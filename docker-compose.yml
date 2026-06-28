@@ -33,6 +33,9 @@ services:
       DATABASE_DSN: postgresql://enterprise_agent:enterprise_agent@postgres:5432/enterprise_agent
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DINGTALK_SECRET: local-dev-secret
+      APP_STARTUP_MIGRATE: "true"
+      SEED_LOCAL_CONFIG: "true"
+      DEBUG_AGENT_USER_ID: local-user
     ports:
       - "8000:8000"
     depends_on:
@@ -50,9 +53,11 @@ services:
       DATABASE_DSN: postgresql://enterprise_agent:enterprise_agent@postgres:5432/enterprise_agent
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       DINGTALK_SECRET: local-dev-secret
+      APP_STARTUP_MIGRATE: "true"
+      SEED_LOCAL_CONFIG: "true"
+      DEBUG_AGENT_USER_ID: local-user
     depends_on:
       postgres:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
-

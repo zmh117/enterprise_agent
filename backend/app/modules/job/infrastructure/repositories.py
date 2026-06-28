@@ -201,6 +201,55 @@ class AgentRepository:
         )
         return self._job_from_row(row) if row else None
 
+    def get_job_detail(self, job_id: str) -> dict[str, Any]:
+        row = self.database.execute_one("select * from agent_job where id = ?", (job_id,))
+        if not row:
+            raise NotFound(f"Agent job not found: {job_id}")
+        return {
+            "id": row["id"],
+            "session_id": row["session_id"],
+            "idempotency_key": row["idempotency_key"],
+            "user_id": row["user_id"],
+            "project_code": row["project_code"],
+            "source": row["source"],
+            "user_message": row["user_message"],
+            "status": row["status"],
+            "priority": int(row["priority"]),
+            "retry_count": int(row["retry_count"]),
+            "max_retry_count": int(row["max_retry_count"]),
+            "result": row.get("result"),
+            "error_message": row.get("error_message"),
+            "created_at": row["created_at"],
+            "started_at": row.get("started_at"),
+            "finished_at": row.get("finished_at"),
+        }
+
+    def list_steps(self, job_id: str) -> list[dict[str, Any]]:
+        self.get_job(job_id)
+        return self.database.execute(
+            """
+            select id, job_id, step_type, title, content, created_at
+            from agent_step
+            where job_id = ?
+            order by created_at, id
+            """,
+            (job_id,),
+        )
+
+    def list_tool_calls(self, job_id: str) -> list[dict[str, Any]]:
+        self.get_job(job_id)
+        rows = self.database.execute(
+            """
+            select id, job_id, tool_name, request_payload, response_summary,
+                   status, duration_ms, risk_level, audit_id, created_at
+            from agent_tool_call
+            where job_id = ?
+            order by created_at, id
+            """,
+            (job_id,),
+        )
+        return [self._tool_call_from_row(row) for row in rows]
+
     def claim_job(self, job_id: str, worker_id: str) -> AgentJob | None:
         job = self.get_job(job_id)
         if job.status != JobStatus.PENDING:
@@ -284,6 +333,26 @@ class AgentRepository:
             result=row.get("result"),
             error_message=row.get("error_message"),
         )
+
+    def _tool_call_from_row(self, row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "job_id": row["job_id"],
+            "tool_name": row["tool_name"],
+            "request_payload": self._json_from_text(row["request_payload"]),
+            "response_summary": self._json_from_text(row["response_summary"]),
+            "status": row["status"],
+            "duration_ms": int(row["duration_ms"]),
+            "risk_level": row["risk_level"],
+            "audit_id": row.get("audit_id"),
+            "created_at": row["created_at"],
+        }
+
+    def _json_from_text(self, value: str) -> Any:
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value
 
 
 class AuditRepository:

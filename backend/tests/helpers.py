@@ -4,7 +4,7 @@ import base64
 import hashlib
 import hmac
 
-from app.bootstrap import Container, build_container
+from app.bootstrap import Container, build_test_container
 from app.shared.config import DingTalkSettings, Settings
 
 
@@ -16,7 +16,7 @@ def test_settings(secret: str = "test-secret") -> Settings:
 
 
 def container() -> Container:
-    return build_container(test_settings(), migrate=True, seed=True)
+    return build_test_container(test_settings(), migrate=True, seed=True)
 
 
 def dingtalk_sign(secret: str, timestamp: str) -> str:

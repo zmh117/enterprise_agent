@@ -144,6 +144,8 @@ make check
 docker compose up --build
 ```
 
+Docker Compose 路径会使用真实 PostgreSQL 和 RabbitMQ。当前 Claude Runtime 和内部工具仍是 fake/stub，用于先验证真实 API、真实 DB、真实 MQ、真实 worker 的闭环。
+
 本地直接启动 API：
 
 ```bash
@@ -162,6 +164,9 @@ PYTHONPATH=backend .venv/bin/python -m app.workers.agent_job_worker
 
 - `DATABASE_DSN`：PostgreSQL 连接串
 - `RABBITMQ_URL`：RabbitMQ 连接串
+- `APP_STARTUP_MIGRATE`：应用启动时是否执行 migration，默认 `true`
+- `SEED_LOCAL_CONFIG`：应用启动时是否初始化本地工具、数据源和权限配置
+- `DEBUG_AGENT_USER_ID`：调试 API 未传 `user_id` 时使用的默认用户
 - `DINGTALK_SECRET`：钉钉机器人签名密钥
 - `DINGTALK_CALLBACK_URL`：钉钉结果回调地址
 - `DINGTALK_CALLBACK_HOST_ALLOWLIST`：允许回调的 host 白名单
@@ -185,6 +190,63 @@ RabbitMQ 队列：
 - `agent.job.dead.queue`：死信队列
 
 应用层只依赖 `MessagePublisher` / `MessageConsumer` 接口，RabbitMQ 实现在 `backend/app/modules/message_bus/infrastructure/`。
+
+## 调试 API
+
+本地闭环优先使用调试 API，不需要先接入真实钉钉机器人：
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/agent/jobs \
+  -H 'content-type: application/json' \
+  -d '{
+    "message": "帮我查一下订单 MO20260627001 为什么一直待领料",
+    "user_id": "local-user",
+    "conversation_id": "debug-conversation",
+    "project_code": "default",
+    "idempotency_key": "demo-order-001"
+  }'
+```
+
+返回示例：
+
+```json
+{
+  "accepted": true,
+  "status": "PENDING",
+  "job_id": "job_xxx",
+  "idempotency_key": "debug:demo-order-001"
+}
+```
+
+查询任务：
+
+```bash
+curl -s http://127.0.0.1:8000/api/agent/jobs/job_xxx
+```
+
+查询执行步骤：
+
+```bash
+curl -s http://127.0.0.1:8000/api/agent/jobs/job_xxx/steps
+```
+
+查询工具调用摘要：
+
+```bash
+curl -s http://127.0.0.1:8000/api/agent/jobs/job_xxx/tool-calls
+```
+
+预期闭环：
+
+```text
+POST /api/agent/jobs
+  -> agent_job.status = PENDING
+  -> RabbitMQ agent.job.queue
+  -> agent-worker 消费消息
+  -> StubClaudeCodeAgentClient 生成只读诊断报告
+  -> agent_job.status = SUCCEEDED
+  -> steps / tool-calls / artifact / audit_event 可查询
+```
 
 ## 数据库表
 
@@ -245,4 +307,3 @@ make check
 - Agent 上下文构造和报告产物持久化
 - 不保存模型私有推理链
 - 钉钉到 Agent 再到回调的端到端假链路
-

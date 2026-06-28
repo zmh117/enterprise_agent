@@ -37,6 +37,9 @@ class Settings:
     claude_model: str = "claude-sonnet-4-20250514"
     environment: str = "local"
     feature_real_claude: bool = False
+    app_startup_migrate: bool = True
+    seed_local_config: bool = False
+    debug_agent_user_id: str = "local-user"
     dingtalk: DingTalkSettings = field(default_factory=DingTalkSettings)
     queue: QueueSettings = field(default_factory=QueueSettings)
     execution: ExecutionSettings = field(default_factory=ExecutionSettings)
@@ -44,6 +47,13 @@ class Settings:
 
 def _csv_tuple(value: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.lower() in {"1", "true", "yes", "on"}
 
 
 def load_settings() -> Settings:
@@ -55,7 +65,10 @@ def load_settings() -> Settings:
         ),
         claude_model=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-20250514"),
         environment=os.getenv("APP_ENV", "local"),
-        feature_real_claude=os.getenv("FEATURE_REAL_CLAUDE", "false").lower() == "true",
+        feature_real_claude=_env_bool("FEATURE_REAL_CLAUDE"),
+        app_startup_migrate=_env_bool("APP_STARTUP_MIGRATE", True),
+        seed_local_config=_env_bool("SEED_LOCAL_CONFIG"),
+        debug_agent_user_id=os.getenv("DEBUG_AGENT_USER_ID", "local-user"),
         dingtalk=DingTalkSettings(
             secret=os.getenv("DINGTALK_SECRET", ""),
             callback_url=os.getenv("DINGTALK_CALLBACK_URL", ""),

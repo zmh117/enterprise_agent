@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import uuid
 
-from app.bootstrap import build_container
+from app.bootstrap import Container, build_worker_container
 from app.modules.message_bus.application.message_publisher import AgentJobMessage
 from app.shared.config import Settings, load_settings
 from app.shared.logging import configure_logging, with_correlation
@@ -12,9 +12,13 @@ logger = logging.getLogger(__name__)
 
 
 class AgentJobWorker:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, container: Container | None = None) -> None:
         self.settings = settings
-        self.container = build_container(settings, migrate=True, seed=True)
+        self.container = container or build_worker_container(
+            settings,
+            migrate=settings.app_startup_migrate,
+            seed=settings.seed_local_config,
+        )
         self.worker_id = f"agent-worker-{uuid.uuid4().hex[:8]}"
 
     def handle(self, message: AgentJobMessage) -> None:
@@ -52,11 +56,11 @@ class AgentJobWorker:
         with_correlation(message.correlation_id, run)
 
     def run_once(self) -> None:
-        self.container.message_bus.consume_agent_jobs(self.handle)
+        if self.container.consumer is None:
+            raise RuntimeError("Worker container does not have a message consumer")
+        self.container.consumer.consume_agent_jobs(self.handle)
 
     def run_forever(self) -> None:
-        # The default container uses an in-memory bus for local/dev tests.
-        # Production composition should wire RabbitMQConsumer into this class.
         self.run_once()
 
 

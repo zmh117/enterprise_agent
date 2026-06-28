@@ -17,7 +17,10 @@ class Database:
             return self._connection
         if self.engine == "sqlite":
             path = self.dsn.removeprefix("sqlite:///")
-            connection = sqlite3.connect(":memory:" if path == ":memory:" else path)
+            connection = sqlite3.connect(
+                ":memory:" if path == ":memory:" else path,
+                check_same_thread=False,
+            )
             connection.row_factory = sqlite3.Row
             self._connection = connection
             return connection
@@ -58,7 +61,8 @@ class Database:
         if self.engine == "sqlite":
             connection.executescript(script)
         else:
-            connection.execute(script)
+            for statement in self._split_statements(script):
+                connection.execute(statement)
         connection.commit()
 
     def run_migrations(self, migrations_dir: Path) -> None:
@@ -69,6 +73,9 @@ class Database:
         if self.engine == "postgres":
             return sql.replace("?", "%s")
         return sql
+
+    def _split_statements(self, script: str) -> list[str]:
+        return [statement.strip() for statement in script.split(";") if statement.strip()]
 
 
 def default_migrations_dir() -> Path:

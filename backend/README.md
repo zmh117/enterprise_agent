@@ -1,29 +1,34 @@
-# Enterprise Agent MVP
+# Enterprise Agent 后端 MVP
 
-This backend implements the read-only diagnostic Agent MVP from the OpenSpec change
-`add-readonly-diagnostic-agent-mvp`.
-
-## Scope
-
-The MVP supports this chain:
+这个后端实现企业级只读诊断 Agent 的 MVP。当前阶段重点是跑通真实执行链路：
 
 ```text
-DingTalk webhook
-  -> Agent session/job persisted in PostgreSQL 16
-  -> RabbitMQ-backed message bus interface
-  -> Agent worker
-  -> Claude Code Agent SDK wrapper
-  -> read-only internal tools
-  -> audit records and final report callback
+DingTalk / Debug API
+  -> FastAPI api-server
+  -> PostgreSQL 16 持久化 Agent 任务
+  -> RabbitMQ agent.job.queue
+  -> agent-worker 消费任务
+  -> Claude Code Agent Runtime 包装层
+  -> 只读内部工具
+  -> 生成诊断报告
+  -> 持久化 steps / tool-calls / artifact / audit
 ```
 
-The implementation keeps RabbitMQ, DingTalk, tools, permissions, audit, and Agent
-runtime as separate modules. The Agent module only executes a job and uses registered
-read-only tools through `InternalApiClient`.
+当前 Claude 和内部工具仍使用 fake/stub，下一步再接真实 Claude Code Agent SDK。
 
-## Read-only Boundary
+## 模块边界
 
-MVP tools:
+- `dingding`：钉钉 webhook、签名校验、消息解析、结果回调。
+- `job`：Agent 任务生命周期、状态流转、重试策略、调试 API。
+- `message_bus`：消息发布和消费接口，RabbitMQ 是基础设施实现。
+- `agent`：构造上下文、加载 skill、调用 Claude Runtime、保存结果。
+- `internal_tools`：只读工具到内部 API 平台的适配，不直连真实数据库/Redis/Loki。
+- `permission`：用户、项目、工具白名单。
+- `audit`：任务、权限、工具调用、失败和最终报告审计。
+
+## 只读边界
+
+MVP 工具：
 
 - `get_er_context`
 - `get_business_flow_context`
@@ -32,80 +37,110 @@ MVP tools:
 - `query_redis_get`
 - `query_redis_scan`
 
-The runtime does not expose code editing, PR creation, deployment, restart, database
-mutation, Redis mutation, or sandbox execution tools. SQL policy only accepts `SELECT`
-or `WITH` statements and rejects DML/DDL/privileged operations. Redis policy only allows
-`get` and bounded `scan`. Loki policy enforces service, time range, and line limits.
+安全限制：
 
-## Local Commands
+- SQL 只允许 `SELECT` / `WITH`。
+- Redis 只允许 `get` 和有限制的 `scan`。
+- Loki 必须限制服务、时间范围和返回行数。
+- 不暴露改代码、提交 PR、重启服务、执行更新 SQL、删除 Redis key、发版、沙盒执行。
 
-Install dev dependencies once:
+## 本地命令
+
+安装依赖：
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 ```
 
-Run local checks without external services:
+运行检查：
 
 ```bash
 make check
 ```
 
-Equivalent commands:
-
-```bash
-python3 -m compileall backend
-PYTHONPATH=backend python3 -m unittest discover -s backend/tests -t .
-openspec validate add-readonly-diagnostic-agent-mvp
-```
-
-Run the service stack after installing dependencies:
+启动 Compose：
 
 ```bash
 docker compose up --build
 ```
 
-API server:
+本地启动 API：
 
 ```bash
-python -m uvicorn app.main:create_app --factory --app-dir backend --host 0.0.0.0 --port 8000
+.venv/bin/python -m uvicorn app.main:create_app --factory --app-dir backend --host 0.0.0.0 --port 8000
 ```
 
-Worker:
+本地启动 worker：
 
 ```bash
-PYTHONPATH=backend python -m app.workers.agent_job_worker
+PYTHONPATH=backend .venv/bin/python -m app.workers.agent_job_worker
 ```
 
-## Environment Variables
+## 调试 API
 
-- `DATABASE_DSN`: PostgreSQL DSN, for example `postgresql://enterprise_agent:enterprise_agent@postgres:5432/enterprise_agent`.
-- `RABBITMQ_URL`: RabbitMQ URL, for example `amqp://guest:guest@rabbitmq:5672/`.
-- `DINGTALK_SECRET`: DingTalk robot signing secret.
-- `DINGTALK_CALLBACK_URL`: optional callback endpoint for final reports.
-- `DINGTALK_CALLBACK_HOST_ALLOWLIST`: comma-separated allowed callback hostnames.
-- `INTERNAL_API_BASE_URL`: internal API platform base URL.
-- `CLAUDE_MODEL`: Claude model identifier used by the real SDK wrapper.
-- `FEATURE_REAL_CLAUDE`: enables real Claude wrapper path when dependencies and credentials are configured.
-- `AGENT_MAX_RETRY_COUNT`: delayed retries after first execution, default `3`.
-- `AGENT_RETRY_DELAY_SECONDS`: retry delay, default `30`.
-- `AGENT_TIMEOUT_SECONDS`: runtime execution timeout budget, default `300`.
-- `MAX_TOOL_RESPONSE_CHARS`: maximum persisted payload summary size.
-- `MAX_LOKI_MINUTES`, `MAX_LOKI_LINES`, `REDIS_SCAN_LIMIT`: read-only tool bounds.
+创建任务：
 
-## Queues
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/agent/jobs \
+  -H 'content-type: application/json' \
+  -d '{
+    "message": "帮我查一下订单 MO20260627001 为什么一直待领料",
+    "user_id": "local-user",
+    "conversation_id": "debug-conversation",
+    "project_code": "default",
+    "idempotency_key": "demo-order-001"
+  }'
+```
 
-- `agent.job.queue`: normal Agent job execution.
-- `agent.job.retry.queue`: delayed retry path for retryable failures.
-- `agent.job.dead.queue`: dead-letter path after retry exhaustion or terminal failure.
+查询任务：
 
-Application services depend on `MessagePublisher` and `MessageConsumer`; RabbitMQ is
-hidden in `modules/message_bus/infrastructure`.
+```bash
+curl -s http://127.0.0.1:8000/api/agent/jobs/job_xxx
+```
 
-## Database Tables
+查询步骤：
 
-Core execution tables:
+```bash
+curl -s http://127.0.0.1:8000/api/agent/jobs/job_xxx/steps
+```
+
+查询工具调用：
+
+```bash
+curl -s http://127.0.0.1:8000/api/agent/jobs/job_xxx/tool-calls
+```
+
+## 环境变量
+
+- `DATABASE_DSN`：PostgreSQL DSN。
+- `RABBITMQ_URL`：RabbitMQ URL。
+- `APP_STARTUP_MIGRATE`：启动时执行 migration，默认 `true`。
+- `SEED_LOCAL_CONFIG`：启动时写入本地工具、数据源和权限 seed。
+- `DEBUG_AGENT_USER_ID`：调试 API 默认用户。
+- `DINGTALK_SECRET`：钉钉机器人签名密钥。
+- `DINGTALK_CALLBACK_URL`：结果回调地址。
+- `DINGTALK_CALLBACK_HOST_ALLOWLIST`：回调 host 白名单。
+- `INTERNAL_API_BASE_URL`：内部 API 平台地址。
+- `CLAUDE_MODEL`：Claude 模型名。
+- `FEATURE_REAL_CLAUDE`：是否启用真实 Claude。
+- `AGENT_MAX_RETRY_COUNT`：最大重试次数。
+- `AGENT_RETRY_DELAY_SECONDS`：重试延迟秒数。
+- `AGENT_TIMEOUT_SECONDS`：Agent 执行超时时间。
+- `MAX_TOOL_RESPONSE_CHARS`：工具响应摘要最大长度。
+- `MAX_LOKI_MINUTES` / `MAX_LOKI_LINES` / `REDIS_SCAN_LIMIT`：只读工具边界。
+
+## 队列
+
+- `agent.job.queue`：正常 Agent 任务。
+- `agent.job.retry.queue`：可重试失败。
+- `agent.job.dead.queue`：最终失败死信。
+
+应用服务只依赖 `MessagePublisher` / `MessageConsumer`，RabbitMQ 细节在 `modules/message_bus/infrastructure`。
+
+## 数据表
+
+执行链路：
 
 - `agent_session`
 - `agent_job`
@@ -115,30 +150,23 @@ Core execution tables:
 - `agent_artifact`
 - `audit_event`
 
-Configuration tables for later web management:
+配置表：
 
 - `tool_definition`
 - `integration_connector`
 - `datasource_registry`
 - `permission_policy`
 
-Migrations are under `backend/migrations`. `backend/seeds/local_seed.sql` provides local
-allowlists, tools, connector metadata, and data source metadata for tests/dev.
+迁移文件在 `backend/migrations`，本地 seed 在 `backend/seeds/local_seed.sql`。
 
-## Testing Notes
+## 当前测试覆盖
 
-The current environment does not have FastAPI, psycopg, pika, pytest, ruff, or mypy
-installed until the dev environment is created. The committed production dependency list
-is in `pyproject.toml`, while the checked test suite can use SQLite-compatible migrations
-and an in-memory message bus to verify the business path without external services.
-
-The tests cover:
-
-- DingTalk signature success/failure and duplicate delivery.
-- Unauthorized user rejection.
-- Job persistence, status transition, and duplicate worker claim behavior.
-- Read-only database/Redis/Loki policy rejection.
-- Tool calls routed through `InternalApiClient` and recorded in audit/tool-call tables.
-- Agent execution with compact context search, report artifact persistence, and no
-  private reasoning persistence.
-- End-to-end fake DingTalk -> job -> worker -> Agent -> report path.
+- 钉钉签名成功 / 失败。
+- 重复消息幂等。
+- 未授权用户拒绝。
+- debug API 创建、幂等创建、查询 job、steps、tool calls。
+- Compose runtime 使用 RabbitMQPublisher / RabbitMQConsumer，不使用内存队列。
+- startup 只初始化一次 container，请求不重复 build。
+- worker 消费消息后更新 job 状态，重复 delivery 不重复回调。
+- 只读 SQL / Redis / Loki 策略。
+- 工具调用审计和报告产物持久化。

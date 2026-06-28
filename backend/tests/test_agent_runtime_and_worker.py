@@ -6,6 +6,7 @@ from app.modules.job.application.create_agent_job_service import CreateAgentJobC
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.message_bus.application.message_publisher import AgentJobMessage
 from app.shared.exceptions import RetryableExecutionError
+from app.workers.agent_job_worker import AgentJobWorker
 from backend.tests.helpers import container
 
 
@@ -65,6 +66,28 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
         self.assertEqual("retry", action)
         self.assertEqual(1, len(c.message_bus.retries))
         self.assertEqual(JobStatus.PENDING, c.agent_repository.get_job(job.id).status)
+
+    def test_worker_consumes_message_and_ignores_duplicate_delivery(self) -> None:
+        c = container()
+        job = c.create_agent_job_service.execute(
+            CreateAgentJobCommand(
+                idempotency_key="worker-job",
+                dingding_conversation_id="conversation-1",
+                dingding_user_id="local-user",
+                user_message="diagnose order",
+                project_code="default",
+            )
+        )
+        worker = AgentJobWorker(c.settings, container=c)
+
+        worker.run_once()
+        stored = c.agent_repository.get_job(job.id)
+        self.assertEqual(JobStatus.SUCCEEDED, stored.status)
+        self.assertEqual(1, len(c.agent_executor.callback_client.sent_messages))
+
+        worker.handle(AgentJobMessage(job_id=job.id, correlation_id="duplicate"))
+        self.assertEqual(JobStatus.SUCCEEDED, c.agent_repository.get_job(job.id).status)
+        self.assertEqual(1, len(c.agent_executor.callback_client.sent_messages))
 
 
 if __name__ == "__main__":

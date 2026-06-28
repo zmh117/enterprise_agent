@@ -20,5 +20,6 @@ unittest:
 
 openspec-validate:
 	openspec validate add-readonly-diagnostic-agent-mvp
+	openspec validate wire-rabbitmq-agent-job-flow
 
 check: compile format-check lint typecheck test unittest openspec-validate

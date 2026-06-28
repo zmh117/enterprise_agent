@@ -1,18 +1,19 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
+from app.modules.agent.application.agent_context_builder import AgentContextBuilder
 from app.modules.agent.application.agent_executor import AgentExecutor
 from app.modules.agent.application.agent_result_service import AgentResultService
-from app.modules.agent.application.agent_context_builder import AgentContextBuilder
 from app.modules.agent.infrastructure.claude_code_agent_client import StubClaudeCodeAgentClient
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
 from app.modules.agent.infrastructure.skill_loader import SkillLoader
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.dingding.application.dingding_message_service import DingTalkMessageService
 from app.modules.dingding.infrastructure.dingding_callback_client import DingTalkCallbackClient
-from app.modules.internal_tools.infrastructure.internal_api_client import FakeInternalApiClient
 from app.modules.internal_tools.application.tools import ReadOnlyToolService
+from app.modules.internal_tools.infrastructure.internal_api_client import FakeInternalApiClient
 from app.modules.job.application.create_agent_job_service import CreateAgentJobService
 from app.modules.job.application.job_retry_service import JobRetryService
 from app.modules.job.application.job_status_service import JobStatusService
@@ -21,7 +22,10 @@ from app.modules.job.infrastructure.repositories import (
     AuditRepository,
     ConfigurationRepository,
 )
+from app.modules.message_bus.application.message_publisher import MessageConsumer, MessagePublisher
 from app.modules.message_bus.infrastructure.in_memory_bus import InMemoryMessageBus
+from app.modules.message_bus.infrastructure.rabbitmq_consumer import RabbitMQConsumer
+from app.modules.message_bus.infrastructure.rabbitmq_publisher import RabbitMQPublisher
 from app.modules.permission.application.permission_service import PermissionService
 from app.shared.config import Settings
 from app.shared.database import Database, default_migrations_dir
@@ -29,11 +33,14 @@ from app.shared.database import Database, default_migrations_dir
 
 @dataclass
 class Container:
+    settings: Settings
     database: Database
     agent_repository: AgentRepository
     audit_service: AuditService
     permission_service: PermissionService
-    message_bus: InMemoryMessageBus
+    publisher: MessagePublisher
+    consumer: MessageConsumer | None
+    message_bus: InMemoryMessageBus | None
     internal_api_client: FakeInternalApiClient
     tool_service: ReadOnlyToolService
     create_agent_job_service: CreateAgentJobService
@@ -42,7 +49,65 @@ class Container:
     retry_service: JobRetryService
 
 
+ContainerFactory = Callable[[Settings], Container]
+
+
+def build_api_container(
+    settings: Settings, *, migrate: bool = True, seed: bool = False
+) -> Container:
+    publisher = RabbitMQPublisher(settings.rabbitmq_url, settings.queue)
+    return _build_container(
+        settings=settings,
+        publisher=publisher,
+        consumer=None,
+        message_bus=None,
+        migrate=migrate,
+        seed=seed,
+    )
+
+
+def build_worker_container(
+    settings: Settings, *, migrate: bool = True, seed: bool = False
+) -> Container:
+    publisher = RabbitMQPublisher(settings.rabbitmq_url, settings.queue)
+    consumer = RabbitMQConsumer(settings.rabbitmq_url, settings.queue)
+    return _build_container(
+        settings=settings,
+        publisher=publisher,
+        consumer=consumer,
+        message_bus=None,
+        migrate=migrate,
+        seed=seed,
+    )
+
+
+def build_test_container(
+    settings: Settings, *, migrate: bool = True, seed: bool = False
+) -> Container:
+    message_bus = InMemoryMessageBus()
+    return _build_container(
+        settings=settings,
+        publisher=message_bus,
+        consumer=message_bus,
+        message_bus=message_bus,
+        migrate=migrate,
+        seed=seed,
+    )
+
+
 def build_container(settings: Settings, *, migrate: bool = True, seed: bool = False) -> Container:
+    return build_test_container(settings, migrate=migrate, seed=seed)
+
+
+def _build_container(
+    *,
+    settings: Settings,
+    publisher: MessagePublisher,
+    consumer: MessageConsumer | None,
+    message_bus: InMemoryMessageBus | None,
+    migrate: bool,
+    seed: bool,
+) -> Container:
     database = Database(settings.database_dsn)
     if migrate:
         database.run_migrations(default_migrations_dir())
@@ -58,12 +123,11 @@ def build_container(settings: Settings, *, migrate: bool = True, seed: bool = Fa
         max_chars=settings.execution.max_tool_response_chars,
     )
     permission_service = PermissionService(config_repository)
-    message_bus = InMemoryMessageBus()
     create_job_service = CreateAgentJobService(
         repository=agent_repository,
         permission_service=permission_service,
         audit_service=audit_service,
-        publisher=message_bus,
+        publisher=publisher,
         queue_settings=settings.queue,
     )
     dingtalk_service = DingTalkMessageService(
@@ -101,14 +165,17 @@ def build_container(settings: Settings, *, migrate: bool = True, seed: bool = Fa
     )
     retry_service = JobRetryService(
         repository=agent_repository,
-        publisher=message_bus,
+        publisher=publisher,
         queue_settings=settings.queue,
     )
     return Container(
+        settings=settings,
         database=database,
         agent_repository=agent_repository,
         audit_service=audit_service,
         permission_service=permission_service,
+        publisher=publisher,
+        consumer=consumer,
         message_bus=message_bus,
         internal_api_client=internal_api_client,
         tool_service=tool_service,

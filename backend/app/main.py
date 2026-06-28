@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
+from app.bootstrap import Container, ContainerFactory, build_api_container
 from app.shared.config import Settings, load_settings
 from app.shared.database import Database, default_migrations_dir
 from app.shared.logging import configure_logging, set_correlation_id
@@ -35,7 +38,25 @@ def _check_rabbitmq(rabbitmq_url: str) -> bool:
         return False
 
 
-def create_app(settings: Settings | None = None) -> Any:
+def _build_api_runtime(settings: Settings) -> Container:
+    return build_api_container(
+        settings,
+        migrate=settings.app_startup_migrate,
+        seed=settings.seed_local_config,
+    )
+
+
+def _app_container(app: Any) -> Container:
+    container = getattr(app.state, "container", None)
+    if not isinstance(container, Container):
+        raise RuntimeError("Application container is not initialized")
+    return container
+
+
+def create_app(
+    settings: Settings | None = None,
+    container_factory: ContainerFactory | None = None,
+) -> Any:
     settings = settings or load_settings()
     configure_logging()
 
@@ -49,7 +70,17 @@ def create_app(settings: Settings | None = None) -> Any:
             }
         )
 
-    app = FastAPI(title="Enterprise Agent", version="0.1.0")
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        factory = container_factory or _build_api_runtime
+        container = factory(settings)
+        app.state.container = container
+        try:
+            yield
+        finally:
+            container.database.close()
+
+    app = FastAPI(title="Enterprise Agent", version="0.1.0", lifespan=lifespan)
 
     @app.middleware("http")
     async def correlation_middleware(request: Request, call_next: Any) -> Any:
@@ -65,24 +96,26 @@ def create_app(settings: Settings | None = None) -> Any:
 
     @app.get("/api/ready")
     def ready() -> dict[str, Any]:
-        status = _build_health(settings)
+        container = _app_container(app)
+        status = {
+            "status": "ok",
+            "database": container.database.ping(),
+            "rabbitmq": _check_rabbitmq(settings.rabbitmq_url),
+            "claude_invoked": False,
+        }
         if not status["database"] or not status["rabbitmq"]:
             raise HTTPException(status_code=503, detail=status)
         return status
 
-    try:
-        from app.modules.dingding.api.dingding_webhook_controller import (
-            build_dingding_router,
-        )
+    from app.modules.dingding.api.dingding_webhook_controller import build_dingding_router
+    from app.modules.job.api.agent_job_debug_controller import build_agent_job_debug_router
 
-        app.include_router(build_dingding_router(settings))
-    except Exception:
-        # Optional route construction depends on migrations/config during early bootstrap.
-        pass
+    app.include_router(build_dingding_router())
+    app.include_router(build_agent_job_debug_router())
 
     @app.post("/api/admin/migrate")
     def migrate() -> dict[str, Any]:
-        Database(settings.database_dsn).run_migrations(default_migrations_dir())
+        _app_container(app).database.run_migrations(default_migrations_dir())
         return {"status": "migrated"}
 
     return app

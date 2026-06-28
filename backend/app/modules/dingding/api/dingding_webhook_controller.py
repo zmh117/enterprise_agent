@@ -2,14 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.bootstrap import build_container
-from app.shared.config import Settings
+from fastapi import APIRouter, Header, HTTPException, Request
+
+from app.bootstrap import Container
 from app.shared.logging import new_correlation_id
 
 
-def build_dingding_router(settings: Settings) -> Any:
-    from fastapi import APIRouter, Header, HTTPException, Request
-
+def build_dingding_router() -> Any:
     router = APIRouter(prefix="/webhooks/dingding", tags=["dingding"])
 
     @router.post("/agent")
@@ -18,7 +17,7 @@ def build_dingding_router(settings: Settings) -> Any:
         x_dingtalk_timestamp: str = Header(default=""),
         x_dingtalk_sign: str = Header(default=""),
     ) -> dict[str, Any]:
-        container = build_container(settings, migrate=True, seed=True)
+        container = _container(request)
         payload = await request.json()
         result = container.dingtalk_message_service.handle_webhook(
             payload=payload,
@@ -33,3 +32,10 @@ def build_dingding_router(settings: Settings) -> Any:
         return result
 
     return router
+
+
+def _container(request: Any) -> Container:
+    container = getattr(request.app.state, "container", None)
+    if not isinstance(container, Container):
+        raise RuntimeError("Application container is not initialized")
+    return container
