@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 
 from fastapi.testclient import TestClient
 
@@ -10,6 +11,10 @@ from app.bootstrap import (
     build_worker_container,
 )
 from app.main import create_app
+from app.modules.agent.infrastructure.claude_code_agent_client import (
+    RealClaudeCodeAgentClient,
+    StubClaudeCodeAgentClient,
+)
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.message_bus.infrastructure.rabbitmq_consumer import RabbitMQConsumer
 from app.modules.message_bus.infrastructure.rabbitmq_publisher import RabbitMQPublisher
@@ -36,6 +41,27 @@ class RuntimeWiringAndDebugApiTests(unittest.TestCase):
         finally:
             api_container.database.close()
             worker_container.database.close()
+            test_container.database.close()
+
+    def test_feature_flag_selects_real_claude_only_for_production_runtime(self) -> None:
+        real_settings = replace(
+            make_settings(),
+            feature_real_claude=True,
+            anthropic_api_key="test-key",
+        )
+        api_container = build_api_container(real_settings, migrate=True, seed=True)
+        test_container = build_test_container(real_settings, migrate=True, seed=True)
+        try:
+            self.assertIsInstance(
+                api_container.agent_executor.claude_client,
+                RealClaudeCodeAgentClient,
+            )
+            self.assertIsInstance(
+                test_container.agent_executor.claude_client,
+                StubClaudeCodeAgentClient,
+            )
+        finally:
+            api_container.database.close()
             test_container.database.close()
 
     def test_lifespan_builds_container_once_for_multiple_webhooks(self) -> None:

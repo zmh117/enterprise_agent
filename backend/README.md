@@ -14,7 +14,7 @@ DingTalk / Debug API
   -> 持久化 steps / tool-calls / artifact / audit
 ```
 
-当前 Claude 和内部工具仍使用 fake/stub，下一步再接真实 Claude Code Agent SDK。
+默认 Claude runtime 使用 stub，设置 `FEATURE_REAL_CLAUDE=true` 后可切换到真实 Claude Agent SDK。内部工具平台当前仍使用 fake client，下一步再接真实内网工具平台。
 
 ## 模块边界
 
@@ -124,11 +124,67 @@ curl -s http://127.0.0.1:8000/api/agent/jobs/job_xxx/tool-calls
 - `INTERNAL_API_BASE_URL`：内部 API 平台地址。
 - `CLAUDE_MODEL`：Claude 模型名。
 - `FEATURE_REAL_CLAUDE`：是否启用真实 Claude。
+- `ANTHROPIC_API_KEY`：真实 Claude runtime 的 Anthropic API key，启用时必填。
+- `ANTHROPIC_BASE_URL`：可选 Anthropic 兼容网关地址。
 - `AGENT_MAX_RETRY_COUNT`：最大重试次数。
 - `AGENT_RETRY_DELAY_SECONDS`：重试延迟秒数。
 - `AGENT_TIMEOUT_SECONDS`：Agent 执行超时时间。
+- `AGENT_MAX_TURNS`：Claude Agent SDK 最大轮次，默认 `12`。
 - `MAX_TOOL_RESPONSE_CHARS`：工具响应摘要最大长度。
 - `MAX_LOKI_MINUTES` / `MAX_LOKI_LINES` / `REDIS_SCAN_LIMIT`：只读工具边界。
+
+## 真实 Claude Runtime
+
+真实 runtime 使用 Python 包 `claude-agent-sdk`，导入名为 `claude_agent_sdk`。SDK 底层需要 Node.js 和 Claude Code CLI。Docker 镜像会安装：
+
+```text
+nodejs
+npm
+@anthropic-ai/claude-code
+```
+
+启用方式：
+
+```bash
+cp .env.example .env
+# 编辑 .env，把 your-deepseek-api-key 换成真实 DeepSeek API Key
+docker compose up --build
+```
+
+本机直跑 worker 时需要本机能找到 CLI：
+
+```bash
+which claude
+```
+
+手动验证路径：
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/agent/jobs \
+  -H 'content-type: application/json' \
+  -d '{
+    "message": "帮我查一下订单 MO20260627001 为什么一直待领料",
+    "user_id": "local-user",
+    "conversation_id": "debug-conversation",
+    "project_code": "default",
+    "idempotency_key": "real-claude-demo-001"
+  }'
+```
+
+然后查询：
+
+```bash
+curl -s http://127.0.0.1:8000/api/agent/jobs/job_xxx
+curl -s http://127.0.0.1:8000/api/agent/jobs/job_xxx/steps
+curl -s http://127.0.0.1:8000/api/agent/jobs/job_xxx/tool-calls
+```
+
+预期：
+
+- job 最终变为 `SUCCEEDED`。
+- `result` 不是 stub 模板中的 `read-only diagnostic analysis completed`。
+- steps 包含 `Model execution completed`。
+- tool calls 只包含 `mcp__internal__*` 对应的只读工具摘要。
 
 ## 队列
 
@@ -168,5 +224,8 @@ curl -s http://127.0.0.1:8000/api/agent/jobs/job_xxx/tool-calls
 - Compose runtime 使用 RabbitMQPublisher / RabbitMQConsumer，不使用内存队列。
 - startup 只初始化一次 container，请求不重复 build。
 - worker 消费消息后更新 job 状态，重复 delivery 不重复回调。
+- feature flag 开启时生产 runtime 注入 `RealClaudeCodeAgentClient`，测试 runtime 仍使用 stub。
+- fake SDK 覆盖真实 runtime 的权限配置、工具循环、错误映射、timeout 和 tool event 解析。
+- opt-in integration 测试默认 skip，只有配置真实 key 和 CLI 时运行。
 - 只读 SQL / Redis / Loki 策略。
 - 工具调用审计和报告产物持久化。

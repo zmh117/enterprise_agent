@@ -31,6 +31,7 @@ class AgentJobWorker:
                 )
             except Exception as exc:
                 job = self.container.agent_repository.get_job(message.job_id)
+                safe_message = getattr(exc, "safe_message", str(exc))
                 action = self.container.retry_service.handle_failure(
                     job,
                     exc,
@@ -39,7 +40,7 @@ class AgentJobWorker:
                 self.container.audit_service.record(
                     f"job.failure.{action}",
                     status="FAILED" if action == "dead" else "RETRYING",
-                    summary=getattr(exc, "safe_message", str(exc)),
+                    summary=safe_message,
                     job_id=job.id,
                     actor_id=self.worker_id,
                 )
@@ -47,11 +48,15 @@ class AgentJobWorker:
                     session = self.container.agent_repository.get_session(job.session_id)
                     self.container.dingtalk_message_service.send_final_result(
                         session.dingding_conversation_id,
-                        self.container.dingtalk_message_service.safe_failure_notice(
-                            getattr(exc, "safe_message", str(exc))
-                        ),
+                        self.container.dingtalk_message_service.safe_failure_notice(safe_message),
                     )
-                logger.warning("Agent job failed; routed to %s", action)
+                logger.warning(
+                    "Agent job failed; routed to %s job_id=%s error_type=%s safe_message=%s",
+                    action,
+                    job.id,
+                    exc.__class__.__name__,
+                    safe_message,
+                )
 
         with_correlation(message.correlation_id, run)
 

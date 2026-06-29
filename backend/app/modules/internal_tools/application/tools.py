@@ -44,6 +44,7 @@ class ReadOnlyToolService:
         project_code: str,
         tool_name: str,
         arguments: dict[str, Any],
+        record_tool_call: bool = True,
     ) -> ToolResult:
         started = time.monotonic()
         audit_id: str | None = None
@@ -63,20 +64,21 @@ class ReadOnlyToolService:
                 payload={"tool": tool_name, "arguments": arguments},
             )
             result = self._execute(tool_name, arguments, project_code)
-            self.repository.add_tool_call(
-                job_id=job_id,
-                tool_name=tool_name,
-                request_payload=bounded_summary(arguments, self.limits.max_tool_response_chars),
-                response_summary=bounded_summary(
-                    result.summary, self.limits.max_tool_response_chars
-                ),
-                status="SUCCEEDED",
-                duration_ms=int((time.monotonic() - started) * 1000),
-                risk_level="low"
-                if tool_name.startswith("get_") or tool_name == "query_loki"
-                else "medium",
-                audit_id=audit_id,
-            )
+            if record_tool_call:
+                self.repository.add_tool_call(
+                    job_id=job_id,
+                    tool_name=tool_name,
+                    request_payload=bounded_summary(arguments, self.limits.max_tool_response_chars),
+                    response_summary=bounded_summary(
+                        result.summary, self.limits.max_tool_response_chars
+                    ),
+                    status="SUCCEEDED",
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                    risk_level="low"
+                    if tool_name.startswith("get_") or tool_name == "query_loki"
+                    else "medium",
+                    audit_id=audit_id,
+                )
             return result
         except Exception as exc:
             audit_id = self.audit_service.record(
@@ -87,16 +89,17 @@ class ReadOnlyToolService:
                 actor_id=user_id,
                 payload={"tool": tool_name, "arguments": arguments},
             )
-            self.repository.add_tool_call(
-                job_id=job_id,
-                tool_name=tool_name,
-                request_payload=bounded_summary(arguments, self.limits.max_tool_response_chars),
-                response_summary={"error": getattr(exc, "safe_message", str(exc))},
-                status="FAILED",
-                duration_ms=int((time.monotonic() - started) * 1000),
-                risk_level="medium",
-                audit_id=audit_id,
-            )
+            if record_tool_call:
+                self.repository.add_tool_call(
+                    job_id=job_id,
+                    tool_name=tool_name,
+                    request_payload=bounded_summary(arguments, self.limits.max_tool_response_chars),
+                    response_summary={"error": getattr(exc, "safe_message", str(exc))},
+                    status="FAILED",
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                    risk_level="medium",
+                    audit_id=audit_id,
+                )
             raise
 
     def _assert_tool_policy(self, tool_name: str, arguments: dict[str, Any]) -> None:

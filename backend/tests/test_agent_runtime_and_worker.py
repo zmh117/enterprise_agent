@@ -5,6 +5,7 @@ import unittest
 from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.message_bus.application.message_publisher import AgentJobMessage
+from app.modules.agent.domain.runtime import AgentRunResult
 from app.shared.exceptions import RetryableExecutionError
 from app.workers.agent_job_worker import AgentJobWorker
 from backend.tests.helpers import container
@@ -13,6 +14,26 @@ from backend.tests.helpers import container
 class FailingClaudeClient:
     def run(self, request: object) -> object:
         raise RetryableExecutionError("timeout", safe_message="Claude timeout")
+
+
+class ToolEventClaudeClient:
+    def run(self, request: object) -> AgentRunResult:
+        return AgentRunResult(
+            final_answer="real runtime answer",
+            tool_events=[
+                {
+                    "tool_name": "query_loki",
+                    "request_payload": {
+                        "payload": '{"service":"order-service"}',
+                        "truncated": False,
+                    },
+                    "response_summary": {"payload": '{"line_count":1}', "truncated": False},
+                    "status": "SUCCEEDED",
+                    "duration_ms": 12,
+                    "risk_level": "low",
+                }
+            ],
+        )
 
 
 class AgentRuntimeAndWorkerTests(unittest.TestCase):
@@ -66,6 +87,26 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
         self.assertEqual("retry", action)
         self.assertEqual(1, len(c.message_bus.retries))
         self.assertEqual(JobStatus.PENDING, c.agent_repository.get_job(job.id).status)
+
+    def test_agent_executor_persists_real_runtime_tool_events(self) -> None:
+        c = container()
+        job = c.create_agent_job_service.execute(
+            CreateAgentJobCommand(
+                idempotency_key="tool-event-job",
+                dingding_conversation_id="conversation-1",
+                dingding_user_id="local-user",
+                user_message="diagnose with real runtime",
+                project_code="default",
+            )
+        )
+        c.agent_executor.claude_client = ToolEventClaudeClient()  # type: ignore[assignment]
+
+        c.agent_executor.execute(job.id)
+        tool_calls = c.agent_repository.list_tool_calls(job.id)
+        tool_names = [call["tool_name"] for call in tool_calls]
+
+        self.assertIn("query_loki", tool_names)
+        self.assertEqual(JobStatus.SUCCEEDED, c.agent_repository.get_job(job.id).status)
 
     def test_worker_consumes_message_and_ignores_duplicate_delivery(self) -> None:
         c = container()

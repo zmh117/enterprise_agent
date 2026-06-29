@@ -11,11 +11,14 @@ class QueueSettings:
     dead_queue: str = "agent.job.dead.queue"
     max_retry_count: int = 3
     retry_delay_seconds: int = 30
+    consumer_heartbeat_seconds: int = 900
+    consumer_reconnect_seconds: int = 5
 
 
 @dataclass(frozen=True)
 class ExecutionSettings:
     timeout_seconds: int = 300
+    max_turns: int = 12
     max_tool_response_chars: int = 4000
     max_loki_minutes: int = 60
     max_loki_lines: int = 500
@@ -35,6 +38,8 @@ class Settings:
     rabbitmq_url: str = "amqp://guest:guest@localhost:5672/"
     internal_api_base_url: str = "http://internal-api-platform.local"
     claude_model: str = "claude-sonnet-4-20250514"
+    anthropic_api_key: str = ""
+    anthropic_base_url: str = ""
     environment: str = "local"
     feature_real_claude: bool = False
     app_startup_migrate: bool = True
@@ -63,7 +68,12 @@ def load_settings() -> Settings:
         internal_api_base_url=os.getenv(
             "INTERNAL_API_BASE_URL", "http://internal-api-platform.local"
         ),
-        claude_model=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-20250514"),
+        claude_model=os.getenv(
+            "CLAUDE_MODEL",
+            os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
+        ),
+        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", os.getenv("ANTHROPIC_AUTH_TOKEN", "")),
+        anthropic_base_url=os.getenv("ANTHROPIC_BASE_URL", ""),
         environment=os.getenv("APP_ENV", "local"),
         feature_real_claude=_env_bool("FEATURE_REAL_CLAUDE"),
         app_startup_migrate=_env_bool("APP_STARTUP_MIGRATE", True),
@@ -80,9 +90,12 @@ def load_settings() -> Settings:
             dead_queue=os.getenv("AGENT_DEAD_QUEUE", "agent.job.dead.queue"),
             max_retry_count=int(os.getenv("AGENT_MAX_RETRY_COUNT", "3")),
             retry_delay_seconds=int(os.getenv("AGENT_RETRY_DELAY_SECONDS", "30")),
+            consumer_heartbeat_seconds=int(os.getenv("RABBITMQ_CONSUMER_HEARTBEAT_SECONDS", "900")),
+            consumer_reconnect_seconds=int(os.getenv("RABBITMQ_CONSUMER_RECONNECT_SECONDS", "5")),
         ),
         execution=ExecutionSettings(
             timeout_seconds=int(os.getenv("AGENT_TIMEOUT_SECONDS", "300")),
+            max_turns=int(os.getenv("AGENT_MAX_TURNS", "12")),
             max_tool_response_chars=int(os.getenv("MAX_TOOL_RESPONSE_CHARS", "4000")),
             max_loki_minutes=int(os.getenv("MAX_LOKI_MINUTES", "60")),
             max_loki_lines=int(os.getenv("MAX_LOKI_LINES", "500")),

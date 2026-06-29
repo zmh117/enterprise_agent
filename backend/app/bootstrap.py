@@ -6,7 +6,10 @@ from dataclasses import dataclass
 from app.modules.agent.application.agent_context_builder import AgentContextBuilder
 from app.modules.agent.application.agent_executor import AgentExecutor
 from app.modules.agent.application.agent_result_service import AgentResultService
-from app.modules.agent.infrastructure.claude_code_agent_client import StubClaudeCodeAgentClient
+from app.modules.agent.infrastructure.claude_code_agent_client import (
+    RealClaudeCodeAgentClient,
+    StubClaudeCodeAgentClient,
+)
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
 from app.modules.agent.infrastructure.skill_loader import SkillLoader
 from app.modules.audit.application.audit_service import AuditService
@@ -63,6 +66,7 @@ def build_api_container(
         message_bus=None,
         migrate=migrate,
         seed=seed,
+        use_real_claude=settings.feature_real_claude,
     )
 
 
@@ -70,7 +74,14 @@ def build_worker_container(
     settings: Settings, *, migrate: bool = True, seed: bool = False
 ) -> Container:
     publisher = RabbitMQPublisher(settings.rabbitmq_url, settings.queue)
-    consumer = RabbitMQConsumer(settings.rabbitmq_url, settings.queue)
+    consumer = RabbitMQConsumer(
+        settings.rabbitmq_url,
+        settings.queue,
+        heartbeat_seconds=max(
+            settings.queue.consumer_heartbeat_seconds,
+            settings.execution.timeout_seconds + 60,
+        ),
+    )
     return _build_container(
         settings=settings,
         publisher=publisher,
@@ -78,6 +89,7 @@ def build_worker_container(
         message_bus=None,
         migrate=migrate,
         seed=seed,
+        use_real_claude=settings.feature_real_claude,
     )
 
 
@@ -92,6 +104,7 @@ def build_test_container(
         message_bus=message_bus,
         migrate=migrate,
         seed=seed,
+        use_real_claude=False,
     )
 
 
@@ -107,6 +120,7 @@ def _build_container(
     message_bus: InMemoryMessageBus | None,
     migrate: bool,
     seed: bool,
+    use_real_claude: bool,
 ) -> Container:
     database = Database(settings.database_dsn)
     if migrate:
@@ -147,6 +161,17 @@ def _build_container(
         limits=settings.execution,
     )
     tool_registry = ToolRegistry(tool_service)
+    claude_client = (
+        RealClaudeCodeAgentClient(
+            model=settings.claude_model,
+            tool_registry=tool_registry,
+            limits=settings.execution,
+            api_key=settings.anthropic_api_key,
+            base_url=settings.anthropic_base_url,
+        )
+        if use_real_claude
+        else StubClaudeCodeAgentClient()
+    )
     agent_executor = AgentExecutor(
         repository=agent_repository,
         audit_service=audit_service,
@@ -155,7 +180,7 @@ def _build_container(
             tool_registry=tool_registry,
             skill_loader=SkillLoader(),
         ),
-        claude_client=StubClaudeCodeAgentClient(),
+        claude_client=claude_client,
         tool_registry=tool_registry,
         result_service=AgentResultService(agent_repository),
         callback_client=DingTalkCallbackClient(

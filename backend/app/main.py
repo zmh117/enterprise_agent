@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from app.bootstrap import Container, ContainerFactory, build_api_container
+from app.modules.agent.infrastructure.claude_code_agent_client import is_claude_cli_available
 from app.shared.config import Settings, load_settings
 from app.shared.database import Database, default_migrations_dir
 from app.shared.logging import configure_logging, set_correlation_id
@@ -22,6 +23,7 @@ def _build_health(settings: Settings) -> dict[str, Any]:
         "database": database.ping(),
         "rabbitmq": _check_rabbitmq(settings.rabbitmq_url),
         "claude_invoked": False,
+        **_claude_runtime_status(settings),
     }
 
 
@@ -36,6 +38,14 @@ def _check_rabbitmq(rabbitmq_url: str) -> bool:
         return True
     except Exception:
         return False
+
+
+def _claude_runtime_status(settings: Settings) -> dict[str, Any]:
+    return {
+        "feature_real_claude": settings.feature_real_claude,
+        "anthropic_api_key_configured": bool(settings.anthropic_api_key),
+        "claude_cli_available": is_claude_cli_available(),
+    }
 
 
 def _build_api_runtime(settings: Settings) -> Container:
@@ -102,6 +112,7 @@ def create_app(
             "database": container.database.ping(),
             "rabbitmq": _check_rabbitmq(settings.rabbitmq_url),
             "claude_invoked": False,
+            **_claude_runtime_status(settings),
         }
         if not status["database"] or not status["rabbitmq"]:
             raise HTTPException(status_code=503, detail=status)

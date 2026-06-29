@@ -69,7 +69,21 @@ class AgentExecutor:
                 title="Context search completed",
                 content="Relevant ER and business-flow context retrieved.",
             )
-            result = self.claude_client.run(AgentRunRequest(job_id=job.id, context=context))
+            result = self.claude_client.run(
+                AgentRunRequest(
+                    job_id=job.id,
+                    user_id=job.user_id,
+                    project_code=job.project_code,
+                    context=context,
+                )
+            )
+            self._persist_tool_events(job.id, result.tool_events)
+            self.repository.add_step(
+                job_id=job.id,
+                step_type="model_completed",
+                title="Model execution completed",
+                content="Claude runtime returned a final diagnostic report.",
+            )
             self.result_service.save_result(job, result.final_answer)
             self.status_service.succeed(job.id, result.final_answer)
             session = self.repository.get_session(job.session_id)
@@ -97,3 +111,32 @@ class AgentExecutor:
             if fail_on_error:
                 self.status_service.fail(job.id, safe_message)
             raise
+
+    def _persist_tool_events(self, job_id: str, tool_events: list[dict[str, object]]) -> None:
+        for event in tool_events:
+            tool_name = str(event.get("tool_name", "unknown"))
+            duration = _int_value(event.get("duration_ms"))
+            audit_id_value = event.get("audit_id")
+            audit_id = audit_id_value if isinstance(audit_id_value, str) else None
+            self.repository.add_tool_call(
+                job_id=job_id,
+                tool_name=tool_name,
+                request_payload=_dict_value(event.get("request_payload")),
+                response_summary=_dict_value(event.get("response_summary")),
+                status=str(event.get("status", "SUCCEEDED")),
+                duration_ms=duration,
+                risk_level=str(event.get("risk_level", "medium")),
+                audit_id=audit_id,
+            )
+
+
+def _dict_value(value: object) -> dict[str, object]:
+    return value if isinstance(value, dict) else {"payload": str(value)}
+
+
+def _int_value(value: object) -> int:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return 0

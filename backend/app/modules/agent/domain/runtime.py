@@ -20,6 +20,8 @@ class AgentExecutionContext:
 @dataclass(frozen=True)
 class AgentRunRequest:
     job_id: str
+    user_id: str
+    project_code: str
     context: AgentExecutionContext
 
 
