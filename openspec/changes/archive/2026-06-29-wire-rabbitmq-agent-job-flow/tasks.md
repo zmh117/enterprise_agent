@@ -37,11 +37,11 @@
 - [x] 5.1 更新 `docker-compose.yml` 环境变量，启用 runtime RabbitMQ 装配和本地 seed。
 - [x] 5.2 增加或更新 README curl 示例：创建 job、查询 job、查询 steps、查询 tool calls。
 - [x] 5.3 运行 `docker compose build api-server agent-worker` 验证镜像构建。
-- [ ] 5.4 运行 Docker Compose 本地闭环验证：提交问题返回 `job_id`，worker 消费后 job 变为 `SUCCEEDED`。
+- [x] 5.4 运行 Docker Compose 本地闭环验证：提交问题返回 `job_id`，worker 消费后 job 变为 `SUCCEEDED`。
 - [x] 5.5 记录验证命令和预期输出，便于后续接入真实 Claude / 真实工具前复用。
 
 ## 6. 最终检查
 
 - [x] 6.1 运行 `make check`，确保格式、lint、类型检查、pytest、unittest 和 OpenSpec 校验通过。
 - [x] 6.2 运行 `openspec validate wire-rabbitmq-agent-job-flow`。
-- [ ] 6.3 检查新 change 的全部任务状态和文档，确认可进入 apply 阶段。
+- [x] 6.3 检查新 change 的全部任务状态和文档，确认可进入 apply 阶段。
