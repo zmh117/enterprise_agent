@@ -15,11 +15,35 @@ from app.modules.agent.infrastructure.claude_code_agent_client import (
     RealClaudeCodeAgentClient,
     StubClaudeCodeAgentClient,
 )
+from app.modules.internal_tools.infrastructure.internal_api_client import (
+    FakeInternalApiClient,
+    HttpInternalApiClient,
+    ToolRequestContext,
+    ToolResult,
+)
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.message_bus.infrastructure.rabbitmq_consumer import RabbitMQConsumer
 from app.modules.message_bus.infrastructure.rabbitmq_publisher import RabbitMQPublisher
 from app.shared.config import Settings
 from backend.tests.helpers import dingtalk_payload, dingtalk_sign, test_settings as make_settings
+
+
+class ContextMetadataInternalApiClient(FakeInternalApiClient):
+    def get_er_context(self, query: str, context: ToolRequestContext) -> ToolResult:
+        summary = {"tables": ["ws_a_order"], "source": "mock-er"}
+        return ToolResult(
+            summary=summary,
+            raw=summary,
+            metadata={"request_id": context.correlation_id, "source": "mock-er"},
+        )
+
+    def get_business_flow_context(self, query: str, context: ToolRequestContext) -> ToolResult:
+        summary = {"nodes": ["material_pick"], "source": "mock-flow"}
+        return ToolResult(
+            summary=summary,
+            raw=summary,
+            metadata={"request_id": context.correlation_id, "source": "mock-flow"},
+        )
 
 
 class RuntimeWiringAndDebugApiTests(unittest.TestCase):
@@ -62,6 +86,25 @@ class RuntimeWiringAndDebugApiTests(unittest.TestCase):
             )
         finally:
             api_container.database.close()
+            test_container.database.close()
+
+    def test_feature_flag_selects_real_internal_tools_only_for_production_runtime(self) -> None:
+        real_settings = replace(
+            make_settings(),
+            feature_real_internal_tools=True,
+            internal_api_base_url="http://internal.test",
+            internal_api_auth_token="tool-token",
+        )
+        api_container = build_api_container(real_settings, migrate=True, seed=True)
+        worker_container = build_worker_container(real_settings, migrate=True, seed=True)
+        test_container = build_test_container(real_settings, migrate=True, seed=True)
+        try:
+            self.assertIsInstance(api_container.internal_api_client, HttpInternalApiClient)
+            self.assertIsInstance(worker_container.internal_api_client, HttpInternalApiClient)
+            self.assertIsInstance(test_container.internal_api_client, FakeInternalApiClient)
+        finally:
+            api_container.database.close()
+            worker_container.database.close()
             test_container.database.close()
 
     def test_lifespan_builds_container_once_for_multiple_webhooks(self) -> None:
@@ -140,6 +183,46 @@ class RuntimeWiringAndDebugApiTests(unittest.TestCase):
             self.assertEqual(200, tool_calls.status_code)
             self.assertGreaterEqual(len(steps.json()["steps"]), 3)
             self.assertEqual(2, len(tool_calls.json()["tool_calls"]))
+
+    def test_debug_api_worker_persists_mock_internal_platform_tool_metadata(self) -> None:
+        settings = make_settings()
+        built = []
+
+        def factory(_: Settings):
+            container = build_test_container(settings, migrate=True, seed=True)
+            container.tool_service.internal_api_client = ContextMetadataInternalApiClient()
+            built.append(container)
+            return container
+
+        with TestClient(create_app(settings, container_factory=factory)) as client:
+            container = built[0]
+            created = client.post(
+                "/api/agent/jobs",
+                json={
+                    "message": "帮我查一下订单 MO20260627001 为什么一直待领料",
+                    "user_id": "local-user",
+                    "conversation_id": "debug-conversation",
+                    "project_code": "default",
+                    "idempotency_key": "mock-platform-debug-job",
+                },
+            )
+            job_id = str(created.json()["job_id"])
+
+            container.message_bus.consume_agent_jobs(
+                lambda message: container.agent_executor.execute(
+                    message.job_id,
+                    fail_on_error=True,
+                )
+            )
+
+            completed = client.get(f"/api/agent/jobs/{job_id}")
+            tool_calls = client.get(f"/api/agent/jobs/{job_id}/tool-calls")
+
+            self.assertEqual(JobStatus.SUCCEEDED.value, completed.json()["status"])
+            payloads = [
+                call["response_summary"]["payload"] for call in tool_calls.json()["tool_calls"]
+            ]
+            self.assertTrue(any("mock-er" in payload for payload in payloads))
 
     def test_debug_api_rejects_unauthorized_user_and_missing_job(self) -> None:
         settings = make_settings()

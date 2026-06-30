@@ -24,6 +24,15 @@ services:
       timeout: 3s
       retries: 20
 
+  mock-internal-api-platform:
+    profiles: ["mock-tools"]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["python", "-m", "uvicorn", "app.mock_internal_api_platform:create_app", "--factory", "--host", "0.0.0.0", "--port", "9000"]
+    expose:
+      - "9000"
+
   api-server:
     build:
       context: .
@@ -36,6 +45,11 @@ services:
       APP_STARTUP_MIGRATE: "true"
       SEED_LOCAL_CONFIG: "true"
       DEBUG_AGENT_USER_ID: local-user
+      FEATURE_REAL_INTERNAL_TOOLS: ${FEATURE_REAL_INTERNAL_TOOLS:-false}
+      INTERNAL_API_BASE_URL: ${INTERNAL_API_BASE_URL:-http://internal-api-platform.local}
+      INTERNAL_API_AUTH_TOKEN: ${INTERNAL_API_AUTH_TOKEN:-}
+      INTERNAL_API_TIMEOUT_SECONDS: ${INTERNAL_API_TIMEOUT_SECONDS:-10}
+      INTERNAL_API_MAX_RESPONSE_CHARS: ${INTERNAL_API_MAX_RESPONSE_CHARS:-4000}
       FEATURE_REAL_CLAUDE: ${FEATURE_REAL_CLAUDE:-false}
       CLAUDE_MODEL: ${CLAUDE_MODEL:-deepseek-v4-pro[1m]}
       ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
@@ -70,6 +84,11 @@ services:
       APP_STARTUP_MIGRATE: "true"
       SEED_LOCAL_CONFIG: "true"
       DEBUG_AGENT_USER_ID: local-user
+      FEATURE_REAL_INTERNAL_TOOLS: ${FEATURE_REAL_INTERNAL_TOOLS:-false}
+      INTERNAL_API_BASE_URL: ${INTERNAL_API_BASE_URL:-http://internal-api-platform.local}
+      INTERNAL_API_AUTH_TOKEN: ${INTERNAL_API_AUTH_TOKEN:-}
+      INTERNAL_API_TIMEOUT_SECONDS: ${INTERNAL_API_TIMEOUT_SECONDS:-10}
+      INTERNAL_API_MAX_RESPONSE_CHARS: ${INTERNAL_API_MAX_RESPONSE_CHARS:-4000}
       FEATURE_REAL_CLAUDE: ${FEATURE_REAL_CLAUDE:-false}
       CLAUDE_MODEL: ${CLAUDE_MODEL:-deepseek-v4-pro[1m]}
       ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}

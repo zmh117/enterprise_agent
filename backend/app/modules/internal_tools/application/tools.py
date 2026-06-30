@@ -12,12 +12,14 @@ from app.modules.internal_tools.application.policies import (
 )
 from app.modules.internal_tools.infrastructure.internal_api_client import (
     InternalApiClient,
+    ToolRequestContext,
     ToolResult,
 )
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.modules.permission.application.permission_service import PermissionService
 from app.shared.config import ExecutionSettings
 from app.shared.exceptions import ToolPolicyError
+from app.shared.logging import correlation_id_var
 
 
 class ReadOnlyToolService:
@@ -63,14 +65,20 @@ class ReadOnlyToolService:
                 actor_id=user_id,
                 payload={"tool": tool_name, "arguments": arguments},
             )
-            result = self._execute(tool_name, arguments, project_code)
+            result = self._execute(
+                tool_name,
+                arguments,
+                job_id=job_id,
+                user_id=user_id,
+                project_code=project_code,
+            )
             if record_tool_call:
                 self.repository.add_tool_call(
                     job_id=job_id,
                     tool_name=tool_name,
                     request_payload=bounded_summary(arguments, self.limits.max_tool_response_chars),
                     response_summary=bounded_summary(
-                        result.summary, self.limits.max_tool_response_chars
+                        _storage_summary(result), self.limits.max_tool_response_chars
                     ),
                     status="SUCCEEDED",
                     duration_ms=int((time.monotonic() - started) * 1000),
@@ -123,16 +131,30 @@ class ReadOnlyToolService:
         elif tool_name not in {"get_er_context", "get_business_flow_context"}:
             raise ToolPolicyError(f"Tool {tool_name} is not registered for read-only MVP")
 
-    def _execute(self, tool_name: str, arguments: dict[str, Any], project_code: str) -> ToolResult:
+    def _execute(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        *,
+        job_id: str,
+        user_id: str,
+        project_code: str,
+    ) -> ToolResult:
+        context = ToolRequestContext(
+            job_id=job_id,
+            user_id=user_id,
+            project_code=project_code,
+            correlation_id=correlation_id_var.get(),
+        )
         if tool_name == "get_er_context":
             return self.internal_api_client.get_er_context(
                 query=str(arguments.get("query", "")),
-                project_code=project_code,
+                context=context,
             )
         if tool_name == "get_business_flow_context":
             return self.internal_api_client.get_business_flow_context(
                 query=str(arguments.get("query", "")),
-                project_code=project_code,
+                context=context,
             )
         if tool_name == "query_loki":
             return self.internal_api_client.query_loki(
@@ -140,22 +162,36 @@ class ReadOnlyToolService:
                 query=str(arguments.get("query", "")),
                 minutes=int(arguments.get("minutes", 15)),
                 limit=int(arguments.get("limit", 100)),
+                context=context,
             )
         if tool_name == "query_database":
             return self.internal_api_client.query_database(
                 datasource=str(arguments.get("datasource", "default")),
                 sql=str(arguments["sql"]),
                 limit=int(arguments.get("limit", 100)),
+                context=context,
             )
         if tool_name == "query_redis_get":
             return self.internal_api_client.query_redis_get(
                 datasource=str(arguments.get("datasource", "default")),
                 key=str(arguments["key"]),
+                context=context,
             )
         if tool_name == "query_redis_scan":
             return self.internal_api_client.query_redis_scan(
                 datasource=str(arguments.get("datasource", "default")),
                 pattern=str(arguments["pattern"]),
                 limit=int(arguments.get("limit", self.limits.redis_scan_limit)),
+                context=context,
             )
         raise ToolPolicyError(f"Tool {tool_name} is not registered")
+
+
+def _storage_summary(result: ToolResult) -> dict[str, Any]:
+    if not result.metadata and not result.truncated:
+        return result.summary
+    return {
+        "summary": result.summary,
+        "metadata": result.metadata,
+        "truncated": result.truncated,
+    }

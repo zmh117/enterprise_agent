@@ -37,11 +37,15 @@ class Settings:
     database_dsn: str = "sqlite:///./enterprise_agent.db"
     rabbitmq_url: str = "amqp://guest:guest@localhost:5672/"
     internal_api_base_url: str = "http://internal-api-platform.local"
+    internal_api_auth_token: str = ""
+    internal_api_timeout_seconds: int = 10
+    internal_api_max_response_chars: int = 4000
     claude_model: str = "claude-sonnet-4-20250514"
     anthropic_api_key: str = ""
     anthropic_base_url: str = ""
     environment: str = "local"
     feature_real_claude: bool = False
+    feature_real_internal_tools: bool = False
     app_startup_migrate: bool = True
     seed_local_config: bool = False
     debug_agent_user_id: str = "local-user"
@@ -68,6 +72,9 @@ def load_settings() -> Settings:
         internal_api_base_url=os.getenv(
             "INTERNAL_API_BASE_URL", "http://internal-api-platform.local"
         ),
+        internal_api_auth_token=os.getenv("INTERNAL_API_AUTH_TOKEN", ""),
+        internal_api_timeout_seconds=int(os.getenv("INTERNAL_API_TIMEOUT_SECONDS", "10")),
+        internal_api_max_response_chars=int(os.getenv("INTERNAL_API_MAX_RESPONSE_CHARS", "4000")),
         claude_model=os.getenv(
             "CLAUDE_MODEL",
             os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
@@ -76,6 +83,7 @@ def load_settings() -> Settings:
         anthropic_base_url=os.getenv("ANTHROPIC_BASE_URL", ""),
         environment=os.getenv("APP_ENV", "local"),
         feature_real_claude=_env_bool("FEATURE_REAL_CLAUDE"),
+        feature_real_internal_tools=_env_bool("FEATURE_REAL_INTERNAL_TOOLS"),
         app_startup_migrate=_env_bool("APP_STARTUP_MIGRATE", True),
         seed_local_config=_env_bool("SEED_LOCAL_CONFIG"),
         debug_agent_user_id=os.getenv("DEBUG_AGENT_USER_ID", "local-user"),

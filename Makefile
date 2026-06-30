@@ -19,8 +19,7 @@ unittest:
 	PYTHONPATH=backend .venv/bin/python -m unittest discover -s backend/tests -t .
 
 openspec-validate:
-	openspec validate add-readonly-diagnostic-agent-mvp
-	openspec validate wire-rabbitmq-agent-job-flow
-	openspec validate connect-real-claude-code-agent-runtime
+	openspec validate --specs
+	openspec validate connect-internal-tool-platform
 
 check: compile format-check lint typecheck test unittest openspec-validate

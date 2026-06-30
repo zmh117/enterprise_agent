@@ -24,6 +24,7 @@ def _build_health(settings: Settings) -> dict[str, Any]:
         "rabbitmq": _check_rabbitmq(settings.rabbitmq_url),
         "claude_invoked": False,
         **_claude_runtime_status(settings),
+        **_internal_tools_status(settings),
     }
 
 
@@ -45,6 +46,14 @@ def _claude_runtime_status(settings: Settings) -> dict[str, Any]:
         "feature_real_claude": settings.feature_real_claude,
         "anthropic_api_key_configured": bool(settings.anthropic_api_key),
         "claude_cli_available": is_claude_cli_available(),
+    }
+
+
+def _internal_tools_status(settings: Settings) -> dict[str, Any]:
+    return {
+        "feature_real_internal_tools": settings.feature_real_internal_tools,
+        "internal_api_base_url_configured": bool(settings.internal_api_base_url),
+        "internal_api_auth_token_configured": bool(settings.internal_api_auth_token),
     }
 
 
@@ -113,6 +122,7 @@ def create_app(
             "rabbitmq": _check_rabbitmq(settings.rabbitmq_url),
             "claude_invoked": False,
             **_claude_runtime_status(settings),
+            **_internal_tools_status(settings),
         }
         if not status["database"] or not status["rabbitmq"]:
             raise HTTPException(status_code=503, detail=status)

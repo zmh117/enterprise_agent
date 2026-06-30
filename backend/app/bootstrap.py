@@ -16,7 +16,11 @@ from app.modules.audit.application.audit_service import AuditService
 from app.modules.dingding.application.dingding_message_service import DingTalkMessageService
 from app.modules.dingding.infrastructure.dingding_callback_client import DingTalkCallbackClient
 from app.modules.internal_tools.application.tools import ReadOnlyToolService
-from app.modules.internal_tools.infrastructure.internal_api_client import FakeInternalApiClient
+from app.modules.internal_tools.infrastructure.internal_api_client import (
+    FakeInternalApiClient,
+    HttpInternalApiClient,
+    InternalApiClient,
+)
 from app.modules.job.application.create_agent_job_service import CreateAgentJobService
 from app.modules.job.application.job_retry_service import JobRetryService
 from app.modules.job.application.job_status_service import JobStatusService
@@ -44,7 +48,7 @@ class Container:
     publisher: MessagePublisher
     consumer: MessageConsumer | None
     message_bus: InMemoryMessageBus | None
-    internal_api_client: FakeInternalApiClient
+    internal_api_client: InternalApiClient
     tool_service: ReadOnlyToolService
     create_agent_job_service: CreateAgentJobService
     dingtalk_message_service: DingTalkMessageService
@@ -152,7 +156,14 @@ def _build_container(
             host_allowlist=settings.dingtalk.callback_host_allowlist,
         ),
     )
-    internal_api_client = FakeInternalApiClient()
+    internal_api_client: InternalApiClient = FakeInternalApiClient()
+    if settings.feature_real_internal_tools and message_bus is None:
+        internal_api_client = HttpInternalApiClient(
+            settings.internal_api_base_url,
+            auth_token=settings.internal_api_auth_token,
+            timeout_seconds=settings.internal_api_timeout_seconds,
+            max_response_chars=settings.internal_api_max_response_chars,
+        )
     tool_service = ReadOnlyToolService(
         internal_api_client=internal_api_client,
         permission_service=permission_service,

@@ -10,6 +10,10 @@ from app.modules.agent.infrastructure.claude_code_agent_client import (
     ClaudeSdk,
     RealClaudeCodeAgentClient,
 )
+from app.modules.internal_tools.infrastructure.internal_api_client import (
+    ToolRequestContext,
+    ToolResult,
+)
 from app.shared.config import ExecutionSettings
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
 from backend.tests.helpers import container
@@ -39,6 +43,35 @@ def fake_server(name: str, tools: list[Any]) -> dict[str, Any]:
 
 class ProcessError(Exception):
     pass
+
+
+class MockPlatformInternalApiClient:
+    def query_database(
+        self, datasource: str, sql: str, limit: int, context: ToolRequestContext
+    ) -> ToolResult:
+        return ToolResult(
+            summary={"row_count": 1, "mock_platform": True, "job_id": context.job_id},
+            raw={"rows": [{"order_no": "MO20260627001"}]},
+        )
+
+    def get_er_context(self, query: str, context: ToolRequestContext) -> ToolResult:
+        return ToolResult(summary={}, raw={})
+
+    def get_business_flow_context(self, query: str, context: ToolRequestContext) -> ToolResult:
+        return ToolResult(summary={}, raw={})
+
+    def query_loki(
+        self, service: str, query: str, minutes: int, limit: int, context: ToolRequestContext
+    ) -> ToolResult:
+        return ToolResult(summary={}, raw={})
+
+    def query_redis_get(self, datasource: str, key: str, context: ToolRequestContext) -> ToolResult:
+        return ToolResult(summary={}, raw={})
+
+    def query_redis_scan(
+        self, datasource: str, pattern: str, limit: int, context: ToolRequestContext
+    ) -> ToolResult:
+        return ToolResult(summary={}, raw={})
 
 
 class RealClaudeCodeAgentClientTests(unittest.TestCase):
@@ -74,6 +107,21 @@ class RealClaudeCodeAgentClientTests(unittest.TestCase):
         self.assertEqual(1, len(result.tool_events))
         self.assertEqual("query_database", result.tool_events[0]["tool_name"])
         self.assertEqual("SUCCEEDED", result.tool_events[0]["status"])
+
+    def test_tool_loop_can_use_mock_internal_platform_client(self) -> None:
+        async def query(prompt: str, options: FakeOptions) -> Any:
+            tool = options.mcp_servers["internal"]["tools"]["query_database"]
+            await tool({"datasource": "default", "sql": "select * from ws_a_order", "limit": 5})
+            yield {"result": "database evidence found"}
+
+        client, request = self._client_and_request(
+            query,
+            internal_api_client=MockPlatformInternalApiClient(),
+        )
+        result = client.run(request)
+
+        self.assertEqual("database evidence found", result.final_answer)
+        self.assertIn("mock_platform", result.tool_events[0]["response_summary"]["payload"])
 
     def test_policy_rejection_is_returned_to_model_as_tool_event(self) -> None:
         tool_response: dict[str, Any] = {}
@@ -153,8 +201,11 @@ class RealClaudeCodeAgentClientTests(unittest.TestCase):
         *,
         api_key: str = "sk-test-valid-shaped-value",
         limits: ExecutionSettings | None = None,
+        internal_api_client: Any | None = None,
     ) -> tuple[RealClaudeCodeAgentClient, AgentRunRequest]:
         c = container()
+        if internal_api_client is not None:
+            c.tool_service.internal_api_client = internal_api_client
         from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
 
         job = c.create_agent_job_service.execute(

@@ -14,7 +14,7 @@ DingTalk / Debug API
   -> 持久化 steps / tool-calls / artifact / audit
 ```
 
-默认 Claude runtime 使用 stub，设置 `FEATURE_REAL_CLAUDE=true` 后可切换到真实 Claude Agent SDK。内部工具平台当前仍使用 fake client，下一步再接真实内网工具平台。
+默认 Claude runtime 使用 stub，设置 `FEATURE_REAL_CLAUDE=true` 后可切换到真实 Claude Agent SDK。默认内部工具使用 fake client，设置 `FEATURE_REAL_INTERNAL_TOOLS=true` 后可切换到 HTTP Internal API Platform 或本地 mock 平台。
 
 ## 模块边界
 
@@ -122,6 +122,10 @@ curl -s http://127.0.0.1:8000/api/agent/jobs/job_xxx/tool-calls
 - `DINGTALK_CALLBACK_URL`：结果回调地址。
 - `DINGTALK_CALLBACK_HOST_ALLOWLIST`：回调 host 白名单。
 - `INTERNAL_API_BASE_URL`：内部 API 平台地址。
+- `FEATURE_REAL_INTERNAL_TOOLS`：是否启用 HTTP Internal API Platform，默认 `false`。
+- `INTERNAL_API_AUTH_TOKEN`：内部 API 平台 Bearer token，不要提交真实值。
+- `INTERNAL_API_TIMEOUT_SECONDS`：内部平台单次请求超时时间，默认 `10`。
+- `INTERNAL_API_MAX_RESPONSE_CHARS`：内部平台响应解析和安全摘要上限，默认 `4000`。
 - `CLAUDE_MODEL`：Claude 模型名。
 - `FEATURE_REAL_CLAUDE`：是否启用真实 Claude。
 - `ANTHROPIC_API_KEY`：真实 Claude runtime 的 Anthropic API key，启用时必填。
@@ -186,6 +190,109 @@ curl -s http://127.0.0.1:8000/api/agent/jobs/job_xxx/tool-calls
 - steps 包含 `Model execution completed`。
 - tool calls 只包含 `mcp__internal__*` 对应的只读工具摘要。
 
+## 内部工具平台
+
+### fake 模式
+
+默认模式：
+
+```env
+FEATURE_REAL_INTERNAL_TOOLS=false
+```
+
+此模式使用 `FakeInternalApiClient`，不访问网络，适合单元测试和基础 MQ / DB / worker 闭环验证。
+
+### mock HTTP 模式
+
+本地验证 HTTP 工具链路：
+
+```env
+FEATURE_REAL_INTERNAL_TOOLS=true
+INTERNAL_API_BASE_URL=http://mock-internal-api-platform:9000
+INTERNAL_API_AUTH_TOKEN=
+```
+
+启动：
+
+```bash
+docker compose --profile mock-tools up -d --build
+```
+
+验证：
+
+```bash
+curl --noproxy '*' -s -X POST http://127.0.0.1:8000/api/agent/jobs \
+  -H 'content-type: application/json' \
+  -d '{
+    "message": "帮我查一下订单 MO20260627001 为什么一直待领料",
+    "user_id": "local-user",
+    "conversation_id": "debug-conversation",
+    "project_code": "default",
+    "idempotency_key": "mock-tools-demo-001"
+  }'
+```
+
+预期：
+
+- job 最终 `SUCCEEDED`。
+- `/tool-calls` 中可以看到 context 工具调用的 `metadata.source` 来自 mock 平台。
+- Agent runtime 仍不直连数据库、Redis、Loki、ER 或业务图存储。
+
+### 真实 Internal API Platform 模式
+
+```env
+FEATURE_REAL_INTERNAL_TOOLS=true
+INTERNAL_API_BASE_URL=https://internal-api.example.com
+INTERNAL_API_AUTH_TOKEN=真实内部平台token
+INTERNAL_API_TIMEOUT_SECONDS=10
+INTERNAL_API_MAX_RESPONSE_CHARS=4000
+```
+
+MVP endpoint：
+
+```text
+POST /tools/context/er
+POST /tools/context/business-flow
+POST /tools/loki/query
+POST /tools/database/query
+POST /tools/redis/get
+POST /tools/redis/scan
+```
+
+通用 headers：
+
+```text
+Authorization: Bearer <INTERNAL_API_AUTH_TOKEN>
+X-Agent-Job-Id: <job_id>
+X-Agent-User-Id: <user_id>
+X-Agent-Project-Code: <project_code>
+X-Correlation-Id: <correlation_id>
+Content-Type: application/json
+```
+
+响应 envelope：
+
+```json
+{
+  "summary": {},
+  "raw": {},
+  "truncated": false,
+  "metadata": {
+    "request_id": "corr-1",
+    "source": "database-gateway",
+    "duration_ms": 12
+  }
+}
+```
+
+错误约定：
+
+- `429`、`502`、`503`、`504`、连接超时：可重试错误。
+- `400`、`401`、`403`、`404`：不可重试错误。
+- body 中 `code` / `type` / `error.code` 为 `policy_denied`：工具策略拒绝。
+
+平台返回的 `raw` 默认只保留在内存的 `ToolResult.raw`，持久化只写 bounded summary。
+
 ## 队列
 
 - `agent.job.queue`：正常 Agent 任务。
@@ -225,6 +332,9 @@ curl -s http://127.0.0.1:8000/api/agent/jobs/job_xxx/tool-calls
 - startup 只初始化一次 container，请求不重复 build。
 - worker 消费消息后更新 job 状态，重复 delivery 不重复回调。
 - feature flag 开启时生产 runtime 注入 `RealClaudeCodeAgentClient`，测试 runtime 仍使用 stub。
+- feature flag 开启时生产 runtime 注入 `HttpInternalApiClient`，测试 runtime 仍使用 fake internal tools。
+- HTTP Internal API client 的 headers、payload、envelope、legacy body、错误分类和脱敏。
+- mock Internal API Platform 的本地 HTTP 工具链路。
 - fake SDK 覆盖真实 runtime 的权限配置、工具循环、错误映射、timeout 和 tool event 解析。
 - opt-in integration 测试默认 skip，只有配置真实 key 和 CLI 时运行。
 - 只读 SQL / Redis / Loki 策略。
