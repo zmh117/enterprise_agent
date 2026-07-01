@@ -94,6 +94,24 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
             raise HTTPException(status_code=exc.status_code, detail=exc.body) from exc
         return _envelope(request, started, result)
 
+    @app.post("/tools/schema/directory")
+    async def schema_directory(
+        request: FastAPIRequest, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        started = time.monotonic()
+        try:
+            result = service.schema_directory(
+                user_id=_user_id(request),
+                environment=_require(payload, "environment"),
+                base=_require(payload, "base"),
+                workshop=_optional(payload, "workshop"),
+                query=str(payload.get("query", "")),
+                limit=_int_or_none(payload.get("limit")),
+            )
+        except PlatformError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.body) from exc
+        return _envelope(request, started, result)
+
     @app.post("/tools/redis/get")
     async def redis_get(request: FastAPIRequest, payload: dict[str, Any]) -> dict[str, Any]:
         started = time.monotonic()

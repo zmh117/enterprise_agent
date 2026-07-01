@@ -11,11 +11,16 @@ from app.shared.config import Settings, load_settings
 
 from .application.platform_service import PlatformService
 from .domain.access import AccessPolicy
+from .domain.schema_directory import SchemaDirectoryReader
 from .domain.topology import DatabaseEngine, Topology
 from .api.routes import register_routes
 from .infrastructure.config import load_platform_config
 from .infrastructure.db.drivers import MysqlExecutor, OracleExecutor, SqlServerExecutor
 from .infrastructure.db.executor import QueryExecutor
+from .infrastructure.db.schema_directory import (
+    MySqlSchemaDirectoryReader,
+    UnsupportedSchemaDirectoryReader,
+)
 from .infrastructure.loki_gateway import HttpLokiClient
 from .infrastructure.redis_gateway import RealRedisGateway
 from .infrastructure.registry import TopologyRegistry
@@ -26,6 +31,14 @@ def default_executors() -> dict[DatabaseEngine, QueryExecutor]:
         DatabaseEngine.MYSQL: MysqlExecutor(),
         DatabaseEngine.SQLSERVER: SqlServerExecutor(),
         DatabaseEngine.ORACLE: OracleExecutor(),
+    }
+
+
+def default_schema_readers() -> dict[DatabaseEngine, SchemaDirectoryReader]:
+    return {
+        DatabaseEngine.MYSQL: MySqlSchemaDirectoryReader(),
+        DatabaseEngine.SQLSERVER: UnsupportedSchemaDirectoryReader(DatabaseEngine.SQLSERVER),
+        DatabaseEngine.ORACLE: UnsupportedSchemaDirectoryReader(DatabaseEngine.ORACLE),
     }
 
 
@@ -43,6 +56,7 @@ def build_service(
         registry=TopologyRegistry(topology),
         access_policy=access_policy,
         executors=default_executors(),
+        schema_readers=default_schema_readers(),
         redis_gateway=RealRedisGateway(),
         loki_client=HttpLokiClient(
             max_minutes=settings.loki.max_minutes,

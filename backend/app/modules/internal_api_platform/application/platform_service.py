@@ -13,6 +13,7 @@ from ..domain.redis_policy import (
     enforce_scan_pattern,
 )
 from ..domain.results import ToolResponse
+from ..domain.schema_directory import SchemaDirectory, SchemaDirectoryReader
 from ..domain.sql.analyzer import analyze_readonly_query
 from ..domain.topology import DatabaseEngine, ResourceKind
 from ..infrastructure.db.executor import QueryExecutor
@@ -30,20 +31,26 @@ class PlatformService:
         registry: TopologyRegistry,
         access_policy: AccessPolicy,
         executors: dict[DatabaseEngine, QueryExecutor],
+        schema_readers: dict[DatabaseEngine, SchemaDirectoryReader] | None = None,
         redis_gateway: RedisGateway,
         loki_client: LokiClient,
         max_rows: int = 100,
         query_timeout_seconds: int = 15,
         redis_scan_limit: int = 200,
+        schema_table_limit: int = 50,
+        schema_column_limit: int = 80,
     ) -> None:
         self._registry = registry
         self._access = access_policy
         self._executors = executors
+        self._schema_readers = schema_readers or {}
         self._redis = redis_gateway
         self._loki = loki_client
         self._max_rows = max_rows
         self._query_timeout_seconds = query_timeout_seconds
         self._redis_scan_limit = redis_scan_limit
+        self._schema_table_limit = schema_table_limit
+        self._schema_column_limit = schema_column_limit
 
     def _authorize_and_resolve(
         self,
@@ -210,6 +217,9 @@ class PlatformService:
         analyzed = analyze_readonly_query(
             sql, engine=binding.engine, max_rows=max_rows, table_prefix=table_prefix
         )
+        schema = self._schema_directory_for_binding(binding, query="")
+        if schema is not None:
+            self._assert_tables_in_schema(analyzed.tables, schema)
         executor = self._executors.get(binding.engine)
         if executor is None:
             raise PolicyViolation(f"No executor configured for engine {binding.engine.value}")
@@ -231,6 +241,51 @@ class PlatformService:
             raw={"row_count": len(executed.rows)},
             truncated=executed.truncated,
             metadata={"source": "internal-api-platform-db"},
+        )
+
+    def schema_directory(
+        self,
+        *,
+        user_id: str,
+        environment: str,
+        base: str,
+        workshop: str | None,
+        query: str = "",
+        limit: int | None = None,
+    ) -> ToolResponse:
+        binding = self._authorize_and_resolve(
+            user_id=user_id,
+            environment=environment,
+            base=base,
+            workshop=workshop,
+            kind=ResourceKind.DATABASE,
+        )
+        table_limit = self._effective_schema_limit(limit)
+        schema = self._schema_directory_for_binding(
+            binding, query=query, table_limit=table_limit
+        )
+        if schema is None:
+            schema = SchemaDirectory(
+                tables=[],
+                limitation=f"Schema directory is not configured for {binding.engine.value}",
+            )
+        summary = {
+            "environment": binding.environment.code,
+            "base": binding.base.code,
+            "workshop": binding.workshop.code if binding.workshop else None,
+            "engine": binding.engine.value,
+            **schema.to_summary(),
+            "diagnostic_action": (
+                "use_listed_tables_and_columns_only"
+                if schema.tables
+                else "stop_and_report_insufficient_evidence"
+            ),
+        }
+        return ToolResponse(
+            summary=summary,
+            raw={"table_count": len(schema.tables)},
+            truncated=schema.truncated,
+            metadata={"source": "internal-api-platform-schema"},
         )
 
     def redis_get(
@@ -321,6 +376,44 @@ class PlatformService:
         if limit is None or limit < 1:
             return self._max_rows
         return min(limit, self._max_rows)
+
+    def _effective_schema_limit(self, limit: int | None) -> int:
+        if limit is None or limit < 1:
+            return self._schema_table_limit
+        return min(limit, self._schema_table_limit)
+
+    def _schema_directory_for_binding(
+        self,
+        binding: ResourceBinding,
+        *,
+        query: str,
+        table_limit: int | None = None,
+    ) -> SchemaDirectory | None:
+        reader = self._schema_readers.get(binding.engine)
+        if reader is None:
+            return None
+        table_prefix = binding.workshop.table_prefix if binding.workshop else None
+        return reader.read(
+            binding,
+            table_prefix=table_prefix,
+            query=query,
+            table_limit=table_limit or self._schema_table_limit,
+            column_limit=self._schema_column_limit,
+        )
+
+    def _assert_tables_in_schema(self, tables: list[str], schema: SchemaDirectory) -> None:
+        if not schema.tables:
+            raise PolicyViolation(
+                "Schema directory is empty for the target; "
+                "diagnostic_action=stop_and_report_insufficient_evidence"
+            )
+        known = {name.lower() for name in schema.table_names()}
+        for table in tables:
+            if table.lower() not in known:
+                raise PolicyViolation(
+                    f"Table '{table}' is not available in the target schema directory; "
+                    "diagnostic_action=stop_or_use_schema_directory"
+                )
 
     def _audit(self, user_id: str, target: TargetRef, decision: str, reason: str) -> None:
         _audit_logger.info(
