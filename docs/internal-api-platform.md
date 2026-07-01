@@ -1,0 +1,91 @@
+# Internal API Platform (topology-aware, read-only)
+
+The Internal API Platform is the second security layer between the Agent and real
+data sources. It resolves structured addresses to concrete resources, enforces a
+read-only + workshop-isolation policy, and audits every access decision.
+
+## Topology model
+
+```
+Environment (e.g. sanjiu, mmk)
+  └─ Base (business code, e.g. guanlan 观澜基地; one DB engine per base)
+       ├─ Database / Redis / Loki   (base-level connections)
+       └─ Workshop (logical partition, e.g. GL001, GL002)
+            ├─ table_prefix     GL001_EBR_
+            ├─ redis_key_prefix GL001:
+            └─ loki_label       {workshop: GL001}
+```
+
+- **Bases use business codes**; IP/host are internal connection details, never exposed to the model.
+- **Engine is per base** (one base = one of `mysql` / `sqlserver` / `oracle`).
+- **Workshops are logical**: DB/Redis/Loki are base-level; workshops differ only by naming.
+- **Degenerate base** (e.g. `mmk/main`): no workshops — still read-only + bounded, no prefix/label.
+
+Configuration is a YAML file (see `backend/config/internal_platform_topology.example.yaml`)
+pointed to by `INTERNAL_PLATFORM_TOPOLOGY_FILE`. Secrets are referenced as
+`secret://<path>` and resolved from `SECRET_<UPPER_SNAKE_OF_PATH>` env vars — the
+topology file never contains plaintext credentials.
+
+## Structured addressing (tool contract)
+
+Tools carry independent addressing fields; `project_code` remains an Agent-side coarse
+permission and is **not** mapped to `environment`.
+
+```json
+POST /tools/database/query
+{ "environment": "sanjiu", "base": "guanlan", "workshop": "GL001",
+  "sql": "select * from GL001_EBR_order where status='WAITING_MATERIAL'", "limit": 100 }
+```
+
+Redis (`/tools/redis/get`, `/tools/redis/scan`) and Loki (`/tools/loki/query`) take the
+same `environment/base/workshop`. The caller identity is read from `X-Agent-User-Id`.
+
+## Multi-dialect read-only SQL safety
+
+Pipeline (fails closed at every step):
+
+1. Comment stripping + first-keyword check (`SELECT`/`WITH` only).
+2. Parse with `sqlglot` (dialect: mysql / tsql / oracle); exactly one statement.
+3. Read-only AST: reject non-query, `SELECT ... INTO`, `FOR UPDATE`, PL/SQL blocks / batches.
+4. Real table extraction (excludes CTE names).
+5. Workshop table-prefix enforcement (case-folded; Oracle upper-cases unquoted identifiers).
+6. Dialect-correct row bound: MySQL `LIMIT`, SQL Server `TOP`, Oracle `FETCH FIRST`.
+
+Defense in depth: SQL parser + read-only DB account + statement timeout + row/byte caps.
+Cross-workshop (`GL002_*` in a `GL001` request) and prefix-less tables are rejected.
+
+## Redis / Loki isolation
+
+- Redis: base-level connection; read-only command whitelist (`get` / bounded `scan`);
+  keys/patterns must fall inside `workshop.redis_key_prefix`; `*` / empty patterns rejected.
+- Loki: base-level upstream (with tenant); the workshop label is injected on top of the
+  caller selector, time range, and line limit.
+
+## Access control & audit
+
+`AccessPolicy` maps each `X-Agent-User-Id` to grants over `environment/base/workshop`
+(`*` wildcards allowed). Denials are non-retryable (`403`). Every decision is logged by
+`internal_api_platform.audit` with caller, target, decision, and reason.
+
+## Verification
+
+Local unit + contract coverage:
+
+```
+make check
+```
+
+Live MySQL smoke test (read-only), against a real database:
+
+```
+INTERNAL_PLATFORM_TOPOLOGY_FILE=... \
+python -m uvicorn app.internal_api_platform:create_app --factory --port 9000
+# then POST /tools/database/query with environment/base/workshop + a SELECT
+```
+
+Docker (topology-aware profile):
+
+```
+docker compose --profile real-tools up -d --build
+# set INTERNAL_API_BASE_URL=http://internal-api-platform:9000 for api-server/agent-worker
+```

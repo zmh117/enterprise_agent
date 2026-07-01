@@ -49,19 +49,64 @@ class InternalApiClient(Protocol):
         minutes: int,
         limit: int,
         context: ToolRequestContext,
+        *,
+        environment: str | None = None,
+        base: str | None = None,
+        workshop: str | None = None,
     ) -> ToolResult: ...
 
     def query_database(
-        self, datasource: str, sql: str, limit: int, context: ToolRequestContext
+        self,
+        datasource: str,
+        sql: str,
+        limit: int,
+        context: ToolRequestContext,
+        *,
+        environment: str | None = None,
+        base: str | None = None,
+        workshop: str | None = None,
     ) -> ToolResult: ...
 
     def query_redis_get(
-        self, datasource: str, key: str, context: ToolRequestContext
+        self,
+        datasource: str,
+        key: str,
+        context: ToolRequestContext,
+        *,
+        environment: str | None = None,
+        base: str | None = None,
+        workshop: str | None = None,
     ) -> ToolResult: ...
 
     def query_redis_scan(
-        self, datasource: str, pattern: str, limit: int, context: ToolRequestContext
+        self,
+        datasource: str,
+        pattern: str,
+        limit: int,
+        context: ToolRequestContext,
+        *,
+        environment: str | None = None,
+        base: str | None = None,
+        workshop: str | None = None,
     ) -> ToolResult: ...
+
+
+def _addressing_payload(
+    environment: str | None, base: str | None, workshop: str | None
+) -> dict[str, str]:
+    """Structured addressing fields to send to a topology-aware platform.
+
+    project_code stays an Agent-side coarse permission; addressing is independent.
+    """
+
+    payload: dict[str, str] = {}
+    if environment:
+        payload["environment"] = environment
+    if base:
+        payload["base"] = base
+    if workshop:
+        payload["workshop"] = workshop
+    return payload
 
 
 class FakeInternalApiClient:
@@ -96,10 +141,14 @@ class FakeInternalApiClient:
         minutes: int,
         limit: int,
         context: ToolRequestContext,
+        *,
+        environment: str | None = None,
+        base: str | None = None,
+        workshop: str | None = None,
     ) -> ToolResult:
-        self.calls.append(
-            ("query_loki", {"selector": selector, "query": query, "minutes": minutes})
-        )
+        call = {"selector": selector, "query": query, "minutes": minutes}
+        call.update(_addressing_payload(environment, base, workshop))
+        self.calls.append(("query_loki", call))
         summary = {
             "selector": selector,
             "line_count": 1,
@@ -108,11 +157,19 @@ class FakeInternalApiClient:
         return ToolResult(summary=summary, raw=summary)
 
     def query_database(
-        self, datasource: str, sql: str, limit: int, context: ToolRequestContext
+        self,
+        datasource: str,
+        sql: str,
+        limit: int,
+        context: ToolRequestContext,
+        *,
+        environment: str | None = None,
+        base: str | None = None,
+        workshop: str | None = None,
     ) -> ToolResult:
-        self.calls.append(
-            ("query_database", {"datasource": datasource, "sql": sql, "limit": limit})
-        )
+        call = {"datasource": datasource, "sql": sql, "limit": limit}
+        call.update(_addressing_payload(environment, base, workshop))
+        self.calls.append(("query_database", call))
         summary = {
             "datasource": datasource,
             "row_count": 1,
@@ -120,15 +177,36 @@ class FakeInternalApiClient:
         }
         return ToolResult(summary=summary, raw=summary)
 
-    def query_redis_get(self, datasource: str, key: str, context: ToolRequestContext) -> ToolResult:
-        self.calls.append(("query_redis_get", {"datasource": datasource, "key": key}))
+    def query_redis_get(
+        self,
+        datasource: str,
+        key: str,
+        context: ToolRequestContext,
+        *,
+        environment: str | None = None,
+        base: str | None = None,
+        workshop: str | None = None,
+    ) -> ToolResult:
+        call = {"datasource": datasource, "key": key}
+        call.update(_addressing_payload(environment, base, workshop))
+        self.calls.append(("query_redis_get", call))
         summary = {"datasource": datasource, "key": key, "value_summary": "WAITING_MATERIAL"}
         return ToolResult(summary=summary, raw=summary)
 
     def query_redis_scan(
-        self, datasource: str, pattern: str, limit: int, context: ToolRequestContext
+        self,
+        datasource: str,
+        pattern: str,
+        limit: int,
+        context: ToolRequestContext,
+        *,
+        environment: str | None = None,
+        base: str | None = None,
+        workshop: str | None = None,
     ) -> ToolResult:
-        self.calls.append(("query_redis_scan", {"datasource": datasource, "pattern": pattern}))
+        call = {"datasource": datasource, "pattern": pattern}
+        call.update(_addressing_payload(environment, base, workshop))
+        self.calls.append(("query_redis_scan", call))
         summary = {"datasource": datasource, "pattern": pattern, "keys": ["order:MO20260627001"]}
         return ToolResult(summary=summary, raw=summary)
 
@@ -170,33 +248,63 @@ class HttpInternalApiClient:
         minutes: int,
         limit: int,
         context: ToolRequestContext,
+        *,
+        environment: str | None = None,
+        base: str | None = None,
+        workshop: str | None = None,
     ) -> ToolResult:
-        return self._post(
-            "/tools/loki/query",
-            {"selector": selector, "query": query, "minutes": minutes, "limit": limit},
-            context,
-        )
+        payload: dict[str, Any] = {
+            "selector": selector,
+            "query": query,
+            "minutes": minutes,
+            "limit": limit,
+        }
+        payload.update(_addressing_payload(environment, base, workshop))
+        return self._post("/tools/loki/query", payload, context)
 
     def query_database(
-        self, datasource: str, sql: str, limit: int, context: ToolRequestContext
+        self,
+        datasource: str,
+        sql: str,
+        limit: int,
+        context: ToolRequestContext,
+        *,
+        environment: str | None = None,
+        base: str | None = None,
+        workshop: str | None = None,
     ) -> ToolResult:
-        return self._post(
-            "/tools/database/query",
-            {"datasource": datasource, "sql": sql, "limit": limit},
-            context,
-        )
+        payload: dict[str, Any] = {"datasource": datasource, "sql": sql, "limit": limit}
+        payload.update(_addressing_payload(environment, base, workshop))
+        return self._post("/tools/database/query", payload, context)
 
-    def query_redis_get(self, datasource: str, key: str, context: ToolRequestContext) -> ToolResult:
-        return self._post("/tools/redis/get", {"datasource": datasource, "key": key}, context)
+    def query_redis_get(
+        self,
+        datasource: str,
+        key: str,
+        context: ToolRequestContext,
+        *,
+        environment: str | None = None,
+        base: str | None = None,
+        workshop: str | None = None,
+    ) -> ToolResult:
+        payload: dict[str, Any] = {"datasource": datasource, "key": key}
+        payload.update(_addressing_payload(environment, base, workshop))
+        return self._post("/tools/redis/get", payload, context)
 
     def query_redis_scan(
-        self, datasource: str, pattern: str, limit: int, context: ToolRequestContext
+        self,
+        datasource: str,
+        pattern: str,
+        limit: int,
+        context: ToolRequestContext,
+        *,
+        environment: str | None = None,
+        base: str | None = None,
+        workshop: str | None = None,
     ) -> ToolResult:
-        return self._post(
-            "/tools/redis/scan",
-            {"datasource": datasource, "pattern": pattern, "limit": limit},
-            context,
-        )
+        payload: dict[str, Any] = {"datasource": datasource, "pattern": pattern, "limit": limit}
+        payload.update(_addressing_payload(environment, base, workshop))
+        return self._post("/tools/redis/scan", payload, context)
 
     def _post(self, path: str, payload: dict[str, Any], context: ToolRequestContext) -> ToolResult:
         request = Request(

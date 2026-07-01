@@ -36,7 +36,7 @@ class MysqlExecutor:
                 port=db.port,
                 user=db.user,
                 password=db.password,
-                database=db.database,
+                database=db.database or None,
                 connect_timeout=timeout_seconds,
                 read_timeout=timeout_seconds,
                 cursorclass=pymysql.cursors.Cursor,
@@ -69,7 +69,7 @@ class SqlServerExecutor:
                 port=str(db.port),
                 user=db.user,
                 password=db.password,
-                database=db.database,
+                database=db.database or None,
                 login_timeout=timeout_seconds,
                 timeout=timeout_seconds,
             )

@@ -41,6 +41,24 @@ class ClaudeSdk:
     tool_annotations: Any | None
 
 
+# Structured addressing shared by database/redis/loki tools. Optional for backward
+# compatibility with the flat datasource contract; required by the topology-aware platform.
+_ADDRESSING_PROPERTIES: dict[str, Any] = {
+    "environment": {
+        "type": "string",
+        "description": "Environment code, e.g. 'sanjiu' or 'mmk'.",
+    },
+    "base": {
+        "type": "string",
+        "description": "Base business code, e.g. 'guanlan' (观澜基地).",
+    },
+    "workshop": {
+        "type": "string",
+        "description": "Workshop code within a partitioned base, e.g. 'GL001'.",
+    },
+}
+
+
 TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
     "get_er_context": {
         "description": "Search compact ER graph context for relevant tables, fields, enums, and relationships.",
@@ -88,19 +106,25 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "query": {"type": "string"},
                 "minutes": {"type": "integer", "minimum": 1},
                 "limit": {"type": "integer", "minimum": 1},
+                **_ADDRESSING_PROPERTIES,
             },
             "required": ["selector"],
             "additionalProperties": False,
         },
     },
     "query_database": {
-        "description": "Run policy-approved read-only SQL through the internal database gateway.",
+        "description": (
+            "Run policy-approved read-only SQL through the internal database gateway. "
+            "Provide structured addressing (environment/base/workshop) so the platform "
+            "routes to the correct base and enforces the workshop table prefix."
+        ),
         "schema": {
             "type": "object",
             "properties": {
                 "datasource": {"type": "string"},
                 "sql": {"type": "string"},
                 "limit": {"type": "integer", "minimum": 1},
+                **_ADDRESSING_PROPERTIES,
             },
             "required": ["sql"],
             "additionalProperties": False,
@@ -110,7 +134,11 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
         "description": "Read one approved Redis key through the internal Redis gateway.",
         "schema": {
             "type": "object",
-            "properties": {"datasource": {"type": "string"}, "key": {"type": "string"}},
+            "properties": {
+                "datasource": {"type": "string"},
+                "key": {"type": "string"},
+                **_ADDRESSING_PROPERTIES,
+            },
             "required": ["key"],
             "additionalProperties": False,
         },
@@ -123,6 +151,7 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "datasource": {"type": "string"},
                 "pattern": {"type": "string"},
                 "limit": {"type": "integer", "minimum": 1},
+                **_ADDRESSING_PROPERTIES,
             },
             "required": ["pattern"],
             "additionalProperties": False,

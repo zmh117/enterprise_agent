@@ -157,6 +157,7 @@ class ReadOnlyToolService:
                 query=str(arguments.get("query", "")),
                 context=context,
             )
+        addressing = _addressing_from_arguments(arguments)
         if tool_name == "query_loki":
             return self.internal_api_client.query_loki(
                 selector=_loki_selector_from_arguments(arguments),
@@ -164,6 +165,7 @@ class ReadOnlyToolService:
                 minutes=int(arguments.get("minutes", 15)),
                 limit=int(arguments.get("limit", 100)),
                 context=context,
+                **addressing,
             )
         if tool_name == "query_database":
             return self.internal_api_client.query_database(
@@ -171,12 +173,14 @@ class ReadOnlyToolService:
                 sql=str(arguments["sql"]),
                 limit=int(arguments.get("limit", 100)),
                 context=context,
+                **addressing,
             )
         if tool_name == "query_redis_get":
             return self.internal_api_client.query_redis_get(
                 datasource=str(arguments.get("datasource", "default")),
                 key=str(arguments["key"]),
                 context=context,
+                **addressing,
             )
         if tool_name == "query_redis_scan":
             return self.internal_api_client.query_redis_scan(
@@ -184,6 +188,7 @@ class ReadOnlyToolService:
                 pattern=str(arguments["pattern"]),
                 limit=int(arguments.get("limit", self.limits.redis_scan_limit)),
                 context=context,
+                **addressing,
             )
         raise ToolPolicyError(f"Tool {tool_name} is not registered")
 
@@ -196,6 +201,17 @@ def _storage_summary(result: ToolResult) -> dict[str, Any]:
         "metadata": result.metadata,
         "truncated": result.truncated,
     }
+
+
+def _addressing_from_arguments(arguments: dict[str, Any]) -> dict[str, str]:
+    """Pass structured addressing only when provided, keeping legacy callers intact."""
+
+    addressing: dict[str, str] = {}
+    for field in ("environment", "base", "workshop"):
+        value = arguments.get(field)
+        if value is not None and str(value).strip():
+            addressing[field] = str(value).strip()
+    return addressing
 
 
 def _loki_selector_from_arguments(arguments: dict[str, Any]) -> dict[str, str]:

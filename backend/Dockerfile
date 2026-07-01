@@ -22,6 +22,21 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-deps --no-build-isolation .
 CMD ["python", "-m", "uvicorn", "app.mock_internal_api_platform:create_app", "--factory", "--host", "0.0.0.0", "--port", "9000"]
 
+FROM python-deps AS internal-api-platform
+# Multi-dialect read-only gateway. DB drivers live only in this image (thin/pure-Python
+# drivers: pymysql, pymssql, oracledb thin, redis) so other images stay slim.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install "pymysql>=1.1" "pymssql>=2.3" "oracledb>=2.2" "redis>=5.0"
+COPY backend/app/__init__.py backend/app/internal_api_platform.py /app/backend/app/
+COPY backend/app/shared /app/backend/app/shared
+COPY backend/app/modules/__init__.py /app/backend/app/modules/
+COPY backend/app/modules/internal_api_platform /app/backend/app/modules/internal_api_platform
+COPY backend/app/modules/local_internal_api_platform /app/backend/app/modules/local_internal_api_platform
+COPY backend/config /app/backend/config
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-deps --no-build-isolation .
+CMD ["python", "-m", "uvicorn", "app.internal_api_platform:create_app", "--factory", "--host", "0.0.0.0", "--port", "9000"]
+
 FROM python-deps AS api-server
 COPY backend/app/__init__.py backend/app/bootstrap.py backend/app/main.py /app/backend/app/
 COPY backend/app/shared /app/backend/app/shared

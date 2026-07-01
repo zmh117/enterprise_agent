@@ -49,6 +49,32 @@ services:
     expose:
       - "9000"
 
+  # Topology-aware, multi-dialect read-only platform (三九/mmk). Set
+  # INTERNAL_API_BASE_URL=http://internal-api-platform:9000 on api-server/agent-worker.
+  internal-api-platform:
+    profiles: ["real-tools"]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: internal-api-platform
+    command: ["python", "-m", "uvicorn", "app.internal_api_platform:create_app", "--factory", "--host", "0.0.0.0", "--port", "9000"]
+    environment:
+      INTERNAL_PLATFORM_TOPOLOGY_FILE: ${INTERNAL_PLATFORM_TOPOLOGY_FILE:-/app/backend/config/internal_platform_topology.example.yaml}
+      INTERNAL_PLATFORM_MAX_ROWS: ${INTERNAL_PLATFORM_MAX_ROWS:-100}
+      LOKI_MAX_MINUTES: ${LOKI_MAX_MINUTES:-60}
+      LOKI_MAX_LINES: ${LOKI_MAX_LINES:-500}
+      LOKI_MAX_RESPONSE_CHARS: ${LOKI_MAX_RESPONSE_CHARS:-4000}
+      # Secret references resolved from SECRET_<UPPER_SNAKE_OF_PATH> env vars.
+      SECRET_SANJIU_GUANLAN_DB_HOST: ${SECRET_SANJIU_GUANLAN_DB_HOST:-}
+      SECRET_SANJIU_GUANLAN_DB_USER: ${SECRET_SANJIU_GUANLAN_DB_USER:-}
+      SECRET_SANJIU_GUANLAN_DB_PASSWORD: ${SECRET_SANJIU_GUANLAN_DB_PASSWORD:-}
+      SECRET_SANJIU_GUANLAN_REDIS_HOST: ${SECRET_SANJIU_GUANLAN_REDIS_HOST:-}
+      SECRET_SANJIU_GUANLAN_LOKI_URL: ${SECRET_SANJIU_GUANLAN_LOKI_URL:-}
+    volumes:
+      - ./backend/config:/app/backend/config:ro
+    expose:
+      - "9000"
+
   api-server:
     build:
       context: .

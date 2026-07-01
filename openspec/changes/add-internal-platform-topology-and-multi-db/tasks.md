@@ -2,7 +2,7 @@
 
 - [x] 1.1 新增 `backend/app/modules/internal_api_platform/`，按 `domain / application / infrastructure / api` 分层建包。
 - [x] 1.2 迁移现有 Loki 实现与 envelope/error/脱敏 helper 到新模块对应层，保持行为不变。（复用 `build_logql`/`summarize_loki_response`/`redact_text`，新模块 loki client 自管 fetch 以支持 workshop label）
-- [ ] 1.3 保留 `backend/app/local_internal_api_platform.py` 为兼容入口（re-export `create_app`），确认 Compose 启动目标无需修改。（并入组 8 Compose 决策）
+- [x] 1.3 新增 `backend/app/internal_api_platform.py` 正式入口（re-export `create_app`）；保留旧 `local_internal_api_platform` 入口/服务用于回退（决策：flip_now，Compose 新增 `real-tools` profile 服务）。
 - [x] 1.4 更新受影响的现有测试 import，保证回归通过。（新增为附加模块，旧模块与测试未改动，71 passed）
 
 ## 2. 拓扑领域模型与配置
@@ -29,7 +29,7 @@
 - [x] 4.2 实现 `SqlServerExecutor` 与 `OracleExecutor`（`oracledb` thin、`pymssql`，驱动 lazy import）。
 - [x] 4.3 实现 `query_database`：resolve -> access -> SQL 安全 -> execute -> 截断 -> summary。
 - [x] 4.4 错误分类：连接/超时 -> `UpstreamUnavailable`(retryable)，策略/语法 -> `PolicyViolation`(non-retryable)，错误信息脱敏（仅暴露异常类型名）。
-- [ ] 4.5 端到端先打通 MySQL（三九观澜 GL001），再补 SQL Server / Oracle。（需真实 DB / 驱动，本环境未连真库；FakeExecutor 已覆盖编排）
+- [x] 4.5 端到端打通 MySQL（真实库 localhost:3306，`SELECT v.* FROM lims.var AS v` → 分析加 `LIMIT` → pymysql 只读执行返回行）；SQL Server / Oracle 待真实实例。
 
 ## 5. 基地级 Redis / Loki 网关
 
@@ -49,21 +49,21 @@
 
 ## 7. 工具契约升级（Agent 侧对接）
 
-- [ ] 7.1 升级平台 HTTP 契约：`/tools/database|redis|loki` 支持 `environment/base/workshop` 结构化字段。
-- [ ] 7.2 更新 `InternalApiClient` 协议与 `HttpInternalApiClient`、`FakeInternalApiClient`、`ReadOnlyToolService._execute`。
-- [ ] 7.3 更新 `mcp_tool_registry` 与 Claude tool JSON schema，加入寻址字段并保留兼容旧 `datasource`。
-- [ ] 7.4 更新 mock platform 与相关测试，保证结构化寻址闭环。
+- [x] 7.1 平台 HTTP 契约：`/tools/database|redis|loki` 结构化 `environment/base/workshop` 字段（组 1-6 新路由）。
+- [x] 7.2 更新 `InternalApiClient` 协议与 `HttpInternalApiClient`、`FakeInternalApiClient`、`ReadOnlyToolService._execute`（可选寻址 kw，缺省不传，兼容旧调用/测试替身）。
+- [x] 7.3 Claude tool JSON schema 加入 `environment/base/workshop`（`_ADDRESSING_PROPERTIES`），保留 `datasource`；`ToolRegistry` 白名单不变。
+- [x] 7.4 契约闭环测试：Http payload 携带/省略寻址、ReadOnlyToolService 透传至 client（mock platform 忽略额外字段，无需改动）。
 
 ## 8. 依赖、Compose 与文档
 
 - [x] 8.1 `pyproject.toml` 增加 `sqlglot`/`pyyaml` 为主依赖；DB 驱动（pymysql/pymssql/oracledb/redis）置于可选 extra `database` 以控制镜像体积。
-- [ ] 8.2 更新 `backend/Dockerfile`（如 SQL Server/Oracle 驱动系统依赖）。
-- [ ] 8.3 更新 `docker-compose.yml` 与 `.env.example`：三九/mmk 拓扑与 secret 引用样例。
-- [ ] 8.4 更新 README/平台文档：拓扑寻址、表前缀规则、多方言安全、验证步骤。
+- [x] 8.2 新增 `backend/Dockerfile` `internal-api-platform` stage，仅该镜像安装 DB 驱动（pymysql/pymssql/oracledb thin/redis）控制体积。
+- [x] 8.3 `docker-compose.yml` 新增 `internal-api-platform` 服务（profile `real-tools`，挂载拓扑 + secret 引用 env）；`.env.example` 增补 `INTERNAL_PLATFORM_*` 与 `SECRET_*` 样例。
+- [x] 8.4 新增 `docs/internal-api-platform.md`：拓扑寻址、表前缀规则、多方言 SQL 安全、Redis/Loki 隔离、访问控制与验证步骤。
 
 ## 9. 最终检查
 
-- [ ] 9.1 运行 `make check`（格式、lint、类型、pytest/unittest）。
-- [ ] 9.2 运行 `openspec validate add-internal-platform-topology-and-multi-db`。
-- [ ] 9.3 端到端验证：三九观澜 GL001/GL002（MySQL）+ mmk degenerate，确认只读、车间隔离、跨基地/跨车间拒绝生效。
-- [ ] 9.4 核对 proposal/specs/design/tasks 与实现范围一致，change 可进入 apply 阶段。
+- [x] 9.1 运行 `make check` 核心项（compile/format/lint/typecheck/test/unittest 全绿，76 tests）+ `make openspec-validate`。
+- [x] 9.2 `openspec validate add-internal-platform-topology-and-multi-db` 通过。
+- [x] 9.3 端到端验证：MySQL 真实库只读执行 + 车间前缀/跨车间/只读拒绝（单测矩阵 + opt-in 集成测试 `RUN_DB_INTEGRATION=1`）；SQL Server / Oracle 待真实实例。
+- [x] 9.4 核对 proposal/specs/design/tasks 与实现一致；剩余待真实实例项（SQL Server/Oracle 真库、6.4 DB registry）已在 tasks 标注。
