@@ -78,6 +78,25 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
             "additionalProperties": False,
         },
     },
+    "get_schema_directory": {
+        "description": (
+            "Return the allowed read-only schema directory for a target environment/base/workshop. "
+            "Use this before writing SQL. Only query tables and columns listed by this tool."
+        ),
+        "schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Optional table-name filter; leave empty for the bounded directory.",
+                },
+                "limit": {"type": "integer", "minimum": 1},
+                **_ADDRESSING_PROPERTIES,
+            },
+            "required": ["environment", "base"],
+            "additionalProperties": False,
+        },
+    },
     "query_loki": {
         "description": (
             "Query bounded Loki logs with exact-match label selectors and a small result limit. "
