@@ -42,6 +42,17 @@ class InternalApiClient(Protocol):
 
     def get_business_flow_context(self, query: str, context: ToolRequestContext) -> ToolResult: ...
 
+    def get_schema_directory(
+        self,
+        context: ToolRequestContext,
+        *,
+        environment: str,
+        base: str,
+        workshop: str | None = None,
+        query: str = "",
+        limit: int = 50,
+    ) -> ToolResult: ...
+
     def query_loki(
         self,
         selector: dict[str, str],
@@ -156,6 +167,43 @@ class FakeInternalApiClient:
         }
         return ToolResult(summary=summary, raw=summary)
 
+    def get_schema_directory(
+        self,
+        context: ToolRequestContext,
+        *,
+        environment: str,
+        base: str,
+        workshop: str | None = None,
+        query: str = "",
+        limit: int = 50,
+    ) -> ToolResult:
+        call = {"query": query, "limit": limit}
+        call.update(_addressing_payload(environment, base, workshop))
+        self.calls.append(("get_schema_directory", call))
+        prefix = f"{workshop}_EBR_" if workshop else ""
+        summary = {
+            "environment": environment,
+            "base": base,
+            "workshop": workshop,
+            "engine": "mysql",
+            "tables": [
+                {
+                    "name": f"{prefix}order",
+                    "columns": [
+                        {"name": "order_no", "data_type": "varchar", "nullable": False},
+                        {"name": "status", "data_type": "varchar", "nullable": True},
+                    ],
+                }
+            ],
+            "table_count": 1,
+            "diagnostic_action": "use_listed_tables_and_columns_only",
+        }
+        return ToolResult(
+            summary=summary,
+            raw={"table_count": 1},
+            metadata={"source": "fake-schema-directory"},
+        )
+
     def query_loki(
         self,
         selector: dict[str, str],
@@ -262,6 +310,20 @@ class HttpInternalApiClient:
             {"query": query, "project_code": context.project_code},
             context,
         )
+
+    def get_schema_directory(
+        self,
+        context: ToolRequestContext,
+        *,
+        environment: str,
+        base: str,
+        workshop: str | None = None,
+        query: str = "",
+        limit: int = 50,
+    ) -> ToolResult:
+        payload: dict[str, Any] = {"query": query, "limit": limit}
+        payload.update(_addressing_payload(environment, base, workshop))
+        return self._post("/tools/schema/directory", payload, context)
 
     def query_loki(
         self,

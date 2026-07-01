@@ -11,6 +11,7 @@ class ToolRegistry:
     READONLY_TOOLS = {
         "get_er_context",
         "get_business_flow_context",
+        "get_schema_directory",
         "query_loki",
         "query_database",
         "query_redis_get",

@@ -129,7 +129,11 @@ class ReadOnlyToolService:
                 limit=int(arguments.get("limit", 100)),
                 settings=self.limits,
             )
-        elif tool_name not in {"get_er_context", "get_business_flow_context"}:
+        elif tool_name not in {
+            "get_er_context",
+            "get_business_flow_context",
+            "get_schema_directory",
+        }:
             raise ToolPolicyError(f"Tool {tool_name} is not registered for read-only MVP")
 
     def _execute(
@@ -156,6 +160,18 @@ class ReadOnlyToolService:
             return self.internal_api_client.get_business_flow_context(
                 query=str(arguments.get("query", "")),
                 context=context,
+            )
+        if tool_name == "get_schema_directory":
+            addressing = _addressing_from_arguments(arguments)
+            if not addressing.get("environment") or not addressing.get("base"):
+                raise ToolPolicyError("Schema directory requires environment and base")
+            return self.internal_api_client.get_schema_directory(
+                context=context,
+                environment=addressing["environment"],
+                base=addressing["base"],
+                workshop=addressing.get("workshop"),
+                query=str(arguments.get("query", "")),
+                limit=int(arguments.get("limit", 50)),
             )
         addressing = _addressing_from_arguments(arguments)
         if tool_name == "query_loki":
