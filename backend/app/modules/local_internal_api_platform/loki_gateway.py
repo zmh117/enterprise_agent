@@ -16,7 +16,8 @@ from .envelope import LocalPlatformError, redact_text, safe_error_text
 from .schemas import LokiQuery, LocalToolResult
 
 
-SERVICE_PATTERN = re.compile(r"^[A-Za-z0-9_.:/-]+$")
+SELECTOR_VALUE_PATTERN = re.compile(r"^[A-Za-z0-9_.:/-]+$")
+ALLOWED_SELECTOR_LABELS = {"cluster", "container", "region", "service", "service_name"}
 MAX_QUERY_CHARS = 300
 RETRYABLE_UPSTREAM_STATUSES = {429, 502, 503, 504}
 
@@ -32,15 +33,7 @@ class LokiGateway:
         self.urlopen_func = urlopen_func
 
     def validate(self, payload: dict[str, Any]) -> LokiQuery:
-        service = str(payload.get("service", "")).strip()
-        if not service:
-            raise LocalPlatformError(400, "invalid_loki_query", "service is required")
-        if not SERVICE_PATTERN.fullmatch(service):
-            raise LocalPlatformError(
-                400,
-                "invalid_loki_query",
-                "service contains unsafe selector characters",
-            )
+        selector = _selector_from_payload(payload)
         query = str(payload.get("query", "")).strip()
         if len(query) > MAX_QUERY_CHARS:
             raise LocalPlatformError(400, "invalid_loki_query", "query is too long")
@@ -59,8 +52,8 @@ class LokiGateway:
             raise LocalPlatformError(400, "invalid_loki_query", "limit must be greater than zero")
         if limit > self.settings.max_lines:
             raise LocalPlatformError(400, "invalid_loki_query", "limit exceeds local Loki limit")
-        logql = build_logql(service, query)
-        return LokiQuery(service=service, query=query, minutes=minutes, limit=limit, logql=logql)
+        logql = build_logql(selector, query)
+        return LokiQuery(selector=selector, query=query, minutes=minutes, limit=limit, logql=logql)
 
     def query(self, payload: dict[str, Any]) -> LocalToolResult:
         loki_query = self.validate(payload)
@@ -124,11 +117,49 @@ class LokiGateway:
         ) from exc
 
 
-def build_logql(service: str, query: str) -> str:
-    selector = f'{{service="{_escape_logql_string(service)}"}}'
+def build_logql(selector: dict[str, str], query: str) -> str:
+    labels = ",".join(
+        f'{label}="{_escape_logql_string(value)}"' for label, value in sorted(selector.items())
+    )
+    selector_text = f"{{{labels}}}"
     if not query:
-        return selector
-    return f'{selector} |= "{_escape_logql_string(query)}"'
+        return selector_text
+    return f'{selector_text} |= "{_escape_logql_string(query)}"'
+
+
+def _selector_from_payload(payload: dict[str, Any]) -> dict[str, str]:
+    raw_selector = payload.get("selector")
+    if raw_selector is None:
+        service = str(payload.get("service", "")).strip()
+        raw_selector = {"service": service} if service else {}
+    if not isinstance(raw_selector, dict):
+        raise LocalPlatformError(400, "invalid_loki_query", "selector must be an object")
+
+    selector: dict[str, str] = {}
+    for raw_label, raw_value in raw_selector.items():
+        label = str(raw_label).strip()
+        if label not in ALLOWED_SELECTOR_LABELS:
+            raise LocalPlatformError(
+                400,
+                "invalid_loki_query",
+                f"selector label is not allowed: {label}",
+            )
+        if not isinstance(raw_value, str):
+            raise LocalPlatformError(400, "invalid_loki_query", "selector values must be strings")
+        value = raw_value.strip()
+        if not value:
+            raise LocalPlatformError(400, "invalid_loki_query", "selector value is required")
+        if not SELECTOR_VALUE_PATTERN.fullmatch(value):
+            raise LocalPlatformError(
+                400,
+                "invalid_loki_query",
+                "selector contains unsafe characters",
+            )
+        selector[label] = value
+
+    if not selector:
+        raise LocalPlatformError(400, "invalid_loki_query", "selector is required")
+    return selector
 
 
 def summarize_loki_response(
@@ -161,7 +192,8 @@ def summarize_loki_response(
                     truncated = True
         streams.append({"labels": labels, "line_count": stream_line_count})
     summary = {
-        "service": loki_query.service,
+        "selector": loki_query.selector,
+        "service": loki_query.selector.get("service", ""),
         "query": loki_query.query,
         "logql": loki_query.logql,
         "minutes": loki_query.minutes,

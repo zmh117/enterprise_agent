@@ -304,11 +304,13 @@ LOKI_TENANT_ID=
 当前 LogQL 构造策略：
 
 ```text
-service + keyword -> {service="<service>"} |= "<keyword>"
-service only      -> {service="<service>"}
+selector + keyword -> {cluster="<cluster>"} |= "<keyword>"
+service + keyword  -> {service="<service>"} |= "<keyword>"
+selector only      -> {cluster="<cluster>"}
 ```
 
-第一版不允许 Agent 传完整任意 LogQL，避免真实联调时生成无界或高成本查询。
+第一版不允许 Agent 传完整任意 LogQL，避免真实联调时生成无界或高成本查询。`selector`
+只允许 `cluster`、`container`、`region`、`service`、`service_name` 这些精确匹配 label。
 
 ### 真实 Internal API Platform 模式
 

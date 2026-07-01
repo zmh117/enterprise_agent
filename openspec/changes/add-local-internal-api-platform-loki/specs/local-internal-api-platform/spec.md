@@ -37,8 +37,8 @@ The local platform MUST constrain Loki query input before calling Loki.
 - **WHEN** `limit` exceeds `LOKI_MAX_LINES`
 - **THEN** the platform rejects or clamps the request according to configuration and records truncation metadata
 
-#### Scenario: Unsafe service selector is supplied
-- **WHEN** the request contains an empty service name or a service value with unsafe selector characters
+#### Scenario: Unsafe selector is supplied
+- **WHEN** the request contains an empty selector, an unsupported selector label, or a selector value with unsafe characters
 - **THEN** the platform rejects the request before constructing LogQL
 
 ### Requirement: Local context endpoints provide explicit placeholders

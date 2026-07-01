@@ -29,7 +29,12 @@ class MetadataInternalApiClient:
         return ToolResult(summary={}, raw={})
 
     def query_loki(
-        self, service: str, query: str, minutes: int, limit: int, context: ToolRequestContext
+        self,
+        selector: dict[str, str],
+        query: str,
+        minutes: int,
+        limit: int,
+        context: ToolRequestContext,
     ) -> ToolResult:
         return ToolResult(summary={}, raw={})
 
@@ -176,7 +181,19 @@ class PermissionAuditToolTests(unittest.TestCase):
         with self.assertRaises(ToolPolicyError):
             assert_redis_readonly("delete", limit=None, settings=settings)
         with self.assertRaises(ToolPolicyError):
-            assert_loki_bounds(service="order-service", minutes=120, limit=10, settings=settings)
+            assert_loki_bounds(
+                selector={"service": "order-service"},
+                minutes=120,
+                limit=10,
+                settings=settings,
+            )
+        with self.assertRaises(ToolPolicyError):
+            assert_loki_bounds(
+                selector={"namespace": "default"},
+                minutes=15,
+                limit=10,
+                settings=settings,
+            )
 
 
 if __name__ == "__main__":

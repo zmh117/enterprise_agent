@@ -61,7 +61,12 @@ class MockPlatformInternalApiClient:
         return ToolResult(summary={}, raw={})
 
     def query_loki(
-        self, service: str, query: str, minutes: int, limit: int, context: ToolRequestContext
+        self,
+        selector: dict[str, str],
+        query: str,
+        minutes: int,
+        limit: int,
+        context: ToolRequestContext,
     ) -> ToolResult:
         return ToolResult(summary={}, raw={})
 

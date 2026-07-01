@@ -61,16 +61,35 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
         },
     },
     "query_loki": {
-        "description": "Query bounded Loki logs for one service with a small result limit.",
+        "description": (
+            "Query bounded Loki logs with exact-match label selectors and a small result limit. "
+            "Use selector for labels such as cluster, service_name, container, region, or service; "
+            "for example {'cluster': 'mes-cluster'}."
+        ),
         "schema": {
             "type": "object",
             "properties": {
-                "service": {"type": "string"},
+                "selector": {
+                    "type": "object",
+                    "properties": {
+                        "cluster": {"type": "string"},
+                        "container": {"type": "string"},
+                        "region": {"type": "string"},
+                        "service": {"type": "string"},
+                        "service_name": {"type": "string"},
+                    },
+                    "additionalProperties": False,
+                    "minProperties": 1,
+                },
+                "service": {
+                    "type": "string",
+                    "description": "Backward-compatible shortcut for selector.service.",
+                },
                 "query": {"type": "string"},
                 "minutes": {"type": "integer", "minimum": 1},
                 "limit": {"type": "integer", "minimum": 1},
             },
-            "required": ["service"],
+            "required": ["selector"],
             "additionalProperties": False,
         },
     },

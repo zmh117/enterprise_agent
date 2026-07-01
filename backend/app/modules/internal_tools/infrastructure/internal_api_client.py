@@ -43,7 +43,12 @@ class InternalApiClient(Protocol):
     def get_business_flow_context(self, query: str, context: ToolRequestContext) -> ToolResult: ...
 
     def query_loki(
-        self, service: str, query: str, minutes: int, limit: int, context: ToolRequestContext
+        self,
+        selector: dict[str, str],
+        query: str,
+        minutes: int,
+        limit: int,
+        context: ToolRequestContext,
     ) -> ToolResult: ...
 
     def query_database(
@@ -85,11 +90,18 @@ class FakeInternalApiClient:
         return ToolResult(summary=summary, raw=summary)
 
     def query_loki(
-        self, service: str, query: str, minutes: int, limit: int, context: ToolRequestContext
+        self,
+        selector: dict[str, str],
+        query: str,
+        minutes: int,
+        limit: int,
+        context: ToolRequestContext,
     ) -> ToolResult:
-        self.calls.append(("query_loki", {"service": service, "query": query, "minutes": minutes}))
+        self.calls.append(
+            ("query_loki", {"selector": selector, "query": query, "minutes": minutes})
+        )
         summary = {
-            "service": service,
+            "selector": selector,
             "line_count": 1,
             "highlights": ["MaterialNotEnoughException"],
         }
@@ -152,11 +164,16 @@ class HttpInternalApiClient:
         )
 
     def query_loki(
-        self, service: str, query: str, minutes: int, limit: int, context: ToolRequestContext
+        self,
+        selector: dict[str, str],
+        query: str,
+        minutes: int,
+        limit: int,
+        context: ToolRequestContext,
     ) -> ToolResult:
         return self._post(
             "/tools/loki/query",
-            {"service": service, "query": query, "minutes": minutes, "limit": limit},
+            {"selector": selector, "query": query, "minutes": minutes, "limit": limit},
             context,
         )
 

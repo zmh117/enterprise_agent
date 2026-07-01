@@ -6,7 +6,7 @@ from typing import Any
 
 @dataclass(frozen=True)
 class LokiQuery:
-    service: str
+    selector: dict[str, str]
     query: str
     minutes: int
     limit: int

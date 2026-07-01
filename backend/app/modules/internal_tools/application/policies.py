@@ -33,6 +33,9 @@ FORBIDDEN_REDIS = {
     "script",
 }
 
+ALLOWED_LOKI_SELECTOR_LABELS = {"cluster", "container", "region", "service", "service_name"}
+LOKI_SELECTOR_VALUE_PATTERN = re.compile(r"^[A-Za-z0-9_.:/-]+$")
+
 
 def assert_readonly_sql(sql: str) -> None:
     normalized = re.sub(r"/\*.*?\*/", " ", sql, flags=re.S)
@@ -60,13 +63,20 @@ def assert_redis_readonly(
 
 def assert_loki_bounds(
     *,
-    service: str,
+    selector: dict[str, str],
     minutes: int,
     limit: int,
     settings: ExecutionSettings,
 ) -> None:
-    if not service:
-        raise ToolPolicyError("Loki service selector is required")
+    if not selector:
+        raise ToolPolicyError("Loki selector is required")
+    for label, value in selector.items():
+        if label not in ALLOWED_LOKI_SELECTOR_LABELS:
+            raise ToolPolicyError(f"Loki selector label is not allowed: {label}")
+        if not value:
+            raise ToolPolicyError("Loki selector value is required")
+        if not LOKI_SELECTOR_VALUE_PATTERN.fullmatch(value):
+            raise ToolPolicyError("Loki selector contains unsafe characters")
     if minutes <= 0 or minutes > settings.max_loki_minutes:
         raise ToolPolicyError("Loki time range exceeds configured maximum")
     if limit <= 0 or limit > settings.max_loki_lines:

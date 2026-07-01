@@ -42,10 +42,14 @@ class LocalInternalApiPlatformTests(unittest.TestCase):
         self.assertEqual(5, response.json()["loki"]["max_minutes"])
 
     def test_logql_builder_escapes_service_and_keyword(self) -> None:
-        self.assertEqual('{service="order-service"}', build_logql("order-service", ""))
+        self.assertEqual('{service="order-service"}', build_logql({"service": "order-service"}, ""))
         self.assertEqual(
             '{service="order-service"} |= "Material\\\\Error \\"bad\\""',
-            build_logql("order-service", 'Material\\Error "bad"'),
+            build_logql({"service": "order-service"}, 'Material\\Error "bad"'),
+        )
+        self.assertEqual(
+            '{cluster="mes-cluster"} |= "Alloy"',
+            build_logql({"cluster": "mes-cluster"}, "Alloy"),
         )
 
     def test_loki_endpoint_returns_summary_envelope(self) -> None:
@@ -62,17 +66,23 @@ class LocalInternalApiPlatformTests(unittest.TestCase):
         )
         response = client.post(
             "/tools/loki/query",
-            json={"service": "order-service", "query": "Material", "minutes": 5, "limit": 10},
+            json={
+                "selector": {"cluster": "mes-cluster"},
+                "query": "Material",
+                "minutes": 5,
+                "limit": 10,
+            },
             headers={"x-correlation-id": "corr-1"},
         )
         body = response.json()
 
         self.assertEqual(200, response.status_code)
         self.assertIn("/loki/api/v1/query_range?", captured["url"])
-        self.assertIn("%7Bservice%3D%22order-service%22%7D+%7C%3D+%22Material%22", captured["url"])
+        self.assertIn("%7Bcluster%3D%22mes-cluster%22%7D+%7C%3D+%22Material%22", captured["url"])
         self.assertEqual("tenant-a", captured["headers"]["X-scope-orgid"])
         self.assertEqual("corr-1", body["metadata"]["request_id"])
         self.assertEqual("local-loki", body["metadata"]["source"])
+        self.assertEqual({"cluster": "mes-cluster"}, body["summary"]["selector"])
         self.assertEqual(1, body["summary"]["line_count"])
         self.assertIn("token=<redacted>", body["summary"]["highlights"][0])
         self.assertNotIn("secret-token", json.dumps(body))
@@ -88,7 +98,7 @@ class LocalInternalApiPlatformTests(unittest.TestCase):
         client = TestClient(create_app(self._settings(), urlopen_func=fake_urlopen))
         response = client.post(
             "/tools/loki/query",
-            json={"service": '{service=~".*"}', "query": "", "minutes": 5, "limit": 10},
+            json={"selector": {"cluster": '{service=~".*"}'}, "query": "", "minutes": 5, "limit": 10},
         )
 
         self.assertEqual(400, response.status_code)
@@ -98,7 +108,7 @@ class LocalInternalApiPlatformTests(unittest.TestCase):
     def test_loki_large_response_is_truncated(self) -> None:
         gateway = LokiGateway(self._settings(max_response_chars=20).loki)
         loki_query = gateway.validate(
-            {"service": "order-service", "query": "", "minutes": 5, "limit": 10}
+            {"selector": {"cluster": "mes-cluster"}, "query": "", "minutes": 5, "limit": 10}
         )
 
         result = summarize_loki_response(
@@ -117,7 +127,7 @@ class LocalInternalApiPlatformTests(unittest.TestCase):
         transient_client = TestClient(create_app(self._settings(), urlopen_func=transient_urlopen))
         transient = transient_client.post(
             "/tools/loki/query",
-            json={"service": "order-service", "query": "", "minutes": 5, "limit": 10},
+            json={"selector": {"service": "order-service"}, "query": "", "minutes": 5, "limit": 10},
         )
         self.assertEqual(503, transient.status_code)
         self.assertEqual("loki_unavailable", transient.json()["detail"]["error"]["code"])
@@ -129,7 +139,7 @@ class LocalInternalApiPlatformTests(unittest.TestCase):
         rejected_client = TestClient(create_app(self._settings(), urlopen_func=rejected_urlopen))
         rejected = rejected_client.post(
             "/tools/loki/query",
-            json={"service": "order-service", "query": "", "minutes": 5, "limit": 10},
+            json={"selector": {"service": "order-service"}, "query": "", "minutes": 5, "limit": 10},
         )
         self.assertEqual(400, rejected.status_code)
         self.assertEqual("loki_rejected_query", rejected.json()["detail"]["error"]["code"])

@@ -80,20 +80,23 @@ INTERNAL_API_BASE_URL=http://local-internal-api-platform:9000
 本地平台构造 Loki LogQL：
 
 ```text
+{cluster="<cluster>"} |= "<query>"
+{service_name="<service_name>"} |= "<query>"
 {service="<service>"} |= "<query>"
 ```
 
-如果 `query` 为空，则只使用服务 selector：
+如果 `query` 为空，则只使用受限 selector：
 
 ```text
-{service="<service>"}
+{cluster="<cluster>"}
 ```
 
 实现时需要限制：
 
 - `minutes <= LOKI_MAX_MINUTES`
 - `limit <= LOKI_MAX_LINES`
-- `service` 不能为空，且只允许安全字符
+- selector 不能为空，且 label 只允许 `cluster`、`container`、`region`、`service`、`service_name`
+- selector value 只允许安全字符
 - `query` 作为日志过滤文本处理，不允许直接传入任意完整 LogQL
 
 替代方案是允许 Agent 直接传完整 LogQL。当前阶段拒绝该方案，因为真实 Claude 联调时更容易产生无界 selector 或高成本查询。

@@ -42,10 +42,10 @@ The system SHALL allow Redis evidence collection only through approved get and b
 - **THEN** the system rejects the request because MVP tools are read-only and does not forward the mutation to the real Redis source
 
 ### Requirement: Loki queries are bounded
-The system SHALL constrain Loki queries by allowed tenant or service, time range, query size, and result size before executing the request. The Internal API Platform MUST also enforce Loki tenant, selector, time range, and result-size limits before querying the real Loki source.
+The system SHALL constrain Loki queries by allowed tenant, allowed selector labels, time range, query size, and result size before executing the request. The Internal API Platform MUST also enforce Loki tenant, selector, time range, and result-size limits before querying the real Loki source.
 
 #### Scenario: Loki query is within limits
-- **WHEN** Agent calls `query_loki` with an allowed service selector and time range
+- **WHEN** Agent calls `query_loki` with an allowed selector and time range
 - **THEN** the internal API platform returns a bounded log summary and records the query metadata
 
 #### Scenario: Loki query exceeds limits
@@ -75,4 +75,3 @@ The system SHALL persist only bounded safe summaries of Internal API Platform re
 #### Scenario: Sensitive platform response is returned
 - **WHEN** the internal platform response contains sensitive fields or credential-like values
 - **THEN** the system masks or omits those values before writing tool-call summaries or audit payloads
-
