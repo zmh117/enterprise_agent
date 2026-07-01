@@ -1,0 +1,61 @@
+# Internal API Platform topology (example).
+#
+# Copy to a real file and point INTERNAL_PLATFORM_TOPOLOGY_FILE at it.
+# Secrets are referenced via `*_ref: secret://...` and resolved from environment
+# variables named SECRET_<UPPER_SNAKE_OF_PATH>. For example
+#   secret://sanjiu/guanlan/db_password -> env SECRET_SANJIU_GUANLAN_DB_PASSWORD
+# Never inline real credentials in this file.
+
+environments:
+  # 三九: multi-base, workshop-partitioned via table/key prefixes and Loki labels.
+  sanjiu:
+    bases:
+      # 观澜基地 (business code: guanlan). One engine per base.
+      guanlan:
+        engine: mysql
+        database:
+          host_ref: secret://sanjiu/guanlan/db_host
+          port: 3306
+          database: erp
+          user_ref: secret://sanjiu/guanlan/db_user
+          password_ref: secret://sanjiu/guanlan/db_password
+        redis:
+          host_ref: secret://sanjiu/guanlan/redis_host
+          port: 6379
+        loki:
+          base_url_ref: secret://sanjiu/guanlan/loki_url
+          tenant: sanjiu-guanlan
+        workshops:
+          GL001:
+            table_prefix: GL001_EBR_
+            redis_key_prefix: "GL001:"
+            loki_label: { workshop: GL001 }
+          GL002:
+            table_prefix: GL002_EBR_
+            redis_key_prefix: "GL002:"
+            loki_label: { workshop: GL002 }
+
+  # mmk: degenerate base, no workshop layer. Still read-only + bounded.
+  mmk:
+    bases:
+      main:
+        engine: sqlserver
+        database:
+          host_ref: secret://mmk/main/db_host
+          port: 1433
+          database: mes
+          user_ref: secret://mmk/main/db_user
+          password_ref: secret://mmk/main/db_password
+        redis:
+          host_ref: secret://mmk/main/redis_host
+          port: 6379
+        loki:
+          base_url_ref: secret://mmk/main/loki_url
+
+# Platform-side access control (second layer, after Agent-side tool/project checks).
+# Each caller (X-Agent-User-Id) maps to grants. "*" is a wildcard at that level.
+access:
+  local-user:
+    - { environment: "*", base: "*", workshop: "*" }
+  guanlan-gl001-operator:
+    - { environment: sanjiu, base: guanlan, workshop: GL001 }

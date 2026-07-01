@@ -256,9 +256,15 @@ Platform 侧 (新增): user 能访问 sanjiu/guanlan/GL001 吗? (env/base/worksh
 
 Rollback：保留 `FEATURE_REAL_INTERNAL_TOOLS`/fake client 与旧扁平入口；新平台异常时回退到 mock/fake，Agent 闭环不受影响；无破坏性数据迁移。
 
+## Resolved Decisions (apply session)
+
+- **寻址契约（组 7）**：新增独立 `environment/base/workshop` 结构化字段；`project_code` 保留为 Agent 侧粗粒度权限，**不做 project=environment 隐式映射**。旧扁平 `datasource` 作为兼容/直达通道可保留但非默认。
+- **部署入口（组 8 / 任务 1.3）**：Compose 入口切换到新 `internal_api_platform`（Dockerfile 增加所选 DB 驱动系统依赖，compose 注入 `INTERNAL_PLATFORM_TOPOLOGY_FILE` 与 secret 引用）；保留旧入口 re-export 以便回退。
+- **实现状态**：组 1–6 + 8.1 已实现并通过 `make check` 与 `openspec validate`；组 7/8/9 待下一轮（组 7 需注意向后兼容以免破坏 Agent 测试套件）。
+
 ## Open Questions
 
-- `environment` 与现有 `project_code` 的映射关系：是 1:1（project=environment）还是 project 更细？
+- `environment` 与现有 `project_code` 的映射关系：是 1:1（project=environment）还是 project 更细？（已决定：不做隐式映射，见 Resolved Decisions）
 - Redis 车间 key 前缀是否稳定统一为 `GL001:`，还是各基地命名不同（需可配置）？
 - Loki 车间 label 名统一为 `workshop` 还是各环境不同？
 - SQL Server/Oracle 在容器内是否接受 `pymssql`/`oracledb thin`，还是必须官方 ODBC/Instant Client？

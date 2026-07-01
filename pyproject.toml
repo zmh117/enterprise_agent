@@ -10,6 +10,8 @@ dependencies = [
   "pika>=1.3",
   "anthropic>=0.40",
   "claude-agent-sdk>=0.1.0",
+  "pyyaml>=6.0",
+  "sqlglot>=25",
 ]
 
 [project.optional-dependencies]
@@ -17,6 +19,14 @@ dev = [
   "pytest>=8.0",
   "ruff>=0.6",
   "mypy>=1.10",
+]
+# Database drivers for the internal API platform's multi-dialect gateway.
+# Optional so the base image stays slim; install where real DB access is needed.
+database = [
+  "pymysql>=1.1",
+  "pymssql>=2.3",
+  "oracledb>=2.2",
+  "redis>=5.0",
 ]
 
 [build-system]

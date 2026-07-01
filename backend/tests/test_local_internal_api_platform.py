@@ -98,7 +98,12 @@ class LocalInternalApiPlatformTests(unittest.TestCase):
         client = TestClient(create_app(self._settings(), urlopen_func=fake_urlopen))
         response = client.post(
             "/tools/loki/query",
-            json={"selector": {"cluster": '{service=~".*"}'}, "query": "", "minutes": 5, "limit": 10},
+            json={
+                "selector": {"cluster": '{service=~".*"}'},
+                "query": "",
+                "minutes": 5,
+                "limit": 10,
+            },
         )
 
         self.assertEqual(400, response.status_code)
