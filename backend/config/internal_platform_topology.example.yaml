@@ -20,7 +20,7 @@ environments:
         database:
           host_ref: secret://sanjiu/guanlan/db_host
           port: 3306
-          database: erp
+          database: CRMES_TEST_CLOUD_GL
           user_ref: secret://sanjiu/guanlan/db_user
           password_ref: secret://sanjiu/guanlan/db_password
         redis:
@@ -33,12 +33,12 @@ environments:
           GL001:
             display_name: 一号车间
             table_prefix: GL001_EBR_
-            redis_key_prefix: "GL001:"
+            redis_key_prefix: 'GL001:'
             loki_label: { workshop: GL001 }
           GL002:
             display_name: 二号车间
             table_prefix: GL002_EBR_
-            redis_key_prefix: "GL002:"
+            redis_key_prefix: 'GL002:'
             loki_label: { workshop: GL002 }
 
   # mmk: degenerate base, no workshop layer. Still read-only + bounded.
@@ -64,6 +64,6 @@ environments:
 # Each caller (X-Agent-User-Id) maps to grants. "*" is a wildcard at that level.
 access:
   local-user:
-    - { environment: "*", base: "*", workshop: "*" }
+    - { environment: '*', base: '*', workshop: '*' }
   guanlan-gl001-operator:
     - { environment: sanjiu, base: guanlan, workshop: GL001 }

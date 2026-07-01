@@ -52,7 +52,7 @@ services:
   # Topology-aware, multi-dialect read-only platform (三九/mmk). Set
   # INTERNAL_API_BASE_URL=http://internal-api-platform:9000 on api-server/agent-worker.
   internal-api-platform:
-    profiles: ["real-tools"]
+    # profiles: ["real-tools"]
     build:
       context: .
       dockerfile: backend/Dockerfile
