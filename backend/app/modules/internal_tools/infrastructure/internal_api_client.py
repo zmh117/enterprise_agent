@@ -487,6 +487,9 @@ def _error_message_from_body(body: dict[str, Any]) -> str:
     error = body.get("error")
     if isinstance(error, dict):
         message = error.get("message") or error.get("code") or error.get("type")
+        action = error.get("diagnostic_action")
+        if action:
+            return f"{message or ''} diagnostic_action={action}".strip()
         return str(message or "")
     if error:
         return str(error)

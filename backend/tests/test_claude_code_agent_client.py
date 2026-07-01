@@ -15,7 +15,11 @@ from app.modules.internal_tools.infrastructure.internal_api_client import (
     ToolResult,
 )
 from app.shared.config import ExecutionSettings
-from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
+from app.shared.exceptions import (
+    DiagnosticLoopExhausted,
+    NonRetryableExecutionError,
+    RetryableExecutionError,
+)
 from backend.tests.helpers import container
 
 
@@ -60,6 +64,18 @@ class MockPlatformInternalApiClient:
     def get_business_flow_context(self, query: str, context: ToolRequestContext) -> ToolResult:
         return ToolResult(summary={}, raw={})
 
+    def get_schema_directory(
+        self,
+        context: ToolRequestContext,
+        *,
+        environment: str,
+        base: str,
+        workshop: str | None = None,
+        query: str = "",
+        limit: int = 50,
+    ) -> ToolResult:
+        return ToolResult(summary={"tables": []}, raw={})
+
     def query_loki(
         self,
         selector: dict[str, str],
@@ -98,6 +114,8 @@ class RealClaudeCodeAgentClientTests(unittest.TestCase):
         self.assertEqual(["mcp__internal__*"], options.allowed_tools)
         self.assertFalse(getattr(options, "disallowed_tools", []))
         self.assertEqual("dontAsk", options.permission_mode)
+        self.assertIn("不具备诊断证据", options.system_prompt)
+        self.assertIn("get_schema_directory", options.system_prompt)
 
     def test_tool_loop_routes_through_tool_registry_and_returns_tool_events(self) -> None:
         async def query(prompt: str, options: FakeOptions) -> Any:
@@ -182,6 +200,37 @@ class RealClaudeCodeAgentClientTests(unittest.TestCase):
         with self.assertRaises(RetryableExecutionError):
             client.run(request)
 
+    def test_process_error_after_tool_call_carries_tool_events(self) -> None:
+        async def query(prompt: str, options: FakeOptions) -> Any:
+            tool = options.mcp_servers["internal"]["tools"]["query_database"]
+            await tool({"datasource": "default", "sql": "select * from ws_a_order", "limit": 5})
+            raise ProcessError("transport disconnected")
+            yield {"result": "unreachable"}
+
+        client, request = self._client_and_request(query)
+
+        with self.assertRaises(RetryableExecutionError) as raised:
+            client.run(request)
+
+        self.assertEqual("claude_transient_error", raised.exception.error_code)
+        self.assertEqual(1, len(raised.exception.tool_events))
+        self.assertEqual("query_database", raised.exception.tool_events[0]["tool_name"])
+
+    def test_max_turns_exhausted_is_non_retryable_and_carries_tool_events(self) -> None:
+        async def query(prompt: str, options: FakeOptions) -> Any:
+            tool = options.mcp_servers["internal"]["tools"]["query_database"]
+            await tool({"datasource": "default", "sql": "select * from ws_a_order", "limit": 5})
+            raise ProcessError("Reached maximum number of turns (12)")
+            yield {"result": "unreachable"}
+
+        client, request = self._client_and_request(query)
+
+        with self.assertRaises(DiagnosticLoopExhausted) as raised:
+            client.run(request)
+
+        self.assertEqual("max_turns_exhausted", raised.exception.error_code)
+        self.assertEqual(1, len(raised.exception.tool_events))
+
     def test_cli_stderr_is_included_in_safe_runtime_error(self) -> None:
         async def query(prompt: str, options: FakeOptions) -> Any:
             options.stderr("HTTP 401 invalid api_key=secret-value")
@@ -246,7 +295,11 @@ class RealClaudeCodeAgentClientTests(unittest.TestCase):
                 user_question=job.user_message,
                 project_code=job.project_code,
                 allowed_tools=["query_database"],
-                tool_restrictions=["select only"],
+                tool_restrictions=[
+                    "select only",
+                    "Call get_schema_directory before query_database.",
+                    "Stop and report 不具备诊断证据 when schema is insufficient.",
+                ],
                 skills={"test": "diagnose"},
                 retrieved_context={"er": {"tables": ["ws_a_order"]}},
                 conversation_summary="none",

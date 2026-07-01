@@ -279,6 +279,7 @@ docker compose --profile local-tools up -d --build local-internal-api-platform a
 GET  /health
 POST /tools/context/er
 POST /tools/context/business-flow
+POST /tools/schema/directory
 POST /tools/loki/query
 POST /tools/database/query
 POST /tools/redis/get
@@ -366,6 +367,25 @@ Content-Type: application/json
 - body 中 `code` / `type` / `error.code` 为 `policy_denied`：工具策略拒绝。
 
 平台返回的 `raw` 默认只保留在内存的 `ToolResult.raw`，持久化只写 bounded summary。
+
+Schema directory 验证：
+
+```bash
+curl --noproxy '*' -s -X POST http://127.0.0.1:9000/tools/schema/directory \
+  -H 'content-type: application/json' \
+  -H 'X-Agent-User-Id: local-user' \
+  -d '{"environment":"sanjiu","base":"guanlan","workshop":"GL001","limit":20}'
+```
+
+真实诊断前，Agent 会使用 schema directory 约束 SQL。若目标 schema 为空、只有
+`GL001_EBR_PI(ID)` 这类不足字段，或缺少订单号/状态/物料相关字段，Agent 必须停止
+扩散式试错并输出 `不具备诊断证据`。失败或 retry-pending job 仍可通过：
+
+```bash
+curl -s http://127.0.0.1:8000/api/agent/jobs/job_xxx/tool-calls
+```
+
+查看失败前已经持久化的工具调用摘要。
 
 ## 队列
 

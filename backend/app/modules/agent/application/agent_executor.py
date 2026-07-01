@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from app.modules.agent.application.agent_context_builder import AgentContextBuilder
 from app.modules.agent.application.agent_result_service import AgentResultService
 from app.modules.agent.domain.runtime import AgentRunRequest
@@ -102,6 +104,7 @@ class AgentExecutor:
             return result.final_answer
         except Exception as exc:
             safe_message = getattr(exc, "safe_message", str(exc))
+            self._persist_tool_events(job.id, getattr(exc, "tool_events", []))
             self.repository.add_step(
                 job_id=job.id,
                 step_type="error",
@@ -113,7 +116,22 @@ class AgentExecutor:
             raise
 
     def _persist_tool_events(self, job_id: str, tool_events: list[dict[str, object]]) -> None:
+        existing = {
+            _event_key(
+                {
+                    "tool_name": row["tool_name"],
+                    "request_payload": row["request_payload"],
+                    "response_summary": row["response_summary"],
+                    "status": row["status"],
+                }
+            )
+            for row in self.repository.list_tool_calls(job_id)
+        }
         for event in tool_events:
+            key = _event_key(event)
+            if key in existing:
+                continue
+            existing.add(key)
             tool_name = str(event.get("tool_name", "unknown"))
             duration = _int_value(event.get("duration_ms"))
             audit_id_value = event.get("audit_id")
@@ -140,3 +158,17 @@ def _int_value(value: object) -> int:
     if isinstance(value, str) and value.isdigit():
         return int(value)
     return 0
+
+
+def _event_key(event: dict[str, object]) -> str:
+    return json.dumps(
+        {
+            "tool_name": event.get("tool_name"),
+            "request_payload": event.get("request_payload"),
+            "response_summary": event.get("response_summary"),
+            "status": event.get("status"),
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+        default=str,
+    )

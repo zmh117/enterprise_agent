@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from ...domain.addressing import ResourceBinding
 from ...domain.errors import ResolutionError
-from ...domain.schema_directory import SchemaColumn, SchemaDirectory, SchemaDirectoryReader, SchemaTable
+from ...domain.schema_directory import SchemaColumn, SchemaDirectory, SchemaTable
 from ...domain.topology import DatabaseEngine
 
 
@@ -27,22 +27,26 @@ class UnsupportedSchemaDirectoryReader:
 
 class FakeSchemaDirectoryReader:
     def __init__(self, tables: list[SchemaTable] | None = None) -> None:
-        self.tables = tables or [
-            SchemaTable(
-                name="GL001_EBR_order",
-                columns=[
-                    SchemaColumn("order_no", "varchar", False),
-                    SchemaColumn("status", "varchar", True),
-                ],
-            ),
-            SchemaTable(
-                name="GL002_EBR_order",
-                columns=[
-                    SchemaColumn("order_no", "varchar", False),
-                    SchemaColumn("status", "varchar", True),
-                ],
-            ),
-        ]
+        self.tables = (
+            tables
+            if tables is not None
+            else [
+                SchemaTable(
+                    name="GL001_EBR_order",
+                    columns=[
+                        SchemaColumn("order_no", "varchar", False),
+                        SchemaColumn("status", "varchar", True),
+                    ],
+                ),
+                SchemaTable(
+                    name="GL002_EBR_order",
+                    columns=[
+                        SchemaColumn("order_no", "varchar", False),
+                        SchemaColumn("status", "varchar", True),
+                    ],
+                ),
+            ]
+        )
         self.calls: list[dict[str, object]] = []
 
     def read(
@@ -145,4 +149,3 @@ def _filter_tables(
             continue
         result.append(table)
     return result
-

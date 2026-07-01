@@ -7,6 +7,7 @@ from app.modules.message_bus.application.message_publisher import MessagePublish
 from app.shared.config import QueueSettings
 from app.shared.exceptions import (
     ExecutionTimeout,
+    DiagnosticLoopExhausted,
     NonRetryableExecutionError,
     PermissionDenied,
     RetryableExecutionError,
@@ -27,7 +28,15 @@ class JobRetryService:
         self.queue_settings = queue_settings
 
     def is_retryable(self, exc: Exception) -> bool:
-        if isinstance(exc, (PermissionDenied, ToolPolicyError, NonRetryableExecutionError)):
+        if isinstance(
+            exc,
+            (
+                PermissionDenied,
+                ToolPolicyError,
+                NonRetryableExecutionError,
+                DiagnosticLoopExhausted,
+            ),
+        ):
             return False
         return isinstance(
             exc, (RetryableExecutionError, ExecutionTimeout, TimeoutError, ConnectionError)

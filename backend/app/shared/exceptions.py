@@ -2,9 +2,18 @@ from __future__ import annotations
 
 
 class AppError(Exception):
-    def __init__(self, message: str, *, safe_message: str | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        safe_message: str | None = None,
+        tool_events: list[dict[str, object]] | None = None,
+        error_code: str = "",
+    ) -> None:
         super().__init__(message)
         self.safe_message = safe_message or message
+        self.tool_events = tool_events or []
+        self.error_code = error_code
 
 
 class PermissionDenied(AppError):
@@ -20,6 +29,10 @@ class RetryableExecutionError(AppError):
 
 
 class NonRetryableExecutionError(AppError):
+    pass
+
+
+class DiagnosticLoopExhausted(NonRetryableExecutionError):
     pass
 
 

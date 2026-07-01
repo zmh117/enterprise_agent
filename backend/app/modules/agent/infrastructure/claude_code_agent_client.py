@@ -22,6 +22,7 @@ from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
 from app.modules.internal_tools.infrastructure.internal_api_client import ToolResult
 from app.shared.config import ExecutionSettings
 from app.shared.exceptions import (
+    DiagnosticLoopExhausted,
     NonRetryableExecutionError,
     RetryableExecutionError,
     ToolPolicyError,
@@ -282,9 +283,11 @@ class RealClaudeCodeAgentClient:
             raise RetryableExecutionError(
                 "Claude Agent SDK execution timed out",
                 safe_message="Claude runtime timed out",
+                tool_events=tool_events,
+                error_code="runtime_timeout",
             ) from exc
         except Exception as exc:
-            self._raise_mapped_sdk_error(exc, cli_stderr)
+            self._raise_mapped_sdk_error(exc, cli_stderr, tool_events)
 
         if not final_answer:
             final_answer = "\n".join(text for text in assistant_texts if text).strip()
@@ -393,22 +396,39 @@ class RealClaudeCodeAgentClient:
             ),
         )
 
-    def _raise_mapped_sdk_error(self, exc: Exception, cli_stderr: list[str]) -> None:
+    def _raise_mapped_sdk_error(
+        self,
+        exc: Exception,
+        cli_stderr: list[str],
+        tool_events: list[dict[str, Any]] | None = None,
+    ) -> None:
+        tool_events = tool_events or []
         if isinstance(exc, (RetryableExecutionError, NonRetryableExecutionError)):
             raise exc
         if isinstance(exc, ToolPolicyError):
             raise NonRetryableExecutionError(
                 str(exc),
                 safe_message=exc.safe_message,
+                tool_events=tool_events,
+                error_code="tool_policy_error",
             ) from exc
         name = exc.__class__.__name__
         message = _sdk_error_message(exc, cli_stderr)
+        if _looks_max_turns_exhausted(message):
+            raise DiagnosticLoopExhausted(
+                message,
+                safe_message=_safe_sdk_error_message("Claude runtime failed", message),
+                tool_events=tool_events,
+                error_code="max_turns_exhausted",
+            ) from exc
         if name in {"CLINotFoundError", "CLIConnectionError"}:
             raise NonRetryableExecutionError(
                 message,
                 safe_message=_safe_sdk_error_message(
                     "Claude Code CLI runtime is not available", message
                 ),
+                tool_events=tool_events,
+                error_code="claude_cli_unavailable",
             ) from exc
         if name in {"ProcessError", "CLIJSONDecodeError"} or _looks_transient(message):
             raise RetryableExecutionError(
@@ -416,10 +436,14 @@ class RealClaudeCodeAgentClient:
                 safe_message=_safe_sdk_error_message(
                     "Claude runtime failed with a transient error", message
                 ),
+                tool_events=tool_events,
+                error_code="claude_transient_error",
             ) from exc
         raise RetryableExecutionError(
             message,
             safe_message=_safe_sdk_error_message("Claude runtime failed", message),
+            tool_events=tool_events,
+            error_code="claude_runtime_error",
         ) from exc
 
 
@@ -618,6 +642,11 @@ def _looks_transient(message: str) -> bool:
             "json",
         )
     )
+
+
+def _looks_max_turns_exhausted(message: str) -> bool:
+    lower = message.lower()
+    return "maximum number of turns" in lower or "max turns" in lower
 
 
 def _append_cli_stderr(lines: list[str], line: str, max_chars: int) -> None:

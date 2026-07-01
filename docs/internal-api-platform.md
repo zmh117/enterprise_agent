@@ -40,6 +40,18 @@ POST /tools/database/query
 Redis (`/tools/redis/get`, `/tools/redis/scan`) and Loki (`/tools/loki/query`) take the
 same `environment/base/workshop`. The caller identity is read from `X-Agent-User-Id`.
 
+Schema discovery is a dedicated read-only platform endpoint, not user-supplied SQL:
+
+```json
+POST /tools/schema/directory
+{ "environment": "sanjiu", "base": "guanlan", "workshop": "GL001", "limit": 20 }
+```
+
+The response lists only authorized tables and columns for the target workshop, omits all
+connection details, and marks `truncated=true` when bounded. Agent SQL must reference only
+tables and columns from this directory. If the directory is empty or lacks fields needed
+for the user question, the Agent should report `不具备诊断证据` instead of guessing table names.
+
 ### ER context → addressing directory
 
 `/tools/context/er` and `/tools/context/business-flow` return, in `summary.addressing`, an
@@ -66,7 +78,8 @@ Pipeline (fails closed at every step):
 3. Read-only AST: reject non-query, `SELECT ... INTO`, `FOR UPDATE`, PL/SQL blocks / batches.
 4. Real table extraction (excludes CTE names).
 5. Workshop table-prefix enforcement (case-folded; Oracle upper-cases unquoted identifiers).
-6. Dialect-correct row bound: MySQL `LIMIT`, SQL Server `TOP`, Oracle `FETCH FIRST`.
+6. Schema-directory availability check for the referenced physical tables.
+7. Dialect-correct row bound: MySQL `LIMIT`, SQL Server `TOP`, Oracle `FETCH FIRST`.
 
 Defense in depth: SQL parser + read-only DB account + statement timeout + row/byte caps.
 Cross-workshop (`GL002_*` in a `GL001` request) and prefix-less tables are rejected.

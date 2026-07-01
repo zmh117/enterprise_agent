@@ -12,6 +12,10 @@ from app.modules.internal_api_platform.application.platform_service import Platf
 from app.modules.internal_api_platform.domain.topology import DatabaseEngine
 from app.modules.internal_api_platform.infrastructure.config import load_platform_config
 from app.modules.internal_api_platform.infrastructure.db.executor import FakeQueryExecutor
+from app.modules.internal_api_platform.infrastructure.db.schema_directory import (
+    FakeSchemaDirectoryReader,
+)
+from app.modules.internal_api_platform.domain.schema_directory import SchemaColumn, SchemaTable
 from app.modules.internal_api_platform.infrastructure.loki_gateway import FakeLokiClient
 from app.modules.internal_api_platform.infrastructure.redis_gateway import FakeRedisGateway
 from app.modules.internal_api_platform.infrastructure.registry import TopologyRegistry
@@ -88,6 +92,7 @@ def _load() -> tuple[TopologyRegistry, object]:
 def _service(
     *,
     executor: FakeQueryExecutor | None = None,
+    schema_reader: FakeSchemaDirectoryReader | None = None,
     redis: FakeRedisGateway | None = None,
     loki: FakeLokiClient | None = None,
 ) -> PlatformService:
@@ -99,6 +104,7 @@ def _service(
             DatabaseEngine.MYSQL: executor or FakeQueryExecutor(),
             DatabaseEngine.SQLSERVER: FakeQueryExecutor(),
         },
+        schema_readers={DatabaseEngine.MYSQL: schema_reader or FakeSchemaDirectoryReader()},
         redis_gateway=redis or FakeRedisGateway(),
         loki_client=loki or FakeLokiClient(),
         max_rows=100,
@@ -257,6 +263,106 @@ class ServiceTests(unittest.TestCase):
         )
 
 
+class SchemaDirectoryTests(unittest.TestCase):
+    def test_schema_directory_filters_by_workshop_and_hides_secrets(self) -> None:
+        service = _service()
+        result = service.schema_directory(
+            user_id="operator",
+            environment="sanjiu",
+            base="guanlan",
+            workshop="GL001",
+        )
+
+        self.assertEqual("internal-api-platform-schema", result.metadata["source"])
+        table_names = [table["name"] for table in result.summary["tables"]]
+        self.assertEqual(["GL001_EBR_order"], table_names)
+        self.assertNotIn("mysql.guanlan", str(result.summary))
+        self.assertNotIn("s3cret", str(result.summary))
+        self.assertEqual("use_listed_tables_and_columns_only", result.summary["diagnostic_action"])
+
+    def test_schema_directory_for_unsupported_engine_is_explicit(self) -> None:
+        from app.modules.internal_api_platform.infrastructure.db.schema_directory import (
+            UnsupportedSchemaDirectoryReader,
+        )
+
+        registry, access = _load()
+        service = PlatformService(
+            registry=registry,
+            access_policy=access,  # type: ignore[arg-type]
+            executors={DatabaseEngine.SQLSERVER: FakeQueryExecutor()},
+            schema_readers={
+                DatabaseEngine.SQLSERVER: UnsupportedSchemaDirectoryReader(DatabaseEngine.SQLSERVER)
+            },
+            redis_gateway=FakeRedisGateway(),
+            loki_client=FakeLokiClient(),
+        )
+
+        result = service.schema_directory(
+            user_id="operator",
+            environment="mmk",
+            base="main",
+            workshop=None,
+        )
+
+        self.assertEqual([], result.summary["tables"])
+        self.assertIn("not implemented", result.summary["limitation"])
+        self.assertEqual(
+            "stop_and_report_insufficient_evidence", result.summary["diagnostic_action"]
+        )
+
+    def test_schema_directory_truncates(self) -> None:
+        service = _service(
+            schema_reader=FakeSchemaDirectoryReader(
+                tables=[
+                    SchemaTable("GL001_EBR_a", [SchemaColumn("id", "int", False)]),
+                    SchemaTable("GL001_EBR_b", [SchemaColumn("id", "int", False)]),
+                ]
+            )
+        )
+        result = service.schema_directory(
+            user_id="operator",
+            environment="sanjiu",
+            base="guanlan",
+            workshop="GL001",
+            limit=1,
+        )
+
+        self.assertTrue(result.truncated)
+        self.assertEqual(1, result.summary["table_count"])
+
+    def test_database_query_rejects_table_absent_from_schema(self) -> None:
+        from app.modules.internal_api_platform.domain.errors import PolicyViolation
+
+        service = _service()
+        with self.assertRaises(PolicyViolation) as raised:
+            service.query_database(
+                user_id="operator",
+                environment="sanjiu",
+                base="guanlan",
+                workshop="GL001",
+                sql="select * from GL001_EBR_missing",
+            )
+
+        self.assertEqual("stop_or_use_schema_directory", raised.exception.diagnostic_action)
+
+    def test_empty_schema_rejects_database_query(self) -> None:
+        from app.modules.internal_api_platform.domain.errors import PolicyViolation
+
+        service = _service(schema_reader=FakeSchemaDirectoryReader(tables=[]))
+        with self.assertRaises(PolicyViolation) as raised:
+            service.query_database(
+                user_id="operator",
+                environment="sanjiu",
+                base="guanlan",
+                workshop="GL001",
+                sql="select * from GL001_EBR_order",
+            )
+
+        self.assertEqual(
+            "stop_and_report_insufficient_evidence", raised.exception.diagnostic_action
+        )
+
+
 class TopologyDirectoryTests(unittest.TestCase):
     def test_directory_is_filtered_by_access_and_hides_secrets(self) -> None:
         service = _service()
@@ -323,6 +429,21 @@ class RouteTests(unittest.TestCase):
         )
         self.assertEqual(200, response.status_code)
         self.assertEqual("mysql", response.json()["summary"]["engine"])
+
+    def test_schema_directory_route(self) -> None:
+        response = self._client().post(
+            "/tools/schema/directory",
+            json={
+                "environment": "sanjiu",
+                "base": "guanlan",
+                "workshop": "GL001",
+            },
+            headers={"x-agent-user-id": "operator"},
+        )
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual("internal-api-platform-schema", response.json()["metadata"]["source"])
+        self.assertEqual("GL001_EBR_order", response.json()["summary"]["tables"][0]["name"])
 
     def test_er_context_route_returns_addressing(self) -> None:
         response = self._client().post(

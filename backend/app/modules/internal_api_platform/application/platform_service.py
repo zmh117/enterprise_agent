@@ -261,9 +261,7 @@ class PlatformService:
             kind=ResourceKind.DATABASE,
         )
         table_limit = self._effective_schema_limit(limit)
-        schema = self._schema_directory_for_binding(
-            binding, query=query, table_limit=table_limit
-        )
+        schema = self._schema_directory_for_binding(binding, query=query, table_limit=table_limit)
         if schema is None:
             schema = SchemaDirectory(
                 tables=[],
@@ -404,15 +402,15 @@ class PlatformService:
     def _assert_tables_in_schema(self, tables: list[str], schema: SchemaDirectory) -> None:
         if not schema.tables:
             raise PolicyViolation(
-                "Schema directory is empty for the target; "
-                "diagnostic_action=stop_and_report_insufficient_evidence"
+                "Schema directory is empty for the target",
+                diagnostic_action="stop_and_report_insufficient_evidence",
             )
         known = {name.lower() for name in schema.table_names()}
         for table in tables:
             if table.lower() not in known:
                 raise PolicyViolation(
-                    f"Table '{table}' is not available in the target schema directory; "
-                    "diagnostic_action=stop_or_use_schema_directory"
+                    f"Table '{table}' is not available in the target schema directory",
+                    diagnostic_action="stop_or_use_schema_directory",
                 )
 
     def _audit(self, user_id: str, target: TargetRef, decision: str, reason: str) -> None:

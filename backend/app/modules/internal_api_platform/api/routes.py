@@ -95,9 +95,7 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
         return _envelope(request, started, result)
 
     @app.post("/tools/schema/directory")
-    async def schema_directory(
-        request: FastAPIRequest, payload: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def schema_directory(request: FastAPIRequest, payload: dict[str, Any]) -> dict[str, Any]:
         started = time.monotonic()
         try:
             result = service.schema_directory(

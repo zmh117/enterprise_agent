@@ -28,6 +28,18 @@ class MetadataInternalApiClient:
     def get_business_flow_context(self, query: str, context: ToolRequestContext) -> ToolResult:
         return ToolResult(summary={}, raw={})
 
+    def get_schema_directory(
+        self,
+        context: ToolRequestContext,
+        *,
+        environment: str,
+        base: str,
+        workshop: str | None = None,
+        query: str = "",
+        limit: int = 50,
+    ) -> ToolResult:
+        return ToolResult(summary={"tables": []}, raw={})
+
     def query_loki(
         self,
         selector: dict[str, str],

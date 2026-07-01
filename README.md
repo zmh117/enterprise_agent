@@ -164,11 +164,27 @@ MVP 只读 endpoint：
 ```text
 POST /tools/context/er
 POST /tools/context/business-flow
+POST /tools/schema/directory
 POST /tools/loki/query
 POST /tools/database/query
 POST /tools/redis/get
 POST /tools/redis/scan
 ```
+
+本地 topology-aware 平台可先验证 schema directory，再提交 Agent job：
+
+```bash
+curl --noproxy '*' -s -X POST http://127.0.0.1:9000/tools/schema/directory \
+  -H 'content-type: application/json' \
+  -H 'X-Agent-User-Id: local-user' \
+  -d '{"environment":"sanjiu","base":"guanlan","workshop":"GL001","limit":20}'
+```
+
+Agent 只允许查询 schema directory 中列出的表和字段。如果本地样例库只有
+`GL001_EBR_PI(ID)` 这类不足以按订单号诊断的数据结构，最终报告应说明
+`不具备诊断证据`，而不是反复猜测 `mo`、`order`、`production_order` 等不存在的表。
+即使真实 Claude runtime 因 timeout 或 max turns 失败，`/tool-calls` 也应保留失败前
+已经发生的工具调用摘要，便于判断是 schema 不足、策略拒绝还是上游不可达。
 
 响应建议统一为：
 

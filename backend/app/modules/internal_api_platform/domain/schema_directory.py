@@ -66,4 +66,3 @@ class SchemaDirectoryReader(Protocol):
         table_limit: int,
         column_limit: int,
     ) -> SchemaDirectory: ...
-

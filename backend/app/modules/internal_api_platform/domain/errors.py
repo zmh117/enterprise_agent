@@ -8,13 +8,17 @@ class PlatformError(Exception):
     code: str = "platform_error"
     retryable: bool = False
 
-    def __init__(self, message: str) -> None:
+    def __init__(self, message: str, *, diagnostic_action: str = "") -> None:
         super().__init__(message)
         self.message = message
+        self.diagnostic_action = diagnostic_action
 
     @property
     def body(self) -> dict[str, dict[str, str]]:
-        return {"error": {"code": self.code, "message": self.message}}
+        error = {"code": self.code, "message": self.message}
+        if self.diagnostic_action:
+            error["diagnostic_action"] = self.diagnostic_action
+        return {"error": error}
 
 
 class ResolutionError(PlatformError):
