@@ -122,8 +122,9 @@ class ReadOnlyToolService:
                 settings=self.limits,
             )
         elif tool_name == "query_loki":
+            selector = _loki_selector_from_arguments(arguments)
             assert_loki_bounds(
-                service=str(arguments.get("service", "")),
+                selector=selector,
                 minutes=int(arguments.get("minutes", 15)),
                 limit=int(arguments.get("limit", 100)),
                 settings=self.limits,
@@ -158,7 +159,7 @@ class ReadOnlyToolService:
             )
         if tool_name == "query_loki":
             return self.internal_api_client.query_loki(
-                service=str(arguments["service"]),
+                selector=_loki_selector_from_arguments(arguments),
                 query=str(arguments.get("query", "")),
                 minutes=int(arguments.get("minutes", 15)),
                 limit=int(arguments.get("limit", 100)),
@@ -195,3 +196,18 @@ def _storage_summary(result: ToolResult) -> dict[str, Any]:
         "metadata": result.metadata,
         "truncated": result.truncated,
     }
+
+
+def _loki_selector_from_arguments(arguments: dict[str, Any]) -> dict[str, str]:
+    selector = arguments.get("selector")
+    if selector is None:
+        service = str(arguments.get("service", "")).strip()
+        return {"service": service} if service else {}
+    if not isinstance(selector, dict):
+        raise ToolPolicyError("Loki selector must be an object")
+    normalized: dict[str, str] = {}
+    for key, value in selector.items():
+        if not isinstance(value, str):
+            raise ToolPolicyError("Loki selector values must be strings")
+        normalized[str(key)] = value.strip()
+    return normalized

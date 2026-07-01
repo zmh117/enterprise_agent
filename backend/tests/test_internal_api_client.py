@@ -79,7 +79,7 @@ class HttpInternalApiClientTests(unittest.TestCase):
             return FakeResponse({"line_count": 1})
 
         client = HttpInternalApiClient("http://internal.test", urlopen_func=fake_urlopen)
-        result = client.query_loki("order-service", "", 15, 10, self._context())
+        result = client.query_loki({"service": "order-service"}, "", 15, 10, self._context())
 
         self.assertEqual({"line_count": 1}, result.summary)
         self.assertEqual({"line_count": 1}, result.raw)
@@ -104,7 +104,7 @@ class HttpInternalApiClientTests(unittest.TestCase):
         client = HttpInternalApiClient("http://internal.test", urlopen_func=fake_urlopen)
 
         with self.assertRaises(RetryableExecutionError) as raised:
-            client.query_loki("order-service", "", 15, 10, self._context())
+            client.query_loki({"service": "order-service"}, "", 15, 10, self._context())
 
         self.assertIn("Internal API Platform request failed", raised.exception.safe_message)
         self.assertIn("bearer <redacted>", raised.exception.safe_message)
