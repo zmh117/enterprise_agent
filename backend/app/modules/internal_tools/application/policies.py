@@ -33,7 +33,14 @@ FORBIDDEN_REDIS = {
     "script",
 }
 
-ALLOWED_LOKI_SELECTOR_LABELS = {"cluster", "container", "region", "service", "service_name"}
+ALLOWED_LOKI_SELECTOR_LABELS = {
+    "cluster",
+    "container",
+    "region",
+    "service",
+    "service_name",
+    "workshop",
+}
 LOKI_SELECTOR_VALUE_PATTERN = re.compile(r"^[A-Za-z0-9_.:/-]+$")
 
 
@@ -81,3 +88,8 @@ def assert_loki_bounds(
         raise ToolPolicyError("Loki time range exceeds configured maximum")
     if limit <= 0 or limit > settings.max_loki_lines:
         raise ToolPolicyError("Loki result size exceeds configured maximum")
+
+
+def assert_loki_label(label: str) -> None:
+    if label not in ALLOWED_LOKI_SELECTOR_LABELS:
+        raise ToolPolicyError(f"Loki selector label is not allowed: {label}")

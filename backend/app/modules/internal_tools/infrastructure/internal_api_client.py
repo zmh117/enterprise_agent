@@ -66,6 +66,42 @@ class InternalApiClient(Protocol):
         workshop: str | None = None,
     ) -> ToolResult: ...
 
+    def diagnose_loki_labels(
+        self,
+        context: ToolRequestContext,
+        *,
+        environment: str,
+        base: str,
+        workshop: str | None = None,
+        minutes: int = 15,
+        limit: int = 100,
+    ) -> ToolResult: ...
+
+    def diagnose_loki_label_values(
+        self,
+        context: ToolRequestContext,
+        *,
+        environment: str,
+        base: str,
+        label: str,
+        workshop: str | None = None,
+        minutes: int = 15,
+        limit: int = 100,
+    ) -> ToolResult: ...
+
+    def diagnose_loki_probe(
+        self,
+        selector: dict[str, str],
+        query: str,
+        minutes: int,
+        limit: int,
+        context: ToolRequestContext,
+        *,
+        environment: str,
+        base: str,
+        workshop: str | None = None,
+    ) -> ToolResult: ...
+
     def query_database(
         self,
         datasource: str,
@@ -226,6 +262,94 @@ class FakeInternalApiClient:
         }
         return ToolResult(summary=summary, raw=summary)
 
+    def diagnose_loki_labels(
+        self,
+        context: ToolRequestContext,
+        *,
+        environment: str,
+        base: str,
+        workshop: str | None = None,
+        minutes: int = 15,
+        limit: int = 100,
+    ) -> ToolResult:
+        call: dict[str, Any] = {"minutes": minutes, "limit": limit}
+        call.update(_addressing_payload(environment, base, workshop))
+        self.calls.append(("diagnose_loki_labels", call))
+        summary = {
+            "selector": {"workshop": workshop} if workshop else {},
+            "labels": ["service", "workshop"],
+            "label_count": 2,
+            "tenant_configured": True,
+            "truncated": False,
+        }
+        return ToolResult(
+            summary=summary,
+            raw={"label_count": 2},
+            metadata={"source": "fake-loki-diagnostics"},
+        )
+
+    def diagnose_loki_label_values(
+        self,
+        context: ToolRequestContext,
+        *,
+        environment: str,
+        base: str,
+        label: str,
+        workshop: str | None = None,
+        minutes: int = 15,
+        limit: int = 100,
+    ) -> ToolResult:
+        call: dict[str, Any] = {"label": label, "minutes": minutes, "limit": limit}
+        call.update(_addressing_payload(environment, base, workshop))
+        self.calls.append(("diagnose_loki_label_values", call))
+        values = [workshop] if label == "workshop" and workshop else ["order-service"]
+        summary = {
+            "label": label,
+            "values": values[:limit],
+            "value_count": len(values[:limit]),
+            "tenant_configured": True,
+            "truncated": len(values) > limit,
+        }
+        return ToolResult(
+            summary=summary,
+            raw={"value_count": len(values)},
+            metadata={"source": "fake-loki-diagnostics"},
+            truncated=len(values) > limit,
+        )
+
+    def diagnose_loki_probe(
+        self,
+        selector: dict[str, str],
+        query: str,
+        minutes: int,
+        limit: int,
+        context: ToolRequestContext,
+        *,
+        environment: str,
+        base: str,
+        workshop: str | None = None,
+    ) -> ToolResult:
+        call: dict[str, Any] = {
+            "selector": selector,
+            "query": query,
+            "minutes": minutes,
+            "limit": limit,
+        }
+        call.update(_addressing_payload(environment, base, workshop))
+        self.calls.append(("diagnose_loki_probe", call))
+        summary = {
+            "selector": selector,
+            "query": query,
+            "stream_count": 0,
+            "line_count": 0,
+            "empty_result_hints": ["No matching logs in fake diagnostics"],
+        }
+        return ToolResult(
+            summary=summary,
+            raw={"result_count": 0},
+            metadata={"source": "fake-loki-diagnostics"},
+        )
+
     def query_database(
         self,
         datasource: str,
@@ -345,6 +469,56 @@ class HttpInternalApiClient:
         }
         payload.update(_addressing_payload(environment, base, workshop))
         return self._post("/tools/loki/query", payload, context)
+
+    def diagnose_loki_labels(
+        self,
+        context: ToolRequestContext,
+        *,
+        environment: str,
+        base: str,
+        workshop: str | None = None,
+        minutes: int = 15,
+        limit: int = 100,
+    ) -> ToolResult:
+        payload: dict[str, Any] = {"minutes": minutes, "limit": limit}
+        payload.update(_addressing_payload(environment, base, workshop))
+        return self._post("/tools/loki/labels", payload, context)
+
+    def diagnose_loki_label_values(
+        self,
+        context: ToolRequestContext,
+        *,
+        environment: str,
+        base: str,
+        label: str,
+        workshop: str | None = None,
+        minutes: int = 15,
+        limit: int = 100,
+    ) -> ToolResult:
+        payload: dict[str, Any] = {"label": label, "minutes": minutes, "limit": limit}
+        payload.update(_addressing_payload(environment, base, workshop))
+        return self._post("/tools/loki/label-values", payload, context)
+
+    def diagnose_loki_probe(
+        self,
+        selector: dict[str, str],
+        query: str,
+        minutes: int,
+        limit: int,
+        context: ToolRequestContext,
+        *,
+        environment: str,
+        base: str,
+        workshop: str | None = None,
+    ) -> ToolResult:
+        payload: dict[str, Any] = {
+            "selector": selector,
+            "query": query,
+            "minutes": minutes,
+            "limit": limit,
+        }
+        payload.update(_addressing_payload(environment, base, workshop))
+        return self._post("/tools/loki/probe", payload, context)
 
     def query_database(
         self,

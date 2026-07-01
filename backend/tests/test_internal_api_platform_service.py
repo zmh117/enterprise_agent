@@ -4,6 +4,7 @@ import textwrap
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 
 from fastapi.testclient import TestClient
 
@@ -142,12 +143,8 @@ class ExampleConfigTests(unittest.TestCase):
 
 
 class LokiClientTests(unittest.TestCase):
-    def test_transient_upstream_error_is_retryable(self) -> None:
-        import io
-        import urllib.error
-
+    def _binding(self) -> Any:
         from app.modules.internal_api_platform.domain.addressing import ResourceBinding
-        from app.modules.internal_api_platform.domain.errors import UpstreamUnavailable
         from app.modules.internal_api_platform.domain.topology import (
             Base,
             DatabaseEngine,
@@ -155,6 +152,26 @@ class LokiClientTests(unittest.TestCase):
             LokiConnection,
             ResourceKind,
         )
+
+        base = Base(
+            code="main",
+            engine=DatabaseEngine.MYSQL,
+            loki=LokiConnection("http://loki:3100", tenant="tenant1"),
+        )
+        return ResourceBinding(
+            environment=Environment(code="mmk", bases={"main": base}),
+            base=base,
+            kind=ResourceKind.LOKI,
+            workshop=None,
+            engine=DatabaseEngine.MYSQL,
+            loki=base.loki,
+        )
+
+    def test_transient_upstream_error_is_retryable(self) -> None:
+        import io
+        import urllib.error
+
+        from app.modules.internal_api_platform.domain.errors import UpstreamUnavailable
         from app.modules.internal_api_platform.infrastructure.loki_gateway import HttpLokiClient
 
         def failing(request: object, timeout: int) -> object:
@@ -166,22 +183,98 @@ class LokiClientTests(unittest.TestCase):
                 fp=io.BytesIO(b"{}"),
             )
 
-        base = Base(
-            code="main", engine=DatabaseEngine.MYSQL, loki=LokiConnection("http://loki:3100")
-        )
-        binding = ResourceBinding(
-            environment=Environment(code="mmk", bases={"main": base}),
-            base=base,
-            kind=ResourceKind.LOKI,
-            workshop=None,
-            engine=DatabaseEngine.MYSQL,
-            loki=base.loki,
-        )
         client = HttpLokiClient(
             max_minutes=60, max_lines=500, max_response_chars=4000, urlopen_func=failing
         )
         with self.assertRaises(UpstreamUnavailable):
-            client.query(binding, selector={"service": "s"}, query="", minutes=5, limit=10)
+            client.query(self._binding(), selector={"service": "s"}, query="", minutes=5, limit=10)
+
+    def test_diagnostic_labels_from_series_are_filtered_and_truncated(self) -> None:
+        from app.modules.internal_api_platform.infrastructure.loki_gateway import HttpLokiClient
+
+        class Response:
+            def __enter__(self) -> "Response":
+                return self
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return (
+                    b'{"status":"success","data":['
+                    b'{"service":"order-service","workshop":"GL001","token":"secret"},'
+                    b'{"container":"order-1","service_name":"order"}]}'
+                )
+
+        def fake_urlopen(request: object, timeout: int) -> Response:
+            return Response()
+
+        client = HttpLokiClient(
+            max_minutes=60, max_lines=2, max_response_chars=4000, urlopen_func=fake_urlopen
+        )
+        result = client.labels(
+            self._binding(),
+            selector={"workshop": "GL001"},
+            minutes=5,
+            limit=2,
+        )
+
+        self.assertEqual(["container", "service"], result.summary["labels"])
+        self.assertTrue(result.truncated)
+        self.assertNotIn("token", result.summary["labels"])
+
+    def test_diagnostic_loki_http_errors_are_classified(self) -> None:
+        import io
+        import urllib.error
+
+        from app.modules.internal_api_platform.domain.errors import (
+            PolicyViolation,
+            UpstreamUnavailable,
+        )
+        from app.modules.internal_api_platform.infrastructure.loki_gateway import HttpLokiClient
+
+        def transient(request: object, timeout: int) -> object:
+            raise urllib.error.HTTPError(
+                url="http://loki",
+                code=503,
+                msg="busy",
+                hdrs={},  # type: ignore[arg-type]
+                fp=io.BytesIO(b'{"error":"authorization: bearer secret-token"}'),
+            )
+
+        client = HttpLokiClient(
+            max_minutes=60, max_lines=500, max_response_chars=4000, urlopen_func=transient
+        )
+        with self.assertRaises(UpstreamUnavailable):
+            client.label_values(
+                self._binding(),
+                label="service",
+                selector={},
+                minutes=5,
+                limit=10,
+            )
+
+        def rejected(request: object, timeout: int) -> object:
+            raise urllib.error.HTTPError(
+                url="http://loki",
+                code=401,
+                msg="unauthorized",
+                hdrs={},  # type: ignore[arg-type]
+                fp=io.BytesIO(b'{"error":"authorization: bearer secret-token"}'),
+            )
+
+        rejected_client = HttpLokiClient(
+            max_minutes=60, max_lines=500, max_response_chars=4000, urlopen_func=rejected
+        )
+        with self.assertRaises(PolicyViolation) as raised:
+            rejected_client.label_values(
+                self._binding(),
+                label="service",
+                selector={},
+                minutes=5,
+                limit=10,
+            )
+        self.assertNotIn("secret-token", str(raised.exception))
 
 
 class ServiceTests(unittest.TestCase):
@@ -261,6 +354,74 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(
             {"service": "order-service", "workshop": "GL001"}, loki.calls[0]["selector"]
         )
+
+    def test_loki_diagnostics_inject_workshop_label(self) -> None:
+        loki = FakeLokiClient()
+        service = _service(loki=loki)
+
+        labels = service.loki_labels(
+            user_id="operator",
+            environment="sanjiu",
+            base="guanlan",
+            workshop="GL001",
+            minutes=5,
+            limit=10,
+        )
+        values = service.loki_label_values(
+            user_id="operator",
+            environment="sanjiu",
+            base="guanlan",
+            workshop="GL001",
+            label="workshop",
+            minutes=5,
+            limit=10,
+        )
+        probe = service.loki_probe(
+            user_id="operator",
+            environment="sanjiu",
+            base="guanlan",
+            workshop="GL001",
+            selector={"service": "order-service"},
+            query="Material",
+            minutes=5,
+            limit=10,
+        )
+
+        self.assertEqual({"workshop": "GL001"}, loki.calls[0]["selector"])
+        self.assertEqual("internal-api-platform-loki-diagnostics", labels.metadata["source"])
+        self.assertEqual(["GL001"], values.summary["values"])
+        self.assertEqual(
+            {"service": "order-service", "workshop": "GL001"},
+            loki.calls[2]["selector"],
+        )
+        self.assertIn("line_count", probe.summary)
+
+    def test_loki_diagnostics_reject_disallowed_label_and_unauthorized_target(self) -> None:
+        from app.modules.internal_api_platform.domain.errors import (
+            AuthorizationError,
+            PolicyViolation,
+        )
+
+        service = _service()
+        with self.assertRaises(PolicyViolation):
+            service.loki_label_values(
+                user_id="operator",
+                environment="sanjiu",
+                base="guanlan",
+                workshop="GL001",
+                label="pod",
+                minutes=5,
+                limit=10,
+            )
+        with self.assertRaises(AuthorizationError):
+            service.loki_labels(
+                user_id="alice",
+                environment="sanjiu",
+                base="guanlan",
+                workshop="GL002",
+                minutes=5,
+                limit=10,
+            )
 
 
 class SchemaDirectoryTests(unittest.TestCase):

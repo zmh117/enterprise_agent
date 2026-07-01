@@ -59,6 +59,15 @@ _ADDRESSING_PROPERTIES: dict[str, Any] = {
     },
 }
 
+_LOKI_SELECTOR_PROPERTIES: dict[str, Any] = {
+    "cluster": {"type": "string"},
+    "container": {"type": "string"},
+    "region": {"type": "string"},
+    "service": {"type": "string"},
+    "service_name": {"type": "string"},
+    "workshop": {"type": "string"},
+}
+
 
 TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
     "get_er_context": {
@@ -109,13 +118,7 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
             "properties": {
                 "selector": {
                     "type": "object",
-                    "properties": {
-                        "cluster": {"type": "string"},
-                        "container": {"type": "string"},
-                        "region": {"type": "string"},
-                        "service": {"type": "string"},
-                        "service_name": {"type": "string"},
-                    },
+                    "properties": _LOKI_SELECTOR_PROPERTIES,
                     "additionalProperties": False,
                     "minProperties": 1,
                 },
@@ -129,6 +132,72 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 **_ADDRESSING_PROPERTIES,
             },
             "required": ["selector"],
+            "additionalProperties": False,
+        },
+    },
+    "diagnose_loki_labels": {
+        "description": (
+            "List bounded Loki label names visible for the resolved environment/base/workshop. "
+            "Use this when a Loki query returns no logs or the correct service label is unclear."
+        ),
+        "schema": {
+            "type": "object",
+            "properties": {
+                "minutes": {"type": "integer", "minimum": 1},
+                "limit": {"type": "integer", "minimum": 1},
+                **_ADDRESSING_PROPERTIES,
+            },
+            "required": ["environment", "base"],
+            "additionalProperties": False,
+        },
+    },
+    "diagnose_loki_label_values": {
+        "description": (
+            "List bounded values for an allowed Loki label such as service, service_name, "
+            "container, cluster, region, or workshop."
+        ),
+        "schema": {
+            "type": "object",
+            "properties": {
+                "label": {
+                    "type": "string",
+                    "enum": [
+                        "cluster",
+                        "container",
+                        "region",
+                        "service",
+                        "service_name",
+                        "workshop",
+                    ],
+                },
+                "minutes": {"type": "integer", "minimum": 1},
+                "limit": {"type": "integer", "minimum": 1},
+                **_ADDRESSING_PROPERTIES,
+            },
+            "required": ["environment", "base", "label"],
+            "additionalProperties": False,
+        },
+    },
+    "diagnose_loki_probe": {
+        "description": (
+            "Probe a bounded Loki selector and keyword to explain empty results. "
+            "Returns stream_count, line_count, and safe empty-result hints."
+        ),
+        "schema": {
+            "type": "object",
+            "properties": {
+                "selector": {
+                    "type": "object",
+                    "properties": _LOKI_SELECTOR_PROPERTIES,
+                    "additionalProperties": False,
+                    "minProperties": 1,
+                },
+                "query": {"type": "string"},
+                "minutes": {"type": "integer", "minimum": 1},
+                "limit": {"type": "integer", "minimum": 1},
+                **_ADDRESSING_PROPERTIES,
+            },
+            "required": ["environment", "base", "selector"],
             "additionalProperties": False,
         },
     },
@@ -621,7 +690,9 @@ def _bounded_payload(payload: Any, max_chars: int) -> dict[str, Any]:
 
 
 def _risk_level(tool_name: str) -> str:
-    return "low" if tool_name.startswith("get_") or tool_name == "query_loki" else "medium"
+    if tool_name.startswith("get_") or tool_name.startswith("diagnose_loki"):
+        return "low"
+    return "low" if tool_name == "query_loki" else "medium"
 
 
 def _looks_transient(message: str) -> bool:

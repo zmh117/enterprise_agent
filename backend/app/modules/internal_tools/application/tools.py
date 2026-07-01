@@ -6,6 +6,7 @@ from typing import Any
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.audit.application.summaries import bounded_summary
 from app.modules.internal_tools.application.policies import (
+    assert_loki_label,
     assert_loki_bounds,
     assert_readonly_sql,
     assert_redis_readonly,
@@ -82,9 +83,7 @@ class ReadOnlyToolService:
                     ),
                     status="SUCCEEDED",
                     duration_ms=int((time.monotonic() - started) * 1000),
-                    risk_level="low"
-                    if tool_name.startswith("get_") or tool_name == "query_loki"
-                    else "medium",
+                    risk_level=_risk_level(tool_name),
                     audit_id=audit_id,
                 )
             return result
@@ -129,6 +128,19 @@ class ReadOnlyToolService:
                 limit=int(arguments.get("limit", 100)),
                 settings=self.limits,
             )
+        elif tool_name == "diagnose_loki_probe":
+            selector = _loki_selector_from_arguments(arguments)
+            assert_loki_bounds(
+                selector=selector,
+                minutes=int(arguments.get("minutes", 15)),
+                limit=int(arguments.get("limit", 100)),
+                settings=self.limits,
+            )
+        elif tool_name == "diagnose_loki_labels":
+            assert_loki_diagnostic_bounds(arguments, self.limits)
+        elif tool_name == "diagnose_loki_label_values":
+            assert_loki_label(str(arguments.get("label", "")))
+            assert_loki_diagnostic_bounds(arguments, self.limits)
         elif tool_name not in {
             "get_er_context",
             "get_business_flow_context",
@@ -183,6 +195,42 @@ class ReadOnlyToolService:
                 context=context,
                 **addressing,
             )
+        if tool_name == "diagnose_loki_labels":
+            if not addressing.get("environment") or not addressing.get("base"):
+                raise ToolPolicyError("Loki diagnostics require environment and base")
+            return self.internal_api_client.diagnose_loki_labels(
+                context=context,
+                environment=addressing["environment"],
+                base=addressing["base"],
+                workshop=addressing.get("workshop"),
+                minutes=int(arguments.get("minutes", 15)),
+                limit=int(arguments.get("limit", 100)),
+            )
+        if tool_name == "diagnose_loki_label_values":
+            if not addressing.get("environment") or not addressing.get("base"):
+                raise ToolPolicyError("Loki diagnostics require environment and base")
+            return self.internal_api_client.diagnose_loki_label_values(
+                context=context,
+                environment=addressing["environment"],
+                base=addressing["base"],
+                workshop=addressing.get("workshop"),
+                label=str(arguments.get("label", "")),
+                minutes=int(arguments.get("minutes", 15)),
+                limit=int(arguments.get("limit", 100)),
+            )
+        if tool_name == "diagnose_loki_probe":
+            if not addressing.get("environment") or not addressing.get("base"):
+                raise ToolPolicyError("Loki diagnostics require environment and base")
+            return self.internal_api_client.diagnose_loki_probe(
+                selector=_loki_selector_from_arguments(arguments),
+                query=str(arguments.get("query", "")),
+                minutes=int(arguments.get("minutes", 15)),
+                limit=int(arguments.get("limit", 100)),
+                context=context,
+                environment=addressing["environment"],
+                base=addressing["base"],
+                workshop=addressing.get("workshop"),
+            )
         if tool_name == "query_database":
             return self.internal_api_client.query_database(
                 datasource=str(arguments.get("datasource", "default")),
@@ -228,6 +276,23 @@ def _addressing_from_arguments(arguments: dict[str, Any]) -> dict[str, str]:
         if value is not None and str(value).strip():
             addressing[field] = str(value).strip()
     return addressing
+
+
+def assert_loki_diagnostic_bounds(arguments: dict[str, Any], limits: ExecutionSettings) -> None:
+    minutes = int(arguments.get("minutes", 15))
+    limit = int(arguments.get("limit", 100))
+    if minutes <= 0 or minutes > limits.max_loki_minutes:
+        raise ToolPolicyError("Loki time range exceeds configured maximum")
+    if limit <= 0 or limit > limits.max_loki_lines:
+        raise ToolPolicyError("Loki result size exceeds configured maximum")
+
+
+def _risk_level(tool_name: str) -> str:
+    if tool_name.startswith("get_") or tool_name.startswith("diagnose_loki"):
+        return "low"
+    if tool_name == "query_loki":
+        return "low"
+    return "medium"
 
 
 def _loki_selector_from_arguments(arguments: dict[str, Any]) -> dict[str, str]:

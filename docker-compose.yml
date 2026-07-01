@@ -49,10 +49,13 @@ services:
     expose:
       - "9000"
 
-  # Topology-aware, multi-dialect read-only platform (三九/mmk). Set
-  # INTERNAL_API_BASE_URL=http://internal-api-platform:9000 on api-server/agent-worker.
+  # real-tools: topology-aware, multi-dialect read-only platform (三九/mmk).
+  # Start with:
+  #   FEATURE_REAL_INTERNAL_TOOLS=true \
+  #   INTERNAL_API_BASE_URL=http://internal-api-platform:9000 \
+  #   docker compose --profile real-tools up -d
   internal-api-platform:
-    # profiles: ["real-tools"]
+    profiles: ["real-tools"]
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -89,7 +92,7 @@ services:
       SEED_LOCAL_CONFIG: "true"
       DEBUG_AGENT_USER_ID: local-user
       FEATURE_REAL_INTERNAL_TOOLS: ${FEATURE_REAL_INTERNAL_TOOLS:-false}
-      INTERNAL_API_BASE_URL: ${INTERNAL_API_BASE_URL:-http://internal-api-platform.local}
+      INTERNAL_API_BASE_URL: ${INTERNAL_API_BASE_URL:-http://internal-api-platform:9000}
       INTERNAL_API_AUTH_TOKEN: ${INTERNAL_API_AUTH_TOKEN:-}
       INTERNAL_API_TIMEOUT_SECONDS: ${INTERNAL_API_TIMEOUT_SECONDS:-10}
       INTERNAL_API_MAX_RESPONSE_CHARS: ${INTERNAL_API_MAX_RESPONSE_CHARS:-4000}
@@ -134,7 +137,7 @@ services:
       SEED_LOCAL_CONFIG: "true"
       DEBUG_AGENT_USER_ID: local-user
       FEATURE_REAL_INTERNAL_TOOLS: ${FEATURE_REAL_INTERNAL_TOOLS:-false}
-      INTERNAL_API_BASE_URL: ${INTERNAL_API_BASE_URL:-http://internal-api-platform.local}
+      INTERNAL_API_BASE_URL: ${INTERNAL_API_BASE_URL:-http://internal-api-platform:9000}
       INTERNAL_API_AUTH_TOKEN: ${INTERNAL_API_AUTH_TOKEN:-}
       INTERNAL_API_TIMEOUT_SECONDS: ${INTERNAL_API_TIMEOUT_SECONDS:-10}
       INTERNAL_API_MAX_RESPONSE_CHARS: ${INTERNAL_API_MAX_RESPONSE_CHARS:-4000}

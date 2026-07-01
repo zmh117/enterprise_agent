@@ -144,16 +144,64 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
     @app.post("/tools/loki/query")
     async def loki_query(request: FastAPIRequest, payload: dict[str, Any]) -> dict[str, Any]:
         started = time.monotonic()
-        selector = payload.get("selector")
-        if not isinstance(selector, dict):
-            selector = {}
         try:
             result = service.query_loki(
                 user_id=_user_id(request),
                 environment=_require(payload, "environment"),
                 base=_require(payload, "base"),
                 workshop=_optional(payload, "workshop"),
-                selector={str(k): str(v) for k, v in selector.items()},
+                selector=_selector(payload),
+                query=str(payload.get("query", "")),
+                minutes=_int_or_none(payload.get("minutes")) or 15,
+                limit=_int_or_none(payload.get("limit")) or 100,
+            )
+        except PlatformError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.body) from exc
+        return _envelope(request, started, result)
+
+    @app.post("/tools/loki/labels")
+    async def loki_labels(request: FastAPIRequest, payload: dict[str, Any]) -> dict[str, Any]:
+        started = time.monotonic()
+        try:
+            result = service.loki_labels(
+                user_id=_user_id(request),
+                environment=_require(payload, "environment"),
+                base=_require(payload, "base"),
+                workshop=_optional(payload, "workshop"),
+                minutes=_int_or_none(payload.get("minutes")) or 15,
+                limit=_int_or_none(payload.get("limit")) or 100,
+            )
+        except PlatformError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.body) from exc
+        return _envelope(request, started, result)
+
+    @app.post("/tools/loki/label-values")
+    async def loki_label_values(request: FastAPIRequest, payload: dict[str, Any]) -> dict[str, Any]:
+        started = time.monotonic()
+        try:
+            result = service.loki_label_values(
+                user_id=_user_id(request),
+                environment=_require(payload, "environment"),
+                base=_require(payload, "base"),
+                workshop=_optional(payload, "workshop"),
+                label=_require(payload, "label"),
+                minutes=_int_or_none(payload.get("minutes")) or 15,
+                limit=_int_or_none(payload.get("limit")) or 100,
+            )
+        except PlatformError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.body) from exc
+        return _envelope(request, started, result)
+
+    @app.post("/tools/loki/probe")
+    async def loki_probe(request: FastAPIRequest, payload: dict[str, Any]) -> dict[str, Any]:
+        started = time.monotonic()
+        try:
+            result = service.loki_probe(
+                user_id=_user_id(request),
+                environment=_require(payload, "environment"),
+                base=_require(payload, "base"),
+                workshop=_optional(payload, "workshop"),
+                selector=_selector(payload),
                 query=str(payload.get("query", "")),
                 minutes=_int_or_none(payload.get("minutes")) or 15,
                 limit=_int_or_none(payload.get("limit")) or 100,
@@ -177,3 +225,10 @@ def _int_or_none(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError) as exc:
         raise PolicyViolation("Numeric field must be an integer") from exc
+
+
+def _selector(payload: dict[str, Any]) -> dict[str, str]:
+    selector = payload.get("selector")
+    if not isinstance(selector, dict):
+        return {}
+    return {str(k): str(v) for k, v in selector.items()}

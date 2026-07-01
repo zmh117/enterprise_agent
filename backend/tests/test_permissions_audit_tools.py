@@ -50,6 +50,45 @@ class MetadataInternalApiClient:
     ) -> ToolResult:
         return ToolResult(summary={}, raw={})
 
+    def diagnose_loki_labels(
+        self,
+        context: ToolRequestContext,
+        *,
+        environment: str,
+        base: str,
+        workshop: str | None = None,
+        minutes: int = 15,
+        limit: int = 100,
+    ) -> ToolResult:
+        return ToolResult(summary={}, raw={})
+
+    def diagnose_loki_label_values(
+        self,
+        context: ToolRequestContext,
+        *,
+        environment: str,
+        base: str,
+        label: str,
+        workshop: str | None = None,
+        minutes: int = 15,
+        limit: int = 100,
+    ) -> ToolResult:
+        return ToolResult(summary={}, raw={})
+
+    def diagnose_loki_probe(
+        self,
+        selector: dict[str, str],
+        query: str,
+        minutes: int,
+        limit: int,
+        context: ToolRequestContext,
+        *,
+        environment: str,
+        base: str,
+        workshop: str | None = None,
+    ) -> ToolResult:
+        return ToolResult(summary={}, raw={})
+
     def query_redis_get(self, datasource: str, key: str, context: ToolRequestContext) -> ToolResult:
         return ToolResult(summary={}, raw={})
 

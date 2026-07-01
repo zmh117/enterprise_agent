@@ -6,6 +6,11 @@ from .topology import Workshop
 ALLOWED_SELECTOR_LABELS = {"cluster", "container", "region", "service", "service_name", "workshop"}
 
 
+def assert_loki_label_allowed(label: str) -> None:
+    if label not in ALLOWED_SELECTOR_LABELS:
+        raise PolicyViolation(f"Loki selector label is not allowed: {label}")
+
+
 def build_effective_selector(
     selector: dict[str, str],
     *,

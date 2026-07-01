@@ -313,14 +313,36 @@ selector only      -> {cluster="<cluster>"}
 第一版不允许 Agent 传完整任意 LogQL，避免真实联调时生成无界或高成本查询。`selector`
 只允许 `cluster`、`container`、`region`、`service`、`service_name` 这些精确匹配 label。
 
-### 真实 Internal API Platform 模式
+### real-tools：正式 Internal API Platform 模式
 
 ```env
 FEATURE_REAL_INTERNAL_TOOLS=true
-INTERNAL_API_BASE_URL=https://internal-api.example.com
-INTERNAL_API_AUTH_TOKEN=真实内部平台token
+INTERNAL_API_BASE_URL=http://internal-api-platform:9000
+INTERNAL_API_AUTH_TOKEN=
 INTERNAL_API_TIMEOUT_SECONDS=10
 INTERNAL_API_MAX_RESPONSE_CHARS=4000
+INTERNAL_PLATFORM_TOPOLOGY_FILE=/app/backend/config/internal_platform_topology.example.yaml
+SECRET_SANJIU_GUANLAN_LOKI_URL=http://host.docker.internal:3100
+```
+
+启动：
+
+```bash
+FEATURE_REAL_CLAUDE=false \
+FEATURE_REAL_INTERNAL_TOOLS=true \
+INTERNAL_API_BASE_URL=http://internal-api-platform:9000 \
+SECRET_SANJIU_GUANLAN_LOKI_URL=http://host.docker.internal:3100 \
+docker compose --profile real-tools up -d --build internal-api-platform api-server agent-worker
+```
+
+配置一致性检查：
+
+```bash
+docker compose --profile real-tools ps
+docker compose --profile real-tools exec agent-worker printenv INTERNAL_API_BASE_URL
+docker compose --profile real-tools exec agent-worker printenv FEATURE_REAL_INTERNAL_TOOLS
+docker compose --profile real-tools exec agent-worker printenv FEATURE_REAL_CLAUDE
+docker compose --profile real-tools exec internal-api-platform python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:9000/health').read().decode())"
 ```
 
 MVP endpoint：
@@ -328,7 +350,11 @@ MVP endpoint：
 ```text
 POST /tools/context/er
 POST /tools/context/business-flow
+POST /tools/schema/directory
 POST /tools/loki/query
+POST /tools/loki/labels
+POST /tools/loki/label-values
+POST /tools/loki/probe
 POST /tools/database/query
 POST /tools/redis/get
 POST /tools/redis/scan
@@ -371,10 +397,15 @@ Content-Type: application/json
 Schema directory 验证：
 
 ```bash
-curl --noproxy '*' -s -X POST http://127.0.0.1:9000/tools/schema/directory \
-  -H 'content-type: application/json' \
-  -H 'X-Agent-User-Id: local-user' \
-  -d '{"environment":"sanjiu","base":"guanlan","workshop":"GL001","limit":20}'
+docker compose --profile real-tools exec internal-api-platform python -c "import json, urllib.request; payload={'environment':'sanjiu','base':'guanlan','workshop':'GL001','limit':20}; req=urllib.request.Request('http://127.0.0.1:9000/tools/schema/directory', data=json.dumps(payload).encode(), headers={'content-type':'application/json','X-Agent-User-Id':'local-user'}, method='POST'); print(urllib.request.urlopen(req).read().decode())"
+```
+
+Loki 诊断验证：
+
+```bash
+docker compose --profile real-tools exec internal-api-platform python -c "import json, urllib.request; payload={'environment':'sanjiu','base':'guanlan','workshop':'GL001','minutes':15,'limit':20}; req=urllib.request.Request('http://127.0.0.1:9000/tools/loki/labels', data=json.dumps(payload).encode(), headers={'content-type':'application/json','X-Agent-User-Id':'local-user'}, method='POST'); print(urllib.request.urlopen(req).read().decode())"
+docker compose --profile real-tools exec internal-api-platform python -c "import json, urllib.request; payload={'environment':'sanjiu','base':'guanlan','workshop':'GL001','label':'service','minutes':15,'limit':20}; req=urllib.request.Request('http://127.0.0.1:9000/tools/loki/label-values', data=json.dumps(payload).encode(), headers={'content-type':'application/json','X-Agent-User-Id':'local-user'}, method='POST'); print(urllib.request.urlopen(req).read().decode())"
+docker compose --profile real-tools exec internal-api-platform python -c "import json, urllib.request; payload={'environment':'sanjiu','base':'guanlan','workshop':'GL001','selector':{'service':'order-service'},'query':'synthetic-test-error','minutes':15,'limit':20}; req=urllib.request.Request('http://127.0.0.1:9000/tools/loki/probe', data=json.dumps(payload).encode(), headers={'content-type':'application/json','X-Agent-User-Id':'local-user'}, method='POST'); print(urllib.request.urlopen(req).read().decode())"
 ```
 
 真实诊断前，Agent 会使用 schema directory 约束 SQL。若目标 schema 为空、只有
@@ -386,6 +417,11 @@ curl -s http://127.0.0.1:8000/api/agent/jobs/job_xxx/tool-calls
 ```
 
 查看失败前已经持久化的工具调用摘要。
+
+真实 Claude/DeepSeek 联调必须默认使用合成问题、合成 Loki 日志或已脱敏工具摘要。
+只验证 real-tools/Loki 链路时使用 `FEATURE_REAL_CLAUDE=false`；启用
+`FEATURE_REAL_CLAUDE=true` 会调用外部模型 API，未确认前不要发送真实业务日志、
+密钥、个人信息或内部敏感内容。
 
 ## 队列
 

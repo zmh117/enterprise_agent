@@ -197,9 +197,11 @@ def summarize_loki_response(
         "query": loki_query.query,
         "logql": loki_query.logql,
         "minutes": loki_query.minutes,
+        "stream_count": len(streams),
         "line_count": total_lines,
         "highlights": highlights,
         "streams": streams,
+        "empty_result_hints": _empty_result_hints(loki_query) if total_lines == 0 else [],
         "truncated": truncated,
     }
     raw = {
@@ -217,6 +219,18 @@ def summarize_loki_response(
 def _loki_result_items(body: dict[str, Any]) -> list[Any]:
     result = _nested_value(body, ["data", "result"])
     return result if isinstance(result, list) else []
+
+
+def _empty_result_hints(loki_query: LokiQuery) -> list[str]:
+    hints = [
+        "Check whether the selector labels exist in the current Loki tenant.",
+        "Check whether the time range contains matching logs.",
+    ]
+    if "service" in loki_query.selector:
+        hints.append("Check whether the service label value is correct.")
+    if loki_query.query:
+        hints.append("Check whether the keyword exists in matching log lines.")
+    return hints
 
 
 def _nested_value(value: dict[str, Any], keys: list[str]) -> Any:

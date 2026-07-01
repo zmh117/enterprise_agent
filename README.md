@@ -105,9 +105,10 @@ INTERNAL_API_AUTH_TOKEN=
 docker compose --profile mock-tools up -d --build
 ```
 
-### local-loki 模式
+### local-tools / local-loki 模式
 
-使用真实 Claude/DeepSeek，加本地开发用 Internal API Platform 查询宿主机 Loki。
+使用本地开发用 `local-internal-api-platform` 查询宿主机 Loki。它只用于快速验证
+容器到宿主机 Loki 的链路，不是正式拓扑化平台。
 
 宿主机 Loki 地址：
 
@@ -131,6 +132,8 @@ LOKI_BASE_URL=http://host.docker.internal:3100 \
 docker compose --profile local-tools up -d --build local-internal-api-platform api-server agent-worker
 ```
 
+只验证真实 Loki 工具链、不调用外部模型时，把 `FEATURE_REAL_CLAUDE=false`。
+
 local-loki 第一版只真实查询 Loki：
 
 ```text
@@ -147,37 +150,87 @@ POST /tools/redis/get             -> tool_not_configured
 POST /tools/redis/scan            -> tool_not_configured
 ```
 
-### 真实 Internal API Platform 模式
+### real-tools 模式
 
-接生产或内网真实 Internal API Platform：
+使用正式拓扑化 `internal-api-platform`。这是当前真实工具平台主线，支持
+environment/base/workshop 寻址、平台侧访问控制、多方言只读数据库网关、
+Redis/Loki 基地级路由和 Loki 诊断。
 
 ```env
 FEATURE_REAL_INTERNAL_TOOLS=true
-INTERNAL_API_BASE_URL=https://internal-api.example.com
-INTERNAL_API_AUTH_TOKEN=真实内部平台token
+INTERNAL_API_BASE_URL=http://internal-api-platform:9000
+INTERNAL_API_AUTH_TOKEN=
 INTERNAL_API_TIMEOUT_SECONDS=10
 INTERNAL_API_MAX_RESPONSE_CHARS=4000
+INTERNAL_PLATFORM_TOPOLOGY_FILE=/app/backend/config/internal_platform_topology.example.yaml
+SECRET_SANJIU_GUANLAN_LOKI_URL=http://host.docker.internal:3100
 ```
 
-MVP 只读 endpoint：
+启动：
+
+```bash
+FEATURE_REAL_CLAUDE=false \
+FEATURE_REAL_INTERNAL_TOOLS=true \
+INTERNAL_API_BASE_URL=http://internal-api-platform:9000 \
+SECRET_SANJIU_GUANLAN_LOKI_URL=http://host.docker.internal:3100 \
+docker compose --profile real-tools up -d --build internal-api-platform api-server agent-worker
+```
+
+real-tools endpoint：
 
 ```text
 POST /tools/context/er
 POST /tools/context/business-flow
 POST /tools/schema/directory
 POST /tools/loki/query
+POST /tools/loki/labels
+POST /tools/loki/label-values
+POST /tools/loki/probe
 POST /tools/database/query
 POST /tools/redis/get
 POST /tools/redis/scan
 ```
 
-本地 topology-aware 平台可先验证 schema directory，再提交 Agent job：
+先验证平台 health、拓扑和 Loki 诊断，再提交 Agent job：
 
 ```bash
-curl --noproxy '*' -s -X POST http://127.0.0.1:9000/tools/schema/directory \
+docker compose --profile real-tools exec agent-worker printenv INTERNAL_API_BASE_URL
+docker compose --profile real-tools exec internal-api-platform python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:9000/health').read().decode())"
+docker compose --profile real-tools exec internal-api-platform python -c "import json, urllib.request; payload={'environment':'sanjiu','base':'guanlan','workshop':'GL001','limit':20}; req=urllib.request.Request('http://127.0.0.1:9000/tools/loki/labels', data=json.dumps(payload).encode(), headers={'content-type':'application/json','X-Agent-User-Id':'local-user'}, method='POST'); print(urllib.request.urlopen(req).read().decode())"
+```
+
+Schema directory 验证：
+
+```bash
+docker compose --profile real-tools exec internal-api-platform python -c "import json, urllib.request; payload={'environment':'sanjiu','base':'guanlan','workshop':'GL001','limit':20}; req=urllib.request.Request('http://127.0.0.1:9000/tools/schema/directory', data=json.dumps(payload).encode(), headers={'content-type':'application/json','X-Agent-User-Id':'local-user'}, method='POST'); print(urllib.request.urlopen(req).read().decode())"
+```
+
+如果使用外部/生产 Internal API Platform，把 `INTERNAL_API_BASE_URL` 改为实际 HTTPS 地址，
+并设置 `INTERNAL_API_AUTH_TOKEN`。
+
+真实 Claude/DeepSeek 联调时，必须默认使用合成问题、合成日志或已脱敏工具摘要：
+
+```bash
+FEATURE_REAL_CLAUDE=true \
+FEATURE_REAL_INTERNAL_TOOLS=true \
+INTERNAL_API_BASE_URL=http://internal-api-platform:9000 \
+docker compose --profile real-tools up -d --build internal-api-platform api-server agent-worker
+```
+
+不要在未确认前把真实业务日志、密钥、个人信息或内部敏感内容发送到外部模型。
+
+提交安全 debug job 示例：
+
+```bash
+curl --noproxy '*' -s -X POST http://127.0.0.1:8000/api/agent/jobs \
   -H 'content-type: application/json' \
-  -H 'X-Agent-User-Id: local-user' \
-  -d '{"environment":"sanjiu","base":"guanlan","workshop":"GL001","limit":20}'
+  -d '{
+    "message": "使用合成日志检查 sanjiu/guanlan/GL001 的 order-service selector 是否能命中 synthetic-test-error",
+    "user_id": "local-user",
+    "conversation_id": "debug-conversation",
+    "project_code": "default",
+    "idempotency_key": "real-tools-safe-smoke-001"
+  }'
 ```
 
 Agent 只允许查询 schema directory 中列出的表和字段。如果本地样例库只有

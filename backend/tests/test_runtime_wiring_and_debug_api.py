@@ -300,6 +300,54 @@ class RuntimeWiringAndDebugApiTests(unittest.TestCase):
                 any("local-business-flow-placeholder" in payload for payload in payloads)
             )
 
+    def test_debug_api_exposes_loki_diagnostic_tool_metadata(self) -> None:
+        settings = make_settings()
+        built = []
+
+        def factory(_: Settings):
+            container = build_test_container(settings, migrate=True, seed=True)
+            built.append(container)
+            return container
+
+        with TestClient(create_app(settings, container_factory=factory)) as client:
+            container = built[0]
+            created = client.post(
+                "/api/agent/jobs",
+                json={
+                    "message": "用合成日志检查 Loki selector",
+                    "user_id": "local-user",
+                    "conversation_id": "debug-conversation",
+                    "project_code": "default",
+                    "idempotency_key": "loki-diagnostic-tool-job",
+                },
+            )
+            job_id = str(created.json()["job_id"])
+
+            container.tool_service.call_tool(
+                job_id=job_id,
+                user_id="local-user",
+                project_code="default",
+                tool_name="diagnose_loki_probe",
+                arguments={
+                    "environment": "sanjiu",
+                    "base": "guanlan",
+                    "workshop": "GL001",
+                    "selector": {"service": "order-service"},
+                    "query": "synthetic-test-error",
+                    "minutes": 5,
+                    "limit": 10,
+                },
+            )
+
+            tool_calls = client.get(f"/api/agent/jobs/{job_id}/tool-calls")
+            self.assertEqual(200, tool_calls.status_code)
+            diagnostic = tool_calls.json()["tool_calls"][0]
+            self.assertEqual("diagnose_loki_probe", diagnostic["tool_name"])
+            self.assertEqual("low", diagnostic["risk_level"])
+            payload = diagnostic["response_summary"]["payload"]
+            self.assertIn("fake-loki-diagnostics", payload)
+            self.assertIn("empty_result_hints", payload)
+
     def test_debug_api_rejects_unauthorized_user_and_missing_job(self) -> None:
         settings = make_settings()
         built = []

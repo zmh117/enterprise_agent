@@ -84,6 +84,62 @@ class HttpInternalApiClientTests(unittest.TestCase):
         self.assertEqual({"line_count": 1}, result.summary)
         self.assertEqual({"line_count": 1}, result.raw)
 
+    def test_loki_diagnostics_post_structured_addressing(self) -> None:
+        captured: list[dict[str, Any]] = []
+
+        def fake_urlopen(request: Any, timeout: int) -> FakeResponse:
+            captured.append(
+                {
+                    "url": request.full_url,
+                    "payload": json.loads(request.data.decode("utf-8")),
+                }
+            )
+            return FakeResponse(
+                {
+                    "summary": {"metadata_source": "ok"},
+                    "metadata": {"source": "internal-api-platform-loki-diagnostics"},
+                }
+            )
+
+        context = self._context()
+        client = HttpInternalApiClient("http://internal.test", urlopen_func=fake_urlopen)
+        client.diagnose_loki_labels(
+            context,
+            environment="sanjiu",
+            base="guanlan",
+            workshop="GL001",
+            minutes=5,
+            limit=10,
+        )
+        client.diagnose_loki_label_values(
+            context,
+            environment="sanjiu",
+            base="guanlan",
+            workshop="GL001",
+            label="service",
+            minutes=5,
+            limit=10,
+        )
+        result = client.diagnose_loki_probe(
+            {"service": "order-service"},
+            "Material",
+            5,
+            10,
+            context,
+            environment="sanjiu",
+            base="guanlan",
+            workshop="GL001",
+        )
+
+        self.assertEqual("http://internal.test/tools/loki/labels", captured[0]["url"])
+        self.assertEqual("http://internal.test/tools/loki/label-values", captured[1]["url"])
+        self.assertEqual("http://internal.test/tools/loki/probe", captured[2]["url"])
+        self.assertEqual("sanjiu", captured[2]["payload"]["environment"])
+        self.assertEqual("guanlan", captured[2]["payload"]["base"])
+        self.assertEqual("GL001", captured[2]["payload"]["workshop"])
+        self.assertEqual({"service": "order-service"}, captured[2]["payload"]["selector"])
+        self.assertEqual("internal-api-platform-loki-diagnostics", result.metadata["source"])
+
     def test_transient_http_status_is_retryable(self) -> None:
         def fake_urlopen(request: Any, timeout: int) -> FakeResponse:
             raise self._http_error(503, {"message": "overloaded token=secret-token"})

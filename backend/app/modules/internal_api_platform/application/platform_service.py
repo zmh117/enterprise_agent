@@ -6,7 +6,7 @@ from typing import Any
 from ..domain.access import AccessPolicy
 from ..domain.addressing import ResourceBinding, TargetRef
 from ..domain.errors import PlatformError, PolicyViolation
-from ..domain.loki_policy import build_effective_selector
+from ..domain.loki_policy import assert_loki_label_allowed, build_effective_selector
 from ..domain.redis_policy import (
     assert_read_command,
     enforce_key_namespace,
@@ -367,8 +367,97 @@ class PlatformService:
         response.metadata.setdefault("source", "internal-api-platform-loki")
         return response
 
+    def loki_labels(
+        self,
+        *,
+        user_id: str,
+        environment: str,
+        base: str,
+        workshop: str | None,
+        minutes: int,
+        limit: int,
+    ) -> ToolResponse:
+        binding = self._authorize_and_resolve(
+            user_id=user_id,
+            environment=environment,
+            base=base,
+            workshop=workshop,
+            kind=ResourceKind.LOKI,
+        )
+        response = self._loki.labels(
+            binding,
+            selector=self._diagnostic_selector(binding),
+            minutes=minutes,
+            limit=limit,
+        )
+        response.metadata.setdefault("source", "internal-api-platform-loki-diagnostics")
+        return response
+
+    def loki_label_values(
+        self,
+        *,
+        user_id: str,
+        environment: str,
+        base: str,
+        workshop: str | None,
+        label: str,
+        minutes: int,
+        limit: int,
+    ) -> ToolResponse:
+        assert_loki_label_allowed(label)
+        binding = self._authorize_and_resolve(
+            user_id=user_id,
+            environment=environment,
+            base=base,
+            workshop=workshop,
+            kind=ResourceKind.LOKI,
+        )
+        response = self._loki.label_values(
+            binding,
+            label=label,
+            selector=self._diagnostic_selector(binding),
+            minutes=minutes,
+            limit=limit,
+        )
+        response.metadata.setdefault("source", "internal-api-platform-loki-diagnostics")
+        return response
+
+    def loki_probe(
+        self,
+        *,
+        user_id: str,
+        environment: str,
+        base: str,
+        workshop: str | None,
+        selector: dict[str, str],
+        query: str,
+        minutes: int,
+        limit: int,
+    ) -> ToolResponse:
+        binding = self._authorize_and_resolve(
+            user_id=user_id,
+            environment=environment,
+            base=base,
+            workshop=workshop,
+            kind=ResourceKind.LOKI,
+        )
+        effective_selector = build_effective_selector(selector, workshop=binding.workshop)
+        response = self._loki.probe(
+            binding,
+            selector=effective_selector,
+            query=query,
+            minutes=minutes,
+            limit=limit,
+        )
+        response.metadata.setdefault("source", "internal-api-platform-loki-diagnostics")
+        return response
+
     def _redis_prefix(self, binding: ResourceBinding) -> str | None:
         return binding.workshop.redis_key_prefix if binding.workshop else None
+
+    @staticmethod
+    def _diagnostic_selector(binding: ResourceBinding) -> dict[str, str]:
+        return dict(binding.workshop.loki_label) if binding.workshop else {}
 
     def _effective_rows(self, limit: int | None) -> int:
         if limit is None or limit < 1:

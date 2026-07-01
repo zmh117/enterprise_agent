@@ -22,5 +22,6 @@ openspec-validate:
 	openspec validate --specs
 	openspec validate connect-internal-tool-platform
 	openspec validate add-local-internal-api-platform-loki
+	openspec validate stabilize-real-tools-runtime-and-loki-diagnostics
 
 check: compile format-check lint typecheck test unittest openspec-validate
