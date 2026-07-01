@@ -8,10 +8,10 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from app.local_internal_api_platform import (
+from app.local_internal_api_platform import create_app
+from app.modules.local_internal_api_platform.loki_gateway import (
     LokiGateway,
     build_logql,
-    create_app,
     summarize_loki_response,
 )
 from app.shared.config import LokiSettings, Settings

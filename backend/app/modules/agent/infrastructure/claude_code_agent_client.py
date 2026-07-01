@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import os
 import re
@@ -357,16 +358,16 @@ class RealClaudeCodeAgentClient:
 
 def load_claude_agent_sdk() -> ClaudeSdk:
     try:
-        import claude_agent_sdk as sdk
+        sdk_module: Any = importlib.import_module("claude_agent_sdk")
     except ModuleNotFoundError:
-        import claude_code_sdk as sdk
+        sdk_module = importlib.import_module("claude_code_sdk")
 
     return ClaudeSdk(
-        query=sdk.query,
-        options=sdk.ClaudeAgentOptions,
-        tool=sdk.tool,
-        create_sdk_mcp_server=sdk.create_sdk_mcp_server,
-        tool_annotations=getattr(sdk, "ToolAnnotations", None),
+        query=sdk_module.query,
+        options=sdk_module.ClaudeAgentOptions,
+        tool=sdk_module.tool,
+        create_sdk_mcp_server=sdk_module.create_sdk_mcp_server,
+        tool_annotations=getattr(sdk_module, "ToolAnnotations", None),
     )
 
 
