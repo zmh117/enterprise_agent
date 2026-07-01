@@ -29,6 +29,7 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      target: mock-internal-api-platform
     command: ["python", "-m", "uvicorn", "app.mock_internal_api_platform:create_app", "--factory", "--host", "0.0.0.0", "--port", "9000"]
     expose:
       - "9000"
@@ -52,6 +53,7 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      target: api-server
     command: ["python", "-m", "uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
     environment:
       DATABASE_DSN: postgresql://enterprise_agent:enterprise_agent@postgres:5432/enterprise_agent
@@ -96,6 +98,7 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      target: agent-worker
     command: ["python", "-m", "app.workers.agent_job_worker"]
     environment:
       DATABASE_DSN: postgresql://enterprise_agent:enterprise_agent@postgres:5432/enterprise_agent

@@ -1,0 +1,15 @@
+*
+
+!pyproject.toml
+!.dockerignore
+!backend/
+!backend/Dockerfile
+!backend/app/
+!backend/app/**
+!backend/migrations/
+!backend/migrations/**
+!backend/seeds/
+!backend/seeds/**
+!.claude/
+!.claude/skills/
+!.claude/skills/**
