@@ -40,6 +40,14 @@ class AgentContextBuilder:
                 "SQL must be read-only and bounded.",
                 "Redis operations must be get or bounded scan.",
                 "Loki queries must be bounded by service, time range, and result size.",
+                (
+                    "For query_database/query_redis_get/query_redis_scan/query_loki, resolve and "
+                    "pass environment/base/workshop. Map the user's natural language (e.g. 观澜基地, "
+                    "GL001 车间) to codes using the 'addressing' directory in the ER context: base "
+                    "uses business codes (观澜基地 -> guanlan), workshops are logical partitions "
+                    "(GL001). Omit workshop only for non-partitioned bases. Never guess codes that "
+                    "are absent from the addressing directory."
+                ),
             ],
             skills=self.skill_loader.load(),
             retrieved_context={

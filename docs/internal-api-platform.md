@@ -40,6 +40,23 @@ POST /tools/database/query
 Redis (`/tools/redis/get`, `/tools/redis/scan`) and Loki (`/tools/loki/query`) take the
 same `environment/base/workshop`. The caller identity is read from `X-Agent-User-Id`.
 
+### ER context → addressing directory
+
+`/tools/context/er` and `/tools/context/business-flow` return, in `summary.addressing`, an
+**access-filtered** directory of environments → bases → workshops (codes + `display_name`
++ `aliases`, no connection details). This is how the model maps natural language to codes:
+
+```
+观澜基地 / 观澜 / 华南  -> base "guanlan"
+一号车间               -> workshop "GL001"
+```
+
+The directory only lists what the caller (`X-Agent-User-Id`) is authorized for, so the
+model cannot address bases/workshops it lacks access to. The Agent system prompt instructs
+the model to resolve `environment/base/workshop` from this directory before calling any
+data tool, and never to invent codes absent from it. Add `display_name`/`aliases` to the
+topology YAML at environment, base, and workshop level to improve mapping quality.
+
 ## Multi-dialect read-only SQL safety
 
 Pipeline (fails closed at every step):

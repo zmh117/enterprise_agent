@@ -58,12 +58,18 @@ def _build_loki(data: dict[str, Any], resolver: SecretResolver) -> LokiConnectio
     )
 
 
+def _aliases(data: dict[str, Any]) -> tuple[str, ...]:
+    return tuple(str(item) for item in (data.get("aliases") or []))
+
+
 def _build_workshop(code: str, data: dict[str, Any]) -> Workshop:
     return Workshop(
         code=code,
         table_prefix=str(data.get("table_prefix", "")),
         redis_key_prefix=str(data.get("redis_key_prefix", "")),
         loki_label=dict(data.get("loki_label", {})),
+        display_name=str(data.get("display_name", "")),
+        aliases=_aliases(data),
     )
 
 
@@ -83,6 +89,8 @@ def _build_base(code: str, data: dict[str, Any], resolver: SecretResolver) -> Ba
         redis=_build_redis(data["redis"], resolver) if data.get("redis") else None,
         loki=_build_loki(data["loki"], resolver) if data.get("loki") else None,
         workshops=workshops,
+        display_name=str(data.get("display_name", "")),
+        aliases=_aliases(data),
     )
 
 
@@ -93,7 +101,12 @@ def build_topology(data: dict[str, Any], resolver: SecretResolver) -> Topology:
             base_code: _build_base(base_code, base_data or {}, resolver)
             for base_code, base_data in (env_data.get("bases") or {}).items()
         }
-        environments[env_code] = Environment(code=env_code, bases=bases)
+        environments[env_code] = Environment(
+            code=env_code,
+            bases=bases,
+            display_name=str(env_data.get("display_name", "")),
+            aliases=_aliases(env_data),
+        )
     return Topology(environments=environments)
 
 

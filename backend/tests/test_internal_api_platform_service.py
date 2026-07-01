@@ -257,6 +257,42 @@ class ServiceTests(unittest.TestCase):
         )
 
 
+class TopologyDirectoryTests(unittest.TestCase):
+    def test_directory_is_filtered_by_access_and_hides_secrets(self) -> None:
+        service = _service()
+        alice = service.topology_directory(user_id="alice")
+        # alice only has sanjiu/guanlan/GL001
+        env = alice["environments"][0]
+        self.assertEqual("sanjiu", env["code"])
+        base = env["bases"][0]
+        self.assertEqual("guanlan", base["code"])
+        self.assertEqual([{"code": "GL001", "display_name": "", "aliases": []}], base["workshops"])
+        self.assertNotIn("database", base)  # no connection details leaked
+        self.assertNotIn("host", str(alice))
+
+    def test_operator_sees_all_including_degenerate_base(self) -> None:
+        service = _service()
+        operator = service.topology_directory(user_id="operator")
+        codes = {env["code"] for env in operator["environments"]}
+        self.assertEqual({"sanjiu", "mmk"}, codes)
+        mmk = next(e for e in operator["environments"] if e["code"] == "mmk")
+        self.assertFalse(mmk["bases"][0]["partitioned"])
+        self.assertEqual([], mmk["bases"][0]["workshops"])
+
+    def test_er_context_embeds_addressing_directory(self) -> None:
+        service = _service()
+        response = service.er_context(user_id="alice", query="订单卡在等料")
+        self.assertIn("addressing", response.summary)
+        self.assertEqual(
+            "guanlan",
+            response.summary["addressing"]["environments"][0]["bases"][0]["code"],
+        )
+
+    def test_unknown_user_gets_empty_directory(self) -> None:
+        service = _service()
+        self.assertEqual({"environments": []}, service.topology_directory(user_id="ghost"))
+
+
 class RouteTests(unittest.TestCase):
     def _client(self) -> TestClient:
         return TestClient(create_app(service=_service()))
@@ -287,6 +323,16 @@ class RouteTests(unittest.TestCase):
         )
         self.assertEqual(200, response.status_code)
         self.assertEqual("mysql", response.json()["summary"]["engine"])
+
+    def test_er_context_route_returns_addressing(self) -> None:
+        response = self._client().post(
+            "/tools/context/er",
+            json={"query": "order"},
+            headers={"x-agent-user-id": "operator"},
+        )
+        self.assertEqual(200, response.status_code)
+        codes = {env["code"] for env in response.json()["summary"]["addressing"]["environments"]}
+        self.assertEqual({"sanjiu", "mmk"}, codes)
 
     def test_unknown_base_returns_404(self) -> None:
         response = self._client().post(

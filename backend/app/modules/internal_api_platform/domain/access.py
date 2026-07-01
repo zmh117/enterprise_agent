@@ -40,6 +40,12 @@ class AccessScope:
 class AccessPolicy:
     scopes: dict[str, AccessScope] = field(default_factory=dict)
 
+    def allows(self, *, user_id: str, target: TargetRef) -> bool:
+        if not user_id:
+            return False
+        scope = self.scopes.get(user_id)
+        return scope is not None and scope.allows(target)
+
     def authorize(self, *, user_id: str, target: TargetRef) -> None:
         if not user_id:
             raise AuthorizationError("Caller identity is required")

@@ -121,6 +121,28 @@ class FakeInternalApiClient:
             "tables": ["ws_a_order", "ws_a_material", "ws_a_inventory"],
             "fields": ["status", "material_id", "inventory_qty"],
             "relationships": ["ws_a_order.material_id -> ws_a_material.id"],
+            "addressing": {
+                "environments": [
+                    {
+                        "code": "sanjiu",
+                        "display_name": "三九",
+                        "aliases": [],
+                        "bases": [
+                            {
+                                "code": "guanlan",
+                                "display_name": "观澜基地",
+                                "aliases": ["观澜"],
+                                "engine": "mysql",
+                                "partitioned": True,
+                                "workshops": [
+                                    {"code": "GL001", "display_name": "", "aliases": []},
+                                    {"code": "GL002", "display_name": "", "aliases": []},
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            },
         }
         return ToolResult(summary=summary, raw=summary)
 

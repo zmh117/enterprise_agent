@@ -47,6 +47,8 @@ class Workshop:
     table_prefix: str
     redis_key_prefix: str
     loki_label: dict[str, str] = field(default_factory=dict)
+    display_name: str = ""
+    aliases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -59,6 +61,8 @@ class Base:
     redis: RedisConnection | None = None
     loki: LokiConnection | None = None
     workshops: dict[str, Workshop] = field(default_factory=dict)
+    display_name: str = ""
+    aliases: tuple[str, ...] = ()
 
     @property
     def is_partitioned(self) -> bool:
@@ -72,6 +76,8 @@ class Base:
 class Environment:
     code: str
     bases: dict[str, Base] = field(default_factory=dict)
+    display_name: str = ""
+    aliases: tuple[str, ...] = ()
 
     def base(self, code: str) -> Base | None:
         return self.bases.get(code)

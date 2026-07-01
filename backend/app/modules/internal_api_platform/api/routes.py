@@ -47,6 +47,22 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
     async def health() -> dict[str, Any]:
         return {"status": "ok", "mode": "internal-api-platform"}
 
+    @app.post("/tools/context/er")
+    async def er_context(request: FastAPIRequest, payload: dict[str, Any]) -> dict[str, Any]:
+        started = time.monotonic()
+        result = service.er_context(user_id=_user_id(request), query=str(payload.get("query", "")))
+        return _envelope(request, started, result)
+
+    @app.post("/tools/context/business-flow")
+    async def business_flow_context(
+        request: FastAPIRequest, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        started = time.monotonic()
+        result = service.business_flow_context(
+            user_id=_user_id(request), query=str(payload.get("query", ""))
+        )
+        return _envelope(request, started, result)
+
     @app.post("/tools/resolve")
     async def resolve(request: FastAPIRequest, payload: dict[str, Any]) -> dict[str, Any]:
         started = time.monotonic()

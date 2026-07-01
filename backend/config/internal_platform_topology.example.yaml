@@ -9,9 +9,13 @@
 environments:
   # 三九: multi-base, workshop-partitioned via table/key prefixes and Loki labels.
   sanjiu:
+    display_name: 三九
+    aliases: [三九集团]
     bases:
       # 观澜基地 (business code: guanlan). One engine per base.
       guanlan:
+        display_name: 观澜基地
+        aliases: [观澜, 华南]
         engine: mysql
         database:
           host_ref: secret://sanjiu/guanlan/db_host
@@ -27,18 +31,22 @@ environments:
           tenant: sanjiu-guanlan
         workshops:
           GL001:
+            display_name: 一号车间
             table_prefix: GL001_EBR_
             redis_key_prefix: "GL001:"
             loki_label: { workshop: GL001 }
           GL002:
+            display_name: 二号车间
             table_prefix: GL002_EBR_
             redis_key_prefix: "GL002:"
             loki_label: { workshop: GL002 }
 
   # mmk: degenerate base, no workshop layer. Still read-only + bounded.
   mmk:
+    display_name: 蒙牛
     bases:
       main:
+        display_name: 主库
         engine: sqlserver
         database:
           host_ref: secret://mmk/main/db_host

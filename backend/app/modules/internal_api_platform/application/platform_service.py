@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from ..domain.access import AccessPolicy
 from ..domain.addressing import ResourceBinding, TargetRef
@@ -66,6 +67,102 @@ class PlatformService:
             raise
         self._audit(user_id, target, "allow", "ok")
         return binding
+
+    def topology_directory(self, *, user_id: str) -> dict[str, Any]:
+        """Non-secret addressing directory filtered to what the caller may access.
+
+        Lets the model map natural language (观澜 / GL001) to environment/base/workshop
+        codes without ever exposing connection details.
+        """
+
+        environments: list[dict[str, Any]] = []
+        for environment in self._registry.topology.environments.values():
+            bases: list[dict[str, Any]] = []
+            for base in environment.bases.values():
+                if base.is_partitioned:
+                    workshops = [
+                        self._workshop_entry(ws)
+                        for ws in base.workshops.values()
+                        if self._can_access(user_id, environment.code, base.code, ws.code)
+                    ]
+                    if not workshops:
+                        continue
+                    bases.append(self._base_entry(base, workshops))
+                else:
+                    if not self._can_access(user_id, environment.code, base.code, None):
+                        continue
+                    bases.append(self._base_entry(base, []))
+            if bases:
+                environments.append(
+                    {
+                        "code": environment.code,
+                        "display_name": environment.display_name,
+                        "aliases": list(environment.aliases),
+                        "bases": bases,
+                    }
+                )
+        return {"environments": environments}
+
+    def er_context(self, *, user_id: str, query: str) -> ToolResponse:
+        return ToolResponse(
+            summary={
+                "source": "internal-platform-er",
+                "query": query,
+                "addressing": self.topology_directory(user_id=user_id),
+                "tables": [],
+                "fields": [],
+                "relationships": [],
+                "note": (
+                    "Resolve environment/base/workshop from 'addressing' before calling "
+                    "data tools. ER graph is not connected yet."
+                ),
+            },
+            metadata={"source": "internal-api-platform"},
+        )
+
+    def business_flow_context(self, *, user_id: str, query: str) -> ToolResponse:
+        return ToolResponse(
+            summary={
+                "source": "internal-platform-business-flow",
+                "query": query,
+                "addressing": self.topology_directory(user_id=user_id),
+                "nodes": [],
+                "edges": [],
+                "note": (
+                    "Resolve environment/base/workshop from 'addressing' before calling "
+                    "data tools. Business-flow graph is not connected yet."
+                ),
+            },
+            metadata={"source": "internal-api-platform"},
+        )
+
+    def _can_access(self, user_id: str, environment: str, base: str, workshop: str | None) -> bool:
+        target = TargetRef(
+            environment=environment,
+            base=base,
+            kind=ResourceKind.DATABASE,
+            workshop=workshop,
+        )
+        return self._access.allows(user_id=user_id, target=target)
+
+    @staticmethod
+    def _base_entry(base: Any, workshops: list[dict[str, Any]]) -> dict[str, Any]:
+        return {
+            "code": base.code,
+            "display_name": base.display_name,
+            "aliases": list(base.aliases),
+            "engine": base.engine.value,
+            "partitioned": base.is_partitioned,
+            "workshops": workshops,
+        }
+
+    @staticmethod
+    def _workshop_entry(workshop: Any) -> dict[str, Any]:
+        return {
+            "code": workshop.code,
+            "display_name": workshop.display_name,
+            "aliases": list(workshop.aliases),
+        }
 
     def describe_target(
         self,

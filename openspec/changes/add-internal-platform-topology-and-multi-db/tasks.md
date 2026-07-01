@@ -53,6 +53,7 @@
 - [x] 7.2 更新 `InternalApiClient` 协议与 `HttpInternalApiClient`、`FakeInternalApiClient`、`ReadOnlyToolService._execute`（可选寻址 kw，缺省不传，兼容旧调用/测试替身）。
 - [x] 7.3 Claude tool JSON schema 加入 `environment/base/workshop`（`_ADDRESSING_PROPERTIES`），保留 `datasource`；`ToolRegistry` 白名单不变。
 - [x] 7.4 契约闭环测试：Http payload 携带/省略寻址、ReadOnlyToolService 透传至 client（mock platform 忽略额外字段，无需改动）。
+- [x] 7.5 ER 上下文→寻址：新平台 `/tools/context/er`、`/tools/context/business-flow` 返回**按访问过滤**的寻址目录（env/base/workshop code + display_name + aliases，无连接信息）；topology 增 display_name/aliases；系统提示词指引模型据目录把自然语言（观澜基地/GL001）映射为寻址字段，禁止臆造目录外 code；Fake ER 附带示例目录。
 
 ## 8. 依赖、Compose 与文档
 
