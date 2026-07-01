@@ -33,6 +33,21 @@ services:
     expose:
       - "9000"
 
+  local-internal-api-platform:
+    profiles: ["local-tools"]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["python", "-m", "uvicorn", "app.local_internal_api_platform:create_app", "--factory", "--host", "0.0.0.0", "--port", "9000"]
+    environment:
+      LOKI_BASE_URL: ${LOKI_BASE_URL:-http://host.docker.internal:3100}
+      LOKI_MAX_MINUTES: ${LOKI_MAX_MINUTES:-60}
+      LOKI_MAX_LINES: ${LOKI_MAX_LINES:-500}
+      LOKI_MAX_RESPONSE_CHARS: ${LOKI_MAX_RESPONSE_CHARS:-4000}
+      LOKI_TENANT_ID: ${LOKI_TENANT_ID:-}
+    expose:
+      - "9000"
+
   api-server:
     build:
       context: .
@@ -50,6 +65,11 @@ services:
       INTERNAL_API_AUTH_TOKEN: ${INTERNAL_API_AUTH_TOKEN:-}
       INTERNAL_API_TIMEOUT_SECONDS: ${INTERNAL_API_TIMEOUT_SECONDS:-10}
       INTERNAL_API_MAX_RESPONSE_CHARS: ${INTERNAL_API_MAX_RESPONSE_CHARS:-4000}
+      LOKI_BASE_URL: ${LOKI_BASE_URL:-http://host.docker.internal:3100}
+      LOKI_MAX_MINUTES: ${LOKI_MAX_MINUTES:-60}
+      LOKI_MAX_LINES: ${LOKI_MAX_LINES:-500}
+      LOKI_MAX_RESPONSE_CHARS: ${LOKI_MAX_RESPONSE_CHARS:-4000}
+      LOKI_TENANT_ID: ${LOKI_TENANT_ID:-}
       FEATURE_REAL_CLAUDE: ${FEATURE_REAL_CLAUDE:-false}
       CLAUDE_MODEL: ${CLAUDE_MODEL:-deepseek-v4-pro[1m]}
       ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
@@ -89,6 +109,11 @@ services:
       INTERNAL_API_AUTH_TOKEN: ${INTERNAL_API_AUTH_TOKEN:-}
       INTERNAL_API_TIMEOUT_SECONDS: ${INTERNAL_API_TIMEOUT_SECONDS:-10}
       INTERNAL_API_MAX_RESPONSE_CHARS: ${INTERNAL_API_MAX_RESPONSE_CHARS:-4000}
+      LOKI_BASE_URL: ${LOKI_BASE_URL:-http://host.docker.internal:3100}
+      LOKI_MAX_MINUTES: ${LOKI_MAX_MINUTES:-60}
+      LOKI_MAX_LINES: ${LOKI_MAX_LINES:-500}
+      LOKI_MAX_RESPONSE_CHARS: ${LOKI_MAX_RESPONSE_CHARS:-4000}
+      LOKI_TENANT_ID: ${LOKI_TENANT_ID:-}
       FEATURE_REAL_CLAUDE: ${FEATURE_REAL_CLAUDE:-false}
       CLAUDE_MODEL: ${CLAUDE_MODEL:-deepseek-v4-pro[1m]}
       ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}

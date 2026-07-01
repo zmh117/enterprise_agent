@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import unittest
 from dataclasses import replace
+from typing import Any
 
 from fastapi.testclient import TestClient
 
@@ -44,6 +46,20 @@ class ContextMetadataInternalApiClient(FakeInternalApiClient):
             raw=summary,
             metadata={"request_id": context.correlation_id, "source": "mock-flow"},
         )
+
+
+class FakeHttpResponse:
+    def __init__(self, body: dict[str, Any]) -> None:
+        self.body = json.dumps(body).encode("utf-8")
+
+    def __enter__(self) -> "FakeHttpResponse":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self.body
 
 
 class RuntimeWiringAndDebugApiTests(unittest.TestCase):
@@ -223,6 +239,66 @@ class RuntimeWiringAndDebugApiTests(unittest.TestCase):
                 call["response_summary"]["payload"] for call in tool_calls.json()["tool_calls"]
             ]
             self.assertTrue(any("mock-er" in payload for payload in payloads))
+
+    def test_debug_api_worker_persists_local_platform_http_envelope(self) -> None:
+        settings = make_settings()
+        built = []
+
+        def fake_urlopen(request: Any, timeout: int) -> FakeHttpResponse:
+            if request.full_url.endswith("/tools/context/er"):
+                source = "local-er-placeholder"
+                summary = {"source": "local-placeholder-er-context", "tables": []}
+            else:
+                source = "local-business-flow-placeholder"
+                summary = {"source": "local-placeholder-business-flow-context", "nodes": []}
+            return FakeHttpResponse(
+                {
+                    "summary": summary,
+                    "raw": summary,
+                    "truncated": False,
+                    "metadata": {"request_id": "corr-1", "source": source, "duration_ms": 1},
+                }
+            )
+
+        def factory(_: Settings):
+            container = build_test_container(settings, migrate=True, seed=True)
+            container.tool_service.internal_api_client = HttpInternalApiClient(
+                "http://local-platform.test",
+                urlopen_func=fake_urlopen,
+            )
+            built.append(container)
+            return container
+
+        with TestClient(create_app(settings, container_factory=factory)) as client:
+            container = built[0]
+            created = client.post(
+                "/api/agent/jobs",
+                json={
+                    "message": "帮我查一下订单 MO20260627001 为什么一直待领料",
+                    "user_id": "local-user",
+                    "conversation_id": "debug-conversation",
+                    "project_code": "default",
+                    "idempotency_key": "local-platform-debug-job",
+                },
+            )
+            job_id = str(created.json()["job_id"])
+
+            container.message_bus.consume_agent_jobs(
+                lambda message: container.agent_executor.execute(
+                    message.job_id,
+                    fail_on_error=True,
+                )
+            )
+
+            tool_calls = client.get(f"/api/agent/jobs/{job_id}/tool-calls")
+            payloads = [
+                call["response_summary"]["payload"] for call in tool_calls.json()["tool_calls"]
+            ]
+
+            self.assertTrue(any("local-er-placeholder" in payload for payload in payloads))
+            self.assertTrue(
+                any("local-business-flow-placeholder" in payload for payload in payloads)
+            )
 
     def test_debug_api_rejects_unauthorized_user_and_missing_job(self) -> None:
         settings = make_settings()

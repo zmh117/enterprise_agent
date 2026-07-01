@@ -24,7 +24,7 @@
 - `FEATURE_REAL_CLAUDE=false` 默认 stub runtime。
 - `FEATURE_REAL_CLAUDE=true` 可切换真实 Claude Agent SDK runtime。
 - `FEATURE_REAL_INTERNAL_TOOLS=false` 默认 fake 内部工具。
-- `FEATURE_REAL_INTERNAL_TOOLS=true` 可切换 HTTP Internal API Platform 或本地 mock 平台。
+- `FEATURE_REAL_INTERNAL_TOOLS=true` 可切换 HTTP Internal API Platform、本地 mock 平台或本地 Loki 平台。
 
 ## 快速开始
 
@@ -80,15 +80,20 @@ which claude
 
 ## 内部工具平台模式
 
-默认 fake：
+### fake 模式
+
+默认 fake，不访问网络：
 
 ```env
 FEATURE_REAL_INTERNAL_TOOLS=false
 ```
 
-使用本地 mock HTTP 平台验证工具链路：
+### mock 模式
+
+使用本地 mock HTTP 平台验证工具链路，不依赖 DeepSeek 或真实 Loki：
 
 ```env
+FEATURE_REAL_CLAUDE=false
 FEATURE_REAL_INTERNAL_TOOLS=true
 INTERNAL_API_BASE_URL=http://mock-internal-api-platform:9000
 INTERNAL_API_AUTH_TOKEN=
@@ -100,7 +105,51 @@ INTERNAL_API_AUTH_TOKEN=
 docker compose --profile mock-tools up -d --build
 ```
 
-接真实 Internal API Platform：
+### local-loki 模式
+
+使用真实 Claude/DeepSeek，加本地开发用 Internal API Platform 查询宿主机 Loki。
+
+宿主机 Loki 地址：
+
+```text
+http://localhost:3100
+```
+
+容器内访问宿主机 Loki 要使用：
+
+```env
+LOKI_BASE_URL=http://host.docker.internal:3100
+```
+
+启动：
+
+```bash
+FEATURE_REAL_CLAUDE=true \
+FEATURE_REAL_INTERNAL_TOOLS=true \
+INTERNAL_API_BASE_URL=http://local-internal-api-platform:9000 \
+LOKI_BASE_URL=http://host.docker.internal:3100 \
+docker compose --profile local-tools up -d --build local-internal-api-platform api-server agent-worker
+```
+
+local-loki 第一版只真实查询 Loki：
+
+```text
+POST /tools/loki/query -> Loki /loki/api/v1/query_range
+```
+
+其它工具行为：
+
+```text
+POST /tools/context/er            -> local placeholder
+POST /tools/context/business-flow -> local placeholder
+POST /tools/database/query        -> tool_not_configured
+POST /tools/redis/get             -> tool_not_configured
+POST /tools/redis/scan            -> tool_not_configured
+```
+
+### 真实 Internal API Platform 模式
+
+接生产或内网真实 Internal API Platform：
 
 ```env
 FEATURE_REAL_INTERNAL_TOOLS=true

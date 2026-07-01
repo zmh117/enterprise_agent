@@ -33,6 +33,15 @@ class DingTalkSettings:
 
 
 @dataclass(frozen=True)
+class LokiSettings:
+    base_url: str = "http://host.docker.internal:3100"
+    max_minutes: int = 60
+    max_lines: int = 500
+    max_response_chars: int = 4000
+    tenant_id: str = ""
+
+
+@dataclass(frozen=True)
 class Settings:
     database_dsn: str = "sqlite:///./enterprise_agent.db"
     rabbitmq_url: str = "amqp://guest:guest@localhost:5672/"
@@ -50,6 +59,7 @@ class Settings:
     seed_local_config: bool = False
     debug_agent_user_id: str = "local-user"
     dingtalk: DingTalkSettings = field(default_factory=DingTalkSettings)
+    loki: LokiSettings = field(default_factory=LokiSettings)
     queue: QueueSettings = field(default_factory=QueueSettings)
     execution: ExecutionSettings = field(default_factory=ExecutionSettings)
 
@@ -91,6 +101,13 @@ def load_settings() -> Settings:
             secret=os.getenv("DINGTALK_SECRET", ""),
             callback_url=os.getenv("DINGTALK_CALLBACK_URL", ""),
             callback_host_allowlist=_csv_tuple(os.getenv("DINGTALK_CALLBACK_HOST_ALLOWLIST", "")),
+        ),
+        loki=LokiSettings(
+            base_url=os.getenv("LOKI_BASE_URL", "http://host.docker.internal:3100"),
+            max_minutes=int(os.getenv("LOKI_MAX_MINUTES", "60")),
+            max_lines=int(os.getenv("LOKI_MAX_LINES", "500")),
+            max_response_chars=int(os.getenv("LOKI_MAX_RESPONSE_CHARS", "4000")),
+            tenant_id=os.getenv("LOKI_TENANT_ID", ""),
         ),
         queue=QueueSettings(
             job_queue=os.getenv("AGENT_JOB_QUEUE", "agent.job.queue"),

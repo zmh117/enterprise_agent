@@ -238,6 +238,78 @@ curl --noproxy '*' -s -X POST http://127.0.0.1:8000/api/agent/jobs \
 - `/tool-calls` 中可以看到 context 工具调用的 `metadata.source` 来自 mock 平台。
 - Agent runtime 仍不直连数据库、Redis、Loki、ER 或业务图存储。
 
+### local-loki 模式
+
+本地验证真实 Claude/DeepSeek + 真实 Loki，但仍保持 Agent 只调用 Internal API Platform。
+
+适用场景：
+
+```text
+真实 Claude/DeepSeek
+  -> agent-worker
+  -> local-internal-api-platform
+  -> Loki query_range
+```
+
+要求宿主机 Loki 可访问：
+
+```bash
+curl -s http://localhost:3100/ready
+```
+
+容器内访问宿主机 Loki 使用：
+
+```env
+LOKI_BASE_URL=http://host.docker.internal:3100
+```
+
+启动：
+
+```bash
+FEATURE_REAL_CLAUDE=true \
+FEATURE_REAL_INTERNAL_TOOLS=true \
+INTERNAL_API_BASE_URL=http://local-internal-api-platform:9000 \
+LOKI_BASE_URL=http://host.docker.internal:3100 \
+docker compose --profile local-tools up -d --build local-internal-api-platform api-server agent-worker
+```
+
+本地平台 endpoint：
+
+```text
+GET  /health
+POST /tools/context/er
+POST /tools/context/business-flow
+POST /tools/loki/query
+POST /tools/database/query
+POST /tools/redis/get
+POST /tools/redis/scan
+```
+
+第一版行为：
+
+- `query_loki` 真实请求 Loki `/loki/api/v1/query_range`。
+- `get_er_context` 和 `get_business_flow_context` 返回明确的 local placeholder。
+- `query_database`、`query_redis_get`、`query_redis_scan` 默认返回 `tool_not_configured`，不会访问真实数据库或 Redis。
+
+Loki 相关配置：
+
+```env
+LOKI_BASE_URL=http://host.docker.internal:3100
+LOKI_MAX_MINUTES=60
+LOKI_MAX_LINES=500
+LOKI_MAX_RESPONSE_CHARS=4000
+LOKI_TENANT_ID=
+```
+
+当前 LogQL 构造策略：
+
+```text
+service + keyword -> {service="<service>"} |= "<keyword>"
+service only      -> {service="<service>"}
+```
+
+第一版不允许 Agent 传完整任意 LogQL，避免真实联调时生成无界或高成本查询。
+
 ### 真实 Internal API Platform 模式
 
 ```env
