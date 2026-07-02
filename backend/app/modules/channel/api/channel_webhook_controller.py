@@ -149,7 +149,17 @@ def _generic_event(payload: dict[str, Any], *, correlation_id: str) -> ChannelEv
 
 
 def _verify_connector_token(container: Container, connector_id: str, provided: str) -> None:
-    connector = container.connector_registry.require_ingress(connector_id)
+    try:
+        connector = container.connector_registry.require_ingress(connector_id)
+    except PermissionDenied as exc:
+        container.audit_service.record(
+            "channel.ingress_denied",
+            status="DENIED",
+            summary=exc.safe_message,
+            actor_id=connector_id,
+            payload={"connector_id": connector_id},
+        )
+        raise HTTPException(status_code=403, detail=exc.safe_message) from exc
     expected = container.connector_registry.resolve_secret(connector)
     if expected and not hmac.compare_digest(expected, provided):
         container.audit_service.record(

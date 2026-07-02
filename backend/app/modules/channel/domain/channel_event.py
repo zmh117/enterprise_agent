@@ -109,7 +109,10 @@ def _mask_sensitive(value: Any) -> Any:
         result: dict[str, Any] = {}
         for key, item in value.items():
             lowered = str(key).lower()
-            if any(token in lowered for token in ("token", "secret", "sign", "password")):
+            if any(
+                token in lowered
+                for token in ("token", "secret", "sign", "password", "webhook", "url", "mobile")
+            ):
                 result[str(key)] = "***"
             else:
                 result[str(key)] = _mask_sensitive(item)

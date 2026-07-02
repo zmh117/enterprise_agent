@@ -18,11 +18,16 @@ from app.modules.channel.infrastructure.connector_registry import ConnectorRegis
 from app.modules.delivery.application.report_chunker import ReportChunker
 from app.modules.delivery.application.result_delivery_service import ResultDeliveryService
 from app.modules.delivery.infrastructure.adapters import (
-    DingTalkDeliveryAdapter,
+    DingTalkConversationDeliveryAdapter,
+    DingTalkEnterpriseAppDeliveryAdapter,
+    DingTalkWebhookRobotDeliveryAdapter,
     HttpDeliveryAdapter,
     NoneDeliveryAdapter,
 )
 from app.modules.dingding.application.dingding_message_service import DingTalkMessageService
+from app.modules.dingding.application.dingtalk_stream_service import (
+    DingTalkStreamMessageService,
+)
 from app.modules.dingding.infrastructure.dingding_callback_client import DingTalkCallbackClient
 from app.modules.internal_tools.application.tools import ReadOnlyToolService
 from app.modules.internal_tools.infrastructure.internal_api_client import (
@@ -63,6 +68,7 @@ class Container:
     channel_ingress_service: ChannelIngressService
     create_agent_job_service: CreateAgentJobService
     dingtalk_message_service: DingTalkMessageService
+    dingtalk_stream_message_service: DingTalkStreamMessageService
     result_delivery_service: ResultDeliveryService
     agent_executor: AgentExecutor
     retry_service: JobRetryService
@@ -173,6 +179,30 @@ def _build_container(
             callback_url=settings.dingtalk.callback_url,
             host_allowlist=settings.dingtalk.callback_host_allowlist,
         ),
+        default_delivery_type=settings.dingtalk.default_delivery_type,
+        default_delivery_connector_id=settings.dingtalk.default_delivery_connector_id,
+        default_source_connector_id=settings.dingtalk.default_source_connector_id,
+        default_project_code=settings.dingtalk.default_project_code,
+        default_environment=settings.dingtalk.default_environment,
+        default_base=settings.dingtalk.default_base,
+        default_workshop=settings.dingtalk.default_workshop,
+        default_service=settings.dingtalk.default_service,
+        default_open_conversation_id=settings.dingtalk.default_open_conversation_id,
+        default_robot_code=settings.dingtalk.default_robot_code,
+    )
+    dingtalk_stream_service = DingTalkStreamMessageService(
+        channel_ingress_service=channel_ingress_service,
+        audit_service=audit_service,
+        default_delivery_type=settings.dingtalk.default_delivery_type,
+        default_delivery_connector_id=settings.dingtalk.default_delivery_connector_id,
+        default_source_connector_id=settings.dingtalk.stream_connector_id,
+        default_project_code=settings.dingtalk.default_project_code,
+        default_environment=settings.dingtalk.default_environment,
+        default_base=settings.dingtalk.default_base,
+        default_workshop=settings.dingtalk.default_workshop,
+        default_service=settings.dingtalk.default_service,
+        default_open_conversation_id=settings.dingtalk.default_open_conversation_id,
+        default_robot_code=settings.dingtalk.default_robot_code,
     )
     internal_api_client: InternalApiClient = FakeInternalApiClient()
     if settings.feature_real_internal_tools and message_bus is None:
@@ -201,9 +231,17 @@ def _build_container(
         if use_real_claude
         else StubClaudeCodeAgentClient()
     )
-    dingtalk_adapter = DingTalkDeliveryAdapter(
+    dingtalk_conversation_adapter = DingTalkConversationDeliveryAdapter(
         fallback_callback_url=settings.dingtalk.callback_url,
         host_allowlist=settings.dingtalk.callback_host_allowlist,
+    )
+    dingtalk_enterprise_adapter = DingTalkEnterpriseAppDeliveryAdapter(
+        connector_registry=connector_registry,
+        timeout_seconds=settings.delivery.timeout_seconds,
+    )
+    dingtalk_webhook_robot_adapter = DingTalkWebhookRobotDeliveryAdapter(
+        connector_registry=connector_registry,
+        timeout_seconds=settings.delivery.timeout_seconds,
     )
     http_adapter = HttpDeliveryAdapter(timeout_seconds=settings.delivery.timeout_seconds)
     result_delivery_service = ResultDeliveryService(
@@ -212,9 +250,9 @@ def _build_container(
         connector_registry=connector_registry,
         adapters={
             "none": NoneDeliveryAdapter(),
-            "dingtalk_conversation": dingtalk_adapter,
-            "dingtalk_webhook_robot": dingtalk_adapter,
-            "dingtalk_enterprise_robot": dingtalk_adapter,
+            "dingtalk_conversation": dingtalk_conversation_adapter,
+            "dingtalk_webhook_robot": dingtalk_webhook_robot_adapter,
+            "dingtalk_enterprise_robot": dingtalk_enterprise_adapter,
             "email": http_adapter,
             "webhook": http_adapter,
         },
@@ -253,6 +291,7 @@ def _build_container(
         channel_ingress_service=channel_ingress_service,
         create_agent_job_service=create_job_service,
         dingtalk_message_service=dingtalk_service,
+        dingtalk_stream_message_service=dingtalk_stream_service,
         result_delivery_service=result_delivery_service,
         agent_executor=agent_executor,
         retry_service=retry_service,

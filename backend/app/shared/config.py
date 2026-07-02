@@ -36,6 +36,28 @@ class DingTalkSettings:
     secret: str = ""
     callback_url: str = ""
     callback_host_allowlist: tuple[str, ...] = ()
+    http_webhook_enabled: bool = False
+    client_id: str = ""
+    client_secret: str = ""
+    stream_enabled: bool = False
+    stream_client_id: str = ""
+    stream_client_secret: str = ""
+    stream_connector_id: str = "connector-dingtalk-stream-default"
+    stream_reconnect_initial_seconds: int = 5
+    stream_reconnect_max_seconds: int = 60
+    stream_worker_id: str = "dingtalk-stream-ingress"
+    webhook_robot_url: str = ""
+    webhook_robot_secret: str = ""
+    default_delivery_type: str = "dingtalk_enterprise_robot"
+    default_delivery_connector_id: str = "connector-dingtalk-enterprise-default"
+    default_source_connector_id: str = "connector-dingtalk-stream-default"
+    default_project_code: str = "default"
+    default_environment: str = ""
+    default_base: str = ""
+    default_workshop: str = ""
+    default_service: str = ""
+    default_open_conversation_id: str = ""
+    default_robot_code: str = ""
 
 
 @dataclass(frozen=True)
@@ -108,6 +130,49 @@ def load_settings() -> Settings:
             secret=os.getenv("DINGTALK_SECRET", ""),
             callback_url=os.getenv("DINGTALK_CALLBACK_URL", ""),
             callback_host_allowlist=_csv_tuple(os.getenv("DINGTALK_CALLBACK_HOST_ALLOWLIST", "")),
+            http_webhook_enabled=_env_bool("DINGTALK_HTTP_WEBHOOK_ENABLED"),
+            client_id=os.getenv("DINGTALK_CLIENT_ID", ""),
+            client_secret=os.getenv("DINGTALK_CLIENT_SECRET", ""),
+            stream_enabled=_env_bool("DINGTALK_STREAM_ENABLED"),
+            stream_client_id=os.getenv(
+                "DINGTALK_STREAM_CLIENT_ID",
+                os.getenv("DINGTALK_CLIENT_ID", ""),
+            ),
+            stream_client_secret=os.getenv(
+                "DINGTALK_STREAM_CLIENT_SECRET",
+                os.getenv("DINGTALK_CLIENT_SECRET", ""),
+            ),
+            stream_connector_id=os.getenv(
+                "DINGTALK_STREAM_CONNECTOR_ID",
+                "connector-dingtalk-stream-default",
+            ),
+            stream_reconnect_initial_seconds=int(
+                os.getenv("DINGTALK_STREAM_RECONNECT_INITIAL_SECONDS", "5")
+            ),
+            stream_reconnect_max_seconds=int(
+                os.getenv("DINGTALK_STREAM_RECONNECT_MAX_SECONDS", "60")
+            ),
+            stream_worker_id=os.getenv("DINGTALK_STREAM_WORKER_ID", "dingtalk-stream-ingress"),
+            webhook_robot_url=os.getenv("DINGTALK_WEBHOOK_ROBOT_URL", ""),
+            webhook_robot_secret=os.getenv("DINGTALK_WEBHOOK_ROBOT_SECRET", ""),
+            default_delivery_type=os.getenv(
+                "DINGTALK_DEFAULT_DELIVERY_TYPE", "dingtalk_enterprise_robot"
+            ),
+            default_delivery_connector_id=os.getenv(
+                "DINGTALK_DEFAULT_DELIVERY_CONNECTOR_ID",
+                "connector-dingtalk-enterprise-default",
+            ),
+            default_source_connector_id=os.getenv(
+                "DINGTALK_DEFAULT_SOURCE_CONNECTOR_ID",
+                "connector-dingtalk-stream-default",
+            ),
+            default_project_code=os.getenv("DINGTALK_DEFAULT_PROJECT_CODE", "default"),
+            default_environment=os.getenv("DINGTALK_DEFAULT_ENVIRONMENT", ""),
+            default_base=os.getenv("DINGTALK_DEFAULT_BASE", ""),
+            default_workshop=os.getenv("DINGTALK_DEFAULT_WORKSHOP", ""),
+            default_service=os.getenv("DINGTALK_DEFAULT_SERVICE", ""),
+            default_open_conversation_id=os.getenv("DINGTALK_DEFAULT_OPEN_CONVERSATION_ID", ""),
+            default_robot_code=os.getenv("DINGTALK_DEFAULT_ROBOT_CODE", ""),
         ),
         loki=LokiSettings(
             base_url=os.getenv("LOKI_BASE_URL", "http://host.docker.internal:3100"),

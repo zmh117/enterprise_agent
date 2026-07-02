@@ -13,6 +13,9 @@ from app.modules.permission.application.permission_service import PermissionServ
 from app.shared.config import QueueSettings
 from app.shared.logging import new_correlation_id
 
+DEFAULT_DINGTALK_SOURCE_CONNECTOR_ID = "connector-dingtalk-stream-default"
+DEFAULT_DINGTALK_DELIVERY_CONNECTOR_ID = "connector-dingtalk-enterprise-default"
+
 
 @dataclass(frozen=True)
 class CreateAgentJobCommand:
@@ -22,7 +25,7 @@ class CreateAgentJobCommand:
     external_conversation_id: str = ""
     project_code: str = "default"
     source_channel: str = "dingding"
-    source_connector_id: str = "connector-dingtalk-enterprise-default"
+    source_connector_id: str = DEFAULT_DINGTALK_SOURCE_CONNECTOR_ID
     external_event_id: str = ""
     requester_display_name: str = ""
     routing_context: dict[str, Any] = field(default_factory=dict)
@@ -56,9 +59,12 @@ class CreateAgentJobCommand:
             return self.reply_route
         if self.effective_source_channel == "debug_api":
             return ReplyRoute(type="none").to_dict()
+        delivery_connector_id = self.source_connector_id
+        if self.source_connector_id == DEFAULT_DINGTALK_SOURCE_CONNECTOR_ID:
+            delivery_connector_id = DEFAULT_DINGTALK_DELIVERY_CONNECTOR_ID
         return ReplyRoute(
             type="dingtalk_conversation",
-            connector_id=self.source_connector_id,
+            connector_id=delivery_connector_id,
             target={"conversation_id": self.effective_conversation_id},
         ).to_dict()
 

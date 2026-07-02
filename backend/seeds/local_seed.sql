@@ -30,13 +30,43 @@ INSERT INTO integration_connector
    secret_ref, endpoint_ref, host_allowlist, created_at, updated_at)
 VALUES
   ('connector-debug-api', 'debug_api', 'debug-api', '', 1, '{}', 1, 0, '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('connector-dingtalk-enterprise-default', 'dingtalk_enterprise_robot', 'dingtalk-enterprise-default', '', 1, '{}', 1, 1, 'test-secret', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('connector-dingtalk-webhook-default', 'dingtalk_webhook_robot', 'dingtalk-webhook-default', '', 1, '{}', 1, 1, 'test-secret', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('connector-dingtalk-stream-default', 'dingtalk_enterprise_stream', 'dingtalk-stream-default', '', 1,
+   '{"client_id_ref":"env:DINGTALK_CLIENT_ID"}',
+   1, 0, 'env:DINGTALK_CLIENT_SECRET', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('connector-dingtalk-enterprise-default', 'dingtalk_enterprise_robot', 'dingtalk-enterprise-default', '', 1,
+   '{"client_id_ref":"env:DINGTALK_CLIENT_ID","default_open_conversation_id":"test-open-conversation","default_robot_code":"test-robot-code"}',
+   0, 1, 'env:DINGTALK_CLIENT_SECRET', '', 'api.dingtalk.com,oapi.dingtalk.com', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('connector-dingtalk-webhook-default', 'dingtalk_webhook_robot', 'dingtalk-webhook-default', '', 1, '{}',
+   0, 1, 'env:DINGTALK_WEBHOOK_ROBOT_SECRET', 'env:DINGTALK_WEBHOOK_ROBOT_URL', 'oapi.dingtalk.com,api.dingtalk.com', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('connector-grafana-default', 'grafana_alert', 'grafana-default', '', 1, '{}', 1, 0, 'test-grafana-token', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('connector-email-default', 'email', 'email-default', '', 1, '{}', 0, 1, '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('connector-webhook-default', 'webhook', 'webhook-default', '', 1, '{}', 0, 1, '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('connector-none', 'none', 'none', '', 1, '{}', 0, 1, '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
+
+UPDATE integration_connector
+SET connector_type = 'dingtalk_enterprise_stream',
+    allow_ingress = 1,
+    allow_delivery = 0,
+    secret_ref = 'env:DINGTALK_CLIENT_SECRET',
+    metadata = '{"client_id_ref":"env:DINGTALK_CLIENT_ID"}',
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = 'connector-dingtalk-stream-default';
+
+UPDATE integration_connector
+SET connector_type = 'dingtalk_enterprise_robot',
+    allow_ingress = 0,
+    allow_delivery = 1,
+    secret_ref = 'env:DINGTALK_CLIENT_SECRET',
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = 'connector-dingtalk-enterprise-default';
+
+UPDATE integration_connector
+SET connector_type = 'dingtalk_webhook_robot',
+    allow_ingress = 0,
+    allow_delivery = 1,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = 'connector-dingtalk-webhook-default';
 
 INSERT INTO datasource_registry
   (id, source_type, source_code, connector_id, enabled, metadata, created_at, updated_at)

@@ -124,7 +124,11 @@ class RuntimeWiringAndDebugApiTests(unittest.TestCase):
             test_container.database.close()
 
     def test_lifespan_builds_container_once_for_multiple_webhooks(self) -> None:
-        settings = make_settings()
+        base_settings = make_settings()
+        settings = replace(
+            base_settings,
+            dingtalk=replace(base_settings.dingtalk, http_webhook_enabled=True),
+        )
         built = []
 
         def factory(_: Settings):

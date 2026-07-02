@@ -60,6 +60,13 @@ class ResultDeliveryService:
         if route.type != "none" and route.connector_id:
             try:
                 connector = self.connector_registry.require_delivery(route.connector_id)
+                self.audit_service.record(
+                    "delivery.connector_authorized",
+                    status="SUCCEEDED",
+                    summary="Delivery connector authorized",
+                    job_id=job_id,
+                    payload={"route_type": route.type, "connector_id": route.connector_id},
+                )
                 endpoint = self.connector_registry.endpoint_url(connector)
                 self.connector_registry.assert_host_allowed(connector, endpoint)
             except Exception as exc:
@@ -161,7 +168,11 @@ class ResultDeliveryService:
             status="FAILED",
             summary=safe_message,
             job_id=job_id,
-            payload={"attempt_id": attempt_id, "route_type": route.type},
+            payload={
+                "attempt_id": attempt_id,
+                "route_type": route.type,
+                "connector_id": route.connector_id,
+            },
         )
 
 
@@ -170,6 +181,24 @@ def _target_summary(route: ReplyRoute, connector: Connector | None) -> dict[str,
         "route_type": route.type,
         "connector_id": route.connector_id,
         "connector_type": connector.connector_type if connector else "",
-        "target": route.target,
+        "target": _safe_target(route.target),
     }
     return safe_payload_summary(summary)
+
+
+def _safe_target(target: dict[str, Any]) -> dict[str, Any]:
+    safe: dict[str, Any] = {}
+    for key, value in target.items():
+        lowered = key.lower()
+        if any(token in lowered for token in ("token", "secret", "sign", "url", "mobile")):
+            if isinstance(value, list):
+                safe[f"{key}_count"] = len(value)
+            elif value:
+                safe[key] = "***"
+            else:
+                safe[key] = ""
+        elif isinstance(value, list):
+            safe[f"{key}_count"] = len(value)
+        else:
+            safe[key] = value
+    return safe

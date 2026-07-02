@@ -18,6 +18,14 @@ def build_dingding_router() -> Any:
         x_dingtalk_sign: str = Header(default=""),
     ) -> dict[str, Any]:
         container = _container(request)
+        if not container.settings.dingtalk.http_webhook_enabled:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "status": "disabled",
+                    "message": "DingTalk HTTP webhook ingress is disabled; use DingTalk Stream ingress.",
+                },
+            )
         payload = await request.json()
         result = container.dingtalk_message_service.handle_webhook(
             payload=payload,

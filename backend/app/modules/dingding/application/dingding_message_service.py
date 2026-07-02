@@ -36,10 +36,30 @@ class DingTalkMessageService:
         secret: str,
         channel_ingress_service: ChannelIngressService,
         callback_client: DingTalkCallbackClient,
+        default_delivery_type: str = "dingtalk_enterprise_robot",
+        default_delivery_connector_id: str = "connector-dingtalk-enterprise-default",
+        default_source_connector_id: str = "connector-dingtalk-enterprise-default",
+        default_project_code: str = "default",
+        default_environment: str = "",
+        default_base: str = "",
+        default_workshop: str = "",
+        default_service: str = "",
+        default_open_conversation_id: str = "",
+        default_robot_code: str = "",
     ) -> None:
         self.secret = secret
         self.channel_ingress_service = channel_ingress_service
         self.callback_client = callback_client
+        self.default_delivery_type = default_delivery_type
+        self.default_delivery_connector_id = default_delivery_connector_id
+        self.default_source_connector_id = default_source_connector_id
+        self.default_project_code = default_project_code
+        self.default_environment = default_environment
+        self.default_base = default_base
+        self.default_workshop = default_workshop
+        self.default_service = default_service
+        self.default_open_conversation_id = default_open_conversation_id
+        self.default_robot_code = default_robot_code
 
     def verify_signature(self, *, timestamp: str, sign: str) -> bool:
         if not self.secret:
@@ -62,7 +82,7 @@ class DingTalkMessageService:
         )
         user_id = payload.get("senderStaffId") or payload.get("senderId") or payload.get("user_id")
         message_id = payload.get("msgId") or payload.get("message_id")
-        project_code = payload.get("project_code") or "default"
+        project_code = payload.get("project_code") or self.default_project_code
         if not user_id or not message_id:
             raise ValueError("DingTalk payload missing sender or message id")
         return DingTalkIncomingMessage(
@@ -85,18 +105,21 @@ class DingTalkMessageService:
             return {"accepted": False, "status": "invalid_signature"}
         message = self.parse_message(payload)
         delivery = ReplyRoute(
-            type=str(payload.get("delivery_type") or "dingtalk_conversation"),
+            type=str(payload.get("delivery_type") or self.default_delivery_type),
             connector_id=str(
-                payload.get("delivery_connector_id") or "connector-dingtalk-enterprise-default"
+                payload.get("delivery_connector_id") or self.default_delivery_connector_id
             ),
             target={
                 "conversation_id": message.conversation_id,
+                "open_conversation_id": self.default_open_conversation_id,
+                "robot_code": self.default_robot_code,
                 **_dict_value(payload.get("delivery_target")),
             },
         )
         source_connector_id = str(
-            payload.get("source_connector_id") or "connector-dingtalk-enterprise-default"
+            payload.get("source_connector_id") or self.default_source_connector_id
         )
+        routing_payload = _dict_value(payload.get("routing"))
         event = ChannelEvent(
             source=ChannelSource(
                 type=message.source,
@@ -106,7 +129,13 @@ class DingTalkMessageService:
                 conversation_id=message.conversation_id,
             ),
             delivery=delivery,
-            routing=RoutingContext(project_code=message.project_code),
+            routing=RoutingContext(
+                project_code=str(routing_payload.get("project_code") or message.project_code),
+                environment=str(routing_payload.get("environment") or self.default_environment),
+                base=str(routing_payload.get("base") or self.default_base),
+                workshop=str(routing_payload.get("workshop") or self.default_workshop),
+                service=str(routing_payload.get("service") or self.default_service),
+            ),
             message=message.content,
             raw_payload_summary=safe_payload_summary(payload),
             idempotency_key=f"dingding:{message.message_id}",

@@ -47,12 +47,26 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-deps --no-build-isolation .
 CMD ["python", "-m", "uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
 
+FROM python-deps AS dingtalk-stream-ingress
+COPY backend/app/__init__.py backend/app/bootstrap.py /app/backend/app/
+COPY backend/app/shared /app/backend/app/shared
+COPY backend/app/modules /app/backend/app/modules
+COPY backend/app/workers /app/backend/app/workers
+COPY backend/migrations /app/backend/migrations
+COPY backend/seeds /app/backend/seeds
+RUN python -c "import app.bootstrap; import app.workers.dingtalk_stream_ingress_worker"
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-deps --no-build-isolation .
+CMD ["python", "-m", "app.workers.dingtalk_stream_ingress_worker"]
+
 FROM claude-runtime AS agent-worker
 COPY backend/app/__init__.py backend/app/bootstrap.py /app/backend/app/
 COPY backend/app/shared /app/backend/app/shared
 COPY backend/app/modules/__init__.py /app/backend/app/modules/
 COPY backend/app/modules/agent /app/backend/app/modules/agent
 COPY backend/app/modules/audit /app/backend/app/modules/audit
+COPY backend/app/modules/channel /app/backend/app/modules/channel
+COPY backend/app/modules/delivery /app/backend/app/modules/delivery
 COPY backend/app/modules/dingding/__init__.py /app/backend/app/modules/dingding/
 COPY backend/app/modules/dingding/application /app/backend/app/modules/dingding/application
 COPY backend/app/modules/dingding/infrastructure /app/backend/app/modules/dingding/infrastructure
@@ -67,6 +81,7 @@ COPY backend/app/workers /app/backend/app/workers
 COPY backend/migrations /app/backend/migrations
 COPY backend/seeds /app/backend/seeds
 COPY .claude /app/.claude
+RUN python -c "import app.bootstrap; import app.workers.agent_job_worker"
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-deps --no-build-isolation .
 CMD ["python", "-m", "app.workers.agent_job_worker"]

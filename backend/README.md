@@ -3,8 +3,8 @@
 这个后端实现企业级只读诊断 Agent 的 MVP。当前阶段重点是跑通真实执行链路：
 
 ```text
-DingTalk / Debug API
-  -> FastAPI api-server
+DingTalk Stream / Grafana webhook / Debug API
+  -> Stream ingress worker 或 FastAPI api-server
   -> PostgreSQL 16 持久化 Agent 任务
   -> RabbitMQ agent.job.queue
   -> agent-worker 消费任务
@@ -18,7 +18,7 @@ DingTalk / Debug API
 
 ## 模块边界
 
-- `dingding`：钉钉 webhook、签名校验、消息解析、结果回调。
+- `dingding`：钉钉 Stream 入口适配、兼容 HTTP webhook、消息解析、结果投递客户端。
 - `job`：Agent 任务生命周期、状态流转、重试策略、调试 API。
 - `message_bus`：消息发布和消费接口，RabbitMQ 是基础设施实现。
 - `agent`：构造上下文、加载 skill、调用 Claude Runtime、保存结果。
@@ -75,6 +75,23 @@ docker compose up --build
 
 ```bash
 PYTHONPATH=backend .venv/bin/python -m app.workers.agent_job_worker
+```
+
+本地启动钉钉 Stream 入口：
+
+```bash
+DINGTALK_STREAM_ENABLED=true \
+DINGTALK_CLIENT_ID=your-client-id \
+DINGTALK_CLIENT_SECRET=your-client-secret \
+PYTHONPATH=backend .venv/bin/python -m app.workers.dingtalk_stream_ingress_worker
+```
+
+Docker Compose 启动 Stream 入口：
+
+```bash
+DINGTALK_CLIENT_ID=your-client-id \
+DINGTALK_CLIENT_SECRET=your-client-secret \
+docker compose --profile dingtalk-stream up --build
 ```
 
 ## 调试 API
@@ -206,14 +223,117 @@ curl -s -X POST http://127.0.0.1:8000/webhooks/grafana/alert \
 本地 seed 包含这些 connector：
 
 - `connector-debug-api`：ingress only。
-- `connector-dingtalk-enterprise-default`：ingress + delivery。
-- `connector-dingtalk-webhook-default`：ingress + delivery。
+- `connector-dingtalk-stream-default`：ingress only，钉钉企业 App Stream 长连接入口。
+- `connector-dingtalk-enterprise-default`：delivery only，钉钉企业 App 结果出口。
+- `connector-dingtalk-webhook-default`：delivery only，只发送消息到群，不接收用户问题。
 - `connector-grafana-default`：ingress only。
 - `connector-email-default`：delivery only。
 - `connector-webhook-default`：delivery only。
 - `connector-none`：none route。
 
 Delivery 支持 `none`、`dingtalk_conversation`、`dingtalk_webhook_robot`、`dingtalk_enterprise_robot`、`email`、`webhook`。长报告会按 `DELIVERY_CHUNK_MAX_CHARS` 分片发送，并记录每个 delivery attempt 和 chunk；投递失败不会重新执行 Agent job。
+
+### DingTalk Stream 入口配置
+
+正式钉钉用户消息入口使用 DingTalk Stream，不需要把本地服务暴露成公网 HTTPS webhook。系统主动用企业 App Client ID/Secret 连接钉钉，收到用户消息后归一化为 Channel event，再创建 Agent job。
+
+```env
+DINGTALK_STREAM_ENABLED=true
+DINGTALK_CLIENT_ID=your-client-id
+DINGTALK_CLIENT_SECRET=your-client-secret
+DINGTALK_STREAM_CONNECTOR_ID=connector-dingtalk-stream-default
+DINGTALK_DEFAULT_SOURCE_CONNECTOR_ID=connector-dingtalk-stream-default
+DINGTALK_DEFAULT_PROJECT_CODE=default
+DINGTALK_DEFAULT_ENVIRONMENT=sanjiu
+DINGTALK_DEFAULT_BASE=guanlan
+DINGTALK_DEFAULT_WORKSHOP=GL001
+DINGTALK_DEFAULT_SERVICE=order-service
+```
+
+Stream SDK 使用 `dingtalk-stream` 包。当前实现通过独立 worker 封装 SDK，fake 测试不依赖真实钉钉网络。若 Stream 连接断开，worker 会按 `DINGTALK_STREAM_RECONNECT_INITIAL_SECONDS` 到 `DINGTALK_STREAM_RECONNECT_MAX_SECONDS` 退避重连。同一个 connector 默认单活运行，重复投递通过 `dingding_stream:<connector_id>:<event_id>` 幂等键去重。
+
+兼容 HTTP webhook 路由 `/webhooks/dingding/agent` 默认禁用。只有显式设置 `DINGTALK_HTTP_WEBHOOK_ENABLED=true` 时才作为本地测试/迁移兼容入口使用；正式钉钉用户消息不要再配置公网 HTTPS 回调地址。
+
+### DingTalk delivery 配置
+
+钉钉企业 App 出口使用 `connector-dingtalk-enterprise-default`。Client ID / Client Secret 不写入数据库明文，本地 seed 使用 `env:` 引用：
+
+```env
+DINGTALK_CLIENT_ID=your-client-id
+DINGTALK_CLIENT_SECRET=your-client-secret
+DINGTALK_DEFAULT_DELIVERY_TYPE=dingtalk_enterprise_robot
+DINGTALK_DEFAULT_DELIVERY_CONNECTOR_ID=connector-dingtalk-enterprise-default
+DINGTALK_DEFAULT_OPEN_CONVERSATION_ID=your-open-conversation-id
+DINGTALK_DEFAULT_ROBOT_CODE=your-robot-code
+```
+
+钉钉 Stream 入口默认使用企业 App 出口。若 Stream 消息没有携带 `routing`，可以用环境变量配置默认诊断范围：
+
+```env
+DINGTALK_DEFAULT_PROJECT_CODE=default
+DINGTALK_DEFAULT_ENVIRONMENT=sanjiu
+DINGTALK_DEFAULT_BASE=guanlan
+DINGTALK_DEFAULT_WORKSHOP=GL001
+DINGTALK_DEFAULT_SERVICE=order-service
+```
+
+默认目标在 connector metadata 中配置：
+
+```json
+{
+  "client_id_ref": "env:DINGTALK_CLIENT_ID",
+  "default_open_conversation_id": "test-open-conversation",
+  "default_robot_code": "test-robot-code"
+}
+```
+
+也可以在请求的 `delivery.target` 中显式指定：
+
+```json
+{
+  "type": "dingtalk_enterprise_robot",
+  "connector_id": "connector-dingtalk-enterprise-default",
+  "target": {
+    "open_conversation_id": "cidxxx",
+    "robot_code": "dingxxx"
+  }
+}
+```
+
+钉钉 webhook 群机器人出口使用 `connector-dingtalk-webhook-default`，只支持发送群消息，不支持作为入口接收用户问题：
+
+```env
+DINGTALK_WEBHOOK_ROBOT_URL=https://oapi.dingtalk.com/robot/send?access_token=xxx
+DINGTALK_WEBHOOK_ROBOT_SECRET=your-robot-sign-secret
+```
+
+Debug API 指定投递到 webhook 群机器人：
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/agent/jobs \
+  -H 'content-type: application/json' \
+  -d '{
+    "message": "帮我查一下订单 MO20260627001 为什么一直待领料",
+    "user_id": "local-user",
+    "conversation_id": "debug-conversation",
+    "project_code": "default",
+    "idempotency_key": "debug-webhook-delivery-001",
+    "delivery": {
+      "type": "dingtalk_webhook_robot",
+      "connector_id": "connector-dingtalk-webhook-default",
+      "target": {"is_at_all": false}
+    }
+  }'
+```
+
+Grafana firing alert 指定投递到 webhook 群机器人时，设置 labels：
+
+```json
+{
+  "ea_delivery_type": "dingtalk_webhook_robot",
+  "ea_delivery_connector_id": "connector-dingtalk-webhook-default"
+}
+```
 
 ## 环境变量
 
@@ -223,8 +343,17 @@ Delivery 支持 `none`、`dingtalk_conversation`、`dingtalk_webhook_robot`、`d
 - `SEED_LOCAL_CONFIG`：启动时写入本地工具、数据源和权限 seed。
 - `DEBUG_AGENT_USER_ID`：调试 API 默认用户。
 - `DINGTALK_SECRET`：钉钉机器人签名密钥。
+- `DINGTALK_HTTP_WEBHOOK_ENABLED`：是否启用兼容 HTTP webhook 入口，默认 `false`。
 - `DINGTALK_CALLBACK_URL`：结果回调地址。
 - `DINGTALK_CALLBACK_HOST_ALLOWLIST`：回调 host 白名单。
+- `DINGTALK_CLIENT_ID`：钉钉企业 App Client ID，不要提交真实值。
+- `DINGTALK_CLIENT_SECRET`：钉钉企业 App Client Secret，不要提交真实值。
+- `DINGTALK_STREAM_ENABLED`：是否启用钉钉 Stream 入口 worker，默认 `false`。
+- `DINGTALK_STREAM_CONNECTOR_ID`：钉钉 Stream 入口 connector，默认 `connector-dingtalk-stream-default`。
+- `DINGTALK_STREAM_RECONNECT_INITIAL_SECONDS`：Stream 断线后首次重连等待秒数，默认 `5`。
+- `DINGTALK_STREAM_RECONNECT_MAX_SECONDS`：Stream 重连最大等待秒数，默认 `60`。
+- `DINGTALK_WEBHOOK_ROBOT_URL`：钉钉 webhook 群机器人 URL，不要提交真实值。
+- `DINGTALK_WEBHOOK_ROBOT_SECRET`：钉钉 webhook 群机器人加签密钥，不要提交真实值。
 - `INTERNAL_API_BASE_URL`：内部 API 平台地址。
 - `FEATURE_REAL_INTERNAL_TOOLS`：是否启用 HTTP Internal API Platform，默认 `false`。
 - `INTERNAL_API_AUTH_TOKEN`：内部 API 平台 Bearer token，不要提交真实值。
@@ -571,6 +700,7 @@ curl -s http://127.0.0.1:8000/api/agent/jobs/job_xxx/tool-calls
 - worker 消费消息后更新 job 状态，重复 delivery 不重复回调。
 - Channel 泛入口、Grafana firing/ignored、缺失 label 拒绝。
 - Delivery none、钉钉分片、adapter 失败、connector 方向校验。
+- DingTalk 企业 App token/message client、webhook 群机器人签名发送、host allowlist 和敏感摘要屏蔽。
 - feature flag 开启时生产 runtime 注入 `RealClaudeCodeAgentClient`，测试 runtime 仍使用 stub。
 - feature flag 开启时生产 runtime 注入 `HttpInternalApiClient`，测试 runtime 仍使用 fake internal tools。
 - HTTP Internal API client 的 headers、payload、envelope、legacy body、错误分类和脱敏。

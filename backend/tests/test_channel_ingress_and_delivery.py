@@ -138,6 +138,37 @@ class ChannelIngressAndDeliveryTests(unittest.TestCase):
             self.assertIsNotNone(c.message_bus)
             self.assertEqual(0, len(c.message_bus.jobs))
 
+    def test_webhook_robot_connector_cannot_be_used_as_ingress(self) -> None:
+        settings = make_settings()
+        built = []
+
+        def factory(_: Any):
+            c = container()
+            built.append(c)
+            return c
+
+        with TestClient(create_app(settings, container_factory=factory)) as client:
+            c = built[0]
+            response = client.post(
+                "/webhooks/channel/agent",
+                json={
+                    "from": {
+                        "type": "dingtalk_webhook_robot",
+                        "connector_id": "connector-dingtalk-webhook-default",
+                        "event_id": "bad-ingress",
+                        "actor_id": "local-user",
+                    },
+                    "delivery": {"type": "none"},
+                    "routing": {"project_code": "default"},
+                    "message": "should be rejected",
+                },
+            )
+
+            self.assertEqual(403, response.status_code)
+            self.assertEqual(0, c.agent_repository.count_rows("agent_job"))
+            self.assertIsNotNone(c.message_bus)
+            self.assertEqual(0, len(c.message_bus.jobs))
+
     def test_delivery_chunks_long_report_and_none_delivery_is_skipped(self) -> None:
         c = container()
         c.result_delivery_service.chunker.max_chars = 10

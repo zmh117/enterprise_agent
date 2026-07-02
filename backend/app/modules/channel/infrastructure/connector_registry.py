@@ -7,6 +7,20 @@ from urllib.parse import urlparse
 from app.modules.job.infrastructure.repositories import ConfigurationRepository
 from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
 
+DINGTALK_STREAM_CONNECTOR_TYPE = "dingtalk_enterprise_stream"
+DELIVERY_ONLY_CONNECTOR_TYPES = {
+    "dingtalk_enterprise_robot",
+    "dingtalk_webhook_robot",
+    "email",
+    "webhook",
+    "none",
+}
+INGRESS_ONLY_CONNECTOR_TYPES = {
+    "debug_api",
+    "grafana_alert",
+    DINGTALK_STREAM_CONNECTOR_TYPE,
+}
+
 
 @dataclass(frozen=True)
 class Connector:
@@ -33,7 +47,11 @@ class ConnectorRegistry:
 
     def require_ingress(self, connector_id: str) -> Connector:
         connector = self._require(connector_id)
-        if not connector.enabled or not connector.allow_ingress:
+        if (
+            not connector.enabled
+            or not connector.allow_ingress
+            or connector.connector_type in DELIVERY_ONLY_CONNECTOR_TYPES
+        ):
             raise PermissionDenied(
                 f"Connector {connector_id} is not allowed for ingress",
                 safe_message="Connector is not allowed for ingress",
@@ -42,14 +60,61 @@ class ConnectorRegistry:
 
     def require_delivery(self, connector_id: str) -> Connector:
         connector = self._require(connector_id)
-        if not connector.enabled or not connector.allow_delivery:
+        if (
+            not connector.enabled
+            or not connector.allow_delivery
+            or connector.connector_type in INGRESS_ONLY_CONNECTOR_TYPES
+        ):
             raise NonRetryableExecutionError(
                 f"Connector {connector_id} is not allowed for delivery",
                 safe_message="Connector is not allowed for delivery",
             )
         return connector
 
+    def require_dingtalk_stream_ingress(self, connector_id: str) -> Connector:
+        connector = self.require_ingress(connector_id)
+        if connector.connector_type != DINGTALK_STREAM_CONNECTOR_TYPE:
+            raise PermissionDenied(
+                f"Connector {connector_id} is not a DingTalk Stream ingress connector",
+                safe_message="Connector is not a DingTalk Stream ingress connector",
+            )
+        return connector
+
     def resolve_secret(self, connector: Connector) -> str:
+        return self.resolve_reference(connector.secret_ref)
+
+    def resolve_reference(self, value: object) -> str:
+        text = str(value or "")
+        if not text:
+            return ""
+        if text.startswith("env:"):
+            return os.getenv(text.removeprefix("env:"), "")
+        return text
+
+    def resolve_metadata_reference(self, connector: Connector, key: str) -> str:
+        value = connector.metadata.get(key)
+        if value is None:
+            return ""
+        return self.resolve_reference(value)
+
+    def metadata_value(self, connector: Connector, key: str) -> str:
+        value = connector.metadata.get(key)
+        if value is None:
+            return ""
+        return str(value)
+
+    def metadata_list(self, connector: Connector, key: str) -> list[str]:
+        value = connector.metadata.get(key)
+        if isinstance(value, list):
+            return [str(item) for item in value if str(item)]
+        if isinstance(value, str) and value:
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return []
+
+    def resolved_endpoint_url(self, connector: Connector) -> str:
+        return self.resolve_reference(connector.endpoint_ref) or connector.base_url
+
+    def resolve_secret_legacy(self, connector: Connector) -> str:
         if not connector.secret_ref:
             return ""
         if connector.secret_ref.startswith("env:"):
@@ -57,9 +122,7 @@ class ConnectorRegistry:
         return connector.secret_ref
 
     def endpoint_url(self, connector: Connector) -> str:
-        if connector.endpoint_ref.startswith("env:"):
-            return os.getenv(connector.endpoint_ref.removeprefix("env:"), "")
-        return connector.endpoint_ref or connector.base_url
+        return self.resolved_endpoint_url(connector)
 
     def assert_host_allowed(self, connector: Connector, url: str) -> None:
         if not url:
