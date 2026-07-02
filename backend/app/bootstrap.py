@@ -13,6 +13,15 @@ from app.modules.agent.infrastructure.claude_code_agent_client import (
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
 from app.modules.agent.infrastructure.skill_loader import SkillLoader
 from app.modules.audit.application.audit_service import AuditService
+from app.modules.channel.application.channel_ingress_service import ChannelIngressService
+from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
+from app.modules.delivery.application.report_chunker import ReportChunker
+from app.modules.delivery.application.result_delivery_service import ResultDeliveryService
+from app.modules.delivery.infrastructure.adapters import (
+    DingTalkDeliveryAdapter,
+    HttpDeliveryAdapter,
+    NoneDeliveryAdapter,
+)
 from app.modules.dingding.application.dingding_message_service import DingTalkMessageService
 from app.modules.dingding.infrastructure.dingding_callback_client import DingTalkCallbackClient
 from app.modules.internal_tools.application.tools import ReadOnlyToolService
@@ -50,8 +59,11 @@ class Container:
     message_bus: InMemoryMessageBus | None
     internal_api_client: InternalApiClient
     tool_service: ReadOnlyToolService
+    connector_registry: ConnectorRegistry
+    channel_ingress_service: ChannelIngressService
     create_agent_job_service: CreateAgentJobService
     dingtalk_message_service: DingTalkMessageService
+    result_delivery_service: ResultDeliveryService
     agent_executor: AgentExecutor
     retry_service: JobRetryService
 
@@ -141,16 +153,22 @@ def _build_container(
         max_chars=settings.execution.max_tool_response_chars,
     )
     permission_service = PermissionService(config_repository)
+    connector_registry = ConnectorRegistry(config_repository)
     create_job_service = CreateAgentJobService(
         repository=agent_repository,
         permission_service=permission_service,
         audit_service=audit_service,
         publisher=publisher,
         queue_settings=settings.queue,
+        connector_registry=connector_registry,
+    )
+    channel_ingress_service = ChannelIngressService(
+        create_job_service=create_job_service,
+        audit_service=audit_service,
     )
     dingtalk_service = DingTalkMessageService(
         secret=settings.dingtalk.secret,
-        create_job_service=create_job_service,
+        channel_ingress_service=channel_ingress_service,
         callback_client=DingTalkCallbackClient(
             callback_url=settings.dingtalk.callback_url,
             host_allowlist=settings.dingtalk.callback_host_allowlist,
@@ -183,6 +201,25 @@ def _build_container(
         if use_real_claude
         else StubClaudeCodeAgentClient()
     )
+    dingtalk_adapter = DingTalkDeliveryAdapter(
+        fallback_callback_url=settings.dingtalk.callback_url,
+        host_allowlist=settings.dingtalk.callback_host_allowlist,
+    )
+    http_adapter = HttpDeliveryAdapter(timeout_seconds=settings.delivery.timeout_seconds)
+    result_delivery_service = ResultDeliveryService(
+        repository=agent_repository,
+        audit_service=audit_service,
+        connector_registry=connector_registry,
+        adapters={
+            "none": NoneDeliveryAdapter(),
+            "dingtalk_conversation": dingtalk_adapter,
+            "dingtalk_webhook_robot": dingtalk_adapter,
+            "dingtalk_enterprise_robot": dingtalk_adapter,
+            "email": http_adapter,
+            "webhook": http_adapter,
+        },
+        chunker=ReportChunker(settings.delivery.chunk_max_chars),
+    )
     agent_executor = AgentExecutor(
         repository=agent_repository,
         audit_service=audit_service,
@@ -194,10 +231,7 @@ def _build_container(
         claude_client=claude_client,
         tool_registry=tool_registry,
         result_service=AgentResultService(agent_repository),
-        callback_client=DingTalkCallbackClient(
-            callback_url=settings.dingtalk.callback_url,
-            host_allowlist=settings.dingtalk.callback_host_allowlist,
-        ),
+        delivery_service=result_delivery_service,
     )
     retry_service = JobRetryService(
         repository=agent_repository,
@@ -215,8 +249,11 @@ def _build_container(
         message_bus=message_bus,
         internal_api_client=internal_api_client,
         tool_service=tool_service,
+        connector_registry=connector_registry,
+        channel_ingress_service=channel_ingress_service,
         create_agent_job_service=create_job_service,
         dingtalk_message_service=dingtalk_service,
+        result_delivery_service=result_delivery_service,
         agent_executor=agent_executor,
         retry_service=retry_service,
     )

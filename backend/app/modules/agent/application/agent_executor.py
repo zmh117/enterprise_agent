@@ -8,7 +8,7 @@ from app.modules.agent.domain.runtime import AgentRunRequest
 from app.modules.agent.infrastructure.claude_code_agent_client import ClaudeCodeAgentClient
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
 from app.modules.audit.application.audit_service import AuditService
-from app.modules.dingding.infrastructure.dingding_callback_client import DingTalkCallbackClient
+from app.modules.delivery.application.result_delivery_service import ResultDeliveryService
 from app.modules.job.application.job_status_service import JobStatusService
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.repositories import AgentRepository
@@ -25,7 +25,7 @@ class AgentExecutor:
         claude_client: ClaudeCodeAgentClient,
         tool_registry: ToolRegistry,
         result_service: AgentResultService,
-        callback_client: DingTalkCallbackClient,
+        delivery_service: ResultDeliveryService,
     ) -> None:
         self.repository = repository
         self.audit_service = audit_service
@@ -34,7 +34,7 @@ class AgentExecutor:
         self.claude_client = claude_client
         self.tool_registry = tool_registry
         self.result_service = result_service
-        self.callback_client = callback_client
+        self.delivery_service = delivery_service
 
     def execute(
         self,
@@ -88,16 +88,11 @@ class AgentExecutor:
             )
             self.result_service.save_result(job, result.final_answer)
             self.status_service.succeed(job.id, result.final_answer)
-            session = self.repository.get_session(job.session_id)
-            self.callback_client.send_markdown(
-                conversation_id=session.dingding_conversation_id,
-                title="Agent diagnostic report",
-                text=result.final_answer,
-            )
+            self.delivery_service.deliver_job_result(job.id)
             self.audit_service.record(
-                "dingtalk.callback",
+                "result.delivery.requested",
                 status="SUCCEEDED",
-                summary="Final report callback sent",
+                summary="Final report delivery requested",
                 job_id=job.id,
                 actor_id=worker_id,
             )

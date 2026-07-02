@@ -1,0 +1,1 @@
+"""Channel ingress module."""

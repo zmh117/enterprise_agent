@@ -45,10 +45,9 @@ class AgentJobWorker:
                     actor_id=self.worker_id,
                 )
                 if action == "dead":
-                    session = self.container.agent_repository.get_session(job.session_id)
-                    self.container.dingtalk_message_service.send_final_result(
-                        session.dingding_conversation_id,
-                        self.container.dingtalk_message_service.safe_failure_notice(safe_message),
+                    self.container.result_delivery_service.deliver_job_failure(
+                        job.id,
+                        safe_message,
                     )
                 logger.warning(
                     "Agent job failed; routed to %s job_id=%s error_type=%s safe_message=%s",

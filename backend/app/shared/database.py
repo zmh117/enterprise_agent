@@ -59,11 +59,25 @@ class Database:
     def execute_script(self, script: str) -> None:
         connection = self.connect()
         if self.engine == "sqlite":
-            connection.executescript(script)
+            for statement in self._split_statements(script):
+                if self._is_postgres_comment_statement(statement):
+                    continue
+                try:
+                    connection.execute(statement)
+                    connection.commit()
+                except Exception as exc:
+                    if not self._is_ignorable_migration_error(exc):
+                        raise
+                    connection.rollback()
         else:
             for statement in self._split_statements(script):
-                connection.execute(statement)
-        connection.commit()
+                try:
+                    connection.execute(statement)
+                    connection.commit()
+                except Exception as exc:
+                    if not self._is_ignorable_migration_error(exc):
+                        raise
+                    connection.rollback()
 
     def run_migrations(self, migrations_dir: Path) -> None:
         for path in sorted(migrations_dir.glob("*.sql")):
@@ -76,6 +90,18 @@ class Database:
 
     def _split_statements(self, script: str) -> list[str]:
         return [statement.strip() for statement in script.split(";") if statement.strip()]
+
+    def _is_ignorable_migration_error(self, exc: Exception) -> bool:
+        message = str(exc).lower()
+        return (
+            "duplicate column" in message
+            or "already exists" in message
+            or "column" in message
+            and "already" in message
+        )
+
+    def _is_postgres_comment_statement(self, statement: str) -> bool:
+        return statement.lstrip().upper().startswith("COMMENT ON ")
 
 
 def default_migrations_dir() -> Path:

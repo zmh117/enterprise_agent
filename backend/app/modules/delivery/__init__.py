@@ -1,0 +1,1 @@
+"""Result delivery module."""

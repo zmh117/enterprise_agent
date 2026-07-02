@@ -7,11 +7,15 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from app.modules.dingding.infrastructure.dingding_callback_client import DingTalkCallbackClient
-from app.modules.job.application.create_agent_job_service import (
-    CreateAgentJobCommand,
-    CreateAgentJobService,
+from app.modules.channel.application.channel_ingress_service import ChannelIngressService
+from app.modules.channel.domain.channel_event import (
+    ChannelEvent,
+    ChannelSource,
+    ReplyRoute,
+    RoutingContext,
+    safe_payload_summary,
 )
+from app.modules.dingding.infrastructure.dingding_callback_client import DingTalkCallbackClient
 from app.shared.exceptions import PermissionDenied
 
 
@@ -30,11 +34,11 @@ class DingTalkMessageService:
         self,
         *,
         secret: str,
-        create_job_service: CreateAgentJobService,
+        channel_ingress_service: ChannelIngressService,
         callback_client: DingTalkCallbackClient,
     ) -> None:
         self.secret = secret
-        self.create_job_service = create_job_service
+        self.channel_ingress_service = channel_ingress_service
         self.callback_client = callback_client
 
     def verify_signature(self, *, timestamp: str, sign: str) -> bool:
@@ -80,18 +84,36 @@ class DingTalkMessageService:
         if not self.verify_signature(timestamp=timestamp, sign=sign):
             return {"accepted": False, "status": "invalid_signature"}
         message = self.parse_message(payload)
+        delivery = ReplyRoute(
+            type=str(payload.get("delivery_type") or "dingtalk_conversation"),
+            connector_id=str(
+                payload.get("delivery_connector_id") or "connector-dingtalk-enterprise-default"
+            ),
+            target={
+                "conversation_id": message.conversation_id,
+                **_dict_value(payload.get("delivery_target")),
+            },
+        )
+        source_connector_id = str(
+            payload.get("source_connector_id") or "connector-dingtalk-enterprise-default"
+        )
+        event = ChannelEvent(
+            source=ChannelSource(
+                type=message.source,
+                connector_id=source_connector_id,
+                event_id=message.message_id,
+                actor_id=message.user_id,
+                conversation_id=message.conversation_id,
+            ),
+            delivery=delivery,
+            routing=RoutingContext(project_code=message.project_code),
+            message=message.content,
+            raw_payload_summary=safe_payload_summary(payload),
+            idempotency_key=f"dingding:{message.message_id}",
+            correlation_id=correlation_id,
+        )
         try:
-            job = self.create_job_service.execute(
-                CreateAgentJobCommand(
-                    idempotency_key=f"dingding:{message.message_id}",
-                    dingding_conversation_id=message.conversation_id,
-                    dingding_user_id=message.user_id,
-                    user_message=message.content,
-                    project_code=message.project_code,
-                    source=message.source,
-                    correlation_id=correlation_id,
-                )
-            )
+            job = self.channel_ingress_service.accept(event)
         except PermissionDenied as exc:
             return {"accepted": False, "status": "permission_denied", "message": exc.safe_message}
         return {
@@ -108,3 +130,7 @@ class DingTalkMessageService:
 
     def safe_failure_notice(self, reason: str) -> str:
         return json.dumps({"status": "failed", "reason": reason}, ensure_ascii=False)
+
+
+def _dict_value(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}

@@ -30,14 +30,28 @@ class AgentRepository:
         dingding_user_id: str,
         source: str,
         project_code: str,
+        source_channel: str | None = None,
+        source_connector_id: str = "",
+        external_conversation_id: str | None = None,
+        requester_id: str | None = None,
+        requester_display_name: str = "",
+        routing_context: dict[str, Any] | None = None,
+        reply_route: dict[str, Any] | None = None,
     ) -> AgentSession:
         session_id = new_id("session")
         timestamp = now_iso()
+        source_channel = source_channel or source
+        external_conversation_id = external_conversation_id or dingding_conversation_id
+        requester_id = requester_id or dingding_user_id
+        routing_context = routing_context or {"project_code": project_code}
+        reply_route = reply_route or {"type": "dingtalk_conversation"}
         self.database.execute(
             """
             insert into agent_session
-              (id, dingding_conversation_id, dingding_user_id, source, project_code, created_at, updated_at)
-            values (?, ?, ?, ?, ?, ?, ?)
+              (id, dingding_conversation_id, dingding_user_id, source, project_code,
+               source_channel, source_connector_id, external_conversation_id, requester_id,
+               requester_display_name, routing_context_json, reply_route_json, created_at, updated_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
@@ -45,6 +59,13 @@ class AgentRepository:
                 dingding_user_id,
                 source,
                 project_code,
+                source_channel,
+                source_connector_id,
+                external_conversation_id,
+                requester_id,
+                requester_display_name,
+                json.dumps(routing_context, ensure_ascii=False),
+                json.dumps(reply_route, ensure_ascii=False),
                 timestamp,
                 timestamp,
             ),
@@ -55,6 +76,13 @@ class AgentRepository:
             dingding_user_id=dingding_user_id,
             source=source,
             project_code=project_code,
+            source_channel=source_channel,
+            source_connector_id=source_connector_id,
+            external_conversation_id=external_conversation_id,
+            requester_id=requester_id,
+            requester_display_name=requester_display_name,
+            routing_context=routing_context,
+            reply_route=reply_route,
         )
 
     def create_job(
@@ -67,18 +95,29 @@ class AgentRepository:
         source: str,
         user_message: str,
         max_retry_count: int,
+        source_channel: str | None = None,
+        source_connector_id: str = "",
+        external_event_id: str = "",
+        requester_id: str | None = None,
+        routing_context: dict[str, Any] | None = None,
+        reply_route: dict[str, Any] | None = None,
     ) -> AgentJob:
         existing = self.get_job_by_idempotency_key(idempotency_key)
         if existing:
             return existing
         job_id = new_id("job")
         timestamp = now_iso()
+        source_channel = source_channel or source
+        requester_id = requester_id or user_id
+        routing_context = routing_context or {"project_code": project_code}
+        reply_route = reply_route or {"type": "dingtalk_conversation"}
         self.database.execute(
             """
             insert into agent_job
               (id, session_id, idempotency_key, user_id, project_code, source, user_message,
-               status, retry_count, max_retry_count, created_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               status, retry_count, max_retry_count, source_channel, source_connector_id,
+               external_event_id, requester_id, routing_context_json, reply_route_json, created_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job_id,
@@ -91,6 +130,12 @@ class AgentRepository:
                 JobStatus.PENDING.value,
                 0,
                 max_retry_count,
+                source_channel,
+                source_connector_id,
+                external_event_id,
+                requester_id,
+                json.dumps(routing_context, ensure_ascii=False),
+                json.dumps(reply_route, ensure_ascii=False),
                 timestamp,
             ),
         )
@@ -193,6 +238,14 @@ class AgentRepository:
             dingding_user_id=row["dingding_user_id"],
             source=row["source"],
             project_code=row["project_code"],
+            source_channel=row.get("source_channel") or row["source"],
+            source_connector_id=row.get("source_connector_id") or "",
+            external_conversation_id=row.get("external_conversation_id")
+            or row["dingding_conversation_id"],
+            requester_id=row.get("requester_id") or row["dingding_user_id"],
+            requester_display_name=row.get("requester_display_name") or "",
+            routing_context=self._json_from_text(row.get("routing_context_json") or "{}"),
+            reply_route=self._json_from_text(row.get("reply_route_json") or "{}"),
         )
 
     def get_job_by_idempotency_key(self, idempotency_key: str) -> AgentJob | None:
@@ -212,6 +265,12 @@ class AgentRepository:
             "user_id": row["user_id"],
             "project_code": row["project_code"],
             "source": row["source"],
+            "source_channel": row.get("source_channel") or row["source"],
+            "source_connector_id": row.get("source_connector_id") or "",
+            "external_event_id": row.get("external_event_id") or "",
+            "requester_id": row.get("requester_id") or row["user_id"],
+            "routing_context": self._json_from_text(row.get("routing_context_json") or "{}"),
+            "reply_route": self._json_from_text(row.get("reply_route_json") or "{}"),
             "user_message": row["user_message"],
             "status": row["status"],
             "priority": int(row["priority"]),
@@ -249,6 +308,128 @@ class AgentRepository:
             (job_id,),
         )
         return [self._tool_call_from_row(row) for row in rows]
+
+    def add_delivery_attempt(
+        self,
+        *,
+        job_id: str,
+        route_type: str,
+        connector_id: str,
+        target_summary: dict[str, Any],
+        status: str,
+        error_message: str | None = None,
+    ) -> str:
+        attempt_id = new_id("delivery")
+        timestamp = now_iso()
+        self.database.execute(
+            """
+            insert into delivery_attempt
+              (id, job_id, route_type, connector_id, target_summary, status,
+               error_message, created_at, finished_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                attempt_id,
+                job_id,
+                route_type,
+                connector_id,
+                json.dumps(target_summary, ensure_ascii=False),
+                status,
+                error_message,
+                timestamp,
+                timestamp if status in {"SUCCEEDED", "FAILED", "SKIPPED"} else None,
+            ),
+        )
+        return attempt_id
+
+    def update_delivery_attempt(
+        self, attempt_id: str, *, status: str, error_message: str | None = None
+    ) -> None:
+        self.database.execute(
+            """
+            update delivery_attempt
+            set status = ?, error_message = ?, finished_at = ?
+            where id = ?
+            """,
+            (
+                status,
+                error_message,
+                now_iso() if status in {"SUCCEEDED", "FAILED", "SKIPPED"} else None,
+                attempt_id,
+            ),
+        )
+
+    def add_delivery_chunk(
+        self,
+        *,
+        attempt_id: str,
+        chunk_index: int,
+        chunk_count: int,
+        status: str,
+        payload_summary: dict[str, Any],
+        error_message: str | None = None,
+    ) -> str:
+        chunk_id = new_id("chunk")
+        self.database.execute(
+            """
+            insert into delivery_chunk
+              (id, attempt_id, chunk_index, chunk_count, status, payload_summary,
+               error_message, created_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                chunk_id,
+                attempt_id,
+                chunk_index,
+                chunk_count,
+                status,
+                json.dumps(payload_summary, ensure_ascii=False),
+                error_message,
+                now_iso(),
+            ),
+        )
+        return chunk_id
+
+    def list_delivery_attempts(self, job_id: str) -> list[dict[str, Any]]:
+        self.get_job(job_id)
+        rows = self.database.execute(
+            """
+            select id, job_id, route_type, connector_id, target_summary, status,
+                   error_message, created_at, finished_at
+            from delivery_attempt
+            where job_id = ?
+            order by created_at, id
+            """,
+            (job_id,),
+        )
+        return [
+            {
+                **row,
+                "target_summary": self._json_from_text(row.get("target_summary") or "{}"),
+            }
+            for row in rows
+        ]
+
+    def list_delivery_chunks(self, job_id: str) -> list[dict[str, Any]]:
+        self.get_job(job_id)
+        rows = self.database.execute(
+            """
+            select c.id, c.attempt_id, a.job_id, c.chunk_index, c.chunk_count, c.status,
+                   c.payload_summary, c.error_message, c.created_at
+            from delivery_chunk c
+            join delivery_attempt a on a.id = c.attempt_id
+            where a.job_id = ?
+            order by c.created_at, c.chunk_index, c.id
+            """,
+            (job_id,),
+        )
+        return [
+            {
+                **row,
+                "payload_summary": self._json_from_text(row.get("payload_summary") or "{}"),
+            }
+            for row in rows
+        ]
 
     def claim_job(self, job_id: str, worker_id: str) -> AgentJob | None:
         job = self.get_job(job_id)
@@ -332,6 +513,12 @@ class AgentRepository:
             max_retry_count=int(row["max_retry_count"]),
             result=row.get("result"),
             error_message=row.get("error_message"),
+            source_channel=row.get("source_channel") or row["source"],
+            source_connector_id=row.get("source_connector_id") or "",
+            external_event_id=row.get("external_event_id") or "",
+            requester_id=row.get("requester_id") or row["user_id"],
+            routing_context=self._json_from_text(row.get("routing_context_json") or "{}"),
+            reply_route=self._json_from_text(row.get("reply_route_json") or "{}"),
         )
 
     def _tool_call_from_row(self, row: dict[str, Any]) -> dict[str, Any]:
@@ -405,6 +592,15 @@ class ConfigurationRepository:
     def get_tool(self, name: str) -> dict[str, Any] | None:
         return self.database.execute_one("select * from tool_definition where name = ?", (name,))
 
+    def get_connector(self, connector_id: str) -> dict[str, Any] | None:
+        row = self.database.execute_one(
+            "select * from integration_connector where id = ?", (connector_id,)
+        )
+        if not row:
+            return None
+        row["metadata"] = self._json_from_text(str(row.get("metadata") or "{}"))
+        return row
+
     def is_allowed(self, *, subject_code: str, resource_type: str, resource_code: str) -> bool:
         row = self.database.execute_one(
             """
@@ -418,3 +614,9 @@ class ConfigurationRepository:
             (subject_code, resource_type, resource_code),
         )
         return row is not None
+
+    def _json_from_text(self, value: str) -> Any:
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value

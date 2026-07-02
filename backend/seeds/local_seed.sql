@@ -19,6 +19,25 @@ VALUES
   ('connector-internal-api', 'internal_api', 'internal-api-platform', 'http://internal-api-platform:9000', 1, '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 
+UPDATE integration_connector
+SET allow_ingress = 0,
+    allow_delivery = 0,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = 'connector-internal-api';
+
+INSERT INTO integration_connector
+  (id, connector_type, name, base_url, enabled, metadata, allow_ingress, allow_delivery,
+   secret_ref, endpoint_ref, host_allowlist, created_at, updated_at)
+VALUES
+  ('connector-debug-api', 'debug_api', 'debug-api', '', 1, '{}', 1, 0, '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('connector-dingtalk-enterprise-default', 'dingtalk_enterprise_robot', 'dingtalk-enterprise-default', '', 1, '{}', 1, 1, 'test-secret', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('connector-dingtalk-webhook-default', 'dingtalk_webhook_robot', 'dingtalk-webhook-default', '', 1, '{}', 1, 1, 'test-secret', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('connector-grafana-default', 'grafana_alert', 'grafana-default', '', 1, '{}', 1, 0, 'test-grafana-token', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('connector-email-default', 'email', 'email-default', '', 1, '{}', 0, 1, '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('connector-webhook-default', 'webhook', 'webhook-default', '', 1, '{}', 0, 1, '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('connector-none', 'none', 'none', '', 1, '{}', 0, 1, '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+ON CONFLICT(id) DO NOTHING;
+
 INSERT INTO datasource_registry
   (id, source_type, source_code, connector_id, enabled, metadata, created_at, updated_at)
 VALUES
@@ -29,5 +48,7 @@ INSERT INTO permission_policy
   (id, subject_type, subject_code, resource_type, resource_code, effect, created_at, updated_at)
 VALUES
   ('policy-user-local', 'user', 'local-user', 'project', 'default', 'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-tool-local', 'user', 'local-user', 'tool', '*', 'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  ('policy-tool-local', 'user', 'local-user', 'tool', '*', 'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-user-grafana', 'user', 'grafana', 'project', 'default', 'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-tool-grafana', 'user', 'grafana', 'tool', '*', 'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;

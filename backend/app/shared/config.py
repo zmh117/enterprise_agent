@@ -26,6 +26,12 @@ class ExecutionSettings:
 
 
 @dataclass(frozen=True)
+class DeliverySettings:
+    chunk_max_chars: int = 3500
+    timeout_seconds: int = 5
+
+
+@dataclass(frozen=True)
 class DingTalkSettings:
     secret: str = ""
     callback_url: str = ""
@@ -62,6 +68,7 @@ class Settings:
     loki: LokiSettings = field(default_factory=LokiSettings)
     queue: QueueSettings = field(default_factory=QueueSettings)
     execution: ExecutionSettings = field(default_factory=ExecutionSettings)
+    delivery: DeliverySettings = field(default_factory=DeliverySettings)
 
 
 def _csv_tuple(value: str) -> tuple[str, ...]:
@@ -125,5 +132,9 @@ def load_settings() -> Settings:
             max_loki_minutes=int(os.getenv("MAX_LOKI_MINUTES", "60")),
             max_loki_lines=int(os.getenv("MAX_LOKI_LINES", "500")),
             redis_scan_limit=int(os.getenv("REDIS_SCAN_LIMIT", "200")),
+        ),
+        delivery=DeliverySettings(
+            chunk_max_chars=int(os.getenv("DELIVERY_CHUNK_MAX_CHARS", "3500")),
+            timeout_seconds=int(os.getenv("DELIVERY_TIMEOUT_SECONDS", "5")),
         ),
     )

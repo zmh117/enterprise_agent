@@ -219,11 +219,11 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
         worker.run_once()
         stored = c.agent_repository.get_job(job.id)
         self.assertEqual(JobStatus.SUCCEEDED, stored.status)
-        self.assertEqual(1, len(c.agent_executor.callback_client.sent_messages))
+        self.assertEqual(1, len(c.result_delivery_service.sent_messages))
 
         worker.handle(AgentJobMessage(job_id=job.id, correlation_id="duplicate"))
         self.assertEqual(JobStatus.SUCCEEDED, c.agent_repository.get_job(job.id).status)
-        self.assertEqual(1, len(c.agent_executor.callback_client.sent_messages))
+        self.assertEqual(1, len(c.result_delivery_service.sent_messages))
 
 
 if __name__ == "__main__":

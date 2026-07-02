@@ -111,6 +111,110 @@ curl -s http://127.0.0.1:8000/api/agent/jobs/job_xxx/steps
 curl -s http://127.0.0.1:8000/api/agent/jobs/job_xxx/tool-calls
 ```
 
+查询结果投递：
+
+```bash
+curl -s http://127.0.0.1:8000/api/agent/jobs/job_xxx/delivery-attempts
+```
+
+## Channel / Delivery 契约
+
+入口请求统一拆成 `from`、`delivery`、`routing`、`message`：
+
+```json
+{
+  "from": {
+    "type": "grafana_alert",
+    "connector_id": "connector-grafana-default",
+    "event_id": "order-service-alert",
+    "actor_id": "grafana"
+  },
+  "delivery": {
+    "type": "dingtalk_webhook_robot",
+    "connector_id": "connector-dingtalk-webhook-default",
+    "target": {"webhook_id": "ops-alerts"}
+  },
+  "routing": {
+    "project_code": "default",
+    "environment": "prod",
+    "base": "guanlan",
+    "workshop": "GL001",
+    "service": "order-service"
+  },
+  "message": "order-service error rate high"
+}
+```
+
+Debug API 默认映射为 `from.type=debug_api` 和 `delivery.type=none`，因此本地调试结果通过查询接口读取，不默认回调钉钉。需要显式投递时可在请求体增加 `delivery` 对象。
+
+通用 Channel endpoint：
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/webhooks/channel/agent \
+  -H 'content-type: application/json' \
+  -d '{
+    "from": {
+      "type": "debug_api",
+      "connector_id": "connector-debug-api",
+      "event_id": "generic-demo-001",
+      "actor_id": "local-user"
+    },
+    "delivery": {"type": "none"},
+    "routing": {"project_code": "default"},
+    "message": "帮我查一下订单 MO20260627001 为什么一直待领料"
+  }'
+```
+
+Grafana webhook 只处理 `status=firing`；`resolved` 会返回 ignored acknowledgement，不创建 Agent job。必填专用 labels：
+
+- `ea_project_code`
+- `ea_environment`
+- `ea_base`
+- `ea_workshop`
+- `ea_service`
+
+可选投递 labels：
+
+- `ea_delivery_type`
+- `ea_delivery_connector_id`
+- `ea_delivery_target`
+
+Grafana firing 示例：
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/webhooks/grafana/alert \
+  -H 'content-type: application/json' \
+  -H 'x-grafana-token: test-grafana-token' \
+  -d '{
+    "status": "firing",
+    "groupKey": "order-service-alert",
+    "commonLabels": {
+      "ea_project_code": "default",
+      "ea_environment": "prod",
+      "ea_base": "guanlan",
+      "ea_workshop": "GL001",
+      "ea_service": "order-service",
+      "ea_delivery_type": "dingtalk_webhook_robot",
+      "ea_delivery_connector_id": "connector-dingtalk-webhook-default"
+    },
+    "commonAnnotations": {
+      "summary": "order-service error rate high"
+    }
+  }'
+```
+
+本地 seed 包含这些 connector：
+
+- `connector-debug-api`：ingress only。
+- `connector-dingtalk-enterprise-default`：ingress + delivery。
+- `connector-dingtalk-webhook-default`：ingress + delivery。
+- `connector-grafana-default`：ingress only。
+- `connector-email-default`：delivery only。
+- `connector-webhook-default`：delivery only。
+- `connector-none`：none route。
+
+Delivery 支持 `none`、`dingtalk_conversation`、`dingtalk_webhook_robot`、`dingtalk_enterprise_robot`、`email`、`webhook`。长报告会按 `DELIVERY_CHUNK_MAX_CHARS` 分片发送，并记录每个 delivery attempt 和 chunk；投递失败不会重新执行 Agent job。
+
 ## 环境变量
 
 - `DATABASE_DSN`：PostgreSQL DSN。
@@ -136,6 +240,8 @@ curl -s http://127.0.0.1:8000/api/agent/jobs/job_xxx/tool-calls
 - `AGENT_MAX_TURNS`：Claude Agent SDK 最大轮次，默认 `12`。
 - `MAX_TOOL_RESPONSE_CHARS`：工具响应摘要最大长度。
 - `MAX_LOKI_MINUTES` / `MAX_LOKI_LINES` / `REDIS_SCAN_LIMIT`：只读工具边界。
+- `DELIVERY_CHUNK_MAX_CHARS`：结果投递单片最大字符数，默认 `3500`。
+- `DELIVERY_TIMEOUT_SECONDS`：外部 delivery 请求超时秒数，默认 `5`。
 
 ## 真实 Claude Runtime
 
@@ -441,6 +547,8 @@ curl -s http://127.0.0.1:8000/api/agent/jobs/job_xxx/tool-calls
 - `agent_step`
 - `agent_tool_call`
 - `agent_artifact`
+- `delivery_attempt`
+- `delivery_chunk`
 - `audit_event`
 
 配置表：
@@ -461,6 +569,8 @@ curl -s http://127.0.0.1:8000/api/agent/jobs/job_xxx/tool-calls
 - Compose runtime 使用 RabbitMQPublisher / RabbitMQConsumer，不使用内存队列。
 - startup 只初始化一次 container，请求不重复 build。
 - worker 消费消息后更新 job 状态，重复 delivery 不重复回调。
+- Channel 泛入口、Grafana firing/ignored、缺失 label 拒绝。
+- Delivery none、钉钉分片、adapter 失败、connector 方向校验。
 - feature flag 开启时生产 runtime 注入 `RealClaudeCodeAgentClient`，测试 runtime 仍使用 stub。
 - feature flag 开启时生产 runtime 注入 `HttpInternalApiClient`，测试 runtime 仍使用 fake internal tools。
 - HTTP Internal API client 的 headers、payload、envelope、legacy body、错误分类和脱敏。

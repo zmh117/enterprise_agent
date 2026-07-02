@@ -6,7 +6,13 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 
 from app.bootstrap import Container
-from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
+from app.modules.channel.domain.channel_event import (
+    ChannelEvent,
+    ChannelSource,
+    ReplyRoute,
+    RoutingContext,
+    safe_payload_summary,
+)
 from app.shared.exceptions import NotFound, PermissionDenied
 from app.shared.logging import new_correlation_id
 
@@ -26,18 +32,30 @@ def build_agent_job_debug_router() -> Any:
         idempotency_key = (
             f"debug:{raw_idempotency_key}" if raw_idempotency_key else f"debug:{uuid.uuid4().hex}"
         )
+        delivery = ReplyRoute.from_dict(_optional_dict(payload, "delivery") or {"type": "none"})
+        routing = RoutingContext.from_dict(
+            {
+                **(_optional_dict(payload, "routing") or {}),
+                "project_code": project_code,
+            }
+        )
+        event = ChannelEvent(
+            source=ChannelSource(
+                type="debug_api",
+                connector_id="connector-debug-api",
+                event_id=idempotency_key,
+                actor_id=user_id,
+                conversation_id=conversation_id,
+            ),
+            delivery=delivery,
+            routing=routing,
+            message=message,
+            raw_payload_summary=safe_payload_summary(payload),
+            idempotency_key=idempotency_key,
+            correlation_id=request.headers.get("x-correlation-id") or new_correlation_id(),
+        )
         try:
-            job = container.create_agent_job_service.execute(
-                CreateAgentJobCommand(
-                    idempotency_key=idempotency_key,
-                    dingding_conversation_id=conversation_id,
-                    dingding_user_id=user_id,
-                    user_message=message,
-                    project_code=project_code,
-                    source="debug_api",
-                    correlation_id=request.headers.get("x-correlation-id") or new_correlation_id(),
-                )
-            )
+            job = container.channel_ingress_service.accept(event)
         except PermissionDenied as exc:
             raise HTTPException(status_code=403, detail=exc.safe_message) from exc
         return {
@@ -70,6 +88,18 @@ def build_agent_job_debug_router() -> Any:
             return {
                 "job_id": job_id,
                 "tool_calls": _container(request).agent_repository.list_tool_calls(job_id),
+            }
+        except NotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.get("/{job_id}/delivery-attempts")
+    def list_delivery_attempts(request: Request, job_id: str) -> dict[str, Any]:
+        try:
+            container = _container(request)
+            return {
+                "job_id": job_id,
+                "delivery_attempts": container.agent_repository.list_delivery_attempts(job_id),
+                "delivery_chunks": container.agent_repository.list_delivery_chunks(job_id),
             }
         except NotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -109,6 +139,15 @@ def _optional_string(payload: dict[str, Any], field: str) -> str | None:
         raise _bad_request(f"Field '{field}' must be a string")
     value = value.strip()
     return value or None
+
+
+def _optional_dict(payload: dict[str, Any], field: str) -> dict[str, Any] | None:
+    value = payload.get(field)
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise _bad_request(f"Field '{field}' must be an object")
+    return value
 
 
 def _bad_request(message: str) -> Exception:

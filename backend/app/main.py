@@ -128,9 +128,11 @@ def create_app(
             raise HTTPException(status_code=503, detail=status)
         return status
 
+    from app.modules.channel.api.channel_webhook_controller import build_channel_router
     from app.modules.dingding.api.dingding_webhook_controller import build_dingding_router
     from app.modules.job.api.agent_job_debug_controller import build_agent_job_debug_router
 
+    app.include_router(build_channel_router())
     app.include_router(build_dingding_router())
     app.include_router(build_agent_job_debug_router())
 
