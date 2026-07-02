@@ -80,9 +80,9 @@ class DingTalkStreamIngressTests(unittest.TestCase):
         self.assertEqual("dingding_stream", job.source_channel)
         self.assertEqual("connector-dingtalk-stream-default", job.source_connector_id)
         self.assertEqual("stream-event-1", job.external_event_id)
-        self.assertEqual("dingtalk_enterprise_robot", job.reply_route["type"])
-        self.assertEqual("connector-dingtalk-enterprise-default", job.reply_route["connector_id"])
-        self.assertEqual("open-cid-1", job.reply_route["target"]["open_conversation_id"])
+        self.assertEqual("dingtalk_stream_session_webhook", job.reply_route["type"])
+        self.assertEqual("", job.reply_route["connector_id"])
+        self.assertEqual("https://oapi.dingtalk.com/robot/sendBySession", job.reply_route["target"]["session_webhook"])
 
     def test_duplicate_stream_event_returns_existing_job_without_second_queue_message(self) -> None:
         c = container()
@@ -137,10 +137,10 @@ class DingTalkStreamIngressTests(unittest.TestCase):
         self.assertEqual("permission_denied", result.status)
         self.assertEqual(0, c.agent_repository.count_rows("agent_job"))
 
-    def test_stream_job_result_uses_configured_delivery_route(self) -> None:
+    def test_stream_job_result_uses_session_webhook_by_default(self) -> None:
         c = container()
         adapter = CaptureDeliveryAdapter()
-        c.result_delivery_service.adapters["dingtalk_enterprise_robot"] = adapter
+        c.result_delivery_service.adapters["dingtalk_stream_session_webhook"] = adapter
 
         result = c.dingtalk_stream_message_service.handle_callback(
             payload=stream_payload(),
@@ -153,10 +153,30 @@ class DingTalkStreamIngressTests(unittest.TestCase):
         c.result_delivery_service.deliver_job_result(result.job_id)
 
         self.assertEqual(1, len(adapter.calls))
-        self.assertEqual("dingtalk_enterprise_robot", adapter.calls[0]["route_type"])
-        self.assertEqual("connector-dingtalk-enterprise-default", adapter.calls[0]["connector_id"])
+        self.assertEqual("dingtalk_stream_session_webhook", adapter.calls[0]["route_type"])
+        self.assertEqual("", adapter.calls[0]["connector_id"])
         attempts = c.agent_repository.list_delivery_attempts(result.job_id)
         self.assertEqual("SUCCEEDED", attempts[0]["status"])
+
+    def test_stream_message_can_override_delivery_to_enterprise_robot(self) -> None:
+        c = container()
+
+        result = c.dingtalk_stream_message_service.handle_callback(
+            payload={
+                **stream_payload(),
+                "delivery": {
+                    "type": "dingtalk_enterprise_robot",
+                    "connector_id": "connector-dingtalk-enterprise-default",
+                    "target": {"open_conversation_id": "open-cid-override"},
+                },
+            },
+            correlation_id="corr-stream-1",
+        )
+
+        job = c.agent_repository.get_job(result.job_id)
+        self.assertEqual("dingtalk_enterprise_robot", job.reply_route["type"])
+        self.assertEqual("connector-dingtalk-enterprise-default", job.reply_route["connector_id"])
+        self.assertEqual("open-cid-override", job.reply_route["target"]["open_conversation_id"])
 
     def test_stream_worker_starts_fake_client_and_creates_job(self) -> None:
         fake_holder: dict[str, FakeStreamClient] = {}
@@ -247,6 +267,8 @@ def stream_payload(
         "msgId": msg_id,
         "eventId": event_id,
         "robotCode": "robot-code-1",
+        "sessionWebhook": "https://oapi.dingtalk.com/robot/sendBySession",
+        "sessionWebhookExpiredTime": "1783003242125",
         "text": {"content": content},
     }
 

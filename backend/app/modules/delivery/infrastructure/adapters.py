@@ -179,6 +179,37 @@ class DingTalkWebhookRobotDeliveryAdapter:
         )
 
 
+class DingTalkStreamSessionWebhookDeliveryAdapter:
+    def __init__(
+        self,
+        *,
+        transport: JsonPostTransport | None = None,
+        timeout_seconds: int = 5,
+    ) -> None:
+        self.transport = transport
+        self.timeout_seconds = timeout_seconds
+        self.sent_messages: list[dict[str, str]] = []
+
+    def send(
+        self, *, connector: Connector | None, route: ReplyRoute, title: str, text: str
+    ) -> None:
+        session_webhook = str(route.target.get("session_webhook") or "")
+        client = DingTalkWebhookRobotClient(
+            webhook_url=session_webhook,
+            transport=self.transport,
+            timeout_seconds=self.timeout_seconds,
+        )
+        client.send_markdown(title=title, text=text)
+        self.sent_messages.extend(
+            {
+                "title": str(item["title"]),
+                "route_type": route.type,
+                "conversation_id": str(route.target.get("conversation_id") or ""),
+            }
+            for item in client.sent_messages
+        )
+
+
 class HttpDeliveryAdapter:
     def __init__(self, *, timeout_seconds: int = 5) -> None:
         self.timeout_seconds = timeout_seconds

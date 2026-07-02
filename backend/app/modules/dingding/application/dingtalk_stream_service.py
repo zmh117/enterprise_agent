@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -14,6 +15,8 @@ from app.modules.channel.domain.channel_event import (
 )
 from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class DingTalkStreamIncomingMessage:
@@ -25,6 +28,8 @@ class DingTalkStreamIncomingMessage:
     sender_display_name: str = ""
     open_conversation_id: str = ""
     robot_code: str = ""
+    session_webhook: str = ""
+    session_webhook_expired_time: str = ""
 
 
 @dataclass(frozen=True)
@@ -95,6 +100,11 @@ class DingTalkStreamMessageService:
                 "payload": safe_payload_summary(payload),
             },
         )
+        logger.info(
+            "DingTalk Stream event received connector_id=%s payload_keys=%s",
+            source_connector_id,
+            sorted(payload.keys()),
+        )
         try:
             message = self.parse_message(payload)
         except UnsupportedDingTalkStreamEvent as exc:
@@ -113,6 +123,11 @@ class DingTalkStreamMessageService:
                 reason=str(exc),
             )
         except RejectedDingTalkStreamMessage as exc:
+            logger.info(
+                "DingTalk Stream message rejected connector_id=%s reason=%s",
+                source_connector_id,
+                exc.reason,
+            )
             self.audit_service.record(
                 "dingtalk.stream.rejected",
                 status="FAILED",
@@ -140,6 +155,12 @@ class DingTalkStreamMessageService:
         try:
             job = self.channel_ingress_service.accept(event)
         except PermissionDenied as exc:
+            logger.info(
+                "DingTalk Stream permission denied connector_id=%s actor_id=%s event_id=%s",
+                source_connector_id,
+                message.user_id,
+                message.event_id,
+            )
             self.audit_service.record(
                 "dingtalk.stream.permission_denied",
                 status="DENIED",
@@ -155,6 +176,13 @@ class DingTalkStreamMessageService:
                 reason=exc.safe_message,
             )
         except NonRetryableExecutionError as exc:
+            logger.info(
+                "DingTalk Stream message rejected connector_id=%s actor_id=%s event_id=%s reason=%s",
+                source_connector_id,
+                message.user_id,
+                message.event_id,
+                exc.safe_message,
+            )
             self.audit_service.record(
                 "dingtalk.stream.rejected",
                 status="FAILED",
@@ -177,6 +205,13 @@ class DingTalkStreamMessageService:
             job_id=job.id,
             actor_id=message.user_id,
             payload={"connector_id": source_connector_id, "event_id": message.event_id},
+        )
+        logger.info(
+            "DingTalk Stream message accepted connector_id=%s actor_id=%s event_id=%s job_id=%s",
+            source_connector_id,
+            message.user_id,
+            message.event_id,
+            job.id,
         )
         return DingTalkStreamHandleResult(
             accepted=True,
@@ -218,6 +253,12 @@ class DingTalkStreamMessageService:
             payload, "openConversationId", "open_conversation_id", "conversationId"
         )
         robot_code = _first_text(payload, "robotCode", "robot_code")
+        session_webhook = _first_text(payload, "sessionWebhook", "session_webhook")
+        session_webhook_expired_time = _first_text(
+            payload,
+            "sessionWebhookExpiredTime",
+            "session_webhook_expired_time",
+        )
 
         if not conversation_id:
             raise RejectedDingTalkStreamMessage("DingTalk Stream payload missing conversation id")
@@ -237,6 +278,8 @@ class DingTalkStreamMessageService:
             sender_display_name=sender_display_name,
             open_conversation_id=open_conversation_id,
             robot_code=robot_code,
+            session_webhook=session_webhook,
+            session_webhook_expired_time=session_webhook_expired_time,
         )
 
     def to_channel_event(
@@ -249,21 +292,7 @@ class DingTalkStreamMessageService:
     ) -> ChannelEvent:
         routing_payload = _dict_value(payload.get("routing"))
         delivery_payload = _dict_value(payload.get("delivery"))
-        delivery = ReplyRoute(
-            type=str(delivery_payload.get("type") or self.default_delivery_type),
-            connector_id=str(
-                delivery_payload.get("connector_id") or self.default_delivery_connector_id
-            ),
-            target={
-                "conversation_id": message.conversation_id,
-                "open_conversation_id": (
-                    message.open_conversation_id or self.default_open_conversation_id
-                ),
-                "robot_code": message.robot_code or self.default_robot_code,
-                **_dict_value(delivery_payload.get("target")),
-            },
-            options=_dict_value(delivery_payload.get("options")),
-        )
+        delivery = self._reply_route(message=message, delivery_payload=delivery_payload)
         return ChannelEvent(
             source=ChannelSource(
                 type="dingding_stream",
@@ -276,6 +305,7 @@ class DingTalkStreamMessageService:
                     "message_id": message.message_id,
                     "open_conversation_id": message.open_conversation_id,
                     "robot_code": message.robot_code,
+                    "session_webhook_expires": message.session_webhook_expired_time,
                 },
             ),
             delivery=delivery,
@@ -290,6 +320,52 @@ class DingTalkStreamMessageService:
             raw_payload_summary=safe_payload_summary(payload),
             idempotency_key=f"dingding_stream:{source_connector_id}:{message.event_id}",
             correlation_id=correlation_id,
+        )
+
+    def _reply_route(
+        self,
+        *,
+        message: DingTalkStreamIncomingMessage,
+        delivery_payload: dict[str, Any],
+    ) -> ReplyRoute:
+        delivery_target = _dict_value(delivery_payload.get("target"))
+        if delivery_payload.get("type"):
+            return ReplyRoute(
+                type=str(delivery_payload.get("type")),
+                connector_id=str(delivery_payload.get("connector_id") or ""),
+                target={
+                    "conversation_id": message.conversation_id,
+                    "open_conversation_id": (
+                        message.open_conversation_id or self.default_open_conversation_id
+                    ),
+                    "robot_code": message.robot_code or self.default_robot_code,
+                    **delivery_target,
+                },
+                options=_dict_value(delivery_payload.get("options")),
+            )
+        if message.session_webhook:
+            return ReplyRoute(
+                type="dingtalk_stream_session_webhook",
+                connector_id="",
+                target={
+                    "conversation_id": message.conversation_id,
+                    "session_webhook": message.session_webhook,
+                    "session_webhook_expired_time": message.session_webhook_expired_time,
+                },
+                options=_dict_value(delivery_payload.get("options")),
+            )
+        return ReplyRoute(
+            type=self.default_delivery_type,
+            connector_id=self.default_delivery_connector_id,
+            target={
+                "conversation_id": message.conversation_id,
+                "open_conversation_id": (
+                    message.open_conversation_id or self.default_open_conversation_id
+                ),
+                "robot_code": message.robot_code or self.default_robot_code,
+                **delivery_target,
+            },
+            options=_dict_value(delivery_payload.get("options")),
         )
 
 

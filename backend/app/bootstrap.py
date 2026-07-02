@@ -20,6 +20,7 @@ from app.modules.delivery.application.result_delivery_service import ResultDeliv
 from app.modules.delivery.infrastructure.adapters import (
     DingTalkConversationDeliveryAdapter,
     DingTalkEnterpriseAppDeliveryAdapter,
+    DingTalkStreamSessionWebhookDeliveryAdapter,
     DingTalkWebhookRobotDeliveryAdapter,
     HttpDeliveryAdapter,
     NoneDeliveryAdapter,
@@ -243,6 +244,9 @@ def _build_container(
         connector_registry=connector_registry,
         timeout_seconds=settings.delivery.timeout_seconds,
     )
+    dingtalk_stream_session_webhook_adapter = DingTalkStreamSessionWebhookDeliveryAdapter(
+        timeout_seconds=settings.delivery.timeout_seconds,
+    )
     http_adapter = HttpDeliveryAdapter(timeout_seconds=settings.delivery.timeout_seconds)
     result_delivery_service = ResultDeliveryService(
         repository=agent_repository,
@@ -251,6 +255,7 @@ def _build_container(
         adapters={
             "none": NoneDeliveryAdapter(),
             "dingtalk_conversation": dingtalk_conversation_adapter,
+            "dingtalk_stream_session_webhook": dingtalk_stream_session_webhook_adapter,
             "dingtalk_webhook_robot": dingtalk_webhook_robot_adapter,
             "dingtalk_enterprise_robot": dingtalk_enterprise_adapter,
             "email": http_adapter,
