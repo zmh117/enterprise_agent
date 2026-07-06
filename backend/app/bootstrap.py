@@ -49,8 +49,12 @@ from app.modules.message_bus.infrastructure.in_memory_bus import InMemoryMessage
 from app.modules.message_bus.infrastructure.rabbitmq_consumer import RabbitMQConsumer
 from app.modules.message_bus.infrastructure.rabbitmq_publisher import RabbitMQPublisher
 from app.modules.permission.application.permission_service import PermissionService
+from app.modules.platform_config.application import PlatformConfigService
+from app.modules.platform_config.infrastructure import PlatformConfigRepository
 from app.shared.config import Settings
 from app.shared.database import Database, default_migrations_dir
+from app.modules.workflow.application import WorkflowService
+from app.modules.workflow.infrastructure import WorkflowRepository
 
 
 @dataclass
@@ -66,6 +70,8 @@ class Container:
     internal_api_client: InternalApiClient
     tool_service: ReadOnlyToolService
     connector_registry: ConnectorRegistry
+    platform_config_service: PlatformConfigService
+    workflow_service: WorkflowService
     channel_ingress_service: ChannelIngressService
     create_agent_job_service: CreateAgentJobService
     dingtalk_message_service: DingTalkMessageService
@@ -155,11 +161,21 @@ def _build_container(
     agent_repository = AgentRepository(database)
     audit_repository = AuditRepository(database)
     config_repository = ConfigurationRepository(database)
+    platform_config_repository = PlatformConfigRepository(database)
+    workflow_repository = WorkflowRepository(database)
     audit_service = AuditService(
         audit_repository,
         max_chars=settings.execution.max_tool_response_chars,
     )
     permission_service = PermissionService(config_repository)
+    platform_config_service = PlatformConfigService(
+        platform_config_repository,
+        permission_service,
+    )
+    workflow_service = WorkflowService(
+        workflow_repository,
+        permission_service,
+    )
     connector_registry = ConnectorRegistry(config_repository)
     create_job_service = CreateAgentJobService(
         repository=agent_repository,
@@ -293,6 +309,8 @@ def _build_container(
         internal_api_client=internal_api_client,
         tool_service=tool_service,
         connector_registry=connector_registry,
+        platform_config_service=platform_config_service,
+        workflow_service=workflow_service,
         channel_ingress_service=channel_ingress_service,
         create_agent_job_service=create_job_service,
         dingtalk_message_service=dingtalk_service,

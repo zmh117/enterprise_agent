@@ -10,14 +10,17 @@ class SecretResolver(Protocol):
 
 
 def _ref_to_env_name(ref: str) -> str:
+    if ref.startswith("env:"):
+        return ref.removeprefix("env:")
     without_scheme = re.sub(r"^secret://", "", ref)
     return "SECRET_" + re.sub(r"[^A-Za-z0-9]+", "_", without_scheme).upper().strip("_")
 
 
 class EnvSecretResolver:
-    """Resolve `secret://a/b/c` references from environment variables.
+    """Resolve secret references from environment variables.
 
     `secret://sanjiu/guanlan/db_password` -> `SECRET_SANJIU_GUANLAN_DB_PASSWORD`.
+    `env:ORDER_DB_PASSWORD` -> `ORDER_DB_PASSWORD`.
     """
 
     def __init__(self, environ: dict[str, str] | None = None) -> None:

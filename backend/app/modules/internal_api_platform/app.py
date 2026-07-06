@@ -8,6 +8,10 @@ from urllib.request import urlopen
 from fastapi import FastAPI
 
 from app.shared.config import Settings, load_settings
+from app.shared.database import Database, default_migrations_dir
+from app.modules.platform_config.application.snapshot import RuntimeTopologySnapshot
+from app.modules.platform_config.application.snapshot import PlatformTopologySnapshotBuilder
+from app.modules.platform_config.infrastructure import PlatformConfigRepository
 
 from .application.platform_service import PlatformService
 from .domain.access import AccessPolicy
@@ -47,14 +51,10 @@ def build_service(
     *,
     urlopen_func: Callable[..., Any] = urlopen,
 ) -> PlatformService:
-    config_path = os.getenv("INTERNAL_PLATFORM_TOPOLOGY_FILE", "")
-    if config_path:
-        topology, access_policy = load_platform_config(config_path)
-    else:
-        topology, access_policy = Topology(), AccessPolicy()
+    snapshot = _load_topology_snapshot(settings)
     return PlatformService(
-        registry=TopologyRegistry(topology),
-        access_policy=access_policy,
+        registry=TopologyRegistry(snapshot.topology),
+        access_policy=snapshot.access_policy,
         executors=default_executors(),
         schema_readers=default_schema_readers(),
         redis_gateway=RealRedisGateway(),
@@ -67,6 +67,53 @@ def build_service(
         max_rows=int(os.getenv("INTERNAL_PLATFORM_MAX_ROWS", "100")),
         query_timeout_seconds=settings.internal_api_timeout_seconds,
         redis_scan_limit=settings.execution.redis_scan_limit,
+        config_source=snapshot.source,
+        config_revision=snapshot.revision,
+        config_errors=snapshot.errors,
+        config_resource_count=snapshot.resource_count,
+    )
+
+
+def _load_topology_snapshot(settings: Settings) -> RuntimeTopologySnapshot:
+    config_path = os.getenv("INTERNAL_PLATFORM_TOPOLOGY_FILE", "")
+    try:
+        database = Database(settings.database_dsn)
+        try:
+            if settings.app_startup_migrate:
+                database.run_migrations(default_migrations_dir())
+            repository = PlatformConfigRepository(database)
+            snapshot = PlatformTopologySnapshotBuilder(repository).build_runtime_snapshot()
+        finally:
+            database.close()
+        if snapshot.source == "database":
+            return snapshot
+        if snapshot.source == "database-invalid":
+            return snapshot
+        if not config_path:
+            return snapshot
+    except Exception as exc:
+        if not config_path:
+            return RuntimeTopologySnapshot(
+                topology=Topology(),
+                access_policy=AccessPolicy(),
+                source="database-error",
+                revision=0,
+                resource_count=0,
+                errors=[str(exc)],
+            )
+    topology, access_policy = load_platform_config(config_path)
+    return RuntimeTopologySnapshot(
+        topology=topology,
+        access_policy=access_policy,
+        source="yaml",
+        revision=0,
+        resource_count=sum(
+            int(base.database is not None)
+            + int(base.redis is not None)
+            + int(base.loki is not None)
+            for environment in topology.environments.values()
+            for base in environment.bases.values()
+        ),
     )
 
 

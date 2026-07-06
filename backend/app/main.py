@@ -131,10 +131,14 @@ def create_app(
     from app.modules.channel.api.channel_webhook_controller import build_channel_router
     from app.modules.dingding.api.dingding_webhook_controller import build_dingding_router
     from app.modules.job.api.agent_job_debug_controller import build_agent_job_debug_router
+    from app.modules.platform_config.api import build_platform_config_router
+    from app.modules.workflow.api import build_workflow_router
 
     app.include_router(build_channel_router())
     app.include_router(build_dingding_router())
     app.include_router(build_agent_job_debug_router())
+    app.include_router(build_platform_config_router())
+    app.include_router(build_workflow_router())
 
     @app.post("/api/admin/migrate")
     def migrate() -> dict[str, Any]:

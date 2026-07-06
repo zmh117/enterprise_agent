@@ -40,7 +40,7 @@ class DingTalkStreamSdkClient:
 
         outer = self
 
-        class EnterpriseAgentStreamHandler(dingtalk_stream.ChatbotHandler):  # type: ignore[name-defined]
+        class EnterpriseAgentStreamHandler(dingtalk_stream.ChatbotHandler):  # type: ignore[misc]
             async def process(self, callback: Any) -> tuple[str, str]:
                 payload = callback.data if isinstance(callback.data, dict) else {}
                 result = outer.callback(payload)

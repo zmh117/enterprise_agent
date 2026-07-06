@@ -25,6 +25,10 @@ DingTalk Stream / Grafana webhook / Debug API
 - `internal_tools`：只读工具到内部 API 平台的适配，不直连真实数据库/Redis/Loki。
 - `permission`：用户、项目、工具白名单。
 - `audit`：任务、权限、工具调用、失败和最终报告审计。
+- `platform_config`：平台拓扑、资源绑定、密钥引用、访问授权和配置审计，供后续 Web 配置平台使用。
+- `workflow`：只读诊断 Agent 的拖拽流程模板、节点、边和发布快照配置。
+
+平台配置 API、同库/分库策略、表设计和拖拽编排模型见 [platform-config-api.md](../docs/platform-config-api.md)。
 
 ## 只读边界
 

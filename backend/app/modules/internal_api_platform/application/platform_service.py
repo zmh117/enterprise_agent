@@ -39,6 +39,10 @@ class PlatformService:
         redis_scan_limit: int = 200,
         schema_table_limit: int = 50,
         schema_column_limit: int = 80,
+        config_source: str = "unknown",
+        config_revision: int = 0,
+        config_errors: list[str] | None = None,
+        config_resource_count: int = 0,
     ) -> None:
         self._registry = registry
         self._access = access_policy
@@ -51,6 +55,19 @@ class PlatformService:
         self._redis_scan_limit = redis_scan_limit
         self._schema_table_limit = schema_table_limit
         self._schema_column_limit = schema_column_limit
+        self._config_source = config_source
+        self._config_revision = config_revision
+        self._config_errors = config_errors or []
+        self._config_resource_count = config_resource_count
+
+    def config_status(self) -> dict[str, Any]:
+        return {
+            "source": self._config_source,
+            "revision": self._config_revision,
+            "valid": not self._config_errors,
+            "errors": self._config_errors,
+            "resource_count": self._config_resource_count,
+        }
 
     def _authorize_and_resolve(
         self,

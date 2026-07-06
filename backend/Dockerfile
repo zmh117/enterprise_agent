@@ -31,8 +31,10 @@ COPY backend/app/__init__.py backend/app/internal_api_platform.py /app/backend/a
 COPY backend/app/shared /app/backend/app/shared
 COPY backend/app/modules/__init__.py /app/backend/app/modules/
 COPY backend/app/modules/internal_api_platform /app/backend/app/modules/internal_api_platform
+COPY backend/app/modules/platform_config /app/backend/app/modules/platform_config
 COPY backend/app/modules/local_internal_api_platform /app/backend/app/modules/local_internal_api_platform
 COPY backend/config /app/backend/config
+COPY backend/migrations /app/backend/migrations
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-deps --no-build-isolation .
 CMD ["python", "-m", "uvicorn", "app.internal_api_platform:create_app", "--factory", "--host", "0.0.0.0", "--port", "9000"]
@@ -77,6 +79,8 @@ COPY backend/app/modules/job/domain /app/backend/app/modules/job/domain
 COPY backend/app/modules/job/infrastructure /app/backend/app/modules/job/infrastructure
 COPY backend/app/modules/message_bus /app/backend/app/modules/message_bus
 COPY backend/app/modules/permission /app/backend/app/modules/permission
+COPY backend/app/modules/platform_config /app/backend/app/modules/platform_config
+COPY backend/app/modules/workflow /app/backend/app/modules/workflow
 COPY backend/app/workers /app/backend/app/workers
 COPY backend/migrations /app/backend/migrations
 COPY backend/seeds /app/backend/seeds

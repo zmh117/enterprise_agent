@@ -79,6 +79,13 @@ INSERT INTO permission_policy
 VALUES
   ('policy-user-local', 'user', 'local-user', 'project', 'default', 'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('policy-tool-local', 'user', 'local-user', 'tool', '*', 'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-platform-config-local', 'user', 'local-user', 'platform_config', '*', 'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('policy-user-grafana', 'user', 'grafana', 'project', 'default', 'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('policy-tool-grafana', 'user', 'grafana', 'tool', '*', 'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+ON CONFLICT(id) DO NOTHING;
+
+INSERT INTO platform_secret_reference
+  (id, code, provider, ref, purpose, status, metadata_json, revision, created_at, updated_at)
+VALUES
+  ('secret-example-order-db-password', 'secret_example_order_db_password', 'env', 'env:ORDER_DB_PASSWORD', 'example database password reference', 'disabled', '{}', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;

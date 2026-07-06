@@ -45,7 +45,12 @@ def _envelope(request: FastAPIRequest, started: float, result: ToolResponse) -> 
 def register_routes(app: FastAPI, *, service: PlatformService) -> None:
     @app.get("/health")
     async def health() -> dict[str, Any]:
-        return {"status": "ok", "mode": "internal-api-platform"}
+        config = service.config_status()
+        return {
+            "status": "ok" if config["valid"] else "degraded",
+            "mode": "internal-api-platform",
+            "config": config,
+        }
 
     @app.post("/tools/context/er")
     async def er_context(request: FastAPIRequest, payload: dict[str, Any]) -> dict[str, Any]:

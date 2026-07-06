@@ -15,6 +15,8 @@ class ScopeRule:
     environment: str = _WILDCARD
     base: str = _WILDCARD
     workshop: str = _WILDCARD
+    effect: str = "allow"
+    priority: int = 100
 
     def matches(self, target: TargetRef) -> bool:
         if self.environment not in {_WILDCARD, target.environment}:
@@ -33,7 +35,11 @@ class AccessScope:
     rules: list[ScopeRule] = field(default_factory=list)
 
     def allows(self, target: TargetRef) -> bool:
-        return any(rule.matches(target) for rule in self.rules)
+        matches = [rule for rule in self.rules if rule.matches(target)]
+        if not matches:
+            return False
+        matches.sort(key=lambda rule: rule.priority)
+        return matches[0].effect == "allow"
 
 
 @dataclass(frozen=True)
