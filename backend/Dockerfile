@@ -35,6 +35,7 @@ COPY backend/app/modules/platform_config /app/backend/app/modules/platform_confi
 COPY backend/app/modules/local_internal_api_platform /app/backend/app/modules/local_internal_api_platform
 COPY backend/config /app/backend/config
 COPY backend/migrations /app/backend/migrations
+RUN python -c "import app.internal_api_platform; import app.modules.internal_api_platform.app"
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-deps --no-build-isolation .
 CMD ["python", "-m", "uvicorn", "app.internal_api_platform:create_app", "--factory", "--host", "0.0.0.0", "--port", "9000"]
@@ -73,6 +74,9 @@ COPY backend/app/modules/dingding/__init__.py /app/backend/app/modules/dingding/
 COPY backend/app/modules/dingding/application /app/backend/app/modules/dingding/application
 COPY backend/app/modules/dingding/infrastructure /app/backend/app/modules/dingding/infrastructure
 COPY backend/app/modules/internal_tools /app/backend/app/modules/internal_tools
+COPY backend/app/modules/internal_api_platform/__init__.py /app/backend/app/modules/internal_api_platform/
+COPY backend/app/modules/internal_api_platform/domain /app/backend/app/modules/internal_api_platform/domain
+COPY backend/app/modules/internal_api_platform/infrastructure/__init__.py backend/app/modules/internal_api_platform/infrastructure/secrets.py /app/backend/app/modules/internal_api_platform/infrastructure/
 COPY backend/app/modules/job/__init__.py /app/backend/app/modules/job/
 COPY backend/app/modules/job/application /app/backend/app/modules/job/application
 COPY backend/app/modules/job/domain /app/backend/app/modules/job/domain
