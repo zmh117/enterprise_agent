@@ -1,3 +1,15 @@
+x-backend-env-file: &backend-env-file
+  - .env
+
+x-database-env: &database-env
+  DATABASE_DSN: postgresql://enterprise_agent:enterprise_agent@postgres:5432/enterprise_agent
+  APP_CONFIG_MASTER_KEY: ${APP_CONFIG_MASTER_KEY:-local-dev-config-master-key}
+  APP_STARTUP_MIGRATE: "true"
+
+x-worker-env: &worker-env
+  <<: *database-env
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+
 services:
   postgres:
     image: postgres:16
@@ -30,7 +42,8 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       target: mock-internal-api-platform
-    command: ["python", "-m", "uvicorn", "app.mock_internal_api_platform:create_app", "--factory", "--host", "0.0.0.0", "--port", "9000"]
+    command:
+      ["python", "-m", "uvicorn", "app.mock_internal_api_platform:create_app", "--factory", "--host", "0.0.0.0", "--port", "9000"]
     expose:
       - "9000"
 
@@ -39,106 +52,43 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    command: ["python", "-m", "uvicorn", "app.local_internal_api_platform:create_app", "--factory", "--host", "0.0.0.0", "--port", "9000"]
-    environment:
-      LOKI_BASE_URL: ${LOKI_BASE_URL:-http://host.docker.internal:3100}
-      LOKI_MAX_MINUTES: ${LOKI_MAX_MINUTES:-60}
-      LOKI_MAX_LINES: ${LOKI_MAX_LINES:-500}
-      LOKI_MAX_RESPONSE_CHARS: ${LOKI_MAX_RESPONSE_CHARS:-4000}
-      LOKI_TENANT_ID: ${LOKI_TENANT_ID:-}
+    command:
+      ["python", "-m", "uvicorn", "app.local_internal_api_platform:create_app", "--factory", "--host", "0.0.0.0", "--port", "9000"]
+    env_file: *backend-env-file
     expose:
       - "9000"
 
-  # real-tools: topology-aware, multi-dialect read-only platform (三九/mmk).
-  # Start with:
-  #   FEATURE_REAL_INTERNAL_TOOLS=true \
-  #   INTERNAL_API_BASE_URL=http://internal-api-platform:9000 \
-  #   docker compose --profile real-tools up -d
+  # real-tools: 拓扑感知、多数据源、只读 Internal API Platform。
   internal-api-platform:
     profiles: ["real-tools"]
     build:
       context: .
       dockerfile: backend/Dockerfile
       target: internal-api-platform
-    command: ["python", "-m", "uvicorn", "app.internal_api_platform:create_app", "--factory", "--host", "0.0.0.0", "--port", "9000"]
+    command:
+      ["python", "-m", "uvicorn", "app.internal_api_platform:create_app", "--factory", "--host", "0.0.0.0", "--port", "9000"]
+    env_file: *backend-env-file
     environment:
-      INTERNAL_PLATFORM_TOPOLOGY_FILE: ${INTERNAL_PLATFORM_TOPOLOGY_FILE:-/app/backend/config/internal_platform_topology.example.yaml}
-      INTERNAL_PLATFORM_MAX_ROWS: ${INTERNAL_PLATFORM_MAX_ROWS:-100}
-      APP_CONFIG_MASTER_KEY: ${APP_CONFIG_MASTER_KEY:-local-dev-config-master-key}
-      LOKI_MAX_MINUTES: ${LOKI_MAX_MINUTES:-60}
-      LOKI_MAX_LINES: ${LOKI_MAX_LINES:-500}
-      LOKI_MAX_RESPONSE_CHARS: ${LOKI_MAX_RESPONSE_CHARS:-4000}
-      # Secret references resolved from SECRET_<UPPER_SNAKE_OF_PATH> env vars.
-      SECRET_SANJIU_GUANLAN_DB_HOST: ${SECRET_SANJIU_GUANLAN_DB_HOST:-}
-      SECRET_SANJIU_GUANLAN_DB_USER: ${SECRET_SANJIU_GUANLAN_DB_USER:-}
-      SECRET_SANJIU_GUANLAN_DB_PASSWORD: ${SECRET_SANJIU_GUANLAN_DB_PASSWORD:-}
-      SECRET_SANJIU_GUANLAN_REDIS_HOST: ${SECRET_SANJIU_GUANLAN_REDIS_HOST:-}
-      SECRET_SANJIU_GUANLAN_LOKI_URL: ${SECRET_SANJIU_GUANLAN_LOKI_URL:-}
+      <<: *database-env
     volumes:
       - ./backend/config:/app/backend/config:ro
     expose:
       - "9000"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   api-server:
     build:
       context: .
       dockerfile: backend/Dockerfile
       target: api-server
-    command: ["python", "-m", "uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    command:
+      ["python", "-m", "uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    env_file: *backend-env-file
     environment:
-      DATABASE_DSN: postgresql://enterprise_agent:enterprise_agent@postgres:5432/enterprise_agent
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
-      APP_CONFIG_MASTER_KEY: ${APP_CONFIG_MASTER_KEY:-local-dev-config-master-key}
-      DINGTALK_SECRET: local-dev-secret
-      DINGTALK_HTTP_WEBHOOK_ENABLED: ${DINGTALK_HTTP_WEBHOOK_ENABLED:-false}
-      DINGTALK_CLIENT_ID: ${DINGTALK_CLIENT_ID:-}
-      DINGTALK_CLIENT_SECRET: ${DINGTALK_CLIENT_SECRET:-}
-      DINGTALK_STREAM_ENABLED: ${DINGTALK_STREAM_ENABLED:-false}
-      DINGTALK_STREAM_CLIENT_ID: ${DINGTALK_STREAM_CLIENT_ID:-}
-      DINGTALK_STREAM_CLIENT_SECRET: ${DINGTALK_STREAM_CLIENT_SECRET:-}
-      DINGTALK_STREAM_CONNECTOR_ID: ${DINGTALK_STREAM_CONNECTOR_ID:-connector-dingtalk-stream-default}
-      DINGTALK_STREAM_RECONNECT_INITIAL_SECONDS: ${DINGTALK_STREAM_RECONNECT_INITIAL_SECONDS:-5}
-      DINGTALK_STREAM_RECONNECT_MAX_SECONDS: ${DINGTALK_STREAM_RECONNECT_MAX_SECONDS:-60}
-      DINGTALK_STREAM_WORKER_ID: ${DINGTALK_STREAM_WORKER_ID:-dingtalk-stream-ingress}
-      DINGTALK_WEBHOOK_ROBOT_URL: ${DINGTALK_WEBHOOK_ROBOT_URL:-}
-      DINGTALK_WEBHOOK_ROBOT_SECRET: ${DINGTALK_WEBHOOK_ROBOT_SECRET:-}
-      DINGTALK_DEFAULT_DELIVERY_TYPE: ${DINGTALK_DEFAULT_DELIVERY_TYPE:-dingtalk_enterprise_robot}
-      DINGTALK_DEFAULT_DELIVERY_CONNECTOR_ID: ${DINGTALK_DEFAULT_DELIVERY_CONNECTOR_ID:-connector-dingtalk-enterprise-default}
-      DINGTALK_DEFAULT_SOURCE_CONNECTOR_ID: ${DINGTALK_DEFAULT_SOURCE_CONNECTOR_ID:-connector-dingtalk-stream-default}
-      DINGTALK_DEFAULT_PROJECT_CODE: ${DINGTALK_DEFAULT_PROJECT_CODE:-default}
-      DINGTALK_DEFAULT_ENVIRONMENT: ${DINGTALK_DEFAULT_ENVIRONMENT:-}
-      DINGTALK_DEFAULT_BASE: ${DINGTALK_DEFAULT_BASE:-}
-      DINGTALK_DEFAULT_WORKSHOP: ${DINGTALK_DEFAULT_WORKSHOP:-}
-      DINGTALK_DEFAULT_SERVICE: ${DINGTALK_DEFAULT_SERVICE:-}
-      DINGTALK_DEFAULT_OPEN_CONVERSATION_ID: ${DINGTALK_DEFAULT_OPEN_CONVERSATION_ID:-}
-      DINGTALK_DEFAULT_ROBOT_CODE: ${DINGTALK_DEFAULT_ROBOT_CODE:-}
-      APP_STARTUP_MIGRATE: "true"
+      <<: *worker-env
       SEED_LOCAL_CONFIG: "true"
-      DEBUG_AGENT_USER_ID: local-user
-      FEATURE_REAL_INTERNAL_TOOLS: ${FEATURE_REAL_INTERNAL_TOOLS:-false}
-      INTERNAL_API_BASE_URL: ${INTERNAL_API_BASE_URL:-http://internal-api-platform:9000}
-      INTERNAL_API_AUTH_TOKEN: ${INTERNAL_API_AUTH_TOKEN:-}
-      INTERNAL_API_TIMEOUT_SECONDS: ${INTERNAL_API_TIMEOUT_SECONDS:-10}
-      INTERNAL_API_MAX_RESPONSE_CHARS: ${INTERNAL_API_MAX_RESPONSE_CHARS:-4000}
-      LOKI_BASE_URL: ${LOKI_BASE_URL:-http://host.docker.internal:3100}
-      LOKI_MAX_MINUTES: ${LOKI_MAX_MINUTES:-60}
-      LOKI_MAX_LINES: ${LOKI_MAX_LINES:-500}
-      LOKI_MAX_RESPONSE_CHARS: ${LOKI_MAX_RESPONSE_CHARS:-4000}
-      LOKI_TENANT_ID: ${LOKI_TENANT_ID:-}
-      FEATURE_REAL_CLAUDE: ${FEATURE_REAL_CLAUDE:-false}
-      CLAUDE_MODEL: ${CLAUDE_MODEL:-deepseek-v4-pro[1m]}
-      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
-      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-deepseek-v4-pro[1m]}
-      ANTHROPIC_DEFAULT_OPUS_MODEL: ${ANTHROPIC_DEFAULT_OPUS_MODEL:-deepseek-v4-pro[1m]}
-      ANTHROPIC_DEFAULT_SONNET_MODEL: ${ANTHROPIC_DEFAULT_SONNET_MODEL:-deepseek-v4-pro[1m]}
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: ${ANTHROPIC_DEFAULT_HAIKU_MODEL:-deepseek-v4-flash}
-      CLAUDE_CODE_SUBAGENT_MODEL: ${CLAUDE_CODE_SUBAGENT_MODEL:-deepseek-v4-flash}
-      CLAUDE_CODE_EFFORT_LEVEL: ${CLAUDE_CODE_EFFORT_LEVEL:-max}
-      AGENT_MAX_TURNS: ${AGENT_MAX_TURNS:-12}
-      RABBITMQ_CONSUMER_HEARTBEAT_SECONDS: ${RABBITMQ_CONSUMER_HEARTBEAT_SECONDS:-900}
-      RABBITMQ_CONSUMER_RECONNECT_SECONDS: ${RABBITMQ_CONSUMER_RECONNECT_SECONDS:-5}
     ports:
       - "8000:8000"
     depends_on:
@@ -154,30 +104,9 @@ services:
       dockerfile: backend/Dockerfile
       target: dingtalk-stream-ingress
     command: ["python", "-m", "app.workers.dingtalk_stream_ingress_worker"]
+    env_file: *backend-env-file
     environment:
-      DATABASE_DSN: postgresql://enterprise_agent:enterprise_agent@postgres:5432/enterprise_agent
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
-      APP_CONFIG_MASTER_KEY: ${APP_CONFIG_MASTER_KEY:-local-dev-config-master-key}
-      DINGTALK_STREAM_ENABLED: "true"
-      DINGTALK_CLIENT_ID: ${DINGTALK_CLIENT_ID:-}
-      DINGTALK_CLIENT_SECRET: ${DINGTALK_CLIENT_SECRET:-}
-      DINGTALK_STREAM_CLIENT_ID: ${DINGTALK_STREAM_CLIENT_ID:-}
-      DINGTALK_STREAM_CLIENT_SECRET: ${DINGTALK_STREAM_CLIENT_SECRET:-}
-      DINGTALK_STREAM_CONNECTOR_ID: ${DINGTALK_STREAM_CONNECTOR_ID:-connector-dingtalk-stream-default}
-      DINGTALK_STREAM_RECONNECT_INITIAL_SECONDS: ${DINGTALK_STREAM_RECONNECT_INITIAL_SECONDS:-5}
-      DINGTALK_STREAM_RECONNECT_MAX_SECONDS: ${DINGTALK_STREAM_RECONNECT_MAX_SECONDS:-60}
-      DINGTALK_STREAM_WORKER_ID: ${DINGTALK_STREAM_WORKER_ID:-dingtalk-stream-ingress}
-      DINGTALK_DEFAULT_DELIVERY_TYPE: ${DINGTALK_DEFAULT_DELIVERY_TYPE:-dingtalk_enterprise_robot}
-      DINGTALK_DEFAULT_DELIVERY_CONNECTOR_ID: ${DINGTALK_DEFAULT_DELIVERY_CONNECTOR_ID:-connector-dingtalk-enterprise-default}
-      DINGTALK_DEFAULT_SOURCE_CONNECTOR_ID: ${DINGTALK_DEFAULT_SOURCE_CONNECTOR_ID:-connector-dingtalk-stream-default}
-      DINGTALK_DEFAULT_PROJECT_CODE: ${DINGTALK_DEFAULT_PROJECT_CODE:-default}
-      DINGTALK_DEFAULT_ENVIRONMENT: ${DINGTALK_DEFAULT_ENVIRONMENT:-}
-      DINGTALK_DEFAULT_BASE: ${DINGTALK_DEFAULT_BASE:-}
-      DINGTALK_DEFAULT_WORKSHOP: ${DINGTALK_DEFAULT_WORKSHOP:-}
-      DINGTALK_DEFAULT_SERVICE: ${DINGTALK_DEFAULT_SERVICE:-}
-      DINGTALK_DEFAULT_OPEN_CONVERSATION_ID: ${DINGTALK_DEFAULT_OPEN_CONVERSATION_ID:-}
-      DINGTALK_DEFAULT_ROBOT_CODE: ${DINGTALK_DEFAULT_ROBOT_CODE:-}
-      APP_STARTUP_MIGRATE: "true"
+      <<: *worker-env
       SEED_LOCAL_CONFIG: "true"
     depends_on:
       postgres:
@@ -191,60 +120,10 @@ services:
       dockerfile: backend/Dockerfile
       target: agent-worker
     command: ["python", "-m", "app.workers.agent_job_worker"]
+    env_file: *backend-env-file
     environment:
-      DATABASE_DSN: postgresql://enterprise_agent:enterprise_agent@postgres:5432/enterprise_agent
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
-      APP_CONFIG_MASTER_KEY: ${APP_CONFIG_MASTER_KEY:-local-dev-config-master-key}
-      DINGTALK_SECRET: local-dev-secret
-      DINGTALK_HTTP_WEBHOOK_ENABLED: ${DINGTALK_HTTP_WEBHOOK_ENABLED:-false}
-      DINGTALK_CLIENT_ID: ${DINGTALK_CLIENT_ID:-}
-      DINGTALK_CLIENT_SECRET: ${DINGTALK_CLIENT_SECRET:-}
-      DINGTALK_STREAM_ENABLED: ${DINGTALK_STREAM_ENABLED:-false}
-      DINGTALK_STREAM_CLIENT_ID: ${DINGTALK_STREAM_CLIENT_ID:-}
-      DINGTALK_STREAM_CLIENT_SECRET: ${DINGTALK_STREAM_CLIENT_SECRET:-}
-      DINGTALK_STREAM_CONNECTOR_ID: ${DINGTALK_STREAM_CONNECTOR_ID:-connector-dingtalk-stream-default}
-      DINGTALK_STREAM_RECONNECT_INITIAL_SECONDS: ${DINGTALK_STREAM_RECONNECT_INITIAL_SECONDS:-5}
-      DINGTALK_STREAM_RECONNECT_MAX_SECONDS: ${DINGTALK_STREAM_RECONNECT_MAX_SECONDS:-60}
-      DINGTALK_STREAM_WORKER_ID: ${DINGTALK_STREAM_WORKER_ID:-dingtalk-stream-ingress}
-      DINGTALK_WEBHOOK_ROBOT_URL: ${DINGTALK_WEBHOOK_ROBOT_URL:-}
-      DINGTALK_WEBHOOK_ROBOT_SECRET: ${DINGTALK_WEBHOOK_ROBOT_SECRET:-}
-      DINGTALK_DEFAULT_DELIVERY_TYPE: ${DINGTALK_DEFAULT_DELIVERY_TYPE:-dingtalk_enterprise_robot}
-      DINGTALK_DEFAULT_DELIVERY_CONNECTOR_ID: ${DINGTALK_DEFAULT_DELIVERY_CONNECTOR_ID:-connector-dingtalk-enterprise-default}
-      DINGTALK_DEFAULT_SOURCE_CONNECTOR_ID: ${DINGTALK_DEFAULT_SOURCE_CONNECTOR_ID:-connector-dingtalk-stream-default}
-      DINGTALK_DEFAULT_PROJECT_CODE: ${DINGTALK_DEFAULT_PROJECT_CODE:-default}
-      DINGTALK_DEFAULT_ENVIRONMENT: ${DINGTALK_DEFAULT_ENVIRONMENT:-}
-      DINGTALK_DEFAULT_BASE: ${DINGTALK_DEFAULT_BASE:-}
-      DINGTALK_DEFAULT_WORKSHOP: ${DINGTALK_DEFAULT_WORKSHOP:-}
-      DINGTALK_DEFAULT_SERVICE: ${DINGTALK_DEFAULT_SERVICE:-}
-      DINGTALK_DEFAULT_OPEN_CONVERSATION_ID: ${DINGTALK_DEFAULT_OPEN_CONVERSATION_ID:-}
-      DINGTALK_DEFAULT_ROBOT_CODE: ${DINGTALK_DEFAULT_ROBOT_CODE:-}
-      APP_STARTUP_MIGRATE: "true"
+      <<: *worker-env
       SEED_LOCAL_CONFIG: "true"
-      DEBUG_AGENT_USER_ID: local-user
-      FEATURE_REAL_INTERNAL_TOOLS: ${FEATURE_REAL_INTERNAL_TOOLS:-false}
-      INTERNAL_API_BASE_URL: ${INTERNAL_API_BASE_URL:-http://internal-api-platform:9000}
-      INTERNAL_API_AUTH_TOKEN: ${INTERNAL_API_AUTH_TOKEN:-}
-      INTERNAL_API_TIMEOUT_SECONDS: ${INTERNAL_API_TIMEOUT_SECONDS:-10}
-      INTERNAL_API_MAX_RESPONSE_CHARS: ${INTERNAL_API_MAX_RESPONSE_CHARS:-4000}
-      LOKI_BASE_URL: ${LOKI_BASE_URL:-http://host.docker.internal:3100}
-      LOKI_MAX_MINUTES: ${LOKI_MAX_MINUTES:-60}
-      LOKI_MAX_LINES: ${LOKI_MAX_LINES:-500}
-      LOKI_MAX_RESPONSE_CHARS: ${LOKI_MAX_RESPONSE_CHARS:-4000}
-      LOKI_TENANT_ID: ${LOKI_TENANT_ID:-}
-      FEATURE_REAL_CLAUDE: ${FEATURE_REAL_CLAUDE:-false}
-      CLAUDE_MODEL: ${CLAUDE_MODEL:-deepseek-v4-pro[1m]}
-      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
-      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-deepseek-v4-pro[1m]}
-      ANTHROPIC_DEFAULT_OPUS_MODEL: ${ANTHROPIC_DEFAULT_OPUS_MODEL:-deepseek-v4-pro[1m]}
-      ANTHROPIC_DEFAULT_SONNET_MODEL: ${ANTHROPIC_DEFAULT_SONNET_MODEL:-deepseek-v4-pro[1m]}
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: ${ANTHROPIC_DEFAULT_HAIKU_MODEL:-deepseek-v4-flash}
-      CLAUDE_CODE_SUBAGENT_MODEL: ${CLAUDE_CODE_SUBAGENT_MODEL:-deepseek-v4-flash}
-      CLAUDE_CODE_EFFORT_LEVEL: ${CLAUDE_CODE_EFFORT_LEVEL:-max}
-      AGENT_MAX_TURNS: ${AGENT_MAX_TURNS:-12}
-      RABBITMQ_CONSUMER_HEARTBEAT_SECONDS: ${RABBITMQ_CONSUMER_HEARTBEAT_SECONDS:-900}
-      RABBITMQ_CONSUMER_RECONNECT_SECONDS: ${RABBITMQ_CONSUMER_RECONNECT_SECONDS:-5}
     depends_on:
       postgres:
         condition: service_healthy
