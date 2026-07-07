@@ -2,9 +2,7 @@
 
 ## Purpose
 Defines backend APIs for the future web configuration console, including topology management, YAML import, snapshot export, validation, and secret-safe responses.
-
 ## Requirements
-
 ### Requirement: Platform configuration API exposes topology management
 系统 SHALL 提供 Web 配置平台使用的 REST API，用于管理环境、基地、车间、资源绑定、密钥引用和访问授权。
 
@@ -63,3 +61,66 @@ Defines backend APIs for the future web configuration console, including topolog
 #### Scenario: Export topology snapshot
 - **WHEN** 系统导出 topology snapshot
 - **THEN** snapshot 中的 credential 字段仍然是 secret reference，不包含明文 token 或 password
+
+### Requirement: Imported topology can be verified as runtime-ready
+系统 SHALL 让通过 YAML import 或平台配置 API 写入的 topology 能被验证为 Internal API Platform 可消费的 runtime snapshot。
+
+#### Scenario: YAML import produces database snapshot
+- **WHEN** 管理端导入合法 topology YAML 到 PostgreSQL
+- **THEN** `/api/platform/topology-snapshot` 返回 source 为 database 或可被运行时加载的 DB-backed snapshot，并包含启用资源数量和访问授权摘要
+
+#### Scenario: Imported topology has validation errors
+- **WHEN** 导入后的启用资源绑定缺少运行时必须字段
+- **THEN** snapshot API 返回配置错误详情，并且不得把该配置标记为 runtime valid
+
+### Requirement: Platform configuration API supports runtime verification workflow
+系统 SHALL 提供足够的只读 API 输出，让开发者或后续 Web 平台确认当前 DB 配置能驱动只读诊断工具。
+
+#### Scenario: Verify effective topology
+- **WHEN** 开发者查询平台 topology snapshot
+- **THEN** 响应包含启用 environment/base/workshop、resource binding 作用域、resource kind、secret reference 摘要和配置 revision/hash
+
+#### Scenario: Verify disabled resource exclusion
+- **WHEN** 管理端禁用某个 resource binding 后查询 topology snapshot
+- **THEN** snapshot 不包含该禁用资源，且 revision/hash 发生可观测变化
+
+### Requirement: Platform configuration API documents restart or reload semantics
+系统 SHALL 明确说明 DB-backed 配置对 Internal API Platform 的生效时机。
+
+#### Scenario: Runtime uses startup snapshot
+- **WHEN** Internal API Platform 采用启动时 snapshot 模型
+- **THEN** 文档和验证流程明确要求修改配置后重启服务或执行未来的 reload 动作才能让运行时读取新配置
+
+### Requirement: Platform API accepts secret values through write-only fields
+系统 SHALL 提供平台密钥管理 API，允许管理端通过 write-only 字段提交 secret 明文值，并只返回 secret ref、状态和脱敏摘要。
+
+#### Scenario: Create secret through API
+- **WHEN** 管理端调用 secret 创建接口并提交明文 value
+- **THEN** API 返回 secret metadata 和 `secret_ref`，响应中不包含明文 value
+
+#### Scenario: Read secret through API
+- **WHEN** 管理端查询 secret 详情
+- **THEN** API 返回 configured/version/updated_at/masked_summary，不返回明文 value
+
+### Requirement: Platform API manages DB-backed runtime config
+系统 SHALL 提供 runtime config 的 CRUD、启停、snapshot 和校验 API，供后续 Web 配置页面使用。
+
+#### Scenario: Save runtime setting
+- **WHEN** 管理端提交合法 runtime setting key、类型、作用域和值
+- **THEN** 系统保存配置、更新 revision，并写入配置审计
+
+#### Scenario: Save secret-backed runtime setting
+- **WHEN** 管理端把 `ANTHROPIC_API_KEY` 配置为 `secret://platform/deepseek_api_key`
+- **THEN** 系统保存 secret ref，并在 snapshot 中仅返回该 ref 的脱敏状态
+
+### Requirement: Platform API exposes env migration guidance
+系统 SHALL 提供或文档化当前 env key 到 DB runtime config / secret management 的映射关系。
+
+#### Scenario: List migratable env keys
+- **WHEN** 管理端请求可迁移配置项列表
+- **THEN** 系统返回 key、类型、默认值、是否敏感、建议作用域、适用服务和是否 bootstrap-only
+
+#### Scenario: Bootstrap-only key is edited
+- **WHEN** 管理端尝试把 `DATABASE_DSN` 或主加密密钥保存为普通 runtime config
+- **THEN** 系统拒绝该配置并提示必须通过部署环境管理
+

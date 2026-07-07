@@ -47,5 +47,5 @@
 - [x] 6.3 运行 `make check`，确保格式、lint、类型检查和测试通过。
 - [x] 6.4 运行 `openspec validate add-local-internal-api-platform-loki`。
 - [x] 6.5 在用户确认 Loki 已运行、DeepSeek key 已配置后，启动 `local-tools` profile。
-- [ ] 6.6 提交 debug job，确认真实 Claude/DeepSeek 运行、local platform 查询 Loki、job 最终进入终态，并可查询 steps/tool-calls。
-- [ ] 6.7 记录真实联调命令、job_id、状态、Loki tool-call 摘要和失败排查方法。
+- [x] 6.6 提交 debug job，确认真实 Claude/DeepSeek 运行、local platform 查询 Loki、job 最终进入终态，并可查询 steps/tool-calls。
+- [x] 6.7 记录真实联调命令、job_id、状态、Loki tool-call 摘要和失败排查方法。

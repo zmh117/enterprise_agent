@@ -57,3 +57,37 @@ TBD - created by archiving change wire-rabbitmq-agent-job-flow. Update Purpose a
 - **WHEN** 开发者按文档启动 Docker Compose 并执行 curl 命令
 - **THEN** 开发者可以观察到 job 从 `PENDING` / `RUNNING` 变为 `SUCCEEDED`，并看到最终报告、步骤和工具调用摘要
 
+### Requirement: 失败 job 的 tool-calls 必须包含真实运行时已发生工具调用
+系统 SHALL 在真实 Claude runtime 失败、timeout、最大轮次耗尽或被 retry service 重新入队后，仍通过 `GET /api/agent/jobs/{job_id}/tool-calls` 返回失败前已经发生并被持久化的工具调用安全摘要。
+
+#### Scenario: 最大轮次耗尽后查询工具调用
+- **WHEN** 一个真实 Claude job 因最大轮次耗尽失败并进入 FAILED 或 retry-pending 状态
+- **THEN** 调试 API 返回该次执行中已经发生的数据库、Redis、Loki 或 schema directory 工具调用摘要
+
+#### Scenario: retry-pending 状态保留上次失败证据
+- **WHEN** job 被 retry service 重新置为 `PENDING` 且保留上次 `error_message`
+- **THEN** `GET /tool-calls` 仍返回上次执行失败前的工具调用摘要，便于开发者判断是否应继续重试
+
+#### Scenario: 失败工具调用摘要仍然脱敏
+- **WHEN** 失败路径持久化工具调用
+- **THEN** 调试 API 返回的请求和响应摘要不得包含密钥、完整 raw payload、私有推理或未受限上游错误正文
+
+### Requirement: Debug API documentation shall cover real-tools verification
+系统 SHALL 在调试 API 文档中提供 real-tools 验证流程，覆盖创建 job、轮询状态、查询 steps、查询 tool-calls，并说明如何确认工具调用来自 `internal-api-platform`。
+
+#### Scenario: 查询 real-tools tool calls
+- **WHEN** 开发者按 real-tools 文档提交 debug job
+- **THEN** `GET /api/agent/jobs/{job_id}/tool-calls` SHALL 返回工具名称、状态、耗时、风险等级、脱敏请求摘要、响应摘要和 metadata source
+
+#### Scenario: 工具链失败排查
+- **WHEN** debug job 失败
+- **THEN** 文档 SHALL 指引开发者检查 job 状态、worker 日志、tool-calls、Internal API Platform health 和 Loki 诊断 endpoint
+
+### Requirement: Debug jobs shall support safe real-model smoke testing
+系统 SHALL 支持使用 debug API 提交真实模型 smoke test，但测试流程 MUST 明确要求使用合成问题、合成日志或脱敏证据。
+
+#### Scenario: 提交安全真实模型测试任务
+- **WHEN** 开发者启用 `FEATURE_REAL_CLAUDE=true` 并提交 debug job
+- **THEN** 文档化流程 SHALL 使用合成或已脱敏测试问题
+- **AND** job steps/tool-calls 可用于确认模型调用了 real-tools 工具链
+

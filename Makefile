@@ -1,4 +1,4 @@
-.PHONY: check compile format-check lint typecheck test unittest openspec-validate
+.PHONY: check compile format-check lint typecheck test unittest openspec-validate smoke-db-backed-config
 
 compile:
 	python3 -m compileall backend
@@ -23,5 +23,8 @@ openspec-validate:
 	openspec validate connect-internal-tool-platform
 	openspec validate add-local-internal-api-platform-loki
 	openspec validate stabilize-real-tools-runtime-and-loki-diagnostics
+
+smoke-db-backed-config:
+	scripts/smoke_db_backed_config.sh
 
 check: compile format-check lint typecheck test unittest openspec-validate

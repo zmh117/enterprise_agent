@@ -2,9 +2,7 @@
 
 ## Purpose
 Defines PostgreSQL-backed platform configuration registry behavior for topology, resource bindings, secret references, access grants, and configuration audit.
-
 ## Requirements
-
 ### Requirement: Platform topology is persisted in PostgreSQL
 系统 SHALL 在 PostgreSQL 中持久化平台 topology，包括 Environment、Base、Workshop 的层级关系、启停状态、别名和扩展元数据。
 
@@ -70,3 +68,70 @@ Defines PostgreSQL-backed platform configuration registry behavior for topology,
 #### Scenario: Future runtime split remains possible
 - **WHEN** 后续需要把聊天和审计运行数据迁移到独立库
 - **THEN** 系统可以通过 repository 配置切换运行数据存储，而不改变 platform configuration 的领域 API
+
+### Requirement: Registry exposes stable runtime revision
+系统 SHALL 为平台配置 registry 暴露稳定 revision 或 hash，用于判断 runtime snapshot 是否来自预期配置版本。
+
+#### Scenario: Configuration changes revision
+- **WHEN** environment、base、workshop、resource binding、secret reference 或 access grant 发生新增、修改、启停
+- **THEN** registry 生成的 topology revision 或 hash MUST 发生变化
+
+#### Scenario: Runtime reports revision
+- **WHEN** Internal API Platform 从 registry 加载 DB-backed snapshot
+- **THEN** 运行时状态输出包含该 revision 或 hash，便于与配置 API snapshot 对比
+
+### Requirement: Registry projects access grants into runtime access policy
+系统 SHALL 将 PostgreSQL 中启用的 platform access grants 投影成 Internal API Platform 运行时访问策略。
+
+#### Scenario: User grant allows target
+- **WHEN** 用户拥有目标 environment/base/workshop 的启用 allow grant
+- **THEN** DB-backed runtime access policy 允许该用户解析并调用该目标下的只读工具
+
+#### Scenario: Disabled or deny grant blocks target
+- **WHEN** grant 被禁用或更高优先级 deny grant 命中目标
+- **THEN** DB-backed runtime access policy 拒绝该用户访问目标，并记录授权拒绝
+
+### Requirement: Registry keeps secret references unresolved outside infrastructure
+系统 SHALL 在 registry、public snapshot、配置审计和运行时状态中只保留 secret reference，不得保存或返回解析后的真实密钥值。
+
+#### Scenario: Secret reference is loaded for runtime
+- **WHEN** DB-backed resource binding 使用 secret reference 配置数据库、Redis 或 Loki credential
+- **THEN** registry snapshot 只包含引用，真实值仅能在 infrastructure gateway 建立外部连接时解析
+
+#### Scenario: Public snapshot is exported
+- **WHEN** 管理端或调试工具导出 topology snapshot
+- **THEN** 响应不得包含任何真实 password、token、api key 或解析后的 secret payload
+
+### Requirement: Registry stores encrypted secret metadata and versions
+系统 SHALL 在平台配置 registry 中保存 secret metadata、active version、provider、状态和审计信息，并将密文版本与普通配置表隔离。
+
+#### Scenario: Persist encrypted secret version
+- **WHEN** 管理端创建 Web-managed secret
+- **THEN** registry 保存 secret metadata 和密文版本，普通 resource binding 只保存 secret ref
+
+#### Scenario: Secret metadata is listed
+- **WHEN** 系统列出 platform secret references
+- **THEN** registry 返回 provider、ref、active version 和 configured 状态，不返回密文或明文
+
+### Requirement: Registry stores runtime config definitions and values
+系统 SHALL 保存 runtime config key 的定义、类型、默认值、敏感性、适用服务和作用域规则，并保存每个作用域下的配置值。
+
+#### Scenario: Register runtime config key
+- **WHEN** 系统启动或迁移时注册 `ANTHROPIC_MODEL`
+- **THEN** registry 保存该 key 的类型、默认值、说明和适用服务
+
+#### Scenario: Persist scoped runtime config value
+- **WHEN** 管理端为 `agent-worker` 保存 `AGENT_MAX_TURNS=12`
+- **THEN** registry 保存 service-scoped 配置值并生成新的 revision/hash
+
+### Requirement: Registry prevents secret payloads in non-secret config
+系统 SHALL 阻止疑似密码、token、api key 等明文值保存到普通 config_json、runtime value_json 或审计 after_json。
+
+#### Scenario: Raw password submitted as runtime config
+- **WHEN** 管理端把 `ANTHROPIC_API_KEY` 明文作为普通 value_json 提交
+- **THEN** registry 拒绝保存并要求使用 secret management
+
+#### Scenario: Raw password submitted in resource binding config
+- **WHEN** 管理端把 database password 放入 resource binding config
+- **THEN** registry 拒绝保存并要求使用 secret_refs
+

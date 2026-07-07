@@ -64,6 +64,7 @@ services:
     environment:
       INTERNAL_PLATFORM_TOPOLOGY_FILE: ${INTERNAL_PLATFORM_TOPOLOGY_FILE:-/app/backend/config/internal_platform_topology.example.yaml}
       INTERNAL_PLATFORM_MAX_ROWS: ${INTERNAL_PLATFORM_MAX_ROWS:-100}
+      APP_CONFIG_MASTER_KEY: ${APP_CONFIG_MASTER_KEY:-local-dev-config-master-key}
       LOKI_MAX_MINUTES: ${LOKI_MAX_MINUTES:-60}
       LOKI_MAX_LINES: ${LOKI_MAX_LINES:-500}
       LOKI_MAX_RESPONSE_CHARS: ${LOKI_MAX_RESPONSE_CHARS:-4000}
@@ -87,6 +88,7 @@ services:
     environment:
       DATABASE_DSN: postgresql://enterprise_agent:enterprise_agent@postgres:5432/enterprise_agent
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      APP_CONFIG_MASTER_KEY: ${APP_CONFIG_MASTER_KEY:-local-dev-config-master-key}
       DINGTALK_SECRET: local-dev-secret
       DINGTALK_HTTP_WEBHOOK_ENABLED: ${DINGTALK_HTTP_WEBHOOK_ENABLED:-false}
       DINGTALK_CLIENT_ID: ${DINGTALK_CLIENT_ID:-}
@@ -155,6 +157,7 @@ services:
     environment:
       DATABASE_DSN: postgresql://enterprise_agent:enterprise_agent@postgres:5432/enterprise_agent
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      APP_CONFIG_MASTER_KEY: ${APP_CONFIG_MASTER_KEY:-local-dev-config-master-key}
       DINGTALK_STREAM_ENABLED: "true"
       DINGTALK_CLIENT_ID: ${DINGTALK_CLIENT_ID:-}
       DINGTALK_CLIENT_SECRET: ${DINGTALK_CLIENT_SECRET:-}
@@ -191,6 +194,7 @@ services:
     environment:
       DATABASE_DSN: postgresql://enterprise_agent:enterprise_agent@postgres:5432/enterprise_agent
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      APP_CONFIG_MASTER_KEY: ${APP_CONFIG_MASTER_KEY:-local-dev-config-master-key}
       DINGTALK_SECRET: local-dev-secret
       DINGTALK_HTTP_WEBHOOK_ENABLED: ${DINGTALK_HTTP_WEBHOOK_ENABLED:-false}
       DINGTALK_CLIENT_ID: ${DINGTALK_CLIENT_ID:-}
