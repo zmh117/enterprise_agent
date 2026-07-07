@@ -431,7 +431,7 @@ class PlatformConfigRepository:
         rows = self.database.execute(
             f"select * from platform_secret_reference {where} order by code"
         )
-        return [self._parse_secret(row) for row in rows]
+        return [self._parse_secret_reference(row) for row in rows]
 
     def get_secret_reference(self, secret_id: str) -> dict[str, Any]:
         row = self.database.execute_one(
@@ -439,13 +439,393 @@ class PlatformConfigRepository:
         )
         if not row:
             raise NotFound(f"Platform secret reference not found: {secret_id}")
-        return self._parse_secret(row)
+        return self._parse_secret_reference(row)
 
     def get_secret_reference_by_code(self, code: str) -> dict[str, Any] | None:
         row = self.database.execute_one(
             "select * from platform_secret_reference where code = ?", (code,)
         )
-        return self._parse_secret(row) if row else None
+        return self._parse_secret_reference(row) if row else None
+
+    def upsert_platform_secret(
+        self,
+        *,
+        code: str,
+        provider: str,
+        ref: str,
+        purpose: str = "",
+        status: str = "enabled",
+        active_version: int = 0,
+        masked_summary: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        existing = self.get_platform_secret_by_code(code)
+        timestamp = now_iso()
+        if existing:
+            self.database.execute(
+                """
+                update platform_secret
+                set provider = ?, ref = ?, purpose = ?, status = ?, active_version = ?,
+                    masked_summary = ?, metadata_json = ?, revision = revision + 1,
+                    updated_at = ?
+                where id = ?
+                """,
+                (
+                    provider,
+                    ref,
+                    purpose,
+                    status,
+                    active_version,
+                    masked_summary,
+                    json_text(metadata or {}),
+                    timestamp,
+                    existing["id"],
+                ),
+            )
+            return self.get_platform_secret(existing["id"])
+        entity_id = new_id("platform_secret")
+        self.database.execute(
+            """
+            insert into platform_secret
+              (id, code, provider, ref, purpose, status, active_version,
+               masked_summary, metadata_json, revision, created_at, updated_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                entity_id,
+                code,
+                provider,
+                ref,
+                purpose,
+                status,
+                active_version,
+                masked_summary,
+                json_text(metadata or {}),
+                1,
+                timestamp,
+                timestamp,
+            ),
+        )
+        return self.get_platform_secret(entity_id)
+
+    def list_platform_secrets(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
+        where = "" if include_disabled else "where status = 'enabled'"
+        rows = self.database.execute(f"select * from platform_secret {where} order by code")
+        return [self._parse_platform_secret(row) for row in rows]
+
+    def get_platform_secret(self, secret_id: str) -> dict[str, Any]:
+        row = self.database.execute_one(
+            "select * from platform_secret where id = ?", (secret_id,)
+        )
+        if not row:
+            raise NotFound(f"Platform secret not found: {secret_id}")
+        return self._parse_platform_secret(row)
+
+    def get_platform_secret_by_code(self, code: str) -> dict[str, Any] | None:
+        row = self.database.execute_one(
+            "select * from platform_secret where code = ?", (code,)
+        )
+        return self._parse_platform_secret(row) if row else None
+
+    def get_platform_secret_by_ref(self, ref: str) -> dict[str, Any] | None:
+        row = self.database.execute_one("select * from platform_secret where ref = ?", (ref,))
+        return self._parse_platform_secret(row) if row else None
+
+    def insert_secret_version(
+        self,
+        *,
+        secret_id: str,
+        version: int,
+        ciphertext: str,
+        nonce: str,
+        key_id: str,
+        algorithm: str,
+        status: str = "active",
+        created_by: str = "",
+    ) -> dict[str, Any]:
+        entity_id = new_id("secret_version")
+        self.database.execute(
+            """
+            insert into platform_secret_version
+              (id, secret_id, version, ciphertext, nonce, key_id, algorithm, status,
+               created_by, created_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                entity_id,
+                secret_id,
+                version,
+                ciphertext,
+                nonce,
+                key_id,
+                algorithm,
+                status,
+                created_by,
+                now_iso(),
+            ),
+        )
+        return self.get_secret_version(entity_id)
+
+    def get_secret_version(self, version_id: str) -> dict[str, Any]:
+        row = self.database.execute_one(
+            "select * from platform_secret_version where id = ?", (version_id,)
+        )
+        if not row:
+            raise NotFound(f"Platform secret version not found: {version_id}")
+        return self._parse_secret_version(row)
+
+    def get_active_secret_version(self, secret_id: str) -> dict[str, Any] | None:
+        row = self.database.execute_one(
+            """
+            select v.*
+            from platform_secret_version v
+            join platform_secret s on s.id = v.secret_id and s.active_version = v.version
+            where v.secret_id = ? and v.status = 'active'
+            """,
+            (secret_id,),
+        )
+        return self._parse_secret_version(row) if row else None
+
+    def set_secret_active_version(
+        self,
+        *,
+        secret_id: str,
+        active_version: int,
+        masked_summary: str,
+    ) -> dict[str, Any]:
+        self.database.execute(
+            """
+            update platform_secret_version
+            set status = 'superseded'
+            where secret_id = ? and version <> ? and status = 'active'
+            """,
+            (secret_id, active_version),
+        )
+        self.database.execute(
+            """
+            update platform_secret_version
+            set status = 'active'
+            where secret_id = ? and version = ?
+            """,
+            (secret_id, active_version),
+        )
+        self.database.execute(
+            """
+            update platform_secret
+            set active_version = ?, masked_summary = ?, status = 'enabled',
+                revision = revision + 1, updated_at = ?
+            where id = ?
+            """,
+            (active_version, masked_summary, now_iso(), secret_id),
+        )
+        return self.get_platform_secret(secret_id)
+
+    def set_platform_secret_status(self, code: str, status: str) -> dict[str, Any]:
+        existing = self.get_platform_secret_by_code(code)
+        if not existing:
+            raise NotFound(f"Platform secret not found: {code}")
+        self.database.execute(
+            """
+            update platform_secret
+            set status = ?, revision = revision + 1, updated_at = ?
+            where id = ?
+            """,
+            (status, now_iso(), existing["id"]),
+        )
+        if status == "disabled":
+            self.database.execute(
+                """
+                update platform_secret_version
+                set status = 'disabled'
+                where secret_id = ? and status = 'active'
+                """,
+                (existing["id"],),
+            )
+        return self.get_platform_secret(existing["id"])
+
+    def upsert_runtime_config_definition(
+        self,
+        *,
+        key: str,
+        value_type: str,
+        default: Any = None,
+        sensitive: bool = False,
+        bootstrap_only: bool = False,
+        service_names: list[str] | None = None,
+        description: str = "",
+        status: str = "enabled",
+    ) -> dict[str, Any]:
+        existing = self.get_runtime_config_definition(key)
+        timestamp = now_iso()
+        params = (
+            value_type,
+            json_text(default),
+            int(sensitive),
+            int(bootstrap_only),
+            json_text(service_names or []),
+            description,
+            status,
+        )
+        if existing:
+            self.database.execute(
+                """
+                update platform_runtime_config_definition
+                set value_type = ?, default_json = ?, sensitive = ?, bootstrap_only = ?,
+                    service_names_json = ?, description = ?, status = ?,
+                    revision = revision + 1, updated_at = ?
+                where id = ?
+                """,
+                (*params, timestamp, existing["id"]),
+            )
+            return self._require_runtime_config_definition(key)
+        entity_id = new_id("runtime_def")
+        self.database.execute(
+            """
+            insert into platform_runtime_config_definition
+              (id, key, value_type, default_json, sensitive, bootstrap_only,
+               service_names_json, description, status, revision, created_at, updated_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (entity_id, key, *params, 1, timestamp, timestamp),
+        )
+        return self._require_runtime_config_definition(key)
+
+    def list_runtime_config_definitions(
+        self, *, include_disabled: bool = True
+    ) -> list[dict[str, Any]]:
+        where = "" if include_disabled else "where status = 'enabled'"
+        rows = self.database.execute(
+            f"select * from platform_runtime_config_definition {where} order by key"
+        )
+        return [self._parse_runtime_config_definition(row) for row in rows]
+
+    def get_runtime_config_definition(self, key: str) -> dict[str, Any] | None:
+        row = self.database.execute_one(
+            "select * from platform_runtime_config_definition where key = ?", (key,)
+        )
+        return self._parse_runtime_config_definition(row) if row else None
+
+    def _require_runtime_config_definition(self, key: str) -> dict[str, Any]:
+        definition = self.get_runtime_config_definition(key)
+        if not definition:
+            raise NotFound(f"Runtime config definition not found: {key}")
+        return definition
+
+    def upsert_runtime_config_value(
+        self,
+        *,
+        key: str,
+        scope_type: str = "global",
+        scope_code: str = "*",
+        service_name: str = "",
+        value: Any = None,
+        secret_ref: str = "",
+        status: str = "enabled",
+    ) -> dict[str, Any]:
+        definition = self.get_runtime_config_definition(key)
+        if not definition:
+            raise NotFound(f"Runtime config definition not found: {key}")
+        existing = self.find_runtime_config_value(
+            key=key, scope_type=scope_type, scope_code=scope_code, service_name=service_name
+        )
+        timestamp = now_iso()
+        params = (
+            definition["id"],
+            key,
+            scope_type,
+            scope_code,
+            service_name,
+            json_text(value),
+            secret_ref,
+            status,
+        )
+        if existing:
+            self.database.execute(
+                """
+                update platform_runtime_config_value
+                set definition_id = ?, key = ?, scope_type = ?, scope_code = ?,
+                    service_name = ?, value_json = ?, secret_ref = ?, status = ?,
+                    revision = revision + 1, updated_at = ?
+                where id = ?
+                """,
+                (*params, timestamp, existing["id"]),
+            )
+            return self.get_runtime_config_value(existing["id"])
+        entity_id = new_id("runtime_cfg")
+        self.database.execute(
+            """
+            insert into platform_runtime_config_value
+              (id, definition_id, key, scope_type, scope_code, service_name,
+               value_json, secret_ref, status, revision, created_at, updated_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (entity_id, *params, 1, timestamp, timestamp),
+        )
+        return self.get_runtime_config_value(entity_id)
+
+    def list_runtime_config_values(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
+        where = "" if include_disabled else "where v.status = 'enabled'"
+        rows = self.database.execute(
+            f"""
+            select v.*, d.value_type, d.sensitive, d.bootstrap_only, d.default_json
+            from platform_runtime_config_value v
+            join platform_runtime_config_definition d on d.id = v.definition_id
+            {where}
+            order by v.key, v.scope_type, v.scope_code, v.service_name
+            """
+        )
+        return [self._parse_runtime_config_value(row) for row in rows]
+
+    def get_runtime_config_value(self, value_id: str) -> dict[str, Any]:
+        row = self.database.execute_one(
+            """
+            select v.*, d.value_type, d.sensitive, d.bootstrap_only, d.default_json
+            from platform_runtime_config_value v
+            join platform_runtime_config_definition d on d.id = v.definition_id
+            where v.id = ?
+            """,
+            (value_id,),
+        )
+        if not row:
+            raise NotFound(f"Runtime config value not found: {value_id}")
+        return self._parse_runtime_config_value(row)
+
+    def find_runtime_config_value(
+        self, *, key: str, scope_type: str, scope_code: str, service_name: str
+    ) -> dict[str, Any] | None:
+        row = self.database.execute_one(
+            """
+            select v.*, d.value_type, d.sensitive, d.bootstrap_only, d.default_json
+            from platform_runtime_config_value v
+            join platform_runtime_config_definition d on d.id = v.definition_id
+            where v.key = ? and v.scope_type = ? and v.scope_code = ? and v.service_name = ?
+            """,
+            (key, scope_type, scope_code, service_name),
+        )
+        return self._parse_runtime_config_value(row) if row else None
+
+    def set_runtime_config_value_status(self, value_id: str, status: str) -> dict[str, Any]:
+        self.database.execute(
+            """
+            update platform_runtime_config_value
+            set status = ?, revision = revision + 1, updated_at = ?
+            where id = ?
+            """,
+            (status, now_iso(), value_id),
+        )
+        return self.get_runtime_config_value(value_id)
+
+    def runtime_config_revision(self) -> int:
+        row = self.database.execute_one(
+            """
+            select coalesce(max(revision), 0) as revision from (
+              select revision from platform_runtime_config_definition
+              union all select revision from platform_runtime_config_value
+              union all select revision from platform_secret
+            ) revisions
+            """
+        )
+        return int(row["revision"]) if row else 0
 
     def upsert_resource_binding(
         self,
@@ -674,8 +1054,20 @@ class PlatformConfigRepository:
         base_id: str | None,
         workshop_id: str | None,
     ) -> dict[str, Any] | None:
+        scope_clauses: list[str] = []
+        scope_params: list[Any] = []
+        for column, value in (
+            ("g.environment_id", environment_id),
+            ("g.base_id", base_id),
+            ("g.workshop_id", workshop_id),
+        ):
+            if value is None:
+                scope_clauses.append(f"{column} is null")
+            else:
+                scope_clauses.append(f"{column} = ?")
+                scope_params.append(value)
         row = self.database.execute_one(
-            """
+            f"""
             select g.*, e.code as environment_code, b.code as base_code, w.code as workshop_code
             from platform_access_grant g
             left join platform_environment e on e.id = g.environment_id
@@ -684,21 +1076,14 @@ class PlatformConfigRepository:
             where g.subject_type = ?
               and g.subject_code = ?
               and g.effect = ?
-              and ((g.environment_id = ?) or (g.environment_id is null and ? is null))
-              and ((g.base_id = ?) or (g.base_id is null and ? is null))
-              and ((g.workshop_id = ?) or (g.workshop_id is null and ? is null))
+              and {" and ".join(scope_clauses)}
             limit 1
             """,
             (
                 subject_type,
                 subject_code,
                 effect,
-                environment_id,
-                environment_id,
-                base_id,
-                base_id,
-                workshop_id,
-                workshop_id,
+                *scope_params,
             ),
         )
         return self._parse_access_grant(row) if row else None
@@ -846,10 +1231,45 @@ class PlatformConfigRepository:
             "revision": int(row.get("revision") or 0),
         }
 
-    def _parse_secret(self, row: dict[str, Any]) -> dict[str, Any]:
+    def _parse_secret_reference(self, row: dict[str, Any]) -> dict[str, Any]:
         return {
             **row,
             "metadata": self._json_from_text(row.get("metadata_json") or "{}"),
+            "revision": int(row.get("revision") or 0),
+        }
+
+    def _parse_platform_secret(self, row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **row,
+            "active_version": int(row.get("active_version") or 0),
+            "metadata": self._json_from_text(row.get("metadata_json") or "{}"),
+            "revision": int(row.get("revision") or 0),
+            "configured": row.get("status") == "enabled" and int(row.get("active_version") or 0) > 0,
+        }
+
+    def _parse_secret_version(self, row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **row,
+            "version": int(row.get("version") or 0),
+        }
+
+    def _parse_runtime_config_definition(self, row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **row,
+            "default": self._json_from_text(row.get("default_json") or "null"),
+            "sensitive": bool(int(row.get("sensitive") or 0)),
+            "bootstrap_only": bool(int(row.get("bootstrap_only") or 0)),
+            "service_names": self._json_from_text(row.get("service_names_json") or "[]"),
+            "revision": int(row.get("revision") or 0),
+        }
+
+    def _parse_runtime_config_value(self, row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **row,
+            "value": self._json_from_text(row.get("value_json") or "null"),
+            "sensitive": bool(int(row.get("sensitive") or 0)),
+            "bootstrap_only": bool(int(row.get("bootstrap_only") or 0)),
+            "default": self._json_from_text(row.get("default_json") or "null"),
             "revision": int(row.get("revision") or 0),
         }
 

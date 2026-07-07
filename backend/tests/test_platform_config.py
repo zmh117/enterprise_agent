@@ -25,10 +25,12 @@ from app.modules.internal_api_platform.infrastructure.loki_gateway import FakeLo
 from app.modules.internal_api_platform.infrastructure.redis_gateway import FakeRedisGateway
 from app.modules.internal_api_platform.infrastructure.registry import TopologyRegistry
 from app.modules.internal_api_platform.infrastructure.secrets import MappingSecretResolver
+from app.modules.internal_api_platform.infrastructure.secrets import DbBackedSecretResolver
 from app.modules.platform_config.application.snapshot import PlatformTopologySnapshotBuilder
 from app.modules.platform_config.infrastructure import PlatformConfigRepository
 from app.shared.config import Settings
 from app.shared.database import Database, default_migrations_dir
+from app.shared.runtime_config_loader import apply_runtime_config_overlay
 from backend.tests.helpers import container, test_settings as make_settings
 
 
@@ -275,6 +277,123 @@ class PlatformConfigApiTests(unittest.TestCase):
                 built[0].agent_repository.count_rows("platform_config_audit"),
                 0,
             )
+
+    def test_platform_secrets_api_is_write_only_and_rotatable(self) -> None:
+        settings = make_settings()
+
+        with patch.dict(os.environ, {"APP_CONFIG_MASTER_KEY": "test-master-key"}, clear=False):
+            with TestClient(create_app(settings, container_factory=lambda _: container())) as client:
+                denied = client.post(
+                    "/api/platform/secrets",
+                    json={"code": "deepseek_api_key", "value": "sk-secret-1234"},
+                    headers={"x-admin-user-id": "unknown"},
+                )
+                self.assertEqual(403, denied.status_code)
+
+                created = client.post(
+                    "/api/platform/secrets",
+                    json={
+                        "code": "deepseek_api_key",
+                        "value": "sk-secret-1234",
+                        "purpose": "claude-runtime",
+                    },
+                    headers={"x-admin-user-id": "local-user"},
+                )
+                self.assertEqual(200, created.status_code)
+                body = created.json()["secret"]
+                self.assertEqual("secret://platform/deepseek_api_key", body["secret_ref"])
+                self.assertNotIn("sk-secret-1234", str(created.json()))
+
+                rotated = client.post(
+                    "/api/platform/secrets/deepseek_api_key/rotate",
+                    json={"value": "sk-secret-5678"},
+                    headers={"x-admin-user-id": "local-user"},
+                )
+                self.assertEqual(200, rotated.status_code)
+                self.assertEqual(2, rotated.json()["secret"]["active_version"])
+                self.assertNotIn("sk-secret-5678", str(rotated.json()))
+
+                disabled = client.post(
+                    "/api/platform/secrets/deepseek_api_key/disable",
+                    headers={"x-admin-user-id": "local-user"},
+                )
+                self.assertEqual(200, disabled.status_code)
+                self.assertFalse(disabled.json()["secret"]["configured"])
+
+    def test_runtime_config_api_snapshot_and_bootstrap_guard(self) -> None:
+        settings = make_settings()
+
+        with patch.dict(os.environ, {"APP_CONFIG_MASTER_KEY": "test-master-key"}, clear=False):
+            with TestClient(create_app(settings, container_factory=lambda _: container())) as client:
+                definitions = client.get("/api/platform/runtime-config/definitions")
+                self.assertEqual(200, definitions.status_code)
+                keys = {item["key"] for item in definitions.json()["definitions"]}
+                self.assertIn("ANTHROPIC_MODEL", keys)
+
+                rejected = client.post(
+                    "/api/platform/runtime-config/values",
+                    json={"key": "DATABASE_DSN", "value": "sqlite:///bad.db"},
+                    headers={"x-admin-user-id": "local-user"},
+                )
+                self.assertEqual(400, rejected.status_code)
+                self.assertIn("bootstrap-only", rejected.json()["detail"])
+
+                global_value = client.post(
+                    "/api/platform/runtime-config/values",
+                    json={"key": "AGENT_MAX_TURNS", "value": 8},
+                    headers={"x-admin-user-id": "local-user"},
+                )
+                self.assertEqual(200, global_value.status_code)
+                service_value = client.post(
+                    "/api/platform/runtime-config/values",
+                    json={
+                        "key": "AGENT_MAX_TURNS",
+                        "scope_type": "service",
+                        "scope_code": "agent-worker",
+                        "service_name": "agent-worker",
+                        "value": 12,
+                    },
+                    headers={"x-admin-user-id": "local-user"},
+                )
+                self.assertEqual(200, service_value.status_code)
+
+                snapshot = client.get(
+                    "/api/platform/runtime-config/snapshot",
+                    params={"service_name": "agent-worker"},
+                )
+                self.assertEqual(200, snapshot.status_code)
+                effective = snapshot.json()["snapshot"]["effective_masked"]
+                self.assertEqual(12, effective["AGENT_MAX_TURNS"]["value"])
+
+                secret = client.post(
+                    "/api/platform/secrets",
+                    json={"code": "deepseek_api_key", "value": "sk-real-secret"},
+                    headers={"x-admin-user-id": "local-user"},
+                )
+                self.assertEqual(200, secret.status_code)
+                key_value = client.post(
+                    "/api/platform/runtime-config/values",
+                    json={
+                        "key": "ANTHROPIC_API_KEY",
+                        "secret_ref": "secret://platform/deepseek_api_key",
+                    },
+                    headers={"x-admin-user-id": "local-user"},
+                )
+                self.assertEqual(200, key_value.status_code)
+                self.assertNotIn("sk-real-secret", str(key_value.json()))
+
+    def test_platform_config_api_reports_missing_topology_yaml_path(self) -> None:
+        settings = make_settings()
+
+        with TestClient(create_app(settings, container_factory=lambda _: container())) as client:
+            missing = client.post(
+                "/api/platform/import/topology-yaml",
+                json={"path": "config/missing_topology.yaml"},
+                headers={"x-admin-user-id": "local-user"},
+            )
+
+        self.assertEqual(404, missing.status_code)
+        self.assertEqual("Topology YAML file not found", missing.json()["detail"])
 
     def test_platform_config_api_snapshot_hash_changes_when_resource_disabled(self) -> None:
         built = []
@@ -538,6 +657,173 @@ class InternalApiPlatformDbConfigTests(unittest.TestCase):
         self.assertIsNone(
             disabled_snapshot.topology.environment("sanjiu").base("guanlan").database  # type: ignore[union-attr]
         )
+
+
+class PlatformSecretAndRuntimeConfigTests(unittest.TestCase):
+    def test_encrypted_db_secret_provider_does_not_persist_plaintext(self) -> None:
+        c = container()
+        repository = PlatformConfigRepository(c.database)
+
+        with patch.dict(os.environ, {"APP_CONFIG_MASTER_KEY": "test-master-key"}, clear=False):
+            secret = c.platform_config_service.create_platform_secret(
+                {
+                    "code": "deepseek_api_key",
+                    "value": "sk-sensitive-value",
+                    "purpose": "claude-runtime",
+                },
+                actor_id="local-user",
+            )
+            self.assertEqual("secret://platform/deepseek_api_key", secret["secret_ref"])
+            stored_versions = c.database.execute("select * from platform_secret_version")
+            self.assertEqual(1, len(stored_versions))
+            encoded = str(stored_versions)
+            self.assertNotIn("sk-sensitive-value", encoded)
+
+            resolver = DbBackedSecretResolver(repository, master_key="test-master-key")
+            self.assertEqual(
+                "sk-sensitive-value",
+                resolver.resolve("secret://platform/deepseek_api_key"),
+            )
+
+            rotated = c.platform_config_service.rotate_platform_secret(
+                "deepseek_api_key",
+                {"value": "sk-rotated-value"},
+                actor_id="local-user",
+            )
+            self.assertEqual(2, rotated["active_version"])
+            self.assertEqual(
+                "sk-rotated-value",
+                resolver.resolve("secret://platform/deepseek_api_key"),
+            )
+
+            c.platform_config_service.disable_platform_secret(
+                "deepseek_api_key",
+                actor_id="local-user",
+            )
+            with self.assertRaises(Exception):
+                resolver.resolve("secret://platform/deepseek_api_key")
+
+        audit_text = str(repository.list_config_audit(limit=20))
+        self.assertNotIn("sk-sensitive-value", audit_text)
+        self.assertNotIn("sk-rotated-value", audit_text)
+
+    def test_runtime_config_overlay_resolves_secret_backed_claude_settings(self) -> None:
+        c = container()
+        base = make_settings()
+
+        with patch.dict(os.environ, {"APP_CONFIG_MASTER_KEY": "test-master-key"}, clear=False):
+            c.platform_config_service.create_platform_secret(
+                {"code": "deepseek_api_key", "value": "sk-db-configured"},
+                actor_id="local-user",
+            )
+            c.platform_config_service.upsert_runtime_config_value(
+                {
+                    "key": "ANTHROPIC_BASE_URL",
+                    "value": "https://api.deepseek.com/anthropic",
+                    "service_name": "agent-worker",
+                },
+                actor_id="local-user",
+            )
+            c.platform_config_service.upsert_runtime_config_value(
+                {
+                    "key": "ANTHROPIC_MODEL",
+                    "value": "deepseek-v4-pro[1m]",
+                    "service_name": "agent-worker",
+                },
+                actor_id="local-user",
+            )
+            c.platform_config_service.upsert_runtime_config_value(
+                {
+                    "key": "ANTHROPIC_API_KEY",
+                    "secret_ref": "secret://platform/deepseek_api_key",
+                    "service_name": "agent-worker",
+                },
+                actor_id="local-user",
+            )
+            c.platform_config_service.upsert_runtime_config_value(
+                {
+                    "key": "FEATURE_REAL_CLAUDE",
+                    "value": True,
+                    "service_name": "agent-worker",
+                },
+                actor_id="local-user",
+            )
+
+            overlaid = apply_runtime_config_overlay(
+                base,
+                c.database,
+                service_name="agent-worker",
+            )
+
+        self.assertEqual("https://api.deepseek.com/anthropic", overlaid.anthropic_base_url)
+        self.assertEqual("deepseek-v4-pro[1m]", overlaid.claude_model)
+        self.assertEqual("sk-db-configured", overlaid.anthropic_api_key)
+        self.assertTrue(overlaid.feature_real_claude)
+        self.assertEqual("database", overlaid.runtime_config_source)
+        self.assertFalse(overlaid.runtime_config_degraded)
+
+    def test_runtime_config_overlay_covers_internal_platform_and_dingtalk(self) -> None:
+        c = container()
+        base = make_settings()
+
+        with patch.dict(os.environ, {"APP_CONFIG_MASTER_KEY": "test-master-key"}, clear=False):
+            c.platform_config_service.create_platform_secret(
+                {"code": "dingtalk_client_secret", "value": "dingtalk-secret"},
+                actor_id="local-user",
+            )
+            c.platform_config_service.upsert_runtime_config_value(
+                {"key": "INTERNAL_PLATFORM_MAX_ROWS", "value": 25},
+                actor_id="local-user",
+            )
+            c.platform_config_service.upsert_runtime_config_value(
+                {
+                    "key": "DINGTALK_CLIENT_SECRET",
+                    "secret_ref": "secret://platform/dingtalk_client_secret",
+                    "service_name": "dingtalk-stream-ingress",
+                },
+                actor_id="local-user",
+            )
+            c.platform_config_service.upsert_runtime_config_value(
+                {
+                    "key": "DINGTALK_DEFAULT_ENVIRONMENT",
+                    "value": "sanjiu",
+                    "service_name": "dingtalk-stream-ingress",
+                },
+                actor_id="local-user",
+            )
+
+            platform_settings = apply_runtime_config_overlay(
+                base,
+                c.database,
+                service_name="internal-api-platform",
+            )
+            dingtalk_settings = apply_runtime_config_overlay(
+                base,
+                c.database,
+                service_name="dingtalk-stream-ingress",
+            )
+
+        self.assertEqual(25, platform_settings.internal_platform_max_rows)
+        self.assertEqual("dingtalk-secret", dingtalk_settings.dingtalk.stream_client_secret)
+        self.assertEqual("sanjiu", dingtalk_settings.dingtalk.default_environment)
+        self.assertFalse(dingtalk_settings.runtime_config_degraded)
+
+        with patch.dict(os.environ, {"APP_CONFIG_MASTER_KEY": "test-master-key"}, clear=False):
+            c.platform_config_service.upsert_runtime_config_value(
+                {
+                    "key": "DINGTALK_CLIENT_SECRET",
+                    "secret_ref": "secret://platform/missing_secret",
+                    "service_name": "dingtalk-stream-ingress",
+                },
+                actor_id="local-user",
+            )
+            degraded = apply_runtime_config_overlay(
+                base,
+                c.database,
+                service_name="dingtalk-stream-ingress",
+            )
+        self.assertTrue(degraded.runtime_config_degraded)
+        self.assertIn("Platform secret is disabled or missing", str(degraded.runtime_config_errors))
 
 
 if __name__ == "__main__":

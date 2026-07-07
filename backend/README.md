@@ -341,6 +341,28 @@ Grafana firing alert 指定投递到 webhook 群机器人时，设置 labels：
 
 ## 环境变量
 
+### Web-managed secrets 与 DB runtime config
+
+后端现在支持把大部分 `.env` 运行参数逐步迁移到 PostgreSQL：
+
+- `bootstrap-only`：`DATABASE_DSN`、`APP_CONFIG_MASTER_KEY`、`APP_ENV`、`APP_STARTUP_MIGRATE`、`SEED_LOCAL_CONFIG`。
+- `db-configurable`：`FEATURE_REAL_CLAUDE`、`ANTHROPIC_BASE_URL`、`ANTHROPIC_MODEL`、`INTERNAL_API_BASE_URL`、`LOKI_MAX_LINES`、`AGENT_MAX_TURNS`、DingTalk 默认路由等。
+- `secret-managed`：`ANTHROPIC_API_KEY`、`DINGTALK_CLIENT_SECRET`、数据库密码、Redis 密码、Loki token 等。
+
+管理 API：
+
+- `POST /api/platform/secrets`
+- `POST /api/platform/secrets/{code}/rotate`
+- `POST /api/platform/secrets/{code}/disable`
+- `GET /api/platform/runtime-config/definitions`
+- `POST /api/platform/runtime-config/values`
+- `GET /api/platform/runtime-config/snapshot`
+- `GET /api/platform/runtime-config/env-migration`
+
+第一版 runtime config 在服务启动时叠加到 `Settings`；修改后重启对应服务生效。DB 不可用或配置解析失败时使用 env/default fallback，并在 `/api/ready` 的 `runtime_config` 字段标记 degraded。
+
+完整流程见 [../docs/web-managed-secrets-and-env-config.md](/Users/mhz/Develop/enterprise_agent/docs/web-managed-secrets-and-env-config.md)。
+
 - `DATABASE_DSN`：PostgreSQL DSN。
 - `RABBITMQ_URL`：RabbitMQ URL。
 - `APP_STARTUP_MIGRATE`：启动时执行 migration，默认 `true`。

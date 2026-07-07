@@ -6,6 +6,8 @@ from typing import Any
 
 import yaml
 
+from app.shared.exceptions import NotFound
+
 from ..infrastructure.repository import PlatformConfigRepository
 from .validation import (
     PlatformConfigValidationError,
@@ -48,8 +50,14 @@ class PlatformTopologyYamlImporter:
         actor_id: str = "",
         correlation_id: str = "",
     ) -> dict[str, Any]:
+        path = Path(path)
+        if not path.exists():
+            raise NotFound(
+                f"Topology YAML file not found: {path}",
+                safe_message="Topology YAML file not found",
+            )
         return self.import_text(
-            Path(path).read_text(),
+            path.read_text(),
             actor_id=actor_id,
             correlation_id=correlation_id,
         )

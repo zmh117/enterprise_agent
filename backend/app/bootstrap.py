@@ -53,6 +53,7 @@ from app.modules.platform_config.application import PlatformConfigService
 from app.modules.platform_config.infrastructure import PlatformConfigRepository
 from app.shared.config import Settings
 from app.shared.database import Database, default_migrations_dir
+from app.shared.runtime_config_loader import load_settings_with_db_overlay
 from app.modules.workflow.application import WorkflowService
 from app.modules.workflow.infrastructure import WorkflowRepository
 
@@ -87,6 +88,7 @@ ContainerFactory = Callable[[Settings], Container]
 def build_api_container(
     settings: Settings, *, migrate: bool = True, seed: bool = False
 ) -> Container:
+    settings = load_settings_with_db_overlay(settings, service_name="api-server", migrate=migrate)
     publisher = RabbitMQPublisher(settings.rabbitmq_url, settings.queue)
     return _build_container(
         settings=settings,
@@ -102,6 +104,7 @@ def build_api_container(
 def build_worker_container(
     settings: Settings, *, migrate: bool = True, seed: bool = False
 ) -> Container:
+    settings = load_settings_with_db_overlay(settings, service_name="agent-worker", migrate=migrate)
     publisher = RabbitMQPublisher(settings.rabbitmq_url, settings.queue)
     consumer = RabbitMQConsumer(
         settings.rabbitmq_url,
@@ -125,6 +128,7 @@ def build_worker_container(
 def build_test_container(
     settings: Settings, *, migrate: bool = True, seed: bool = False
 ) -> Container:
+    settings = load_settings_with_db_overlay(settings, service_name="api-server", migrate=migrate)
     message_bus = InMemoryMessageBus()
     return _build_container(
         settings=settings,

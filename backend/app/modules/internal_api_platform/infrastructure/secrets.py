@@ -4,6 +4,8 @@ import os
 import re
 from typing import Protocol
 
+from app.shared.exceptions import NonRetryableExecutionError
+
 
 class SecretResolver(Protocol):
     def resolve(self, ref: str) -> str: ...
@@ -39,3 +41,33 @@ class MappingSecretResolver:
 
     def resolve(self, ref: str) -> str:
         return self._values.get(ref, "")
+
+
+class DbBackedSecretResolver:
+    """Resolve Web-managed platform secrets and keep env fallback behavior."""
+
+    def __init__(
+        self,
+        repository: object,
+        *,
+        master_key: str = "",
+        fallback: SecretResolver | None = None,
+    ) -> None:
+        self._repository = repository
+        self._master_key = master_key
+        self._fallback = fallback or EnvSecretResolver()
+
+    def resolve(self, ref: str) -> str:
+        if ref.startswith("secret://platform/"):
+            from app.modules.platform_config.application.secrets import EncryptedDbSecretProvider
+
+            return EncryptedDbSecretProvider(
+                self._repository,  # type: ignore[arg-type]
+                master_key=self._master_key,
+            ).resolve(ref)
+        if ref.startswith(("vault:", "kms:")):
+            raise NonRetryableExecutionError(
+                "External secret provider is not configured",
+                safe_message="External secret provider is not configured",
+            )
+        return self._fallback.resolve(ref)

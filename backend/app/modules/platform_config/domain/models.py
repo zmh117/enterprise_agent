@@ -29,6 +29,37 @@ class SecretProvider(str, Enum):
     ENV = "env"
     VAULT = "vault"
     KMS = "kms"
+    ENCRYPTED_DB = "encrypted_db"
+
+
+class SecretStatus(str, Enum):
+    ENABLED = "enabled"
+    DISABLED = "disabled"
+
+
+class SecretVersionStatus(str, Enum):
+    ACTIVE = "active"
+    SUPERSEDED = "superseded"
+    DISABLED = "disabled"
+
+
+class RuntimeConfigScope(str, Enum):
+    GLOBAL = "global"
+    SERVICE = "service"
+    PROJECT = "project"
+    ENVIRONMENT = "environment"
+    BASE = "base"
+    WORKSHOP = "workshop"
+    CONNECTOR = "connector"
+
+
+class ConfigValueType(str, Enum):
+    BOOL = "bool"
+    INT = "int"
+    STRING = "string"
+    URL = "url"
+    JSON = "json"
+    SECRET_REF = "secret_ref"
 
 
 class AccessEffect(str, Enum):
@@ -91,6 +122,61 @@ class PlatformSecretReference:
     purpose: str = ""
     status: ConfigStatus = ConfigStatus.ENABLED
     metadata: dict[str, Any] = field(default_factory=dict)
+    revision: int = 1
+
+
+@dataclass(frozen=True)
+class PlatformSecret:
+    id: str
+    code: str
+    provider: SecretProvider = SecretProvider.ENCRYPTED_DB
+    ref: str = ""
+    purpose: str = ""
+    status: SecretStatus = SecretStatus.ENABLED
+    active_version: int = 0
+    masked_summary: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+    revision: int = 1
+
+
+@dataclass(frozen=True)
+class PlatformSecretVersion:
+    id: str
+    secret_id: str
+    version: int
+    ciphertext: str
+    nonce: str
+    key_id: str
+    algorithm: str
+    status: SecretVersionStatus = SecretVersionStatus.ACTIVE
+    created_by: str = ""
+
+
+@dataclass(frozen=True)
+class RuntimeConfigDefinition:
+    id: str
+    key: str
+    value_type: ConfigValueType
+    default: Any = None
+    sensitive: bool = False
+    bootstrap_only: bool = False
+    service_names: tuple[str, ...] = ()
+    description: str = ""
+    status: ConfigStatus = ConfigStatus.ENABLED
+    revision: int = 1
+
+
+@dataclass(frozen=True)
+class RuntimeConfigValue:
+    id: str
+    definition_id: str
+    key: str
+    scope_type: RuntimeConfigScope = RuntimeConfigScope.GLOBAL
+    scope_code: str = "*"
+    service_name: str = ""
+    value: Any = None
+    secret_ref: str = ""
+    status: ConfigStatus = ConfigStatus.ENABLED
     revision: int = 1
 
 

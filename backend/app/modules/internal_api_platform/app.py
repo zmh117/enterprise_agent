@@ -12,6 +12,7 @@ from app.shared.database import Database, default_migrations_dir
 from app.modules.platform_config.application.snapshot import RuntimeTopologySnapshot
 from app.modules.platform_config.application.snapshot import PlatformTopologySnapshotBuilder
 from app.modules.platform_config.infrastructure import PlatformConfigRepository
+from app.shared.runtime_config_loader import load_settings_with_db_overlay
 
 from .application.platform_service import PlatformService
 from .domain.access import AccessPolicy
@@ -28,6 +29,7 @@ from .infrastructure.db.schema_directory import (
 from .infrastructure.loki_gateway import HttpLokiClient
 from .infrastructure.redis_gateway import RealRedisGateway
 from .infrastructure.registry import TopologyRegistry
+from .infrastructure.secrets import DbBackedSecretResolver
 
 
 def default_executors() -> dict[DatabaseEngine, QueryExecutor]:
@@ -51,6 +53,11 @@ def build_service(
     *,
     urlopen_func: Callable[..., Any] = urlopen,
 ) -> PlatformService:
+    settings = load_settings_with_db_overlay(
+        settings,
+        service_name="internal-api-platform",
+        migrate=settings.app_startup_migrate,
+    )
     snapshot = _load_topology_snapshot(settings)
     return PlatformService(
         registry=TopologyRegistry(snapshot.topology),
@@ -64,7 +71,7 @@ def build_service(
             max_response_chars=settings.loki.max_response_chars,
             urlopen_func=urlopen_func,
         ),
-        max_rows=int(os.getenv("INTERNAL_PLATFORM_MAX_ROWS", "100")),
+        max_rows=settings.internal_platform_max_rows,
         query_timeout_seconds=settings.internal_api_timeout_seconds,
         redis_scan_limit=settings.execution.redis_scan_limit,
         config_source=snapshot.source,
@@ -83,7 +90,13 @@ def _load_topology_snapshot(settings: Settings) -> RuntimeTopologySnapshot:
             if settings.app_startup_migrate:
                 database.run_migrations(default_migrations_dir())
             repository = PlatformConfigRepository(database)
-            snapshot = PlatformTopologySnapshotBuilder(repository).build_runtime_snapshot()
+            snapshot = PlatformTopologySnapshotBuilder(
+                repository,
+                resolver=DbBackedSecretResolver(
+                    repository,
+                    master_key=os.getenv("APP_CONFIG_MASTER_KEY", ""),
+                ),
+            ).build_runtime_snapshot()
         finally:
             database.close()
         if snapshot.source == "database":

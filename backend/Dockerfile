@@ -44,6 +44,7 @@ FROM python-deps AS api-server
 COPY backend/app/__init__.py backend/app/bootstrap.py backend/app/main.py /app/backend/app/
 COPY backend/app/shared /app/backend/app/shared
 COPY backend/app/modules /app/backend/app/modules
+COPY backend/config /app/backend/config
 COPY backend/migrations /app/backend/migrations
 COPY backend/seeds /app/backend/seeds
 RUN --mount=type=cache,target=/root/.cache/pip \

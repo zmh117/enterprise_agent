@@ -165,6 +165,144 @@ def build_platform_config_router() -> APIRouter:
             raise _handle(exc) from exc
         return {"secret_reference": entity}
 
+    @router.get("/secrets")
+    def list_platform_secrets(
+        request: Request,
+        include_disabled: bool = Query(default=True),
+    ) -> dict[str, Any]:
+        service = _container(request).platform_config_service
+        return {"secrets": service.list_platform_secrets(include_disabled=include_disabled)}
+
+    @router.post("/secrets")
+    async def create_platform_secret(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            entity = _container(request).platform_config_service.create_platform_secret(
+                payload,
+                actor_id=_actor(request),
+                correlation_id=_correlation_id(request),
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"secret": entity}
+
+    @router.get("/secrets/{code}")
+    def get_platform_secret(request: Request, code: str) -> dict[str, Any]:
+        try:
+            entity = _container(request).platform_config_service.get_platform_secret(code)
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"secret": entity}
+
+    @router.post("/secrets/{code}/rotate")
+    async def rotate_platform_secret(
+        request: Request, code: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        try:
+            entity = _container(request).platform_config_service.rotate_platform_secret(
+                code,
+                payload,
+                actor_id=_actor(request),
+                correlation_id=_correlation_id(request),
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"secret": entity}
+
+    @router.post("/secrets/{code}/disable")
+    def disable_platform_secret(request: Request, code: str) -> dict[str, Any]:
+        try:
+            entity = _container(request).platform_config_service.disable_platform_secret(
+                code,
+                actor_id=_actor(request),
+                correlation_id=_correlation_id(request),
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"secret": entity}
+
+    @router.get("/runtime-config/definitions")
+    def list_runtime_config_definitions(
+        request: Request,
+        include_disabled: bool = Query(default=True),
+    ) -> dict[str, Any]:
+        service = _container(request).platform_config_service
+        service.ensure_runtime_config_definitions()
+        return {
+            "definitions": service.list_runtime_config_definitions(
+                include_disabled=include_disabled
+            )
+        }
+
+    @router.post("/runtime-config/definitions")
+    async def upsert_runtime_config_definition(
+        request: Request, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        try:
+            entity = _container(request).platform_config_service.upsert_runtime_config_definition(
+                payload,
+                actor_id=_actor(request),
+                correlation_id=_correlation_id(request),
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"definition": entity}
+
+    @router.get("/runtime-config/values")
+    def list_runtime_config_values(
+        request: Request,
+        include_disabled: bool = Query(default=True),
+    ) -> dict[str, Any]:
+        service = _container(request).platform_config_service
+        return {"values": service.list_runtime_config_values(include_disabled=include_disabled)}
+
+    @router.post("/runtime-config/values")
+    async def upsert_runtime_config_value(
+        request: Request, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        try:
+            entity = _container(request).platform_config_service.upsert_runtime_config_value(
+                payload,
+                actor_id=_actor(request),
+                correlation_id=_correlation_id(request),
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"value": entity}
+
+    @router.post("/runtime-config/values/{value_id}/disable")
+    def disable_runtime_config_value(request: Request, value_id: str) -> dict[str, Any]:
+        return _set_runtime_config_value_status(request, value_id, "disabled")
+
+    @router.get("/runtime-config/snapshot")
+    def runtime_config_snapshot(
+        request: Request,
+        service_name: str = "",
+        project: str = "",
+        environment: str = "",
+        base: str = "",
+        workshop: str = "",
+        connector: str = "",
+    ) -> dict[str, Any]:
+        scopes = {
+            "project": project,
+            "environment": environment,
+            "base": base,
+            "workshop": workshop,
+            "connector": connector,
+        }
+        return {
+            "snapshot": _container(request).platform_config_service.runtime_config_snapshot(
+                service_name=service_name,
+                scopes={key: value for key, value in scopes.items() if value},
+            )
+        }
+
+    @router.get("/runtime-config/env-migration")
+    def runtime_config_env_migration(request: Request) -> dict[str, Any]:
+        return {
+            "items": _container(request).platform_config_service.runtime_config_env_migration()
+        }
+
     @router.get("/resource-bindings")
     def list_resource_bindings(
         request: Request,
@@ -317,3 +455,18 @@ def _set_access_grant_status(request: Request, grant_id: str, status: str) -> di
     except Exception as exc:
         raise _handle(exc) from exc
     return {"access_grant": entity}
+
+
+def _set_runtime_config_value_status(
+    request: Request, value_id: str, status: str
+) -> dict[str, Any]:
+    try:
+        entity = _container(request).platform_config_service.set_runtime_config_value_status(
+            value_id,
+            status,
+            actor_id=_actor(request),
+            correlation_id=_correlation_id(request),
+        )
+    except Exception as exc:
+        raise _handle(exc) from exc
+    return {"value": entity}

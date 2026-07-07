@@ -25,6 +25,7 @@ def _build_health(settings: Settings) -> dict[str, Any]:
         "claude_invoked": False,
         **_claude_runtime_status(settings),
         **_internal_tools_status(settings),
+        **_runtime_config_status(settings),
     }
 
 
@@ -54,6 +55,18 @@ def _internal_tools_status(settings: Settings) -> dict[str, Any]:
         "feature_real_internal_tools": settings.feature_real_internal_tools,
         "internal_api_base_url_configured": bool(settings.internal_api_base_url),
         "internal_api_auth_token_configured": bool(settings.internal_api_auth_token),
+    }
+
+
+def _runtime_config_status(settings: Settings) -> dict[str, Any]:
+    return {
+        "runtime_config": {
+            "source": settings.runtime_config_source,
+            "degraded": settings.runtime_config_degraded,
+            "revision": settings.runtime_config_revision,
+            "config_hash": settings.runtime_config_hash,
+            "errors": list(settings.runtime_config_errors),
+        }
     }
 
 
@@ -116,13 +129,15 @@ def create_app(
     @app.get("/api/ready")
     def ready() -> dict[str, Any]:
         container = _app_container(app)
+        runtime_settings = container.settings
         status = {
             "status": "ok",
             "database": container.database.ping(),
-            "rabbitmq": _check_rabbitmq(settings.rabbitmq_url),
+            "rabbitmq": _check_rabbitmq(runtime_settings.rabbitmq_url),
             "claude_invoked": False,
-            **_claude_runtime_status(settings),
-            **_internal_tools_status(settings),
+            **_claude_runtime_status(runtime_settings),
+            **_internal_tools_status(runtime_settings),
+            **_runtime_config_status(runtime_settings),
         }
         if not status["database"] or not status["rabbitmq"]:
             raise HTTPException(status_code=503, detail=status)

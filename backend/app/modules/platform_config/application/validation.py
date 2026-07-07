@@ -8,9 +8,11 @@ from app.shared.exceptions import NonRetryableExecutionError
 
 from ..domain import (
     AccessEffect,
+    ConfigValueType,
     ConfigStatus,
     ResourceKind,
     ResourceScopeType,
+    RuntimeConfigScope,
     SecretProvider,
     SubjectType,
 )
@@ -91,6 +93,26 @@ def validate_secret_provider(value: str) -> SecretProvider:
         ) from exc
 
 
+def validate_config_value_type(value: str) -> ConfigValueType:
+    try:
+        return ConfigValueType(str(value))
+    except ValueError as exc:
+        raise PlatformConfigValidationError(
+            f"Invalid runtime config value type: {value}",
+            safe_message="Invalid runtime config value type",
+        ) from exc
+
+
+def validate_runtime_scope_type(value: str) -> RuntimeConfigScope:
+    try:
+        return RuntimeConfigScope(str(value or RuntimeConfigScope.GLOBAL.value))
+    except ValueError as exc:
+        raise PlatformConfigValidationError(
+            f"Invalid runtime config scope type: {value}",
+            safe_message="Invalid runtime config scope type",
+        ) from exc
+
+
 def validate_subject_type(value: str) -> SubjectType:
     try:
         return SubjectType(str(value))
@@ -121,8 +143,58 @@ def validate_secret_ref(value: str) -> str:
             safe_message="Secret ref must include provider prefix",
         )
     provider = value.split(":", 1)[0]
+    if provider == "secret" and not value.startswith("secret://"):
+        raise PlatformConfigValidationError(
+            "Secret ref must use secret:// format",
+            safe_message="Secret ref must use secret:// format",
+        )
     validate_secret_provider(provider)
     return value
+
+
+def coerce_runtime_value(value: Any, value_type: ConfigValueType, *, field: str = "value") -> Any:
+    if value_type == ConfigValueType.SECRET_REF:
+        return validate_secret_ref(str(value or ""))
+    if value_type == ConfigValueType.BOOL:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str) and value.lower() in {"1", "true", "yes", "on"}:
+            return True
+        if isinstance(value, str) and value.lower() in {"0", "false", "no", "off"}:
+            return False
+        raise PlatformConfigValidationError(
+            f"{field} must be a boolean", safe_message=f"{field} must be a boolean"
+        )
+    if value_type == ConfigValueType.INT:
+        if isinstance(value, bool):
+            raise PlatformConfigValidationError(
+                f"{field} must be an integer", safe_message=f"{field} must be an integer"
+            )
+        try:
+            return int(value)
+        except (TypeError, ValueError) as exc:
+            raise PlatformConfigValidationError(
+                f"{field} must be an integer", safe_message=f"{field} must be an integer"
+            ) from exc
+    if value_type == ConfigValueType.STRING:
+        text = str(value or "")
+        _reject_obvious_secret_text(text, field=field)
+        return text
+    if value_type == ConfigValueType.URL:
+        text = str(value or "").strip()
+        if not text.startswith(("http://", "https://", "amqp://", "amqps://")):
+            raise PlatformConfigValidationError(
+                f"{field} must be a supported URL", safe_message=f"{field} must be a supported URL"
+            )
+        _reject_obvious_secret_text(text, field=field)
+        return text
+    if value_type == ConfigValueType.JSON:
+        assert_no_secret_payload(value, path=field)
+        return value
+    raise PlatformConfigValidationError(
+        f"Unsupported runtime config value type: {value_type}",
+        safe_message="Unsupported runtime config value type",
+    )
 
 
 def assert_no_secret_payload(value: Any, *, path: str = "config") -> None:
@@ -140,6 +212,8 @@ def assert_no_secret_payload(value: Any, *, path: str = "config") -> None:
     elif isinstance(value, list):
         for index, child in enumerate(value):
             assert_no_secret_payload(child, path=f"{path}[{index}]")
+    elif isinstance(value, str):
+        _reject_obvious_secret_text(value, field=path)
 
 
 def normalize_aliases(value: Any) -> list[str]:
@@ -199,3 +273,15 @@ def _looks_like_secret_ref(value: Any) -> bool:
     except PlatformConfigValidationError:
         return False
     return True
+
+
+def _reject_obvious_secret_text(value: str, *, field: str) -> None:
+    text = str(value or "")
+    lower = text.lower()
+    if _looks_like_secret_ref(text):
+        return
+    if any(marker in lower for marker in ("sk-", "api_key=", "token=", "password=")):
+        raise PlatformConfigValidationError(
+            f"Secret payload is not allowed at {field}",
+            safe_message="Secret payload is not allowed in platform configuration",
+        )

@@ -25,6 +25,16 @@
 - `FEATURE_REAL_CLAUDE=true` 可切换真实 Claude Agent SDK runtime。
 - `FEATURE_REAL_INTERNAL_TOOLS=false` 默认 fake 内部工具。
 - `FEATURE_REAL_INTERNAL_TOOLS=true` 可切换 HTTP Internal API Platform、本地 mock 平台或本地 Loki 平台。
+- Web-managed secrets：`/api/platform/secrets` 支持管理员输入密钥后加密保存，并返回 `secret://platform/<code>`。
+- DB-backed runtime config：`/api/platform/runtime-config/*` 支持把 DeepSeek、Internal API、Loki、DingTalk 默认路由和 Agent limits 逐步迁入 PostgreSQL。
+
+## Web 管理配置与密钥
+
+平台配置分为 `bootstrap-only`、`db-configurable` 和 `secret-managed` 三类。最小 bootstrap env 仍保留 `DATABASE_DSN`、`APP_CONFIG_MASTER_KEY`、`APP_ENV`、`APP_STARTUP_MIGRATE`、`SEED_LOCAL_CONFIG`；Claude/DeepSeek、Internal API、Loki、DingTalk 默认路由和 Agent limits 可逐步通过 PostgreSQL runtime config 管理。
+
+Web 管理端后续可以调用 `/api/platform/secrets` 保存 API key、password、token，后端只返回 `secret://platform/<code>`，不会回显明文。运行参数通过 `/api/platform/runtime-config/*` 管理，第一版修改后重启服务生效。
+
+详细说明见 [docs/web-managed-secrets-and-env-config.md](/Users/mhz/Develop/enterprise_agent/docs/web-managed-secrets-and-env-config.md)。
 
 ## 快速开始
 

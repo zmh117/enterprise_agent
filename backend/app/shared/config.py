@@ -77,6 +77,7 @@ class Settings:
     internal_api_auth_token: str = ""
     internal_api_timeout_seconds: int = 10
     internal_api_max_response_chars: int = 4000
+    internal_platform_max_rows: int = 100
     claude_model: str = "claude-sonnet-4-20250514"
     anthropic_api_key: str = ""
     anthropic_base_url: str = ""
@@ -85,6 +86,11 @@ class Settings:
     feature_real_internal_tools: bool = False
     app_startup_migrate: bool = True
     seed_local_config: bool = False
+    runtime_config_source: str = "env"
+    runtime_config_degraded: bool = False
+    runtime_config_revision: int = 0
+    runtime_config_hash: str = ""
+    runtime_config_errors: tuple[str, ...] = ()
     debug_agent_user_id: str = "local-user"
     dingtalk: DingTalkSettings = field(default_factory=DingTalkSettings)
     loki: LokiSettings = field(default_factory=LokiSettings)
@@ -114,6 +120,7 @@ def load_settings() -> Settings:
         internal_api_auth_token=os.getenv("INTERNAL_API_AUTH_TOKEN", ""),
         internal_api_timeout_seconds=int(os.getenv("INTERNAL_API_TIMEOUT_SECONDS", "10")),
         internal_api_max_response_chars=int(os.getenv("INTERNAL_API_MAX_RESPONSE_CHARS", "4000")),
+        internal_platform_max_rows=int(os.getenv("INTERNAL_PLATFORM_MAX_ROWS", "100")),
         claude_model=os.getenv(
             "CLAUDE_MODEL",
             os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
