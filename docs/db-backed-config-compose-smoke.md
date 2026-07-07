@@ -230,6 +230,12 @@ Anthropic/DeepSeek token
 
 ## 9. 一键 Smoke 脚本
 
+脚本会使用 `docker compose` 当前解析到的 `APP_CONFIG_MASTER_KEY`，不会覆盖 `.env`。同一个 Postgres 数据卷内不要随意切换 `APP_CONFIG_MASTER_KEY`；如果切换了，需要重新 rotate Web-managed secrets，否则会出现：
+
+```text
+Platform secret decrypt failed
+```
+
 默认 stub 模式：
 
 ```bash

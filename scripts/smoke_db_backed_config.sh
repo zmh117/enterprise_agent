@@ -70,7 +70,6 @@ echo "==> Starting Docker Compose services"
     compose_args+=(--build)
   fi
   compose_args+=(postgres rabbitmq api-server agent-worker)
-  APP_CONFIG_MASTER_KEY="${APP_CONFIG_MASTER_KEY:-local-dev-config-master-key}" \
   FEATURE_REAL_CLAUDE="$REAL_CLAUDE" \
   FEATURE_REAL_INTERNAL_TOOLS="${FEATURE_REAL_INTERNAL_TOOLS:-false}" \
   docker compose "${compose_args[@]}"
@@ -158,7 +157,6 @@ assert_json "'ANTHROPIC_API_KEY' in data['snapshot']['effective_masked']" "ANTHR
 echo "==> Restarting api-server and agent-worker to apply startup overlay"
 (
   cd "$ROOT_DIR"
-  APP_CONFIG_MASTER_KEY="${APP_CONFIG_MASTER_KEY:-local-dev-config-master-key}" \
   docker compose restart api-server agent-worker >/dev/null
 )
 
