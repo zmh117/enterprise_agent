@@ -191,6 +191,26 @@ POST /tools/redis/get
 POST /tools/redis/scan
 ```
 
+DB-backed platform config 验证：
+
+```bash
+curl --noproxy '*' -s -X POST http://127.0.0.1:8000/api/platform/import/topology-yaml \
+  -H 'content-type: application/json' \
+  -H 'x-admin-user-id: local-user' \
+  -d '{"path":"config/internal_platform_topology.example.yaml"}'
+
+curl --noproxy '*' -s http://127.0.0.1:8000/api/platform/topology-snapshot
+
+docker compose --profile real-tools restart internal-api-platform
+docker compose --profile real-tools exec internal-api-platform python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:9000/health').read().decode())"
+```
+
+预期 `health.config.source=database`。只有 PostgreSQL 没有启用 topology 时才允许
+YAML fallback；如果 DB 中已有启用 topology 但配置无效，必须显示
+`config.source=database-invalid`，不能静默回退 YAML。当前 runtime 使用启动时
+snapshot，修改平台配置后需要重启 `internal-api-platform`，后续可再做 reload endpoint。
+完整步骤见 `docs/db-backed-platform-config-runtime-test.md`。
+
 先验证平台 health、拓扑和 Loki 诊断，再提交 Agent job：
 
 ```bash

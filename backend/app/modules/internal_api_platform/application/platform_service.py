@@ -41,6 +41,7 @@ class PlatformService:
         schema_column_limit: int = 80,
         config_source: str = "unknown",
         config_revision: int = 0,
+        config_hash: str = "",
         config_errors: list[str] | None = None,
         config_resource_count: int = 0,
     ) -> None:
@@ -57,6 +58,7 @@ class PlatformService:
         self._schema_column_limit = schema_column_limit
         self._config_source = config_source
         self._config_revision = config_revision
+        self._config_hash = config_hash
         self._config_errors = config_errors or []
         self._config_resource_count = config_resource_count
 
@@ -64,6 +66,7 @@ class PlatformService:
         return {
             "source": self._config_source,
             "revision": self._config_revision,
+            "config_hash": self._config_hash,
             "valid": not self._config_errors,
             "errors": self._config_errors,
             "resource_count": self._config_resource_count,

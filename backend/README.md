@@ -647,6 +647,35 @@ docker compose --profile real-tools exec internal-api-platform python -c "import
 docker compose --profile real-tools exec internal-api-platform python -c "import json, urllib.request; payload={'environment':'sanjiu','base':'guanlan','workshop':'GL001','selector':{'service':'order-service'},'query':'synthetic-test-error','minutes':15,'limit':20}; req=urllib.request.Request('http://127.0.0.1:9000/tools/loki/probe', data=json.dumps(payload).encode(), headers={'content-type':'application/json','X-Agent-User-Id':'local-user'}, method='POST'); print(urllib.request.urlopen(req).read().decode())"
 ```
 
+DB-backed platform config runtime 验证：
+
+```bash
+curl --noproxy '*' -s -X POST http://127.0.0.1:8000/api/platform/import/topology-yaml \
+  -H 'content-type: application/json' \
+  -H 'x-admin-user-id: local-user' \
+  -d '{"path":"config/internal_platform_topology.example.yaml"}'
+
+curl --noproxy '*' -s http://127.0.0.1:8000/api/platform/topology-snapshot
+
+docker compose --profile real-tools restart internal-api-platform
+docker compose --profile real-tools exec internal-api-platform python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:9000/health').read().decode())"
+docker compose --profile real-tools exec internal-api-platform python -c "import json, urllib.request; payload={'environment':'sanjiu','base':'guanlan','workshop':'GL001','kind':'database'}; req=urllib.request.Request('http://127.0.0.1:9000/tools/resolve', data=json.dumps(payload).encode(), headers={'content-type':'application/json','X-Agent-User-Id':'local-user'}, method='POST'); print(urllib.request.urlopen(req).read().decode())"
+```
+
+关键判断：
+
+```text
+/api/platform/topology-snapshot: source = database, valid = true
+/health: config.source = database, config.resource_count > 0
+/tools/resolve: metadata.source = internal-api-platform
+```
+
+只有数据库没有启用 topology 且设置了 `INTERNAL_PLATFORM_TOPOLOGY_FILE` 时才走 YAML
+fallback。数据库已有启用 topology 但配置不完整时，必须显示
+`config.source=database-invalid` 和 degraded health。当前 `internal-api-platform` 使用启动时
+snapshot，修改 platform config 后需要重启服务；完整步骤见
+`docs/db-backed-platform-config-runtime-test.md`。
+
 真实诊断前，Agent 会使用 schema directory 约束 SQL。若目标 schema 为空、只有
 `GL001_EBR_PI(ID)` 这类不足字段，或缺少订单号/状态/物料相关字段，Agent 必须停止
 扩散式试错并输出 `不具备诊断证据`。失败或 retry-pending job 仍可通过：

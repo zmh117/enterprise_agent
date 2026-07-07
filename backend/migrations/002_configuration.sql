@@ -72,12 +72,12 @@ CREATE TABLE IF NOT EXISTS permission_policy (
   updated_at TEXT NOT NULL
 );
 
-COMMENT ON TABLE permission_policy IS '权限策略表，记录主体对工具、数据源、项目或环境资源的允许和拒绝规则';
+COMMENT ON TABLE permission_policy IS '权限策略表，记录主体对工具、数据源、项目、环境、基地、车间或平台配置资源的允许和拒绝规则';
 COMMENT ON COLUMN permission_policy.id IS '权限策略 ID';
 COMMENT ON COLUMN permission_policy.subject_type IS '主体类型，例如 user、role、service、channel';
 COMMENT ON COLUMN permission_policy.subject_code IS '主体编码，例如用户 ID、角色编码或服务账号编码';
-COMMENT ON COLUMN permission_policy.resource_type IS '资源类型，例如 tool、datasource、project、environment';
-COMMENT ON COLUMN permission_policy.resource_code IS '资源编码，例如工具名称、数据源编码或项目编码';
+COMMENT ON COLUMN permission_policy.resource_type IS '资源类型，例如 tool、datasource、project、environment、base、workshop、platform_config';
+COMMENT ON COLUMN permission_policy.resource_code IS '资源编码，例如工具名称、数据源编码、项目编码、环境/基地/车间编码或 *';
 COMMENT ON COLUMN permission_policy.effect IS '策略效果，例如 allow 或 deny';
 COMMENT ON COLUMN permission_policy.created_at IS '权限策略创建时间';
 COMMENT ON COLUMN permission_policy.updated_at IS '权限策略最近更新时间';

@@ -30,6 +30,7 @@ class RuntimeTopologySnapshot:
     access_policy: AccessPolicy
     source: str
     revision: int
+    config_hash: str
     resource_count: int
     errors: list[str] = field(default_factory=list)
 
@@ -69,6 +70,7 @@ class PlatformTopologySnapshotBuilder:
                 access_policy=AccessPolicy(),
                 source="database-empty",
                 revision=0,
+                config_hash=self._config_hash(),
                 resource_count=0,
             )
 
@@ -148,6 +150,7 @@ class PlatformTopologySnapshotBuilder:
             access_policy=self.build_access_policy(),
             source=source,
             revision=self.repository.topology_revision(),
+            config_hash=self._config_hash(),
             resource_count=len(bindings),
             errors=errors,
         )

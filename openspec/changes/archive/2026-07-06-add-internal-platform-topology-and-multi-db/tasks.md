@@ -44,7 +44,7 @@
 - [x] 6.1 定义 `AccessScope`/`ScopeRule`/`AccessPolicy`（user -> 可访问 env/base/workshop，支持 `*`）与 YAML 配置。
 - [x] 6.2 实现授权：路由解析 caller（`X-Agent-User-Id`），越权 -> `AuthorizationError`(403, non-retryable)。
 - [x] 6.3 access allow/deny 审计（`internal_api_platform.audit` logger，含 caller + 目标 + decision + reason）。
-- [ ] 6.4 `permission_policy` 预留 `resource_type` 扩展（environment/base/workshop）。（DB 迁移预留，YAML 优先，暂缓）
+- [x] 6.4 `permission_policy` 预留 `resource_type` 扩展（environment/base/workshop）。（DB 通用字段已存在；迁移注释明确保留 environment/base/workshop/platform_config 资源类型，平台访问细粒度策略仍由 YAML/平台配置投影优先）
 - [x] 6.5 单元测试：in-scope 通过、跨 workshop 拒绝、缺身份拒绝、未知用户拒绝、通配授权。
 
 ## 7. 工具契约升级（Agent 侧对接）

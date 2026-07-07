@@ -69,6 +69,7 @@ def build_service(
         redis_scan_limit=settings.execution.redis_scan_limit,
         config_source=snapshot.source,
         config_revision=snapshot.revision,
+        config_hash=snapshot.config_hash,
         config_errors=snapshot.errors,
         config_resource_count=snapshot.resource_count,
     )
@@ -98,6 +99,7 @@ def _load_topology_snapshot(settings: Settings) -> RuntimeTopologySnapshot:
                 access_policy=AccessPolicy(),
                 source="database-error",
                 revision=0,
+                config_hash="",
                 resource_count=0,
                 errors=[str(exc)],
             )
@@ -107,6 +109,7 @@ def _load_topology_snapshot(settings: Settings) -> RuntimeTopologySnapshot:
         access_policy=access_policy,
         source="yaml",
         revision=0,
+        config_hash="",
         resource_count=sum(
             int(base.database is not None)
             + int(base.redis is not None)
