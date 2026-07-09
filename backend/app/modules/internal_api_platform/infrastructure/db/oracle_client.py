@@ -177,5 +177,5 @@ def build_oracle_makedsn(
     use_sid: bool,
 ) -> str:
     if use_sid:
-        return oracledb.makedsn(host, port, sid=database)
-    return oracledb.makedsn(host, port, service_name=database)
+        return str(oracledb.makedsn(host, port, sid=database))
+    return str(oracledb.makedsn(host, port, service_name=database))

@@ -10,6 +10,7 @@ from app.shared.exceptions import NotFound
 
 from ..infrastructure.repository import PlatformConfigRepository
 from .validation import (
+    PlatformConfigValidationError,
     assert_no_secret_payload,
     normalize_oracle_database_config,
     normalize_redis_resource_config,

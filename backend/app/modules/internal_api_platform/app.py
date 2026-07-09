@@ -16,7 +16,6 @@ from app.shared.runtime_config_loader import load_settings_with_db_overlay
 
 from .application.platform_service import PlatformService
 from .domain.access import AccessPolicy
-from .domain.schema_directory import SchemaDirectoryReader
 from .domain.topology import DatabaseEngine, Topology
 from .api.routes import register_routes
 from .infrastructure.config import load_platform_config
@@ -24,8 +23,10 @@ from .infrastructure.db.drivers import MysqlExecutor, OracleExecutor, SqlServerE
 from .infrastructure.db.executor import QueryExecutor
 from .infrastructure.db.oracle_client import ensure_oracle_client_initialized
 from .infrastructure.db.schema_directory import (
-    MySqlSchemaDirectoryReader,
-    UnsupportedSchemaDirectoryReader,
+    MySqlSchemaInspector,
+    OracleSchemaInspector,
+    SchemaInspectorFactory,
+    SqlServerSchemaInspector,
 )
 from .infrastructure.loki_gateway import HttpLokiClient
 from .infrastructure.redis_gateway import RealRedisGateway
@@ -47,12 +48,14 @@ def _bootstrap_oracle_client() -> None:
     ensure_oracle_client_initialized()
 
 
-def default_schema_readers() -> dict[DatabaseEngine, SchemaDirectoryReader]:
-    return {
-        DatabaseEngine.MYSQL: MySqlSchemaDirectoryReader(),
-        DatabaseEngine.SQLSERVER: UnsupportedSchemaDirectoryReader(DatabaseEngine.SQLSERVER),
-        DatabaseEngine.ORACLE: UnsupportedSchemaDirectoryReader(DatabaseEngine.ORACLE),
-    }
+def default_schema_inspector_factory() -> SchemaInspectorFactory:
+    return SchemaInspectorFactory(
+        {
+            DatabaseEngine.MYSQL: MySqlSchemaInspector(),
+            DatabaseEngine.SQLSERVER: SqlServerSchemaInspector(),
+            DatabaseEngine.ORACLE: OracleSchemaInspector(),
+        }
+    )
 
 
 def build_service(
@@ -71,7 +74,7 @@ def build_service(
         registry=TopologyRegistry(snapshot.topology),
         access_policy=snapshot.access_policy,
         executors=default_executors(),
-        schema_readers=default_schema_readers(),
+        schema_inspector_factory=default_schema_inspector_factory(),
         redis_gateway=RealRedisGateway(),
         loki_client=HttpLokiClient(
             max_minutes=settings.loki.max_minutes,

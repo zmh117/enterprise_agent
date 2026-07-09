@@ -52,6 +52,30 @@ connection details, and marks `truncated=true` when bounded. Agent SQL must refe
 tables and columns from this directory. If the directory is empty or lacks fields needed
 for the user question, the Agent should report `不具备诊断证据` instead of guessing table names.
 
+### Multi-dialect schema preview
+
+`SchemaInspectorFactory` selects a read-only inspector from the resolved base engine:
+
+- MySQL: reads `information_schema.columns`.
+- Oracle: reads `ALL_TABLES` and `ALL_TAB_COLUMNS`. Table bounds use a nested
+  `ROWNUM` query, so metadata preview is compatible with Oracle 11g and does not require
+  `FETCH FIRST`.
+- SQL Server: reads `sys.tables`, `sys.schemas`, `sys.columns`, and `sys.types`.
+  If the database binding does not set `schema`, the inspector uses `dbo`.
+
+Schema preview returns ordinary table and column metadata only. It never samples business
+rows, persists imported schema data, or exposes connection fields. `table_prefix`, search
+text, table limits, and per-table column limits remain enforced for every engine.
+
+Minimum metadata visibility:
+
+- Oracle read-only users need access to the target owner's rows in `ALL_TABLES` and
+  `ALL_TAB_COLUMNS`. Set the database binding `schema` to that owner; when omitted, the
+  connection user is used.
+- SQL Server read-only users need metadata visibility for the target database/schema
+  (for example through ownership or an approved `VIEW DEFINITION` grant). Broader data
+  write permissions are not required.
+
 ### ER context → addressing directory
 
 `/tools/context/er` and `/tools/context/business-flow` return, in `summary.addressing`, an
@@ -130,6 +154,22 @@ Live MySQL smoke test (read-only), against a real database:
 INTERNAL_PLATFORM_TOPOLOGY_FILE=... \
 python -m uvicorn app.internal_api_platform:create_app --factory --port 9000
 # then POST /tools/database/query with environment/base/workshop + a SELECT
+```
+
+Optional live schema preview tests:
+
+```bash
+RUN_ORACLE_SCHEMA_INTEGRATION=1 \
+ORACLE_HOST=... ORACLE_SERVICE=... ORACLE_USER=... ORACLE_PASSWORD=... \
+ORACLE_SCHEMA=... \
+.venv/bin/pytest backend/tests/test_redis_oracle_integration.py \
+  -k OracleSchemaInspectorIntegrationTests -q
+
+RUN_SQLSERVER_SCHEMA_INTEGRATION=1 \
+SQLSERVER_HOST=... SQLSERVER_DATABASE=... \
+SQLSERVER_USER=... SQLSERVER_PASSWORD=... SQLSERVER_SCHEMA=dbo \
+.venv/bin/pytest backend/tests/test_redis_oracle_integration.py \
+  -k SqlServerSchemaInspectorIntegrationTests -q
 ```
 
 Docker (topology-aware profile):

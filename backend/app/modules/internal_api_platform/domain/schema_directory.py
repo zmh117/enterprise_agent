@@ -56,7 +56,7 @@ class SchemaDirectory:
         }
 
 
-class SchemaDirectoryReader(Protocol):
+class SchemaInspector(Protocol):
     def read(
         self,
         binding: ResourceBinding,
@@ -66,3 +66,7 @@ class SchemaDirectoryReader(Protocol):
         table_limit: int,
         column_limit: int,
     ) -> SchemaDirectory: ...
+
+
+# Backward-compatible name for callers outside the platform assembly.
+SchemaDirectoryReader = SchemaInspector

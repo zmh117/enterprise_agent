@@ -20,6 +20,7 @@ from app.modules.internal_api_platform.domain.topology import DatabaseEngine, Re
 from app.modules.internal_api_platform.infrastructure.db.executor import FakeQueryExecutor
 from app.modules.internal_api_platform.infrastructure.db.schema_directory import (
     FakeSchemaDirectoryReader,
+    SchemaInspectorFactory,
 )
 from app.modules.internal_api_platform.infrastructure.loki_gateway import FakeLokiClient
 from app.modules.internal_api_platform.infrastructure.redis_gateway import FakeRedisGateway
@@ -117,7 +118,13 @@ def _db_backed_service(
             DatabaseEngine.SQLSERVER: FakeQueryExecutor(),
             DatabaseEngine.ORACLE: FakeQueryExecutor(),
         },
-        schema_readers={DatabaseEngine.MYSQL: FakeSchemaDirectoryReader()},
+        schema_inspector_factory=SchemaInspectorFactory(
+            {
+                DatabaseEngine.MYSQL: FakeSchemaDirectoryReader(),
+                DatabaseEngine.SQLSERVER: FakeSchemaDirectoryReader(),
+                DatabaseEngine.ORACLE: FakeSchemaDirectoryReader(),
+            }
+        ),
         redis_gateway=redis or FakeRedisGateway(),
         loki_client=loki or FakeLokiClient(),
         config_source=snapshot.source,

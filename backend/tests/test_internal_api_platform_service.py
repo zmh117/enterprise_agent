@@ -15,6 +15,7 @@ from app.modules.internal_api_platform.infrastructure.config import load_platfor
 from app.modules.internal_api_platform.infrastructure.db.executor import FakeQueryExecutor
 from app.modules.internal_api_platform.infrastructure.db.schema_directory import (
     FakeSchemaDirectoryReader,
+    SchemaInspectorFactory,
 )
 from app.modules.internal_api_platform.domain.schema_directory import SchemaColumn, SchemaTable
 from app.modules.internal_api_platform.infrastructure.loki_gateway import FakeLokiClient
@@ -105,7 +106,9 @@ def _service(
             DatabaseEngine.MYSQL: executor or FakeQueryExecutor(),
             DatabaseEngine.SQLSERVER: FakeQueryExecutor(),
         },
-        schema_readers={DatabaseEngine.MYSQL: schema_reader or FakeSchemaDirectoryReader()},
+        schema_inspector_factory=SchemaInspectorFactory(
+            {DatabaseEngine.MYSQL: schema_reader or FakeSchemaDirectoryReader()}
+        ),
         redis_gateway=redis or FakeRedisGateway(),
         loki_client=loki or FakeLokiClient(),
         max_rows=100,
@@ -453,9 +456,13 @@ class SchemaDirectoryTests(unittest.TestCase):
             registry=registry,
             access_policy=access,  # type: ignore[arg-type]
             executors={DatabaseEngine.SQLSERVER: FakeQueryExecutor()},
-            schema_readers={
-                DatabaseEngine.SQLSERVER: UnsupportedSchemaDirectoryReader(DatabaseEngine.SQLSERVER)
-            },
+            schema_inspector_factory=SchemaInspectorFactory(
+                {
+                    DatabaseEngine.SQLSERVER: UnsupportedSchemaDirectoryReader(
+                        DatabaseEngine.SQLSERVER
+                    )
+                }
+            ),
             redis_gateway=FakeRedisGateway(),
             loki_client=FakeLokiClient(),
         )

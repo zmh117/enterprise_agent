@@ -13,10 +13,11 @@ from ..domain.redis_policy import (
     enforce_scan_pattern,
 )
 from ..domain.results import ToolResponse
-from ..domain.schema_directory import SchemaDirectory, SchemaDirectoryReader
+from ..domain.schema_directory import SchemaDirectory
 from ..domain.sql.analyzer import analyze_readonly_query
 from ..domain.topology import DatabaseEngine, OracleCompat, ResourceKind
 from ..infrastructure.db.executor import QueryExecutor
+from ..infrastructure.db.schema_directory import SchemaInspectorFactory
 from ..infrastructure.loki_gateway import LokiClient
 from ..infrastructure.redis_gateway import RedisGateway
 from ..infrastructure.registry import TopologyRegistry
@@ -31,7 +32,7 @@ class PlatformService:
         registry: TopologyRegistry,
         access_policy: AccessPolicy,
         executors: dict[DatabaseEngine, QueryExecutor],
-        schema_readers: dict[DatabaseEngine, SchemaDirectoryReader] | None = None,
+        schema_inspector_factory: SchemaInspectorFactory | None = None,
         redis_gateway: RedisGateway,
         loki_client: LokiClient,
         max_rows: int = 100,
@@ -48,7 +49,7 @@ class PlatformService:
         self._registry = registry
         self._access = access_policy
         self._executors = executors
-        self._schema_readers = schema_readers or {}
+        self._schema_inspectors = schema_inspector_factory or SchemaInspectorFactory()
         self._redis = redis_gateway
         self._loki = loki_client
         self._max_rows = max_rows
@@ -503,11 +504,9 @@ class PlatformService:
         query: str,
         table_limit: int | None = None,
     ) -> SchemaDirectory | None:
-        reader = self._schema_readers.get(binding.engine)
-        if reader is None:
-            return None
+        inspector = self._schema_inspectors.for_engine(binding.engine)
         table_prefix = binding.workshop.table_prefix if binding.workshop else None
-        return reader.read(
+        return inspector.read(
             binding,
             table_prefix=table_prefix,
             query=query,
