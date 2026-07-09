@@ -16,6 +16,22 @@ class DatabaseEngine(str, Enum):
     ORACLE = "oracle"
 
 
+class RedisMode(str, Enum):
+    STANDALONE = "standalone"
+    CLUSTER = "cluster"
+
+
+class OracleClientMode(str, Enum):
+    THIN = "thin"
+    THICK = "thick"
+    AUTO = "auto"
+
+
+class OracleCompat(str, Enum):
+    MODERN = "modern"
+    LEGACY = "legacy"
+
+
 @dataclass(frozen=True)
 class DatabaseConnection:
     host: str
@@ -23,6 +39,17 @@ class DatabaseConnection:
     database: str
     user: str
     password: str
+    schema: str = ""
+    oracle_client_mode: OracleClientMode = OracleClientMode.AUTO
+    oracle_compat: OracleCompat = OracleCompat.MODERN
+    use_sid: bool = False
+    connect_descriptor: str = ""
+
+
+@dataclass(frozen=True)
+class RedisNode:
+    host: str
+    port: int = 6379
 
 
 @dataclass(frozen=True)
@@ -31,6 +58,17 @@ class RedisConnection:
     port: int
     db: int = 0
     password: str = ""
+    mode: RedisMode = RedisMode.STANDALONE
+    nodes: tuple[RedisNode, ...] = ()
+
+    def startup_nodes(self) -> tuple[RedisNode, ...]:
+        """Nodes used to bootstrap a cluster client (or the standalone endpoint)."""
+
+        if self.nodes:
+            return self.nodes
+        if self.host:
+            return (RedisNode(host=self.host, port=self.port),)
+        return ()
 
 
 @dataclass(frozen=True)

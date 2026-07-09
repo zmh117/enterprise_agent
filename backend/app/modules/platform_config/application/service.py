@@ -22,6 +22,8 @@ from .validation import (
     normalize_aliases,
     normalize_json_list,
     normalize_json_object,
+    normalize_oracle_database_config,
+    normalize_redis_resource_config,
     validate_config_value_type,
     validate_access_effect,
     validate_code,
@@ -309,6 +311,15 @@ class PlatformConfigService:
             ).items()
         }
         kind = validate_resource_kind(str(payload.get("resource_kind") or ""))
+        if kind.value == "redis":
+            config = normalize_redis_resource_config(config)
+        engine = (
+            validate_engine(str(payload.get("engine") or ""))
+            if kind.value == "database"
+            else payload.get("engine")
+        )
+        if kind.value == "database" and engine == "oracle":
+            config = normalize_oracle_database_config(config)
         before = self.repository.get_resource_binding_by_code(code)
         entity = self.repository.upsert_resource_binding(
             code=code,
@@ -318,11 +329,7 @@ class PlatformConfigService:
             workshop_code=payload.get("workshop_code"),
             resource_kind=kind.value,
             connector_id=payload.get("connector_id"),
-            engine=(
-                validate_engine(str(payload.get("engine") or ""))
-                if kind.value == "database"
-                else payload.get("engine")
-            ),
+            engine=engine if kind.value == "database" else None,
             config=config,
             secret_refs=secret_refs,
             status=validate_status(str(payload.get("status") or "enabled")).value,

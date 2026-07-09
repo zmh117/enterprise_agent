@@ -1,69 +1,278 @@
-# Internal API Platform topology (example).
+# Internal API Platform topology (example / local real-tools).
 #
-# Copy to a real file and point INTERNAL_PLATFORM_TOPOLOGY_FILE at it.
-# Secrets are referenced via `*_ref: secret://...` and resolved from environment
-# variables named SECRET_<UPPER_SNAKE_OF_PATH>. For example
-#   secret://sanjiu/guanlan/db_password -> env SECRET_SANJIU_GUANLAN_DB_PASSWORD
+# Secrets use `*_ref: secret://...` → env `SECRET_<UPPER_SNAKE_OF_PATH>`.
 # Never inline real credentials in this file.
+#
+# Oracle: `database` = Easy Connect service name (SERVICE).
+# Workshop codes = PLANT + workshop number (e.g. GL + 001 → GL001).
 
 environments:
-  # 三九: multi-base, workshop-partitioned via table/key prefixes and Loki labels.
+  # 三九：观澜 / 顺丰 / 郴州 × 云端 / 边端（Oracle + Redis Cluster）
   sanjiu:
     display_name: 三九
     aliases: [三九集团]
     bases:
-      # 观澜基地 (business code: guanlan). One engine per base.
-      guanlan:
-        display_name: 观澜基地
-        aliases: [观澜, 华南]
-        engine: mysql
+      guanlan_cloud:
+        display_name: 观澜云端
+        aliases: [观澜云端, 观澜, guanlan]
+        engine: oracle
         database:
-          host_ref: secret://sanjiu/guanlan/db_host
-          port: 3306
-          database: CRMES_TEST_CLOUD_GL
-          user_ref: secret://sanjiu/guanlan/db_user
-          password_ref: secret://sanjiu/guanlan/db_password
+          host_ref: secret://sanjiu/guanlan_cloud/db_host
+          port: 1521
+          database: CRMES
+          schema: CRMES_TEST_CLOUD_GL
+          user_ref: secret://sanjiu/guanlan_cloud/db_user
+          password_ref: secret://sanjiu/guanlan_cloud/db_password
+          oracle_client_mode: thick
+          oracle_compat: legacy
+          use_sid: false
         redis:
-          host_ref: secret://sanjiu/guanlan/redis_host
-          port: 6379
-        loki:
-          base_url_ref: secret://sanjiu/guanlan/loki_url
-          tenant: sanjiu-guanlan
+          mode: cluster
+          password_ref: secret://sanjiu/cloud/redis_password
+          nodes:
+            - { host: 10.0.102.103, port: 6380 }
+            - { host: 10.0.102.103, port: 6381 }
+            - { host: 10.0.102.104, port: 6380 }
+            - { host: 10.0.102.104, port: 6381 }
+            - { host: 10.0.102.105, port: 6380 }
+            - { host: 10.0.102.105, port: 6381 }
         workshops:
           GL001:
-            display_name: 一号车间
+            display_name: 观澜云端一号车间
             table_prefix: GL001_EBR_
             redis_key_prefix: 'GL001:'
             loki_label: { workshop: GL001 }
           GL002:
-            display_name: 二号车间
+            display_name: 观澜云端二号车间
             table_prefix: GL002_EBR_
             redis_key_prefix: 'GL002:'
             loki_label: { workshop: GL002 }
+          GL003:
+            display_name: 观澜云端三号车间
+            table_prefix: GL003_EBR_
+            redis_key_prefix: 'GL003:'
+            loki_label: { workshop: GL003 }
 
-  # mmk: degenerate base, no workshop layer. Still read-only + bounded.
+      guanlan_edge:
+        display_name: 观澜边端
+        aliases: [观澜边端]
+        engine: oracle
+        database:
+          host_ref: secret://sanjiu/guanlan_edge/db_host
+          port: 1521
+          database: CRMES
+          schema: CRMES_TEST_EDGE_GL
+          user_ref: secret://sanjiu/guanlan_edge/db_user
+          password_ref: secret://sanjiu/guanlan_edge/db_password
+          oracle_client_mode: thick
+          oracle_compat: legacy
+          use_sid: false
+        redis:
+          mode: cluster
+          password_ref: secret://sanjiu/guanlan_edge/redis_password
+          nodes:
+            - { host: 10.0.102.113, port: 6380 }
+            - { host: 10.0.102.113, port: 6381 }
+            - { host: 10.0.102.114, port: 6380 }
+            - { host: 10.0.102.114, port: 6381 }
+            - { host: 10.0.102.115, port: 6380 }
+            - { host: 10.0.102.115, port: 6381 }
+        workshops:
+          GL001:
+            display_name: 观澜边端一号车间
+            table_prefix: GL001_EBR_
+            redis_key_prefix: 'GL001:'
+            loki_label: { workshop: GL001 }
+          GL002:
+            display_name: 观澜边端二号车间
+            table_prefix: GL002_EBR_
+            redis_key_prefix: 'GL002:'
+            loki_label: { workshop: GL002 }
+          GL003:
+            display_name: 观澜边端三号车间
+            table_prefix: GL003_EBR_
+            redis_key_prefix: 'GL003:'
+            loki_label: { workshop: GL003 }
+
+      shunfeng_cloud:
+        display_name: 顺丰云端
+        aliases: [顺丰云端, 顺峰云端]
+        engine: oracle
+        database:
+          host_ref: secret://sanjiu/shunfeng_cloud/db_host
+          port: 1521
+          database: CRMES
+          schema: CRMES_TEST_CLOUD_SF
+          user_ref: secret://sanjiu/shunfeng_cloud/db_user
+          password_ref: secret://sanjiu/shunfeng_cloud/db_password
+          oracle_client_mode: thick
+          oracle_compat: legacy
+          use_sid: false
+        redis:
+          mode: cluster
+          password_ref: secret://sanjiu/cloud/redis_password
+          nodes:
+            - { host: 10.0.102.103, port: 6380 }
+            - { host: 10.0.102.103, port: 6381 }
+            - { host: 10.0.102.104, port: 6380 }
+            - { host: 10.0.102.104, port: 6381 }
+            - { host: 10.0.102.105, port: 6380 }
+            - { host: 10.0.102.105, port: 6381 }
+        workshops:
+          SF001:
+            display_name: 顺丰云端一号车间
+            table_prefix: SF001_EBR_
+            redis_key_prefix: 'SF001:'
+            loki_label: { workshop: SF001 }
+          SF002:
+            display_name: 顺丰云端二号车间
+            table_prefix: SF002_EBR_
+            redis_key_prefix: 'SF002:'
+            loki_label: { workshop: SF002 }
+
+      shunfeng_edge:
+        display_name: 顺丰边端
+        aliases: [顺丰边端, 顺峰边端]
+        engine: oracle
+        database:
+          host_ref: secret://sanjiu/shunfeng_edge/db_host
+          port: 1521
+          database: CRMES
+          schema: CRMES_TEST_EDGE_SF
+          user_ref: secret://sanjiu/shunfeng_edge/db_user
+          password_ref: secret://sanjiu/shunfeng_edge/db_password
+          oracle_client_mode: thick
+          oracle_compat: legacy
+          use_sid: false
+        redis:
+          mode: cluster
+          password_ref: secret://sanjiu/shunfeng_edge/redis_password
+          nodes:
+            - { host: 10.0.102.123, port: 6380 }
+            - { host: 10.0.102.123, port: 6381 }
+            - { host: 10.0.102.124, port: 6380 }
+            - { host: 10.0.102.124, port: 6381 }
+            - { host: 10.0.102.125, port: 6380 }
+            - { host: 10.0.102.125, port: 6381 }
+        workshops:
+          SF001:
+            display_name: 顺丰边端一号车间
+            table_prefix: SF001_EBR_
+            redis_key_prefix: 'SF001:'
+            loki_label: { workshop: SF001 }
+          SF002:
+            display_name: 顺丰边端二号车间
+            table_prefix: SF002_EBR_
+            redis_key_prefix: 'SF002:'
+            loki_label: { workshop: SF002 }
+
+      chenzhou_cloud:
+        display_name: 郴州云端
+        aliases: [郴州云端]
+        engine: oracle
+        database:
+          host_ref: secret://sanjiu/chenzhou_cloud/db_host
+          port: 1521
+          database: CRMES
+          schema: CRMES_TEST_CLOUD_CZ
+          user_ref: secret://sanjiu/chenzhou_cloud/db_user
+          password_ref: secret://sanjiu/chenzhou_cloud/db_password
+          oracle_client_mode: thick
+          oracle_compat: legacy
+          use_sid: false
+        redis:
+          mode: cluster
+          password_ref: secret://sanjiu/cloud/redis_password
+          nodes:
+            - { host: 10.0.102.103, port: 6380 }
+            - { host: 10.0.102.103, port: 6381 }
+            - { host: 10.0.102.104, port: 6380 }
+            - { host: 10.0.102.104, port: 6381 }
+            - { host: 10.0.102.105, port: 6380 }
+            - { host: 10.0.102.105, port: 6381 }
+        workshops:
+          CZ001:
+            display_name: 郴州云端一号车间
+            table_prefix: CZ001_EBR_
+            redis_key_prefix: 'CZ001:'
+            loki_label: { workshop: CZ001 }
+          CZ002:
+            display_name: 郴州云端二号车间
+            table_prefix: CZ002_EBR_
+            redis_key_prefix: 'CZ002:'
+            loki_label: { workshop: CZ002 }
+
+      chenzhou_edge:
+        display_name: 郴州边端
+        aliases: [郴州边端]
+        engine: oracle
+        database:
+          host_ref: secret://sanjiu/chenzhou_edge/db_host
+          port: 1521
+          database: CRMES
+          schema: CRMES_TEST_EDGE_CZ
+          user_ref: secret://sanjiu/chenzhou_edge/db_user
+          password_ref: secret://sanjiu/chenzhou_edge/db_password
+          oracle_client_mode: thick
+          oracle_compat: legacy
+          use_sid: false
+        redis:
+          mode: cluster
+          password_ref: secret://sanjiu/chenzhou_edge/redis_password
+          nodes:
+            - { host: 10.0.102.93, port: 6380 }
+            - { host: 10.0.102.93, port: 6381 }
+            - { host: 10.0.102.94, port: 6380 }
+            - { host: 10.0.102.94, port: 6381 }
+            - { host: 10.0.102.95, port: 6380 }
+            - { host: 10.0.102.95, port: 6381 }
+        workshops:
+          CZ001:
+            display_name: 郴州边端一号车间
+            table_prefix: CZ001_EBR_
+            redis_key_prefix: 'CZ001:'
+            loki_label: { workshop: CZ001 }
+          CZ002:
+            display_name: 郴州边端二号车间
+            table_prefix: CZ002_EBR_
+            redis_key_prefix: 'CZ002:'
+            loki_label: { workshop: CZ002 }
+
+  # 新腾 / XT MySQL（无车间分层）
+  xt:
+    display_name: 新腾
+    aliases: [XT, MES51]
+    bases:
+      mes51:
+        display_name: MES51
+        aliases: [MES51]
+        engine: mysql
+        database:
+          host_ref: secret://xt/mes51/db_host
+          port: 3306
+          database: MES51
+          user_ref: secret://xt/mes51/db_user
+          password_ref: secret://xt/mes51/db_password
+
+  # 蒙牛 / MKK SQL Server（无车间分层）
   mmk:
     display_name: 蒙牛
+    aliases: [MKK]
     bases:
       main:
-        display_name: 主库
+        display_name: MKKUTF8
+        aliases: [MKK, 主库]
         engine: sqlserver
         database:
           host_ref: secret://mmk/main/db_host
           port: 1433
-          database: mes
+          database: MKKUTF8
+          schema: dbo
           user_ref: secret://mmk/main/db_user
           password_ref: secret://mmk/main/db_password
-        redis:
-          host_ref: secret://mmk/main/redis_host
-          port: 6379
-        loki:
-          base_url_ref: secret://mmk/main/loki_url
 
-# Platform-side access control (second layer, after Agent-side tool/project checks).
-# Each caller (X-Agent-User-Id) maps to grants. "*" is a wildcard at that level.
 access:
   local-user:
     - { environment: '*', base: '*', workshop: '*' }
   guanlan-gl001-operator:
-    - { environment: sanjiu, base: guanlan, workshop: GL001 }
+    - { environment: sanjiu, base: guanlan_cloud, workshop: GL001 }

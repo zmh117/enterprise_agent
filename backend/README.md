@@ -596,6 +596,8 @@ SECRET_SANJIU_GUANLAN_LOKI_URL=http://host.docker.internal:3100 \
 docker compose --profile real-tools up -d --build internal-api-platform api-server agent-worker
 ```
 
+Oracle Instant Client（旧版 Oracle / thick 模式）仅打入 `internal-api-platform` 镜像。将官方 Instant Client 放到 `backend/vendor/oracle/` 后重建该服务；说明见 `backend/vendor/oracle/README.md`。未放入客户端时镜像仍可构建，运行时保持 thin；`oracle_client_mode: thick` 的基地会明确失败。`api-server` / `agent-worker` 不包含 Instant Client。
+
 配置一致性检查：
 
 ```bash

@@ -66,6 +66,122 @@ def validate_engine(value: str) -> str:
     return value
 
 
+def validate_redis_mode(value: str) -> str:
+    value = str(value or "standalone").strip().lower()
+    if value not in {"standalone", "cluster"}:
+        raise PlatformConfigValidationError(
+            f"Invalid redis mode: {value}",
+            safe_message="Invalid redis mode",
+        )
+    return value
+
+
+def validate_oracle_client_mode(value: str) -> str:
+    value = str(value or "auto").strip().lower()
+    if value not in {"thin", "thick", "auto"}:
+        raise PlatformConfigValidationError(
+            f"Invalid oracle_client_mode: {value}",
+            safe_message="Invalid oracle_client_mode",
+        )
+    return value
+
+
+def validate_oracle_compat(value: str) -> str:
+    value = str(value or "modern").strip().lower()
+    if value not in {"modern", "legacy"}:
+        raise PlatformConfigValidationError(
+            f"Invalid oracle_compat: {value}",
+            safe_message="Invalid oracle_compat",
+        )
+    return value
+
+
+def normalize_redis_resource_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Normalize and validate redis binding config_json fields."""
+
+    normalized = dict(config)
+    mode = validate_redis_mode(str(normalized.get("mode") or "standalone"))
+    normalized["mode"] = mode
+    if "db" in normalized and normalized["db"] is not None:
+        try:
+            db = int(normalized["db"])
+        except (TypeError, ValueError) as exc:
+            raise PlatformConfigValidationError(
+                "redis db must be an integer", safe_message="redis db must be an integer"
+            ) from exc
+        if mode == "cluster" and db != 0:
+            raise PlatformConfigValidationError(
+                "Redis cluster mode does not support non-zero db",
+                safe_message="Redis cluster mode does not support non-zero db",
+            )
+        normalized["db"] = db
+    nodes = normalized.get("nodes")
+    if nodes is not None:
+        if not isinstance(nodes, list):
+            raise PlatformConfigValidationError(
+                "redis nodes must be a list", safe_message="redis nodes must be a list"
+            )
+        cleaned: list[dict[str, Any]] = []
+        for index, item in enumerate(nodes):
+            if not isinstance(item, dict):
+                raise PlatformConfigValidationError(
+                    f"redis nodes[{index}] must be an object",
+                    safe_message="redis nodes entries must be objects",
+                )
+            host = str(item.get("host") or "").strip()
+            if not host:
+                raise PlatformConfigValidationError(
+                    f"redis nodes[{index}].host is required",
+                    safe_message="redis node host is required",
+                )
+            cleaned.append({"host": host, "port": int(item.get("port") or 6379)})
+        normalized["nodes"] = cleaned
+        if mode == "cluster" and not cleaned and not normalized.get("host"):
+            raise PlatformConfigValidationError(
+                "Redis cluster mode requires nodes or host",
+                safe_message="Redis cluster mode requires nodes or host",
+            )
+    elif mode == "cluster" and not normalized.get("host"):
+        raise PlatformConfigValidationError(
+            "Redis cluster mode requires nodes or host",
+            safe_message="Redis cluster mode requires nodes or host",
+        )
+    return normalized
+
+
+def normalize_oracle_database_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Normalize Oracle-specific fields on a database resource config_json."""
+
+    normalized = dict(config)
+    normalized["oracle_client_mode"] = validate_oracle_client_mode(
+        str(normalized.get("oracle_client_mode") or "auto")
+    )
+    normalized["oracle_compat"] = validate_oracle_compat(
+        str(normalized.get("oracle_compat") or "modern")
+    )
+    if "use_sid" in normalized:
+        value = normalized["use_sid"]
+        if isinstance(value, bool):
+            normalized["use_sid"] = value
+        else:
+            text = str(value).strip().lower()
+            if text in {"1", "true", "yes", "on"}:
+                normalized["use_sid"] = True
+            elif text in {"0", "false", "no", "off", ""}:
+                normalized["use_sid"] = False
+            else:
+                raise PlatformConfigValidationError(
+                    "use_sid must be a boolean", safe_message="use_sid must be a boolean"
+                )
+    else:
+        normalized["use_sid"] = False
+    if "connect_descriptor" in normalized and normalized["connect_descriptor"] is not None:
+        normalized["connect_descriptor"] = str(normalized["connect_descriptor"])
+    else:
+        normalized.setdefault("connect_descriptor", "")
+    return normalized
+
+
 def validate_resource_kind(value: str) -> ResourceKind:
     try:
         return ResourceKind(str(value))

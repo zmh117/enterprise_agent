@@ -8,7 +8,7 @@ from sqlglot import exp
 from sqlglot.errors import SqlglotError
 
 from ..errors import PolicyViolation
-from ..topology import DatabaseEngine
+from ..topology import DatabaseEngine, OracleCompat
 from .dialect import sqlglot_dialect
 from .readonly import (
     assert_first_keyword_readonly,
@@ -34,12 +34,20 @@ def _existing_limit(expression: exp.Expression) -> int | None:
     return None
 
 
+def _apply_oracle_legacy_rownum(sql: str, *, max_rows: int) -> str:
+    """Wrap SQL with ROWNUM for older Oracle versions that lack FETCH FIRST."""
+
+    stripped = sql.strip().rstrip(";")
+    return f"SELECT * FROM ({stripped}) WHERE ROWNUM <= {max_rows}"
+
+
 def analyze_readonly_query(
     sql: str,
     *,
     engine: DatabaseEngine,
     max_rows: int,
     table_prefix: str | None,
+    oracle_compat: OracleCompat = OracleCompat.MODERN,
 ) -> AnalyzedQuery:
     """Validate and bound a read-only query, failing closed on any ambiguity.
 
@@ -72,6 +80,16 @@ def analyze_readonly_query(
     effective = min(existing, max_rows) if existing is not None else max_rows
     if effective < 1:
         effective = 1
+
+    if engine is DatabaseEngine.ORACLE and oracle_compat is OracleCompat.LEGACY:
+        # Avoid FETCH FIRST (12c+); use ROWNUM wrapper for older servers.
+        base_sql = expression.sql(dialect=dialect)
+        return AnalyzedQuery(
+            sql=_apply_oracle_legacy_rownum(base_sql, max_rows=effective),
+            tables=tables,
+            row_limit=effective,
+        )
+
     query = cast(exp.Query, expression)
     bounded = query.limit(effective)
     return AnalyzedQuery(sql=bounded.sql(dialect=dialect), tables=tables, row_limit=effective)

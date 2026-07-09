@@ -15,7 +15,7 @@ from ..domain.redis_policy import (
 from ..domain.results import ToolResponse
 from ..domain.schema_directory import SchemaDirectory, SchemaDirectoryReader
 from ..domain.sql.analyzer import analyze_readonly_query
-from ..domain.topology import DatabaseEngine, ResourceKind
+from ..domain.topology import DatabaseEngine, OracleCompat, ResourceKind
 from ..infrastructure.db.executor import QueryExecutor
 from ..infrastructure.loki_gateway import LokiClient
 from ..infrastructure.redis_gateway import RedisGateway
@@ -234,8 +234,15 @@ class PlatformService:
         )
         max_rows = self._effective_rows(limit)
         table_prefix = binding.workshop.table_prefix if binding.workshop else None
+        oracle_compat = OracleCompat.MODERN
+        if binding.database is not None:
+            oracle_compat = getattr(binding.database, "oracle_compat", OracleCompat.MODERN)
         analyzed = analyze_readonly_query(
-            sql, engine=binding.engine, max_rows=max_rows, table_prefix=table_prefix
+            sql,
+            engine=binding.engine,
+            max_rows=max_rows,
+            table_prefix=table_prefix,
+            oracle_compat=oracle_compat,
         )
         schema = self._schema_directory_for_binding(binding, query="")
         if schema is not None:

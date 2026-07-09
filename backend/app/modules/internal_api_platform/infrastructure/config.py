@@ -12,7 +12,11 @@ from ..domain.topology import (
     DatabaseEngine,
     Environment,
     LokiConnection,
+    OracleClientMode,
+    OracleCompat,
     RedisConnection,
+    RedisMode,
+    RedisNode,
     Topology,
     Workshop,
 )
@@ -32,6 +36,80 @@ def _value(data: dict[str, Any], key: str, resolver: SecretResolver, default: st
     return default
 
 
+def _parse_bool(value: Any, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off", ""}:
+        return False
+    raise TopologyConfigError(f"Invalid boolean value: {value}")
+
+
+def _parse_redis_mode(value: Any) -> RedisMode:
+    text = str(value or RedisMode.STANDALONE.value).strip().lower()
+    try:
+        return RedisMode(text)
+    except ValueError as exc:
+        raise TopologyConfigError(
+            f"Invalid redis mode '{value}'; expected standalone or cluster"
+        ) from exc
+
+
+def _parse_oracle_client_mode(value: Any) -> OracleClientMode:
+    text = str(value or OracleClientMode.AUTO.value).strip().lower()
+    try:
+        return OracleClientMode(text)
+    except ValueError as exc:
+        raise TopologyConfigError(
+            f"Invalid oracle_client_mode '{value}'; expected thin, thick, or auto"
+        ) from exc
+
+
+def _parse_oracle_compat(value: Any) -> OracleCompat:
+    text = str(value or OracleCompat.MODERN.value).strip().lower()
+    try:
+        return OracleCompat(text)
+    except ValueError as exc:
+        raise TopologyConfigError(
+            f"Invalid oracle_compat '{value}'; expected modern or legacy"
+        ) from exc
+
+
+def _parse_redis_nodes(data: dict[str, Any], resolver: SecretResolver) -> tuple[RedisNode, ...]:
+    raw_nodes = data.get("nodes")
+    if not raw_nodes:
+        return ()
+    if not isinstance(raw_nodes, list):
+        raise TopologyConfigError("redis.nodes must be a list")
+    nodes: list[RedisNode] = []
+    for index, item in enumerate(raw_nodes):
+        if not isinstance(item, dict):
+            raise TopologyConfigError(f"redis.nodes[{index}] must be an object")
+        host = _value(item, "host", resolver)
+        if not host:
+            raise TopologyConfigError(f"redis.nodes[{index}].host is required")
+        nodes.append(RedisNode(host=host, port=int(item.get("port", 6379))))
+    return tuple(nodes)
+
+
+def validate_redis_connection(conn: RedisConnection) -> None:
+    if conn.mode is RedisMode.CLUSTER:
+        if not conn.startup_nodes():
+            raise TopologyConfigError(
+                "Redis cluster mode requires startup nodes (nodes list or host)"
+            )
+        if conn.db not in (0, None):
+            # Cluster has no SELECT db; non-zero is a misconfiguration.
+            if int(conn.db) != 0:
+                raise TopologyConfigError(
+                    "Redis cluster mode does not support non-zero db; omit db or set db: 0"
+                )
+
+
 def _build_database(data: dict[str, Any], resolver: SecretResolver) -> DatabaseConnection:
     return DatabaseConnection(
         host=_value(data, "host", resolver),
@@ -39,16 +117,32 @@ def _build_database(data: dict[str, Any], resolver: SecretResolver) -> DatabaseC
         database=_value(data, "database", resolver),
         user=_value(data, "user", resolver),
         password=_value(data, "password", resolver),
+        schema=str(data.get("schema") or ""),
+        oracle_client_mode=_parse_oracle_client_mode(data.get("oracle_client_mode")),
+        oracle_compat=_parse_oracle_compat(data.get("oracle_compat")),
+        use_sid=_parse_bool(data.get("use_sid"), default=False),
+        connect_descriptor=str(data.get("connect_descriptor") or ""),
     )
 
 
 def _build_redis(data: dict[str, Any], resolver: SecretResolver) -> RedisConnection:
-    return RedisConnection(
-        host=_value(data, "host", resolver),
-        port=int(data.get("port", 6379)),
+    mode = _parse_redis_mode(data.get("mode"))
+    nodes = _parse_redis_nodes(data, resolver)
+    host = _value(data, "host", resolver)
+    port = int(data.get("port", 6379))
+    if mode is RedisMode.CLUSTER and not host and nodes:
+        host = nodes[0].host
+        port = nodes[0].port
+    conn = RedisConnection(
+        host=host,
+        port=port,
         db=int(data.get("db", 0)),
         password=_value(data, "password", resolver),
+        mode=mode,
+        nodes=nodes,
     )
+    validate_redis_connection(conn)
+    return conn
 
 
 def _build_loki(data: dict[str, Any], resolver: SecretResolver) -> LokiConnection:

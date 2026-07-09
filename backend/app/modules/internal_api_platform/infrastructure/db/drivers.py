@@ -4,7 +4,13 @@ from typing import Any
 
 from ...domain.addressing import ResourceBinding
 from ...domain.errors import PolicyViolation, ResolutionError, UpstreamUnavailable
+from ...domain.topology import OracleClientMode
 from .executor import ExecutedRows
+from .oracle_client import (
+    assert_oracle_client_mode_ready,
+    build_oracle_dsn,
+    build_oracle_makedsn,
+)
 
 
 def _require_db(binding: ResourceBinding) -> Any:
@@ -92,17 +98,48 @@ class OracleExecutor:
         self, binding: ResourceBinding, sql: str, *, timeout_seconds: int, max_rows: int
     ) -> ExecutedRows:
         db = _require_db(binding)
+        mode = getattr(db, "oracle_client_mode", OracleClientMode.AUTO)
+        try:
+            assert_oracle_client_mode_ready(mode)
+        except ResolutionError:
+            raise
         try:
             import oracledb
         except ModuleNotFoundError as exc:  # pragma: no cover - driver optional
             raise UpstreamUnavailable("Oracle driver is not installed") from exc
+
+        connect_descriptor = str(getattr(db, "connect_descriptor", "") or "")
+        use_sid = bool(getattr(db, "use_sid", False))
+        if connect_descriptor.strip():
+            dsn = build_oracle_dsn(
+                host=db.host,
+                port=db.port,
+                database=db.database,
+                use_sid=use_sid,
+                connect_descriptor=connect_descriptor,
+            )
+        else:
+            dsn = build_oracle_makedsn(
+                oracledb,
+                host=db.host,
+                port=db.port,
+                database=db.database,
+                use_sid=use_sid,
+            )
         try:
             conn = oracledb.connect(
                 user=db.user,
                 password=db.password,
-                dsn=f"{db.host}:{db.port}/{db.database}",
+                dsn=dsn,
             )
             conn.call_timeout = timeout_seconds * 1000
+            schema = str(getattr(db, "schema", "") or "").strip()
+            if schema:
+                if not schema.replace("_", "").isalnum():
+                    raise ResolutionError("Oracle schema contains invalid characters")
+                cursor = conn.cursor()
+                cursor.execute(f'ALTER SESSION SET CURRENT_SCHEMA = "{schema}"')
+                cursor.close()
         except Exception as exc:  # pragma: no cover - needs live DB
             raise UpstreamUnavailable(f"Oracle connection failed: {type(exc).__name__}") from exc
         try:

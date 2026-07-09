@@ -135,9 +135,11 @@ class ExampleConfigTests(unittest.TestCase):
         topology, access = load_platform_config(path, resolver=MappingSecretResolver({}))
         self.assertIn("sanjiu", topology.environments)
         self.assertIn("mmk", topology.environments)
-        guanlan = topology.environment("sanjiu").base("guanlan")  # type: ignore[union-attr]
+        self.assertIn("xt", topology.environments)
+        guanlan = topology.environment("sanjiu").base("guanlan_cloud")  # type: ignore[union-attr]
         self.assertTrue(guanlan.is_partitioned)
-        self.assertEqual({"GL001", "GL002"}, set(guanlan.workshops))
+        self.assertEqual({"GL001", "GL002", "GL003"}, set(guanlan.workshops))
+        self.assertEqual(DatabaseEngine.ORACLE, guanlan.engine)
         self.assertFalse(topology.environment("mmk").base("main").is_partitioned)  # type: ignore[union-attr]
         self.assertIn("local-user", access.scopes)
 

@@ -22,6 +22,7 @@ from .api.routes import register_routes
 from .infrastructure.config import load_platform_config
 from .infrastructure.db.drivers import MysqlExecutor, OracleExecutor, SqlServerExecutor
 from .infrastructure.db.executor import QueryExecutor
+from .infrastructure.db.oracle_client import ensure_oracle_client_initialized
 from .infrastructure.db.schema_directory import (
     MySqlSchemaDirectoryReader,
     UnsupportedSchemaDirectoryReader,
@@ -40,6 +41,12 @@ def default_executors() -> dict[DatabaseEngine, QueryExecutor]:
     }
 
 
+def _bootstrap_oracle_client() -> None:
+    """Best-effort thick init at process start when Instant Client is present."""
+
+    ensure_oracle_client_initialized()
+
+
 def default_schema_readers() -> dict[DatabaseEngine, SchemaDirectoryReader]:
     return {
         DatabaseEngine.MYSQL: MySqlSchemaDirectoryReader(),
@@ -53,6 +60,7 @@ def build_service(
     *,
     urlopen_func: Callable[..., Any] = urlopen,
 ) -> PlatformService:
+    _bootstrap_oracle_client()
     settings = load_settings_with_db_overlay(
         settings,
         service_name="internal-api-platform",

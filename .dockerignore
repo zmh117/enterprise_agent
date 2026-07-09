@@ -10,6 +10,10 @@
 !backend/migrations/**
 !backend/seeds/
 !backend/seeds/**
+!backend/vendor/
+!backend/vendor/oracle/
+!backend/vendor/oracle/**
 !.claude/
 !.claude/skills/
 !.claude/skills/**
+antvX6/

@@ -79,15 +79,34 @@ Pipeline (fails closed at every step):
 4. Real table extraction (excludes CTE names).
 5. Workshop table-prefix enforcement (case-folded; Oracle upper-cases unquoted identifiers).
 6. Schema-directory availability check for the referenced physical tables.
-7. Dialect-correct row bound: MySQL `LIMIT`, SQL Server `TOP`, Oracle `FETCH FIRST`.
+7. Dialect-correct row bound: MySQL `LIMIT`, SQL Server `TOP`, Oracle `FETCH FIRST`
+   (modern) or `ROWNUM` wrapper when the base sets `oracle_compat: legacy`.
 
 Defense in depth: SQL parser + read-only DB account + statement timeout + row/byte caps.
 Cross-workshop (`GL002_*` in a `GL001` request) and prefix-less tables are rejected.
+
+### Oracle thick / Instant Client
+
+- The `internal-api-platform` image can bundle Oracle Instant Client (see
+  `backend/vendor/oracle/README.md`). Set `ORACLE_CLIENT_LIB_DIR` if the libraries live
+  elsewhere.
+- Topology database fields (Oracle bases):
+  - `oracle_client_mode`: `auto` (default) | `thin` | `thick`
+  - `oracle_compat`: `modern` (default, `FETCH FIRST`) | `legacy` (`ROWNUM`)
+  - `use_sid`: `true` to connect by SID instead of service name
+  - `connect_descriptor`: optional full TNS / connect descriptor
+- `thick` fails closed if Instant Client is missing or failed to initialize (no silent
+  thin fallback). Local development without Instant Client can keep `auto`/`thin`.
 
 ## Redis / Loki isolation
 
 - Redis: base-level connection; read-only command whitelist (`get` / bounded `scan`);
   keys/patterns must fall inside `workshop.redis_key_prefix`; `*` / empty patterns rejected.
+- Redis modes (topology `redis.mode`):
+  - `standalone` (default): single `host`/`port`/`db`
+  - `cluster`: `nodes: [{host, port}, ...]` (or a single host as startup node); logical
+    `db` must be `0` / omitted. Workshop key-prefix policy is unchanged; cluster SCAN may
+    be slower across slots.
 - Loki: base-level upstream (with tenant); the workshop label is injected on top of the
   caller selector, time range, and line limit.
 

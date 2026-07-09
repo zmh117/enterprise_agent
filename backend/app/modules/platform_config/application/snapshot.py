@@ -12,7 +12,11 @@ from app.modules.internal_api_platform.domain.topology import (
     DatabaseEngine,
     Environment,
     LokiConnection,
+    OracleClientMode,
+    OracleCompat,
     RedisConnection,
+    RedisMode,
+    RedisNode,
     Topology,
     Workshop,
 )
@@ -248,6 +252,27 @@ class PlatformTopologySnapshotBuilder:
         if binding is None:
             return None
         config = binding.get("config") or {}
+        try:
+            oracle_client_mode = OracleClientMode(
+                str(config.get("oracle_client_mode") or OracleClientMode.AUTO.value).lower()
+            )
+        except ValueError:
+            errors.append(
+                f"Resource {binding['code']} has invalid oracle_client_mode"
+            )
+            oracle_client_mode = OracleClientMode.AUTO
+        try:
+            oracle_compat = OracleCompat(
+                str(config.get("oracle_compat") or OracleCompat.MODERN.value).lower()
+            )
+        except ValueError:
+            errors.append(f"Resource {binding['code']} has invalid oracle_compat")
+            oracle_compat = OracleCompat.MODERN
+        use_sid = config.get("use_sid")
+        if isinstance(use_sid, str):
+            use_sid = use_sid.strip().lower() in {"1", "true", "yes", "on"}
+        else:
+            use_sid = bool(use_sid)
         return DatabaseConnection(
             host=self._value(binding, "host", errors=errors, resolve_secrets=resolve_secrets),
             port=int(config.get("port") or 0),
@@ -258,6 +283,11 @@ class PlatformTopologySnapshotBuilder:
             password=self._value(
                 binding, "password", errors=errors, resolve_secrets=resolve_secrets
             ),
+            schema=str(config.get("schema") or ""),
+            oracle_client_mode=oracle_client_mode,
+            oracle_compat=oracle_compat,
+            use_sid=use_sid,
+            connect_descriptor=str(config.get("connect_descriptor") or ""),
         )
 
     def _redis_connection(
@@ -270,12 +300,63 @@ class PlatformTopologySnapshotBuilder:
         if binding is None:
             return None
         config = binding.get("config") or {}
+        try:
+            mode = RedisMode(str(config.get("mode") or RedisMode.STANDALONE.value).lower())
+        except ValueError:
+            errors.append(f"Resource {binding['code']} has invalid redis mode")
+            mode = RedisMode.STANDALONE
+        nodes = self._redis_nodes(config, errors=errors)
+        host = self._optional_value(binding, "host", resolve_secrets=resolve_secrets)
+        port = int(config.get("port") or 6379)
+        if mode is RedisMode.CLUSTER:
+            if not host and nodes:
+                host = nodes[0].host
+                port = nodes[0].port
+            elif not host and not nodes:
+                errors.append(
+                    f"Resource {binding['code']} cluster redis requires host or nodes"
+                )
+            db = int(config.get("db") or 0)
+            if db != 0:
+                errors.append(
+                    f"Resource {binding['code']} cluster redis does not support non-zero db"
+                )
+        else:
+            if not host:
+                errors.append(f"Resource {binding['code']} missing required field: host")
+            db = int(config.get("db") or 0)
         return RedisConnection(
-            host=self._value(binding, "host", errors=errors, resolve_secrets=resolve_secrets),
-            port=int(config.get("port") or 6379),
-            db=int(config.get("db") or 0),
+            host=host,
+            port=port,
+            db=db,
             password=self._optional_value(binding, "password", resolve_secrets=resolve_secrets),
+            mode=mode,
+            nodes=nodes,
         )
+
+    def _redis_nodes(
+        self,
+        config: dict[str, Any],
+        *,
+        errors: list[str],
+    ) -> tuple[RedisNode, ...]:
+        raw_nodes = config.get("nodes")
+        if not raw_nodes:
+            return ()
+        if not isinstance(raw_nodes, list):
+            errors.append("redis nodes must be a list")
+            return ()
+        nodes: list[RedisNode] = []
+        for index, item in enumerate(raw_nodes):
+            if not isinstance(item, dict):
+                errors.append(f"redis nodes[{index}] must be an object")
+                continue
+            host = str(item.get("host") or "").strip()
+            if not host:
+                errors.append(f"redis nodes[{index}] missing host")
+                continue
+            nodes.append(RedisNode(host=host, port=int(item.get("port") or 6379)))
+        return tuple(nodes)
 
     def _loki_connection(
         self,

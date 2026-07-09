@@ -42,17 +42,39 @@ def _example_yaml_path() -> Path:
 
 def _secret_values() -> dict[str, str]:
     return {
-        "secret://sanjiu/guanlan/db_host": "mysql.guanlan",
-        "secret://sanjiu/guanlan/db_user": "reader",
-        "secret://sanjiu/guanlan/db_password": "db-password",
-        "secret://sanjiu/guanlan/redis_host": "redis.guanlan",
-        "secret://sanjiu/guanlan/loki_url": "http://loki.guanlan:3100",
-        "secret://mmk/main/db_host": "mssql.mmk",
-        "secret://mmk/main/db_user": "reader",
+        "secret://sanjiu/guanlan_cloud/db_host": "10.0.102.240",
+        "secret://sanjiu/guanlan_cloud/db_user": "system",
+        "secret://sanjiu/guanlan_cloud/db_password": "db-password",
+        "secret://sanjiu/guanlan_edge/db_host": "10.0.102.106",
+        "secret://sanjiu/guanlan_edge/db_user": "system",
+        "secret://sanjiu/guanlan_edge/db_password": "db-password",
+        "secret://sanjiu/guanlan_edge/redis_password": "redis-password",
+        "secret://sanjiu/shunfeng_cloud/db_host": "10.0.102.240",
+        "secret://sanjiu/shunfeng_cloud/db_user": "system",
+        "secret://sanjiu/shunfeng_cloud/db_password": "db-password",
+        "secret://sanjiu/shunfeng_edge/db_host": "10.0.102.116",
+        "secret://sanjiu/shunfeng_edge/db_user": "system",
+        "secret://sanjiu/shunfeng_edge/db_password": "db-password",
+        "secret://sanjiu/shunfeng_edge/redis_password": "redis-password",
+        "secret://sanjiu/chenzhou_cloud/db_host": "10.0.102.240",
+        "secret://sanjiu/chenzhou_cloud/db_user": "system",
+        "secret://sanjiu/chenzhou_cloud/db_password": "db-password",
+        "secret://sanjiu/chenzhou_edge/db_host": "10.0.102.88",
+        "secret://sanjiu/chenzhou_edge/db_user": "system",
+        "secret://sanjiu/chenzhou_edge/db_password": "db-password",
+        "secret://sanjiu/chenzhou_edge/redis_password": "redis-password",
+        "secret://sanjiu/cloud/redis_password": "redis-password",
+        "secret://xt/mes51/db_host": "10.0.125.102",
+        "secret://xt/mes51/db_user": "root",
+        "secret://xt/mes51/db_password": "db-password",
+        "secret://mmk/main/db_host": "10.0.102.130",
+        "secret://mmk/main/db_user": "sa",
         "secret://mmk/main/db_password": "mmk-password",
-        "secret://mmk/main/redis_host": "redis.mmk",
-        "secret://mmk/main/loki_url": "http://loki.mmk:3100",
     }
+
+
+# 6 Oracle bases × (db+redis) + xt db + mmk db
+_EXAMPLE_RESOURCE_COUNT = 14
 
 
 def _file_database() -> tuple[tempfile.TemporaryDirectory[str], Database, str]:
@@ -116,16 +138,16 @@ class PlatformConfigRepositoryTests(unittest.TestCase):
 
         self.assertGreater(result["created"], 0)
         self.assertEqual([], result["errors"])
-        self.assertEqual(2, c.agent_repository.count_rows("platform_environment"))
+        self.assertEqual(3, c.agent_repository.count_rows("platform_environment"))
         self.assertGreater(c.agent_repository.count_rows("platform_resource_binding"), 0)
 
         public = c.platform_config_service.public_snapshot()
         self.assertEqual("database", public["source"])
-        self.assertEqual(6, public["resource_count"])
+        self.assertEqual(_EXAMPLE_RESOURCE_COUNT, public["resource_count"])
         self.assertEqual(2, public["access_grant_count"])
         self.assertRegex(public["config_hash"], r"^[0-9a-f]{64}$")
         encoded = str(public)
-        self.assertIn("secret://sanjiu/guanlan/db_password", encoded)
+        self.assertIn("secret://sanjiu/guanlan_cloud/db_password", encoded)
         self.assertNotIn("db-password", encoded)
 
         builder = PlatformTopologySnapshotBuilder(
@@ -134,11 +156,11 @@ class PlatformConfigRepositoryTests(unittest.TestCase):
         )
         runtime = builder.build_runtime_snapshot()
         self.assertEqual("database", runtime.source)
-        self.assertEqual(6, runtime.resource_count)
+        self.assertEqual(_EXAMPLE_RESOURCE_COUNT, runtime.resource_count)
         self.assertRegex(runtime.config_hash, r"^[0-9a-f]{64}$")
         self.assertEqual([], runtime.errors)
-        guanlan = runtime.topology.environment("sanjiu").base("guanlan")  # type: ignore[union-attr]
-        self.assertEqual("mysql.guanlan", guanlan.database.host)  # type: ignore[union-attr]
+        guanlan = runtime.topology.environment("sanjiu").base("guanlan_cloud")  # type: ignore[union-attr]
+        self.assertEqual("10.0.102.240", guanlan.database.host)  # type: ignore[union-attr]
         self.assertIn("local-user", runtime.access_policy.scopes)
 
     def test_runtime_snapshot_empty_invalid_and_disabled_resource_paths(self) -> None:
@@ -253,7 +275,7 @@ class PlatformConfigApiTests(unittest.TestCase):
             self.assertEqual(200, snapshot.status_code)
             snapshot_body = snapshot.json()["snapshot"]
             self.assertEqual("database", snapshot_body["source"])
-            self.assertEqual(6, snapshot_body["resource_count"])
+            self.assertEqual(_EXAMPLE_RESOURCE_COUNT, snapshot_body["resource_count"])
             self.assertEqual(2, snapshot_body["access_grant_count"])
             self.assertRegex(snapshot_body["config_hash"], r"^[0-9a-f]{64}$")
 
@@ -263,7 +285,7 @@ class PlatformConfigApiTests(unittest.TestCase):
                     "code": "bad_db",
                     "scope_type": "base",
                     "environment_code": "sanjiu",
-                    "base_code": "guanlan",
+                    "base_code": "guanlan_cloud",
                     "resource_kind": "database",
                     "engine": "mysql",
                     "config": {"host": "mysql", "password": "raw"},
@@ -413,7 +435,7 @@ class PlatformConfigApiTests(unittest.TestCase):
             self.assertEqual(200, imported.status_code)
             before = client.get("/api/platform/topology-snapshot").json()["snapshot"]
             disabled = client.post(
-                "/api/platform/resource-bindings/sanjiu_guanlan_loki/disable",
+                "/api/platform/resource-bindings/sanjiu_guanlan_cloud_redis/disable",
                 headers={"x-admin-user-id": "local-user"},
             )
             self.assertEqual(200, disabled.status_code)
@@ -421,7 +443,7 @@ class PlatformConfigApiTests(unittest.TestCase):
 
             self.assertNotEqual(before["config_hash"], after["config_hash"])
             self.assertEqual(before["resource_count"] - 1, after["resource_count"])
-            self.assertNotIn("sanjiu_guanlan_loki", str(after))
+            self.assertNotIn("sanjiu_guanlan_cloud_redis", str(after))
             self.assertGreater(
                 built[0].agent_repository.count_rows("platform_config_audit"),
                 0,
@@ -447,16 +469,10 @@ class InternalApiPlatformDbConfigTests(unittest.TestCase):
                 """,
             )
             env_values = {
-                "SECRET_SANJIU_GUANLAN_DB_HOST": "mysql.guanlan",
-                "SECRET_SANJIU_GUANLAN_DB_USER": "reader",
-                "SECRET_SANJIU_GUANLAN_DB_PASSWORD": "db-password",
-                "SECRET_SANJIU_GUANLAN_REDIS_HOST": "redis.guanlan",
-                "SECRET_SANJIU_GUANLAN_LOKI_URL": "http://loki.guanlan:3100",
-                "SECRET_MMK_MAIN_DB_HOST": "mssql.mmk",
-                "SECRET_MMK_MAIN_DB_USER": "reader",
-                "SECRET_MMK_MAIN_DB_PASSWORD": "mmk-password",
-                "SECRET_MMK_MAIN_REDIS_HOST": "redis.mmk",
-                "SECRET_MMK_MAIN_LOKI_URL": "http://loki.mmk:3100",
+                **{
+                    f"SECRET_{ref.removeprefix('secret://').upper().replace('/', '_').replace('-', '_')}": value
+                    for ref, value in _secret_values().items()
+                },
                 "INTERNAL_PLATFORM_TOPOLOGY_FILE": str(yaml_path),
             }
             with patch.dict(os.environ, env_values, clear=False):
@@ -484,7 +500,7 @@ class InternalApiPlatformDbConfigTests(unittest.TestCase):
         ):
             fallback = _load_topology_snapshot(Settings(database_dsn=dsn, app_startup_migrate=True))
         self.assertEqual("yaml", fallback.source)
-        self.assertEqual(6, fallback.resource_count)
+        self.assertEqual(_EXAMPLE_RESOURCE_COUNT, fallback.resource_count)
 
         with patch.dict(os.environ, {"INTERNAL_PLATFORM_TOPOLOGY_FILE": ""}, clear=False):
             empty = _load_topology_snapshot(Settings(database_dsn=dsn, app_startup_migrate=True))
@@ -540,18 +556,18 @@ class InternalApiPlatformDbConfigTests(unittest.TestCase):
         resolved = service.describe_target(
             user_id="local-user",
             environment="sanjiu",
-            base="guanlan",
+            base="guanlan_cloud",
             workshop="GL001",
             kind=ResourceKind.DATABASE,
         )
         self.assertEqual("sanjiu", resolved.summary["environment"])
-        self.assertEqual("guanlan", resolved.summary["base"])
+        self.assertEqual("guanlan_cloud", resolved.summary["base"])
         self.assertEqual("GL001", resolved.summary["workshop"])
 
         database_result = service.query_database(
             user_id="local-user",
             environment="sanjiu",
-            base="guanlan",
+            base="guanlan_cloud",
             workshop="GL001",
             sql="select * from GL001_EBR_order",
             limit=10,
@@ -561,7 +577,7 @@ class InternalApiPlatformDbConfigTests(unittest.TestCase):
             service.query_database(
                 user_id="local-user",
                 environment="sanjiu",
-                base="guanlan",
+                base="guanlan_cloud",
                 workshop="GL001",
                 sql="select * from GL002_EBR_order",
             )
@@ -569,7 +585,7 @@ class InternalApiPlatformDbConfigTests(unittest.TestCase):
         redis_result = service.redis_get(
             user_id="local-user",
             environment="sanjiu",
-            base="guanlan",
+            base="guanlan_cloud",
             workshop="GL001",
             key="GL001:order:1",
         )
@@ -578,31 +594,14 @@ class InternalApiPlatformDbConfigTests(unittest.TestCase):
             service.redis_get(
                 user_id="local-user",
                 environment="sanjiu",
-                base="guanlan",
+                base="guanlan_cloud",
                 workshop="GL001",
                 key="GL002:order:1",
             )
 
-        loki = FakeLokiClient()
-        service = _db_backed_service(c.database, loki=loki)
-        service.query_loki(
-            user_id="local-user",
-            environment="sanjiu",
-            base="guanlan",
-            workshop="GL001",
-            selector={"service": "order-service"},
-            query="Material",
-            minutes=5,
-            limit=10,
-        )
-        self.assertEqual(
-            {"service": "order-service", "workshop": "GL001"},
-            loki.calls[0]["selector"],
-        )
-
         health_text = str(service.config_status())
         self.assertNotIn("db-password", health_text)
-        self.assertNotIn("redis.guanlan", health_text)
+        self.assertNotIn("10.0.102.240", health_text)
 
     def test_db_backed_access_grants_allow_deny_and_disabled_resource(self) -> None:
         c = container()
@@ -615,7 +614,7 @@ class InternalApiPlatformDbConfigTests(unittest.TestCase):
             subject_code="limited-user",
             effect="allow",
             environment_code="sanjiu",
-            base_code="guanlan",
+            base_code="guanlan_cloud",
             workshop_code="GL001",
             priority=100,
         )
@@ -624,7 +623,7 @@ class InternalApiPlatformDbConfigTests(unittest.TestCase):
             subject_code="limited-user",
             effect="deny",
             environment_code="sanjiu",
-            base_code="guanlan",
+            base_code="guanlan_cloud",
             workshop_code="GL001",
             priority=1,
         )
@@ -633,7 +632,7 @@ class InternalApiPlatformDbConfigTests(unittest.TestCase):
             service.describe_target(
                 user_id="limited-user",
                 environment="sanjiu",
-                base="guanlan",
+                base="guanlan_cloud",
                 workshop="GL001",
                 kind=ResourceKind.DATABASE,
             )
@@ -643,19 +642,19 @@ class InternalApiPlatformDbConfigTests(unittest.TestCase):
         allowed = service.describe_target(
             user_id="limited-user",
             environment="sanjiu",
-            base="guanlan",
+            base="guanlan_cloud",
             workshop="GL001",
             kind=ResourceKind.DATABASE,
         )
         self.assertEqual("sanjiu", allowed.summary["environment"])
-        self.assertEqual("guanlan", allowed.summary["base"])
+        self.assertEqual("guanlan_cloud", allowed.summary["base"])
         self.assertEqual("GL001", allowed.summary["workshop"])
 
-        repository.set_resource_binding_status("sanjiu_guanlan_database", "disabled")
+        repository.set_resource_binding_status("sanjiu_guanlan_cloud_database", "disabled")
         disabled_snapshot = PlatformTopologySnapshotBuilder(repository).build_runtime_snapshot()
-        self.assertEqual(5, disabled_snapshot.resource_count)
+        self.assertEqual(_EXAMPLE_RESOURCE_COUNT - 1, disabled_snapshot.resource_count)
         self.assertIsNone(
-            disabled_snapshot.topology.environment("sanjiu").base("guanlan").database  # type: ignore[union-attr]
+            disabled_snapshot.topology.environment("sanjiu").base("guanlan_cloud").database  # type: ignore[union-attr]
         )
 
 

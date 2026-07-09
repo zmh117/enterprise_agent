@@ -10,8 +10,9 @@ from app.shared.exceptions import NotFound
 
 from ..infrastructure.repository import PlatformConfigRepository
 from .validation import (
-    PlatformConfigValidationError,
     assert_no_secret_payload,
+    normalize_oracle_database_config,
+    normalize_redis_resource_config,
     validate_engine,
     validate_secret_ref,
 )
@@ -200,6 +201,10 @@ class PlatformTopologyYamlImporter:
             else:
                 config[key_text] = value
         assert_no_secret_payload(config)
+        if kind == "redis":
+            config = normalize_redis_resource_config(config)
+        if kind == "database" and engine == "oracle":
+            config = normalize_oracle_database_config(config)
         code = f"{env_code}_{base_code}_{kind}"
         before = self.repository.get_resource_binding_by_code(code)
         binding = self.repository.upsert_resource_binding(
