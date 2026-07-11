@@ -89,7 +89,7 @@ class MySqlSeeder:
 
         return cast(Connection, pymysql.connect(
             host=_env("SECRET_AGENT_TEST_MYSQL_DB_HOST", "agent-test-mysql"),
-            port=_env_int("SECRET_AGENT_TEST_MYSQL_DB_PORT", 3306),
+            port=_env_int("AGENT_TEST_MYSQL_PORT", 3306),
             user=_env("SECRET_AGENT_TEST_MYSQL_DB_USER", "agent_test_reader"),
             password=_env("SECRET_AGENT_TEST_MYSQL_DB_PASSWORD"),
             database=_env("AGENT_TEST_MYSQL_DATABASE", "agent_test"),
@@ -127,9 +127,10 @@ class SqlServerSeeder:
     name = "sqlserver"
     placeholder = "%s"
 
-    def connect_admin(self, database: str = "master") -> Connection:
+    def connect_admin(self, database: str = "master", *, autocommit: bool = False) -> Connection:
         import pymssql
 
+        # CREATE DATABASE / CREATE LOGIN 不能放在多语句事务里；建库建登录要用 autocommit。
         return cast(Connection, pymssql.connect(
             server=_env("AGENT_TEST_SQLSERVER_HOST", "agent-test-sqlserver"),
             port=str(_env_int("AGENT_TEST_SQLSERVER_PORT", 1433)),
@@ -138,6 +139,7 @@ class SqlServerSeeder:
             database=database,
             login_timeout=10,
             timeout=30,
+            autocommit=autocommit,
         ))
 
     def connect_reader(self) -> Connection:
@@ -145,7 +147,7 @@ class SqlServerSeeder:
 
         return cast(Connection, pymssql.connect(
             server=_env("SECRET_AGENT_TEST_SQLSERVER_DB_HOST", "agent-test-sqlserver"),
-            port=str(_env_int("SECRET_AGENT_TEST_SQLSERVER_DB_PORT", 1433)),
+            port=str(_env_int("AGENT_TEST_SQLSERVER_PORT", 1433)),
             user=_env("SECRET_AGENT_TEST_SQLSERVER_DB_USER", "agent_test_reader"),
             password=_env("SECRET_AGENT_TEST_SQLSERVER_DB_PASSWORD"),
             database=_env("AGENT_TEST_SQLSERVER_DATABASE", "agent_test"),
@@ -157,17 +159,15 @@ class SqlServerSeeder:
         database = _env("AGENT_TEST_SQLSERVER_DATABASE", "agent_test")
         reader = _env("SECRET_AGENT_TEST_SQLSERVER_DB_USER", "agent_test_reader")
         reader_password = _env("SECRET_AGENT_TEST_SQLSERVER_DB_PASSWORD")
-        admin = self.connect_admin("master")
+        admin = self.connect_admin("master", autocommit=True)
         cur = admin.cursor()
         try:
             cur.execute(f"IF DB_ID(%s) IS NULL CREATE DATABASE [{database}]", (database,))
-            admin.commit()
             cur.execute(
                 "IF SUSER_ID(%s) IS NULL "
                 f"CREATE LOGIN [{reader}] WITH PASSWORD = %s, CHECK_POLICY = OFF",
                 (reader, reader_password),
             )
-            admin.commit()
         finally:
             cur.close()
             admin.close()
@@ -220,7 +220,7 @@ class RedisSeeder:
         prefix = self.base.upper()
         return redis.Redis(
             host=_env(f"SECRET_AGENT_TEST_{prefix}_REDIS_HOST", f"agent-test-redis-{self.base}"),
-            port=_env_int(f"SECRET_AGENT_TEST_{prefix}_REDIS_PORT", 6379),
+            port=_env_int(f"AGENT_TEST_REDIS_{prefix}_PORT", 6379),
             username=_env(f"SECRET_AGENT_TEST_{prefix}_REDIS_USER", "agent_test_reader"),
             password=_env(f"SECRET_AGENT_TEST_{prefix}_REDIS_PASSWORD"),
             socket_timeout=5,

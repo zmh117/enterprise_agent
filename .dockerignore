@@ -4,6 +4,8 @@
 !.dockerignore
 !backend/
 !backend/Dockerfile
+!backend/docker/
+!backend/docker/**
 !backend/app/
 !backend/app/**
 !backend/migrations/

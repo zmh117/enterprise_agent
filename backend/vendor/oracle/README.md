@@ -24,6 +24,16 @@ extracted libraries to git (they are gitignored).
 docker compose --profile real-tools build internal-api-platform
 ```
 
+未放入 Instant Client 时，Dockerfile **不会执行 apt-get**（避免日常构建卡在
+`deb.debian.org`）。只有检测到 `instantclient/` 或 zip 时才会安装 `libaio` /
+`unzip`；可用 build-arg 换国内 Debian 源：
+
+```bash
+docker compose --profile real-tools build internal-api-platform \
+  --build-arg DEBIAN_MIRROR=https://mirrors.aliyun.com/debian \
+  --build-arg DEBIAN_SECURITY_MIRROR=https://mirrors.aliyun.com/debian-security
+```
+
 The image sets:
 
 - `ORACLE_CLIENT_LIB_DIR=/opt/oracle/instantclient`

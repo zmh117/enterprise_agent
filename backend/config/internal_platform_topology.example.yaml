@@ -240,7 +240,7 @@ environments:
 
   # 新腾 / XT MySQL（无车间分层）
   xt:
-    display_name: 新腾
+    display_name: 先泰
     aliases: [XT, MES51]
     bases:
       mes51:
@@ -256,7 +256,7 @@ environments:
 
   # 蒙牛 / MKK SQL Server（无车间分层）
   mmk:
-    display_name: 蒙牛
+    display_name: 迈克康
     aliases: [MKK]
     bases:
       main:
@@ -292,6 +292,10 @@ environments:
           port: 6379
           user_ref: secret://agent_test/mysql/redis_user
           password_ref: secret://agent_test/mysql/redis_password
+        loki:
+          # 与 .env 中 LOKI_BASE_URL / LOKI_TENANT_ID 对齐；查询窗口等限制仍用全局 LOKI_MAX_*
+          base_url_ref: secret://agent_test/loki/base_url
+          tenant: tenant1
 
       sqlserver:
         display_name: SQL Server 测试基地
@@ -310,9 +314,15 @@ environments:
           port: 6379
           user_ref: secret://agent_test/sqlserver/redis_user
           password_ref: secret://agent_test/sqlserver/redis_password
+        loki:
+          base_url_ref: secret://agent_test/loki/base_url
+          tenant: tenant1
 
 access:
   local-user:
+    - { environment: '*', base: '*', workshop: '*' }
+  # 钉钉 Stream 本地联调账号（senderStaffId）
+  "03695725024624053732":
     - { environment: '*', base: '*', workshop: '*' }
   guanlan-gl001-operator:
     - { environment: sanjiu, base: guanlan_cloud, workshop: GL001 }
