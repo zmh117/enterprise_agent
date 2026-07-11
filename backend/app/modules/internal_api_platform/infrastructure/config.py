@@ -137,6 +137,7 @@ def _build_redis(data: dict[str, Any], resolver: SecretResolver) -> RedisConnect
         host=host,
         port=port,
         db=int(data.get("db", 0)),
+        username=_value(data, "user", resolver),
         password=_value(data, "password", resolver),
         mode=mode,
         nodes=nodes,

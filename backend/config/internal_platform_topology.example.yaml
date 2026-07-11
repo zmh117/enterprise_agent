@@ -271,6 +271,46 @@ environments:
           user_ref: secret://mmk/main/db_user
           password_ref: secret://mmk/main/db_password
 
+  # Agent 本地测试数据：MySQL / SQL Server × 独立 Redis（无车间分层）
+  agent_test:
+    display_name: Agent 本地测试数据
+    aliases: [agent-test, 本地测试数据]
+    bases:
+      mysql:
+        display_name: MySQL 测试基地
+        aliases: [mysql-test]
+        engine: mysql
+        database:
+          host_ref: secret://agent_test/mysql/db_host
+          port: 3306
+          database: agent_test
+          user_ref: secret://agent_test/mysql/db_user
+          password_ref: secret://agent_test/mysql/db_password
+        redis:
+          mode: standalone
+          host_ref: secret://agent_test/mysql/redis_host
+          port: 6379
+          user_ref: secret://agent_test/mysql/redis_user
+          password_ref: secret://agent_test/mysql/redis_password
+
+      sqlserver:
+        display_name: SQL Server 测试基地
+        aliases: [sqlserver-test, mssql-test]
+        engine: sqlserver
+        database:
+          host_ref: secret://agent_test/sqlserver/db_host
+          port: 1433
+          database: agent_test
+          schema: dbo
+          user_ref: secret://agent_test/sqlserver/db_user
+          password_ref: secret://agent_test/sqlserver/db_password
+        redis:
+          mode: standalone
+          host_ref: secret://agent_test/sqlserver/redis_host
+          port: 6379
+          user_ref: secret://agent_test/sqlserver/redis_user
+          password_ref: secret://agent_test/sqlserver/redis_password
+
 access:
   local-user:
     - { environment: '*', base: '*', workshop: '*' }

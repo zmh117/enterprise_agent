@@ -135,7 +135,16 @@ class ExampleConfigTests(unittest.TestCase):
             / "config"
             / "internal_platform_topology.example.yaml"
         )
-        topology, access = load_platform_config(path, resolver=MappingSecretResolver({}))
+        topology, access = load_platform_config(
+            path,
+            resolver=MappingSecretResolver(
+                {
+                    "secret://agent_test/mysql/redis_host": "agent-test-redis-mysql",
+                    "secret://agent_test/mysql/redis_user": "agent_test_reader",
+                    "secret://agent_test/sqlserver/redis_host": "agent-test-redis-sqlserver",
+                }
+            ),
+        )
         self.assertIn("sanjiu", topology.environments)
         self.assertIn("mmk", topology.environments)
         self.assertIn("xt", topology.environments)
@@ -144,6 +153,22 @@ class ExampleConfigTests(unittest.TestCase):
         self.assertEqual({"GL001", "GL002", "GL003"}, set(guanlan.workshops))
         self.assertEqual(DatabaseEngine.ORACLE, guanlan.engine)
         self.assertFalse(topology.environment("mmk").base("main").is_partitioned)  # type: ignore[union-attr]
+        agent_test = topology.environment("agent_test")
+        self.assertIsNotNone(agent_test)
+        mysql = agent_test.base("mysql")  # type: ignore[union-attr]
+        sqlserver = agent_test.base("sqlserver")  # type: ignore[union-attr]
+        self.assertEqual(DatabaseEngine.MYSQL, mysql.engine)
+        self.assertEqual(DatabaseEngine.SQLSERVER, sqlserver.engine)
+        self.assertEqual("dbo", sqlserver.database.schema)  # type: ignore[union-attr]
+        self.assertIsNone(agent_test.base("oracle"))
+        self.assertEqual(
+            {
+                "agent-test-redis-mysql",
+                "agent-test-redis-sqlserver",
+            },
+            {mysql.redis.host, sqlserver.redis.host},  # type: ignore[union-attr]
+        )
+        self.assertEqual("agent_test_reader", mysql.redis.username)  # type: ignore[union-attr]
         self.assertIn("local-user", access.scopes)
 
 

@@ -71,11 +71,23 @@ def _secret_values() -> dict[str, str]:
         "secret://mmk/main/db_host": "10.0.102.130",
         "secret://mmk/main/db_user": "sa",
         "secret://mmk/main/db_password": "mmk-password",
+        "secret://agent_test/mysql/db_host": "agent-test-mysql",
+        "secret://agent_test/mysql/db_user": "agent_test_reader",
+        "secret://agent_test/mysql/db_password": "mysql-reader-password",
+        "secret://agent_test/mysql/redis_host": "agent-test-redis-mysql",
+        "secret://agent_test/mysql/redis_user": "agent_test_reader",
+        "secret://agent_test/mysql/redis_password": "mysql-redis-reader-password",
+        "secret://agent_test/sqlserver/db_host": "agent-test-sqlserver",
+        "secret://agent_test/sqlserver/db_user": "agent_test_reader",
+        "secret://agent_test/sqlserver/db_password": "sqlserver-reader-password",
+        "secret://agent_test/sqlserver/redis_host": "agent-test-redis-sqlserver",
+        "secret://agent_test/sqlserver/redis_user": "agent_test_reader",
+        "secret://agent_test/sqlserver/redis_password": "sqlserver-redis-reader-password",
     }
 
 
-# 6 Oracle bases × (db+redis) + xt db + mmk db
-_EXAMPLE_RESOURCE_COUNT = 14
+# 6 Oracle bases × (db+redis) + xt db + mmk db + agent_test × (2 db + 2 redis)
+_EXAMPLE_RESOURCE_COUNT = 18
 
 
 def _file_database() -> tuple[tempfile.TemporaryDirectory[str], Database, str]:
@@ -145,7 +157,7 @@ class PlatformConfigRepositoryTests(unittest.TestCase):
 
         self.assertGreater(result["created"], 0)
         self.assertEqual([], result["errors"])
-        self.assertEqual(3, c.agent_repository.count_rows("platform_environment"))
+        self.assertEqual(4, c.agent_repository.count_rows("platform_environment"))
         self.assertGreater(c.agent_repository.count_rows("platform_resource_binding"), 0)
 
         public = c.platform_config_service.public_snapshot()

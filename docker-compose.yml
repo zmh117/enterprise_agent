@@ -1,13 +1,101 @@
-x-backend-env-file: &backend-env-file
-  - .env
-
 x-database-env: &database-env
   DATABASE_DSN: postgresql://enterprise_agent:enterprise_agent@postgres:5432/enterprise_agent
   APP_CONFIG_MASTER_KEY: ${APP_CONFIG_MASTER_KEY:-local-dev-config-master-key}
   APP_STARTUP_MIGRATE: "true"
 
-x-worker-env: &worker-env
+x-runtime-env: &runtime-env
   <<: *database-env
+  APP_ENV: ${APP_ENV:-local}
+  FEATURE_REAL_INTERNAL_TOOLS: ${FEATURE_REAL_INTERNAL_TOOLS:-true}
+  FEATURE_REAL_CLAUDE: ${FEATURE_REAL_CLAUDE:-true}
+  INTERNAL_API_BASE_URL: ${INTERNAL_API_BASE_URL:-http://internal-api-platform:9000}
+  INTERNAL_API_AUTH_TOKEN: ${INTERNAL_API_AUTH_TOKEN:-}
+  INTERNAL_API_TIMEOUT_SECONDS: ${INTERNAL_API_TIMEOUT_SECONDS:-10}
+  INTERNAL_API_MAX_RESPONSE_CHARS: ${INTERNAL_API_MAX_RESPONSE_CHARS:-4000}
+  INTERNAL_PLATFORM_TOPOLOGY_FILE: ${INTERNAL_PLATFORM_TOPOLOGY_FILE:-/app/backend/config/internal_platform_topology.example.yaml}
+  INTERNAL_PLATFORM_MAX_ROWS: ${INTERNAL_PLATFORM_MAX_ROWS:-100}
+  LOKI_BASE_URL: ${LOKI_BASE_URL:-http://host.docker.internal:3100}
+  LOKI_MAX_MINUTES: ${LOKI_MAX_MINUTES:-60}
+  LOKI_MAX_LINES: ${LOKI_MAX_LINES:-500}
+  LOKI_MAX_RESPONSE_CHARS: ${LOKI_MAX_RESPONSE_CHARS:-4000}
+  LOKI_TENANT_ID: ${LOKI_TENANT_ID:-}
+  DINGTALK_CLIENT_ID: ${DINGTALK_CLIENT_ID:-}
+  DINGTALK_CLIENT_SECRET: ${DINGTALK_CLIENT_SECRET:-}
+  DINGTALK_STREAM_ENABLED: ${DINGTALK_STREAM_ENABLED:-true}
+  DINGTALK_STREAM_CONNECTOR_ID: ${DINGTALK_STREAM_CONNECTOR_ID:-connector-dingtalk-stream-default}
+  DINGTALK_STREAM_RECONNECT_INITIAL_SECONDS: ${DINGTALK_STREAM_RECONNECT_INITIAL_SECONDS:-5}
+  DINGTALK_STREAM_RECONNECT_MAX_SECONDS: ${DINGTALK_STREAM_RECONNECT_MAX_SECONDS:-60}
+  DINGTALK_STREAM_WORKER_ID: ${DINGTALK_STREAM_WORKER_ID:-dingtalk-stream-ingress}
+  DINGTALK_DEFAULT_DELIVERY_TYPE: ${DINGTALK_DEFAULT_DELIVERY_TYPE:-dingtalk_enterprise_robot}
+  DINGTALK_DEFAULT_DELIVERY_CONNECTOR_ID: ${DINGTALK_DEFAULT_DELIVERY_CONNECTOR_ID:-connector-dingtalk-enterprise-default}
+  DINGTALK_DEFAULT_SOURCE_CONNECTOR_ID: ${DINGTALK_DEFAULT_SOURCE_CONNECTOR_ID:-connector-dingtalk-stream-default}
+  DINGTALK_DEFAULT_PROJECT_CODE: ${DINGTALK_DEFAULT_PROJECT_CODE:-default}
+  DINGTALK_DEFAULT_ENVIRONMENT: ${DINGTALK_DEFAULT_ENVIRONMENT:-}
+  DINGTALK_DEFAULT_BASE: ${DINGTALK_DEFAULT_BASE:-}
+  DINGTALK_DEFAULT_WORKSHOP: ${DINGTALK_DEFAULT_WORKSHOP:-}
+  DINGTALK_DEFAULT_SERVICE: ${DINGTALK_DEFAULT_SERVICE:-}
+  DINGTALK_DEFAULT_OPEN_CONVERSATION_ID: ${DINGTALK_DEFAULT_OPEN_CONVERSATION_ID:-}
+  DINGTALK_DEFAULT_ROBOT_CODE: ${DINGTALK_DEFAULT_ROBOT_CODE:-}
+  ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
+  ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
+  CLAUDE_MODEL: ${CLAUDE_MODEL:-}
+  ANTHROPIC_DEFAULT_OPUS_MODEL: ${ANTHROPIC_DEFAULT_OPUS_MODEL:-}
+  ANTHROPIC_DEFAULT_SONNET_MODEL: ${ANTHROPIC_DEFAULT_SONNET_MODEL:-}
+  ANTHROPIC_DEFAULT_HAIKU_MODEL: ${ANTHROPIC_DEFAULT_HAIKU_MODEL:-}
+  CLAUDE_CODE_SUBAGENT_MODEL: ${CLAUDE_CODE_SUBAGENT_MODEL:-}
+  CLAUDE_CODE_EFFORT_LEVEL: ${CLAUDE_CODE_EFFORT_LEVEL:-}
+  AGENT_MAX_TURNS: ${AGENT_MAX_TURNS:-12}
+  RABBITMQ_CONSUMER_HEARTBEAT_SECONDS: ${RABBITMQ_CONSUMER_HEARTBEAT_SECONDS:-900}
+  RABBITMQ_CONSUMER_RECONNECT_SECONDS: ${RABBITMQ_CONSUMER_RECONNECT_SECONDS:-5}
+  SECRET_SANJIU_GUANLAN_CLOUD_DB_HOST: ${SECRET_SANJIU_GUANLAN_CLOUD_DB_HOST:-}
+  SECRET_SANJIU_GUANLAN_CLOUD_DB_USER: ${SECRET_SANJIU_GUANLAN_CLOUD_DB_USER:-}
+  SECRET_SANJIU_GUANLAN_CLOUD_DB_PASSWORD: ${SECRET_SANJIU_GUANLAN_CLOUD_DB_PASSWORD:-}
+  SECRET_SANJIU_GUANLAN_EDGE_DB_HOST: ${SECRET_SANJIU_GUANLAN_EDGE_DB_HOST:-}
+  SECRET_SANJIU_GUANLAN_EDGE_DB_USER: ${SECRET_SANJIU_GUANLAN_EDGE_DB_USER:-}
+  SECRET_SANJIU_GUANLAN_EDGE_DB_PASSWORD: ${SECRET_SANJIU_GUANLAN_EDGE_DB_PASSWORD:-}
+  SECRET_SANJIU_GUANLAN_EDGE_REDIS_PASSWORD: ${SECRET_SANJIU_GUANLAN_EDGE_REDIS_PASSWORD:-}
+  SECRET_SANJIU_SHUNFENG_CLOUD_DB_HOST: ${SECRET_SANJIU_SHUNFENG_CLOUD_DB_HOST:-}
+  SECRET_SANJIU_SHUNFENG_CLOUD_DB_USER: ${SECRET_SANJIU_SHUNFENG_CLOUD_DB_USER:-}
+  SECRET_SANJIU_SHUNFENG_CLOUD_DB_PASSWORD: ${SECRET_SANJIU_SHUNFENG_CLOUD_DB_PASSWORD:-}
+  SECRET_SANJIU_SHUNFENG_EDGE_DB_HOST: ${SECRET_SANJIU_SHUNFENG_EDGE_DB_HOST:-}
+  SECRET_SANJIU_SHUNFENG_EDGE_DB_USER: ${SECRET_SANJIU_SHUNFENG_EDGE_DB_USER:-}
+  SECRET_SANJIU_SHUNFENG_EDGE_DB_PASSWORD: ${SECRET_SANJIU_SHUNFENG_EDGE_DB_PASSWORD:-}
+  SECRET_SANJIU_SHUNFENG_EDGE_REDIS_PASSWORD: ${SECRET_SANJIU_SHUNFENG_EDGE_REDIS_PASSWORD:-}
+  SECRET_SANJIU_CHENZHOU_CLOUD_DB_HOST: ${SECRET_SANJIU_CHENZHOU_CLOUD_DB_HOST:-}
+  SECRET_SANJIU_CHENZHOU_CLOUD_DB_USER: ${SECRET_SANJIU_CHENZHOU_CLOUD_DB_USER:-}
+  SECRET_SANJIU_CHENZHOU_CLOUD_DB_PASSWORD: ${SECRET_SANJIU_CHENZHOU_CLOUD_DB_PASSWORD:-}
+  SECRET_SANJIU_CHENZHOU_EDGE_DB_HOST: ${SECRET_SANJIU_CHENZHOU_EDGE_DB_HOST:-}
+  SECRET_SANJIU_CHENZHOU_EDGE_DB_USER: ${SECRET_SANJIU_CHENZHOU_EDGE_DB_USER:-}
+  SECRET_SANJIU_CHENZHOU_EDGE_DB_PASSWORD: ${SECRET_SANJIU_CHENZHOU_EDGE_DB_PASSWORD:-}
+  SECRET_SANJIU_CHENZHOU_EDGE_REDIS_PASSWORD: ${SECRET_SANJIU_CHENZHOU_EDGE_REDIS_PASSWORD:-}
+  SECRET_SANJIU_CLOUD_REDIS_PASSWORD: ${SECRET_SANJIU_CLOUD_REDIS_PASSWORD:-}
+  SECRET_XT_MES51_DB_HOST: ${SECRET_XT_MES51_DB_HOST:-}
+  SECRET_XT_MES51_DB_USER: ${SECRET_XT_MES51_DB_USER:-}
+  SECRET_XT_MES51_DB_PASSWORD: ${SECRET_XT_MES51_DB_PASSWORD:-}
+  SECRET_MMK_MAIN_DB_HOST: ${SECRET_MMK_MAIN_DB_HOST:-}
+  SECRET_MMK_MAIN_DB_USER: ${SECRET_MMK_MAIN_DB_USER:-}
+  SECRET_MMK_MAIN_DB_PASSWORD: ${SECRET_MMK_MAIN_DB_PASSWORD:-}
+  SECRET_AGENT_TEST_MYSQL_DB_HOST: ${SECRET_AGENT_TEST_MYSQL_DB_HOST:-agent-test-mysql}
+  SECRET_AGENT_TEST_MYSQL_DB_PORT: ${SECRET_AGENT_TEST_MYSQL_DB_PORT:-3306}
+  SECRET_AGENT_TEST_MYSQL_DB_USER: ${SECRET_AGENT_TEST_MYSQL_DB_USER:-agent_test_reader}
+  SECRET_AGENT_TEST_MYSQL_DB_PASSWORD: ${SECRET_AGENT_TEST_MYSQL_DB_PASSWORD:-agent_test_reader_mysql}
+  SECRET_AGENT_TEST_MYSQL_REDIS_HOST: ${SECRET_AGENT_TEST_MYSQL_REDIS_HOST:-agent-test-redis-mysql}
+  SECRET_AGENT_TEST_MYSQL_REDIS_PORT: ${SECRET_AGENT_TEST_MYSQL_REDIS_PORT:-6379}
+  SECRET_AGENT_TEST_MYSQL_REDIS_USER: ${SECRET_AGENT_TEST_MYSQL_REDIS_USER:-agent_test_reader}
+  SECRET_AGENT_TEST_MYSQL_REDIS_PASSWORD: ${SECRET_AGENT_TEST_MYSQL_REDIS_PASSWORD:-agent_test_reader_redis_mysql}
+  SECRET_AGENT_TEST_SQLSERVER_DB_HOST: ${SECRET_AGENT_TEST_SQLSERVER_DB_HOST:-agent-test-sqlserver}
+  SECRET_AGENT_TEST_SQLSERVER_DB_PORT: ${SECRET_AGENT_TEST_SQLSERVER_DB_PORT:-1433}
+  SECRET_AGENT_TEST_SQLSERVER_DB_USER: ${SECRET_AGENT_TEST_SQLSERVER_DB_USER:-agent_test_reader}
+  SECRET_AGENT_TEST_SQLSERVER_DB_PASSWORD: ${SECRET_AGENT_TEST_SQLSERVER_DB_PASSWORD:-AgentTest_reader_sqlserver_2026}
+  SECRET_AGENT_TEST_SQLSERVER_REDIS_HOST: ${SECRET_AGENT_TEST_SQLSERVER_REDIS_HOST:-agent-test-redis-sqlserver}
+  SECRET_AGENT_TEST_SQLSERVER_REDIS_PORT: ${SECRET_AGENT_TEST_SQLSERVER_REDIS_PORT:-6379}
+  SECRET_AGENT_TEST_SQLSERVER_REDIS_USER: ${SECRET_AGENT_TEST_SQLSERVER_REDIS_USER:-agent_test_reader}
+  SECRET_AGENT_TEST_SQLSERVER_REDIS_PASSWORD: ${SECRET_AGENT_TEST_SQLSERVER_REDIS_PASSWORD:-agent_test_reader_redis_sqlserver}
+
+x-worker-env: &worker-env
+  <<: *runtime-env
   RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
 
 services:
@@ -36,6 +124,156 @@ services:
       timeout: 3s
       retries: 20
 
+  agent-test-mysql:
+    profiles: ["agent-test-data"]
+    image: ${AGENT_TEST_MYSQL_IMAGE:-mysql:8.4}
+    environment:
+      MYSQL_ROOT_PASSWORD: ${AGENT_TEST_MYSQL_ROOT_PASSWORD:-AgentTest_mysql_root_2026}
+      MYSQL_DATABASE: ${AGENT_TEST_MYSQL_DATABASE:-agent_test}
+    ports:
+      - "${AGENT_TEST_MYSQL_HOST_PORT:-3307}:3306"
+    volumes:
+      - agent-test-mysql-data:/var/lib/mysql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  agent-test-sqlserver:
+    profiles: ["agent-test-data"]
+    image: ${AGENT_TEST_SQLSERVER_IMAGE:-mcr.microsoft.com/mssql/server:2022-latest}
+    platform: ${AGENT_TEST_SQLSERVER_PLATFORM:-linux/amd64}
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: ${AGENT_TEST_SQLSERVER_SA_PASSWORD:-AgentTest_sqlserver_sa_2026!}
+    ports:
+      - "${AGENT_TEST_SQLSERVER_HOST_PORT:-14330}:1433"
+    volumes:
+      - agent-test-sqlserver-data:/var/opt/mssql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "/opt/mssql-tools18/bin/sqlcmd -C -S 127.0.0.1 -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q \"SELECT 1\" -b -o /dev/null",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 60s
+
+  agent-test-redis-mysql:
+    profiles: ["agent-test-data"]
+    image: ${AGENT_TEST_REDIS_IMAGE:-redis:7.4}
+    command:
+      [
+        "redis-server",
+        "--appendonly",
+        "yes",
+        "--requirepass",
+        "${AGENT_TEST_REDIS_MYSQL_ADMIN_PASSWORD:-agent_test_redis_mysql_admin}",
+      ]
+    environment:
+      AGENT_TEST_REDIS_MYSQL_ADMIN_PASSWORD: ${AGENT_TEST_REDIS_MYSQL_ADMIN_PASSWORD:-agent_test_redis_mysql_admin}
+    ports:
+      - "${AGENT_TEST_REDIS_MYSQL_HOST_PORT:-6381}:6379"
+    volumes:
+      - agent-test-redis-mysql-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "redis-cli -a \"$$AGENT_TEST_REDIS_MYSQL_ADMIN_PASSWORD\" ping | grep PONG",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  agent-test-redis-sqlserver:
+    profiles: ["agent-test-data"]
+    image: ${AGENT_TEST_REDIS_IMAGE:-redis:7.4}
+    command:
+      [
+        "redis-server",
+        "--appendonly",
+        "yes",
+        "--requirepass",
+        "${AGENT_TEST_REDIS_SQLSERVER_ADMIN_PASSWORD:-agent_test_redis_sqlserver_admin}",
+      ]
+    environment:
+      AGENT_TEST_REDIS_SQLSERVER_ADMIN_PASSWORD: ${AGENT_TEST_REDIS_SQLSERVER_ADMIN_PASSWORD:-agent_test_redis_sqlserver_admin}
+    ports:
+      - "${AGENT_TEST_REDIS_SQLSERVER_HOST_PORT:-6382}:6379"
+    volumes:
+      - agent-test-redis-sqlserver-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "redis-cli -a \"$$AGENT_TEST_REDIS_SQLSERVER_ADMIN_PASSWORD\" ping | grep PONG",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  agent-test-data-seeder:
+    profiles: ["agent-test-data"]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: agent-test-data-seeder
+    command: ["python", "-m", "app.agent_test_data.seeder", "seed"]
+    environment:
+      AGENT_TEST_MYSQL_HOST: agent-test-mysql
+      AGENT_TEST_MYSQL_PORT: 3306
+      AGENT_TEST_MYSQL_DATABASE: ${AGENT_TEST_MYSQL_DATABASE:-agent_test}
+      AGENT_TEST_MYSQL_ROOT_PASSWORD: ${AGENT_TEST_MYSQL_ROOT_PASSWORD:-AgentTest_mysql_root_2026}
+      AGENT_TEST_SQLSERVER_HOST: agent-test-sqlserver
+      AGENT_TEST_SQLSERVER_PORT: 1433
+      AGENT_TEST_SQLSERVER_DATABASE: ${AGENT_TEST_SQLSERVER_DATABASE:-agent_test}
+      AGENT_TEST_SQLSERVER_SA_PASSWORD: ${AGENT_TEST_SQLSERVER_SA_PASSWORD:-AgentTest_sqlserver_sa_2026!}
+      AGENT_TEST_REDIS_MYSQL_HOST: agent-test-redis-mysql
+      AGENT_TEST_REDIS_MYSQL_PORT: 6379
+      AGENT_TEST_REDIS_MYSQL_ADMIN_PASSWORD: ${AGENT_TEST_REDIS_MYSQL_ADMIN_PASSWORD:-agent_test_redis_mysql_admin}
+      AGENT_TEST_REDIS_MYSQL_SEEDER_USER: ${AGENT_TEST_REDIS_MYSQL_SEEDER_USER:-agent_test_seeder}
+      AGENT_TEST_REDIS_MYSQL_SEEDER_PASSWORD: ${AGENT_TEST_REDIS_MYSQL_SEEDER_PASSWORD:-agent_test_seeder_redis_mysql}
+      AGENT_TEST_REDIS_SQLSERVER_HOST: agent-test-redis-sqlserver
+      AGENT_TEST_REDIS_SQLSERVER_PORT: 6379
+      AGENT_TEST_REDIS_SQLSERVER_ADMIN_PASSWORD: ${AGENT_TEST_REDIS_SQLSERVER_ADMIN_PASSWORD:-agent_test_redis_sqlserver_admin}
+      AGENT_TEST_REDIS_SQLSERVER_SEEDER_USER: ${AGENT_TEST_REDIS_SQLSERVER_SEEDER_USER:-agent_test_seeder}
+      AGENT_TEST_REDIS_SQLSERVER_SEEDER_PASSWORD: ${AGENT_TEST_REDIS_SQLSERVER_SEEDER_PASSWORD:-agent_test_seeder_redis_sqlserver}
+      SECRET_AGENT_TEST_MYSQL_DB_HOST: agent-test-mysql
+      SECRET_AGENT_TEST_MYSQL_DB_PORT: 3306
+      SECRET_AGENT_TEST_MYSQL_DB_USER: ${SECRET_AGENT_TEST_MYSQL_DB_USER:-agent_test_reader}
+      SECRET_AGENT_TEST_MYSQL_DB_PASSWORD: ${SECRET_AGENT_TEST_MYSQL_DB_PASSWORD:-agent_test_reader_mysql}
+      SECRET_AGENT_TEST_MYSQL_REDIS_HOST: agent-test-redis-mysql
+      SECRET_AGENT_TEST_MYSQL_REDIS_PORT: 6379
+      SECRET_AGENT_TEST_MYSQL_REDIS_USER: ${SECRET_AGENT_TEST_MYSQL_REDIS_USER:-agent_test_reader}
+      SECRET_AGENT_TEST_MYSQL_REDIS_PASSWORD: ${SECRET_AGENT_TEST_MYSQL_REDIS_PASSWORD:-agent_test_reader_redis_mysql}
+      SECRET_AGENT_TEST_SQLSERVER_DB_HOST: agent-test-sqlserver
+      SECRET_AGENT_TEST_SQLSERVER_DB_PORT: 1433
+      SECRET_AGENT_TEST_SQLSERVER_DB_USER: ${SECRET_AGENT_TEST_SQLSERVER_DB_USER:-agent_test_reader}
+      SECRET_AGENT_TEST_SQLSERVER_DB_PASSWORD: ${SECRET_AGENT_TEST_SQLSERVER_DB_PASSWORD:-AgentTest_reader_sqlserver_2026}
+      SECRET_AGENT_TEST_SQLSERVER_REDIS_HOST: agent-test-redis-sqlserver
+      SECRET_AGENT_TEST_SQLSERVER_REDIS_PORT: 6379
+      SECRET_AGENT_TEST_SQLSERVER_REDIS_USER: ${SECRET_AGENT_TEST_SQLSERVER_REDIS_USER:-agent_test_reader}
+      SECRET_AGENT_TEST_SQLSERVER_REDIS_PASSWORD: ${SECRET_AGENT_TEST_SQLSERVER_REDIS_PASSWORD:-agent_test_reader_redis_sqlserver}
+    depends_on:
+      agent-test-mysql:
+        condition: service_healthy
+      agent-test-sqlserver:
+        condition: service_healthy
+      agent-test-redis-mysql:
+        condition: service_healthy
+      agent-test-redis-sqlserver:
+        condition: service_healthy
+
   mock-internal-api-platform:
     profiles: ["mock-tools"]
     build:
@@ -54,7 +292,8 @@ services:
       dockerfile: backend/Dockerfile
     command:
       ["python", "-m", "uvicorn", "app.local_internal_api_platform:create_app", "--factory", "--host", "0.0.0.0", "--port", "9000"]
-    env_file: *backend-env-file
+    environment:
+      <<: *runtime-env
     expose:
       - "9000"
 
@@ -67,9 +306,8 @@ services:
       target: internal-api-platform
     command:
       ["python", "-m", "uvicorn", "app.internal_api_platform:create_app", "--factory", "--host", "0.0.0.0", "--port", "9000"]
-    env_file: *backend-env-file
     environment:
-      <<: *database-env
+      <<: *runtime-env
     volumes:
       - ./backend/config:/app/backend/config:ro
     expose:
@@ -85,7 +323,6 @@ services:
       target: api-server
     command:
       ["python", "-m", "uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
-    env_file: *backend-env-file
     environment:
       <<: *worker-env
       SEED_LOCAL_CONFIG: "true"
@@ -104,7 +341,6 @@ services:
       dockerfile: backend/Dockerfile
       target: dingtalk-stream-ingress
     command: ["python", "-m", "app.workers.dingtalk_stream_ingress_worker"]
-    env_file: *backend-env-file
     environment:
       <<: *worker-env
       SEED_LOCAL_CONFIG: "true"
@@ -120,7 +356,6 @@ services:
       dockerfile: backend/Dockerfile
       target: agent-worker
     command: ["python", "-m", "app.workers.agent_job_worker"]
-    env_file: *backend-env-file
     environment:
       <<: *worker-env
       SEED_LOCAL_CONFIG: "true"
@@ -129,3 +364,13 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+
+volumes:
+  agent-test-mysql-data:
+    name: enterprise_agent_agent_test_mysql_data
+  agent-test-sqlserver-data:
+    name: enterprise_agent_agent_test_sqlserver_data
+  agent-test-redis-mysql-data:
+    name: enterprise_agent_agent_test_redis_mysql_data
+  agent-test-redis-sqlserver-data:
+    name: enterprise_agent_agent_test_redis_sqlserver_data

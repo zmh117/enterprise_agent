@@ -57,6 +57,7 @@ class RedisConnection:
     host: str
     port: int
     db: int = 0
+    username: str = ""
     password: str = ""
     mode: RedisMode = RedisMode.STANDALONE
     nodes: tuple[RedisNode, ...] = ()

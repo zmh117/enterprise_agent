@@ -2,6 +2,14 @@
 
 这是一个企业内部只读诊断 Agent 平台 MVP。当前目标是先跑通诊断执行链路，而不是做“大而全 Agent 平台”。
 
+本地多数据库测试数据环境见 [docs/agent-test-data.md](/Users/mhz/Develop/enterprise_agent/docs/agent-test-data.md)，入口：
+
+```bash
+scripts/agent_test_data.sh up
+scripts/agent_test_data.sh verify
+scripts/agent_test_data.sh reset --yes
+```
+
 ```text
 钉钉 / Debug API
   -> FastAPI api-server

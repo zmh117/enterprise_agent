@@ -329,6 +329,7 @@ class PlatformTopologySnapshotBuilder:
             host=host,
             port=port,
             db=db,
+            username=self._optional_value(binding, "user", resolve_secrets=resolve_secrets),
             password=self._optional_value(binding, "password", resolve_secrets=resolve_secrets),
             mode=mode,
             nodes=nodes,

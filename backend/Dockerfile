@@ -55,6 +55,7 @@ RUN mkdir -p /opt/oracle/instantclient \
 ENV LD_LIBRARY_PATH=/opt/oracle/instantclient
 ENV ORACLE_CLIENT_LIB_DIR=/opt/oracle/instantclient
 COPY backend/app/__init__.py backend/app/internal_api_platform.py /app/backend/app/
+COPY backend/app/agent_test_data /app/backend/app/agent_test_data
 COPY backend/app/shared /app/backend/app/shared
 COPY backend/app/modules/__init__.py /app/backend/app/modules/
 COPY backend/app/modules/internal_api_platform /app/backend/app/modules/internal_api_platform
@@ -66,6 +67,16 @@ RUN python -c "import app.internal_api_platform; import app.modules.internal_api
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-deps --no-build-isolation .
 CMD ["python", "-m", "uvicorn", "app.internal_api_platform:create_app", "--factory", "--host", "0.0.0.0", "--port", "9000"]
+
+FROM python-deps AS agent-test-data-seeder
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install "pymysql>=1.1" "pymssql>=2.3" "redis>=5.0"
+COPY backend/app/__init__.py /app/backend/app/
+COPY backend/app/agent_test_data /app/backend/app/agent_test_data
+RUN python -c "import app.agent_test_data.seeder"
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-deps --no-build-isolation .
+CMD ["python", "-m", "app.agent_test_data.seeder", "seed"]
 
 FROM python-deps AS api-server
 COPY backend/app/__init__.py backend/app/bootstrap.py backend/app/main.py /app/backend/app/

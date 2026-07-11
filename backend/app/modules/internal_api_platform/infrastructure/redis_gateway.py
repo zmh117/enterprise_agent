@@ -56,6 +56,7 @@ class RealRedisGateway:
                     ) from exc
                 return RedisCluster(
                     startup_nodes=startup_nodes,
+                    username=conn.username or None,
                     password=conn.password or None,
                     socket_timeout=5,
                     decode_responses=True,
@@ -64,6 +65,7 @@ class RealRedisGateway:
                 host=conn.host,
                 port=conn.port,
                 db=conn.db,
+                username=conn.username or None,
                 password=conn.password or None,
                 socket_timeout=5,
                 decode_responses=True,
