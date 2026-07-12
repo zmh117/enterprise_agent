@@ -83,11 +83,12 @@ def _secret_values() -> dict[str, str]:
         "secret://agent_test/sqlserver/redis_host": "agent-test-redis-sqlserver",
         "secret://agent_test/sqlserver/redis_user": "agent_test_reader",
         "secret://agent_test/sqlserver/redis_password": "sqlserver-redis-reader-password",
+        "secret://agent_test/loki/base_url": "http://loki:3100",
     }
 
 
-# 6 Oracle bases × (db+redis) + xt db + mmk db + agent_test × (2 db + 2 redis)
-_EXAMPLE_RESOURCE_COUNT = 18
+# 6 Oracle bases × (db+redis) + xt db + mmk db + agent_test × (2 db + 2 redis + 2 loki)
+_EXAMPLE_RESOURCE_COUNT = 20
 
 
 def _file_database() -> tuple[tempfile.TemporaryDirectory[str], Database, str]:
@@ -163,7 +164,7 @@ class PlatformConfigRepositoryTests(unittest.TestCase):
         public = c.platform_config_service.public_snapshot()
         self.assertEqual("database", public["source"])
         self.assertEqual(_EXAMPLE_RESOURCE_COUNT, public["resource_count"])
-        self.assertEqual(2, public["access_grant_count"])
+        self.assertEqual(3, public["access_grant_count"])
         self.assertRegex(public["config_hash"], r"^[0-9a-f]{64}$")
         encoded = str(public)
         self.assertIn("secret://sanjiu/guanlan_cloud/db_password", encoded)
@@ -295,7 +296,7 @@ class PlatformConfigApiTests(unittest.TestCase):
             snapshot_body = snapshot.json()["snapshot"]
             self.assertEqual("database", snapshot_body["source"])
             self.assertEqual(_EXAMPLE_RESOURCE_COUNT, snapshot_body["resource_count"])
-            self.assertEqual(2, snapshot_body["access_grant_count"])
+            self.assertEqual(3, snapshot_body["access_grant_count"])
             self.assertRegex(snapshot_body["config_hash"], r"^[0-9a-f]{64}$")
 
             rejected = client.post(

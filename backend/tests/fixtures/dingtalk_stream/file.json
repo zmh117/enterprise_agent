@@ -1,0 +1,14 @@
+{
+  "conversationId": "group-conversation-redacted",
+  "msgId": "file-message-redacted",
+  "senderStaffId": "local-user",
+  "conversationType": "2",
+  "robotCode": "robot-redacted",
+  "msgtype": "file",
+  "content": {
+    "downloadCode": "fixture-file-code",
+    "fileName": "diagnosis.md",
+    "fileSize": 128,
+    "contentType": "text/markdown"
+  }
+}

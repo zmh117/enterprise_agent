@@ -1,0 +1,9 @@
+{
+  "conversationId": "direct-conversation-redacted",
+  "msgId": "picture-message-redacted",
+  "senderStaffId": "local-user",
+  "conversationType": "1",
+  "robotCode": "robot-redacted",
+  "msgtype": "picture",
+  "content": {"downloadCode": "fixture-picture-code"}
+}

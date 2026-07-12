@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from app.modules.agent.application.agent_context_builder import AgentContextBuilder
+from app.modules.agent.application.conversation_context import ConversationContextService
 from app.modules.agent.application.agent_executor import AgentExecutor
 from app.modules.agent.application.agent_result_service import AgentResultService
 from app.modules.agent.infrastructure.claude_code_agent_client import (
@@ -13,6 +14,12 @@ from app.modules.agent.infrastructure.claude_code_agent_client import (
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
 from app.modules.agent.infrastructure.skill_loader import SkillLoader
 from app.modules.audit.application.audit_service import AuditService
+from app.modules.attachments.credentials import AttachmentCredentialCipher
+from app.modules.attachments.dingtalk_downloader import DingTalkMediaDownloader
+from app.modules.attachments.domain import ObjectStorage
+from app.modules.attachments.extraction import SafeAttachmentExtractor
+from app.modules.attachments.service import AttachmentProcessingService
+from app.modules.attachments.storage import InMemoryObjectStorage, S3ObjectStorage
 from app.modules.channel.application.channel_ingress_service import ChannelIngressService
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.delivery.application.report_chunker import ReportChunker
@@ -30,6 +37,7 @@ from app.modules.dingding.application.dingtalk_stream_service import (
     DingTalkStreamMessageService,
 )
 from app.modules.dingding.infrastructure.dingding_callback_client import DingTalkCallbackClient
+from app.modules.dingding.infrastructure.dingtalk_delivery_clients import DingTalkAccessTokenClient
 from app.modules.internal_tools.application.tools import ReadOnlyToolService
 from app.modules.internal_tools.infrastructure.internal_api_client import (
     FakeInternalApiClient,
@@ -80,6 +88,8 @@ class Container:
     result_delivery_service: ResultDeliveryService
     agent_executor: AgentExecutor
     retry_service: JobRetryService
+    object_storage: ObjectStorage
+    attachment_service: AttachmentProcessingService | None
 
 
 ContainerFactory = Callable[[Settings], Container]
@@ -181,6 +191,11 @@ def _build_container(
         permission_service,
     )
     connector_registry = ConnectorRegistry(config_repository)
+    credential_cipher = (
+        AttachmentCredentialCipher(settings.app_config_master_key)
+        if settings.attachments.enabled
+        else None
+    )
     create_job_service = CreateAgentJobService(
         repository=agent_repository,
         permission_service=permission_service,
@@ -188,6 +203,9 @@ def _build_container(
         publisher=publisher,
         queue_settings=settings.queue,
         connector_registry=connector_registry,
+        credential_cipher=credential_cipher,
+        continuous_enabled=settings.conversation.enabled,
+        attachment_settings=settings.attachments,
     )
     channel_ingress_service = ChannelIngressService(
         create_job_service=create_job_service,
@@ -224,6 +242,8 @@ def _build_container(
         default_service=settings.dingtalk.default_service,
         default_open_conversation_id=settings.dingtalk.default_open_conversation_id,
         default_robot_code=settings.dingtalk.default_robot_code,
+        attachments_enabled=settings.attachments.enabled,
+        attachment_credential_ttl_seconds=settings.attachments.credential_ttl_seconds,
     )
     internal_api_client: InternalApiClient = FakeInternalApiClient()
     if settings.feature_real_internal_tools and message_bus is None:
@@ -283,6 +303,33 @@ def _build_container(
         },
         chunker=ReportChunker(settings.delivery.chunk_max_chars),
     )
+    object_storage: ObjectStorage = InMemoryObjectStorage(settings.object_storage.bucket)
+    if settings.attachments.enabled and message_bus is None:
+        s3_storage = S3ObjectStorage(settings.object_storage)
+        s3_storage.ensure_bucket()
+        object_storage = s3_storage
+    attachment_service: AttachmentProcessingService | None = None
+    if settings.attachments.enabled and credential_cipher is not None:
+        attachment_service = AttachmentProcessingService(
+            repository=agent_repository,
+            publisher=publisher,
+            audit_service=audit_service,
+            credential_cipher=credential_cipher,
+            downloader=DingTalkMediaDownloader(
+                token_client=DingTalkAccessTokenClient(
+                    client_id=settings.dingtalk.stream_client_id,
+                    client_secret=settings.dingtalk.stream_client_secret,
+                    timeout_seconds=settings.attachments.timeout_seconds,
+                ),
+                robot_code=settings.dingtalk.default_robot_code
+                or settings.dingtalk.stream_client_id,
+                timeout_seconds=settings.attachments.timeout_seconds,
+            ),
+            storage=object_storage,
+            extractor=SafeAttachmentExtractor(settings.attachments),
+            settings=settings.attachments,
+            delivery_service=result_delivery_service,
+        )
     agent_executor = AgentExecutor(
         repository=agent_repository,
         audit_service=audit_service,
@@ -290,6 +337,11 @@ def _build_container(
         context_builder=AgentContextBuilder(
             tool_registry=tool_registry,
             skill_loader=SkillLoader(),
+            conversation_service=(
+                ConversationContextService(agent_repository, settings.conversation)
+                if settings.conversation.enabled
+                else None
+            ),
         ),
         claude_client=claude_client,
         tool_registry=tool_registry,
@@ -322,4 +374,6 @@ def _build_container(
         result_delivery_service=result_delivery_service,
         agent_executor=agent_executor,
         retry_service=retry_service,
+        object_storage=object_storage,
+        attachment_service=attachment_service,
     )

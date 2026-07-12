@@ -26,8 +26,8 @@
 - **WHEN** 消息包含DOC、XLS、PPT、PDF、压缩包、音视频、SVG、脚本、可执行文件或未知格式
 - **THEN** 系统不解析内容并返回不泄漏内部信息的格式说明
 
-### Requirement: 下载和对象写入幂等且不持久化凭证
-系统 SHALL 使用内部attachment ID驱动下载和存储并以SHA-256校验完整性，MUST NOT 持久化download code、临时URL、session webhook、access token或对象存储凭证。
+### Requirement: 下载和对象写入幂等且短期凭证受保护
+系统 SHALL 使用内部attachment ID驱动下载和存储并以SHA-256校验完整性。download code或等价来源凭证只允许使用平台主密钥短期加密落库，MUST NOT保存明文或将明文/密文暴露到队列、日志、审计、API和调试输出，并 MUST 在下载完成、拒绝、失败或过期后清除。session webhook、access token和对象存储凭证 MUST NOT作为attachment来源凭证持久化。
 
 #### Scenario: 外部事件被重投
 - **WHEN** 钉钉重复投递包含同一附件的事件
@@ -36,6 +36,10 @@
 #### Scenario: 对象写入后任务重试
 - **WHEN** 下载任务在对象完整写入后发生确认超时
 - **THEN** 重试校验已有对象散列并继续状态机，不产生第二份对象
+
+#### Scenario: 下载凭证到达终态
+- **WHEN** attachment下载完成、被拒绝、最终失败或来源凭证过期
+- **THEN** 系统清除加密来源凭证且后续读取只能获得凭证已清除状态
 
 ### Requirement: 文档在受限worker中提取
 系统 SHALL 使用非root、无外网、受CPU/内存/时间限制的worker提取DOCX段落/表格、XLSX工作表有界单元格、PPTX幻灯片文本和Markdown纯文本，MUST NOT执行公式、宏、嵌入对象、HTML或远程资源。

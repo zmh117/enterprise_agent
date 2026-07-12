@@ -2,15 +2,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
+import hashlib
+from pathlib import Path
 
 from app.modules.audit.application.audit_service import AuditService
-from app.modules.channel.domain.channel_event import ReplyRoute, RoutingContext
+from app.modules.attachments.credentials import AttachmentCredentialCipher
+from app.modules.channel.domain.channel_event import ChannelAttachment, ReplyRoute, RoutingContext
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.job.domain.agent_job import AgentJob
+from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.modules.message_bus.application.message_publisher import MessagePublisher
 from app.modules.permission.application.permission_service import PermissionService
-from app.shared.config import QueueSettings
+from app.shared.config import AttachmentSettings, QueueSettings
+from app.shared.exceptions import NonRetryableExecutionError
 from app.shared.logging import new_correlation_id
 
 DEFAULT_DINGTALK_SOURCE_CONNECTOR_ID = "connector-dingtalk-stream-default"
@@ -34,6 +39,10 @@ class CreateAgentJobCommand:
     dingding_conversation_id: str | None = None
     dingding_user_id: str | None = None
     source: str | None = None
+    external_message_id: str = ""
+    conversation_type: str = "direct"
+    bot_identity: str = ""
+    attachments: tuple[ChannelAttachment, ...] = ()
 
     @property
     def effective_requester_id(self) -> str:
@@ -79,6 +88,9 @@ class CreateAgentJobService:
         publisher: MessagePublisher,
         queue_settings: QueueSettings,
         connector_registry: ConnectorRegistry | None = None,
+        credential_cipher: AttachmentCredentialCipher | None = None,
+        continuous_enabled: bool = False,
+        attachment_settings: AttachmentSettings | None = None,
     ) -> None:
         self.repository = repository
         self.permission_service = permission_service
@@ -86,11 +98,15 @@ class CreateAgentJobService:
         self.publisher = publisher
         self.queue_settings = queue_settings
         self.connector_registry = connector_registry
+        self.credential_cipher = credential_cipher
+        self.continuous_enabled = continuous_enabled
+        self.attachment_settings = attachment_settings or AttachmentSettings()
 
     def execute(self, command: CreateAgentJobCommand) -> AgentJob:
         existing = self.repository.get_job_by_idempotency_key(command.idempotency_key)
         if existing is not None:
             return existing
+        self._validate_attachments(command.attachments)
         requester_id = command.effective_requester_id
         source_channel = command.effective_source_channel
         project_code = command.effective_routing_context.get("project_code", command.project_code)
@@ -114,62 +130,138 @@ class CreateAgentJobService:
             user_id=requester_id,
             project_code=project_code,
         )
-        session = self.repository.create_session(
-            dingding_conversation_id=command.effective_conversation_id,
-            dingding_user_id=requester_id,
-            source=source_channel,
-            project_code=project_code,
+        if command.attachments and self.credential_cipher is None:
+            raise NonRetryableExecutionError(
+                "Attachment credential encryption is unavailable",
+                safe_message="Attachment processing is not configured",
+            )
+        session_key = _session_key(
             source_channel=source_channel,
-            source_connector_id=command.source_connector_id,
-            external_conversation_id=command.effective_conversation_id,
-            requester_id=requester_id,
-            requester_display_name=command.requester_display_name,
-            routing_context=command.effective_routing_context,
-            reply_route=reply_route,
-        )
-        job = self.repository.create_job(
-            session_id=session.id,
-            idempotency_key=command.idempotency_key,
-            user_id=requester_id,
+            connector_id=command.source_connector_id,
             project_code=project_code,
-            source=source_channel,
-            user_message=command.user_message,
-            max_retry_count=self.queue_settings.max_retry_count,
-            source_channel=source_channel,
-            source_connector_id=command.source_connector_id,
-            external_event_id=command.external_event_id,
+            conversation_type=command.conversation_type,
+            conversation_id=command.effective_conversation_id,
             requester_id=requester_id,
-            routing_context=command.effective_routing_context,
-            reply_route=reply_route,
-        )
-        self.repository.add_message(
-            session_id=session.id,
-            job_id=job.id,
-            role="user",
-            content=command.user_message,
-        )
-        self.audit_service.record(
-            "job.created",
-            status="SUCCEEDED",
-            summary="Agent job created",
-            job_id=job.id,
-            actor_id=requester_id,
-            payload={
-                "idempotency_key": command.idempotency_key,
-                "source_channel": source_channel,
-                "source_connector_id": command.source_connector_id,
-                "external_event_id": command.external_event_id,
-            },
-        )
-        self.publisher.publish_agent_job(job.id, command.correlation_id or new_correlation_id())
-        self.audit_service.record(
-            "queue.dispatched",
-            status="SUCCEEDED",
-            summary="Agent job dispatched to message bus",
-            job_id=job.id,
-            actor_id=requester_id,
-        )
+            bot_identity=command.bot_identity,
+        ) if self.continuous_enabled else ""
+        correlation_id = command.correlation_id or new_correlation_id()
+        attachment_ids: list[str] = []
+        with self.repository.database.transaction():
+            session = self.repository.create_session(
+                dingding_conversation_id=command.effective_conversation_id,
+                dingding_user_id=requester_id,
+                source=source_channel,
+                project_code=project_code,
+                source_channel=source_channel,
+                source_connector_id=command.source_connector_id,
+                external_conversation_id=command.effective_conversation_id,
+                requester_id=requester_id,
+                requester_display_name=command.requester_display_name,
+                routing_context=command.effective_routing_context,
+                reply_route=reply_route,
+                session_key=session_key,
+                conversation_type=command.conversation_type,
+                bot_identity=command.bot_identity,
+            )
+            job = self.repository.create_job(
+                session_id=session.id,
+                idempotency_key=command.idempotency_key,
+                user_id=requester_id,
+                project_code=project_code,
+                source=source_channel,
+                user_message=command.user_message,
+                max_retry_count=self.queue_settings.max_retry_count,
+                source_channel=source_channel,
+                source_connector_id=command.source_connector_id,
+                external_event_id=command.external_event_id,
+                requester_id=requester_id,
+                routing_context=command.effective_routing_context,
+                reply_route=reply_route,
+                initial_status=(
+                    JobStatus.WAITING_INPUT if command.attachments else JobStatus.PENDING
+                ),
+            )
+            message_id = self.repository.add_message(
+                session_id=session.id,
+                job_id=job.id,
+                role="user",
+                content=command.user_message,
+                external_message_id=command.external_message_id or command.external_event_id,
+                sender_id=requester_id,
+                sender_display_name=command.requester_display_name,
+                message_type="multimodal" if command.attachments else "text",
+                content_status="PENDING" if command.attachments else "READY",
+            )
+            for ordinal, attachment in enumerate(command.attachments, start=1):
+                assert self.credential_cipher is not None
+                created = self.repository.add_attachment(
+                    message_id=message_id,
+                    job_id=job.id,
+                    ordinal=ordinal,
+                    media_type=attachment.media_type,
+                    file_name=attachment.file_name,
+                    declared_mime=attachment.declared_mime,
+                    declared_size=attachment.declared_size,
+                    credential_ciphertext=self.credential_cipher.encrypt(
+                        attachment.source_credential
+                    ),
+                    credential_type=attachment.source_credential_type,
+                    credential_expires_at=attachment.source_credential_expires_at,
+                )
+                attachment_ids.append(created.id)
+            self.audit_service.record(
+                "job.created",
+                status="SUCCEEDED",
+                summary="Agent job created",
+                job_id=job.id,
+                actor_id=requester_id,
+                payload={
+                    "idempotency_key": command.idempotency_key,
+                    "source_channel": source_channel,
+                    "source_connector_id": command.source_connector_id,
+                    "external_event_id": command.external_event_id,
+                },
+            )
+        for attachment_id in attachment_ids:
+            self.publisher.publish_attachment(attachment_id, correlation_id)
+        if not command.attachments:
+            self.publisher.publish_agent_job(job.id, correlation_id)
+            self.audit_service.record(
+                "queue.dispatched",
+                status="SUCCEEDED",
+                summary="Agent job dispatched to message bus",
+                job_id=job.id,
+                actor_id=requester_id,
+            )
         return job
+
+    def _validate_attachments(self, attachments: tuple[ChannelAttachment, ...]) -> None:
+        if len(attachments) > self.attachment_settings.max_count:
+            raise NonRetryableExecutionError(
+                "attachment_count_exceeded", safe_message="Too many attachments"
+            )
+        total = 0
+        for attachment in attachments:
+            extension = Path(attachment.file_name).suffix.lower()
+            if extension not in self.attachment_settings.allowed_extensions:
+                raise NonRetryableExecutionError(
+                    "unsupported_attachment_type", safe_message="Unsupported attachment type"
+                )
+            if not attachment.source_credential:
+                raise NonRetryableExecutionError(
+                    "attachment_source_missing", safe_message="Attachment source is missing"
+                )
+            size = int(attachment.declared_size or 0)
+            if size > self.attachment_settings.max_file_bytes:
+                raise NonRetryableExecutionError(
+                    "attachment_size_exceeded", safe_message="Attachment is too large"
+                )
+            total += size
+        if total > self.attachment_settings.max_message_bytes:
+            raise NonRetryableExecutionError(
+                "attachment_message_size_exceeded",
+                safe_message="Attachment message is too large",
+            )
 
     def _assert_connectors_allowed(
         self, command: CreateAgentJobCommand, reply_route: dict[str, Any]
@@ -196,3 +288,23 @@ class CreateAgentJobService:
                 actor_id=command.effective_requester_id,
                 payload={"connector_id": route.connector_id, "route_type": route.type},
             )
+
+
+def _session_key(
+    *,
+    source_channel: str,
+    connector_id: str,
+    project_code: str,
+    conversation_type: str,
+    conversation_id: str,
+    requester_id: str,
+    bot_identity: str,
+) -> str:
+    if conversation_type == "group":
+        identity = conversation_id
+    else:
+        identity = f"{requester_id}:{bot_identity or connector_id}"
+    canonical = "|".join(
+        [source_channel, connector_id, project_code, conversation_type, identity]
+    )
+    return "session-key:" + hashlib.sha256(canonical.encode()).hexdigest()

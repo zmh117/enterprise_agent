@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterable
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 
 class Database:
@@ -11,6 +12,7 @@ class Database:
         self.dsn = dsn
         self.engine = "sqlite" if dsn.startswith("sqlite://") else "postgres"
         self._connection: Any | None = None
+        self._transaction_depth = 0
 
     def connect(self) -> Any:
         if self._connection is not None:
@@ -49,8 +51,28 @@ class Database:
         translated = self._translate_placeholders(sql)
         cursor = connection.execute(translated, tuple(params))
         rows = cursor.fetchall() if cursor.description else []
-        connection.commit()
+        if self._transaction_depth == 0:
+            connection.commit()
         return [dict(row) for row in rows]
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        connection = self.connect()
+        outermost = self._transaction_depth == 0
+        if outermost:
+            connection.execute("BEGIN")
+        self._transaction_depth += 1
+        try:
+            yield
+        except Exception:
+            self._transaction_depth -= 1
+            if outermost:
+                connection.rollback()
+            raise
+        else:
+            self._transaction_depth -= 1
+            if outermost:
+                connection.commit()
 
     def execute_one(self, sql: str, params: Iterable[Any] = ()) -> dict[str, Any] | None:
         rows = self.execute(sql, params)

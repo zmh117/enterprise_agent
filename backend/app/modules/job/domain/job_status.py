@@ -4,6 +4,7 @@ from enum import StrEnum
 
 
 class JobStatus(StrEnum):
+    WAITING_INPUT = "WAITING_INPUT"
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     SUCCEEDED = "SUCCEEDED"
@@ -12,6 +13,7 @@ class JobStatus(StrEnum):
 
 
 ALLOWED_TRANSITIONS: dict[JobStatus, set[JobStatus]] = {
+    JobStatus.WAITING_INPUT: {JobStatus.PENDING, JobStatus.FAILED},
     JobStatus.PENDING: {JobStatus.RUNNING, JobStatus.FAILED},
     JobStatus.RUNNING: {JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.TIMEOUT},
     JobStatus.SUCCEEDED: set(),

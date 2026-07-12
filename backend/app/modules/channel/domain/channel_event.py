@@ -16,6 +16,17 @@ class ChannelSource:
 
 
 @dataclass(frozen=True)
+class ChannelAttachment:
+    media_type: str
+    file_name: str
+    source_credential: str
+    source_credential_type: str = "download_code"
+    declared_mime: str = ""
+    declared_size: int | None = None
+    source_credential_expires_at: str | None = None
+
+
+@dataclass(frozen=True)
 class RoutingContext:
     project_code: str = "default"
     environment: str = ""
@@ -76,7 +87,8 @@ class ChannelEvent:
     source: ChannelSource
     delivery: ReplyRoute
     routing: RoutingContext
-    message: str
+    message: str = ""
+    attachments: tuple[ChannelAttachment, ...] = ()
     raw_payload_summary: dict[str, Any] = field(default_factory=dict)
     idempotency_key: str = ""
     correlation_id: str | None = None
@@ -111,7 +123,17 @@ def _mask_sensitive(value: Any) -> Any:
             lowered = str(key).lower()
             if any(
                 token in lowered
-                for token in ("token", "secret", "sign", "password", "webhook", "url", "mobile")
+                for token in (
+                    "token",
+                    "secret",
+                    "sign",
+                    "password",
+                    "webhook",
+                    "url",
+                    "mobile",
+                    "download",
+                    "credential",
+                )
             ):
                 result[str(key)] = "***"
             else:

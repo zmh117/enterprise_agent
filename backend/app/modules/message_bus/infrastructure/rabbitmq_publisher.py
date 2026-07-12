@@ -25,6 +25,32 @@ class RabbitMQPublisher:
             {"job_id": job_id, "correlation_id": correlation_id, "reason": reason},
         )
 
+    def publish_attachment(self, attachment_id: str, correlation_id: str) -> None:
+        self._publish(
+            self.queue.attachment_queue,
+            {"attachment_id": attachment_id, "correlation_id": correlation_id},
+        )
+
+    def publish_attachment_retry(
+        self, attachment_id: str, correlation_id: str, delay_seconds: int
+    ) -> None:
+        self._publish_attachment_retry(
+            {
+                "attachment_id": attachment_id,
+                "correlation_id": correlation_id,
+                "delay_seconds": delay_seconds,
+            },
+            delay_seconds,
+        )
+
+    def publish_attachment_dead_letter(
+        self, attachment_id: str, correlation_id: str, reason: str
+    ) -> None:
+        self._publish(
+            self.queue.attachment_dead_queue,
+            {"attachment_id": attachment_id, "correlation_id": correlation_id, "reason": reason},
+        )
+
     def _publish(self, queue_name: str, payload: dict[str, object]) -> None:
         try:
             import pika
@@ -39,6 +65,36 @@ class RabbitMQPublisher:
                 routing_key=queue_name,
                 body=json.dumps(payload).encode("utf-8"),
                 properties=pika.BasicProperties(delivery_mode=2),
+            )
+        finally:
+            connection.close()
+
+    def _publish_attachment_retry(
+        self, payload: dict[str, object], delay_seconds: int
+    ) -> None:
+        try:
+            import pika
+        except ModuleNotFoundError as exc:
+            raise RuntimeError("pika is required for RabbitMQ publishing") from exc
+        connection = pika.BlockingConnection(pika.URLParameters(self.rabbitmq_url))
+        try:
+            channel = connection.channel()
+            channel.queue_declare(
+                queue=self.queue.attachment_retry_queue,
+                durable=True,
+                arguments={
+                    "x-dead-letter-exchange": "",
+                    "x-dead-letter-routing-key": self.queue.attachment_queue,
+                },
+            )
+            channel.basic_publish(
+                exchange="",
+                routing_key=self.queue.attachment_retry_queue,
+                body=json.dumps(payload).encode("utf-8"),
+                properties=pika.BasicProperties(
+                    delivery_mode=2,
+                    expiration=str(max(delay_seconds, 1) * 1000),
+                ),
             )
         finally:
             connection.close()

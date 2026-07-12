@@ -1,0 +1,11 @@
+{
+  "conversationId": "direct-conversation-redacted",
+  "chatbotUserId": "bot-user-redacted",
+  "msgId": "direct-message-redacted",
+  "senderNick": "User A",
+  "senderStaffId": "local-user",
+  "conversationType": "1",
+  "text": {"content": "继续分析刚才的问题"},
+  "robotCode": "robot-redacted",
+  "msgtype": "text"
+}

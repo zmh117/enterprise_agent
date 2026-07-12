@@ -32,7 +32,7 @@
 
 ### 2. 通用Channel信封支持可选文本和附件
 
-规范化消息包含可选文本、发送人、会话类型和附件列表，文本与附件不能同时为空。附件临时下载句柄只在adapter控制范围内使用；download code、临时URL、token和session webhook不进入数据库、RabbitMQ、日志或审计。
+规范化消息包含可选文本、发送人、会话类型和附件列表，文本与附件不能同时为空。为兼顾快速ACK与可恢复异步下载，download code或等价媒体来源凭证使用现有`APP_CONFIG_MASTER_KEY`短期加密后保存到attachment记录，附带凭证类型和过期时间；下载完成、拒绝、失败或过期后立即清除密文。明文凭证、临时URL、token和session webhook不进入数据库、RabbitMQ、日志、审计或调试接口。
 
 同一外部事件只创建一条message、若干attachment和一个job。Agent队列继续只传`job_id/correlation_id`，附件队列只传`attachment_id/correlation_id`。
 
@@ -42,7 +42,7 @@
 
 - `agent_session`：`session_key`、`conversation_type`、`summary_text`、`summary_through_sequence`、`summary_version`、`last_message_at`。
 - `agent_message`：外部消息ID、发送人、消息类型、sequence、内容状态和安全元数据。
-- `message_attachment`：文件名、声明/探测MIME、大小、SHA-256、bucket/key、处理状态、失败码、时间戳。
+- `message_attachment`：文件名、声明/探测MIME、大小、SHA-256、bucket/key、处理状态、失败码、短期加密来源凭证/类型/过期时间和处理时间戳；所有终态清除凭证密文。
 - `attachment_content`：有界纯文本、分段信息、解析器版本、字符数和截断标记。
 
 对象key使用内部attachment ID和散列，不使用用户文件名。bucket保持私有，Agent只读取数据库中的安全提取文本。定义`ObjectStorage`端口，MVP实现S3兼容adapter和本地MinIO；生产可以无业务改动地替换企业S3。

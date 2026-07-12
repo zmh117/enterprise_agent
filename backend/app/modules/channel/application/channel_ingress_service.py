@@ -54,5 +54,11 @@ class ChannelIngressService:
                 routing_context=event.routing.to_dict(),
                 reply_route=event.delivery.to_dict(),
                 correlation_id=event.correlation_id,
+                external_message_id=str(event.source.metadata.get("message_id") or ""),
+                conversation_type=str(
+                    event.source.metadata.get("conversation_type") or "direct"
+                ),
+                bot_identity=str(event.source.metadata.get("bot_identity") or ""),
+                attachments=event.attachments,
             )
         )

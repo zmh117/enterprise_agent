@@ -49,6 +49,29 @@ x-runtime-env: &runtime-env
   AGENT_MAX_TURNS: ${AGENT_MAX_TURNS:-12}
   RABBITMQ_CONSUMER_HEARTBEAT_SECONDS: ${RABBITMQ_CONSUMER_HEARTBEAT_SECONDS:-900}
   RABBITMQ_CONSUMER_RECONNECT_SECONDS: ${RABBITMQ_CONSUMER_RECONNECT_SECONDS:-5}
+  FEATURE_CONTINUOUS_CONVERSATION: ${FEATURE_CONTINUOUS_CONVERSATION:-false}
+  CONVERSATION_RECENT_MESSAGE_LIMIT: ${CONVERSATION_RECENT_MESSAGE_LIMIT:-20}
+  CONVERSATION_SUMMARY_TRIGGER_MESSAGES: ${CONVERSATION_SUMMARY_TRIGGER_MESSAGES:-30}
+  CONVERSATION_MAX_SUMMARY_CHARS: ${CONVERSATION_MAX_SUMMARY_CHARS:-4000}
+  CONVERSATION_MAX_CONTEXT_CHARS: ${CONVERSATION_MAX_CONTEXT_CHARS:-12000}
+  CONVERSATION_MAX_ATTACHMENT_CONTEXT_CHARS: ${CONVERSATION_MAX_ATTACHMENT_CONTEXT_CHARS:-4000}
+  FEATURE_MESSAGE_ATTACHMENTS: ${FEATURE_MESSAGE_ATTACHMENTS:-false}
+  ATTACHMENT_ALLOWED_EXTENSIONS: ${ATTACHMENT_ALLOWED_EXTENSIONS:-.jpg,.jpeg,.png,.webp,.docx,.xlsx,.pptx,.md,.markdown}
+  ATTACHMENT_MAX_COUNT: ${ATTACHMENT_MAX_COUNT:-10}
+  ATTACHMENT_MAX_FILE_BYTES: ${ATTACHMENT_MAX_FILE_BYTES:-26214400}
+  ATTACHMENT_MAX_MESSAGE_BYTES: ${ATTACHMENT_MAX_MESSAGE_BYTES:-104857600}
+  ATTACHMENT_MAX_UNCOMPRESSED_BYTES: ${ATTACHMENT_MAX_UNCOMPRESSED_BYTES:-104857600}
+  ATTACHMENT_MAX_EXTRACT_CHARS: ${ATTACHMENT_MAX_EXTRACT_CHARS:-50000}
+  ATTACHMENT_MAX_IMAGE_PIXELS: ${ATTACHMENT_MAX_IMAGE_PIXELS:-25000000}
+  ATTACHMENT_TIMEOUT_SECONDS: ${ATTACHMENT_TIMEOUT_SECONDS:-60}
+  ATTACHMENT_RETENTION_DAYS: ${ATTACHMENT_RETENTION_DAYS:-180}
+  ATTACHMENT_CREDENTIAL_TTL_SECONDS: ${ATTACHMENT_CREDENTIAL_TTL_SECONDS:-900}
+  S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-http://minio:9000}
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY:-enterprise_agent}
+  S3_SECRET_KEY: ${S3_SECRET_KEY:-enterprise_agent_change_me}
+  S3_BUCKET: ${S3_BUCKET:-agent-attachments}
+  S3_REGION: ${S3_REGION:-us-east-1}
+  S3_SECURE: ${S3_SECURE:-false}
   SECRET_SANJIU_GUANLAN_CLOUD_DB_HOST: ${SECRET_SANJIU_GUANLAN_CLOUD_DB_HOST:-}
   SECRET_SANJIU_GUANLAN_CLOUD_DB_USER: ${SECRET_SANJIU_GUANLAN_CLOUD_DB_USER:-}
   SECRET_SANJIU_GUANLAN_CLOUD_DB_PASSWORD: ${SECRET_SANJIU_GUANLAN_CLOUD_DB_PASSWORD:-}
@@ -125,6 +148,41 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+  minio:
+    profiles: ["attachments"]
+    image: ${MINIO_IMAGE:-minio/minio:latest}
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-enterprise_agent}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-enterprise_agent_change_me}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  minio-init:
+    profiles: ["attachments"]
+    image: ${MINIO_MC_IMAGE:-minio/mc:latest}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" &&
+        mc mb --ignore-existing "local/$${S3_BUCKET}" &&
+        mc anonymous set none "local/$${S3_BUCKET}"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-enterprise_agent}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-enterprise_agent_change_me}
+      S3_BUCKET: ${S3_BUCKET:-agent-attachments}
+    depends_on:
+      minio:
+        condition: service_healthy
 
   agent-test-mysql:
     profiles: ["agent-test-data"]
@@ -372,11 +430,35 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  attachment-worker:
+    profiles: ["attachments"]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: agent-worker
+    command: ["python", "-m", "app.workers.attachment_worker"]
+    environment:
+      <<: *worker-env
+      FEATURE_CONTINUOUS_CONVERSATION: "true"
+      FEATURE_MESSAGE_ATTACHMENTS: "true"
+      SEED_LOCAL_CONFIG: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
 volumes:
   postgres18-data:
     name: enterprise_agent_postgres18_data
   rabbitmq4-data:
     name: enterprise_agent_rabbitmq4_data
+  minio-data:
+    name: enterprise_agent_minio_data
   agent-test-mysql-data:
     name: enterprise_agent_agent_test_mysql_data
   agent-test-sqlserver-data:

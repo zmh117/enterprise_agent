@@ -7,7 +7,7 @@
 - 为钉钉群聊和私聊生成稳定、隔离的会话键：群聊按connector、project和群conversation复用session；私聊按connector、project、用户和机器人身份复用session。
 - 扩展Channel event和钉钉Stream解析，接收文本、JPEG/PNG/WebP图片以及DOCX、XLSX、PPTX、Markdown附件；首期明确拒绝旧版DOC/XLS/PPT及其他未支持格式。
 - 使用PostgreSQL保存session、消息、附件元数据、处理状态、提取文本和滚动摘要；使用私有S3兼容对象存储保存原始二进制，本地Compose提供MinIO。
-- 使用RabbitMQ异步处理附件，job在 `WAITING_INPUT` 等待输入就绪；队列只传内部ID，不传二进制、临时URL或token。
+- 使用RabbitMQ异步处理附件，job在 `WAITING_INPUT` 等待输入就绪；队列只传内部ID。下载凭证使用平台主密钥短期加密落库，下载完成或过期后清除，明文、二进制、临时URL和token不得进入队列、日志、审计或调试接口。
 - 使用受限Python解析器提取DOCX、XLSX、PPTX和Markdown文本；图片首期只做安全校验、去除元数据和存储，不承诺OCR或视觉理解。
 - Agent上下文由PostgreSQL中的滚动摘要、最近消息和有界附件文本组成；首期不引入Agent专用Redis、pgvector、Qdrant、OpenSearch、Weaviate、Tika、LibreOffice或ClamAV。
 - 为会话隔离、消息/附件幂等、对象存储、附件状态、上下文读取和失败投递建立安全审计及端到端验证。

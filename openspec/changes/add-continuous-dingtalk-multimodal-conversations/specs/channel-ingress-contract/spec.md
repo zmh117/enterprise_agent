@@ -17,12 +17,12 @@
 
 ## ADDED Requirements
 
-### Requirement: Channel附件信封不得泄漏短期凭证
-系统 SHALL 只在adapter控制范围内使用附件短期来源句柄，MUST NOT把临时URL、download code、session webhook或token写入数据库、RabbitMQ、日志或审计。
+### Requirement: Channel附件信封保护短期凭证
+系统 SHALL 只在受控媒体下载边界使用附件短期来源凭证。为支持可恢复异步下载，系统 MAY 使用平台主密钥短期加密凭证并保存类型和过期时间，但 MUST NOT 持久化明文或把明文/密文写入RabbitMQ、日志、审计、API或调试输出；终态或过期后 MUST 清除密文。
 
 #### Scenario: Adapter receives temporary media credential
 - **WHEN** 外部payload包含下载附件所需的短期凭证
-- **THEN** 持久化记录和日志只保留内部attachment ID及安全来源摘要
+- **THEN** 数据库只可保存短期密文、类型和过期时间，其他持久化输出只保留内部attachment ID及安全来源摘要
 
 ### Requirement: Channel附件事件保持端到端幂等
 系统 SHALL 将Channel、connector、外部事件、外部消息和附件序号纳入稳定幂等语义。

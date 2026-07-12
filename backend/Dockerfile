@@ -97,6 +97,7 @@ COPY backend/app/__init__.py backend/app/bootstrap.py /app/backend/app/
 COPY backend/app/shared /app/backend/app/shared
 COPY backend/app/modules/__init__.py /app/backend/app/modules/
 COPY backend/app/modules/agent /app/backend/app/modules/agent
+COPY backend/app/modules/attachments /app/backend/app/modules/attachments
 COPY backend/app/modules/audit /app/backend/app/modules/audit
 COPY backend/app/modules/channel /app/backend/app/modules/channel
 COPY backend/app/modules/delivery /app/backend/app/modules/delivery

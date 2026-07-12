@@ -5,7 +5,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from app.modules.job.domain.agent_job import AgentJob, AgentSession
+from app.modules.job.domain.agent_job import AgentJob, AgentSession, MessageAttachment
 from app.modules.job.domain.job_status import JobStatus, can_transition
 from app.shared.database import Database
 from app.shared.exceptions import NotFound, NonRetryableExecutionError
@@ -37,6 +37,9 @@ class AgentRepository:
         requester_display_name: str = "",
         routing_context: dict[str, Any] | None = None,
         reply_route: dict[str, Any] | None = None,
+        session_key: str = "",
+        conversation_type: str = "direct",
+        bot_identity: str = "",
     ) -> AgentSession:
         session_id = new_id("session")
         timestamp = now_iso()
@@ -45,13 +48,16 @@ class AgentRepository:
         requester_id = requester_id or dingding_user_id
         routing_context = routing_context or {"project_code": project_code}
         reply_route = reply_route or {"type": "dingtalk_conversation"}
+        session_key = session_key or f"legacy:{session_id}"
         self.database.execute(
             """
             insert into agent_session
               (id, dingding_conversation_id, dingding_user_id, source, project_code,
                source_channel, source_connector_id, external_conversation_id, requester_id,
-               requester_display_name, routing_context_json, reply_route_json, created_at, updated_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               requester_display_name, routing_context_json, reply_route_json, created_at, updated_at,
+               session_key, conversation_type, bot_identity)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            on conflict(session_key) do nothing
             """,
             (
                 session_id,
@@ -68,22 +74,17 @@ class AgentRepository:
                 json.dumps(reply_route, ensure_ascii=False),
                 timestamp,
                 timestamp,
+                session_key,
+                conversation_type,
+                bot_identity,
             ),
         )
-        return AgentSession(
-            id=session_id,
-            dingding_conversation_id=dingding_conversation_id,
-            dingding_user_id=dingding_user_id,
-            source=source,
-            project_code=project_code,
-            source_channel=source_channel,
-            source_connector_id=source_connector_id,
-            external_conversation_id=external_conversation_id,
-            requester_id=requester_id,
-            requester_display_name=requester_display_name,
-            routing_context=routing_context,
-            reply_route=reply_route,
-        )
+        row = self.database.execute_one("select id from agent_session where session_key = ?", (session_key,))
+        if not row:
+            raise NonRetryableExecutionError(
+                "Agent session could not be resolved", safe_message="Agent session could not be resolved"
+            )
+        return self.get_session(str(row["id"]))
 
     def create_job(
         self,
@@ -101,6 +102,7 @@ class AgentRepository:
         requester_id: str | None = None,
         routing_context: dict[str, Any] | None = None,
         reply_route: dict[str, Any] | None = None,
+        initial_status: JobStatus = JobStatus.PENDING,
     ) -> AgentJob:
         existing = self.get_job_by_idempotency_key(idempotency_key)
         if existing:
@@ -127,7 +129,7 @@ class AgentRepository:
                 project_code,
                 source,
                 user_message,
-                JobStatus.PENDING.value,
+                initial_status.value,
                 0,
                 max_retry_count,
                 source_channel,
@@ -141,16 +143,313 @@ class AgentRepository:
         )
         return self.get_job(job_id)
 
-    def add_message(self, *, session_id: str, job_id: str | None, role: str, content: str) -> str:
+    def add_message(
+        self,
+        *,
+        session_id: str,
+        job_id: str | None,
+        role: str,
+        content: str,
+        external_message_id: str = "",
+        sender_id: str = "",
+        sender_display_name: str = "",
+        message_type: str = "text",
+        content_status: str = "READY",
+        safe_metadata: dict[str, Any] | None = None,
+    ) -> str:
+        if external_message_id:
+            existing = self.database.execute_one(
+                "select id from agent_message where session_id = ? and external_message_id = ?",
+                (session_id, external_message_id),
+            )
+            if existing:
+                return str(existing["id"])
         message_id = new_id("msg")
+        sequence = self.database.execute_one(
+            """
+            update agent_session
+            set message_sequence = message_sequence + 1, last_message_at = ?, updated_at = ?
+            where id = ?
+            returning message_sequence
+            """,
+            (now_iso(), now_iso(), session_id),
+        )
+        if not sequence:
+            raise NotFound(f"Agent session not found: {session_id}")
         self.database.execute(
             """
-            insert into agent_message (id, session_id, job_id, role, content, created_at)
-            values (?, ?, ?, ?, ?, ?)
+            insert into agent_message
+              (id, session_id, job_id, role, content, created_at, external_message_id,
+               sender_id, sender_display_name, message_type, sequence_no, content_status,
+               safe_metadata_json)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (message_id, session_id, job_id, role, content, now_iso()),
+            (
+                message_id,
+                session_id,
+                job_id,
+                role,
+                content,
+                now_iso(),
+                external_message_id,
+                sender_id,
+                sender_display_name,
+                message_type,
+                int(sequence["message_sequence"]),
+                content_status,
+                json.dumps(safe_metadata or {}, ensure_ascii=False),
+            ),
         )
         return message_id
+
+    def add_attachment(
+        self,
+        *,
+        message_id: str,
+        job_id: str,
+        ordinal: int,
+        media_type: str,
+        file_name: str,
+        declared_mime: str = "",
+        declared_size: int | None = None,
+        credential_ciphertext: str = "",
+        credential_type: str = "",
+        credential_expires_at: str | None = None,
+    ) -> MessageAttachment:
+        existing = self.database.execute_one(
+            "select * from message_attachment where message_id = ? and ordinal = ?",
+            (message_id, ordinal),
+        )
+        if existing:
+            return self._attachment_from_row(existing)
+        attachment_id = new_id("attachment")
+        timestamp = now_iso()
+        self.database.execute(
+            """
+            insert into message_attachment
+              (id, message_id, job_id, ordinal, media_type, file_name, declared_mime,
+               declared_size, status, source_credential_ciphertext, source_credential_type,
+               source_credential_expires_at, created_at, updated_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?)
+            """,
+            (
+                attachment_id,
+                message_id,
+                job_id,
+                ordinal,
+                media_type,
+                file_name,
+                declared_mime,
+                declared_size,
+                credential_ciphertext,
+                credential_type,
+                credential_expires_at,
+                timestamp,
+                timestamp,
+            ),
+        )
+        return self.get_attachment(attachment_id)
+
+    def increment_attachment_retry(self, attachment_id: str) -> int:
+        row = self.database.execute_one(
+            """
+            update message_attachment set retry_count = retry_count + 1, updated_at = ?
+            where id = ? returning retry_count
+            """,
+            (now_iso(), attachment_id),
+        )
+        return int(row["retry_count"]) if row else 0
+
+    def get_attachment(self, attachment_id: str) -> MessageAttachment:
+        row = self.database.execute_one("select * from message_attachment where id = ?", (attachment_id,))
+        if not row:
+            raise NotFound(f"Message attachment not found: {attachment_id}")
+        return self._attachment_from_row(row)
+
+    def get_attachment_secret(self, attachment_id: str) -> dict[str, Any]:
+        row = self.database.execute_one(
+            """
+            select source_credential_ciphertext, source_credential_type,
+                   source_credential_expires_at
+            from message_attachment where id = ?
+            """,
+            (attachment_id,),
+        )
+        if not row:
+            raise NotFound(f"Message attachment not found: {attachment_id}")
+        return row
+
+    def list_attachments(self, job_id: str) -> list[MessageAttachment]:
+        rows = self.database.execute(
+            "select * from message_attachment where job_id = ? order by ordinal", (job_id,)
+        )
+        return [self._attachment_from_row(row) for row in rows]
+
+    def update_attachment(
+        self,
+        attachment_id: str,
+        *,
+        status: str,
+        detected_mime: str | None = None,
+        size_bytes: int | None = None,
+        sha256: str | None = None,
+        object_bucket: str | None = None,
+        object_key: str | None = None,
+        failure_code: str | None = None,
+        clear_credential: bool = False,
+    ) -> MessageAttachment:
+        terminal = status in {"READY", "REJECTED", "FAILED", "stored_not_interpreted"}
+        self.database.execute(
+            """
+            update message_attachment
+            set status = ?, detected_mime = coalesce(?, detected_mime),
+                size_bytes = coalesce(?, size_bytes), sha256 = coalesce(?, sha256),
+                object_bucket = coalesce(?, object_bucket), object_key = coalesce(?, object_key),
+                failure_code = coalesce(?, failure_code), updated_at = ?,
+                finished_at = case when ? then ? else finished_at end,
+                source_credential_ciphertext = case when ? then '' else source_credential_ciphertext end,
+                source_credential_type = case when ? then '' else source_credential_type end,
+                source_credential_expires_at = case when ? then null else source_credential_expires_at end
+            where id = ?
+            """,
+            (
+                status,
+                detected_mime,
+                size_bytes,
+                sha256,
+                object_bucket,
+                object_key,
+                failure_code,
+                now_iso(),
+                terminal,
+                now_iso(),
+                clear_credential or terminal,
+                clear_credential or terminal,
+                clear_credential or terminal,
+                attachment_id,
+            ),
+        )
+        return self.get_attachment(attachment_id)
+
+    def save_attachment_content(
+        self,
+        *,
+        attachment_id: str,
+        plain_text: str,
+        segments: list[dict[str, Any]],
+        parser_version: str,
+        truncated: bool,
+    ) -> None:
+        content_id = new_id("attachment_content")
+        self.database.execute(
+            """
+            insert into attachment_content
+              (id, attachment_id, plain_text, segments_json, parser_version,
+               char_count, truncated, created_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?)
+            on conflict(attachment_id) do update set
+              plain_text = excluded.plain_text,
+              segments_json = excluded.segments_json,
+              parser_version = excluded.parser_version,
+              char_count = excluded.char_count,
+              truncated = excluded.truncated
+            """,
+            (
+                content_id,
+                attachment_id,
+                plain_text,
+                json.dumps(segments, ensure_ascii=False),
+                parser_version,
+                len(plain_text),
+                int(truncated),
+                now_iso(),
+            ),
+        )
+
+    def list_messages(self, session_id: str, *, limit: int = 20) -> list[dict[str, Any]]:
+        rows = self.database.execute(
+            """
+            select id, session_id, job_id, role, content, external_message_id, sender_id,
+                   sender_display_name, message_type, sequence_no, content_status,
+                   safe_metadata_json, created_at
+            from agent_message where session_id = ?
+            order by sequence_no desc limit ?
+            """,
+            (session_id, limit),
+        )
+        return [
+            {**row, "safe_metadata": self._json_from_text(row.get("safe_metadata_json") or "{}")}
+            for row in reversed(rows)
+        ]
+
+    def list_attachment_context(self, job_id: str, *, max_chars: int) -> list[dict[str, Any]]:
+        rows = self.database.execute(
+            """
+            select a.id, a.file_name, a.status, a.failure_code, c.plain_text, c.truncated
+            from message_attachment a
+            left join attachment_content c on c.attachment_id = a.id
+            where a.job_id = ? order by a.ordinal
+            """,
+            (job_id,),
+        )
+        return [
+            {
+                "attachment_id": row["id"],
+                "file_name": row["file_name"],
+                "status": row["status"],
+                "failure_code": row.get("failure_code") or "",
+                "text": str(row.get("plain_text") or "")[:max_chars],
+                "truncated": bool(row.get("truncated"))
+                or len(str(row.get("plain_text") or "")) > max_chars,
+            }
+            for row in rows
+        ]
+
+    def list_expired_attachments(self, now: str) -> list[MessageAttachment]:
+        rows = self.database.execute(
+            """
+            select * from message_attachment
+            where expires_at is not null and expires_at <= ? and object_key <> ''
+              and status <> 'DELETED'
+            order by expires_at, id
+            """,
+            (now,),
+        )
+        return [self._attachment_from_row(row) for row in rows]
+
+    def mark_attachment_deleted(self, attachment_id: str) -> None:
+        self.database.execute(
+            """
+            update message_attachment
+            set status = 'DELETED', object_bucket = '', object_key = '', updated_at = ?,
+                finished_at = coalesce(finished_at, ?)
+            where id = ?
+            """,
+            (now_iso(), now_iso(), attachment_id),
+        )
+        self.database.execute(
+            "delete from attachment_content where attachment_id = ?", (attachment_id,)
+        )
+
+    def update_session_summary(
+        self,
+        session_id: str,
+        *,
+        expected_version: int,
+        summary_text: str,
+        through_sequence: int,
+    ) -> bool:
+        rows = self.database.execute(
+            """
+            update agent_session
+            set summary_text = ?, summary_through_sequence = ?,
+                summary_version = summary_version + 1, updated_at = ?
+            where id = ? and summary_version = ?
+            returning id
+            """,
+            (summary_text, through_sequence, now_iso(), session_id, expected_version),
+        )
+        return bool(rows)
 
     def add_step(self, *, job_id: str, step_type: str, title: str, content: str) -> str:
         step_id = new_id("step")
@@ -246,6 +545,12 @@ class AgentRepository:
             requester_display_name=row.get("requester_display_name") or "",
             routing_context=self._json_from_text(row.get("routing_context_json") or "{}"),
             reply_route=self._json_from_text(row.get("reply_route_json") or "{}"),
+            session_key=row.get("session_key") or f"legacy:{row['id']}",
+            conversation_type=row.get("conversation_type") or "direct",
+            bot_identity=row.get("bot_identity") or "",
+            summary_text=row.get("summary_text") or "",
+            summary_through_sequence=int(row.get("summary_through_sequence") or 0),
+            summary_version=int(row.get("summary_version") or 0),
         )
 
     def get_job_by_idempotency_key(self, idempotency_key: str) -> AgentJob | None:
@@ -498,6 +803,25 @@ class AgentRepository:
     def count_rows(self, table: str) -> int:
         row = self.database.execute_one(f"select count(*) as count from {table}")
         return int(row["count"]) if row else 0
+
+    def _attachment_from_row(self, row: dict[str, Any]) -> MessageAttachment:
+        return MessageAttachment(
+            id=str(row["id"]),
+            message_id=str(row["message_id"]),
+            job_id=str(row["job_id"]),
+            ordinal=int(row["ordinal"]),
+            media_type=str(row["media_type"]),
+            file_name=str(row["file_name"]),
+            declared_mime=str(row.get("declared_mime") or ""),
+            detected_mime=str(row.get("detected_mime") or ""),
+            declared_size=int(row["declared_size"]) if row.get("declared_size") is not None else None,
+            size_bytes=int(row["size_bytes"]) if row.get("size_bytes") is not None else None,
+            sha256=str(row.get("sha256") or ""),
+            object_bucket=str(row.get("object_bucket") or ""),
+            object_key=str(row.get("object_key") or ""),
+            status=str(row["status"]),
+            failure_code=str(row.get("failure_code") or ""),
+        )
 
     def _job_from_row(self, row: dict[str, Any]) -> AgentJob:
         return AgentJob(

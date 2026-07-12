@@ -36,8 +36,8 @@
 - **THEN** Stream入口先确认接收，job等待附件终态后再进入Agent队列
 
 ### Requirement: 钉钉媒体凭证保持短寿命
-系统 SHALL 使用受控钉钉客户端获取媒体，MUST NOT持久化或记录download code、临时URL、access token或session webhook。
+系统 SHALL 使用受控钉钉客户端获取媒体。download code MAY 使用平台主密钥短期加密落库以支持异步恢复，但明文和密文 MUST NOT进入队列、日志、审计、API或调试输出，并 MUST 在下载终态或过期后清除。临时URL、access token和session webhook MUST NOT作为媒体来源凭证持久化。
 
 #### Scenario: Media download succeeds
 - **WHEN** adapter使用有效临时凭证下载附件
-- **THEN** 系统只保存内部对象引用、散列和安全来源摘要并清除临时凭证
+- **THEN** 系统只保存内部对象引用、散列和安全来源摘要，并清除加密来源凭证

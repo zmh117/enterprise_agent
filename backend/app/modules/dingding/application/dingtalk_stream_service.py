@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.channel.application.channel_ingress_service import ChannelIngressService
 from app.modules.channel.domain.channel_event import (
+    ChannelAttachment,
     ChannelEvent,
     ChannelSource,
     ReplyRoute,
@@ -30,6 +32,9 @@ class DingTalkStreamIncomingMessage:
     robot_code: str = ""
     session_webhook: str = ""
     session_webhook_expired_time: str = ""
+    conversation_type: str = "direct"
+    bot_identity: str = ""
+    attachments: tuple[ChannelAttachment, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -68,6 +73,8 @@ class DingTalkStreamMessageService:
         default_service: str = "",
         default_open_conversation_id: str = "",
         default_robot_code: str = "",
+        attachments_enabled: bool = False,
+        attachment_credential_ttl_seconds: int = 900,
     ) -> None:
         self.channel_ingress_service = channel_ingress_service
         self.audit_service = audit_service
@@ -81,6 +88,8 @@ class DingTalkStreamMessageService:
         self.default_service = default_service
         self.default_open_conversation_id = default_open_conversation_id
         self.default_robot_code = default_robot_code
+        self.attachments_enabled = attachments_enabled
+        self.attachment_credential_ttl_seconds = attachment_credential_ttl_seconds
 
     def handle_callback(
         self,
@@ -222,12 +231,14 @@ class DingTalkStreamMessageService:
         )
 
     def parse_message(self, payload: dict[str, Any]) -> DingTalkStreamIncomingMessage:
-        content = _text_content(payload)
-        if content is None:
+        content = (_text_content(payload) or "").strip()
+        attachments = (
+            _attachments(payload, credential_ttl_seconds=self.attachment_credential_ttl_seconds)
+            if self.attachments_enabled
+            else ()
+        )
+        if not content and not attachments:
             raise UnsupportedDingTalkStreamEvent("Unsupported DingTalk Stream event")
-        content = content.strip()
-        if not content:
-            raise RejectedDingTalkStreamMessage("DingTalk Stream message content is empty")
 
         conversation_id = _first_text(
             payload,
@@ -259,6 +270,9 @@ class DingTalkStreamMessageService:
             "sessionWebhookExpiredTime",
             "session_webhook_expired_time",
         )
+        raw_conversation_type = _first_text(payload, "conversationType", "conversation_type")
+        conversation_type = "group" if raw_conversation_type == "2" else "direct"
+        bot_identity = _first_text(payload, "robotCode", "chatbotUserId", "chatbot_user_id")
 
         if not conversation_id:
             raise RejectedDingTalkStreamMessage("DingTalk Stream payload missing conversation id")
@@ -280,6 +294,9 @@ class DingTalkStreamMessageService:
             robot_code=robot_code,
             session_webhook=session_webhook,
             session_webhook_expired_time=session_webhook_expired_time,
+            conversation_type=conversation_type,
+            bot_identity=bot_identity,
+            attachments=attachments,
         )
 
     def to_channel_event(
@@ -306,6 +323,8 @@ class DingTalkStreamMessageService:
                     "open_conversation_id": message.open_conversation_id,
                     "robot_code": message.robot_code,
                     "session_webhook_expires": message.session_webhook_expired_time,
+                    "conversation_type": message.conversation_type,
+                    "bot_identity": message.bot_identity,
                 },
             ),
             delivery=delivery,
@@ -317,6 +336,7 @@ class DingTalkStreamMessageService:
                 service=str(routing_payload.get("service") or self.default_service),
             ),
             message=message.content,
+            attachments=message.attachments,
             raw_payload_summary=safe_payload_summary(payload),
             idempotency_key=f"dingding_stream:{source_connector_id}:{message.event_id}",
             correlation_id=correlation_id,
@@ -378,7 +398,7 @@ def _text_content(payload: dict[str, Any]) -> str | None:
         return text
     for key in ("content", "message", "message_text"):
         value = payload.get(key)
-        if value is not None:
+        if isinstance(value, str):
             return str(value)
     return None
 
@@ -393,3 +413,44 @@ def _first_text(payload: dict[str, Any], *keys: str) -> str:
 
 def _dict_value(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _attachments(
+    payload: dict[str, Any], *, credential_ttl_seconds: int
+) -> tuple[ChannelAttachment, ...]:
+    msgtype = _first_text(payload, "msgtype", "messageType").lower()
+    raw_items: list[dict[str, Any]] = []
+    if msgtype in {"picture", "image"}:
+        raw_items = [_dict_value(payload.get("content") or payload.get("image") or payload)]
+    elif msgtype in {"file", "document"}:
+        raw_items = [_dict_value(payload.get("content") or payload.get("file") or payload)]
+    elif msgtype == "richtext":
+        rich = _dict_value(payload.get("content") or payload).get("richText") or []
+        raw_items = [item for item in rich if isinstance(item, dict) and item.get("downloadCode")]
+    result: list[ChannelAttachment] = []
+    for index, item in enumerate(raw_items, start=1):
+        download_code = str(item.get("downloadCode") or "")
+        if not download_code:
+            continue
+        file_name = str(
+            item.get("fileName")
+            or item.get("filename")
+            or (f"image-{index}.png" if msgtype in {"picture", "image", "richtext"} else "")
+        )
+        if not file_name:
+            continue
+        suffix = file_name.lower().rsplit(".", 1)[-1] if "." in file_name else ""
+        media_type = "image" if suffix in {"jpg", "jpeg", "png", "webp"} else "document"
+        result.append(
+            ChannelAttachment(
+                media_type=media_type,
+                file_name=file_name,
+                source_credential=download_code,
+                declared_mime=str(item.get("contentType") or item.get("mimeType") or ""),
+                declared_size=(int(item["fileSize"]) if item.get("fileSize") is not None else None),
+                source_credential_expires_at=(
+                    datetime.now(UTC) + timedelta(seconds=credential_ttl_seconds)
+                ).isoformat(),
+            )
+        )
+    return tuple(result)

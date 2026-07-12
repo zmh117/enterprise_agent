@@ -1,0 +1,12 @@
+{
+  "conversationId": "group-conversation-redacted",
+  "chatbotUserId": "bot-user-redacted",
+  "msgId": "group-message-redacted",
+  "senderNick": "User B",
+  "senderStaffId": "local-user",
+  "conversationType": "2",
+  "conversationTitle": "Group Redacted",
+  "text": {"content": "请分析群里的这个问题"},
+  "robotCode": "robot-redacted",
+  "msgtype": "text"
+}
