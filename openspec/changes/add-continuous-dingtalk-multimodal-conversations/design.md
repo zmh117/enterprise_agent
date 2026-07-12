@@ -1,114 +1,112 @@
 ## Context
 
-当前钉钉 Stream adapter 只从 payload 提取文本，`ChannelEvent.message` 也是单字符串；`CreateAgentJobService` 对每个外部事件调用 `create_session()`，所以相同群聊或私聊的后续问题落入不同 session。`agent_message` 只保存 role/content，`AgentContextBuilder` 将会话摘要固定为“仅使用当前问题”。现有 PostgreSQL 已保存 session、message、job、工具调用和审计，是会话控制面的事实来源，但没有附件对象存储、媒体处理队列或会话读取模型。
+当前`DingTalkStreamMessageService`只产生字符串消息，`CreateAgentJobService`每次调用`create_session()`，`AgentContextBuilder`也明确只使用当前问题。项目已经使用PostgreSQL 18作为事务事实库、RabbitMQ 4作为异步通道并通过Loki查询日志；测试用Redis属于基地业务数据源，不能复用为Agent缓存。
 
-本变更涉及外部钉钉媒体下载、数据库模型、对象存储、异步处理、Agent上下文和数据安全。参与方包括钉钉用户、群成员、Agent API/worker、平台管理员及对象存储运维方。
+原方案同时引入MinIO、Tika/LibreOffice、ClamAV、OCR/视觉服务、复杂保留治理和47项任务，超过连续对话MVP的必要范围。本设计保留真实群聊/私聊连续性与附件存储，但把外部组件控制在PostgreSQL、RabbitMQ和MinIO，并通过应用端口保留后续替换能力。
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- 让同一钉钉群聊或私聊在明确隔离键下复用稳定 Agent session，并保留发送人和消息顺序。
-- 支持文本、常见图片、DOC/DOCX、XLS/XLSX、PPT/PPTX和Markdown消息附件。
-- 采用“PostgreSQL元数据与可检索文本 + S3兼容对象存储原文件”的分层存储。
-- 在不阻塞钉钉快速ACK的前提下完成附件下载、扫描、解析和Agent job调度。
-- 为Agent提供有界、可追溯、不会跨群或跨私聊泄漏的连续对话上下文。
-- 支持幂等、保留期、删除、失败恢复、审计和本地Docker验证。
+- 同一钉钉群聊或私聊稳定复用session，消息有序、带发送人且不跨范围泄漏。
+- PostgreSQL持久化文本、附件元数据、提取文本和滚动摘要，MinIO保存附件原文件。
+- 支持JPEG/PNG/WebP安全存储以及DOCX/XLSX/PPTX/Markdown的有界文本提取。
+- 附件异步处理不阻塞Stream ACK，Agent只在输入到达终态后执行。
+- 使用端口隔离对象存储、附件提取、摘要和未来记忆检索实现。
 
 **Non-Goals:**
 
-- 本变更不建设跨会话长期记忆、Embedding或向量检索。
-- 不支持音频、视频、压缩包、PDF、可执行文件、脚本、SVG或任意未知格式。
-- 不让Agent修改、覆盖或向钉钉回传用户附件。
-- 不执行Office宏、公式、外部链接、嵌入对象或Markdown中的远程内容。
-- 不自动合并历史上已经被拆分的旧session；旧记录保留可读，新消息使用新会话键。
+- 不建设跨session长期记忆、Embedding或向量/全文检索索引。
+- 不增加Agent专用Redis/Valkey、Qdrant、OpenSearch、Weaviate或Elasticsearch。
+- 不支持DOC/XLS/PPT旧格式、PDF、压缩包、音视频、SVG、脚本或可执行文件。
+- 不部署Tika、LibreOffice、ClamAV、OCR或视觉模型；图片首期可保存但不作为可理解文本注入Agent。
+- 不自动合并历史已拆分session，也不实现附件回传、在线预览或编辑。
 
 ## Decisions
 
-### 1. 会话身份由服务端生成稳定键
+### 1. PostgreSQL是会话唯一事实源，MVP不使用Redis缓存
 
-新增归一化的 `conversation_type=group|direct` 和不可逆 `session_key`：
+群聊session key由`source_channel + connector_id + project_code + group + external_conversation_id`生成；私聊key由`source_channel + connector_id + project_code + direct + requester_id + bot_identity`生成。数据库唯一约束与原子get-or-create处理并发，session内sequence保证消息顺序。
 
-- 群聊键输入：`source_channel + source_connector_id + project_code + group + external_conversation_id`。
-- 私聊键输入：`source_channel + source_connector_id + project_code + direct + requester_id + bot_identity`；外部conversation ID作为来源元数据保存，但不单独决定私聊归属。
+滚动摘要、摘要游标和最近消息均从PostgreSQL读取。应用层定义`ConversationRepository`和`ConversationCache`边界，但MVP使用`NoConversationCache`，避免缓存成为一致性前提。未来只有在测量到重复读取负载或需要分布式限流、流式状态时才接入独立Redis/Valkey。
 
-数据库对 `session_key` 建唯一约束，并使用原子 get-or-create。群聊中不同发送人共享同一session，但每条消息保存独立sender；私聊始终按用户隔离。选择服务端键而不是直接复用钉钉ID，是为了防止不同connector、项目或会话类型出现相同外部ID时串线。
+### 2. 通用Channel信封支持可选文本和附件
 
-### 2. 扩展通用Channel消息信封
+规范化消息包含可选文本、发送人、会话类型和附件列表，文本与附件不能同时为空。附件临时下载句柄只在adapter控制范围内使用；download code、临时URL、token和session webhook不进入数据库、RabbitMQ、日志或审计。
 
-将单字符串消息扩展为规范化消息：文本正文可为空，附件列表可为空，但二者不能同时为空。附件描述只包含稳定媒体类型、显示文件名、声明大小/MIME和供adapter立即换取文件的短期来源句柄。短期下载URL、download code、session webhook和token只在内存中流转，不写数据库、队列或日志。
+同一外部事件只创建一条message、若干attachment和一个job。Agent队列继续只传`job_id/correlation_id`，附件队列只传`attachment_id/correlation_id`。
 
-RabbitMQ Agent job消息仍只包含 `job_id` 和 `correlation_id`。附件处理使用独立的内部任务消息，只传 `attachment_id`，不传外部凭证或二进制。
+### 3. PostgreSQL保存元数据，MinIO保存原文件
 
-### 3. PostgreSQL与对象存储分层
+加法迁移扩展：
 
-数据库采用加法迁移：
+- `agent_session`：`session_key`、`conversation_type`、`summary_text`、`summary_through_sequence`、`summary_version`、`last_message_at`。
+- `agent_message`：外部消息ID、发送人、消息类型、sequence、内容状态和安全元数据。
+- `message_attachment`：文件名、声明/探测MIME、大小、SHA-256、bucket/key、处理状态、失败码、时间戳。
+- `attachment_content`：有界纯文本、分段信息、解析器版本、字符数和截断标记。
 
-- `agent_session` 增加 `session_key`、`conversation_type`、`summary_text`、`summary_through_sequence`、`summary_version`、`last_message_at`。
-- `agent_message` 增加 `external_message_id`、`sender_id`、`sender_display_name`、`message_type`、`sequence_no`、`content_status`、`safe_metadata_json`，并保留现有 `content` 兼容字段。
-- 新增 `message_attachment`，保存message归属、文件名、声明/探测MIME、大小、SHA-256、对象bucket/key、扫描与提取状态、失败码、提取文本引用、创建/完成/过期时间。
-- 大段提取文本保存到独立 `attachment_content`，包含纯文本、页/工作表/幻灯片等分段索引、解析器版本、字符数及截断标记。
+对象key使用内部attachment ID和散列，不使用用户文件名。bucket保持私有，Agent只读取数据库中的安全提取文本。定义`ObjectStorage`端口，MVP实现S3兼容adapter和本地MinIO；生产可以无业务改动地替换企业S3。
 
-原始二进制进入私有S3兼容bucket，不进入PostgreSQL、RabbitMQ或审计payload。对象key使用内部attachment ID和内容散列，不使用用户文件名。生产可以接入企业对象存储；本地Compose提供MinIO及幂等bucket初始化。
+### 4. MVP只解析现代、安全边界较清楚的格式
 
-相较把二进制写入PostgreSQL，此方案避免数据库膨胀和备份阻塞；相较只保存钉钉临时URL，此方案不依赖会过期的外部下载凭证。
+使用受限Python worker：
 
-### 4. 附件异步处理并对Agent job设置输入闸门
+- DOCX：提取段落和表格文本。
+- XLSX：只读、`data_only`方式按工作表和行列上限提取，不计算公式。
+- PPTX：按幻灯片提取文本形状内容。
+- Markdown：按纯文本读取，不渲染HTML、不加载远程资源。
+- JPEG/PNG/WebP：使用真实格式、大小和像素限制校验，重编码去除元数据后存储；首期不生成OCR/视觉描述。
 
-入口先完成认证、幂等检查、session解析、message/attachment元数据持久化并返回ACK。包含附件的job进入 `WAITING_INPUT`，附件任务执行以下状态机：
+所有格式执行扩展名/MIME一致性、数量、文件大小、解压后大小、页/行列/幻灯片和字符上限。宏格式、加密文档、嵌入对象、类型伪装和超限内容拒绝。worker使用非root、无外网、只读根文件系统、临时目录和CPU/内存/超时限制。
 
-`PENDING -> DOWNLOADING -> STORED -> SCANNING -> EXTRACTING -> READY`，失败终态为 `REJECTED` 或 `FAILED`。
+定义`AttachmentExtractor`和`MalwareScanner`端口，但MVP不以空扫描器伪装为“已扫描”；状态和审计只陈述已执行的格式校验/解析隔离。未来生产要求恶意软件扫描或旧Office支持时，再接入ClamAV和Tika/LibreOffice。
+
+### 5. 附件使用WAITING_INPUT输入闸门
+
+入口原子保存session、message、attachment和job后快速ACK。纯文本job直接PENDING；包含附件的job进入WAITING_INPUT。attachment状态为`PENDING -> DOWNLOADING -> STORED -> EXTRACTING -> READY`，失败终态为`REJECTED/FAILED`。
 
 所有附件到达终态后：
 
-- 有文本或至少一个READY附件时，job转为 `PENDING` 并发布到现有Agent队列；上下文明确列出不可用附件。
-- 没有任何可用输入时，job以安全原因失败并走现有结果投递，不调用模型。
+- 有文本或至少一个可用附件文本：job原子转PENDING并只发布一次。
+- 只有图片而没有文本：保留图片记录，但安全结束job并说明MVP暂不理解图片。
+- 文本加图片：使用文本执行，并明确图片未作为理解证据。
+- 全部附件失败且无文本：不调用模型，走现有安全失败投递。
 
-下载和处理按attachment ID幂等；重试必须校验已有对象SHA-256，不能制造重复对象或重复Agent job。相比在Stream回调里同步下载和解析，该方案保留快速ACK并隔离大文件失败。
+下载、对象写入、提取和job释放均按内部ID幂等。
 
-### 5. 内容安全与解析工具采用隔离端口
+### 6. 连续上下文使用滚动摘要加最近消息
 
-定义 `ObjectStorage`、`MediaDownloader`、`MalwareScanner`、`AttachmentExtractor` 应用端口。建议S3实现使用兼容客户端；Office解析通过无网络、只读根文件系统、受CPU/内存/超时限制的Apache Tika/LibreOffice提取容器；图片先用libmagic/Pillow验证并重编码去除元数据，再由受控OCR/视觉提取器生成文本；Markdown按受限字符集读取为纯文本，不渲染HTML或请求远程资源。
+`AgentContextBuilder`读取当前session的摘要、摘要游标后的最近消息和READY文本附件片段。群消息带发送人标签；上下文先做session/project/connector/请求人权限过滤，再按最近消息数、单附件字符数和总字符/token预算裁剪。
 
-默认策略可配置，初始建议为单文件25 MiB、单消息100 MiB、最多10个附件，以及页数、工作表行列、幻灯片数和提取字符数上限。以探测MIME为准，扩展名与MIME不一致、加密文档、宏/嵌入对象、恶意软件、压缩炸弹或超限内容进入REJECTED。实现前应通过真实钉钉payload夹具确认各媒体类型的下载句柄字段。
+定义`ConversationSummarizer`端口，以摘要版本和`summary_through_sequence`乐观更新。摘要失败时退化为最近消息窗口，不阻塞当前job。历史消息和附件都标记为不可信用户数据，不能改变系统安全规则或工具权限。
 
-### 6. 连续上下文由最近原文加滚动摘要组成
+### 7. 为长期记忆与检索预留端口但不提前部署
 
-`AgentContextBuilder` 按当前job的session读取：滚动摘要、摘要游标之后的最近消息、每条消息可用的附件提取片段。群聊消息必须带发送人标签；私聊不暴露其他用户内容。上下文先按范围和权限过滤，再按配置的消息数、单附件字符数和总token/字符预算截断。
+未来长期记忆通过`MemoryRepository`保存PostgreSQL事实，通过`EmbeddingProvider`生成向量，通过`MemoryRetrievalIndex`检索。MVP不创建memory表、不安装pgvector，也不创建空Qdrant/OpenSearch集成。应用模块不得把MinIO、未来Redis或检索引擎SDK类型泄漏到领域/应用层。
 
-当未摘要消息超过阈值时，通过可替换的 `ConversationSummarizer` 生成新摘要，并以乐观版本和 `summary_through_sequence` 原子推进；摘要失败不阻塞当前job，退化为最近消息窗口。附件内容被明确标记为“不可信用户数据”，不能覆盖系统提示、安全规则或工具策略。
-
-### 7. 生命周期、访问和审计
-
-原文件、提取文本、消息和会话分别使用可配置保留期；默认不做硬编码业务承诺。清理任务先标记过期，再删除对象，最后清除/匿名化数据库内容，过程可重试。对象bucket保持私有；Agent只接收经过权限过滤的提取文本，不接收对象URL或存储凭证。
-
-记录session命中/创建、附件下载、校验、扫描、提取、拒绝、上下文读取、过期和删除事件，但审计只保存ID、大小、类型、散列前缀和安全错误码，不保存正文、二进制、token或临时URL。
+升级顺序固定为：连续会话MVP → PostgreSQL长期记忆与pgvector → 有测量依据时增加Redis/Valkey、Qdrant或OpenSearch。
 
 ## Risks / Trade-offs
 
-- [钉钉群聊/私聊payload字段因消息类型或SDK版本不同] → 收集真实脱敏payload夹具，adapter内集中做版本兼容和契约测试，未知类型安全忽略。
-- [并发消息创建重复session或顺序错乱] → session_key唯一约束、数据库原子upsert、session内单调sequence及并发测试。
-- [附件下载凭证在异步处理前过期] → 入口在凭证有效窗口内启动受控下载任务；只在内存/短寿命加密任务上下文使用凭证，超时向用户明确报告重新上传。
-- [恶意Office或图片攻击解析器] → MIME探测、恶意软件扫描、隔离容器、无网络、资源上限、禁止宏和嵌入对象。
-- [长聊天和大表格挤爆模型上下文] → 分段提取、行列/字符上限、滚动摘要、总预算和截断标志。
-- [对象与数据库状态不一致] → 状态机、内容散列、幂等补偿和周期性孤儿对象核对。
-- [群聊上下文包含其他成员敏感信息] → 会话级权限策略、发送人归属、项目/connector隔离、可配置保留和删除审计。
-- [增加MinIO、扫描和提取服务提高运维成本] → 全部通过端口抽象；本地使用Compose，生产允许接企业S3和已有扫描/提取服务。
+- [真实钉钉payload字段与夹具不同] → 实施第一步收集脱敏群聊、私聊和媒体payload，集中在adapter做兼容。
+- [不使用Redis导致PostgreSQL读取增加] → 先测量上下文读取延迟；端口已经允许后续加入缓存，但PostgreSQL始终是事实源。
+- [不部署ClamAV仍存在恶意文件风险] → 只允许严格白名单格式、隔离解析、资源限制且不提供用户下载；生产开放下载或扩展格式前必须另行接入扫描。
+- [图片首期不能参与诊断] → 明确用户提示和状态，不让模型猜测；OCR/视觉理解作为独立后续能力。
+- [大工作簿或演示文稿耗尽资源] → 流式/只读解析、解压大小和结构上限、worker隔离、超时和文本截断。
+- [对象与数据库状态不一致] → 状态机、SHA-256、幂等补偿和只报告不自动删除的孤儿核对。
 
 ## Migration Plan
 
-1. 先部署对象存储、私有bucket、扫描/提取服务及健康检查，功能开关保持关闭。
-2. 执行加法数据库迁移；为旧session生成唯一legacy key，不尝试把历史会话自动合并。
-3. 部署支持新字段但仍按旧文本路径运行的API和worker，验证向后兼容。
-4. 启用附件下载/存储/提取，先观察模式记录状态但不注入Agent上下文。
-5. 启用稳定session复用和连续上下文，按connector灰度群聊与私聊。
-6. 运行真实钉钉文本、图片和各文档格式端到端测试，再扩大范围。
+1. 执行加法数据库迁移并为旧session生成唯一legacy key，不自动合并历史。
+2. 部署MinIO profile、私有bucket初始化和对象存储健康检查，连续会话/附件开关保持关闭。
+3. 部署兼容旧文本路径的新API和worker，先启用session复用与文本连续上下文。
+4. 启用现代文档和图片存储、异步提取及WAITING_INPUT闸门。
+5. 用真实脱敏群聊、私聊和各MVP附件完成端到端验证后再默认启用。
 
-回滚时关闭多模态和连续会话开关，停止新附件任务并恢复每请求新session；保留加法表列和已存对象，待确认无在途任务后按保留策略清理，不执行破坏性降级迁移。
+回滚通过功能开关恢复每请求新session并停止新附件任务；保留加法列、表和对象，确认无在途任务后按文档清理，不执行破坏性降级迁移。
 
 ## Open Questions
 
-- 生产环境使用现有企业S3兼容对象存储还是由本项目维护独立bucket，以及对应KMS/备份策略。
-- 原文件、提取文本和聊天消息的正式保留天数、法律保留及用户删除SLA。
-- 图片首期必须提供OCR/视觉描述，还是允许先完成安全存储并向Agent标记“图片内容尚不可读”。
-- 钉钉实际群聊、私聊、图片和文件Stream payload中的稳定会话类型及媒体下载字段，需要在实现任务开始时用脱敏真实样本锁定。
+- 生产环境最终使用企业S3兼容存储还是独立MinIO，以及对应备份、加密和保留策略。
+- 聊天消息、附件原文件和提取文本的正式保留天数。
+- 真实钉钉群聊、私聊、图片和文件Stream payload中的稳定会话类型及媒体下载字段，需要在apply的第一项任务中用脱敏样本确认。

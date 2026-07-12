@@ -303,3 +303,5 @@ curl --noproxy '\*' -s -X POST http://127.0.0.1:8000/api/platform/import/topolog
  -H 'content-type: application/json' \
  -H 'x-admin-user-id: local-user' \
  -d '{"path":"config/internal_platform_topology.example.yaml"}'
+
+docker compose --profile dingtalk-stream --profile internal-tools up -d
