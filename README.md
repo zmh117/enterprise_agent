@@ -46,6 +46,10 @@ Web 管理端后续可以调用 `/api/platform/secrets` 保存 API key、passwor
 
 ## 快速开始
 
+PostgreSQL 18 / RabbitMQ 4 的全新启动、已有数据迁移与回滚步骤见
+[Compose 基础设施升级手册](docs/compose-postgres18-rabbitmq4-upgrade.md)。已有 PostgreSQL 16
+数据时不要直接执行 `docker compose up`，必须先按手册备份和排空队列。
+
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'

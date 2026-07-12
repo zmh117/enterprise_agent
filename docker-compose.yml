@@ -98,13 +98,15 @@ x-worker-env: &worker-env
 
 services:
   postgres:
-    image: postgres:16
+    image: ${POSTGRES_IMAGE:-postgres:18}
     environment:
       POSTGRES_DB: enterprise_agent
       POSTGRES_USER: enterprise_agent
       POSTGRES_PASSWORD: enterprise_agent
     ports:
       - "5433:5432"
+    volumes:
+      - postgres18-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U enterprise_agent -d enterprise_agent"]
       interval: 5s
@@ -112,10 +114,12 @@ services:
       retries: 20
 
   rabbitmq:
-    image: rabbitmq:3-management
+    image: ${RABBITMQ_IMAGE:-rabbitmq:4-management}
     ports:
       - "5672:5672"
       - "15672:15672"
+    volumes:
+      - rabbitmq4-data:/var/lib/rabbitmq
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 5s
@@ -369,6 +373,10 @@ services:
         condition: service_healthy
 
 volumes:
+  postgres18-data:
+    name: enterprise_agent_postgres18_data
+  rabbitmq4-data:
+    name: enterprise_agent_rabbitmq4_data
   agent-test-mysql-data:
     name: enterprise_agent_agent_test_mysql_data
   agent-test-sqlserver-data:

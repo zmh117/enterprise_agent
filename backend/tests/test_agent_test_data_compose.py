@@ -28,6 +28,12 @@ class AgentTestDataComposeTests(unittest.TestCase):
             self.assertEqual(["agent-test-data"], services[name]["profiles"])
         self.assertIn("linux/amd64", services["agent-test-sqlserver"]["platform"])
         volumes = compose["volumes"]  # type: ignore[index]
+        agent_test_volume_keys = {
+            "agent-test-mysql-data",
+            "agent-test-sqlserver-data",
+            "agent-test-redis-mysql-data",
+            "agent-test-redis-sqlserver-data",
+        }
         self.assertEqual(
             {
                 "enterprise_agent_agent_test_mysql_data",
@@ -35,8 +41,10 @@ class AgentTestDataComposeTests(unittest.TestCase):
                 "enterprise_agent_agent_test_redis_mysql_data",
                 "enterprise_agent_agent_test_redis_sqlserver_data",
             },
-            {value["name"] for value in volumes.values()},
+            {volumes[key]["name"] for key in agent_test_volume_keys},
         )
+        self.assertEqual("enterprise_agent_postgres18_data", volumes["postgres18-data"]["name"])
+        self.assertEqual("enterprise_agent_rabbitmq4_data", volumes["rabbitmq4-data"]["name"])
 
     def test_runtime_services_do_not_receive_agent_test_admin_credentials(self) -> None:
         services = self._compose()["services"]  # type: ignore[index]
