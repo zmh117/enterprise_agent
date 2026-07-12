@@ -307,3 +307,6 @@ curl --noproxy '\*' -s -X POST http://127.0.0.1:8000/api/platform/import/topolog
  -d '{"path":"config/internal_platform_topology.example.yaml"}'
 
 docker compose --profile dingtalk-stream --profile internal-tools up -d
+docker compose --profile attachments --profile dingtalk-stream up -d --build
+docker compose --profile attachments ps
+docker compose --profile attachments logs --tail=100 attachment-worker

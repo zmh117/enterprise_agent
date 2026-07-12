@@ -52,7 +52,7 @@ docker compose --profile attachments ps
 docker compose --profile attachments logs --tail=100 attachment-worker
 ```
 
-MinIO API默认端口9000，控制台默认端口9001。bucket由`minio-init`幂等创建并保持匿名访问关闭。
+MinIO API 宿主机默认端口 **19000**，控制台 **19001**（容器内仍是 9000/9001；`S3_ENDPOINT_URL=http://minio:9000`）。若需改映射，设置 `MINIO_API_PORT` / `MINIO_CONSOLE_PORT`。bucket 由 `minio-init` 幂等创建并保持匿名访问关闭。
 
 ## 处理与恢复
 

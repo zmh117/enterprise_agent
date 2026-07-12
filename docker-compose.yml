@@ -150,15 +150,16 @@ services:
       retries: 20
 
   minio:
-    profiles: ["attachments"]
+    # profiles: ["attachments"]
     image: ${MINIO_IMAGE:-minio/minio:latest}
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${S3_ACCESS_KEY:-enterprise_agent}
       MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-enterprise_agent_change_me}
     ports:
-      - "${MINIO_API_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      # 宿主机默认避开常见 9000 占用；容器内仍是 9000/9001，S3_ENDPOINT_URL 继续用 http://minio:9000
+      - "${MINIO_API_PORT:-19000}:9000"
+      - "${MINIO_CONSOLE_PORT:-19001}:9001"
     volumes:
       - minio-data:/data
     healthcheck:
@@ -168,7 +169,7 @@ services:
       retries: 30
 
   minio-init:
-    profiles: ["attachments"]
+    # profiles: ["attachments"]
     image: ${MINIO_MC_IMAGE:-minio/mc:latest}
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -186,7 +187,7 @@ services:
 
   agent-test-mysql:
     profiles: ["agent-test-data"]
-    image: ${AGENT_TEST_MYSQL_IMAGE:-mysql:8.4}
+    image: ${AGENT_TEST_MYSQL_IMAGE:-mysql:8.0}
     environment:
       MYSQL_ROOT_PASSWORD: ${AGENT_TEST_MYSQL_ROOT_PASSWORD:-AgentTest_mysql_root_2026}
       MYSQL_DATABASE: ${AGENT_TEST_MYSQL_DATABASE:-agent_test}
@@ -355,7 +356,7 @@ services:
 
   # real-tools: 拓扑感知、多数据源、只读 Internal API Platform。
   internal-api-platform:
-    profiles: ["real-tools"]
+    # profiles: ["real-tools"]
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -400,7 +401,7 @@ services:
         condition: service_healthy
 
   dingtalk-stream-ingress:
-    profiles: ["dingtalk-stream"]
+    # profiles: ["dingtalk-stream"]
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -431,7 +432,7 @@ services:
         condition: service_healthy
 
   attachment-worker:
-    profiles: ["attachments"]
+    # profiles: ["attachments"]
     build:
       context: .
       dockerfile: backend/Dockerfile
