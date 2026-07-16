@@ -158,8 +158,8 @@ services:
       MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-enterprise_agent_change_me}
     ports:
       # 宿主机默认避开常见 9000 占用；容器内仍是 9000/9001，S3_ENDPOINT_URL 继续用 http://minio:9000
-      - "${MINIO_API_PORT:-19000}:9000"
-      - "${MINIO_CONSOLE_PORT:-19001}:9001"
+      - "${MINIO_API_PORT:-19000}:19000"
+      - "${MINIO_CONSOLE_PORT:-19001}:19001"
     volumes:
       - minio-data:/data
     healthcheck:
