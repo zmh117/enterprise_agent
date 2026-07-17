@@ -13,6 +13,8 @@ from app.modules.agent.infrastructure.claude_code_agent_client import (
 )
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
 from app.modules.agent.infrastructure.skill_loader import SkillLoader
+from app.modules.agent_config.application import AgentConfigService
+from app.modules.agent_config.infrastructure import AgentConfigRepository
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.attachments.credentials import AttachmentCredentialCipher
 from app.modules.attachments.dingtalk_downloader import DingTalkMediaDownloader
@@ -44,6 +46,13 @@ from app.modules.internal_tools.infrastructure.internal_api_client import (
     HttpInternalApiClient,
     InternalApiClient,
 )
+from app.modules.identity.application import (
+    AuthService,
+    AuthorizationEvaluator,
+    IdentityAdminService,
+    IdentityService,
+)
+from app.modules.identity.infrastructure import IdentityRepository
 from app.modules.job.application.create_agent_job_service import CreateAgentJobService
 from app.modules.job.application.job_retry_service import JobRetryService
 from app.modules.job.application.job_status_service import JobStatusService
@@ -71,7 +80,14 @@ class Container:
     settings: Settings
     database: Database
     agent_repository: AgentRepository
+    identity_repository: IdentityRepository
+    identity_service: IdentityService
+    identity_admin_service: IdentityAdminService
+    auth_service: AuthService
+    authorization_evaluator: AuthorizationEvaluator
+    agent_config_service: AgentConfigService
     audit_service: AuditService
+    audit_repository: AuditRepository
     permission_service: PermissionService
     publisher: MessagePublisher
     consumer: MessageConsumer | None
@@ -175,13 +191,45 @@ def _build_container(
     agent_repository = AgentRepository(database)
     audit_repository = AuditRepository(database)
     config_repository = ConfigurationRepository(database)
+    identity_repository = IdentityRepository(database)
     platform_config_repository = PlatformConfigRepository(database)
+    agent_config_repository = AgentConfigRepository(database)
     workflow_repository = WorkflowRepository(database)
     audit_service = AuditService(
         audit_repository,
         max_chars=settings.execution.max_tool_response_chars,
     )
-    permission_service = PermissionService(config_repository)
+    connector_registry = ConnectorRegistry(config_repository)
+    identity_service = IdentityService(
+        identity_repository,
+        audit_service,
+        connector_registry,
+    )
+    authorization_evaluator = AuthorizationEvaluator(identity_repository, audit_service)
+    permission_service = PermissionService(
+        config_repository,
+        authorization_evaluator=authorization_evaluator,
+        unified_enabled=settings.identity.enabled,
+        shadow_mode=settings.identity.permission_shadow_mode,
+    )
+    auth_service = AuthService(
+        identity_repository,
+        audit_service,
+        settings.identity,
+    )
+    identity_admin_service = IdentityAdminService(
+        identity_repository,
+        identity_service,
+        authorization_evaluator,
+        audit_service,
+    )
+    agent_config_service = AgentConfigService(
+        agent_config_repository,
+        authorization_evaluator,
+        audit_service,
+        SkillLoader(),
+        allowed_models={settings.claude_model},
+    )
     platform_config_service = PlatformConfigService(
         platform_config_repository,
         permission_service,
@@ -190,7 +238,6 @@ def _build_container(
         workflow_repository,
         permission_service,
     )
-    connector_registry = ConnectorRegistry(config_repository)
     credential_cipher = (
         AttachmentCredentialCipher(settings.app_config_master_key)
         if settings.attachments.enabled
@@ -206,10 +253,15 @@ def _build_container(
         credential_cipher=credential_cipher,
         continuous_enabled=settings.conversation.enabled,
         attachment_settings=settings.attachments,
+        agent_config_service=agent_config_service,
+        published_agent_runtime_enabled=settings.identity.published_agent_runtime_enabled,
+        default_agent_code=settings.identity.default_agent_code,
     )
     channel_ingress_service = ChannelIngressService(
         create_job_service=create_job_service,
         audit_service=audit_service,
+        identity_service=identity_service if settings.identity.enabled else None,
+        unified_identity_enabled=settings.identity.enabled,
     )
     dingtalk_service = DingTalkMessageService(
         secret=settings.dingtalk.secret,
@@ -244,6 +296,8 @@ def _build_container(
         default_robot_code=settings.dingtalk.default_robot_code,
         attachments_enabled=settings.attachments.enabled,
         attachment_credential_ttl_seconds=settings.attachments.credential_ttl_seconds,
+        connector_registry=connector_registry,
+        default_tenant_code=settings.identity.dingtalk_tenant_code,
     )
     internal_api_client: InternalApiClient = FakeInternalApiClient()
     if settings.feature_real_internal_tools and message_bus is None:
@@ -342,6 +396,7 @@ def _build_container(
                 if settings.conversation.enabled
                 else None
             ),
+            agent_config_service=agent_config_service,
         ),
         claude_client=claude_client,
         tool_registry=tool_registry,
@@ -357,7 +412,14 @@ def _build_container(
         settings=settings,
         database=database,
         agent_repository=agent_repository,
+        identity_repository=identity_repository,
+        identity_service=identity_service,
+        identity_admin_service=identity_admin_service,
+        auth_service=auth_service,
+        authorization_evaluator=authorization_evaluator,
+        agent_config_service=agent_config_service,
         audit_service=audit_service,
+        audit_repository=audit_repository,
         permission_service=permission_service,
         publisher=publisher,
         consumer=consumer,

@@ -8,6 +8,19 @@ x-runtime-env: &runtime-env
   APP_ENV: ${APP_ENV:-local}
   FEATURE_REAL_INTERNAL_TOOLS: ${FEATURE_REAL_INTERNAL_TOOLS:-true}
   FEATURE_REAL_CLAUDE: ${FEATURE_REAL_CLAUDE:-true}
+  FEATURE_UNIFIED_IDENTITY: ${FEATURE_UNIFIED_IDENTITY:-false}
+  FEATURE_WEB_ADMIN: ${FEATURE_WEB_ADMIN:-false}
+  FEATURE_PUBLISHED_AGENT_RUNTIME: ${FEATURE_PUBLISHED_AGENT_RUNTIME:-false}
+  FEATURE_TEST_IDENTITY_HEADERS: ${FEATURE_TEST_IDENTITY_HEADERS:-false}
+  FEATURE_PERMISSION_SHADOW_MODE: ${FEATURE_PERMISSION_SHADOW_MODE:-true}
+  WEB_SESSION_COOKIE_NAME: ${WEB_SESSION_COOKIE_NAME:-enterprise_agent_session}
+  WEB_CSRF_COOKIE_NAME: ${WEB_CSRF_COOKIE_NAME:-enterprise_agent_csrf}
+  WEB_SESSION_IDLE_SECONDS: ${WEB_SESSION_IDLE_SECONDS:-28800}
+  WEB_SESSION_ABSOLUTE_SECONDS: ${WEB_SESSION_ABSOLUTE_SECONDS:-604800}
+  WEB_COOKIE_SECURE: ${WEB_COOKIE_SECURE:-true}
+  WEB_ALLOWED_ORIGINS: ${WEB_ALLOWED_ORIGINS:-}
+  DINGTALK_TENANT_CODE: ${DINGTALK_TENANT_CODE:-default}
+  DEFAULT_AGENT_CODE: ${DEFAULT_AGENT_CODE:-default-diagnostic-agent}
   INTERNAL_API_BASE_URL: ${INTERNAL_API_BASE_URL:-http://internal-api-platform:9000}
   INTERNAL_API_AUTH_TOKEN: ${INTERNAL_API_AUTH_TOKEN:-}
   INTERNAL_API_TIMEOUT_SECONDS: ${INTERNAL_API_TIMEOUT_SECONDS:-10}
@@ -399,6 +412,15 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+
+  admin-web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "${ADMIN_WEB_PORT:-8080}:80"
+    depends_on:
+      - api-server
 
   dingtalk-stream-ingress:
     # profiles: ["dingtalk-stream"]

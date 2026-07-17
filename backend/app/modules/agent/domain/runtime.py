@@ -15,6 +15,12 @@ class AgentExecutionContext:
     skills: dict[str, str]
     retrieved_context: dict[str, Any]
     conversation_summary: str
+    business_instructions: str = ""
+    model: str = ""
+    max_turns: int | None = None
+    timeout_seconds: int | None = None
+    publication_id: str = ""
+    config_hash: str = ""
 
 
 @dataclass(frozen=True)

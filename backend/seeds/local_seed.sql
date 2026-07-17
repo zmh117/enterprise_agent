@@ -31,7 +31,7 @@ INSERT INTO integration_connector
 VALUES
   ('connector-debug-api', 'debug_api', 'debug-api', '', 1, '{}', 1, 0, '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('connector-dingtalk-stream-default', 'dingtalk_enterprise_stream', 'dingtalk-stream-default', '', 1,
-   '{"client_id_ref":"env:DINGTALK_CLIENT_ID"}',
+   '{"client_id_ref":"env:DINGTALK_CLIENT_ID","tenant_code":"default"}',
    1, 0, 'env:DINGTALK_CLIENT_SECRET', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('connector-dingtalk-enterprise-default', 'dingtalk_enterprise_robot', 'dingtalk-enterprise-default', '', 1,
    '{"client_id_ref":"env:DINGTALK_CLIENT_ID","default_open_conversation_id":"test-open-conversation","default_robot_code":"test-robot-code"}',
@@ -49,7 +49,7 @@ SET connector_type = 'dingtalk_enterprise_stream',
     allow_ingress = 1,
     allow_delivery = 0,
     secret_ref = 'env:DINGTALK_CLIENT_SECRET',
-    metadata = '{"client_id_ref":"env:DINGTALK_CLIENT_ID"}',
+    metadata = '{"client_id_ref":"env:DINGTALK_CLIENT_ID","tenant_code":"default"}',
     updated_at = CURRENT_TIMESTAMP
 WHERE id = 'connector-dingtalk-stream-default';
 
@@ -74,12 +74,132 @@ VALUES
   ('datasource-default', 'service', 'default', 'connector-internal-api', 1, '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 
+INSERT INTO app_user
+  (id, username, display_name, email, status, revision, created_at, updated_at)
+VALUES
+  ('user_local_admin', 'local-user', 'Local Administrator', '', 'enabled', 1,
+   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+ON CONFLICT(id) DO NOTHING;
+
+INSERT INTO user_password_credential
+  (user_id, password_hash, revision, password_changed_at, created_at, updated_at)
+VALUES
+  ('user_local_admin',
+   '$argon2id$v=19$m=65536,t=3,p=4$1tYap6oiM9gZNM+L+eV7EQ$TRvntO4ZwHDzf/JtP+kJq7NL0io0CDiGpVUOeySk9ys',
+   1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+ON CONFLICT(user_id) DO NOTHING;
+
+INSERT INTO user_external_identity
+  (id, user_id, provider, tenant_code, external_subject_id, connector_id,
+   display_name, status, verified_at, last_seen_at, metadata_json, revision,
+   created_at, updated_at)
+VALUES
+  ('identity_local_dingtalk', 'user_local_admin', 'dingtalk', 'default', 'local-user',
+   'connector-dingtalk-stream-default', 'Local Administrator', 'enabled',
+   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, '{}', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+ON CONFLICT(id) DO NOTHING;
+
+INSERT INTO rbac_role
+  (id, code, name, description, status, revision, created_at, updated_at)
+VALUES
+  ('role_platform_admin', 'platform-admin', '平台管理员',
+   'Manage users, roles, platform configuration and Agent publications',
+   'enabled', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+ON CONFLICT(id) DO NOTHING;
+
+INSERT INTO rbac_user_role
+  (id, user_id, role_id, status, revision, created_at, updated_at)
+VALUES
+  ('membership_local_admin', 'user_local_admin', 'role_platform_admin',
+   'enabled', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+ON CONFLICT(id) DO NOTHING;
+
+INSERT INTO permission_policy
+  (id, subject_type, subject_code, resource_type, resource_code, effect,
+   action, status, priority, revision, created_at, updated_at)
+VALUES
+  ('policy-role-admin-users', 'role', 'platform-admin', 'user', '*', 'allow',
+   'manage', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-roles', 'role', 'platform-admin', 'role', '*', 'allow',
+   'manage', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-identities', 'role', 'platform-admin', 'identity', '*', 'allow',
+   'manage', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-agent-edit', 'role', 'platform-admin', 'agent', '*', 'allow',
+   'edit', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-agent-publish', 'role', 'platform-admin', 'agent', '*', 'allow',
+   'publish', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-platform', 'role', 'platform-admin', 'platform_config', '*', 'allow',
+   'manage', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-secrets', 'role', 'platform-admin', 'secret', '*', 'allow',
+   'manage', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-secrets-read', 'role', 'platform-admin', 'secret', '*', 'allow',
+   'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-platform-read', 'role', 'platform-admin', 'platform_config', '*', 'allow',
+   'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-audit', 'role', 'platform-admin', 'audit', '*', 'allow',
+   'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-project', 'role', 'platform-admin', 'project', 'default', 'allow',
+   'use', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-tools', 'role', 'platform-admin', 'tool', '*', 'allow',
+   'use', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-agent-use', 'role', 'platform-admin', 'agent', 'default-diagnostic-agent',
+   'allow', 'use', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+ON CONFLICT(id) DO NOTHING;
+
+INSERT INTO agent_definition
+  (id, code, name, description, project_code, status, current_publication_id,
+   revision, created_by, created_at, updated_at)
+VALUES
+  ('agent_default_diagnostic', 'default-diagnostic-agent', '默认诊断 Agent',
+   'Enterprise internal read-only diagnostic Agent', 'default', 'enabled',
+   'agent_publication_default_v1', 1, 'user_local_admin', CURRENT_TIMESTAMP,
+   CURRENT_TIMESTAMP)
+ON CONFLICT(id) DO NOTHING;
+
+INSERT INTO agent_revision
+  (id, agent_id, revision, status, config_json, config_hash, validation_json,
+   created_by, created_at, updated_at)
+VALUES
+  ('agent_revision_default_v1', 'agent_default_diagnostic', 1, 'published',
+   '{"business_role":"Enterprise internal read-only diagnostic Agent","business_instructions":"Use evidence from approved internal tools and state uncertainty when evidence is incomplete.","model_policy":{"model":"claude-sonnet-4-20250514"},"execution":{"max_turns":12,"timeout_seconds":300},"tools":["get_er_context","get_business_flow_context","get_schema_directory","diagnose_loki_labels","diagnose_loki_label_values","diagnose_loki_probe","query_loki","query_database","query_redis_get","query_redis_scan"],"skills":[],"routing":{"project_code":"default"},"channels":{"ingress":["connector-dingtalk-stream-default"],"delivery":["connector-dingtalk-enterprise-default"]}}',
+   'acee515709597912f04ba4e181575c14314121f084dbe561e9e04599179df1b9',
+   '{"valid":true,"errors":[]}', 'user_local_admin', CURRENT_TIMESTAMP,
+   CURRENT_TIMESTAMP)
+ON CONFLICT(id) DO NOTHING;
+
+INSERT INTO agent_publication
+  (id, agent_id, revision_id, revision, schema_version, snapshot_json, config_hash,
+   status, published_by, published_at)
+VALUES
+  ('agent_publication_default_v1', 'agent_default_diagnostic',
+   'agent_revision_default_v1', 1, 1,
+   '{"business_role":"Enterprise internal read-only diagnostic Agent","business_instructions":"Use evidence from approved internal tools and state uncertainty when evidence is incomplete.","model_policy":{"model":"claude-sonnet-4-20250514"},"execution":{"max_turns":12,"timeout_seconds":300},"tools":["get_er_context","get_business_flow_context","get_schema_directory","diagnose_loki_labels","diagnose_loki_label_values","diagnose_loki_probe","query_loki","query_database","query_redis_get","query_redis_scan"],"skills":[],"routing":{"project_code":"default"},"channels":{"ingress":["connector-dingtalk-stream-default"],"delivery":["connector-dingtalk-enterprise-default"]}}',
+   'acee515709597912f04ba4e181575c14314121f084dbe561e9e04599179df1b9',
+   'active', 'user_local_admin', CURRENT_TIMESTAMP)
+ON CONFLICT(id) DO NOTHING;
+
+INSERT INTO agent_tool_binding (id, publication_id, tool_name, created_at)
+SELECT 'binding_default_' || name, 'agent_publication_default_v1', name, CURRENT_TIMESTAMP
+FROM tool_definition
+WHERE enabled = 1 AND read_only = 1
+ON CONFLICT(id) DO NOTHING;
+
+INSERT INTO agent_channel_binding
+  (id, publication_id, direction, connector_id, config_json, created_at)
+VALUES
+  ('binding_default_ingress_dingtalk', 'agent_publication_default_v1', 'ingress',
+   'connector-dingtalk-stream-default', '{}', CURRENT_TIMESTAMP),
+  ('binding_default_delivery_dingtalk', 'agent_publication_default_v1', 'delivery',
+   'connector-dingtalk-enterprise-default', '{}', CURRENT_TIMESTAMP)
+ON CONFLICT(id) DO NOTHING;
+
 INSERT INTO permission_policy
   (id, subject_type, subject_code, resource_type, resource_code, effect, created_at, updated_at)
 VALUES
   ('policy-user-local', 'user', 'local-user', 'project', 'default', 'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('policy-tool-local', 'user', 'local-user', 'tool', '*', 'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('policy-platform-config-local', 'user', 'local-user', 'platform_config', '*', 'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-secret-local', 'user', 'local-user', 'secret', '*', 'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('policy-user-grafana', 'user', 'grafana', 'project', 'default', 'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('policy-tool-grafana', 'user', 'grafana', 'tool', '*', 'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;

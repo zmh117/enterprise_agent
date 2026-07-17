@@ -83,6 +83,23 @@ class ObjectStorageSettings:
 
 
 @dataclass(frozen=True)
+class IdentitySettings:
+    enabled: bool = False
+    web_admin_enabled: bool = False
+    published_agent_runtime_enabled: bool = False
+    test_identity_headers_enabled: bool = False
+    permission_shadow_mode: bool = True
+    session_cookie_name: str = "enterprise_agent_session"
+    csrf_cookie_name: str = "enterprise_agent_csrf"
+    session_idle_seconds: int = 8 * 60 * 60
+    session_absolute_seconds: int = 7 * 24 * 60 * 60
+    cookie_secure: bool = True
+    allowed_origins: tuple[str, ...] = ()
+    dingtalk_tenant_code: str = "default"
+    default_agent_code: str = "default-diagnostic-agent"
+
+
+@dataclass(frozen=True)
 class DingTalkSettings:
     secret: str = ""
     callback_url: str = ""
@@ -152,6 +169,7 @@ class Settings:
     conversation: ConversationSettings = field(default_factory=ConversationSettings)
     attachments: AttachmentSettings = field(default_factory=AttachmentSettings)
     object_storage: ObjectStorageSettings = field(default_factory=ObjectStorageSettings)
+    identity: IdentitySettings = field(default_factory=IdentitySettings)
 
 
 def _csv_tuple(value: str) -> tuple[str, ...]:
@@ -318,5 +336,26 @@ def load_settings() -> Settings:
             bucket=os.getenv("S3_BUCKET", "agent-attachments"),
             region=os.getenv("S3_REGION", "us-east-1"),
             secure=_env_bool("S3_SECURE"),
+        ),
+        identity=IdentitySettings(
+            enabled=_env_bool("FEATURE_UNIFIED_IDENTITY"),
+            web_admin_enabled=_env_bool("FEATURE_WEB_ADMIN"),
+            published_agent_runtime_enabled=_env_bool("FEATURE_PUBLISHED_AGENT_RUNTIME"),
+            test_identity_headers_enabled=_env_bool("FEATURE_TEST_IDENTITY_HEADERS"),
+            permission_shadow_mode=_env_bool("FEATURE_PERMISSION_SHADOW_MODE", True),
+            session_cookie_name=os.getenv(
+                "WEB_SESSION_COOKIE_NAME", "enterprise_agent_session"
+            ),
+            csrf_cookie_name=os.getenv("WEB_CSRF_COOKIE_NAME", "enterprise_agent_csrf"),
+            session_idle_seconds=int(os.getenv("WEB_SESSION_IDLE_SECONDS", "28800")),
+            session_absolute_seconds=int(
+                os.getenv("WEB_SESSION_ABSOLUTE_SECONDS", "604800")
+            ),
+            cookie_secure=_env_bool("WEB_COOKIE_SECURE", True),
+            allowed_origins=_csv_tuple(os.getenv("WEB_ALLOWED_ORIGINS", "")),
+            dingtalk_tenant_code=os.getenv("DINGTALK_TENANT_CODE", "default"),
+            default_agent_code=os.getenv(
+                "DEFAULT_AGENT_CODE", "default-diagnostic-agent"
+            ),
         ),
     )

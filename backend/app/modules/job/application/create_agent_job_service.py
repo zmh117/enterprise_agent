@@ -5,6 +5,7 @@ from typing import Any
 import hashlib
 from pathlib import Path
 
+from app.modules.agent_config.application import AgentConfigService
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.attachments.credentials import AttachmentCredentialCipher
 from app.modules.channel.domain.channel_event import ChannelAttachment, ReplyRoute, RoutingContext
@@ -43,6 +44,8 @@ class CreateAgentJobCommand:
     conversation_type: str = "direct"
     bot_identity: str = ""
     attachments: tuple[ChannelAttachment, ...] = ()
+    external_identity_id: str = ""
+    agent_code: str = ""
 
     @property
     def effective_requester_id(self) -> str:
@@ -91,6 +94,9 @@ class CreateAgentJobService:
         credential_cipher: AttachmentCredentialCipher | None = None,
         continuous_enabled: bool = False,
         attachment_settings: AttachmentSettings | None = None,
+        agent_config_service: AgentConfigService | None = None,
+        published_agent_runtime_enabled: bool = False,
+        default_agent_code: str = "default-diagnostic-agent",
     ) -> None:
         self.repository = repository
         self.permission_service = permission_service
@@ -101,6 +107,9 @@ class CreateAgentJobService:
         self.credential_cipher = credential_cipher
         self.continuous_enabled = continuous_enabled
         self.attachment_settings = attachment_settings or AttachmentSettings()
+        self.agent_config_service = agent_config_service
+        self.published_agent_runtime_enabled = published_agent_runtime_enabled
+        self.default_agent_code = default_agent_code
 
     def execute(self, command: CreateAgentJobCommand) -> AgentJob:
         existing = self.repository.get_job_by_idempotency_key(command.idempotency_key)
@@ -130,6 +139,52 @@ class CreateAgentJobService:
             user_id=requester_id,
             project_code=project_code,
         )
+        agent_definition_id = ""
+        agent_publication_id = ""
+        agent_revision = 0
+        agent_config_hash = ""
+        if self.published_agent_runtime_enabled:
+            if self.agent_config_service is None:
+                raise NonRetryableExecutionError(
+                    "Published Agent runtime service is unavailable",
+                    safe_message="Agent configuration is unavailable",
+                )
+            agent_code = command.agent_code or self.default_agent_code
+            self.permission_service.require_action(
+                user_id=requester_id,
+                resource_type="agent",
+                resource_code=agent_code,
+                action="use",
+            )
+            definition = self.agent_config_service.repository.get_definition(agent_code)
+            publication = self.agent_config_service.current_publication(agent_code)
+            agent_definition_id = str(definition["id"])
+            agent_publication_id = str(publication["id"])
+            agent_revision = int(publication["revision"])
+            agent_config_hash = str(publication["config_hash"])
+            if command.source_connector_id and not self.agent_config_service.connector_allowed(
+                publication_id=agent_publication_id,
+                direction="ingress",
+                connector_id=command.source_connector_id,
+            ):
+                raise NonRetryableExecutionError(
+                    "Source connector is not assigned to the Agent publication",
+                    safe_message="Agent is not available on this channel",
+                )
+            delivery_connector_id = str(reply_route.get("connector_id") or "")
+            if (
+                reply_route.get("type") != "none"
+                and delivery_connector_id
+                and not self.agent_config_service.connector_allowed(
+                    publication_id=agent_publication_id,
+                    direction="delivery",
+                    connector_id=delivery_connector_id,
+                )
+            ):
+                raise NonRetryableExecutionError(
+                    "Delivery connector is not assigned to the Agent publication",
+                    safe_message="Agent result delivery is not configured for this channel",
+                )
         if command.attachments and self.credential_cipher is None:
             raise NonRetryableExecutionError(
                 "Attachment credential encryption is unavailable",
@@ -162,6 +217,7 @@ class CreateAgentJobService:
                 session_key=session_key,
                 conversation_type=command.conversation_type,
                 bot_identity=command.bot_identity,
+                external_identity_id=command.external_identity_id,
             )
             job = self.repository.create_job(
                 session_id=session.id,
@@ -180,6 +236,12 @@ class CreateAgentJobService:
                 initial_status=(
                     JobStatus.WAITING_INPUT if command.attachments else JobStatus.PENDING
                 ),
+                internal_user_id=requester_id,
+                external_identity_id=command.external_identity_id,
+                agent_definition_id=agent_definition_id,
+                agent_publication_id=agent_publication_id,
+                agent_revision=agent_revision,
+                agent_config_hash=agent_config_hash,
             )
             message_id = self.repository.add_message(
                 session_id=session.id,
@@ -220,6 +282,9 @@ class CreateAgentJobService:
                     "source_channel": source_channel,
                     "source_connector_id": command.source_connector_id,
                     "external_event_id": command.external_event_id,
+                    "agent_publication_id": agent_publication_id,
+                    "agent_revision": agent_revision,
+                    "agent_config_hash": agent_config_hash,
                 },
             )
         for attachment_id in attachment_ids:

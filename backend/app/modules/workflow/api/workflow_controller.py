@@ -5,6 +5,11 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.bootstrap import Container
+from app.modules.identity.api.dependencies import (
+    current_principal,
+    optional_legacy_actor,
+    require_csrf,
+)
 from app.shared.exceptions import AppError, NotFound, PermissionDenied
 
 
@@ -16,9 +21,12 @@ def _container(request: Request) -> Container:
 
 
 def _actor(request: Request) -> str:
-    return (
-        request.headers.get("x-admin-user-id") or request.headers.get("x-agent-user-id") or ""
-    ).strip()
+    settings = _container(request).settings.identity
+    if settings.enabled or settings.web_admin_enabled:
+        principal = current_principal(request)
+        require_csrf(request, principal)
+        return principal.user_id
+    return optional_legacy_actor(request)
 
 
 def _handle(exc: Exception) -> HTTPException:

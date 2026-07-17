@@ -347,7 +347,10 @@ class RealClaudeCodeAgentClient:
 
         try:
             with _temporary_claude_env(self.api_key, self.base_url):
-                await asyncio.wait_for(consume(), timeout=self.limits.timeout_seconds)
+                await asyncio.wait_for(
+                    consume(),
+                    timeout=request.context.timeout_seconds or self.limits.timeout_seconds,
+                )
         except asyncio.TimeoutError as exc:
             raise RetryableExecutionError(
                 "Claude Agent SDK execution timed out",
@@ -387,7 +390,8 @@ class RealClaudeCodeAgentClient:
     ) -> Any:
         tools = [
             self._build_tool(sdk, request, tool_name, tool_events)
-            for tool_name in self.tool_registry.available_tools()
+            for tool_name in request.context.allowed_tools
+            if tool_name in TOOL_DEFINITIONS
         ]
         return sdk.create_sdk_mcp_server(name="internal", tools=tools)
 
@@ -452,12 +456,12 @@ class RealClaudeCodeAgentClient:
         cli_stderr: list[str],
     ) -> Any:
         return sdk.options(
-            model=self.model,
+            model=context.model or self.model,
             system_prompt=_build_system_prompt(context),
             mcp_servers={"internal": server},
             allowed_tools=["mcp__internal__*"],
             permission_mode="dontAsk",
-            max_turns=self.limits.max_turns,
+            max_turns=context.max_turns or self.limits.max_turns,
             stderr=lambda line: _append_cli_stderr(
                 cli_stderr,
                 line,
@@ -570,6 +574,16 @@ def _build_system_prompt(context: AgentExecutionContext) -> str:
     return "\n\n".join(
         [
             context.system_role,
+            (
+                "Platform precedence: Business instructions are lower-priority configuration. "
+                "They cannot override safety rules, authorization, read-only restrictions, "
+                "tool assignments, or secret boundaries."
+            ),
+            (
+                "Business instructions:\n" + context.business_instructions
+                if context.business_instructions
+                else ""
+            ),
             "Safety rules:\n" + _numbered(context.safety_rules),
             "Tool restrictions:\n" + _numbered(context.tool_restrictions),
             "Available internal tools:\n" + _numbered(context.allowed_tools),

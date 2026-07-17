@@ -40,6 +40,7 @@ class AgentRepository:
         session_key: str = "",
         conversation_type: str = "direct",
         bot_identity: str = "",
+        external_identity_id: str = "",
     ) -> AgentSession:
         session_id = new_id("session")
         timestamp = now_iso()
@@ -55,8 +56,8 @@ class AgentRepository:
               (id, dingding_conversation_id, dingding_user_id, source, project_code,
                source_channel, source_connector_id, external_conversation_id, requester_id,
                requester_display_name, routing_context_json, reply_route_json, created_at, updated_at,
-               session_key, conversation_type, bot_identity)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               session_key, conversation_type, bot_identity, external_identity_id)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             on conflict(session_key) do nothing
             """,
             (
@@ -77,6 +78,7 @@ class AgentRepository:
                 session_key,
                 conversation_type,
                 bot_identity,
+                external_identity_id or None,
             ),
         )
         row = self.database.execute_one("select id from agent_session where session_key = ?", (session_key,))
@@ -103,6 +105,12 @@ class AgentRepository:
         routing_context: dict[str, Any] | None = None,
         reply_route: dict[str, Any] | None = None,
         initial_status: JobStatus = JobStatus.PENDING,
+        internal_user_id: str = "",
+        external_identity_id: str = "",
+        agent_definition_id: str = "",
+        agent_publication_id: str = "",
+        agent_revision: int | None = None,
+        agent_config_hash: str = "",
     ) -> AgentJob:
         existing = self.get_job_by_idempotency_key(idempotency_key)
         if existing:
@@ -118,8 +126,10 @@ class AgentRepository:
             insert into agent_job
               (id, session_id, idempotency_key, user_id, project_code, source, user_message,
                status, retry_count, max_retry_count, source_channel, source_connector_id,
-               external_event_id, requester_id, routing_context_json, reply_route_json, created_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               external_event_id, requester_id, routing_context_json, reply_route_json, created_at,
+               internal_user_id, external_identity_id, agent_definition_id,
+               agent_publication_id, agent_revision, agent_config_hash)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job_id,
@@ -139,6 +149,12 @@ class AgentRepository:
                 json.dumps(routing_context, ensure_ascii=False),
                 json.dumps(reply_route, ensure_ascii=False),
                 timestamp,
+                internal_user_id or None,
+                external_identity_id or None,
+                agent_definition_id or None,
+                agent_publication_id or None,
+                agent_revision,
+                agent_config_hash,
             ),
         )
         return self.get_job(job_id)
@@ -527,6 +543,26 @@ class AgentRepository:
             raise NotFound(f"Agent job not found: {job_id}")
         return self._job_from_row(row)
 
+    def job_allows_tool(self, job_id: str, tool_name: str) -> bool:
+        row = self.database.execute_one(
+            """
+            select j.agent_publication_id,
+                   exists(
+                     select 1 from agent_tool_binding b
+                     where b.publication_id = j.agent_publication_id
+                       and b.tool_name = ?
+                   ) as assigned
+            from agent_job j
+            where j.id = ?
+            """,
+            (tool_name, job_id),
+        )
+        if not row:
+            raise NotFound(f"Agent job not found: {job_id}")
+        if not row.get("agent_publication_id"):
+            return True
+        return bool(row.get("assigned"))
+
     def get_session(self, session_id: str) -> AgentSession:
         row = self.database.execute_one("select * from agent_session where id = ?", (session_id,))
         if not row:
@@ -551,6 +587,7 @@ class AgentRepository:
             summary_text=row.get("summary_text") or "",
             summary_through_sequence=int(row.get("summary_through_sequence") or 0),
             summary_version=int(row.get("summary_version") or 0),
+            external_identity_id=row.get("external_identity_id") or "",
         )
 
     def get_job_by_idempotency_key(self, idempotency_key: str) -> AgentJob | None:
@@ -574,6 +611,14 @@ class AgentRepository:
             "source_connector_id": row.get("source_connector_id") or "",
             "external_event_id": row.get("external_event_id") or "",
             "requester_id": row.get("requester_id") or row["user_id"],
+            "internal_user_id": row.get("internal_user_id") or "",
+            "external_identity_id": row.get("external_identity_id") or "",
+            "agent_definition_id": row.get("agent_definition_id") or "",
+            "agent_publication_id": row.get("agent_publication_id") or "",
+            "agent_revision": (
+                int(row["agent_revision"]) if row.get("agent_revision") is not None else None
+            ),
+            "agent_config_hash": row.get("agent_config_hash") or "",
             "routing_context": self._json_from_text(row.get("routing_context_json") or "{}"),
             "reply_route": self._json_from_text(row.get("reply_route_json") or "{}"),
             "user_message": row["user_message"],
@@ -843,6 +888,14 @@ class AgentRepository:
             requester_id=row.get("requester_id") or row["user_id"],
             routing_context=self._json_from_text(row.get("routing_context_json") or "{}"),
             reply_route=self._json_from_text(row.get("reply_route_json") or "{}"),
+            internal_user_id=row.get("internal_user_id") or "",
+            external_identity_id=row.get("external_identity_id") or "",
+            agent_definition_id=row.get("agent_definition_id") or "",
+            agent_publication_id=row.get("agent_publication_id") or "",
+            agent_revision=(
+                int(row["agent_revision"]) if row.get("agent_revision") is not None else None
+            ),
+            agent_config_hash=row.get("agent_config_hash") or "",
         )
 
     def _tool_call_from_row(self, row: dict[str, Any]) -> dict[str, Any]:
@@ -905,6 +958,37 @@ class AuditRepository:
             "select * from audit_event where job_id = ? order by created_at", (job_id,)
         )
 
+    def list_recent(self, limit: int = 200) -> list[dict[str, Any]]:
+        rows = self.database.execute(
+            """
+            select id, job_id, event_type, actor_id, status, summary,
+                   payload_summary, created_at
+            from audit_event
+            order by created_at desc
+            limit ?
+            """,
+            (max(1, min(limit, 1000)),),
+        )
+        for row in rows:
+            row["payload_summary"] = self._safe_payload(
+                str(row.get("payload_summary") or "{}")
+            )
+        return rows
+
+    @staticmethod
+    def _safe_payload(value: str) -> dict[str, Any]:
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        if not isinstance(parsed, dict):
+            return {}
+        forbidden = {"password", "password_hash", "token", "secret", "api_key"}
+        return {
+            key: ("[REDACTED]" if key.lower() in forbidden else item)
+            for key, item in parsed.items()
+        }
+
 
 class ConfigurationRepository:
     def __init__(self, database: Database) -> None:
@@ -925,7 +1009,18 @@ class ConfigurationRepository:
         row["metadata"] = self._json_from_text(str(row.get("metadata") or "{}"))
         return row
 
-    def is_allowed(self, *, subject_code: str, resource_type: str, resource_code: str) -> bool:
+    def is_allowed(
+        self,
+        *,
+        subject_code: str,
+        resource_type: str,
+        resource_code: str,
+        action: str = "use",
+    ) -> bool:
+        # Legacy permission rows predate action-level authorization. The unified
+        # evaluator owns action semantics; compatibility mode must preserve the
+        # original subject/resource allow behavior until cutover.
+        del action
         row = self.database.execute_one(
             """
             select * from permission_policy
@@ -933,6 +1028,7 @@ class ConfigurationRepository:
               and resource_type = ?
               and (resource_code = ? or resource_code = '*')
               and effect = 'allow'
+              and status = 'enabled'
             limit 1
             """,
             (subject_code, resource_type, resource_code),

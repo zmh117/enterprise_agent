@@ -6,6 +6,12 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.bootstrap import Container
+from app.modules.identity.api.dependencies import (
+    current_principal,
+    optional_legacy_actor,
+    require_action,
+    require_csrf,
+)
 from app.shared.exceptions import AppError, NotFound, PermissionDenied
 
 
@@ -17,9 +23,23 @@ def _container(request: Request) -> Container:
 
 
 def _actor(request: Request) -> str:
-    return (
-        request.headers.get("x-admin-user-id") or request.headers.get("x-agent-user-id") or ""
-    ).strip()
+    settings = _container(request).settings.identity
+    if settings.enabled or settings.web_admin_enabled:
+        principal = current_principal(request)
+        require_csrf(request, principal)
+        return principal.user_id
+    return optional_legacy_actor(request)
+
+
+def _require_management_read(request: Request, *, resource_type: str) -> None:
+    settings = _container(request).settings.identity
+    if settings.enabled or settings.web_admin_enabled:
+        require_action(
+            request,
+            resource_type=resource_type,
+            resource_code="*",
+            action="read",
+        )
 
 
 def _correlation_id(request: Request) -> str:
@@ -148,6 +168,7 @@ def build_platform_config_router() -> APIRouter:
         request: Request,
         include_disabled: bool = Query(default=True),
     ) -> dict[str, Any]:
+        _require_management_read(request, resource_type="secret")
         service = _container(request).platform_config_service
         return {
             "secret_references": service.list_secret_references(include_disabled=include_disabled)
@@ -170,6 +191,7 @@ def build_platform_config_router() -> APIRouter:
         request: Request,
         include_disabled: bool = Query(default=True),
     ) -> dict[str, Any]:
+        _require_management_read(request, resource_type="secret")
         service = _container(request).platform_config_service
         return {"secrets": service.list_platform_secrets(include_disabled=include_disabled)}
 
@@ -187,6 +209,7 @@ def build_platform_config_router() -> APIRouter:
 
     @router.get("/secrets/{code}")
     def get_platform_secret(request: Request, code: str) -> dict[str, Any]:
+        _require_management_read(request, resource_type="secret")
         try:
             entity = _container(request).platform_config_service.get_platform_secret(code)
         except Exception as exc:
@@ -225,6 +248,7 @@ def build_platform_config_router() -> APIRouter:
         request: Request,
         include_disabled: bool = Query(default=True),
     ) -> dict[str, Any]:
+        _require_management_read(request, resource_type="platform_config")
         service = _container(request).platform_config_service
         service.ensure_runtime_config_definitions()
         return {
@@ -252,6 +276,7 @@ def build_platform_config_router() -> APIRouter:
         request: Request,
         include_disabled: bool = Query(default=True),
     ) -> dict[str, Any]:
+        _require_management_read(request, resource_type="platform_config")
         service = _container(request).platform_config_service
         return {"values": service.list_runtime_config_values(include_disabled=include_disabled)}
 
@@ -283,6 +308,7 @@ def build_platform_config_router() -> APIRouter:
         workshop: str = "",
         connector: str = "",
     ) -> dict[str, Any]:
+        _require_management_read(request, resource_type="platform_config")
         scopes = {
             "project": project,
             "environment": environment,
@@ -299,6 +325,7 @@ def build_platform_config_router() -> APIRouter:
 
     @router.get("/runtime-config/env-migration")
     def runtime_config_env_migration(request: Request) -> dict[str, Any]:
+        _require_management_read(request, resource_type="platform_config")
         return {
             "items": _container(request).platform_config_service.runtime_config_env_migration()
         }
@@ -308,6 +335,7 @@ def build_platform_config_router() -> APIRouter:
         request: Request,
         include_disabled: bool = Query(default=True),
     ) -> dict[str, Any]:
+        _require_management_read(request, resource_type="platform_config")
         service = _container(request).platform_config_service
         return {
             "resource_bindings": service.list_resource_bindings(include_disabled=include_disabled)
@@ -338,6 +366,7 @@ def build_platform_config_router() -> APIRouter:
         request: Request,
         include_disabled: bool = Query(default=True),
     ) -> dict[str, Any]:
+        _require_management_read(request, resource_type="platform_config")
         service = _container(request).platform_config_service
         return {"access_grants": service.list_access_grants(include_disabled=include_disabled)}
 

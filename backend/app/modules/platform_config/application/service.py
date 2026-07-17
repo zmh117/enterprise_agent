@@ -57,15 +57,25 @@ class PlatformConfigService:
                 "Platform config actor is required",
                 safe_message="Platform config actor is required",
             )
-        if not self.permission_service.config_repository.is_allowed(
-            subject_code=actor_id,
+        self.permission_service.require_action(
+            user_id=actor_id,
             resource_type="platform_config",
             resource_code="*",
-        ):
+            action="manage",
+        )
+
+    def require_secret_admin(self, actor_id: str) -> None:
+        if not actor_id:
             raise PermissionDenied(
-                f"User {actor_id} is not allowed to manage platform config",
-                safe_message="User is not allowed to manage platform config",
+                "Secret administrator actor is required",
+                safe_message="Secret administrator actor is required",
             )
+        self.permission_service.require_action(
+            user_id=actor_id,
+            resource_type="secret",
+            resource_code="*",
+            action="manage",
+        )
 
     def list_environments(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
         return self.repository.list_environments(include_disabled=include_disabled)
@@ -223,7 +233,7 @@ class PlatformConfigService:
     def upsert_secret_reference(
         self, payload: dict[str, Any], *, actor_id: str, correlation_id: str = ""
     ) -> dict[str, Any]:
-        self.require_admin(actor_id)
+        self.require_secret_admin(actor_id)
         code = validate_code(str(payload.get("code") or ""))
         ref = validate_secret_ref(str(payload.get("ref") or ""))
         provider = validate_secret_provider(str(payload.get("provider") or ref.split(":", 1)[0]))
@@ -256,7 +266,7 @@ class PlatformConfigService:
     def create_platform_secret(
         self, payload: dict[str, Any], *, actor_id: str, correlation_id: str = ""
     ) -> dict[str, Any]:
-        self.require_admin(actor_id)
+        self.require_secret_admin(actor_id)
         code = validate_code(str(payload.get("code") or ""))
         before = self.repository.get_platform_secret_by_code(code)
         secret = self._secret_provider().create_secret(
@@ -273,7 +283,7 @@ class PlatformConfigService:
     def rotate_platform_secret(
         self, code: str, payload: dict[str, Any], *, actor_id: str, correlation_id: str = ""
     ) -> dict[str, Any]:
-        self.require_admin(actor_id)
+        self.require_secret_admin(actor_id)
         before = self.repository.get_platform_secret_by_code(validate_code(code))
         secret = self._secret_provider().rotate_secret(
             code=code,
@@ -287,7 +297,7 @@ class PlatformConfigService:
     def disable_platform_secret(
         self, code: str, *, actor_id: str, correlation_id: str = ""
     ) -> dict[str, Any]:
-        self.require_admin(actor_id)
+        self.require_secret_admin(actor_id)
         before = self.repository.get_platform_secret_by_code(validate_code(code))
         secret = self._secret_provider().disable_secret(code=code, actor_id=actor_id)
         public = self._public_secret(secret)

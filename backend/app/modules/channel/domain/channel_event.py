@@ -4,6 +4,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, cast
 
+from app.modules.identity.domain import ExternalIdentityDescriptor
+
 
 @dataclass(frozen=True)
 class ChannelSource:
@@ -13,6 +15,7 @@ class ChannelSource:
     actor_id: str
     conversation_id: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
+    external_identity: ExternalIdentityDescriptor | None = None
 
 
 @dataclass(frozen=True)

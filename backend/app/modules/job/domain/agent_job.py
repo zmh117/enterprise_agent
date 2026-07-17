@@ -26,6 +26,7 @@ class AgentSession:
     summary_text: str = ""
     summary_through_sequence: int = 0
     summary_version: int = 0
+    external_identity_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,12 @@ class AgentJob:
     requester_id: str = ""
     routing_context: dict[str, Any] | None = None
     reply_route: dict[str, Any] | None = None
+    internal_user_id: str = ""
+    external_identity_id: str = ""
+    agent_definition_id: str = ""
+    agent_publication_id: str = ""
+    agent_revision: int | None = None
+    agent_config_hash: str = ""
 
 
 @dataclass(frozen=True)

@@ -52,10 +52,24 @@ class ReadOnlyToolService:
         started = time.monotonic()
         audit_id: str | None = None
         try:
+            job = self.repository.get_job(job_id)
+            expected_user_id = job.internal_user_id or job.user_id
+            if expected_user_id != user_id or job.project_code != project_code:
+                raise ToolPolicyError(
+                    "Tool request identity does not match persisted job",
+                    safe_message="Tool request does not match the Agent job",
+                )
+            if not self.repository.job_allows_tool(job_id, tool_name):
+                raise ToolPolicyError(
+                    f"Tool {tool_name} is not assigned to the Agent publication",
+                    safe_message="Tool is not assigned to this Agent version",
+                )
+            scope = _addressing_from_arguments(arguments)
             self.permission_service.assert_tool_allowed(
                 user_id=user_id,
                 tool_name=tool_name,
                 project_code=project_code,
+                scope=scope,
             )
             self._assert_tool_policy(tool_name, arguments)
             audit_id = self.audit_service.record(

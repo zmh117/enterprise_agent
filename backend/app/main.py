@@ -94,6 +94,8 @@ def create_app(
 
     try:
         from fastapi import FastAPI, HTTPException, Request
+        from fastapi.exceptions import RequestValidationError
+        from fastapi.responses import JSONResponse
     except ModuleNotFoundError:
         return FallbackApp(
             routes={
@@ -113,6 +115,25 @@ def create_app(
             container.database.close()
 
     app = FastAPI(title="Enterprise Agent", version="0.1.0", lifespan=lifespan)
+
+    @app.exception_handler(RequestValidationError)
+    async def safe_validation_error(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        del request
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": [
+                    {
+                        "loc": list(error.get("loc") or ()),
+                        "msg": str(error.get("msg") or "Invalid value"),
+                        "type": str(error.get("type") or "value_error"),
+                    }
+                    for error in exc.errors()
+                ]
+            },
+        )
 
     @app.middleware("http")
     async def correlation_middleware(request: Request, call_next: Any) -> Any:
@@ -144,19 +165,33 @@ def create_app(
         return status
 
     from app.modules.channel.api.channel_webhook_controller import build_channel_router
+    from app.modules.agent_config.api import build_agent_config_router
     from app.modules.dingding.api.dingding_webhook_controller import build_dingding_router
+    from app.modules.identity.api import build_auth_router, build_identity_admin_router
     from app.modules.job.api.agent_job_debug_controller import build_agent_job_debug_router
     from app.modules.platform_config.api import build_platform_config_router
     from app.modules.workflow.api import build_workflow_router
 
     app.include_router(build_channel_router())
+    app.include_router(build_agent_config_router())
     app.include_router(build_dingding_router())
     app.include_router(build_agent_job_debug_router())
+    app.include_router(build_auth_router())
+    app.include_router(build_identity_admin_router())
     app.include_router(build_platform_config_router())
     app.include_router(build_workflow_router())
 
     @app.post("/api/admin/migrate")
-    def migrate() -> dict[str, Any]:
+    def migrate(request: Request) -> dict[str, Any]:
+        from app.modules.identity.api.dependencies import require_action
+
+        require_action(
+            request,
+            resource_type="platform_config",
+            resource_code="*",
+            action="manage",
+            csrf=True,
+        )
         _app_container(app).database.run_migrations(default_migrations_dir())
         return {"status": "migrated"}
 

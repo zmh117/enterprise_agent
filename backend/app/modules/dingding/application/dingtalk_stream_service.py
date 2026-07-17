@@ -15,6 +15,8 @@ from app.modules.channel.domain.channel_event import (
     RoutingContext,
     safe_payload_summary,
 )
+from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
+from app.modules.identity.domain import ExternalIdentityDescriptor
 from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
 
 logger = logging.getLogger(__name__)
@@ -35,6 +37,8 @@ class DingTalkStreamIncomingMessage:
     conversation_type: str = "direct"
     bot_identity: str = ""
     attachments: tuple[ChannelAttachment, ...] = ()
+    union_id: str = ""
+    open_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -75,6 +79,8 @@ class DingTalkStreamMessageService:
         default_robot_code: str = "",
         attachments_enabled: bool = False,
         attachment_credential_ttl_seconds: int = 900,
+        connector_registry: ConnectorRegistry | None = None,
+        default_tenant_code: str = "default",
     ) -> None:
         self.channel_ingress_service = channel_ingress_service
         self.audit_service = audit_service
@@ -90,6 +96,8 @@ class DingTalkStreamMessageService:
         self.default_robot_code = default_robot_code
         self.attachments_enabled = attachments_enabled
         self.attachment_credential_ttl_seconds = attachment_credential_ttl_seconds
+        self.connector_registry = connector_registry
+        self.default_tenant_code = default_tenant_code
 
     def handle_callback(
         self,
@@ -155,13 +163,13 @@ class DingTalkStreamMessageService:
                 reason=exc.reason,
             )
 
-        event = self.to_channel_event(
-            message=message,
-            payload=payload,
-            source_connector_id=source_connector_id,
-            correlation_id=correlation_id,
-        )
         try:
+            event = self.to_channel_event(
+                message=message,
+                payload=payload,
+                source_connector_id=source_connector_id,
+                correlation_id=correlation_id,
+            )
             job = self.channel_ingress_service.accept(event)
         except PermissionDenied as exc:
             logger.info(
@@ -248,15 +256,19 @@ class DingTalkStreamMessageService:
             "open_conversation_id",
             "conversationTitle",
         )
-        user_id = _first_text(
+        staff_id = _first_text(
             payload,
             "senderStaffId",
             "sender_staff_id",
+        )
+        sender_id = _first_text(
+            payload,
             "senderId",
             "sender_id",
             "user_id",
             "userId",
         )
+        user_id = staff_id or sender_id
         message_id = _first_text(payload, "msgId", "msg_id", "messageId", "message_id")
         event_id = _first_text(payload, "eventId", "event_id", "event_idempotent_id")
         sender_display_name = _first_text(payload, "senderNick", "sender_nick", "senderName")
@@ -273,6 +285,8 @@ class DingTalkStreamMessageService:
         raw_conversation_type = _first_text(payload, "conversationType", "conversation_type")
         conversation_type = "group" if raw_conversation_type == "2" else "direct"
         bot_identity = _first_text(payload, "robotCode", "chatbotUserId", "chatbot_user_id")
+        union_id = _first_text(payload, "senderUnionId", "unionId", "union_id")
+        open_id = _first_text(payload, "senderOpenId", "openId", "open_id", "senderId")
 
         if not conversation_id:
             raise RejectedDingTalkStreamMessage("DingTalk Stream payload missing conversation id")
@@ -297,6 +311,8 @@ class DingTalkStreamMessageService:
             conversation_type=conversation_type,
             bot_identity=bot_identity,
             attachments=attachments,
+            union_id=union_id,
+            open_id=open_id,
         )
 
     def to_channel_event(
@@ -310,6 +326,19 @@ class DingTalkStreamMessageService:
         routing_payload = _dict_value(payload.get("routing"))
         delivery_payload = _dict_value(payload.get("delivery"))
         delivery = self._reply_route(message=message, delivery_payload=delivery_payload)
+        tenant_code = self.default_tenant_code
+        if self.connector_registry is not None:
+            connector = self.connector_registry.require_dingtalk_stream_ingress(
+                source_connector_id
+            )
+            tenant_code = self.connector_registry.metadata_value(
+                connector, "tenant_code"
+            )
+            if not tenant_code:
+                raise PermissionDenied(
+                    "DingTalk connector has no trusted tenant metadata",
+                    safe_message="DingTalk connector tenant is not configured",
+                )
         return ChannelEvent(
             source=ChannelSource(
                 type="dingding_stream",
@@ -326,6 +355,15 @@ class DingTalkStreamMessageService:
                     "conversation_type": message.conversation_type,
                     "bot_identity": message.bot_identity,
                 },
+                external_identity=ExternalIdentityDescriptor(
+                    provider="dingtalk",
+                    tenant_code=tenant_code,
+                    external_subject_id=message.user_id,
+                    connector_id=source_connector_id,
+                    union_id=message.union_id,
+                    open_id=message.open_id,
+                    display_name=message.sender_display_name,
+                ),
             ),
             delivery=delivery,
             routing=RoutingContext(

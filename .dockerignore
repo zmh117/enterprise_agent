@@ -15,6 +15,10 @@
 !backend/vendor/
 !backend/vendor/oracle/
 !backend/vendor/oracle/**
+!frontend/
+!frontend/**
+frontend/node_modules/
+frontend/dist/
 !.claude/
 !.claude/skills/
 !.claude/skills/**

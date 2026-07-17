@@ -4,6 +4,9 @@
 
 钉钉群聊/私聊连续会话、MinIO附件存储和现代Office/Markdown受限提取说明见[连续对话与多模态附件MVP](docs/continuous-multimodal-conversations.md)。
 
+统一用户、钉钉身份绑定、RBAC 与默认诊断 Agent 发布管理见
+[统一身份、RBAC 与 Agent 管理端](docs/unified-identity-rbac-admin.md)。
+
 本地多数据库测试数据环境见 [docs/agent-test-data.md](/Users/mhz/Develop/enterprise_agent/docs/agent-test-data.md)，入口：
 
 ```bash
@@ -37,6 +40,8 @@ scripts/agent_test_data.sh reset --yes
 - `FEATURE_REAL_INTERNAL_TOOLS=true` 可切换 HTTP Internal API Platform、本地 mock 平台或本地 Loki 平台。
 - Web-managed secrets：`/api/platform/secrets` 支持管理员输入密钥后加密保存，并返回 `secret://platform/<code>`。
 - DB-backed runtime config：`/api/platform/runtime-config/*` 支持把 DeepSeek、Internal API、Loki、DingTalk 默认路由和 Agent limits 逐步迁入 PostgreSQL。
+- 可选统一身份与 RBAC：Web session、钉钉外部身份映射、角色/deny 优先授权和审计。
+- 独立 React 管理端：第一版只开放一个默认诊断 Agent，底层按多 Agent revision/publication 建模。
 
 ## Web 管理配置与密钥
 

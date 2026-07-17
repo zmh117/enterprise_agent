@@ -28,15 +28,12 @@ class WorkflowService:
                 "Workflow config actor is required",
                 safe_message="Workflow config actor is required",
             )
-        if not self.permission_service.config_repository.is_allowed(
-            subject_code=actor_id,
+        self.permission_service.require_action(
+            user_id=actor_id,
             resource_type="platform_config",
             resource_code="*",
-        ):
-            raise PermissionDenied(
-                f"User {actor_id} is not allowed to manage workflow config",
-                safe_message="User is not allowed to manage workflow config",
-            )
+            action="manage",
+        )
 
     def list_templates(
         self, *, project_code: str | None = None, include_disabled: bool = True

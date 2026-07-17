@@ -97,6 +97,7 @@ COPY backend/app/__init__.py backend/app/bootstrap.py /app/backend/app/
 COPY backend/app/shared /app/backend/app/shared
 COPY backend/app/modules/__init__.py /app/backend/app/modules/
 COPY backend/app/modules/agent /app/backend/app/modules/agent
+COPY backend/app/modules/agent_config /app/backend/app/modules/agent_config
 COPY backend/app/modules/attachments /app/backend/app/modules/attachments
 COPY backend/app/modules/audit /app/backend/app/modules/audit
 COPY backend/app/modules/channel /app/backend/app/modules/channel
@@ -104,6 +105,7 @@ COPY backend/app/modules/delivery /app/backend/app/modules/delivery
 COPY backend/app/modules/dingding/__init__.py /app/backend/app/modules/dingding/
 COPY backend/app/modules/dingding/application /app/backend/app/modules/dingding/application
 COPY backend/app/modules/dingding/infrastructure /app/backend/app/modules/dingding/infrastructure
+COPY backend/app/modules/identity /app/backend/app/modules/identity
 COPY backend/app/modules/internal_tools /app/backend/app/modules/internal_tools
 COPY backend/app/modules/internal_api_platform/__init__.py /app/backend/app/modules/internal_api_platform/
 COPY backend/app/modules/internal_api_platform/domain /app/backend/app/modules/internal_api_platform/domain
