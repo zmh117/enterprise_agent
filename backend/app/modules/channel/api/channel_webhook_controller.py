@@ -43,78 +43,73 @@ def build_channel_router() -> Any:
         request: Request,
         x_grafana_token: str = Header(default=""),
         x_connector_id: str = Header(default="connector-grafana-default"),
-    ) -> dict[str, Any]:
+    ) -> Any:
         container = _container(request)
-        payload = await _json_payload(request)
-        _verify_connector_token(container, x_connector_id, x_grafana_token)
-        status = str(payload.get("status") or "").lower()
-        event_id = _grafana_event_id(payload)
-        if status != "firing":
-            container.audit_service.record(
-                "channel.grafana.ignored",
-                status="SKIPPED",
-                summary="Grafana alert ignored because it is not firing",
-                actor_id="grafana",
-                payload={
-                    "connector_id": x_connector_id,
-                    "external_event_id": event_id,
-                    "grafana_status": status,
-                    "payload": safe_payload_summary(payload),
-                },
-            )
-            return {"accepted": False, "ignored": True, "status": "ignored", "reason": "not_firing"}
-        labels = _grafana_labels(payload)
-        missing = [
-            key
-            for key in ("ea_project_code", "ea_environment", "ea_base", "ea_workshop", "ea_service")
-            if not str(labels.get(key) or "").strip()
-        ]
-        if missing:
-            container.audit_service.record(
-                "channel.grafana.rejected",
-                status="FAILED",
-                summary="Grafana alert missing Enterprise Agent routing labels",
-                actor_id="grafana",
-                payload={"missing": missing, "external_event_id": event_id},
-            )
-            raise HTTPException(
-                status_code=400,
-                detail={"message": "Missing Enterprise Agent routing labels", "missing": missing},
-            )
-        delivery_type = str(labels.get("ea_delivery_type") or "dingtalk_webhook_robot")
-        delivery_connector_id = str(
-            labels.get("ea_delivery_connector_id") or "connector-dingtalk-webhook-default"
-        )
-        event = ChannelEvent(
-            source=ChannelSource(
-                type="grafana_alert",
-                connector_id=x_connector_id,
-                event_id=event_id,
-                actor_id="grafana",
-                metadata={"status": status},
-            ),
-            delivery=ReplyRoute(
-                type=delivery_type,
-                connector_id=delivery_connector_id,
-                target={"webhook_id": str(labels.get("ea_delivery_target") or "grafana-alert")},
-            ),
-            routing=RoutingContext(
-                project_code=str(labels["ea_project_code"]),
-                environment=str(labels["ea_environment"]),
-                base=str(labels["ea_base"]),
-                workshop=str(labels["ea_workshop"]),
-                service=str(labels["ea_service"]),
-            ),
-            message=_grafana_message(payload),
-            raw_payload_summary=safe_payload_summary(payload),
-            idempotency_key=f"grafana:{x_connector_id}:{event_id}:firing",
-            correlation_id=request.headers.get("x-correlation-id") or new_correlation_id(),
-        )
         try:
-            job = container.channel_ingress_service.accept(event)
-        except PermissionDenied as exc:
-            raise HTTPException(status_code=403, detail=exc.safe_message) from exc
-        return {"accepted": True, "status": job.status.value, "job_id": job.id}
+            from app.modules.webhook.api.public_controller import (
+                acknowledgement_payload,
+                bounded_raw_body,
+                public_error_response,
+            )
+            from fastapi.responses import JSONResponse
+
+            trigger = container.webhook_trigger_repository.get_enabled_grafana_by_connector(
+                x_connector_id
+            )
+            if not trigger:
+                from app.shared.exceptions import NotFound
+
+                raise NotFound(
+                    "Managed Grafana Trigger not found",
+                    safe_message="Grafana Webhook endpoint is unavailable",
+                    error_code="webhook_not_found",
+                )
+            raw_body = await bounded_raw_body(
+                request, container.settings.webhooks.max_body_bytes
+            )
+            acknowledgement = container.webhook_ingress_service.receive(
+                public_id=str(trigger["public_id"]),
+                raw_body=raw_body,
+                content_type=request.headers.get("content-type", ""),
+                headers={**dict(request.headers), "authorization": f"Bearer {x_grafana_token}"},
+                correlation_id=request.headers.get("x-correlation-id")
+                or new_correlation_id(),
+                remote_address=request.client.host if request.client else "",
+            )
+            if acknowledgement.accepted:
+                container.webhook_outbox_publisher.publish_pending(limit=1)
+                # The deprecated route preserves its historical contract of
+                # returning a created job. The queued dispatcher delivery is
+                # intentionally idempotent and will observe the same job later.
+                from app.modules.message_bus.application.message_publisher import (
+                    WebhookEventMessage,
+                )
+
+                container.webhook_dispatcher.handle(
+                    WebhookEventMessage(
+                        webhook_event_id=acknowledgement.event_id,
+                        correlation_id=acknowledgement.correlation_id,
+                    )
+                )
+            event = container.webhook_event_repository.get(acknowledgement.event_id)
+            payload = acknowledgement_payload(acknowledgement)
+            payload.update(
+                {
+                    "status": "ignored" if acknowledgement.ignored else "PENDING",
+                    "job_id": event.get("job_id"),
+                    "deprecated": True,
+                    "replacement": f"/webhooks/v1/{trigger['public_id']}",
+                }
+            )
+            return JSONResponse(
+                status_code=200,
+                content=payload,
+                headers={"Deprecation": "true"},
+            )
+        except Exception as exc:
+            if "public_error_response" in locals():
+                return public_error_response(exc)
+            raise
 
     return router
 

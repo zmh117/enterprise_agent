@@ -38,11 +38,19 @@ VALUES
    0, 1, 'env:DINGTALK_CLIENT_SECRET', '', 'api.dingtalk.com,oapi.dingtalk.com', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('connector-dingtalk-webhook-default', 'dingtalk_webhook_robot', 'dingtalk-webhook-default', '', 1, '{}',
    0, 1, 'env:DINGTALK_WEBHOOK_ROBOT_SECRET', 'env:DINGTALK_WEBHOOK_ROBOT_URL', 'oapi.dingtalk.com,api.dingtalk.com', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('connector-grafana-default', 'grafana_alert', 'grafana-default', '', 1, '{}', 1, 0, 'test-grafana-token', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('connector-grafana-default', 'grafana_alert', 'grafana-default', '', 1, '{}', 1, 0, 'env:GRAFANA_WEBHOOK_TOKEN', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('connector-email-default', 'email', 'email-default', '', 1, '{}', 0, 1, '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('connector-webhook-default', 'webhook', 'webhook-default', '', 1, '{}', 0, 1, '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('connector-none', 'none', 'none', '', 1, '{}', 0, 1, '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
+
+UPDATE integration_connector
+SET connector_type = 'grafana_alert',
+    allow_ingress = 1,
+    allow_delivery = 0,
+    secret_ref = 'env:GRAFANA_WEBHOOK_TOKEN',
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = 'connector-grafana-default';
 
 UPDATE integration_connector
 SET connector_type = 'dingtalk_enterprise_stream',
@@ -143,7 +151,17 @@ VALUES
   ('policy-role-admin-tools', 'role', 'platform-admin', 'tool', '*', 'allow',
    'use', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('policy-role-admin-agent-use', 'role', 'platform-admin', 'agent', 'default-diagnostic-agent',
-   'allow', 'use', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+   'allow', 'use', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-webhook-read', 'role', 'platform-admin', 'webhook_trigger', '*',
+   'allow', 'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-webhook-edit', 'role', 'platform-admin', 'webhook_trigger', '*',
+   'allow', 'edit', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-webhook-publish', 'role', 'platform-admin', 'webhook_trigger', '*',
+   'allow', 'publish', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-webhook-rotate', 'role', 'platform-admin', 'webhook_trigger', '*',
+   'allow', 'rotate', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-webhook-service-account', 'role', 'platform-admin', 'webhook_trigger', '*',
+   'allow', 'manage_service_account', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 
 INSERT INTO agent_definition
@@ -190,7 +208,69 @@ VALUES
   ('binding_default_ingress_dingtalk', 'agent_publication_default_v1', 'ingress',
    'connector-dingtalk-stream-default', '{}', CURRENT_TIMESTAMP),
   ('binding_default_delivery_dingtalk', 'agent_publication_default_v1', 'delivery',
-   'connector-dingtalk-enterprise-default', '{}', CURRENT_TIMESTAMP)
+   'connector-dingtalk-enterprise-default', '{}', CURRENT_TIMESTAMP),
+  ('binding_default_ingress_grafana', 'agent_publication_default_v1', 'ingress',
+   'connector-grafana-default', '{}', CURRENT_TIMESTAMP),
+  ('binding_default_delivery_dingtalk_webhook', 'agent_publication_default_v1', 'delivery',
+   'connector-dingtalk-webhook-default', '{}', CURRENT_TIMESTAMP)
+ON CONFLICT(id) DO NOTHING;
+
+INSERT INTO app_user
+  (id, username, display_name, email, status, account_type, revision, created_at, updated_at)
+VALUES
+  ('user_webhook_grafana_default', 'svc-webhook-grafana-default',
+   'Webhook: 默认 Grafana 告警', '', 'enabled', 'service', 1,
+   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+ON CONFLICT(id) DO NOTHING;
+
+INSERT INTO permission_policy
+  (id, subject_type, subject_code, resource_type, resource_code, effect,
+   action, status, priority, revision, created_at, updated_at)
+VALUES
+  ('policy-webhook-grafana-agent', 'user', 'user_webhook_grafana_default', 'agent',
+   'default-diagnostic-agent', 'allow', 'use', 'enabled', 20, 1,
+   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-webhook-grafana-project', 'user', 'user_webhook_grafana_default', 'project',
+   'default', 'allow', 'use', 'enabled', 20, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-webhook-grafana-tools', 'user', 'user_webhook_grafana_default', 'tool',
+   '*', 'allow', 'use', 'enabled', 20, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+ON CONFLICT(id) DO NOTHING;
+
+INSERT INTO webhook_trigger_definition
+  (id, code, name, trigger_type, public_id, connector_id, service_account_id,
+   status, current_publication_id, revision, created_by, created_at, updated_at)
+VALUES
+  ('webhook_trigger_grafana_default', 'grafana-default', '默认 Grafana 告警',
+   'grafana', 'wh_local_grafana_default_00000000000000000001',
+   'connector-grafana-default', 'user_webhook_grafana_default', 'enabled',
+   'webhook_trigger_publication_grafana_v1', 1, 'user_local_admin',
+   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+ON CONFLICT(id) DO NOTHING;
+
+INSERT INTO webhook_trigger_revision
+  (id, trigger_id, revision, status, schema_version, config_json, config_hash,
+   validation_json, created_by, created_at, updated_at)
+VALUES
+  ('webhook_trigger_revision_grafana_v1', 'webhook_trigger_grafana_default', 1,
+   'published', 1,
+   '{"adapter":"grafana_alertmanager_v1","agent":{"code":"default-diagnostic-agent","publication_id":"agent_publication_default_v1"},"authentication":{"nonce_header":"x-webhook-nonce","secret_ref":"secret://connector/connector-grafana-default","signature_header":"x-webhook-signature","timestamp_header":"x-webhook-timestamp","type":"bearer_v1","window_seconds":300},"delivery":{"connector_id":"connector-dingtalk-webhook-default","options":{},"target":{"webhook_id":"grafana-alert"},"type":"dingtalk_webhook_robot"},"idempotency":{"cooldown_seconds":300},"limits":{"max_alerts":20,"max_in_flight":10,"requests_per_minute":60},"mapping":{"event_id_pointer":"","filters":[],"message_template":"Diagnose this firing alert: {summary}","status_pointer":"","variables":{"summary":"/commonAnnotations/summary"}},"routing":{"base":{"allowed_values":["guanlan","longhua","songshan"],"mode":"extract","pointer":"/commonLabels/ea_base","value":""},"environment":{"allowed_values":["prod","test"],"mode":"extract","pointer":"/commonLabels/ea_environment","value":""},"project_code":{"allowed_values":["default"],"mode":"extract","pointer":"/commonLabels/ea_project_code","value":""},"service":{"allowed_values":["mes-service","order-service"],"mode":"extract","pointer":"/commonLabels/ea_service","value":""},"workshop":{"allowed_values":["GL001","assembly","packing","smt"],"mode":"extract","pointer":"/commonLabels/ea_workshop","value":""}},"schema_version":1}',
+   'fda47d53486bb616baa4089590c5496461211a5e335dbe7eba5d5dbea69cb9bd',
+   '{"valid":true,"errors":[]}', 'user_local_admin', CURRENT_TIMESTAMP,
+   CURRENT_TIMESTAMP)
+ON CONFLICT(id) DO NOTHING;
+
+INSERT INTO webhook_trigger_publication
+  (id, trigger_id, revision_id, revision, schema_version, snapshot_json,
+   config_hash, agent_publication_id, agent_revision, agent_config_hash,
+   status, published_by, published_at)
+VALUES
+  ('webhook_trigger_publication_grafana_v1', 'webhook_trigger_grafana_default',
+   'webhook_trigger_revision_grafana_v1', 1, 1,
+   '{"adapter":"grafana_alertmanager_v1","agent":{"code":"default-diagnostic-agent","publication_id":"agent_publication_default_v1","revision":1,"config_hash":"acee515709597912f04ba4e181575c14314121f084dbe561e9e04599179df1b9","read_only_tools":["diagnose_loki_label_values","diagnose_loki_labels","diagnose_loki_probe","get_business_flow_context","get_er_context","get_schema_directory","query_database","query_loki","query_redis_get","query_redis_scan"]},"authentication":{"nonce_header":"x-webhook-nonce","secret_ref":"secret://connector/connector-grafana-default","signature_header":"x-webhook-signature","timestamp_header":"x-webhook-timestamp","type":"bearer_v1","window_seconds":300},"delivery":{"connector_id":"connector-dingtalk-webhook-default","options":{},"target":{"webhook_id":"grafana-alert"},"type":"dingtalk_webhook_robot"},"idempotency":{"cooldown_seconds":300},"limits":{"max_alerts":20,"max_in_flight":10,"requests_per_minute":60},"mapping":{"event_id_pointer":"","filters":[],"message_template":"Diagnose this firing alert: {summary}","status_pointer":"","variables":{"summary":"/commonAnnotations/summary"}},"routing":{"base":{"allowed_values":["guanlan","longhua","songshan"],"mode":"extract","pointer":"/commonLabels/ea_base","value":""},"environment":{"allowed_values":["prod","test"],"mode":"extract","pointer":"/commonLabels/ea_environment","value":""},"project_code":{"allowed_values":["default"],"mode":"extract","pointer":"/commonLabels/ea_project_code","value":""},"service":{"allowed_values":["mes-service","order-service"],"mode":"extract","pointer":"/commonLabels/ea_service","value":""},"workshop":{"allowed_values":["GL001","assembly","packing","smt"],"mode":"extract","pointer":"/commonLabels/ea_workshop","value":""}},"schema_version":1,"service_account_id":"user_webhook_grafana_default","source_connector_id":"connector-grafana-default"}',
+   'fda47d53486bb616baa4089590c5496461211a5e335dbe7eba5d5dbea69cb9bd',
+   'agent_publication_default_v1', 1,
+   'acee515709597912f04ba4e181575c14314121f084dbe561e9e04599179df1b9',
+   'active', 'user_local_admin', CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 
 INSERT INTO permission_policy

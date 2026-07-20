@@ -16,6 +16,12 @@ class AttachmentTaskMessage:
     correlation_id: str
 
 
+@dataclass(frozen=True)
+class WebhookEventMessage:
+    webhook_event_id: str
+    correlation_id: str
+
+
 class MessagePublisher(Protocol):
     def publish_agent_job(self, job_id: str, correlation_id: str) -> None: ...
 
@@ -33,9 +39,19 @@ class MessagePublisher(Protocol):
         self, attachment_id: str, correlation_id: str, reason: str
     ) -> None: ...
 
+    def publish_webhook_event(
+        self, webhook_event_id: str, correlation_id: str
+    ) -> None: ...
+
+    def publish_webhook_dead_letter(
+        self, webhook_event_id: str, correlation_id: str, reason: str
+    ) -> None: ...
+
 
 class MessageConsumer(Protocol):
     def consume_agent_jobs(self, handler: "AgentJobHandler") -> None: ...
+
+    def consume_webhook_events(self, handler: "WebhookEventHandler") -> None: ...
 
 
 class AgentJobHandler(Protocol):
@@ -44,3 +60,7 @@ class AgentJobHandler(Protocol):
 
 class AttachmentTaskHandler(Protocol):
     def __call__(self, message: AttachmentTaskMessage) -> None: ...
+
+
+class WebhookEventHandler(Protocol):
+    def __call__(self, message: WebhookEventMessage) -> None: ...

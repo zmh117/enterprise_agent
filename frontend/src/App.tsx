@@ -10,6 +10,7 @@ import { AuditPage } from "./pages/AuditPage";
 import { LoginPage } from "./pages/LoginPage";
 import { RolesPage } from "./pages/RolesPage";
 import { UsersPage } from "./pages/UsersPage";
+import { WebhookEditorPage, WebhookEventsPage, WebhooksPage } from "./pages/WebhooksPage";
 
 export function App() {
   return (
@@ -21,6 +22,10 @@ export function App() {
         <Route path="roles" element={<CapabilityRoute capability="roles_manage"><RolesPage /></CapabilityRoute>} />
         <Route path="agents/default-diagnostic-agent" element={<CapabilityRoute capability="agent_edit"><AgentPage /></CapabilityRoute>} />
         <Route path="agents/default-diagnostic-agent/publications" element={<CapabilityRoute capability="agent_edit"><AgentPage /></CapabilityRoute>} />
+        <Route path="webhooks" element={<CapabilityRoute capability="webhook_read"><WebhooksPage /></CapabilityRoute>} />
+        <Route path="webhooks/new" element={<CapabilityRoute capability="webhook_edit"><WebhookEditorPage /></CapabilityRoute>} />
+        <Route path="webhooks/:code" element={<CapabilityRoute capability="webhook_read"><WebhookEditorPage /></CapabilityRoute>} />
+        <Route path="webhooks/:code/events" element={<CapabilityRoute capability="webhook_read"><WebhookEventsPage /></CapabilityRoute>} />
         <Route path="audit" element={<CapabilityRoute capability="audit_read"><AuditPage /></CapabilityRoute>} />
         <Route path="*" element={<AdminIndex />} />
       </Route>
@@ -34,6 +39,7 @@ type Capability = keyof Principal["capabilities"];
 function AdminIndex() {
   const { user } = useAuth();
   if (user?.capabilities.agent_edit) return <Navigate to="agents/default-diagnostic-agent" replace />;
+  if (user?.capabilities.webhook_read) return <Navigate to="webhooks" replace />;
   if (user?.capabilities.users_manage) return <Navigate to="users" replace />;
   if (user?.capabilities.roles_manage) return <Navigate to="roles" replace />;
   if (user?.capabilities.audit_read) return <Navigate to="audit" replace />;

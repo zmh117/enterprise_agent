@@ -118,11 +118,12 @@ COPY backend/app/modules/message_bus /app/backend/app/modules/message_bus
 COPY backend/app/modules/permission /app/backend/app/modules/permission
 COPY backend/app/modules/platform_config /app/backend/app/modules/platform_config
 COPY backend/app/modules/workflow /app/backend/app/modules/workflow
+COPY backend/app/modules/webhook /app/backend/app/modules/webhook
 COPY backend/app/workers /app/backend/app/workers
 COPY backend/migrations /app/backend/migrations
 COPY backend/seeds /app/backend/seeds
 COPY .claude /app/.claude
-RUN python -c "import app.bootstrap; import app.workers.agent_job_worker"
+RUN python -c "import app.bootstrap; import app.workers.agent_job_worker; import app.workers.webhook_dispatch_worker"
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-deps --no-build-isolation .
 CMD ["python", "-m", "app.workers.agent_job_worker"]

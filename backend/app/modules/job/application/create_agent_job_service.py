@@ -46,6 +46,12 @@ class CreateAgentJobCommand:
     attachments: tuple[ChannelAttachment, ...] = ()
     external_identity_id: str = ""
     agent_code: str = ""
+    fixed_agent_publication_id: str = ""
+    fixed_agent_revision: int | None = None
+    fixed_agent_config_hash: str = ""
+    webhook_event_id: str = ""
+    webhook_trigger_id: str = ""
+    webhook_trigger_publication_id: str = ""
 
     @property
     def effective_requester_id(self) -> str:
@@ -143,7 +149,7 @@ class CreateAgentJobService:
         agent_publication_id = ""
         agent_revision = 0
         agent_config_hash = ""
-        if self.published_agent_runtime_enabled:
+        if self.published_agent_runtime_enabled or command.fixed_agent_publication_id:
             if self.agent_config_service is None:
                 raise NonRetryableExecutionError(
                     "Published Agent runtime service is unavailable",
@@ -157,7 +163,30 @@ class CreateAgentJobService:
                 action="use",
             )
             definition = self.agent_config_service.repository.get_definition(agent_code)
-            publication = self.agent_config_service.current_publication(agent_code)
+            publication = (
+                self.agent_config_service.publication(command.fixed_agent_publication_id)
+                if command.fixed_agent_publication_id
+                else self.agent_config_service.current_publication(agent_code)
+            )
+            if str(publication["agent_id"]) != str(definition["id"]):
+                raise NonRetryableExecutionError(
+                    "Pinned Agent publication belongs to another Agent",
+                    safe_message="Pinned Agent configuration is invalid",
+                )
+            if command.fixed_agent_revision is not None and int(
+                publication["revision"]
+            ) != int(command.fixed_agent_revision):
+                raise NonRetryableExecutionError(
+                    "Pinned Agent revision mismatch",
+                    safe_message="Pinned Agent configuration integrity check failed",
+                )
+            if command.fixed_agent_config_hash and str(
+                publication["config_hash"]
+            ) != command.fixed_agent_config_hash:
+                raise NonRetryableExecutionError(
+                    "Pinned Agent hash mismatch",
+                    safe_message="Pinned Agent configuration integrity check failed",
+                )
             agent_definition_id = str(definition["id"])
             agent_publication_id = str(publication["id"])
             agent_revision = int(publication["revision"])
@@ -242,6 +271,9 @@ class CreateAgentJobService:
                 agent_publication_id=agent_publication_id,
                 agent_revision=agent_revision,
                 agent_config_hash=agent_config_hash,
+                webhook_event_id=command.webhook_event_id,
+                webhook_trigger_id=command.webhook_trigger_id,
+                webhook_trigger_publication_id=command.webhook_trigger_publication_id,
             )
             message_id = self.repository.add_message(
                 session_id=session.id,
@@ -285,6 +317,9 @@ class CreateAgentJobService:
                     "agent_publication_id": agent_publication_id,
                     "agent_revision": agent_revision,
                     "agent_config_hash": agent_config_hash,
+                    "webhook_event_id": command.webhook_event_id,
+                    "webhook_trigger_id": command.webhook_trigger_id,
+                    "webhook_trigger_publication_id": command.webhook_trigger_publication_id,
                 },
             )
         for attachment_id in attachment_ids:

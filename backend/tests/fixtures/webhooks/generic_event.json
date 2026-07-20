@@ -1,0 +1,12 @@
+{
+  "event_id": "fixture-event-001",
+  "status": "open",
+  "message": "Sanitized upstream system incident",
+  "scope": {
+    "project_code": "default",
+    "environment": "prod",
+    "base": "guanlan",
+    "workshop": "GL001",
+    "service": "order-service"
+  }
+}

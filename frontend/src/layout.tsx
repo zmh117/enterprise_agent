@@ -1,4 +1,4 @@
-import { Bot, ChevronRight, LogOut, ScrollText, ShieldCheck, UsersRound } from "lucide-react";
+import { Bot, ChevronRight, LogOut, ScrollText, ShieldCheck, UsersRound, Webhook } from "lucide-react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
 import { useAuth } from "./auth";
@@ -9,6 +9,7 @@ const navigation = [
   { to: "/admin/users", label: "用户与身份", icon: UsersRound, capability: "users_manage" },
   { to: "/admin/roles", label: "角色与权限", icon: ShieldCheck, capability: "roles_manage" },
   { to: "/admin/agents/default-diagnostic-agent", label: "默认诊断 Agent", icon: Bot, capability: "agent_edit" },
+  { to: "/admin/webhooks", label: "Webhook 触发器", icon: Webhook, capability: "webhook_read" },
   { to: "/admin/audit", label: "安全审计", icon: ScrollText, capability: "audit_read" },
 ] as const;
 

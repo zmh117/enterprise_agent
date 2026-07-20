@@ -11,6 +11,8 @@ x-runtime-env: &runtime-env
   FEATURE_UNIFIED_IDENTITY: ${FEATURE_UNIFIED_IDENTITY:-false}
   FEATURE_WEB_ADMIN: ${FEATURE_WEB_ADMIN:-false}
   FEATURE_PUBLISHED_AGENT_RUNTIME: ${FEATURE_PUBLISHED_AGENT_RUNTIME:-false}
+  FEATURE_WEBHOOK_TRIGGERS: ${FEATURE_WEBHOOK_TRIGGERS:-true}
+  GRAFANA_WEBHOOK_TOKEN: ${GRAFANA_WEBHOOK_TOKEN:-}
   FEATURE_TEST_IDENTITY_HEADERS: ${FEATURE_TEST_IDENTITY_HEADERS:-false}
   FEATURE_PERMISSION_SHADOW_MODE: ${FEATURE_PERMISSION_SHADOW_MODE:-true}
   WEB_SESSION_COOKIE_NAME: ${WEB_SESSION_COOKIE_NAME:-enterprise_agent_session}
@@ -62,6 +64,18 @@ x-runtime-env: &runtime-env
   AGENT_MAX_TURNS: ${AGENT_MAX_TURNS:-12}
   RABBITMQ_CONSUMER_HEARTBEAT_SECONDS: ${RABBITMQ_CONSUMER_HEARTBEAT_SECONDS:-900}
   RABBITMQ_CONSUMER_RECONNECT_SECONDS: ${RABBITMQ_CONSUMER_RECONNECT_SECONDS:-5}
+  WEBHOOK_DISPATCH_QUEUE: ${WEBHOOK_DISPATCH_QUEUE:-agent.webhook.dispatch.queue}
+  WEBHOOK_DISPATCH_DEAD_QUEUE: ${WEBHOOK_DISPATCH_DEAD_QUEUE:-agent.webhook.dispatch.dead.queue}
+  WEBHOOK_MAX_BODY_BYTES: ${WEBHOOK_MAX_BODY_BYTES:-1048576}
+  WEBHOOK_MAX_JSON_DEPTH: ${WEBHOOK_MAX_JSON_DEPTH:-20}
+  WEBHOOK_MAX_COLLECTION_ITEMS: ${WEBHOOK_MAX_COLLECTION_ITEMS:-2000}
+  WEBHOOK_MAX_MESSAGE_CHARS: ${WEBHOOK_MAX_MESSAGE_CHARS:-4000}
+  WEBHOOK_MAX_SUMMARY_CHARS: ${WEBHOOK_MAX_SUMMARY_CHARS:-4000}
+  WEBHOOK_HMAC_WINDOW_SECONDS: ${WEBHOOK_HMAC_WINDOW_SECONDS:-300}
+  WEBHOOK_EVENT_RETENTION_DAYS: ${WEBHOOK_EVENT_RETENTION_DAYS:-30}
+  WEBHOOK_OUTBOX_SCAN_SECONDS: ${WEBHOOK_OUTBOX_SCAN_SECONDS:-5}
+  WEBHOOK_OUTBOX_MAX_ATTEMPTS: ${WEBHOOK_OUTBOX_MAX_ATTEMPTS:-8}
+  WEBHOOK_OUTBOX_RETRY_BASE_SECONDS: ${WEBHOOK_OUTBOX_RETRY_BASE_SECONDS:-5}
   FEATURE_CONTINUOUS_CONVERSATION: ${FEATURE_CONTINUOUS_CONVERSATION:-false}
   CONVERSATION_RECENT_MESSAGE_LIMIT: ${CONVERSATION_RECENT_MESSAGE_LIMIT:-20}
   CONVERSATION_SUMMARY_TRIGGER_MESSAGES: ${CONVERSATION_SUMMARY_TRIGGER_MESSAGES:-30}
@@ -452,6 +466,31 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+
+  webhook-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: agent-worker
+    command: ["python", "-m", "app.workers.webhook_dispatch_worker"]
+    environment:
+      <<: *worker-env
+      SEED_LOCAL_CONFIG: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import time; from pathlib import Path; p=Path('/tmp/webhook-worker.heartbeat'); raise SystemExit(0 if p.exists() and time.time()-p.stat().st_mtime < 60 else 1)"
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 20s
 
   attachment-worker:
     # profiles: ["attachments"]

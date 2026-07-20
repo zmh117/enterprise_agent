@@ -45,6 +45,19 @@ class IdentityService:
             )
         self.repository.touch_external_identity(str(identity["id"]))
         user = self.repository.get_user(str(identity["user_id"]))
+        if str(user.get("account_type") or "human") != "human":
+            self.audit_service.record(
+                "identity.external.denied",
+                status="DENIED",
+                summary="External authentication is unavailable for service accounts",
+                actor_id=str(user["id"]),
+                payload={"provider": descriptor.provider},
+            )
+            raise PermissionDenied(
+                "Service account external authentication denied",
+                safe_message="External identity is not authorized",
+                error_code="service_account_identity_forbidden",
+            )
         return AuthenticatedPrincipal(
             user_id=str(user["id"]),
             username=str(user["username"]),
@@ -79,6 +92,19 @@ class IdentityService:
                 error_code="tenant_mismatch",
             )
         user = self.repository.get_user(user_id)
+        if str(user.get("account_type") or "human") != "human":
+            self.audit_service.record(
+                "identity.external.binding_denied",
+                status="DENIED",
+                summary="Service account external identity binding denied",
+                actor_id=actor_id,
+                payload={"user_id": user_id, "provider": "dingtalk"},
+            )
+            raise PermissionDenied(
+                "Service accounts cannot bind external identities",
+                safe_message="Service accounts cannot bind external identities",
+                error_code="service_account_identity_forbidden",
+            )
         if str(user["status"]) != "enabled" or int(user["revision"]) != expected_user_revision:
             raise NonRetryableExecutionError(
                 "User revision conflict",

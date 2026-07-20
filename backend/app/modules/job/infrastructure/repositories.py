@@ -111,6 +111,9 @@ class AgentRepository:
         agent_publication_id: str = "",
         agent_revision: int | None = None,
         agent_config_hash: str = "",
+        webhook_event_id: str = "",
+        webhook_trigger_id: str = "",
+        webhook_trigger_publication_id: str = "",
     ) -> AgentJob:
         existing = self.get_job_by_idempotency_key(idempotency_key)
         if existing:
@@ -128,8 +131,9 @@ class AgentRepository:
                status, retry_count, max_retry_count, source_channel, source_connector_id,
                external_event_id, requester_id, routing_context_json, reply_route_json, created_at,
                internal_user_id, external_identity_id, agent_definition_id,
-               agent_publication_id, agent_revision, agent_config_hash)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               agent_publication_id, agent_revision, agent_config_hash,
+               webhook_event_id, webhook_trigger_id, webhook_trigger_publication_id)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job_id,
@@ -155,6 +159,9 @@ class AgentRepository:
                 agent_publication_id or None,
                 agent_revision,
                 agent_config_hash,
+                webhook_event_id or None,
+                webhook_trigger_id or None,
+                webhook_trigger_publication_id or None,
             ),
         )
         return self.get_job(job_id)
@@ -896,6 +903,9 @@ class AgentRepository:
                 int(row["agent_revision"]) if row.get("agent_revision") is not None else None
             ),
             agent_config_hash=row.get("agent_config_hash") or "",
+            webhook_event_id=row.get("webhook_event_id") or "",
+            webhook_trigger_id=row.get("webhook_trigger_id") or "",
+            webhook_trigger_publication_id=row.get("webhook_trigger_publication_id") or "",
         )
 
     def _tool_call_from_row(self, row: dict[str, Any]) -> dict[str, Any]:

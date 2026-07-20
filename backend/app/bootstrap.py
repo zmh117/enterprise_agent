@@ -73,6 +73,19 @@ from app.shared.database import Database, default_migrations_dir
 from app.shared.runtime_config_loader import load_settings_with_db_overlay
 from app.modules.workflow.application import WorkflowService
 from app.modules.workflow.infrastructure import WorkflowRepository
+from app.modules.webhook.application import (
+    TriggerValidator,
+    WebhookAuthenticator,
+    WebhookDispatcher,
+    WebhookIngressService,
+    WebhookMapper,
+    WebhookOutboxPublisher,
+    WebhookTriggerService,
+)
+from app.modules.webhook.infrastructure import (
+    WebhookEventRepository,
+    WebhookTriggerRepository,
+)
 
 
 @dataclass
@@ -106,6 +119,12 @@ class Container:
     retry_service: JobRetryService
     object_storage: ObjectStorage
     attachment_service: AttachmentProcessingService | None
+    webhook_trigger_repository: WebhookTriggerRepository
+    webhook_event_repository: WebhookEventRepository
+    webhook_trigger_service: WebhookTriggerService
+    webhook_ingress_service: WebhookIngressService
+    webhook_outbox_publisher: WebhookOutboxPublisher
+    webhook_dispatcher: WebhookDispatcher
 
 
 ContainerFactory = Callable[[Settings], Container]
@@ -128,9 +147,13 @@ def build_api_container(
 
 
 def build_worker_container(
-    settings: Settings, *, migrate: bool = True, seed: bool = False
+    settings: Settings,
+    *,
+    migrate: bool = True,
+    seed: bool = False,
+    service_name: str = "agent-worker",
 ) -> Container:
-    settings = load_settings_with_db_overlay(settings, service_name="agent-worker", migrate=migrate)
+    settings = load_settings_with_db_overlay(settings, service_name=service_name, migrate=migrate)
     publisher = RabbitMQPublisher(settings.rabbitmq_url, settings.queue)
     consumer = RabbitMQConsumer(
         settings.rabbitmq_url,
@@ -195,6 +218,8 @@ def _build_container(
     platform_config_repository = PlatformConfigRepository(database)
     agent_config_repository = AgentConfigRepository(database)
     workflow_repository = WorkflowRepository(database)
+    webhook_trigger_repository = WebhookTriggerRepository(database)
+    webhook_event_repository = WebhookEventRepository(database)
     audit_service = AuditService(
         audit_repository,
         max_chars=settings.execution.max_tool_response_chars,
@@ -262,6 +287,50 @@ def _build_container(
         audit_service=audit_service,
         identity_service=identity_service if settings.identity.enabled else None,
         unified_identity_enabled=settings.identity.enabled,
+    )
+    webhook_mapper = WebhookMapper(
+        max_message_chars=settings.webhooks.max_message_chars,
+        max_summary_chars=settings.webhooks.max_summary_chars,
+    )
+    webhook_validator = TriggerValidator(
+        repository=webhook_trigger_repository,
+        identity_repository=identity_repository,
+        connector_registry=connector_registry,
+        agent_config_service=agent_config_service,
+        authorization=authorization_evaluator,
+    )
+    webhook_trigger_service = WebhookTriggerService(
+        repository=webhook_trigger_repository,
+        identity_repository=identity_repository,
+        authorization=authorization_evaluator,
+        audit_service=audit_service,
+        validator=webhook_validator,
+        mapper=webhook_mapper,
+    )
+    webhook_ingress_service = WebhookIngressService(
+        trigger_repository=webhook_trigger_repository,
+        event_repository=webhook_event_repository,
+        authenticator=WebhookAuthenticator(
+            connector_registry=connector_registry,
+            event_repository=webhook_event_repository,
+        ),
+        mapper=webhook_mapper,
+        audit_service=audit_service,
+        settings=settings.webhooks,
+    )
+    webhook_outbox_publisher = WebhookOutboxPublisher(
+        repository=webhook_event_repository,
+        publisher=publisher,
+        audit_service=audit_service,
+        settings=settings.webhooks,
+    )
+    webhook_dispatcher = WebhookDispatcher(
+        event_repository=webhook_event_repository,
+        trigger_repository=webhook_trigger_repository,
+        identity_repository=identity_repository,
+        agent_config_service=agent_config_service,
+        channel_ingress_service=channel_ingress_service,
+        audit_service=audit_service,
     )
     dingtalk_service = DingTalkMessageService(
         secret=settings.dingtalk.secret,
@@ -438,4 +507,10 @@ def _build_container(
         retry_service=retry_service,
         object_storage=object_storage,
         attachment_service=attachment_service,
+        webhook_trigger_repository=webhook_trigger_repository,
+        webhook_event_repository=webhook_event_repository,
+        webhook_trigger_service=webhook_trigger_service,
+        webhook_ingress_service=webhook_ingress_service,
+        webhook_outbox_publisher=webhook_outbox_publisher,
+        webhook_dispatcher=webhook_dispatcher,
     )

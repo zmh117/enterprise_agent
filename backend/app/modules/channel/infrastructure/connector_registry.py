@@ -89,6 +89,14 @@ class ConnectorRegistry:
             return ""
         if text.startswith("env:"):
             return os.getenv(text.removeprefix("env:"), "")
+        connector_prefix = "secret://connector/"
+        if text.startswith(connector_prefix):
+            connector = self.get(text.removeprefix(connector_prefix))
+            if connector is None or connector.secret_ref == text:
+                return ""
+            return self.resolve_reference(connector.secret_ref)
+        if text.startswith(("secret://", "vault:", "kms:")):
+            return ""
         return text
 
     def resolve_metadata_reference(self, connector: Connector, key: str) -> str:

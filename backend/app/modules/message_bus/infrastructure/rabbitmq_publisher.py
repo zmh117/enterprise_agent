@@ -51,6 +51,23 @@ class RabbitMQPublisher:
             {"attachment_id": attachment_id, "correlation_id": correlation_id, "reason": reason},
         )
 
+    def publish_webhook_event(self, webhook_event_id: str, correlation_id: str) -> None:
+        self._publish_webhook(
+            {"webhook_event_id": webhook_event_id, "correlation_id": correlation_id},
+        )
+
+    def publish_webhook_dead_letter(
+        self, webhook_event_id: str, correlation_id: str, reason: str
+    ) -> None:
+        self._publish(
+            self.queue.webhook_dead_queue,
+            {
+                "webhook_event_id": webhook_event_id,
+                "correlation_id": correlation_id,
+                "reason": reason,
+            },
+        )
+
     def _publish(self, queue_name: str, payload: dict[str, object]) -> None:
         try:
             import pika
@@ -60,12 +77,15 @@ class RabbitMQPublisher:
         try:
             channel = connection.channel()
             channel.queue_declare(queue=queue_name, durable=True)
-            channel.basic_publish(
+            channel.confirm_delivery()
+            confirmed = channel.basic_publish(
                 exchange="",
                 routing_key=queue_name,
                 body=json.dumps(payload).encode("utf-8"),
                 properties=pika.BasicProperties(delivery_mode=2),
             )
+            if confirmed is False:
+                raise RuntimeError("RabbitMQ publisher confirm failed")
         finally:
             connection.close()
 
@@ -96,5 +116,34 @@ class RabbitMQPublisher:
                     expiration=str(max(delay_seconds, 1) * 1000),
                 ),
             )
+        finally:
+            connection.close()
+
+    def _publish_webhook(self, payload: dict[str, object]) -> None:
+        try:
+            import pika
+        except ModuleNotFoundError as exc:
+            raise RuntimeError("pika is required for RabbitMQ publishing") from exc
+        connection = pika.BlockingConnection(pika.URLParameters(self.rabbitmq_url))
+        try:
+            channel = connection.channel()
+            channel.queue_declare(queue=self.queue.webhook_dead_queue, durable=True)
+            channel.queue_declare(
+                queue=self.queue.webhook_queue,
+                durable=True,
+                arguments={
+                    "x-dead-letter-exchange": "",
+                    "x-dead-letter-routing-key": self.queue.webhook_dead_queue,
+                },
+            )
+            channel.confirm_delivery()
+            confirmed = channel.basic_publish(
+                exchange="",
+                routing_key=self.queue.webhook_queue,
+                body=json.dumps(payload).encode("utf-8"),
+                properties=pika.BasicProperties(delivery_mode=2),
+            )
+            if confirmed is False:
+                raise RuntimeError("RabbitMQ publisher confirm failed")
         finally:
             connection.close()

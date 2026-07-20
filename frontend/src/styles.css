@@ -143,6 +143,33 @@ tbody tr:hover { background: #fafcfa; }
 .publication-item strong { font-size: 11px; }
 .publication-item span, .publication-item code { margin-top: 3px; color: var(--muted); font-size: 9px; }
 .subheading { margin: 20px 0 9px; color: #536159; font-size: 11px; text-transform: uppercase; letter-spacing: .07em; }
+.webhook-list { display: grid; gap: 8px; }
+.webhook-list-item { display: grid; grid-template-columns: 42px minmax(210px, 1.3fr) minmax(170px, 1fr) minmax(180px, 1fr) auto; align-items: center; gap: 14px; padding: 14px; border: 1px solid var(--line); border-radius: 11px; color: var(--ink); text-decoration: none; background: #fcfdfc; }
+.webhook-list-item:hover { border-color: #bdd5c7; background: #f3f8f5; }
+.webhook-list-item strong, .webhook-list-item span, .webhook-list-item small { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.webhook-list-item strong { font-size: 11px; }
+.webhook-list-item span, .webhook-list-item small { margin-top: 3px; color: var(--muted); font-size: 9px; }
+.webhook-icon { display: grid; width: 40px; height: 40px; place-items: center; border-radius: 11px; color: var(--green); background: var(--green-soft); }
+.webhook-editor-grid { grid-template-columns: minmax(0, 1fr) 380px; }
+.webhook-form-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.advanced-json, .webhook-sample { min-height: 150px; resize: vertical; font-family: "SFMono-Regular", Consolas, monospace; font-size: 10px; line-height: 1.55; }
+.webhook-sample { min-height: 260px; }
+.agent-pin { display: grid; grid-template-columns: minmax(220px, .8fr) 1.4fr; gap: 14px; margin-bottom: 18px; padding: 14px; border: 1px solid #d5e3da; border-radius: 10px; background: #f4f8f5; }
+.agent-pin span, .agent-pin strong, .agent-pin code { display: block; }
+.agent-pin span { margin-bottom: 5px; color: var(--muted); font-size: 9px; text-transform: uppercase; }
+.agent-pin strong { font-size: 12px; }
+.agent-pin code { margin-top: 4px; color: var(--muted); }
+.tool-chip-row { display: flex; flex-wrap: wrap; gap: 4px; }
+.endpoint-code { display: block; padding: 11px; overflow-wrap: anywhere; border-radius: 8px; color: #cde7da; background: #12271f; line-height: 1.55; }
+.agent-rail .endpoint-code + .button { margin-top: 12px; }
+.agent-status-strip .status-actions { flex-direction: row; flex-wrap: wrap; }
+.event-list { display: grid; gap: 6px; margin-top: 14px; }
+.event-button { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 9px; text-align: left; color: var(--ink); background: #fff; }
+.event-button:hover, .event-button.selected { border-color: #bcd7c7; background: #eef6f1; }
+.event-button span { color: var(--muted); font-size: 9px; }
+.event-button strong { grid-column: 1 / -1; overflow: hidden; text-overflow: ellipsis; font-size: 10px; white-space: nowrap; }
+.event-button .badge { grid-column: 2; grid-row: 1; }
+.event-detail-preview { max-height: 70vh; }
 
 .login-page { display: grid; grid-template-columns: 1.15fr .85fr; min-height: 100vh; background: #fff; }
 .login-story { position: relative; display: flex; flex-direction: column; padding: 54px 70px; overflow: hidden; color: #fff; background: radial-gradient(circle at 80% 20%, rgba(76,153,116,.27), transparent 32%), linear-gradient(145deg, #10251d 0%, #183b2d 100%); }
@@ -175,4 +202,20 @@ tbody tr:hover { background: #fafcfa; }
   .sidebar { width: 220px; }
   .page { padding-inline: 28px; }
   .agent-grid { grid-template-columns: minmax(0, 1fr) 330px; }
+  .webhook-list-item { grid-template-columns: 42px 1.2fr 1fr auto; }
+  .webhook-list-item > div:nth-of-type(4) { display: none; }
+}
+
+@media (max-width: 900px) {
+  .app-shell { display: block; }
+  .sidebar { position: static; width: 100%; min-height: auto; }
+  .sidebar nav { margin-top: 20px; }
+  .sidebar-note { display: none; }
+  .main-shell { width: 100%; }
+  .page { padding: 24px 16px 60px; }
+  .agent-grid, .master-detail, .agent-pin { grid-template-columns: 1fr; }
+  .agent-rail { position: static; }
+  .webhook-form-grid, .form-grid { grid-template-columns: 1fr 1fr; }
+  .webhook-list-item { grid-template-columns: 42px 1fr auto; }
+  .webhook-list-item > div:nth-of-type(3), .webhook-list-item > div:nth-of-type(4) { display: none; }
 }

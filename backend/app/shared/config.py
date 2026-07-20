@@ -12,6 +12,8 @@ class QueueSettings:
     attachment_queue: str = "agent.attachment.queue"
     attachment_retry_queue: str = "agent.attachment.retry.queue"
     attachment_dead_queue: str = "agent.attachment.dead.queue"
+    webhook_queue: str = "agent.webhook.dispatch.queue"
+    webhook_dead_queue: str = "agent.webhook.dispatch.dead.queue"
     max_retry_count: int = 3
     retry_delay_seconds: int = 30
     consumer_heartbeat_seconds: int = 900
@@ -100,6 +102,21 @@ class IdentitySettings:
 
 
 @dataclass(frozen=True)
+class WebhookSettings:
+    enabled: bool = True
+    max_body_bytes: int = 1024 * 1024
+    max_json_depth: int = 20
+    max_collection_items: int = 2000
+    max_message_chars: int = 4000
+    max_summary_chars: int = 4000
+    default_hmac_window_seconds: int = 300
+    event_retention_days: int = 30
+    outbox_scan_seconds: int = 5
+    outbox_max_attempts: int = 8
+    outbox_retry_base_seconds: int = 5
+
+
+@dataclass(frozen=True)
 class DingTalkSettings:
     secret: str = ""
     callback_url: str = ""
@@ -170,6 +187,7 @@ class Settings:
     attachments: AttachmentSettings = field(default_factory=AttachmentSettings)
     object_storage: ObjectStorageSettings = field(default_factory=ObjectStorageSettings)
     identity: IdentitySettings = field(default_factory=IdentitySettings)
+    webhooks: WebhookSettings = field(default_factory=WebhookSettings)
 
 
 def _csv_tuple(value: str) -> tuple[str, ...]:
@@ -273,6 +291,12 @@ def load_settings() -> Settings:
             attachment_dead_queue=os.getenv(
                 "ATTACHMENT_DEAD_QUEUE", "agent.attachment.dead.queue"
             ),
+            webhook_queue=os.getenv(
+                "WEBHOOK_DISPATCH_QUEUE", "agent.webhook.dispatch.queue"
+            ),
+            webhook_dead_queue=os.getenv(
+                "WEBHOOK_DISPATCH_DEAD_QUEUE", "agent.webhook.dispatch.dead.queue"
+            ),
             max_retry_count=int(os.getenv("AGENT_MAX_RETRY_COUNT", "3")),
             retry_delay_seconds=int(os.getenv("AGENT_RETRY_DELAY_SECONDS", "30")),
             consumer_heartbeat_seconds=int(os.getenv("RABBITMQ_CONSUMER_HEARTBEAT_SECONDS", "900")),
@@ -357,5 +381,18 @@ def load_settings() -> Settings:
             default_agent_code=os.getenv(
                 "DEFAULT_AGENT_CODE", "default-diagnostic-agent"
             ),
+        ),
+        webhooks=WebhookSettings(
+            enabled=_env_bool("FEATURE_WEBHOOK_TRIGGERS", True),
+            max_body_bytes=int(os.getenv("WEBHOOK_MAX_BODY_BYTES", str(1024 * 1024))),
+            max_json_depth=int(os.getenv("WEBHOOK_MAX_JSON_DEPTH", "20")),
+            max_collection_items=int(os.getenv("WEBHOOK_MAX_COLLECTION_ITEMS", "2000")),
+            max_message_chars=int(os.getenv("WEBHOOK_MAX_MESSAGE_CHARS", "4000")),
+            max_summary_chars=int(os.getenv("WEBHOOK_MAX_SUMMARY_CHARS", "4000")),
+            default_hmac_window_seconds=int(os.getenv("WEBHOOK_HMAC_WINDOW_SECONDS", "300")),
+            event_retention_days=int(os.getenv("WEBHOOK_EVENT_RETENTION_DAYS", "30")),
+            outbox_scan_seconds=int(os.getenv("WEBHOOK_OUTBOX_SCAN_SECONDS", "5")),
+            outbox_max_attempts=int(os.getenv("WEBHOOK_OUTBOX_MAX_ATTEMPTS", "8")),
+            outbox_retry_base_seconds=int(os.getenv("WEBHOOK_OUTBOX_RETRY_BASE_SECONDS", "5")),
         ),
     )

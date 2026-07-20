@@ -171,6 +171,10 @@ def create_app(
     from app.modules.job.api.agent_job_debug_controller import build_agent_job_debug_router
     from app.modules.platform_config.api import build_platform_config_router
     from app.modules.workflow.api import build_workflow_router
+    from app.modules.webhook.api import (
+        build_public_webhook_router,
+        build_webhook_admin_router,
+    )
 
     app.include_router(build_channel_router())
     app.include_router(build_agent_config_router())
@@ -180,6 +184,8 @@ def create_app(
     app.include_router(build_identity_admin_router())
     app.include_router(build_platform_config_router())
     app.include_router(build_workflow_router())
+    app.include_router(build_public_webhook_router())
+    app.include_router(build_webhook_admin_router())
 
     @app.post("/api/admin/migrate")
     def migrate(request: Request) -> dict[str, Any]:

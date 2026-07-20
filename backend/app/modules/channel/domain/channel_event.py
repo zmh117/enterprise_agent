@@ -95,6 +95,13 @@ class ChannelEvent:
     raw_payload_summary: dict[str, Any] = field(default_factory=dict)
     idempotency_key: str = ""
     correlation_id: str | None = None
+    agent_code: str = ""
+    agent_publication_id: str = ""
+    agent_revision: int | None = None
+    agent_config_hash: str = ""
+    webhook_event_id: str = ""
+    webhook_trigger_id: str = ""
+    webhook_trigger_publication_id: str = ""
 
     @property
     def effective_idempotency_key(self) -> str:

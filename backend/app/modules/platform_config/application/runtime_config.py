@@ -82,6 +82,19 @@ RUNTIME_CONFIG_DEFINITIONS: tuple[RuntimeConfigDefinitionSpec, ...] = (
     RuntimeConfigDefinitionSpec("RABBITMQ_CONSUMER_RECONNECT_SECONDS", "int", 5, service_names=("agent-worker",)),
     RuntimeConfigDefinitionSpec("AGENT_MAX_RETRY_COUNT", "int", 3, service_names=("api-server", "agent-worker")),
     RuntimeConfigDefinitionSpec("AGENT_RETRY_DELAY_SECONDS", "int", 30, service_names=("api-server", "agent-worker")),
+    RuntimeConfigDefinitionSpec("FEATURE_WEBHOOK_TRIGGERS", "bool", True, service_names=("api-server", "webhook-worker")),
+    RuntimeConfigDefinitionSpec("WEBHOOK_DISPATCH_QUEUE", "string", "agent.webhook.dispatch.queue", service_names=("api-server", "webhook-worker")),
+    RuntimeConfigDefinitionSpec("WEBHOOK_DISPATCH_DEAD_QUEUE", "string", "agent.webhook.dispatch.dead.queue", service_names=("api-server", "webhook-worker")),
+    RuntimeConfigDefinitionSpec("WEBHOOK_MAX_BODY_BYTES", "int", 1048576, service_names=("api-server",)),
+    RuntimeConfigDefinitionSpec("WEBHOOK_MAX_JSON_DEPTH", "int", 20, service_names=("api-server",)),
+    RuntimeConfigDefinitionSpec("WEBHOOK_MAX_COLLECTION_ITEMS", "int", 2000, service_names=("api-server",)),
+    RuntimeConfigDefinitionSpec("WEBHOOK_MAX_MESSAGE_CHARS", "int", 4000, service_names=("api-server", "webhook-worker")),
+    RuntimeConfigDefinitionSpec("WEBHOOK_MAX_SUMMARY_CHARS", "int", 4000, service_names=("api-server", "webhook-worker")),
+    RuntimeConfigDefinitionSpec("WEBHOOK_HMAC_WINDOW_SECONDS", "int", 300, service_names=("api-server",)),
+    RuntimeConfigDefinitionSpec("WEBHOOK_EVENT_RETENTION_DAYS", "int", 30, service_names=("api-server", "webhook-worker")),
+    RuntimeConfigDefinitionSpec("WEBHOOK_OUTBOX_SCAN_SECONDS", "int", 5, service_names=("webhook-worker",)),
+    RuntimeConfigDefinitionSpec("WEBHOOK_OUTBOX_MAX_ATTEMPTS", "int", 8, service_names=("api-server", "webhook-worker")),
+    RuntimeConfigDefinitionSpec("WEBHOOK_OUTBOX_RETRY_BASE_SECONDS", "int", 5, service_names=("api-server", "webhook-worker")),
 )
 
 

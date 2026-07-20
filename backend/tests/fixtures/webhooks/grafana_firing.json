@@ -1,0 +1,29 @@
+{
+  "receiver": "enterprise-agent",
+  "status": "firing",
+  "groupKey": "{}:{alertname=\"OrderApiErrors\",service=\"order-service\"}",
+  "commonLabels": {
+    "alertname": "OrderApiErrors",
+    "ea_project_code": "default",
+    "ea_environment": "prod",
+    "ea_base": "guanlan",
+    "ea_workshop": "GL001",
+    "ea_service": "order-service"
+  },
+  "commonAnnotations": {
+    "summary": "Order API error rate is above the test threshold"
+  },
+  "alerts": [
+    {
+      "status": "firing",
+      "fingerprint": "fixture-fingerprint-001",
+      "labels": {
+        "instance": "fixture-host",
+        "service": "order-service"
+      },
+      "annotations": {
+        "description": "Sanitized test alert"
+      }
+    }
+  ]
+}

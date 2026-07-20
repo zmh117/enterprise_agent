@@ -5,7 +5,12 @@ import logging
 import time
 from typing import Any
 
-from app.modules.message_bus.application.message_publisher import AgentJobHandler, AgentJobMessage
+from app.modules.message_bus.application.message_publisher import (
+    AgentJobHandler,
+    AgentJobMessage,
+    WebhookEventHandler,
+    WebhookEventMessage,
+)
 from app.shared.config import QueueSettings
 
 logger = logging.getLogger(__name__)
@@ -26,6 +31,12 @@ class RabbitMQConsumer:
         self.reconnect_seconds = reconnect_seconds or queue.consumer_reconnect_seconds
 
     def consume_agent_jobs(self, handler: AgentJobHandler) -> None:
+        self._consume_agent_jobs(handler)
+
+    def consume_webhook_events(self, handler: WebhookEventHandler) -> None:
+        self._consume_webhook_events(handler)
+
+    def _consume_agent_jobs(self, handler: AgentJobHandler) -> None:
         try:
             import pika
         except ModuleNotFoundError as exc:
@@ -70,6 +81,71 @@ class RabbitMQConsumer:
             except Exception:
                 logger.exception(
                     "RabbitMQ consumer connection lost; reconnecting in %s seconds",
+                    self.reconnect_seconds,
+                )
+                if connection is not None:
+                    try:
+                        connection.close()
+                    except Exception:
+                        logger.debug("RabbitMQ connection close after error failed", exc_info=True)
+                time.sleep(self.reconnect_seconds)
+
+    def _consume_webhook_events(self, handler: WebhookEventHandler) -> None:
+        try:
+            import pika
+        except ModuleNotFoundError as exc:
+            raise RuntimeError("pika is required for RabbitMQ consuming") from exc
+
+        while True:
+            connection: Any | None = None
+            try:
+                parameters = pika.URLParameters(self.rabbitmq_url)
+                parameters.heartbeat = self.heartbeat_seconds
+                parameters.blocked_connection_timeout = self.heartbeat_seconds + 60
+                connection = pika.BlockingConnection(parameters)
+                channel = connection.channel()
+                channel.queue_declare(queue=self.queue.webhook_dead_queue, durable=True)
+                channel.queue_declare(
+                    queue=self.queue.webhook_queue,
+                    durable=True,
+                    arguments={
+                        "x-dead-letter-exchange": "",
+                        "x-dead-letter-routing-key": self.queue.webhook_dead_queue,
+                    },
+                )
+                channel.basic_qos(prefetch_count=1)
+
+                def on_message(ch: Any, method: Any, properties: Any, body: bytes) -> None:
+                    del properties
+                    payload = json.loads(body.decode("utf-8"))
+                    try:
+                        handler(
+                            WebhookEventMessage(
+                                webhook_event_id=payload["webhook_event_id"],
+                                correlation_id=payload.get("correlation_id", ""),
+                            )
+                        )
+                    except Exception:
+                        logger.exception("Webhook event handler failed before ack")
+                        if ch.is_open:
+                            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+                        return
+                    ch.basic_ack(delivery_tag=method.delivery_tag)
+
+                channel.basic_consume(
+                    queue=self.queue.webhook_queue, on_message_callback=on_message
+                )
+                logger.info(
+                    "RabbitMQ Webhook consumer started queue=%s heartbeat=%s",
+                    self.queue.webhook_queue,
+                    self.heartbeat_seconds,
+                )
+                channel.start_consuming()
+            except KeyboardInterrupt:
+                raise
+            except Exception:
+                logger.exception(
+                    "RabbitMQ Webhook consumer connection lost; reconnecting in %s seconds",
                     self.reconnect_seconds,
                 )
                 if connection is not None:

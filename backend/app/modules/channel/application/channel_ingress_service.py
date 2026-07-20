@@ -93,5 +93,12 @@ class ChannelIngressService:
                 bot_identity=str(event.source.metadata.get("bot_identity") or ""),
                 attachments=event.attachments,
                 external_identity_id=external_identity_id,
+                agent_code=event.agent_code,
+                fixed_agent_publication_id=event.agent_publication_id,
+                fixed_agent_revision=event.agent_revision,
+                fixed_agent_config_hash=event.agent_config_hash,
+                webhook_event_id=event.webhook_event_id,
+                webhook_trigger_id=event.webhook_trigger_id,
+                webhook_trigger_publication_id=event.webhook_trigger_publication_id,
             )
         )

@@ -168,6 +168,13 @@ def apply_runtime_config_overlay(
         ),
         queue=replace(
             settings.queue,
+            webhook_queue=_str(
+                runtime_value("WEBHOOK_DISPATCH_QUEUE"), settings.queue.webhook_queue
+            ),
+            webhook_dead_queue=_str(
+                runtime_value("WEBHOOK_DISPATCH_DEAD_QUEUE"),
+                settings.queue.webhook_dead_queue,
+            ),
             max_retry_count=_int(
                 runtime_value("AGENT_MAX_RETRY_COUNT"),
                 settings.queue.max_retry_count,
@@ -183,6 +190,50 @@ def apply_runtime_config_overlay(
             consumer_reconnect_seconds=_int(
                 runtime_value("RABBITMQ_CONSUMER_RECONNECT_SECONDS"),
                 settings.queue.consumer_reconnect_seconds,
+            ),
+        ),
+        webhooks=replace(
+            settings.webhooks,
+            enabled=_bool(
+                runtime_value("FEATURE_WEBHOOK_TRIGGERS"), settings.webhooks.enabled
+            ),
+            max_body_bytes=_int(
+                runtime_value("WEBHOOK_MAX_BODY_BYTES"), settings.webhooks.max_body_bytes
+            ),
+            max_json_depth=_int(
+                runtime_value("WEBHOOK_MAX_JSON_DEPTH"), settings.webhooks.max_json_depth
+            ),
+            max_collection_items=_int(
+                runtime_value("WEBHOOK_MAX_COLLECTION_ITEMS"),
+                settings.webhooks.max_collection_items,
+            ),
+            max_message_chars=_int(
+                runtime_value("WEBHOOK_MAX_MESSAGE_CHARS"),
+                settings.webhooks.max_message_chars,
+            ),
+            max_summary_chars=_int(
+                runtime_value("WEBHOOK_MAX_SUMMARY_CHARS"),
+                settings.webhooks.max_summary_chars,
+            ),
+            default_hmac_window_seconds=_int(
+                runtime_value("WEBHOOK_HMAC_WINDOW_SECONDS"),
+                settings.webhooks.default_hmac_window_seconds,
+            ),
+            event_retention_days=_int(
+                runtime_value("WEBHOOK_EVENT_RETENTION_DAYS"),
+                settings.webhooks.event_retention_days,
+            ),
+            outbox_scan_seconds=_int(
+                runtime_value("WEBHOOK_OUTBOX_SCAN_SECONDS"),
+                settings.webhooks.outbox_scan_seconds,
+            ),
+            outbox_max_attempts=_int(
+                runtime_value("WEBHOOK_OUTBOX_MAX_ATTEMPTS"),
+                settings.webhooks.outbox_max_attempts,
+            ),
+            outbox_retry_base_seconds=_int(
+                runtime_value("WEBHOOK_OUTBOX_RETRY_BASE_SECONDS"),
+                settings.webhooks.outbox_retry_base_seconds,
             ),
         ),
         execution=replace(

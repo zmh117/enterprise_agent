@@ -1,0 +1,21 @@
+{
+  "receiver": "enterprise-agent",
+  "status": "resolved",
+  "groupKey": "{}:{alertname=\"OrderApiErrors\",service=\"order-service\"}",
+  "commonLabels": {
+    "ea_project_code": "default",
+    "ea_environment": "prod",
+    "ea_base": "guanlan",
+    "ea_workshop": "GL001",
+    "ea_service": "order-service"
+  },
+  "commonAnnotations": {
+    "summary": "Order API error rate returned to normal"
+  },
+  "alerts": [
+    {
+      "status": "resolved",
+      "fingerprint": "fixture-fingerprint-001"
+    }
+  ]
+}

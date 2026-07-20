@@ -19,16 +19,27 @@ class IdentityRepository:
         display_name: str,
         email: str = "",
         status: str = "enabled",
+        account_type: str = "human",
     ) -> dict[str, Any]:
         user_id = new_id("user")
         timestamp = now_iso()
         self.database.execute(
             """
             insert into app_user
-              (id, username, display_name, email, status, revision, created_at, updated_at)
-            values (?, ?, ?, ?, ?, 1, ?, ?)
+              (id, username, display_name, email, status, account_type,
+               revision, created_at, updated_at)
+            values (?, ?, ?, ?, ?, ?, 1, ?, ?)
             """,
-            (user_id, username, display_name, email, status, timestamp, timestamp),
+            (
+                user_id,
+                username,
+                display_name,
+                email,
+                status,
+                account_type,
+                timestamp,
+                timestamp,
+            ),
         )
         return self.get_user(user_id)
 
@@ -36,7 +47,8 @@ class IdentityRepository:
         where = "" if include_disabled else "where status = 'enabled'"
         return self.database.execute(
             f"""
-            select id, username, display_name, email, status, revision, created_at, updated_at
+            select id, username, display_name, email, status, account_type,
+                   revision, created_at, updated_at
             from app_user {where}
             order by username
             """
@@ -45,7 +57,8 @@ class IdentityRepository:
     def get_user(self, user_id: str) -> dict[str, Any]:
         row = self.database.execute_one(
             """
-            select id, username, display_name, email, status, revision, created_at, updated_at
+            select id, username, display_name, email, status, account_type,
+                   revision, created_at, updated_at
             from app_user where id = ?
             """,
             (user_id,),
@@ -57,7 +70,8 @@ class IdentityRepository:
     def get_user_by_username(self, username: str) -> dict[str, Any] | None:
         return self.database.execute_one(
             """
-            select id, username, display_name, email, status, revision, created_at, updated_at
+            select id, username, display_name, email, status, account_type,
+                   revision, created_at, updated_at
             from app_user where username = ?
             """,
             (username,),
@@ -93,6 +107,13 @@ class IdentityRepository:
         return self.get_user(user_id)
 
     def set_password_hash(self, user_id: str, password_hash: str) -> None:
+        user = self.get_user(user_id)
+        if str(user["account_type"]) != "human":
+            raise NonRetryableExecutionError(
+                "Service accounts cannot have password credentials",
+                safe_message="Service accounts cannot have password credentials",
+                error_code="service_account_password_forbidden",
+            )
         timestamp = now_iso()
         self.database.execute(
             """
@@ -128,7 +149,13 @@ class IdentityRepository:
         open_id: str = "",
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        self.get_user(user_id)
+        user = self.get_user(user_id)
+        if str(user["account_type"]) != "human":
+            raise NonRetryableExecutionError(
+                "Service accounts cannot bind external identities",
+                safe_message="Service accounts cannot bind external identities",
+                error_code="service_account_identity_forbidden",
+            )
         existing = self.find_external_identity(
             provider=provider,
             tenant_code=tenant_code,
@@ -203,7 +230,7 @@ class IdentityRepository:
         row = self.database.execute_one(
             f"""
             select i.*, u.username, u.display_name as user_display_name,
-                   u.status as user_status
+                   u.status as user_status, u.account_type as user_account_type
             from user_external_identity i
             join app_user u on u.id = i.user_id
             where i.provider = ? and i.tenant_code = ? and i.external_subject_id = ?
@@ -583,6 +610,13 @@ class IdentityRepository:
         user_agent_summary: str = "",
         remote_address_summary: str = "",
     ) -> dict[str, Any]:
+        user = self.get_user(user_id)
+        if str(user["account_type"]) != "human":
+            raise NonRetryableExecutionError(
+                "Service accounts cannot create login sessions",
+                safe_message="Service accounts cannot create login sessions",
+                error_code="service_account_session_forbidden",
+            )
         session_id = new_id("session_auth")
         timestamp = now_iso()
         self.database.execute(
@@ -611,7 +645,8 @@ class IdentityRepository:
     def get_session_by_token_hash(self, token_hash: str) -> dict[str, Any] | None:
         return self.database.execute_one(
             """
-            select s.*, u.username, u.display_name, u.status as user_status
+            select s.*, u.username, u.display_name, u.status as user_status,
+                   u.account_type as user_account_type
             from user_session s
             join app_user u on u.id = s.user_id
             where s.token_hash = ?
@@ -681,6 +716,7 @@ class IdentityRepository:
             join app_user u on u.id = ur.user_id
             where r.code = 'platform-admin' and r.status = 'enabled'
               and ur.status = 'enabled' and u.status = 'enabled'
+              and u.account_type = 'human'
             """
         )
         return int(row["count"]) if row else 0

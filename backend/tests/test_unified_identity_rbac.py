@@ -84,9 +84,14 @@ def test_web_auth_uses_hashed_sessions_csrf_and_rejects_forged_headers() -> None
             "roles_manage": True,
             "identities_manage": True,
             "agent_edit": True,
-            "agent_publish": True,
-            "audit_read": True,
-        }
+                "agent_publish": True,
+                "audit_read": True,
+                "webhook_read": True,
+                "webhook_edit": True,
+                "webhook_publish": True,
+                "webhook_rotate": True,
+                "webhook_manage_service_account": True,
+            }
         session_token = client.cookies.get("enterprise_agent_session")
         assert session_token
         stored = container.database.execute_one(

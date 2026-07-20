@@ -55,6 +55,9 @@ class AgentJob:
     agent_publication_id: str = ""
     agent_revision: int | None = None
     agent_config_hash: str = ""
+    webhook_event_id: str = ""
+    webhook_trigger_id: str = ""
+    webhook_trigger_publication_id: str = ""
 
 
 @dataclass(frozen=True)

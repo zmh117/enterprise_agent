@@ -43,7 +43,12 @@ class AuthService:
             else self._dummy_password_hash
         )
         password_valid = self.passwords.verify(password_hash, password)
-        valid = bool(user and str(user["status"]) == "enabled" and password_valid)
+        valid = bool(
+            user
+            and str(user["status"]) == "enabled"
+            and str(user.get("account_type") or "human") == "human"
+            and password_valid
+        )
         if not valid or user is None:
             self.audit_service.record(
                 "auth.login.failed",
@@ -90,7 +95,14 @@ class AuthService:
                 error_code="not_authenticated",
             )
         row = self.repository.get_session_by_token_hash(_sha256(token))
-        if not row or str(row["status"]) != "active" or str(row["user_status"]) != "enabled":
+        if (
+            not row
+            or str(row["status"]) != "active"
+            or str(row["user_status"]) != "enabled"
+            or str(row.get("user_account_type") or "human") != "human"
+        ):
+            if row and str(row["status"]) == "active":
+                self.repository.revoke_session(str(row["id"]))
             raise PermissionDenied(
                 "Session is invalid",
                 safe_message="Authentication required",
@@ -131,6 +143,19 @@ class AuthService:
     def change_password(
         self, *, principal: AuthenticatedPrincipal, current: str, new: str
     ) -> None:
+        user = self.repository.get_user(principal.user_id)
+        if str(user.get("account_type") or "human") != "human":
+            self.audit_service.record(
+                "auth.service_account.denied",
+                status="DENIED",
+                summary="Service account password operation denied",
+                actor_id=principal.user_id,
+            )
+            raise PermissionDenied(
+                "Service accounts cannot use password authentication",
+                safe_message="Password authentication is unavailable for this account",
+                error_code="service_account_login_forbidden",
+            )
         password_hash = self.repository.get_password_hash(principal.user_id)
         if not self.passwords.verify(password_hash, current):
             raise PermissionDenied(
