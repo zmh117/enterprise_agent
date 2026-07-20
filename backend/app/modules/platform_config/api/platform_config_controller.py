@@ -47,6 +47,8 @@ def _correlation_id(request: Request) -> str:
 
 
 def _handle(exc: Exception) -> HTTPException:
+    if isinstance(exc, HTTPException):
+        return exc
     if isinstance(exc, PermissionDenied):
         return HTTPException(status_code=403, detail=exc.safe_message)
     if isinstance(exc, NotFound):
