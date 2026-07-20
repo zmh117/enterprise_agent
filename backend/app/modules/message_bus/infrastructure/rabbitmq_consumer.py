@@ -12,6 +12,9 @@ from app.modules.message_bus.application.message_publisher import (
     WebhookEventMessage,
 )
 from app.shared.config import QueueSettings
+from app.modules.message_bus.infrastructure.rabbitmq_topology import (
+    declare_agent_job_topology,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +53,7 @@ class RabbitMQConsumer:
                 parameters.blocked_connection_timeout = self.heartbeat_seconds + 60
                 connection = pika.BlockingConnection(parameters)
                 channel = connection.channel()
-                channel.queue_declare(queue=self.queue.job_queue, durable=True)
+                declare_agent_job_topology(channel, self.queue)
                 channel.basic_qos(prefetch_count=1)
 
                 def on_message(ch: Any, method: Any, properties: Any, body: bytes) -> None:

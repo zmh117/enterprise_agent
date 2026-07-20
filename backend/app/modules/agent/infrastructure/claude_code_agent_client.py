@@ -2,16 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import importlib.metadata
 import json
 import os
 import re
 import shutil
+import subprocess
 import threading
 import time
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Protocol
+from functools import lru_cache
+from urllib.parse import urlsplit
 
 from app.modules.agent.domain.runtime import (
     AgentExecutionContext,
@@ -339,6 +343,27 @@ class RealClaudeCodeAgentClient:
         async def consume() -> None:
             nonlocal final_answer
             async for message in sdk.query(prompt=prompt, options=options):
+                error_result = _result_error_details(message)
+                if error_result is not None:
+                    detail, inconsistent = error_result
+                    error_code = (
+                        "claude_inconsistent_result"
+                        if inconsistent
+                        else "claude_error_result"
+                    )
+                    raise RetryableExecutionError(
+                        detail,
+                        safe_message=(
+                            "模型运行返回了不一致的失败结果，系统将按重试策略处理。"
+                            if inconsistent
+                            else "模型运行失败，系统将按重试策略处理。"
+                        ),
+                        tool_events=tool_events,
+                        error_code=error_code,
+                        diagnostics=self._safe_runtime_diagnostics(
+                            RuntimeError(detail), cli_stderr
+                        ),
+                    )
                 assistant_texts.extend(_extract_text_blocks(message))
                 parsed_tool_events.extend(_extract_tool_events(message, self.limits))
                 result_text = _extract_result_text(message)
@@ -380,6 +405,7 @@ class RealClaudeCodeAgentClient:
             raise NonRetryableExecutionError(
                 "Claude Agent SDK dependency is not installed",
                 safe_message="Claude runtime dependency is not installed",
+                error_code="claude_sdk_unavailable",
             ) from exc
 
     def _build_internal_server(
@@ -487,12 +513,22 @@ class RealClaudeCodeAgentClient:
             ) from exc
         name = exc.__class__.__name__
         message = _sdk_error_message(exc, cli_stderr)
+        diagnostics = self._safe_runtime_diagnostics(exc, cli_stderr)
+        if _looks_inconsistent_result(message):
+            raise RetryableExecutionError(
+                message,
+                safe_message="模型运行返回了不一致的失败结果，系统将按重试策略处理。",
+                tool_events=tool_events,
+                error_code="claude_inconsistent_result",
+                diagnostics=diagnostics,
+            ) from exc
         if _looks_max_turns_exhausted(message):
             raise DiagnosticLoopExhausted(
                 message,
                 safe_message=_safe_sdk_error_message("Claude runtime failed", message),
                 tool_events=tool_events,
                 error_code="max_turns_exhausted",
+                diagnostics=diagnostics,
             ) from exc
         if name in {"CLINotFoundError", "CLIConnectionError"}:
             raise NonRetryableExecutionError(
@@ -502,6 +538,15 @@ class RealClaudeCodeAgentClient:
                 ),
                 tool_events=tool_events,
                 error_code="claude_cli_unavailable",
+                diagnostics=diagnostics,
+            ) from exc
+        if _looks_invalid_model(message):
+            raise NonRetryableExecutionError(
+                message,
+                safe_message="模型配置无效，请联系管理员检查 Agent 的模型策略。",
+                tool_events=tool_events,
+                error_code="claude_invalid_model",
+                diagnostics=diagnostics,
             ) from exc
         if name in {"ProcessError", "CLIJSONDecodeError"} or _looks_transient(message):
             raise RetryableExecutionError(
@@ -511,13 +556,31 @@ class RealClaudeCodeAgentClient:
                 ),
                 tool_events=tool_events,
                 error_code="claude_transient_error",
+                diagnostics=diagnostics,
             ) from exc
         raise RetryableExecutionError(
             message,
             safe_message=_safe_sdk_error_message("Claude runtime failed", message),
             tool_events=tool_events,
             error_code="claude_runtime_error",
+            diagnostics=diagnostics,
         ) from exc
+
+    def _safe_runtime_diagnostics(
+        self, exc: Exception, cli_stderr: list[str]
+    ) -> dict[str, object]:
+        subtype = getattr(exc, "subtype", None)
+        errors = getattr(exc, "errors", None)
+        return {
+            "exception_class": exc.__class__.__name__[:120],
+            "sdk_version": _package_version(),
+            "cli_version": _claude_cli_version(),
+            "model_policy_ref": self.model[:120],
+            "provider_host": _provider_host(self.base_url),
+            "subtype": _bounded_safe_diagnostic(subtype),
+            "errors": _bounded_safe_diagnostic(errors),
+            "stderr": _bounded_safe_diagnostic("\n".join(cli_stderr)),
+        }
 
 
 def load_claude_agent_sdk() -> ClaudeSdk:
@@ -729,6 +792,46 @@ def _looks_transient(message: str) -> bool:
     )
 
 
+def _looks_inconsistent_result(message: str) -> bool:
+    lower = message.lower()
+    return "error result: success" in lower or (
+        "is_error=true" in lower and "success" in lower
+    )
+
+
+def _looks_invalid_model(message: str) -> bool:
+    lower = message.lower()
+    return any(
+        marker in lower
+        for marker in (
+            "model not found",
+            "invalid model",
+            "unknown model",
+            "does not exist or you do not have access to it",
+        )
+    )
+
+
+def _result_error_details(message: Any) -> tuple[str, bool] | None:
+    is_error = _value(message, "is_error")
+    if is_error is not True:
+        return None
+    subtype = _value(message, "subtype")
+    errors = _value(message, "errors")
+    result = _value(message, "result")
+    detail = _compact_error_detail(
+        json.dumps(
+            {"subtype": subtype, "errors": errors, "result": result},
+            ensure_ascii=False,
+            default=str,
+        )
+    )
+    inconsistent = str(result).strip().lower() == "success" or (
+        not errors and str(subtype or "").lower() in {"success", "completed"}
+    )
+    return detail or "Claude runtime returned an error result", inconsistent
+
+
 def _looks_max_turns_exhausted(message: str) -> bool:
     lower = message.lower()
     return "maximum number of turns" in lower or "max turns" in lower
@@ -775,11 +878,59 @@ def _redact_sensitive_text(text: str) -> str:
         (r"(?i)(anthropic_api_key\s*[:=]\s*)[^\s,;]+", r"\1<redacted>"),
         (r"(?i)(anthropic_auth_token\s*[:=]\s*)[^\s,;]+", r"\1<redacted>"),
         (r"(?i)(api[_-]?key\s*[:=]\s*)[^\s,;]+", r"\1<redacted>"),
+        (r"(?i)https?://[^\s\]\[\)\(\}\{\"']+", "<redacted-url>"),
     )
     redacted = text
     for pattern, replacement in patterns:
         redacted = re.sub(pattern, replacement, redacted)
     return redacted
+
+
+def _bounded_safe_diagnostic(value: Any, max_chars: int = 500) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        text = value
+    else:
+        text = json.dumps(value, ensure_ascii=False, default=str)
+    return _compact_error_detail(text, max_chars=max_chars)
+
+
+def _provider_host(base_url: str) -> str:
+    if not base_url:
+        return "default"
+    try:
+        return (urlsplit(base_url).hostname or "invalid").lower()[:255]
+    except ValueError:
+        return "invalid"
+
+
+@lru_cache(maxsize=1)
+def _package_version() -> str:
+    for package in ("claude-agent-sdk", "claude-code-sdk"):
+        try:
+            return importlib.metadata.version(package)[:80]
+        except importlib.metadata.PackageNotFoundError:
+            continue
+    return "unknown"
+
+
+@lru_cache(maxsize=1)
+def _claude_cli_version() -> str:
+    executable = shutil.which("claude") or shutil.which("claude-code")
+    if not executable:
+        return "unavailable"
+    try:
+        completed = subprocess.run(
+            [executable, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    return _compact_error_detail(completed.stdout or completed.stderr, max_chars=80) or "unknown"
 
 
 def _looks_placeholder_api_key(value: str) -> bool:

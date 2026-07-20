@@ -10,12 +10,14 @@ class AppError(Exception):
         tool_events: list[dict[str, object]] | None = None,
         error_code: str = "",
         field_errors: list[dict[str, str]] | None = None,
+        diagnostics: dict[str, object] | None = None,
     ) -> None:
         super().__init__(message)
         self.safe_message = safe_message or message
         self.tool_events = tool_events or []
         self.error_code = error_code
         self.field_errors = field_errors or []
+        self.diagnostics = diagnostics or {}
 
 
 class PermissionDenied(AppError):

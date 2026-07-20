@@ -21,12 +21,40 @@ from backend.tests.helpers import container
     reason="Real Claude integration requires opt-in flag, ANTHROPIC_API_KEY, and Claude CLI",
 )
 def test_real_claude_sdk_smoke_completes_single_debug_job() -> None:
+    _run_real_smoke(
+        model=os.getenv("CLAUDE_MODEL", ""),
+        api_key=os.environ["ANTHROPIC_API_KEY"],
+        base_url=os.getenv("ANTHROPIC_BASE_URL", ""),
+        idempotency_key="real-claude-integration",
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(
+    os.getenv("RUN_REAL_CLAUDE_BASELINE_INTEGRATION") != "true"
+    or not os.getenv("BASELINE_ANTHROPIC_API_KEY")
+    or not os.getenv("BASELINE_CLAUDE_MODEL")
+    or not is_claude_cli_available(),
+    reason="Baseline comparison requires explicit opt-in, model, key, and Claude CLI",
+)
+def test_real_claude_sdk_baseline_compatibility_smoke() -> None:
+    _run_real_smoke(
+        model=os.environ["BASELINE_CLAUDE_MODEL"],
+        api_key=os.environ["BASELINE_ANTHROPIC_API_KEY"],
+        base_url=os.getenv("BASELINE_ANTHROPIC_BASE_URL", ""),
+        idempotency_key="real-claude-baseline-integration",
+    )
+
+
+def _run_real_smoke(
+    *, model: str, api_key: str, base_url: str, idempotency_key: str
+) -> None:
     from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
 
     c = container()
     job = c.create_agent_job_service.execute(
         CreateAgentJobCommand(
-            idempotency_key="real-claude-integration",
+            idempotency_key=idempotency_key,
             dingding_conversation_id="integration-conversation",
             dingding_user_id="local-user",
             user_message="请用一句话确认真实 Claude Agent SDK 运行时可用，不要调用工具。",
@@ -34,11 +62,11 @@ def test_real_claude_sdk_smoke_completes_single_debug_job() -> None:
         )
     )
     client = RealClaudeCodeAgentClient(
-        model=c.settings.claude_model,
+        model=model or c.settings.claude_model,
         tool_registry=c.agent_executor.tool_registry,
         limits=replace(c.settings.execution, timeout_seconds=60, max_turns=2),
-        api_key=os.environ["ANTHROPIC_API_KEY"],
-        base_url=os.getenv("ANTHROPIC_BASE_URL", ""),
+        api_key=api_key,
+        base_url=base_url,
     )
     result = client.run(
         AgentRunRequest(

@@ -71,6 +71,7 @@ CMD ["python", "-m", "app.agent_test_data.seeder", "seed"]
 
 FROM python-deps AS api-server
 COPY backend/app/__init__.py backend/app/bootstrap.py backend/app/main.py /app/backend/app/
+COPY backend/app/cli /app/backend/app/cli
 COPY backend/app/shared /app/backend/app/shared
 COPY backend/app/modules /app/backend/app/modules
 COPY backend/config /app/backend/config
@@ -94,6 +95,7 @@ CMD ["python", "-m", "app.workers.dingtalk_stream_ingress_worker"]
 
 FROM claude-runtime AS agent-worker
 COPY backend/app/__init__.py backend/app/bootstrap.py /app/backend/app/
+COPY backend/app/cli /app/backend/app/cli
 COPY backend/app/shared /app/backend/app/shared
 COPY backend/app/modules/__init__.py /app/backend/app/modules/
 COPY backend/app/modules/agent /app/backend/app/modules/agent

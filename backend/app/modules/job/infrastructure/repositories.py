@@ -635,6 +635,9 @@ class AgentRepository:
             "max_retry_count": int(row["max_retry_count"]),
             "result": row.get("result"),
             "error_message": row.get("error_message"),
+            "last_error_code": row.get("last_error_code") or "",
+            "last_error_at": row.get("last_error_at"),
+            "next_retry_at": row.get("next_retry_at"),
             "created_at": row["created_at"],
             "started_at": row.get("started_at"),
             "finished_at": row.get("finished_at"),
@@ -789,15 +792,18 @@ class AgentRepository:
         ]
 
     def claim_job(self, job_id: str, worker_id: str) -> AgentJob | None:
-        job = self.get_job(job_id)
-        if job.status != JobStatus.PENDING:
-            return None
         timestamp = now_iso()
-        self.database.execute(
+        row = self.database.execute_one(
             """
             update agent_job
-            set status = ?, started_at = ?, locked_at = ?, locked_by = ?
-            where id = ? and status = ?
+            set status = ?, started_at = coalesce(started_at, ?), locked_at = ?, locked_by = ?,
+                next_retry_at = null
+            where id = ?
+              and (
+                status = ?
+                or (status = ? and next_retry_at is not null and next_retry_at <= ?)
+              )
+            returning *
             """,
             (
                 JobStatus.RUNNING.value,
@@ -806,10 +812,11 @@ class AgentRepository:
                 worker_id,
                 job_id,
                 JobStatus.PENDING.value,
+                JobStatus.RETRY_WAIT.value,
+                timestamp,
             ),
         )
-        claimed = self.get_job(job_id)
-        return claimed if claimed.status == JobStatus.RUNNING else None
+        return self._job_from_row(row) if row else None
 
     def transition_job(
         self,
@@ -818,6 +825,7 @@ class AgentRepository:
         target: JobStatus,
         result: str | None = None,
         error_message: str | None = None,
+        error_code: str = "",
     ) -> AgentJob:
         job = self.get_job(job_id)
         if not can_transition(job.status, target):
@@ -830,27 +838,153 @@ class AgentRepository:
             if target in {JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.TIMEOUT}
             else None
         )
-        self.database.execute(
+        row = self.database.execute_one(
             """
             update agent_job
             set status = ?, result = coalesce(?, result), error_message = coalesce(?, error_message),
-                finished_at = coalesce(?, finished_at)
-            where id = ?
+                last_error_code = case when ? <> '' then ? else last_error_code end,
+                last_error_at = coalesce(?, last_error_at),
+                next_retry_at = null,
+                finished_at = coalesce(?, finished_at), locked_at = null, locked_by = null
+            where id = ? and status = ?
+            returning *
             """,
-            (target.value, result, error_message, finished_at, job_id),
+            (
+                target.value,
+                result,
+                error_message,
+                error_code,
+                error_code,
+                now_iso() if error_message is not None else None,
+                finished_at,
+                job_id,
+                job.status.value,
+            ),
         )
-        return self.get_job(job_id)
+        if not row:
+            raise NonRetryableExecutionError(
+                "Job changed while transitioning",
+                safe_message="Job status changed concurrently",
+                error_code="job_transition_conflict",
+            )
+        return self._job_from_row(row)
 
-    def increment_retry(self, job_id: str, error_message: str) -> AgentJob:
-        self.database.execute(
+    def schedule_retry(
+        self,
+        job_id: str,
+        *,
+        error_message: str,
+        error_code: str,
+        next_retry_at: str,
+    ) -> AgentJob:
+        row = self.database.execute_one(
             """
             update agent_job
-            set retry_count = retry_count + 1, error_message = ?, status = ?
-            where id = ?
+            set retry_count = retry_count + 1, error_message = ?, last_error_code = ?,
+                last_error_at = ?, next_retry_at = ?, status = ?, locked_at = null, locked_by = null
+            where id = ? and status = ? and retry_count < max_retry_count
+            returning *
             """,
-            (error_message, JobStatus.PENDING.value, job_id),
+            (
+                error_message,
+                error_code,
+                now_iso(),
+                next_retry_at,
+                JobStatus.RETRY_WAIT.value,
+                job_id,
+                JobStatus.RUNNING.value,
+            ),
         )
-        return self.get_job(job_id)
+        if not row:
+            raise NonRetryableExecutionError(
+                "Job is not eligible for retry scheduling",
+                safe_message="Job retry state changed concurrently",
+                error_code="job_retry_conflict",
+            )
+        return self._job_from_row(row)
+
+    def list_stranded_retry_jobs(
+        self,
+        job_ids: list[str] | None = None,
+        *,
+        lock_stale_before: str | None = None,
+    ) -> list[AgentJob]:
+        parameters: list[Any] = [JobStatus.PENDING.value]
+        lock_filter = " and (locked_at is null or locked_by is null)"
+        if lock_stale_before is not None:
+            lock_filter = " and (locked_at is null or locked_by is null or locked_at <= ?)"
+            parameters.append(lock_stale_before)
+        job_filter = ""
+        if job_ids:
+            placeholders = ", ".join("?" for _ in job_ids)
+            job_filter = f" and id in ({placeholders})"
+            parameters.extend(job_ids)
+        rows = self.database.execute(
+            f"""
+            select * from agent_job
+            where status = ? and retry_count > 0 and error_message is not null
+              and result is null {lock_filter}
+              {job_filter}
+            order by created_at, id
+            """,
+            tuple(parameters),
+        )
+        return [self._job_from_row(row) for row in rows]
+
+    def list_overdue_retry_wait_jobs(
+        self, *, before: str, job_ids: list[str] | None = None
+    ) -> list[AgentJob]:
+        parameters: list[Any] = [JobStatus.RETRY_WAIT.value, before]
+        job_filter = ""
+        if job_ids:
+            placeholders = ", ".join("?" for _ in job_ids)
+            job_filter = f" and id in ({placeholders})"
+            parameters.extend(job_ids)
+        rows = self.database.execute(
+            f"""
+            select * from agent_job
+            where status = ? and retry_count > 0 and result is null
+              and next_retry_at is not null and next_retry_at <= ?
+              {job_filter}
+            order by next_retry_at, id
+            """,
+            tuple(parameters),
+        )
+        return [self._job_from_row(row) for row in rows]
+
+    def recover_stranded_retry(
+        self,
+        job_id: str,
+        *,
+        next_retry_at: str,
+        error_code: str = "legacy_retry_recovered",
+        lock_stale_before: str | None = None,
+    ) -> AgentJob | None:
+        lock_filter = " and (locked_at is null or locked_by is null)"
+        parameters: list[Any] = [
+            JobStatus.RETRY_WAIT.value,
+            error_code,
+            now_iso(),
+            next_retry_at,
+            job_id,
+            JobStatus.PENDING.value,
+        ]
+        if lock_stale_before is not None:
+            lock_filter = " and (locked_at is null or locked_by is null or locked_at <= ?)"
+            parameters.append(lock_stale_before)
+        row = self.database.execute_one(
+            f"""
+            update agent_job
+            set status = ?, last_error_code = case when last_error_code = '' then ? else last_error_code end,
+                last_error_at = coalesce(last_error_at, ?), next_retry_at = ?,
+                locked_at = null, locked_by = null
+            where id = ? and status = ? and retry_count > 0 and error_message is not null
+              and result is null {lock_filter}
+            returning *
+            """,
+            tuple(parameters),
+        )
+        return self._job_from_row(row) if row else None
 
     def count_rows(self, table: str) -> int:
         row = self.database.execute_one(f"select count(*) as count from {table}")
@@ -889,6 +1023,9 @@ class AgentRepository:
             max_retry_count=int(row["max_retry_count"]),
             result=row.get("result"),
             error_message=row.get("error_message"),
+            last_error_code=row.get("last_error_code") or "",
+            last_error_at=row.get("last_error_at"),
+            next_retry_at=row.get("next_retry_at"),
             source_channel=row.get("source_channel") or row["source"],
             source_connector_id=row.get("source_connector_id") or "",
             external_event_id=row.get("external_event_id") or "",

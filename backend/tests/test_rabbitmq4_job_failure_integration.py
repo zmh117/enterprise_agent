@@ -7,6 +7,7 @@ import uuid
 from dataclasses import replace
 
 from app.bootstrap import build_worker_container
+from app.modules.agent.domain.runtime import AgentExecutionContext
 from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.message_bus.application.message_publisher import AgentJobMessage
@@ -30,6 +31,21 @@ class _FailingClaudeClient:
         raise NonRetryableExecutionError(
             "synthetic non-retryable failure",
             safe_message="Synthetic RabbitMQ 4 dead-letter smoke failure",
+        )
+
+
+class _StaticContextBuilder:
+    def build(self, job: object) -> AgentExecutionContext:
+        return AgentExecutionContext(
+            system_role="Synthetic integration Agent",
+            safety_rules=["Read only"],
+            user_question="synthetic failure",
+            project_code="default",
+            allowed_tools=[],
+            tool_restrictions=[],
+            skills={},
+            retrieved_context={},
+            conversation_summary="",
         )
 
 
@@ -67,6 +83,7 @@ class RabbitMQ4JobFailureIntegrationTests(unittest.TestCase):
         self.container = build_worker_container(settings, migrate=True, seed=False)
         # DB runtime overlay can tune retry settings, but test queue names must stay isolated.
         self.container.settings = replace(self.container.settings, queue=self.queue)
+        self.container.agent_executor.context_builder = _StaticContextBuilder()  # type: ignore[assignment]
         self.connection = pika.BlockingConnection(pika.URLParameters(self.rabbitmq_url))
         self.channel = self.connection.channel()
 
@@ -128,7 +145,7 @@ class RabbitMQ4JobFailureIntegrationTests(unittest.TestCase):
             (retry_message.job_id,),
         )
 
-        self.assertEqual(JobStatus.PENDING, retry_job.status)
+        self.assertEqual(JobStatus.RETRY_WAIT, retry_job.status)
         self.assertEqual(1, retry_job.retry_count)
         self.assertEqual(retry_message.job_id, retry_payload["job_id"])
         self.assertIn("job.failure.retry", [row["event_type"] for row in retry_audit])

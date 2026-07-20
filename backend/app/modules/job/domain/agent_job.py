@@ -43,6 +43,9 @@ class AgentJob:
     max_retry_count: int
     result: str | None = None
     error_message: str | None = None
+    last_error_code: str = ""
+    last_error_at: str | None = None
+    next_retry_at: str | None = None
     source_channel: str = "dingding"
     source_connector_id: str = "connector-dingtalk-enterprise-default"
     external_event_id: str = ""

@@ -39,9 +39,23 @@ class ResultDeliveryService:
             text=job.result,
         )
 
-    def deliver_job_failure(self, job_id: str, reason: str) -> None:
+    def deliver_job_failure(
+        self,
+        job_id: str,
+        reason: str,
+        *,
+        error_code: str = "agent_runtime_error",
+    ) -> None:
         job = self.repository.get_job(job_id)
-        text = json.dumps({"status": "failed", "reason": reason}, ensure_ascii=False)
+        text = json.dumps(
+            {
+                "status": "failed",
+                "error_code": _safe_error_code(error_code),
+                "message": _safe_failure_message(reason),
+                "job_id": job.id,
+            },
+            ensure_ascii=False,
+        )
         self._deliver(
             job_id=job.id,
             route=ReplyRoute.from_dict(job.reply_route),
@@ -202,3 +216,15 @@ def _safe_target(target: dict[str, Any]) -> dict[str, Any]:
         else:
             safe[key] = value
     return safe
+
+
+def _safe_error_code(value: str) -> str:
+    normalized = "".join(char for char in value if char.isalnum() or char in {"_", "-"})
+    return normalized[:80] or "agent_runtime_error"
+
+
+def _safe_failure_message(reason: str) -> str:
+    lowered = reason.lower()
+    if any(token in lowered for token in ("token", "secret", "api_key", "authorization", "http")):
+        return "Agent 运行失败，系统已记录脱敏诊断信息，请联系管理员并提供 Job 标识。"
+    return reason[:500] or "Agent 运行失败，请联系管理员并提供 Job 标识。"

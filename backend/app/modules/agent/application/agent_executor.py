@@ -41,6 +41,7 @@ class AgentExecutor:
         job_id: str,
         *,
         worker_id: str = "agent-worker",
+        correlation_id: str = "",
         fail_on_error: bool = True,
     ) -> str:
         claimed = self.status_service.claim(job_id, worker_id)
@@ -56,7 +57,17 @@ class AgentExecutor:
             summary="Worker claimed Agent job",
             job_id=job.id,
             actor_id=worker_id,
+            payload={"correlation_id": correlation_id, "retry_count": job.retry_count},
         )
+        if job.retry_count > 0:
+            self.audit_service.record(
+                "job.retry.released",
+                status="SUCCEEDED",
+                summary="Due Agent job retry returned to a worker",
+                job_id=job.id,
+                actor_id=worker_id,
+                payload={"correlation_id": correlation_id, "retry_count": job.retry_count},
+            )
         self.repository.add_step(
             job_id=job.id,
             step_type="started",

@@ -7,7 +7,8 @@ from dataclasses import dataclass, field
 @dataclass(frozen=True)
 class QueueSettings:
     job_queue: str = "agent.job.queue"
-    retry_queue: str = "agent.job.retry.queue"
+    retry_queue: str = "agent.job.retry.delay.v1.queue"
+    legacy_retry_queue: str = "agent.job.retry.queue"
     dead_queue: str = "agent.job.dead.queue"
     attachment_queue: str = "agent.attachment.queue"
     attachment_retry_queue: str = "agent.attachment.retry.queue"
@@ -282,7 +283,10 @@ def load_settings() -> Settings:
         ),
         queue=QueueSettings(
             job_queue=os.getenv("AGENT_JOB_QUEUE", "agent.job.queue"),
-            retry_queue=os.getenv("AGENT_RETRY_QUEUE", "agent.job.retry.queue"),
+            retry_queue=os.getenv("AGENT_RETRY_QUEUE", "agent.job.retry.delay.v1.queue"),
+            legacy_retry_queue=os.getenv(
+                "AGENT_LEGACY_RETRY_QUEUE", "agent.job.retry.queue"
+            ),
             dead_queue=os.getenv("AGENT_DEAD_QUEUE", "agent.job.dead.queue"),
             attachment_queue=os.getenv("ATTACHMENT_QUEUE", "agent.attachment.queue"),
             attachment_retry_queue=os.getenv(

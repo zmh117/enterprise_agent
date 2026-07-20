@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import unittest
 from dataclasses import replace
 from typing import Any
@@ -238,6 +239,49 @@ class RealClaudeCodeAgentClientTests(unittest.TestCase):
 
         with self.assertRaises(RetryableExecutionError):
             client.run(request)
+
+    def test_inconsistent_error_result_has_stable_safe_classification(self) -> None:
+        async def query(prompt: str, options: FakeOptions) -> Any:
+            del prompt, options
+            yield {"type": "result", "is_error": True, "result": "success", "errors": []}
+
+        client, request = self._client_and_request(query)
+        with self.assertRaises(RetryableExecutionError) as raised:
+            client.run(request)
+
+        self.assertEqual("claude_inconsistent_result", raised.exception.error_code)
+        self.assertIn("不一致", raised.exception.safe_message)
+        self.assertNotIn("error result: success", raised.exception.safe_message.lower())
+
+    def test_process_error_success_is_inconsistent_and_diagnostics_are_redacted(self) -> None:
+        async def query(prompt: str, options: FakeOptions) -> Any:
+            del prompt
+            options.stderr(
+                "request https://user:pass@example.invalid/path?api_key=secret api_key=secret"
+            )
+            raise ProcessError("Claude Code returned an error result: success")
+            yield {"result": "unreachable"}
+
+        client, request = self._client_and_request(query)
+        with self.assertRaises(RetryableExecutionError) as raised:
+            client.run(request)
+
+        self.assertEqual("claude_inconsistent_result", raised.exception.error_code)
+        diagnostics = json.dumps(raised.exception.diagnostics)
+        self.assertNotIn("secret", diagnostics)
+        self.assertNotIn("user:pass", diagnostics)
+        self.assertEqual("default", raised.exception.diagnostics["provider_host"])
+
+    def test_explicit_invalid_model_is_non_retryable(self) -> None:
+        async def query(prompt: str, options: FakeOptions) -> Any:
+            del prompt, options
+            raise ProcessError("model not found")
+            yield {"result": "unreachable"}
+
+        client, request = self._client_and_request(query)
+        with self.assertRaises(NonRetryableExecutionError) as raised:
+            client.run(request)
+        self.assertEqual("claude_invalid_model", raised.exception.error_code)
 
     def test_process_error_after_tool_call_carries_tool_events(self) -> None:
         async def query(prompt: str, options: FakeOptions) -> Any:

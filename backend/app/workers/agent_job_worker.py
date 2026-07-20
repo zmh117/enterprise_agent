@@ -23,10 +23,16 @@ class AgentJobWorker:
 
     def handle(self, message: AgentJobMessage) -> None:
         def run() -> None:
+            current = self.container.agent_repository.get_job(message.job_id)
+            if self.container.retry_service.reschedule_if_early(
+                current, message.correlation_id
+            ):
+                return
             try:
                 self.container.agent_executor.execute(
                     message.job_id,
                     worker_id=self.worker_id,
+                    correlation_id=message.correlation_id,
                     fail_on_error=False,
                 )
             except Exception as exc:
@@ -39,15 +45,16 @@ class AgentJobWorker:
                 )
                 self.container.audit_service.record(
                     f"job.failure.{action}",
-                    status="FAILED" if action == "dead" else "RETRYING",
+                    status="FAILED" if action in {"dead", "timeout"} else "RETRYING",
                     summary=safe_message,
                     job_id=job.id,
                     actor_id=self.worker_id,
                 )
-                if action == "dead":
+                if action in {"dead", "timeout"}:
                     self.container.result_delivery_service.deliver_job_failure(
                         job.id,
                         safe_message,
+                        error_code=getattr(exc, "error_code", "") or "agent_runtime_error",
                     )
                 logger.warning(
                     "Agent job failed; routed to %s job_id=%s error_type=%s safe_message=%s",

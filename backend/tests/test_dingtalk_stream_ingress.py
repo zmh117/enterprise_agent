@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import unittest
 from contextlib import contextmanager
@@ -12,6 +13,7 @@ from app.modules.dingding.application.dingtalk_stream_service import (
     DingTalkStreamHandleResult,
 )
 from app.modules.job.application.job_status_service import JobStatusService
+from app.modules.job.domain.job_status import JobStatus
 from app.shared.config import DingTalkSettings, Settings
 from app.shared.exceptions import NonRetryableExecutionError
 from app.workers.dingtalk_stream_ingress_worker import DingTalkStreamIngressWorker
@@ -157,6 +159,39 @@ class DingTalkStreamIngressTests(unittest.TestCase):
         self.assertEqual("", adapter.calls[0]["connector_id"])
         attempts = c.agent_repository.list_delivery_attempts(result.job_id)
         self.assertEqual("SUCCEEDED", attempts[0]["status"])
+
+    def test_expired_session_webhook_failure_is_recorded_without_fallback(self) -> None:
+        c = container()
+        result = c.dingtalk_stream_message_service.handle_callback(
+            payload={
+                **stream_payload(),
+                "sessionWebhookExpiredTime": "1",
+            },
+            correlation_id="corr-expired-session-webhook",
+        )
+        claimed = c.agent_repository.claim_job(result.job_id, "worker")
+        self.assertIsNotNone(claimed)
+        c.agent_repository.transition_job(
+            job_id=result.job_id,
+            target=JobStatus.FAILED,
+            error_message="模型运行失败",
+            error_code="claude_runtime_error",
+        )
+
+        c.result_delivery_service.deliver_job_failure(
+            result.job_id,
+            "模型运行失败",
+            error_code="claude_runtime_error",
+        )
+
+        attempts = c.agent_repository.list_delivery_attempts(result.job_id)
+        self.assertEqual(1, len(attempts))
+        self.assertEqual("FAILED", attempts[0]["status"])
+        self.assertEqual("dingtalk_stream_session_webhook", attempts[0]["route_type"])
+        serialized = json.dumps(attempts).lower()
+        self.assertNotIn("oapi.dingtalk.com", serialized)
+        self.assertNotIn("token=", serialized)
+        self.assertEqual(JobStatus.FAILED, c.agent_repository.get_job(result.job_id).status)
 
     def test_stream_message_can_override_delivery_to_enterprise_robot(self) -> None:
         c = container()

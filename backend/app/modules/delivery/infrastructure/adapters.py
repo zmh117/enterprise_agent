@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Protocol
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -14,6 +15,7 @@ from app.modules.dingding.infrastructure.dingtalk_delivery_clients import (
     DingTalkWebhookRobotClient,
     JsonPostTransport,
 )
+from app.shared.exceptions import NonRetryableExecutionError
 
 
 class DeliveryAdapter(Protocol):
@@ -194,6 +196,17 @@ class DingTalkStreamSessionWebhookDeliveryAdapter:
         self, *, connector: Connector | None, route: ReplyRoute, title: str, text: str
     ) -> None:
         session_webhook = str(route.target.get("session_webhook") or "")
+        expires_at = (
+            route.target.get("session_webhook_expired_time")
+            or route.target.get("session_webhook_expires")
+            or route.target.get("sessionWebhookExpiredTime")
+        )
+        if _session_webhook_expired(expires_at):
+            raise NonRetryableExecutionError(
+                "DingTalk Stream session webhook has expired",
+                safe_message="钉钉会话回复地址已过期，失败详情已记录，请发送新消息后重试。",
+                error_code="dingtalk_session_webhook_expired",
+            )
         client = DingTalkWebhookRobotClient(
             webhook_url=session_webhook,
             transport=self.transport,
@@ -254,3 +267,15 @@ def _bool_value(value: object) -> bool:
     if isinstance(value, str):
         return value.lower() in {"1", "true", "yes", "on"}
     return False
+
+
+def _session_webhook_expired(value: object) -> bool:
+    if value in (None, ""):
+        return False
+    try:
+        timestamp = float(str(value))
+    except (TypeError, ValueError):
+        return True
+    if timestamp > 10_000_000_000:
+        timestamp /= 1000
+    return timestamp <= time.time()

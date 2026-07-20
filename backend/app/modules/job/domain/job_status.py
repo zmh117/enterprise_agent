@@ -7,6 +7,7 @@ class JobStatus(StrEnum):
     WAITING_INPUT = "WAITING_INPUT"
     PENDING = "PENDING"
     RUNNING = "RUNNING"
+    RETRY_WAIT = "RETRY_WAIT"
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
     TIMEOUT = "TIMEOUT"
@@ -15,7 +16,13 @@ class JobStatus(StrEnum):
 ALLOWED_TRANSITIONS: dict[JobStatus, set[JobStatus]] = {
     JobStatus.WAITING_INPUT: {JobStatus.PENDING, JobStatus.FAILED},
     JobStatus.PENDING: {JobStatus.RUNNING, JobStatus.FAILED},
-    JobStatus.RUNNING: {JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.TIMEOUT},
+    JobStatus.RUNNING: {
+        JobStatus.RETRY_WAIT,
+        JobStatus.SUCCEEDED,
+        JobStatus.FAILED,
+        JobStatus.TIMEOUT,
+    },
+    JobStatus.RETRY_WAIT: {JobStatus.RUNNING, JobStatus.FAILED, JobStatus.TIMEOUT},
     JobStatus.SUCCEEDED: set(),
     JobStatus.FAILED: set(),
     JobStatus.TIMEOUT: set(),

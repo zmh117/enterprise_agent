@@ -203,8 +203,10 @@ def test_publication_is_immutable_jobs_are_pinned_and_retry_keeps_original_versi
     assert rollback_job.agent_publication_id == original["id"]
     assert c.agent_repository.get_job(new_job.id).agent_publication_id == publication["id"]
 
+    claimed_new_job = c.agent_repository.claim_job(new_job.id, "publication-retry-worker")
+    assert claimed_new_job is not None
     result = c.retry_service.handle_failure(
-        new_job,
+        claimed_new_job,
         RetryableExecutionError("temporary failure", safe_message="temporary failure"),
         "retry-correlation",
     )

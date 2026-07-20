@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import unittest
 import uuid
 
 from app.modules.message_bus.infrastructure.rabbitmq_publisher import RabbitMQPublisher
+from app.modules.message_bus.infrastructure.rabbitmq_topology import (
+    declare_agent_job_topology,
+)
 from app.shared.config import QueueSettings
 
 _RUN = os.getenv("RUN_RABBITMQ4_INTEGRATION") == "1"
@@ -63,7 +67,6 @@ class RabbitMQ4IntegrationTests(unittest.TestCase):
             self.queues.retry_queue: {
                 "job_id": "job-retry",
                 "correlation_id": "corr-retry",
-                "delay_seconds": 30,
             },
             self.queues.dead_queue: {
                 "job_id": "job-dead",
@@ -74,7 +77,7 @@ class RabbitMQ4IntegrationTests(unittest.TestCase):
 
         for queue_name, expected_payload in expected.items():
             # Repeating the durable declaration must remain idempotent on RabbitMQ 4.
-            self.channel.queue_declare(queue=queue_name, durable=True)
+            declare_agent_job_topology(self.channel, self.queues)
             method, properties, body = self.channel.basic_get(queue=queue_name, auto_ack=False)
             self.assertIsNotNone(method, f"No message in {queue_name}")
             self.assertEqual(2, properties.delivery_mode)
@@ -83,6 +86,30 @@ class RabbitMQ4IntegrationTests(unittest.TestCase):
 
             state = self.channel.queue_declare(queue=queue_name, durable=True, passive=True)
             self.assertEqual(0, state.method.message_count)
+
+    def test_retry_expiration_dead_letters_back_to_main_queue(self) -> None:
+        publisher = RabbitMQPublisher(self.rabbitmq_url, self.queues)
+        publisher.publish_retry("job-delayed", "corr-delayed", 1)
+
+        deadline = time.monotonic() + 8
+        payload: dict[str, object] | None = None
+        while time.monotonic() < deadline:
+            method, _, body = self.channel.basic_get(
+                queue=self.queues.job_queue, auto_ack=False
+            )
+            if method is not None:
+                payload = json.loads(body.decode("utf-8"))
+                self.channel.basic_ack(method.delivery_tag)
+                break
+            time.sleep(0.1)
+
+        self.assertEqual(
+            {"job_id": "job-delayed", "correlation_id": "corr-delayed"}, payload
+        )
+        retry_state = self.channel.queue_declare(
+            queue=self.queues.retry_queue, passive=True
+        )
+        self.assertEqual(0, retry_state.method.message_count)
 
 
 if __name__ == "__main__":

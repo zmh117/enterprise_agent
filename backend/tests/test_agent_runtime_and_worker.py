@@ -123,7 +123,7 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
 
         self.assertEqual("retry", action)
         self.assertEqual(1, len(c.message_bus.retries))
-        self.assertEqual(JobStatus.PENDING, c.agent_repository.get_job(job.id).status)
+        self.assertEqual(JobStatus.RETRY_WAIT, c.agent_repository.get_job(job.id).status)
 
     def test_retry_pending_job_keeps_failure_tool_events(self) -> None:
         c = container()
@@ -149,7 +149,7 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
             action = "none"
 
         self.assertEqual("retry", action)
-        self.assertEqual(JobStatus.PENDING, c.agent_repository.get_job(job.id).status)
+        self.assertEqual(JobStatus.RETRY_WAIT, c.agent_repository.get_job(job.id).status)
         tool_calls = c.agent_repository.list_tool_calls(job.id)
         self.assertIn("query_database", [call["tool_name"] for call in tool_calls])
 

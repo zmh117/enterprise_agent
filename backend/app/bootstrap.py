@@ -476,6 +476,7 @@ def _build_container(
         repository=agent_repository,
         publisher=publisher,
         queue_settings=settings.queue,
+        audit_service=audit_service,
     )
     return Container(
         settings=settings,

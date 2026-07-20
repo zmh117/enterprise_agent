@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 
 from app.shared.config import QueueSettings
+from app.modules.message_bus.infrastructure.rabbitmq_topology import (
+    declare_agent_job_topology,
+)
 
 
 class RabbitMQPublisher:
@@ -11,19 +14,54 @@ class RabbitMQPublisher:
         self.queue = queue
 
     def publish_agent_job(self, job_id: str, correlation_id: str) -> None:
-        self._publish(self.queue.job_queue, {"job_id": job_id, "correlation_id": correlation_id})
+        self._publish_agent_message(
+            self.queue.job_queue,
+            {"job_id": job_id, "correlation_id": correlation_id},
+        )
 
     def publish_retry(self, job_id: str, correlation_id: str, delay_seconds: int) -> None:
-        self._publish(
+        self._publish_agent_message(
             self.queue.retry_queue,
-            {"job_id": job_id, "correlation_id": correlation_id, "delay_seconds": delay_seconds},
+            {"job_id": job_id, "correlation_id": correlation_id},
+            expiration_ms=max(delay_seconds, 1) * 1000,
         )
 
     def publish_dead_letter(self, job_id: str, correlation_id: str, reason: str) -> None:
-        self._publish(
+        self._publish_agent_message(
             self.queue.dead_queue,
             {"job_id": job_id, "correlation_id": correlation_id, "reason": reason},
         )
+
+    def _publish_agent_message(
+        self,
+        queue_name: str,
+        payload: dict[str, object],
+        *,
+        expiration_ms: int | None = None,
+    ) -> None:
+        try:
+            import pika
+        except ModuleNotFoundError as exc:
+            raise RuntimeError("pika is required for RabbitMQ publishing") from exc
+        connection = pika.BlockingConnection(pika.URLParameters(self.rabbitmq_url))
+        try:
+            channel = connection.channel()
+            declare_agent_job_topology(channel, self.queue)
+            channel.confirm_delivery()
+            properties_kwargs: dict[str, object] = {"delivery_mode": 2}
+            if expiration_ms is not None:
+                properties_kwargs["expiration"] = str(expiration_ms)
+            confirmed = channel.basic_publish(
+                exchange="",
+                routing_key=queue_name,
+                body=json.dumps(payload).encode("utf-8"),
+                properties=pika.BasicProperties(**properties_kwargs),
+                mandatory=True,
+            )
+            if confirmed is False:
+                raise RuntimeError("RabbitMQ publisher confirm failed")
+        finally:
+            connection.close()
 
     def publish_attachment(self, attachment_id: str, correlation_id: str) -> None:
         self._publish(
