@@ -1,0 +1,9 @@
+{
+  "name": "@enterprise-agent/config",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "lint": "tsc --noEmit", "typecheck": "tsc --noEmit", "build": "tsc --noEmit" },
+  "devDependencies": { "typescript": "6.0.3" },
+  "exports": { "./tsconfig.base.json": "./tsconfig.base.json", "./tsconfig.react.json": "./tsconfig.react.json" }
+}

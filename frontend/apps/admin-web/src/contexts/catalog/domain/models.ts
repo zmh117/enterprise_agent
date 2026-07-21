@@ -1,0 +1,10 @@
+export type Skill = { code: string; name: string; description: string; source: string; status: string; assignable: boolean; error_summary: string };
+export type ToolProvider = { code: string; name: string; available: boolean; dialects: string[]; probe: string; config_schema: Record<string, unknown> };
+export type ToolResource = { id: string; code: string; scope_type: "environment" | "base" | "workshop"; resource_kind: "database" | "redis" | "loki"; engine?: string; environment_code?: string; base_code?: string; workshop_code?: string; status: "enabled" | "disabled"; revision: number; config: Record<string, unknown>; secret_refs: Record<string, string> };
+export type ChannelProvider = { code: string; name: string; available: boolean; directions: string[]; required: string[] };
+export type Connector = { id: string; connector_type: string; name: string; base_url?: string; endpoint_ref?: string; enabled: boolean; allow_ingress: boolean; allow_delivery: boolean; revision: number; secret_ref: string; host_allowlist: string[]; metadata?: Record<string, unknown> };
+export type ToolResourceDraft = Omit<ToolResource, "id" | "revision"> & { expected_revision: number };
+export type ConnectorDraft = Omit<Connector, "revision"> & { expected_revision: number };
+export type ProbeResult = { resource_kind?: string; status: string; duration_ms?: number; summary: string; correlation_id: string };
+export type ManagedSecret = { id: string; code: string; secret_ref: string; purpose: string; status: "enabled" | "disabled"; active_version: number; configured: boolean; masked_summary: string; revision: number; updated_at?: string };
+export type ManagedSecretDraft = { code: string; value: string; purpose: string };

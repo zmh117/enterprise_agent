@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -117,10 +115,28 @@ def create_app(
     app = FastAPI(title="Enterprise Agent", version="0.1.0", lifespan=lifespan)
 
     @app.exception_handler(RequestValidationError)
-    async def safe_validation_error(
-        request: Request, exc: RequestValidationError
-    ) -> JSONResponse:
-        del request
+    async def safe_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+        correlation_id = getattr(request.state, "correlation_id", "-")
+        field_errors = [
+            {
+                "field": ".".join(str(item) for item in (error.get("loc") or ())[1:]),
+                "message": str(error.get("msg") or "Invalid value"),
+            }
+            for error in exc.errors()
+        ]
+        if request.url.path.startswith("/api/admin"):
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "detail": {
+                        "code": "validation_failed",
+                        "message": "Request validation failed",
+                        "field_errors": field_errors,
+                        "correlation_id": correlation_id,
+                    }
+                },
+                headers={"x-correlation-id": correlation_id},
+            )
         return JSONResponse(
             status_code=422,
             content={
@@ -137,10 +153,10 @@ def create_app(
 
     @app.middleware("http")
     async def correlation_middleware(request: Request, call_next: Any) -> Any:
-        correlation_id = request.headers.get("x-correlation-id")
-        set_correlation_id(correlation_id)
+        correlation_id = set_correlation_id(request.headers.get("x-correlation-id"))
+        request.state.correlation_id = correlation_id
         response = await call_next(request)
-        response.headers["x-correlation-id"] = correlation_id or "-"
+        response.headers["x-correlation-id"] = correlation_id
         return response
 
     @app.get("/api/health")
@@ -165,6 +181,7 @@ def create_app(
         return status
 
     from app.modules.channel.api.channel_webhook_controller import build_channel_router
+    from app.modules.admin.api import build_admin_router
     from app.modules.agent_config.api import build_agent_config_router
     from app.modules.dingding.api.dingding_webhook_controller import build_dingding_router
     from app.modules.identity.api import build_auth_router, build_identity_admin_router
@@ -177,6 +194,7 @@ def create_app(
     )
 
     app.include_router(build_channel_router())
+    app.include_router(build_admin_router())
     app.include_router(build_agent_config_router())
     app.include_router(build_dingding_router())
     app.include_router(build_agent_job_debug_router())

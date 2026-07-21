@@ -64,20 +64,21 @@ class RollbackRequest(BaseModel):
 def build_agent_config_router() -> APIRouter:
     router = APIRouter(prefix="/api/admin/agents", tags=["agent-configuration"])
 
+    @router.get("")
+    def list_agents(request: Request) -> dict[str, Any]:
+        require_action(request, resource_type="agent", resource_code="*", action="edit")
+        return {"agents": container(request).agent_config_service.list_agents()}
+
     @router.get("/{agent_code}")
     def get_agent(request: Request, agent_code: str) -> dict[str, Any]:
-        require_action(
-            request, resource_type="agent", resource_code=agent_code, action="edit"
-        )
+        require_action(request, resource_type="agent", resource_code=agent_code, action="edit")
         try:
             return {"agent": container(request).agent_config_service.get(agent_code)}
         except Exception as exc:
             raise handle_exception(exc) from exc
 
     @router.put("/{agent_code}/draft")
-    def save_draft(
-        request: Request, agent_code: str, payload: AgentDraftRequest
-    ) -> dict[str, Any]:
+    def save_draft(request: Request, agent_code: str, payload: AgentDraftRequest) -> dict[str, Any]:
         principal = require_action(
             request,
             resource_type="agent",
@@ -97,9 +98,7 @@ def build_agent_config_router() -> APIRouter:
         return {"revision": revision}
 
     @router.post("/{agent_code}/validate")
-    def validate(
-        request: Request, agent_code: str, payload: RevisionRequest
-    ) -> dict[str, Any]:
+    def validate(request: Request, agent_code: str, payload: RevisionRequest) -> dict[str, Any]:
         principal = require_action(
             request,
             resource_type="agent",
@@ -118,9 +117,7 @@ def build_agent_config_router() -> APIRouter:
         return {"revision": revision}
 
     @router.post("/{agent_code}/publish")
-    def publish(
-        request: Request, agent_code: str, payload: RevisionRequest
-    ) -> dict[str, Any]:
+    def publish(request: Request, agent_code: str, payload: RevisionRequest) -> dict[str, Any]:
         principal = require_action(
             request,
             resource_type="agent",
@@ -139,9 +136,7 @@ def build_agent_config_router() -> APIRouter:
         return {"publication": publication}
 
     @router.post("/{agent_code}/rollback")
-    def rollback(
-        request: Request, agent_code: str, payload: RollbackRequest
-    ) -> dict[str, Any]:
+    def rollback(request: Request, agent_code: str, payload: RollbackRequest) -> dict[str, Any]:
         principal = require_action(
             request,
             resource_type="agent",
@@ -161,9 +156,7 @@ def build_agent_config_router() -> APIRouter:
 
     @router.get("/{agent_code}/publications")
     def publications(request: Request, agent_code: str) -> dict[str, Any]:
-        require_action(
-            request, resource_type="agent", resource_code=agent_code, action="edit"
-        )
+        require_action(request, resource_type="agent", resource_code=agent_code, action="edit")
         try:
             values = container(request).agent_config_service.publications(agent_code)
         except Exception as exc:
@@ -172,13 +165,9 @@ def build_agent_config_router() -> APIRouter:
 
     @router.get("/{agent_code}/effective-config")
     def effective(request: Request, agent_code: str) -> dict[str, Any]:
-        require_action(
-            request, resource_type="agent", resource_code=agent_code, action="edit"
-        )
+        require_action(request, resource_type="agent", resource_code=agent_code, action="edit")
         try:
-            publication = container(request).agent_config_service.current_publication(
-                agent_code
-            )
+            publication = container(request).agent_config_service.current_publication(agent_code)
         except Exception as exc:
             raise handle_exception(exc) from exc
         return {

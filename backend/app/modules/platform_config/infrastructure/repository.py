@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.shared.database import Database
-from app.shared.exceptions import NotFound
+from app.shared.exceptions import NonRetryableExecutionError, NotFound
 
 
 def now_iso() -> str:
@@ -514,17 +514,13 @@ class PlatformConfigRepository:
         return [self._parse_platform_secret(row) for row in rows]
 
     def get_platform_secret(self, secret_id: str) -> dict[str, Any]:
-        row = self.database.execute_one(
-            "select * from platform_secret where id = ?", (secret_id,)
-        )
+        row = self.database.execute_one("select * from platform_secret where id = ?", (secret_id,))
         if not row:
             raise NotFound(f"Platform secret not found: {secret_id}")
         return self._parse_platform_secret(row)
 
     def get_platform_secret_by_code(self, code: str) -> dict[str, Any] | None:
-        row = self.database.execute_one(
-            "select * from platform_secret where code = ?", (code,)
-        )
+        row = self.database.execute_one("select * from platform_secret where code = ?", (code,))
         return self._parse_platform_secret(row) if row else None
 
     def get_platform_secret_by_ref(self, ref: str) -> dict[str, Any] | None:
@@ -841,6 +837,7 @@ class PlatformConfigRepository:
         config: dict[str, Any] | None = None,
         secret_refs: dict[str, str] | None = None,
         status: str = "enabled",
+        expected_revision: int | None = None,
     ) -> dict[str, Any]:
         environment_id, base_id, workshop_id = self.resolve_scope_ids(
             environment_code=environment_code, base_code=base_code, workshop_code=workshop_code
@@ -860,18 +857,37 @@ class PlatformConfigRepository:
             status,
         )
         if existing:
-            self.database.execute(
+            if expected_revision is not None and int(existing["revision"]) != expected_revision:
+                raise NonRetryableExecutionError(
+                    "Platform resource revision conflict",
+                    safe_message="Tool resource changed; refresh and try again",
+                    error_code="revision_conflict",
+                )
+            rows = self.database.execute(
                 """
                 update platform_resource_binding
                 set scope_type = ?, environment_id = ?, base_id = ?, workshop_id = ?,
                     resource_kind = ?, connector_id = ?, engine = ?, config_json = ?,
                     secret_refs_json = ?, status = ?, revision = revision + 1,
                     updated_at = ?
-                where id = ?
+                where id = ? and (? is null or revision = ?)
+                returning id
                 """,
-                (*params, timestamp, existing["id"]),
+                (*params, timestamp, existing["id"], expected_revision, expected_revision),
             )
+            if not rows:
+                raise NonRetryableExecutionError(
+                    "Platform resource revision conflict",
+                    safe_message="Tool resource changed; refresh and try again",
+                    error_code="revision_conflict",
+                )
             return self.get_resource_binding(existing["id"])
+        if expected_revision not in {None, 0}:
+            raise NonRetryableExecutionError(
+                "Platform resource revision conflict",
+                safe_message="Tool resource does not exist at the requested revision",
+                error_code="revision_conflict",
+            )
         entity_id = new_id("resource")
         self.database.execute(
             """
@@ -1244,7 +1260,8 @@ class PlatformConfigRepository:
             "active_version": int(row.get("active_version") or 0),
             "metadata": self._json_from_text(row.get("metadata_json") or "{}"),
             "revision": int(row.get("revision") or 0),
-            "configured": row.get("status") == "enabled" and int(row.get("active_version") or 0) > 0,
+            "configured": row.get("status") == "enabled"
+            and int(row.get("active_version") or 0) > 0,
         }
 
     def _parse_secret_version(self, row: dict[str, Any]) -> dict[str, Any]:

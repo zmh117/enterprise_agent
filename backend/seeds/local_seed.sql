@@ -161,7 +161,29 @@ VALUES
   ('policy-role-admin-webhook-rotate', 'role', 'platform-admin', 'webhook_trigger', '*',
    'allow', 'rotate', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('policy-role-admin-webhook-service-account', 'role', 'platform-admin', 'webhook_trigger', '*',
-   'allow', 'manage_service_account', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+   'allow', 'manage_service_account', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-dashboard-read', 'role', 'platform-admin', 'admin_dashboard', '*',
+   'allow', 'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-skill-read', 'role', 'platform-admin', 'skill_catalog', '*',
+   'allow', 'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-tool-resource-read', 'role', 'platform-admin', 'tool_resource', '*',
+   'allow', 'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-tool-resource-manage', 'role', 'platform-admin', 'tool_resource', '*',
+   'allow', 'manage', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-tool-resource-test', 'role', 'platform-admin', 'tool_resource', '*',
+   'allow', 'test', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-channel-read', 'role', 'platform-admin', 'channel_connector', '*',
+   'allow', 'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-channel-manage', 'role', 'platform-admin', 'channel_connector', '*',
+   'allow', 'manage', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-queue-read', 'role', 'platform-admin', 'queue_status', '*',
+   'allow', 'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-job-read', 'role', 'platform-admin', 'agent_job', '*',
+   'allow', 'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-conversation-read', 'role', 'platform-admin', 'conversation', '*',
+   'allow', 'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-attachment-read', 'role', 'platform-admin', 'attachment', '*',
+   'allow', 'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 
 INSERT INTO agent_definition

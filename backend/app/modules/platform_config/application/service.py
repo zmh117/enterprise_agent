@@ -308,7 +308,12 @@ class PlatformConfigService:
         return self.repository.list_resource_bindings(include_disabled=include_disabled)
 
     def upsert_resource_binding(
-        self, payload: dict[str, Any], *, actor_id: str, correlation_id: str = ""
+        self,
+        payload: dict[str, Any],
+        *,
+        actor_id: str,
+        correlation_id: str = "",
+        expected_revision: int | None = None,
     ) -> dict[str, Any]:
         self.require_admin(actor_id)
         code = validate_code(str(payload.get("code") or ""))
@@ -343,6 +348,7 @@ class PlatformConfigService:
             config=config,
             secret_refs=secret_refs,
             status=validate_status(str(payload.get("status") or "enabled")).value,
+            expected_revision=expected_revision,
         )
         self._audit("resource_binding", entity, "upsert", actor_id, before, correlation_id)
         return entity
@@ -395,9 +401,7 @@ class PlatformConfigService:
         self._audit("runtime_config_definition", entity, "upsert", actor_id, before, correlation_id)
         return entity
 
-    def list_runtime_config_values(
-        self, *, include_disabled: bool = True
-    ) -> list[dict[str, Any]]:
+    def list_runtime_config_values(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
         return [
             self._public_runtime_config_value(item)
             for item in self.repository.list_runtime_config_values(
@@ -433,7 +437,9 @@ class PlatformConfigService:
         secret_ref = ""
         value: Any = None
         if definition.get("sensitive") or value_type.value == "secret_ref":
-            secret_ref = validate_secret_ref(str(payload.get("secret_ref") or payload.get("value") or ""))
+            secret_ref = validate_secret_ref(
+                str(payload.get("secret_ref") or payload.get("value") or "")
+            )
         else:
             value = coerce_runtime_value(payload.get("value"), value_type)
             assert_no_secret_payload({key: value})
@@ -593,6 +599,9 @@ class PlatformConfigService:
 
     def _secret_provider(self) -> EncryptedDbSecretProvider:
         return EncryptedDbSecretProvider(self.repository)
+
+    def resolve_secret(self, ref: str) -> str:
+        return self._secret_provider().resolve(ref)
 
     def _public_secret(self, secret: dict[str, Any]) -> dict[str, Any]:
         return {

@@ -5,21 +5,28 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist"] },
+  { ignores: ["**/dist/**", "**/node_modules/**", "**/*.tsbuildinfo"] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ["**/*.{ts,tsx}"],
-    languageOptions: {
-      ecmaVersion: 2022,
-      globals: globals.browser,
-    },
-    plugins: {
-      "react-hooks": reactHooks,
-      "react-refresh": reactRefresh,
-    },
+    languageOptions: { ecmaVersion: 2022, globals: { ...globals.browser, ...globals.node } },
+    plugins: { "react-hooks": reactHooks, "react-refresh": reactRefresh },
+    rules: { ...reactHooks.configs.recommended.rules, "react-refresh/only-export-components": "off" },
+  },
+  {
+    files: ["packages/ui/**/*.{ts,tsx}"],
     rules: {
-      ...reactHooks.configs.recommended.rules,
-      "react-refresh/only-export-components": "off"
+      "no-restricted-imports": ["error", { "patterns": [
+        { "group": ["@/contexts/*", "@enterprise-agent/api-client", "@enterprise-agent/admin-web/*"], "message": "Shared UI must remain independent from business contexts and HTTP contracts." }
+      ] }],
+    },
+  },
+  {
+    files: ["apps/admin-web/src/contexts/**/presentation/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": ["error", { "patterns": [
+        { "group": ["@enterprise-agent/api-client", "**/infrastructure/*"], "message": "Presentation depends on application view models, not raw HTTP DTOs or infrastructure adapters." }
+      ] }],
     },
   },
 );

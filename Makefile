@@ -1,4 +1,4 @@
-.PHONY: check compile format-check lint typecheck test unittest openspec-validate smoke-db-backed-config
+.PHONY: check compile format-check lint typecheck test unittest frontend-check openspec-validate smoke-db-backed-config
 
 compile:
 	python3 -m compileall backend
@@ -15,6 +15,9 @@ typecheck:
 test:
 	.venv/bin/pytest backend/tests
 
+frontend-check:
+	cd frontend && pnpm install --frozen-lockfile && pnpm lint && pnpm typecheck && pnpm test && pnpm build
+
 unittest:
 	PYTHONPATH=backend .venv/bin/python -m unittest discover -s backend/tests -t .
 
@@ -27,4 +30,4 @@ openspec-validate:
 smoke-db-backed-config:
 	scripts/smoke_db_backed_config.sh
 
-check: compile format-check lint typecheck test unittest openspec-validate
+check: compile format-check lint typecheck test unittest frontend-check openspec-validate

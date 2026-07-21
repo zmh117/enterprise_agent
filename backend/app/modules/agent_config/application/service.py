@@ -73,15 +73,27 @@ class AgentConfigService:
         latest = self.repository.latest_revision(str(definition["id"]))
         current = None
         if definition.get("current_publication_id"):
-            current = self.repository.get_publication(
-                str(definition["current_publication_id"])
-            )
+            current = self.repository.get_publication(str(definition["current_publication_id"]))
         return {
             "definition": definition,
             "draft": latest,
             "current_publication": current,
             "catalog": self.catalog(),
         }
+
+    def list_agents(self) -> list[dict[str, Any]]:
+        return [
+            {
+                **definition,
+                "management_mode": (
+                    "editable" if definition["code"] == DEFAULT_AGENT_CODE else "read_only"
+                ),
+            }
+            for definition in self.repository.list_definitions()
+        ]
+
+    def skill_catalog(self) -> list[dict[str, Any]]:
+        return self.skill_loader.catalog()
 
     def catalog(self) -> dict[str, Any]:
         return {
@@ -99,6 +111,7 @@ class AgentConfigService:
         expected_revision: int,
         config: dict[str, Any],
     ) -> dict[str, Any]:
+        self._require_mvp_write_agent(agent_code)
         self.authorization.require(
             user_id=actor_id,
             resource_type="agent",
@@ -139,6 +152,7 @@ class AgentConfigService:
     def validate_revision(
         self, *, actor_id: str, agent_code: str, revision_id: str
     ) -> dict[str, Any]:
+        self._require_mvp_write_agent(agent_code)
         self.authorization.require(
             user_id=actor_id,
             resource_type="agent",
@@ -153,13 +167,10 @@ class AgentConfigService:
                 safe_message="Revision does not belong to this Agent",
             )
         errors = self._validate_config(revision["config"])
-        return self.repository.set_validation(
-            revision_id, valid=not errors, errors=errors
-        )
+        return self.repository.set_validation(revision_id, valid=not errors, errors=errors)
 
-    def publish(
-        self, *, actor_id: str, agent_code: str, revision_id: str
-    ) -> dict[str, Any]:
+    def publish(self, *, actor_id: str, agent_code: str, revision_id: str) -> dict[str, Any]:
+        self._require_mvp_write_agent(agent_code)
         self.authorization.require(
             user_id=actor_id,
             resource_type="agent",
@@ -201,9 +212,8 @@ class AgentConfigService:
         )
         return publication
 
-    def rollback(
-        self, *, actor_id: str, agent_code: str, publication_id: str
-    ) -> dict[str, Any]:
+    def rollback(self, *, actor_id: str, agent_code: str, publication_id: str) -> dict[str, Any]:
+        self._require_mvp_write_agent(agent_code)
         self.authorization.require(
             user_id=actor_id,
             resource_type="agent",
@@ -249,20 +259,14 @@ class AgentConfigService:
             )
         return publication
 
-    def connector_allowed(
-        self, *, publication_id: str, direction: str, connector_id: str
-    ) -> bool:
-        return connector_id in self.repository.publication_connectors(
-            publication_id, direction
-        )
+    def connector_allowed(self, *, publication_id: str, direction: str, connector_id: str) -> bool:
+        return connector_id in self.repository.publication_connectors(publication_id, direction)
 
     def publications(self, agent_code: str) -> list[dict[str, Any]]:
         definition = self.repository.get_definition(agent_code)
         return self.repository.list_publications(str(definition["id"]))
 
-    def allowed_tools(
-        self, *, publication_id: str, user_id: str, project_code: str
-    ) -> list[str]:
+    def allowed_tools(self, *, publication_id: str, user_id: str, project_code: str) -> list[str]:
         del project_code
         assigned = self.repository.publication_tools(publication_id)
         enabled = self.repository.enabled_tools()
@@ -278,12 +282,19 @@ class AgentConfigService:
                 result.append(tool_name)
         return result
 
+    @staticmethod
+    def _require_mvp_write_agent(agent_code: str) -> None:
+        if agent_code != DEFAULT_AGENT_CODE:
+            raise NonRetryableExecutionError(
+                "MVP Agent write attempted for a non-default Agent",
+                safe_message="This Agent is read-only in the current management release",
+                error_code="agent_read_only",
+            )
+
     def _normalize(self, config: dict[str, Any]) -> dict[str, Any]:
         normalized = {
             "business_role": str(config.get("business_role") or "").strip(),
-            "business_instructions": str(
-                config.get("business_instructions") or ""
-            ).strip(),
+            "business_instructions": str(config.get("business_instructions") or "").strip(),
             "model_policy": dict(config.get("model_policy") or {}),
             "execution": dict(config.get("execution") or {}),
             "tools": sorted({str(item) for item in (config.get("tools") or [])}),
@@ -309,9 +320,7 @@ class AgentConfigService:
                 errors.append({"field": field, "message": "Must be an object"})
                 continue
             for key in sorted(set(value) - allowed):
-                errors.append(
-                    {"field": f"{field}.{key}", "message": "Field is not configurable"}
-                )
+                errors.append({"field": f"{field}.{key}", "message": "Field is not configurable"})
         return errors
 
     def _validate_config(self, config: dict[str, Any]) -> list[dict[str, str]]:
@@ -319,9 +328,7 @@ class AgentConfigService:
         serialized = json.dumps(config, ensure_ascii=False).lower()
         for key in FORBIDDEN_CONFIG_KEYS:
             if f'"{key}"' in serialized:
-                errors.append(
-                    {"field": key, "message": "Field is controlled by platform security"}
-                )
+                errors.append({"field": key, "message": "Field is controlled by platform security"})
         instructions = str(config.get("business_instructions") or "").lower()
         for pattern in FORBIDDEN_INSTRUCTION_PATTERNS:
             if pattern in instructions:
@@ -338,14 +345,13 @@ class AgentConfigService:
         # legitimately contain brackets or other punctuation, so a second,
         # narrower character regex would make the catalog and validator disagree.
         if model not in self.allowed_models:
-            errors.append(
-                {"field": "model_policy.model", "message": "Model is not registered"}
-            )
+            errors.append({"field": "model_policy.model", "message": "Model is not registered"})
         enabled_tools = self.repository.enabled_tools()
         for tool_name in config.get("tools") or []:
-            if str(tool_name) not in ToolRegistry.READONLY_TOOLS or str(
-                tool_name
-            ) not in enabled_tools:
+            if (
+                str(tool_name) not in ToolRegistry.READONLY_TOOLS
+                or str(tool_name) not in enabled_tools
+            ):
                 errors.append(
                     {
                         "field": "tools",
@@ -398,7 +404,5 @@ class AgentConfigService:
 
 def _hash(config: dict[str, Any]) -> str:
     return hashlib.sha256(
-        json.dumps(
-            config, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        ).encode()
+        json.dumps(config, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()

@@ -7,6 +7,9 @@
 统一用户、钉钉身份绑定、RBAC 与默认诊断 Agent 发布管理见
 [统一身份、RBAC 与 Agent 管理端](docs/unified-identity-rbac-admin.md)。
 
+新的 shadcn 管理控制台、DDD 目录、开发命令、权限和只读运维边界见
+[Admin Web MVP](docs/admin-web-mvp.md)。
+
 本地多数据库测试数据环境见 [docs/agent-test-data.md](/Users/mhz/Develop/enterprise_agent/docs/agent-test-data.md)，入口：
 
 ```bash

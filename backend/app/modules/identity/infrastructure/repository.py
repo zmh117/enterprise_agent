@@ -270,9 +270,7 @@ class IdentityRepository:
             )
         return self.get_external_identity(identity_id)
 
-    def create_role(
-        self, *, code: str, name: str, description: str = ""
-    ) -> dict[str, Any]:
+    def create_role(self, *, code: str, name: str, description: str = "") -> dict[str, Any]:
         role_id = new_id("role")
         timestamp = now_iso()
         self.database.execute(
@@ -287,9 +285,7 @@ class IdentityRepository:
 
     def list_roles(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
         where = "" if include_disabled else "where status = 'enabled'"
-        return self.database.execute(
-            f"select * from rbac_role {where} order by code"
-        )
+        return self.database.execute(f"select * from rbac_role {where} order by code")
 
     def get_role(self, role_id: str) -> dict[str, Any]:
         row = self.database.execute_one("select * from rbac_role where id = ?", (role_id,))
@@ -356,9 +352,12 @@ class IdentityRepository:
                 """,
                 (timestamp, existing["id"]),
             )
-            return self.database.execute_one(
-                "select * from rbac_user_role where id = ?", (existing["id"],)
-            ) or {}
+            return (
+                self.database.execute_one(
+                    "select * from rbac_user_role where id = ?", (existing["id"],)
+                )
+                or {}
+            )
         if expected_revision not in (None, 0):
             raise NonRetryableExecutionError(
                 "Membership revision conflict",
@@ -374,13 +373,12 @@ class IdentityRepository:
             """,
             (membership_id, user_id, role_id, timestamp, timestamp),
         )
-        return self.database.execute_one(
-            "select * from rbac_user_role where id = ?", (membership_id,)
-        ) or {}
+        return (
+            self.database.execute_one("select * from rbac_user_role where id = ?", (membership_id,))
+            or {}
+        )
 
-    def remove_role(
-        self, *, user_id: str, role_id: str, expected_revision: int
-    ) -> dict[str, Any]:
+    def remove_role(self, *, user_id: str, role_id: str, expected_revision: int) -> dict[str, Any]:
         rows = self.database.execute(
             """
             update rbac_user_role
@@ -502,9 +500,10 @@ class IdentityRepository:
                     timestamp,
                 ),
             )
-        return self.database.execute_one(
-            "select * from permission_policy where id = ?", (policy_id,)
-        ) or {}
+        return (
+            self.database.execute_one("select * from permission_policy where id = ?", (policy_id,))
+            or {}
+        )
 
     def get_policy(self, policy_id: str) -> dict[str, Any] | None:
         return self.database.execute_one(
@@ -585,9 +584,7 @@ class IdentityRepository:
             item["tool_scope"] = tool_scope
             item["resource_scope"] = _json_object(row.get("resource_scope_json"))
             item["specificity"] = sum(
-                1
-                for field in ("environment_id", "base_id", "workshop_id")
-                if row.get(field)
+                1 for field in ("environment_id", "base_id", "workshop_id") if row.get(field)
             ) + (1 if tool_name and tool_scope and "*" not in tool_scope else 0)
             matched.append(item)
         return sorted(
@@ -598,6 +595,43 @@ class IdentityRepository:
                 str(row["id"]),
             ),
         )
+
+    def safe_platform_scope_summary(
+        self,
+        *,
+        user_id: str,
+        role_codes: tuple[str, ...],
+        global_access: bool = False,
+    ) -> dict[str, Any]:
+        if global_access:
+            return {"mode": "global", "grants": []}
+        rows = self.database.execute(
+            """
+            select g.subject_type, g.subject_code, g.effect,
+                   e.code as environment_code, b.code as base_code,
+                   w.code as workshop_code, g.tool_scope_json
+            from platform_access_grant g
+            left join platform_environment e on e.id = g.environment_id
+            left join platform_base b on b.id = g.base_id
+            left join platform_workshop w on w.id = g.workshop_id
+            where g.status = 'enabled'
+            order by g.priority, g.id
+            """
+        )
+        principals = {("user", user_id)}
+        principals.update(("role", code) for code in role_codes)
+        grants = [
+            {
+                "effect": str(row["effect"]),
+                "environment": str(row.get("environment_code") or "*"),
+                "base": str(row.get("base_code") or "*"),
+                "workshop": str(row.get("workshop_code") or "*"),
+                "tools": _json_list(row.get("tool_scope_json")),
+            }
+            for row in rows
+            if (str(row["subject_type"]), str(row["subject_code"])) in principals
+        ]
+        return {"mode": "restricted", "grants": grants}
 
     def create_session(
         self,

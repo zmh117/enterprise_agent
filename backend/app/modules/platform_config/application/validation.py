@@ -58,7 +58,7 @@ def validate_status(value: str) -> ConfigStatus:
 
 def validate_engine(value: str) -> str:
     value = str(value or "").strip().lower()
-    if value not in {"mysql", "sqlserver", "oracle"}:
+    if value not in {"postgresql", "mysql", "sqlserver", "oracle"}:
         raise PlatformConfigValidationError(
             f"Invalid database engine: {value}",
             safe_message="Invalid database engine",
