@@ -22,3 +22,5 @@ frontend/**/.turbo/
 frontend/apps/*/dist/
 frontend/**/tsconfig.tsbuildinfo
 frontend/.pnpm-store/
+frontend/packages/
+frontend/apps/*/node_modules/
