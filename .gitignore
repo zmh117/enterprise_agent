@@ -17,10 +17,4 @@ backend/vendor/oracle/*.zip
 node_modules/
 frontend/node_modules/
 frontend/dist/
-frontend/.turbo/
-frontend/**/.turbo/
-frontend/apps/*/dist/
-frontend/**/tsconfig.tsbuildinfo
-frontend/.pnpm-store/
-frontend/packages/
-frontend/apps/*/node_modules/
+frontend/.vite/
