@@ -1,9 +1,0 @@
-{
-  "extends": "../config/tsconfig.react.json",
-  "compilerOptions": {
-    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.tsbuildinfo",
-    "baseUrl": ".",
-    "paths": { "@enterprise-agent/ui/*": ["./src/*"] }
-  },
-  "include": ["src"]
-}
