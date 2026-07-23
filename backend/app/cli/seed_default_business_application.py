@@ -37,6 +37,8 @@ def main() -> int:
                 "conversation_mode": "channel",
                 "recent_message_limit": 20,
                 "retention_days": 30,
+                "continuous_conversation_enabled": False,
+                "attachments_enabled": False,
             },
             "execution_policy": {
                 "max_turns": 12,

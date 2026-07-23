@@ -23,8 +23,11 @@ def _container(request: Request) -> Container:
 
 
 def _actor(request: Request) -> str:
-    settings = _container(request).settings.identity
-    if settings.enabled or settings.web_admin_enabled:
+    c = _container(request)
+    if (
+        c.settings.feature_configuration.unified_identity_enabled
+        or c.settings.feature_configuration.web_admin_enabled
+    ):
         principal = current_principal(request)
         require_csrf(request, principal)
         return principal.user_id
@@ -32,8 +35,11 @@ def _actor(request: Request) -> str:
 
 
 def _require_management_read(request: Request, *, resource_type: str) -> None:
-    settings = _container(request).settings.identity
-    if settings.enabled or settings.web_admin_enabled:
+    c = _container(request)
+    if (
+        c.settings.feature_configuration.unified_identity_enabled
+        or c.settings.feature_configuration.web_admin_enabled
+    ):
         require_action(
             request,
             resource_type=resource_type,
@@ -330,6 +336,22 @@ def build_platform_config_router() -> APIRouter:
         _require_management_read(request, resource_type="platform_config")
         return {
             "items": _container(request).platform_config_service.runtime_config_env_migration()
+        }
+
+    @router.get("/runtime-config/features")
+    def effective_feature_configuration(request: Request) -> dict[str, Any]:
+        if not _container(
+            request
+        ).settings.feature_configuration.web_admin_enabled:
+            raise HTTPException(status_code=404, detail="Web administration is disabled")
+        _require_management_read(request, resource_type="platform_config")
+        c = _container(request)
+        return {
+            "features": c.settings.feature_configuration.to_snapshot(
+                revision=c.settings.runtime_config_revision,
+                config_hash=c.settings.runtime_config_hash,
+                source=c.settings.runtime_config_source,
+            )
         }
 
     @router.get("/resource-bindings")

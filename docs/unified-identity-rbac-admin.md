@@ -9,11 +9,8 @@
 本地 HTTP 验收可在 `.env` 中设置：
 
 ```env
-FEATURE_UNIFIED_IDENTITY=true
 FEATURE_WEB_ADMIN=true
 FEATURE_PUBLISHED_AGENT_RUNTIME=true
-FEATURE_TEST_IDENTITY_HEADERS=false
-FEATURE_PERMISSION_SHADOW_MODE=true
 WEB_COOKIE_SECURE=false
 WEB_ALLOWED_ORIGINS=http://localhost:8080,http://127.0.0.1:8080
 ADMIN_WEB_PORT=8080
@@ -21,12 +18,16 @@ DINGTALK_TENANT_CODE=default
 DEFAULT_AGENT_CODE=default-diagnostic-agent
 ```
 
-生产必须使用 HTTPS，并把 `WEB_COOKIE_SECURE` 设为 `true`。`WEB_ALLOWED_ORIGINS` 只配置明确可信的 Origin，不使用通配符。生产不得启用 `FEATURE_TEST_IDENTITY_HEADERS`。
+`FEATURE_WEB_ADMIN=true` 会同时启用统一身份、Web Session、RBAC 和业务应用控制面。
+生产必须使用 HTTPS，并把 `WEB_COOKIE_SECURE` 设为 `true`。`WEB_ALLOWED_ORIGINS`
+只配置明确可信的 Origin，不使用通配符。测试身份请求头只允许测试进程内部启用，
+生产误配会导致启动失败。
 
 启动管理端与 API：
 
 ```bash
-docker compose up -d --build postgres rabbitmq api-server admin-web
+FEATURE_WEB_ADMIN=true docker compose --profile admin up -d --build \
+  postgres rabbitmq api-server admin-web
 ```
 
 访问 `http://localhost:8080`。`admin-web` 由 Nginx 提供静态资源，并把同源 `/api` 代理到 `api-server`。Compose 本地 seed 的账号仅用于开发：`local-user` / `local-admin-change-me`；首次登录后应立即修改密码。生产 migration 不创建默认密码。
@@ -115,7 +116,8 @@ docker compose exec api-server python -m app.cli.reconcile_legacy_identities --a
 
 ## 故障恢复
 
-登录后全部接口返回 401：确认 `FEATURE_UNIFIED_IDENTITY` 与 `FEATURE_WEB_ADMIN` 在 `api-server` 中同时开启，检查 session 是否 idle/absolute 过期、用户是否停用，并确认浏览器访问的是 `admin-web` 同源入口。
+登录后全部接口返回 401：确认 `FEATURE_WEB_ADMIN=true`，检查 session 是否
+idle/absolute 过期、用户是否停用，并确认浏览器访问的是 `admin-web` 同源入口。
 
 写操作返回 403：先检查 Origin/CSRF；若错误码为权限拒绝，再检查用户、角色、membership、显式 deny 和管理 action。不要开启 test identity header 绕过。
 
@@ -127,4 +129,6 @@ Agent 无法发布：先查看字段级校验错误；确认模型、工具、Sk
 
 publication 数据损坏或 hash 不一致时运行时会 fail closed。恢复应选择一个已验证历史 publication 回滚，或从草稿重新校验并发布；不得直接修改 snapshot/hash。PostgreSQL 是事实源，管理端静态资源可以重新构建。
 
-切换统一 RBAC 前保持 `FEATURE_PERMISSION_SHADOW_MODE=true`，观察旧/新决策差异并完成旧主体对账；验证一致后再按部署窗口切换，避免把 shadow 结果误当作真正授权。
+切换统一 RBAC 前通过受审计 runtime config 保持
+`PERMISSION_SHADOW_MODE=true`，观察旧/新决策差异并完成旧主体对账；验证一致后再按
+部署窗口发布新的 runtime config revision，避免把 shadow 结果误当作真正授权。

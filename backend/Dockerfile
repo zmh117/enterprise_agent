@@ -108,6 +108,7 @@ COPY backend/app/modules/agent /app/backend/app/modules/agent
 COPY backend/app/modules/agent_config /app/backend/app/modules/agent_config
 COPY backend/app/modules/attachments /app/backend/app/modules/attachments
 COPY backend/app/modules/audit /app/backend/app/modules/audit
+COPY backend/app/modules/business_application /app/backend/app/modules/business_application
 COPY backend/app/modules/channel /app/backend/app/modules/channel
 COPY backend/app/modules/delivery /app/backend/app/modules/delivery
 COPY backend/app/modules/dingding/__init__.py /app/backend/app/modules/dingding/

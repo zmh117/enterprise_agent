@@ -549,7 +549,7 @@ class BusinessApplicationService:
                 }
                 for item in revision["capabilities"]
             ],
-            "runtime_wired": False,
+            "runtime_wired": True,
         }
         reject_dangerous_content(snapshot)
         canonical_json(snapshot)
@@ -754,7 +754,7 @@ class BusinessApplicationResolver:
             },
             "deployment": deployment,
             "publication": publication,
-            "runtime_wired": False,
+            "runtime_wired": True,
         }
 
     def resolve_trigger(
@@ -772,6 +772,24 @@ class BusinessApplicationResolver:
         )
         if route is None:
             raise self.configuration_error("No active Business Application route")
+        application = self.repository.get_by_id(str(route["application_id"]))
+        return self.resolve_active(str(application["code"]), environment)
+
+    def resolve_trigger_optional(
+        self,
+        environment: str,
+        trigger_type: str,
+        connector_id: str,
+        routing_key: str,
+    ) -> dict[str, Any] | None:
+        route = self.repository.find_route(
+            environment=validate_environment(environment),
+            trigger_type=trigger_type,
+            connector_id=connector_id,
+            normalized_routing_key=normalize_routing_key(routing_key),
+        )
+        if route is None:
+            return None
         application = self.repository.get_by_id(str(route["application_id"]))
         return self.resolve_active(str(application["code"]), environment)
 

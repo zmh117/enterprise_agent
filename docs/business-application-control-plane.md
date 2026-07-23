@@ -18,27 +18,27 @@ Business Application
 Redis 或 Loki。Identity/RBAC 决定谁能管理应用；Channel Connector 继续持有渠道
 边界；未来 Capability Catalog 只提供受治理的业务 API 能力。
 
-当前所有 API 响应都返回：
+活动路由解析成功时，有效配置返回：
 
 ```json
 {
-  "runtime_wired": false
+  "runtime_wired": true
 }
 ```
 
-这表示发布和激活只更新控制面，不会切换钉钉、Webhook、RabbitMQ、Agent Job、
-只读工具或 Delivery 的现有执行路径。
+这表示后续新消息会使用该 publication 固定的 Agent 与 `session_policy`。
+草稿和仅发布但未激活的 revision 不会改变运行路径；三个数据面安全闸门仍优先。
 
 ## 功能开关
 
-默认关闭：
+管理面由一个总开关控制：
 
 ```dotenv
-FEATURE_BUSINESS_APPLICATION_CONTROL_PLANE=false
+FEATURE_WEB_ADMIN=false
 ```
 
-关闭时真实管理写入口返回
-`business_application_control_plane_disabled`。测试环境确认权限、迁移和回退后再开启。
+关闭时不注册 `/api/admin` 管理入口。开启后统一身份、Session、RBAC 与业务应用
+控制面原子启用，但不会自动开启已发布 Runtime、真实模型或真实工具。
 
 ## 数据模型
 
@@ -68,7 +68,7 @@ business_application.activate
 依赖默认 Agent Publication 存在后，可以幂等创建未激活草稿：
 
 ```bash
-FEATURE_BUSINESS_APPLICATION_CONTROL_PLANE=true \
+FEATURE_WEB_ADMIN=true \
   .venv/bin/python -m app.cli.seed_default_business_application
 ```
 

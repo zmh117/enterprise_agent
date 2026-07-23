@@ -88,14 +88,10 @@ ${DEEPSEEK_API_KEY_FOR_SMOKE}
 
 ## 4. 写入 DB-backed Runtime Config
 
-写入 DeepSeek/Claude runtime 配置：
+`FEATURE_REAL_CLAUDE` 是部署安全闸门，只能在启动环境中设置。数据库只写模型地址、
+模型名和 Secret 引用：
 
 ```bash
-curl --noproxy '*' -s -X POST http://127.0.0.1:8000/api/platform/runtime-config/values \
-  -H 'content-type: application/json' \
-  -H 'x-admin-user-id: local-user' \
-  -d '{"key":"FEATURE_REAL_CLAUDE","value":false}'
-
 curl --noproxy '*' -s -X POST http://127.0.0.1:8000/api/platform/runtime-config/values \
   -H 'content-type: application/json' \
   -H 'x-admin-user-id: local-user' \

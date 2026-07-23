@@ -198,6 +198,8 @@ class SessionPolicyRequest(StrictRequest):
     conversation_mode: Literal["channel", "actor", "application"] = "channel"
     recent_message_limit: int = Field(default=20, ge=1, le=100)
     retention_days: int = Field(default=30, ge=1, le=3650)
+    continuous_conversation_enabled: bool = False
+    attachments_enabled: bool = False
 
 
 class ExecutionPolicyRequest(StrictRequest):
@@ -283,7 +285,9 @@ def build_business_application_router() -> APIRouter:
         principal = current_principal(request)
         return {
             "enabled": bool(
-                container(request).settings.feature_business_application_control_plane
+                container(
+                    request
+                ).settings.feature_configuration.business_application_control_plane_enabled
             ),
             "runtime_wired": False,
             "subject_id": principal.user_id,
@@ -517,7 +521,11 @@ def _write_principal(request: Request) -> Any:
 
 
 def _require_enabled(request: Request) -> None:
-    if not container(request).settings.feature_business_application_control_plane:
+    if not (
+        container(
+            request
+        ).settings.feature_configuration.business_application_control_plane_enabled
+    ):
         raise HTTPException(
             status_code=404,
             detail={

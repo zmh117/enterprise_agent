@@ -15,7 +15,13 @@ from app.shared.exceptions import NonRetryableExecutionError
 
 CODE_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$")
 ENVIRONMENTS = {"local", "test", "staging", "production"}
-SESSION_POLICY_FIELDS = {"conversation_mode", "recent_message_limit", "retention_days"}
+SESSION_POLICY_FIELDS = {
+    "conversation_mode",
+    "recent_message_limit",
+    "retention_days",
+    "continuous_conversation_enabled",
+    "attachments_enabled",
+}
 EXECUTION_POLICY_FIELDS = {"max_turns", "timeout_seconds", "max_tool_calls"}
 TRIGGER_CONFIG_FIELDS = {"conversation_type", "require_mention", "webhook_definition_id"}
 DELIVERY_CONFIG_FIELDS = {"target_reference", "reply_mode"}
@@ -89,6 +95,10 @@ def validate_session_policy(value: dict[str, Any]) -> dict[str, Any]:
         "conversation_mode": str(value.get("conversation_mode") or "channel").strip(),
         "recent_message_limit": int(value.get("recent_message_limit") or 20),
         "retention_days": int(value.get("retention_days") or 30),
+        "continuous_conversation_enabled": bool(
+            value.get("continuous_conversation_enabled", False)
+        ),
+        "attachments_enabled": bool(value.get("attachments_enabled", False)),
     }
     if normalized["conversation_mode"] not in {"channel", "actor", "application"}:
         raise validation_error(

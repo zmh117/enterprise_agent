@@ -65,6 +65,8 @@ def draft_payload(*, route: str = "", capabilities: list[dict[str, object]] | No
             "conversation_mode": "channel",
             "recent_message_limit": 20,
             "retention_days": 30,
+            "continuous_conversation_enabled": False,
+            "attachments_enabled": False,
         },
         "execution_policy": {
             "max_turns": 12,
@@ -337,6 +339,140 @@ def test_publish_activate_resolve_rollback_and_deactivate_do_not_touch_data_plan
         )["count"],
     }
     assert application["runtime_wired"] is False
+
+
+def test_only_published_session_policy_is_visible_to_runtime_resolver() -> None:
+    container = build_test_container(control_plane_settings(), migrate=True, seed=True)
+    service = container.business_application_service
+    application = service.create(
+        actor_id="user_local_admin",
+        code="session-policy-test",
+        name="Session Policy Test",
+        description="",
+        project_code="default",
+        owner_user_id="user_local_admin",
+    )
+    first_payload = draft_payload(route="session-room")
+    first_payload["session_policy"] = {
+        "conversation_mode": "channel",
+        "recent_message_limit": 20,
+        "retention_days": 30,
+        "continuous_conversation_enabled": True,
+        "attachments_enabled": True,
+    }
+    first_revision = service.save_draft(
+        actor_id="user_local_admin",
+        code="session-policy-test",
+        expected_revision=int(application["revision"]),
+        payload=first_payload,
+    )
+    first_publication = service.publish(
+        actor_id="user_local_admin",
+        code="session-policy-test",
+        revision_id=str(first_revision["id"]),
+    )
+    service.activate(
+        actor_id="user_local_admin",
+        code="session-policy-test",
+        environment="test",
+        publication_id=str(first_publication["id"]),
+        expected_revision=0,
+    )
+
+    current = container.business_application_resolver.resolve_trigger(
+        "test",
+        "dingtalk_private",
+        "connector-dingtalk-stream-default",
+        "session-room",
+    )
+    policy = current["publication"]["snapshot"]["session_policy"]
+    assert policy["continuous_conversation_enabled"] is True
+    assert policy["attachments_enabled"] is True
+
+    latest = container.business_application_repository.get_by_code(
+        "session-policy-test"
+    )
+    service.save_draft(
+        actor_id="user_local_admin",
+        code="session-policy-test",
+        expected_revision=int(latest["revision"]),
+        payload=draft_payload(route="session-room"),
+    )
+    unchanged = container.business_application_resolver.resolve_trigger(
+        "test",
+        "dingtalk_private",
+        "connector-dingtalk-stream-default",
+        "session-room",
+    )
+    assert unchanged["publication"]["id"] == first_publication["id"]
+    assert unchanged["publication"]["snapshot"]["session_policy"][
+        "continuous_conversation_enabled"
+    ] is True
+
+
+def test_active_business_application_policy_controls_live_channel_sessions() -> None:
+    container = build_test_container(control_plane_settings(), migrate=True, seed=True)
+    service = container.business_application_service
+    application = service.create(
+        actor_id="user_local_admin",
+        code="live-session-policy",
+        name="Live Session Policy",
+        description="",
+        project_code="default",
+        owner_user_id="user_local_admin",
+    )
+    payload = draft_payload(route="conversation-policy-runtime")
+    payload["session_policy"] = {
+        "conversation_mode": "channel",
+        "recent_message_limit": 20,
+        "retention_days": 30,
+        "continuous_conversation_enabled": True,
+        "attachments_enabled": False,
+    }
+    revision = service.save_draft(
+        actor_id="user_local_admin",
+        code="live-session-policy",
+        expected_revision=int(application["revision"]),
+        payload=payload,
+    )
+    publication = service.publish(
+        actor_id="user_local_admin",
+        code="live-session-policy",
+        revision_id=str(revision["id"]),
+    )
+    service.activate(
+        actor_id="user_local_admin",
+        code="live-session-policy",
+        environment="test",
+        publication_id=str(publication["id"]),
+        expected_revision=0,
+    )
+
+    first = container.dingtalk_stream_message_service.handle_callback(
+        payload={
+            "conversationId": "conversation-policy-runtime",
+            "senderStaffId": "local-user",
+            "msgId": "policy-message-1",
+            "text": {"content": "first"},
+        },
+        correlation_id="policy-correlation-1",
+    )
+    second = container.dingtalk_stream_message_service.handle_callback(
+        payload={
+            "conversationId": "conversation-policy-runtime",
+            "senderStaffId": "local-user",
+            "msgId": "policy-message-2",
+            "text": {"content": "second"},
+        },
+        correlation_id="policy-correlation-2",
+    )
+
+    assert first.accepted is True
+    assert second.accepted is True
+    first_job = container.agent_repository.get_job(first.job_id)
+    second_job = container.agent_repository.get_job(second.job_id)
+    assert first_job.session_id == second_job.session_id
+    assert first_job.agent_publication_id == "agent_publication_default_v1"
 
 
 def test_resolver_fails_closed_for_lifecycle_schema_and_hash_errors() -> None:

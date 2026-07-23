@@ -143,7 +143,6 @@ PY
 }
 
 echo "==> Writing DB-backed runtime config"
-write_runtime_value "FEATURE_REAL_CLAUDE" "$REAL_CLAUDE"
 write_runtime_value "ANTHROPIC_BASE_URL" "https://api.deepseek.com/anthropic"
 write_runtime_value "ANTHROPIC_MODEL" "deepseek-v4-pro[1m]"
 write_runtime_secret "ANTHROPIC_API_KEY" "secret://platform/$SECRET_CODE"

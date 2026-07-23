@@ -1,7 +1,17 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+import logging
+from dataclasses import dataclass, field, replace
+
+from app.shared.feature_configuration import (
+    EffectiveFeatureConfiguration,
+    default_feature_configuration,
+    feature_configuration_from_values,
+    resolve_feature_configuration,
+)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -172,6 +182,9 @@ class Settings:
     feature_real_claude: bool = False
     feature_real_internal_tools: bool = False
     feature_business_application_control_plane: bool = False
+    feature_configuration: EffectiveFeatureConfiguration = field(
+        default_factory=default_feature_configuration
+    )
     app_startup_migrate: bool = True
     seed_local_config: bool = False
     runtime_config_source: str = "env"
@@ -204,6 +217,15 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 
 def load_settings() -> Settings:
+    environment = os.getenv("APP_ENV", "local")
+    features = resolve_feature_configuration(environment, os.environ)
+    for diagnostic in features.diagnostics:
+        logger.warning(
+            "%s keys=%s removal_version=%s",
+            diagnostic.message,
+            ",".join(diagnostic.keys),
+            "0.3.0",
+        )
     return Settings(
         database_dsn=os.getenv("DATABASE_DSN", "sqlite:///./enterprise_agent.db"),
         rabbitmq_url=os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"),
@@ -221,12 +243,13 @@ def load_settings() -> Settings:
         ),
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", os.getenv("ANTHROPIC_AUTH_TOKEN", "")),
         anthropic_base_url=os.getenv("ANTHROPIC_BASE_URL", ""),
-        environment=os.getenv("APP_ENV", "local"),
-        feature_real_claude=_env_bool("FEATURE_REAL_CLAUDE"),
-        feature_real_internal_tools=_env_bool("FEATURE_REAL_INTERNAL_TOOLS"),
-        feature_business_application_control_plane=_env_bool(
-            "FEATURE_BUSINESS_APPLICATION_CONTROL_PLANE"
+        environment=environment,
+        feature_real_claude=features.real_claude_enabled,
+        feature_real_internal_tools=features.real_internal_tools_enabled,
+        feature_business_application_control_plane=(
+            features.business_application_control_plane_enabled
         ),
+        feature_configuration=features,
         app_startup_migrate=_env_bool("APP_STARTUP_MIGRATE", True),
         seed_local_config=_env_bool("SEED_LOCAL_CONFIG"),
         debug_agent_user_id=os.getenv("DEBUG_AGENT_USER_ID", "local-user"),
@@ -323,7 +346,7 @@ def load_settings() -> Settings:
             timeout_seconds=int(os.getenv("DELIVERY_TIMEOUT_SECONDS", "5")),
         ),
         conversation=ConversationSettings(
-            enabled=_env_bool("FEATURE_CONTINUOUS_CONVERSATION"),
+            enabled=features.continuous_conversation_compatibility_enabled,
             recent_message_limit=int(os.getenv("CONVERSATION_RECENT_MESSAGE_LIMIT", "20")),
             summary_trigger_messages=int(os.getenv("CONVERSATION_SUMMARY_TRIGGER_MESSAGES", "30")),
             max_summary_chars=int(os.getenv("CONVERSATION_MAX_SUMMARY_CHARS", "4000")),
@@ -333,7 +356,7 @@ def load_settings() -> Settings:
             ),
         ),
         attachments=AttachmentSettings(
-            enabled=_env_bool("FEATURE_MESSAGE_ATTACHMENTS"),
+            enabled=features.message_attachments_compatibility_enabled,
             allowed_extensions=_csv_tuple(
                 os.getenv(
                     "ATTACHMENT_ALLOWED_EXTENSIONS",
@@ -370,11 +393,13 @@ def load_settings() -> Settings:
             secure=_env_bool("S3_SECURE"),
         ),
         identity=IdentitySettings(
-            enabled=_env_bool("FEATURE_UNIFIED_IDENTITY"),
-            web_admin_enabled=_env_bool("FEATURE_WEB_ADMIN"),
-            published_agent_runtime_enabled=_env_bool("FEATURE_PUBLISHED_AGENT_RUNTIME"),
-            test_identity_headers_enabled=_env_bool("FEATURE_TEST_IDENTITY_HEADERS"),
-            permission_shadow_mode=_env_bool("FEATURE_PERMISSION_SHADOW_MODE", True),
+            enabled=features.unified_identity_enabled,
+            web_admin_enabled=features.web_admin_enabled,
+            published_agent_runtime_enabled=(
+                features.published_agent_runtime_enabled
+            ),
+            test_identity_headers_enabled=features.test_identity_headers_enabled,
+            permission_shadow_mode=features.permission_shadow_mode,
             session_cookie_name=os.getenv(
                 "WEB_SESSION_COOKIE_NAME", "enterprise_agent_session"
             ),
@@ -391,7 +416,7 @@ def load_settings() -> Settings:
             ),
         ),
         webhooks=WebhookSettings(
-            enabled=_env_bool("FEATURE_WEBHOOK_TRIGGERS", True),
+            enabled=features.webhook_ingress_compatibility_enabled,
             max_body_bytes=int(os.getenv("WEBHOOK_MAX_BODY_BYTES", str(1024 * 1024))),
             max_json_depth=int(os.getenv("WEBHOOK_MAX_JSON_DEPTH", "20")),
             max_collection_items=int(os.getenv("WEBHOOK_MAX_COLLECTION_ITEMS", "2000")),
@@ -404,3 +429,53 @@ def load_settings() -> Settings:
             outbox_retry_base_seconds=int(os.getenv("WEBHOOK_OUTBOX_RETRY_BASE_SECONDS", "5")),
         ),
     )
+
+
+def synchronize_feature_configuration(settings: Settings) -> Settings:
+    """Keep programmatically constructed Settings aligned with the unified model."""
+    features = settings.feature_configuration
+    expected = (
+        settings.identity.web_admin_enabled,
+        settings.identity.published_agent_runtime_enabled,
+        settings.feature_real_claude,
+        settings.feature_real_internal_tools,
+        settings.identity.enabled,
+        settings.feature_business_application_control_plane,
+        settings.identity.test_identity_headers_enabled,
+        settings.identity.permission_shadow_mode,
+        settings.webhooks.enabled,
+        settings.conversation.enabled,
+        settings.attachments.enabled,
+    )
+    actual = (
+        features.web_admin_enabled,
+        features.published_agent_runtime_enabled,
+        features.real_claude_enabled,
+        features.real_internal_tools_enabled,
+        features.unified_identity_enabled,
+        features.business_application_control_plane_enabled,
+        features.test_identity_headers_enabled,
+        features.permission_shadow_mode,
+        features.webhook_ingress_compatibility_enabled,
+        features.continuous_conversation_compatibility_enabled,
+        features.message_attachments_compatibility_enabled,
+    )
+    if actual == expected:
+        return settings
+    synchronized = feature_configuration_from_values(
+        web_admin=settings.identity.web_admin_enabled,
+        published_agent_runtime=settings.identity.published_agent_runtime_enabled,
+        real_claude=settings.feature_real_claude,
+        real_internal_tools=settings.feature_real_internal_tools,
+        unified_identity=settings.identity.enabled,
+        business_application_control_plane=(
+            settings.feature_business_application_control_plane
+        ),
+        test_identity_headers=settings.identity.test_identity_headers_enabled,
+        permission_shadow_mode=settings.identity.permission_shadow_mode,
+        webhook_ingress=settings.webhooks.enabled,
+        continuous_conversation=settings.conversation.enabled,
+        message_attachments=settings.attachments.enabled,
+        source="programmatic-settings",
+    )
+    return replace(settings, feature_configuration=synchronized)

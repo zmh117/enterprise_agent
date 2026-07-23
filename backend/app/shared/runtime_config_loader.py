@@ -7,8 +7,9 @@ from app.modules.internal_api_platform.infrastructure.secrets import DbBackedSec
 from app.modules.platform_config.application.runtime_config import RuntimeConfigRegistry
 from app.modules.platform_config.application.runtime_config import RuntimeConfigSnapshotBuilder
 from app.modules.platform_config.infrastructure import PlatformConfigRepository
-from app.shared.config import Settings
+from app.shared.config import Settings, synchronize_feature_configuration
 from app.shared.database import Database, default_migrations_dir
+from app.shared.feature_configuration import apply_runtime_feature_policies
 
 
 def load_settings_with_db_overlay(
@@ -17,6 +18,7 @@ def load_settings_with_db_overlay(
     service_name: str,
     migrate: bool = True,
 ) -> Settings:
+    settings = synchronize_feature_configuration(settings)
     try:
         database = Database(settings.database_dsn)
         try:
@@ -40,6 +42,7 @@ def apply_runtime_config_overlay(
     *,
     service_name: str,
 ) -> Settings:
+    settings = synchronize_feature_configuration(settings)
     repository = PlatformConfigRepository(database)
     RuntimeConfigRegistry(repository).ensure_builtin_definitions()
     snapshot = RuntimeConfigSnapshotBuilder(repository).build_snapshot(service_name=service_name)
@@ -59,6 +62,21 @@ def apply_runtime_config_overlay(
                 return None
         return item.get("value")
 
+    runtime_feature_values = {
+        key: runtime_value(key)
+        for key in (
+            "FEATURE_PUBLISHED_AGENT_RUNTIME",
+            "FEATURE_REAL_CLAUDE",
+            "FEATURE_REAL_INTERNAL_TOOLS",
+            "PERMISSION_SHADOW_MODE",
+            "FEATURE_PERMISSION_SHADOW_MODE",
+        )
+        if runtime_value(key) is not None
+    }
+    features = apply_runtime_feature_policies(
+        settings.feature_configuration,
+        runtime_feature_values,
+    )
     claude_model = runtime_value("CLAUDE_MODEL") or runtime_value("ANTHROPIC_MODEL")
     anthropic_api_key = runtime_value("ANTHROPIC_API_KEY") or runtime_value(
         "ANTHROPIC_AUTH_TOKEN"
@@ -85,11 +103,12 @@ def apply_runtime_config_overlay(
         claude_model=_str(claude_model, settings.claude_model),
         anthropic_api_key=_str(anthropic_api_key, settings.anthropic_api_key),
         anthropic_base_url=_str(runtime_value("ANTHROPIC_BASE_URL"), settings.anthropic_base_url),
-        feature_real_claude=_bool(runtime_value("FEATURE_REAL_CLAUDE"), settings.feature_real_claude),
-        feature_real_internal_tools=_bool(
-            runtime_value("FEATURE_REAL_INTERNAL_TOOLS"),
-            settings.feature_real_internal_tools,
+        feature_real_claude=features.real_claude_enabled,
+        feature_real_internal_tools=features.real_internal_tools_enabled,
+        feature_business_application_control_plane=(
+            features.business_application_control_plane_enabled
         ),
+        feature_configuration=features,
         runtime_config_source=str(snapshot["source"]),
         runtime_config_degraded=False,
         runtime_config_revision=int(snapshot.get("revision") or 0),
@@ -192,11 +211,19 @@ def apply_runtime_config_overlay(
                 settings.queue.consumer_reconnect_seconds,
             ),
         ),
+        identity=replace(
+            settings.identity,
+            enabled=features.unified_identity_enabled,
+            web_admin_enabled=features.web_admin_enabled,
+            published_agent_runtime_enabled=(
+                features.published_agent_runtime_enabled
+            ),
+            test_identity_headers_enabled=features.test_identity_headers_enabled,
+            permission_shadow_mode=features.permission_shadow_mode,
+        ),
         webhooks=replace(
             settings.webhooks,
-            enabled=_bool(
-                runtime_value("FEATURE_WEBHOOK_TRIGGERS"), settings.webhooks.enabled
-            ),
+            enabled=features.webhook_ingress_compatibility_enabled,
             max_body_bytes=_int(
                 runtime_value("WEBHOOK_MAX_BODY_BYTES"), settings.webhooks.max_body_bytes
             ),

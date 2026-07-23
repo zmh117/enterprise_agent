@@ -152,12 +152,13 @@ def build_api_container(
     publisher = RabbitMQPublisher(settings.rabbitmq_url, settings.queue)
     return _build_container(
         settings=settings,
+        service_name="api-server",
         publisher=publisher,
         consumer=None,
         message_bus=None,
         migrate=migrate,
         seed=seed,
-        use_real_claude=settings.feature_real_claude,
+        use_real_claude=settings.feature_configuration.real_claude_enabled,
     )
 
 
@@ -180,12 +181,13 @@ def build_worker_container(
     )
     return _build_container(
         settings=settings,
+        service_name=service_name,
         publisher=publisher,
         consumer=consumer,
         message_bus=None,
         migrate=migrate,
         seed=seed,
-        use_real_claude=settings.feature_real_claude,
+        use_real_claude=settings.feature_configuration.real_claude_enabled,
     )
 
 
@@ -196,6 +198,7 @@ def build_test_container(
     message_bus = InMemoryMessageBus()
     return _build_container(
         settings=settings,
+        service_name="test-runtime",
         publisher=message_bus,
         consumer=message_bus,
         message_bus=message_bus,
@@ -212,6 +215,7 @@ def build_container(settings: Settings, *, migrate: bool = True, seed: bool = Fa
 def _build_container(
     *,
     settings: Settings,
+    service_name: str,
     publisher: MessagePublisher,
     consumer: MessageConsumer | None,
     message_bus: InMemoryMessageBus | None,
@@ -250,8 +254,8 @@ def _build_container(
     permission_service = PermissionService(
         config_repository,
         authorization_evaluator=authorization_evaluator,
-        unified_enabled=settings.identity.enabled,
-        shadow_mode=settings.identity.permission_shadow_mode,
+        unified_enabled=settings.feature_configuration.unified_identity_enabled,
+        shadow_mode=settings.feature_configuration.permission_shadow_mode,
     )
     auth_service = AuthService(
         identity_repository,
@@ -294,7 +298,7 @@ def _build_container(
     )
     credential_cipher = (
         AttachmentCredentialCipher(settings.app_config_master_key)
-        if settings.attachments.enabled
+        if settings.app_config_master_key
         else None
     )
     create_job_service = CreateAgentJobService(
@@ -308,14 +312,28 @@ def _build_container(
         continuous_enabled=settings.conversation.enabled,
         attachment_settings=settings.attachments,
         agent_config_service=agent_config_service,
-        published_agent_runtime_enabled=settings.identity.published_agent_runtime_enabled,
+        published_agent_runtime_enabled=(
+            settings.feature_configuration.published_agent_runtime_enabled
+        ),
         default_agent_code=settings.identity.default_agent_code,
     )
     channel_ingress_service = ChannelIngressService(
         create_job_service=create_job_service,
         audit_service=audit_service,
-        identity_service=identity_service if settings.identity.enabled else None,
-        unified_identity_enabled=settings.identity.enabled,
+        identity_service=(
+            identity_service
+            if settings.feature_configuration.unified_identity_enabled
+            else None
+        ),
+        unified_identity_enabled=(
+            settings.feature_configuration.unified_identity_enabled
+        ),
+        business_application_resolver=(
+            business_application_resolver
+            if settings.feature_configuration.published_agent_runtime_enabled
+            else None
+        ),
+        runtime_environment=settings.environment,
     )
     webhook_mapper = WebhookMapper(
         max_message_chars=settings.webhooks.max_message_chars,
@@ -392,13 +410,16 @@ def _build_container(
         default_service=settings.dingtalk.default_service,
         default_open_conversation_id=settings.dingtalk.default_open_conversation_id,
         default_robot_code=settings.dingtalk.default_robot_code,
-        attachments_enabled=settings.attachments.enabled,
+        attachments_enabled=credential_cipher is not None,
         attachment_credential_ttl_seconds=settings.attachments.credential_ttl_seconds,
         connector_registry=connector_registry,
         default_tenant_code=settings.identity.dingtalk_tenant_code,
     )
     internal_api_client: InternalApiClient = FakeInternalApiClient()
-    if settings.feature_real_internal_tools and message_bus is None:
+    if (
+        settings.feature_configuration.real_internal_tools_enabled
+        and message_bus is None
+    ):
         internal_api_client = HttpInternalApiClient(
             settings.internal_api_base_url,
             auth_token=settings.internal_api_auth_token,
@@ -456,12 +477,15 @@ def _build_container(
         chunker=ReportChunker(settings.delivery.chunk_max_chars),
     )
     object_storage: ObjectStorage = InMemoryObjectStorage(settings.object_storage.bucket)
-    if settings.attachments.enabled and message_bus is None:
+    if service_name == "attachment-worker" and message_bus is None:
         s3_storage = S3ObjectStorage(settings.object_storage)
         s3_storage.ensure_bucket()
         object_storage = s3_storage
     attachment_service: AttachmentProcessingService | None = None
-    if settings.attachments.enabled and credential_cipher is not None:
+    if (
+        credential_cipher is not None
+        and (service_name == "attachment-worker" or message_bus is not None)
+    ):
         attachment_service = AttachmentProcessingService(
             repository=agent_repository,
             publisher=publisher,
@@ -489,10 +513,8 @@ def _build_container(
         context_builder=AgentContextBuilder(
             tool_registry=tool_registry,
             skill_loader=SkillLoader(),
-            conversation_service=(
-                ConversationContextService(agent_repository, settings.conversation)
-                if settings.conversation.enabled
-                else None
+            conversation_service=ConversationContextService(
+                agent_repository, settings.conversation
             ),
             agent_config_service=agent_config_service,
         ),

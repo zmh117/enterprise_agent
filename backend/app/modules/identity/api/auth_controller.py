@@ -55,7 +55,7 @@ def build_auth_router() -> APIRouter:
     @router.post("/login")
     def login(request: Request, response: Response, payload: LoginRequest) -> dict[str, Any]:
         c = container(request)
-        if not c.settings.identity.web_admin_enabled:
+        if not c.settings.feature_configuration.web_admin_enabled:
             raise HTTPException(status_code=404, detail="Web administration is disabled")
         client_host = request.client.host if request.client else ""
         rate_key = f"{payload.username.lower()}:{client_host}"

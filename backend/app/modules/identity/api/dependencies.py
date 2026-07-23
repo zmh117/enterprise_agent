@@ -56,7 +56,10 @@ def current_principal(request: Request) -> AuthenticatedPrincipal:
 
 def optional_legacy_actor(request: Request) -> str:
     c = container(request)
-    if c.settings.identity.enabled or c.settings.identity.web_admin_enabled:
+    if (
+        c.settings.feature_configuration.unified_identity_enabled
+        or c.settings.feature_configuration.web_admin_enabled
+    ):
         return current_principal(request).user_id
     return (
         request.headers.get("x-admin-user-id")

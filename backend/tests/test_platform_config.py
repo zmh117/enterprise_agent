@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -728,7 +729,7 @@ class PlatformSecretAndRuntimeConfigTests(unittest.TestCase):
 
     def test_runtime_config_overlay_resolves_secret_backed_claude_settings(self) -> None:
         c = container()
-        base = make_settings()
+        base = replace(make_settings(), feature_real_claude=True)
 
         with patch.dict(os.environ, {"APP_CONFIG_MASTER_KEY": "test-master-key"}, clear=False):
             c.platform_config_service.create_platform_secret(
@@ -759,14 +760,15 @@ class PlatformSecretAndRuntimeConfigTests(unittest.TestCase):
                 },
                 actor_id="local-user",
             )
-            c.platform_config_service.upsert_runtime_config_value(
-                {
-                    "key": "FEATURE_REAL_CLAUDE",
-                    "value": True,
-                    "service_name": "agent-worker",
-                },
-                actor_id="local-user",
-            )
+            with self.assertRaisesRegex(ValueError, "deployment env"):
+                c.platform_config_service.upsert_runtime_config_value(
+                    {
+                        "key": "FEATURE_REAL_CLAUDE",
+                        "value": True,
+                        "service_name": "agent-worker",
+                    },
+                    actor_id="local-user",
+                )
 
             overlaid = apply_runtime_config_overlay(
                 base,

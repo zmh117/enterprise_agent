@@ -16,10 +16,15 @@ from .validation import (
 
 BOOTSTRAP_ONLY_KEYS = {
     "DATABASE_DSN",
+    "RABBITMQ_URL",
     "APP_CONFIG_MASTER_KEY",
     "APP_ENV",
     "APP_STARTUP_MIGRATE",
     "SEED_LOCAL_CONFIG",
+    "FEATURE_WEB_ADMIN",
+    "FEATURE_PUBLISHED_AGENT_RUNTIME",
+    "FEATURE_REAL_CLAUDE",
+    "FEATURE_REAL_INTERNAL_TOOLS",
 }
 
 
@@ -32,16 +37,117 @@ class RuntimeConfigDefinitionSpec:
     bootstrap_only: bool = False
     service_names: tuple[str, ...] = ()
     description: str = ""
+    classification: str = "runtime-config"
+    target: str = ""
+    deprecated_version: str = ""
+    restart_required: bool = False
 
 
 RUNTIME_CONFIG_DEFINITIONS: tuple[RuntimeConfigDefinitionSpec, ...] = (
     RuntimeConfigDefinitionSpec("DATABASE_DSN", "string", "", bootstrap_only=True),
+    RuntimeConfigDefinitionSpec("RABBITMQ_URL", "string", "", bootstrap_only=True),
     RuntimeConfigDefinitionSpec("APP_CONFIG_MASTER_KEY", "secret_ref", "", sensitive=True, bootstrap_only=True),
     RuntimeConfigDefinitionSpec("APP_ENV", "string", "local", bootstrap_only=True),
     RuntimeConfigDefinitionSpec("APP_STARTUP_MIGRATE", "bool", True, bootstrap_only=True),
     RuntimeConfigDefinitionSpec("SEED_LOCAL_CONFIG", "bool", False, bootstrap_only=True),
-    RuntimeConfigDefinitionSpec("FEATURE_REAL_CLAUDE", "bool", False, service_names=("api-server", "agent-worker")),
-    RuntimeConfigDefinitionSpec("FEATURE_REAL_INTERNAL_TOOLS", "bool", False, service_names=("api-server", "agent-worker")),
+    RuntimeConfigDefinitionSpec(
+        "FEATURE_WEB_ADMIN",
+        "bool",
+        False,
+        bootstrap_only=True,
+        classification="deployment-safety-gate",
+        restart_required=True,
+    ),
+    RuntimeConfigDefinitionSpec(
+        "FEATURE_PUBLISHED_AGENT_RUNTIME",
+        "bool",
+        False,
+        bootstrap_only=True,
+        classification="deployment-safety-gate",
+        restart_required=True,
+    ),
+    RuntimeConfigDefinitionSpec(
+        "FEATURE_REAL_CLAUDE",
+        "bool",
+        False,
+        bootstrap_only=True,
+        service_names=("api-server", "agent-worker"),
+        classification="deployment-safety-gate",
+        restart_required=True,
+    ),
+    RuntimeConfigDefinitionSpec(
+        "FEATURE_REAL_INTERNAL_TOOLS",
+        "bool",
+        False,
+        bootstrap_only=True,
+        service_names=("api-server", "agent-worker"),
+        classification="deployment-safety-gate",
+        restart_required=True,
+    ),
+    RuntimeConfigDefinitionSpec(
+        "PERMISSION_SHADOW_MODE",
+        "bool",
+        True,
+        service_names=("api-server", "agent-worker"),
+        classification="governed-runtime-policy",
+    ),
+    RuntimeConfigDefinitionSpec(
+        "FEATURE_UNIFIED_IDENTITY",
+        "bool",
+        False,
+        bootstrap_only=True,
+        classification="deprecated",
+        target="FEATURE_WEB_ADMIN",
+        deprecated_version="0.3.0",
+        restart_required=True,
+    ),
+    RuntimeConfigDefinitionSpec(
+        "FEATURE_BUSINESS_APPLICATION_CONTROL_PLANE",
+        "bool",
+        False,
+        bootstrap_only=True,
+        classification="deprecated",
+        target="FEATURE_WEB_ADMIN",
+        deprecated_version="0.3.0",
+        restart_required=True,
+    ),
+    RuntimeConfigDefinitionSpec(
+        "FEATURE_CONTINUOUS_CONVERSATION",
+        "bool",
+        False,
+        bootstrap_only=True,
+        classification="deprecated",
+        target="Business Application session_policy",
+        deprecated_version="0.3.0",
+    ),
+    RuntimeConfigDefinitionSpec(
+        "FEATURE_MESSAGE_ATTACHMENTS",
+        "bool",
+        False,
+        bootstrap_only=True,
+        classification="deprecated",
+        target="Business Application session_policy",
+        deprecated_version="0.3.0",
+    ),
+    RuntimeConfigDefinitionSpec(
+        "FEATURE_TEST_IDENTITY_HEADERS",
+        "bool",
+        False,
+        bootstrap_only=True,
+        classification="test-only",
+        target="test-only application configuration",
+        deprecated_version="0.3.0",
+        restart_required=True,
+    ),
+    RuntimeConfigDefinitionSpec(
+        "FEATURE_PERMISSION_SHADOW_MODE",
+        "bool",
+        True,
+        bootstrap_only=True,
+        classification="deprecated",
+        target="PERMISSION_SHADOW_MODE runtime policy",
+        deprecated_version="0.3.0",
+    ),
     RuntimeConfigDefinitionSpec("INTERNAL_API_BASE_URL", "url", "http://internal-api-platform.local", service_names=("api-server", "agent-worker")),
     RuntimeConfigDefinitionSpec("INTERNAL_API_AUTH_TOKEN", "secret_ref", "", sensitive=True, service_names=("api-server", "agent-worker")),
     RuntimeConfigDefinitionSpec("INTERNAL_API_TIMEOUT_SECONDS", "int", 10, service_names=("api-server", "agent-worker", "internal-api-platform")),
@@ -82,7 +188,16 @@ RUNTIME_CONFIG_DEFINITIONS: tuple[RuntimeConfigDefinitionSpec, ...] = (
     RuntimeConfigDefinitionSpec("RABBITMQ_CONSUMER_RECONNECT_SECONDS", "int", 5, service_names=("agent-worker",)),
     RuntimeConfigDefinitionSpec("AGENT_MAX_RETRY_COUNT", "int", 3, service_names=("api-server", "agent-worker")),
     RuntimeConfigDefinitionSpec("AGENT_RETRY_DELAY_SECONDS", "int", 30, service_names=("api-server", "agent-worker")),
-    RuntimeConfigDefinitionSpec("FEATURE_WEBHOOK_TRIGGERS", "bool", True, service_names=("api-server", "webhook-worker")),
+    RuntimeConfigDefinitionSpec(
+        "FEATURE_WEBHOOK_TRIGGERS",
+        "bool",
+        True,
+        bootstrap_only=True,
+        service_names=("api-server", "webhook-worker"),
+        classification="deprecated",
+        target="published Connector/Trigger configuration",
+        deprecated_version="0.3.0",
+    ),
     RuntimeConfigDefinitionSpec("WEBHOOK_DISPATCH_QUEUE", "string", "agent.webhook.dispatch.queue", service_names=("api-server", "webhook-worker")),
     RuntimeConfigDefinitionSpec("WEBHOOK_DISPATCH_DEAD_QUEUE", "string", "agent.webhook.dispatch.dead.queue", service_names=("api-server", "webhook-worker")),
     RuntimeConfigDefinitionSpec("WEBHOOK_MAX_BODY_BYTES", "int", 1048576, service_names=("api-server",)),
@@ -123,9 +238,31 @@ class RuntimeConfigRegistry:
                 "sensitive": item.sensitive,
                 "bootstrap_only": item.bootstrap_only,
                 "service_names": list(item.service_names),
-                "target": "bootstrap-env"
-                if item.bootstrap_only
-                else ("secret-management" if item.sensitive else "runtime-config"),
+                "classification": (
+                    item.classification
+                    if item.classification != "runtime-config"
+                    else (
+                        "bootstrap-only"
+                        if item.bootstrap_only
+                        else (
+                            "secret-management"
+                            if item.sensitive
+                            else "governed-runtime-policy"
+                        )
+                    )
+                ),
+                "target": item.target
+                or (
+                    "bootstrap-env"
+                    if item.bootstrap_only
+                    else (
+                        "secret-management"
+                        if item.sensitive
+                        else "runtime-config"
+                    )
+                ),
+                "deprecated_version": item.deprecated_version,
+                "restart_required": item.restart_required or item.bootstrap_only,
             }
             for item in RUNTIME_CONFIG_DEFINITIONS
         ]

@@ -63,7 +63,7 @@ webhook_event auth/filter/status
 
 ## 启动和发布
 
-1. 在 `.env` 设置 `FEATURE_WEBHOOK_TRIGGERS=true`，并为 connector 的 `secret_ref` 提供真实 secret。默认 Grafana connector 引用 `env:GRAFANA_WEBHOOK_TOKEN`，SQL seed 和 Trigger snapshot 均不保存值。
+1. 启用 ingress Connector，并为其 `secret_ref` 提供真实 secret。默认 Grafana connector 引用 `env:GRAFANA_WEBHOOK_TOKEN`，SQL seed 和 Trigger snapshot 均不保存值。
 2. 启动 `api-server`、`rabbitmq`、`agent-worker`、`webhook-worker` 和固定 Delivery 所需配置。
 3. 管理员在 `/admin/webhooks` 创建草稿，完成 preview、validate 后再 publish。新 Trigger 会创建一个不可登录的 service account；需通过统一 RBAC 明确授予 Agent、project、工具和平台数据范围。
 4. 只有已启用 Trigger、已启用 service account、已发布 Trigger revision 和固定 Agent publication 同时有效时，公共 URL 才接受事件。

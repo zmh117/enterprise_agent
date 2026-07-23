@@ -4,7 +4,7 @@ from typing import Any
 
 from app.bootstrap import Container, ContainerFactory, build_api_container
 from app.modules.agent.infrastructure.claude_code_agent_client import is_claude_cli_available
-from app.shared.config import Settings, load_settings
+from app.shared.config import Settings, load_settings, synchronize_feature_configuration
 from app.shared.database import Database, default_migrations_dir
 from app.shared.logging import configure_logging, set_correlation_id
 
@@ -64,7 +64,12 @@ def _runtime_config_status(settings: Settings) -> dict[str, Any]:
             "revision": settings.runtime_config_revision,
             "config_hash": settings.runtime_config_hash,
             "errors": list(settings.runtime_config_errors),
-        }
+        },
+        "feature_configuration": settings.feature_configuration.to_snapshot(
+            revision=settings.runtime_config_revision,
+            config_hash=settings.runtime_config_hash,
+            source=settings.runtime_config_source,
+        ),
     }
 
 
@@ -87,7 +92,7 @@ def create_app(
     settings: Settings | None = None,
     container_factory: ContainerFactory | None = None,
 ) -> Any:
-    settings = settings or load_settings()
+    settings = synchronize_feature_configuration(settings or load_settings())
     configure_logging()
 
     try:
@@ -195,30 +200,39 @@ def create_app(
     )
 
     app.include_router(build_channel_router())
-    app.include_router(build_business_application_router())
-    app.include_router(build_admin_router())
-    app.include_router(build_agent_config_router())
     app.include_router(build_dingding_router())
     app.include_router(build_agent_job_debug_router())
-    app.include_router(build_auth_router())
-    app.include_router(build_identity_admin_router())
     app.include_router(build_platform_config_router())
     app.include_router(build_workflow_router())
     app.include_router(build_public_webhook_router())
-    app.include_router(build_webhook_admin_router())
 
-    @app.post("/api/admin/migrate")
-    def migrate(request: Request) -> dict[str, Any]:
-        from app.modules.identity.api.dependencies import require_action
-
-        require_action(
-            request,
-            resource_type="platform_config",
-            resource_code="*",
-            action="manage",
-            csrf=True,
+    management_surface_enabled = any(
+        (
+            settings.feature_configuration.web_admin_enabled,
+            settings.feature_configuration.unified_identity_enabled,
+            settings.feature_configuration.business_application_control_plane_enabled,
         )
-        _app_container(app).database.run_migrations(default_migrations_dir())
-        return {"status": "migrated"}
+    )
+    if management_surface_enabled:
+        app.include_router(build_business_application_router())
+        app.include_router(build_admin_router())
+        app.include_router(build_agent_config_router())
+        app.include_router(build_auth_router())
+        app.include_router(build_identity_admin_router())
+        app.include_router(build_webhook_admin_router())
+
+        @app.post("/api/admin/migrate")
+        def migrate(request: Request) -> dict[str, Any]:
+            from app.modules.identity.api.dependencies import require_action
+
+            require_action(
+                request,
+                resource_type="platform_config",
+                resource_code="*",
+                action="manage",
+                csrf=True,
+            )
+            _app_container(app).database.run_migrations(default_migrations_dir())
+            return {"status": "migrated"}
 
     return app

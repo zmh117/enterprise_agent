@@ -37,12 +37,15 @@ scripts/agent_test_data.sh reset --yes
 - 钉钉 webhook 接入。
 - 只读工具策略：ER、业务流、Loki、数据库、Redis。
 - 审计、重试、死信队列。
+- `FEATURE_WEB_ADMIN=false` 默认不注册管理入口；设为 `true` 后原子启用身份、Session、RBAC 和业务应用控制面。
+- `FEATURE_PUBLISHED_AGENT_RUNTIME=false` 默认不让业务应用发布结果接管 Agent 执行链。
 - `FEATURE_REAL_CLAUDE=false` 默认 stub runtime。
 - `FEATURE_REAL_CLAUDE=true` 可切换真实 Claude Agent SDK runtime。
 - `FEATURE_REAL_INTERNAL_TOOLS=false` 默认 fake 内部工具。
 - `FEATURE_REAL_INTERNAL_TOOLS=true` 可切换 HTTP Internal API Platform、本地 mock 平台或本地 Loki 平台。
 - Web-managed secrets：`/api/platform/secrets` 支持管理员输入密钥后加密保存，并返回 `secret://platform/<code>`。
 - DB-backed runtime config：`/api/platform/runtime-config/*` 支持把 DeepSeek、Internal API、Loki、DingTalk 默认路由和 Agent limits 逐步迁入 PostgreSQL。
+- 功能开关迁移：普通部署只保留四个顶层开关，旧键检查与迁移见 `docs/feature-configuration-migration.md`。
 - 可选统一身份与 RBAC：Web session、钉钉外部身份映射、角色/deny 优先授权和审计。
 - 独立 React 管理端：第一版只开放一个默认诊断 Agent，底层按多 Agent revision/publication 建模。
 

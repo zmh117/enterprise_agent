@@ -34,11 +34,18 @@
 
 ## 本地启动
 
-在`.env`设置：
+在业务应用草稿的 `session_policy` 中设置并显式发布：
+
+```json
+{
+  "continuous_conversation_enabled": true,
+  "attachments_enabled": true
+}
+```
+
+对象存储凭据仍由部署环境或 Secret 管理：
 
 ```dotenv
-FEATURE_CONTINUOUS_CONVERSATION=true
-FEATURE_MESSAGE_ATTACHMENTS=true
 S3_ACCESS_KEY=enterprise_agent
 S3_SECRET_KEY=<local-secret>
 S3_BUCKET=agent-attachments

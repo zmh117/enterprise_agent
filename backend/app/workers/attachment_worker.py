@@ -19,6 +19,7 @@ def main() -> None:
         settings,
         migrate=settings.app_startup_migrate,
         seed=settings.seed_local_config,
+        service_name="attachment-worker",
     )
     if container.attachment_service is None:
         raise RuntimeError("Attachment processing is not enabled")

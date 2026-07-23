@@ -21,8 +21,8 @@ def _container(request: Request) -> Container:
 
 
 def _actor(request: Request) -> str:
-    settings = _container(request).settings.identity
-    if settings.enabled or settings.web_admin_enabled:
+    features = _container(request).settings.feature_configuration
+    if features.unified_identity_enabled or features.web_admin_enabled:
         principal = current_principal(request)
         require_csrf(request, principal)
         return principal.user_id

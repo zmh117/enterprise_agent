@@ -52,6 +52,8 @@ class CreateAgentJobCommand:
     webhook_event_id: str = ""
     webhook_trigger_id: str = ""
     webhook_trigger_publication_id: str = ""
+    continuous_conversation_enabled: bool | None = None
+    attachments_enabled: bool | None = None
 
     @property
     def effective_requester_id(self) -> str:
@@ -121,7 +123,15 @@ class CreateAgentJobService:
         existing = self.repository.get_job_by_idempotency_key(command.idempotency_key)
         if existing is not None:
             return existing
-        self._validate_attachments(command.attachments)
+        attachments_enabled = (
+            self.attachment_settings.enabled
+            if command.attachments_enabled is None
+            else command.attachments_enabled
+        )
+        self._validate_attachments(
+            command.attachments,
+            enabled=attachments_enabled,
+        )
         requester_id = command.effective_requester_id
         source_channel = command.effective_source_channel
         project_code = command.effective_routing_context.get("project_code", command.project_code)
@@ -219,6 +229,11 @@ class CreateAgentJobService:
                 "Attachment credential encryption is unavailable",
                 safe_message="Attachment processing is not configured",
             )
+        continuous_enabled = (
+            self.continuous_enabled
+            if command.continuous_conversation_enabled is None
+            else command.continuous_conversation_enabled
+        )
         session_key = _session_key(
             source_channel=source_channel,
             connector_id=command.source_connector_id,
@@ -227,7 +242,7 @@ class CreateAgentJobService:
             conversation_id=command.effective_conversation_id,
             requester_id=requester_id,
             bot_identity=command.bot_identity,
-        ) if self.continuous_enabled else ""
+        ) if continuous_enabled else ""
         correlation_id = command.correlation_id or new_correlation_id()
         attachment_ids: list[str] = []
         with self.repository.database.transaction():
@@ -335,7 +350,17 @@ class CreateAgentJobService:
             )
         return job
 
-    def _validate_attachments(self, attachments: tuple[ChannelAttachment, ...]) -> None:
+    def _validate_attachments(
+        self,
+        attachments: tuple[ChannelAttachment, ...],
+        *,
+        enabled: bool,
+    ) -> None:
+        if attachments and not enabled:
+            raise NonRetryableExecutionError(
+                "message_attachments_disabled",
+                safe_message="Attachments are not enabled for this application",
+            )
         if len(attachments) > self.attachment_settings.max_count:
             raise NonRetryableExecutionError(
                 "attachment_count_exceeded", safe_message="Too many attachments"
