@@ -1,7 +1,12 @@
-import DashboardPage from "@/app/dashboard/page"
+import { PlatformShell } from "@/app/shell/platform-shell"
+import { DashboardPage } from "@/contexts/overview/presentation/dashboard-page"
 
 export function App() {
-  return <DashboardPage />
+  return (
+    <PlatformShell>
+      <DashboardPage />
+    </PlatformShell>
+  )
 }
 
 export default App
