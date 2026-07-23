@@ -6,6 +6,7 @@ import "./index.css"
 import App from "./App.tsx"
 import { ThemeProvider } from "@/components/theme-provider.tsx"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { AuthenticationGate } from "@/contexts/auth/presentation/authentication-gate"
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -18,10 +19,15 @@ const queryClient = new QueryClient({
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <ThemeProvider defaultTheme="light" storageKey="agent-platform-prototype-theme">
+    <ThemeProvider
+      defaultTheme="light"
+      storageKey="agent-platform-prototype-theme"
+    >
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
-          <App />
+          <AuthenticationGate>
+            <App />
+          </AuthenticationGate>
         </TooltipProvider>
       </QueryClientProvider>
     </ThemeProvider>

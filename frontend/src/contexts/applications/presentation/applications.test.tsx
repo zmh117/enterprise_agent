@@ -63,7 +63,7 @@ describe("Business Application workbench", () => {
     )
     renderWithQuery(<ApplicationsPage />)
     expect(await screen.findByText("需要管理会话")).toBeInTheDocument()
-    expect(screen.getByText(/不提供独立登录页/)).toBeInTheDocument()
+    expect(screen.getByText(/通过登录页重新建立会话/)).toBeInTheDocument()
   })
 
   it("shows a dedicated authorization state on 403", async () => {

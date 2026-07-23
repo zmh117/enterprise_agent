@@ -426,7 +426,7 @@ services:
         condition: service_healthy
 
   admin-web:
-    profiles: ["admin"]
+    # profiles: ["admin"]
     build:
       context: .
       dockerfile: frontend/Dockerfile

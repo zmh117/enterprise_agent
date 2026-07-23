@@ -24,7 +24,7 @@ export function ApplicationState({
           icon: LogInIcon,
           title: "需要管理会话",
           description:
-            "请先通过现有后台认证建立会话。本版本不提供独立登录页，也不会展示模拟应用。",
+            "管理会话不存在或已经失效。请刷新页面，通过登录页重新建立会话。",
         }
       : apiError?.status === 403
         ? {
@@ -72,4 +72,3 @@ export function ApplicationState({
     </Card>
   )
 }
-
