@@ -24,6 +24,7 @@ class Database:
                 check_same_thread=False,
             )
             connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON")
             self._connection = connection
             return connection
         try:

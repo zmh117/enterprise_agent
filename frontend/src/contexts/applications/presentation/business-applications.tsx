@@ -1,17 +1,10 @@
-import { ArrowUpRightIcon, BoxesIcon, CheckCircle2Icon } from "lucide-react"
+import { ArrowRightIcon, BoxesIcon } from "lucide-react"
+import { Link } from "react-router-dom"
 
 import { Badge } from "@/components/ui/badge"
+import { buttonVariants } from "@/components/ui/button"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
-import { applicationWorkspaces, businessApplications } from "@/mocks/dashboard"
-import { DisabledAction } from "@/shared/presentation/disabled-action"
 import { SectionHeading } from "@/shared/presentation/section-heading"
-
-const tones = {
-  indigo:
-    "bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300",
-  cyan: "bg-cyan-50 text-cyan-700 dark:bg-cyan-950 dark:text-cyan-300",
-  amber: "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
-} as const
 
 export function BusinessApplications() {
   return (
@@ -22,105 +15,37 @@ export function BusinessApplications() {
       <SectionHeading
         eyebrow="Primary object"
         title="业务应用"
-        description="业务应用装配 Profile、Workflow、Channel、Capability 和发布快照；三个应用共享同一套 Agent Runtime。"
-        prototype
+        description="业务应用真实工作区已经连接后端控制面；Dashboard 不再展示静态应用 fixture。"
         action={
-          <DisabledAction variant="outline" size="sm">
-            新建应用 · 规划中
-          </DisabledAction>
+          <Link
+            to="/applications"
+            className={buttonVariants({ variant: "outline", size: "sm" })}
+          >
+            打开业务应用
+            <ArrowRightIcon data-icon="inline-end" />
+          </Link>
         }
       />
-
-      <div className="grid gap-4 xl:grid-cols-3">
-        {businessApplications.map((application) => {
-          const Icon = application.icon
-          return (
-            <Card key={application.id} className="shadow-none">
-              <CardHeader className="border-b">
-                <div className="flex items-start justify-between gap-3">
-                  <span
-                    className={`flex size-10 items-center justify-center rounded-xl ${tones[application.tone]}`}
-                  >
-                    <Icon className="size-5" aria-hidden="true" />
-                  </span>
-                  <Badge variant="outline" className="font-normal">
-                    {application.release}
-                  </Badge>
-                </div>
-                <div className="mt-2">
-                  <h3 className="text-base font-semibold">
-                    {application.name}
-                  </h3>
-                  <p className="mt-1 min-h-12 text-sm leading-6 text-muted-foreground">
-                    {application.description}
-                  </p>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <Definition label="Agent Profile" value={application.profile} />
-                <Definition label="Workflow" value={application.workflow} />
-                <Definition label="触发器" value={application.trigger} />
-                <Definition label="输出渠道" value={application.delivery} />
-                <Definition label="身份策略" value={application.identity} />
-                <div className="flex flex-wrap items-center gap-2 pt-1">
-                  <Badge className="bg-indigo-50 text-indigo-700 hover:bg-indigo-50 dark:bg-indigo-950 dark:text-indigo-300">
-                    {application.capabilities} 个只读 Capability
-                  </Badge>
-                  <Badge variant="secondary">{application.environment}</Badge>
-                </div>
-                <DisabledAction variant="outline" className="mt-1 w-full">
-                  查看应用工作区 · 规划中
-                  <ArrowUpRightIcon data-icon="inline-end" />
-                </DisabledAction>
-              </CardContent>
-            </Card>
-          )
-        })}
-      </div>
-
       <Card className="shadow-none">
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <BoxesIcon className="size-4 text-indigo-600" aria-hidden="true" />
-            <h3 className="font-semibold">应用工作区目标结构</h3>
-            <Badge variant="outline" className="ml-auto">
-              仅展示关系
-            </Badge>
+        <CardHeader className="flex-row items-center gap-3 border-b">
+          <span className="flex size-10 items-center justify-center rounded-xl bg-indigo-50 text-indigo-700">
+            <BoxesIcon className="size-5" aria-hidden="true" />
+          </span>
+          <div>
+            <h3 className="font-semibold">控制面事实来自管理 API</h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              列表、草稿、校验、publication 和环境 deployment
+              均在独立页面读取真实数据。
+            </p>
           </div>
         </CardHeader>
-        <CardContent className="grid gap-2 md:grid-cols-5">
-          {applicationWorkspaces.map((workspace, index) => (
-            <div
-              key={workspace.name}
-              className="rounded-lg border bg-muted/35 p-3"
-            >
-              <div className="flex items-center gap-2">
-                <CheckCircle2Icon
-                  className="size-3.5 text-indigo-600"
-                  aria-hidden="true"
-                />
-                <span className="text-sm font-medium">
-                  {index + 1}. {workspace.name}
-                </span>
-              </div>
-              <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
-                {workspace.description}
-              </p>
-            </div>
-          ))}
+        <CardContent className="flex flex-wrap gap-2">
+          <Badge variant="secondary">追加式 revision</Badge>
+          <Badge variant="secondary">不可变 publication</Badge>
+          <Badge variant="secondary">环境级 activation</Badge>
+          <Badge variant="outline">runtime_wired=false</Badge>
         </CardContent>
       </Card>
     </section>
-  )
-}
-
-function Definition({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="grid grid-cols-[6.5rem_1fr] gap-3 text-xs">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="min-w-0 truncate text-right font-medium" title={value}>
-        {value}
-      </dd>
-    </div>
   )
 }

@@ -1,14 +1,10 @@
-import type { ReactNode } from "react"
+import { Outlet } from "react-router-dom"
 
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { PlatformNavigation } from "@/app/navigation/platform-navigation"
 import { PlatformHeader } from "@/app/shell/platform-header"
 
-type PlatformShellProps = {
-  children: ReactNode
-}
-
-export function PlatformShell({ children }: PlatformShellProps) {
+export function PlatformShell() {
   return (
     <SidebarProvider
       style={
@@ -20,7 +16,9 @@ export function PlatformShell({ children }: PlatformShellProps) {
       <PlatformNavigation />
       <SidebarInset className="min-w-0 bg-muted/30">
         <PlatformHeader />
-        <main className="min-w-0 flex-1">{children}</main>
+        <main className="min-w-0 flex-1">
+          <Outlet />
+        </main>
       </SidebarInset>
     </SidebarProvider>
   )

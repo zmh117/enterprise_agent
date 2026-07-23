@@ -40,9 +40,9 @@ export function DashboardPage() {
           <div className="flex items-start gap-2">
             <InfoIcon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
             <p>
-              <strong>{prototypeMeta.label}：</strong>
-              {prototypeMeta.fixturePolicy}{" "}
-              所有创建、编辑、绑定、测试、保存、发布和回滚入口均不可操作。
+              <strong>渐进接线：</strong>
+              业务应用已连接真实控制面；其余 Dashboard 区域仍使用
+              {prototypeMeta.label}，不会伪装成实时数据。
             </p>
           </div>
         </div>
@@ -73,8 +73,7 @@ export function DashboardPage() {
       <ExternalIdentityMap />
 
       <footer className="border-t py-5 text-xs leading-5 text-muted-foreground">
-        本页仅用于评审产品结构。未连接登录、路由业务页、后端
-        API、数据库或实时运行数据。
+        Dashboard 仍用于评审产品结构；业务应用请进入独立真实工作区。
       </footer>
     </div>
   )

@@ -31,6 +31,7 @@ export type NavigationItem = {
   label: string
   icon: LucideIcon
   active?: boolean
+  href?: string
 }
 
 export type NavigationGroup = {
@@ -41,12 +42,17 @@ export type NavigationGroup = {
 export const navigationGroups: NavigationGroup[] = [
   {
     label: "工作台",
-    items: [{ label: "总览", icon: LayoutDashboardIcon, active: true }],
+    items: [{ label: "总览", icon: LayoutDashboardIcon, active: true, href: "/" }],
   },
   {
     label: "业务应用",
     items: [
-      { label: "应用列表", icon: PackageCheckIcon },
+      {
+        label: "应用列表",
+        icon: PackageCheckIcon,
+        active: true,
+        href: "/applications",
+      },
       { label: "流程设计", icon: WorkflowIcon },
       { label: "渠道与触发器", icon: RadioTowerIcon },
       { label: "发布管理", icon: HistoryIcon },
@@ -93,72 +99,6 @@ export const overviewMetrics = [
   { label: "API Capability", value: "18", note: "只读能力示例" },
   { label: "示例运行", value: "126", note: "静态记录，非实时" },
 ] as const
-
-export type BusinessApplication = {
-  id: string
-  name: string
-  description: string
-  icon: LucideIcon
-  tone: "indigo" | "cyan" | "amber"
-  profile: string
-  workflow: string
-  trigger: string
-  capabilities: number
-  delivery: string
-  environment: string
-  release: string
-  identity: string
-}
-
-export const businessApplications: BusinessApplication[] = [
-  {
-    id: "APP-DEMO-PRIVATE",
-    name: "钉钉私聊诊断助手",
-    description: "面向人员的一对一连续诊断，会话与调用主体都按当前发送人解析。",
-    icon: BotIcon,
-    tone: "indigo",
-    profile: "生产故障诊断 · r3",
-    workflow: "private-diagnosis · v2",
-    trigger: "钉钉私聊消息",
-    capabilities: 6,
-    delivery: "回复原私聊",
-    environment: "示例生产环境",
-    release: "评审中",
-    identity: "应用 + 租户 + 钉钉用户",
-  },
-  {
-    id: "APP-DEMO-GROUP",
-    name: "钉钉群聊诊断助手",
-    description:
-      "群保存会话上下文；每条消息仍按发送人的内部身份和数据权限执行。",
-    icon: MessagesSquareIcon,
-    tone: "cyan",
-    profile: "生产故障诊断 · r3",
-    workflow: "group-diagnosis · v1",
-    trigger: "群聊 @机器人",
-    capabilities: 5,
-    delivery: "回复原群聊",
-    environment: "示例生产环境",
-    release: "草稿",
-    identity: "群会话 ≠ 群共享身份",
-  },
-  {
-    id: "APP-DEMO-WEBHOOK",
-    name: "Webhook 告警分析助手",
-    description:
-      "以服务账号接收已验签告警，固定查询基础信息后交由 Agent 综合分析。",
-    icon: BellRingIcon,
-    tone: "amber",
-    profile: "告警分析 · r2",
-    workflow: "alert-triage · v4",
-    trigger: "签名 Webhook",
-    capabilities: 7,
-    delivery: "钉钉告警群",
-    environment: "示例生产环境",
-    release: "已冻结示例",
-    identity: "服务账号 · alarm-demo",
-  },
-]
 
 export const applicationWorkspaces = [
   { name: "应用概览", description: "装配关系、负责人和状态" },

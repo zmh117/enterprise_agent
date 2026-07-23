@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 
 class AdminScope:
@@ -17,7 +17,8 @@ class AdminScope:
         )
         if owner and owner == self.user_id:
             return True
-        routing = item.get("routing") if isinstance(item.get("routing"), dict) else {}
+        raw_routing = item.get("routing")
+        routing = cast(dict[str, Any], raw_routing) if isinstance(raw_routing, dict) else {}
         environment = str(routing.get("environment") or "")
         base = str(routing.get("base") or "")
         workshop = str(routing.get("workshop") or "")

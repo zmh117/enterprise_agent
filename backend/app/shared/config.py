@@ -171,6 +171,7 @@ class Settings:
     environment: str = "local"
     feature_real_claude: bool = False
     feature_real_internal_tools: bool = False
+    feature_business_application_control_plane: bool = False
     app_startup_migrate: bool = True
     seed_local_config: bool = False
     runtime_config_source: str = "env"
@@ -223,6 +224,9 @@ def load_settings() -> Settings:
         environment=os.getenv("APP_ENV", "local"),
         feature_real_claude=_env_bool("FEATURE_REAL_CLAUDE"),
         feature_real_internal_tools=_env_bool("FEATURE_REAL_INTERNAL_TOOLS"),
+        feature_business_application_control_plane=_env_bool(
+            "FEATURE_BUSINESS_APPLICATION_CONTROL_PLANE"
+        ),
         app_startup_migrate=_env_bool("APP_STARTUP_MIGRATE", True),
         seed_local_config=_env_bool("SEED_LOCAL_CONFIG"),
         debug_agent_user_id=os.getenv("DEBUG_AGENT_USER_ID", "local-user"),

@@ -1,4 +1,5 @@
 import { BoxesIcon, CircleDotDashedIcon } from "lucide-react"
+import { Link, useLocation } from "react-router-dom"
 
 import { Badge } from "@/components/ui/badge"
 import {
@@ -17,6 +18,7 @@ import {
 import { navigationGroups } from "@/mocks/dashboard"
 
 export function PlatformNavigation() {
+  const location = useLocation()
   return (
     <Sidebar collapsible="offcanvas" variant="sidebar">
       <SidebarHeader className="h-16 justify-center border-b px-3">
@@ -53,7 +55,12 @@ export function PlatformNavigation() {
                   return (
                     <SidebarMenuItem key={item.label}>
                       <SidebarMenuButton
-                        isActive={item.active}
+                        isActive={
+                          Boolean(item.href) &&
+                          (item.href === "/"
+                            ? location.pathname === "/"
+                            : location.pathname.startsWith(item.href!))
+                        }
                         disabled={!item.active}
                         title={
                           item.active ? item.label : `${item.label} · 规划中`
@@ -62,6 +69,9 @@ export function PlatformNavigation() {
                           item.active ? item.label : `${item.label}，规划中`
                         }
                         className="disabled:pointer-events-auto disabled:cursor-not-allowed disabled:opacity-75"
+                        render={
+                          item.href ? <Link to={item.href} /> : undefined
+                        }
                       >
                         <Icon aria-hidden="true" />
                         <span>{item.label}</span>
@@ -93,7 +103,9 @@ export function PlatformNavigation() {
             />
             界面原型
           </div>
-          <p className="mt-1.5 leading-5">无登录、无真实数据、无业务操作</p>
+          <p className="mt-1.5 leading-5">
+            业务应用已接真实控制面；其他模块仍为规划状态
+          </p>
         </div>
       </SidebarFooter>
     </Sidebar>

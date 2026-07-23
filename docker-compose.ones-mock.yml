@@ -1,0 +1,40 @@
+name: enterprise-agent-ones-mock
+
+services:
+  ones-mock:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: mock-ones-api
+    environment:
+      ONES_MOCK_EMAIL: ${ONES_MOCK_EMAIL:-mock.user@example.test}
+      ONES_MOCK_PASSWORD: ${ONES_MOCK_PASSWORD:-ones-mock-password-not-a-secret}
+      ONES_MOCK_USER_UUID: ${ONES_MOCK_USER_UUID:-MOCK-ONES-USER-001}
+      ONES_MOCK_USER_NAME: ${ONES_MOCK_USER_NAME:-Mock ONES User}
+      ONES_MOCK_TOKEN: ${ONES_MOCK_TOKEN:-MOCK-ONES-TOKEN-NOT-A-SECRET}
+      ONES_MOCK_TEAM_UUID: ${ONES_MOCK_TEAM_UUID:-MOCK-ONES-TEAM-001}
+      ONES_MOCK_TEAM_NAME: ${ONES_MOCK_TEAM_NAME:-Mock ONES Team}
+      ONES_MOCK_PROJECT_SCOPE_UUID: ${ONES_MOCK_PROJECT_SCOPE_UUID:-MOCK-ONES-PROJECT-SCOPE-001}
+    ports:
+      - "127.0.0.1:${ONES_MOCK_PORT:-19121}:19121"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:19121/health', timeout=2).read()",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped

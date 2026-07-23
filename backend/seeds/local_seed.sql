@@ -183,7 +183,22 @@ VALUES
   ('policy-role-admin-conversation-read', 'role', 'platform-admin', 'conversation', '*',
    'allow', 'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('policy-role-admin-attachment-read', 'role', 'platform-admin', 'attachment', '*',
-   'allow', 'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+   'allow', 'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-business-application-read', 'role', 'platform-admin',
+   'business_application', '*', 'allow', 'read', 'enabled', 10, 1,
+   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-business-application-create', 'role', 'platform-admin',
+   'business_application', '*', 'allow', 'create', 'enabled', 10, 1,
+   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-business-application-edit', 'role', 'platform-admin',
+   'business_application', '*', 'allow', 'edit', 'enabled', 10, 1,
+   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-business-application-publish', 'role', 'platform-admin',
+   'business_application', '*', 'allow', 'publish', 'enabled', 10, 1,
+   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-business-application-activate', 'role', 'platform-admin',
+   'business_application', '*', 'allow', 'activate', 'enabled', 10, 1,
+   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 
 INSERT INTO agent_definition

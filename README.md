@@ -318,3 +318,5 @@ docker compose --profile dingtalk-stream --profile internal-tools up -d
 docker compose --profile attachments --profile dingtalk-stream up -d --build
 docker compose --profile attachments ps
 docker compose --profile attachments logs --tail=100 attachment-worker
+
+docker compose -f docker-compose.ones-mock.yml up --build -d

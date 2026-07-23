@@ -22,6 +22,18 @@ from app.modules.attachments.domain import ObjectStorage
 from app.modules.attachments.extraction import SafeAttachmentExtractor
 from app.modules.attachments.service import AttachmentProcessingService
 from app.modules.attachments.storage import InMemoryObjectStorage, S3ObjectStorage
+from app.modules.business_application.application import (
+    BusinessApplicationResolver,
+    BusinessApplicationService,
+)
+from app.modules.business_application.infrastructure import BusinessApplicationRepository
+from app.modules.business_application.infrastructure.adapters import (
+    AgentPublicationAdapter,
+    ChannelConnectorAdapter,
+    EmptyCapabilityCatalogAdapter,
+    IdentitySubjectAdapter,
+    WorkflowPublicationAdapter,
+)
 from app.modules.channel.application.channel_ingress_service import ChannelIngressService
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.delivery.application.report_chunker import ReportChunker
@@ -110,6 +122,9 @@ class Container:
     connector_registry: ConnectorRegistry
     platform_config_service: PlatformConfigService
     workflow_service: WorkflowService
+    business_application_repository: BusinessApplicationRepository
+    business_application_service: BusinessApplicationService
+    business_application_resolver: BusinessApplicationResolver
     channel_ingress_service: ChannelIngressService
     create_agent_job_service: CreateAgentJobService
     dingtalk_message_service: DingTalkMessageService
@@ -218,6 +233,7 @@ def _build_container(
     platform_config_repository = PlatformConfigRepository(database)
     agent_config_repository = AgentConfigRepository(database)
     workflow_repository = WorkflowRepository(database)
+    business_application_repository = BusinessApplicationRepository(database)
     webhook_trigger_repository = WebhookTriggerRepository(database)
     webhook_event_repository = WebhookEventRepository(database)
     audit_service = AuditService(
@@ -262,6 +278,19 @@ def _build_container(
     workflow_service = WorkflowService(
         workflow_repository,
         permission_service,
+    )
+    business_application_service = BusinessApplicationService(
+        business_application_repository,
+        authorization_evaluator,
+        audit_service,
+        AgentPublicationAdapter(agent_config_repository),
+        WorkflowPublicationAdapter(workflow_repository),
+        ChannelConnectorAdapter(connector_registry),
+        IdentitySubjectAdapter(identity_repository),
+        EmptyCapabilityCatalogAdapter(),
+    )
+    business_application_resolver = BusinessApplicationResolver(
+        business_application_repository
     )
     credential_cipher = (
         AttachmentCredentialCipher(settings.app_config_master_key)
@@ -499,6 +528,9 @@ def _build_container(
         connector_registry=connector_registry,
         platform_config_service=platform_config_service,
         workflow_service=workflow_service,
+        business_application_repository=business_application_repository,
+        business_application_service=business_application_service,
+        business_application_resolver=business_application_resolver,
         channel_ingress_service=channel_ingress_service,
         create_agent_job_service=create_job_service,
         dingtalk_message_service=dingtalk_service,

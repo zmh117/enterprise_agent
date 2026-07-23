@@ -1,12 +1,9 @@
-import { PlatformShell } from "@/app/shell/platform-shell"
-import { DashboardPage } from "@/contexts/overview/presentation/dashboard-page"
+import { RouterProvider } from "react-router-dom"
+
+import { appRouter } from "@/app/router/app-router"
 
 export function App() {
-  return (
-    <PlatformShell>
-      <DashboardPage />
-    </PlatformShell>
-  )
+  return <RouterProvider router={appRouter} />
 }
 
 export default App

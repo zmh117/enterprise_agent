@@ -41,7 +41,12 @@ class RabbitMQQueueStatusAdapter:
     def _status(self, item: dict[str, Any]) -> dict[str, Any]:
         parsed = urlparse(self.rabbitmq_url)
         host = parsed.hostname or "localhost"
-        management_port = 15672 if parsed.port in {None, 5672} else parsed.port + 10000
+        broker_port = parsed.port
+        management_port = (
+            15672
+            if broker_port is None or broker_port == 5672
+            else broker_port + 10000
+        )
         vhost = unquote(parsed.path.removeprefix("/")) or "/"
         url = f"http://{host}:{management_port}/api/queues/{quote(vhost, safe='')}/{quote(item['name'], safe='')}"
         credentials = f"{unquote(parsed.username or 'guest')}:{unquote(parsed.password or 'guest')}"

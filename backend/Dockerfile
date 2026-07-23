@@ -22,6 +22,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-deps --no-build-isolation .
 CMD ["python", "-m", "uvicorn", "app.mock_internal_api_platform:create_app", "--factory", "--host", "0.0.0.0", "--port", "9000"]
 
+FROM python-deps AS mock-ones-api
+COPY backend/app/__init__.py backend/app/mock_ones_api.py /app/backend/app/
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-deps --no-build-isolation .
+CMD ["python", "-m", "uvicorn", "app.mock_ones_api:create_app", "--factory", "--host", "0.0.0.0", "--port", "19121"]
+
 FROM python-deps AS internal-api-platform
 # Multi-dialect read-only gateway. DB drivers live only in this image.
 # Oracle Instant Client (thick) is bundled when vendor/oracle provides the client;
