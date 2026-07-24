@@ -1,6 +1,26 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
+
+from app.shared.exceptions import NonRetryableExecutionError
+
+
+class ExternalIdentityProvider(StrEnum):
+    DINGTALK = "dingtalk"
+    ONES = "ones"
+
+    @classmethod
+    def require_supported(cls, value: str) -> ExternalIdentityProvider:
+        normalized = value.strip().lower()
+        try:
+            return cls(normalized)
+        except ValueError as exc:
+            raise NonRetryableExecutionError(
+                f"Unsupported external identity provider: {value}",
+                safe_message="External identity provider is not supported",
+                error_code="identity_provider_unsupported",
+            ) from exc
 
 
 @dataclass(frozen=True)

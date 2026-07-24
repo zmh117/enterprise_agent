@@ -16,6 +16,11 @@ WEB_ALLOWED_ORIGINS=http://localhost:8080,http://127.0.0.1:8080
 ADMIN_WEB_PORT=8080
 DINGTALK_TENANT_CODE=default
 DEFAULT_AGENT_CODE=default-diagnostic-agent
+ONES_IDENTITY_INSTANCE_CODE=default
+ONES_IDENTITY_DISPLAY_NAME=ONES
+ONES_IDENTITY_BASE_URL=http://host.docker.internal:19121
+ONES_IDENTITY_ALLOWED_HOSTS=host.docker.internal
+ONES_IDENTITY_ALLOW_INSECURE_LOCAL=true
 ```
 
 `FEATURE_WEB_ADMIN=true` 会同时启用统一身份、Web Session、RBAC 和业务应用控制面。
@@ -45,15 +50,18 @@ docker compose exec api-server \
 
 CLI 要求至少 12 位密码、二次确认，并拒绝重复 bootstrap。管理员创建后再开启对外管理入口。
 
-## 用户、角色和钉钉绑定
+## 用户与外部身份绑定
 
 推荐顺序：
 
-1. 在“用户与身份”创建内部用户。
-2. 在“角色与权限”创建职责角色并配置策略。
-3. 回到用户详情分配角色。
-4. 选择受信钉钉 tenant/connector，手工录入该用户的 `senderStaffId`。
-5. 让用户从钉钉发送一条测试消息，确认审计中的内部 requester、external identity 与工具范围。
+1. 在“用户与外部身份”创建内部用户。
+2. 选择受信钉钉 tenant/connector，录入该用户的 `senderStaffId`。
+3. 如需 ONES 映射，输入 ONES 邮箱与一次性密码，由服务端固定登录端点验证 UUID。
+4. 让用户从钉钉发送一条测试消息，确认审计中的内部 requester 与 external identity。
+
+ONES 登录响应只提取 UUID、显示名称和团队 UUID。服务端立即丢弃 Token，且不保存
+邮箱、密码或原始响应。生产环境必须使用 HTTPS 和精确 Host 白名单；本地 HTTP 例外
+只能用于受控 Mock。ONES 身份当前只是人员映射，不会调用需求、任务或缺陷接口。
 
 系统不会按昵称、手机号或邮箱自动匹配，也不会在收到未知钉钉用户时自动创建账号。`provider + tenant_code + external_subject_id` 唯一；冲突、未知、已解绑或已停用身份在创建 session/job 和发布队列消息前 fail closed。
 

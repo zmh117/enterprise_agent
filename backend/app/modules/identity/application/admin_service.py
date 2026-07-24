@@ -7,6 +7,7 @@ from app.modules.identity.application.authorization import AuthorizationEvaluato
 from app.modules.identity.application.identity_service import IdentityService
 from app.modules.identity.application.passwords import PasswordService
 from app.modules.identity.infrastructure import IdentityRepository
+from app.shared.exceptions import NonRetryableExecutionError
 
 
 class IdentityAdminService:
@@ -38,10 +39,37 @@ class IdentityAdminService:
             resource_code="*",
             action="manage",
         )
+        normalized_username = username.strip()
+        normalized_display_name = display_name.strip()
+        if not normalized_username:
+            raise NonRetryableExecutionError(
+                "Username is required",
+                safe_message="Username is required",
+                error_code="invalid_user",
+                field_errors=[{"field": "username", "message": "Username is required"}],
+            )
+        if not normalized_display_name:
+            raise NonRetryableExecutionError(
+                "Display name is required",
+                safe_message="Display name is required",
+                error_code="invalid_user",
+                field_errors=[
+                    {"field": "display_name", "message": "Display name is required"}
+                ],
+            )
+        if self.repository.get_user_by_username(normalized_username) is not None:
+            raise NonRetryableExecutionError(
+                "Username already exists",
+                safe_message="Username is already in use",
+                error_code="username_conflict",
+                field_errors=[
+                    {"field": "username", "message": "Username is already in use"}
+                ],
+            )
         with self.repository.database.transaction():
             user = self.repository.create_user(
-                username=username.strip(),
-                display_name=display_name.strip(),
+                username=normalized_username,
+                display_name=normalized_display_name,
                 email=email.strip(),
             )
             if password:
@@ -77,32 +105,33 @@ class IdentityAdminService:
             resource_code=user_id,
             action="manage",
         )
-        before = self.repository.get_user(user_id)
-        user = self.repository.update_user(
-            user_id,
-            expected_revision=expected_revision,
-            display_name=display_name,
-            email=email,
-            status=status,
-        )
-        if status != "enabled":
-            self.repository.revoke_user_sessions(user_id)
-        self.audit_service.record(
-            "admin.user.updated",
-            status="SUCCEEDED",
-            summary="Internal user updated",
-            actor_id=actor_id,
-            payload={
-                "user_id": user_id,
-                "before": {
-                    "display_name": before["display_name"],
-                    "email": before["email"],
-                    "status": before["status"],
-                    "revision": before["revision"],
+        with self.repository.database.transaction():
+            before = self.repository.get_user(user_id)
+            user = self.repository.update_user(
+                user_id,
+                expected_revision=expected_revision,
+                display_name=display_name.strip(),
+                email=email.strip(),
+                status=status,
+            )
+            if status != "enabled":
+                self.repository.revoke_user_sessions(user_id)
+            self.audit_service.record(
+                "admin.user.updated",
+                status="SUCCEEDED",
+                summary="Internal user updated",
+                actor_id=actor_id,
+                payload={
+                    "user_id": user_id,
+                    "before": {
+                        "display_name": before["display_name"],
+                        "email": before["email"],
+                        "status": before["status"],
+                        "revision": before["revision"],
+                    },
+                    "after": user,
                 },
-                "after": user,
-            },
-        )
+            )
         return user
 
     def create_role(

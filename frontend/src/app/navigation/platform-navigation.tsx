@@ -1,4 +1,4 @@
-import { BoxesIcon, CircleDotDashedIcon } from "lucide-react"
+import { BoxesIcon, CircleCheckBigIcon } from "lucide-react"
 import { Link, useLocation } from "react-router-dom"
 
 import { Badge } from "@/components/ui/badge"
@@ -34,7 +34,7 @@ export function PlatformNavigation() {
               <span className="flex flex-col text-left leading-tight">
                 <span className="font-semibold">Agent 应用平台</span>
                 <span className="text-[11px] text-muted-foreground">
-                  Control Plane Prototype
+                  Control Plane
                 </span>
               </span>
             </SidebarMenuButton>
@@ -97,14 +97,14 @@ export function PlatformNavigation() {
       <SidebarFooter className="p-3">
         <div className="rounded-lg border bg-background/70 p-3 text-xs text-muted-foreground">
           <div className="flex items-center gap-2 font-medium text-foreground">
-            <CircleDotDashedIcon
-              className="size-3.5 text-amber-600"
+            <CircleCheckBigIcon
+              className="size-3.5 text-emerald-600"
               aria-hidden="true"
             />
-            界面原型
+            MVP 已接线
           </div>
           <p className="mt-1.5 leading-5">
-            业务应用已接真实控制面；其他模块仍为规划状态
+            当前仅开放业务应用、用户与外部身份
           </p>
         </div>
       </SidebarFooter>

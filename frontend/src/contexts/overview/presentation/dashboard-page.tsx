@@ -1,80 +1,130 @@
-import { InfoIcon, SparklesIcon } from "lucide-react"
+import {
+  ArrowRightIcon,
+  BoxesIcon,
+  Link2Icon,
+  ShieldCheckIcon,
+  UsersIcon,
+} from "lucide-react"
+import { Link } from "react-router-dom"
 
 import { Badge } from "@/components/ui/badge"
-import { BusinessApplications } from "@/contexts/applications/presentation/business-applications"
-import { CapabilityGovernance } from "@/contexts/api-capabilities/presentation/capability-governance"
-import { ExternalIdentityMap } from "@/contexts/external-identities/presentation/external-identity-map"
-import { OperationsPreview } from "@/contexts/operations/presentation/operations-preview"
-import { OverviewMetrics } from "@/contexts/overview/presentation/overview-metrics"
-import { PlatformFlow } from "@/contexts/overview/presentation/platform-flow"
-import { WorkflowPreview } from "@/contexts/workflows/presentation/workflow-preview"
-import { prototypeMeta } from "@/mocks/dashboard"
+import { Button } from "@/components/ui/button"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
 
 export function DashboardPage() {
   return (
-    <div className="mx-auto flex w-full max-w-[1680px] flex-col gap-7 px-4 py-5 sm:px-6 lg:gap-8 lg:px-8 lg:py-7">
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-7 px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
       <section
         aria-labelledby="page-title"
-        className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"
+        className="rounded-2xl border bg-card px-6 py-7 shadow-sm sm:px-8"
       >
-        <div>
-          <div className="mb-2 flex flex-wrap items-center gap-2">
-            <Badge className="gap-1 bg-indigo-600 text-white hover:bg-indigo-600">
-              <SparklesIcon aria-hidden="true" />
-              控制面信息架构
-            </Badge>
-            <Badge variant="outline">MVP 界面评审</Badge>
-          </div>
-          <h1
-            id="page-title"
-            className="text-2xl font-semibold tracking-tight sm:text-3xl"
-          >
-            Agent 应用平台
-          </h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground sm:text-base">
-            以业务应用为中心，装配 Agent Profile、Workflow、Channel 与受控 API
-            Capability；同一 Runtime 支撑多个业务入口。
-          </p>
+        <div className="mb-3 flex items-center gap-2">
+          <Badge variant="secondary">当前 MVP</Badge>
+          <Badge variant="outline">真实控制面</Badge>
         </div>
-        <div className="max-w-xl rounded-lg border border-indigo-200 bg-indigo-50/70 px-4 py-3 text-xs leading-5 text-indigo-950 dark:border-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-100">
-          <div className="flex items-start gap-2">
-            <InfoIcon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-            <p>
-              <strong>渐进接线：</strong>
-              业务应用已连接真实控制面；其余 Dashboard 区域仍使用
-              {prototypeMeta.label}，不会伪装成实时数据。
-            </p>
-          </div>
-        </div>
+        <h1
+          id="page-title"
+          className="text-2xl font-semibold tracking-tight sm:text-3xl"
+        >
+          Agent 应用平台
+        </h1>
+        <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground sm:text-base">
+          当前界面只开放已经接入后端的业务应用，以及用户与外部身份管理。
+          钉钉和 ONES 身份统一关联到系统用户，身份映射本身不会新增授权。
+        </p>
       </section>
 
-      <OverviewMetrics />
-      <BusinessApplications />
-      <PlatformFlow />
-
-      <section className="space-y-4" aria-labelledby="control-plane-title">
-        <div>
-          <h2
-            id="control-plane-title"
-            className="text-lg font-semibold tracking-tight"
-          >
-            控制面预览
-          </h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            工作流负责确定性步骤，Capability Gateway
-            负责能力、主体、版本和审计边界。
-          </p>
-        </div>
-        <WorkflowPreview />
-        <CapabilityGovernance />
-        <OperationsPreview />
+      <section
+        className="grid gap-4 md:grid-cols-2"
+        aria-label="可用管理模块"
+      >
+        <ModuleCard
+          icon={BoxesIcon}
+          title="业务应用"
+          description="进入现有业务应用控制面，查看和维护已经接线的应用配置。"
+          href="/applications"
+          action="打开业务应用"
+        />
+        <ModuleCard
+          icon={UsersIcon}
+          title="用户与外部身份"
+          description="创建和启停系统用户，并管理钉钉、ONES 外部身份的绑定与生命周期。"
+          href="/users"
+          action="管理用户身份"
+        />
       </section>
 
-      <ExternalIdentityMap />
+      <Card className="shadow-none">
+        <CardHeader>
+          <div className="flex size-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+            <ShieldCheckIcon aria-hidden="true" />
+          </div>
+          <CardTitle>统一身份边界</CardTitle>
+          <CardDescription>
+            一个系统用户可关联多个受支持外部系统身份。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3 text-sm sm:grid-cols-3">
+          <BoundaryItem title="系统用户" detail="平台内唯一人员主体" />
+          <BoundaryItem title="钉钉身份" detail="用于消息入口身份解析" />
+          <BoundaryItem title="ONES 身份" detail="仅完成身份验证与映射" />
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
 
-      <footer className="border-t py-5 text-xs leading-5 text-muted-foreground">
-        Dashboard 仍用于评审产品结构；业务应用请进入独立真实工作区。
-      </footer>
+function ModuleCard({
+  icon: Icon,
+  title,
+  description,
+  href,
+  action,
+}: {
+  icon: typeof BoxesIcon
+  title: string
+  description: string
+  href: string
+  action: string
+}) {
+  return (
+    <Card className="shadow-none">
+      <CardHeader>
+        <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+          <Icon aria-hidden="true" />
+        </div>
+        <CardTitle>{title}</CardTitle>
+        <CardDescription className="min-h-10">{description}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Button
+          nativeButton={false}
+          render={<Link to={href} />}
+          className="w-full sm:w-auto"
+        >
+          {action}
+          <ArrowRightIcon aria-hidden="true" />
+        </Button>
+      </CardContent>
+    </Card>
+  )
+}
+
+function BoundaryItem({ title, detail }: { title: string; detail: string }) {
+  return (
+    <div className="rounded-xl border bg-muted/20 p-4">
+      <Link2Icon
+        className="mb-3 size-4 text-muted-foreground"
+        aria-hidden="true"
+      />
+      <p className="font-medium">{title}</p>
+      <p className="mt-1 text-xs text-muted-foreground">{detail}</p>
     </div>
   )
 }

@@ -120,7 +120,17 @@ def handle_exception(exc: Exception) -> HTTPException:
     if isinstance(exc, NotFound):
         return HTTPException(status_code=404, detail=exc.safe_message)
     if isinstance(exc, AppError):
-        status = 409 if exc.error_code in {"revision_conflict", "identity_conflict"} else 400
+        status = (
+            409
+            if exc.error_code
+            in {
+                "revision_conflict",
+                "identity_conflict",
+                "ones_identity_conflict",
+                "username_conflict",
+            }
+            else 400
+        )
         return HTTPException(
             status_code=status,
             detail={

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
+from app.modules.identity.application.ones_identity import OnesIdentityVerifier
 from app.modules.identity.domain import AuthenticatedPrincipal, ExternalIdentityDescriptor
 from app.modules.identity.infrastructure import IdentityRepository
-from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
+from app.shared.exceptions import AppError, NonRetryableExecutionError, PermissionDenied
 
 
 class IdentityService:
@@ -13,10 +14,20 @@ class IdentityService:
         repository: IdentityRepository,
         audit_service: AuditService,
         connector_registry: ConnectorRegistry | None = None,
+        ones_verifier: OnesIdentityVerifier | None = None,
+        ones_instance_code: str = "default",
+        ones_display_name: str = "ONES",
     ) -> None:
         self.repository = repository
         self.audit_service = audit_service
         self.connector_registry = connector_registry
+        self.ones_verifier = ones_verifier
+        self.ones_instance_code = ones_instance_code.strip() or "default"
+        self.ones_display_name = ones_display_name.strip() or "ONES"
+
+    @property
+    def ones_available(self) -> bool:
+        return bool(self.ones_verifier and self.ones_verifier.available)
 
     def resolve_external(
         self, descriptor: ExternalIdentityDescriptor
@@ -120,6 +131,7 @@ class IdentityService:
                 external_subject_id=external_subject_id,
                 connector_id=connector_id,
                 display_name=display_name,
+                metadata={"verification_method": "trusted_connector"},
             )
         except NonRetryableExecutionError:
             self.audit_service.record(
@@ -149,6 +161,93 @@ class IdentityService:
         )
         return identity
 
+    def bind_ones(
+        self,
+        *,
+        actor_id: str,
+        user_id: str,
+        email: str,
+        password: str,
+        expected_user_revision: int,
+    ) -> dict[str, object]:
+        self._require_bindable_user(
+            user_id=user_id,
+            expected_user_revision=expected_user_revision,
+            provider="ones",
+            actor_id=actor_id,
+        )
+        if self.ones_verifier is None or not self.ones_verifier.available:
+            raise NonRetryableExecutionError(
+                "ONES identity provider is unavailable",
+                safe_message="ONES identity verification is unavailable",
+                error_code="ones_connection_unavailable",
+            )
+        try:
+            verified = self.ones_verifier.verify(email=email, password=password)
+        except AppError as exc:
+            self.audit_service.record(
+                "identity.external.verification_failed",
+                status="DENIED",
+                summary="ONES identity verification failed",
+                actor_id=actor_id,
+                payload={
+                    "user_id": user_id,
+                    "provider": "ones",
+                    "instance_code": self.ones_instance_code,
+                    "error_code": exc.error_code or "ones_verification_failed",
+                },
+            )
+            raise
+        try:
+            with self.repository.database.transaction():
+                current = self._require_bindable_user(
+                    user_id=user_id,
+                    expected_user_revision=expected_user_revision,
+                    provider="ones",
+                    actor_id=actor_id,
+                )
+                identity = self.repository.bind_external_identity(
+                    user_id=user_id,
+                    provider="ones",
+                    tenant_code=self.ones_instance_code,
+                    external_subject_id=verified.user_uuid,
+                    connector_id="",
+                    display_name=verified.display_name,
+                    metadata={
+                        "verification_method": "ones_password_login",
+                        "team_uuids": list(verified.team_uuids),
+                    },
+                )
+                self.audit_service.record(
+                    "identity.external.bound",
+                    status="SUCCEEDED",
+                    summary="ONES identity bound to internal user",
+                    actor_id=actor_id,
+                    payload={
+                        "user_id": user_id,
+                        "identity_id": identity["id"],
+                        "provider": "ones",
+                        "instance_code": self.ones_instance_code,
+                        "team_count": len(verified.team_uuids),
+                        "user_revision": current["revision"],
+                    },
+                )
+        except NonRetryableExecutionError as exc:
+            if exc.error_code == "identity_conflict":
+                self.audit_service.record(
+                    "identity.external.binding_conflict",
+                    status="DENIED",
+                    summary="ONES identity binding conflict",
+                    actor_id=actor_id,
+                    payload={
+                        "user_id": user_id,
+                        "provider": "ones",
+                        "instance_code": self.ones_instance_code,
+                    },
+                )
+            raise
+        return identity
+
     def set_identity_status(
         self,
         *,
@@ -174,3 +273,60 @@ class IdentityService:
             },
         )
         return identity
+
+    def unbind_identity(
+        self,
+        *,
+        actor_id: str,
+        identity_id: str,
+        expected_revision: int,
+    ) -> dict[str, object]:
+        before = self.repository.get_external_identity(identity_id)
+        identity = self.repository.unbind_external_identity(
+            identity_id,
+            expected_revision=expected_revision,
+        )
+        self.audit_service.record(
+            "identity.external.unbound",
+            status="SUCCEEDED",
+            summary="External identity unbound from internal user",
+            actor_id=actor_id,
+            payload={
+                "identity_id": identity_id,
+                "user_id": identity["user_id"],
+                "provider": identity["provider"],
+                "before_status": before["status"],
+                "after_status": identity["status"],
+            },
+        )
+        return identity
+
+    def _require_bindable_user(
+        self,
+        *,
+        user_id: str,
+        expected_user_revision: int,
+        provider: str,
+        actor_id: str,
+    ) -> dict[str, object]:
+        user = self.repository.get_user(user_id)
+        if str(user.get("account_type") or "human") != "human":
+            self.audit_service.record(
+                "identity.external.binding_denied",
+                status="DENIED",
+                summary="Service account external identity binding denied",
+                actor_id=actor_id,
+                payload={"user_id": user_id, "provider": provider},
+            )
+            raise PermissionDenied(
+                "Service accounts cannot bind external identities",
+                safe_message="Service accounts cannot bind external identities",
+                error_code="service_account_identity_forbidden",
+            )
+        if str(user["status"]) != "enabled" or int(user["revision"]) != expected_user_revision:
+            raise NonRetryableExecutionError(
+                "User revision conflict",
+                safe_message="User was modified; refresh and try again",
+                error_code="revision_conflict",
+            )
+        return user

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from fastapi import APIRouter, Request
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Query, Request
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from app.modules.identity.api.dependencies import (
     container,
@@ -49,11 +49,21 @@ class MembershipRequest(BaseModel):
 
 
 class BindDingTalkRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     expected_user_revision: int = Field(ge=1)
     tenant_code: str = Field(min_length=1, max_length=120)
     external_subject_id: str = Field(min_length=1, max_length=200)
     connector_id: str = Field(min_length=1, max_length=200)
     display_name: str = Field(default="", max_length=200)
+
+
+class BindOnesRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_user_revision: int = Field(ge=1)
+    email: str = Field(min_length=3, max_length=320)
+    password: SecretStr = Field(min_length=1, max_length=512)
 
 
 class IdentityStatusRequest(BaseModel):
@@ -78,12 +88,35 @@ def build_identity_admin_router() -> APIRouter:
     router = APIRouter(prefix="/api/admin", tags=["identity-admin"])
 
     @router.get("/users")
-    def list_users(request: Request) -> dict[str, Any]:
+    def list_users(
+        request: Request,
+        search: str = Query(default="", max_length=200),
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=25, ge=1, le=100),
+        include_disabled: bool = True,
+    ) -> dict[str, Any]:
         require_action(
             request, resource_type="user", resource_code="*", action="manage"
         )
         c = container(request)
-        return {"users": c.identity_repository.list_users()}
+        total = c.identity_repository.count_users(
+            include_disabled=include_disabled,
+            search=search,
+        )
+        return {
+            "users": c.identity_repository.list_users(
+                include_disabled=include_disabled,
+                search=search,
+                limit=page_size,
+                offset=(page - 1) * page_size,
+            ),
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": (total + page_size - 1) // page_size,
+            },
+        }
 
     @router.post("/users")
     def create_user(request: Request, payload: CreateUserRequest) -> dict[str, Any]:
@@ -191,6 +224,31 @@ def build_identity_admin_router() -> APIRouter:
             raise handle_exception(exc) from exc
         return {"identity": identity}
 
+    @router.post("/users/{user_id}/ones-identities")
+    def bind_ones(
+        request: Request,
+        user_id: str,
+        payload: BindOnesRequest,
+    ) -> dict[str, Any]:
+        principal = require_action(
+            request,
+            resource_type="identity",
+            resource_code=user_id,
+            action="manage",
+            csrf=True,
+        )
+        try:
+            identity = container(request).identity_service.bind_ones(
+                actor_id=principal.user_id,
+                user_id=user_id,
+                email=payload.email,
+                password=payload.password.get_secret_value(),
+                expected_user_revision=payload.expected_user_revision,
+            )
+        except Exception as exc:
+            raise handle_exception(exc) from exc
+        return {"identity": identity}
+
     @router.put("/identities/{identity_id}/status")
     def set_identity_status(
         request: Request, identity_id: str, payload: IdentityStatusRequest
@@ -225,10 +283,9 @@ def build_identity_admin_router() -> APIRouter:
             csrf=True,
         )
         try:
-            identity = container(request).identity_service.set_identity_status(
+            identity = container(request).identity_service.unbind_identity(
                 actor_id=principal.user_id,
                 identity_id=identity_id,
-                status="disabled",
                 expected_revision=expected_revision,
             )
         except Exception as exc:
@@ -376,12 +433,51 @@ def build_identity_admin_router() -> APIRouter:
             ]
         }
 
+    @router.get("/external-identity-providers")
+    def list_external_identity_providers(request: Request) -> dict[str, Any]:
+        require_action(
+            request,
+            resource_type="identity",
+            resource_code="*",
+            action="manage",
+        )
+        c = container(request)
+        dingtalk_count = int(
+            (
+                c.database.execute_one(
+                    """
+                    select count(*) as count
+                    from integration_connector
+                    where connector_type = 'dingtalk_enterprise_stream'
+                      and enabled = 1
+                      and allow_ingress = 1
+                    """
+                )
+                or {"count": 0}
+            )["count"]
+        )
+        return {
+            "providers": [
+                {
+                    "code": "dingtalk",
+                    "display_name": "钉钉",
+                    "available": dingtalk_count > 0,
+                },
+                {
+                    "code": "ones",
+                    "display_name": c.identity_service.ones_display_name,
+                    "available": c.identity_service.ones_available,
+                    "instance_code": c.identity_service.ones_instance_code,
+                },
+            ]
+        }
+
     @router.get("/identity-conflicts")
     def identity_conflict(
         request: Request,
         tenant_code: str,
         external_subject_id: str,
-        provider: str = "dingtalk",
+        provider: Literal["dingtalk", "ones"] = "dingtalk",
     ) -> dict[str, Any]:
         require_action(
             request, resource_type="identity", resource_code="*", action="manage"

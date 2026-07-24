@@ -1,23 +1,8 @@
 import type { LucideIcon } from "lucide-react"
 import {
-  BellRingIcon,
-  BotIcon,
-  BracesIcon,
-  Building2Icon,
-  CableIcon,
-  CircleGaugeIcon,
-  ClipboardCheckIcon,
-  HistoryIcon,
-  KeyRoundIcon,
   LayoutDashboardIcon,
-  MessagesSquareIcon,
-  NetworkIcon,
   PackageCheckIcon,
-  RadioTowerIcon,
-  ScrollTextIcon,
-  ShieldCheckIcon,
   UsersIcon,
-  WorkflowIcon,
 } from "lucide-react"
 
 export const prototypeMeta = {
@@ -53,42 +38,17 @@ export const navigationGroups: NavigationGroup[] = [
         active: true,
         href: "/applications",
       },
-      { label: "流程设计", icon: WorkflowIcon },
-      { label: "渠道与触发器", icon: RadioTowerIcon },
-      { label: "发布管理", icon: HistoryIcon },
-    ],
-  },
-  {
-    label: "Agent 配置",
-    items: [
-      { label: "Agent Profile", icon: BotIcon },
-      { label: "Skill", icon: BracesIcon },
-      { label: "上下文策略", icon: NetworkIcon },
-    ],
-  },
-  {
-    label: "API 能力",
-    items: [
-      { label: "能力目录", icon: CableIcon },
-      { label: "应用授权", icon: ShieldCheckIcon },
-      { label: "平台连接", icon: Building2Icon },
-    ],
-  },
-  {
-    label: "运行中心",
-    items: [
-      { label: "Agent 任务", icon: CircleGaugeIcon },
-      { label: "会话记录", icon: MessagesSquareIcon },
-      { label: "调用与投递", icon: BellRingIcon },
     ],
   },
   {
     label: "系统管理",
     items: [
-      { label: "用户与外部身份", icon: UsersIcon },
-      { label: "角色与授权", icon: KeyRoundIcon },
-      { label: "审计日志", icon: ScrollTextIcon },
-      { label: "环境管理", icon: ClipboardCheckIcon },
+      {
+        label: "用户与外部身份",
+        icon: UsersIcon,
+        active: true,
+        href: "/users",
+      },
     ],
   },
 ]

@@ -23,6 +23,7 @@ user uuid: MOCK-ONES-USER-001
 token: MOCK-ONES-TOKEN-NOT-A-SECRET
 team uuid: MOCK-ONES-TEAM-001
 project scope uuid: MOCK-ONES-PROJECT-SCOPE-001
+invalid response email: invalid.response@example.test
 ```
 
 这些值仅用于本地 Mock，不得替换成真实密码或 Token 后提交。需要覆盖时，在本地 Shell
@@ -38,6 +39,24 @@ curl -sS http://127.0.0.1:19121/project/api/project/auth/login \
 
 响应中的 `user.uuid`、`user.token` 和 `teams[0].uuid` 分别用于业务请求头
 `Ones-User-Id`、`Ones-Auth-Token` 和业务 URL 的 `{team_uuid}`。
+
+## 用于系统用户身份绑定
+
+主 Compose 中的 API 可以使用以下本地配置连接该 Mock：
+
+```env
+ONES_IDENTITY_INSTANCE_CODE=default
+ONES_IDENTITY_DISPLAY_NAME=ONES
+ONES_IDENTITY_BASE_URL=http://host.docker.internal:19121
+ONES_IDENTITY_ALLOWED_HOSTS=host.docker.internal
+ONES_IDENTITY_TIMEOUT_SECONDS=5
+ONES_IDENTITY_MAX_RESPONSE_BYTES=65536
+ONES_IDENTITY_ALLOW_INSECURE_LOCAL=true
+```
+
+管理员在用户详情页输入 Mock 邮箱和一次性密码后，服务端只保存
+`user.uuid`、`user.name`、团队 UUID 和验证时间。登录响应中的 Token、邮箱、密码和
+原始响应不会进入身份记录、审计或前端缓存。
 
 ## 查询需求、任务和缺陷
 
@@ -89,6 +108,5 @@ POST /project/api/project/team/{team_uuid}/items/graphql?t=issueTypeScopes
 
 ## 当前边界
 
-当前只提供 ONES 外部接口 Mock。系统用户与 ONES 用户的身份绑定、凭据安全存储以及
-需求/任务/缺陷的 API Capability 适配不在该 Mock 内实现，后续应分别接入身份域和
-Capability Gateway，避免 Agent 直接持有 ONES 密码或自由构造底层请求。
+该 Mock 同时保留工作项接口报文，供未来独立变更使用；当前 Agent 平台只调用登录端点
+完成用户身份绑定，不调用需求、任务、缺陷接口，也不创建 ONES API Capability。

@@ -18,6 +18,7 @@ class MockOnesSettings:
     team_uuid: str = "MOCK-ONES-TEAM-001"
     team_name: str = "Mock ONES Team"
     project_scope_uuid: str = "MOCK-ONES-PROJECT-SCOPE-001"
+    invalid_response_email: str = "invalid.response@example.test"
 
     @classmethod
     def from_environment(cls) -> MockOnesSettings:
@@ -30,6 +31,10 @@ class MockOnesSettings:
             team_uuid=os.getenv("ONES_MOCK_TEAM_UUID", cls.team_uuid),
             team_name=os.getenv("ONES_MOCK_TEAM_NAME", cls.team_name),
             project_scope_uuid=os.getenv("ONES_MOCK_PROJECT_SCOPE_UUID", cls.project_scope_uuid),
+            invalid_response_email=os.getenv(
+                "ONES_MOCK_INVALID_RESPONSE_EMAIL",
+                cls.invalid_response_email,
+            ),
         )
 
 
@@ -288,6 +293,11 @@ def create_app(settings: MockOnesSettings | None = None) -> FastAPI:
 
     @app.post("/project/api/project/auth/login")
     async def login(payload: LoginRequest) -> dict[str, Any]:
+        if payload.email == resolved_settings.invalid_response_email:
+            return {
+                "user": {"name": "Invalid Mock User"},
+                "teams": "invalid",
+            }
         if (
             payload.email != resolved_settings.email
             or payload.password != resolved_settings.password

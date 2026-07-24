@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from app.modules.identity.domain import ExternalIdentityProvider
 from app.modules.job.infrastructure.repositories import new_id, now_iso
 from app.shared.database import Database
 from app.shared.exceptions import NotFound, NonRetryableExecutionError
@@ -23,36 +24,76 @@ class IdentityRepository:
     ) -> dict[str, Any]:
         user_id = new_id("user")
         timestamp = now_iso()
-        self.database.execute(
-            """
-            insert into app_user
-              (id, username, display_name, email, status, account_type,
-               revision, created_at, updated_at)
-            values (?, ?, ?, ?, ?, ?, 1, ?, ?)
-            """,
-            (
-                user_id,
-                username,
-                display_name,
-                email,
-                status,
-                account_type,
-                timestamp,
-                timestamp,
-            ),
-        )
+        try:
+            self.database.execute(
+                """
+                insert into app_user
+                  (id, username, display_name, email, status, account_type,
+                   revision, created_at, updated_at)
+                values (?, ?, ?, ?, ?, ?, 1, ?, ?)
+                """,
+                (
+                    user_id,
+                    username,
+                    display_name,
+                    email,
+                    status,
+                    account_type,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+        except Exception as exc:
+            if "unique" in str(exc).lower():
+                raise NonRetryableExecutionError(
+                    "Username already exists",
+                    safe_message="Username is already in use",
+                    error_code="username_conflict",
+                    field_errors=[
+                        {"field": "username", "message": "Username is already in use"}
+                    ],
+                ) from exc
+            raise
         return self.get_user(user_id)
 
-    def list_users(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
-        where = "" if include_disabled else "where status = 'enabled'"
+    def list_users(
+        self,
+        *,
+        include_disabled: bool = True,
+        search: str = "",
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        where_sql, params = self._user_search_clause(
+            include_disabled=include_disabled,
+            search=search,
+        )
+        pagination = ""
+        if limit is not None:
+            pagination = "limit ? offset ?"
+            params.extend((limit, offset))
         return self.database.execute(
             f"""
-            select id, username, display_name, email, status, account_type,
+            select u.id, u.username, u.display_name, u.email, u.status, u.account_type,
                    revision, created_at, updated_at
-            from app_user {where}
-            order by username
-            """
+            from app_user u
+            {where_sql}
+            order by lower(u.username), u.id
+            {pagination}
+            """,
+            tuple(params),
         )
+
+    def count_users(self, *, include_disabled: bool = True, search: str = "") -> int:
+        where_sql, params = self._user_search_clause(
+            include_disabled=include_disabled,
+            search=search,
+        )
+        row = self.database.execute_one(
+            f"select count(*) as count from app_user u {where_sql}",
+            tuple(params),
+        )
+        return int(row["count"]) if row else 0
 
     def get_user(self, user_id: str) -> dict[str, Any]:
         row = self.database.execute_one(
@@ -149,6 +190,11 @@ class IdentityRepository:
         open_id: str = "",
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        normalized_provider = ExternalIdentityProvider.require_supported(provider).value
+        normalized_metadata = self._identity_metadata(
+            normalized_provider,
+            metadata or {},
+        )
         user = self.get_user(user_id)
         if str(user["account_type"]) != "human":
             raise NonRetryableExecutionError(
@@ -157,7 +203,7 @@ class IdentityRepository:
                 error_code="service_account_identity_forbidden",
             )
         existing = self.find_external_identity(
-            provider=provider,
+            provider=normalized_provider,
             tenant_code=tenant_code,
             external_subject_id=external_subject_id,
             include_disabled=True,
@@ -166,9 +212,46 @@ class IdentityRepository:
             if str(existing["user_id"]) != user_id:
                 raise NonRetryableExecutionError(
                     "External identity already belongs to another user",
-                    safe_message="DingTalk identity is already bound",
+                    safe_message="External identity is already bound to another user",
                     error_code="identity_conflict",
                 )
+            if normalized_provider == ExternalIdentityProvider.ONES.value:
+                self.database.execute(
+                    """
+                    update user_external_identity
+                    set display_name = ?, metadata_json = ?, verified_at = ?,
+                        status = 'enabled', revision = revision + 1, updated_at = ?
+                    where id = ?
+                    """,
+                    (
+                        display_name,
+                        json.dumps(normalized_metadata, ensure_ascii=False, sort_keys=True),
+                        now_iso(),
+                        now_iso(),
+                        existing["id"],
+                    ),
+                )
+                return self.get_external_identity(str(existing["id"]))
+            if str(existing["status"]) != "enabled":
+                self.database.execute(
+                    """
+                    update user_external_identity
+                    set display_name = ?, union_id = ?, open_id = ?,
+                        metadata_json = ?, status = 'enabled', verified_at = ?,
+                        revision = revision + 1, updated_at = ?
+                    where id = ?
+                    """,
+                    (
+                        display_name,
+                        union_id,
+                        open_id,
+                        json.dumps(normalized_metadata, ensure_ascii=False, sort_keys=True),
+                        now_iso(),
+                        now_iso(),
+                        existing["id"],
+                    ),
+                )
+                return self.get_external_identity(str(existing["id"]))
             return existing
         identity_id = new_id("identity")
         timestamp = now_iso()
@@ -183,7 +266,7 @@ class IdentityRepository:
             (
                 identity_id,
                 user_id,
-                provider,
+                normalized_provider,
                 tenant_code,
                 external_subject_id,
                 connector_id,
@@ -191,8 +274,10 @@ class IdentityRepository:
                 open_id,
                 display_name,
                 timestamp,
-                timestamp,
-                json.dumps(metadata or {}, ensure_ascii=False),
+                timestamp
+                if normalized_provider == ExternalIdentityProvider.DINGTALK.value
+                else None,
+                json.dumps(normalized_metadata, ensure_ascii=False, sort_keys=True),
                 timestamp,
                 timestamp,
             ),
@@ -253,6 +338,12 @@ class IdentityRepository:
     def set_external_identity_status(
         self, identity_id: str, *, status: str, expected_revision: int
     ) -> dict[str, Any]:
+        if status not in {"enabled", "disabled"}:
+            raise NonRetryableExecutionError(
+                "Invalid external identity status",
+                safe_message="Identity status is invalid",
+                error_code="identity_status_invalid",
+            )
         rows = self.database.execute(
             """
             update user_external_identity
@@ -268,6 +359,34 @@ class IdentityRepository:
                 safe_message="Identity was modified; refresh and try again",
                 error_code="revision_conflict",
             )
+        return self.get_external_identity(identity_id)
+
+    def unbind_external_identity(
+        self,
+        identity_id: str,
+        *,
+        expected_revision: int,
+    ) -> dict[str, Any]:
+        rows = self.database.execute(
+            """
+            update user_external_identity
+            set status = 'unbound', revision = revision + 1, updated_at = ?
+            where id = ? and revision = ?
+            returning id
+            """,
+            (now_iso(), identity_id, expected_revision),
+        )
+        if not rows:
+            if self.database.execute_one(
+                "select id from user_external_identity where id = ?",
+                (identity_id,),
+            ):
+                raise NonRetryableExecutionError(
+                    "Identity revision conflict",
+                    safe_message="Identity was modified; refresh and try again",
+                    error_code="revision_conflict",
+                )
+            raise NotFound("External identity not found", safe_message="Identity not found")
         return self.get_external_identity(identity_id)
 
     def create_role(self, *, code: str, name: str, description: str = "") -> dict[str, Any]:
@@ -835,6 +954,10 @@ class IdentityRepository:
             "status": row["status"],
             "verified_at": row.get("verified_at"),
             "last_seen_at": row.get("last_seen_at"),
+            "metadata": self._identity_metadata(
+                str(row["provider"]),
+                _json_object(row.get("metadata_json")),
+            ),
             "revision": int(row.get("revision") or 1),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
@@ -842,6 +965,62 @@ class IdentityRepository:
             "user_display_name": row.get("user_display_name") or "",
             "user_status": row.get("user_status") or "",
         }
+
+    @staticmethod
+    def _identity_metadata(provider: str, metadata: dict[str, Any]) -> dict[str, Any]:
+        normalized_provider = ExternalIdentityProvider.require_supported(provider).value
+        verification_method = str(metadata.get("verification_method") or "")
+        result: dict[str, Any] = {}
+        if verification_method:
+            result["verification_method"] = verification_method
+        if normalized_provider == ExternalIdentityProvider.ONES.value:
+            team_uuids = metadata.get("team_uuids")
+            if isinstance(team_uuids, (list, tuple)):
+                result["team_uuids"] = list(
+                    dict.fromkeys(
+                        str(value).strip()
+                        for value in team_uuids
+                        if str(value).strip()
+                    )
+                )
+        return result
+
+    @staticmethod
+    def _user_search_clause(
+        *,
+        include_disabled: bool,
+        search: str,
+    ) -> tuple[str, list[Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if not include_disabled:
+            clauses.append("u.status = 'enabled'")
+        term = search.strip().lower()
+        if term:
+            pattern = f"%{term}%"
+            clauses.append(
+                """
+                (
+                  lower(u.username) like ?
+                  or lower(u.display_name) like ?
+                  or lower(u.email) like ?
+                  or exists (
+                    select 1
+                    from user_external_identity i
+                    where i.user_id = u.id
+                      and (
+                        lower(i.display_name) like ?
+                        or lower(i.external_subject_id) like ?
+                      )
+                  )
+                )
+                """
+            )
+            params.extend((pattern, pattern, pattern, pattern, pattern))
+        return (
+            f"where {' and '.join(clauses)}" if clauses else "",
+            params,
+        )
 
 
 def _json_list(value: object) -> list[str]:

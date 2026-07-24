@@ -223,6 +223,37 @@ class DingTalkStreamSessionWebhookDeliveryAdapter:
         )
 
 
+class DingTalkStreamSessionRejectionNotifier:
+    def __init__(self, adapter: DingTalkStreamSessionWebhookDeliveryAdapter) -> None:
+        self.adapter = adapter
+
+    def notify(
+        self,
+        *,
+        conversation_id: str,
+        session_webhook: str,
+        session_webhook_expires: str,
+        reason: str,
+    ) -> bool:
+        if not session_webhook:
+            return False
+        self.adapter.send(
+            connector=None,
+            route=ReplyRoute(
+                type="dingtalk_stream_session_webhook",
+                connector_id="",
+                target={
+                    "conversation_id": conversation_id,
+                    "session_webhook": session_webhook,
+                    "session_webhook_expires": session_webhook_expires,
+                },
+            ),
+            title="Agent 请求未受理",
+            text=reason,
+        )
+        return True
+
+
 class HttpDeliveryAdapter:
     def __init__(self, *, timeout_seconds: int = 5) -> None:
         self.timeout_seconds = timeout_seconds

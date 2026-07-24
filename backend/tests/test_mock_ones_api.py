@@ -53,6 +53,19 @@ class MockOnesApiTests(unittest.TestCase):
         self.assertNotIn("wrong-password", response.text)
         self.assertEqual("invalid_credentials", response.json()["detail"]["code"])
 
+    def test_login_can_return_an_invalid_contract_for_adapter_tests(self) -> None:
+        response = self.client.post(
+            "/project/api/project/auth/login",
+            json={
+                "email": self.settings.invalid_response_email,
+                "password": "ignored-by-invalid-contract-scenario",
+            },
+        )
+
+        self.assertEqual(200, response.status_code)
+        self.assertNotIn("uuid", response.json()["user"])
+        self.assertNotIsInstance(response.json()["teams"], list)
+
     def test_graphql_requires_login_derived_auth_headers(self) -> None:
         response = self.client.post(
             f"/project/api/project/team/{self.settings.team_uuid}/items/graphql",

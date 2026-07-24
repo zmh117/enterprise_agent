@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Protocol
 
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.channel.application.channel_ingress_service import ChannelIngressService
@@ -61,6 +61,17 @@ class RejectedDingTalkStreamMessage(ValueError):
         self.reason = reason
 
 
+class DingTalkStreamRejectionNotifier(Protocol):
+    def notify(
+        self,
+        *,
+        conversation_id: str,
+        session_webhook: str,
+        session_webhook_expires: str,
+        reason: str,
+    ) -> bool: ...
+
+
 class DingTalkStreamMessageService:
     def __init__(
         self,
@@ -81,6 +92,7 @@ class DingTalkStreamMessageService:
         attachment_credential_ttl_seconds: int = 900,
         connector_registry: ConnectorRegistry | None = None,
         default_tenant_code: str = "default",
+        rejection_notifier: DingTalkStreamRejectionNotifier | None = None,
     ) -> None:
         self.channel_ingress_service = channel_ingress_service
         self.audit_service = audit_service
@@ -98,6 +110,7 @@ class DingTalkStreamMessageService:
         self.attachment_credential_ttl_seconds = attachment_credential_ttl_seconds
         self.connector_registry = connector_registry
         self.default_tenant_code = default_tenant_code
+        self.rejection_notifier = rejection_notifier
 
     def handle_callback(
         self,
@@ -185,6 +198,11 @@ class DingTalkStreamMessageService:
                 actor_id=message.user_id,
                 payload={"connector_id": source_connector_id, "event_id": message.event_id},
             )
+            self._notify_rejection(
+                message=message,
+                reason=exc.safe_message,
+                connector_id=source_connector_id,
+            )
             return DingTalkStreamHandleResult(
                 accepted=False,
                 status="permission_denied",
@@ -206,6 +224,11 @@ class DingTalkStreamMessageService:
                 summary=exc.safe_message,
                 actor_id=message.user_id,
                 payload={"connector_id": source_connector_id, "event_id": message.event_id},
+            )
+            self._notify_rejection(
+                message=message,
+                reason=exc.safe_message,
+                connector_id=source_connector_id,
             )
             return DingTalkStreamHandleResult(
                 accepted=False,
@@ -236,6 +259,51 @@ class DingTalkStreamMessageService:
             ack_status="OK",
             ack_message="Task accepted, analysis is starting.",
             job_id=job.id,
+        )
+
+    def _notify_rejection(
+        self,
+        *,
+        message: DingTalkStreamIncomingMessage,
+        reason: str,
+        connector_id: str,
+    ) -> None:
+        if self.rejection_notifier is None:
+            return
+        try:
+            delivered = self.rejection_notifier.notify(
+                conversation_id=message.conversation_id,
+                session_webhook=message.session_webhook,
+                session_webhook_expires=message.session_webhook_expired_time,
+                reason=reason,
+            )
+        except Exception as exc:
+            self.audit_service.record(
+                "dingtalk.stream.rejection_delivery_failed",
+                status="FAILED",
+                summary=str(getattr(exc, "safe_message", "DingTalk rejection delivery failed")),
+                actor_id=message.user_id,
+                payload={
+                    "connector_id": connector_id,
+                    "event_id": message.event_id,
+                },
+            )
+            return
+        self.audit_service.record(
+            "dingtalk.stream.rejection_delivered"
+            if delivered
+            else "dingtalk.stream.rejection_delivery_unavailable",
+            status="SUCCEEDED" if delivered else "SKIPPED",
+            summary=(
+                "DingTalk rejection delivered to original session"
+                if delivered
+                else "DingTalk session webhook is unavailable"
+            ),
+            actor_id=message.user_id,
+            payload={
+                "connector_id": connector_id,
+                "event_id": message.event_id,
+            },
         )
 
     def parse_message(self, payload: dict[str, Any]) -> DingTalkStreamIncomingMessage:

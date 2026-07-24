@@ -42,6 +42,7 @@ from app.modules.delivery.infrastructure.adapters import (
     DingTalkConversationDeliveryAdapter,
     DingTalkEnterpriseAppDeliveryAdapter,
     DingTalkStreamSessionWebhookDeliveryAdapter,
+    DingTalkStreamSessionRejectionNotifier,
     DingTalkWebhookRobotDeliveryAdapter,
     HttpDeliveryAdapter,
     NoneDeliveryAdapter,
@@ -65,6 +66,9 @@ from app.modules.identity.application import (
     IdentityService,
 )
 from app.modules.identity.infrastructure import IdentityRepository
+from app.modules.identity.infrastructure.ones_identity_verifier import (
+    UrllibOnesIdentityVerifier,
+)
 from app.modules.job.application.create_agent_job_service import CreateAgentJobService
 from app.modules.job.application.job_retry_service import JobRetryService
 from app.modules.job.application.job_status_service import JobStatusService
@@ -245,10 +249,17 @@ def _build_container(
         max_chars=settings.execution.max_tool_response_chars,
     )
     connector_registry = ConnectorRegistry(config_repository)
+    ones_identity_verifier = UrllibOnesIdentityVerifier(
+        settings.ones_identity,
+        environment=settings.environment,
+    )
     identity_service = IdentityService(
         identity_repository,
         audit_service,
         connector_registry,
+        ones_verifier=ones_identity_verifier,
+        ones_instance_code=settings.ones_identity.instance_code,
+        ones_display_name=settings.ones_identity.display_name,
     )
     authorization_evaluator = AuthorizationEvaluator(identity_repository, audit_service)
     permission_service = PermissionService(
@@ -397,6 +408,9 @@ def _build_container(
         default_open_conversation_id=settings.dingtalk.default_open_conversation_id,
         default_robot_code=settings.dingtalk.default_robot_code,
     )
+    dingtalk_stream_session_webhook_adapter = DingTalkStreamSessionWebhookDeliveryAdapter(
+        timeout_seconds=settings.delivery.timeout_seconds,
+    )
     dingtalk_stream_service = DingTalkStreamMessageService(
         channel_ingress_service=channel_ingress_service,
         audit_service=audit_service,
@@ -414,6 +428,9 @@ def _build_container(
         attachment_credential_ttl_seconds=settings.attachments.credential_ttl_seconds,
         connector_registry=connector_registry,
         default_tenant_code=settings.identity.dingtalk_tenant_code,
+        rejection_notifier=DingTalkStreamSessionRejectionNotifier(
+            dingtalk_stream_session_webhook_adapter
+        ),
     )
     internal_api_client: InternalApiClient = FakeInternalApiClient()
     if (
@@ -455,9 +472,6 @@ def _build_container(
     )
     dingtalk_webhook_robot_adapter = DingTalkWebhookRobotDeliveryAdapter(
         connector_registry=connector_registry,
-        timeout_seconds=settings.delivery.timeout_seconds,
-    )
-    dingtalk_stream_session_webhook_adapter = DingTalkStreamSessionWebhookDeliveryAdapter(
         timeout_seconds=settings.delivery.timeout_seconds,
     )
     http_adapter = HttpDeliveryAdapter(timeout_seconds=settings.delivery.timeout_seconds)
