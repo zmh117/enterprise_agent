@@ -20,6 +20,12 @@ class AdminReadRepository:
             select j.id, j.session_id, j.status, j.retry_count, j.max_retry_count,
                    j.internal_user_id, j.user_id, j.project_code, j.source_channel,
                    j.source_connector_id, j.routing_context_json, j.error_message,
+                   j.business_application_id, j.business_application_code,
+                   j.business_application_publication_id,
+                   j.business_application_deployment_id,
+                   j.business_application_route_id,
+                   j.business_application_runtime_status,
+                   j.business_application_route_decision_json,
                    j.created_at, j.started_at, j.finished_at,
                    d.code as agent_code,
                    (select w.correlation_id from webhook_event w where w.job_id = j.id order by w.received_at desc limit 1) as correlation_id
@@ -66,7 +72,9 @@ class AdminReadRepository:
             """
             select id, requester_id, project_code, source_channel,
                    source_connector_id, external_conversation_id,
-                   routing_context_json, updated_at
+                   routing_context_json, business_application_id,
+                   business_application_code, conversation_mode,
+                   recent_message_limit, updated_at
             from agent_session
             where updated_at >= ? and updated_at < ?
             order by updated_at desc, id desc
@@ -93,7 +101,9 @@ class AdminReadRepository:
             """
             select id, requester_id, requester_display_name, project_code,
                    source_channel, source_connector_id, external_conversation_id,
-                   routing_context_json, created_at, updated_at
+                   routing_context_json, business_application_id,
+                   business_application_code, conversation_mode,
+                   recent_message_limit, created_at, updated_at
             from agent_session where id = ?
             """,
             (session_id,),
@@ -118,6 +128,12 @@ class AdminReadRepository:
             select j.id, j.session_id, j.status, j.retry_count, j.max_retry_count,
                    j.internal_user_id, j.user_id, j.project_code, j.source_channel,
                    j.source_connector_id, j.routing_context_json, j.error_message,
+                   j.business_application_id, j.business_application_code,
+                   j.business_application_publication_id,
+                   j.business_application_deployment_id,
+                   j.business_application_route_id,
+                   j.business_application_runtime_status,
+                   j.business_application_route_decision_json,
                    j.created_at, j.started_at, j.finished_at, d.code as agent_code
             from agent_job j left join agent_definition d on d.id = j.agent_definition_id
             where j.session_id = ? order by j.created_at, j.id limit ?
@@ -171,6 +187,12 @@ class AdminReadRepository:
             select j.id, j.session_id, j.status, j.retry_count, j.max_retry_count,
                    j.internal_user_id, j.user_id, j.project_code, j.source_channel,
                    j.source_connector_id, j.external_event_id, j.routing_context_json,
+                   j.business_application_id, j.business_application_code,
+                   j.business_application_publication_id,
+                   j.business_application_deployment_id,
+                   j.business_application_route_id,
+                   j.business_application_runtime_status,
+                   j.business_application_route_decision_json,
                    j.error_message, j.created_at, j.started_at, j.finished_at,
                    d.code as agent_code
             from agent_job j left join agent_definition d on d.id = j.agent_definition_id
@@ -227,8 +249,19 @@ class AdminReadRepository:
     def _job(row: dict[str, Any]) -> dict[str, Any]:
         item = dict(row)
         item["routing"] = _json_object(item.pop("routing_context_json", {}))
+        item["business_application_route_decision"] = _json_object(
+            item.pop("business_application_route_decision_json", {})
+        )
+        item["correlation_id"] = str(
+            item.get("correlation_id")
+            or item["business_application_route_decision"].get("correlation_id")
+            or ""
+        )
         item["error_summary"] = str(item.pop("error_message", "") or "")[:500]
         item["agent_code"] = str(item.get("agent_code") or "default-diagnostic-agent")
+        item["business_application_runtime_status"] = str(
+            item.get("business_application_runtime_status") or "legacy_unattributed"
+        )
         return _safe_times(item)
 
     @staticmethod

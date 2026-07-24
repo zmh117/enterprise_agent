@@ -1,0 +1,86 @@
+# ONES Mock 配置（仅本地联调，勿填真实账号/Token）
+
+server:
+  port: 19121
+
+team:
+  uuid: MOCK-ONES-TEAM-001
+  name: Mock ONES Team
+
+project:
+  uuid: MOCK-ONES-PROJECT-001
+  name: Mock Manufacturing Project
+  scope_uuid: MOCK-ONES-PROJECT-SCOPE-001
+  scope_name_pinyin: mock-manufacturing-project
+
+# 登录该邮箱时返回故意破坏的合同，供适配器负向测试
+invalid_response_email: invalid.response@example.test
+
+users:
+  - email: mock.user@example.test
+    password: ones-mock-password-not-a-secret
+    uuid: MOCK-ONES-USER-001
+    name: Mock ONES User
+    token: MOCK-ONES-TOKEN-NOT-A-SECRET
+  - email: mock.owner@example.test
+    password: ones-mock-owner-password-not-a-secret
+    uuid: MOCK-ONES-USER-002
+    name: Mock ONES Owner
+    token: MOCK-ONES-TOKEN-OWNER-NOT-A-SECRET
+
+issue_types:
+  demand:
+    uuid: MOCK-ISSUE-TYPE-DEMAND
+    scope_uuid: MOCK-ISSUE-SCOPE-DEMAND
+    name: 需求
+    name_pinyin: xu1qiu2
+    detail_type: 1
+    icon: 3
+  task:
+    uuid: MOCK-ISSUE-TYPE-TASK
+    scope_uuid: MOCK-ISSUE-SCOPE-TASK
+    name: 任务
+    name_pinyin: ren4wu4
+    detail_type: 2
+    icon: 1
+  defect:
+    uuid: MOCK-ISSUE-TYPE-DEFECT
+    scope_uuid: MOCK-ISSUE-SCOPE-DEFECT
+    name: 缺陷
+    name_pinyin: que1xian4
+    detail_type: 3
+    icon: 2
+
+priorities:
+  normal:
+    uuid: MOCK-PRIORITY-NORMAL
+    value: 普通
+    color: "#2e7d32"
+    bg_color: "#e8f5e9"
+    position: 2
+
+statuses:
+  todo:
+    uuid: MOCK-STATUS-TODO
+    name: 待处理
+    category: to_do
+
+tasks:
+  - number: 900101
+    name: "Mock requirement: add production order traceability"
+    issue_type: demand
+    owner_uuid: MOCK-ONES-USER-001
+    status: todo
+    priority: normal
+  - number: 900102
+    name: "Mock task: verify production order synchronization"
+    issue_type: task
+    owner_uuid: MOCK-ONES-USER-002
+    status: todo
+    priority: normal
+  - number: 900103
+    name: "Mock defect: order status is not refreshed"
+    issue_type: defect
+    owner_uuid: MOCK-ONES-USER-001
+    status: todo
+    priority: normal

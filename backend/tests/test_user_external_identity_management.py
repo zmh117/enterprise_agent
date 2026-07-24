@@ -20,7 +20,10 @@ from app.modules.identity.infrastructure.ones_identity_verifier import (
 )
 from app.shared.config import IdentitySettings, OnesIdentitySettings, Settings
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
-from backend.tests.helpers import test_settings as base_test_settings
+from backend.tests.helpers import (
+    activate_dingtalk_test_application,
+    test_settings as base_test_settings,
+)
 
 ADMIN_PASSWORD = "local-admin-change-me"
 ORIGIN = "http://admin.test"
@@ -89,7 +92,8 @@ class FakeRejectionNotifier:
 def identity_settings() -> Settings:
     return replace(
         base_test_settings(),
-        environment="test",
+        environment="local",
+        feature_business_application_control_plane=True,
         identity=IdentitySettings(
             enabled=True,
             web_admin_enabled=True,
@@ -109,6 +113,11 @@ def identity_settings() -> Settings:
 def identity_container(verifier: FakeOnesVerifier | None = None) -> Container:
     container = build_test_container(identity_settings(), migrate=True, seed=True)
     container.identity_service.ones_verifier = verifier or FakeOnesVerifier()
+    activate_dingtalk_test_application(
+        container,
+        code="identity-test-application",
+        robot_code="test-robot-code",
+    )
     return container
 
 
@@ -491,6 +500,7 @@ def test_dingtalk_binding_state_controls_ingress_and_replies_with_safe_rejection
             "conversationId": f"conversation-{suffix}",
             "senderStaffId": "local-user",
             "msgId": f"message-{suffix}",
+            "robotCode": "test-robot-code",
             "sessionWebhook": "https://oapi.dingtalk.com/robot/sendBySession",
             "sessionWebhookExpiredTime": "2099-01-01T00:00:00+00:00",
             "text": {"content": "check status"},
@@ -501,9 +511,7 @@ def test_dingtalk_binding_state_controls_ingress_and_replies_with_safe_rejection
         correlation_id="correlation-enabled",
     )
     assert accepted.accepted is True
-    identity_row = container.identity_repository.get_external_identity(
-        "identity_local_dingtalk"
-    )
+    identity_row = container.identity_repository.get_external_identity("identity_local_dingtalk")
 
     disabled = container.identity_service.set_identity_status(
         actor_id="user_local_admin",
@@ -648,9 +656,7 @@ def test_ones_verifier_uses_fixed_path_and_returns_only_whitelisted_identity() -
             "ones_response_invalid",
         ),
         (
-            lambda request, timeout: (_ for _ in ()).throw(
-                URLError("connection unavailable")
-            ),
+            lambda request, timeout: (_ for _ in ()).throw(URLError("connection unavailable")),
             "ones_connection_unavailable",
         ),
         (
@@ -719,9 +725,7 @@ def test_ones_verifier_rejects_oversize_untrusted_host_and_production_http() -> 
         ),
         environment="local",
         open_response=lambda request, timeout: FakeResponse(
-            json.dumps(
-                {"user": {"uuid": "LOCAL", "name": "Local"}, "teams": []}
-            ).encode()
+            json.dumps({"user": {"uuid": "LOCAL", "name": "Local"}, "teams": []}).encode()
         ),
     )
     assert local.verify(email="local@example.test", password="secret").user_uuid == "LOCAL"
@@ -798,9 +802,7 @@ def test_live_ones_mock_binding_failure_idempotency_and_conflict() -> None:
         )
         assert invalid.status_code == 400
         assert invalid.json()["detail"]["code"] == "ones_invalid_credentials"
-        assert container.identity_repository.list_external_identities(
-            str(second["id"])
-        ) == []
+        assert container.identity_repository.list_external_identities(str(second["id"])) == []
 
         conflict = client.post(
             f"/api/admin/users/{second['id']}/ones-identities",

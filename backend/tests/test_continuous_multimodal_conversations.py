@@ -24,6 +24,7 @@ from app.modules.agent.application.conversation_context import ConversationConte
 from app.shared.database import Database, default_migrations_dir
 from app.shared.exceptions import PermissionDenied, RetryableExecutionError
 from app.shared.config import AttachmentSettings, ConversationSettings, DingTalkSettings, Settings
+from backend.tests.helpers import activate_dingtalk_test_application
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "dingtalk_stream"
@@ -74,11 +75,72 @@ def multimodal_container() -> object:
         ),
         attachments=AttachmentSettings(enabled=True, max_file_bytes=1024 * 1024),
     )
-    return build_test_container(settings, migrate=True, seed=True)
+    settings = replace(
+        settings,
+        environment="local",
+        feature_business_application_control_plane=True,
+        identity=replace(
+            settings.identity,
+            published_agent_runtime_enabled=True,
+        ),
+    )
+    container = build_test_container(settings, migrate=True, seed=True)
+    container.permission_service.unified_enabled = False
+    container.database.execute(
+        """
+        insert into permission_policy
+          (id, subject_type, subject_code, resource_type, resource_code, effect,
+           created_at, updated_at)
+        values (?, 'user', 'local-user', 'project', 'default', 'allow',
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        """,
+        ("policy-multimodal-local-user",),
+    )
+    container.database.execute(
+        """
+        insert into permission_policy
+          (id, subject_type, subject_code, resource_type, resource_code, action, effect,
+           created_at, updated_at)
+        values (?, 'user', 'local-user', 'agent', 'default-diagnostic-agent', 'use',
+                'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        """,
+        ("policy-multimodal-local-user-agent",),
+    )
+    for policy_id, resource_type, resource_code in (
+        ("policy-multimodal-admin-project", "project", "default"),
+        (
+            "policy-multimodal-admin-agent",
+            "agent",
+            "default-diagnostic-agent",
+        ),
+        ("policy-multimodal-admin-tool", "tool", "*"),
+    ):
+        container.database.execute(
+            """
+            insert into permission_policy
+              (id, subject_type, subject_code, resource_type, resource_code, action,
+               effect, created_at, updated_at)
+            values (?, 'user', 'user_local_admin', ?, ?, 'use', 'allow',
+                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """,
+            (policy_id, resource_type, resource_code),
+        )
+    activate_dingtalk_test_application(
+        container,
+        code="multimodal-test-application",
+        robot_code="robot-redacted",
+        group_conversation_ids=("group-conversation-redacted",),
+        attachments_enabled=True,
+    )
+    return container
 
 
 def load_fixture(name: str) -> dict[str, object]:
-    return json.loads((FIXTURES / name).read_text())
+    payload = json.loads((FIXTURES / name).read_text())
+    payload["senderStaffId"] = "user_local_admin"
+    payload["sessionWebhook"] = "https://oapi.dingtalk.com/robot/sendBySession"
+    payload["sessionWebhookExpiredTime"] = "2099-01-01T00:00:00+00:00"
+    return payload
 
 
 def test_real_sanitized_group_and_direct_contracts_resolve_stable_sessions() -> None:
@@ -91,15 +153,20 @@ def test_real_sanitized_group_and_direct_contracts_resolve_stable_sessions() -> 
     second = c.dingtalk_stream_message_service.handle_callback(payload=direct, correlation_id="2")
     third = c.dingtalk_stream_message_service.handle_callback(payload=group, correlation_id="3")
 
-    assert c.agent_repository.get_job(first.job_id).session_id == c.agent_repository.get_job(
-        second.job_id
-    ).session_id
-    assert c.agent_repository.get_job(first.job_id).session_id != c.agent_repository.get_job(
-        third.job_id
-    ).session_id
-    assert c.agent_repository.get_session(
-        c.agent_repository.get_job(third.job_id).session_id
-    ).conversation_type == "group"
+    assert (
+        c.agent_repository.get_job(first.job_id).session_id
+        == c.agent_repository.get_job(second.job_id).session_id
+    )
+    assert (
+        c.agent_repository.get_job(first.job_id).session_id
+        != c.agent_repository.get_job(third.job_id).session_id
+    )
+    assert (
+        c.agent_repository.get_session(
+            c.agent_repository.get_job(third.job_id).session_id
+        ).conversation_type
+        == "group"
+    )
     messages = c.agent_repository.list_messages(
         c.agent_repository.get_job(first.job_id).session_id, limit=10
     )
@@ -117,6 +184,16 @@ def test_direct_sessions_are_isolated_by_requester() -> None:
                 CURRENT_TIMESTAMP)
         """,
         ("policy-user-b",),
+    )
+    c.database.execute(
+        """
+        insert into permission_policy
+          (id, subject_type, subject_code, resource_type, resource_code, action, effect,
+           created_at, updated_at)
+        values (?, 'user', 'user-b', 'agent', 'default-diagnostic-agent', 'use', 'allow',
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        """,
+        ("policy-user-b-agent",),
     )
     jobs = []
     for user in ("local-user", "user-b"):
@@ -175,7 +252,9 @@ def test_multimodal_persistence_rolls_back_before_any_queue_publish() -> None:
 def test_markdown_attachment_is_encrypted_stored_extracted_and_releases_job() -> None:
     c = multimodal_container()
     payload = load_fixture("file.json")
-    result = c.dingtalk_stream_message_service.handle_callback(payload=payload, correlation_id="corr")
+    result = c.dingtalk_stream_message_service.handle_callback(
+        payload=payload, correlation_id="corr"
+    )
     job = c.agent_repository.get_job(result.job_id)
     assert job.status == JobStatus.WAITING_INPUT
     task = c.message_bus.attachments.popleft()
@@ -201,7 +280,9 @@ def test_markdown_attachment_is_encrypted_stored_extracted_and_releases_job() ->
 def test_image_only_is_stored_without_model_execution() -> None:
     c = multimodal_container()
     payload = load_fixture("picture.json")
-    result = c.dingtalk_stream_message_service.handle_callback(payload=payload, correlation_id="corr")
+    result = c.dingtalk_stream_message_service.handle_callback(
+        payload=payload, correlation_id="corr"
+    )
     task = c.message_bus.attachments.popleft()
     image = Image.new("RGB", (2, 2), "red")
     data = io.BytesIO()
@@ -227,18 +308,14 @@ def test_supported_document_extractors_and_limits() -> None:
     workbook.active["A1"] = "xlsx evidence"
     xlsx_bytes = io.BytesIO()
     workbook.save(xlsx_bytes)
-    assert "xlsx evidence" in extractor.extract(
-        file_name="a.xlsx", data=xlsx_bytes.getvalue()
-    ).text
+    assert "xlsx evidence" in extractor.extract(file_name="a.xlsx", data=xlsx_bytes.getvalue()).text
 
     presentation = Presentation()
     slide = presentation.slides.add_slide(presentation.slide_layouts[5])
     slide.shapes.title.text = "pptx evidence"
     pptx_bytes = io.BytesIO()
     presentation.save(pptx_bytes)
-    assert "pptx evidence" in extractor.extract(
-        file_name="a.pptx", data=pptx_bytes.getvalue()
-    ).text
+    assert "pptx evidence" in extractor.extract(file_name="a.pptx", data=pptx_bytes.getvalue()).text
 
     with pytest.raises(Exception):
         extractor.extract(file_name="legacy.doc", data=b"legacy")
@@ -295,7 +372,9 @@ def test_legacy_sessions_are_backfilled_without_merging() -> None:
                 'u', '', '{}', '{}', 'now', 'now')
         """
     )
-    database.execute_script((migrations / "006_continuous_conversation_attachments.sql").read_text())
+    database.execute_script(
+        (migrations / "006_continuous_conversation_attachments.sql").read_text()
+    )
     rows = database.execute("select id, session_key from agent_session order by id")
     assert rows == [
         {"id": "old-a", "session_key": "legacy:old-a"},

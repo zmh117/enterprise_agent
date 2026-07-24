@@ -14,7 +14,7 @@ from app.modules.business_application.domain.models import (
 from app.shared.exceptions import NonRetryableExecutionError
 
 CODE_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$")
-ENVIRONMENTS = {"local", "test", "staging", "production"}
+ENVIRONMENTS = {"local"}
 SESSION_POLICY_FIELDS = {
     "conversation_mode",
     "recent_message_limit",
@@ -71,7 +71,10 @@ def validate_code(value: str, *, field: str = "code") -> str:
 def validate_environment(value: str) -> str:
     normalized = value.strip().lower()
     if normalized not in ENVIRONMENTS:
-        raise validation_error("environment", "Environment is not supported")
+        raise validation_error(
+            "environment",
+            "Only the local Business Application environment is supported",
+        )
     return normalized
 
 
@@ -105,9 +108,7 @@ def validate_session_policy(value: dict[str, Any]) -> dict[str, Any]:
             "session_policy.conversation_mode", "Conversation mode is not supported"
         )
     if not 1 <= normalized["recent_message_limit"] <= 100:
-        raise validation_error(
-            "session_policy.recent_message_limit", "Must be between 1 and 100"
-        )
+        raise validation_error("session_policy.recent_message_limit", "Must be between 1 and 100")
     if not 1 <= normalized["retention_days"] <= 3650:
         raise validation_error("session_policy.retention_days", "Must be between 1 and 3650")
     return normalized
@@ -151,13 +152,9 @@ def validate_trigger(value: dict[str, Any], index: int) -> dict[str, Any]:
         raise validation_error(f"triggers.{index}", "Trigger or actor policy is invalid") from exc
     service_account = str(value.get("service_account_user_id") or "").strip()
     if trigger_type == TriggerType.WEBHOOK and actor_policy != ActorPolicy.SERVICE_ACCOUNT:
-        raise validation_error(
-            f"triggers.{index}.actor_policy", "Webhook requires SERVICE_ACCOUNT"
-        )
+        raise validation_error(f"triggers.{index}.actor_policy", "Webhook requires SERVICE_ACCOUNT")
     if trigger_type != TriggerType.WEBHOOK and actor_policy != ActorPolicy.CURRENT_SENDER:
-        raise validation_error(
-            f"triggers.{index}.actor_policy", "DingTalk requires CURRENT_SENDER"
-        )
+        raise validation_error(f"triggers.{index}.actor_policy", "DingTalk requires CURRENT_SENDER")
     if actor_policy == ActorPolicy.SERVICE_ACCOUNT and not service_account:
         raise validation_error(
             f"triggers.{index}.service_account_user_id", "Service account is required"
@@ -177,9 +174,7 @@ def validate_trigger(value: dict[str, Any], index: int) -> dict[str, Any]:
         "trigger_type": trigger_type,
         "connector_id": connector_id,
         "routing_key": str(value.get("routing_key") or "").strip(),
-        "normalized_routing_key": normalize_routing_key(
-            str(value.get("routing_key") or "")
-        ),
+        "normalized_routing_key": normalize_routing_key(str(value.get("routing_key") or "")),
         "actor_policy": actor_policy,
         "service_account_user_id": service_account,
         "enabled": bool(value.get("enabled", True)),

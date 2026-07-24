@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from app.mock_ones_api import MOCK_ISSUE_TYPES, MockOnesSettings, create_app
+from ones_mock.mock_ones_api import MOCK_ISSUE_TYPES, MockOnesSettings, create_app
 
 
 class MockOnesApiTests(unittest.TestCase):
@@ -29,7 +29,10 @@ class MockOnesApiTests(unittest.TestCase):
         response = self.client.get("/health")
 
         self.assertEqual(200, response.status_code)
-        self.assertEqual({"status": "ok", "service": "ones-mock"}, response.json())
+        body = response.json()
+        self.assertEqual("ok", body["status"])
+        self.assertEqual("ones-mock", body["service"])
+        self.assertEqual(2, body["users"])
 
     def test_login_returns_user_token_and_team_for_business_requests(self) -> None:
         response = self.client.post(

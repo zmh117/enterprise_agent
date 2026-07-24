@@ -4,6 +4,7 @@ import json
 import os
 import unittest
 from contextlib import contextmanager
+from dataclasses import replace
 from typing import Any
 
 from app.bootstrap import build_test_container
@@ -17,7 +18,10 @@ from app.modules.job.domain.job_status import JobStatus
 from app.shared.config import DingTalkSettings, Settings
 from app.shared.exceptions import NonRetryableExecutionError
 from app.workers.dingtalk_stream_ingress_worker import DingTalkStreamIngressWorker
-from backend.tests.helpers import container
+from backend.tests.test_business_application_control_plane import (
+    control_plane_settings,
+    draft_payload,
+)
 
 
 class FakeStreamClient:
@@ -66,7 +70,7 @@ class CaptureDeliveryAdapter:
 
 class DingTalkStreamIngressTests(unittest.TestCase):
     def test_stream_message_creates_job_and_acknowledges(self) -> None:
-        c = container()
+        c = routed_container()
 
         result = c.dingtalk_stream_message_service.handle_callback(
             payload=stream_payload(),
@@ -84,10 +88,13 @@ class DingTalkStreamIngressTests(unittest.TestCase):
         self.assertEqual("stream-event-1", job.external_event_id)
         self.assertEqual("dingtalk_stream_session_webhook", job.reply_route["type"])
         self.assertEqual("", job.reply_route["connector_id"])
-        self.assertEqual("https://oapi.dingtalk.com/robot/sendBySession", job.reply_route["target"]["session_webhook"])
+        self.assertEqual(
+            "https://oapi.dingtalk.com/robot/sendBySession",
+            job.reply_route["target"]["session_webhook"],
+        )
 
     def test_duplicate_stream_event_returns_existing_job_without_second_queue_message(self) -> None:
-        c = container()
+        c = routed_container()
 
         first = c.dingtalk_stream_message_service.handle_callback(
             payload=stream_payload(), correlation_id="corr-stream-1"
@@ -101,7 +108,7 @@ class DingTalkStreamIngressTests(unittest.TestCase):
         self.assertEqual(1, len(c.message_bus.jobs))
 
     def test_unsupported_stream_event_is_ignored_without_job(self) -> None:
-        c = container()
+        c = routed_container()
 
         result = c.dingtalk_stream_message_service.handle_callback(
             payload={"eventType": "cardCallback", "eventId": "card-1"},
@@ -115,7 +122,7 @@ class DingTalkStreamIngressTests(unittest.TestCase):
         self.assertEqual(0, len(c.message_bus.jobs))
 
     def test_missing_stream_identity_is_rejected_without_job(self) -> None:
-        c = container()
+        c = routed_container()
 
         result = c.dingtalk_stream_message_service.handle_callback(
             payload={"text": {"content": "diagnose"}, "msgId": "msg-1"},
@@ -128,7 +135,7 @@ class DingTalkStreamIngressTests(unittest.TestCase):
         self.assertEqual(0, len(c.message_bus.jobs))
 
     def test_unauthorized_stream_user_is_rejected_without_job(self) -> None:
-        c = container()
+        c = routed_container()
 
         result = c.dingtalk_stream_message_service.handle_callback(
             payload=stream_payload(user_id="blocked-user"),
@@ -140,7 +147,7 @@ class DingTalkStreamIngressTests(unittest.TestCase):
         self.assertEqual(0, c.agent_repository.count_rows("agent_job"))
 
     def test_stream_job_result_uses_session_webhook_by_default(self) -> None:
-        c = container()
+        c = routed_container()
         adapter = CaptureDeliveryAdapter()
         c.result_delivery_service.adapters["dingtalk_stream_session_webhook"] = adapter
 
@@ -161,7 +168,7 @@ class DingTalkStreamIngressTests(unittest.TestCase):
         self.assertEqual("SUCCEEDED", attempts[0]["status"])
 
     def test_expired_session_webhook_failure_is_recorded_without_fallback(self) -> None:
-        c = container()
+        c = routed_container()
         result = c.dingtalk_stream_message_service.handle_callback(
             payload={
                 **stream_payload(),
@@ -193,8 +200,9 @@ class DingTalkStreamIngressTests(unittest.TestCase):
         self.assertNotIn("token=", serialized)
         self.assertEqual(JobStatus.FAILED, c.agent_repository.get_job(result.job_id).status)
 
-    def test_stream_message_can_override_delivery_to_enterprise_robot(self) -> None:
-        c = container()
+    def test_stream_message_cannot_override_published_application_delivery(self) -> None:
+        c = routed_container()
+        jobs_before = c.agent_repository.count_rows("agent_job")
 
         result = c.dingtalk_stream_message_service.handle_callback(
             payload={
@@ -208,16 +216,15 @@ class DingTalkStreamIngressTests(unittest.TestCase):
             correlation_id="corr-stream-1",
         )
 
-        job = c.agent_repository.get_job(result.job_id)
-        self.assertEqual("dingtalk_enterprise_robot", job.reply_route["type"])
-        self.assertEqual("connector-dingtalk-enterprise-default", job.reply_route["connector_id"])
-        self.assertEqual("open-cid-override", job.reply_route["target"]["open_conversation_id"])
+        self.assertFalse(result.accepted)
+        self.assertEqual("rejected", result.status)
+        self.assertEqual(jobs_before, c.agent_repository.count_rows("agent_job"))
 
     def test_stream_worker_starts_fake_client_and_creates_job(self) -> None:
         fake_holder: dict[str, FakeStreamClient] = {}
         with patched_env(DINGTALK_CLIENT_ID="client-id", DINGTALK_CLIENT_SECRET="client-secret"):
             settings = stream_settings()
-            c = build_test_container(settings, migrate=True, seed=True)
+            c = routed_container(settings)
 
             def factory(client_id: str, client_secret: str, callback: Any) -> FakeStreamClient:
                 self.assertEqual("client-id", client_id)
@@ -239,7 +246,7 @@ class DingTalkStreamIngressTests(unittest.TestCase):
     def test_stream_worker_missing_credentials_fails_without_job(self) -> None:
         with patched_env(DINGTALK_CLIENT_ID="", DINGTALK_CLIENT_SECRET=""):
             settings = stream_settings()
-            c = build_test_container(settings, migrate=True, seed=True)
+            c = routed_container(settings)
             worker = DingTalkStreamIngressWorker(settings, container=c)
 
             with self.assertRaises(NonRetryableExecutionError):
@@ -256,7 +263,7 @@ class DingTalkStreamIngressTests(unittest.TestCase):
         calls = {"count": 0}
         with patched_env(DINGTALK_CLIENT_ID="client-id", DINGTALK_CLIENT_SECRET="client-secret"):
             settings = stream_settings()
-            c = build_test_container(settings, migrate=True, seed=True)
+            c = routed_container(settings)
 
             def factory(client_id: str, client_secret: str, callback: Any) -> FakeStreamClient:
                 calls["count"] += 1
@@ -285,6 +292,53 @@ def stream_settings() -> Settings:
             stream_reconnect_max_seconds=1,
         ),
     )
+
+
+def routed_container(settings: Settings | None = None):
+    base = control_plane_settings()
+    if settings is not None:
+        base = replace(
+            base,
+            database_dsn=settings.database_dsn,
+            dingtalk=settings.dingtalk,
+        )
+    settings = replace(
+        base,
+        environment="local",
+        feature_business_application_control_plane=True,
+        identity=replace(
+            base.identity,
+            published_agent_runtime_enabled=True,
+        ),
+    )
+    current = build_test_container(settings, migrate=True, seed=True)
+    application = current.business_application_service.create(
+        actor_id="user_local_admin",
+        code="dingtalk-stream-test-application",
+        name="DingTalk Stream Test Application",
+        description="Test route required by fail-closed ingress",
+        project_code="default",
+        owner_user_id="user_local_admin",
+    )
+    revision = current.business_application_service.save_draft(
+        actor_id="user_local_admin",
+        code="dingtalk-stream-test-application",
+        expected_revision=int(application["revision"]),
+        payload=draft_payload(route="bot:robot-code-1"),
+    )
+    publication = current.business_application_service.publish(
+        actor_id="user_local_admin",
+        code="dingtalk-stream-test-application",
+        revision_id=str(revision["id"]),
+    )
+    current.business_application_service.activate(
+        actor_id="user_local_admin",
+        code="dingtalk-stream-test-application",
+        environment="local",
+        publication_id=str(publication["id"]),
+        expected_revision=0,
+    )
+    return current
 
 
 def stream_payload(

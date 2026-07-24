@@ -6,14 +6,14 @@ import {
   deploymentSchema,
   publicationSchema,
   revisionSchema,
+  runtimeStateSchema,
   type CreateApplicationInput,
   type SaveDraftInput,
 } from "@/contexts/applications/domain/business-application"
 import { apiRequest } from "@/shared/api/api-client"
 
-const listResponseSchema = z.object({
+const listResponseSchema = runtimeStateSchema.extend({
   items: z.array(applicationSummarySchema),
-  runtime_wired: z.literal(false),
 })
 
 const detailResponseSchema = z.object({
@@ -41,13 +41,15 @@ export const catalogSchema = z.object({
 
 export async function listApplications() {
   return listResponseSchema.parse(
-    await apiRequest("/api/admin/business-applications"),
+    await apiRequest("/api/admin/business-applications")
   ).items
 }
 
 export async function getApplication(code: string) {
   return detailResponseSchema.parse(
-    await apiRequest(`/api/admin/business-applications/${encodeURIComponent(code)}`),
+    await apiRequest(
+      `/api/admin/business-applications/${encodeURIComponent(code)}`
+    )
   ).application
 }
 
@@ -56,7 +58,7 @@ export async function createApplication(input: CreateApplicationInput) {
     await apiRequest("/api/admin/business-applications", {
       method: "POST",
       body: input,
-    }),
+    })
   ).application
 }
 
@@ -69,24 +71,27 @@ export async function updateApplication(
     project_code: string
     owner_user_id: string
     status: "enabled" | "disabled" | "archived"
-  },
+  }
 ) {
   return detailResponseSchema.parse(
-    await apiRequest(`/api/admin/business-applications/${encodeURIComponent(code)}`, {
-      method: "PUT",
-      body: input,
-    }),
+    await apiRequest(
+      `/api/admin/business-applications/${encodeURIComponent(code)}`,
+      {
+        method: "PUT",
+        body: input,
+      }
+    )
   ).application
 }
 
 export async function saveDraft(code: string, input: SaveDraftInput) {
-  const response = z
-    .object({ revision: revisionSchema, runtime_wired: z.literal(false) })
+  const response = runtimeStateSchema
+    .extend({ revision: revisionSchema })
     .parse(
       await apiRequest(
         `/api/admin/business-applications/${encodeURIComponent(code)}/draft`,
-        { method: "PUT", body: input },
-      ),
+        { method: "PUT", body: input }
+      )
     )
   return response.revision
 }
@@ -97,67 +102,61 @@ export async function validateDraft(code: string, revisionId: string) {
     .parse(
       await apiRequest(
         `/api/admin/business-applications/${encodeURIComponent(code)}/validate`,
-        { method: "POST", body: { revision_id: revisionId } },
-      ),
+        { method: "POST", body: { revision_id: revisionId } }
+      )
     ).revision
 }
 
 export async function publishDraft(code: string, revisionId: string) {
-  return z
-    .object({
+  return runtimeStateSchema
+    .extend({
       publication: publicationSchema,
-      runtime_wired: z.literal(false),
     })
     .parse(
       await apiRequest(
         `/api/admin/business-applications/${encodeURIComponent(code)}/publish`,
-        { method: "POST", body: { revision_id: revisionId } },
-      ),
+        { method: "POST", body: { revision_id: revisionId } }
+      )
     ).publication
 }
 
 export async function activatePublication(
   code: string,
-  environment: string,
   publicationId: string,
-  expectedRevision: number,
+  expectedRevision: number
 ) {
-  return z
-    .object({ deployment: deploymentSchema })
-    .parse(
-      await apiRequest(
-        `/api/admin/business-applications/${encodeURIComponent(code)}/environments/${encodeURIComponent(environment)}/activate`,
-        {
-          method: "POST",
-          body: {
-            publication_id: publicationId,
-            expected_revision: expectedRevision,
-          },
+  return z.object({ deployment: deploymentSchema }).parse(
+    await apiRequest(
+      `/api/admin/business-applications/${encodeURIComponent(code)}/environments/local/activate`,
+      {
+        method: "POST",
+        body: {
+          publication_id: publicationId,
+          expected_revision: expectedRevision,
         },
-      ),
-    ).deployment
+      }
+    )
+  ).deployment
 }
 
-export async function deactivateEnvironment(
+export async function deactivateLocalDeployment(
   code: string,
-  environment: string,
-  expectedRevision: number,
+  expectedRevision: number
 ) {
   return z
     .object({ deployment: deploymentSchema })
     .parse(
       await apiRequest(
-        `/api/admin/business-applications/${encodeURIComponent(code)}/environments/${encodeURIComponent(environment)}/deactivate`,
-        { method: "POST", body: { expected_revision: expectedRevision } },
-      ),
+        `/api/admin/business-applications/${encodeURIComponent(code)}/environments/local/deactivate`,
+        { method: "POST", body: { expected_revision: expectedRevision } }
+      )
     ).deployment
 }
 
 export async function getCatalog(code: string) {
   return catalogSchema.parse(
     await apiRequest(
-      `/api/admin/business-applications/${encodeURIComponent(code)}/catalog`,
-    ),
+      `/api/admin/business-applications/${encodeURIComponent(code)}/catalog`
+    )
   )
 }
-

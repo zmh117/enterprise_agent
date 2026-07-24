@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react"
 import {
+  ActivityIcon,
   LayoutDashboardIcon,
   PackageCheckIcon,
   UsersIcon,
@@ -48,6 +49,17 @@ export const navigationGroups: NavigationGroup[] = [
         icon: UsersIcon,
         active: true,
         href: "/users",
+      },
+    ],
+  },
+  {
+    label: "运行中心",
+    items: [
+      {
+        label: "Agent 运行记录",
+        icon: ActivityIcon,
+        active: true,
+        href: "/operations/jobs",
       },
     ],
   },

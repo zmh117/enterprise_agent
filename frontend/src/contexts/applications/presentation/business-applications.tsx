@@ -34,7 +34,7 @@ export function BusinessApplications() {
           <div>
             <h3 className="font-semibold">控制面事实来自管理 API</h3>
             <p className="mt-1 text-sm text-muted-foreground">
-              列表、草稿、校验、publication 和环境 deployment
+              列表、草稿、校验、publication 和 local deployment
               均在独立页面读取真实数据。
             </p>
           </div>
@@ -42,8 +42,8 @@ export function BusinessApplications() {
         <CardContent className="flex flex-wrap gap-2">
           <Badge variant="secondary">追加式 revision</Badge>
           <Badge variant="secondary">不可变 publication</Badge>
-          <Badge variant="secondary">环境级 activation</Badge>
-          <Badge variant="outline">runtime_wired=false</Badge>
+          <Badge variant="secondary">local activation</Badge>
+          <Badge variant="outline">服务端 RuntimeReadiness</Badge>
         </CardContent>
       </Card>
     </section>

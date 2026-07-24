@@ -57,7 +57,11 @@ class AgentExecutor:
             summary="Worker claimed Agent job",
             job_id=job.id,
             actor_id=worker_id,
-            payload={"correlation_id": correlation_id, "retry_count": job.retry_count},
+            payload={
+                "correlation_id": correlation_id,
+                "retry_count": job.retry_count,
+                **_business_application_context(job),
+            },
         )
         if job.retry_count > 0:
             self.audit_service.record(
@@ -66,7 +70,11 @@ class AgentExecutor:
                 summary="Due Agent job retry returned to a worker",
                 job_id=job.id,
                 actor_id=worker_id,
-                payload={"correlation_id": correlation_id, "retry_count": job.retry_count},
+                payload={
+                    "correlation_id": correlation_id,
+                    "retry_count": job.retry_count,
+                    **_business_application_context(job),
+                },
             )
         self.repository.add_step(
             job_id=job.id,
@@ -106,6 +114,10 @@ class AgentExecutor:
                 summary="Final report delivery requested",
                 job_id=job.id,
                 actor_id=worker_id,
+                payload={
+                    "correlation_id": correlation_id,
+                    **_business_application_context(job),
+                },
             )
             return result.final_answer
         except Exception as exc:
@@ -178,3 +190,18 @@ def _event_key(event: dict[str, object]) -> str:
         ensure_ascii=False,
         default=str,
     )
+
+
+def _business_application_context(job: object) -> dict[str, str]:
+    return {
+        "business_application_code": str(getattr(job, "business_application_code", "") or ""),
+        "business_application_publication_id": str(
+            getattr(job, "business_application_publication_id", "") or ""
+        ),
+        "business_application_deployment_id": str(
+            getattr(job, "business_application_deployment_id", "") or ""
+        ),
+        "business_application_route_id": str(
+            getattr(job, "business_application_route_id", "") or ""
+        ),
+    }

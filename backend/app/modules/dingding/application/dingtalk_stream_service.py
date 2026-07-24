@@ -223,7 +223,12 @@ class DingTalkStreamMessageService:
                 status="FAILED",
                 summary=exc.safe_message,
                 actor_id=message.user_id,
-                payload={"connector_id": source_connector_id, "event_id": message.event_id},
+                payload={
+                    "connector_id": source_connector_id,
+                    "event_id": message.event_id,
+                    "correlation_id": correlation_id,
+                    "reason_code": exc.error_code or "non_retryable_execution_error",
+                },
             )
             self._notify_rejection(
                 message=message,
@@ -395,18 +400,24 @@ class DingTalkStreamMessageService:
         delivery_payload = _dict_value(payload.get("delivery"))
         delivery = self._reply_route(message=message, delivery_payload=delivery_payload)
         tenant_code = self.default_tenant_code
+        connector_bot_identity = ""
         if self.connector_registry is not None:
-            connector = self.connector_registry.require_dingtalk_stream_ingress(
-                source_connector_id
-            )
-            tenant_code = self.connector_registry.metadata_value(
-                connector, "tenant_code"
-            )
+            connector = self.connector_registry.require_dingtalk_stream_ingress(source_connector_id)
+            tenant_code = self.connector_registry.metadata_value(connector, "tenant_code")
             if not tenant_code:
                 raise PermissionDenied(
                     "DingTalk connector has no trusted tenant metadata",
                     safe_message="DingTalk connector tenant is not configured",
                 )
+            connector_bot_identity = self.connector_registry.metadata_value(
+                connector, "default_robot_code"
+            )
+        bot_identity = (
+            message.bot_identity
+            or message.robot_code
+            or connector_bot_identity
+            or self.default_robot_code
+        )
         return ChannelEvent(
             source=ChannelSource(
                 type="dingding_stream",
@@ -421,7 +432,7 @@ class DingTalkStreamMessageService:
                     "robot_code": message.robot_code,
                     "session_webhook_expires": message.session_webhook_expired_time,
                     "conversation_type": message.conversation_type,
-                    "bot_identity": message.bot_identity,
+                    "bot_identity": bot_identity,
                 },
                 external_identity=ExternalIdentityDescriptor(
                     provider="dingtalk",

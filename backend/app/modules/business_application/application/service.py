@@ -25,6 +25,14 @@ from app.modules.business_application.domain.policies import (
     validate_trigger,
     verify_snapshot,
 )
+from app.modules.business_application.domain.runtime import (
+    RouteResolutionOutcome,
+    RuntimeReadiness,
+    RuntimeReadinessEvaluator,
+    RuntimeReason,
+    RuntimeRouteResolution,
+    normalize_deployment_environment,
+)
 from app.modules.business_application.infrastructure import BusinessApplicationRepository
 from app.modules.identity.application.authorization import AuthorizationEvaluator
 from app.shared.exceptions import NonRetryableExecutionError, NotFound
@@ -43,6 +51,7 @@ class BusinessApplicationService:
         connector_reader: ChannelConnectorReader,
         identity_reader: IdentitySubjectReader,
         capability_reader: CapabilityCatalogReader,
+        runtime_evaluator: RuntimeReadinessEvaluator | None = None,
     ) -> None:
         self.repository = repository
         self.authorization = authorization
@@ -52,6 +61,10 @@ class BusinessApplicationService:
         self.connector_reader = connector_reader
         self.identity_reader = identity_reader
         self.capability_reader = capability_reader
+        self.runtime_evaluator = runtime_evaluator or RuntimeReadinessEvaluator(
+            data_plane_enabled=False,
+            runtime_environment="local",
+        )
 
     def list_applications(
         self,
@@ -135,11 +148,7 @@ class BusinessApplicationService:
             owner_user_id=owner_user_id.strip(),
             status=normalized_status,
         )
-        event = (
-            "status_changed"
-            if str(current["status"]) != normalized_status
-            else "updated"
-        )
+        event = "status_changed" if str(current["status"]) != normalized_status else "updated"
         self._audit(event, actor_id, application)
         return self._detail(application)
 
@@ -162,9 +171,7 @@ class BusinessApplicationService:
             )
         reject_dangerous_content(payload)
         session_policy = validate_session_policy(dict(payload.get("session_policy") or {}))
-        execution_policy = validate_execution_policy(
-            dict(payload.get("execution_policy") or {})
-        )
+        execution_policy = validate_execution_policy(dict(payload.get("execution_policy") or {}))
         triggers = [
             validate_trigger(dict(value), index)
             for index, value in enumerate(payload.get("triggers") or [])
@@ -176,9 +183,7 @@ class BusinessApplicationService:
         capabilities = self._normalize_capabilities(payload.get("capabilities") or [])
         normalized = {
             "agent_publication_id": str(payload.get("agent_publication_id") or "").strip(),
-            "workflow_publication_id": str(
-                payload.get("workflow_publication_id") or ""
-            ).strip(),
+            "workflow_publication_id": str(payload.get("workflow_publication_id") or "").strip(),
             "session_policy": session_policy,
             "execution_policy": execution_policy,
             "triggers": triggers,
@@ -212,9 +217,7 @@ class BusinessApplicationService:
         self._require(actor_id, normalized_code, "edit")
         application = self.repository.get_by_code(normalized_code)
         revision = (
-            self.repository.get_revision(revision_id)
-            if revision_id
-            else application.get("draft")
+            self.repository.get_revision(revision_id) if revision_id else application.get("draft")
         )
         if not isinstance(revision, dict) or str(revision["application_id"]) != str(
             application["id"]
@@ -298,6 +301,19 @@ class BusinessApplicationService:
                 "Business Application publication not found",
                 safe_message="Business Application publication not found",
             )
+        activation_errors = self.runtime_evaluator.activation_errors(dict(publication["snapshot"]))
+        if (
+            self.runtime_evaluator.data_plane_enabled
+            and normalize_deployment_environment(normalized_environment)
+            == self.runtime_evaluator.runtime_environment
+            and activation_errors
+        ):
+            raise NonRetryableExecutionError(
+                "Business Application runtime preflight failed",
+                safe_message="Business Application runtime configuration is not executable",
+                error_code="validation_failed",
+                field_errors=activation_errors,
+            )
         routes = [
             {
                 "trigger_type": str(trigger["trigger_type"]),
@@ -316,15 +332,28 @@ class BusinessApplicationService:
             actor_id=actor_id,
             routes=routes,
         )
+        readiness = self.runtime_evaluator.evaluate(
+            snapshot=dict(publication["snapshot"]),
+            deployment=deployment,
+        )
+        event = "activated"
+        if old and old.get("publication_id") and old.get("publication_id") != publication_id:
+            try:
+                old_publication = self.repository.get_publication(str(old["publication_id"]))
+                if int(publication["revision"]) < int(old_publication["revision"]):
+                    event = "rolled_back"
+            except Exception:
+                event = "activated"
         self._audit(
-            "activated",
+            event,
             actor_id,
             application,
             publication=publication,
             environment=normalized_environment,
             previous_publication_id=str((old or {}).get("publication_id") or ""),
+            readiness=readiness,
         )
-        return {**deployment, "runtime_wired": False}
+        return {**deployment, **readiness.to_dict()}
 
     def deactivate(
         self,
@@ -345,20 +374,23 @@ class BusinessApplicationService:
             expected_revision=expected_revision,
             actor_id=actor_id,
         )
+        readiness = self.runtime_evaluator.evaluate(snapshot=None, deployment=deployment)
         self._audit(
             "deactivated",
             actor_id,
             application,
             environment=normalized_environment,
             previous_publication_id=str((old or {}).get("publication_id") or ""),
+            readiness=readiness,
         )
-        return {**deployment, "runtime_wired": False}
+        return {**deployment, **readiness.to_dict()}
 
     def publications(self, *, actor_id: str, code: str) -> list[dict[str, Any]]:
         application = self.repository.get_by_code(validate_code(code))
         self._require(actor_id, code, "read")
+        deployments = self.repository.list_deployments(str(application["id"]))
         return [
-            {**publication, "snapshot": self._snapshot_summary(publication["snapshot"])}
+            self._publication_with_readiness(publication, deployments)
             for publication in self.repository.list_publications(str(application["id"]))
         ]
 
@@ -429,9 +461,7 @@ class BusinessApplicationService:
             if not delivery["enabled"]:
                 continue
             direction = (
-                "ingress"
-                if str(delivery["delivery_type"]) == "reply_original"
-                else "delivery"
+                "ingress" if str(delivery["delivery_type"]) == "reply_original" else "delivery"
             )
             reference = self._resolve_component(
                 errors,
@@ -482,9 +512,7 @@ class BusinessApplicationService:
         component: ComponentReference,
         field: str,
     ) -> None:
-        if component.project_code and component.project_code != str(
-            application["project_code"]
-        ):
+        if component.project_code and component.project_code != str(application["project_code"]):
             errors.append({"field": field, "message": "Component project scope conflicts"})
 
     def _snapshot(
@@ -549,7 +577,6 @@ class BusinessApplicationService:
                 }
                 for item in revision["capabilities"]
             ],
-            "runtime_wired": True,
         }
         reject_dangerous_content(snapshot)
         canonical_json(snapshot)
@@ -640,9 +667,7 @@ class BusinessApplicationService:
                 "Business Application name is invalid",
                 safe_message="Business Application metadata is invalid",
                 error_code="validation_failed",
-                field_errors=[
-                    {"field": "name", "message": "Name is required and must be bounded"}
-                ],
+                field_errors=[{"field": "name", "message": "Name is required and must be bounded"}],
             )
         if len(description) > 4000 or len(owner_user_id) > 200:
             raise NonRetryableExecutionError(
@@ -670,7 +695,9 @@ class BusinessApplicationService:
         publication: dict[str, Any] | None = None,
         environment: str = "",
         previous_publication_id: str = "",
+        readiness: RuntimeReadiness | None = None,
     ) -> None:
+        readiness = readiness or self._runtime_for_application(application)
         self.audit_service.record(
             f"business_application.{event}",
             status="SUCCEEDED",
@@ -684,18 +711,31 @@ class BusinessApplicationService:
                 "config_hash": (publication or revision or {}).get("config_hash", ""),
                 "environment": environment,
                 "previous_publication_id": previous_publication_id,
-                "runtime_wired": False,
+                **readiness.to_dict(),
             },
         )
+        if event in {"activated", "rolled_back", "deactivated"}:
+            self.audit_service.record(
+                f"business_application.runtime.{event}",
+                status="SUCCEEDED",
+                summary=f"Business Application runtime {event}",
+                actor_id=actor_id,
+                payload={
+                    "application_code": application["code"],
+                    "publication_id": (publication or {}).get("id", ""),
+                    "previous_publication_id": previous_publication_id,
+                    "environment": environment,
+                    **readiness.to_dict(),
+                },
+            )
 
     def _summary(self, application: dict[str, Any]) -> dict[str, Any]:
         active_environments = sorted(
             str(deployment["environment"])
-            for deployment in self.repository.list_deployments(
-                str(application["id"])
-            )
+            for deployment in self.repository.list_deployments(str(application["id"]))
             if deployment["active"]
         )
+        readiness = self._runtime_for_application(application)
         return {
             "id": application["id"],
             "code": application["code"],
@@ -707,18 +747,30 @@ class BusinessApplicationService:
             "revision": application["revision"],
             "latest_publication_revision": application.get("latest_publication_revision"),
             "active_environments": active_environments,
-            "runtime_wired": False,
+            **readiness.to_dict(),
         }
 
     def _detail(self, application: dict[str, Any]) -> dict[str, Any]:
+        readiness = self._runtime_for_application(application)
+        deployments = [
+            self._deployment_with_readiness(value)
+            for value in application.get("deployments")
+            or self.repository.list_deployments(str(application["id"]))
+        ]
+        publications = [
+            self._publication_with_readiness(value, deployments)
+            for value in application.get("publications")
+            or self.repository.list_publications(str(application["id"]))
+        ]
         return {
             **application,
-            "runtime_wired": False,
+            "publications": publications,
+            "deployments": deployments,
+            **readiness.to_dict(),
             "capability_catalog_connected": False,
         }
 
-    @staticmethod
-    def _snapshot_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
+    def _snapshot_summary(self, snapshot: dict[str, Any]) -> dict[str, Any]:
         return {
             "schema_version": snapshot.get("schema_version"),
             "application": snapshot.get("application"),
@@ -728,13 +780,102 @@ class BusinessApplicationService:
             "trigger_count": len(snapshot.get("triggers") or []),
             "delivery_count": len(snapshot.get("deliveries") or []),
             "capability_count": len(snapshot.get("capabilities") or []),
-            "runtime_wired": False,
+            "runtime_readiness": self.runtime_evaluator.evaluate(
+                snapshot=snapshot,
+                deployment=None,
+            ).to_dict(),
         }
+
+    def _deployment_with_readiness(self, deployment: dict[str, Any]) -> dict[str, Any]:
+        snapshot: dict[str, Any] | None = None
+        if deployment.get("publication_id"):
+            try:
+                snapshot = dict(
+                    self._verified_publication(str(deployment["publication_id"]))["snapshot"]
+                )
+            except Exception:
+                readiness = self.runtime_evaluator.blocked_integrity(
+                    deployment_environment=str(deployment.get("environment") or "")
+                )
+                return {**deployment, **readiness.to_dict()}
+        readiness = self.runtime_evaluator.evaluate(
+            snapshot=snapshot,
+            deployment=deployment,
+        )
+        return {**deployment, **readiness.to_dict()}
+
+    def _publication_with_readiness(
+        self,
+        publication: dict[str, Any],
+        deployments: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        deployment = next(
+            (
+                value
+                for value in deployments
+                if bool(value.get("active"))
+                and str(value.get("publication_id") or "") == str(publication["id"])
+                and normalize_deployment_environment(str(value.get("environment") or ""))
+                == self.runtime_evaluator.runtime_environment
+            ),
+            None,
+        )
+        snapshot = dict(publication["snapshot"])
+        if int(publication.get("schema_version") or 0) != SCHEMA_VERSION or not verify_snapshot(
+            snapshot,
+            str(publication.get("config_hash") or ""),
+        ):
+            readiness = self.runtime_evaluator.blocked_integrity(
+                deployment_environment=str((deployment or {}).get("environment") or "")
+            )
+        else:
+            readiness = self.runtime_evaluator.evaluate(
+                snapshot=snapshot,
+                deployment=deployment,
+            )
+        return {
+            **publication,
+            "snapshot": self._snapshot_summary(snapshot),
+            **readiness.to_dict(),
+        }
+
+    def _runtime_for_application(self, application: dict[str, Any]) -> RuntimeReadiness:
+        deployment = next(
+            (
+                value
+                for value in application.get("deployments")
+                or self.repository.list_deployments(str(application["id"]))
+                if bool(value.get("active"))
+                and normalize_deployment_environment(str(value.get("environment") or ""))
+                == self.runtime_evaluator.runtime_environment
+            ),
+            None,
+        )
+        if deployment is None:
+            return self.runtime_evaluator.empty()
+        try:
+            publication = self._verified_publication(str(deployment.get("publication_id") or ""))
+        except Exception:
+            return self.runtime_evaluator.blocked_integrity(
+                deployment_environment=str(deployment.get("environment") or "")
+            )
+        return self.runtime_evaluator.evaluate(
+            snapshot=dict(publication["snapshot"]),
+            deployment=deployment,
+        )
 
 
 class BusinessApplicationResolver:
-    def __init__(self, repository: BusinessApplicationRepository) -> None:
+    def __init__(
+        self,
+        repository: BusinessApplicationRepository,
+        runtime_evaluator: RuntimeReadinessEvaluator | None = None,
+    ) -> None:
         self.repository = repository
+        self.runtime_evaluator = runtime_evaluator or RuntimeReadinessEvaluator(
+            data_plane_enabled=False,
+            runtime_environment="local",
+        )
 
     def resolve_active(self, application_code: str, environment: str) -> dict[str, Any]:
         application = self.repository.get_by_code(validate_code(application_code))
@@ -746,15 +887,19 @@ class BusinessApplicationResolver:
         if deployment is None or not deployment["active"] or not deployment["publication_id"]:
             raise self.configuration_error("Business Application is not active")
         publication = self._verified(str(deployment["publication_id"]))
+        readiness = self.runtime_evaluator.evaluate(
+            snapshot=dict(publication["snapshot"]),
+            deployment=deployment,
+        )
         return {
             "application": {
                 "id": application["id"],
                 "code": application["code"],
                 "project_code": application["project_code"],
             },
-            "deployment": deployment,
-            "publication": publication,
-            "runtime_wired": True,
+            "deployment": {**deployment, **readiness.to_dict()},
+            "publication": {**publication, **readiness.to_dict()},
+            **readiness.to_dict(),
         }
 
     def resolve_trigger(
@@ -764,16 +909,23 @@ class BusinessApplicationResolver:
         connector_id: str,
         routing_key: str,
     ) -> dict[str, Any]:
-        route = self.repository.find_route(
-            environment=validate_environment(environment),
-            trigger_type=trigger_type,
-            connector_id=connector_id,
-            normalized_routing_key=normalize_routing_key(routing_key),
+        resolution = self.resolve_route(
+            environment,
+            trigger_type,
+            connector_id,
+            routing_key,
         )
-        if route is None:
-            raise self.configuration_error("No active Business Application route")
-        application = self.repository.get_by_id(str(route["application_id"]))
-        return self.resolve_active(str(application["code"]), environment)
+        if resolution.outcome == RouteResolutionOutcome.NOT_MATCHED:
+            raise self.configuration_error(
+                "No active Business Application route",
+                error_code=RuntimeReason.ROUTE_NOT_MATCHED.value,
+            )
+        if resolution.outcome == RouteResolutionOutcome.BLOCKED:
+            raise self.configuration_error(
+                resolution.message,
+                error_code=resolution.reason_code,
+            )
+        return resolution.to_dict()
 
     def resolve_trigger_optional(
         self,
@@ -782,16 +934,95 @@ class BusinessApplicationResolver:
         connector_id: str,
         routing_key: str,
     ) -> dict[str, Any] | None:
+        resolution = self.resolve_route(
+            environment,
+            trigger_type,
+            connector_id,
+            routing_key,
+        )
+        if resolution.outcome == RouteResolutionOutcome.NOT_MATCHED:
+            return None
+        if resolution.outcome == RouteResolutionOutcome.BLOCKED:
+            raise self.configuration_error(
+                resolution.message,
+                error_code=resolution.reason_code,
+            )
+        return resolution.to_dict()
+
+    def resolve_route(
+        self,
+        environment: str,
+        trigger_type: str,
+        connector_id: str,
+        routing_key: str,
+    ) -> RuntimeRouteResolution:
+        normalized_environment = validate_environment(environment)
         route = self.repository.find_route(
-            environment=validate_environment(environment),
+            environment=normalized_environment,
             trigger_type=trigger_type,
             connector_id=connector_id,
             normalized_routing_key=normalize_routing_key(routing_key),
         )
         if route is None:
-            return None
+            readiness = self.runtime_evaluator.empty(reason=RuntimeReason.ROUTE_NOT_MATCHED)
+            return RuntimeRouteResolution(
+                outcome=RouteResolutionOutcome.NOT_MATCHED,
+                reason_code=RuntimeReason.ROUTE_NOT_MATCHED.value,
+                message="No active Business Application route matched",
+                readiness=readiness,
+            )
         application = self.repository.get_by_id(str(route["application_id"]))
-        return self.resolve_active(str(application["code"]), environment)
+        deployment = self.repository.get_deployment(str(application["id"]), normalized_environment)
+        if (
+            str(application.get("status") or "") != "enabled"
+            or deployment is None
+            or not bool(deployment.get("active"))
+        ):
+            readiness = self.runtime_evaluator.blocked_integrity(
+                deployment_environment=normalized_environment
+            )
+            return RuntimeRouteResolution(
+                outcome=RouteResolutionOutcome.BLOCKED,
+                reason_code=RuntimeReason.PUBLICATION_INTEGRITY_ERROR.value,
+                message="Business Application is not active",
+                readiness=readiness,
+                application=self._application_summary(application),
+                deployment=deployment,
+                route=self._safe_route(route),
+            )
+        try:
+            publication = self._verified(str(deployment["publication_id"]))
+        except Exception:
+            readiness = self.runtime_evaluator.blocked_integrity(
+                deployment_environment=normalized_environment
+            )
+            return RuntimeRouteResolution(
+                outcome=RouteResolutionOutcome.BLOCKED,
+                reason_code=RuntimeReason.PUBLICATION_INTEGRITY_ERROR.value,
+                message="Business Application publication integrity check failed",
+                readiness=readiness,
+                application=self._application_summary(application),
+                deployment=deployment,
+                route=self._safe_route(route),
+            )
+        readiness = self.runtime_evaluator.evaluate(
+            snapshot=dict(publication["snapshot"]),
+            deployment=deployment,
+        )
+        if readiness.runtime_status.value == "blocked":
+            outcome = RouteResolutionOutcome.BLOCKED
+        else:
+            outcome = RouteResolutionOutcome.MATCHED
+        return RuntimeRouteResolution(
+            outcome=outcome,
+            reason_code=readiness.reason_code,
+            message=readiness.message,
+            readiness=readiness,
+            application=self._application_summary(application),
+            deployment=deployment,
+            publication=publication,
+            route=self._safe_route(route),
+        )
 
     def _verified(self, publication_id: str) -> dict[str, Any]:
         publication = self.repository.get_publication(publication_id)
@@ -804,9 +1035,33 @@ class BusinessApplicationResolver:
         return publication
 
     @staticmethod
-    def configuration_error(message: str) -> NonRetryableExecutionError:
+    def configuration_error(
+        message: str,
+        *,
+        error_code: str = "business_application_configuration_error",
+    ) -> NonRetryableExecutionError:
         return NonRetryableExecutionError(
             message,
             safe_message="Business Application runtime configuration is unavailable",
-            error_code="business_application_configuration_error",
+            error_code=error_code,
         )
+
+    @staticmethod
+    def _application_summary(application: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": application["id"],
+            "code": application["code"],
+            "project_code": application["project_code"],
+        }
+
+    @staticmethod
+    def _safe_route(route: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": route["id"],
+            "deployment_id": route["deployment_id"],
+            "application_id": route["application_id"],
+            "publication_id": route["publication_id"],
+            "environment": route["environment"],
+            "trigger_type": route["trigger_type"],
+            "connector_id": route["connector_id"],
+        }

@@ -74,6 +74,7 @@ class JobRetryService:
                         "retry_count": scheduled.retry_count,
                         "error_code": error_code,
                         "publish_error_type": publish_exc.__class__.__name__,
+                        **_business_application_context(job),
                     },
                 )
                 return "retry_dispatch_failed"
@@ -88,6 +89,7 @@ class JobRetryService:
                     "next_retry_at": scheduled.next_retry_at,
                     "error_code": error_code,
                     "diagnostics": diagnostics,
+                    **_business_application_context(job),
                 },
             )
             return "retry"
@@ -109,7 +111,11 @@ class JobRetryService:
                 status="SUCCEEDED",
                 summary="Terminal Agent job published to dead-letter queue",
                 job_id=job.id,
-                payload={"correlation_id": correlation_id, "error_code": error_code},
+                payload={
+                    "correlation_id": correlation_id,
+                    "error_code": error_code,
+                    **_business_application_context(job),
+                },
             )
         except Exception as publish_exc:
             self.audit_service.record(
@@ -121,6 +127,7 @@ class JobRetryService:
                     "correlation_id": correlation_id,
                     "error_code": error_code,
                     "publish_error_type": publish_exc.__class__.__name__,
+                    **_business_application_context(job),
                 },
             )
         return "timeout" if terminal.status == JobStatus.TIMEOUT else "dead"
@@ -147,6 +154,7 @@ class JobRetryService:
                     "correlation_id": correlation_id,
                     "remaining_seconds": delay_seconds,
                     "publish_error_type": publish_exc.__class__.__name__,
+                    **_business_application_context(job),
                 },
             )
             return True
@@ -158,6 +166,16 @@ class JobRetryService:
             payload={
                 "correlation_id": correlation_id,
                 "remaining_seconds": delay_seconds,
+                **_business_application_context(job),
             },
         )
         return True
+
+
+def _business_application_context(job: AgentJob) -> dict[str, str]:
+    return {
+        "business_application_code": job.business_application_code,
+        "business_application_publication_id": (job.business_application_publication_id),
+        "business_application_deployment_id": (job.business_application_deployment_id),
+        "business_application_route_id": job.business_application_route_id,
+    }

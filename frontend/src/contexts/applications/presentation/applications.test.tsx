@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { describe, expect, it, vi } from "vitest"
 
@@ -14,7 +20,7 @@ function renderWithQuery(ui: React.ReactNode) {
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>{ui}</MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   )
 }
 
@@ -23,7 +29,7 @@ function response(body: unknown, status = 200) {
     new Response(JSON.stringify(body), {
       status,
       headers: { "Content-Type": "application/json" },
-    }),
+    })
   )
 }
 
@@ -42,33 +48,74 @@ describe("Business Application workbench", () => {
             status: "enabled",
             revision: 3,
             latest_publication_revision: 2,
-            active_environments: ["test"],
-            runtime_wired: false,
+            active_environments: ["local"],
+            runtime_wired: true,
+            runtime_status: "partially_wired",
+            runtime_environment: "local",
+            deployment_environment: "local",
+            reason_code: "ready",
+            message: "入口已接管，部分策略仅保存",
+            runtime_components: {
+              trigger_routing: {
+                status: "wired",
+                reason_code: "ready",
+                message: "钉钉入口已接管",
+                fields: {},
+              },
+            },
+            affected_routes: [],
+            legacy_fallback_enabled: false,
           },
         ],
-        runtime_wired: false,
-      }),
+        runtime_wired: true,
+        runtime_status: "partially_wired",
+        runtime_environment: "local",
+      })
     )
     renderWithQuery(<ApplicationsPage />)
     expect(await screen.findByText("真实诊断应用")).toBeInTheDocument()
     expect(screen.getByText("r3")).toBeInTheDocument()
-    expect(screen.getByText("test")).toBeInTheDocument()
-    expect(screen.getByText("runtime_wired=false：")).toBeInTheDocument()
+    expect(screen.getByText("local")).toBeInTheDocument()
+    expect(screen.getByLabelText("运行状态：部分接管")).toBeInTheDocument()
+    expect(screen.getByText(/1 个应用已接管或部分接管入口/)).toBeInTheDocument()
     expect(screen.queryByText("APP-DEMO-PRIVATE")).not.toBeInTheDocument()
   })
 
   it("shows a dedicated authentication state on 401", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(() =>
-      response({ detail: "Authentication required" }, 401),
+      response({ detail: "Authentication required" }, 401)
     )
     renderWithQuery(<ApplicationsPage />)
     expect(await screen.findByText("需要管理会话")).toBeInTheDocument()
     expect(screen.getByText(/通过登录页重新建立会话/)).toBeInTheDocument()
   })
 
+  it("treats a missing runtime state as not wired instead of claiming takeover", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      response({
+        items: [
+          {
+            id: "business_app_missing_state",
+            code: "missing-state",
+            name: "缺失状态应用",
+            description: "",
+            project_code: "default",
+            owner_user_id: "",
+            status: "enabled",
+            revision: 1,
+            active_environments: [],
+          },
+        ],
+      })
+    )
+    renderWithQuery(<ApplicationsPage />)
+    expect(await screen.findByLabelText("运行状态：未接管")).toBeInTheDocument()
+    expect(screen.queryByLabelText("运行状态：已接管")).not.toBeInTheDocument()
+  })
+
   it("shows a dedicated authorization state on 403", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(() =>
-      response({ detail: "Forbidden" }, 403),
+      response({ detail: "Forbidden" }, 403)
     )
     renderWithQuery(<ApplicationsPage />)
     expect(await screen.findByText("没有业务应用权限")).toBeInTheDocument()
@@ -114,7 +161,28 @@ describe("Business Application workbench", () => {
             deliveries: [],
             capabilities: [],
           },
-          publications: [],
+          publications: [
+            {
+              id: "business_app_publication_d28011cc1804417e8780a6d1587893b4",
+              application_id: "business_app_test",
+              revision_id: "revision_1",
+              revision: 12,
+              schema_version: 1,
+              config_hash:
+                "eab3972fbb59cfa878ab403632149082cc7f90a46d8405b64f6d463aee72c08f",
+              published_by: "user_1354ddf6d1e547faad514fec57a0a3fb",
+              published_at: "2026-07-24T16:49:34+08:00",
+              runtime_wired: true,
+              runtime_status: "partially_wired",
+              runtime_environment: "local",
+              deployment_environment: "local",
+              reason_code: "ready",
+              message: "入口已接管",
+              runtime_components: {},
+              affected_routes: [],
+              legacy_fallback_enabled: false,
+            },
+          ],
           deployments: [],
         },
       })
@@ -133,14 +201,27 @@ describe("Business Application workbench", () => {
             />
           </Routes>
         </MemoryRouter>
-      </QueryClientProvider>,
+      </QueryClientProvider>
     )
     expect(await screen.findAllByText("真实诊断应用")).not.toHaveLength(0)
     fireEvent.click(screen.getAllByRole("tab", { name: "组成配置" })[0])
     expect(
-      await screen.findByText(/Capability Catalog 尚未接入/),
+      await screen.findByText(/Capability Catalog 尚未接入/)
     ).toBeInTheDocument()
     expect(screen.queryByLabelText(/SQL/i)).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getAllByRole("tab", { name: "发布与运行" })[0])
+    const publicationCard = await screen.findByTestId(
+      "publication-history-card"
+    )
+    expect(publicationCard).toHaveClass("sm:grid-cols-[minmax(0,1fr)_auto]")
+    expect(within(publicationCard).getByText("Hash")).toBeInTheDocument()
+    expect(within(publicationCard).getByText("发布人")).toBeInTheDocument()
+    expect(within(publicationCard).getByText("发布时间")).toBeInTheDocument()
+    expect(within(publicationCard).getByText("Schema")).toBeInTheDocument()
+    expect(
+      within(publicationCard).getByRole("status").parentElement
+    ).toHaveClass("sm:col-span-2")
   })
 
   it("injects CSRF for writes and exposes stable conflict metadata", async () => {
@@ -155,14 +236,14 @@ describe("Business Application workbench", () => {
             current_revision: 7,
           },
         },
-        409,
-      ),
+        409
+      )
     )
     await expect(
       apiRequest("/api/admin/business-applications/real-app", {
         method: "PUT",
         body: { expected_revision: 1 },
-      }),
+      })
     ).rejects.toMatchObject({
       status: 409,
       code: "revision_conflict",

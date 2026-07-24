@@ -19,6 +19,7 @@ import {
   useCreateApplication,
 } from "@/contexts/applications/application/business-application-queries"
 import { ApplicationState } from "@/contexts/applications/presentation/application-state"
+import { RuntimeStatusBadge } from "@/contexts/applications/presentation/runtime-readiness"
 import { ApiError } from "@/shared/api/api-client"
 
 export function ApplicationsPage() {
@@ -51,10 +52,13 @@ export function ApplicationsPage() {
             <BoxesIcon className="size-4" aria-hidden="true" />
             BUSINESS APPLICATIONS
           </div>
-          <h1 className="mt-2 text-2xl font-semibold tracking-tight">业务应用</h1>
+          <h1 className="mt-2 text-2xl font-semibold tracking-tight">
+            业务应用
+          </h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-            装配已发布 Agent、Workflow 和 Channel，经过校验后形成不可变发布快照。
-            当前控制面尚未接管钉钉或 Webhook 运行时。
+            装配已发布 Agent、Workflow 和
+            Channel，经过校验后形成不可变发布快照。
+            页面直接展示服务端计算的入口接管状态、组件限制和兼容回退边界。
           </p>
         </div>
         <div className="flex gap-2">
@@ -70,14 +74,17 @@ export function ApplicationsPage() {
             />
             刷新
           </Button>
-          <Button type="button" onClick={() => setShowCreate((value) => !value)}>
+          <Button
+            type="button"
+            onClick={() => setShowCreate((value) => !value)}
+          >
             <PlusIcon aria-hidden="true" />
             新建应用
           </Button>
         </div>
       </header>
 
-      <RuntimeNotice />
+      <RuntimeNotice applications={query.data ?? []} />
 
       {showCreate ? (
         <Card className="shadow-none">
@@ -123,7 +130,10 @@ export function ApplicationsPage() {
                     }
                   />
                 </Field>
-                <Field label="负责人用户 ID（可选）" htmlFor="application-owner">
+                <Field
+                  label="负责人用户 ID（可选）"
+                  htmlFor="application-owner"
+                >
                   <Input
                     id="application-owner"
                     maxLength={200}
@@ -149,7 +159,10 @@ export function ApplicationsPage() {
               <div className="flex flex-wrap gap-2">
                 <Button type="submit" disabled={create.isPending}>
                   {create.isPending ? (
-                    <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
+                    <LoaderCircleIcon
+                      className="animate-spin"
+                      aria-hidden="true"
+                    />
                   ) : null}
                   创建应用
                 </Button>
@@ -181,12 +194,17 @@ export function ApplicationsPage() {
               <CardHeader className="border-b">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <CardTitle className="text-base">{application.name}</CardTitle>
+                    <CardTitle className="text-base">
+                      {application.name}
+                    </CardTitle>
                     <p className="mt-1 font-mono text-xs text-muted-foreground">
                       {application.code}
                     </p>
                   </div>
-                  <StatusBadge status={application.status} />
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <StatusBadge status={application.status} />
+                    <RuntimeStatusBadge state={application} />
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -195,7 +213,10 @@ export function ApplicationsPage() {
                 </p>
                 <dl className="grid grid-cols-2 gap-3 text-xs">
                   <Definition label="项目" value={application.project_code} />
-                  <Definition label="当前修订" value={`r${application.revision}`} />
+                  <Definition
+                    label="当前修订"
+                    value={`r${application.revision}`}
+                  />
                   <Definition
                     label="最新发布"
                     value={
@@ -205,7 +226,7 @@ export function ApplicationsPage() {
                     }
                   />
                   <Definition
-                    label="活动环境"
+                    label="运行实例"
                     value={
                       application.active_environments.length
                         ? application.active_environments.join("、")
@@ -232,22 +253,44 @@ export function ApplicationsPage() {
   )
 }
 
-function RuntimeNotice() {
+function RuntimeNotice({
+  applications,
+}: {
+  applications: Array<{
+    runtime_status: "not_wired" | "partially_wired" | "wired" | "blocked"
+    runtime_environment: string
+  }>
+}) {
+  const claimed = applications.filter((item) =>
+    ["wired", "partially_wired"].includes(item.runtime_status)
+  ).length
+  const blocked = applications.filter(
+    (item) => item.runtime_status === "blocked"
+  ).length
+  const environment = applications.find(
+    (item) => item.runtime_environment
+  )?.runtime_environment
   return (
     <div
-      className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"
+      className="rounded-lg border bg-muted/25 px-4 py-3 text-sm leading-6"
       role="status"
     >
-      <strong>runtime_wired=false：</strong>
-      发布和激活只更新控制面，不会启动 Agent Job，也不会切换现有钉钉或 Webhook
-      路由。
+      <strong>当前运行环境：{environment || "等待服务端状态"}</strong>
+      <span className="ml-2 text-muted-foreground">
+        {claimed} 个应用已接管或部分接管入口
+        {blocked ? `，${blocked} 个应用被运行时预检阻塞` : ""}
+        。未命中入口将返回配置错误，不再调用兼容默认 Agent。
+      </span>
     </div>
   )
 }
 
 function ApplicationListSkeleton() {
   return (
-    <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3" aria-label="正在加载业务应用">
+    <div
+      className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3"
+      aria-label="正在加载业务应用"
+    >
       {[0, 1, 2].map((value) => (
         <Card key={value} className="shadow-none">
           <CardContent className="space-y-4 pt-6">
@@ -265,7 +308,10 @@ function EmptyApplications() {
   return (
     <Card className="shadow-none">
       <CardContent className="flex min-h-64 flex-col items-center justify-center text-center">
-        <BoxesIcon className="size-8 text-muted-foreground" aria-hidden="true" />
+        <BoxesIcon
+          className="size-8 text-muted-foreground"
+          aria-hidden="true"
+        />
         <h2 className="mt-4 font-semibold">还没有业务应用</h2>
         <p className="mt-2 text-sm text-muted-foreground">
           创建稳定应用定义后，再选择已发布组件并执行校验。
@@ -334,10 +380,17 @@ function Definition({ label, value }: { label: string; value: string }) {
 
 export function StatusBadge({ status }: { status: string }) {
   const label =
-    status === "enabled" ? "已启用" : status === "disabled" ? "已停用" : "已归档"
+    status === "enabled"
+      ? "已启用"
+      : status === "disabled"
+        ? "已停用"
+        : "已归档"
   return (
     <Badge variant={status === "enabled" ? "default" : "secondary"}>
-      <span className="mr-1 size-1.5 rounded-full bg-current" aria-hidden="true" />
+      <span
+        className="mr-1 size-1.5 rounded-full bg-current"
+        aria-hidden="true"
+      />
       {label}
     </Badge>
   )

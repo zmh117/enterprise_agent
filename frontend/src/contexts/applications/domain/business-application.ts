@@ -1,5 +1,40 @@
 import { z } from "zod"
 
+export const runtimeComponentSchema = z.object({
+  status: z.enum([
+    "wired",
+    "partially_wired",
+    "stored_only",
+    "unsupported",
+    "blocked",
+  ]),
+  reason_code: z.string().default(""),
+  message: z.string().default(""),
+  fields: z.record(z.string(), z.string()).default({}),
+})
+
+export const runtimeStateSchema = z.object({
+  runtime_wired: z.boolean().default(false),
+  runtime_status: z
+    .enum(["not_wired", "partially_wired", "wired", "blocked"])
+    .default("not_wired"),
+  runtime_environment: z.string().default(""),
+  deployment_environment: z.string().default(""),
+  reason_code: z.string().default("runtime_state_missing"),
+  message: z.string().default("运行时状态尚未返回，按未接管处理。"),
+  runtime_components: z.record(z.string(), runtimeComponentSchema).default({}),
+  affected_routes: z
+    .array(
+      z.object({
+        trigger_type: z.string(),
+        connector_id: z.string(),
+        routing_key_summary: z.string(),
+      }),
+    )
+    .default([]),
+  legacy_fallback_enabled: z.boolean().default(false),
+})
+
 const validationErrorSchema = z.object({
   field: z.string(),
   message: z.string(),
@@ -60,8 +95,8 @@ export const revisionSchema = z
   })
   .passthrough()
 
-export const publicationSchema = z
-  .object({
+export const publicationSchema = runtimeStateSchema
+  .extend({
     id: z.string(),
     application_id: z.string(),
     revision_id: z.string(),
@@ -74,8 +109,8 @@ export const publicationSchema = z
   })
   .passthrough()
 
-export const deploymentSchema = z
-  .object({
+export const deploymentSchema = runtimeStateSchema
+  .extend({
     id: z.string(),
     application_id: z.string(),
     environment: z.string(),
@@ -88,8 +123,8 @@ export const deploymentSchema = z
   })
   .passthrough()
 
-export const applicationSummarySchema = z
-  .object({
+export const applicationSummarySchema = runtimeStateSchema
+  .extend({
     id: z.string(),
     code: z.string(),
     name: z.string(),
@@ -100,7 +135,6 @@ export const applicationSummarySchema = z
     revision: z.number(),
     latest_publication_revision: z.number().nullable().optional(),
     active_environments: z.array(z.string()).default([]),
-    runtime_wired: z.literal(false),
   })
   .passthrough()
 
@@ -116,6 +150,7 @@ export type BusinessApplication = z.infer<typeof businessApplicationSchema>
 export type BusinessApplicationRevision = z.infer<typeof revisionSchema>
 export type Publication = z.infer<typeof publicationSchema>
 export type Deployment = z.infer<typeof deploymentSchema>
+export type RuntimeState = z.infer<typeof runtimeStateSchema>
 
 export type CreateApplicationInput = {
   code: string

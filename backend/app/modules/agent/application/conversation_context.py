@@ -10,7 +10,9 @@ from app.shared.exceptions import PermissionDenied
 
 
 class ConversationSummarizer(Protocol):
-    def summarize(self, previous: str, messages: list[dict[str, object]], max_chars: int) -> str: ...
+    def summarize(
+        self, previous: str, messages: list[dict[str, object]], max_chars: int
+    ) -> str: ...
 
 
 class BoundedConversationSummarizer:
@@ -59,13 +61,14 @@ class ConversationContextService:
             raise PermissionDenied("Conversation project scope mismatch")
         if session.conversation_type == "direct" and session.requester_id != job.requester_id:
             raise PermissionDenied("Conversation requester scope mismatch")
+        recent_message_limit = session.recent_message_limit or self.settings.recent_message_limit
         messages = self.repository.list_messages(
             job.session_id,
-            limit=self.settings.recent_message_limit + self.settings.summary_trigger_messages,
+            limit=recent_message_limit + self.settings.summary_trigger_messages,
         )
         summary = session.summary_text
         if len(messages) > self.settings.summary_trigger_messages:
-            cutoff = len(messages) - self.settings.recent_message_limit
+            cutoff = len(messages) - recent_message_limit
             older = messages[:cutoff]
             try:
                 candidate = self.summarizer.summarize(
@@ -73,7 +76,9 @@ class ConversationContextService:
                     older,
                     self.settings.max_summary_chars,
                 )
-                through = int(older[-1]["sequence_no"]) if older else session.summary_through_sequence
+                through = (
+                    int(older[-1]["sequence_no"]) if older else session.summary_through_sequence
+                )
                 if self.repository.update_session_summary(
                     session.id,
                     expected_version=session.summary_version,
@@ -83,9 +88,9 @@ class ConversationContextService:
                     summary = candidate
                 messages = messages[cutoff:]
             except Exception:
-                messages = messages[-self.settings.recent_message_limit :]
+                messages = messages[-recent_message_limit:]
         else:
-            messages = messages[-self.settings.recent_message_limit :]
+            messages = messages[-recent_message_limit:]
         attachments = self.repository.list_attachment_context(
             job.id,
             max_chars=self.settings.max_attachment_context_chars,

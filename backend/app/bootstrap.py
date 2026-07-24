@@ -26,6 +26,7 @@ from app.modules.business_application.application import (
     BusinessApplicationResolver,
     BusinessApplicationService,
 )
+from app.modules.business_application.domain import RuntimeReadinessEvaluator
 from app.modules.business_application.infrastructure import BusinessApplicationRepository
 from app.modules.business_application.infrastructure.adapters import (
     AgentPublicationAdapter,
@@ -294,6 +295,10 @@ def _build_container(
         workflow_repository,
         permission_service,
     )
+    business_application_runtime_evaluator = RuntimeReadinessEvaluator(
+        data_plane_enabled=(settings.feature_configuration.published_agent_runtime_enabled),
+        runtime_environment="local",
+    )
     business_application_service = BusinessApplicationService(
         business_application_repository,
         authorization_evaluator,
@@ -303,9 +308,11 @@ def _build_container(
         ChannelConnectorAdapter(connector_registry),
         IdentitySubjectAdapter(identity_repository),
         EmptyCapabilityCatalogAdapter(),
+        business_application_runtime_evaluator,
     )
     business_application_resolver = BusinessApplicationResolver(
-        business_application_repository
+        business_application_repository,
+        business_application_runtime_evaluator,
     )
     credential_cipher = (
         AttachmentCredentialCipher(settings.app_config_master_key)
@@ -332,19 +339,15 @@ def _build_container(
         create_job_service=create_job_service,
         audit_service=audit_service,
         identity_service=(
-            identity_service
-            if settings.feature_configuration.unified_identity_enabled
-            else None
+            identity_service if settings.feature_configuration.unified_identity_enabled else None
         ),
-        unified_identity_enabled=(
-            settings.feature_configuration.unified_identity_enabled
-        ),
+        unified_identity_enabled=(settings.feature_configuration.unified_identity_enabled),
         business_application_resolver=(
             business_application_resolver
             if settings.feature_configuration.published_agent_runtime_enabled
             else None
         ),
-        runtime_environment=settings.environment,
+        runtime_environment="local",
     )
     webhook_mapper = WebhookMapper(
         max_message_chars=settings.webhooks.max_message_chars,
@@ -433,10 +436,7 @@ def _build_container(
         ),
     )
     internal_api_client: InternalApiClient = FakeInternalApiClient()
-    if (
-        settings.feature_configuration.real_internal_tools_enabled
-        and message_bus is None
-    ):
+    if settings.feature_configuration.real_internal_tools_enabled and message_bus is None:
         internal_api_client = HttpInternalApiClient(
             settings.internal_api_base_url,
             auth_token=settings.internal_api_auth_token,
@@ -496,9 +496,8 @@ def _build_container(
         s3_storage.ensure_bucket()
         object_storage = s3_storage
     attachment_service: AttachmentProcessingService | None = None
-    if (
-        credential_cipher is not None
-        and (service_name == "attachment-worker" or message_bus is not None)
+    if credential_cipher is not None and (
+        service_name == "attachment-worker" or message_bus is not None
     ):
         attachment_service = AttachmentProcessingService(
             repository=agent_repository,

@@ -31,10 +31,13 @@ def control_plane_settings() -> object:
     )
 
 
-def draft_payload(*, route: str = "", capabilities: list[dict[str, object]] | None = None) -> dict[str, object]:
+def draft_payload(
+    *, route: str = "", capabilities: list[dict[str, object]] | None = None
+) -> dict[str, object]:
     triggers: list[dict[str, object]] = []
     deliveries: list[dict[str, object]] = []
     if route:
+        route = route if ":" in route else f"bot:{route}"
         triggers.append(
             {
                 "trigger_type": "dingtalk_private",
@@ -117,9 +120,7 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
     db.run_migrations(default_migrations_dir())
     tables = {
         str(row["name"])
-        for row in db.execute(
-            "select name from sqlite_master where type = 'table'"
-        )
+        for row in db.execute("select name from sqlite_master where type = 'table'")
     }
     assert {
         "business_application",
@@ -145,22 +146,23 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
             values ('orphan', 'missing', 1, 'actor', 'now', 'now')
             """
         )
-    migration_names = [
-        path.name for path in sorted(default_migrations_dir().glob("*.sql"))
-    ]
+    migration_names = [path.name for path in sorted(default_migrations_dir().glob("*.sql"))]
     assert migration_names.index("009_admin_web_read_models.sql") < migration_names.index(
         "009_agent_job_retry_failure_delivery.sql"
     )
-    assert migration_names.index("009_agent_job_retry_failure_delivery.sql") < migration_names.index(
-        "010_business_application_control_plane.sql"
-    )
+    assert migration_names.index(
+        "009_agent_job_retry_failure_delivery.sql"
+    ) < migration_names.index("010_business_application_control_plane.sql")
 
 
 def test_domain_policies_reject_unsafe_or_unknown_configuration() -> None:
     assert normalize_routing_key("  Default   Room ") == "default room"
-    assert validate_execution_policy(
-        {"max_turns": 2, "timeout_seconds": 30, "max_tool_calls": 4}
-    )["max_turns"] == 2
+    assert (
+        validate_execution_policy({"max_turns": 2, "timeout_seconds": 30, "max_tool_calls": 4})[
+            "max_turns"
+        ]
+        == 2
+    )
     with pytest.raises(NonRetryableExecutionError):
         validate_execution_policy(
             {
@@ -204,11 +206,9 @@ def test_repository_is_append_only_and_enforces_revision_conflicts() -> None:
             payload=draft_payload(),
         )
     assert conflict.value.error_code == "revision_conflict"
-    assert len(
-        container.business_application_repository.list_revisions(
-            str(application["id"])
-        )
-    ) == 2
+    assert (
+        len(container.business_application_repository.list_revisions(str(application["id"]))) == 2
+    )
     assert first["revision"] == 2
 
     ordered_payload = draft_payload(
@@ -262,9 +262,9 @@ def test_publish_activate_resolve_rollback_and_deactivate_do_not_touch_data_plan
     container = build_test_container(control_plane_settings(), migrate=True, seed=True)
     before = {
         "jobs": container.database.execute_one("select count(*) as count from agent_job")["count"],
-        "sessions": container.database.execute_one(
-            "select count(*) as count from agent_session"
-        )["count"],
+        "sessions": container.database.execute_one("select count(*) as count from agent_session")[
+            "count"
+        ],
     }
     application, first_revision, first_publication = create_draft_publish(
         container, "lifecycle-test", route="room-a"
@@ -275,25 +275,25 @@ def test_publish_activate_resolve_rollback_and_deactivate_do_not_touch_data_plan
         revision_id=str(first_revision["id"]),
     )
     assert repeated_publication["id"] == first_publication["id"]
-    assert len(
-        container.business_application_repository.list_publications(
-            str(application["id"])
-        )
-    ) == 1
+    assert (
+        len(container.business_application_repository.list_publications(str(application["id"])))
+        == 1
+    )
     first = container.business_application_service.activate(
         actor_id="user_local_admin",
         code="lifecycle-test",
-        environment="test",
+        environment="local",
         publication_id=str(first_publication["id"]),
         expected_revision=0,
     )
     resolved = container.business_application_resolver.resolve_trigger(
-        "test",
+        "local",
         "dingtalk_private",
         "connector-dingtalk-stream-default",
-        " ROOM-A ",
+        " BOT:ROOM-A ",
     )
-    assert first["runtime_wired"] is False
+    assert first["runtime_wired"] is True
+    assert first["runtime_status"] == "partially_wired"
     assert resolved["publication"]["id"] == first_publication["id"]
 
     latest = container.business_application_repository.get_by_code("lifecycle-test")
@@ -311,34 +311,114 @@ def test_publish_activate_resolve_rollback_and_deactivate_do_not_touch_data_plan
     second = container.business_application_service.activate(
         actor_id="user_local_admin",
         code="lifecycle-test",
-        environment="test",
+        environment="local",
         publication_id=str(second_publication["id"]),
         expected_revision=int(first["revision"]),
     )
     rolled_back = container.business_application_service.activate(
         actor_id="user_local_admin",
         code="lifecycle-test",
-        environment="test",
+        environment="local",
         publication_id=str(first_publication["id"]),
         expected_revision=int(second["revision"]),
     )
     stopped = container.business_application_service.deactivate(
         actor_id="user_local_admin",
         code="lifecycle-test",
-        environment="test",
+        environment="local",
         expected_revision=int(rolled_back["revision"]),
     )
     assert stopped["active"] is False
     with pytest.raises(NonRetryableExecutionError) as missing:
-        container.business_application_resolver.resolve_active("lifecycle-test", "test")
+        container.business_application_resolver.resolve_active("lifecycle-test", "local")
     assert missing.value.error_code == "business_application_configuration_error"
     assert before == {
         "jobs": container.database.execute_one("select count(*) as count from agent_job")["count"],
-        "sessions": container.database.execute_one(
-            "select count(*) as count from agent_session"
-        )["count"],
+        "sessions": container.database.execute_one("select count(*) as count from agent_session")[
+            "count"
+        ],
     }
     assert application["runtime_wired"] is False
+
+
+def test_local_only_migration_removes_nonlocal_runtime_pointers_but_preserves_history() -> None:
+    container = build_test_container(control_plane_settings(), migrate=True, seed=True)
+    application, _revision, publication = create_draft_publish(
+        container,
+        "local-only-cleanup",
+        route="cleanup-bot",
+    )
+    local_deployment = container.business_application_service.activate(
+        actor_id="user_local_admin",
+        code="local-only-cleanup",
+        environment="local",
+        publication_id=str(publication["id"]),
+        expected_revision=0,
+    )
+    container.database.execute(
+        """
+        insert into business_application_deployment (
+          id, application_id, environment, publication_id, active, revision,
+          activated_by, activated_at, deactivated_by, deactivated_at, updated_at
+        ) values (?, ?, 'test', ?, 1, 1, 'legacy-admin', ?, '', null, ?)
+        """,
+        (
+            "deployment-nonlocal-test",
+            application["id"],
+            publication["id"],
+            "2026-07-24T00:00:00+00:00",
+            "2026-07-24T00:00:00+00:00",
+        ),
+    )
+    container.database.execute(
+        """
+        insert into business_application_active_route (
+          id, deployment_id, application_id, publication_id, environment,
+          trigger_type, connector_id, normalized_routing_key, created_at
+        ) values (?, ?, ?, ?, 'test', 'dingtalk_private', ?, ?, ?)
+        """,
+        (
+            "route-nonlocal-test",
+            "deployment-nonlocal-test",
+            application["id"],
+            publication["id"],
+            "connector-dingtalk-stream-default",
+            "bot:cleanup-bot",
+            "2026-07-24T00:00:00+00:00",
+        ),
+    )
+
+    container.database.execute_script(
+        (default_migrations_dir() / "012_business_application_local_only.sql").read_text()
+    )
+
+    deployments = container.database.execute(
+        """
+        select id, environment
+          from business_application_deployment
+         where application_id = ?
+         order by environment
+        """,
+        (application["id"],),
+    )
+    routes = container.database.execute(
+        """
+        select deployment_id, environment
+          from business_application_active_route
+         where application_id = ?
+         order by environment
+        """,
+        (application["id"],),
+    )
+    assert deployments == [{"id": local_deployment["id"], "environment": "local"}]
+    assert routes == [{"deployment_id": local_deployment["id"], "environment": "local"}]
+    assert (
+        container.database.execute_one(
+            "select count(*) as count from business_application_publication where id = ?",
+            (publication["id"],),
+        )["count"]
+        == 1
+    )
 
 
 def test_only_published_session_policy_is_visible_to_runtime_resolver() -> None:
@@ -374,24 +454,22 @@ def test_only_published_session_policy_is_visible_to_runtime_resolver() -> None:
     service.activate(
         actor_id="user_local_admin",
         code="session-policy-test",
-        environment="test",
+        environment="local",
         publication_id=str(first_publication["id"]),
         expected_revision=0,
     )
 
     current = container.business_application_resolver.resolve_trigger(
-        "test",
+        "local",
         "dingtalk_private",
         "connector-dingtalk-stream-default",
-        "session-room",
+        "bot:session-room",
     )
     policy = current["publication"]["snapshot"]["session_policy"]
     assert policy["continuous_conversation_enabled"] is True
     assert policy["attachments_enabled"] is True
 
-    latest = container.business_application_repository.get_by_code(
-        "session-policy-test"
-    )
+    latest = container.business_application_repository.get_by_code("session-policy-test")
     service.save_draft(
         actor_id="user_local_admin",
         code="session-policy-test",
@@ -399,15 +477,16 @@ def test_only_published_session_policy_is_visible_to_runtime_resolver() -> None:
         payload=draft_payload(route="session-room"),
     )
     unchanged = container.business_application_resolver.resolve_trigger(
-        "test",
+        "local",
         "dingtalk_private",
         "connector-dingtalk-stream-default",
-        "session-room",
+        "bot:session-room",
     )
     assert unchanged["publication"]["id"] == first_publication["id"]
-    assert unchanged["publication"]["snapshot"]["session_policy"][
-        "continuous_conversation_enabled"
-    ] is True
+    assert (
+        unchanged["publication"]["snapshot"]["session_policy"]["continuous_conversation_enabled"]
+        is True
+    )
 
 
 def test_active_business_application_policy_controls_live_channel_sessions() -> None:
@@ -421,7 +500,7 @@ def test_active_business_application_policy_controls_live_channel_sessions() -> 
         project_code="default",
         owner_user_id="user_local_admin",
     )
-    payload = draft_payload(route="conversation-policy-runtime")
+    payload = draft_payload(route="bot:test-robot-code")
     payload["session_policy"] = {
         "conversation_mode": "channel",
         "recent_message_limit": 20,
@@ -443,7 +522,7 @@ def test_active_business_application_policy_controls_live_channel_sessions() -> 
     service.activate(
         actor_id="user_local_admin",
         code="live-session-policy",
-        environment="test",
+        environment="local",
         publication_id=str(publication["id"]),
         expected_revision=0,
     )
@@ -453,6 +532,8 @@ def test_active_business_application_policy_controls_live_channel_sessions() -> 
             "conversationId": "conversation-policy-runtime",
             "senderStaffId": "local-user",
             "msgId": "policy-message-1",
+            "robotCode": "test-robot-code",
+            "sessionWebhook": "https://oapi.dingtalk.com/robot/sendBySession",
             "text": {"content": "first"},
         },
         correlation_id="policy-correlation-1",
@@ -462,6 +543,8 @@ def test_active_business_application_policy_controls_live_channel_sessions() -> 
             "conversationId": "conversation-policy-runtime",
             "senderStaffId": "local-user",
             "msgId": "policy-message-2",
+            "robotCode": "test-robot-code",
+            "sessionWebhook": "https://oapi.dingtalk.com/robot/sendBySession",
             "text": {"content": "second"},
         },
         correlation_id="policy-correlation-2",
@@ -477,13 +560,11 @@ def test_active_business_application_policy_controls_live_channel_sessions() -> 
 
 def test_resolver_fails_closed_for_lifecycle_schema_and_hash_errors() -> None:
     container = build_test_container(control_plane_settings(), migrate=True, seed=True)
-    application, _revision, publication = create_draft_publish(
-        container, "resolver-integrity-test"
-    )
+    application, _revision, publication = create_draft_publish(container, "resolver-integrity-test")
     deployment = container.business_application_service.activate(
         actor_id="user_local_admin",
         code="resolver-integrity-test",
-        environment="test",
+        environment="local",
         publication_id=str(publication["id"]),
         expected_revision=0,
     )
@@ -498,9 +579,7 @@ def test_resolver_fails_closed_for_lifecycle_schema_and_hash_errors() -> None:
         (publication["id"],),
     )
     with pytest.raises(NonRetryableExecutionError) as schema_error:
-        container.business_application_resolver.resolve_active(
-            "resolver-integrity-test", "test"
-        )
+        container.business_application_resolver.resolve_active("resolver-integrity-test", "local")
     assert schema_error.value.error_code == "business_application_configuration_error"
 
     container.database.execute(
@@ -512,9 +591,7 @@ def test_resolver_fails_closed_for_lifecycle_schema_and_hash_errors() -> None:
         (publication["id"],),
     )
     with pytest.raises(NonRetryableExecutionError) as hash_error:
-        container.business_application_resolver.resolve_active(
-            "resolver-integrity-test", "test"
-        )
+        container.business_application_resolver.resolve_active("resolver-integrity-test", "local")
     assert hash_error.value.error_code == "business_application_configuration_error"
 
     container.database.execute(
@@ -522,24 +599,18 @@ def test_resolver_fails_closed_for_lifecycle_schema_and_hash_errors() -> None:
         (application["id"],),
     )
     with pytest.raises(NonRetryableExecutionError) as lifecycle_error:
-        container.business_application_resolver.resolve_active(
-            "resolver-integrity-test", "test"
-        )
+        container.business_application_resolver.resolve_active("resolver-integrity-test", "local")
     assert lifecycle_error.value.error_code == "business_application_configuration_error"
 
 
 def test_activation_route_projection_rejects_conflicting_application() -> None:
     container = build_test_container(control_plane_settings(), migrate=True, seed=True)
-    _, _, first_publication = create_draft_publish(
-        container, "route-owner-a", route="same-room"
-    )
-    _, _, second_publication = create_draft_publish(
-        container, "route-owner-b", route="same-room"
-    )
+    _, _, first_publication = create_draft_publish(container, "route-owner-a", route="same-room")
+    _, _, second_publication = create_draft_publish(container, "route-owner-b", route="same-room")
     container.business_application_service.activate(
         actor_id="user_local_admin",
         code="route-owner-a",
-        environment="test",
+        environment="local",
         publication_id=str(first_publication["id"]),
         expected_revision=0,
     )
@@ -547,7 +618,7 @@ def test_activation_route_projection_rejects_conflicting_application() -> None:
         container.business_application_service.activate(
             actor_id="user_local_admin",
             code="route-owner-b",
-            environment="test",
+            environment="local",
             publication_id=str(second_publication["id"]),
             expected_revision=0,
         )
@@ -700,9 +771,7 @@ def test_admin_api_prevents_enumeration_and_denies_unprivileged_writes() -> None
             password="restricted-local-test-password",
         )
         listed = client.get("/api/admin/business-applications")
-        hidden = client.get(
-            "/api/admin/business-applications/private-application"
-        )
+        hidden = client.get("/api/admin/business-applications/private-application")
         forbidden = client.post(
             "/api/admin/business-applications",
             headers=csrf_headers(csrf),
@@ -723,9 +792,10 @@ def test_seed_cli_exists_and_production_migration_does_not_activate() -> None:
     assert Path("backend/app/cli/seed_default_business_application.py").exists()
     db = Database("sqlite:///:memory:")
     db.run_migrations(default_migrations_dir())
-    assert db.execute_one(
-        "select count(*) as count from business_application_deployment"
-    )["count"] == 0
+    assert (
+        db.execute_one("select count(*) as count from business_application_deployment")["count"]
+        == 0
+    )
 
 
 def test_local_seed_and_default_application_cli_are_idempotent(
@@ -735,19 +805,23 @@ def test_local_seed_and_default_application_cli_are_idempotent(
 
     database_path = tmp_path / "control-plane-seed.db"
     monkeypatch.setenv("DATABASE_DSN", f"sqlite:///{database_path}")
-    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("APP_ENV", "local")
     monkeypatch.setenv("FEATURE_UNIFIED_IDENTITY", "true")
     monkeypatch.setenv("FEATURE_WEB_ADMIN", "true")
     monkeypatch.setenv("FEATURE_BUSINESS_APPLICATION_CONTROL_PLANE", "true")
     assert main() == 0
     assert main() == 0
     db = Database(f"sqlite:///{database_path}")
-    assert db.execute_one(
-        """
+    assert (
+        db.execute_one(
+            """
         select count(*) as count from business_application
          where code = 'default-diagnostic-application'
         """
-    )["count"] == 1
-    assert db.execute_one(
-        "select count(*) as count from business_application_deployment"
-    )["count"] == 0
+        )["count"]
+        == 1
+    )
+    assert (
+        db.execute_one("select count(*) as count from business_application_deployment")["count"]
+        == 0
+    )

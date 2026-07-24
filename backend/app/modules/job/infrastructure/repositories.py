@@ -41,6 +41,11 @@ class AgentRepository:
         conversation_type: str = "direct",
         bot_identity: str = "",
         external_identity_id: str = "",
+        business_application_id: str = "",
+        business_application_code: str = "",
+        conversation_mode: str = "legacy",
+        recent_message_limit: int | None = None,
+        session_policy: dict[str, Any] | None = None,
     ) -> AgentSession:
         session_id = new_id("session")
         timestamp = now_iso()
@@ -56,8 +61,10 @@ class AgentRepository:
               (id, dingding_conversation_id, dingding_user_id, source, project_code,
                source_channel, source_connector_id, external_conversation_id, requester_id,
                requester_display_name, routing_context_json, reply_route_json, created_at, updated_at,
-               session_key, conversation_type, bot_identity, external_identity_id)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               session_key, conversation_type, bot_identity, external_identity_id,
+               business_application_id, business_application_code, conversation_mode,
+               recent_message_limit, session_policy_json)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             on conflict(session_key) do nothing
             """,
             (
@@ -79,12 +86,20 @@ class AgentRepository:
                 conversation_type,
                 bot_identity,
                 external_identity_id or None,
+                business_application_id or None,
+                business_application_code,
+                conversation_mode,
+                recent_message_limit,
+                json.dumps(session_policy or {}, ensure_ascii=False),
             ),
         )
-        row = self.database.execute_one("select id from agent_session where session_key = ?", (session_key,))
+        row = self.database.execute_one(
+            "select id from agent_session where session_key = ?", (session_key,)
+        )
         if not row:
             raise NonRetryableExecutionError(
-                "Agent session could not be resolved", safe_message="Agent session could not be resolved"
+                "Agent session could not be resolved",
+                safe_message="Agent session could not be resolved",
             )
         return self.get_session(str(row["id"]))
 
@@ -114,6 +129,14 @@ class AgentRepository:
         webhook_event_id: str = "",
         webhook_trigger_id: str = "",
         webhook_trigger_publication_id: str = "",
+        business_application_id: str = "",
+        business_application_code: str = "",
+        business_application_publication_id: str = "",
+        business_application_deployment_id: str = "",
+        business_application_route_id: str = "",
+        business_application_config_hash: str = "",
+        business_application_runtime_status: str = "",
+        business_application_route_decision: dict[str, Any] | None = None,
     ) -> AgentJob:
         existing = self.get_job_by_idempotency_key(idempotency_key)
         if existing:
@@ -132,8 +155,14 @@ class AgentRepository:
                external_event_id, requester_id, routing_context_json, reply_route_json, created_at,
                internal_user_id, external_identity_id, agent_definition_id,
                agent_publication_id, agent_revision, agent_config_hash,
-               webhook_event_id, webhook_trigger_id, webhook_trigger_publication_id)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               webhook_event_id, webhook_trigger_id, webhook_trigger_publication_id,
+               business_application_id, business_application_code,
+               business_application_publication_id, business_application_deployment_id,
+               business_application_route_id, business_application_config_hash,
+               business_application_runtime_status,
+               business_application_route_decision_json)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job_id,
@@ -162,6 +191,17 @@ class AgentRepository:
                 webhook_event_id or None,
                 webhook_trigger_id or None,
                 webhook_trigger_publication_id or None,
+                business_application_id or None,
+                business_application_code,
+                business_application_publication_id or None,
+                business_application_deployment_id or None,
+                business_application_route_id or None,
+                business_application_config_hash,
+                business_application_runtime_status,
+                json.dumps(
+                    business_application_route_decision or {},
+                    ensure_ascii=False,
+                ),
             ),
         )
         return self.get_job(job_id)
@@ -284,7 +324,9 @@ class AgentRepository:
         return int(row["retry_count"]) if row else 0
 
     def get_attachment(self, attachment_id: str) -> MessageAttachment:
-        row = self.database.execute_one("select * from message_attachment where id = ?", (attachment_id,))
+        row = self.database.execute_one(
+            "select * from message_attachment where id = ?", (attachment_id,)
+        )
         if not row:
             raise NotFound(f"Message attachment not found: {attachment_id}")
         return self._attachment_from_row(row)
@@ -595,6 +637,15 @@ class AgentRepository:
             summary_through_sequence=int(row.get("summary_through_sequence") or 0),
             summary_version=int(row.get("summary_version") or 0),
             external_identity_id=row.get("external_identity_id") or "",
+            business_application_id=row.get("business_application_id") or "",
+            business_application_code=row.get("business_application_code") or "",
+            conversation_mode=row.get("conversation_mode") or "legacy",
+            recent_message_limit=(
+                int(row["recent_message_limit"])
+                if row.get("recent_message_limit") is not None
+                else None
+            ),
+            session_policy=self._json_from_text(row.get("session_policy_json") or "{}"),
         )
 
     def get_job_by_idempotency_key(self, idempotency_key: str) -> AgentJob | None:
@@ -626,6 +677,22 @@ class AgentRepository:
                 int(row["agent_revision"]) if row.get("agent_revision") is not None else None
             ),
             "agent_config_hash": row.get("agent_config_hash") or "",
+            "business_application_id": row.get("business_application_id") or "",
+            "business_application_code": row.get("business_application_code") or "",
+            "business_application_publication_id": (
+                row.get("business_application_publication_id") or ""
+            ),
+            "business_application_deployment_id": (
+                row.get("business_application_deployment_id") or ""
+            ),
+            "business_application_route_id": (row.get("business_application_route_id") or ""),
+            "business_application_config_hash": (row.get("business_application_config_hash") or ""),
+            "business_application_runtime_status": (
+                row.get("business_application_runtime_status") or "legacy_unattributed"
+            ),
+            "business_application_route_decision": self._json_from_text(
+                row.get("business_application_route_decision_json") or "{}"
+            ),
             "routing_context": self._json_from_text(row.get("routing_context_json") or "{}"),
             "reply_route": self._json_from_text(row.get("reply_route_json") or "{}"),
             "user_message": row["user_message"],
@@ -1000,7 +1067,9 @@ class AgentRepository:
             file_name=str(row["file_name"]),
             declared_mime=str(row.get("declared_mime") or ""),
             detected_mime=str(row.get("detected_mime") or ""),
-            declared_size=int(row["declared_size"]) if row.get("declared_size") is not None else None,
+            declared_size=int(row["declared_size"])
+            if row.get("declared_size") is not None
+            else None,
             size_bytes=int(row["size_bytes"]) if row.get("size_bytes") is not None else None,
             sha256=str(row.get("sha256") or ""),
             object_bucket=str(row.get("object_bucket") or ""),
@@ -1043,6 +1112,22 @@ class AgentRepository:
             webhook_event_id=row.get("webhook_event_id") or "",
             webhook_trigger_id=row.get("webhook_trigger_id") or "",
             webhook_trigger_publication_id=row.get("webhook_trigger_publication_id") or "",
+            business_application_id=row.get("business_application_id") or "",
+            business_application_code=row.get("business_application_code") or "",
+            business_application_publication_id=(
+                row.get("business_application_publication_id") or ""
+            ),
+            business_application_deployment_id=(
+                row.get("business_application_deployment_id") or ""
+            ),
+            business_application_route_id=(row.get("business_application_route_id") or ""),
+            business_application_config_hash=(row.get("business_application_config_hash") or ""),
+            business_application_runtime_status=(
+                row.get("business_application_runtime_status") or "legacy_unattributed"
+            ),
+            business_application_route_decision=self._json_from_text(
+                row.get("business_application_route_decision_json") or "{}"
+            ),
         )
 
     def _tool_call_from_row(self, row: dict[str, Any]) -> dict[str, Any]:
@@ -1117,9 +1202,7 @@ class AuditRepository:
             (max(1, min(limit, 1000)),),
         )
         for row in rows:
-            row["payload_summary"] = self._safe_payload(
-                str(row.get("payload_summary") or "{}")
-            )
+            row["payload_summary"] = self._safe_payload(str(row.get("payload_summary") or "{}"))
         return rows
 
     @staticmethod

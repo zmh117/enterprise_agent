@@ -27,6 +27,11 @@ class AgentSession:
     summary_through_sequence: int = 0
     summary_version: int = 0
     external_identity_id: str = ""
+    business_application_id: str = ""
+    business_application_code: str = ""
+    conversation_mode: str = "legacy"
+    recent_message_limit: int | None = None
+    session_policy: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -61,6 +66,14 @@ class AgentJob:
     webhook_event_id: str = ""
     webhook_trigger_id: str = ""
     webhook_trigger_publication_id: str = ""
+    business_application_id: str = ""
+    business_application_code: str = ""
+    business_application_publication_id: str = ""
+    business_application_deployment_id: str = ""
+    business_application_route_id: str = ""
+    business_application_config_hash: str = ""
+    business_application_runtime_status: str = ""
+    business_application_route_decision: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

@@ -1,8 +1,4 @@
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 import type {
   CreateApplicationInput,
@@ -11,7 +7,7 @@ import type {
 import {
   activatePublication,
   createApplication,
-  deactivateEnvironment,
+  deactivateLocalDeployment,
   getApplication,
   getCatalog,
   listApplications,
@@ -59,7 +55,10 @@ export function useCreateApplication() {
   return useMutation({
     mutationFn: (input: CreateApplicationInput) => createApplication(input),
     onSuccess: (application) => {
-      queryClient.setQueryData(applicationKeys.detail(application.code), application)
+      queryClient.setQueryData(
+        applicationKeys.detail(application.code),
+        application
+      )
       void queryClient.invalidateQueries({ queryKey: applicationKeys.list() })
     },
   })
@@ -79,58 +78,50 @@ export function useUpdateApplication(code: string) {
 
 export function useSaveDraft(code: string) {
   return useRefreshApplicationMutation(code, (input: SaveDraftInput) =>
-    saveDraft(code, input),
+    saveDraft(code, input)
   )
 }
 
 export function useValidateDraft(code: string) {
   return useRefreshApplicationMutation(code, (revisionId: string) =>
-    validateDraft(code, revisionId),
+    validateDraft(code, revisionId)
   )
 }
 
 export function usePublishDraft(code: string) {
   return useRefreshApplicationMutation(code, (revisionId: string) =>
-    publishDraft(code, revisionId),
+    publishDraft(code, revisionId)
   )
 }
 
 export function useActivatePublication(code: string) {
   return useRefreshApplicationMutation(
     code,
-    (input: {
-      environment: string
-      publicationId: string
-      expectedRevision: number
-    }) =>
-      activatePublication(
-        code,
-        input.environment,
-        input.publicationId,
-        input.expectedRevision,
-      ),
+    (input: { publicationId: string; expectedRevision: number }) =>
+      activatePublication(code, input.publicationId, input.expectedRevision)
   )
 }
 
-export function useDeactivateEnvironment(code: string) {
+export function useDeactivateLocalDeployment(code: string) {
   return useRefreshApplicationMutation(
     code,
-    (input: { environment: string; expectedRevision: number }) =>
-      deactivateEnvironment(code, input.environment, input.expectedRevision),
+    (input: { expectedRevision: number }) =>
+      deactivateLocalDeployment(code, input.expectedRevision)
   )
 }
 
 function useRefreshApplicationMutation<TInput, TResult>(
   code: string,
-  mutationFn: (input: TInput) => Promise<TResult>,
+  mutationFn: (input: TInput) => Promise<TResult>
 ) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn,
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: applicationKeys.detail(code) })
+      void queryClient.invalidateQueries({
+        queryKey: applicationKeys.detail(code),
+      })
       void queryClient.invalidateQueries({ queryKey: applicationKeys.list() })
     },
   })
 }
-

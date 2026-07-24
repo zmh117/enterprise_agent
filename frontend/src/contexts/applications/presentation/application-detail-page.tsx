@@ -25,7 +25,7 @@ import {
   useActivatePublication,
   useApplication,
   useApplicationCatalog,
-  useDeactivateEnvironment,
+  useDeactivateLocalDeployment,
   usePublishDraft,
   useSaveDraft,
   useUpdateApplication,
@@ -40,6 +40,12 @@ import {
   MutationError,
   StatusBadge,
 } from "@/contexts/applications/presentation/applications-page"
+import {
+  RuntimeOperationImpact,
+  RuntimeReadinessPanel,
+  RuntimeStatusBadge,
+} from "@/contexts/applications/presentation/runtime-readiness"
+import { cn } from "@/lib/utils"
 
 export function ApplicationDetailPage() {
   const code = useParams().code ?? ""
@@ -64,7 +70,9 @@ export function ApplicationDetailPage() {
       </div>
     )
   }
-  return <ApplicationWorkspace key={query.data.revision} application={query.data} />
+  return (
+    <ApplicationWorkspace key={query.data.revision} application={query.data} />
+  )
 }
 
 function ApplicationWorkspace({
@@ -95,12 +103,7 @@ function ApplicationWorkspace({
               {application.code} · {application.project_code}
             </p>
           </div>
-          <Badge
-            variant="outline"
-            className="border-amber-300 bg-amber-50 text-amber-900"
-          >
-            runtime_wired=false · 尚未接管入口
-          </Badge>
+          <RuntimeStatusBadge state={application} />
         </div>
       </header>
 
@@ -109,7 +112,7 @@ function ApplicationWorkspace({
           <TabsTrigger value="overview">概览</TabsTrigger>
           <TabsTrigger value="composition">组成配置</TabsTrigger>
           <TabsTrigger value="validation">校验结果</TabsTrigger>
-          <TabsTrigger value="publications">发布与环境</TabsTrigger>
+          <TabsTrigger value="publications">发布与运行</TabsTrigger>
         </TabsList>
         <TabsContent value="overview">
           <OverviewTab application={application} />
@@ -247,13 +250,25 @@ function OverviewTab({ application }: { application: BusinessApplication }) {
           rows={[
             ["发布数量", String(application.publications.length)],
             [
-              "活动环境",
-              String(application.deployments.filter((item) => item.active).length),
+              "运行实例",
+              String(
+                application.deployments.filter((item) => item.active).length
+              ),
             ],
             ["Capability 目录", "未接入"],
-            ["数据面", "未接线"],
+            [
+              "数据面",
+              application.runtime_status === "wired"
+                ? "已接管"
+                : application.runtime_status === "partially_wired"
+                  ? "部分接管"
+                  : application.runtime_status === "blocked"
+                    ? "已阻塞"
+                    : "未接管",
+            ],
           ]}
         />
+        <RuntimeReadinessPanel state={application} />
       </div>
     </div>
   )
@@ -263,7 +278,9 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
   const catalog = useApplicationCatalog(application.code)
   const save = useSaveDraft(application.code)
   const draft = application.draft
-  const [form, setForm] = useState<SaveDraftInput>(() => draftToForm(application))
+  const [form, setForm] = useState<SaveDraftInput>(() =>
+    draftToForm(application)
+  )
 
   function submit(event: FormEvent) {
     event.preventDefault()
@@ -345,7 +362,8 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
       <MutationError error={save.error} />
       <div className="sticky bottom-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background/95 p-3 shadow-lg backdrop-blur">
         <p className="text-xs text-muted-foreground">
-          保存将基于 expected revision r{application.revision} 创建新的追加式草稿。
+          保存将基于 expected revision r{application.revision}{" "}
+          创建新的追加式草稿。
         </p>
         <Button type="submit" disabled={save.isPending || catalog.isLoading}>
           {save.isPending ? (
@@ -488,10 +506,10 @@ function BindingsEditor({
   catalog: Catalog
 }) {
   const ingress = uniqueConnectors(
-    catalog?.connectors.filter((item) => item.direction === "ingress") ?? [],
+    catalog?.connectors.filter((item) => item.direction === "ingress") ?? []
   )
   const delivery = uniqueConnectors(
-    catalog?.connectors.filter((item) => item.direction === "delivery") ?? [],
+    catalog?.connectors.filter((item) => item.direction === "delivery") ?? []
   )
   return (
     <div className="grid gap-5 xl:grid-cols-2">
@@ -510,7 +528,7 @@ function BindingsEditor({
                   {
                     trigger_type: "dingtalk_private",
                     connector_id: ingress[0]?.id ?? "",
-                    routing_key: "default",
+                    routing_key: "bot:",
                     actor_policy: "CURRENT_SENDER",
                     service_account_user_id: "",
                     enabled: true,
@@ -547,6 +565,12 @@ function BindingsEditor({
                         .value as SaveDraftInput["triggers"][number]["trigger_type"]
                       changeTrigger(form, setForm, index, {
                         trigger_type: type,
+                        routing_key:
+                          type === "dingtalk_private"
+                            ? "bot:"
+                            : type === "dingtalk_group"
+                              ? "conversation:"
+                              : trigger.routing_key,
                         actor_policy:
                           type === "webhook"
                             ? "SERVICE_ACCOUNT"
@@ -559,7 +583,10 @@ function BindingsEditor({
                     <option value="webhook">Webhook</option>
                   </select>
                 </Field>
-                <Field label="入口 Connector" htmlFor={`trigger-connector-${index}`}>
+                <Field
+                  label="入口 Connector"
+                  htmlFor={`trigger-connector-${index}`}
+                >
                   <select
                     id={`trigger-connector-${index}`}
                     className={selectClass}
@@ -590,6 +617,19 @@ function BindingsEditor({
                       })
                     }
                   />
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    {trigger.trigger_type === "dingtalk_private"
+                      ? "私聊使用 bot:<robot identity>；同一机器人下所有用户共享入口匹配，但权限仍按当前发送人。"
+                      : trigger.trigger_type === "dingtalk_group"
+                        ? "群聊使用 conversation:<open conversation id>；不要填写用户 ID 或消息内容。"
+                        : "Webhook 路由由对应 Trigger 定义控制。"}
+                    {isLegacyRoutingKey(
+                      trigger.trigger_type,
+                      trigger.routing_key
+                    )
+                      ? " 当前是旧路由键，必须改为带命名空间的新值并重新发布。"
+                      : ""}
+                  </p>
                 </Field>
                 <Field label="主体策略" htmlFor={`trigger-actor-${index}`}>
                   <Input
@@ -687,7 +727,10 @@ function BindingsEditor({
                   <option value="webhook_callback">Webhook 回调</option>
                 </select>
               </Field>
-              <Field label="Delivery Connector" htmlFor={`delivery-connector-${index}`}>
+              <Field
+                label="Delivery Connector"
+                htmlFor={`delivery-connector-${index}`}
+              >
                 <select
                   id={`delivery-connector-${index}`}
                   className={selectClass}
@@ -717,7 +760,7 @@ function BindingsEditor({
                   setForm({
                     ...form,
                     deliveries: form.deliveries.filter(
-                      (_, item) => item !== index,
+                      (_, item) => item !== index
                     ),
                   })
                 }
@@ -776,7 +819,10 @@ function ValidationTab({ application }: { application: BusinessApplication }) {
               {validation?.errors.length ? (
                 <ul className="mt-3 space-y-2 text-sm">
                   {validation.errors.map((item, index) => (
-                    <li key={`${item.field}-${index}`} className="rounded border bg-white/60 p-2">
+                    <li
+                      key={`${item.field}-${index}`}
+                      className="rounded border bg-white/60 p-2"
+                    >
                       <span className="font-mono text-xs">{item.field}</span>
                       <span className="ml-2">{item.message}</span>
                     </li>
@@ -806,7 +852,9 @@ function ValidationTab({ application }: { application: BusinessApplication }) {
               type="button"
               disabled={!canPublish || publish.isPending}
               title={
-                canPublish ? "创建不可变发布" : "必须先通过校验且应用处于启用状态"
+                canPublish
+                  ? "创建不可变发布"
+                  : "必须先通过校验且应用处于启用状态"
               }
               onClick={() => revision && publish.mutate(revision.id)}
             >
@@ -838,32 +886,29 @@ function ValidationTab({ application }: { application: BusinessApplication }) {
 
 function PublicationTab({ application }: { application: BusinessApplication }) {
   const activate = useActivatePublication(application.code)
-  const deactivate = useDeactivateEnvironment(application.code)
-  const [environment, setEnvironment] = useState("test")
+  const deactivate = useDeactivateLocalDeployment(application.code)
+  const environment = "local"
   const deployment = application.deployments.find(
-    (item) => item.environment === environment,
+    (item) => item.environment === environment
   )
   const error = activate.error ?? deactivate.error
   return (
     <div className="space-y-5">
       <Card className="shadow-none">
         <CardHeader>
-          <CardTitle>环境 Deployment</CardTitle>
+          <CardTitle>本地 Deployment</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <Field label="目标环境" htmlFor="deployment-environment">
-            <select
-              id="deployment-environment"
-              className={`${selectClass} max-w-xs`}
-              value={environment}
-              onChange={(event) => setEnvironment(event.target.value)}
-            >
-              <option value="test">test</option>
-              <option value="staging">staging</option>
-              <option value="production">production</option>
-              <option value="local">local</option>
-            </select>
-          </Field>
+          <div className="rounded-lg border bg-muted/30 p-4 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline">唯一运行环境</Badge>
+              <span className="font-mono">local</span>
+            </div>
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">
+              发布、激活、回退和停用都直接作用于当前本地运行实例，不再维护
+              test、staging 或 production Deployment。
+            </p>
+          </div>
           <div className="rounded-lg border bg-muted/30 p-4 text-sm">
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant={deployment?.active ? "default" : "secondary"}>
@@ -878,6 +923,11 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
               publication: {deployment?.publication_id || "none"}
             </p>
           </div>
+          <RuntimeOperationImpact
+            state={deployment ?? application}
+            action="deactivate"
+            targetEnvironment={environment}
+          />
           {deployment?.active ? (
             <Button
               type="button"
@@ -886,23 +936,23 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
               onClick={() => {
                 if (
                   window.confirm(
-                    `确认停用 ${environment} 环境？这只移除控制面活动路由投影。`,
+                    "确认停用 local 环境？后续新消息若没有匹配应用，将返回配置错误且不创建 Job；已入队 Job 继续使用原版本。"
                   )
                 ) {
                   deactivate.mutate({
-                    environment,
                     expectedRevision: deployment.revision,
                   })
                 }
               }}
             >
               <PowerIcon aria-hidden="true" />
-              停用环境
+              停用 local
             </Button>
           ) : null}
           <MutationError error={error} />
           <p className="text-xs leading-5 text-muted-foreground">
-            激活和停用不会接管现有钉钉/Webhook。后续数据面接线需要独立变更和灰度回退验证。
+            状态由服务端按数据面闸门、local 运行实例和 Publication
+            组件统一计算；界面不自行猜测是否接管。
           </p>
         </CardContent>
       </Card>
@@ -919,25 +969,43 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
               {application.publications.map((publication) => (
                 <article
                   key={publication.id}
-                  className="flex flex-col gap-3 rounded-lg border p-4 lg:flex-row lg:items-center"
+                  data-testid="publication-history-card"
+                  className="grid gap-4 rounded-lg border p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start"
                 >
                   <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="outline">r{publication.revision}</Badge>
-                      <span className="font-medium">{publication.id}</span>
-                    </div>
-                    <div className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
-                      <span>hash: {publication.config_hash.slice(0, 16)}…</span>
-                      <span>发布人: {publication.published_by}</span>
-                      <span>
-                        发布时间: {formatDate(publication.published_at)}
+                    <div className="flex min-w-0 items-start gap-2">
+                      <Badge variant="outline" className="shrink-0">
+                        r{publication.revision}
+                      </Badge>
+                      <span className="min-w-0 font-mono text-sm leading-5 font-medium break-all">
+                        {publication.id}
                       </span>
-                      <span>schema: v{publication.schema_version}</span>
                     </div>
+                    <dl className="mt-4 grid gap-x-6 gap-y-3 text-xs sm:grid-cols-2 xl:grid-cols-4">
+                      <PublicationMetadata
+                        label="Hash"
+                        value={`${publication.config_hash.slice(0, 16)}…`}
+                        monospace
+                      />
+                      <PublicationMetadata
+                        label="发布人"
+                        value={publication.published_by}
+                        monospace
+                      />
+                      <PublicationMetadata
+                        label="发布时间"
+                        value={formatDate(publication.published_at)}
+                      />
+                      <PublicationMetadata
+                        label="Schema"
+                        value={`v${publication.schema_version}`}
+                      />
+                    </dl>
                   </div>
                   <Button
                     type="button"
                     variant="outline"
+                    className="w-full sm:w-auto"
                     disabled={
                       application.status !== "enabled" || activate.isPending
                     }
@@ -954,11 +1022,10 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
                           : "激活"
                       if (
                         window.confirm(
-                          `确认将 publication r${publication.revision} ${action}到 ${environment} 环境？这只更新控制面，不会接管钉钉或 Webhook。`,
+                          `确认将 publication r${publication.revision} ${action}到 local 环境？匹配入口会使用该版本；未命中消息将返回配置错误且不创建 Job，已入队 Job 不切换版本。`
                         )
                       ) {
                         activate.mutate({
-                          environment,
                           publicationId: publication.id,
                           expectedRevision: deployment?.revision ?? 0,
                         })
@@ -971,12 +1038,51 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
                       ? "当前版本"
                       : "激活此版本"}
                   </Button>
+                  <div className="sm:col-span-2">
+                    <RuntimeOperationImpact
+                      state={publication}
+                      action={
+                        deployment?.active &&
+                        deployment.publication_id !== publication.id
+                          ? "rollback"
+                          : "activate"
+                      }
+                      targetEnvironment={environment}
+                    />
+                  </div>
                 </article>
               ))}
             </div>
           )}
         </CardContent>
       </Card>
+    </div>
+  )
+}
+
+function PublicationMetadata({
+  label,
+  value,
+  monospace = false,
+}: {
+  label: string
+  value: string
+  monospace?: boolean
+}) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+        {label}
+      </dt>
+      <dd
+        className={cn(
+          "mt-1 leading-5 break-words text-foreground",
+          monospace && "font-mono break-all"
+        )}
+        title={value}
+      >
+        {value}
+      </dd>
     </div>
   )
 }
@@ -1003,7 +1109,10 @@ function SummaryCard({
           {rows.map(([label, value]) => (
             <div key={label} className="flex justify-between gap-4">
               <dt className="text-muted-foreground">{label}</dt>
-              <dd className="min-w-0 truncate text-right font-medium" title={value}>
+              <dd
+                className="min-w-0 truncate text-right font-medium"
+                title={value}
+              >
                 {value}
               </dd>
             </div>
@@ -1077,11 +1186,9 @@ function draftToForm(application: BusinessApplication): SaveDraftInput {
     session_policy: {
       conversation_mode:
         (draft?.session_policy.conversation_mode as
-          | "channel"
-          | "actor"
-          | "application") ?? "channel",
+          "channel" | "actor" | "application") ?? "channel",
       recent_message_limit: Number(
-        draft?.session_policy.recent_message_limit ?? 20,
+        draft?.session_policy.recent_message_limit ?? 20
       ),
       retention_days: Number(draft?.session_policy.retention_days ?? 30),
     },
@@ -1092,23 +1199,26 @@ function draftToForm(application: BusinessApplication): SaveDraftInput {
     },
     triggers:
       draft?.triggers.map((item) => ({
-        trigger_type: item.trigger_type as SaveDraftInput["triggers"][number]["trigger_type"],
+        trigger_type:
+          item.trigger_type as SaveDraftInput["triggers"][number]["trigger_type"],
         connector_id: item.connector_id,
         routing_key: item.routing_key,
-        actor_policy: item.actor_policy as SaveDraftInput["triggers"][number]["actor_policy"],
+        actor_policy:
+          item.actor_policy as SaveDraftInput["triggers"][number]["actor_policy"],
         service_account_user_id: item.service_account_user_id,
         enabled: item.enabled,
         config: {
           conversation_type: String(item.config.conversation_type ?? ""),
           require_mention: Boolean(item.config.require_mention),
           webhook_definition_id: String(
-            item.config.webhook_definition_id ?? "",
+            item.config.webhook_definition_id ?? ""
           ),
         },
       })) ?? [],
     deliveries:
       draft?.deliveries.map((item) => ({
-        delivery_type: item.delivery_type as SaveDraftInput["deliveries"][number]["delivery_type"],
+        delivery_type:
+          item.delivery_type as SaveDraftInput["deliveries"][number]["delivery_type"],
         connector_id: item.connector_id,
         enabled: item.enabled,
         config: {
@@ -1124,12 +1234,12 @@ function changeTrigger(
   form: SaveDraftInput,
   setForm: (value: SaveDraftInput) => void,
   index: number,
-  patch: Partial<SaveDraftInput["triggers"][number]>,
+  patch: Partial<SaveDraftInput["triggers"][number]>
 ) {
   setForm({
     ...form,
     triggers: form.triggers.map((item, itemIndex) =>
-      itemIndex === index ? { ...item, ...patch } : item,
+      itemIndex === index ? { ...item, ...patch } : item
     ),
   })
 }
@@ -1138,12 +1248,12 @@ function changeDelivery(
   form: SaveDraftInput,
   setForm: (value: SaveDraftInput) => void,
   index: number,
-  patch: Partial<SaveDraftInput["deliveries"][number]>,
+  patch: Partial<SaveDraftInput["deliveries"][number]>
 ) {
   setForm({
     ...form,
     deliveries: form.deliveries.map((item, itemIndex) =>
-      itemIndex === index ? { ...item, ...patch } : item,
+      itemIndex === index ? { ...item, ...patch } : item
     ),
   })
 }
@@ -1156,6 +1266,17 @@ function formatDate(value: string): string {
   if (!value) return "-"
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
+}
+
+function isLegacyRoutingKey(triggerType: string, routingKey: string): boolean {
+  const value = routingKey.trim().toLowerCase()
+  if (triggerType === "dingtalk_private") {
+    return !value.startsWith("bot:") || value === "bot:"
+  }
+  if (triggerType === "dingtalk_group") {
+    return !value.startsWith("conversation:") || value === "conversation:"
+  }
+  return false
 }
 
 const selectClass =

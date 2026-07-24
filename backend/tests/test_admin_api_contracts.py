@@ -381,6 +381,11 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
         requester_id="user_local_admin",
         routing_context={"project_code": "default", "environment": "prod", "base": "guanlan"},
         session_key="ops-session",
+        business_application_id="application-ops",
+        business_application_code="operations-application",
+        conversation_mode="channel",
+        recent_message_limit=20,
+        session_policy={"conversation_mode": "channel", "retention_days": 30},
     )
     job = container.agent_repository.create_job(
         session_id=session.id,
@@ -393,6 +398,16 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
         max_retry_count=3,
         initial_status=JobStatus.FAILED,
         routing_context={"project_code": "default", "environment": "prod", "base": "guanlan"},
+        business_application_id="application-ops",
+        business_application_code="operations-application",
+        business_application_publication_id="publication-ops",
+        business_application_deployment_id="deployment-ops",
+        business_application_route_id="route-ops",
+        business_application_runtime_status="partially_wired",
+        business_application_route_decision={
+            "correlation_id": "correlation-ops",
+            "resolution_outcome": "matched",
+        },
     )
     message_id = container.agent_repository.add_message(
         session_id=session.id,
@@ -437,7 +452,13 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
     assert conversations.status_code == conversation.status_code == 200
     assert attachments.status_code == attachment_detail.status_code == 200
     assert jobs.json()["page"]["limit"] == 25
+    assert jobs.json()["items"][0]["business_application_code"] == "operations-application"
+    assert jobs.json()["items"][0]["business_application_publication_id"] == "publication-ops"
+    assert jobs.json()["items"][0]["correlation_id"] == "correlation-ops"
+    assert detail.json()["job"]["business_application_deployment_id"] == "deployment-ops"
     assert conversations.json()["page"]["limit"] == 25
+    assert conversation.json()["session"]["business_application_code"] == "operations-application"
+    assert conversation.json()["session"]["conversation_mode"] == "channel"
     assert "request_payload" not in str(detail.json())
     serialized_attachment = str(attachment_detail.json())
     assert "must-never-leak" not in serialized_attachment

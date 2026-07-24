@@ -1,7 +1,14 @@
 from __future__ import annotations
 
+import hashlib
+
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.business_application.application import BusinessApplicationResolver
+from app.modules.business_application.domain import (
+    RouteResolutionOutcome,
+    RuntimeReason,
+    RuntimeRouteResolution,
+)
 from app.modules.channel.domain.channel_event import ChannelEvent
 from app.modules.identity.application import IdentityService
 from app.modules.job.application.create_agent_job_service import (
@@ -9,7 +16,7 @@ from app.modules.job.application.create_agent_job_service import (
     CreateAgentJobService,
 )
 from app.modules.job.domain.agent_job import AgentJob
-from app.shared.exceptions import PermissionDenied
+from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
 
 
 class ChannelIngressService:
@@ -77,89 +84,297 @@ class ChannelIngressService:
                 "DingTalk external identity descriptor is required",
                 safe_message="DingTalk identity could not be verified",
             )
-        runtime = self._resolve_business_application(event)
-        snapshot = ((runtime or {}).get("publication") or {}).get("snapshot") or {}
+        resolution = self._resolve_business_application(event)
+        runtime = (
+            resolution.to_dict()
+            if resolution is not None and resolution.outcome == RouteResolutionOutcome.MATCHED
+            else {}
+        )
+        snapshot = (runtime.get("publication") or {}).get("snapshot") or {}
         session_policy = snapshot.get("session_policy") or {}
         agent = snapshot.get("agent") or {}
-        return self.create_job_service.execute(
-            CreateAgentJobCommand(
-                idempotency_key=event.effective_idempotency_key,
-                requester_id=requester_id,
-                requester_display_name=str(event.source.metadata.get("display_name") or ""),
-                external_conversation_id=event.source.conversation_id,
-                user_message=event.message,
-                project_code=event.routing.project_code,
-                source_channel=event.source.type,
-                source_connector_id=event.source.connector_id,
-                external_event_id=event.source.event_id,
-                routing_context=event.routing.to_dict(),
-                reply_route=event.delivery.to_dict(),
-                correlation_id=event.correlation_id,
-                external_message_id=str(event.source.metadata.get("message_id") or ""),
-                conversation_type=str(
-                    event.source.metadata.get("conversation_type") or "direct"
-                ),
-                bot_identity=str(event.source.metadata.get("bot_identity") or ""),
-                attachments=event.attachments,
-                external_identity_id=external_identity_id,
-                agent_code=event.agent_code or str(agent.get("code") or ""),
-                fixed_agent_publication_id=(
-                    event.agent_publication_id
-                    or str(agent.get("id") or "")
-                ),
-                fixed_agent_revision=(
-                    event.agent_revision
-                    if event.agent_revision is not None
-                    else (
-                        int(agent["revision"])
-                        if agent.get("revision") is not None
-                        else None
-                    )
-                ),
-                fixed_agent_config_hash=(
-                    event.agent_config_hash
-                    or str(agent.get("config_hash") or "")
-                ),
-                continuous_conversation_enabled=(
-                    bool(session_policy["continuous_conversation_enabled"])
-                    if "continuous_conversation_enabled" in session_policy
-                    else None
-                ),
-                attachments_enabled=(
-                    bool(session_policy["attachments_enabled"])
-                    if "attachments_enabled" in session_policy
-                    else None
-                ),
-                webhook_event_id=event.webhook_event_id,
-                webhook_trigger_id=event.webhook_trigger_id,
-                webhook_trigger_publication_id=event.webhook_trigger_publication_id,
+        self._assert_application_agent_precedence(event, resolution, agent)
+        self._assert_application_delivery(event, resolution, snapshot)
+        application = runtime.get("application") or {}
+        publication = runtime.get("publication") or {}
+        deployment = runtime.get("deployment") or {}
+        route = runtime.get("route") or {}
+        command = CreateAgentJobCommand(
+            idempotency_key=event.effective_idempotency_key,
+            requester_id=requester_id,
+            requester_display_name=str(event.source.metadata.get("display_name") or ""),
+            external_conversation_id=event.source.conversation_id,
+            user_message=event.message,
+            project_code=event.routing.project_code,
+            source_channel=event.source.type,
+            source_connector_id=event.source.connector_id,
+            external_event_id=event.source.event_id,
+            routing_context=event.routing.to_dict(),
+            reply_route=event.delivery.to_dict(),
+            correlation_id=event.correlation_id,
+            external_message_id=str(event.source.metadata.get("message_id") or ""),
+            conversation_type=str(event.source.metadata.get("conversation_type") or "direct"),
+            bot_identity=str(event.source.metadata.get("bot_identity") or ""),
+            attachments=event.attachments,
+            external_identity_id=external_identity_id,
+            agent_code=(
+                str(agent.get("code") or "")
+                if resolution is not None and resolution.outcome == RouteResolutionOutcome.MATCHED
+                else event.agent_code
+            ),
+            fixed_agent_publication_id=(
+                str(agent.get("id") or "")
+                if resolution is not None and resolution.outcome == RouteResolutionOutcome.MATCHED
+                else event.agent_publication_id
+            ),
+            fixed_agent_revision=(
+                int(agent["revision"])
+                if resolution is not None
+                and resolution.outcome == RouteResolutionOutcome.MATCHED
+                and agent.get("revision") is not None
+                else event.agent_revision
+            ),
+            fixed_agent_config_hash=(
+                str(agent.get("config_hash") or "")
+                if resolution is not None and resolution.outcome == RouteResolutionOutcome.MATCHED
+                else event.agent_config_hash
+            ),
+            continuous_conversation_enabled=(
+                bool(session_policy["continuous_conversation_enabled"])
+                if "continuous_conversation_enabled" in session_policy
+                else None
+            ),
+            attachments_enabled=(
+                bool(session_policy["attachments_enabled"])
+                if "attachments_enabled" in session_policy
+                else None
+            ),
+            webhook_event_id=event.webhook_event_id,
+            webhook_trigger_id=event.webhook_trigger_id,
+            webhook_trigger_publication_id=event.webhook_trigger_publication_id,
+            business_application_id=str(application.get("id") or ""),
+            business_application_code=str(application.get("code") or ""),
+            business_application_publication_id=str(publication.get("id") or ""),
+            business_application_deployment_id=str(deployment.get("id") or ""),
+            business_application_route_id=str(route.get("id") or ""),
+            business_application_config_hash=str(publication.get("config_hash") or ""),
+            business_application_runtime_status=str(runtime.get("runtime_status") or ""),
+            business_application_route_decision=self._safe_route_decision(event, resolution),
+            conversation_mode=str(session_policy.get("conversation_mode") or "legacy"),
+            recent_message_limit=(
+                int(session_policy["recent_message_limit"])
+                if session_policy.get("recent_message_limit") is not None
+                else None
+            ),
+            session_policy=dict(session_policy),
+        )
+        job = self.create_job_service.execute(command)
+        if resolution is not None and resolution.outcome == RouteResolutionOutcome.MATCHED:
+            self.audit_service.record(
+                "business_application.route.job_created",
+                status="SUCCEEDED",
+                summary="Business Application route created an Agent job",
+                job_id=job.id,
+                actor_id=requester_id,
+                payload={
+                    **self._safe_route_decision(event, resolution),
+                    "job_id": job.id,
+                },
             )
-        )
+        return job
 
-    def _resolve_business_application(
-        self, event: ChannelEvent
-    ) -> dict[str, object] | None:
+    def _resolve_business_application(self, event: ChannelEvent) -> RuntimeRouteResolution | None:
+        if event.source.type != "dingding_stream":
+            return None
         if self.business_application_resolver is None:
-            return None
+            self.audit_service.record(
+                "business_application.route.blocked",
+                status="FAILED",
+                summary="Business Application runtime is unavailable",
+                actor_id=event.source.actor_id,
+                payload={
+                    "correlation_id": event.correlation_id or "",
+                    "external_event_id": event.source.event_id,
+                    "source_connector_id": event.source.connector_id,
+                    "reason_code": RuntimeReason.DATA_PLANE_DISABLED.value,
+                    "legacy_fallback": False,
+                },
+            )
+            raise NonRetryableExecutionError(
+                "Business Application runtime is unavailable",
+                safe_message="当前机器人未配置可用的业务应用，请联系管理员",
+                error_code=RuntimeReason.DATA_PLANE_DISABLED.value,
+            )
         trigger_type = _trigger_type(event)
-        routing_key = (
-            event.webhook_trigger_id
-            if trigger_type == "webhook"
-            else event.source.conversation_id
-        )
+        routing_key = _business_application_routing_key(event, trigger_type)
         if not routing_key:
-            return None
-        environment = _normalize_environment(
-            event.routing.environment
-            or self.runtime_environment
-            or "local"
-        )
-        return self.business_application_resolver.resolve_trigger_optional(
+            self.audit_service.record(
+                "business_application.route.not_matched",
+                status="FAILED",
+                summary="No trusted Business Application routing identity is available",
+                actor_id=event.source.actor_id,
+                payload={
+                    "correlation_id": event.correlation_id or "",
+                    "external_event_id": event.source.event_id,
+                    "source_connector_id": event.source.connector_id,
+                    "trigger_type": trigger_type,
+                    "reason_code": RuntimeReason.ROUTE_NOT_MATCHED.value,
+                    "legacy_fallback": False,
+                },
+            )
+            raise NonRetryableExecutionError(
+                "No trusted Business Application routing identity is available",
+                safe_message="当前机器人未配置可用的业务应用，请联系管理员",
+                error_code=RuntimeReason.ROUTE_NOT_MATCHED.value,
+            )
+        environment = "local"
+        resolution = self.business_application_resolver.resolve_route(
             environment,
             trigger_type,
             event.source.connector_id,
             routing_key,
         )
+        event_type = f"business_application.route.{resolution.outcome.value}"
+        status = (
+            "SUCCEEDED"
+            if resolution.outcome == RouteResolutionOutcome.MATCHED
+            else (
+                "SKIPPED" if resolution.outcome == RouteResolutionOutcome.NOT_MATCHED else "FAILED"
+            )
+        )
+        self.audit_service.record(
+            event_type,
+            status=status,
+            summary=resolution.message,
+            actor_id=event.source.actor_id,
+            payload=self._safe_route_decision(event, resolution),
+        )
+        if resolution.outcome == RouteResolutionOutcome.BLOCKED:
+            raise NonRetryableExecutionError(
+                resolution.message,
+                safe_message="Business Application configuration is temporarily unavailable",
+                error_code=resolution.reason_code,
+            )
+        if resolution.outcome == RouteResolutionOutcome.NOT_MATCHED:
+            raise NonRetryableExecutionError(
+                resolution.message,
+                safe_message="当前机器人未配置可用的业务应用，请联系管理员",
+                error_code=RuntimeReason.ROUTE_NOT_MATCHED.value,
+            )
+        return resolution
+
+    @staticmethod
+    def _assert_application_agent_precedence(
+        event: ChannelEvent,
+        resolution: RuntimeRouteResolution | None,
+        agent: dict[str, object],
+    ) -> None:
+        if resolution is None or resolution.outcome != RouteResolutionOutcome.MATCHED:
+            return
+        conflicts = (
+            (bool(event.agent_code) and event.agent_code != str(agent.get("code") or ""))
+            or (
+                bool(event.agent_publication_id)
+                and event.agent_publication_id != str(agent.get("id") or "")
+            )
+            or (
+                event.agent_revision is not None
+                and event.agent_revision != int(str(agent.get("revision") or 0))
+            )
+            or (
+                bool(event.agent_config_hash)
+                and event.agent_config_hash != str(agent.get("config_hash") or "")
+            )
+        )
+        if conflicts:
+            raise NonRetryableExecutionError(
+                "Channel Agent configuration conflicts with Business Application",
+                safe_message="Business Application Agent configuration is inconsistent",
+                error_code=RuntimeReason.AGENT_OVERRIDE_CONFLICT.value,
+            )
+
+    @staticmethod
+    def _assert_application_delivery(
+        event: ChannelEvent,
+        resolution: RuntimeRouteResolution | None,
+        snapshot: dict[str, object],
+    ) -> None:
+        if resolution is None or resolution.outcome != RouteResolutionOutcome.MATCHED:
+            return
+        raw_deliveries = snapshot.get("deliveries")
+        deliveries = raw_deliveries if isinstance(raw_deliveries, list) else []
+        bindings = [
+            value
+            for value in deliveries
+            if isinstance(value, dict)
+            and bool(value.get("enabled", True))
+            and str(value.get("delivery_type") or "") == "reply_original"
+        ]
+        if len(bindings) != 1:
+            raise NonRetryableExecutionError(
+                "Business Application reply-original delivery is invalid",
+                safe_message="Business Application result delivery is unavailable",
+                error_code=RuntimeReason.MISSING_DELIVERY_BINDING.value,
+            )
+        if str(bindings[0].get("connector_id") or "") != event.source.connector_id:
+            raise NonRetryableExecutionError(
+                "Business Application delivery connector does not match ingress",
+                safe_message="Business Application result delivery is unavailable",
+                error_code=RuntimeReason.DELIVERY_CONNECTOR_MISMATCH.value,
+            )
+        if event.delivery.type != "dingtalk_stream_session_webhook":
+            raise NonRetryableExecutionError(
+                "Business Application requires DingTalk reply-original delivery",
+                safe_message="The original DingTalk session cannot receive the result",
+                error_code=RuntimeReason.UNSUPPORTED_DELIVERY.value,
+            )
+
+    @staticmethod
+    def _safe_route_decision(
+        event: ChannelEvent,
+        resolution: RuntimeRouteResolution | None,
+    ) -> dict[str, object]:
+        route = resolution.route if resolution is not None else None
+        application = resolution.application if resolution is not None else None
+        deployment = resolution.deployment if resolution is not None else None
+        publication = resolution.publication if resolution is not None else None
+        trigger_type = _trigger_type(event)
+        routing_key = _business_application_routing_key(event, trigger_type)
+        return {
+            "correlation_id": event.correlation_id or "",
+            "external_event_id": event.source.event_id,
+            "deployment_environment": _normalize_environment(
+                str((deployment or {}).get("environment") or "")
+            ),
+            "trigger_type": trigger_type,
+            "source_connector_id": event.source.connector_id,
+            "routing_key_hash": (
+                hashlib.sha256(routing_key.encode()).hexdigest() if routing_key else ""
+            ),
+            "resolution_outcome": (
+                resolution.outcome.value
+                if resolution is not None
+                else RouteResolutionOutcome.NOT_MATCHED.value
+            ),
+            "reason_code": (
+                resolution.reason_code
+                if resolution is not None
+                else RuntimeReason.ROUTE_NOT_MATCHED.value
+            ),
+            "business_application_code": str((application or {}).get("code") or ""),
+            "business_application_publication_id": str((publication or {}).get("id") or ""),
+            "business_application_deployment_id": str((deployment or {}).get("id") or ""),
+            "business_application_route_id": str((route or {}).get("id") or ""),
+            "runtime_status": (
+                resolution.readiness.runtime_status.value if resolution is not None else "not_wired"
+            ),
+            "runtime_components": (
+                resolution.readiness.to_dict().get("runtime_components", {})
+                if resolution is not None
+                else {}
+            ),
+            "legacy_fallback": False,
+        }
 
 
 def _trigger_type(event: ChannelEvent) -> str:
@@ -172,6 +387,16 @@ def _trigger_type(event: ChannelEvent) -> str:
     if str(event.source.metadata.get("conversation_type") or "").lower() == "group":
         return "dingtalk_group"
     return "dingtalk_private"
+
+
+def _business_application_routing_key(event: ChannelEvent, trigger_type: str) -> str:
+    if trigger_type == "dingtalk_private":
+        identity = str(event.source.metadata.get("bot_identity") or "").strip().lower()
+        return f"bot:{identity}" if identity else ""
+    if trigger_type == "dingtalk_group":
+        identity = event.source.conversation_id.strip().lower()
+        return f"conversation:{identity}" if identity else ""
+    return ""
 
 
 def _normalize_environment(value: str) -> str:

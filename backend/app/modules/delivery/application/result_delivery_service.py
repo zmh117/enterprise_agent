@@ -70,6 +70,8 @@ class ResultDeliveryService:
     def _deliver(self, *, job_id: str, route: ReplyRoute, title: str, text: str) -> None:
         if self.has_completed_delivery(job_id):
             return
+        job = self.repository.get_job(job_id)
+        runtime_context = _runtime_context(job)
         connector: Connector | None = None
         if route.type != "none" and route.connector_id:
             try:
@@ -79,7 +81,11 @@ class ResultDeliveryService:
                     status="SUCCEEDED",
                     summary="Delivery connector authorized",
                     job_id=job_id,
-                    payload={"route_type": route.type, "connector_id": route.connector_id},
+                    payload={
+                        "route_type": route.type,
+                        "connector_id": route.connector_id,
+                        **runtime_context,
+                    },
                 )
                 endpoint = self.connector_registry.endpoint_url(connector)
                 self.connector_registry.assert_host_allowed(connector, endpoint)
@@ -99,7 +105,11 @@ class ResultDeliveryService:
             status="STARTED",
             summary="Result delivery started",
             job_id=job_id,
-            payload={"route_type": route.type, "connector_id": route.connector_id},
+            payload={
+                "route_type": route.type,
+                "connector_id": route.connector_id,
+                **runtime_context,
+            },
         )
         if route.type == "none":
             self.repository.update_delivery_attempt(attempt_id, status="SKIPPED")
@@ -108,7 +118,7 @@ class ResultDeliveryService:
                 status="SKIPPED",
                 summary="Delivery route is none",
                 job_id=job_id,
-                payload={"attempt_id": attempt_id},
+                payload={"attempt_id": attempt_id, **runtime_context},
             )
             return
         adapter = self.adapters.get(route.type, self.adapters.get("webhook", NoneDeliveryAdapter()))
@@ -135,6 +145,7 @@ class ResultDeliveryService:
                         "attempt_id": attempt_id,
                         "chunk_index": index,
                         "chunk_count": len(chunks),
+                        **runtime_context,
                     },
                 )
             except Exception as exc:
@@ -155,7 +166,11 @@ class ResultDeliveryService:
                     status="FAILED",
                     summary=safe_message,
                     job_id=job_id,
-                    payload={"attempt_id": attempt_id, "chunk_index": index},
+                    payload={
+                        "attempt_id": attempt_id,
+                        "chunk_index": index,
+                        **runtime_context,
+                    },
                 )
                 return
         self.repository.update_delivery_attempt(attempt_id, status="SUCCEEDED")
@@ -164,11 +179,16 @@ class ResultDeliveryService:
             status="SUCCEEDED",
             summary="Result delivery completed",
             job_id=job_id,
-            payload={"attempt_id": attempt_id, "chunk_count": len(chunks)},
+            payload={
+                "attempt_id": attempt_id,
+                "chunk_count": len(chunks),
+                **runtime_context,
+            },
         )
 
     def _record_config_failure(self, job_id: str, route: ReplyRoute, exc: Exception) -> None:
         safe_message = getattr(exc, "safe_message", str(exc))
+        runtime_context = _runtime_context(self.repository.get_job(job_id))
         attempt_id = self.repository.add_delivery_attempt(
             job_id=job_id,
             route_type=route.type,
@@ -186,6 +206,7 @@ class ResultDeliveryService:
                 "attempt_id": attempt_id,
                 "route_type": route.type,
                 "connector_id": route.connector_id,
+                **runtime_context,
             },
         )
 
@@ -228,3 +249,19 @@ def _safe_failure_message(reason: str) -> str:
     if any(token in lowered for token in ("token", "secret", "api_key", "authorization", "http")):
         return "Agent 运行失败，系统已记录脱敏诊断信息，请联系管理员并提供 Job 标识。"
     return reason[:500] or "Agent 运行失败，请联系管理员并提供 Job 标识。"
+
+
+def _runtime_context(job: Any) -> dict[str, str]:
+    decision = (
+        job.business_application_route_decision
+        if isinstance(job.business_application_route_decision, dict)
+        else {}
+    )
+    return {
+        "correlation_id": str(decision.get("correlation_id") or ""),
+        "external_event_id": job.external_event_id,
+        "business_application_code": job.business_application_code,
+        "business_application_publication_id": (job.business_application_publication_id),
+        "business_application_deployment_id": (job.business_application_deployment_id),
+        "business_application_route_id": job.business_application_route_id,
+    }

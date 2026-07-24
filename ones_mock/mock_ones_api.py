@@ -1,0 +1,514 @@
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
+
+import yaml
+from fastapi import FastAPI, Header, HTTPException, Query
+from pydantic import BaseModel, Field
+
+
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().with_name("mock.yaml")
+
+
+@dataclass(frozen=True)
+class MockOnesUser:
+    email: str
+    password: str
+    uuid: str
+    name: str
+    token: str
+
+
+@dataclass(frozen=True)
+class MockOnesConfig:
+    users: tuple[MockOnesUser, ...]
+    team_uuid: str
+    team_name: str
+    project_uuid: str
+    project_name: str
+    project_scope_uuid: str
+    project_scope_name_pinyin: str
+    invalid_response_email: str
+    issue_types: dict[str, dict[str, Any]]
+    priorities: dict[str, dict[str, Any]]
+    statuses: dict[str, dict[str, Any]]
+    tasks: tuple[dict[str, Any], ...]
+
+    @property
+    def primary_user(self) -> MockOnesUser:
+        if not self.users:
+            raise ValueError("mock.yaml must define at least one user")
+        return self.users[0]
+
+    def find_user_by_credentials(self, email: str, password: str) -> MockOnesUser | None:
+        for user in self.users:
+            if user.email == email and user.password == password:
+                return user
+        return None
+
+    def find_user_by_auth(self, *, token: str, user_uuid: str) -> MockOnesUser | None:
+        for user in self.users:
+            if user.token == token and user.uuid == user_uuid:
+                return user
+        return None
+
+    def user_by_uuid(self, user_uuid: str) -> MockOnesUser | None:
+        for user in self.users:
+            if user.uuid == user_uuid:
+                return user
+        return None
+
+
+@dataclass(frozen=True)
+class MockOnesSettings:
+    """Compatibility view used by unit tests (primary user + shared team/project)."""
+
+    config: MockOnesConfig = field(default_factory=lambda: load_config())
+
+    @property
+    def email(self) -> str:
+        return self.config.primary_user.email
+
+    @property
+    def password(self) -> str:
+        return self.config.primary_user.password
+
+    @property
+    def user_uuid(self) -> str:
+        return self.config.primary_user.uuid
+
+    @property
+    def user_name(self) -> str:
+        return self.config.primary_user.name
+
+    @property
+    def token(self) -> str:
+        return self.config.primary_user.token
+
+    @property
+    def team_uuid(self) -> str:
+        return self.config.team_uuid
+
+    @property
+    def team_name(self) -> str:
+        return self.config.team_name
+
+    @property
+    def project_scope_uuid(self) -> str:
+        return self.config.project_scope_uuid
+
+    @property
+    def invalid_response_email(self) -> str:
+        return self.config.invalid_response_email
+
+    @classmethod
+    def from_environment(cls) -> MockOnesSettings:
+        return cls(config=load_config())
+
+
+def _require_mapping(value: object, field_name: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_name} must be a mapping")
+    return value
+
+
+def _require_str(value: object, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} must be a non-empty string")
+    return value.strip()
+
+
+def _require_int(value: object, field_name: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"{field_name} must be an integer")
+    return value
+
+
+def load_config(path: str | Path | None = None) -> MockOnesConfig:
+    config_path = Path(path or os.getenv("ONES_MOCK_CONFIG") or DEFAULT_CONFIG_PATH)
+    if not config_path.is_file():
+        raise FileNotFoundError(f"ONES mock config not found: {config_path}")
+    raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    data = _require_mapping(raw, "mock.yaml")
+
+    team = _require_mapping(data.get("team"), "team")
+    project = _require_mapping(data.get("project"), "project")
+    users_raw = data.get("users")
+    if not isinstance(users_raw, list) or len(users_raw) < 1:
+        raise ValueError("users must be a non-empty list")
+
+    users: list[MockOnesUser] = []
+    seen_emails: set[str] = set()
+    seen_uuids: set[str] = set()
+    for index, item in enumerate(users_raw):
+        user_data = _require_mapping(item, f"users[{index}]")
+        email = _require_str(user_data.get("email"), f"users[{index}].email")
+        uuid = _require_str(user_data.get("uuid"), f"users[{index}].uuid")
+        if email in seen_emails:
+            raise ValueError(f"duplicate user email: {email}")
+        if uuid in seen_uuids:
+            raise ValueError(f"duplicate user uuid: {uuid}")
+        seen_emails.add(email)
+        seen_uuids.add(uuid)
+        users.append(
+            MockOnesUser(
+                email=email,
+                password=_require_str(user_data.get("password"), f"users[{index}].password"),
+                uuid=uuid,
+                name=_require_str(user_data.get("name"), f"users[{index}].name"),
+                token=_require_str(user_data.get("token"), f"users[{index}].token"),
+            )
+        )
+
+    issue_types = _require_mapping(data.get("issue_types"), "issue_types")
+    priorities = _require_mapping(data.get("priorities"), "priorities")
+    statuses = _require_mapping(data.get("statuses"), "statuses")
+    tasks_raw = data.get("tasks") or []
+    if not isinstance(tasks_raw, list):
+        raise ValueError("tasks must be a list")
+
+    tasks: list[dict[str, Any]] = []
+    for index, item in enumerate(tasks_raw):
+        task = _require_mapping(item, f"tasks[{index}]")
+        tasks.append(
+            {
+                "number": _require_int(task.get("number"), f"tasks[{index}].number"),
+                "name": _require_str(task.get("name"), f"tasks[{index}].name"),
+                "issue_type": _require_str(task.get("issue_type"), f"tasks[{index}].issue_type"),
+                "owner_uuid": _require_str(task.get("owner_uuid"), f"tasks[{index}].owner_uuid"),
+                "status": _require_str(task.get("status"), f"tasks[{index}].status"),
+                "priority": _require_str(task.get("priority"), f"tasks[{index}].priority"),
+            }
+        )
+
+    return MockOnesConfig(
+        users=tuple(users),
+        team_uuid=_require_str(team.get("uuid"), "team.uuid"),
+        team_name=_require_str(team.get("name"), "team.name"),
+        project_uuid=_require_str(project.get("uuid"), "project.uuid"),
+        project_name=_require_str(project.get("name"), "project.name"),
+        project_scope_uuid=_require_str(project.get("scope_uuid"), "project.scope_uuid"),
+        project_scope_name_pinyin=_require_str(
+            project.get("scope_name_pinyin") or "mock-project",
+            "project.scope_name_pinyin",
+        ),
+        invalid_response_email=_require_str(
+            data.get("invalid_response_email"),
+            "invalid_response_email",
+        ),
+        issue_types={
+            str(key): _require_mapping(value, f"issue_types.{key}")
+            for key, value in issue_types.items()
+        },
+        priorities={
+            str(key): _require_mapping(value, f"priorities.{key}")
+            for key, value in priorities.items()
+        },
+        statuses={
+            str(key): _require_mapping(value, f"statuses.{key}")
+            for key, value in statuses.items()
+        },
+        tasks=tuple(tasks),
+    )
+
+
+@lru_cache(maxsize=1)
+def get_default_config() -> MockOnesConfig:
+    return load_config()
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class GraphqlRequest(BaseModel):
+    query: str = Field(min_length=1)
+    variables: dict[str, Any] = Field(default_factory=dict)
+
+
+def _task_fixture(config: MockOnesConfig, task: dict[str, Any]) -> dict[str, Any]:
+    issue_type_key = str(task["issue_type"])
+    if issue_type_key not in config.issue_types:
+        raise ValueError(f"unknown issue_type: {issue_type_key}")
+    issue_type = config.issue_types[issue_type_key]
+    priority_key = str(task["priority"])
+    status_key = str(task["status"])
+    if priority_key not in config.priorities:
+        raise ValueError(f"unknown priority: {priority_key}")
+    if status_key not in config.statuses:
+        raise ValueError(f"unknown status: {status_key}")
+    priority = config.priorities[priority_key]
+    status = config.statuses[status_key]
+    owner = config.user_by_uuid(str(task["owner_uuid"]))
+    owner_name = owner.name if owner is not None else "Mock Owner"
+    owner_uuid = str(task["owner_uuid"])
+    number = int(task["number"])
+    task_uuid = f"MOCK-ONES-TASK-{number}"
+    return {
+        "_MOCK_CUSTOM_FIELD": None,
+        "createTime": 1784736000000000 + number,
+        "deadline": None,
+        "estimatedHours": 0,
+        "issueType": {
+            "manhourStatisticMode": 0,
+            "uuid": issue_type["uuid"],
+        },
+        "issueTypeScope": {"uuid": issue_type["scope_uuid"]},
+        "key": f"task-{task_uuid}",
+        "name": task["name"],
+        "number": number,
+        "owner": {
+            "avatar": "",
+            "key": f"user-{owner_uuid}",
+            "name": owner_name,
+            "uuid": owner_uuid,
+        },
+        "parent": {"uuid": ""},
+        "path": task_uuid,
+        "position": 0,
+        "priority": {
+            "bgColor": priority.get("bg_color") or "#e8f5e9",
+            "color": priority.get("color") or "#2e7d32",
+            "position": int(priority.get("position") or 0),
+            "uuid": priority["uuid"],
+            "value": priority["value"],
+        },
+        "project": {
+            "key": f"project-{config.project_uuid}",
+            "name": config.project_name,
+            "uuid": config.project_uuid,
+        },
+        "remainingManhour": 0,
+        "serverUpdateStamp": 1784736001000000 + number,
+        "status": {
+            "category": status["category"],
+            "name": status["name"],
+            "uuid": status["uuid"],
+        },
+        "subIssueType": None,
+        "subTaskCount": 0,
+        "subTaskDoneCount": 0,
+        "subTasks": [],
+        "totalEstimatedHours": 0,
+        "totalRemainingHours": 0,
+        "uuid": task_uuid,
+    }
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
+def _issue_type_filter(variables: dict[str, Any]) -> set[str]:
+    groups = variables.get("filterGroup")
+    if not isinstance(groups, list):
+        return set()
+    values: set[str] = set()
+    for group in groups:
+        if isinstance(group, dict):
+            values.update(_string_list(group.get("issueType_in")))
+    return values
+
+
+def _search_keyword(variables: dict[str, Any]) -> str:
+    search = variables.get("search")
+    if not isinstance(search, dict):
+        return ""
+    keyword = search.get("keyword")
+    return keyword.strip() if isinstance(keyword, str) else ""
+
+
+def _page_limit(variables: dict[str, Any]) -> int:
+    pagination = variables.get("pagination")
+    if not isinstance(pagination, dict):
+        return 500
+    limit = pagination.get("limit")
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
+        return 500
+    return min(limit, 1000)
+
+
+def _matches_keyword(task: dict[str, Any], keyword: str) -> bool:
+    normalized = keyword.removeprefix("#").strip().casefold()
+    if not normalized:
+        return True
+    return (
+        normalized in str(task["number"]).casefold() or normalized in str(task["name"]).casefold()
+    )
+
+
+def _group_task_data(config: MockOnesConfig, variables: dict[str, Any]) -> dict[str, Any]:
+    issue_types = _issue_type_filter(variables)
+    keyword = _search_keyword(variables)
+    tasks = [
+        fixture
+        for fixture in (_task_fixture(config, task) for task in config.tasks)
+        if (not issue_types or str(fixture["issueType"]["uuid"]) in issue_types)
+        and _matches_keyword(fixture, keyword)
+    ]
+    total_count = len(tasks)
+    tasks = tasks[: _page_limit(variables)]
+    count = len(tasks)
+    start_cursor = f"mock-cursor-{tasks[0]['number']}" if tasks else ""
+    end_cursor = f"mock-cursor-{tasks[-1]['number']}" if tasks else ""
+    return {
+        "data": {
+            "buckets": [
+                {
+                    "key": "bucket.0.__all",
+                    "pageInfo": {
+                        "count": count,
+                        "totalCount": total_count,
+                        "startPos": 0 if tasks else -1,
+                        "startCursor": start_cursor,
+                        "endPos": count - 1,
+                        "endCursor": end_cursor,
+                        "hasNextPage": total_count > count,
+                        "preciseCount": total_count,
+                    },
+                    "tasks": tasks,
+                }
+            ]
+        }
+    }
+
+
+def _issue_type_scopes(config: MockOnesConfig, variables: dict[str, Any]) -> dict[str, Any]:
+    requested_scope: str | None = None
+    requested_scope_type: int | None = None
+    filters = variables.get("filter")
+    if isinstance(filters, dict):
+        scope = filters.get("scope_equal")
+        scope_type = filters.get("scopeType_equal")
+        requested_scope = scope if isinstance(scope, str) else None
+        requested_scope_type = scope_type if isinstance(scope_type, int) else None
+
+    if requested_scope not in {None, config.project_scope_uuid} or requested_scope_type not in {
+        None,
+        1,
+    }:
+        return {"data": {"issueTypeScopes": []}}
+
+    scopes = []
+    for issue_type in config.issue_types.values():
+        scopes.append(
+            {
+                "issueType": {
+                    "builtIn": False,
+                    "detailType": issue_type["detail_type"],
+                    "icon": issue_type["icon"],
+                    "key": f"issue_type-{issue_type['uuid']}",
+                    "name": issue_type["name"],
+                    "namePinyin": issue_type["name_pinyin"],
+                    "subIssueType": False,
+                    "uuid": issue_type["uuid"],
+                },
+                "name": issue_type["name"],
+                "namePinyin": issue_type["name_pinyin"],
+                "scope": config.project_scope_uuid,
+                "scopeName": config.project_name,
+                "scopeNamePinyin": config.project_scope_name_pinyin,
+                "scopeType": 1,
+                "scopeTypeName": "项目",
+                "text": f"{issue_type['name']} 项目 {config.project_name}",
+                "uuid": issue_type["scope_uuid"],
+            }
+        )
+    return {"data": {"issueTypeScopes": scopes}}
+
+
+def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> FastAPI:
+    if settings is None:
+        config = get_default_config()
+    elif isinstance(settings, MockOnesSettings):
+        config = settings.config
+    else:
+        config = settings
+
+    app = FastAPI(title="Mock ONES API", version="0.2.0")
+    app.state.ones_mock_config = config
+
+    @app.get("/health")
+    async def health() -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "service": "ones-mock",
+            "users": len(config.users),
+        }
+
+    @app.post("/project/api/project/auth/login")
+    async def login(payload: LoginRequest) -> dict[str, Any]:
+        if payload.email == config.invalid_response_email:
+            return {
+                "user": {"name": "Invalid Mock User"},
+                "teams": "invalid",
+            }
+        user = config.find_user_by_credentials(payload.email, payload.password)
+        if user is None:
+            raise HTTPException(
+                status_code=401,
+                detail={"code": "invalid_credentials", "message": "invalid email or password"},
+            )
+        return {
+            "user": {
+                "uuid": user.uuid,
+                "email": user.email,
+                "name": user.name,
+                "token": user.token,
+            },
+            "teams": [
+                {
+                    "uuid": config.team_uuid,
+                    "name": config.team_name,
+                }
+            ],
+        }
+
+    @app.post("/project/api/project/team/{team_uuid}/items/graphql")
+    async def graphql(
+        team_uuid: str,
+        payload: GraphqlRequest,
+        query_type: str = Query(alias="t"),
+        ones_auth_token: str | None = Header(default=None, alias="Ones-Auth-Token"),
+        ones_user_id: str | None = Header(default=None, alias="Ones-User-Id"),
+    ) -> dict[str, Any]:
+        user = config.find_user_by_auth(
+            token=str(ones_auth_token or ""),
+            user_uuid=str(ones_user_id or ""),
+        )
+        if user is None:
+            raise HTTPException(
+                status_code=401,
+                detail={"code": "unauthorized", "message": "invalid ONES auth headers"},
+            )
+        if team_uuid != config.team_uuid:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "team_not_found", "message": "mock team does not exist"},
+            )
+        if query_type == "group-task-data":
+            return _group_task_data(config, payload.variables)
+        if query_type == "issueTypeScopes":
+            return _issue_type_scopes(config, payload.variables)
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "unsupported_query_type",
+                "message": f"unsupported mock query type: {query_type}",
+            },
+        )
+
+    return app
+
+
+try:
+    MOCK_ISSUE_TYPES = get_default_config().issue_types
+except FileNotFoundError:
+    MOCK_ISSUE_TYPES = {}

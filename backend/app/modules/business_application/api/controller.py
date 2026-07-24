@@ -27,6 +27,36 @@ class ValidationResponse(BaseModel):
     errors: list[ValidationErrorResponse] = Field(default_factory=list)
 
 
+class RuntimeComponentResponse(BaseModel):
+    status: Literal[
+        "wired",
+        "partially_wired",
+        "stored_only",
+        "unsupported",
+        "blocked",
+    ]
+    reason_code: str
+    message: str
+    fields: dict[str, str] = Field(default_factory=dict)
+
+
+class RuntimeStateResponse(BaseModel):
+    runtime_wired: bool = False
+    runtime_status: Literal[
+        "not_wired",
+        "partially_wired",
+        "wired",
+        "blocked",
+    ] = "not_wired"
+    runtime_environment: str = ""
+    deployment_environment: str = ""
+    reason_code: str = "no_active_deployment"
+    message: str = ""
+    runtime_components: dict[str, RuntimeComponentResponse] = Field(default_factory=dict)
+    affected_routes: list[dict[str, str]] = Field(default_factory=list)
+    legacy_fallback_enabled: bool = False
+
+
 class TriggerResponse(BaseModel):
     trigger_type: str
     connector_id: str
@@ -70,7 +100,7 @@ class RevisionResponse(BaseModel):
     updated_at: str = ""
 
 
-class PublicationResponse(BaseModel):
+class PublicationResponse(RuntimeStateResponse):
     id: str
     application_id: str
     revision_id: str
@@ -82,7 +112,7 @@ class PublicationResponse(BaseModel):
     published_at: str
 
 
-class DeploymentResponse(BaseModel):
+class DeploymentResponse(RuntimeStateResponse):
     id: str
     application_id: str
     environment: str
@@ -94,10 +124,9 @@ class DeploymentResponse(BaseModel):
     deactivated_by: str = ""
     deactivated_at: str = ""
     updated_at: str = ""
-    runtime_wired: bool = False
 
 
-class ApplicationSummaryResponse(BaseModel):
+class ApplicationSummaryResponse(RuntimeStateResponse):
     id: str
     code: str
     name: str
@@ -108,7 +137,6 @@ class ApplicationSummaryResponse(BaseModel):
     revision: int
     latest_publication_revision: int | None = None
     active_environments: list[str] = Field(default_factory=list)
-    runtime_wired: bool = False
 
 
 class ApplicationResponse(ApplicationSummaryResponse):
@@ -118,30 +146,27 @@ class ApplicationResponse(ApplicationSummaryResponse):
     capability_catalog_connected: bool = False
 
 
-class ApplicationListResponse(BaseModel):
+class ApplicationListResponse(RuntimeStateResponse):
     items: list[ApplicationSummaryResponse]
-    runtime_wired: bool = False
 
 
 class ApplicationEnvelope(BaseModel):
     application: ApplicationResponse
 
 
-class RevisionEnvelope(BaseModel):
+class RevisionEnvelope(RuntimeStateResponse):
     revision: RevisionResponse
-    runtime_wired: bool = False
 
 
-class PublicationEnvelope(BaseModel):
+class PublicationEnvelope(RuntimeStateResponse):
     publication: PublicationResponse
-    runtime_wired: bool = False
 
 
 class DeploymentEnvelope(BaseModel):
     deployment: DeploymentResponse
 
 
-class PublicationListResponse(BaseModel):
+class PublicationListResponse(RuntimeStateResponse):
     items: list[PublicationResponse]
 
 
@@ -170,11 +195,10 @@ class EffectiveApplicationResponse(BaseModel):
     project_code: str
 
 
-class EffectiveResponse(BaseModel):
+class EffectiveResponse(RuntimeStateResponse):
     application: EffectiveApplicationResponse
     deployment: DeploymentResponse
     publication: PublicationResponse
-    runtime_wired: bool = False
 
 
 class CreateApplicationRequest(StrictRequest):
@@ -249,9 +273,7 @@ class SaveDraftRequest(StrictRequest):
     agent_publication_id: str = Field(default="", max_length=200)
     workflow_publication_id: str = Field(default="", max_length=200)
     session_policy: SessionPolicyRequest = Field(default_factory=SessionPolicyRequest)
-    execution_policy: ExecutionPolicyRequest = Field(
-        default_factory=ExecutionPolicyRequest
-    )
+    execution_policy: ExecutionPolicyRequest = Field(default_factory=ExecutionPolicyRequest)
     triggers: list[TriggerRequest] = Field(default_factory=list, max_length=20)
     deliveries: list[DeliveryRequest] = Field(default_factory=list, max_length=20)
     capabilities: list[CapabilityRequest] = Field(default_factory=list, max_length=100)
@@ -283,13 +305,16 @@ def build_business_application_router() -> APIRouter:
     @router.get("/_status")
     def status(request: Request) -> dict[str, Any]:
         principal = current_principal(request)
+        runtime = (
+            container(request).business_application_service.runtime_evaluator.empty().to_dict()
+        )
         return {
             "enabled": bool(
                 container(
                     request
                 ).settings.feature_configuration.business_application_control_plane_enabled
             ),
-            "runtime_wired": False,
+            **runtime,
             "subject_id": principal.user_id,
         }
 
@@ -313,12 +338,10 @@ def build_business_application_router() -> APIRouter:
             )
         except Exception as exc:
             raise _http_error(exc) from exc
-        return {"items": values, "runtime_wired": False}
+        return {"items": values, **_aggregate_runtime(values, request)}
 
     @router.post("", response_model=ApplicationEnvelope)
-    def create_application(
-        request: Request, payload: CreateApplicationRequest
-    ) -> dict[str, Any]:
+    def create_application(request: Request, payload: CreateApplicationRequest) -> dict[str, Any]:
         _require_enabled(request)
         principal = _write_principal(request)
         try:
@@ -361,9 +384,7 @@ def build_business_application_router() -> APIRouter:
         return {"application": application}
 
     @router.put("/{code}/draft", response_model=RevisionEnvelope)
-    def save_draft(
-        request: Request, code: str, payload: SaveDraftRequest
-    ) -> dict[str, Any]:
+    def save_draft(request: Request, code: str, payload: SaveDraftRequest) -> dict[str, Any]:
         _require_enabled(request)
         principal = _write_principal(request)
         body = payload.model_dump()
@@ -377,7 +398,10 @@ def build_business_application_router() -> APIRouter:
             )
         except Exception as exc:
             raise _http_error(exc) from exc
-        return {"revision": revision, "runtime_wired": False}
+        return {
+            "revision": revision,
+            **container(request).business_application_service.runtime_evaluator.empty().to_dict(),
+        }
 
     @router.post("/{code}/validate", response_model=RevisionEnvelope)
     def validate_application(
@@ -393,12 +417,13 @@ def build_business_application_router() -> APIRouter:
             )
         except Exception as exc:
             raise _http_error(exc) from exc
-        return {"revision": revision}
+        return {
+            "revision": revision,
+            **container(request).business_application_service.runtime_evaluator.empty().to_dict(),
+        }
 
     @router.post("/{code}/publish", response_model=PublicationEnvelope)
-    def publish_application(
-        request: Request, code: str, payload: PublishRequest
-    ) -> dict[str, Any]:
+    def publish_application(request: Request, code: str, payload: PublishRequest) -> dict[str, Any]:
         _require_enabled(request)
         principal = _write_principal(request)
         try:
@@ -409,7 +434,11 @@ def build_business_application_router() -> APIRouter:
             )
         except Exception as exc:
             raise _http_error(exc) from exc
-        return {"publication": publication, "runtime_wired": False}
+        runtime = container(request).business_application_service.runtime_evaluator.evaluate(
+            snapshot=dict(publication.get("snapshot") or {}),
+            deployment=None,
+        )
+        return {"publication": publication, **runtime.to_dict()}
 
     @router.get("/{code}/publications", response_model=PublicationListResponse)
     def publications(request: Request, code: str) -> dict[str, Any]:
@@ -423,7 +452,7 @@ def build_business_application_router() -> APIRouter:
             raise HTTPException(status_code=404, detail="Business Application not found") from exc
         except Exception as exc:
             raise _http_error(exc) from exc
-        return {"items": values}
+        return {"items": values, **_aggregate_runtime(values, request)}
 
     @router.get("/{code}/catalog", response_model=CatalogResponse)
     def catalog(request: Request, code: str) -> dict[str, Any]:
@@ -492,7 +521,7 @@ def build_business_application_router() -> APIRouter:
     def effective(
         request: Request,
         code: str,
-        environment: str = Query(default="test", max_length=40),
+        environment: str = Query(default="local", max_length=40),
     ) -> dict[str, Any]:
         _require_enabled(request)
         principal = current_principal(request)
@@ -502,9 +531,7 @@ def build_business_application_router() -> APIRouter:
             )
             return cast(
                 dict[str, Any],
-                container(request).business_application_resolver.resolve_active(
-                    code, environment
-                ),
+                container(request).business_application_resolver.resolve_active(code, environment),
             )
         except PermissionDenied as exc:
             raise HTTPException(status_code=404, detail="Business Application not found") from exc
@@ -522,9 +549,7 @@ def _write_principal(request: Request) -> Any:
 
 def _require_enabled(request: Request) -> None:
     if not (
-        container(
-            request
-        ).settings.feature_configuration.business_application_control_plane_enabled
+        container(request).settings.feature_configuration.business_application_control_plane_enabled
     ):
         raise HTTPException(
             status_code=404,
@@ -563,9 +588,7 @@ def _http_error(exc: Exception) -> HTTPException:
         if exc.error_code == "revision_conflict":
             detail["current_revision"] = exc.diagnostics.get("current_revision")
         if exc.error_code == "route_conflict":
-            detail["conflict_application_id"] = exc.diagnostics.get(
-                "conflict_application_id"
-            )
+            detail["conflict_application_id"] = exc.diagnostics.get("conflict_application_id")
         return HTTPException(status_code=status, detail=detail)
     if isinstance(exc, ValueError):
         return HTTPException(
@@ -573,3 +596,36 @@ def _http_error(exc: Exception) -> HTTPException:
             detail={"code": "validation_failed", "message": str(exc)},
         )
     return HTTPException(status_code=500, detail="Internal server error")
+
+
+def _aggregate_runtime(values: list[dict[str, Any]], request: Request) -> dict[str, Any]:
+    if not values:
+        return cast(
+            dict[str, Any],
+            container(request).business_application_service.runtime_evaluator.empty().to_dict(),
+        )
+    rank = {
+        "wired": 4,
+        "partially_wired": 3,
+        "blocked": 2,
+        "not_wired": 1,
+    }
+    selected = max(
+        values,
+        key=lambda value: rank.get(str(value.get("runtime_status") or ""), 0),
+    )
+    return {
+        key: selected[key]
+        for key in (
+            "runtime_wired",
+            "runtime_status",
+            "runtime_environment",
+            "deployment_environment",
+            "reason_code",
+            "message",
+            "runtime_components",
+            "affected_routes",
+            "legacy_fallback_enabled",
+        )
+        if key in selected
+    }

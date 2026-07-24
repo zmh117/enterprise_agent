@@ -54,6 +54,17 @@ class CreateAgentJobCommand:
     webhook_trigger_publication_id: str = ""
     continuous_conversation_enabled: bool | None = None
     attachments_enabled: bool | None = None
+    business_application_id: str = ""
+    business_application_code: str = ""
+    business_application_publication_id: str = ""
+    business_application_deployment_id: str = ""
+    business_application_route_id: str = ""
+    business_application_config_hash: str = ""
+    business_application_runtime_status: str = ""
+    business_application_route_decision: dict[str, Any] = field(default_factory=dict)
+    conversation_mode: str = "legacy"
+    recent_message_limit: int | None = None
+    session_policy: dict[str, Any] = field(default_factory=dict)
 
     @property
     def effective_requester_id(self) -> str:
@@ -183,16 +194,17 @@ class CreateAgentJobService:
                     "Pinned Agent publication belongs to another Agent",
                     safe_message="Pinned Agent configuration is invalid",
                 )
-            if command.fixed_agent_revision is not None and int(
-                publication["revision"]
-            ) != int(command.fixed_agent_revision):
+            if command.fixed_agent_revision is not None and int(publication["revision"]) != int(
+                command.fixed_agent_revision
+            ):
                 raise NonRetryableExecutionError(
                     "Pinned Agent revision mismatch",
                     safe_message="Pinned Agent configuration integrity check failed",
                 )
-            if command.fixed_agent_config_hash and str(
-                publication["config_hash"]
-            ) != command.fixed_agent_config_hash:
+            if (
+                command.fixed_agent_config_hash
+                and str(publication["config_hash"]) != command.fixed_agent_config_hash
+            ):
                 raise NonRetryableExecutionError(
                     "Pinned Agent hash mismatch",
                     safe_message="Pinned Agent configuration integrity check failed",
@@ -234,15 +246,21 @@ class CreateAgentJobService:
             if command.continuous_conversation_enabled is None
             else command.continuous_conversation_enabled
         )
-        session_key = _session_key(
-            source_channel=source_channel,
-            connector_id=command.source_connector_id,
-            project_code=project_code,
-            conversation_type=command.conversation_type,
-            conversation_id=command.effective_conversation_id,
-            requester_id=requester_id,
-            bot_identity=command.bot_identity,
-        ) if continuous_enabled else ""
+        session_key = (
+            _session_key(
+                source_channel=source_channel,
+                connector_id=command.source_connector_id,
+                project_code=project_code,
+                conversation_type=command.conversation_type,
+                conversation_id=command.effective_conversation_id,
+                requester_id=requester_id,
+                bot_identity=command.bot_identity,
+                business_application_id=command.business_application_id,
+                conversation_mode=command.conversation_mode,
+            )
+            if continuous_enabled
+            else ""
+        )
         correlation_id = command.correlation_id or new_correlation_id()
         attachment_ids: list[str] = []
         with self.repository.database.transaction():
@@ -262,6 +280,11 @@ class CreateAgentJobService:
                 conversation_type=command.conversation_type,
                 bot_identity=command.bot_identity,
                 external_identity_id=command.external_identity_id,
+                business_application_id=command.business_application_id,
+                business_application_code=command.business_application_code,
+                conversation_mode=command.conversation_mode,
+                recent_message_limit=command.recent_message_limit,
+                session_policy=command.session_policy,
             )
             job = self.repository.create_job(
                 session_id=session.id,
@@ -289,6 +312,14 @@ class CreateAgentJobService:
                 webhook_event_id=command.webhook_event_id,
                 webhook_trigger_id=command.webhook_trigger_id,
                 webhook_trigger_publication_id=command.webhook_trigger_publication_id,
+                business_application_id=command.business_application_id,
+                business_application_code=command.business_application_code,
+                business_application_publication_id=(command.business_application_publication_id),
+                business_application_deployment_id=(command.business_application_deployment_id),
+                business_application_route_id=command.business_application_route_id,
+                business_application_config_hash=(command.business_application_config_hash),
+                business_application_runtime_status=(command.business_application_runtime_status),
+                business_application_route_decision=(command.business_application_route_decision),
             )
             message_id = self.repository.add_message(
                 session_id=session.id,
@@ -335,6 +366,17 @@ class CreateAgentJobService:
                     "webhook_event_id": command.webhook_event_id,
                     "webhook_trigger_id": command.webhook_trigger_id,
                     "webhook_trigger_publication_id": command.webhook_trigger_publication_id,
+                    "business_application_code": command.business_application_code,
+                    "business_application_publication_id": (
+                        command.business_application_publication_id
+                    ),
+                    "business_application_deployment_id": (
+                        command.business_application_deployment_id
+                    ),
+                    "business_application_route_id": (command.business_application_route_id),
+                    "business_application_runtime_status": (
+                        command.business_application_runtime_status
+                    ),
                 },
             )
         for attachment_id in attachment_ids:
@@ -424,12 +466,28 @@ def _session_key(
     conversation_id: str,
     requester_id: str,
     bot_identity: str,
+    business_application_id: str = "",
+    conversation_mode: str = "legacy",
 ) -> str:
-    if conversation_type == "group":
+    if business_application_id and conversation_mode == "application":
+        identity = business_application_id
+    elif business_application_id and conversation_mode == "actor":
+        identity = f"{requester_id}:{bot_identity or connector_id}"
+    elif business_application_id and conversation_mode == "channel":
+        identity = conversation_id
+    elif conversation_type == "group":
         identity = conversation_id
     else:
         identity = f"{requester_id}:{bot_identity or connector_id}"
     canonical = "|".join(
-        [source_channel, connector_id, project_code, conversation_type, identity]
+        [
+            business_application_id or "legacy",
+            source_channel,
+            connector_id,
+            project_code,
+            conversation_type,
+            conversation_mode,
+            identity,
+        ]
     )
     return "session-key:" + hashlib.sha256(canonical.encode()).hexdigest()
