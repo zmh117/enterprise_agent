@@ -325,6 +325,7 @@ def _build_container(
         audit_service=audit_service,
         publisher=publisher,
         queue_settings=settings.queue,
+        execution_settings=settings.execution,
         connector_registry=connector_registry,
         credential_cipher=credential_cipher,
         continuous_enabled=settings.conversation.enabled,

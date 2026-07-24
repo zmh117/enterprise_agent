@@ -155,6 +155,31 @@ export function RuntimeJobDetailPage() {
             ["创建时间", formatDate(job.created_at)],
           ]}
         />
+        <FactCard
+          title="固定执行策略"
+          rows={[
+            ["Schema", `v${job.execution_policy.schema_version}`],
+            [
+              "请求限制",
+              policyText(job.execution_policy.requested),
+            ],
+            [
+              "实际限制",
+              policyText(job.execution_policy.effective),
+            ],
+            [
+              "Agent Publication",
+              job.execution_policy.sources.agent_publication_id || "运行时默认",
+            ],
+            ["实际工具调用", String(job.tool_call_count)],
+            [
+              "策略耗尽",
+              job.execution_policy_exhausted
+                ? `是（${job.last_error_code}）`
+                : "否",
+            ],
+          ]}
+        />
       </div>
       <Card className="mt-4 shadow-none">
         <CardHeader>
@@ -285,4 +310,12 @@ function formatDate(value: string | null | undefined) {
   if (!value) return "-"
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
+}
+
+function policyText(value: {
+  max_turns: number
+  timeout_seconds: number
+  max_tool_calls: number
+}) {
+  return `${value.max_turns} 轮 · ${value.timeout_seconds} 秒 · ${value.max_tool_calls} 次工具调用`
 }

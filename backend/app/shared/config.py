@@ -35,6 +35,7 @@ class QueueSettings:
 class ExecutionSettings:
     timeout_seconds: int = 300
     max_turns: int = 12
+    max_tool_calls: int = 30
     max_tool_response_chars: int = 4000
     max_loki_minutes: int = 60
     max_loki_lines: int = 500
@@ -348,6 +349,7 @@ def load_settings() -> Settings:
         execution=ExecutionSettings(
             timeout_seconds=int(os.getenv("AGENT_TIMEOUT_SECONDS", "300")),
             max_turns=int(os.getenv("AGENT_MAX_TURNS", "12")),
+            max_tool_calls=int(os.getenv("AGENT_MAX_TOOL_CALLS", "30")),
             max_tool_response_chars=int(os.getenv("MAX_TOOL_RESPONSE_CHARS", "4000")),
             max_loki_minutes=int(os.getenv("MAX_LOKI_MINUTES", "60")),
             max_loki_lines=int(os.getenv("MAX_LOKI_LINES", "500")),

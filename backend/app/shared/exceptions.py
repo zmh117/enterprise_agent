@@ -40,6 +40,10 @@ class DiagnosticLoopExhausted(NonRetryableExecutionError):
     pass
 
 
+class ExecutionPolicyExceeded(NonRetryableExecutionError):
+    pass
+
+
 class ExecutionTimeout(AppError):
     pass
 

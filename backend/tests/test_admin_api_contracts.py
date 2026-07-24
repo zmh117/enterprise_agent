@@ -16,6 +16,20 @@ from app.shared.exceptions import NonRetryableExecutionError
 from backend.tests.test_unified_identity_rbac import csrf_headers, login, unified_settings
 
 
+def execution_policy_snapshot() -> dict[str, object]:
+    values = {
+        "max_turns": 12,
+        "timeout_seconds": 300,
+        "max_tool_calls": 30,
+    }
+    return {
+        "schema_version": 1,
+        "requested": dict(values),
+        "effective": dict(values),
+        "sources": {"source_kind": "runtime_default"},
+    }
+
+
 def test_admin_capabilities_are_permission_derived_and_scope_safe() -> None:
     settings = unified_settings()
     container = build_test_container(settings, migrate=True, seed=True)
@@ -160,6 +174,7 @@ def test_dashboard_is_scope_filtered_and_queue_failure_is_region_local() -> None
         max_retry_count=3,
         initial_status=JobStatus.FAILED,
         routing_context={"project_code": "default", "environment": "prod", "base": "guanlan"},
+        execution_policy=execution_policy_snapshot(),
     )
     container.agent_repository.create_job(
         session_id=other_session.id,
@@ -172,6 +187,7 @@ def test_dashboard_is_scope_filtered_and_queue_failure_is_region_local() -> None
         max_retry_count=3,
         initial_status=JobStatus.FAILED,
         routing_context={"project_code": "default", "environment": "prod", "base": "longhua"},
+        execution_policy=execution_policy_snapshot(),
     )
     window = TimeWindow.parse()
     result = DashboardQueryService(
@@ -408,6 +424,7 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
             "correlation_id": "correlation-ops",
             "resolution_outcome": "matched",
         },
+        execution_policy=execution_policy_snapshot(),
     )
     message_id = container.agent_repository.add_message(
         session_id=session.id,

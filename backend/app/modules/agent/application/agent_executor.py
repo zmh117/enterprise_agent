@@ -82,6 +82,11 @@ class AgentExecutor:
             title="Agent execution started",
             content="Read-only diagnostic runtime started.",
         )
+        self.repository.record_execution_policy_usage(
+            job.id,
+            tool_call_count=0,
+            exhausted=False,
+        )
         try:
             context = self.context_builder.build(job)
             self.repository.add_step(
@@ -99,6 +104,11 @@ class AgentExecutor:
                 )
             )
             self._persist_tool_events(job.id, result.tool_events)
+            self.repository.record_execution_policy_usage(
+                job.id,
+                tool_call_count=len(result.tool_events),
+                exhausted=False,
+            )
             self.repository.add_step(
                 job_id=job.id,
                 step_type="model_completed",
@@ -122,7 +132,16 @@ class AgentExecutor:
             return result.final_answer
         except Exception as exc:
             safe_message = getattr(exc, "safe_message", str(exc))
-            self._persist_tool_events(job.id, getattr(exc, "tool_events", []))
+            tool_events = getattr(exc, "tool_events", [])
+            self._persist_tool_events(job.id, tool_events)
+            self.repository.record_execution_policy_usage(
+                job.id,
+                tool_call_count=len(tool_events),
+                exhausted=(
+                    getattr(exc, "error_code", "")
+                    == "execution_policy_max_tool_calls_exhausted"
+                ),
+            )
             self.repository.add_step(
                 job_id=job.id,
                 step_type="error",

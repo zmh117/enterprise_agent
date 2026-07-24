@@ -74,6 +74,9 @@ class AgentJob:
     business_application_config_hash: str = ""
     business_application_runtime_status: str = ""
     business_application_route_decision: dict[str, Any] | None = None
+    execution_policy: dict[str, Any] | None = None
+    execution_policy_tool_call_count: int = 0
+    execution_policy_exhausted: bool = False
 
 
 @dataclass(frozen=True)

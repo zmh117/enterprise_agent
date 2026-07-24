@@ -161,6 +161,7 @@ RUNTIME_CONFIG_DEFINITIONS: tuple[RuntimeConfigDefinitionSpec, ...] = (
     RuntimeConfigDefinitionSpec("CLAUDE_CODE_EFFORT_LEVEL", "string", "max", service_names=("api-server", "agent-worker")),
     RuntimeConfigDefinitionSpec("AGENT_MAX_TURNS", "int", 12, service_names=("agent-worker", "api-server")),
     RuntimeConfigDefinitionSpec("AGENT_TIMEOUT_SECONDS", "int", 300, service_names=("agent-worker",)),
+    RuntimeConfigDefinitionSpec("AGENT_MAX_TOOL_CALLS", "int", 30, service_names=("agent-worker", "api-server")),
     RuntimeConfigDefinitionSpec("MAX_TOOL_RESPONSE_CHARS", "int", 4000, service_names=("agent-worker",)),
     RuntimeConfigDefinitionSpec("MAX_LOKI_MINUTES", "int", 60, service_names=("agent-worker", "internal-api-platform")),
     RuntimeConfigDefinitionSpec("MAX_LOKI_LINES", "int", 500, service_names=("agent-worker", "internal-api-platform")),

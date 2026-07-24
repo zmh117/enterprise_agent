@@ -21,6 +21,11 @@ class RuntimeComponentState(StrEnum):
     BLOCKED = "blocked"
 
 
+class RuntimeComponentImpact(StrEnum):
+    RUNTIME = "runtime"
+    GOVERNANCE = "governance"
+
+
 class RouteResolutionOutcome(StrEnum):
     MATCHED = "matched"
     NOT_MATCHED = "not_matched"
@@ -56,6 +61,7 @@ class RuntimeComponentStatus:
     reason_code: str
     message: str
     fields: dict[str, str] = field(default_factory=dict)
+    impact: RuntimeComponentImpact = RuntimeComponentImpact.RUNTIME
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -63,6 +69,7 @@ class RuntimeComponentStatus:
             "reason_code": self.reason_code,
             "message": self.message,
             "fields": dict(self.fields),
+            "impact": self.impact.value,
         }
 
 
@@ -197,6 +204,7 @@ class RuntimeReadinessEvaluator:
                 RuntimeComponentState.STORED_ONLY,
             }
             for component in components.values()
+            if component.impact == RuntimeComponentImpact.RUNTIME
         )
         return RuntimeReadiness(
             runtime_wired=True,
@@ -433,22 +441,33 @@ class RuntimeReadinessEvaluator:
         session_policy = dict(snapshot.get("session_policy") or {})
         if session_policy:
             components["session_policy"] = RuntimeComponentStatus(
-                RuntimeComponentState.PARTIALLY_WIRED,
-                RuntimeReason.RETENTION_POLICY_STORED_ONLY.value,
-                "Conversation policy is active; retention_days is stored only",
+                RuntimeComponentState.WIRED,
+                RuntimeReason.READY.value,
+                "Conversation loading policy is enforced by the runtime",
                 fields={
                     "conversation_mode": "wired",
                     "recent_message_limit": "wired",
                     "continuous_conversation_enabled": "wired",
                     "attachments_enabled": "wired",
-                    "retention_days": "stored_only",
                 },
+            )
+            components["retention_policy"] = RuntimeComponentStatus(
+                RuntimeComponentState.STORED_ONLY,
+                RuntimeReason.RETENTION_POLICY_STORED_ONLY.value,
+                "Retention is recorded for governance but no automatic cleanup runs",
+                fields={"retention_days": "stored_only"},
+                impact=RuntimeComponentImpact.GOVERNANCE,
             )
 
         components["execution_policy"] = RuntimeComponentStatus(
-            RuntimeComponentState.STORED_ONLY,
-            RuntimeReason.EXECUTION_POLICY_STORED_ONLY.value,
-            "Execution policy is stored but not enforced by the worker",
+            RuntimeComponentState.WIRED,
+            RuntimeReason.READY.value,
+            "Execution limits are fixed on each Job and enforced by the worker",
+            fields={
+                "max_turns": "wired",
+                "timeout_seconds": "wired",
+                "max_tool_calls": "wired",
+            },
         )
         if snapshot.get("workflow"):
             components["workflow"] = RuntimeComponentStatus(
@@ -489,12 +508,15 @@ class RuntimeReadinessEvaluator:
             ),
             "agent_publication": ready,
             "session_policy": ready,
-            "delivery": ready,
-            "execution_policy": RuntimeComponentStatus(
+            "retention_policy": RuntimeComponentStatus(
                 RuntimeComponentState.STORED_ONLY,
-                RuntimeReason.EXECUTION_POLICY_STORED_ONLY.value,
-                "Execution policy is stored only",
+                RuntimeReason.RETENTION_POLICY_STORED_ONLY.value,
+                "Retention is stored only",
+                fields={"retention_days": "stored_only"},
+                impact=RuntimeComponentImpact.GOVERNANCE,
             ),
+            "delivery": ready,
+            "execution_policy": ready,
             "workflow": ready,
             "capabilities": ready,
         }
@@ -544,6 +566,7 @@ def _component_field(name: str) -> str:
         "trigger_routing": "triggers",
         "agent_publication": "agent_publication_id",
         "session_policy": "session_policy",
+        "retention_policy": "session_policy.retention_days",
         "delivery": "deliveries",
         "execution_policy": "execution_policy",
         "workflow": "workflow_publication_id",

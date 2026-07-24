@@ -94,6 +94,7 @@ def _publish(
     triggers: list[dict[str, Any]],
     deliveries: list[dict[str, Any]] | None = None,
     session_policy: dict[str, Any] | None = None,
+    execution_policy: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     application = container.business_application_service.create(
         actor_id="user_local_admin",
@@ -115,6 +116,8 @@ def _publish(
     ]
     if session_policy is not None:
         payload["session_policy"] = session_policy
+    if execution_policy is not None:
+        payload["execution_policy"] = execution_policy
     revision = container.business_application_service.save_draft(
         actor_id="user_local_admin",
         code=code,
@@ -229,10 +232,13 @@ def test_runtime_readiness_reports_gate_environment_and_component_states() -> No
         runtime_environment="local",
     ).evaluate(snapshot=snapshot, deployment={"environment": "local", "active": True})
     assert current.runtime_wired is True
-    assert current.runtime_status.value == "partially_wired"
+    assert current.runtime_status.value == "wired"
     assert current.components["trigger_routing"].status.value == "wired"
-    assert current.components["execution_policy"].status.value == "stored_only"
-    assert current.components["session_policy"].fields["retention_days"] == "stored_only"
+    assert current.components["execution_policy"].status.value == "wired"
+    assert current.components["session_policy"].status.value == "wired"
+    assert current.components["retention_policy"].status.value == "stored_only"
+    assert current.components["retention_policy"].impact.value == "governance"
+    assert current.components["retention_policy"].fields["retention_days"] == "stored_only"
 
 
 def test_runtime_environment_is_separate_from_business_data_environment() -> None:
@@ -691,6 +697,58 @@ def test_same_bot_group_routes_are_split_by_conversation_and_reply_to_original_s
     assert adapter.routes[0].target["conversation_id"] == "group-a"
 
 
+def test_routed_job_pins_requested_and_effective_execution_policy() -> None:
+    container = _container()
+    _, _, publication = _publish(
+        container,
+        "execution-policy-routing",
+        triggers=[
+            _trigger(
+                trigger_type="dingtalk_private",
+                routing_key="bot:diagnostic-bot",
+            )
+        ],
+        execution_policy={
+            "max_turns": 99,
+            "timeout_seconds": 120,
+            "max_tool_calls": 4,
+        },
+    )
+    _activate(
+        container,
+        "execution-policy-routing",
+        publication,
+        environment="local",
+    )
+
+    result = container.dingtalk_stream_message_service.handle_callback(
+        payload=_stream_payload(message_id="execution-policy-routing"),
+        correlation_id="correlation-execution-policy-routing",
+    )
+    job = container.agent_repository.get_job(result.job_id)
+
+    assert job.execution_policy is not None
+    assert job.execution_policy["schema_version"] == 1
+    assert job.execution_policy["requested"] == {
+        "max_turns": 99,
+        "timeout_seconds": 120,
+        "max_tool_calls": 4,
+    }
+    assert job.execution_policy["effective"] == {
+        "max_turns": 12,
+        "timeout_seconds": 120,
+        "max_tool_calls": 4,
+    }
+    assert (
+        job.execution_policy["sources"]["business_application_publication_id"]
+        == publication["id"]
+    )
+    assert (
+        job.execution_policy["sources"]["agent_publication_id"]
+        == "agent_publication_default_v1"
+    )
+
+
 def test_missing_group_conversation_id_is_rejected_without_route_guessing() -> None:
     container = _container()
     before = container.agent_repository.count_rows("agent_job")
@@ -1014,7 +1072,7 @@ def test_management_api_exposes_uniform_runtime_contract_and_preflight_errors() 
         effective.json()["deployment"],
     ):
         assert value["runtime_wired"] is True
-        assert value["runtime_status"] == "partially_wired"
+        assert value["runtime_status"] == "wired"
         assert value["runtime_environment"] == "local"
         assert value["runtime_components"]["trigger_routing"]["status"] == "wired"
     assert prepared.status_code == 422

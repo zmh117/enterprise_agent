@@ -11,6 +11,7 @@ export const runtimeComponentSchema = z.object({
   reason_code: z.string().default(""),
   message: z.string().default(""),
   fields: z.record(z.string(), z.string()).default({}),
+  impact: z.enum(["runtime", "governance"]).default("runtime"),
 })
 
 export const runtimeStateSchema = z.object({

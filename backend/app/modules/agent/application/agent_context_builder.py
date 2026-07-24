@@ -8,6 +8,7 @@ from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
 from app.modules.agent.infrastructure.skill_loader import SkillLoader
 from app.modules.agent_config.application import AgentConfigService
 from app.modules.job.domain.agent_job import AgentJob
+from app.modules.job.domain.execution_policy import JobExecutionPolicySnapshot
 
 
 class AgentContextBuilder:
@@ -25,6 +26,7 @@ class AgentContextBuilder:
         self.agent_config_service = agent_config_service
 
     def build(self, job: AgentJob) -> AgentExecutionContext:
+        execution_policy = JobExecutionPolicySnapshot.from_dict(job.execution_policy)
         publication = self._publication(job)
         snapshot = publication.get("snapshot") if publication else {}
         if not isinstance(snapshot, dict):
@@ -43,7 +45,6 @@ class AgentContextBuilder:
         schema_context = self._schema_context(job, er_summary, allowed_tools)
         conversation = self.conversation_service.build(job) if self.conversation_service else None
         skill_names = tuple(str(item) for item in snapshot.get("skills") or [])
-        execution = snapshot.get("execution") or {}
         model_policy = snapshot.get("model_policy") or {}
         return AgentExecutionContext(
             system_role=str(
@@ -112,8 +113,9 @@ class AgentContextBuilder:
             ),
             business_instructions=str(snapshot.get("business_instructions") or ""),
             model=str(model_policy.get("model") or ""),
-            max_turns=_optional_int(execution.get("max_turns")),
-            timeout_seconds=_optional_int(execution.get("timeout_seconds")),
+            max_turns=execution_policy.effective.max_turns,
+            timeout_seconds=execution_policy.effective.timeout_seconds,
+            max_tool_calls=execution_policy.effective.max_tool_calls,
             publication_id=str(publication.get("id") or "") if publication else "",
             config_hash=str(publication.get("config_hash") or "") if publication else "",
         )
@@ -197,13 +199,6 @@ class AgentContextBuilder:
                 "error": getattr(exc, "safe_message", str(exc)),
                 "diagnostic_action": "stop_and_report_insufficient_evidence",
             }
-
-
-def _optional_int(value: Any) -> int | None:
-    if value in (None, ""):
-        return None
-    return int(value)
-
 
 def _resolve_single_target(message: str, addressing: Any) -> dict[str, str] | None:
     if not isinstance(addressing, dict):

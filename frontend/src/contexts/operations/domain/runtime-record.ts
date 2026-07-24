@@ -1,5 +1,18 @@
 import { z } from "zod"
 
+const executionPolicyValuesSchema = z.object({
+  max_turns: z.number().int(),
+  timeout_seconds: z.number().int(),
+  max_tool_calls: z.number().int(),
+})
+
+const jobExecutionPolicySchema = z.object({
+  schema_version: z.literal(1),
+  requested: executionPolicyValuesSchema,
+  effective: executionPolicyValuesSchema,
+  sources: z.record(z.string(), z.string()),
+})
+
 export const runtimeJobSchema = z
   .object({
     id: z.string(),
@@ -34,6 +47,10 @@ export const runtimeJobSchema = z
     business_application_route_decision: z
       .record(z.string(), z.unknown())
       .default({}),
+    execution_policy: jobExecutionPolicySchema,
+    tool_call_count: z.number().int().nonnegative().default(0),
+    execution_policy_exhausted: z.boolean().default(false),
+    last_error_code: z.string().default(""),
     error_summary: z.string().default(""),
     created_at: z.string(),
     started_at: z.string().nullish(),

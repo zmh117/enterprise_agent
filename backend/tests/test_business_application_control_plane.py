@@ -293,7 +293,7 @@ def test_publish_activate_resolve_rollback_and_deactivate_do_not_touch_data_plan
         " BOT:ROOM-A ",
     )
     assert first["runtime_wired"] is True
-    assert first["runtime_status"] == "partially_wired"
+    assert first["runtime_status"] == "wired"
     assert resolved["publication"]["id"] == first_publication["id"]
 
     latest = container.business_application_repository.get_by_code("lifecycle-test")

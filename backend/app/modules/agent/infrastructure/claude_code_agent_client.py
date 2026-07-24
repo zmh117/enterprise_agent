@@ -21,12 +21,14 @@ from app.modules.agent.domain.runtime import (
     AgentExecutionContext,
     AgentRunRequest,
     AgentRunResult,
+    ToolCallBudget,
 )
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
 from app.modules.internal_tools.infrastructure.internal_api_client import ToolResult
 from app.shared.config import ExecutionSettings
 from app.shared.exceptions import (
     DiagnosticLoopExhausted,
+    ExecutionPolicyExceeded,
     NonRetryableExecutionError,
     RetryableExecutionError,
     ToolPolicyError,
@@ -332,7 +334,10 @@ class RealClaudeCodeAgentClient:
     async def _run_async(self, request: AgentRunRequest) -> AgentRunResult:
         sdk = self._load_sdk()
         tool_events: list[dict[str, Any]] = []
-        internal_server = self._build_internal_server(sdk, request, tool_events)
+        tool_budget = ToolCallBudget(maximum=request.context.max_tool_calls)
+        internal_server = self._build_internal_server(
+            sdk, request, tool_events, tool_budget
+        )
         cli_stderr: list[str] = []
         options = self._build_options(sdk, request.context, internal_server, cli_stderr)
         prompt = request.context.user_question
@@ -374,7 +379,7 @@ class RealClaudeCodeAgentClient:
             with _temporary_claude_env(self.api_key, self.base_url):
                 await asyncio.wait_for(
                     consume(),
-                    timeout=request.context.timeout_seconds or self.limits.timeout_seconds,
+                    timeout=request.context.timeout_seconds,
                 )
         except asyncio.TimeoutError as exc:
             raise RetryableExecutionError(
@@ -413,9 +418,10 @@ class RealClaudeCodeAgentClient:
         sdk: ClaudeSdk,
         request: AgentRunRequest,
         tool_events: list[dict[str, Any]],
+        tool_budget: ToolCallBudget,
     ) -> Any:
         tools = [
-            self._build_tool(sdk, request, tool_name, tool_events)
+            self._build_tool(sdk, request, tool_name, tool_events, tool_budget)
             for tool_name in request.context.allowed_tools
             if tool_name in TOOL_DEFINITIONS
         ]
@@ -427,12 +433,14 @@ class RealClaudeCodeAgentClient:
         request: AgentRunRequest,
         tool_name: str,
         tool_events: list[dict[str, Any]],
+        tool_budget: ToolCallBudget,
     ) -> Any:
         definition = TOOL_DEFINITIONS[tool_name]
 
         async def handler(arguments: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
             started = time.monotonic()
             try:
+                tool_budget.consume()
                 result = await asyncio.to_thread(
                     self.tool_registry.call,
                     job_id=request.job_id,
@@ -452,6 +460,20 @@ class RealClaudeCodeAgentClient:
                 )
                 tool_events.append(event)
                 return _sdk_tool_response(result.summary)
+            except ExecutionPolicyExceeded as exc:
+                tool_events.append(
+                    {
+                        "tool_name": tool_name,
+                        "request_payload": arguments,
+                        "response_summary": {"error": exc.safe_message},
+                        "status": "REJECTED",
+                        "duration_ms": int((time.monotonic() - started) * 1000),
+                        "risk_level": _risk_level(tool_name),
+                        "error_code": exc.error_code,
+                    }
+                )
+                exc.tool_events = list(tool_events)
+                raise
             except Exception as exc:
                 safe_message = getattr(exc, "safe_message", str(exc))
                 tool_events.append(
@@ -487,7 +509,7 @@ class RealClaudeCodeAgentClient:
             mcp_servers={"internal": server},
             allowed_tools=["mcp__internal__*"],
             permission_mode="dontAsk",
-            max_turns=context.max_turns or self.limits.max_turns,
+            max_turns=context.max_turns,
             stderr=lambda line: _append_cli_stderr(
                 cli_stderr,
                 line,

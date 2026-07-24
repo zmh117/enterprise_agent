@@ -11,11 +11,12 @@ from app.modules.attachments.credentials import AttachmentCredentialCipher
 from app.modules.channel.domain.channel_event import ChannelAttachment, ReplyRoute, RoutingContext
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.job.domain.agent_job import AgentJob
+from app.modules.job.domain.execution_policy import EffectiveExecutionPolicyResolver
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.modules.message_bus.application.message_publisher import MessagePublisher
 from app.modules.permission.application.permission_service import PermissionService
-from app.shared.config import AttachmentSettings, QueueSettings
+from app.shared.config import AttachmentSettings, ExecutionSettings, QueueSettings
 from app.shared.exceptions import NonRetryableExecutionError
 from app.shared.logging import new_correlation_id
 
@@ -65,6 +66,7 @@ class CreateAgentJobCommand:
     conversation_mode: str = "legacy"
     recent_message_limit: int | None = None
     session_policy: dict[str, Any] = field(default_factory=dict)
+    application_execution_policy: dict[str, Any] = field(default_factory=dict)
 
     @property
     def effective_requester_id(self) -> str:
@@ -109,6 +111,7 @@ class CreateAgentJobService:
         audit_service: AuditService,
         publisher: MessagePublisher,
         queue_settings: QueueSettings,
+        execution_settings: ExecutionSettings,
         connector_registry: ConnectorRegistry | None = None,
         credential_cipher: AttachmentCredentialCipher | None = None,
         continuous_enabled: bool = False,
@@ -122,6 +125,7 @@ class CreateAgentJobService:
         self.audit_service = audit_service
         self.publisher = publisher
         self.queue_settings = queue_settings
+        self.execution_policy_resolver = EffectiveExecutionPolicyResolver(execution_settings)
         self.connector_registry = connector_registry
         self.credential_cipher = credential_cipher
         self.continuous_enabled = continuous_enabled
@@ -170,6 +174,7 @@ class CreateAgentJobService:
         agent_publication_id = ""
         agent_revision = 0
         agent_config_hash = ""
+        agent_snapshot: dict[str, Any] = {}
         if self.published_agent_runtime_enabled or command.fixed_agent_publication_id:
             if self.agent_config_service is None:
                 raise NonRetryableExecutionError(
@@ -213,6 +218,7 @@ class CreateAgentJobService:
             agent_publication_id = str(publication["id"])
             agent_revision = int(publication["revision"])
             agent_config_hash = str(publication["config_hash"])
+            agent_snapshot = dict(publication.get("snapshot") or {})
             if command.source_connector_id and not self.agent_config_service.connector_allowed(
                 publication_id=agent_publication_id,
                 direction="ingress",
@@ -236,6 +242,22 @@ class CreateAgentJobService:
                     "Delivery connector is not assigned to the Agent publication",
                     safe_message="Agent result delivery is not configured for this channel",
                 )
+        execution_policy = self.execution_policy_resolver.resolve(
+            application_policy=command.application_execution_policy or None,
+            agent_snapshot=agent_snapshot,
+            sources={
+                "business_application_id": command.business_application_id,
+                "business_application_publication_id": (
+                    command.business_application_publication_id
+                ),
+                "business_application_config_hash": (
+                    command.business_application_config_hash
+                ),
+                "agent_publication_id": agent_publication_id,
+                "agent_revision": agent_revision,
+                "agent_config_hash": agent_config_hash,
+            },
+        )
         if command.attachments and self.credential_cipher is None:
             raise NonRetryableExecutionError(
                 "Attachment credential encryption is unavailable",
@@ -320,6 +342,7 @@ class CreateAgentJobService:
                 business_application_config_hash=(command.business_application_config_hash),
                 business_application_runtime_status=(command.business_application_runtime_status),
                 business_application_route_decision=(command.business_application_route_decision),
+                execution_policy=execution_policy.to_dict(),
             )
             message_id = self.repository.add_message(
                 session_id=session.id,

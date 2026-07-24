@@ -35,6 +35,26 @@ function job(overrides: Record<string, unknown> = {}) {
     business_application_route_id: "route-1",
     business_application_runtime_status: "partially_wired",
     business_application_route_decision: {},
+    execution_policy: {
+      schema_version: 1,
+      requested: {
+        max_turns: 20,
+        timeout_seconds: 300,
+        max_tool_calls: 10,
+      },
+      effective: {
+        max_turns: 12,
+        timeout_seconds: 300,
+        max_tool_calls: 10,
+      },
+      sources: {
+        source_kind: "business_application",
+        agent_publication_id: "agent-publication-1",
+      },
+    },
+    tool_call_count: 3,
+    execution_policy_exhausted: false,
+    last_error_code: "",
     created_at: "2026-07-24T10:00:00+00:00",
     ...overrides,
   }
@@ -107,6 +127,10 @@ describe("runtime provenance records", () => {
     expect(screen.getByText("publication-1")).toBeInTheDocument()
     expect(screen.getByText("deployment-1")).toBeInTheDocument()
     expect(screen.getByText("route-1")).toBeInTheDocument()
+    expect(
+      screen.getByText("12 轮 · 300 秒 · 10 次工具调用"),
+    ).toBeInTheDocument()
+    expect(screen.getByText("agent-publication-1")).toBeInTheDocument()
   })
 
   it("shows application-scoped conversation policy and job provenance", async () => {

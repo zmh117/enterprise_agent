@@ -38,6 +38,7 @@ class RuntimeComponentResponse(BaseModel):
     reason_code: str
     message: str
     fields: dict[str, str] = Field(default_factory=dict)
+    impact: Literal["runtime", "governance"] = "runtime"
 
 
 class RuntimeStateResponse(BaseModel):

@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.modules.job.domain.agent_job import AgentJob, AgentSession, MessageAttachment
+from app.modules.job.domain.execution_policy import JobExecutionPolicySnapshot
 from app.modules.job.domain.job_status import JobStatus, can_transition
 from app.shared.database import Database
 from app.shared.exceptions import NotFound, NonRetryableExecutionError
@@ -137,6 +138,7 @@ class AgentRepository:
         business_application_config_hash: str = "",
         business_application_runtime_status: str = "",
         business_application_route_decision: dict[str, Any] | None = None,
+        execution_policy: dict[str, Any] | None = None,
     ) -> AgentJob:
         existing = self.get_job_by_idempotency_key(idempotency_key)
         if existing:
@@ -147,6 +149,9 @@ class AgentRepository:
         requester_id = requester_id or user_id
         routing_context = routing_context or {"project_code": project_code}
         reply_route = reply_route or {"type": "dingtalk_conversation"}
+        normalized_execution_policy = JobExecutionPolicySnapshot.from_dict(
+            execution_policy
+        ).to_dict()
         self.database.execute(
             """
             insert into agent_job
@@ -160,9 +165,9 @@ class AgentRepository:
                business_application_publication_id, business_application_deployment_id,
                business_application_route_id, business_application_config_hash,
                business_application_runtime_status,
-               business_application_route_decision_json)
+               business_application_route_decision_json, execution_policy_json)
             values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?)
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job_id,
@@ -202,9 +207,27 @@ class AgentRepository:
                     business_application_route_decision or {},
                     ensure_ascii=False,
                 ),
+                json.dumps(normalized_execution_policy, ensure_ascii=False),
             ),
         )
         return self.get_job(job_id)
+
+    def record_execution_policy_usage(
+        self,
+        job_id: str,
+        *,
+        tool_call_count: int,
+        exhausted: bool,
+    ) -> None:
+        self.database.execute(
+            """
+            update agent_job
+            set execution_policy_tool_call_count = ?,
+                execution_policy_exhausted = ?
+            where id = ?
+            """,
+            (max(int(tool_call_count), 0), int(exhausted), job_id),
+        )
 
     def add_message(
         self,
@@ -693,6 +716,15 @@ class AgentRepository:
             "business_application_route_decision": self._json_from_text(
                 row.get("business_application_route_decision_json") or "{}"
             ),
+            "execution_policy": self._json_from_text(
+                row.get("execution_policy_json") or "{}"
+            ),
+            "tool_call_count": int(
+                row.get("execution_policy_tool_call_count") or 0
+            ),
+            "execution_policy_exhausted": bool(
+                row.get("execution_policy_exhausted") or False
+            ),
             "routing_context": self._json_from_text(row.get("routing_context_json") or "{}"),
             "reply_route": self._json_from_text(row.get("reply_route_json") or "{}"),
             "user_message": row["user_message"],
@@ -1127,6 +1159,13 @@ class AgentRepository:
             ),
             business_application_route_decision=self._json_from_text(
                 row.get("business_application_route_decision_json") or "{}"
+            ),
+            execution_policy=self._json_from_text(row.get("execution_policy_json") or "{}"),
+            execution_policy_tool_call_count=int(
+                row.get("execution_policy_tool_call_count") or 0
+            ),
+            execution_policy_exhausted=bool(
+                row.get("execution_policy_exhausted") or False
             ),
         )
 

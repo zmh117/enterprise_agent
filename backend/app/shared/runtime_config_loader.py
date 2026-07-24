@@ -270,6 +270,10 @@ def apply_runtime_config_overlay(
                 settings.execution.timeout_seconds,
             ),
             max_turns=_int(runtime_value("AGENT_MAX_TURNS"), settings.execution.max_turns),
+            max_tool_calls=_int(
+                runtime_value("AGENT_MAX_TOOL_CALLS"),
+                settings.execution.max_tool_calls,
+            ),
             max_tool_response_chars=_int(
                 runtime_value("MAX_TOOL_RESPONSE_CHARS"),
                 settings.execution.max_tool_response_chars,

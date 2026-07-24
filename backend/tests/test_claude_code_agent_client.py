@@ -18,6 +18,7 @@ from app.modules.internal_tools.infrastructure.internal_api_client import (
 from app.shared.config import ExecutionSettings
 from app.shared.exceptions import (
     DiagnosticLoopExhausted,
+    ExecutionPolicyExceeded,
     NonRetryableExecutionError,
     RetryableExecutionError,
 )
@@ -314,6 +315,62 @@ class RealClaudeCodeAgentClientTests(unittest.TestCase):
         self.assertEqual("max_turns_exhausted", raised.exception.error_code)
         self.assertEqual(1, len(raised.exception.tool_events))
 
+    def test_max_tool_calls_stops_before_second_registry_call(self) -> None:
+        platform = MockPlatformInternalApiClient()
+        platform.database_calls = 0
+        original = platform.query_database
+
+        def counted_query_database(*args: Any, **kwargs: Any) -> ToolResult:
+            platform.database_calls += 1
+            return original(*args, **kwargs)
+
+        platform.query_database = counted_query_database  # type: ignore[method-assign]
+
+        async def query(prompt: str, options: FakeOptions) -> Any:
+            del prompt
+            tool = options.mcp_servers["internal"]["tools"]["query_database"]
+            arguments = {
+                "datasource": "default",
+                "sql": "select * from ws_a_order",
+                "limit": 5,
+            }
+            await tool(arguments)
+            await tool(arguments)
+            yield {"result": "unreachable"}
+
+        client, request = self._client_and_request(
+            query,
+            limits=ExecutionSettings(max_tool_calls=1, timeout_seconds=5),
+            internal_api_client=platform,
+        )
+        with self.assertRaises(ExecutionPolicyExceeded) as raised:
+            client.run(request)
+
+        self.assertEqual(
+            "execution_policy_max_tool_calls_exhausted",
+            raised.exception.error_code,
+        )
+        self.assertEqual(1, platform.database_calls)
+        self.assertEqual(["SUCCEEDED", "REJECTED"], [
+            item["status"] for item in raised.exception.tool_events
+        ])
+
+    def test_zero_tool_budget_rejects_first_call(self) -> None:
+        async def query(prompt: str, options: FakeOptions) -> Any:
+            del prompt
+            tool = options.mcp_servers["internal"]["tools"]["query_database"]
+            await tool({"sql": "select 1", "limit": 1})
+            yield {"result": "unreachable"}
+
+        client, request = self._client_and_request(
+            query,
+            limits=ExecutionSettings(max_tool_calls=0, timeout_seconds=5),
+        )
+        with self.assertRaises(ExecutionPolicyExceeded) as raised:
+            client.run(request)
+
+        self.assertEqual("REJECTED", raised.exception.tool_events[0]["status"])
+
     def test_cli_stderr_is_included_in_safe_runtime_error(self) -> None:
         async def query(prompt: str, options: FakeOptions) -> Any:
             options.stderr("HTTP 401 invalid api_key=secret-value")
@@ -386,6 +443,9 @@ class RealClaudeCodeAgentClientTests(unittest.TestCase):
                 skills={"test": "diagnose"},
                 retrieved_context={"er": {"tables": ["ws_a_order"]}},
                 conversation_summary="none",
+                max_turns=runtime_limits.max_turns,
+                timeout_seconds=runtime_limits.timeout_seconds,
+                max_tool_calls=runtime_limits.max_tool_calls,
             ),
         )
         return client, request

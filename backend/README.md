@@ -394,6 +394,7 @@ Grafana firing alert 指定投递到 webhook 群机器人时，设置 labels：
 - `AGENT_RETRY_DELAY_SECONDS`：重试延迟秒数。
 - `AGENT_TIMEOUT_SECONDS`：Agent 执行超时时间。
 - `AGENT_MAX_TURNS`：Claude Agent SDK 最大轮次，默认 `12`。
+- `AGENT_MAX_TOOL_CALLS`：未经过业务应用路由的 Job 默认最大工具调用次数，默认 `30`；业务应用 Job 使用其 Publication 固定值。
 - `MAX_TOOL_RESPONSE_CHARS`：工具响应摘要最大长度。
 - `MAX_LOKI_MINUTES` / `MAX_LOKI_LINES` / `REDIS_SCAN_LIMIT`：只读工具边界。
 - `DELIVERY_CHUNK_MAX_CHARS`：结果投递单片最大字符数，默认 `3500`。

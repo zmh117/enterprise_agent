@@ -162,7 +162,7 @@ Workflow Publication 一旦被声明仍为 `stored_only/impact=runtime`，所以
   webhook trigger definition / revision / publication
 ```
 
-数据库迁移先增加可空 `execution_policy_json`，在 API Server、Ingress 和 Worker 停止接收/执行任务的维护窗口内清理旧运行数据，确认 `agent_job` 为空后再把列改为 `NOT NULL` 且不设置默认值。附件对象不能只删数据库元数据；一次性维护命令必须先收集并删除对应 MinIO object key，失败则中止数据库清理并报告。
+schema migration 先以可重放方式增加可空 `execution_policy_json` 和运行计数字段。由于本项目启动时会重复执行 migration 文件，破坏性数据清理不得直接写入常规 migration；在 API Server、Ingress 和 Worker 停止接收/执行任务的维护窗口内，由显式确认的一次性维护命令先清理 MinIO 对象和旧运行数据，确认 `agent_job` 为空后再把列改为 `NOT NULL` 且不设置默认值。附件对象不能只删数据库元数据；一次性维护命令必须先收集并删除对应 MinIO object key，失败则中止数据库清理并报告。
 
 选择删除完整旧运行链而不是只删 `agent_job`，是为了满足外键顺序、避免孤儿消息/附件以及防止旧连续会话内容进入新策略 Job。控制面配置不参与清理，迁移后可直接继续使用现有默认诊断应用。
 
@@ -184,7 +184,7 @@ Workflow Publication 一旦被声明仍为 `stored_only/impact=runtime`，所以
 1. 在维护开始前输出待删除 Job、Session、附件对象、消息、工具调用、投递、Webhook 事件和审计计数，并确认控制面表计数基线。
 2. 停止所有可能创建或消费 Job 的 API Server、钉钉/Webhook Ingress、Agent/Attachment/Webhook Worker，保留 PostgreSQL、MinIO 和 RabbitMQ 基础设施。
 3. 一次性维护命令删除旧附件/产物对象；任何对象清理失败都中止后续数据库迁移。
-4. 数据库迁移增加临时可空策略列，按外键安全顺序删除旧运行数据和孤立 Session，验证没有旧 Job 后将列设为 `NOT NULL` 且无默认值。
+4. 可重放 schema migration 增加临时可空策略列；一次性维护命令按外键安全顺序删除旧运行数据和孤立 Session，验证没有旧 Job 后将列设为 `NOT NULL` 且无默认值。
 5. 以同一提交部署会强制写/读 v1 快照的 API Server、Ingress、Worker 和管理 Web，不允许新旧版本混跑。
 6. 接通策略解析、Job 固定和三字段执行后，更新 RuntimeReadiness 与管理 API/Web。
 7. 使用保留的默认诊断应用和身份/Connector 配置创建全新 Job，验证 v1 provenance、有效限制、运行状态和投递。

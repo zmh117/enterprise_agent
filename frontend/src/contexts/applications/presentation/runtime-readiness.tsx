@@ -20,6 +20,7 @@ const componentLabels: Record<string, string> = {
   trigger_routing: "入口路由",
   agent_publication: "Agent 版本",
   session_policy: "会话策略",
+  retention_policy: "数据保留策略",
   delivery: "结果投递",
   execution_policy: "执行策略",
   workflow: "Workflow",
@@ -68,6 +69,12 @@ export function RuntimeReadinessPanel({
   compact?: boolean
 }) {
   const components = Object.entries(state.runtime_components)
+  const runtimeComponents = components.filter(
+    ([, component]) => component.impact === "runtime",
+  )
+  const governanceComponents = components.filter(
+    ([, component]) => component.impact === "governance",
+  )
   const content = (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -87,9 +94,9 @@ export function RuntimeReadinessPanel({
           {state.reason_code}
         </p>
       </div>
-      {components.length ? (
+      {runtimeComponents.length ? (
         <dl className="grid gap-2 sm:grid-cols-2">
-          {components.map(([name, component]) => (
+          {runtimeComponents.map(([name, component]) => (
             <div key={name} className="rounded-md border bg-muted/20 p-3">
               <dt className="flex items-center justify-between gap-2 text-xs font-medium">
                 <span>{componentLabels[name] ?? name}</span>
@@ -108,6 +115,26 @@ export function RuntimeReadinessPanel({
           服务端未返回组件状态；界面不会据此推断为已接管。
         </p>
       )}
+      {governanceComponents.length ? (
+        <div>
+          <p className="text-xs font-medium">治理提示（不影响运行接管）</p>
+          <dl className="mt-2 grid gap-2 sm:grid-cols-2">
+            {governanceComponents.map(([name, component]) => (
+              <div key={name} className="rounded-md border border-dashed p-3">
+                <dt className="flex items-center justify-between gap-2 text-xs font-medium">
+                  <span>{componentLabels[name] ?? name}</span>
+                  <span className="font-mono text-[10px] text-muted-foreground uppercase">
+                    {component.status}
+                  </span>
+                </dt>
+                <dd className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {component.message}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      ) : null}
       {state.affected_routes.length ? (
         <div>
           <p className="text-xs font-medium">受影响入口</p>

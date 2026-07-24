@@ -92,6 +92,7 @@ class ChannelIngressService:
         )
         snapshot = (runtime.get("publication") or {}).get("snapshot") or {}
         session_policy = snapshot.get("session_policy") or {}
+        execution_policy = snapshot.get("execution_policy") or {}
         agent = snapshot.get("agent") or {}
         self._assert_application_agent_precedence(event, resolution, agent)
         self._assert_application_delivery(event, resolution, snapshot)
@@ -167,6 +168,7 @@ class ChannelIngressService:
                 else None
             ),
             session_policy=dict(session_policy),
+            application_execution_policy=dict(execution_policy),
         )
         job = self.create_job_service.execute(command)
         if resolution is not None and resolution.outcome == RouteResolutionOutcome.MATCHED:
