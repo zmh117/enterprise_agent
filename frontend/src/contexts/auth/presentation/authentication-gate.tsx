@@ -104,7 +104,9 @@ function LoginCard({
       onAuthenticated(response.user)
     } catch (error) {
       setErrorMessage(
-        error instanceof Error ? error.message : "登录失败，请检查账号和密码。"
+        error instanceof ApiError
+          ? error.message
+          : "登录失败，请检查账号和密码。",
       )
     } finally {
       setSubmitting(false)
@@ -192,7 +194,7 @@ async function resolveAuthenticationState(): Promise<AuthenticationState> {
     return {
       status: "unavailable",
       message:
-        error instanceof Error
+        error instanceof ApiError
           ? error.message
           : "认证服务当前不可用，请稍后重试。",
     }

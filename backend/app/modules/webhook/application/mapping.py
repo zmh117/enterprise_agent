@@ -53,7 +53,7 @@ class WebhookMapper:
             return self._generic(config=config, payload=payload)
         raise NonRetryableExecutionError(
             "Unsupported Webhook adapter",
-            safe_message="Webhook adapter is unsupported",
+            safe_message="不支持此 Webhook 适配器",
             error_code="webhook_mapping_failed",
         )
 
@@ -112,9 +112,9 @@ class WebhookMapper:
         if not event_id:
             raise NonRetryableExecutionError(
                 "Generic Webhook event ID is missing",
-                safe_message="Webhook event ID is missing",
+                safe_message="缺少 Webhook 事件 ID",
                 error_code="webhook_mapping_failed",
-                field_errors=[{"field": "mapping.event_id_pointer", "message": "Value is missing"}],
+                field_errors=[{"field": "mapping.event_id_pointer", "message": "缺少字段值"}],
             )
         if not self._filters_match(mapping.get("filters") or [], payload):
             return MappingResult(
@@ -131,7 +131,7 @@ class WebhookMapper:
         if not message:
             raise NonRetryableExecutionError(
                 "Generic Webhook message is empty",
-                safe_message="Webhook message is empty",
+                safe_message="Webhook 消息为空",
                 error_code="webhook_mapping_failed",
             )
         return MappingResult(
@@ -187,15 +187,15 @@ class WebhookMapper:
                 if value not in set(rule.get("allowed_values") or []):
                     raise NonRetryableExecutionError(
                         f"Webhook routing value is not allowed for {field}",
-                        safe_message="Webhook routing value is not allowed",
+                        safe_message="不允许使用此 Webhook 路由值",
                         error_code="webhook_scope_denied",
-                        field_errors=[{"field": f"routing.{field}", "message": "Value is outside allowlist"}],
+                        field_errors=[{"field": f"routing.{field}", "message": "字段值不在允许列表中"}],
                     )
             result[field] = value
         if not result["project_code"]:
             raise NonRetryableExecutionError(
                 "Webhook project routing is empty",
-                safe_message="Webhook project routing is required",
+                safe_message="必须配置 Webhook 项目路由",
                 error_code="webhook_scope_denied",
             )
         return result

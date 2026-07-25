@@ -67,7 +67,7 @@ export function AgentProfilesPage() {
   return (
     <main className="mx-auto w-full max-w-[1400px] space-y-5 px-4 py-6 sm:px-6 lg:px-8">
       <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Agent Profile</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Agent 配置</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           底层按多 Agent 建模；当前版本只允许编辑默认诊断 Agent。
         </p>
@@ -95,7 +95,7 @@ export function AgentProfilesPage() {
               </div>
               <div className="space-y-2 text-sm">
                 <StatusLine
-                  label="Publication"
+                  label="发布版本"
                   value={
                     profile.current_publication
                       ? `r${profile.current_publication.revision}`
@@ -104,7 +104,9 @@ export function AgentProfilesPage() {
                 />
                 <StatusLine
                   label="模型连接"
-                  value={profile.model_connection_status}
+                  value={modelConnectionStatusLabel(
+                    profile.model_connection_status,
+                  )}
                 />
                 <StatusLine
                   label="活动应用"
@@ -150,7 +152,7 @@ export function AgentProfilePage() {
       <main className="mx-auto w-full max-w-[1100px] px-4 py-8">
         <Card className="border-destructive/40 shadow-none">
           <CardHeader>
-            <CardTitle>Agent Profile 无法加载</CardTitle>
+            <CardTitle>Agent 配置无法加载</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <MutationMessage error={error} />
@@ -179,7 +181,7 @@ export function AgentProfilePage() {
               第一版 UI 只开放默认诊断 Agent，不支持创建、复制或删除 Agent。
             </p>
             <Button variant="outline" render={<Link to="/agent-profiles" />}>
-              返回 Agent Profile
+              返回 Agent 配置
             </Button>
           </CardContent>
         </Card>
@@ -215,7 +217,7 @@ function Workspace({
             <h1 className="text-2xl font-semibold tracking-tight">
               {agent.definition.name}
             </h1>
-            <Badge variant="outline">唯一可编辑 Profile</Badge>
+            <Badge variant="outline">唯一可编辑 Agent 配置</Badge>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
             {agent.definition.code} · Claude Agent SDK · {currentModel}
@@ -243,17 +245,17 @@ function Workspace({
 
       <Card className="border-amber-300/70 bg-amber-50/40 shadow-none dark:bg-amber-950/10">
         <CardContent className="py-4 text-sm text-muted-foreground">
-          发布 Agent Profile 只生成新的 Agent
-          Publication，不会自动切换任何业务应用。 已激活应用仍使用它自己固定的
-          Agent Publication，需进入应用详情手动更新并重新发布。
+          发布 Agent 配置只会生成新的 Agent
+          发布版本，不会自动切换任何业务应用。已激活应用仍使用它自己固定的
+          Agent 发布版本，需进入应用详情手动更新并重新发布。
         </CardContent>
       </Card>
 
       <Tabs defaultValue="profile">
         <TabsList className="h-auto w-full justify-start overflow-x-auto">
-          <TabsTrigger value="profile">Profile 配置</TabsTrigger>
+          <TabsTrigger value="profile">Agent 配置</TabsTrigger>
           <TabsTrigger value="connection">模型连接</TabsTrigger>
-          <TabsTrigger value="publications">Publication 历史</TabsTrigger>
+          <TabsTrigger value="publications">发布历史</TabsTrigger>
         </TabsList>
         <TabsContent value="profile">
           <ProfileForm agent={agent} connection={connection} />
@@ -338,7 +340,7 @@ function ConnectionForm({
                 disabled
               />
             </Field>
-            <Field label="Base URL" htmlFor="model-base-url">
+            <Field label="服务地址（Base URL）" htmlFor="model-base-url">
               <Input
                 id="model-base-url"
                 value={form.base_url}
@@ -389,7 +391,7 @@ function ConnectionForm({
                 placeholder="留空则继承主模型"
               />
             </Field>
-            <Field label="Subagent 模型" htmlFor="model-subagent">
+            <Field label="子 Agent 模型" htmlFor="model-subagent">
               <Input
                 id="model-subagent"
                 value={form.subagent_model}
@@ -399,7 +401,7 @@ function ConnectionForm({
                 placeholder="留空则继承主模型"
               />
             </Field>
-            <Field label="Effort Level" htmlFor="model-effort">
+            <Field label="推理强度" htmlFor="model-effort">
               <select
                 id="model-effort"
                 className={selectClass}
@@ -414,7 +416,14 @@ function ConnectionForm({
               >
                 {["low", "medium", "high", "max"].map((value) => (
                   <option key={value} value={value}>
-                    {value}
+                    {
+                      {
+                        low: "低",
+                        medium: "中",
+                        high: "高",
+                        max: "最高",
+                      }[value]
+                    }
                   </option>
                 ))}
               </select>
@@ -481,12 +490,12 @@ function ConnectionForm({
               mono
             />
             <StatusLine
-              label="Secret 版本"
+              label="凭据版本"
               value={`v${current.credential.version}`}
             />
             <StatusLine label="连接版本" value={`r${current.revision}`} />
             <StatusLine
-              label="Provider Host"
+              label="提供方主机"
               value={current.provider_host}
               mono
             />
@@ -497,7 +506,7 @@ function ConnectionForm({
             />
             {!canManageCredential ? (
               <p className="text-xs text-muted-foreground">
-                当前账号没有 Secret 管理权限，凭据只读。
+                当前账号没有凭据管理权限，只能查看凭据状态。
               </p>
             ) : null}
           </CardContent>
@@ -507,7 +516,7 @@ function ConnectionForm({
             <CardTitle>安全边界</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm text-muted-foreground">
-            <p>仅允许 HTTPS 和部署侧 Provider Host allowlist。</p>
+            <p>仅允许 HTTPS 和部署侧提供方主机允许列表。</p>
             <p>拒绝 URL 用户信息、fragment、私网和环回 DNS 结果。</p>
             <p>连接测试只能使用已保存 revision 和加密凭据。</p>
           </CardContent>
@@ -597,8 +606,7 @@ function CredentialSheet({
             </Field>
             <MutationMessage error={error} />
             <p className="text-xs leading-5 text-muted-foreground">
-              Provider 侧旧 Key 应先撤销。保存成功后只显示脱敏摘要和 active
-              version。
+              应先在模型提供方撤销旧 Key。保存成功后只显示脱敏摘要和活动版本。
             </p>
           </div>
           <SheetFooter>
@@ -684,11 +692,12 @@ function ProfileForm({
   }
 
   const validationErrors = agent.draft?.validation.errors ?? []
+  const draftPublished = agent.draft?.status === "published"
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_24rem]">
       <Card className="shadow-none">
         <CardHeader>
-          <CardTitle>Profile 草稿</CardTitle>
+          <CardTitle>Agent 配置草稿</CardTitle>
         </CardHeader>
         <CardContent className="space-y-5">
           <div className="grid gap-4 md:grid-cols-2">
@@ -771,7 +780,7 @@ function ProfileForm({
             onToggle={(value) => toggleList("tools", value)}
           />
           <Checklist
-            title="Skill"
+            title="技能"
             items={agent.catalog.skills}
             selected={form.skills}
             onToggle={(value) => toggleList("skills", value)}
@@ -822,7 +831,7 @@ function ProfileForm({
             <Button
               type="button"
               variant="outline"
-              disabled={!agent.draft || validate.isPending}
+              disabled={!agent.draft || draftPublished || validate.isPending}
               onClick={() => agent.draft && validate.mutate(agent.draft.id)}
             >
               <CheckCircle2Icon />
@@ -833,6 +842,7 @@ function ProfileForm({
               variant="secondary"
               disabled={
                 !agent.draft ||
+                draftPublished ||
                 !agent.draft.validation.valid ||
                 publish.isPending ||
                 !agent.permissions.can_publish
@@ -840,9 +850,14 @@ function ProfileForm({
               onClick={() => agent.draft && publish.mutate(agent.draft.id)}
             >
               <SendIcon />
-              发布 Agent
+              {draftPublished ? "当前版本已发布" : "发布 Agent"}
             </Button>
           </div>
+          {draftPublished ? (
+            <p className="text-xs text-muted-foreground">
+              当前修订版本已经发布。修改配置并保存后会生成新的草稿版本。
+            </p>
+          ) : null}
           {!agent.permissions.can_publish ? (
             <p className="text-xs text-muted-foreground">
               当前账号可编辑草稿，但没有 Agent 发布或回滚权限。
@@ -854,18 +869,18 @@ function ProfileForm({
       <div className="space-y-5">
         <Card className="shadow-none">
           <CardHeader>
-            <CardTitle>当前有效 Publication</CardTitle>
+            <CardTitle>当前有效发布版本</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
             {agent.current_publication ? (
               <>
                 <StatusLine
-                  label="Publication"
+                  label="发布版本"
                   value={agent.current_publication.id}
                   mono
                 />
                 <StatusLine
-                  label="Revision"
+                  label="修订版本"
                   value={`r${agent.current_publication.revision}`}
                 />
                 <StatusLine
@@ -873,11 +888,11 @@ function ProfileForm({
                   value={
                     "model_connection" in agent.current_publication.snapshot
                       ? "固定模型连接版本"
-                      : "Legacy 全局连接"
+                      : "旧版全局连接"
                   }
                 />
                 <StatusLine
-                  label="Hash"
+                  label="配置哈希"
                   value={`${agent.current_publication.config_hash.slice(0, 14)}…`}
                   mono
                 />
@@ -893,9 +908,9 @@ function ProfileForm({
           </CardHeader>
           <CardContent className="space-y-2 text-sm text-muted-foreground">
             <p>草稿校验通过后才能发布。</p>
-            <p>新 Publication 固定模型连接 revision 与 config hash。</p>
-            <p>API Key 轮换更新活动 Secret，不复制到 Publication。</p>
-            <p>业务应用不会自动切换到新 Agent Publication。</p>
+            <p>新发布版本会固定模型连接版本与配置哈希。</p>
+            <p>API Key 轮换会更新活动凭据，不会复制到发布版本。</p>
+            <p>业务应用不会自动切换到新的 Agent 发布版本。</p>
           </CardContent>
         </Card>
       </div>
@@ -932,7 +947,7 @@ function PublicationHistory({
                   <Badge variant="outline">
                     {publication.model_runtime_mode === "pinned_connection"
                       ? "固定模型连接"
-                      : "Legacy 全局连接"}
+                      : "旧版全局连接"}
                   </Badge>
                 </div>
                 <p className="font-mono text-xs break-all">{publication.id}</p>
@@ -996,6 +1011,18 @@ function ReadOnlyModelSummary({
         URL、Key、默认模型映射和 effort level 请在“模型连接”页签修改。
       </p>
     </div>
+  )
+}
+
+function modelConnectionStatusLabel(status: string): string {
+  return (
+    {
+      ready: "已就绪",
+      rotation_required: "需要轮换凭据",
+      disabled: "已停用",
+      legacy_global_connection: "旧版全局连接",
+      unconfigured: "未配置",
+    }[status] ?? status
   )
 }
 
@@ -1087,9 +1114,7 @@ function MutationMessage({ error }: { error: unknown }) {
     )
   }
   return (
-    <p className="text-sm text-destructive">
-      {error instanceof Error ? error.message : "操作失败"}
-    </p>
+    <p className="text-sm text-destructive">操作失败，请稍后重试。</p>
   )
 }
 

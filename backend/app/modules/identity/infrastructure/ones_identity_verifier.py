@@ -63,7 +63,7 @@ class UrllibOnesIdentityVerifier(OnesIdentityVerifier):
         if not self._url:
             raise NonRetryableExecutionError(
                 "ONES identity provider is not configured",
-                safe_message="ONES identity verification is unavailable",
+                safe_message="ONES 身份验证不可用",
                 error_code="ones_connection_unavailable",
             )
         request = Request(
@@ -90,7 +90,7 @@ class UrllibOnesIdentityVerifier(OnesIdentityVerifier):
         except (URLError, TimeoutError, socket.timeout, OSError) as exc:
             raise RetryableExecutionError(
                 f"ONES identity verification failed: {type(exc).__name__}",
-                safe_message="ONES identity verification is temporarily unavailable",
+                safe_message="ONES 身份验证暂时不可用",
                 error_code="ones_connection_unavailable",
             ) from None
         if len(raw) > self.settings.max_response_bytes:
@@ -125,14 +125,14 @@ class UrllibOnesIdentityVerifier(OnesIdentityVerifier):
         ):
             raise NonRetryableExecutionError(
                 "Invalid ONES identity base URL",
-                safe_message="ONES identity provider configuration is invalid",
+                safe_message="ONES 身份提供方配置无效",
                 error_code="ones_configuration_invalid",
             )
         allowed_hosts = {host.strip().lower() for host in self.settings.allowed_hosts if host.strip()}
         if not allowed_hosts or hostname not in allowed_hosts:
             raise NonRetryableExecutionError(
                 f"ONES identity host is not allowed: {hostname}",
-                safe_message="ONES identity provider host is not allowed",
+                safe_message="不允许使用此 ONES 身份提供方主机",
                 error_code="ones_configuration_invalid",
             )
         if scheme != "https" and (
@@ -141,7 +141,7 @@ class UrllibOnesIdentityVerifier(OnesIdentityVerifier):
         ):
             raise NonRetryableExecutionError(
                 "ONES identity provider requires HTTPS",
-                safe_message="ONES identity provider must use HTTPS",
+                safe_message="ONES 身份提供方必须使用 HTTPS",
                 error_code="ones_configuration_invalid",
             )
         return urlunparse(
@@ -190,18 +190,18 @@ class UrllibOnesIdentityVerifier(OnesIdentityVerifier):
         if status in {401, 403}:
             return NonRetryableExecutionError(
                 "ONES credentials were rejected",
-                safe_message="ONES email or password is invalid",
+                safe_message="ONES 邮箱或密码错误",
                 error_code="ones_invalid_credentials",
             )
         if 300 <= status < 400:
             return NonRetryableExecutionError(
                 "ONES identity provider redirect was rejected",
-                safe_message="ONES identity provider returned an invalid response",
+                safe_message="ONES 身份提供方返回了无效响应",
                 error_code="ones_response_invalid",
             )
         return RetryableExecutionError(
             f"ONES identity provider returned HTTP {status}",
-            safe_message="ONES identity verification is temporarily unavailable",
+            safe_message="ONES 身份验证暂时不可用",
             error_code="ones_connection_unavailable",
         )
 
@@ -209,6 +209,6 @@ class UrllibOnesIdentityVerifier(OnesIdentityVerifier):
     def _invalid_response(reason: str) -> NonRetryableExecutionError:
         return NonRetryableExecutionError(
             f"Invalid ONES identity response: {reason}",
-            safe_message="ONES identity provider returned an invalid response",
+            safe_message="ONES 身份提供方返回了无效响应",
             error_code="ones_response_invalid",
         )

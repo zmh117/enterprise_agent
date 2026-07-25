@@ -94,7 +94,7 @@ def test_admin_validation_errors_have_stable_contract_and_correlation_id() -> No
     assert response.headers["x-correlation-id"] == "contract-test"
     detail = response.json()["detail"]
     assert detail["code"] == "validation_failed"
-    assert detail["message"] == "Request validation failed"
+    assert detail["message"] == "请求参数校验失败"
     assert detail["correlation_id"] == "contract-test"
     assert [item["field"] for item in detail["field_errors"]] == [
         "username",

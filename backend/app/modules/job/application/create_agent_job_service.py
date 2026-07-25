@@ -184,7 +184,7 @@ class CreateAgentJobService:
             if self.agent_config_service is None:
                 raise NonRetryableExecutionError(
                     "Published Agent runtime service is unavailable",
-                    safe_message="Agent configuration is unavailable",
+                    safe_message="Agent 配置不可用",
                 )
             agent_code = command.agent_code or self.default_agent_code
             self.permission_service.require_action(
@@ -202,14 +202,14 @@ class CreateAgentJobService:
             if str(publication["agent_id"]) != str(definition["id"]):
                 raise NonRetryableExecutionError(
                     "Pinned Agent publication belongs to another Agent",
-                    safe_message="Pinned Agent configuration is invalid",
+                    safe_message="固定的 Agent 配置无效",
                 )
             if command.fixed_agent_revision is not None and int(publication["revision"]) != int(
                 command.fixed_agent_revision
             ):
                 raise NonRetryableExecutionError(
                     "Pinned Agent revision mismatch",
-                    safe_message="Pinned Agent configuration integrity check failed",
+                    safe_message="固定的 Agent 配置完整性校验失败",
                 )
             if (
                 command.fixed_agent_config_hash
@@ -217,7 +217,7 @@ class CreateAgentJobService:
             ):
                 raise NonRetryableExecutionError(
                     "Pinned Agent hash mismatch",
-                    safe_message="Pinned Agent configuration integrity check failed",
+                    safe_message="固定的 Agent 配置完整性校验失败",
                 )
             agent_definition_id = str(definition["id"])
             agent_publication_id = str(publication["id"])
@@ -253,7 +253,7 @@ class CreateAgentJobService:
             ):
                 raise NonRetryableExecutionError(
                     "Source connector is not assigned to the Agent publication",
-                    safe_message="Agent is not available on this channel",
+                    safe_message="此渠道无法使用该 Agent",
                 )
             delivery_connector_id = str(reply_route.get("connector_id") or "")
             if (
@@ -267,7 +267,7 @@ class CreateAgentJobService:
             ):
                 raise NonRetryableExecutionError(
                     "Delivery connector is not assigned to the Agent publication",
-                    safe_message="Agent result delivery is not configured for this channel",
+                    safe_message="此渠道尚未配置 Agent 结果投递",
                 )
         execution_policy = self.execution_policy_resolver.resolve(
             application_policy=command.application_execution_policy or None,
@@ -286,7 +286,7 @@ class CreateAgentJobService:
         if command.attachments and self.credential_cipher is None:
             raise NonRetryableExecutionError(
                 "Attachment credential encryption is unavailable",
-                safe_message="Attachment processing is not configured",
+                safe_message="尚未配置附件处理能力",
             )
         continuous_enabled = (
             self.continuous_enabled
@@ -451,33 +451,33 @@ class CreateAgentJobService:
         if attachments and not enabled:
             raise NonRetryableExecutionError(
                 "message_attachments_disabled",
-                safe_message="Attachments are not enabled for this application",
+                safe_message="此业务应用未启用附件",
             )
         if len(attachments) > self.attachment_settings.max_count:
             raise NonRetryableExecutionError(
-                "attachment_count_exceeded", safe_message="Too many attachments"
+                "attachment_count_exceeded", safe_message="附件数量过多"
             )
         total = 0
         for attachment in attachments:
             extension = Path(attachment.file_name).suffix.lower()
             if extension not in self.attachment_settings.allowed_extensions:
                 raise NonRetryableExecutionError(
-                    "unsupported_attachment_type", safe_message="Unsupported attachment type"
+                    "unsupported_attachment_type", safe_message="不支持此附件类型"
                 )
             if not attachment.source_credential:
                 raise NonRetryableExecutionError(
-                    "attachment_source_missing", safe_message="Attachment source is missing"
+                    "attachment_source_missing", safe_message="缺少附件来源"
                 )
             size = int(attachment.declared_size or 0)
             if size > self.attachment_settings.max_file_bytes:
                 raise NonRetryableExecutionError(
-                    "attachment_size_exceeded", safe_message="Attachment is too large"
+                    "attachment_size_exceeded", safe_message="附件过大"
                 )
             total += size
         if total > self.attachment_settings.max_message_bytes:
             raise NonRetryableExecutionError(
                 "attachment_message_size_exceeded",
-                safe_message="Attachment message is too large",
+                safe_message="附件消息过大",
             )
 
     def _assert_connectors_allowed(

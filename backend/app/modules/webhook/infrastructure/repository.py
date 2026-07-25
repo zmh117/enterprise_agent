@@ -59,7 +59,7 @@ class WebhookTriggerRepository:
             (code,),
         )
         if not row:
-            raise NotFound("Webhook Trigger not found", safe_message="Webhook Trigger not found")
+            raise NotFound("Webhook Trigger not found", safe_message="未找到 Webhook 触发器")
         return self._definition(row)
 
     def get_definition_by_public_id(self, public_id: str) -> dict[str, Any] | None:
@@ -195,7 +195,7 @@ class WebhookTriggerRepository:
             "select * from webhook_trigger_revision where id = ?", (revision_id,)
         )
         if not row:
-            raise NotFound("Webhook Trigger revision not found", safe_message="Revision not found")
+            raise NotFound("Webhook Trigger revision not found", safe_message="未找到修订版本")
         return self._revision(row)
 
     def save_draft(
@@ -211,7 +211,7 @@ class WebhookTriggerRepository:
         if latest and int(latest["revision"]) != expected_revision:
             raise NonRetryableExecutionError(
                 "Webhook Trigger revision conflict",
-                safe_message="Webhook Trigger draft changed; refresh and try again",
+                safe_message="Webhook 触发器草稿已发生变化，请刷新后重试",
                 error_code="revision_conflict",
             )
         revision_id = new_id("webhook_trigger_revision")
@@ -317,7 +317,7 @@ class WebhookTriggerRepository:
             "select * from webhook_trigger_publication where id = ?", (publication_id,)
         )
         if not row:
-            raise NotFound("Webhook Trigger publication not found", safe_message="Publication not found")
+            raise NotFound("Webhook Trigger publication not found", safe_message="未找到发布版本")
         return self._publication(row)
 
     def current_publication(self, trigger_id: str) -> dict[str, Any]:
@@ -332,7 +332,7 @@ class WebhookTriggerRepository:
         if not row:
             raise NotFound(
                 "Webhook Trigger has no publication",
-                safe_message="Webhook Trigger is not published",
+                safe_message="Webhook 触发器尚未发布",
             )
         return self._publication(row)
 
@@ -356,7 +356,7 @@ class WebhookTriggerRepository:
         if str(publication["trigger_id"]) != str(definition["id"]):
             raise NonRetryableExecutionError(
                 "Publication belongs to another Trigger",
-                safe_message="Publication does not belong to this Trigger",
+                safe_message="发布版本不属于此触发器",
             )
         rows = self.database.execute(
             """
@@ -390,10 +390,10 @@ class WebhookTriggerRepository:
         ):
             raise NonRetryableExecutionError(
                 "Webhook Trigger revision conflict",
-                safe_message="Webhook Trigger changed; refresh and try again",
+                safe_message="Webhook 触发器已发生变化，请刷新后重试",
                 error_code="revision_conflict",
             )
-        raise NotFound("Webhook Trigger not found", safe_message="Webhook Trigger not found")
+        raise NotFound("Webhook Trigger not found", safe_message="未找到 Webhook 触发器")
 
     def _definition(self, row: dict[str, Any]) -> dict[str, Any]:
         result = {**row, "revision": int(row["revision"])}

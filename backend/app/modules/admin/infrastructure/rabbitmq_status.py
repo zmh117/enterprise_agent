@@ -27,7 +27,7 @@ class RabbitMQQueueStatusAdapter:
                 "collected_at": collected_at,
                 "error": {
                     "code": "queue_status_unavailable",
-                    "message": "Queue status is temporarily unavailable",
+                    "message": "队列状态暂时不可用",
                 },
                 "items": [],
             }

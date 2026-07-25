@@ -123,7 +123,7 @@ def build_admin_router() -> APIRouter:
         if item is None:
             from fastapi import HTTPException
 
-            raise HTTPException(status_code=404, detail="Skill not found")
+            raise HTTPException(status_code=404, detail="未找到技能")
         return {"skill": item}
 
     @router.get("/tool-providers")
@@ -181,7 +181,7 @@ def build_admin_router() -> APIRouter:
         if item is None or not _scope(c, principal).permits(_resource_scope_item(item)):
             from fastapi import HTTPException
 
-            raise HTTPException(status_code=404, detail="Tool resource not found")
+            raise HTTPException(status_code=404, detail="未找到工具资源")
         return {"resource": item}
 
     @router.post("/tool-resources")
@@ -198,7 +198,7 @@ def build_admin_router() -> APIRouter:
         if path_code and path_code != payload.code:
             from fastapi import HTTPException
 
-            raise HTTPException(status_code=422, detail="Path and payload resource codes differ")
+            raise HTTPException(status_code=422, detail="路径与请求内容中的资源编码不一致")
         try:
             ResourceProviderService().validate(data)
             c = container(request)
@@ -226,7 +226,7 @@ def build_admin_router() -> APIRouter:
         if existing is None or not _scope(c, principal).permits(_resource_scope_item(existing)):
             from fastapi import HTTPException
 
-            raise HTTPException(status_code=404, detail="Tool resource not found")
+            raise HTTPException(status_code=404, detail="未找到工具资源")
         data = {
             **existing,
             "status": payload.status,
@@ -253,7 +253,7 @@ def build_admin_router() -> APIRouter:
         if resource is None or not _scope(c, principal).permits(_resource_scope_item(resource)):
             from fastapi import HTTPException
 
-            raise HTTPException(status_code=404, detail="Tool resource not found")
+            raise HTTPException(status_code=404, detail="未找到工具资源")
         try:
             result = ResourceProviderService().probe(
                 resource, c.platform_config_service.resolve_secret
@@ -343,7 +343,7 @@ def build_admin_router() -> APIRouter:
         if connector_id and data["id"] and connector_id != data["id"]:
             from fastapi import HTTPException
 
-            raise HTTPException(status_code=422, detail="Path and payload connector ids differ")
+            raise HTTPException(status_code=422, detail="路径与请求内容中的连接器 ID 不一致")
         if connector_id:
             data["id"] = connector_id
         try:
@@ -503,7 +503,7 @@ def build_admin_router() -> APIRouter:
         if evidence is None or not _scope(c, principal).permits(evidence["job"]):
             from fastapi import HTTPException
 
-            raise HTTPException(status_code=404, detail="Agent job not found")
+            raise HTTPException(status_code=404, detail="未找到 Agent 任务")
         return evidence
 
     @router.get("/conversations")
@@ -575,7 +575,7 @@ def build_admin_router() -> APIRouter:
         if session is None or not _scope(c, principal).permits(session):
             from fastapi import HTTPException
 
-            raise HTTPException(status_code=404, detail="Conversation not found")
+            raise HTTPException(status_code=404, detail="未找到会话")
         jobs_for_session = repository.session_jobs(session_id)
         attachments = [
             item
@@ -641,7 +641,7 @@ def build_admin_router() -> APIRouter:
         if item is None or not _scope(c, principal).permits(item):
             from fastapi import HTTPException
 
-            raise HTTPException(status_code=404, detail="Attachment not found")
+            raise HTTPException(status_code=404, detail="未找到附件")
         return {"attachment": item}
 
     return router

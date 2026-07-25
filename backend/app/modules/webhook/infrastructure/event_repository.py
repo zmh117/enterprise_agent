@@ -104,7 +104,7 @@ class WebhookEventRepository:
             (event_id,),
         )
         if not row:
-            raise NotFound("Webhook event not found", safe_message="Webhook event not found")
+            raise NotFound("Webhook event not found", safe_message="未找到 Webhook 事件")
         return self._event(row)
 
     def list_events(

@@ -100,7 +100,7 @@ class AgentRepository:
         if not row:
             raise NonRetryableExecutionError(
                 "Agent session could not be resolved",
-                safe_message="Agent session could not be resolved",
+                safe_message="无法确定 Agent 会话",
             )
         return self.get_session(str(row["id"]))
 
@@ -930,7 +930,7 @@ class AgentRepository:
         if not can_transition(job.status, target):
             raise NonRetryableExecutionError(
                 f"Invalid job transition {job.status.value} -> {target.value}",
-                safe_message="Invalid job status transition",
+                safe_message="任务状态不能这样变更",
             )
         finished_at = (
             now_iso()
@@ -963,7 +963,7 @@ class AgentRepository:
         if not row:
             raise NonRetryableExecutionError(
                 "Job changed while transitioning",
-                safe_message="Job status changed concurrently",
+                safe_message="任务状态已被其他操作修改，请刷新后重试",
                 error_code="job_transition_conflict",
             )
         return self._job_from_row(row)
@@ -997,7 +997,7 @@ class AgentRepository:
         if not row:
             raise NonRetryableExecutionError(
                 "Job is not eligible for retry scheduling",
-                safe_message="Job retry state changed concurrently",
+                safe_message="任务重试状态已被其他操作修改，请刷新后重试",
                 error_code="job_retry_conflict",
             )
         return self._job_from_row(row)

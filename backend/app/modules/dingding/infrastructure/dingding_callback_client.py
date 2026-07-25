@@ -22,7 +22,7 @@ class DingTalkCallbackClient:
         if self.host_allowlist and parsed.hostname not in self.host_allowlist:
             raise NonRetryableExecutionError(
                 f"Callback host {parsed.hostname} is not allowed",
-                safe_message="Callback host is not allowed",
+                safe_message="不允许使用此回调主机",
             )
         request = Request(
             self.callback_url,

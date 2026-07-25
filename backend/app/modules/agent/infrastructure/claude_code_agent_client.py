@@ -308,12 +308,12 @@ class RealClaudeCodeAgentClient:
         if not api_key:
             raise NonRetryableExecutionError(
                 "ANTHROPIC_API_KEY is required when FEATURE_REAL_CLAUDE=true",
-                safe_message="Claude runtime API key is not configured",
+                safe_message="尚未配置 Claude 运行时 API Key",
             )
         if _looks_placeholder_api_key(api_key):
             raise NonRetryableExecutionError(
                 "ANTHROPIC_API_KEY is still a placeholder value",
-                safe_message="Claude runtime API key is still a placeholder; set a real DeepSeek API key in .env",
+                safe_message="Claude 运行时 API Key 仍为占位值，请在 .env 中配置真实的 DeepSeek API Key",
             )
         try:
             asyncio.get_running_loop()
@@ -337,7 +337,7 @@ class RealClaudeCodeAgentClient:
         if result is None:
             raise RetryableExecutionError(
                 "Claude runtime did not return a result",
-                safe_message="Claude runtime did not return a result",
+                safe_message="Claude 运行时没有返回结果",
             )
         return result
 
@@ -395,7 +395,7 @@ class RealClaudeCodeAgentClient:
         except asyncio.TimeoutError as exc:
             raise RetryableExecutionError(
                 "Claude Agent SDK execution timed out",
-                safe_message="Claude runtime timed out",
+                safe_message="Claude 运行超时",
                 tool_events=tool_events,
                 error_code="runtime_timeout",
             ) from exc
@@ -407,7 +407,7 @@ class RealClaudeCodeAgentClient:
         if not final_answer:
             raise RetryableExecutionError(
                 "Claude Agent SDK completed without a final answer",
-                safe_message="Claude runtime completed without a final answer",
+                safe_message="Claude 运行结束，但没有生成最终回答",
             )
         return AgentRunResult(
             final_answer=final_answer,
@@ -423,7 +423,7 @@ class RealClaudeCodeAgentClient:
         if _looks_placeholder_api_key(api_key):
             raise NonRetryableExecutionError(
                 "Model connection credential is missing or placeholder",
-                safe_message="Model connection credential is not configured",
+                safe_message="尚未配置模型连接凭据",
                 error_code="model_connection_credential_unavailable",
             )
 
@@ -452,7 +452,7 @@ class RealClaudeCodeAgentClient:
                     if error_result is not None:
                         raise RetryableExecutionError(
                             error_result[0],
-                            safe_message="Model provider rejected the connection test",
+                            safe_message="模型提供方拒绝了连接测试",
                             error_code="model_connection_provider_rejected",
                         )
                     if _extract_result_text(message) or _extract_text_blocks(message):
@@ -464,7 +464,7 @@ class RealClaudeCodeAgentClient:
             except asyncio.TimeoutError as exc:
                 raise RetryableExecutionError(
                     "Model connection test timed out",
-                    safe_message="Model connection test timed out",
+                    safe_message="模型连接测试超时",
                     error_code="model_connection_test_timeout",
                 ) from exc
             except Exception as exc:
@@ -472,10 +472,10 @@ class RealClaudeCodeAgentClient:
             if not received:
                 raise RetryableExecutionError(
                     "Model connection test returned no content",
-                    safe_message="Model connection test returned no content",
+                    safe_message="模型连接测试没有返回内容",
                     error_code="model_connection_empty_result",
                 )
-            return {"detail": "Connection succeeded"}
+            return {"detail": "连接成功"}
 
         try:
             asyncio.get_running_loop()
@@ -496,7 +496,7 @@ class RealClaudeCodeAgentClient:
         thread.join()
         if error is not None:
             raise error
-        return result or {"detail": "Connection succeeded"}
+        return result or {"detail": "连接成功"}
 
     def _resolve_api_key(self, binding: ModelRuntimeBinding) -> str:
         if binding.legacy:
@@ -504,7 +504,7 @@ class RealClaudeCodeAgentClient:
         if self.secret_resolver is None:
             raise NonRetryableExecutionError(
                 "Model connection secret resolver is unavailable",
-                safe_message="Model runtime credential resolver is unavailable",
+                safe_message="模型运行凭据解析器不可用",
                 error_code="model_connection_credential_unavailable",
             )
         return self.secret_resolver(binding.secret_ref)
@@ -529,7 +529,7 @@ class RealClaudeCodeAgentClient:
         except ModuleNotFoundError as exc:
             raise NonRetryableExecutionError(
                 "Claude Agent SDK dependency is not installed",
-                safe_message="Claude runtime dependency is not installed",
+                safe_message="尚未安装 Claude 运行时依赖",
                 error_code="claude_sdk_unavailable",
             ) from exc
 
@@ -669,7 +669,7 @@ class RealClaudeCodeAgentClient:
         if _looks_max_turns_exhausted(message):
             raise DiagnosticLoopExhausted(
                 message,
-                safe_message=_safe_sdk_error_message("Claude runtime failed", message),
+                safe_message=_safe_sdk_error_message("Claude 运行失败", message),
                 tool_events=tool_events,
                 error_code="max_turns_exhausted",
                 diagnostics=diagnostics,
@@ -678,7 +678,7 @@ class RealClaudeCodeAgentClient:
             raise NonRetryableExecutionError(
                 message,
                 safe_message=_safe_sdk_error_message(
-                    "Claude Code CLI runtime is not available", message
+                    "Claude Code CLI 运行时不可用", message
                 ),
                 tool_events=tool_events,
                 error_code="claude_cli_unavailable",
@@ -696,7 +696,7 @@ class RealClaudeCodeAgentClient:
             raise RetryableExecutionError(
                 message,
                 safe_message=_safe_sdk_error_message(
-                    "Claude runtime failed with a transient error", message
+                    "Claude 运行时发生暂时性错误", message
                 ),
                 tool_events=tool_events,
                 error_code="claude_transient_error",
@@ -704,7 +704,7 @@ class RealClaudeCodeAgentClient:
             ) from exc
         raise RetryableExecutionError(
             message,
-            safe_message=_safe_sdk_error_message("Claude runtime failed", message),
+            safe_message=_safe_sdk_error_message("Claude 运行失败", message),
             tool_events=tool_events,
             error_code="claude_runtime_error",
             diagnostics=diagnostics,

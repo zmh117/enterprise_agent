@@ -162,7 +162,7 @@ class HttpInternalApiClientTests(unittest.TestCase):
         with self.assertRaises(RetryableExecutionError) as raised:
             client.query_loki({"service": "order-service"}, "", 15, 10, self._context())
 
-        self.assertIn("Internal API Platform request failed", raised.exception.safe_message)
+        self.assertIn("内部 API 平台请求失败", raised.exception.safe_message)
         self.assertIn("bearer <redacted>", raised.exception.safe_message)
         self.assertNotIn("secret-token", raised.exception.safe_message)
 

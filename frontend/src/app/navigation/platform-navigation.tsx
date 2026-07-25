@@ -102,7 +102,7 @@ export function PlatformNavigation() {
             MVP 已接线
           </div>
           <p className="mt-1.5 leading-5">
-            当前开放业务应用、Agent Profile、用户与外部身份
+            当前开放业务应用、Agent 配置、用户与外部身份
           </p>
         </div>
       </SidebarFooter>

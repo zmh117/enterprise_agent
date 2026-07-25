@@ -36,7 +36,7 @@ class AdminConnectorRepository:
             "dingtalk_webhook_robot",
         }:
             raise NotFound(
-                "Channel connector not found", safe_message="Channel connector not found"
+                "Channel connector not found", safe_message="未找到渠道连接器"
             )
         return self._public(row)
 
@@ -117,6 +117,6 @@ class AdminConnectorRepository:
 def _conflict() -> NonRetryableExecutionError:
     return NonRetryableExecutionError(
         "Channel connector revision conflict",
-        safe_message="Channel connector changed; refresh and try again",
+        safe_message="渠道连接器已发生变化，请刷新后重试",
         error_code="revision_conflict",
     )

@@ -19,7 +19,7 @@ def validate_workflow_status(value: str) -> WorkflowStatus:
     except ValueError as exc:
         raise PlatformConfigValidationError(
             f"Invalid workflow status: {value}",
-            safe_message="Invalid workflow status",
+            safe_message="工作流状态无效",
         ) from exc
 
 
@@ -29,7 +29,7 @@ def validate_node_type(value: str) -> WorkflowNodeType:
     except ValueError as exc:
         raise PlatformConfigValidationError(
             f"Invalid workflow node type: {value}",
-            safe_message="Invalid workflow node type",
+            safe_message="工作流节点类型无效",
         ) from exc
 
 
@@ -58,18 +58,18 @@ def validate_graph(
     if len(node_keys) != len(set(node_keys)):
         raise PlatformConfigValidationError(
             "Workflow node keys must be unique",
-            safe_message="Workflow node keys must be unique",
+            safe_message="工作流节点标识不能重复",
         )
     if entry_node_key and entry_node_key not in set(node_keys):
         raise PlatformConfigValidationError(
             "Workflow entry node does not exist",
-            safe_message="Workflow entry node does not exist",
+            safe_message="工作流入口节点不存在",
         )
     edge_keys = [str(edge["edge_key"]) for edge in edges]
     if len(edge_keys) != len(set(edge_keys)):
         raise PlatformConfigValidationError(
             "Workflow edge keys must be unique",
-            safe_message="Workflow edge keys must be unique",
+            safe_message="工作流连线标识不能重复",
         )
     for edge in edges:
         if edge["source_node_key"] not in set(node_keys) or edge["target_node_key"] not in set(
@@ -77,5 +77,5 @@ def validate_graph(
         ):
             raise PlatformConfigValidationError(
                 "Workflow edge references a missing node",
-                safe_message="Workflow edge references a missing node",
+                safe_message="工作流连线引用了不存在的节点",
             )

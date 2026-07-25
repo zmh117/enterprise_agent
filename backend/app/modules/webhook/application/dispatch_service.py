@@ -120,7 +120,7 @@ class WebhookDispatcher:
             if str(definition["status"]) != "enabled":
                 raise NonRetryableExecutionError(
                     "Webhook Trigger is disabled before dispatch",
-                    safe_message="Webhook Trigger is disabled",
+                    safe_message="Webhook 触发器已停用",
                 )
             service_account = self.identity_repository.get_user(
                 str(event["service_account_id"])
@@ -131,7 +131,7 @@ class WebhookDispatcher:
             ):
                 raise NonRetryableExecutionError(
                     "Webhook service account is disabled before dispatch",
-                    safe_message="Webhook service account is disabled",
+                    safe_message="Webhook 服务账号已停用",
                 )
             publication = self.trigger_repository.get_publication(
                 str(event["trigger_publication_id"])
@@ -139,7 +139,7 @@ class WebhookDispatcher:
             if str(publication["trigger_id"]) != str(event["trigger_id"]):
                 raise NonRetryableExecutionError(
                     "Webhook event Trigger publication mismatch",
-                    safe_message="Webhook event integrity check failed",
+                    safe_message="Webhook 事件完整性校验失败",
                 )
             snapshot = publication["snapshot"]
             agent_publication = self.agent_config_service.publication(
@@ -153,7 +153,7 @@ class WebhookDispatcher:
             ):
                 raise NonRetryableExecutionError(
                     "Webhook event pinned Agent publication mismatch",
-                    safe_message="Webhook Agent configuration integrity check failed",
+                    safe_message="Webhook Agent 配置完整性校验失败",
                 )
             normalized = event["normalized_event"]
             channel_event = ChannelEvent(

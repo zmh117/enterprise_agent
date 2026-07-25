@@ -206,7 +206,7 @@ describe("Business Application workbench", () => {
     expect(await screen.findAllByText("真实诊断应用")).not.toHaveLength(0)
     fireEvent.click(screen.getAllByRole("tab", { name: "组成配置" })[0])
     expect(
-      await screen.findByText(/Capability Catalog 尚未接入/)
+      await screen.findByText(/能力目录尚未接入/)
     ).toBeInTheDocument()
     expect(screen.queryByLabelText(/SQL/i)).not.toBeInTheDocument()
 
@@ -215,10 +215,10 @@ describe("Business Application workbench", () => {
       "publication-history-card"
     )
     expect(publicationCard).toHaveClass("sm:grid-cols-[minmax(0,1fr)_auto]")
-    expect(within(publicationCard).getByText("Hash")).toBeInTheDocument()
+    expect(within(publicationCard).getByText("配置哈希")).toBeInTheDocument()
     expect(within(publicationCard).getByText("发布人")).toBeInTheDocument()
     expect(within(publicationCard).getByText("发布时间")).toBeInTheDocument()
-    expect(within(publicationCard).getByText("Schema")).toBeInTheDocument()
+    expect(within(publicationCard).getByText("结构版本")).toBeInTheDocument()
     expect(
       within(publicationCard).getByRole("status").parentElement
     ).toHaveClass("sm:col-span-2")
@@ -253,5 +253,16 @@ describe("Business Application workbench", () => {
     const init = fetch.mock.calls[0][1]
     expect(new Headers(init?.headers).get("X-CSRF-Token")).toBe("csrf-value")
     expect(init?.credentials).toBe("include")
+  })
+
+  it("does not expose an English server error to users", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      response({ detail: "Internal server error" }, 500)
+    )
+
+    await expect(apiRequest("/api/admin/test")).rejects.toMatchObject({
+      status: 500,
+      message: "服务器内部错误，请稍后重试。",
+    } satisfies Partial<ApiError>)
   })
 })

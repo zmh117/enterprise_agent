@@ -172,7 +172,7 @@ class AgentConfigService:
         if raw_errors:
             raise NonRetryableExecutionError(
                 "Agent configuration shape is invalid",
-                safe_message="Agent configuration is invalid",
+                safe_message="Agent 配置无效",
                 error_code="validation_failed",
                 field_errors=raw_errors,
             )
@@ -213,7 +213,7 @@ class AgentConfigService:
         if str(revision["agent_id"]) != str(definition["id"]):
             raise NonRetryableExecutionError(
                 "Revision belongs to another Agent",
-                safe_message="Revision does not belong to this Agent",
+                safe_message="修订版本不属于此 Agent",
             )
         errors = self._validate_config(revision["config"])
         return self.repository.set_validation(revision_id, valid=not errors, errors=errors)
@@ -227,6 +227,25 @@ class AgentConfigService:
             action="publish",
         )
         definition = self.repository.get_definition(agent_code)
+        revision = self.repository.get_revision(revision_id)
+        if str(revision["agent_id"]) != str(definition["id"]):
+            raise NonRetryableExecutionError(
+                "Revision belongs to another Agent",
+                safe_message="修订版本不属于此 Agent",
+            )
+        existing = self.repository.publication_for_revision(
+            agent_id=str(definition["id"]),
+            revision_id=revision_id,
+        )
+        if existing is not None:
+            if str(definition.get("current_publication_id") or "") == str(existing["id"]):
+                self.repository.mark_revision_published(revision_id)
+                return self._verified_publication(existing)
+            raise NonRetryableExecutionError(
+                "Agent revision was already published and is no longer current",
+                safe_message="该修订版本已经发布；如需重新启用，请在发布历史中回退到该版本",
+                error_code="revision_already_published",
+            )
         revision = self.validate_revision(
             actor_id=actor_id, agent_code=agent_code, revision_id=revision_id
         )
@@ -234,7 +253,7 @@ class AgentConfigService:
         if errors:
             raise NonRetryableExecutionError(
                 "Agent configuration validation failed",
-                safe_message="Agent configuration is invalid",
+                safe_message="Agent 配置无效",
                 error_code="validation_failed",
                 field_errors=errors,
             )
@@ -245,12 +264,12 @@ class AgentConfigService:
             if self.model_connection_service is not None and not connection_revision_id:
                 raise NonRetryableExecutionError(
                     "New Agent publications require a model connection revision",
-                    safe_message="Select a ready model connection before publishing",
+                    safe_message="发布前请选择状态正常的模型连接",
                     error_code="model_connection_required",
                     field_errors=[
                         {
                             "field": "model_policy.model_connection_revision_id",
-                            "message": "A ready model connection is required",
+                            "message": "必须选择状态正常的模型连接",
                         }
                     ],
                 )
@@ -261,7 +280,7 @@ class AgentConfigService:
                 if connection_revision["status"] != "ready":
                     raise NonRetryableExecutionError(
                         "Model connection revision is not ready",
-                        safe_message="Rotate the model credential before publishing",
+                        safe_message="发布前请先轮换模型凭据",
                         error_code="model_connection_rotation_required",
                     )
                 snapshot["model_connection"] = {
@@ -350,12 +369,12 @@ class AgentConfigService:
         if int(publication.get("schema_version") or 0) != 1:
             raise NonRetryableExecutionError(
                 "Unsupported Agent publication schema",
-                safe_message="Agent configuration schema is unsupported",
+                safe_message="不支持此 Agent 配置结构版本",
             )
         if _hash(publication["snapshot"]) != str(publication["config_hash"]):
             raise NonRetryableExecutionError(
                 "Agent publication hash mismatch",
-                safe_message="Agent configuration integrity check failed",
+                safe_message="Agent 配置完整性校验失败",
             )
         return publication
 
@@ -401,7 +420,7 @@ class AgentConfigService:
         if agent_code != DEFAULT_AGENT_CODE:
             raise NonRetryableExecutionError(
                 "MVP Agent write attempted for a non-default Agent",
-                safe_message="This Agent is read-only in the current management release",
+                safe_message="当前管理版本中此 Agent 只能查看，不能编辑",
                 error_code="agent_read_only",
             )
 
@@ -421,7 +440,7 @@ class AgentConfigService:
     def _validate_shape(self, config: dict[str, Any]) -> list[dict[str, str]]:
         errors: list[dict[str, str]] = []
         for key in sorted(set(config) - ALLOWED_CONFIG_KEYS):
-            errors.append({"field": key, "message": "Field is not configurable"})
+            errors.append({"field": key, "message": "此字段不可配置"})
         nested = {
             "model_policy": {
                 "runtime",
@@ -435,10 +454,10 @@ class AgentConfigService:
         for field, allowed in nested.items():
             value = config.get(field) or {}
             if not isinstance(value, dict):
-                errors.append({"field": field, "message": "Must be an object"})
+                errors.append({"field": field, "message": "必须是对象"})
                 continue
             for key in sorted(set(value) - allowed):
-                errors.append({"field": f"{field}.{key}", "message": "Field is not configurable"})
+                errors.append({"field": f"{field}.{key}", "message": "此字段不可配置"})
         return errors
 
     def _validate_config(self, config: dict[str, Any]) -> list[dict[str, str]]:
@@ -446,14 +465,14 @@ class AgentConfigService:
         serialized = json.dumps(config, ensure_ascii=False).lower()
         for key in FORBIDDEN_CONFIG_KEYS:
             if f'"{key}"' in serialized:
-                errors.append({"field": key, "message": "Field is controlled by platform security"})
+                errors.append({"field": key, "message": "此字段由平台安全策略控制"})
         instructions = str(config.get("business_instructions") or "").lower()
         for pattern in FORBIDDEN_INSTRUCTION_PATTERNS:
             if pattern in instructions:
                 errors.append(
                     {
                         "field": "business_instructions",
-                        "message": "Business instructions conflict with platform safety",
+                        "message": "业务指令与平台安全规则冲突",
                     }
                 )
                 break
@@ -473,7 +492,7 @@ class AgentConfigService:
             errors.append(
                 {
                     "field": "model_policy.runtime",
-                    "message": "Only claude_agent_sdk is supported",
+                    "message": "仅支持 claude_agent_sdk",
                 }
             )
         if connection_revision_id:
@@ -481,7 +500,7 @@ class AgentConfigService:
                 errors.append(
                     {
                         "field": "model_policy.model_connection_revision_id",
-                        "message": "Model connection service is unavailable",
+                        "message": "模型连接服务不可用",
                     }
                 )
             else:
@@ -493,7 +512,7 @@ class AgentConfigService:
                     errors.append(
                         {
                             "field": "model_policy.model_connection_revision_id",
-                            "message": "Model connection revision does not exist",
+                            "message": "模型连接版本不存在",
                         }
                     )
                 else:
@@ -501,18 +520,18 @@ class AgentConfigService:
                         errors.append(
                             {
                                 "field": "model_policy.model_connection_revision_id",
-                                "message": "Model connection requires credential rotation",
+                                "message": "模型连接需要轮换凭据",
                             }
                         )
                     if model != str(connection["config"]["model"]):
                         errors.append(
                             {
                                 "field": "model_policy.model",
-                                "message": "Model must match the selected connection revision",
+                                "message": "模型必须与所选模型连接版本一致",
                             }
                         )
         elif model not in self.allowed_models:
-            errors.append({"field": "model_policy.model", "message": "Model is not registered"})
+            errors.append({"field": "model_policy.model", "message": "模型尚未注册"})
         enabled_tools = self.repository.enabled_tools()
         for tool_name in config.get("tools") or []:
             if (
@@ -522,7 +541,7 @@ class AgentConfigService:
                 errors.append(
                     {
                         "field": "tools",
-                        "message": f"Tool {tool_name} is not registered and read-only",
+                        "message": f"工具 {tool_name} 尚未注册为只读工具",
                     }
                 )
         available_skills = set(self.skill_loader.load())
@@ -531,7 +550,7 @@ class AgentConfigService:
                 errors.append(
                     {
                         "field": "skills",
-                        "message": f"Skill {skill_code} is not registered",
+                        "message": f"Skill {skill_code} 尚未注册",
                     }
                 )
         channels = config.get("channels") or {}
@@ -542,7 +561,7 @@ class AgentConfigService:
                         errors.append(
                             {
                                 "field": f"channels.{direction}",
-                                "message": f"Connector {connector_id} is unavailable",
+                                "message": f"连接器 {connector_id} 不可用",
                             }
                         )
         execution = config.get("execution") or {}
@@ -552,18 +571,18 @@ class AgentConfigService:
                 timeout = int(execution.get("timeout_seconds") or 300)
             except (TypeError, ValueError):
                 errors.append(
-                    {"field": "execution", "message": "Execution limits must be integers"}
+                    {"field": "execution", "message": "执行限制必须是整数"}
                 )
                 return errors
             if not 1 <= max_turns <= 100:
                 errors.append(
-                    {"field": "execution.max_turns", "message": "Must be between 1 and 100"}
+                    {"field": "execution.max_turns", "message": "必须在 1 到 100 之间"}
                 )
             if not 10 <= timeout <= 3600:
                 errors.append(
                     {
                         "field": "execution.timeout_seconds",
-                        "message": "Must be between 10 and 3600",
+                        "message": "必须在 10 到 3600 之间",
                     }
                 )
         return errors

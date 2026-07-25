@@ -59,14 +59,14 @@ class WebhookIngressService:
         if not self.settings.enabled or not PUBLIC_ID_RE.fullmatch(public_id):
             raise NotFound(
                 "Webhook public ID not found",
-                safe_message="Webhook endpoint not found",
+                safe_message="未找到 Webhook 端点",
                 error_code="webhook_not_found",
             )
         definition = self.trigger_repository.get_definition_by_public_id(public_id)
         if not definition:
             raise NotFound(
                 "Webhook public ID not found",
-                safe_message="Webhook endpoint not found",
+                safe_message="未找到 Webhook 端点",
                 error_code="webhook_not_found",
             )
         if (
@@ -76,7 +76,7 @@ class WebhookIngressService:
         ):
             raise PermissionDenied(
                 "Webhook Trigger or service account is disabled",
-                safe_message="Webhook endpoint is unavailable",
+                safe_message="Webhook 端点不可用",
                 error_code="webhook_disabled",
             )
         try:
@@ -84,26 +84,26 @@ class WebhookIngressService:
         except NotFound as exc:
             raise PermissionDenied(
                 "Webhook Trigger is not published",
-                safe_message="Webhook endpoint is unavailable",
+                safe_message="Webhook 端点不可用",
                 error_code="webhook_not_published",
             ) from exc
         snapshot = publication["snapshot"]
         if config_hash(_revision_config(snapshot)) != str(publication["config_hash"]):
             raise PermissionDenied(
                 "Webhook Trigger publication hash mismatch",
-                safe_message="Webhook endpoint configuration failed integrity checks",
+                safe_message="Webhook 端点配置完整性校验失败",
                 error_code="webhook_not_published",
             )
         if not content_type.lower().split(";", 1)[0].strip() == "application/json":
             raise NonRetryableExecutionError(
                 "Webhook content type is not JSON",
-                safe_message="Content-Type must be application/json",
+                safe_message="Content-Type 必须为 application/json",
                 error_code="webhook_invalid_content_type",
             )
         if len(raw_body) > self.settings.max_body_bytes:
             raise NonRetryableExecutionError(
                 "Webhook request body exceeds configured limit",
-                safe_message="Webhook payload is too large",
+                safe_message="Webhook 载荷过大",
                 error_code="webhook_payload_too_large",
             )
         payload_hash = hashlib.sha256(raw_body).hexdigest()
@@ -131,7 +131,7 @@ class WebhookIngressService:
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             error = NonRetryableExecutionError(
                 "Webhook request body is invalid JSON",
-                safe_message="Request body must be a JSON object",
+                safe_message="请求正文必须是 JSON 对象",
                 error_code="webhook_payload_invalid",
             )
             self._record_rejection(
@@ -152,7 +152,7 @@ class WebhookIngressService:
         ):
             error = NonRetryableExecutionError(
                 "Webhook JSON shape exceeds configured limits",
-                safe_message="Webhook JSON structure is not allowed",
+                safe_message="不允许使用此 Webhook JSON 结构",
                 error_code="webhook_payload_invalid",
             )
             self._record_rejection(
@@ -176,7 +176,7 @@ class WebhookIngressService:
         ):
             rate_error = PermissionDenied(
                 "Webhook Trigger rate limit exceeded",
-                safe_message="Webhook rate limit exceeded",
+                safe_message="Webhook 请求过于频繁，请稍后重试",
                 error_code="webhook_rate_limited",
             )
             self._record_rejection(

@@ -40,7 +40,7 @@ class PermissionService:
         ):
             raise PermissionDenied(
                 f"User {user_id} is not allowed for {project_code}",
-                safe_message="User is not allowed to use Agent for this scope",
+                safe_message="当前用户无权在此范围内使用 Agent",
             )
 
     def assert_tool_allowed(
@@ -55,12 +55,12 @@ class PermissionService:
         if not tool or int(tool["enabled"]) != 1:
             raise ToolPolicyError(
                 f"Tool {tool_name} is disabled",
-                safe_message="Tool is disabled",
+                safe_message="工具已停用",
             )
         if int(tool["read_only"]) != 1:
             raise ToolPolicyError(
                 f"Tool {tool_name} is not read-only",
-                safe_message="Only read-only tools are allowed",
+                safe_message="只允许使用只读工具",
             )
         if not self._is_allowed(
             user_id=user_id,
@@ -70,7 +70,7 @@ class PermissionService:
         ):
             raise ToolPolicyError(
                 f"User {user_id} is not allowed to call {tool_name}",
-                safe_message="User is not allowed to call this tool",
+                safe_message="当前用户无权调用此工具",
             )
         self.assert_user_can_create_job(user_id=user_id, project_code=project_code)
         if (
@@ -89,7 +89,7 @@ class PermissionService:
             if not decision.allowed:
                 raise ToolPolicyError(
                     f"Platform scope denied: {decision.reason}",
-                    safe_message="User is not allowed to access this data scope",
+                    safe_message="当前用户无权访问此数据范围",
                 )
 
     def require_action(
@@ -108,7 +108,7 @@ class PermissionService:
         ):
             raise PermissionDenied(
                 f"User {user_id} is not allowed to manage {resource_type}",
-                safe_message="User is not allowed to manage this configuration",
+                safe_message="当前用户无权管理此配置",
             )
 
     def _is_allowed(

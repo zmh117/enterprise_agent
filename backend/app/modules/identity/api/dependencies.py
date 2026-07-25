@@ -51,7 +51,7 @@ def current_principal(request: Request) -> AuthenticatedPrincipal:
                     role_codes=c.identity_repository.role_codes_for_user(str(user["id"])),
                     auth_source="test-header",
                 )
-    raise HTTPException(status_code=401, detail="Authentication required")
+    raise HTTPException(status_code=401, detail="请先登录")
 
 
 def optional_legacy_actor(request: Request) -> str:
@@ -75,9 +75,9 @@ def require_csrf(request: Request, principal: AuthenticatedPrincipal) -> None:
     settings = c.settings.identity
     origin = request.headers.get("origin", "")
     if origin and origin not in settings.allowed_origins:
-        raise HTTPException(status_code=403, detail="Origin is not allowed")
+        raise HTTPException(status_code=403, detail="不允许使用此请求来源")
     if c.settings.environment not in {"local", "test", "testing"} and not origin:
-        raise HTTPException(status_code=403, detail="Origin is required")
+        raise HTTPException(status_code=403, detail="请求必须包含来源信息")
     session_token = request.cookies.get(settings.session_cookie_name, "")
     csrf_cookie = request.cookies.get(settings.csrf_cookie_name, "")
     csrf_header = request.headers.get("x-csrf-token", "")
@@ -88,7 +88,7 @@ def require_csrf(request: Request, principal: AuthenticatedPrincipal) -> None:
         or csrf_cookie != csrf_header
         or not c.auth_service.verify_csrf(session_token, csrf_header)
     ):
-        raise HTTPException(status_code=403, detail="CSRF validation failed")
+        raise HTTPException(status_code=403, detail="CSRF 校验失败")
 
 
 def require_action(
@@ -128,6 +128,7 @@ def handle_exception(exc: Exception) -> HTTPException:
                 "identity_conflict",
                 "ones_identity_conflict",
                 "username_conflict",
+                "revision_already_published",
             }
             else 400
         )
@@ -141,4 +142,4 @@ def handle_exception(exc: Exception) -> HTTPException:
         )
     if isinstance(exc, ValueError):
         return HTTPException(status_code=422, detail=str(exc))
-    return HTTPException(status_code=500, detail="Internal server error")
+    return HTTPException(status_code=500, detail="服务器内部错误")

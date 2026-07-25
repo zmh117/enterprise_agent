@@ -38,7 +38,7 @@ def register_routes(
             "source": "local-placeholder-er-context",
             "project_code": str(payload.get("project_code", "default")),
             "query": str(payload.get("query", "")),
-            "message": "Local ER context is not connected; placeholder context returned.",
+            "message": "本地 ER 上下文尚未连接，当前返回占位内容",
             "tables": [],
             "fields": [],
             "relationships": [],
@@ -53,7 +53,7 @@ def register_routes(
             "source": "local-placeholder-business-flow-context",
             "project_code": str(payload.get("project_code", "default")),
             "query": str(payload.get("query", "")),
-            "message": "Local business-flow context is not connected; placeholder context returned.",
+            "message": "本地业务流程上下文尚未连接，当前返回占位内容",
             "nodes": [],
             "edges": [],
         }

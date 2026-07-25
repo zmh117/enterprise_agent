@@ -16,7 +16,7 @@ export function WorkflowPreview() {
                 className="size-4 text-indigo-600"
                 aria-hidden="true"
               />
-              <h3 className="font-semibold">Workflow 预览</h3>
+              <h3 className="font-semibold">工作流预览</h3>
             </div>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
               固定 API 节点保证确定性；Agent 节点只在授权集合中自主选择能力。

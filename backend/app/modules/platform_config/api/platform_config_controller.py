@@ -63,7 +63,7 @@ def _handle(exc: Exception) -> HTTPException:
         return HTTPException(status_code=400, detail=exc.safe_message)
     if isinstance(exc, ValueError):
         return HTTPException(status_code=400, detail=str(exc))
-    return HTTPException(status_code=500, detail="Internal server error")
+    return HTTPException(status_code=500, detail="服务器内部错误")
 
 
 def build_platform_config_router() -> APIRouter:
@@ -343,7 +343,7 @@ def build_platform_config_router() -> APIRouter:
         if not _container(
             request
         ).settings.feature_configuration.web_admin_enabled:
-            raise HTTPException(status_code=404, detail="Web administration is disabled")
+            raise HTTPException(status_code=404, detail="Web 管理功能已停用")
         _require_management_read(request, resource_type="platform_config")
         c = _container(request)
         return {

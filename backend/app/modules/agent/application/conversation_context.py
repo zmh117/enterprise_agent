@@ -58,9 +58,15 @@ class ConversationContextService:
     def build(self, job: AgentJob) -> ConversationContext:
         session = self.repository.get_session(job.session_id)
         if session.project_code != job.project_code:
-            raise PermissionDenied("Conversation project scope mismatch")
+            raise PermissionDenied(
+                "Conversation project scope mismatch",
+                safe_message="会话所属项目与当前任务不匹配",
+            )
         if session.conversation_type == "direct" and session.requester_id != job.requester_id:
-            raise PermissionDenied("Conversation requester scope mismatch")
+            raise PermissionDenied(
+                "Conversation requester scope mismatch",
+                safe_message="会话请求人与当前任务不匹配",
+            )
         recent_message_limit = session.recent_message_limit or self.settings.recent_message_limit
         messages = self.repository.list_messages(
             job.session_id,

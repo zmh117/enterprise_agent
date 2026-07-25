@@ -37,7 +37,7 @@ class DingTalkMediaDownloader:
         if not download_url:
             raise RetryableExecutionError(
                 "DingTalk media response did not include download URL",
-                safe_message="DingTalk media download is temporarily unavailable",
+                safe_message="钉钉媒体文件下载暂时不可用",
             )
         request = Request(download_url, headers={"user-agent": "enterprise-agent/1.0"})
         try:
@@ -57,6 +57,6 @@ class DingTalkMediaDownloader:
         except Exception as exc:
             raise RetryableExecutionError(
                 "DingTalk media download failed",
-                safe_message="DingTalk media download failed",
+                safe_message="钉钉媒体文件下载失败",
             ) from exc
         return b"".join(chunks)

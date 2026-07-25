@@ -109,7 +109,7 @@ class WorkflowConfigTests(unittest.TestCase):
                 },
             )
             self.assertEqual(400, mutation.status_code)
-            self.assertIn("Mutation workflow node", mutation.json()["detail"])
+            self.assertIn("不允许写操作工作流节点", mutation.json()["detail"])
 
             edge = client.post(
                 "/api/agent/workflows/safe-flow/edges",
@@ -121,7 +121,7 @@ class WorkflowConfigTests(unittest.TestCase):
                 },
             )
             self.assertEqual(400, edge.status_code)
-            self.assertIn("missing node", edge.json()["detail"])
+            self.assertIn("不存在的节点", edge.json()["detail"])
 
 
 if __name__ == "__main__":

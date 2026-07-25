@@ -9,9 +9,9 @@ export function PlatformFlow() {
   return (
     <section aria-labelledby="platform-flow-title" className="space-y-4">
       <SectionHeading
-        eyebrow="Target architecture"
+        eyebrow="目标架构"
         title="一次请求如何穿过平台"
-        description="Agent Runtime 只看到受控业务能力；底层数据访问、认证、路由、脱敏与限流由独立 API 平台负责。"
+        description="Agent 运行时只看到受控业务能力；底层数据访问、认证、路由、脱敏与限流由独立 API 平台负责。"
       />
 
       <Card className="shadow-none">
@@ -52,7 +52,7 @@ export function PlatformFlow() {
               <div>
                 <h3 className="font-semibold">Agent 平台的边界</h3>
                 <p className="text-xs text-muted-foreground">
-                  配置应用、流程、身份策略和 Capability
+                  配置应用、流程、身份策略和能力
                 </p>
               </div>
             </div>
@@ -60,8 +60,8 @@ export function PlatformFlow() {
           <CardContent className="grid gap-2 text-sm sm:grid-cols-2">
             {[
               "创建业务应用",
-              "装配 Agent Profile",
-              "选择业务 Capability",
+              "装配 Agent 配置",
+              "选择业务能力",
               "执行流程与投递",
               "记录调用审计",
               "传递可信主体上下文",

@@ -157,7 +157,7 @@ def build_model_connection_router() -> APIRouter:
             if payload.revision_id not in revisions:
                 raise NonRetryableExecutionError(
                     "Model connection revision belongs to another connection",
-                    safe_message="Model connection revision is invalid",
+                    safe_message="模型连接版本无效",
                     error_code="validation_failed",
                 )
             result = container(request).model_connection_service.test_saved_revision(

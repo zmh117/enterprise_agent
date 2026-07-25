@@ -54,7 +54,7 @@ class ConnectorRegistry:
         ):
             raise PermissionDenied(
                 f"Connector {connector_id} is not allowed for ingress",
-                safe_message="Connector is not allowed for ingress",
+                safe_message="该连接器不允许用于消息接入",
             )
         return connector
 
@@ -67,7 +67,7 @@ class ConnectorRegistry:
         ):
             raise NonRetryableExecutionError(
                 f"Connector {connector_id} is not allowed for delivery",
-                safe_message="Connector is not allowed for delivery",
+                safe_message="该连接器不允许用于结果投递",
             )
         return connector
 
@@ -76,7 +76,7 @@ class ConnectorRegistry:
         if connector.connector_type != DINGTALK_STREAM_CONNECTOR_TYPE:
             raise PermissionDenied(
                 f"Connector {connector_id} is not a DingTalk Stream ingress connector",
-                safe_message="Connector is not a DingTalk Stream ingress connector",
+                safe_message="该连接器不是钉钉 Stream 接入连接器",
             )
         return connector
 
@@ -139,7 +139,7 @@ class ConnectorRegistry:
         if connector.host_allowlist and parsed.hostname not in connector.host_allowlist:
             raise NonRetryableExecutionError(
                 f"Delivery host {parsed.hostname} is not allowed",
-                safe_message="Delivery host is not allowed",
+                safe_message="不允许使用此投递主机",
             )
 
     def _require(self, connector_id: str) -> Connector:
@@ -147,7 +147,7 @@ class ConnectorRegistry:
         if connector is None:
             raise NonRetryableExecutionError(
                 f"Unknown connector: {connector_id}",
-                safe_message="Connector is not configured",
+                safe_message="连接器尚未配置",
             )
         return connector
 

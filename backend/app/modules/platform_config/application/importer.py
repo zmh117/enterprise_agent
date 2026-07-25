@@ -56,7 +56,7 @@ class PlatformTopologyYamlImporter:
         if not path.exists():
             raise NotFound(
                 f"Topology YAML file not found: {path}",
-                safe_message="Topology YAML file not found",
+                safe_message="未找到拓扑 YAML 文件",
             )
         return self.import_text(
             path.read_text(),
@@ -75,7 +75,7 @@ class PlatformTopologyYamlImporter:
         if not isinstance(raw, dict):
             raise PlatformConfigValidationError(
                 "Topology YAML root must be an object",
-                safe_message="Topology YAML root must be an object",
+                safe_message="拓扑 YAML 根节点必须是对象",
             )
         stats = ImportStats()
         for env_code, env_data in (raw.get("environments") or {}).items():

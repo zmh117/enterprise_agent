@@ -525,9 +525,7 @@ def test_dingtalk_binding_state_controls_ingress_and_replies_with_safe_rejection
     )
     assert denied_disabled.accepted is False
     assert denied_disabled.status == "permission_denied"
-    assert notifier.calls[-1]["reason"] == (
-        "Your DingTalk account is not authorized; contact an administrator"
-    )
+    assert notifier.calls[-1]["reason"] == "你的钉钉账号尚未获得授权，请联系管理员"
     assert "https://oapi.dingtalk.com/robot/sendBySession" not in json.dumps(
         container.database.execute("select payload_summary from audit_event")
     )

@@ -154,7 +154,7 @@ class RuntimeReadinessEvaluator:
                 components,
                 affected_routes,
                 RuntimeReason.DATA_PLANE_DISABLED,
-                "Business Application data plane is disabled",
+                "业务应用数据面已停用",
             )
         if deployment is None or not bool(deployment.get("active")):
             return self._not_wired(
@@ -162,7 +162,7 @@ class RuntimeReadinessEvaluator:
                 components,
                 affected_routes,
                 RuntimeReason.NO_ACTIVE_DEPLOYMENT,
-                "Business Application has no active deployment",
+                "业务应用没有活动部署",
             )
         if deployment_environment != self.runtime_environment:
             return self._not_wired(
@@ -170,7 +170,7 @@ class RuntimeReadinessEvaluator:
                 components,
                 affected_routes,
                 RuntimeReason.NOT_CURRENT_RUNTIME_ENVIRONMENT,
-                "Deployment is not active in this runtime environment",
+                "部署未在当前运行环境中激活",
             )
         if blockers:
             reason, message = blockers[0]
@@ -195,7 +195,7 @@ class RuntimeReadinessEvaluator:
                 components,
                 affected_routes,
                 RuntimeReason.NO_SUPPORTED_ROUTE,
-                "No supported active DingTalk route is configured",
+                "尚未配置受支持的活动钉钉路由",
             )
         partial = any(
             component.status
@@ -213,9 +213,9 @@ class RuntimeReadinessEvaluator:
             deployment_environment=deployment_environment,
             reason_code=RuntimeReason.READY.value,
             message=(
-                "Business Application routing is active; some policies are stored only"
+                "业务应用路由已生效；部分策略仅保存但尚未执行"
                 if partial
-                else "Business Application routing is active"
+                else "业务应用路由已生效"
             ),
             components=components,
             affected_routes=affected_routes,
@@ -232,9 +232,9 @@ class RuntimeReadinessEvaluator:
             else reason
         )
         message = {
-            RuntimeReason.DATA_PLANE_DISABLED: "Business Application data plane is disabled",
-            RuntimeReason.ROUTE_NOT_MATCHED: "No active Business Application route matched",
-        }.get(effective_reason, "Business Application has no active deployment")
+            RuntimeReason.DATA_PLANE_DISABLED: "业务应用数据面已停用",
+            RuntimeReason.ROUTE_NOT_MATCHED: "没有匹配的活动业务应用路由",
+        }.get(effective_reason, "业务应用没有活动部署")
         return self._not_wired(
             "",
             self._default_components(),
@@ -266,7 +266,7 @@ class RuntimeReadinessEvaluator:
         components["agent_publication"] = RuntimeComponentStatus(
             RuntimeComponentState.BLOCKED,
             reason.value,
-            "Business Application publication integrity check failed",
+            "业务应用发布版本完整性校验失败",
         )
         return RuntimeReadiness(
             runtime_wired=False,
@@ -274,7 +274,7 @@ class RuntimeReadinessEvaluator:
             runtime_environment=self.runtime_environment,
             deployment_environment=deployment_environment,
             reason_code=reason.value,
-            message="Business Application runtime configuration is unavailable",
+            message="业务应用运行配置不可用",
             components=components,
         )
 
@@ -292,12 +292,12 @@ class RuntimeReadinessEvaluator:
             components["agent_publication"] = RuntimeComponentStatus(
                 RuntimeComponentState.BLOCKED,
                 RuntimeReason.MISSING_AGENT_PUBLICATION.value,
-                "A valid Agent Publication is required",
+                "必须选择有效的 Agent 发布版本",
             )
             blockers.append(
                 (
                     RuntimeReason.MISSING_AGENT_PUBLICATION.value,
-                    "Business Application Agent Publication is unavailable",
+                    "业务应用的 Agent 发布版本不可用",
                 )
             )
 
@@ -334,7 +334,7 @@ class RuntimeReadinessEvaluator:
                 blockers.append(
                     (
                         RuntimeReason.LEGACY_ROUTING_KEY.value,
-                        "DingTalk route uses an unsupported legacy routing key",
+                        "钉钉路由使用了不受支持的旧版路由键",
                     )
                 )
             if str(trigger.get("actor_policy") or "") != "CURRENT_SENDER":
@@ -342,7 +342,7 @@ class RuntimeReadinessEvaluator:
                 blockers.append(
                     (
                         RuntimeReason.UNSUPPORTED_ACTOR_POLICY.value,
-                        "DingTalk routes require CURRENT_SENDER actor policy",
+                        "钉钉路由必须使用 CURRENT_SENDER 主体策略",
                     )
                 )
         if trigger_blocked:
@@ -358,13 +358,13 @@ class RuntimeReadinessEvaluator:
             components["trigger_routing"] = RuntimeComponentStatus(
                 RuntimeComponentState.WIRED,
                 RuntimeReason.READY.value,
-                "Supported DingTalk routes are configured",
+                "已配置受支持的钉钉路由",
             )
         else:
             components["trigger_routing"] = RuntimeComponentStatus(
                 RuntimeComponentState.STORED_ONLY,
                 RuntimeReason.UNSUPPORTED_TRIGGER.value,
-                "No supported DingTalk route is configured",
+                "尚未配置受支持的钉钉路由",
             )
 
         deliveries = [
@@ -387,24 +387,24 @@ class RuntimeReadinessEvaluator:
                 components["delivery"] = RuntimeComponentStatus(
                     RuntimeComponentState.BLOCKED,
                     RuntimeReason.MISSING_DELIVERY_BINDING.value,
-                    "DingTalk routes require reply_original delivery",
+                    "钉钉路由必须配置 reply_original 投递",
                 )
                 blockers.append(
                     (
                         RuntimeReason.MISSING_DELIVERY_BINDING.value,
-                        "Business Application reply-original delivery is missing",
+                        "业务应用缺少原会话回复投递",
                     )
                 )
             elif len(reply_deliveries) != 1:
                 components["delivery"] = RuntimeComponentStatus(
                     RuntimeComponentState.BLOCKED,
                     RuntimeReason.DUPLICATE_DELIVERY_BINDING.value,
-                    "Exactly one reply_original delivery is required",
+                    "必须且只能配置一个 reply_original 投递",
                 )
                 blockers.append(
                     (
                         RuntimeReason.DUPLICATE_DELIVERY_BINDING.value,
-                        "Business Application has duplicate reply-original deliveries",
+                        "业务应用配置了重复的原会话回复投递",
                     )
                 )
             else:
@@ -417,25 +417,25 @@ class RuntimeReadinessEvaluator:
                     components["delivery"] = RuntimeComponentStatus(
                         RuntimeComponentState.BLOCKED,
                         RuntimeReason.DELIVERY_CONNECTOR_MISMATCH.value,
-                        "Reply-original connector must match the ingress connector",
+                        "原会话回复连接器必须与接入连接器一致",
                     )
                     blockers.append(
                         (
                             RuntimeReason.DELIVERY_CONNECTOR_MISMATCH.value,
-                            "Business Application delivery connector does not match ingress",
+                            "业务应用投递连接器与接入连接器不匹配",
                         )
                     )
                 else:
                     components["delivery"] = RuntimeComponentStatus(
                         RuntimeComponentState.WIRED,
                         RuntimeReason.READY.value,
-                        "Reply-original delivery is configured",
+                        "已配置原会话回复投递",
                     )
         elif deliveries:
             components["delivery"] = RuntimeComponentStatus(
                 RuntimeComponentState.STORED_ONLY,
                 RuntimeReason.UNSUPPORTED_DELIVERY.value,
-                "Delivery is stored but not connected by this runtime phase",
+                "投递配置已保存，但当前运行阶段尚未接入",
             )
 
         session_policy = dict(snapshot.get("session_policy") or {})
@@ -443,7 +443,7 @@ class RuntimeReadinessEvaluator:
             components["session_policy"] = RuntimeComponentStatus(
                 RuntimeComponentState.WIRED,
                 RuntimeReason.READY.value,
-                "Conversation loading policy is enforced by the runtime",
+                "运行时已执行会话加载策略",
                 fields={
                     "conversation_mode": "wired",
                     "recent_message_limit": "wired",
@@ -454,7 +454,7 @@ class RuntimeReadinessEvaluator:
             components["retention_policy"] = RuntimeComponentStatus(
                 RuntimeComponentState.STORED_ONLY,
                 RuntimeReason.RETENTION_POLICY_STORED_ONLY.value,
-                "Retention is recorded for governance but no automatic cleanup runs",
+                "数据保留策略已用于治理记录，但尚未执行自动清理",
                 fields={"retention_days": "stored_only"},
                 impact=RuntimeComponentImpact.GOVERNANCE,
             )
@@ -462,7 +462,7 @@ class RuntimeReadinessEvaluator:
         components["execution_policy"] = RuntimeComponentStatus(
             RuntimeComponentState.WIRED,
             RuntimeReason.READY.value,
-            "Execution limits are fixed on each Job and enforced by the worker",
+            "执行限制已固定到每个任务，并由工作进程强制执行",
             fields={
                 "max_turns": "wired",
                 "timeout_seconds": "wired",
@@ -473,7 +473,7 @@ class RuntimeReadinessEvaluator:
             components["workflow"] = RuntimeComponentStatus(
                 RuntimeComponentState.STORED_ONLY,
                 RuntimeReason.WORKFLOW_STORED_ONLY.value,
-                "Workflow Publication is stored but not executed",
+                "工作流发布版本已保存，但尚未执行",
             )
         capabilities = [
             value
@@ -484,12 +484,12 @@ class RuntimeReadinessEvaluator:
             components["capabilities"] = RuntimeComponentStatus(
                 RuntimeComponentState.UNSUPPORTED,
                 RuntimeReason.CAPABILITY_UNSUPPORTED.value,
-                "API Capability runtime is not connected",
+                "API 能力运行时尚未接入",
             )
             blockers.append(
                 (
                     RuntimeReason.CAPABILITY_UNSUPPORTED.value,
-                    "API Capability runtime is unavailable",
+                    "API 能力运行时不可用",
                 )
             )
         return components, blockers, tuple(affected_routes)
@@ -498,20 +498,20 @@ class RuntimeReadinessEvaluator:
         ready = RuntimeComponentStatus(
             RuntimeComponentState.WIRED,
             RuntimeReason.READY.value,
-            "Component is ready",
+            "组件已就绪",
         )
         return {
             "trigger_routing": RuntimeComponentStatus(
                 RuntimeComponentState.STORED_ONLY,
                 RuntimeReason.NO_SUPPORTED_ROUTE.value,
-                "No active supported route",
+                "没有活动的受支持路由",
             ),
             "agent_publication": ready,
             "session_policy": ready,
             "retention_policy": RuntimeComponentStatus(
                 RuntimeComponentState.STORED_ONLY,
                 RuntimeReason.RETENTION_POLICY_STORED_ONLY.value,
-                "Retention is stored only",
+                "数据保留策略仅保存但尚未执行",
                 fields={"retention_days": "stored_only"},
                 impact=RuntimeComponentImpact.GOVERNANCE,
             ),

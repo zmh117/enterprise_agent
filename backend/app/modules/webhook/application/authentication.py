@@ -34,7 +34,7 @@ class WebhookAuthenticator:
         if not secret:
             raise PermissionDenied(
                 "Webhook secret reference could not be resolved",
-                safe_message="Webhook authentication failed",
+                safe_message="Webhook 身份验证失败",
                 error_code="webhook_auth_failed",
             )
         auth_type = str(auth.get("type") or "")
@@ -46,7 +46,7 @@ class WebhookAuthenticator:
             if not token or not hmac.compare_digest(secret.encode(), token.encode()):
                 raise PermissionDenied(
                     "Webhook bearer credential is invalid",
-                    safe_message="Webhook authentication failed",
+                    safe_message="Webhook 身份验证失败",
                     error_code="webhook_auth_failed",
                 )
             return "bearer_v1"
@@ -60,7 +60,7 @@ class WebhookAuthenticator:
             )
         raise PermissionDenied(
             "Webhook authentication scheme is unsupported",
-            safe_message="Webhook authentication failed",
+            safe_message="Webhook 身份验证失败",
             error_code="webhook_auth_failed",
         )
 
@@ -82,7 +82,7 @@ class WebhookAuthenticator:
         if not timestamp_text or not nonce or not provided or len(nonce) > 256:
             raise PermissionDenied(
                 "Webhook HMAC headers are missing",
-                safe_message="Webhook authentication failed",
+                safe_message="Webhook 身份验证失败",
                 error_code="webhook_auth_required",
             )
         try:
@@ -90,14 +90,14 @@ class WebhookAuthenticator:
         except ValueError as exc:
             raise PermissionDenied(
                 "Webhook HMAC timestamp is invalid",
-                safe_message="Webhook authentication failed",
+                safe_message="Webhook 身份验证失败",
                 error_code="webhook_signature_expired",
             ) from exc
         window = int(auth.get("window_seconds") or 300)
         if abs(int(time.time()) - timestamp) > window:
             raise PermissionDenied(
                 "Webhook HMAC timestamp is outside the allowed window",
-                safe_message="Webhook signature timestamp expired",
+                safe_message="Webhook 签名时间戳已过期",
                 error_code="webhook_signature_expired",
             )
         canonical = timestamp_text.encode() + b"." + raw_body
@@ -106,7 +106,7 @@ class WebhookAuthenticator:
         if not hmac.compare_digest(expected.encode(), normalized_provided.encode()):
             raise PermissionDenied(
                 "Webhook HMAC signature is invalid",
-                safe_message="Webhook authentication failed",
+                safe_message="Webhook 身份验证失败",
                 error_code="webhook_auth_failed",
             )
         nonce_hash = hashlib.sha256(nonce.encode()).hexdigest()
@@ -116,7 +116,7 @@ class WebhookAuthenticator:
         ):
             raise PermissionDenied(
                 "Webhook HMAC nonce was already used",
-                safe_message="Webhook replay detected",
+                safe_message="检测到重复提交的 Webhook 请求",
                 error_code="webhook_replay_detected",
             )
         return "hmac_sha256_v1"

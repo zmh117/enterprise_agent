@@ -262,7 +262,7 @@ class DingTalkStreamMessageService:
             accepted=True,
             status="received",
             ack_status="OK",
-            ack_message="Task accepted, analysis is starting.",
+            ack_message="任务已受理，正在开始分析",
             job_id=job.id,
         )
 
@@ -286,7 +286,7 @@ class DingTalkStreamMessageService:
             self.audit_service.record(
                 "dingtalk.stream.rejection_delivery_failed",
                 status="FAILED",
-                summary=str(getattr(exc, "safe_message", "DingTalk rejection delivery failed")),
+                summary=str(getattr(exc, "safe_message", "钉钉拒绝通知投递失败")),
                 actor_id=message.user_id,
                 payload={
                     "connector_id": connector_id,
@@ -407,7 +407,7 @@ class DingTalkStreamMessageService:
             if not tenant_code:
                 raise PermissionDenied(
                     "DingTalk connector has no trusted tenant metadata",
-                    safe_message="DingTalk connector tenant is not configured",
+                    safe_message="钉钉连接器尚未配置企业标识",
                 )
             connector_bot_identity = self.connector_registry.metadata_value(
                 connector, "default_robot_code"

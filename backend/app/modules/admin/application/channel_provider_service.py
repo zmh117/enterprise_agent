@@ -48,7 +48,7 @@ class ChannelProviderService:
 def _invalid(field: str, message: str) -> NonRetryableExecutionError:
     return NonRetryableExecutionError(
         "Invalid Channel connector",
-        safe_message="Channel connector configuration is invalid",
+        safe_message="渠道连接器配置无效",
         error_code="validation_failed",
         field_errors=[{"field": field, "message": message}],
     )

@@ -23,9 +23,9 @@ class PageWindow:
         if limit < 1 or limit > MAX_PAGE_LIMIT:
             raise NonRetryableExecutionError(
                 "Page limit is outside the supported range",
-                safe_message=f"limit must be between 1 and {MAX_PAGE_LIMIT}",
+                safe_message=f"limit 必须在 1 到 {MAX_PAGE_LIMIT} 之间",
                 error_code="invalid_page",
-                field_errors=[{"field": "limit", "message": "Invalid page size"}],
+                field_errors=[{"field": "limit", "message": "分页大小无效"}],
             )
         if cursor:
             try:
@@ -33,9 +33,9 @@ class PageWindow:
             except Exception as exc:
                 raise NonRetryableExecutionError(
                     "Pagination cursor is malformed",
-                    safe_message="Pagination cursor is invalid",
+                    safe_message="分页游标无效",
                     error_code="invalid_cursor",
-                    field_errors=[{"field": "cursor", "message": "Invalid cursor"}],
+                    field_errors=[{"field": "cursor", "message": "游标无效"}],
                 ) from exc
         return cls(limit=limit, cursor=cursor)
 

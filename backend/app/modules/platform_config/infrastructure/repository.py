@@ -860,7 +860,7 @@ class PlatformConfigRepository:
             if expected_revision is not None and int(existing["revision"]) != expected_revision:
                 raise NonRetryableExecutionError(
                     "Platform resource revision conflict",
-                    safe_message="Tool resource changed; refresh and try again",
+                    safe_message="工具资源已发生变化，请刷新后重试",
                     error_code="revision_conflict",
                 )
             rows = self.database.execute(
@@ -878,14 +878,14 @@ class PlatformConfigRepository:
             if not rows:
                 raise NonRetryableExecutionError(
                     "Platform resource revision conflict",
-                    safe_message="Tool resource changed; refresh and try again",
+                    safe_message="工具资源已发生变化，请刷新后重试",
                     error_code="revision_conflict",
                 )
             return self.get_resource_binding(existing["id"])
         if expected_revision not in {None, 0}:
             raise NonRetryableExecutionError(
                 "Platform resource revision conflict",
-                safe_message="Tool resource does not exist at the requested revision",
+                safe_message="请求版本中的工具资源不存在",
                 error_code="revision_conflict",
             )
         entity_id = new_id("resource")

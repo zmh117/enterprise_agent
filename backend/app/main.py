@@ -125,7 +125,7 @@ def create_app(
         field_errors = [
             {
                 "field": ".".join(str(item) for item in (error.get("loc") or ())[1:]),
-                "message": str(error.get("msg") or "Invalid value"),
+                "message": _request_validation_message(error),
             }
             for error in exc.errors()
         ]
@@ -135,7 +135,7 @@ def create_app(
                 content={
                     "detail": {
                         "code": "validation_failed",
-                        "message": "Request validation failed",
+                        "message": "请求参数校验失败",
                         "field_errors": field_errors,
                         "correlation_id": correlation_id,
                     }
@@ -148,7 +148,7 @@ def create_app(
                 "detail": [
                     {
                         "loc": list(error.get("loc") or ()),
-                        "msg": str(error.get("msg") or "Invalid value"),
+                        "msg": _request_validation_message(error),
                         "type": str(error.get("type") or "value_error"),
                     }
                     for error in exc.errors()
@@ -238,3 +238,28 @@ def create_app(
             return {"status": "migrated"}
 
     return app
+
+
+def _request_validation_message(error: dict[str, Any]) -> str:
+    messages = {
+        "missing": "此字段为必填项",
+        "string_type": "必须填写文本",
+        "string_too_short": "文本长度不足",
+        "string_too_long": "文本长度超出限制",
+        "int_type": "必须填写整数",
+        "int_parsing": "必须填写整数",
+        "float_type": "必须填写数字",
+        "float_parsing": "必须填写数字",
+        "bool_type": "必须填写布尔值",
+        "bool_parsing": "必须填写布尔值",
+        "list_type": "必须填写列表",
+        "dict_type": "必须填写对象",
+        "json_invalid": "不是有效的 JSON",
+        "literal_error": "字段值不在允许范围内",
+        "enum": "字段值不在允许范围内",
+        "greater_than": "字段值过小",
+        "greater_than_equal": "字段值过小",
+        "less_than": "字段值过大",
+        "less_than_equal": "字段值过大",
+    }
+    return messages.get(str(error.get("type") or ""), "字段值无效")

@@ -78,7 +78,7 @@ class ChannelConnectorAdapter:
         if connector is None:
             raise NotFound(
                 f"Channel connector not found: {connector_id}",
-                safe_message="Channel connector not found",
+                safe_message="未找到渠道连接器",
             )
         allowed = (
             connector.allow_ingress if direction == "ingress" else connector.allow_delivery
@@ -142,12 +142,12 @@ class EmptyCapabilityCatalogAdapter:
         del version_constraint, environment
         raise NonRetryableExecutionError(
             f"Capability Catalog is not connected: {code}",
-            safe_message="API Capability catalog is not connected",
+            safe_message="API 能力目录尚未连接",
             error_code="capability_catalog_unavailable",
             field_errors=[
                 {
                     "field": "capabilities",
-                    "message": f"Capability {code} cannot be resolved yet",
+                    "message": f"暂时无法解析能力 {code}",
                 }
             ],
         )

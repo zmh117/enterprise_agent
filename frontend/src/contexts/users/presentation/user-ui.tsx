@@ -28,9 +28,7 @@ export function RequestError({ error }: { error: unknown }) {
   const message =
     error instanceof ApiError
       ? error.message
-      : error instanceof Error
-        ? error.message
-        : "请求未能完成。"
+      : "请求未能完成，请稍后重试。"
   return (
     <p
       role="alert"

@@ -218,6 +218,6 @@ def _validate_sources(source_kind: str, sources: Mapping[str, str]) -> None:
 def _invalid(message: str) -> NonRetryableExecutionError:
     return NonRetryableExecutionError(
         message,
-        safe_message="Agent execution policy configuration is invalid",
+        safe_message="Agent 执行策略配置无效",
         error_code="execution_policy_integrity_error",
     )

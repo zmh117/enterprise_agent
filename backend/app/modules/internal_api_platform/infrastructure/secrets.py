@@ -68,6 +68,6 @@ class DbBackedSecretResolver:
         if ref.startswith(("vault:", "kms:")):
             raise NonRetryableExecutionError(
                 "External secret provider is not configured",
-                safe_message="External secret provider is not configured",
+                safe_message="尚未配置外部凭据提供方",
             )
         return self._fallback.resolve(ref)

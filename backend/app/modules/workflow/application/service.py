@@ -26,7 +26,7 @@ class WorkflowService:
         if not actor_id:
             raise PermissionDenied(
                 "Workflow config actor is required",
-                safe_message="Workflow config actor is required",
+                safe_message="缺少工作流配置操作人",
             )
         self.permission_service.require_action(
             user_id=actor_id,
@@ -104,7 +104,7 @@ class WorkflowService:
 
             raise PlatformConfigValidationError(
                 "Workflow edge references a missing node",
-                safe_message="Workflow edge references a missing node",
+                safe_message="工作流连线引用了不存在的节点",
             )
         entity = self.repository.upsert_edge(
             template_code=template_code,

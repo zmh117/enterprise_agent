@@ -44,26 +44,26 @@ class IdentityAdminService:
         if not normalized_username:
             raise NonRetryableExecutionError(
                 "Username is required",
-                safe_message="Username is required",
+                safe_message="请输入用户名",
                 error_code="invalid_user",
-                field_errors=[{"field": "username", "message": "Username is required"}],
+                field_errors=[{"field": "username", "message": "请输入用户名"}],
             )
         if not normalized_display_name:
             raise NonRetryableExecutionError(
                 "Display name is required",
-                safe_message="Display name is required",
+                safe_message="请输入显示名称",
                 error_code="invalid_user",
                 field_errors=[
-                    {"field": "display_name", "message": "Display name is required"}
+                    {"field": "display_name", "message": "请输入显示名称"}
                 ],
             )
         if self.repository.get_user_by_username(normalized_username) is not None:
             raise NonRetryableExecutionError(
                 "Username already exists",
-                safe_message="Username is already in use",
+                safe_message="用户名已被使用",
                 error_code="username_conflict",
                 field_errors=[
-                    {"field": "username", "message": "Username is already in use"}
+                    {"field": "username", "message": "用户名已被使用"}
                 ],
             )
         with self.repository.database.transaction():

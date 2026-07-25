@@ -19,13 +19,13 @@ class AgentConfigRepository:
     def get_definition(self, code: str) -> dict[str, Any]:
         row = self.database.execute_one("select * from agent_definition where code = ?", (code,))
         if not row:
-            raise NotFound("Agent not found", safe_message="Agent not found")
+            raise NotFound("Agent not found", safe_message="未找到 Agent")
         return row
 
     def get_definition_by_id(self, agent_id: str) -> dict[str, Any]:
         row = self.database.execute_one("select * from agent_definition where id = ?", (agent_id,))
         if not row:
-            raise NotFound("Agent not found", safe_message="Agent not found")
+            raise NotFound("Agent not found", safe_message="未找到 Agent")
         return row
 
     def latest_revision(self, agent_id: str) -> dict[str, Any] | None:
@@ -41,7 +41,7 @@ class AgentConfigRepository:
     def get_revision(self, revision_id: str) -> dict[str, Any]:
         row = self.database.execute_one("select * from agent_revision where id = ?", (revision_id,))
         if not row:
-            raise NotFound("Agent revision not found", safe_message="Agent revision not found")
+            raise NotFound("Agent revision not found", safe_message="未找到 Agent 修订版本")
         return self._revision(row)
 
     def save_draft(
@@ -57,7 +57,7 @@ class AgentConfigRepository:
         if latest and int(latest["revision"]) != expected_revision:
             raise NonRetryableExecutionError(
                 "Agent revision conflict",
-                safe_message="Agent draft changed; refresh and try again",
+                safe_message="Agent 草稿已发生变化，请刷新后重试",
                 error_code="revision_conflict",
             )
         next_revision = expected_revision + 1
@@ -97,7 +97,9 @@ class AgentConfigRepository:
         self.database.execute(
             """
             update agent_revision
-            set status = ?, validation_json = ?, updated_at = ?
+            set status = case when status = 'published' then 'published' else ? end,
+                validation_json = ?,
+                updated_at = ?
             where id = ?
             """,
             (
@@ -108,6 +110,28 @@ class AgentConfigRepository:
             ),
         )
         return self.get_revision(revision_id)
+
+    def publication_for_revision(
+        self, *, agent_id: str, revision_id: str
+    ) -> dict[str, Any] | None:
+        row = self.database.execute_one(
+            """
+            select * from agent_publication
+            where agent_id = ? and revision_id = ?
+            """,
+            (agent_id, revision_id),
+        )
+        return self._publication(row) if row else None
+
+    def mark_revision_published(self, revision_id: str) -> None:
+        self.database.execute(
+            """
+            update agent_revision
+            set status = 'published', updated_at = ?
+            where id = ? and status <> 'published'
+            """,
+            (now_iso(), revision_id),
+        )
 
     def create_publication(
         self,
@@ -121,12 +145,14 @@ class AgentConfigRepository:
     ) -> dict[str, Any]:
         publication_id = new_id("agent_publication")
         timestamp = now_iso()
-        self.database.execute(
+        inserted = self.database.execute(
             """
             insert into agent_publication
               (id, agent_id, revision_id, revision, schema_version, snapshot_json,
                config_hash, status, published_by, published_at)
             values (?, ?, ?, ?, 1, ?, ?, 'active', ?, ?)
+            on conflict(agent_id, revision) do nothing
+            returning id
             """,
             (
                 publication_id,
@@ -139,6 +165,21 @@ class AgentConfigRepository:
                 timestamp,
             ),
         )
+        if not inserted:
+            existing = self.database.execute_one(
+                """
+                select * from agent_publication
+                where agent_id = ? and revision = ?
+                """,
+                (agent_id, revision),
+            )
+            if existing:
+                return self._publication(existing)
+            raise NonRetryableExecutionError(
+                "Agent publication conflict could not be resolved",
+                safe_message="Agent 发布冲突，请刷新后重试",
+                error_code="revision_conflict",
+            )
         self.database.execute(
             """
             update agent_revision set status = 'published', updated_at = ?
@@ -197,7 +238,7 @@ class AgentConfigRepository:
         )
         if not row:
             raise NotFound(
-                "Agent publication not found", safe_message="Agent publication not found"
+                "Agent publication not found", safe_message="未找到 Agent 发布版本"
             )
         return self._publication(row)
 
@@ -214,7 +255,7 @@ class AgentConfigRepository:
         if not row:
             raise NotFound(
                 "Agent has no active publication",
-                safe_message="Agent configuration is not published",
+                safe_message="Agent 配置尚未发布",
             )
         return self._publication(row)
 
@@ -233,7 +274,7 @@ class AgentConfigRepository:
         if str(publication["agent_id"]) != agent_id:
             raise NonRetryableExecutionError(
                 "Publication belongs to another Agent",
-                safe_message="Publication does not belong to this Agent",
+                safe_message="发布版本不属于此 Agent",
             )
         self.database.execute(
             """

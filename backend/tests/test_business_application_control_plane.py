@@ -662,7 +662,7 @@ def test_capability_can_be_drafted_but_blocks_validation_and_publication() -> No
         revision_id=str(revision["id"]),
     )
     assert validated["validation"]["valid"] is False
-    assert "Capability" in str(validated["validation"]["errors"])
+    assert "能力" in str(validated["validation"]["errors"])
     with pytest.raises(NonRetryableExecutionError) as invalid:
         service.publish(
             actor_id="user_local_admin",

@@ -217,7 +217,7 @@ class RealClaudeCodeAgentClientTests(unittest.TestCase):
         with self.assertRaises(NonRetryableExecutionError) as raised:
             client.run(request)
 
-        self.assertIn("placeholder", raised.exception.safe_message)
+        self.assertIn("占位值", raised.exception.safe_message)
 
     def test_timeout_is_retryable(self) -> None:
         async def query(prompt: str, options: FakeOptions) -> Any:

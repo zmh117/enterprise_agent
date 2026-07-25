@@ -71,7 +71,7 @@ class ResourceProviderService:
         except Exception as exc:
             raise NonRetryableExecutionError(
                 f"Resource probe failed: {type(exc).__name__}",
-                safe_message="Connection test failed",
+                safe_message="连接测试失败",
                 error_code="connection_test_failed",
             ) from exc
         return {
@@ -182,7 +182,7 @@ class ResourceProviderService:
 def _invalid(field: str, message: str) -> NonRetryableExecutionError:
     return NonRetryableExecutionError(
         "Invalid tool resource",
-        safe_message="Tool resource configuration is invalid",
+        safe_message="工具资源配置无效",
         error_code="validation_failed",
         field_errors=[{"field": field, "message": message}],
     )

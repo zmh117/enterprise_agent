@@ -69,7 +69,7 @@ class AttachmentProcessingService:
             if detected_mime.startswith("image/"):
                 if not isinstance(self.extractor, SafeAttachmentExtractor):
                     raise NonRetryableExecutionError(
-                        "Image normalizer unavailable", safe_message="Image validation unavailable"
+                        "Image normalizer unavailable", safe_message="图片校验暂时不可用"
                     )
                 data, detected_mime = self.extractor.normalize_image(data=data)
             digest = hashlib.sha256(data).hexdigest()

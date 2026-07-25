@@ -53,9 +53,9 @@ class TriggerValidator:
     ) -> tuple[list[dict[str, str]], dict[str, Any]]:
         errors: list[dict[str, str]] = []
         if int(config.get("schema_version") or 0) != 1:
-            errors.append({"field": "schema_version", "message": "Only schema version 1 is supported"})
+            errors.append({"field": "schema_version", "message": "仅支持结构版本 1"})
         if str(config.get("adapter") or "") not in {item.value for item in TriggerSchema}:
-            errors.append({"field": "adapter", "message": "Unsupported adapter"})
+            errors.append({"field": "adapter", "message": "不支持此适配器"})
         expected_adapter = {
             "grafana": TriggerSchema.GRAFANA_ALERTMANAGER_V1.value,
             "generic": TriggerSchema.GENERIC_JSON_V1.value,
@@ -64,76 +64,81 @@ class TriggerValidator:
             errors.append(
                 {
                     "field": "adapter",
-                    "message": "Adapter does not match the Trigger type",
+                    "message": "适配器与触发器类型不匹配",
                 }
             )
         account = self.identity_repository.get_user(str(definition["service_account_id"]))
         if str(account.get("account_type")) != "service":
-            errors.append({"field": "service_account", "message": "A service account is required"})
+            errors.append({"field": "service_account", "message": "必须选择服务账号"})
         if str(account.get("status")) != "enabled":
-            errors.append({"field": "service_account", "message": "Service account is disabled"})
+            errors.append({"field": "service_account", "message": "服务账号已停用"})
         try:
             source = self.connector_registry.require_ingress(str(definition["connector_id"]))
         except Exception as exc:
-            errors.append({"field": "connector_id", "message": getattr(exc, "safe_message", "Ingress connector is unavailable")})
+            errors.append(
+                {
+                    "field": "connector_id",
+                    "message": getattr(exc, "safe_message", "接入连接器不可用"),
+                }
+            )
             source = None
 
         auth = config.get("authentication") or {}
         auth_type = str(auth.get("type") or "")
         if auth_type not in {item.value for item in AuthenticationType}:
-            errors.append({"field": "authentication.type", "message": "Unsupported authentication type"})
+            errors.append({"field": "authentication.type", "message": "不支持此身份验证类型"})
         secret_ref = str(auth.get("secret_ref") or "")
         if not secret_ref.startswith(SECRET_REF_PREFIXES):
-            errors.append({"field": "authentication.secret_ref", "message": "A managed secret reference is required"})
+            errors.append({"field": "authentication.secret_ref", "message": "必须选择受管凭据引用"})
         elif not self.connector_registry.resolve_reference(secret_ref):
-            errors.append({"field": "authentication.secret_ref", "message": "Secret reference cannot be resolved"})
+            errors.append({"field": "authentication.secret_ref", "message": "无法解析凭据引用"})
         if not 30 <= int(auth.get("window_seconds") or 0) <= 900:
-            errors.append({"field": "authentication.window_seconds", "message": "Must be between 30 and 900"})
+            errors.append({"field": "authentication.window_seconds", "message": "必须在 30 到 900 之间"})
 
         mapping = config.get("mapping") or {}
         variables = mapping.get("variables") or {}
         if not isinstance(variables, dict) or len(variables) > 50:
-            errors.append({"field": "mapping.variables", "message": "At most 50 variables are allowed"})
+            errors.append({"field": "mapping.variables", "message": "最多允许配置 50 个变量"})
             variables = {}
         for name, pointer in variables.items():
             if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", str(name)):
-                errors.append({"field": "mapping.variables", "message": "Variable name is invalid"})
+                errors.append({"field": "mapping.variables", "message": "变量名无效"})
             if not validate_pointer(str(pointer)):
-                errors.append({"field": f"mapping.variables.{name}", "message": "JSON Pointer is invalid"})
+                errors.append({"field": f"mapping.variables.{name}", "message": "JSON Pointer 无效"})
         template = str(mapping.get("message_template") or "")
         unknown_variables = sorted(set(_TEMPLATE_VARIABLE_RE.findall(template)) - set(variables))
         if unknown_variables:
-            errors.append({"field": "mapping.message_template", "message": f"Unknown variables: {', '.join(unknown_variables)}"})
+            errors.append({"field": "mapping.message_template", "message": f"存在未知变量：{', '.join(unknown_variables)}"})
         for index, condition in enumerate(mapping.get("filters") or []):
             if not isinstance(condition, dict):
-                errors.append({"field": f"mapping.filters.{index}", "message": "Condition must be an object"})
+                errors.append({"field": f"mapping.filters.{index}", "message": "条件必须是对象"})
                 continue
             if str(condition.get("operator") or "") not in CONDITION_OPERATORS:
-                errors.append({"field": f"mapping.filters.{index}.operator", "message": "Operator is not allowed"})
+                errors.append({"field": f"mapping.filters.{index}.operator", "message": "不允许使用此操作符"})
             if not validate_pointer(str(condition.get("pointer") or "")):
-                errors.append({"field": f"mapping.filters.{index}.pointer", "message": "JSON Pointer is invalid"})
+                errors.append({"field": f"mapping.filters.{index}.pointer", "message": "JSON Pointer 无效"})
         if config.get("adapter") == TriggerSchema.GENERIC_JSON_V1 and not validate_pointer(
             str(mapping.get("event_id_pointer") or "")
         ):
-            errors.append({"field": "mapping.event_id_pointer", "message": "JSON Pointer is invalid"})
+            errors.append({"field": "mapping.event_id_pointer", "message": "JSON Pointer 无效"})
 
         for field in ROUTING_FIELDS:
             rule = (config.get("routing") or {}).get(field) or {}
             mode = str(rule.get("mode") or "")
             if mode not in {"fixed", "extract"}:
-                errors.append({"field": f"routing.{field}.mode", "message": "Mode must be fixed or extract"})
+                errors.append({"field": f"routing.{field}.mode", "message": "模式必须为 fixed 或 extract"})
                 continue
             if mode == "fixed" and field == "project_code" and not str(rule.get("value") or ""):
-                errors.append({"field": f"routing.{field}.value", "message": "Project code is required"})
+                errors.append({"field": f"routing.{field}.value", "message": "必须填写项目编码"})
             if mode == "extract":
                 if not validate_pointer(str(rule.get("pointer") or "")):
-                    errors.append({"field": f"routing.{field}.pointer", "message": "JSON Pointer is invalid"})
+                    errors.append({"field": f"routing.{field}.pointer", "message": "JSON Pointer 无效"})
                 if not rule.get("allowed_values"):
-                    errors.append({"field": f"routing.{field}.allowed_values", "message": "Extract routing requires an allowlist"})
+                    errors.append({"field": f"routing.{field}.allowed_values", "message": "提取路由必须配置允许列表"})
             if field == "service":
                 for value in [str(rule.get("value") or ""), *[str(item) for item in rule.get("allowed_values") or []]]:
                     if value and not SERVICE_CODE_RE.fullmatch(value):
-                        errors.append({"field": "routing.service", "message": "Service code is invalid"})
+                        errors.append({"field": "routing.service", "message": "服务编码无效"})
 
         limits = config.get("limits") or {}
         for limit_name, minimum, maximum in (
@@ -143,17 +148,22 @@ class TriggerValidator:
         ):
             limit_value = int(limits.get(limit_name) or 0)
             if not minimum <= limit_value <= maximum:
-                errors.append({"field": f"limits.{limit_name}", "message": f"Must be between {minimum} and {maximum}"})
+                errors.append({"field": f"limits.{limit_name}", "message": f"必须在 {minimum} 到 {maximum} 之间"})
 
         delivery = config.get("delivery") or {}
         delivery_id = str(delivery.get("connector_id") or "")
         try:
             self.connector_registry.require_delivery(delivery_id)
         except Exception as exc:
-            errors.append({"field": "delivery.connector_id", "message": getattr(exc, "safe_message", "Delivery connector is unavailable")})
+            errors.append(
+                {
+                    "field": "delivery.connector_id",
+                    "message": getattr(exc, "safe_message", "投递连接器不可用"),
+                }
+            )
         target = delivery.get("target") or {}
         if not isinstance(target, dict) or set(target) - _SAFE_TARGET_KEYS:
-            errors.append({"field": "delivery.target", "message": "Delivery target contains unsupported fields"})
+            errors.append({"field": "delivery.target", "message": "投递目标包含不支持的字段"})
 
         agent = config.get("agent") or {}
         agent_code = str(agent.get("code") or "")
@@ -165,21 +175,26 @@ class TriggerValidator:
                 str(agent_publication["agent_id"])
             )
             if str(agent_definition["code"]) != agent_code:
-                errors.append({"field": "agent", "message": "Agent publication does not match Agent code"})
+                errors.append({"field": "agent", "message": "Agent 发布版本与 Agent 编码不匹配"})
             if source and not self.agent_config_service.connector_allowed(
                 publication_id=agent_publication_id,
                 direction="ingress",
                 connector_id=source.id,
             ):
-                errors.append({"field": "connector_id", "message": "Ingress connector is not assigned to Agent publication"})
+                errors.append({"field": "connector_id", "message": "Agent 发布版本未分配此接入连接器"})
             if delivery_id and not self.agent_config_service.connector_allowed(
                 publication_id=agent_publication_id,
                 direction="delivery",
                 connector_id=delivery_id,
             ):
-                errors.append({"field": "delivery.connector_id", "message": "Delivery connector is not assigned to Agent publication"})
+                errors.append({"field": "delivery.connector_id", "message": "Agent 发布版本未分配此投递连接器"})
         except Exception as exc:
-            errors.append({"field": "agent.publication_id", "message": getattr(exc, "safe_message", "Agent publication is unavailable")})
+            errors.append(
+                {
+                    "field": "agent.publication_id",
+                    "message": getattr(exc, "safe_message", "Agent 发布版本不可用"),
+                }
+            )
 
         project_rule = (config.get("routing") or {}).get("project_code") or {}
         project_values = (
@@ -190,12 +205,12 @@ class TriggerValidator:
         if agent_code and not self.authorization.decide(
             user_id=str(account["id"]), resource_type="agent", resource_code=agent_code, action="use"
         ).allowed:
-            errors.append({"field": "service_account", "message": "Service account cannot use the Agent"})
+            errors.append({"field": "service_account", "message": "服务账号不能使用此 Agent"})
         for project_code in project_values:
             if project_code and not self.authorization.decide(
                 user_id=str(account["id"]), resource_type="project", resource_code=project_code, action="use"
             ).allowed:
-                errors.append({"field": "routing.project_code", "message": f"Service account cannot use project {project_code}"})
+                errors.append({"field": "routing.project_code", "message": f"服务账号不能使用项目 {project_code}"})
 
         assigned_tools = sorted(
             self.agent_config_service.repository.publication_tools(agent_publication_id)
@@ -208,7 +223,7 @@ class TriggerValidator:
             errors.append(
                 {
                     "field": "agent.publication_id",
-                    "message": f"Agent publication contains invalid tools: {', '.join(invalid_tools)}",
+                    "message": f"Agent 发布版本包含无效工具：{', '.join(invalid_tools)}",
                 }
             )
         allowed_tools = self.agent_config_service.allowed_tools(
@@ -220,7 +235,7 @@ class TriggerValidator:
             errors.append(
                 {
                     "field": "service_account",
-                    "message": "Service account cannot use any assigned read-only Agent tool",
+                    "message": "服务账号不能使用任何已分配的只读 Agent 工具",
                 }
             )
         summary = {
@@ -283,9 +298,9 @@ class WebhookTriggerService:
         if not CODE_RE.fullmatch(code):
             raise NonRetryableExecutionError(
                 "Webhook Trigger code is invalid",
-                safe_message="Webhook Trigger code is invalid",
+                safe_message="Webhook 触发器编码无效",
                 error_code="validation_failed",
-                field_errors=[{"field": "code", "message": "Use lower-case letters, digits and hyphens"}],
+                field_errors=[{"field": "code", "message": "只能使用小写字母、数字和连字符"}],
             )
         self.validator.connector_registry.require_ingress(connector_id)
         with self.repository.database.transaction():
@@ -382,7 +397,7 @@ class WebhookTriggerService:
         if errors:
             raise NonRetryableExecutionError(
                 "Webhook Trigger validation failed",
-                safe_message="Webhook Trigger configuration is invalid",
+                safe_message="Webhook 触发器配置无效",
                 error_code="validation_failed",
                 field_errors=errors,
             )
@@ -405,7 +420,7 @@ class WebhookTriggerService:
             self.repository.set_validation(revision_id, errors=errors, summary=summary)
             raise NonRetryableExecutionError(
                 "Webhook Trigger validation failed",
-                safe_message="Webhook Trigger configuration is invalid",
+                safe_message="Webhook 触发器配置无效",
                 error_code="validation_failed",
                 field_errors=errors,
             )
@@ -503,7 +518,7 @@ class WebhookTriggerService:
         if not confirm:
             raise NonRetryableExecutionError(
                 "Public ID rotation requires confirmation",
-                safe_message="Confirm public ID rotation",
+                safe_message="请确认轮换公开 ID",
                 error_code="confirmation_required",
             )
         before = self.repository.get_definition(code)
@@ -548,7 +563,7 @@ class WebhookTriggerService:
         if str(revision["trigger_id"]) != str(definition["id"]):
             raise NonRetryableExecutionError(
                 "Revision belongs to another Trigger",
-                safe_message="Revision does not belong to this Trigger",
+                safe_message="修订版本不属于此触发器",
             )
 
     def _require(self, actor_id: str, action: str, code: str = "*") -> None:

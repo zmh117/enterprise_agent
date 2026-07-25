@@ -77,7 +77,7 @@ describe("Agent Profile management", () => {
 
     expect(await screen.findByText("默认诊断 Agent")).toBeInTheDocument()
     expect(screen.getByText("r3")).toBeInTheDocument()
-    expect(screen.getByText("ready")).toBeInTheDocument()
+    expect(screen.getByText("已就绪")).toBeInTheDocument()
     expect(screen.getByRole("link", { name: "进入配置" })).toHaveAttribute(
       "href",
       "/agent-profiles/default-diagnostic-agent"
@@ -281,12 +281,12 @@ describe("Agent Profile management", () => {
     const keyInput = screen.getByPlaceholderText("输入新的 API Key")
     expect(keyInput).toHaveValue("")
     fireEvent.change(keyInput, { target: { value: crypto.randomUUID() } })
-    fireEvent.click(screen.getByRole("button", { name: "Close" }))
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }))
     fireEvent.click(screen.getByRole("button", { name: "轮换 API Key" }))
     expect(screen.getByPlaceholderText("输入新的 API Key")).toHaveValue("")
-    fireEvent.click(screen.getByRole("button", { name: "Close" }))
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }))
 
-    fireEvent.click(screen.getByRole("tab", { name: "Profile 配置" }))
+    fireEvent.click(screen.getByRole("tab", { name: "Agent 配置" }))
     fireEvent.click(screen.getByRole("button", { name: "发布 Agent" }))
     await waitFor(() =>
       expect(fetchSpy).toHaveBeenCalledWith(
@@ -295,7 +295,7 @@ describe("Agent Profile management", () => {
       )
     )
 
-    fireEvent.click(screen.getByRole("tab", { name: "Publication 历史" }))
+    fireEvent.click(screen.getByRole("tab", { name: "发布历史" }))
     expect(
       await screen.findByRole("link", { name: "默认诊断应用 · local" })
     ).toHaveAttribute("href", "/applications/default-diagnostic-application")

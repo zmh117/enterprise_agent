@@ -21,7 +21,7 @@ class ModelConnectionRepository:
         if not row:
             raise NotFound(
                 f"Model connection not found: {code}",
-                safe_message="Model connection not found",
+                safe_message="未找到模型连接",
             )
         return self._connection(row)
 
@@ -32,7 +32,7 @@ class ModelConnectionRepository:
         if not row:
             raise NotFound(
                 f"Model connection not found: {connection_id}",
-                safe_message="Model connection not found",
+                safe_message="未找到模型连接",
             )
         return self._connection(row)
 
@@ -98,7 +98,7 @@ class ModelConnectionRepository:
         if not initialized:
             raise NonRetryableExecutionError(
                 "Default model connection revision was not initialized",
-                safe_message="Default model connection initialization failed",
+                safe_message="默认模型连接初始化失败",
                 error_code="model_connection_initialization_failed",
             )
         self.database.execute(
@@ -115,7 +115,7 @@ class ModelConnectionRepository:
         if not current_revision_id:
             raise NonRetryableExecutionError(
                 "Default model connection has no current revision",
-                safe_message="Default model connection initialization failed",
+                safe_message="默认模型连接初始化失败",
                 error_code="model_connection_initialization_failed",
             )
         return self.get_revision(current_revision_id)
@@ -135,7 +135,7 @@ class ModelConnectionRepository:
         if int(connection["revision"]) != expected_revision:
             raise NonRetryableExecutionError(
                 "Model connection revision conflict",
-                safe_message="Model connection changed; refresh and try again",
+                safe_message="模型连接已发生变化，请刷新后重试",
                 error_code="revision_conflict",
                 diagnostics={"current_revision": int(connection["revision"])},
             )
@@ -180,7 +180,7 @@ class ModelConnectionRepository:
         if int(refreshed["revision"]) != revision:
             raise NonRetryableExecutionError(
                 "Model connection revision conflict",
-                safe_message="Model connection changed; refresh and try again",
+                safe_message="模型连接已发生变化，请刷新后重试",
                 error_code="revision_conflict",
             )
         return self.get_revision(revision_id)
@@ -196,7 +196,7 @@ class ModelConnectionRepository:
         if int(connection["revision"]) != expected_revision:
             raise NonRetryableExecutionError(
                 "Model connection revision conflict",
-                safe_message="Model connection changed; refresh and try again",
+                safe_message="模型连接已发生变化，请刷新后重试",
                 error_code="revision_conflict",
                 diagnostics={"current_revision": int(connection["revision"])},
             )
@@ -219,7 +219,7 @@ class ModelConnectionRepository:
         if int(refreshed["revision"]) != next_revision:
             raise NonRetryableExecutionError(
                 "Model connection revision conflict",
-                safe_message="Model connection changed; refresh and try again",
+                safe_message="模型连接已发生变化，请刷新后重试",
                 error_code="revision_conflict",
             )
         return refreshed
@@ -238,7 +238,7 @@ class ModelConnectionRepository:
         if not row:
             raise NotFound(
                 f"Model connection revision not found: {revision_id}",
-                safe_message="Model connection revision not found",
+                safe_message="未找到模型连接版本",
             )
         return self._revision(row)
 

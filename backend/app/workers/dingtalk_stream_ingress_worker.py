@@ -67,7 +67,7 @@ class DingTalkStreamIngressWorker:
         if connector_id in _RUNNING_CONNECTORS:
             raise NonRetryableExecutionError(
                 f"DingTalk Stream connector already running: {connector_id}",
-                safe_message="DingTalk Stream connector is already running",
+                safe_message="钉钉 Stream 连接器已在运行",
             )
         _RUNNING_CONNECTORS.add(connector_id)
         try:
@@ -184,7 +184,7 @@ class DingTalkStreamIngressWorker:
             )
             raise NonRetryableExecutionError(
                 "DingTalk Stream credentials are missing",
-                safe_message="DingTalk Stream credentials are missing",
+                safe_message="缺少钉钉 Stream 凭据",
             )
         return client_id, client_secret
 

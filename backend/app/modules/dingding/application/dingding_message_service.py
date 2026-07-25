@@ -149,7 +149,7 @@ class DingTalkMessageService:
             "accepted": True,
             "status": "received",
             "job_id": job.id,
-            "message": "Task accepted, analysis is starting.",
+            "message": "任务已受理，正在开始分析",
         }
 
     def send_final_result(self, conversation_id: str, report: str) -> None:

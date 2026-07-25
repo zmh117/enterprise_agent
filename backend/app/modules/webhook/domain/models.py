@@ -167,17 +167,17 @@ def ensure_no_secret_values(config: dict[str, Any]) -> None:
     if any(marker in serialized for marker in forbidden):
         raise NonRetryableExecutionError(
             "Trigger config contains a secret value field",
-            safe_message="Trigger configuration must contain secret references only",
+            safe_message="触发器配置只能包含凭据引用",
             error_code="validation_failed",
         )
     unknown = sorted(set(config) - ALLOWED_CONFIG_KEYS)
     if unknown:
         raise NonRetryableExecutionError(
             "Trigger config contains unsupported top-level fields",
-            safe_message="Trigger configuration contains unsupported fields",
+            safe_message="触发器配置包含不支持的字段",
             error_code="validation_failed",
             field_errors=[
-                {"field": str(field), "message": "Field is not configurable"}
+                {"field": str(field), "message": "此字段不可配置"}
                 for field in unknown
             ],
         )
@@ -199,10 +199,10 @@ def ensure_no_secret_values(config: dict[str, Any]) -> None:
     if prohibited_keys:
         raise NonRetryableExecutionError(
             "Trigger config contains executable fields",
-            safe_message="Executable mapping fields are not supported",
+            safe_message="不支持可执行映射字段",
             error_code="validation_failed",
             field_errors=[
-                {"field": field, "message": "Scripts and functions are forbidden"}
+                {"field": field, "message": "禁止使用脚本和函数"}
                 for field in prohibited_keys
             ],
         )

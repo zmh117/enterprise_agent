@@ -23,7 +23,7 @@ def build_dingding_router() -> Any:
                 status_code=404,
                 detail={
                     "status": "disabled",
-                    "message": "DingTalk HTTP webhook ingress is disabled; use DingTalk Stream ingress.",
+                    "message": "钉钉 HTTP Webhook 接入已停用，请使用钉钉 Stream 接入",
                 },
             )
         payload = await request.json()

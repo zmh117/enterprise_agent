@@ -363,7 +363,7 @@ def test_not_matched_and_integrity_failure_are_rejected_without_job() -> None:
     assert blocked.status == "rejected"
     assert notifier.reasons == [
         "当前机器人未配置可用的业务应用，请联系管理员",
-        "Business Application configuration is temporarily unavailable",
+        "业务应用配置暂时不可用",
     ]
     assert container.agent_repository.count_rows("agent_job") == jobs_before
     assert len(container.message_bus.jobs) == jobs_before
@@ -433,7 +433,7 @@ def test_activation_is_local_only_and_rejects_invalid_runtime_bindings() -> None
     assert environment_error.value.field_errors == [
         {
             "field": "environment",
-            "message": "Only the local Business Application environment is supported",
+            "message": "仅支持业务应用的 local 环境",
         }
     ]
 
@@ -924,7 +924,7 @@ def test_application_recent_message_limit_and_attachment_policy_are_enforced() -
     )
     with pytest.raises(NonRetryableExecutionError) as disabled:
         container.channel_ingress_service.accept(event)
-    assert disabled.value.safe_message == "Attachments are not enabled for this application"
+    assert disabled.value.safe_message == "此业务应用未启用附件"
 
 
 def test_route_audit_is_correlated_hashed_and_never_contains_session_credentials() -> None:

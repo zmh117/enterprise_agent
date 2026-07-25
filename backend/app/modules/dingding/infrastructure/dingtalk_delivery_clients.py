@@ -38,12 +38,12 @@ class UrllibJsonPostTransport:
             safe_status = getattr(exc, "code", "unknown")
             raise RetryableExecutionError(
                 f"DingTalk HTTP request failed with status {safe_status}",
-                safe_message=f"DingTalk HTTP request failed with status {safe_status}",
+                safe_message=f"钉钉 HTTP 请求失败，状态码：{safe_status}",
             ) from exc
         except URLError as exc:
             raise RetryableExecutionError(
                 "DingTalk HTTP request failed",
-                safe_message="DingTalk HTTP request failed",
+                safe_message="钉钉 HTTP 请求失败",
             ) from exc
         if not body:
             return {}
@@ -52,12 +52,12 @@ class UrllibJsonPostTransport:
         except json.JSONDecodeError as exc:
             raise RetryableExecutionError(
                 "DingTalk response is not valid JSON",
-                safe_message="DingTalk response is not valid JSON",
+                safe_message="钉钉响应不是有效的 JSON",
             ) from exc
         if not isinstance(value, dict):
             raise RetryableExecutionError(
                 "DingTalk response JSON is not an object",
-                safe_message="DingTalk response JSON is not an object",
+                safe_message="钉钉响应 JSON 不是对象",
             )
         return value
 
@@ -93,7 +93,7 @@ class DingTalkAccessTokenClient:
         if not self.client_id or not self.client_secret:
             raise NonRetryableExecutionError(
                 "DingTalk enterprise App credentials are not configured",
-                safe_message="DingTalk enterprise App credentials are not configured",
+                safe_message="尚未配置钉钉企业应用凭据",
             )
         now = float(self.clock())
         if self._cached_token and self._cached_token.expires_at - self.refresh_margin_seconds > now:
@@ -109,7 +109,7 @@ class DingTalkAccessTokenClient:
         if not token:
             raise NonRetryableExecutionError(
                 "DingTalk access token response did not include a token",
-                safe_message="DingTalk access token response did not include a token",
+                safe_message="钉钉访问令牌响应中没有令牌",
             )
         self._cached_token = DingTalkAccessToken(value=token, expires_at=now + expires_in)
         return token
@@ -136,7 +136,7 @@ class DingTalkEnterpriseMessageClient:
         if not open_conversation_id or not robot_code:
             raise NonRetryableExecutionError(
                 "DingTalk enterprise delivery target is not configured",
-                safe_message="DingTalk enterprise delivery target is not configured",
+                safe_message="尚未配置钉钉企业投递目标",
             )
         payload = {
             "robotCode": robot_code,
@@ -153,7 +153,7 @@ class DingTalkEnterpriseMessageClient:
             {"x-acs-dingtalk-access-token": self.token_client.access_token()},
             self.timeout_seconds,
         )
-        _raise_for_dingtalk_error(response, default_safe_message="DingTalk enterprise send failed")
+        _raise_for_dingtalk_error(response, default_safe_message="钉钉企业消息发送失败")
 
 
 class DingTalkWebhookRobotClient:
@@ -185,7 +185,7 @@ class DingTalkWebhookRobotClient:
         if not self.webhook_url:
             raise NonRetryableExecutionError(
                 "DingTalk webhook robot URL is not configured",
-                safe_message="DingTalk webhook robot URL is not configured",
+                safe_message="尚未配置钉钉 Webhook 机器人地址",
             )
         payload = {
             "msgtype": "markdown",
@@ -203,7 +203,7 @@ class DingTalkWebhookRobotClient:
             {},
             self.timeout_seconds,
         )
-        _raise_for_dingtalk_error(response, default_safe_message="DingTalk webhook send failed")
+        _raise_for_dingtalk_error(response, default_safe_message="钉钉 Webhook 消息发送失败")
 
     def signed_webhook_url(self) -> str:
         if not self.secret:

@@ -38,7 +38,7 @@ def _handle(exc: Exception) -> HTTPException:
         return HTTPException(status_code=400, detail=exc.safe_message)
     if isinstance(exc, ValueError):
         return HTTPException(status_code=400, detail=str(exc))
-    return HTTPException(status_code=500, detail="Internal server error")
+    return HTTPException(status_code=500, detail="服务器内部错误")
 
 
 def build_workflow_router() -> APIRouter:

@@ -81,7 +81,7 @@ class BusinessApplicationRepository:
             if "unique" in str(exc).lower():
                 raise NonRetryableExecutionError(
                     f"Business Application code already exists: {code}",
-                    safe_message="Business Application code already exists",
+                    safe_message="业务应用编码已存在",
                     error_code="revision_conflict",
                 ) from exc
             raise
@@ -129,7 +129,7 @@ class BusinessApplicationRepository:
         if row is None:
             raise NotFound(
                 f"Business Application not found: {code}",
-                safe_message="Business Application not found",
+                safe_message="未找到业务应用",
             )
         return self._application(row, include_draft=True)
 
@@ -140,7 +140,7 @@ class BusinessApplicationRepository:
         if row is None:
             raise NotFound(
                 f"Business Application not found: {application_id}",
-                safe_message="Business Application not found",
+                safe_message="未找到业务应用",
             )
         return self._application(row, include_draft=True)
 
@@ -160,7 +160,7 @@ class BusinessApplicationRepository:
         if status == "archived" and self.has_active_deployment(str(application["id"])):
             raise NonRetryableExecutionError(
                 "Cannot archive an active Business Application",
-                safe_message="Deactivate all environments before archiving",
+                safe_message="归档前请先停用所有环境",
                 error_code="application_active",
             )
         next_revision = expected_revision + 1
@@ -317,7 +317,7 @@ class BusinessApplicationRepository:
         if row is None:
             raise NotFound(
                 f"Business Application revision not found: {revision_id}",
-                safe_message="Business Application revision not found",
+                safe_message="未找到业务应用修订版本",
             )
         return self._revision(row)
 
@@ -418,7 +418,7 @@ class BusinessApplicationRepository:
         if row is None:
             raise NotFound(
                 f"Business Application publication not found: {publication_id}",
-                safe_message="Business Application publication not found",
+                safe_message="未找到业务应用发布版本",
             )
         return self._publication(row)
 
@@ -555,7 +555,7 @@ class BusinessApplicationRepository:
                 )
                 raise NonRetryableExecutionError(
                     "Business Application route is already active",
-                    safe_message="Trigger route is already used by another application",
+                    safe_message="触发器路由已被其他业务应用使用",
                     error_code="route_conflict",
                     diagnostics={"conflict_application_id": (conflict or {}).get("application_id")},
                 ) from exc
@@ -577,7 +577,7 @@ class BusinessApplicationRepository:
         if existing is None:
             raise NotFound(
                 "Business Application deployment not found",
-                safe_message="Business Application deployment not found",
+                safe_message="未找到业务应用部署",
             )
         self._expect_revision(existing, expected_revision)
         timestamp = now_iso()
@@ -640,7 +640,7 @@ class BusinessApplicationRepository:
     def revision_conflict(current_revision: int) -> NonRetryableExecutionError:
         return NonRetryableExecutionError(
             "Business Application revision conflict",
-            safe_message="Business Application was changed by another administrator",
+            safe_message="业务应用已被其他管理员修改，请刷新后重试",
             error_code="revision_conflict",
             diagnostics={"current_revision": current_revision},
         )

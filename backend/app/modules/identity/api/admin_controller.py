@@ -511,7 +511,7 @@ def build_identity_admin_router() -> APIRouter:
         if not changed:
             from fastapi import HTTPException
 
-            raise HTTPException(status_code=404, detail="Session not found")
+            raise HTTPException(status_code=404, detail="未找到会话")
         container(request).audit_service.record(
             "admin.session.revoked",
             status="SUCCEEDED",

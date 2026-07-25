@@ -123,7 +123,7 @@ describe("runtime provenance records", () => {
       "/operations/jobs/:jobId",
       <RuntimeJobDetailPage />
     )
-    expect(await screen.findByText("Job 运行归因")).toBeInTheDocument()
+    expect(await screen.findByText("任务运行归因")).toBeInTheDocument()
     expect(screen.getByText("publication-1")).toBeInTheDocument()
     expect(screen.getByText("deployment-1")).toBeInTheDocument()
     expect(screen.getByText("route-1")).toBeInTheDocument()
@@ -167,9 +167,9 @@ describe("runtime provenance records", () => {
     )
     expect(await screen.findByText("会话归因")).toBeInTheDocument()
     expect(screen.getAllByText("diagnostic-app").length).toBeGreaterThan(0)
-    expect(screen.getByText("channel")).toBeInTheDocument()
+    expect(screen.getByText("按渠道会话")).toBeInTheDocument()
     expect(
-      screen.getByRole("list", { name: "会话内 Job 列表" })
+      screen.getByRole("list", { name: "会话内任务列表" })
     ).toBeInTheDocument()
     expect(screen.getAllByRole("listitem")).toHaveLength(2)
     expect(screen.getByText("2 个")).toBeInTheDocument()

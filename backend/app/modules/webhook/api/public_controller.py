@@ -70,7 +70,7 @@ async def bounded_raw_body(request: Request, max_bytes: int) -> bytes:
 
             raise NonRetryableExecutionError(
                 "Webhook request body exceeds configured limit",
-                safe_message="Webhook payload is too large",
+                safe_message="Webhook 载荷过大",
                 error_code="webhook_payload_too_large",
             )
         chunks.append(chunk)
@@ -103,7 +103,7 @@ def public_error_response(exc: Exception) -> JSONResponse:
         code = exc.error_code or "webhook_request_failed"
         fields = exc.field_errors
     else:
-        message = "Webhook request failed"
+        message = "Webhook 请求失败"
         code = "webhook_request_failed"
         fields = []
     return JSONResponse(

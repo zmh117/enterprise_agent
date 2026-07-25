@@ -314,7 +314,7 @@ class PlatformConfigApiTests(unittest.TestCase):
                 headers={"x-admin-user-id": "local-user"},
             )
             self.assertEqual(400, rejected.status_code)
-            self.assertIn("Secret payload", rejected.json()["detail"])
+            self.assertIn("凭据内容", rejected.json()["detail"])
 
             self.assertGreater(
                 built[0].agent_repository.count_rows("platform_config_audit"),
@@ -436,7 +436,7 @@ class PlatformConfigApiTests(unittest.TestCase):
             )
 
         self.assertEqual(404, missing.status_code)
-        self.assertEqual("Topology YAML file not found", missing.json()["detail"])
+        self.assertEqual("未找到拓扑 YAML 文件", missing.json()["detail"])
 
     def test_platform_config_api_snapshot_hash_changes_when_resource_disabled(self) -> None:
         built = []
@@ -844,7 +844,7 @@ class PlatformSecretAndRuntimeConfigTests(unittest.TestCase):
                 service_name="dingtalk-stream-ingress",
             )
         self.assertTrue(degraded.runtime_config_degraded)
-        self.assertIn("Platform secret is disabled or missing", str(degraded.runtime_config_errors))
+        self.assertIn("平台凭据缺失或已停用", str(degraded.runtime_config_errors))
 
 
 if __name__ == "__main__":

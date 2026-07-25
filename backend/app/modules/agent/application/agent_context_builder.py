@@ -39,14 +39,14 @@ class AgentContextBuilder:
             if self.agent_config_service is None:
                 raise NonRetryableExecutionError(
                     "Model connection runtime service is missing",
-                    safe_message="Model connection runtime is unavailable",
+                    safe_message="模型连接运行时不可用",
                     error_code="model_connection_runtime_unavailable",
                 )
             service = self.agent_config_service.model_connection_service
             if service is None:
                 raise NonRetryableExecutionError(
                     "Model connection runtime service is missing",
-                    safe_message="Model connection runtime is unavailable",
+                    safe_message="模型连接运行时不可用",
                     error_code="model_connection_runtime_unavailable",
                 )
             revision_id = str(model_connection.get("revision_id") or "")
@@ -58,7 +58,7 @@ class AgentContextBuilder:
             ):
                 raise NonRetryableExecutionError(
                     "Pinned model connection does not match the Agent publication",
-                    safe_message="Pinned model connection integrity check failed",
+                    safe_message="固定的模型连接完整性校验失败",
                     error_code="model_connection_integrity_failed",
                 )
         allowed_tools = self._allowed_tools(job, publication)

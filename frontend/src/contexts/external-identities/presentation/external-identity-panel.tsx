@@ -66,7 +66,7 @@ export function ExternalIdentityPanel({ user }: { user: User }) {
           <div>
             <CardTitle>外部身份</CardTitle>
             <CardDescription className="mt-1">
-              只支持钉钉和 ONES。身份映射不会自动授予角色、Capability 或 ONES
+              只支持钉钉和 ONES。身份映射不会自动授予角色、能力或 ONES
               业务权限。
             </CardDescription>
           </div>

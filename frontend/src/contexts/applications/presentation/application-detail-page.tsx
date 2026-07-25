@@ -241,7 +241,7 @@ function OverviewTab({ application }: { application: BusinessApplication }) {
             ["修订", draft ? `r${draft.revision}` : "无"],
             ["状态", draft?.status ?? "无"],
             ["Agent", draft?.agent_publication_id || "未选择"],
-            ["Workflow", draft?.workflow_publication_id || "未选择"],
+            ["工作流", draft?.workflow_publication_id || "未选择"],
           ]}
         />
         <SummaryCard
@@ -255,7 +255,7 @@ function OverviewTab({ application }: { application: BusinessApplication }) {
                 application.deployments.filter((item) => item.active).length
               ),
             ],
-            ["Capability 目录", "未接入"],
+            ["能力目录", "未接入"],
             [
               "数据面",
               application.runtime_status === "wired"
@@ -294,7 +294,7 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
           <CardTitle>已发布组件</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-2">
-          <Field label="Agent Publication" htmlFor="draft-agent">
+          <Field label="Agent 发布版本" htmlFor="draft-agent">
             <select
               id="draft-agent"
               className={selectClass}
@@ -312,7 +312,7 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
               ))}
             </select>
           </Field>
-          <Field label="Workflow Publication（可选）" htmlFor="draft-workflow">
+          <Field label="工作流发布版本（可选）" htmlFor="draft-workflow">
             <select
               id="draft-workflow"
               className={selectClass}
@@ -324,7 +324,7 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
                 })
               }
             >
-              <option value="">不引用 Workflow</option>
+              <option value="">不引用工作流</option>
               {catalog.data?.workflows.map((item) => (
                 <option key={item.id} value={item.id}>
                   {item.code} · v{item.revision}
@@ -339,7 +339,7 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
           ) : null}
           <div className="rounded-md border bg-muted/35 p-3 text-sm text-muted-foreground md:col-span-2">
             <WorkflowIcon className="mr-2 inline size-4" aria-hidden="true" />
-            流程设计画布不在本阶段实现；这里只冻结已发布 Workflow 引用。
+            流程设计画布不在本阶段实现；这里只固定已发布的工作流引用。
           </div>
         </CardContent>
       </Card>
@@ -349,12 +349,12 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
 
       <Card className="shadow-none">
         <CardHeader>
-          <CardTitle>API Capability</CardTitle>
+          <CardTitle>API 能力</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="rounded-md border border-dashed p-4 text-sm leading-6 text-muted-foreground">
-            Capability Catalog 尚未接入，当前列表必须为空。这里不提供任意
-            Capability 编码、HTTP URL、SQL、Redis、Loki、Shell 或工具名输入。
+            能力目录尚未接入，当前列表必须为空。这里不提供任意
+            能力编码、HTTP URL、SQL、Redis、Loki、Shell 或工具名输入。
           </div>
         </CardContent>
       </Card>
@@ -515,7 +515,7 @@ function BindingsEditor({
     <div className="grid gap-5 xl:grid-cols-2">
       <Card className="shadow-none">
         <CardHeader className="flex-row items-center justify-between">
-          <CardTitle>Trigger Bindings</CardTitle>
+          <CardTitle>触发器绑定</CardTitle>
           <Button
             type="button"
             size="sm"
@@ -542,18 +542,18 @@ function BindingsEditor({
               })
             }
           >
-            添加 Trigger
+            添加触发器
           </Button>
         </CardHeader>
         <CardContent className="space-y-4">
           {form.triggers.length === 0 ? (
-            <EmptyBinding text="尚未配置 Trigger；应用可以发布，但不会产生入口路由。" />
+            <EmptyBinding text="尚未配置触发器；应用可以发布，但不会产生入口路由。" />
           ) : null}
           {form.triggers.map((trigger, index) => (
             <div key={index} className="space-y-3 rounded-lg border p-3">
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field
-                  label={`Trigger ${index + 1} 类型`}
+                  label={`触发器 ${index + 1} 类型`}
                   htmlFor={`trigger-type-${index}`}
                 >
                   <select
@@ -605,7 +605,10 @@ function BindingsEditor({
                     ))}
                   </select>
                 </Field>
-                <Field label="Routing Key" htmlFor={`trigger-route-${index}`}>
+                <Field
+                  label="路由键（Routing Key）"
+                  htmlFor={`trigger-route-${index}`}
+                >
                   <Input
                     id={`trigger-route-${index}`}
                     required
@@ -622,7 +625,7 @@ function BindingsEditor({
                       ? "私聊使用 bot:<robot identity>；同一机器人下所有用户共享入口匹配，但权限仍按当前发送人。"
                       : trigger.trigger_type === "dingtalk_group"
                         ? "群聊使用 conversation:<open conversation id>；不要填写用户 ID 或消息内容。"
-                        : "Webhook 路由由对应 Trigger 定义控制。"}
+                        : "Webhook 路由由对应触发器定义控制。"}
                     {isLegacyRoutingKey(
                       trigger.trigger_type,
                       trigger.routing_key
@@ -668,7 +671,7 @@ function BindingsEditor({
                   })
                 }
               >
-                删除 Trigger
+                删除触发器
               </Button>
             </div>
           ))}
@@ -677,7 +680,7 @@ function BindingsEditor({
 
       <Card className="shadow-none">
         <CardHeader className="flex-row items-center justify-between">
-          <CardTitle>Delivery Bindings</CardTitle>
+          <CardTitle>投递绑定</CardTitle>
           <Button
             type="button"
             size="sm"
@@ -697,17 +700,17 @@ function BindingsEditor({
               })
             }
           >
-            添加 Delivery
+            添加投递
           </Button>
         </CardHeader>
         <CardContent className="space-y-4">
           {form.deliveries.length === 0 ? (
-            <EmptyBinding text="尚未配置 Delivery；发布不会改变现有结果投递链。" />
+            <EmptyBinding text="尚未配置投递；发布不会改变现有结果投递链。" />
           ) : null}
           {form.deliveries.map((binding, index) => (
             <div key={index} className="space-y-3 rounded-lg border p-3">
               <Field
-                label={`Delivery ${index + 1} 类型`}
+                label={`投递 ${index + 1} 类型`}
                 htmlFor={`delivery-type-${index}`}
               >
                 <select
@@ -728,7 +731,7 @@ function BindingsEditor({
                 </select>
               </Field>
               <Field
-                label="Delivery Connector"
+                label="投递连接器"
                 htmlFor={`delivery-connector-${index}`}
               >
                 <select
@@ -765,7 +768,7 @@ function BindingsEditor({
                   })
                 }
               >
-                删除 Delivery
+                删除投递
               </Button>
             </div>
           ))}
@@ -873,11 +876,11 @@ function ValidationTab({ application }: { application: BusinessApplication }) {
         icon={ShieldAlertIcon}
         rows={[
           ["应用状态", application.status],
-          ["Agent Publication", revision?.agent_publication_id || "未选择"],
-          ["Workflow Publication", revision?.workflow_publication_id || "可选"],
-          ["Trigger", String(revision?.triggers.length ?? 0)],
-          ["Delivery", String(revision?.deliveries.length ?? 0)],
-          ["Capability", String(revision?.capabilities.length ?? 0)],
+          ["Agent 发布版本", revision?.agent_publication_id || "未选择"],
+          ["工作流发布版本", revision?.workflow_publication_id || "可选"],
+          ["触发器", String(revision?.triggers.length ?? 0)],
+          ["投递", String(revision?.deliveries.length ?? 0)],
+          ["能力", String(revision?.capabilities.length ?? 0)],
         ]}
       />
     </div>
@@ -896,7 +899,7 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
     <div className="space-y-5">
       <Card className="shadow-none">
         <CardHeader>
-          <CardTitle>本地 Deployment</CardTitle>
+          <CardTitle>本地部署</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="rounded-lg border bg-muted/30 p-4 text-sm">
@@ -906,7 +909,7 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
             </div>
             <p className="mt-2 text-xs leading-5 text-muted-foreground">
               发布、激活、回退和停用都直接作用于当前本地运行实例，不再维护
-              test、staging 或 production Deployment。
+              test、staging 或 production 部署。
             </p>
           </div>
           <div className="rounded-lg border bg-muted/30 p-4 text-sm">
@@ -936,7 +939,7 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
               onClick={() => {
                 if (
                   window.confirm(
-                    "确认停用 local 环境？后续新消息若没有匹配应用，将返回配置错误且不创建 Job；已入队 Job 继续使用原版本。"
+                    "确认停用 local 环境？后续新消息若没有匹配应用，将返回配置错误且不创建任务；已入队任务继续使用原版本。"
                   )
                 ) {
                   deactivate.mutate({
@@ -951,7 +954,7 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
           ) : null}
           <MutationError error={error} />
           <p className="text-xs leading-5 text-muted-foreground">
-            状态由服务端按数据面闸门、local 运行实例和 Publication
+            状态由服务端按数据面闸门、本地运行实例和发布版本
             组件统一计算；界面不自行猜测是否接管。
           </p>
         </CardContent>
@@ -959,7 +962,7 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
 
       <Card className="shadow-none">
         <CardHeader>
-          <CardTitle>Publication 历史</CardTitle>
+          <CardTitle>发布历史</CardTitle>
         </CardHeader>
         <CardContent>
           {application.publications.length === 0 ? (
@@ -983,7 +986,7 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
                     </div>
                     <dl className="mt-4 grid gap-x-6 gap-y-3 text-xs sm:grid-cols-2 xl:grid-cols-4">
                       <PublicationMetadata
-                        label="Hash"
+                        label="配置哈希"
                         value={`${publication.config_hash.slice(0, 16)}…`}
                         monospace
                       />
@@ -997,7 +1000,7 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
                         value={formatDate(publication.published_at)}
                       />
                       <PublicationMetadata
-                        label="Schema"
+                        label="结构版本"
                         value={`v${publication.schema_version}`}
                       />
                     </dl>
@@ -1022,7 +1025,7 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
                           : "激活"
                       if (
                         window.confirm(
-                          `确认将 publication r${publication.revision} ${action}到 local 环境？匹配入口会使用该版本；未命中消息将返回配置错误且不创建 Job，已入队 Job 不切换版本。`
+                          `确认将发布版本 r${publication.revision} ${action}到 local 环境？匹配入口会使用该版本；未命中消息将返回配置错误且不创建任务，已入队任务不切换版本。`
                         )
                       ) {
                         activate.mutate({

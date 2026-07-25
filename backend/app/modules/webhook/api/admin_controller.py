@@ -313,7 +313,7 @@ def build_webhook_admin_router() -> APIRouter:
 
             raise handle_exception(
                 NonRetryableExecutionError(
-                    "Publication path and body mismatch", safe_message="Publication ID mismatch"
+                    "Publication path and body mismatch", safe_message="发布版本 ID 不匹配"
                 )
             )
         principal = require_action(

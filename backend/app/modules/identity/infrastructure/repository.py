@@ -47,10 +47,10 @@ class IdentityRepository:
             if "unique" in str(exc).lower():
                 raise NonRetryableExecutionError(
                     "Username already exists",
-                    safe_message="Username is already in use",
+                    safe_message="用户名已被使用",
                     error_code="username_conflict",
                     field_errors=[
-                        {"field": "username", "message": "Username is already in use"}
+                        {"field": "username", "message": "用户名已被使用"}
                     ],
                 ) from exc
             raise
@@ -105,7 +105,7 @@ class IdentityRepository:
             (user_id,),
         )
         if not row:
-            raise NotFound("User not found", safe_message="User not found")
+            raise NotFound("User not found", safe_message="未找到用户")
         return row
 
     def get_user_by_username(self, username: str) -> dict[str, Any] | None:
@@ -141,10 +141,10 @@ class IdentityRepository:
             if self.database.execute_one("select id from app_user where id = ?", (user_id,)):
                 raise NonRetryableExecutionError(
                     "User revision conflict",
-                    safe_message="User was modified; refresh and try again",
+                    safe_message="用户信息已发生变化，请刷新后重试",
                     error_code="revision_conflict",
                 )
-            raise NotFound("User not found", safe_message="User not found")
+            raise NotFound("User not found", safe_message="未找到用户")
         return self.get_user(user_id)
 
     def set_password_hash(self, user_id: str, password_hash: str) -> None:
@@ -152,7 +152,7 @@ class IdentityRepository:
         if str(user["account_type"]) != "human":
             raise NonRetryableExecutionError(
                 "Service accounts cannot have password credentials",
-                safe_message="Service accounts cannot have password credentials",
+                safe_message="服务账号不能设置密码凭据",
                 error_code="service_account_password_forbidden",
             )
         timestamp = now_iso()
@@ -199,7 +199,7 @@ class IdentityRepository:
         if str(user["account_type"]) != "human":
             raise NonRetryableExecutionError(
                 "Service accounts cannot bind external identities",
-                safe_message="Service accounts cannot bind external identities",
+                safe_message="服务账号不能绑定外部身份",
                 error_code="service_account_identity_forbidden",
             )
         existing = self.find_external_identity(
@@ -212,7 +212,7 @@ class IdentityRepository:
             if str(existing["user_id"]) != user_id:
                 raise NonRetryableExecutionError(
                     "External identity already belongs to another user",
-                    safe_message="External identity is already bound to another user",
+                    safe_message="此外部身份已绑定其他用户",
                     error_code="identity_conflict",
                 )
             if normalized_provider == ExternalIdentityProvider.ONES.value:
@@ -300,7 +300,7 @@ class IdentityRepository:
             "select * from user_external_identity where id = ?", (identity_id,)
         )
         if not row:
-            raise NotFound("External identity not found", safe_message="Identity not found")
+            raise NotFound("External identity not found", safe_message="未找到身份")
         return self._external_public(row)
 
     def find_external_identity(
@@ -341,7 +341,7 @@ class IdentityRepository:
         if status not in {"enabled", "disabled"}:
             raise NonRetryableExecutionError(
                 "Invalid external identity status",
-                safe_message="Identity status is invalid",
+                safe_message="身份状态无效",
                 error_code="identity_status_invalid",
             )
         rows = self.database.execute(
@@ -356,7 +356,7 @@ class IdentityRepository:
         if not rows:
             raise NonRetryableExecutionError(
                 "Identity revision conflict",
-                safe_message="Identity was modified; refresh and try again",
+                safe_message="身份信息已发生变化，请刷新后重试",
                 error_code="revision_conflict",
             )
         return self.get_external_identity(identity_id)
@@ -383,10 +383,10 @@ class IdentityRepository:
             ):
                 raise NonRetryableExecutionError(
                     "Identity revision conflict",
-                    safe_message="Identity was modified; refresh and try again",
+                    safe_message="身份信息已发生变化，请刷新后重试",
                     error_code="revision_conflict",
                 )
-            raise NotFound("External identity not found", safe_message="Identity not found")
+            raise NotFound("External identity not found", safe_message="未找到身份")
         return self.get_external_identity(identity_id)
 
     def create_role(self, *, code: str, name: str, description: str = "") -> dict[str, Any]:
@@ -409,7 +409,7 @@ class IdentityRepository:
     def get_role(self, role_id: str) -> dict[str, Any]:
         row = self.database.execute_one("select * from rbac_role where id = ?", (role_id,))
         if not row:
-            raise NotFound("Role not found", safe_message="Role not found")
+            raise NotFound("Role not found", safe_message="未找到角色")
         return row
 
     def get_role_by_code(self, code: str) -> dict[str, Any] | None:
@@ -437,7 +437,7 @@ class IdentityRepository:
         if not rows:
             raise NonRetryableExecutionError(
                 "Role revision conflict",
-                safe_message="Role was modified; refresh and try again",
+                safe_message="角色已发生变化，请刷新后重试",
                 error_code="revision_conflict",
             )
         return self.get_role(role_id)
@@ -460,7 +460,7 @@ class IdentityRepository:
             if expected_revision is not None and int(existing["revision"]) != expected_revision:
                 raise NonRetryableExecutionError(
                     "Membership revision conflict",
-                    safe_message="Role membership was modified; refresh and try again",
+                    safe_message="角色成员关系已发生变化，请刷新后重试",
                     error_code="revision_conflict",
                 )
             self.database.execute(
@@ -480,7 +480,7 @@ class IdentityRepository:
         if expected_revision not in (None, 0):
             raise NonRetryableExecutionError(
                 "Membership revision conflict",
-                safe_message="Role membership was modified; refresh and try again",
+                safe_message="角色成员关系已发生变化，请刷新后重试",
                 error_code="revision_conflict",
             )
         membership_id = new_id("membership")
@@ -510,7 +510,7 @@ class IdentityRepository:
         if not rows:
             raise NonRetryableExecutionError(
                 "Membership revision conflict",
-                safe_message="Role membership was modified; refresh and try again",
+                safe_message="角色成员关系已发生变化，请刷新后重试",
                 error_code="revision_conflict",
             )
         return rows[0]
@@ -588,14 +588,14 @@ class IdentityRepository:
             if not rows:
                 raise NonRetryableExecutionError(
                     "Permission revision conflict",
-                    safe_message="Permission was modified; refresh and try again",
+                    safe_message="权限已发生变化，请刷新后重试",
                     error_code="revision_conflict",
                 )
         else:
             if expected_revision != 0:
                 raise NonRetryableExecutionError(
                     "Permission revision conflict",
-                    safe_message="Permission was modified; refresh and try again",
+                    safe_message="权限已发生变化，请刷新后重试",
                     error_code="revision_conflict",
                 )
             self.database.execute(
@@ -767,7 +767,7 @@ class IdentityRepository:
         if str(user["account_type"]) != "human":
             raise NonRetryableExecutionError(
                 "Service accounts cannot create login sessions",
-                safe_message="Service accounts cannot create login sessions",
+                safe_message="服务账号不能创建登录会话",
                 error_code="service_account_session_forbidden",
             )
         session_id = new_id("session_auth")

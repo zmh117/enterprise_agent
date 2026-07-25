@@ -51,19 +51,19 @@ class EncryptedDbSecretProvider:
         if not ref.startswith("secret://platform/"):
             raise PlatformConfigValidationError(
                 "Unsupported platform secret provider",
-                safe_message="Unsupported platform secret provider",
+                safe_message="不支持此平台凭据提供方",
             )
         secret = self.repository.get_platform_secret_by_ref(ref)
         if not secret or secret["status"] != "enabled":
             raise NonRetryableExecutionError(
                 f"Platform secret is disabled or missing: {ref}",
-                safe_message="Platform secret is disabled or missing",
+                safe_message="平台凭据缺失或已停用",
             )
         version = self.repository.get_active_secret_version(str(secret["id"]))
         if not version:
             raise NonRetryableExecutionError(
                 f"Platform secret active version is missing: {ref}",
-                safe_message="Platform secret active version is missing",
+                safe_message="平台凭据缺少活动版本",
             )
         return self._decrypt(
             ciphertext=str(version["ciphertext"]),
@@ -154,14 +154,14 @@ class EncryptedDbSecretProvider:
         except Exception as exc:
             raise NonRetryableExecutionError(
                 "Platform secret decrypt failed",
-                safe_message="Platform secret decrypt failed",
+                safe_message="平台凭据解密失败",
             ) from exc
         return plaintext.decode("utf-8")
 
     def _require_value(self, value: str) -> None:
         if not str(value or ""):
             raise PlatformConfigValidationError(
-                "Secret value is required", safe_message="Secret value is required"
+                "Secret value is required", safe_message="必须填写凭据值"
             )
 
 
@@ -179,7 +179,7 @@ def _normalize_master_key(value: str) -> bytes:
     if not text or text in {"change-me", "<your-master-key>"}:
         raise NonRetryableExecutionError(
             "APP_CONFIG_MASTER_KEY is required for encrypted DB secrets",
-            safe_message="APP_CONFIG_MASTER_KEY is required for encrypted DB secrets",
+            safe_message="加密数据库凭据需要配置 APP_CONFIG_MASTER_KEY",
         )
     for candidate in (text, text + "=" * (-len(text) % 4)):
         try:

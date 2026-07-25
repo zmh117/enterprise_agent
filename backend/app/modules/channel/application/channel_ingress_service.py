@@ -82,7 +82,7 @@ class ChannelIngressService:
         }:
             raise PermissionDenied(
                 "DingTalk external identity descriptor is required",
-                safe_message="DingTalk identity could not be verified",
+                safe_message="无法验证钉钉身份",
             )
         resolution = self._resolve_business_application(event)
         runtime = (
@@ -254,7 +254,7 @@ class ChannelIngressService:
         if resolution.outcome == RouteResolutionOutcome.BLOCKED:
             raise NonRetryableExecutionError(
                 resolution.message,
-                safe_message="Business Application configuration is temporarily unavailable",
+                safe_message="业务应用配置暂时不可用",
                 error_code=resolution.reason_code,
             )
         if resolution.outcome == RouteResolutionOutcome.NOT_MATCHED:
@@ -291,7 +291,7 @@ class ChannelIngressService:
         if conflicts:
             raise NonRetryableExecutionError(
                 "Channel Agent configuration conflicts with Business Application",
-                safe_message="Business Application Agent configuration is inconsistent",
+                safe_message="业务应用的 Agent 配置不一致",
                 error_code=RuntimeReason.AGENT_OVERRIDE_CONFLICT.value,
             )
 
@@ -315,19 +315,19 @@ class ChannelIngressService:
         if len(bindings) != 1:
             raise NonRetryableExecutionError(
                 "Business Application reply-original delivery is invalid",
-                safe_message="Business Application result delivery is unavailable",
+                safe_message="业务应用结果投递不可用",
                 error_code=RuntimeReason.MISSING_DELIVERY_BINDING.value,
             )
         if str(bindings[0].get("connector_id") or "") != event.source.connector_id:
             raise NonRetryableExecutionError(
                 "Business Application delivery connector does not match ingress",
-                safe_message="Business Application result delivery is unavailable",
+                safe_message="业务应用结果投递不可用",
                 error_code=RuntimeReason.DELIVERY_CONNECTOR_MISMATCH.value,
             )
         if event.delivery.type != "dingtalk_stream_session_webhook":
             raise NonRetryableExecutionError(
                 "Business Application requires DingTalk reply-original delivery",
-                safe_message="The original DingTalk session cannot receive the result",
+                safe_message="原钉钉会话无法接收结果",
                 error_code=RuntimeReason.UNSUPPORTED_DELIVERY.value,
             )
 

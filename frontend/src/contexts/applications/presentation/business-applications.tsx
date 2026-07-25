@@ -13,9 +13,9 @@ export function BusinessApplications() {
       className="space-y-4"
     >
       <SectionHeading
-        eyebrow="Primary object"
+        eyebrow="核心对象"
         title="业务应用"
-        description="业务应用真实工作区已经连接后端控制面；Dashboard 不再展示静态应用 fixture。"
+        description="业务应用工作区已经连接后端控制面；总览不再展示静态应用示例数据。"
         action={
           <Link
             to="/applications"
@@ -34,16 +34,16 @@ export function BusinessApplications() {
           <div>
             <h3 className="font-semibold">控制面事实来自管理 API</h3>
             <p className="mt-1 text-sm text-muted-foreground">
-              列表、草稿、校验、publication 和 local deployment
+              列表、草稿、校验、发布版本和本地部署
               均在独立页面读取真实数据。
             </p>
           </div>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
-          <Badge variant="secondary">追加式 revision</Badge>
-          <Badge variant="secondary">不可变 publication</Badge>
-          <Badge variant="secondary">local activation</Badge>
-          <Badge variant="outline">服务端 RuntimeReadiness</Badge>
+          <Badge variant="secondary">追加式修订版本</Badge>
+          <Badge variant="secondary">不可变发布版本</Badge>
+          <Badge variant="secondary">本地激活</Badge>
+          <Badge variant="outline">服务端运行就绪状态</Badge>
         </CardContent>
       </Card>
     </section>

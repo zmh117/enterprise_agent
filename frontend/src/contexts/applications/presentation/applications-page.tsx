@@ -56,7 +56,7 @@ export function ApplicationsPage() {
             业务应用
           </h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-            装配已发布 Agent、Workflow 和
+            装配已发布 Agent、工作流和
             Channel，经过校验后形成不可变发布快照。
             页面直接展示服务端计算的入口接管状态、组件限制和兼容回退边界。
           </p>

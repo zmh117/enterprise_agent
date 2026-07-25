@@ -26,11 +26,11 @@ export function RuntimeRecordsPage() {
         <div>
           <div className="flex items-center gap-2 text-xs font-medium text-indigo-700">
             <ActivityIcon className="size-4" aria-hidden="true" />
-            OPERATIONS
+            运行中心
           </div>
           <h1 className="mt-2 text-2xl font-semibold">Agent 运行记录</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            展示 Job 固定的业务应用、Publication、Deployment 与 route
+            展示任务固定的业务应用、发布版本、部署与路由
             归因；历史记录不会按当前配置猜测回填。
           </p>
         </div>
@@ -62,7 +62,7 @@ export function RuntimeRecordsPage() {
               ))}
               {!query.data.length ? (
                 <p className="p-8 text-center text-sm text-muted-foreground">
-                  当前时间窗口没有 Job。
+                  当前时间窗口没有任务。
                 </p>
               ) : null}
             </div>
@@ -101,9 +101,9 @@ function JobRow({ job }: { job: RuntimeJob }) {
         </p>
       </div>
       <div className="flex flex-wrap gap-2">
-        <Badge variant="secondary">{job.status}</Badge>
+        <Badge variant="secondary">{jobStatusLabel(job.status)}</Badge>
         <Badge variant="outline">
-          {job.business_application_runtime_status}
+          {runtimeStatusLabel(job.business_application_runtime_status)}
         </Badge>
       </div>
     </article>
@@ -128,7 +128,7 @@ export function RuntimeJobDetailPage() {
   return (
     <PageFrame>
       <PageBack />
-      <h1 className="text-2xl font-semibold">Job 运行归因</h1>
+      <h1 className="text-2xl font-semibold">任务运行归因</h1>
       <p className="mt-1 font-mono text-xs text-muted-foreground">{job.id}</p>
       <div className="mt-5 grid gap-4 xl:grid-cols-2">
         <FactCard
@@ -138,35 +138,38 @@ export function RuntimeJobDetailPage() {
               "业务应用",
               job.business_application_code || "legacy_unattributed",
             ],
-            ["Application ID", job.business_application_id || "未归因"],
+            ["业务应用 ID", job.business_application_id || "未归因"],
             [
-              "Publication",
+              "发布版本",
               job.business_application_publication_id || "未归因",
             ],
-            ["Deployment", job.business_application_deployment_id || "未归因"],
-            ["Route", job.business_application_route_id || "未归因"],
-            ["运行状态", job.business_application_runtime_status],
+            ["部署 ID", job.business_application_deployment_id || "未归因"],
+            ["路由 ID", job.business_application_route_id || "未归因"],
+            [
+              "运行状态",
+              runtimeStatusLabel(job.business_application_runtime_status),
+            ],
           ]}
         />
         <FactCard
           title="执行关联"
           rows={[
-            ["状态", job.status],
+            ["状态", jobStatusLabel(job.status)],
             ["Agent", job.agent_code],
-            ["Correlation ID", job.correlation_id || "无"],
+            ["关联 ID", job.correlation_id || "无"],
             ["来源", job.source_channel],
-            ["Connector", job.source_connector_id],
+            ["连接器", job.source_connector_id],
             ["创建时间", formatDate(job.created_at)],
           ]}
         />
         <FactCard
           title="固定执行策略"
           rows={[
-            ["Schema", `v${job.execution_policy.schema_version}`],
+            ["结构版本", `v${job.execution_policy.schema_version}`],
             ["请求限制", policyText(job.execution_policy.requested)],
             ["实际限制", policyText(job.execution_policy.effective)],
             [
-              "Agent Publication",
+              "Agent 发布版本",
               job.execution_policy.sources.agent_publication_id || "运行时默认",
             ],
             ["实际工具调用", String(job.tool_call_count)],
@@ -191,7 +194,7 @@ export function RuntimeJobDetailPage() {
             className={buttonVariants({ variant: "outline" })}
             to={`/operations/conversations/${encodeURIComponent(job.session_id)}`}
           >
-            查看会话与同会话 Job
+            查看会话与同会话任务
           </Link>
         </CardContent>
       </Card>
@@ -228,8 +231,8 @@ export function ConversationDetailPage() {
           title="会话策略"
           rows={[
             ["业务应用", session.business_application_code || "legacy"],
-            ["Application ID", session.business_application_id || "未归因"],
-            ["会话模式", session.conversation_mode],
+            ["业务应用 ID", session.business_application_id || "未归因"],
+            ["会话模式", conversationModeLabel(session.conversation_mode)],
             [
               "最近消息上限",
               String(session.recent_message_limit ?? "使用兼容默认值"),
@@ -240,12 +243,12 @@ export function ConversationDetailPage() {
         />
         <Card className="min-w-0 overflow-hidden shadow-none">
           <CardHeader className="flex flex-row items-center justify-between gap-3">
-            <CardTitle>会话内 Job</CardTitle>
+            <CardTitle>会话内任务</CardTitle>
             <Badge variant="secondary">{query.data.jobs.length} 个</Badge>
           </CardHeader>
           <CardContent className="p-0">
             {query.data.jobs.length ? (
-              <ul className="divide-y" aria-label="会话内 Job 列表">
+              <ul className="divide-y" aria-label="会话内任务列表">
                 {query.data.jobs.map((job) => (
                   <li key={job.id}>
                     <ConversationJobRow job={job} />
@@ -254,7 +257,7 @@ export function ConversationDetailPage() {
               </ul>
             ) : (
               <p className="px-5 py-10 text-center text-sm text-muted-foreground">
-                当前会话还没有 Job。
+                当前会话还没有任务。
               </p>
             )}
           </CardContent>
@@ -283,9 +286,9 @@ function ConversationJobRow({ job }: { job: RuntimeJob }) {
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
-          <Badge variant="secondary">{job.status}</Badge>
+          <Badge variant="secondary">{jobStatusLabel(job.status)}</Badge>
           <Badge variant="outline">
-            {job.business_application_runtime_status}
+            {runtimeStatusLabel(job.business_application_runtime_status)}
           </Badge>
         </div>
       </div>
@@ -296,7 +299,7 @@ function ConversationJobRow({ job }: { job: RuntimeJob }) {
             ? job.business_application_code
             : "历史兼容任务（无业务应用归因）"}
         </dd>
-        <dt className="text-muted-foreground">Publication</dt>
+        <dt className="text-muted-foreground">发布版本</dt>
         <dd className="min-w-0 font-mono break-all text-muted-foreground">
           {attributed
             ? job.business_application_publication_id
@@ -334,6 +337,43 @@ function FactCard({
       </CardContent>
     </Card>
   )
+}
+
+const jobStatusLabels: Record<string, string> = {
+  WAITING_INPUT: "等待输入",
+  PENDING: "等待执行",
+  RUNNING: "执行中",
+  RETRY_WAIT: "等待重试",
+  SUCCEEDED: "已成功",
+  FAILED: "已失败",
+  TIMEOUT: "已超时",
+}
+
+const runtimeStatusLabels: Record<string, string> = {
+  not_wired: "未接管",
+  partially_wired: "部分接管",
+  wired: "已接管",
+  blocked: "已阻塞",
+  legacy_unattributed: "旧版记录（未归因）",
+}
+
+const conversationModeLabels: Record<string, string> = {
+  channel: "按渠道会话",
+  actor: "按当前主体",
+  application: "按业务应用",
+  legacy: "旧版兼容模式",
+}
+
+function jobStatusLabel(status: string): string {
+  return jobStatusLabels[status] ?? status
+}
+
+function runtimeStatusLabel(status: string): string {
+  return runtimeStatusLabels[status] ?? status
+}
+
+function conversationModeLabel(mode: string): string {
+  return conversationModeLabels[mode] ?? mode
 }
 
 function PageFrame({ children }: { children: React.ReactNode }) {

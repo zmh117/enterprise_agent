@@ -363,7 +363,7 @@ def build_business_application_router() -> APIRouter:
                 actor_id=principal.user_id, code=code
             )
         except PermissionDenied as exc:
-            raise HTTPException(status_code=404, detail="Business Application not found") from exc
+            raise HTTPException(status_code=404, detail="未找到业务应用") from exc
         except Exception as exc:
             raise _http_error(exc) from exc
         return {"application": application}
@@ -450,7 +450,7 @@ def build_business_application_router() -> APIRouter:
                 actor_id=principal.user_id, code=code
             )
         except PermissionDenied as exc:
-            raise HTTPException(status_code=404, detail="Business Application not found") from exc
+            raise HTTPException(status_code=404, detail="未找到业务应用") from exc
         except Exception as exc:
             raise _http_error(exc) from exc
         return {"items": values, **_aggregate_runtime(values, request)}
@@ -467,7 +467,7 @@ def build_business_application_router() -> APIRouter:
                 ),
             )
         except PermissionDenied as exc:
-            raise HTTPException(status_code=404, detail="Business Application not found") from exc
+            raise HTTPException(status_code=404, detail="未找到业务应用") from exc
         except Exception as exc:
             raise _http_error(exc) from exc
 
@@ -535,7 +535,7 @@ def build_business_application_router() -> APIRouter:
                 container(request).business_application_resolver.resolve_active(code, environment),
             )
         except PermissionDenied as exc:
-            raise HTTPException(status_code=404, detail="Business Application not found") from exc
+            raise HTTPException(status_code=404, detail="未找到业务应用") from exc
         except Exception as exc:
             raise _http_error(exc) from exc
 
@@ -556,7 +556,7 @@ def _require_enabled(request: Request) -> None:
             status_code=404,
             detail={
                 "code": "business_application_control_plane_disabled",
-                "message": "Business Application control plane is disabled",
+                "message": "业务应用控制面已停用",
             },
         )
 
@@ -596,7 +596,7 @@ def _http_error(exc: Exception) -> HTTPException:
             status_code=422,
             detail={"code": "validation_failed", "message": str(exc)},
         )
-    return HTTPException(status_code=500, detail="Internal server error")
+    return HTTPException(status_code=500, detail="服务器内部错误")
 
 
 def _aggregate_runtime(values: list[dict[str, Any]], request: Request) -> dict[str, Any]:

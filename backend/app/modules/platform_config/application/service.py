@@ -55,7 +55,7 @@ class PlatformConfigService:
         if not actor_id:
             raise PermissionDenied(
                 "Platform config actor is required",
-                safe_message="Platform config actor is required",
+                safe_message="缺少平台配置操作人",
             )
         self.permission_service.require_action(
             user_id=actor_id,
@@ -68,7 +68,7 @@ class PlatformConfigService:
         if not actor_id:
             raise PermissionDenied(
                 "Secret administrator actor is required",
-                safe_message="Secret administrator actor is required",
+                safe_message="缺少凭据管理员操作人",
             )
         self.permission_service.require_action(
             user_id=actor_id,

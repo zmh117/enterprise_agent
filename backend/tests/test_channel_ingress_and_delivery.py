@@ -24,7 +24,7 @@ class FailingAdapter:
         title: str,
         text: str,
     ) -> None:
-        raise NonRetryableExecutionError("boom", safe_message="delivery failed safely")
+        raise NonRetryableExecutionError("boom", safe_message="投递安全失败")
 
 
 class ChannelIngressAndDeliveryTests(unittest.TestCase):
@@ -244,7 +244,7 @@ class ChannelIngressAndDeliveryTests(unittest.TestCase):
         self.assertEqual(JobStatus.SUCCEEDED, c.agent_repository.get_job(job.id).status)
         attempts = c.agent_repository.list_delivery_attempts(job.id)
         self.assertEqual("FAILED", attempts[0]["status"])
-        self.assertEqual("delivery failed safely", attempts[0]["error_message"])
+        self.assertEqual("投递安全失败", attempts[0]["error_message"])
 
     def test_delivery_connector_direction_is_enforced_before_job_creation(self) -> None:
         c = container()

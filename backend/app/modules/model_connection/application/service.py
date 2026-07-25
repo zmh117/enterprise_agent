@@ -81,7 +81,7 @@ class UnavailableModelSecretProvider:
     def _raise() -> None:
         raise NonRetryableExecutionError(
             "APP_CONFIG_MASTER_KEY is required for model credentials",
-            safe_message="Model credential encryption is not configured",
+            safe_message="尚未配置模型凭据加密",
             error_code="model_credential_encryption_unavailable",
         )
 
@@ -211,12 +211,12 @@ class ModelConnectionService:
         self._require_agent_editor(actor_id)
         self._require_secret_admin(actor_id)
         if not str(api_key or ""):
-            raise _validation_error("api_key", "API Key is required")
+            raise _validation_error("api_key", "必须填写 API Key")
         connection = self.repository.get_connection(code)
         if int(connection["revision"]) != expected_revision:
             raise NonRetryableExecutionError(
                 "Model connection revision conflict",
-                safe_message="Model connection changed; refresh and try again",
+                safe_message="模型连接已发生变化，请刷新后重试",
                 error_code="revision_conflict",
                 diagnostics={"current_revision": int(connection["revision"])},
             )
@@ -224,7 +224,7 @@ class ModelConnectionService:
         if not revision_id:
             raise NonRetryableExecutionError(
                 "Model connection has no configuration revision",
-                safe_message="Save model connection configuration before setting a credential",
+                safe_message="设置凭据前请先保存模型连接配置",
                 error_code="model_connection_revision_required",
             )
         current = self.repository.get_revision(revision_id)
@@ -288,7 +288,7 @@ class ModelConnectionService:
             if not revision_id:
                 raise NonRetryableExecutionError(
                     "Model connection has no revision",
-                    safe_message="Model connection has no saved revision",
+                    safe_message="模型连接没有已保存的版本",
                     error_code="model_connection_revision_required",
                 )
             self.runtime_binding(revision_id, require_connection_enabled=False)
@@ -316,7 +316,7 @@ class ModelConnectionService:
             if self.tester is None:
                 raise NonRetryableExecutionError(
                     "Model connection tester is unavailable",
-                    safe_message="Model connection test runtime is unavailable",
+                    safe_message="模型连接测试运行时不可用",
                     error_code="model_connection_test_unavailable",
                 )
             self.validate_base_url(binding.base_url, validate_dns=True)
@@ -324,7 +324,7 @@ class ModelConnectionService:
             api_key = self.resolve_api_key(binding)
             outcome = self.tester(binding, api_key, max(3, min(timeout_seconds, 30)))
         except Exception as exc:
-            safe_message = getattr(exc, "safe_message", "Model connection test failed")
+            safe_message = getattr(exc, "safe_message", "模型连接测试失败")
             error_code = getattr(exc, "error_code", "model_connection_test_failed")
             config = dict(revision.get("config") or {})
             self.audit_service.record(
@@ -359,7 +359,7 @@ class ModelConnectionService:
             "model": binding.model,
             "duration_ms": int((time.monotonic() - started) * 1000),
             "runtime": "claude_agent_sdk",
-            "detail": str(outcome.get("detail") or "Connection succeeded")[:200],
+            "detail": str(outcome.get("detail") or "连接成功")[:200],
         }
         self.audit_service.record(
             "model.connection.test_succeeded",
@@ -375,7 +375,7 @@ class ModelConnectionService:
         if _hash(dict(revision["config"])) != str(revision["config_hash"]):
             raise NonRetryableExecutionError(
                 "Model connection revision hash mismatch",
-                safe_message="Model connection integrity check failed",
+                safe_message="模型连接完整性校验失败",
                 error_code="model_connection_integrity_failed",
             )
         return self._public_revision(revision)
@@ -393,34 +393,34 @@ class ModelConnectionService:
         ):
             raise NonRetryableExecutionError(
                 "Model connection is disabled",
-                safe_message="Model connection is disabled",
+                safe_message="模型连接已停用",
                 error_code="model_connection_disabled",
             )
         config = dict(revision["config"])
         if _hash(config) != str(revision["config_hash"]):
             raise NonRetryableExecutionError(
                 "Model connection revision hash mismatch",
-                safe_message="Model connection integrity check failed",
+                safe_message="模型连接完整性校验失败",
                 error_code="model_connection_integrity_failed",
             )
         normalized = self.normalize_config(config, validate_dns=True)
         if normalized != config:
             raise NonRetryableExecutionError(
                 "Model connection revision is not canonical",
-                safe_message="Model connection integrity check failed",
+                safe_message="模型连接完整性校验失败",
                 error_code="model_connection_integrity_failed",
             )
         if revision["status"] != "ready":
             raise NonRetryableExecutionError(
                 "Model connection revision is not ready",
-                safe_message="Model connection credential must be rotated before use",
+                safe_message="使用模型连接前必须先轮换凭据",
                 error_code="model_connection_rotation_required",
             )
         secret_id = str(revision.get("api_key_secret_id") or "")
         if not self._secret_ready(secret_id):
             raise NonRetryableExecutionError(
                 "Model connection credential is missing or disabled",
-                safe_message="Model connection credential is missing or disabled",
+                safe_message="模型连接凭据缺失或已停用",
                 error_code="model_connection_credential_unavailable",
             )
         secret = self.platform_repository.get_platform_secret(secret_id)
@@ -445,7 +445,7 @@ class ModelConnectionService:
         if not binding.secret_ref:
             raise NonRetryableExecutionError(
                 "Model runtime credential reference is missing",
-                safe_message="Model runtime credential is not configured",
+                safe_message="尚未配置模型运行凭据",
                 error_code="model_connection_credential_unavailable",
             )
         return self.secret_provider.resolve(binding.secret_ref)
@@ -485,17 +485,17 @@ class ModelConnectionService:
     ) -> dict[str, str | int]:
         unknown = sorted(set(config) - CONFIG_FIELDS)
         if unknown:
-            raise _validation_error(unknown[0], "Field is not configurable for this protocol")
+            raise _validation_error(unknown[0], "此协议不允许配置该字段")
         if "schema_version" in config:
             try:
                 schema_version = int(config["schema_version"])
             except (TypeError, ValueError) as exc:
-                raise _validation_error("schema_version", "Schema version must be 1") from exc
+                raise _validation_error("schema_version", "结构版本必须为 1") from exc
             if schema_version != 1:
-                raise _validation_error("schema_version", "Only schema version 1 is supported")
+                raise _validation_error("schema_version", "仅支持结构版本 1")
         protocol = str(config.get("protocol") or ANTHROPIC_COMPATIBLE_PROTOCOL).strip()
         if protocol != ANTHROPIC_COMPATIBLE_PROTOCOL:
-            raise _validation_error("protocol", "Only anthropic_compatible is supported")
+            raise _validation_error("protocol", "仅支持 anthropic_compatible")
         base_url = str(config.get("base_url") or "").strip().rstrip("/")
         self.validate_base_url(base_url, validate_dns=validate_dns)
         model = _model_value(config.get("model"), "model")
@@ -510,7 +510,8 @@ class ModelConnectionService:
         effort = str(config.get("effort_level") or "max").strip().lower()
         if effort not in EFFORT_LEVELS:
             raise _validation_error(
-                "effort_level", f"Must be one of: {', '.join(sorted(EFFORT_LEVELS))}"
+                "effort_level",
+                f"必须是以下值之一：{', '.join(sorted(EFFORT_LEVELS))}",
             )
         return ModelConnectionConfig(
             protocol=protocol,
@@ -527,7 +528,7 @@ class ModelConnectionService:
         try:
             parsed = urlsplit(value)
         except ValueError as exc:
-            raise _validation_error("base_url", "Invalid provider URL") from exc
+            raise _validation_error("base_url", "模型提供方地址无效") from exc
         host = (parsed.hostname or "").lower()
         if (
             parsed.scheme != "https"
@@ -539,24 +540,24 @@ class ModelConnectionService:
         ):
             raise _validation_error(
                 "base_url",
-                "Must be an HTTPS URL without credentials, query, or fragment",
+                "必须是不包含凭据、查询参数或片段的 HTTPS 地址",
             )
         if host not in self.allowed_hosts:
-            raise _validation_error("base_url", "Provider host is not allowed")
+            raise _validation_error("base_url", "不允许使用此模型提供方主机")
         if not validate_dns:
             return
         try:
             answers = self.dns_resolver(host, parsed.port or 443, type=socket.SOCK_STREAM)
         except OSError as exc:
-            raise _validation_error("base_url", "Provider host cannot be resolved") from exc
+            raise _validation_error("base_url", "无法解析模型提供方主机") from exc
         addresses = {str(item[4][0]) for item in answers if item and len(item) >= 5}
         if not addresses:
-            raise _validation_error("base_url", "Provider host cannot be resolved")
+            raise _validation_error("base_url", "无法解析模型提供方主机")
         for address in addresses:
             try:
                 ip = ipaddress.ip_address(address)
             except ValueError as exc:
-                raise _validation_error("base_url", "Provider DNS result is invalid") from exc
+                raise _validation_error("base_url", "模型提供方 DNS 结果无效") from exc
             if (
                 ip.is_private
                 or ip.is_loopback
@@ -566,7 +567,7 @@ class ModelConnectionService:
                 or ip.is_multicast
             ):
                 raise _validation_error(
-                    "base_url", "Provider host resolves to a disallowed network"
+                    "base_url", "模型提供方主机解析到了不允许的网络"
                 )
 
     def _public_connection(self, connection: dict[str, Any]) -> dict[str, Any]:
@@ -588,7 +589,7 @@ class ModelConnectionService:
         if _hash(dict(revision["config"])) != str(revision["config_hash"]):
             raise NonRetryableExecutionError(
                 "Model connection revision hash mismatch",
-                safe_message="Model connection integrity check failed",
+                safe_message="模型连接完整性校验失败",
                 error_code="model_connection_integrity_failed",
             )
         secret_id = str(revision.get("api_key_secret_id") or "")
@@ -685,14 +686,14 @@ def _hash(config: dict[str, Any]) -> str:
 def _model_value(value: Any, field: str) -> str:
     text = str(value or "").strip()
     if not text or len(text) > 200 or any(ord(char) < 32 for char in text):
-        raise _validation_error(field, "Model identifier is required and must be at most 200 chars")
+        raise _validation_error(field, "必须填写模型标识，且最多允许 200 个字符")
     return text
 
 
 def _validation_error(field: str, message: str) -> NonRetryableExecutionError:
     return NonRetryableExecutionError(
         f"Invalid model connection field {field}: {message}",
-        safe_message="Model connection configuration is invalid",
+        safe_message="模型连接配置无效",
         error_code="validation_failed",
         field_errors=[{"field": field, "message": message}],
     )
@@ -731,6 +732,6 @@ def _assert_provider_does_not_redirect(base_url: str, timeout_seconds: int) -> N
     if 300 <= status < 400:
         raise NonRetryableExecutionError(
             "Model provider Base URL redirects",
-            safe_message="Model provider Base URL must not redirect",
+            safe_message="模型提供方 Base URL 不能发生重定向",
             error_code="model_connection_redirect_rejected",
         )

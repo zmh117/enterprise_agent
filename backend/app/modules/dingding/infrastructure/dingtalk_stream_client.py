@@ -35,7 +35,7 @@ class DingTalkStreamSdkClient:
         except ModuleNotFoundError as exc:
             raise NonRetryableExecutionError(
                 "dingtalk-stream package is required for DingTalk Stream ingress",
-                safe_message="DingTalk Stream SDK is not installed",
+                safe_message="尚未安装钉钉 Stream SDK",
             ) from exc
 
         outer = self

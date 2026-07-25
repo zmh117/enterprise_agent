@@ -23,8 +23,16 @@ const componentLabels: Record<string, string> = {
   retention_policy: "数据保留策略",
   delivery: "结果投递",
   execution_policy: "执行策略",
-  workflow: "Workflow",
+  workflow: "工作流",
   capabilities: "API 能力",
+}
+
+const componentStatusLabels: Record<string, string> = {
+  wired: "已接管",
+  partially_wired: "部分接管",
+  stored_only: "仅保存",
+  unsupported: "暂不支持",
+  blocked: "已阻塞",
 }
 
 export function RuntimeStatusBadge({
@@ -84,7 +92,7 @@ export function RuntimeReadinessPanel({
         </span>
         {state.deployment_environment ? (
           <span className="text-xs text-muted-foreground">
-            · Deployment：{state.deployment_environment}
+            · 部署环境：{state.deployment_environment}
           </span>
         ) : null}
       </div>
@@ -101,7 +109,7 @@ export function RuntimeReadinessPanel({
               <dt className="flex items-center justify-between gap-2 text-xs font-medium">
                 <span>{componentLabels[name] ?? name}</span>
                 <span className="font-mono text-[10px] text-muted-foreground uppercase">
-                  {component.status}
+                  {componentStatusLabels[component.status] ?? component.status}
                 </span>
               </dt>
               <dd className="mt-1 text-xs leading-5 text-muted-foreground">
@@ -124,7 +132,7 @@ export function RuntimeReadinessPanel({
                 <dt className="flex items-center justify-between gap-2 text-xs font-medium">
                   <span>{componentLabels[name] ?? name}</span>
                   <span className="font-mono text-[10px] text-muted-foreground uppercase">
-                    {component.status}
+                    {componentStatusLabels[component.status] ?? component.status}
                   </span>
                 </dt>
                 <dd className="mt-1 text-xs leading-5 text-muted-foreground">
@@ -173,8 +181,8 @@ export function RuntimeOperationImpact({
 }) {
   const text =
     action === "deactivate"
-      ? "停用后释放上述入口；后续未命中消息将返回配置错误且不创建 Job。已入队 Job 继续使用原固定版本。"
-      : `${action === "rollback" ? "回退" : "激活"}后由该 Publication 接管匹配入口；未命中消息将返回配置错误且不创建 Job，已入队 Job 不切换版本。`
+      ? "停用后释放上述入口；后续未命中消息将返回配置错误且不创建任务。已入队任务继续使用原固定版本。"
+      : `${action === "rollback" ? "回退" : "激活"}后由该发布版本接管匹配入口；未命中消息将返回配置错误且不创建任务，已入队任务不切换版本。`
   return (
     <div
       className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs leading-5 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"

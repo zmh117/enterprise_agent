@@ -58,7 +58,7 @@ class AuthService:
             )
             raise PermissionDenied(
                 "Invalid credentials",
-                safe_message="Invalid username or password",
+                safe_message="用户名或密码错误",
                 error_code="invalid_credentials",
             )
         token = secrets.token_urlsafe(32)
@@ -91,7 +91,7 @@ class AuthService:
         if not token:
             raise PermissionDenied(
                 "Authentication required",
-                safe_message="Authentication required",
+                safe_message="请先登录",
                 error_code="not_authenticated",
             )
         row = self.repository.get_session_by_token_hash(_sha256(token))
@@ -105,7 +105,7 @@ class AuthService:
                 self.repository.revoke_session(str(row["id"]))
             raise PermissionDenied(
                 "Session is invalid",
-                safe_message="Authentication required",
+                safe_message="请先登录",
                 error_code="not_authenticated",
             )
         now = datetime.now(UTC)
@@ -115,7 +115,7 @@ class AuthService:
             self.repository.revoke_session(str(row["id"]))
             raise PermissionDenied(
                 "Session expired",
-                safe_message="Session expired",
+                safe_message="登录会话已过期，请重新登录",
                 error_code="session_expired",
             )
         self.repository.touch_session(
@@ -153,14 +153,14 @@ class AuthService:
             )
             raise PermissionDenied(
                 "Service accounts cannot use password authentication",
-                safe_message="Password authentication is unavailable for this account",
+                safe_message="此账号不能使用密码登录",
                 error_code="service_account_login_forbidden",
             )
         password_hash = self.repository.get_password_hash(principal.user_id)
         if not self.passwords.verify(password_hash, current):
             raise PermissionDenied(
                 "Current password is invalid",
-                safe_message="Current password is invalid",
+                safe_message="当前密码不正确",
             )
         self.repository.set_password_hash(principal.user_id, self.passwords.hash(new))
         self.repository.revoke_user_sessions(principal.user_id)
@@ -177,7 +177,7 @@ class AuthService:
         if self.repository.admin_count() > 0:
             raise PermissionDenied(
                 "Administrator already exists",
-                safe_message="An administrator already exists",
+                safe_message="系统中已存在管理员",
             )
         with self.repository.database.transaction():
             user = self.repository.create_user(

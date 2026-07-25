@@ -166,7 +166,7 @@ class BusinessApplicationService:
         if str(application["status"]) == "archived":
             raise NonRetryableExecutionError(
                 "Archived Business Application cannot be edited",
-                safe_message="Archived Business Application cannot be edited",
+                safe_message="已归档的业务应用不能编辑",
                 error_code="invalid_lifecycle",
             )
         reject_dangerous_content(payload)
@@ -224,7 +224,7 @@ class BusinessApplicationService:
         ):
             raise NotFound(
                 "Business Application revision not found",
-                safe_message="Business Application revision not found",
+                safe_message="未找到业务应用修订版本",
             )
         errors, _components = self._validate_revision(application, revision)
         result = self.repository.set_validation(
@@ -246,21 +246,21 @@ class BusinessApplicationService:
         if str(application["status"]) != "enabled":
             raise NonRetryableExecutionError(
                 "Disabled or archived Business Application cannot be published",
-                safe_message="Only enabled Business Applications can be published",
+                safe_message="只有已启用的业务应用才能发布",
                 error_code="invalid_lifecycle",
             )
         revision = self.repository.get_revision(revision_id)
         if str(revision["application_id"]) != str(application["id"]):
             raise NotFound(
                 "Business Application revision not found",
-                safe_message="Business Application revision not found",
+                safe_message="未找到业务应用修订版本",
             )
         errors, components = self._validate_revision(application, revision)
         self.repository.set_validation(str(revision["id"]), valid=not errors, errors=errors)
         if errors:
             raise NonRetryableExecutionError(
                 "Business Application publication validation failed",
-                safe_message="Business Application validation failed",
+                safe_message="业务应用校验失败",
                 error_code="validation_failed",
                 field_errors=errors,
             )
@@ -292,14 +292,14 @@ class BusinessApplicationService:
         if str(application["status"]) != "enabled":
             raise NonRetryableExecutionError(
                 "Business Application is not enabled",
-                safe_message="Only enabled Business Applications can be activated",
+                safe_message="只有已启用的业务应用才能激活",
                 error_code="invalid_lifecycle",
             )
         publication = self._verified_publication(publication_id)
         if str(publication["application_id"]) != str(application["id"]):
             raise NotFound(
                 "Business Application publication not found",
-                safe_message="Business Application publication not found",
+                safe_message="未找到业务应用发布版本",
             )
         activation_errors = self.runtime_evaluator.activation_errors(dict(publication["snapshot"]))
         if (
@@ -310,7 +310,7 @@ class BusinessApplicationService:
         ):
             raise NonRetryableExecutionError(
                 "Business Application runtime preflight failed",
-                safe_message="Business Application runtime configuration is not executable",
+                safe_message="业务应用运行配置无法执行",
                 error_code="validation_failed",
                 field_errors=activation_errors,
             )
@@ -412,7 +412,7 @@ class BusinessApplicationService:
         errors: list[dict[str, str]] = []
         components: dict[str, Any] = {}
         if str(application["status"]) != "enabled":
-            errors.append({"field": "status", "message": "Application must be enabled"})
+            errors.append({"field": "status", "message": "业务应用必须处于启用状态"})
         agent = self._resolve_component(
             errors,
             "agent_publication_id",
@@ -486,7 +486,7 @@ class BusinessApplicationService:
             )
         if agent is None and not str(revision.get("agent_publication_id") or ""):
             errors.append(
-                {"field": "agent_publication_id", "message": "Agent Publication is required"}
+                {"field": "agent_publication_id", "message": "必须选择 Agent 发布版本"}
             )
         return errors, components
 
@@ -498,10 +498,10 @@ class BusinessApplicationService:
             reference = resolve()
         except Exception as exc:
             field_errors = getattr(exc, "field_errors", [])
-            errors.extend(field_errors or [{"field": field, "message": "Component is unavailable"}])
+            errors.extend(field_errors or [{"field": field, "message": "组件不可用"}])
             return None
         if reference.status != "enabled":
-            errors.append({"field": field, "message": "Component is disabled"})
+            errors.append({"field": field, "message": "组件已停用"})
             return None
         return reference if isinstance(reference, ComponentReference) else None
 
@@ -513,7 +513,7 @@ class BusinessApplicationService:
         field: str,
     ) -> None:
         if component.project_code and component.project_code != str(application["project_code"]):
-            errors.append({"field": field, "message": "Component project scope conflicts"})
+            errors.append({"field": field, "message": "组件项目范围冲突"})
 
     def _snapshot(
         self,
@@ -587,13 +587,13 @@ class BusinessApplicationService:
         if int(publication["schema_version"]) != SCHEMA_VERSION:
             raise NonRetryableExecutionError(
                 "Unsupported Business Application publication schema",
-                safe_message="Business Application publication schema is unsupported",
+                safe_message="不支持此业务应用发布结构版本",
                 error_code="integrity_error",
             )
         if not verify_snapshot(publication["snapshot"], str(publication["config_hash"])):
             raise NonRetryableExecutionError(
                 "Business Application publication hash mismatch",
-                safe_message="Business Application publication integrity check failed",
+                safe_message="业务应用发布版本完整性校验失败",
                 error_code="integrity_error",
             )
         return publication
@@ -606,10 +606,10 @@ class BusinessApplicationService:
             if not isinstance(raw, dict):
                 raise NonRetryableExecutionError(
                     "Capability reference must be an object",
-                    safe_message="Business Application configuration is invalid",
+                    safe_message="业务应用配置无效",
                     error_code="validation_failed",
                     field_errors=[
-                        {"field": f"capabilities.{index}", "message": "Must be an object"}
+                        {"field": f"capabilities.{index}", "message": "必须是对象"}
                     ],
                 )
             unknown = set(raw) - {
@@ -620,12 +620,12 @@ class BusinessApplicationService:
             if unknown:
                 raise NonRetryableExecutionError(
                     "Unknown Capability reference fields",
-                    safe_message="Business Application configuration is invalid",
+                    safe_message="业务应用配置无效",
                     error_code="validation_failed",
                     field_errors=[
                         {
                             "field": f"capabilities.{index}.{field}",
-                            "message": "Unknown field",
+                            "message": "未知字段",
                         }
                         for field in sorted(unknown)
                     ],
@@ -638,12 +638,12 @@ class BusinessApplicationService:
             if len(version) > 80:
                 raise NonRetryableExecutionError(
                     "Capability version constraint is too long",
-                    safe_message="Business Application configuration is invalid",
+                    safe_message="业务应用配置无效",
                     error_code="validation_failed",
                     field_errors=[
                         {
                             "field": f"capabilities.{index}.version_constraint",
-                            "message": "Must be at most 80 characters",
+                            "message": "最多允许 80 个字符",
                         }
                     ],
                 )
@@ -665,16 +665,16 @@ class BusinessApplicationService:
         if not name.strip() or len(name.strip()) > 200:
             raise NonRetryableExecutionError(
                 "Business Application name is invalid",
-                safe_message="Business Application metadata is invalid",
+                safe_message="业务应用元数据无效",
                 error_code="validation_failed",
-                field_errors=[{"field": "name", "message": "Name is required and must be bounded"}],
+                field_errors=[{"field": "name", "message": "必须填写名称且长度不能超出限制"}],
             )
         if len(description) > 4000 or len(owner_user_id) > 200:
             raise NonRetryableExecutionError(
                 "Business Application metadata is too long",
-                safe_message="Business Application metadata is invalid",
+                safe_message="业务应用元数据无效",
                 error_code="validation_failed",
-                field_errors=[{"field": "description", "message": "Metadata is too long"}],
+                field_errors=[{"field": "description", "message": "元数据过长"}],
             )
 
     def _require(self, actor_id: str, code: str, action: str) -> None:
@@ -1042,7 +1042,7 @@ class BusinessApplicationResolver:
     ) -> NonRetryableExecutionError:
         return NonRetryableExecutionError(
             message,
-            safe_message="Business Application runtime configuration is unavailable",
+            safe_message="业务应用运行配置不可用",
             error_code=error_code,
         )
 

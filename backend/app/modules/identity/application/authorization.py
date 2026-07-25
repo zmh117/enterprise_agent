@@ -155,7 +155,7 @@ class AuthorizationEvaluator:
             self._audit_denial(decision)
             raise PermissionDenied(
                 f"Platform scope denied: {decision.reason}",
-                safe_message="You are not allowed to access this data scope",
+                safe_message="你无权访问此数据范围",
                 error_code="platform_scope_denied",
             )
         return decision
@@ -199,7 +199,7 @@ class AuthorizationEvaluator:
             self._audit_denial(decision)
             raise PermissionDenied(
                 f"Permission denied: {decision.reason}",
-                safe_message="You are not allowed to perform this action",
+                safe_message="你无权执行此操作",
                 error_code="permission_denied",
             )
         return decision

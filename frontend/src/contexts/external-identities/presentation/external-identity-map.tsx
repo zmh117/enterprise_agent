@@ -30,7 +30,7 @@ export function ExternalIdentityMap() {
   return (
     <section aria-labelledby="identity-map-title" className="space-y-4">
       <SectionHeading
-        eyebrow="Identity & governance"
+        eyebrow="身份与治理"
         title="一个内部用户，多个外部系统身份"
         description="钉钉、ONES 与未来系统账号只映射到统一内部人员；身份映射负责找到可信主体，不直接授予平台或外部系统权限。"
         prototype
@@ -84,7 +84,7 @@ export function ExternalIdentityMap() {
                 身份关联不等于授权
               </div>
               <p className="mt-1.5 text-xs leading-5 text-amber-900/75 dark:text-amber-200/75">
-                内部角色、应用权限、Capability、API 平台数据权限以及 ONES
+                内部角色、应用权限、能力、API 平台数据权限以及 ONES
                 原生权限仍分别校验。
               </p>
             </div>
@@ -97,7 +97,7 @@ export function ExternalIdentityMap() {
               <div>
                 <h3 className="font-semibold">外部身份映射</h3>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Provider、连接、外部主体、用途与验证状态独立记录
+                  身份提供方、连接、外部主体、用途与验证状态独立记录
                 </p>
               </div>
               <Badge variant="outline">1 : N</Badge>

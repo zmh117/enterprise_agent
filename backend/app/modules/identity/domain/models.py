@@ -18,7 +18,7 @@ class ExternalIdentityProvider(StrEnum):
         except ValueError as exc:
             raise NonRetryableExecutionError(
                 f"Unsupported external identity provider: {value}",
-                safe_message="External identity provider is not supported",
+                safe_message="不支持此外部身份提供方",
                 error_code="identity_provider_unsupported",
             ) from exc
 

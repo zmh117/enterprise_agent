@@ -51,7 +51,7 @@ class IdentityService:
             )
             raise PermissionDenied(
                 "External identity is not bound",
-                safe_message="Your DingTalk account is not authorized; contact an administrator",
+                safe_message="你的钉钉账号尚未获得授权，请联系管理员",
                 error_code="identity_not_bound",
             )
         self.repository.touch_external_identity(str(identity["id"]))
@@ -66,7 +66,7 @@ class IdentityService:
             )
             raise PermissionDenied(
                 "Service account external authentication denied",
-                safe_message="External identity is not authorized",
+                safe_message="此外部身份未获授权",
                 error_code="service_account_identity_forbidden",
             )
         return AuthenticatedPrincipal(
@@ -92,14 +92,14 @@ class IdentityService:
         if self.connector_registry is None:
             raise PermissionDenied(
                 "Connector registry is unavailable",
-                safe_message="DingTalk connector cannot be verified",
+                safe_message="无法验证钉钉连接器",
             )
         connector = self.connector_registry.require_dingtalk_stream_ingress(connector_id)
         trusted_tenant = self.connector_registry.metadata_value(connector, "tenant_code")
         if not trusted_tenant or trusted_tenant != tenant_code:
             raise PermissionDenied(
                 "DingTalk tenant does not match trusted connector metadata",
-                safe_message="DingTalk tenant does not match the selected connector",
+                safe_message="钉钉企业与所选连接器不匹配",
                 error_code="tenant_mismatch",
             )
         user = self.repository.get_user(user_id)
@@ -113,13 +113,13 @@ class IdentityService:
             )
             raise PermissionDenied(
                 "Service accounts cannot bind external identities",
-                safe_message="Service accounts cannot bind external identities",
+                safe_message="服务账号不能绑定外部身份",
                 error_code="service_account_identity_forbidden",
             )
         if str(user["status"]) != "enabled" or int(user["revision"]) != expected_user_revision:
             raise NonRetryableExecutionError(
                 "User revision conflict",
-                safe_message="User was modified; refresh and try again",
+                safe_message="用户信息已发生变化，请刷新后重试",
                 error_code="revision_conflict",
             )
         before = self.repository.list_external_identities(user_id)
@@ -179,7 +179,7 @@ class IdentityService:
         if self.ones_verifier is None or not self.ones_verifier.available:
             raise NonRetryableExecutionError(
                 "ONES identity provider is unavailable",
-                safe_message="ONES identity verification is unavailable",
+                safe_message="ONES 身份验证不可用",
                 error_code="ones_connection_unavailable",
             )
         try:
@@ -320,13 +320,13 @@ class IdentityService:
             )
             raise PermissionDenied(
                 "Service accounts cannot bind external identities",
-                safe_message="Service accounts cannot bind external identities",
+                safe_message="服务账号不能绑定外部身份",
                 error_code="service_account_identity_forbidden",
             )
         if str(user["status"]) != "enabled" or int(user["revision"]) != expected_user_revision:
             raise NonRetryableExecutionError(
                 "User revision conflict",
-                safe_message="User was modified; refresh and try again",
+                safe_message="用户信息已发生变化，请刷新后重试",
                 error_code="revision_conflict",
             )
         return user

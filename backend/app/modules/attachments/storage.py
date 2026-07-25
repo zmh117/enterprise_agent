@@ -18,12 +18,12 @@ class InMemoryObjectStorage:
         actual = hashlib.sha256(data).hexdigest()
         if actual != sha256:
             raise NonRetryableExecutionError(
-                "Object checksum mismatch", safe_message="Attachment checksum mismatch"
+                "Object checksum mismatch", safe_message="附件校验和不匹配"
             )
         existing = self.objects.get(key)
         if existing is not None and hashlib.sha256(existing).hexdigest() != sha256:
             raise NonRetryableExecutionError(
-                "Object key collision", safe_message="Attachment object conflict"
+                "Object key collision", safe_message="附件对象冲突"
             )
         self.objects[key] = data
         return StoredObject(self.bucket, key, len(data), sha256)
@@ -31,7 +31,7 @@ class InMemoryObjectStorage:
     def get(self, *, key: str) -> bytes:
         if key not in self.objects:
             raise NonRetryableExecutionError(
-                "Object not found", safe_message="Attachment object not found"
+                "Object not found", safe_message="未找到附件对象"
             )
         return self.objects[key]
 
@@ -75,7 +75,7 @@ class S3ObjectStorage:
             metadata = head.get("Metadata") or {}
             if metadata.get("sha256") != sha256:
                 raise NonRetryableExecutionError(
-                    "Object key collision", safe_message="Attachment object conflict"
+                    "Object key collision", safe_message="附件对象冲突"
                 )
             return StoredObject(self.bucket, key, int(head.get("ContentLength") or 0), sha256)
         self.client.put_object(

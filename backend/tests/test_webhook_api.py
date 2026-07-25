@@ -66,7 +66,7 @@ def test_public_webhook_returns_202_and_stable_safe_errors() -> None:
         assert denied.json() == {
             "error": {
                 "code": "webhook_auth_failed",
-                "message": "Webhook authentication failed",
+                "message": "Webhook 身份验证失败",
                 "field_errors": [],
             }
         }

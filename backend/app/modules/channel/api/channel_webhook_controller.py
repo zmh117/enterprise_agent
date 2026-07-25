@@ -61,7 +61,7 @@ def build_channel_router() -> Any:
 
                 raise NotFound(
                     "Managed Grafana Trigger not found",
-                    safe_message="Grafana Webhook endpoint is unavailable",
+                    safe_message="Grafana Webhook 端点不可用",
                     error_code="webhook_not_found",
                 )
             raw_body = await bounded_raw_body(
@@ -120,7 +120,10 @@ def _generic_event(payload: dict[str, Any], *, correlation_id: str) -> ChannelEv
     routing = RoutingContext.from_dict(_dict_value(payload.get("routing")))
     message = str(payload.get("message") or "").strip()
     if not source_payload.get("type") or not message:
-        raise HTTPException(status_code=400, detail="Fields 'from.type' and 'message' are required")
+        raise HTTPException(
+            status_code=400,
+            detail="必须填写字段 from.type 和 message",
+        )
     source_type = str(source_payload["type"])
     connector_id = str(source_payload.get("connector_id") or f"connector-{source_type}")
     event_id = str(source_payload.get("event_id") or new_correlation_id())
@@ -164,7 +167,7 @@ def _verify_connector_token(container: Container, connector_id: str, provided: s
             actor_id=connector_id,
             payload={"connector_id": connector_id},
         )
-        raise HTTPException(status_code=401, detail="Invalid channel credential")
+        raise HTTPException(status_code=401, detail="渠道凭据无效")
     container.audit_service.record(
         "channel.signature_verified",
         status="SUCCEEDED",
@@ -178,9 +181,9 @@ async def _json_payload(request: Any) -> dict[str, Any]:
     try:
         payload = await request.json()
     except Exception as exc:
-        raise HTTPException(status_code=400, detail="Request body must be valid JSON") from exc
+        raise HTTPException(status_code=400, detail="请求正文必须是有效的 JSON") from exc
     if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="Request body must be a JSON object")
+        raise HTTPException(status_code=400, detail="请求正文必须是 JSON 对象")
     return payload
 
 

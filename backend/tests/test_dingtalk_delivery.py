@@ -186,7 +186,7 @@ class DingTalkDeliveryTests(unittest.TestCase):
         self.assertEqual([], transport.calls)
         attempts = c.agent_repository.list_delivery_attempts(job.id)
         self.assertEqual("FAILED", attempts[0]["status"])
-        self.assertEqual("Delivery host is not allowed", attempts[0]["error_message"])
+        self.assertEqual("不允许使用此投递主机", attempts[0]["error_message"])
 
     def test_webhook_robot_client_generates_dingtalk_signature(self) -> None:
         client = DingTalkWebhookRobotClient(

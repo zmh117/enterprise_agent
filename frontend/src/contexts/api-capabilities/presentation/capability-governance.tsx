@@ -21,7 +21,7 @@ export function CapabilityGovernance() {
                   className="size-4 text-indigo-600"
                   aria-hidden="true"
                 />
-                <h3 className="font-semibold">API Capability 目录</h3>
+                <h3 className="font-semibold">API 能力目录</h3>
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
                 展示业务能力，不展示底层数据源实现。

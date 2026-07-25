@@ -57,12 +57,12 @@ class ReadOnlyToolService:
             if expected_user_id != user_id or job.project_code != project_code:
                 raise ToolPolicyError(
                     "Tool request identity does not match persisted job",
-                    safe_message="Tool request does not match the Agent job",
+                    safe_message="工具请求与 Agent 任务不匹配",
                 )
             if not self.repository.job_allows_tool(job_id, tool_name):
                 raise ToolPolicyError(
                     f"Tool {tool_name} is not assigned to the Agent publication",
-                    safe_message="Tool is not assigned to this Agent version",
+                    safe_message="此 Agent 版本未分配该工具",
                 )
             scope = _addressing_from_arguments(arguments)
             self.permission_service.assert_tool_allowed(
@@ -190,7 +190,10 @@ class ReadOnlyToolService:
         if tool_name == "get_schema_directory":
             addressing = _addressing_from_arguments(arguments)
             if not addressing.get("environment") or not addressing.get("base"):
-                raise ToolPolicyError("Schema directory requires environment and base")
+                raise ToolPolicyError(
+                    "Schema directory requires environment and base",
+                    safe_message="查询 Schema 目录必须指定环境和基地",
+                )
             return self.internal_api_client.get_schema_directory(
                 context=context,
                 environment=addressing["environment"],
@@ -211,7 +214,10 @@ class ReadOnlyToolService:
             )
         if tool_name == "diagnose_loki_labels":
             if not addressing.get("environment") or not addressing.get("base"):
-                raise ToolPolicyError("Loki diagnostics require environment and base")
+                raise ToolPolicyError(
+                    "Loki diagnostics require environment and base",
+                    safe_message="Loki 诊断必须指定环境和基地",
+                )
             return self.internal_api_client.diagnose_loki_labels(
                 context=context,
                 environment=addressing["environment"],
@@ -222,7 +228,10 @@ class ReadOnlyToolService:
             )
         if tool_name == "diagnose_loki_label_values":
             if not addressing.get("environment") or not addressing.get("base"):
-                raise ToolPolicyError("Loki diagnostics require environment and base")
+                raise ToolPolicyError(
+                    "Loki diagnostics require environment and base",
+                    safe_message="Loki 诊断必须指定环境和基地",
+                )
             return self.internal_api_client.diagnose_loki_label_values(
                 context=context,
                 environment=addressing["environment"],
@@ -234,7 +243,10 @@ class ReadOnlyToolService:
             )
         if tool_name == "diagnose_loki_probe":
             if not addressing.get("environment") or not addressing.get("base"):
-                raise ToolPolicyError("Loki diagnostics require environment and base")
+                raise ToolPolicyError(
+                    "Loki diagnostics require environment and base",
+                    safe_message="Loki 诊断必须指定环境和基地",
+                )
             return self.internal_api_client.diagnose_loki_probe(
                 selector=_loki_selector_from_arguments(arguments),
                 query=str(arguments.get("query", "")),
@@ -296,9 +308,15 @@ def assert_loki_diagnostic_bounds(arguments: dict[str, Any], limits: ExecutionSe
     minutes = int(arguments.get("minutes", 15))
     limit = int(arguments.get("limit", 100))
     if minutes <= 0 or minutes > limits.max_loki_minutes:
-        raise ToolPolicyError("Loki time range exceeds configured maximum")
+        raise ToolPolicyError(
+            "Loki time range exceeds configured maximum",
+            safe_message="Loki 查询时间范围超过配置上限",
+        )
     if limit <= 0 or limit > limits.max_loki_lines:
-        raise ToolPolicyError("Loki result size exceeds configured maximum")
+        raise ToolPolicyError(
+            "Loki result size exceeds configured maximum",
+            safe_message="Loki 查询结果数量超过配置上限",
+        )
 
 
 def _risk_level(tool_name: str) -> str:
@@ -315,10 +333,16 @@ def _loki_selector_from_arguments(arguments: dict[str, Any]) -> dict[str, str]:
         service = str(arguments.get("service", "")).strip()
         return {"service": service} if service else {}
     if not isinstance(selector, dict):
-        raise ToolPolicyError("Loki selector must be an object")
+        raise ToolPolicyError(
+            "Loki selector must be an object",
+            safe_message="Loki 选择器必须是对象",
+        )
     normalized: dict[str, str] = {}
     for key, value in selector.items():
         if not isinstance(value, str):
-            raise ToolPolicyError("Loki selector values must be strings")
+            raise ToolPolicyError(
+                "Loki selector values must be strings",
+                safe_message="Loki 选择器值必须是文本",
+            )
         normalized[str(key)] = value.strip()
     return normalized

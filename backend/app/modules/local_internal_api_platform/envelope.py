@@ -32,7 +32,7 @@ def tool_not_configured(tool_name: str) -> HTTPException:
         detail={
             "error": {
                 "code": "tool_not_configured",
-                "message": f"{tool_name} tool is not configured in local internal platform",
+                "message": f"本地内部平台尚未配置工具 {tool_name}",
             }
         },
     )

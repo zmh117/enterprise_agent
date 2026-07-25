@@ -37,7 +37,7 @@ class LoginRateLimiter:
         while attempts and attempts[0] < now - self.window_seconds:
             attempts.popleft()
         if len(attempts) >= self.limit:
-            raise HTTPException(status_code=429, detail="Too many login attempts")
+            raise HTTPException(status_code=429, detail="登录尝试次数过多，请稍后重试")
 
     def record_failure(self, key: str) -> None:
         self.attempts[key].append(time.monotonic())
@@ -56,7 +56,7 @@ def build_auth_router() -> APIRouter:
     def login(request: Request, response: Response, payload: LoginRequest) -> dict[str, Any]:
         c = container(request)
         if not c.settings.feature_configuration.web_admin_enabled:
-            raise HTTPException(status_code=404, detail="Web administration is disabled")
+            raise HTTPException(status_code=404, detail="Web 管理功能已停用")
         client_host = request.client.host if request.client else ""
         rate_key = f"{payload.username.lower()}:{client_host}"
         _login_limiter.require(rate_key)
@@ -146,7 +146,7 @@ def build_auth_router() -> APIRouter:
             user_id=principal.user_id,
         )
         if not changed:
-            raise HTTPException(status_code=404, detail="Session not found")
+            raise HTTPException(status_code=404, detail="未找到会话")
         return {"status": "revoked"}
 
     return router

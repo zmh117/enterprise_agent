@@ -42,7 +42,7 @@ def validate_code(value: str, *, field: str = "code") -> str:
     value = str(value or "").strip()
     if not _CODE_RE.match(value):
         raise PlatformConfigValidationError(
-            f"Invalid {field}: {value}", safe_message=f"Invalid {field}"
+            f"Invalid {field}: {value}", safe_message=f"{field} 无效"
         )
     return value
 
@@ -52,7 +52,7 @@ def validate_status(value: str) -> ConfigStatus:
         return ConfigStatus(str(value or ConfigStatus.ENABLED.value))
     except ValueError as exc:
         raise PlatformConfigValidationError(
-            f"Invalid status: {value}", safe_message="Invalid status"
+            f"Invalid status: {value}", safe_message="状态无效"
         ) from exc
 
 
@@ -61,7 +61,7 @@ def validate_engine(value: str) -> str:
     if value not in {"postgresql", "mysql", "sqlserver", "oracle"}:
         raise PlatformConfigValidationError(
             f"Invalid database engine: {value}",
-            safe_message="Invalid database engine",
+            safe_message="数据库引擎无效",
         )
     return value
 
@@ -71,7 +71,7 @@ def validate_redis_mode(value: str) -> str:
     if value not in {"standalone", "cluster"}:
         raise PlatformConfigValidationError(
             f"Invalid redis mode: {value}",
-            safe_message="Invalid redis mode",
+            safe_message="Redis 模式无效",
         )
     return value
 
@@ -81,7 +81,7 @@ def validate_oracle_client_mode(value: str) -> str:
     if value not in {"thin", "thick", "auto"}:
         raise PlatformConfigValidationError(
             f"Invalid oracle_client_mode: {value}",
-            safe_message="Invalid oracle_client_mode",
+            safe_message="oracle_client_mode 配置无效",
         )
     return value
 
@@ -91,7 +91,7 @@ def validate_oracle_compat(value: str) -> str:
     if value not in {"modern", "legacy"}:
         raise PlatformConfigValidationError(
             f"Invalid oracle_compat: {value}",
-            safe_message="Invalid oracle_compat",
+            safe_message="oracle_compat 配置无效",
         )
     return value
 
@@ -107,44 +107,44 @@ def normalize_redis_resource_config(config: dict[str, Any]) -> dict[str, Any]:
             db = int(normalized["db"])
         except (TypeError, ValueError) as exc:
             raise PlatformConfigValidationError(
-                "redis db must be an integer", safe_message="redis db must be an integer"
+                "redis db must be an integer", safe_message="Redis 数据库编号必须是整数"
             ) from exc
         if mode == "cluster" and db != 0:
             raise PlatformConfigValidationError(
                 "Redis cluster mode does not support non-zero db",
-                safe_message="Redis cluster mode does not support non-zero db",
+                safe_message="Redis 集群模式不支持非零数据库编号",
             )
         normalized["db"] = db
     nodes = normalized.get("nodes")
     if nodes is not None:
         if not isinstance(nodes, list):
             raise PlatformConfigValidationError(
-                "redis nodes must be a list", safe_message="redis nodes must be a list"
+                "redis nodes must be a list", safe_message="Redis 节点必须是列表"
             )
         cleaned: list[dict[str, Any]] = []
         for index, item in enumerate(nodes):
             if not isinstance(item, dict):
                 raise PlatformConfigValidationError(
                     f"redis nodes[{index}] must be an object",
-                    safe_message="redis nodes entries must be objects",
+                    safe_message="Redis 节点条目必须是对象",
                 )
             host = str(item.get("host") or "").strip()
             if not host:
                 raise PlatformConfigValidationError(
                     f"redis nodes[{index}].host is required",
-                    safe_message="redis node host is required",
+                    safe_message="必须填写 Redis 节点主机",
                 )
             cleaned.append({"host": host, "port": int(item.get("port") or 6379)})
         normalized["nodes"] = cleaned
         if mode == "cluster" and not cleaned and not normalized.get("host"):
             raise PlatformConfigValidationError(
                 "Redis cluster mode requires nodes or host",
-                safe_message="Redis cluster mode requires nodes or host",
+                safe_message="Redis 集群模式需要配置节点或主机",
             )
     elif mode == "cluster" and not normalized.get("host"):
         raise PlatformConfigValidationError(
             "Redis cluster mode requires nodes or host",
-            safe_message="Redis cluster mode requires nodes or host",
+            safe_message="Redis 集群模式需要配置节点或主机",
         )
     return normalized
 
@@ -171,7 +171,7 @@ def normalize_oracle_database_config(config: dict[str, Any]) -> dict[str, Any]:
                 normalized["use_sid"] = False
             else:
                 raise PlatformConfigValidationError(
-                    "use_sid must be a boolean", safe_message="use_sid must be a boolean"
+                    "use_sid must be a boolean", safe_message="use_sid 必须是布尔值"
                 )
     else:
         normalized["use_sid"] = False
@@ -187,7 +187,7 @@ def validate_resource_kind(value: str) -> ResourceKind:
         return ResourceKind(str(value))
     except ValueError as exc:
         raise PlatformConfigValidationError(
-            f"Invalid resource kind: {value}", safe_message="Invalid resource kind"
+            f"Invalid resource kind: {value}", safe_message="资源类型无效"
         ) from exc
 
 
@@ -196,7 +196,7 @@ def validate_scope_type(value: str) -> ResourceScopeType:
         return ResourceScopeType(str(value))
     except ValueError as exc:
         raise PlatformConfigValidationError(
-            f"Invalid scope type: {value}", safe_message="Invalid scope type"
+            f"Invalid scope type: {value}", safe_message="作用域类型无效"
         ) from exc
 
 
@@ -205,7 +205,7 @@ def validate_secret_provider(value: str) -> SecretProvider:
         return SecretProvider(str(value))
     except ValueError as exc:
         raise PlatformConfigValidationError(
-            f"Invalid secret provider: {value}", safe_message="Invalid secret provider"
+            f"Invalid secret provider: {value}", safe_message="凭据提供方无效"
         ) from exc
 
 
@@ -215,7 +215,7 @@ def validate_config_value_type(value: str) -> ConfigValueType:
     except ValueError as exc:
         raise PlatformConfigValidationError(
             f"Invalid runtime config value type: {value}",
-            safe_message="Invalid runtime config value type",
+            safe_message="运行配置值类型无效",
         ) from exc
 
 
@@ -225,7 +225,7 @@ def validate_runtime_scope_type(value: str) -> RuntimeConfigScope:
     except ValueError as exc:
         raise PlatformConfigValidationError(
             f"Invalid runtime config scope type: {value}",
-            safe_message="Invalid runtime config scope type",
+            safe_message="运行配置作用域类型无效",
         ) from exc
 
 
@@ -234,7 +234,7 @@ def validate_subject_type(value: str) -> SubjectType:
         return SubjectType(str(value))
     except ValueError as exc:
         raise PlatformConfigValidationError(
-            f"Invalid subject type: {value}", safe_message="Invalid subject type"
+            f"Invalid subject type: {value}", safe_message="主体类型无效"
         ) from exc
 
 
@@ -243,7 +243,7 @@ def validate_access_effect(value: str) -> AccessEffect:
         return AccessEffect(str(value))
     except ValueError as exc:
         raise PlatformConfigValidationError(
-            f"Invalid access effect: {value}", safe_message="Invalid access effect"
+            f"Invalid access effect: {value}", safe_message="访问效果值无效"
         ) from exc
 
 
@@ -251,18 +251,18 @@ def validate_secret_ref(value: str) -> str:
     value = str(value or "").strip()
     if not value:
         raise PlatformConfigValidationError(
-            "Secret ref is required", safe_message="Secret ref is required"
+            "Secret ref is required", safe_message="必须填写凭据引用"
         )
     if ":" not in value:
         raise PlatformConfigValidationError(
             "Secret ref must include provider prefix",
-            safe_message="Secret ref must include provider prefix",
+            safe_message="凭据引用必须包含提供方前缀",
         )
     provider = value.split(":", 1)[0]
     if provider == "secret" and not value.startswith("secret://"):
         raise PlatformConfigValidationError(
             "Secret ref must use secret:// format",
-            safe_message="Secret ref must use secret:// format",
+            safe_message="凭据引用必须使用 secret:// 格式",
         )
     validate_secret_provider(provider)
     return value
@@ -279,18 +279,18 @@ def coerce_runtime_value(value: Any, value_type: ConfigValueType, *, field: str 
         if isinstance(value, str) and value.lower() in {"0", "false", "no", "off"}:
             return False
         raise PlatformConfigValidationError(
-            f"{field} must be a boolean", safe_message=f"{field} must be a boolean"
+            f"{field} must be a boolean", safe_message=f"{field} 必须是布尔值"
         )
     if value_type == ConfigValueType.INT:
         if isinstance(value, bool):
             raise PlatformConfigValidationError(
-                f"{field} must be an integer", safe_message=f"{field} must be an integer"
+                f"{field} must be an integer", safe_message=f"{field} 必须是整数"
             )
         try:
             return int(value)
         except (TypeError, ValueError) as exc:
             raise PlatformConfigValidationError(
-                f"{field} must be an integer", safe_message=f"{field} must be an integer"
+                f"{field} must be an integer", safe_message=f"{field} 必须是整数"
             ) from exc
     if value_type == ConfigValueType.STRING:
         text = str(value or "")
@@ -300,7 +300,7 @@ def coerce_runtime_value(value: Any, value_type: ConfigValueType, *, field: str 
         text = str(value or "").strip()
         if not text.startswith(("http://", "https://", "amqp://", "amqps://")):
             raise PlatformConfigValidationError(
-                f"{field} must be a supported URL", safe_message=f"{field} must be a supported URL"
+                f"{field} must be a supported URL", safe_message=f"{field} 必须是受支持的 URL"
             )
         _reject_obvious_secret_text(text, field=field)
         return text
@@ -309,7 +309,7 @@ def coerce_runtime_value(value: Any, value_type: ConfigValueType, *, field: str 
         return value
     raise PlatformConfigValidationError(
         f"Unsupported runtime config value type: {value_type}",
-        safe_message="Unsupported runtime config value type",
+        safe_message="不支持此运行配置值类型",
     )
 
 
@@ -322,7 +322,7 @@ def assert_no_secret_payload(value: Any, *, path: str = "config") -> None:
                 if not _looks_like_secret_ref(child):
                     raise PlatformConfigValidationError(
                         f"Secret payload is not allowed at {child_path}",
-                        safe_message="Secret payload is not allowed in platform configuration",
+                        safe_message="平台配置中不允许包含凭据内容",
                     )
             assert_no_secret_payload(child, path=child_path)
     elif isinstance(value, list):
@@ -337,7 +337,7 @@ def normalize_aliases(value: Any) -> list[str]:
         return []
     if not isinstance(value, list):
         raise PlatformConfigValidationError(
-            "aliases must be a list", safe_message="aliases must be a list"
+            "aliases must be a list", safe_message="aliases 必须是列表"
         )
     return [str(item).strip() for item in value if str(item).strip()]
 
@@ -347,7 +347,7 @@ def normalize_json_object(value: Any, *, field: str) -> dict[str, Any]:
         return {}
     if not isinstance(value, dict):
         raise PlatformConfigValidationError(
-            f"{field} must be an object", safe_message=f"{field} must be an object"
+            f"{field} must be an object", safe_message=f"{field} 必须是对象"
         )
     return dict(value)
 
@@ -357,7 +357,7 @@ def normalize_json_list(value: Any, *, field: str) -> list[Any]:
         return []
     if not isinstance(value, list):
         raise PlatformConfigValidationError(
-            f"{field} must be a list", safe_message=f"{field} must be a list"
+            f"{field} must be a list", safe_message=f"{field} 必须是列表"
         )
     return list(value)
 
@@ -368,7 +368,7 @@ def assert_readonly_tool_scope(tool_scope: list[Any]) -> None:
         if any(term in text for term in _MUTATION_TERMS):
             raise PlatformConfigValidationError(
                 f"Mutation tool scope is not allowed: {item}",
-                safe_message="Mutation tool scope is not allowed in MVP",
+                safe_message="当前版本不允许写操作工具作用域",
             )
 
 
@@ -377,7 +377,7 @@ def assert_readonly_workflow_node(node_type: str, config: dict[str, Any]) -> Non
     if any(term in text for term in _MUTATION_TERMS):
         raise PlatformConfigValidationError(
             f"Mutation workflow node is not allowed: {node_type}",
-            safe_message="Mutation workflow node is not allowed in MVP",
+            safe_message="当前版本不允许写操作工作流节点",
         )
 
 
@@ -399,5 +399,5 @@ def _reject_obvious_secret_text(value: str, *, field: str) -> None:
     if any(marker in lower for marker in ("sk-", "api_key=", "token=", "password=")):
         raise PlatformConfigValidationError(
             f"Secret payload is not allowed at {field}",
-            safe_message="Secret payload is not allowed in platform configuration",
+            safe_message="平台配置中不允许包含凭据内容",
         )

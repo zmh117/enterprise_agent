@@ -48,7 +48,7 @@ export const navigationGroups: NavigationGroup[] = [
     label: "Agent 配置",
     items: [
       {
-        label: "Agent Profile",
+        label: "Agent 配置",
         icon: BotIcon,
         active: true,
         href: "/agent-profiles",
@@ -81,8 +81,8 @@ export const navigationGroups: NavigationGroup[] = [
 
 export const overviewMetrics = [
   { label: "业务应用", value: "3", note: "覆盖三种入口" },
-  { label: "Agent Profile", value: "2", note: "共享一个 Runtime" },
-  { label: "API Capability", value: "18", note: "只读能力示例" },
+  { label: "Agent 配置", value: "2", note: "共享一个运行时" },
+  { label: "API 能力", value: "18", note: "只读能力示例" },
   { label: "示例运行", value: "126", note: "静态记录，非实时" },
 ] as const
 
@@ -90,18 +90,18 @@ export const applicationWorkspaces = [
   { name: "应用概览", description: "装配关系、负责人和状态" },
   { name: "流程设计", description: "触发、确定性节点与 Agent 节点" },
   { name: "渠道与触发器", description: "入口、会话策略与投递目标" },
-  { name: "能力授权", description: "应用级 Capability 白名单" },
+  { name: "能力授权", description: "应用级能力白名单" },
   { name: "发布管理", description: "冻结引用版本与回滚记录" },
 ] as const
 
 export const platformFlow = [
-  { label: "Channel", description: "钉钉 / Webhook" },
-  { label: "Business Application", description: "业务入口装配" },
-  { label: "Workflow", description: "确定性流程" },
-  { label: "Agent Runtime", description: "共享执行内核" },
-  { label: "Capability Gateway", description: "授权与审计" },
-  { label: "API Platform", description: "受控业务 API" },
-  { label: "Delivery", description: "原会话 / 通知" },
+  { label: "渠道", description: "钉钉 / Webhook" },
+  { label: "业务应用", description: "业务入口装配" },
+  { label: "工作流", description: "确定性流程" },
+  { label: "Agent 运行时", description: "共享执行内核" },
+  { label: "能力网关", description: "授权与审计" },
+  { label: "API 平台", description: "受控业务 API" },
+  { label: "结果投递", description: "原会话 / 通知" },
 ] as const
 
 export const workflowPreviews = [
@@ -170,17 +170,17 @@ export const capabilities = [
 export const permissionIntersection = [
   "平台已发布",
   "应用已授权",
-  "Workflow 节点允许",
-  "Agent Profile 允许",
+  "工作流节点允许",
+  "Agent 配置允许",
   "当前主体数据权限",
 ] as const
 
 export const releaseSnapshot = [
-  ["Profile Revision", "diagnosis-profile · r3"],
-  ["Workflow Revision", "private-diagnosis · v2"],
-  ["Capability Version", "capability-set · 2026-demo-03"],
-  ["Channel Binding", "dingtalk-private · demo-v1"],
-  ["Policy Revision", "read-only-policy · r5"],
+  ["配置修订版本", "diagnosis-profile · r3"],
+  ["工作流修订版本", "private-diagnosis · v2"],
+  ["能力版本", "capability-set · 2026-demo-03"],
+  ["渠道绑定", "dingtalk-private · demo-v1"],
+  ["策略修订版本", "read-only-policy · r5"],
 ] as const
 
 export const sampleRuns = [
@@ -281,7 +281,7 @@ export const buildStatuses = [
   },
   {
     label: "需要适配",
-    items: "业务应用、Capability Gateway、版本化 Workflow",
+    items: "业务应用、能力网关、版本化工作流",
     tone: "amber",
   },
   {

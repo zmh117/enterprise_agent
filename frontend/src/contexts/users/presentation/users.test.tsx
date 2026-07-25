@@ -220,7 +220,7 @@ describe("User and external identity management", () => {
           {
             detail: {
               code: "revision_conflict",
-              message: "User was modified; refresh and try again",
+              message: "用户信息已被修改，请刷新后重试",
             },
           },
           409,
@@ -237,7 +237,7 @@ describe("User and external identity management", () => {
     })
     fireEvent.click(screen.getByRole("button", { name: "保存资料" }))
     expect(
-      await screen.findByText("User was modified; refresh and try again"),
+      await screen.findByText("用户信息已被修改，请刷新后重试"),
     ).toBeInTheDocument()
   })
 
@@ -253,7 +253,7 @@ describe("User and external identity management", () => {
           {
             detail: {
               code: "ones_invalid_credentials",
-              message: "ONES email or password is invalid",
+              message: "ONES 邮箱或密码错误",
             },
           },
           400,
@@ -275,7 +275,7 @@ describe("User and external identity management", () => {
     fireEvent.click(screen.getByRole("button", { name: "验证并绑定" }))
 
     expect(
-      await screen.findByText("ONES email or password is invalid"),
+      await screen.findByText("ONES 邮箱或密码错误"),
     ).toBeInTheDocument()
     expect(bindingBody).toEqual({
       expected_user_revision: 3,

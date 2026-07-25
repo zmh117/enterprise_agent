@@ -283,6 +283,49 @@ def test_agent_publication_pins_connection_and_job_records_safe_provenance() -> 
     )
 
 
+def test_agent_publication_is_idempotent_and_published_revision_stays_published() -> None:
+    c = container()
+    connection_revision = ready_connection(c)
+    agent = c.agent_config_service.get(AGENT_CODE)
+    draft = c.agent_config_service.save_draft(
+        actor_id=ADMIN_ID,
+        agent_code=AGENT_CODE,
+        expected_revision=int(agent["draft"]["revision"]),
+        config=agent_config(str(connection_revision["id"])),
+    )
+
+    first = c.agent_config_service.publish(
+        actor_id=ADMIN_ID,
+        agent_code=AGENT_CODE,
+        revision_id=str(draft["id"]),
+    )
+    revalidated = c.agent_config_service.validate_revision(
+        actor_id=ADMIN_ID,
+        agent_code=AGENT_CODE,
+        revision_id=str(draft["id"]),
+    )
+    c.database.execute(
+        "update agent_revision set status = 'validated' where id = ?",
+        (draft["id"],),
+    )
+    second = c.agent_config_service.publish(
+        actor_id=ADMIN_ID,
+        agent_code=AGENT_CODE,
+        revision_id=str(draft["id"]),
+    )
+
+    assert revalidated["status"] == "published"
+    assert second["id"] == first["id"]
+    assert c.agent_config_service.get(AGENT_CODE)["draft"]["status"] == "published"
+    assert c.database.execute_one(
+        """
+        select count(*) as count from agent_publication
+        where agent_id = ? and revision_id = ?
+        """,
+        (agent["definition"]["id"], draft["id"]),
+    ) == {"count": 1}
+
+
 def test_connection_revision_is_immutable_while_credential_rotation_is_active() -> None:
     c = container()
     first = ready_connection(c)

@@ -580,12 +580,12 @@ class HttpInternalApiClient:
             message = _safe_error_text(str(exc), self.max_response_chars)
             raise RetryableExecutionError(
                 f"Internal API Platform request failed: {message}",
-                safe_message=f"Internal API Platform request failed: {message}",
+                safe_message=f"内部 API 平台请求失败：{message}",
             ) from exc
         except json.JSONDecodeError as exc:
             raise RetryableExecutionError(
                 "Internal API Platform returned invalid JSON",
-                safe_message="Internal API Platform returned invalid JSON",
+                safe_message="内部 API 平台返回了无效 JSON",
             ) from exc
         summary = body.get("summary", body)
         raw = body.get("raw", body)
@@ -623,21 +623,21 @@ class HttpInternalApiClient:
         if exc.code in TRANSIENT_HTTP_STATUSES:
             raise RetryableExecutionError(
                 f"Internal API Platform transient error ({exc.code}): {message}",
-                safe_message=f"Internal API Platform transient error ({exc.code}): {message}",
+                safe_message=f"内部 API 平台暂时性错误（{exc.code}）：{message}",
             ) from exc
         if _is_policy_denial(body):
             raise ToolPolicyError(
                 f"Internal API Platform policy denied: {message}",
-                safe_message=f"Internal API Platform policy denied: {message}",
+                safe_message=f"内部 API 平台策略拒绝了请求：{message}",
             ) from exc
         if exc.code in NON_RETRYABLE_HTTP_STATUSES:
             raise NonRetryableExecutionError(
                 f"Internal API Platform rejected request ({exc.code}): {message}",
-                safe_message=f"Internal API Platform rejected request ({exc.code}): {message}",
+                safe_message=f"内部 API 平台拒绝了请求（{exc.code}）：{message}",
             ) from exc
         raise RetryableExecutionError(
             f"Internal API Platform HTTP error ({exc.code}): {message}",
-            safe_message=f"Internal API Platform HTTP error ({exc.code}): {message}",
+            safe_message=f"内部 API 平台 HTTP 错误（{exc.code}）：{message}",
         ) from exc
 
 

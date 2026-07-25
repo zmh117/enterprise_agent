@@ -121,13 +121,12 @@ function toApiError(status: number, payload: unknown): ApiError {
         ]
       })
     : []
+  const serverMessage =
+    typeof detail.message === "string" ? detail.message.trim() : ""
   return new ApiError({
     status,
     code,
-    message:
-      typeof detail.message === "string" && detail.message
-        ? detail.message
-        : "请求未能完成。",
+    message: userVisibleMessage(serverMessage, status),
     fieldErrors,
     currentRevision:
       typeof detail.current_revision === "number"
@@ -136,7 +135,13 @@ function toApiError(status: number, payload: unknown): ApiError {
   })
 }
 
+function userVisibleMessage(message: string, status: number): string {
+  if (/[\u3400-\u9fff]/u.test(message)) {
+    return message
+  }
+  return status >= 500 ? "服务器内部错误，请稍后重试。" : "请求未能完成。"
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
-
