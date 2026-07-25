@@ -19,7 +19,7 @@ class AdminConnectorRepository:
             where connector_type in (
               'dingtalk_enterprise_stream', 'dingtalk_callback',
               'dingtalk_enterprise_robot', 'dingtalk_webhook_robot'
-            )
+            ) and deleted = 0
             order by name, id
             """
         )
@@ -27,7 +27,8 @@ class AdminConnectorRepository:
 
     def get(self, connector_id: str) -> dict[str, Any]:
         row = self.database.execute_one(
-            "select * from integration_connector where id = ?", (connector_id,)
+            "select * from integration_connector where id = ? and deleted = 0",
+            (connector_id,),
         )
         if not row or str(row["connector_type"]) not in {
             "dingtalk_enterprise_stream",

@@ -22,6 +22,12 @@ class WebhookEventMessage:
     correlation_id: str
 
 
+@dataclass(frozen=True)
+class ChannelEventMessage:
+    channel_event_id: str
+    correlation_id: str
+
+
 class MessagePublisher(Protocol):
     def publish_agent_job(self, job_id: str, correlation_id: str) -> None: ...
 
@@ -47,11 +53,21 @@ class MessagePublisher(Protocol):
         self, webhook_event_id: str, correlation_id: str, reason: str
     ) -> None: ...
 
+    def publish_channel_event(
+        self, channel_event_id: str, correlation_id: str
+    ) -> None: ...
+
+    def publish_channel_dead_letter(
+        self, channel_event_id: str, correlation_id: str, reason: str
+    ) -> None: ...
+
 
 class MessageConsumer(Protocol):
     def consume_agent_jobs(self, handler: "AgentJobHandler") -> None: ...
 
     def consume_webhook_events(self, handler: "WebhookEventHandler") -> None: ...
+
+    def consume_channel_events(self, handler: "ChannelEventHandler") -> None: ...
 
 
 class AgentJobHandler(Protocol):
@@ -64,3 +80,7 @@ class AttachmentTaskHandler(Protocol):
 
 class WebhookEventHandler(Protocol):
     def __call__(self, message: WebhookEventMessage) -> None: ...
+
+
+class ChannelEventHandler(Protocol):
+    def __call__(self, message: ChannelEventMessage) -> None: ...

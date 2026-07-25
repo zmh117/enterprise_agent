@@ -73,7 +73,9 @@ class ChannelConnectorAdapter:
     def __init__(self, registry: ConnectorRegistry) -> None:
         self.registry = registry
 
-    def resolve(self, connector_id: str, direction: str) -> ComponentReference:
+    def resolve(
+        self, connector_id: str, direction: str, trigger_type: str = ""
+    ) -> ComponentReference:
         connector = self.registry.get(connector_id)
         if connector is None:
             raise NotFound(
@@ -83,10 +85,24 @@ class ChannelConnectorAdapter:
         allowed = (
             connector.allow_ingress if direction == "ingress" else connector.allow_delivery
         )
+        if direction == "ingress" and trigger_type in {
+            "dingtalk_private",
+            "dingtalk_group",
+        }:
+            allowed = allowed and connector.connector_type == "dingtalk_enterprise_stream"
+            capability = (
+                "allow_private_chat"
+                if trigger_type == "dingtalk_private"
+                else "allow_group_chat"
+            )
+            allowed = allowed and bool(connector.metadata.get(capability, True))
+        elif direction == "ingress" and trigger_type == "webhook":
+            allowed = allowed and connector.connector_type != "dingtalk_enterprise_stream"
+        row = self.registry.repository.get_connector(connector_id) or {}
         return ComponentReference(
             id=connector.id,
             code=connector.name,
-            revision=1,
+            revision=int(row.get("revision", 1)),
             project_code="",
             status="enabled" if connector.enabled and allowed else "disabled",
             config_hash="",
@@ -98,7 +114,7 @@ class ChannelConnectorAdapter:
         rows = self.registry.repository.database.execute(
             """
             select id from integration_connector
-             where enabled = 1 order by name, id
+             where enabled = 1 and deleted = 0 order by name, id
             """
         )
         result: list[ComponentReference] = []
@@ -151,4 +167,3 @@ class EmptyCapabilityCatalogAdapter:
                 }
             ],
         )
-

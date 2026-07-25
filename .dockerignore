@@ -19,6 +19,10 @@
 !frontend/**
 frontend/node_modules/
 frontend/dist/
+!dingtalk-runtime/
+!dingtalk-runtime/**
+dingtalk-runtime/node_modules/
+dingtalk-runtime/dist/
 !.claude/
 !.claude/skills/
 !.claude/skills/**

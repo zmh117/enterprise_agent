@@ -8,12 +8,15 @@ from typing import Any
 from app.modules.message_bus.application.message_publisher import (
     AgentJobHandler,
     AgentJobMessage,
+    ChannelEventHandler,
+    ChannelEventMessage,
     WebhookEventHandler,
     WebhookEventMessage,
 )
 from app.shared.config import QueueSettings
 from app.modules.message_bus.infrastructure.rabbitmq_topology import (
     declare_agent_job_topology,
+    declare_channel_event_topology,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,6 +41,9 @@ class RabbitMQConsumer:
 
     def consume_webhook_events(self, handler: WebhookEventHandler) -> None:
         self._consume_webhook_events(handler)
+
+    def consume_channel_events(self, handler: ChannelEventHandler) -> None:
+        self._consume_channel_events(handler)
 
     def _consume_agent_jobs(self, handler: AgentJobHandler) -> None:
         try:
@@ -149,6 +155,58 @@ class RabbitMQConsumer:
             except Exception:
                 logger.exception(
                     "RabbitMQ Webhook consumer connection lost; reconnecting in %s seconds",
+                    self.reconnect_seconds,
+                )
+                if connection is not None:
+                    try:
+                        connection.close()
+                    except Exception:
+                        logger.debug("RabbitMQ connection close after error failed", exc_info=True)
+                time.sleep(self.reconnect_seconds)
+
+    def _consume_channel_events(self, handler: ChannelEventHandler) -> None:
+        try:
+            import pika
+        except ModuleNotFoundError as exc:
+            raise RuntimeError("pika is required for RabbitMQ consuming") from exc
+        while True:
+            connection: Any | None = None
+            try:
+                parameters = pika.URLParameters(self.rabbitmq_url)
+                parameters.heartbeat = self.heartbeat_seconds
+                parameters.blocked_connection_timeout = self.heartbeat_seconds + 60
+                connection = pika.BlockingConnection(parameters)
+                channel = connection.channel()
+                declare_channel_event_topology(channel, self.queue)
+                channel.basic_qos(prefetch_count=1)
+
+                def on_message(ch: Any, method: Any, properties: Any, body: bytes) -> None:
+                    del properties
+                    payload = json.loads(body.decode("utf-8"))
+                    try:
+                        handler(
+                            ChannelEventMessage(
+                                channel_event_id=payload["channel_event_id"],
+                                correlation_id=payload.get("correlation_id", ""),
+                            )
+                        )
+                    except Exception:
+                        logger.exception("Channel event handler failed before ack")
+                        if ch.is_open:
+                            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+                        return
+                    ch.basic_ack(delivery_tag=method.delivery_tag)
+
+                channel.basic_consume(
+                    queue=self.queue.channel_queue, on_message_callback=on_message
+                )
+                logger.info("RabbitMQ Channel consumer started queue=%s", self.queue.channel_queue)
+                channel.start_consuming()
+            except KeyboardInterrupt:
+                raise
+            except Exception:
+                logger.exception(
+                    "RabbitMQ Channel consumer connection lost; reconnecting in %s seconds",
                     self.reconnect_seconds,
                 )
                 if connection is not None:

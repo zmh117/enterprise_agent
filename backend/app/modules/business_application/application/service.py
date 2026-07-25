@@ -441,7 +441,9 @@ class BusinessApplicationService:
                 errors,
                 f"triggers.{index}.connector_id",
                 lambda trigger=trigger: self.connector_reader.resolve(
-                    str(trigger["connector_id"]), "ingress"
+                    str(trigger["connector_id"]),
+                    "ingress",
+                    str(trigger["trigger_type"]),
                 ),
             )
             if reference:

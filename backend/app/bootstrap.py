@@ -83,6 +83,17 @@ from app.modules.message_bus.application.message_publisher import MessageConsume
 from app.modules.message_bus.infrastructure.in_memory_bus import InMemoryMessageBus
 from app.modules.message_bus.infrastructure.rabbitmq_consumer import RabbitMQConsumer
 from app.modules.message_bus.infrastructure.rabbitmq_publisher import RabbitMQPublisher
+from app.modules.managed_channel import (
+    ChannelDispatchService,
+    ChannelOutboxPublisher,
+    ManagedChannelRepository,
+    ManagedChannelService,
+    ManagedWebhookProviderAdapter,
+    RuntimeControlService,
+)
+from app.modules.managed_channel.application.service import (
+    UnavailableChannelCredentialCipher,
+)
 from app.modules.model_connection import (
     ModelConnectionRepository,
     ModelConnectionService,
@@ -153,6 +164,11 @@ class Container:
     webhook_ingress_service: WebhookIngressService
     webhook_outbox_publisher: WebhookOutboxPublisher
     webhook_dispatcher: WebhookDispatcher
+    managed_channel_repository: ManagedChannelRepository
+    managed_channel_service: ManagedChannelService
+    runtime_control_service: RuntimeControlService
+    channel_outbox_publisher: ChannelOutboxPublisher
+    channel_dispatch_service: ChannelDispatchService
 
 
 ContainerFactory = Callable[[Settings], Container]
@@ -254,11 +270,23 @@ def _build_container(
     business_application_repository = BusinessApplicationRepository(database)
     webhook_trigger_repository = WebhookTriggerRepository(database)
     webhook_event_repository = WebhookEventRepository(database)
+    managed_channel_repository = ManagedChannelRepository(database)
     audit_service = AuditService(
         audit_repository,
         max_chars=settings.execution.max_tool_response_chars,
     )
-    connector_registry = ConnectorRegistry(config_repository)
+    model_secret_provider = (
+        EncryptedDbSecretProvider(
+            platform_config_repository,
+            master_key=settings.app_config_master_key,
+        )
+        if settings.app_config_master_key
+        else UnavailableModelSecretProvider()
+    )
+    connector_registry = ConnectorRegistry(
+        config_repository,
+        reference_resolver=model_secret_provider.resolve,
+    )
     ones_identity_verifier = UrllibOnesIdentityVerifier(
         settings.ones_identity,
         environment=settings.environment,
@@ -292,14 +320,6 @@ def _build_container(
     platform_config_service = PlatformConfigService(
         platform_config_repository,
         permission_service,
-    )
-    model_secret_provider = (
-        EncryptedDbSecretProvider(
-            platform_config_repository,
-            master_key=settings.app_config_master_key,
-        )
-        if settings.app_config_master_key
-        else UnavailableModelSecretProvider()
     )
     model_connection_service = ModelConnectionService(
         model_connection_repository,
@@ -478,6 +498,39 @@ def _build_container(
             dingtalk_stream_session_webhook_adapter
         ),
     )
+    channel_credential_cipher = (
+        AttachmentCredentialCipher(settings.app_config_master_key)
+        if settings.app_config_master_key
+        else UnavailableChannelCredentialCipher()
+    )
+    managed_channel_service = ManagedChannelService(
+        repository=managed_channel_repository,
+        webhook_provider=ManagedWebhookProviderAdapter(
+            repository=webhook_trigger_repository,
+            service=webhook_trigger_service,
+        ),
+        secret_provider=model_secret_provider,
+        audit_service=audit_service,
+        stale_seconds=settings.managed_channels.stale_seconds,
+    )
+    runtime_control_service = RuntimeControlService(
+        repository=managed_channel_repository,
+        secret_resolver=connector_registry.resolve_reference,
+        credential_cipher=channel_credential_cipher,
+        max_event_bytes=settings.managed_channels.max_event_bytes,
+        lease_ttl_seconds=settings.managed_channels.lease_ttl_seconds,
+    )
+    channel_outbox_publisher = ChannelOutboxPublisher(
+        repository=managed_channel_repository,
+        publisher=publisher,
+        max_attempts=settings.managed_channels.outbox_max_attempts,
+        retry_base_seconds=settings.managed_channels.outbox_retry_base_seconds,
+    )
+    channel_dispatch_service = ChannelDispatchService(
+        repository=managed_channel_repository,
+        stream_service=dingtalk_stream_service,
+        credential_cipher=channel_credential_cipher,
+    )
     internal_api_client: InternalApiClient = FakeInternalApiClient()
     if settings.feature_configuration.real_internal_tools_enabled and message_bus is None:
         internal_api_client = HttpInternalApiClient(
@@ -628,4 +681,9 @@ def _build_container(
         webhook_ingress_service=webhook_ingress_service,
         webhook_outbox_publisher=webhook_outbox_publisher,
         webhook_dispatcher=webhook_dispatcher,
+        managed_channel_repository=managed_channel_repository,
+        managed_channel_service=managed_channel_service,
+        runtime_control_service=runtime_control_service,
+        channel_outbox_publisher=channel_outbox_publisher,
+        channel_dispatch_service=channel_dispatch_service,
     )

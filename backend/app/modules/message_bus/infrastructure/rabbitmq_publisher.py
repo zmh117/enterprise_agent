@@ -5,6 +5,7 @@ import json
 from app.shared.config import QueueSettings
 from app.modules.message_bus.infrastructure.rabbitmq_topology import (
     declare_agent_job_topology,
+    declare_channel_event_topology,
 )
 
 
@@ -106,6 +107,23 @@ class RabbitMQPublisher:
             },
         )
 
+    def publish_channel_event(self, channel_event_id: str, correlation_id: str) -> None:
+        self._publish_channel(
+            {"channel_event_id": channel_event_id, "correlation_id": correlation_id}
+        )
+
+    def publish_channel_dead_letter(
+        self, channel_event_id: str, correlation_id: str, reason: str
+    ) -> None:
+        self._publish(
+            self.queue.channel_dead_queue,
+            {
+                "channel_event_id": channel_event_id,
+                "correlation_id": correlation_id,
+                "reason": reason,
+            },
+        )
+
     def _publish(self, queue_name: str, payload: dict[str, object]) -> None:
         try:
             import pika
@@ -180,6 +198,28 @@ class RabbitMQPublisher:
                 routing_key=self.queue.webhook_queue,
                 body=json.dumps(payload).encode("utf-8"),
                 properties=pika.BasicProperties(delivery_mode=2),
+            )
+            if confirmed is False:
+                raise RuntimeError("RabbitMQ publisher confirm failed")
+        finally:
+            connection.close()
+
+    def _publish_channel(self, payload: dict[str, object]) -> None:
+        try:
+            import pika
+        except ModuleNotFoundError as exc:
+            raise RuntimeError("pika is required for RabbitMQ publishing") from exc
+        connection = pika.BlockingConnection(pika.URLParameters(self.rabbitmq_url))
+        try:
+            channel = connection.channel()
+            declare_channel_event_topology(channel, self.queue)
+            channel.confirm_delivery()
+            confirmed = channel.basic_publish(
+                exchange="",
+                routing_key=self.queue.channel_queue,
+                body=json.dumps(payload).encode("utf-8"),
+                properties=pika.BasicProperties(delivery_mode=2),
+                mandatory=True,
             )
             if confirmed is False:
                 raise RuntimeError("RabbitMQ publisher confirm failed")

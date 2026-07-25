@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -38,8 +39,13 @@ class Connector:
 
 
 class ConnectorRegistry:
-    def __init__(self, repository: ConfigurationRepository) -> None:
+    def __init__(
+        self,
+        repository: ConfigurationRepository,
+        reference_resolver: Callable[[str], str] | None = None,
+    ) -> None:
         self.repository = repository
+        self.reference_resolver = reference_resolver
 
     def get(self, connector_id: str) -> Connector | None:
         row = self.repository.get_connector(connector_id)
@@ -95,6 +101,8 @@ class ConnectorRegistry:
             if connector is None or connector.secret_ref == text:
                 return ""
             return self.resolve_reference(connector.secret_ref)
+        if text.startswith("secret://platform/") and self.reference_resolver is not None:
+            return self.reference_resolver(text)
         if text.startswith(("secret://", "vault:", "kms:")):
             return ""
         return text

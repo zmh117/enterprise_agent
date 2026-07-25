@@ -29,7 +29,9 @@ class WorkflowPublicationReader(Protocol):
 
 
 class ChannelConnectorReader(Protocol):
-    def resolve(self, connector_id: str, direction: str) -> ComponentReference: ...
+    def resolve(
+        self, connector_id: str, direction: str, trigger_type: str = ""
+    ) -> ComponentReference: ...
 
     def catalog(self) -> list[ComponentReference]: ...
 
@@ -42,4 +44,3 @@ class CapabilityCatalogReader(Protocol):
     def resolve(
         self, code: str, version_constraint: str, environment: str
     ) -> ComponentReference: ...
-

@@ -23,6 +23,18 @@ def declare_agent_job_topology(channel: Any, queue: QueueSettings) -> None:
     )
 
 
+def declare_channel_event_topology(channel: Any, queue: QueueSettings) -> None:
+    channel.queue_declare(queue=queue.channel_dead_queue, durable=True)
+    channel.queue_declare(
+        queue=queue.channel_queue,
+        durable=True,
+        arguments={
+            "x-dead-letter-exchange": "",
+            "x-dead-letter-routing-key": queue.channel_dead_queue,
+        },
+    )
+
+
 def inspect_agent_job_topology(rabbitmq_url: str, queue: QueueSettings) -> dict[str, object]:
     try:
         import pika

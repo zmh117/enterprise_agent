@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react"
 import {
   AlertCircleIcon,
   ArrowLeftIcon,
+  CableIcon,
   CheckCircle2Icon,
   Clock3Icon,
   GitBranchIcon,
@@ -31,11 +32,13 @@ import {
   useUpdateApplication,
   useValidateDraft,
 } from "@/contexts/applications/application/business-application-queries"
+import { useEligibleChannels } from "@/contexts/applications/application/managed-channel-queries"
 import type {
   BusinessApplication,
   SaveDraftInput,
 } from "@/contexts/applications/domain/business-application"
 import { ApplicationState } from "@/contexts/applications/presentation/application-state"
+import { ManagedChannelsPanel } from "@/contexts/applications/presentation/managed-channels-panel"
 import {
   MutationError,
   StatusBadge,
@@ -111,6 +114,7 @@ function ApplicationWorkspace({
         <TabsList className="h-auto w-full justify-start overflow-x-auto">
           <TabsTrigger value="overview">概览</TabsTrigger>
           <TabsTrigger value="composition">组成配置</TabsTrigger>
+          <TabsTrigger value="channels">渠道与触发器</TabsTrigger>
           <TabsTrigger value="validation">校验结果</TabsTrigger>
           <TabsTrigger value="publications">发布与运行</TabsTrigger>
         </TabsList>
@@ -120,6 +124,9 @@ function ApplicationWorkspace({
         <TabsContent value="composition">
           <CompositionTab application={application} />
         </TabsContent>
+        <TabsContent value="channels">
+          <ChannelsTab application={application} />
+        </TabsContent>
         <TabsContent value="validation">
           <ValidationTab application={application} />
         </TabsContent>
@@ -127,6 +134,28 @@ function ApplicationWorkspace({
           <PublicationTab application={application} />
         </TabsContent>
       </Tabs>
+    </div>
+  )
+}
+
+function ChannelsTab({ application }: { application: BusinessApplication }) {
+  const catalog = useApplicationCatalog(application.code)
+  return (
+    <div className="space-y-5">
+      <div className="flex items-start gap-3 rounded-lg border bg-muted/25 p-4">
+        <CableIcon
+          className="mt-0.5 size-5 shrink-0 text-indigo-600"
+          aria-hidden="true"
+        />
+        <div>
+          <p className="font-medium">渠道配置与应用草稿分离</p>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+            在这里创建或维护渠道；在“组成配置”中把可用渠道绑定为触发器。
+            渠道变更不会直接修改已经发布和激活的应用版本。
+          </p>
+        </div>
+      </div>
+      <ManagedChannelsPanel catalog={catalog.data} />
     </div>
   )
 }
@@ -505,9 +534,6 @@ function BindingsEditor({
   setForm: (value: SaveDraftInput) => void
   catalog: Catalog
 }) {
-  const ingress = uniqueConnectors(
-    catalog?.connectors.filter((item) => item.direction === "ingress") ?? []
-  )
   const delivery = uniqueConnectors(
     catalog?.connectors.filter((item) => item.direction === "delivery") ?? []
   )
@@ -527,7 +553,7 @@ function BindingsEditor({
                   ...form.triggers,
                   {
                     trigger_type: "dingtalk_private",
-                    connector_id: ingress[0]?.id ?? "",
+                    connector_id: "",
                     routing_key: "bot:",
                     actor_policy: "CURRENT_SENDER",
                     service_account_user_id: "",
@@ -575,6 +601,18 @@ function BindingsEditor({
                           type === "webhook"
                             ? "SERVICE_ACCOUNT"
                             : "CURRENT_SENDER",
+                        connector_id: "",
+                        config: {
+                          ...trigger.config,
+                          conversation_type:
+                            type === "dingtalk_private"
+                              ? "private"
+                              : type === "dingtalk_group"
+                                ? "group"
+                                : "webhook",
+                          require_mention: type === "dingtalk_group",
+                          webhook_definition_id: "",
+                        },
                       })
                     }}
                   >
@@ -584,26 +622,16 @@ function BindingsEditor({
                   </select>
                 </Field>
                 <Field
-                  label="入口 Connector"
+                  label="入口渠道"
                   htmlFor={`trigger-connector-${index}`}
                 >
-                  <select
+                  <EligibleChannelSelect
                     id={`trigger-connector-${index}`}
-                    className={selectClass}
-                    value={trigger.connector_id}
-                    onChange={(event) =>
-                      changeTrigger(form, setForm, index, {
-                        connector_id: event.target.value,
-                      })
+                    trigger={trigger}
+                    onChange={(change) =>
+                      changeTrigger(form, setForm, index, change)
                     }
-                  >
-                    <option value="">请选择入口 Connector</option>
-                    {ingress.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.code} · {item.component_type}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </Field>
                 <Field
                   label="路由键（Routing Key）"
@@ -746,7 +774,11 @@ function BindingsEditor({
                 >
                   <option value="">请选择投递 Connector</option>
                   {(binding.delivery_type === "reply_original"
-                    ? ingress
+                    ? uniqueConnectors(
+                        catalog?.connectors.filter(
+                          (item) => item.direction === "ingress"
+                        ) ?? []
+                      )
                     : delivery
                   ).map((item) => (
                     <option key={item.id} value={item.id}>
@@ -775,6 +807,100 @@ function BindingsEditor({
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+function EligibleChannelSelect({
+  id,
+  trigger,
+  onChange,
+}: {
+  id: string
+  trigger: SaveDraftInput["triggers"][number]
+  onChange: (
+    patch: Partial<SaveDraftInput["triggers"][number]>
+  ) => void
+}) {
+  const query = useEligibleChannels(trigger.trigger_type)
+  const items = query.data ?? []
+  const current = items.find(
+    (item) =>
+      (trigger.config.webhook_definition_id &&
+        item.webhook_trigger_id === trigger.config.webhook_definition_id) ||
+      (!trigger.config.webhook_definition_id && item.id === trigger.connector_id)
+  )
+  const selected = current
+    ? current.webhook_trigger_id ?? current.id
+    : trigger.config.webhook_definition_id || trigger.connector_id
+  const invalid = Boolean(selected) && !current
+
+  return (
+    <>
+      <select
+        id={id}
+        className={selectClass}
+        value={selected}
+        disabled={query.isLoading}
+        onChange={(event) => {
+          const item = items.find(
+            (candidate) =>
+              (candidate.webhook_trigger_id ?? candidate.id) ===
+              event.target.value
+          )
+          if (!item) {
+            onChange({
+              connector_id: "",
+              config: {
+                ...trigger.config,
+                webhook_definition_id: "",
+              },
+            })
+            return
+          }
+          onChange({
+            connector_id: item.id,
+            routing_key:
+              trigger.trigger_type === "webhook"
+                ? item.routing_key || trigger.routing_key
+                : trigger.routing_key,
+            config: {
+              ...trigger.config,
+              webhook_definition_id:
+                trigger.trigger_type === "webhook"
+                  ? item.webhook_trigger_id || ""
+                  : "",
+            },
+          })
+        }}
+      >
+        <option value="">
+          {query.isLoading ? "正在加载可用渠道…" : "请选择已启用渠道"}
+        </option>
+        {invalid ? (
+          <option value={selected}>
+            当前绑定已停用或失效 · {trigger.connector_id}
+          </option>
+        ) : null}
+        {items.map((item) => (
+          <option
+            key={`${item.kind}-${item.webhook_trigger_id ?? item.id}`}
+            value={item.webhook_trigger_id ?? item.id}
+          >
+            {item.name} ·{" "}
+            {item.kind === "WEBHOOK" ? "Webhook" : "钉钉应用机器人"}
+          </option>
+        ))}
+      </select>
+      {query.isError ? (
+        <p className="text-xs text-destructive">
+          无法加载可用渠道，请刷新后重试。
+        </p>
+      ) : invalid ? (
+        <p className="text-xs text-amber-700">
+          该旧绑定不再满足入口条件；保存前请选择新的可用渠道。
+        </p>
+      ) : null}
+    </>
   )
 }
 

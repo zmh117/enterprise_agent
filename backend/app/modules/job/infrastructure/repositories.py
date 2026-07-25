@@ -1270,7 +1270,8 @@ class ConfigurationRepository:
 
     def get_connector(self, connector_id: str) -> dict[str, Any] | None:
         row = self.database.execute_one(
-            "select * from integration_connector where id = ?", (connector_id,)
+            "select * from integration_connector where id = ? and deleted = 0",
+            (connector_id,),
         )
         if not row:
             return None

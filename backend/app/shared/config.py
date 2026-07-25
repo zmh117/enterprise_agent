@@ -25,6 +25,8 @@ class QueueSettings:
     attachment_dead_queue: str = "agent.attachment.dead.queue"
     webhook_queue: str = "agent.webhook.dispatch.queue"
     webhook_dead_queue: str = "agent.webhook.dispatch.dead.queue"
+    channel_queue: str = "agent.channel.dispatch.queue"
+    channel_dead_queue: str = "agent.channel.dispatch.dead.queue"
     max_retry_count: int = 3
     retry_delay_seconds: int = 30
     consumer_heartbeat_seconds: int = 900
@@ -140,6 +142,18 @@ class WebhookSettings:
 
 
 @dataclass(frozen=True)
+class ManagedChannelSettings:
+    runtime_auth_token: str = ""
+    runtime_auth_token_file: str = ""
+    lease_ttl_seconds: int = 15
+    stale_seconds: int = 30
+    max_event_bytes: int = 256 * 1024
+    outbox_max_attempts: int = 8
+    outbox_retry_base_seconds: int = 5
+    internal_requests_per_minute: int = 600
+
+
+@dataclass(frozen=True)
 class DingTalkSettings:
     secret: str = ""
     callback_url: str = ""
@@ -217,6 +231,7 @@ class Settings:
     identity: IdentitySettings = field(default_factory=IdentitySettings)
     ones_identity: OnesIdentitySettings = field(default_factory=OnesIdentitySettings)
     webhooks: WebhookSettings = field(default_factory=WebhookSettings)
+    managed_channels: ManagedChannelSettings = field(default_factory=ManagedChannelSettings)
 
 
 def _csv_tuple(value: str) -> tuple[str, ...]:
@@ -339,6 +354,10 @@ def load_settings() -> Settings:
             webhook_dead_queue=os.getenv(
                 "WEBHOOK_DISPATCH_DEAD_QUEUE", "agent.webhook.dispatch.dead.queue"
             ),
+            channel_queue=os.getenv("CHANNEL_DISPATCH_QUEUE", "agent.channel.dispatch.queue"),
+            channel_dead_queue=os.getenv(
+                "CHANNEL_DISPATCH_DEAD_QUEUE", "agent.channel.dispatch.dead.queue"
+            ),
             max_retry_count=int(os.getenv("AGENT_MAX_RETRY_COUNT", "3")),
             retry_delay_seconds=int(os.getenv("AGENT_RETRY_DELAY_SECONDS", "30")),
             consumer_heartbeat_seconds=int(os.getenv("RABBITMQ_CONSUMER_HEARTBEAT_SECONDS", "900")),
@@ -436,6 +455,22 @@ def load_settings() -> Settings:
             outbox_scan_seconds=int(os.getenv("WEBHOOK_OUTBOX_SCAN_SECONDS", "5")),
             outbox_max_attempts=int(os.getenv("WEBHOOK_OUTBOX_MAX_ATTEMPTS", "8")),
             outbox_retry_base_seconds=int(os.getenv("WEBHOOK_OUTBOX_RETRY_BASE_SECONDS", "5")),
+        ),
+        managed_channels=ManagedChannelSettings(
+            runtime_auth_token=os.getenv("DINGTALK_RUNTIME_AUTH_TOKEN", ""),
+            runtime_auth_token_file=os.getenv("DINGTALK_RUNTIME_AUTH_TOKEN_FILE", ""),
+            lease_ttl_seconds=int(os.getenv("DINGTALK_RUNTIME_LEASE_TTL_SECONDS", "15")),
+            stale_seconds=int(os.getenv("DINGTALK_RUNTIME_STALE_SECONDS", "30")),
+            max_event_bytes=int(
+                os.getenv("DINGTALK_RUNTIME_MAX_EVENT_BYTES", str(256 * 1024))
+            ),
+            outbox_max_attempts=int(os.getenv("CHANNEL_OUTBOX_MAX_ATTEMPTS", "8")),
+            outbox_retry_base_seconds=int(
+                os.getenv("CHANNEL_OUTBOX_RETRY_BASE_SECONDS", "5")
+            ),
+            internal_requests_per_minute=int(
+                os.getenv("DINGTALK_RUNTIME_REQUESTS_PER_MINUTE", "600")
+            ),
         ),
     )
 

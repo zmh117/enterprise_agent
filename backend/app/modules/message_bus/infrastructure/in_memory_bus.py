@@ -7,6 +7,8 @@ from app.modules.message_bus.application.message_publisher import (
     AgentJobMessage,
     AttachmentTaskHandler,
     AttachmentTaskMessage,
+    ChannelEventHandler,
+    ChannelEventMessage,
     WebhookEventHandler,
     WebhookEventMessage,
 )
@@ -22,6 +24,8 @@ class InMemoryMessageBus:
         self.attachment_dead_letters: deque[tuple[AttachmentTaskMessage, str]] = deque()
         self.webhook_events: deque[WebhookEventMessage] = deque()
         self.webhook_dead_letters: deque[tuple[WebhookEventMessage, str]] = deque()
+        self.channel_events: deque[ChannelEventMessage] = deque()
+        self.channel_dead_letters: deque[tuple[ChannelEventMessage, str]] = deque()
 
     def publish_agent_job(self, job_id: str, correlation_id: str) -> None:
         self.jobs.append(AgentJobMessage(job_id=job_id, correlation_id=correlation_id))
@@ -74,6 +78,20 @@ class InMemoryMessageBus:
     def consume_webhook_events(self, handler: WebhookEventHandler) -> None:
         while self.webhook_events:
             handler(self.webhook_events.popleft())
+
+    def publish_channel_event(self, channel_event_id: str, correlation_id: str) -> None:
+        self.channel_events.append(ChannelEventMessage(channel_event_id, correlation_id))
+
+    def publish_channel_dead_letter(
+        self, channel_event_id: str, correlation_id: str, reason: str
+    ) -> None:
+        self.channel_dead_letters.append(
+            (ChannelEventMessage(channel_event_id, correlation_id), reason)
+        )
+
+    def consume_channel_events(self, handler: ChannelEventHandler) -> None:
+        while self.channel_events:
+            handler(self.channel_events.popleft())
 
     def drain_retry_to_jobs(self) -> None:
         while self.retries:

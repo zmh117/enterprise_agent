@@ -199,6 +199,10 @@ def create_app(
         build_public_webhook_router,
         build_webhook_admin_router,
     )
+    from app.modules.managed_channel.api import (
+        build_managed_channel_router,
+        build_runtime_control_router,
+    )
 
     app.include_router(build_channel_router())
     app.include_router(build_dingding_router())
@@ -206,6 +210,7 @@ def create_app(
     app.include_router(build_platform_config_router())
     app.include_router(build_workflow_router())
     app.include_router(build_public_webhook_router())
+    app.include_router(build_runtime_control_router())
 
     management_surface_enabled = any(
         (
@@ -222,6 +227,7 @@ def create_app(
         app.include_router(build_auth_router())
         app.include_router(build_identity_admin_router())
         app.include_router(build_webhook_admin_router())
+        app.include_router(build_managed_channel_router())
 
         @app.post("/api/admin/migrate")
         def migrate(request: Request) -> dict[str, Any]:
