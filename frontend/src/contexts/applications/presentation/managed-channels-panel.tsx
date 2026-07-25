@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent, type ReactNode } from "react"
+import { useState, type FormEvent, type ReactNode } from "react"
 import {
   BotIcon,
   LoaderCircleIcon,
@@ -23,7 +23,6 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
-import type { catalogSchema } from "@/contexts/applications/infrastructure/business-application-api"
 import {
   useCreateDingTalkChannel,
   useCreateWebhookChannel,
@@ -32,20 +31,19 @@ import {
   useRestartManagedChannel,
   useSetManagedChannelEnabled,
   useUpdateDingTalkChannel,
+  useWebhookConnectorOptions,
 } from "@/contexts/applications/application/managed-channel-queries"
 import type {
   DingTalkChannelInput,
   ManagedChannel,
   WebhookChannelInput,
+  WebhookConnectorOption,
 } from "@/contexts/applications/domain/managed-channel"
 import { MutationError } from "@/contexts/applications/presentation/applications-page"
 import { cn } from "@/lib/utils"
-import type { z } from "zod"
-
-type Catalog = z.infer<typeof catalogSchema>
-
-export function ManagedChannelsPanel({ catalog }: { catalog?: Catalog }) {
+export function ManagedChannelsPanel() {
   const query = useManagedChannels()
+  const webhookConnectorOptions = useWebhookConnectorOptions()
   const [dingTalkEditor, setDingTalkEditor] = useState<
     ManagedChannel | "create" | null
   >(null)
@@ -121,10 +119,14 @@ export function ManagedChannelsPanel({ catalog }: { catalog?: Catalog }) {
         key={
           dingTalkEditor === "create"
             ? "create"
-            : dingTalkEditor?.id ?? "closed"
+            : (dingTalkEditor?.id ?? "closed")
         }
         open={dingTalkEditor !== null}
-        channel={dingTalkEditor === "create" ? undefined : dingTalkEditor ?? undefined}
+        channel={
+          dingTalkEditor === "create"
+            ? undefined
+            : (dingTalkEditor ?? undefined)
+        }
         onOpenChange={(open) => {
           if (!open) setDingTalkEditor(null)
         }}
@@ -132,7 +134,9 @@ export function ManagedChannelsPanel({ catalog }: { catalog?: Catalog }) {
       <WebhookEditor
         open={webhookOpen}
         onOpenChange={setWebhookOpen}
-        catalog={catalog}
+        connectors={webhookConnectorOptions.data ?? []}
+        connectorsLoading={webhookConnectorOptions.isLoading}
+        connectorsError={webhookConnectorOptions.error}
       />
     </div>
   )
@@ -149,7 +153,8 @@ function ManagedChannelCard({
   const restart = useRestartManagedChannel()
   const remove = useDeleteManagedChannel()
   const mutationError = setEnabled.error ?? restart.error ?? remove.error
-  const status = channel.runtime?.status ?? (channel.enabled ? "READY" : "STOPPED")
+  const status =
+    channel.runtime?.status ?? (channel.enabled ? "READY" : "STOPPED")
   const dingTalk = channel.kind === "DINGTALK_APP_ROBOT"
 
   return (
@@ -159,14 +164,19 @@ function ManagedChannelCard({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               {dingTalk ? (
-                <BotIcon className="size-4 text-indigo-600" aria-hidden="true" />
+                <BotIcon
+                  className="size-4 text-indigo-600"
+                  aria-hidden="true"
+                />
               ) : (
                 <WebhookIcon
                   className="size-4 text-emerald-600"
                   aria-hidden="true"
                 />
               )}
-              <CardTitle className="truncate text-base">{channel.name}</CardTitle>
+              <CardTitle className="truncate text-base">
+                {channel.name}
+              </CardTitle>
               <Badge variant="outline">r{channel.revision}</Badge>
             </div>
             <p className="mt-2 font-mono text-xs break-all text-muted-foreground">
@@ -185,10 +195,17 @@ function ManagedChannelCard({
       </CardHeader>
       <CardContent className="space-y-4">
         <dl className="grid gap-3 text-xs sm:grid-cols-2">
-          <Metadata label="类型" value={dingTalk ? "钉钉应用机器人" : "Webhook"} />
+          <Metadata
+            label="类型"
+            value={dingTalk ? "钉钉应用机器人" : "Webhook"}
+          />
           <Metadata
             label={dingTalk ? "企业标识" : "入口路由"}
-            value={dingTalk ? channel.tenant_code || "未配置" : channel.routing_key || "未发布"}
+            value={
+              dingTalk
+                ? channel.tenant_code || "未配置"
+                : channel.routing_key || "未发布"
+            }
           />
           <Metadata
             label="最近消息"
@@ -203,7 +220,12 @@ function ManagedChannelCard({
         {dingTalk ? (
           <>
             <div className="flex flex-wrap gap-2">
-              <Button type="button" size="sm" variant="outline" onClick={onEdit}>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={onEdit}
+              >
                 <PencilIcon aria-hidden="true" />
                 编辑
               </Button>
@@ -288,7 +310,10 @@ function DingTalkEditor({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent key={editorKey} className="w-full overflow-y-auto sm:max-w-xl">
+      <SheetContent
+        key={editorKey}
+        className="w-full overflow-y-auto sm:max-w-xl"
+      >
         <DingTalkEditorForm
           channel={channel}
           initialForm={form}
@@ -371,18 +396,27 @@ function DingTalkEditorForm({
             }
           />
         </EditorField>
-        <EditorField label="企业标识（Corp / Tenant）" htmlFor="dingtalk-tenant">
+        <EditorField
+          label="企业标识（Corp / Tenant）"
+          htmlFor="dingtalk-tenant"
+        >
           <Input
             id="dingtalk-tenant"
             required
             maxLength={128}
             value={form.tenant_code}
             onChange={(event) =>
-              setInitialForm({ ...initialForm, tenant_code: event.target.value })
+              setInitialForm({
+                ...initialForm,
+                tenant_code: event.target.value,
+              })
             }
           />
         </EditorField>
-        <EditorField label="Client Secret / AppSecret" htmlFor="dingtalk-secret">
+        <EditorField
+          label="Client Secret / AppSecret"
+          htmlFor="dingtalk-secret"
+        >
           <Input
             id="dingtalk-secret"
             type="password"
@@ -453,22 +487,17 @@ function DingTalkEditorForm({
 function WebhookEditor({
   open,
   onOpenChange,
-  catalog,
+  connectors,
+  connectorsLoading,
+  connectorsError,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  catalog?: Catalog
+  connectors: WebhookConnectorOption[]
+  connectorsLoading: boolean
+  connectorsError: unknown
 }) {
   const create = useCreateWebhookChannel()
-  const connectors = useMemo(
-    () =>
-      (catalog?.connectors ?? []).filter(
-        (item) =>
-          item.direction === "ingress" &&
-          item.component_type !== "dingtalk_enterprise_stream"
-      ),
-    [catalog]
-  )
   const [form, setForm] = useState<WebhookChannelInput>({
     code: "",
     name: "",
@@ -484,15 +513,15 @@ function WebhookEditor({
         connector_id: form.connector_id || connectors[0]?.id || "",
       },
       {
-      onSuccess: () => {
-        setForm({
-          code: "",
-          name: "",
-          trigger_type: "generic",
-          connector_id: connectors[0]?.id ?? "",
-        })
-        onOpenChange(false)
-      },
+        onSuccess: () => {
+          setForm({
+            code: "",
+            name: "",
+            trigger_type: "generic",
+            connector_id: connectors[0]?.id ?? "",
+          })
+          onOpenChange(false)
+        },
       }
     )
   }
@@ -562,22 +591,31 @@ function WebhookEditor({
                 <option value="">请选择现有 Webhook Connector</option>
                 {connectors.map((item) => (
                   <option key={item.id} value={item.id}>
-                    {item.code}
+                    {item.name} · {item.connector_type}
                   </option>
                 ))}
               </select>
             </EditorField>
-            {connectors.length === 0 ? (
+            {connectorsLoading ? (
+              <p className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
+                正在加载 Webhook 入口 Connector……
+              </p>
+            ) : connectors.length === 0 && !connectorsError ? (
               <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">
                 当前没有可复用的 Webhook 入口 Connector，无法新建。
               </p>
             ) : null}
-            <MutationError error={create.error} />
+            <MutationError error={connectorsError ?? create.error} />
           </div>
           <SheetFooter>
             <Button
               type="submit"
-              disabled={create.isPending || connectors.length === 0}
+              disabled={
+                create.isPending ||
+                connectorsLoading ||
+                Boolean(connectorsError) ||
+                connectors.length === 0
+              }
             >
               {create.isPending ? (
                 <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
@@ -622,7 +660,7 @@ function Metadata({
       <dt className="text-muted-foreground">{label}</dt>
       <dd
         className={cn(
-          "mt-1 break-words font-medium",
+          "mt-1 font-medium break-words",
           danger && "text-destructive"
         )}
       >

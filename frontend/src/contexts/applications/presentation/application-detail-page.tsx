@@ -2,7 +2,6 @@ import { useState, type FormEvent } from "react"
 import {
   AlertCircleIcon,
   ArrowLeftIcon,
-  CableIcon,
   CheckCircle2Icon,
   Clock3Icon,
   GitBranchIcon,
@@ -38,7 +37,6 @@ import type {
   SaveDraftInput,
 } from "@/contexts/applications/domain/business-application"
 import { ApplicationState } from "@/contexts/applications/presentation/application-state"
-import { ManagedChannelsPanel } from "@/contexts/applications/presentation/managed-channels-panel"
 import {
   MutationError,
   StatusBadge,
@@ -114,7 +112,6 @@ function ApplicationWorkspace({
         <TabsList className="h-auto w-full justify-start overflow-x-auto">
           <TabsTrigger value="overview">概览</TabsTrigger>
           <TabsTrigger value="composition">组成配置</TabsTrigger>
-          <TabsTrigger value="channels">渠道与触发器</TabsTrigger>
           <TabsTrigger value="validation">校验结果</TabsTrigger>
           <TabsTrigger value="publications">发布与运行</TabsTrigger>
         </TabsList>
@@ -124,9 +121,6 @@ function ApplicationWorkspace({
         <TabsContent value="composition">
           <CompositionTab application={application} />
         </TabsContent>
-        <TabsContent value="channels">
-          <ChannelsTab application={application} />
-        </TabsContent>
         <TabsContent value="validation">
           <ValidationTab application={application} />
         </TabsContent>
@@ -134,28 +128,6 @@ function ApplicationWorkspace({
           <PublicationTab application={application} />
         </TabsContent>
       </Tabs>
-    </div>
-  )
-}
-
-function ChannelsTab({ application }: { application: BusinessApplication }) {
-  const catalog = useApplicationCatalog(application.code)
-  return (
-    <div className="space-y-5">
-      <div className="flex items-start gap-3 rounded-lg border bg-muted/25 p-4">
-        <CableIcon
-          className="mt-0.5 size-5 shrink-0 text-indigo-600"
-          aria-hidden="true"
-        />
-        <div>
-          <p className="font-medium">渠道配置与应用草稿分离</p>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            在这里创建或维护渠道；在“组成配置”中把可用渠道绑定为触发器。
-            渠道变更不会直接修改已经发布和激活的应用版本。
-          </p>
-        </div>
-      </div>
-      <ManagedChannelsPanel catalog={catalog.data} />
     </div>
   )
 }
@@ -382,8 +354,8 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
         </CardHeader>
         <CardContent>
           <div className="rounded-md border border-dashed p-4 text-sm leading-6 text-muted-foreground">
-            能力目录尚未接入，当前列表必须为空。这里不提供任意
-            能力编码、HTTP URL、SQL、Redis、Loki、Shell 或工具名输入。
+            能力目录尚未接入，当前列表必须为空。这里不提供任意 能力编码、HTTP
+            URL、SQL、Redis、Loki、Shell 或工具名输入。
           </div>
         </CardContent>
       </Card>
@@ -621,10 +593,7 @@ function BindingsEditor({
                     <option value="webhook">Webhook</option>
                   </select>
                 </Field>
-                <Field
-                  label="入口渠道"
-                  htmlFor={`trigger-connector-${index}`}
-                >
+                <Field label="入口渠道" htmlFor={`trigger-connector-${index}`}>
                   <EligibleChannelSelect
                     id={`trigger-connector-${index}`}
                     trigger={trigger}
@@ -758,10 +727,7 @@ function BindingsEditor({
                   <option value="webhook_callback">Webhook 回调</option>
                 </select>
               </Field>
-              <Field
-                label="投递连接器"
-                htmlFor={`delivery-connector-${index}`}
-              >
+              <Field label="投递连接器" htmlFor={`delivery-connector-${index}`}>
                 <select
                   id={`delivery-connector-${index}`}
                   className={selectClass}
@@ -817,9 +783,7 @@ function EligibleChannelSelect({
 }: {
   id: string
   trigger: SaveDraftInput["triggers"][number]
-  onChange: (
-    patch: Partial<SaveDraftInput["triggers"][number]>
-  ) => void
+  onChange: (patch: Partial<SaveDraftInput["triggers"][number]>) => void
 }) {
   const query = useEligibleChannels(trigger.trigger_type)
   const items = query.data ?? []
@@ -827,10 +791,11 @@ function EligibleChannelSelect({
     (item) =>
       (trigger.config.webhook_definition_id &&
         item.webhook_trigger_id === trigger.config.webhook_definition_id) ||
-      (!trigger.config.webhook_definition_id && item.id === trigger.connector_id)
+      (!trigger.config.webhook_definition_id &&
+        item.id === trigger.connector_id)
   )
   const selected = current
-    ? current.webhook_trigger_id ?? current.id
+    ? (current.webhook_trigger_id ?? current.id)
     : trigger.config.webhook_definition_id || trigger.connector_id
   const invalid = Boolean(selected) && !current
 

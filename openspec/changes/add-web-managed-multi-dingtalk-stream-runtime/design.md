@@ -159,7 +159,17 @@ revision
 - DingTalk Inbox/Outbox 故障恢复；
 - Compose 构建和真实双机器人验证（有凭据时）。
 
-这些验收未完成前，不开始 React 页面。前端阶段只新增“业务应用 → 渠道与触发器”，包含 Channel 列表、钉钉应用机器人配置、受管 Webhook 配置入口和 Trigger Binding 选择，不扩展其他菜单或功能。
+这些验收未完成前，不开始 React 页面。前端阶段在左侧导航“业务应用”分组中新增两个同级入口：
+
+```text
+业务应用
+├── 应用列表
+└── 渠道与触发器
+```
+
+“渠道与触发器”使用独立路由 `/applications/channels`，负责平台级 Channel 列表、钉钉应用机器人配置和受管 Webhook 配置，不依赖当前应用上下文，也不直接修改任何应用草稿。应用详情移除“渠道与触发器”Tab，只在现有“组成配置/应用设置”的 Trigger Binding 中读取 eligible Channel 目录并选择入口。导航激活状态必须区分 `/applications`、`/applications/channels` 和 `/applications/:code`，不能同时高亮两个菜单项。
+
+前端阶段不扩展其他菜单或功能。
 
 ### 9. 保留现有基础设施版本与测试兼容性
 
@@ -184,7 +194,7 @@ revision
 3. 将现有环境变量中的钉钉应用登记为 `dingtalk_enterprise_stream` Connector，并把 Client Secret 写入现有受管 Secret。
 4. 停止旧 `dingtalk-stream-ingress`，启动 `dingtalk-runtime`，确认 READY、消息幂等、Business Application 路由及原会话回复。
 5. 验证新增第二个机器人、独立停用、Secret 轮换、Runtime 重启、RabbitMQ 故障恢复。
-6. 后端验收通过后实现“业务应用 → 渠道与触发器”页面，并验证只有 eligible Channel 可绑定。
+6. 后端验收通过后，在“业务应用”侧边栏分组的“应用列表”下实现独立“渠道与触发器”页面，从应用详情移除 Channel 管理 Tab，并验证只有 eligible Channel 可在应用设置中绑定。
 7. 稳定后删除旧单连接 Worker 的 Compose 服务和启动配置；保留迁移说明，不保留双运行模式。
 
 回滚时停止新 Runtime，恢复旧单连接 Worker所需环境变量并只启用一个既有机器人。Inbox/Outbox 和运行状态表可以保留，不影响旧数据面；不得同时运行新旧连接。

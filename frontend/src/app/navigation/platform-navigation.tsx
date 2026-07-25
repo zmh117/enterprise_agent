@@ -16,6 +16,7 @@ import {
   SidebarSeparator,
 } from "@/components/ui/sidebar"
 import { navigationGroups } from "@/mocks/dashboard"
+import { resolveActiveNavigationHref } from "@/app/navigation/navigation-match"
 
 export function PlatformNavigation() {
   const location = useLocation()
@@ -52,14 +53,15 @@ export function PlatformNavigation() {
               <SidebarMenu>
                 {group.items.map((item) => {
                   const Icon = item.icon
+                  const activeHref = resolveActiveNavigationHref(
+                    location.pathname,
+                    group.items
+                  )
                   return (
                     <SidebarMenuItem key={item.label}>
                       <SidebarMenuButton
                         isActive={
-                          Boolean(item.href) &&
-                          (item.href === "/"
-                            ? location.pathname === "/"
-                            : location.pathname.startsWith(item.href!))
+                          Boolean(item.href) && item.href === activeHref
                         }
                         disabled={!item.active}
                         title={

@@ -70,6 +70,11 @@ describe("Managed channels", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = String(input)
       if (
+        url.endsWith("/api/admin/managed-channels/webhook-connector-options")
+      ) {
+        return response({ items: [] })
+      }
+      if (
         url.endsWith(
           "/api/admin/managed-channels/dingtalk-app-robots/connector-dingtalk-a"
         )
@@ -170,16 +175,11 @@ describe("Managed channels", () => {
 
     renderWithQuery(
       <Routes>
-        <Route
-          path="/applications/:code"
-          element={<ApplicationDetailPage />}
-        />
+        <Route path="/applications/:code" element={<ApplicationDetailPage />} />
       </Routes>,
       ["/applications/real-app"]
     )
-    fireEvent.click(
-      await screen.findByRole("tab", { name: "组成配置" })
-    )
+    fireEvent.click(await screen.findByRole("tab", { name: "组成配置" }))
     const selector = await screen.findByLabelText("入口渠道")
     expect(
       await screen.findByRole("option", { name: /生产诊断机器人/ })
@@ -187,6 +187,9 @@ describe("Managed channels", () => {
     expect(selector).toHaveValue("connector-dingtalk-a")
     expect(
       within(selector).queryByRole("option", { name: /Webhook/ })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole("tab", { name: "渠道与触发器" })
     ).not.toBeInTheDocument()
   })
 })

@@ -79,6 +79,9 @@ class ManagedChannelService:
             )
         return sorted(result, key=lambda item: (str(item["kind"]), str(item["name"])))
 
+    def webhook_connector_options(self) -> list[dict[str, Any]]:
+        return self.repository.list_webhook_connector_options()
+
     def create_webhook(
         self,
         *,
@@ -149,20 +152,34 @@ class ManagedChannelService:
                 safe_message="该钉钉 Client ID 已存在",
                 error_code="channel_client_id_conflict",
             )
+        secret_ref = str(current["secret_ref"])
         with self.repository.database.transaction():
             if rotate_secret:
-                secret_code = str(current["secret_ref"]).removeprefix("secret://platform/")
-                self.secret_provider.rotate_secret(
-                    code=secret_code,
-                    value=normalized.client_secret,
-                    actor_id=actor_id,
-                )
+                if secret_ref.startswith("secret://platform/"):
+                    self.secret_provider.rotate_secret(
+                        code=secret_ref.removeprefix("secret://platform/"),
+                        value=normalized.client_secret,
+                        actor_id=actor_id,
+                    )
+                else:
+                    secret_code = self._secret_code(normalized.client_id)
+                    self.secret_provider.create_secret(
+                        code=secret_code,
+                        value=normalized.client_secret,
+                        purpose="dingtalk_stream_client_secret",
+                        actor_id=actor_id,
+                        metadata={
+                            "managed_by": "managed_channel",
+                            "migrated_from": "bootstrap_reference",
+                        },
+                    )
+                    secret_ref = f"secret://platform/{secret_code}"
             item = self.repository.update_dingtalk_connector(
                 connector_id=connector_id,
                 expected_revision=expected_revision,
                 name=normalized.name,
                 metadata=self._metadata(normalized),
-                secret_ref=str(current["secret_ref"]),
+                secret_ref=secret_ref,
                 enabled=bool(current["enabled"]),
                 force_revision=rotate_secret,
             )

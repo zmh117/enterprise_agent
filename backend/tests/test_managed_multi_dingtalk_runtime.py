@@ -193,6 +193,54 @@ def test_restart_changes_only_selected_connector_revision():
     )
 
 
+def test_updating_bootstrap_connector_migrates_env_secret_to_managed_secret():
+    container = _container()
+    timestamp = "2026-07-26T00:00:00+00:00"
+    container.database.execute(
+        """
+        insert into integration_connector
+          (id, connector_type, name, base_url, enabled, metadata,
+           allow_ingress, allow_delivery, secret_ref, endpoint_ref,
+           host_allowlist, revision, created_at, updated_at, deleted)
+        values (
+          'connector-bootstrap-dingtalk', 'dingtalk_enterprise_stream',
+          '旧启动配置机器人', '', 1,
+          '{"client_id_ref":"env:DINGTALK_CLIENT_ID","tenant_code":"default"}',
+          1, 0, 'env:DINGTALK_CLIENT_SECRET', '', '', 1, ?, ?, 0
+        )
+        """,
+        (timestamp, timestamp),
+    )
+
+    updated = container.managed_channel_service.update_dingtalk(
+        "connector-bootstrap-dingtalk",
+        DingTalkApplicationInput(
+            name="受管钉钉机器人",
+            client_id="ding-managed",
+            client_secret="replacement-secret",
+            tenant_code="default",
+        ),
+        expected_revision=1,
+        actor_id="test-admin",
+        rotate_secret=True,
+    )
+
+    row = container.database.execute_one(
+        "select secret_ref from integration_connector where id = ?",
+        ("connector-bootstrap-dingtalk",),
+    )
+    assert row is not None
+    secret_ref = str(row["secret_ref"])
+    assert secret_ref.startswith("secret://platform/dingtalk-")
+    assert (
+        container.managed_channel_service.secret_provider.resolve(secret_ref)
+        == "replacement-secret"
+    )
+    assert updated["client_id"] == "ding-managed"
+    assert updated["revision"] == 2
+    assert "replacement-secret" not in str(updated)
+
+
 def test_internal_runtime_api_requires_service_auth_and_rate_limits_safe_errors():
     settings = Settings(
         database_dsn="sqlite:///:memory:",
@@ -249,3 +297,71 @@ def test_managed_channel_audit_contains_no_client_secret():
     serialized = str(events[0])
     assert "secret-ding-audit" not in serialized
     assert "client_secret" not in serialized
+
+
+def test_webhook_connector_options_are_application_independent_and_ingress_only():
+    container = _container()
+    timestamp = "2026-07-26T00:00:00+00:00"
+    rows = [
+        (
+            "connector-webhook-ingress",
+            "grafana_alert",
+            "Grafana 告警入口",
+            1,
+            1,
+            0,
+        ),
+        (
+            "connector-dingtalk-ingress",
+            "dingtalk_enterprise_stream",
+            "钉钉 Stream",
+            1,
+            1,
+            0,
+        ),
+        (
+            "connector-delivery-only",
+            "dingtalk_webhook_robot",
+            "钉钉投递",
+            1,
+            0,
+            1,
+        ),
+        (
+            "connector-disabled-ingress",
+            "grafana_alert",
+            "停用入口",
+            0,
+            1,
+            0,
+        ),
+    ]
+    for connector_id, connector_type, name, enabled, ingress, delivery in rows:
+        container.database.execute(
+            """
+            insert into integration_connector
+              (id, connector_type, name, base_url, enabled, metadata,
+               allow_ingress, allow_delivery, secret_ref, endpoint_ref,
+               host_allowlist, revision, created_at, updated_at, deleted)
+            values (?, ?, ?, '', ?, '{}', ?, ?, '', '', '', 1, ?, ?, 0)
+            """,
+            (
+                connector_id,
+                connector_type,
+                name,
+                enabled,
+                ingress,
+                delivery,
+                timestamp,
+                timestamp,
+            ),
+        )
+
+    assert container.managed_channel_service.webhook_connector_options() == [
+        {
+            "id": "connector-webhook-ingress",
+            "name": "Grafana 告警入口",
+            "connector_type": "grafana_alert",
+            "revision": 1,
+        }
+    ]

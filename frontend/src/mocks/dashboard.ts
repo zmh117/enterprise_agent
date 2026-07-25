@@ -1,6 +1,7 @@
 import type { LucideIcon } from "lucide-react"
 import {
   ActivityIcon,
+  CableIcon,
   LayoutDashboardIcon,
   PackageCheckIcon,
   BotIcon,
@@ -41,6 +42,12 @@ export const navigationGroups: NavigationGroup[] = [
         icon: PackageCheckIcon,
         active: true,
         href: "/applications",
+      },
+      {
+        label: "渠道与触发器",
+        icon: CableIcon,
+        active: true,
+        href: "/applications/channels",
       },
     ],
   },

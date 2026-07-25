@@ -2,18 +2,21 @@ import { z } from "zod"
 
 import {
   managedChannelSchema,
+  webhookConnectorOptionSchema,
   type DingTalkChannelInput,
   type WebhookChannelInput,
 } from "@/contexts/applications/domain/managed-channel"
 import { apiRequest } from "@/shared/api/api-client"
 
 const itemsSchema = z.object({ items: z.array(managedChannelSchema) })
+const webhookConnectorOptionsSchema = z.object({
+  items: z.array(webhookConnectorOptionSchema),
+})
 const channelSchema = z.object({ channel: managedChannelSchema })
 
 export async function listManagedChannels() {
-  return itemsSchema.parse(
-    await apiRequest("/api/admin/managed-channels")
-  ).items
+  return itemsSchema.parse(await apiRequest("/api/admin/managed-channels"))
+    .items
 }
 
 export async function listEligibleChannels(triggerType: string) {
@@ -21,6 +24,12 @@ export async function listEligibleChannels(triggerType: string) {
     await apiRequest(
       `/api/admin/managed-channels/eligible?trigger_type=${encodeURIComponent(triggerType)}`
     )
+  ).items
+}
+
+export async function listWebhookConnectorOptions() {
+  return webhookConnectorOptionsSchema.parse(
+    await apiRequest("/api/admin/managed-channels/webhook-connector-options")
   ).items
 }
 

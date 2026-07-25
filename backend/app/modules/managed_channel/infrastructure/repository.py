@@ -31,6 +31,28 @@ class ManagedChannelRepository:
         )
         return [self._connector(row) for row in rows]
 
+    def list_webhook_connector_options(self) -> list[dict[str, Any]]:
+        rows = self.database.execute(
+            """
+            select id, connector_type, name, revision
+              from integration_connector
+             where enabled = 1
+               and allow_ingress = 1
+               and deleted = 0
+               and connector_type != 'dingtalk_enterprise_stream'
+             order by name, id
+            """
+        )
+        return [
+            {
+                "id": str(row["id"]),
+                "name": str(row["name"]),
+                "connector_type": str(row["connector_type"]),
+                "revision": int(row.get("revision") or 1),
+            }
+            for row in rows
+        ]
+
     def get_connector(self, connector_id: str) -> dict[str, Any]:
         row = self.database.execute_one(
             """

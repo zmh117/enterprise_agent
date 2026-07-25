@@ -87,7 +87,7 @@
 ## 8. 业务应用渠道与触发器前端
 
 - [x] 8.1 在前端 Business Application 上下文增加 Managed Channel 与 eligible Channel API client 和类型
-- [x] 8.2 在应用详情增加“渠道与触发器”入口，复用现有布局、权限和错误处理
+- [x] 8.2 在左侧“业务应用”分组的“应用列表”下增加同级“渠道与触发器”菜单和独立 `/applications/channels` 路由；移除应用详情中的 Channel 管理 Tab
 - [x] 8.3 实现 Channel 列表，显示 provider、enabled、有效运行状态、最近消息、最近错误和 revision
 - [x] 8.4 实现钉钉应用机器人创建/编辑表单，Secret 编辑留空表示不修改，响应中不展示原值
 - [x] 8.5 实现 Webhook 配置入口并复用现有 Managed Webhook 表单/接口，不新增任意 HTTP 或其他 provider
@@ -95,13 +95,13 @@
 - [x] 8.7 将 Trigger Binding 的 Connector 自由输入改为 eligible Channel 选择器
 - [x] 8.8 根据 trigger type 过滤 Webhook、钉钉私聊和钉钉群聊可选项，并展示停用/失效旧绑定
 - [x] 8.9 保持应用草稿、校验、发布、激活的现有生命周期；Channel 选择不直接修改已发布版本
-- [x] 8.10 确认页面不出现 Agent Profile、模型、工具、并行度和其他本次排除功能
+- [x] 8.10 确认独立 Channel 页面不修改应用草稿，应用设置只选择 eligible Channel，且页面不出现 Agent Profile、模型、工具、并行度和其他本次排除功能
 
 ## 9. 前端与端到端回归
 
-- [x] 9.1 为 Channel 列表、Secret 留空、revision conflict、状态轮询和错误态编写前端测试
+- [x] 9.1 为独立路由、侧边栏顺序与单项高亮、Channel 列表、Secret 留空、revision conflict、状态轮询和错误态编写前端测试
 - [x] 9.2 为 Trigger eligible selector、provider 过滤、失效绑定和发布前服务端拒绝编写前端测试
-- [x] 9.3 运行 frontend test、lint/typecheck 和生产构建
+- [x] 9.3 完成页面迁移后重新运行 frontend test、lint/typecheck 和生产构建
 - [ ] 9.4 在浏览器验证新增钉钉机器人后无需重启 Compose 即更新为 STARTING/READY
 - [ ] 9.5 在浏览器验证停用 Channel 后不能新绑定，既有草稿显示失效且发布被服务端拒绝
 - [x] 9.6 验证本变更没有新增 Agent 配置入口、没有修改 Agent Worker 并行行为、没有新增 reply queue

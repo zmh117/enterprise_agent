@@ -10,6 +10,7 @@ import {
   deleteManagedChannel,
   listEligibleChannels,
   listManagedChannels,
+  listWebhookConnectorOptions,
   restartManagedChannel,
   setManagedChannelEnabled,
   updateDingTalkChannel,
@@ -20,6 +21,8 @@ export const managedChannelKeys = {
   list: () => [...managedChannelKeys.all, "list"] as const,
   eligible: (triggerType: string) =>
     [...managedChannelKeys.all, "eligible", triggerType] as const,
+  webhookConnectorOptions: () =>
+    [...managedChannelKeys.all, "webhook-connector-options"] as const,
 }
 
 export function useManagedChannels(enabled = true) {
@@ -37,6 +40,14 @@ export function useEligibleChannels(triggerType: string) {
     queryKey: managedChannelKeys.eligible(triggerType),
     queryFn: () => listEligibleChannels(triggerType),
     enabled: Boolean(triggerType),
+    retry: false,
+  })
+}
+
+export function useWebhookConnectorOptions() {
+  return useQuery({
+    queryKey: managedChannelKeys.webhookConnectorOptions(),
+    queryFn: listWebhookConnectorOptions,
     retry: false,
   })
 }
@@ -60,11 +71,7 @@ export function useCreateWebhookChannel() {
 export function useSetManagedChannelEnabled() {
   return useRefreshChannelsMutation(
     (input: { channelId: string; revision: number; enabled: boolean }) =>
-      setManagedChannelEnabled(
-        input.channelId,
-        input.revision,
-        input.enabled
-      )
+      setManagedChannelEnabled(input.channelId, input.revision, input.enabled)
   )
 }
 

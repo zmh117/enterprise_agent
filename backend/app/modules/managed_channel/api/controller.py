@@ -118,6 +118,20 @@ def build_managed_channel_router() -> APIRouter:
         except Exception as exc:
             raise handle_exception(exc) from exc
 
+    @router.get("/webhook-connector-options")
+    def webhook_connector_options(request: Request) -> dict[str, Any]:
+        require_action(
+            request, resource_type="channel_connector", resource_code="*", action="read"
+        )
+        try:
+            return {
+                "items": container(
+                    request
+                ).managed_channel_service.webhook_connector_options()
+            }
+        except Exception as exc:
+            raise handle_exception(exc) from exc
+
     @router.get("/{channel_id}")
     def detail(request: Request, channel_id: str) -> dict[str, Any]:
         require_action(

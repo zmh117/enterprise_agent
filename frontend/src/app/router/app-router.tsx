@@ -3,6 +3,7 @@ import { createBrowserRouter } from "react-router-dom"
 import { PlatformShell } from "@/app/shell/platform-shell"
 import { ApplicationDetailPage } from "@/contexts/applications/presentation/application-detail-page"
 import { ApplicationsPage } from "@/contexts/applications/presentation/applications-page"
+import { ManagedChannelsPage } from "@/contexts/applications/presentation/managed-channels-page"
 import {
   AgentProfilePage,
   AgentProfilesPage,
@@ -21,6 +22,10 @@ export const appRouter = createBrowserRouter([
     children: [
       { path: "/", element: <DashboardPage /> },
       { path: "/applications", element: <ApplicationsPage /> },
+      {
+        path: "/applications/channels",
+        element: <ManagedChannelsPage />,
+      },
       { path: "/applications/:code", element: <ApplicationDetailPage /> },
       {
         path: "/agent-profiles",
