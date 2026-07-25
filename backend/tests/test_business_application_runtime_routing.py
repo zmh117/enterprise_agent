@@ -42,6 +42,7 @@ SESSION_WEBHOOK = "https://oapi.dingtalk.com/robot/sendBySession"
 class RecordingRejectionNotifier:
     def __init__(self) -> None:
         self.reasons: list[str] = []
+        self.sender_user_ids: list[str] = []
 
     def notify(
         self,
@@ -49,10 +50,12 @@ class RecordingRejectionNotifier:
         conversation_id: str,
         session_webhook: str,
         session_webhook_expires: str,
+        sender_user_id: str,
         reason: str,
     ) -> bool:
         assert conversation_id
         assert session_webhook == SESSION_WEBHOOK
+        self.sender_user_ids.append(sender_user_id)
         self.reasons.append(reason)
         return True
 
@@ -686,6 +689,8 @@ def test_same_bot_group_routes_are_split_by_conversation_and_reply_to_original_s
     assert first_job.business_application_route_id != second_job.business_application_route_id
     assert first_job.reply_route["type"] == "dingtalk_stream_session_webhook"
     assert second_job.reply_route["type"] == "dingtalk_stream_session_webhook"
+    assert first_job.reply_route["target"]["at_user_ids"] == ["local-user"]
+    assert second_job.reply_route["target"]["at_user_ids"] == ["local-user"]
 
     adapter = RecordingDeliveryAdapter()
     container.result_delivery_service.adapters["dingtalk_stream_session_webhook"] = adapter
@@ -695,6 +700,26 @@ def test_same_bot_group_routes_are_split_by_conversation_and_reply_to_original_s
     container.result_delivery_service.deliver_job_result(first.job_id)
     assert len(adapter.routes) == 1
     assert adapter.routes[0].target["conversation_id"] == "group-a"
+    assert adapter.routes[0].target["at_user_ids"] == ["local-user"]
+
+
+def test_unmatched_group_route_rejection_mentions_original_sender() -> None:
+    container = _container()
+    notifier = RecordingRejectionNotifier()
+    container.dingtalk_stream_message_service.rejection_notifier = notifier
+
+    result = container.dingtalk_stream_message_service.handle_callback(
+        payload=_stream_payload(
+            message_id="unmatched-group-mention",
+            conversation_id="unmatched-group",
+            conversation_type="2",
+        ),
+        correlation_id="correlation-unmatched-group-mention",
+    )
+
+    assert result.accepted is False
+    assert result.status == "rejected"
+    assert notifier.sender_user_ids == ["local-user"]
 
 
 def test_routed_job_pins_requested_and_effective_execution_policy() -> None:
@@ -740,13 +765,9 @@ def test_routed_job_pins_requested_and_effective_execution_policy() -> None:
         "max_tool_calls": 4,
     }
     assert (
-        job.execution_policy["sources"]["business_application_publication_id"]
-        == publication["id"]
+        job.execution_policy["sources"]["business_application_publication_id"] == publication["id"]
     )
-    assert (
-        job.execution_policy["sources"]["agent_publication_id"]
-        == "agent_publication_default_v1"
-    )
+    assert job.execution_policy["sources"]["agent_publication_id"] == "agent_publication_default_v1"
 
 
 def test_missing_group_conversation_id_is_rejected_without_route_guessing() -> None:

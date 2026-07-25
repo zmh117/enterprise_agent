@@ -68,6 +68,7 @@ class DingTalkStreamRejectionNotifier(Protocol):
         conversation_id: str,
         session_webhook: str,
         session_webhook_expires: str,
+        sender_user_id: str,
         reason: str,
     ) -> bool: ...
 
@@ -280,6 +281,7 @@ class DingTalkStreamMessageService:
                 conversation_id=message.conversation_id,
                 session_webhook=message.session_webhook,
                 session_webhook_expires=message.session_webhook_expired_time,
+                sender_user_id=(message.user_id if message.conversation_type == "group" else ""),
                 reason=reason,
             )
         except Exception as exc:
@@ -466,6 +468,7 @@ class DingTalkStreamMessageService:
         delivery_payload: dict[str, Any],
     ) -> ReplyRoute:
         delivery_target = _dict_value(delivery_payload.get("target"))
+        mention_target = _reply_mention_target(message)
         if delivery_payload.get("type"):
             return ReplyRoute(
                 type=str(delivery_payload.get("type")),
@@ -477,6 +480,7 @@ class DingTalkStreamMessageService:
                     ),
                     "robot_code": message.robot_code or self.default_robot_code,
                     **delivery_target,
+                    **mention_target,
                 },
                 options=_dict_value(delivery_payload.get("options")),
             )
@@ -488,6 +492,7 @@ class DingTalkStreamMessageService:
                     "conversation_id": message.conversation_id,
                     "session_webhook": message.session_webhook,
                     "session_webhook_expired_time": message.session_webhook_expired_time,
+                    **mention_target,
                 },
                 options=_dict_value(delivery_payload.get("options")),
             )
@@ -501,6 +506,7 @@ class DingTalkStreamMessageService:
                 ),
                 "robot_code": message.robot_code or self.default_robot_code,
                 **delivery_target,
+                **mention_target,
             },
             options=_dict_value(delivery_payload.get("options")),
         )
@@ -530,6 +536,12 @@ def _first_text(payload: dict[str, Any], *keys: str) -> str:
 
 def _dict_value(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _reply_mention_target(message: DingTalkStreamIncomingMessage) -> dict[str, list[str]]:
+    if message.conversation_type != "group":
+        return {}
+    return {"at_user_ids": [message.user_id]}
 
 
 def _attachments(

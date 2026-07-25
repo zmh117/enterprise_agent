@@ -76,6 +76,7 @@ class FakeRejectionNotifier:
         conversation_id: str,
         session_webhook: str,
         session_webhook_expires: str,
+        sender_user_id: str,
         reason: str,
     ) -> bool:
         self.calls.append(
@@ -83,6 +84,7 @@ class FakeRejectionNotifier:
                 "conversation_id": conversation_id,
                 "session_webhook": session_webhook,
                 "session_webhook_expires": session_webhook_expires,
+                "sender_user_id": sender_user_id,
                 "reason": reason,
             }
         )

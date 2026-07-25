@@ -212,7 +212,11 @@ class DingTalkStreamSessionWebhookDeliveryAdapter:
             transport=self.transport,
             timeout_seconds=self.timeout_seconds,
         )
-        client.send_markdown(title=title, text=text)
+        client.send_markdown(
+            title=title,
+            text=text,
+            at_user_ids=_string_list(route.target.get("at_user_ids")),
+        )
         self.sent_messages.extend(
             {
                 "title": str(item["title"]),
@@ -233,10 +237,12 @@ class DingTalkStreamSessionRejectionNotifier:
         conversation_id: str,
         session_webhook: str,
         session_webhook_expires: str,
+        sender_user_id: str,
         reason: str,
     ) -> bool:
         if not session_webhook:
             return False
+        mention_target = {"at_user_ids": [sender_user_id]} if sender_user_id else {}
         self.adapter.send(
             connector=None,
             route=ReplyRoute(
@@ -246,6 +252,7 @@ class DingTalkStreamSessionRejectionNotifier:
                     "conversation_id": conversation_id,
                     "session_webhook": session_webhook,
                     "session_webhook_expires": session_webhook_expires,
+                    **mention_target,
                 },
             ),
             title="Agent 请求未受理",

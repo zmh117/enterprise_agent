@@ -7,8 +7,10 @@ from typing import Any
 
 from app.modules.delivery.infrastructure.adapters import (
     DingTalkEnterpriseAppDeliveryAdapter,
+    DingTalkStreamSessionWebhookDeliveryAdapter,
     DingTalkWebhookRobotDeliveryAdapter,
 )
+from app.modules.channel.domain.channel_event import ReplyRoute
 from app.modules.dingding.infrastructure.dingtalk_delivery_clients import (
     DingTalkAccessTokenClient,
     DingTalkWebhookRobotClient,
@@ -201,6 +203,30 @@ class DingTalkDeliveryTests(unittest.TestCase):
         self.assertIn("timestamp=1000", signed_url)
         self.assertIn("sign=", signed_url)
         self.assertIn("access_token=token", signed_url)
+
+    def test_stream_session_webhook_mentions_original_group_sender(self) -> None:
+        transport = FakeDingTalkTransport()
+        adapter = DingTalkStreamSessionWebhookDeliveryAdapter(transport=transport)
+
+        adapter.send(
+            connector=None,
+            route=ReplyRoute(
+                type="dingtalk_stream_session_webhook",
+                target={
+                    "conversation_id": "group-1",
+                    "session_webhook": ("https://oapi.dingtalk.com/robot/sendBySession"),
+                    "session_webhook_expired_time": "4102444800000",
+                    "at_user_ids": ["sender-staff-id"],
+                },
+            ),
+            title="Agent diagnostic report",
+            text="diagnostic result",
+        )
+
+        self.assertEqual(1, len(transport.calls))
+        payload = transport.calls[0]["payload"]
+        self.assertEqual(["sender-staff-id"], payload["at"]["atUserIds"])
+        self.assertFalse(payload["at"]["isAtAll"])
 
 
 @contextmanager

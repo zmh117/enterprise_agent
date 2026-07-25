@@ -92,6 +92,7 @@ class DingTalkStreamIngressTests(unittest.TestCase):
             "https://oapi.dingtalk.com/robot/sendBySession",
             job.reply_route["target"]["session_webhook"],
         )
+        self.assertNotIn("at_user_ids", job.reply_route["target"])
 
     def test_duplicate_stream_event_returns_existing_job_without_second_queue_message(self) -> None:
         c = routed_container()
