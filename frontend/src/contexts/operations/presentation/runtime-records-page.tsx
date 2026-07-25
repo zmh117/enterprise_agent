@@ -30,7 +30,8 @@ export function RuntimeRecordsPage() {
           </div>
           <h1 className="mt-2 text-2xl font-semibold">Agent 运行记录</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            展示 Job 固定的业务应用、Publication、Deployment 与 route 归因；历史记录不会按当前配置猜测回填。
+            展示 Job 固定的业务应用、Publication、Deployment 与 route
+            归因；历史记录不会按当前配置猜测回填。
           </p>
         </div>
         <Button
@@ -133,7 +134,10 @@ export function RuntimeJobDetailPage() {
         <FactCard
           title="固定版本"
           rows={[
-            ["业务应用", job.business_application_code || "legacy_unattributed"],
+            [
+              "业务应用",
+              job.business_application_code || "legacy_unattributed",
+            ],
             ["Application ID", job.business_application_id || "未归因"],
             [
               "Publication",
@@ -159,14 +163,8 @@ export function RuntimeJobDetailPage() {
           title="固定执行策略"
           rows={[
             ["Schema", `v${job.execution_policy.schema_version}`],
-            [
-              "请求限制",
-              policyText(job.execution_policy.requested),
-            ],
-            [
-              "实际限制",
-              policyText(job.execution_policy.effective),
-            ],
+            ["请求限制", policyText(job.execution_policy.requested)],
+            ["实际限制", policyText(job.execution_policy.effective)],
             [
               "Agent Publication",
               job.execution_policy.sources.agent_publication_id || "运行时默认",
@@ -219,9 +217,13 @@ export function ConversationDetailPage() {
   return (
     <PageFrame>
       <PageBack />
-      <h1 className="text-2xl font-semibold">会话归因</h1>
-      <p className="mt-1 font-mono text-xs text-muted-foreground">{session.id}</p>
-      <div className="mt-5 grid gap-4 xl:grid-cols-2">
+      <header className="min-w-0">
+        <h1 className="text-2xl font-semibold">会话归因</h1>
+        <p className="mt-1 font-mono text-xs break-all text-muted-foreground">
+          {session.id}
+        </p>
+      </header>
+      <div className="mt-5 grid gap-4 2xl:grid-cols-[minmax(18rem,0.72fr)_minmax(0,1.28fr)] 2xl:items-start">
         <FactCard
           title="会话策略"
           rows={[
@@ -236,18 +238,72 @@ export function ConversationDetailPage() {
             ["请求人", session.requester_id],
           ]}
         />
-        <Card className="shadow-none">
-          <CardHeader>
+        <Card className="min-w-0 overflow-hidden shadow-none">
+          <CardHeader className="flex flex-row items-center justify-between gap-3">
             <CardTitle>会话内 Job</CardTitle>
+            <Badge variant="secondary">{query.data.jobs.length} 个</Badge>
           </CardHeader>
-          <CardContent className="space-y-2">
-            {query.data.jobs.map((job) => (
-              <JobRow key={job.id} job={job} />
-            ))}
+          <CardContent className="p-0">
+            {query.data.jobs.length ? (
+              <ul className="divide-y" aria-label="会话内 Job 列表">
+                {query.data.jobs.map((job) => (
+                  <li key={job.id}>
+                    <ConversationJobRow job={job} />
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="px-5 py-10 text-center text-sm text-muted-foreground">
+                当前会话还没有 Job。
+              </p>
+            )}
           </CardContent>
         </Card>
       </div>
     </PageFrame>
+  )
+}
+
+function ConversationJobRow({ job }: { job: RuntimeJob }) {
+  const attributed = Boolean(job.business_application_id)
+  return (
+    <article className="min-w-0 px-5 py-4 text-sm">
+      <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <Link
+            to={`/operations/jobs/${encodeURIComponent(job.id)}`}
+            title={job.id}
+            className="block truncate font-mono text-xs font-medium hover:underline"
+          >
+            {job.id}
+          </Link>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {job.source_channel} · {job.agent_code} ·{" "}
+            {formatDate(job.created_at)}
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
+          <Badge variant="secondary">{job.status}</Badge>
+          <Badge variant="outline">
+            {job.business_application_runtime_status}
+          </Badge>
+        </div>
+      </div>
+      <dl className="mt-3 grid min-w-0 gap-2 border-t pt-3 text-xs sm:grid-cols-[minmax(7rem,9rem)_minmax(0,1fr)]">
+        <dt className="text-muted-foreground">业务应用</dt>
+        <dd className="min-w-0 font-medium break-all">
+          {attributed
+            ? job.business_application_code
+            : "历史兼容任务（无业务应用归因）"}
+        </dd>
+        <dt className="text-muted-foreground">Publication</dt>
+        <dd className="min-w-0 font-mono break-all text-muted-foreground">
+          {attributed
+            ? job.business_application_publication_id
+            : "legacy_unattributed"}
+        </dd>
+      </dl>
+    </article>
   )
 }
 
@@ -266,9 +322,12 @@ function FactCard({
       <CardContent>
         <dl className="space-y-3 text-sm">
           {rows.map(([label, value]) => (
-            <div key={label} className="grid gap-1 sm:grid-cols-[10rem_1fr]">
+            <div
+              key={label}
+              className="grid min-w-0 gap-1 sm:grid-cols-[minmax(7rem,9rem)_minmax(0,1fr)]"
+            >
               <dt className="text-muted-foreground">{label}</dt>
-              <dd className="break-all font-medium">{value}</dd>
+              <dd className="min-w-0 font-medium break-all">{value}</dd>
             </div>
           ))}
         </dl>

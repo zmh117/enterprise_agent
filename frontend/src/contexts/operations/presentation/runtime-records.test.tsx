@@ -14,7 +14,7 @@ function response(body: unknown) {
     new Response(JSON.stringify(body), {
       status: 200,
       headers: { "Content-Type": "application/json" },
-    }),
+    })
   )
 }
 
@@ -63,7 +63,7 @@ function job(overrides: Record<string, unknown> = {}) {
 function renderRoute(
   path: string,
   routePattern: string,
-  element: React.ReactNode,
+  element: React.ReactNode
 ) {
   return render(
     <QueryClientProvider
@@ -78,7 +78,7 @@ function renderRoute(
           <Route path={routePattern} element={element} />
         </Routes>
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   )
 }
 
@@ -97,12 +97,12 @@ describe("runtime provenance records", () => {
           }),
         ],
         page: { limit: 50, has_more: false, next_cursor: null },
-      }),
+      })
     )
     renderRoute("/operations/jobs", "/operations/jobs", <RuntimeRecordsPage />)
     expect(await screen.findByText("diagnostic-app")).toBeInTheDocument()
     expect(
-      screen.getByText("历史兼容任务（无业务应用归因）"),
+      screen.getByText("历史兼容任务（无业务应用归因）")
     ).toBeInTheDocument()
     expect(screen.getAllByText("legacy_unattributed").length).toBeGreaterThan(0)
   })
@@ -116,19 +116,19 @@ describe("runtime provenance records", () => {
         tool_calls: [],
         delivery_attempts: [],
         webhook_events: [],
-      }),
+      })
     )
     renderRoute(
       "/operations/jobs/job-1",
       "/operations/jobs/:jobId",
-      <RuntimeJobDetailPage />,
+      <RuntimeJobDetailPage />
     )
     expect(await screen.findByText("Job 运行归因")).toBeInTheDocument()
     expect(screen.getByText("publication-1")).toBeInTheDocument()
     expect(screen.getByText("deployment-1")).toBeInTheDocument()
     expect(screen.getByText("route-1")).toBeInTheDocument()
     expect(
-      screen.getByText("12 轮 · 300 秒 · 10 次工具调用"),
+      screen.getByText("12 轮 · 300 秒 · 10 次工具调用")
     ).toBeInTheDocument()
     expect(screen.getByText("agent-publication-1")).toBeInTheDocument()
   })
@@ -149,17 +149,32 @@ describe("runtime provenance records", () => {
           created_at: "2026-07-24T10:00:00+00:00",
           updated_at: "2026-07-24T10:00:00+00:00",
         },
-        jobs: [job()],
+        jobs: [
+          job(),
+          job({
+            id: "job-with-a-very-long-identifier-that-must-not-break-the-layout",
+            business_application_publication_id:
+              "business_app_publication_with_a_very_long_identifier",
+          }),
+        ],
         messages: [],
-      }),
+      })
     )
     renderRoute(
       "/operations/conversations/session-1",
       "/operations/conversations/:sessionId",
-      <ConversationDetailPage />,
+      <ConversationDetailPage />
     )
     expect(await screen.findByText("会话归因")).toBeInTheDocument()
     expect(screen.getAllByText("diagnostic-app").length).toBeGreaterThan(0)
     expect(screen.getByText("channel")).toBeInTheDocument()
+    expect(
+      screen.getByRole("list", { name: "会话内 Job 列表" })
+    ).toBeInTheDocument()
+    expect(screen.getAllByRole("listitem")).toHaveLength(2)
+    expect(screen.getByText("2 个")).toBeInTheDocument()
+    expect(
+      screen.getByText("business_app_publication_with_a_very_long_identifier")
+    ).toBeInTheDocument()
   })
 })
