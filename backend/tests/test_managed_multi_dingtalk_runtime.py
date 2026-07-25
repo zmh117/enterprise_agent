@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 from fastapi.testclient import TestClient
@@ -281,6 +282,73 @@ def test_internal_runtime_api_requires_service_auth_and_rate_limits_safe_errors(
             "message": "Runtime 请求过于频繁",
         }
         assert "runtime-test-token" not in limited.text
+
+
+def test_internal_runtime_inbox_accepts_compact_utf8_json_byte_count():
+    settings = Settings(
+        database_dsn="sqlite:///:memory:",
+        app_config_master_key="managed-channel-test-key",
+        managed_channels=ManagedChannelSettings(
+            runtime_auth_token="runtime-test-token",
+            internal_requests_per_minute=100,
+        ),
+    )
+    container = build_test_container(settings, migrate=True)
+    channel = _create(container, "ding-compact-json")
+    _RUNTIME_RATE_WINDOWS.clear()
+    normalized_event = {
+        "conversationId": "group-中文",
+        "conversationType": "2",
+        "senderStaffId": "user-1",
+        "msgId": "message-compact-json",
+        "text": {"content": "帮我查询嵌套消息"},
+    }
+    compact = json.dumps(
+        normalized_event,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode()
+    serializer_drift_bytes = len(compact) - 1
+
+    with TestClient(
+        create_app(settings, container_factory=lambda _: container)
+    ) as client:
+        headers = {"Authorization": "Bearer runtime-test-token"}
+        acquired = client.post(
+            "/api/internal/dingtalk-runtime/lease/acquire",
+            headers=headers,
+            json={"runtime_id": "runtime-one", "lease_token": ""},
+        )
+        assert acquired.status_code == 200
+        lease_token = acquired.json()["lease"]["lease_token"]
+        accepted = client.post(
+            "/api/internal/dingtalk-runtime/inbox",
+            headers=headers,
+            json={
+                "runtime_id": "runtime-one",
+                "lease_token": lease_token,
+                "connector_id": channel["id"],
+                "external_event_id": "message-compact-json",
+                "correlation_id": "correlation-compact-json",
+                "normalized_event": normalized_event,
+                "safe_summary": {"msgtype": "text", "hasText": True},
+                "payload_hash": "",
+                "request_bytes": serializer_drift_bytes,
+            },
+        )
+        assert accepted.status_code == 200
+        assert accepted.json()["created"] is True
+        stored = container.database.execute_one(
+            """
+            select request_bytes, status
+            from channel_ingress_event
+            where external_event_id = ?
+            """,
+            ("message-compact-json",),
+        )
+        assert stored is not None
+        assert int(stored["request_bytes"]) == len(compact)
+        assert stored["status"] == "ACCEPTED"
 
 
 def test_managed_channel_audit_contains_no_client_secret():

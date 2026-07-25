@@ -22,8 +22,6 @@ from app.modules.managed_channel.domain import (
     DingTalkApplicationInput,
     RuntimeConnectorState,
 )
-from app.shared.exceptions import NonRetryableExecutionError
-
 _RUNTIME_RATE_LOCK = threading.Lock()
 _RUNTIME_RATE_WINDOWS: dict[str, deque[float]] = {}
 
@@ -359,13 +357,12 @@ def build_runtime_control_router() -> APIRouter:
     def inbox(request: Request, payload: RuntimeInboxRequest) -> dict[str, Any]:
         _require_runtime_auth(request)
         try:
-            encoded = json.dumps(payload.normalized_event, ensure_ascii=False).encode()
-            if payload.request_bytes and payload.request_bytes < len(encoded):
-                raise NonRetryableExecutionError(
-                    "request_bytes is smaller than normalized payload",
-                    safe_message="渠道消息大小声明无效",
-                    error_code="validation_failed",
-                )
+            encoded = json.dumps(
+                payload.normalized_event,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode()
+            effective_request_bytes = max(payload.request_bytes, len(encoded))
             digest = payload.payload_hash or hashlib.sha256(encoded).hexdigest()
             event, created = container(request).runtime_control_service.receive(
                 payload.runtime_id,
@@ -377,7 +374,7 @@ def build_runtime_control_router() -> APIRouter:
                     normalized_event=payload.normalized_event,
                     safe_summary=payload.safe_summary,
                     payload_hash=digest,
-                    request_bytes=payload.request_bytes or len(encoded),
+                    request_bytes=effective_request_bytes,
                 ),
             )
             return {

@@ -5,7 +5,7 @@ import type {
   StreamClient,
   StreamClientFactory,
 } from "./contracts.js";
-import type { ControlApi } from "./control-api.js";
+import { ControlApiError, type ControlApi } from "./control-api.js";
 
 interface ManagedClient {
   config: DesiredConnector;
@@ -100,12 +100,25 @@ export class RuntimeManager {
           message
         );
         if (result.acknowledged) {
+          managed.errorCode = "";
+          managed.errorSummary = "";
           client.acknowledge(message.headers.messageId, {
             status: result.created ? "ACCEPTED" : "DUPLICATE",
             eventId: result.event_id,
           });
         }
-      } catch {
+      } catch (error) {
+        const failure = inboxFailure(error);
+        managed.errorCode = failure.code;
+        managed.errorSummary = failure.summary;
+        console.warn(
+          JSON.stringify({
+            event: "dingtalk_inbox_rejected",
+            connector_id: config.connector_id,
+            status: failure.status,
+            error_code: failure.code,
+          })
+        );
         // No ACK: DingTalk can redeliver. Secrets and payloads are intentionally not logged.
       }
     });
@@ -164,4 +177,27 @@ function isAuthenticationFailure(error: unknown): boolean {
     "unauthorized",
     "forbidden",
   ].some((marker) => message.includes(marker));
+}
+
+function inboxFailure(error: unknown): {
+  code: string;
+  summary: string;
+  status: number;
+} {
+  if (error instanceof ControlApiError) {
+    const suffix = error.code || `http_${error.status}`;
+    return {
+      code: `inbox_${suffix}`.slice(0, 120),
+      summary: `Control API rejected DingTalk inbox status=${error.status}`.slice(
+        0,
+        500
+      ),
+      status: error.status,
+    };
+  }
+  return {
+    code: "inbox_submit_failed",
+    summary: "DingTalk inbox submission failed",
+    status: 0,
+  };
 }

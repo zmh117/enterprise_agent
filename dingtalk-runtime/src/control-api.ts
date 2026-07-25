@@ -116,15 +116,44 @@ export class ControlApi {
     if (options.body !== undefined) init.body = JSON.stringify(options.body);
     const response = await fetch(`${this.baseUrl}${path}`, init);
     if (!response.ok) {
-      throw new ControlApiError(response.status);
+      throw new ControlApiError(
+        response.status,
+        await readSafeErrorCode(response)
+      );
     }
     return (await response.json()) as T;
   }
 }
 
 export class ControlApiError extends Error {
-  constructor(readonly status: number) {
-    super(`Control API request failed status=${status}`);
+  constructor(
+    readonly status: number,
+    readonly code = ""
+  ) {
+    super(
+      `Control API request failed status=${status}` +
+        (code ? ` code=${code}` : "")
+    );
     this.name = "ControlApiError";
+  }
+}
+
+async function readSafeErrorCode(response: Response): Promise<string> {
+  try {
+    const payload: unknown = await response.json();
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      return "";
+    }
+    const detail = (payload as Record<string, unknown>).detail;
+    if (!detail || typeof detail !== "object" || Array.isArray(detail)) {
+      return "";
+    }
+    const code = (detail as Record<string, unknown>).code;
+    if (typeof code !== "string" || !/^[a-z0-9_.-]{1,120}$/i.test(code)) {
+      return "";
+    }
+    return code;
+  } catch {
+    return "";
   }
 }

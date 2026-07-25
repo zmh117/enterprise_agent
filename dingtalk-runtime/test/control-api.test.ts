@@ -1,0 +1,80 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { ControlApi, ControlApiError } from "../src/control-api.js";
+
+test("submit reports compact UTF-8 JSON byte count", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestBody: Record<string, unknown> | undefined;
+  globalThis.fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return new Response(
+      JSON.stringify({
+        acknowledged: true,
+        created: true,
+        event_id: "event-1",
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }
+    );
+  };
+  try {
+    const api = new ControlApi({
+      baseUrl: "http://control-api.test",
+      token: "runtime-token",
+    });
+    const normalized = {
+      conversationId: "群聊-1",
+      text: { content: "查询嵌套消息" },
+    };
+    await api.submit("runtime-1", "lease-1", "connector-1", {
+      headers: { messageId: "message-1" },
+      data: JSON.stringify(normalized),
+    });
+
+    assert.equal(
+      requestBody?.request_bytes,
+      Buffer.byteLength(JSON.stringify(normalized))
+    );
+    assert.deepEqual(requestBody?.normalized_event, normalized);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("control API errors expose only a validated safe error code", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        detail: {
+          code: "validation_failed",
+          message: "sensitive server detail must not enter the runtime error",
+        },
+      }),
+      {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      }
+    );
+  try {
+    const api = new ControlApi({
+      baseUrl: "http://control-api.test",
+      token: "runtime-token",
+    });
+    await assert.rejects(
+      api.submit("runtime-1", "lease-1", "connector-1", {
+        headers: { messageId: "message-1" },
+        data: JSON.stringify({ text: { content: "private" } }),
+      }),
+      (error: unknown) =>
+        error instanceof ControlApiError &&
+        error.status === 400 &&
+        error.code === "validation_failed" &&
+        !error.message.includes("sensitive server detail")
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

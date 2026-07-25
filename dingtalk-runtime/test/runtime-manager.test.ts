@@ -5,6 +5,7 @@ import type {
   StreamClient,
   StreamEnvelope,
 } from "../src/contracts.js";
+import { ControlApiError } from "../src/control-api.js";
 import { RuntimeManager } from "../src/runtime-manager.js";
 
 class FakeClient implements StreamClient {
@@ -119,4 +120,48 @@ test("connected is not ready and reconnecting remains explicit", async () => {
   assert.equal(states.get("socket-only")?.registered, false);
   assert.equal(states.get("reconnecting")?.status, "RECONNECTING");
   assert.equal(manager.counts().registered, 0);
+});
+
+test("inbox rejection is reported without logging message content", async () => {
+  const clients: FakeClient[] = [];
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (message?: unknown) => warnings.push(String(message));
+  try {
+    const api = {
+      submit: async () => {
+        throw new ControlApiError(400, "validation_failed");
+      },
+    };
+    const manager = new RuntimeManager(
+      "runtime",
+      api as never,
+      (config) => {
+        const client = new FakeClient(config);
+        clients.push(client);
+        return client;
+      },
+      "lease"
+    );
+    await manager.reconcile({
+      revision: 1,
+      connectors: [connector("connector-a")],
+    });
+    await clients[0]?.handler?.({
+      headers: { messageId: "message-1", topic: "robot" },
+      data: JSON.stringify({ text: { content: "不得写入日志的正文" } }),
+    });
+
+    const state = manager.states()[0];
+    assert.equal(state?.error_code, "inbox_validation_failed");
+    assert.equal(
+      state?.error_summary,
+      "Control API rejected DingTalk inbox status=400"
+    );
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0] ?? "", /dingtalk_inbox_rejected/);
+    assert.doesNotMatch(warnings[0] ?? "", /不得写入日志的正文/);
+  } finally {
+    console.warn = originalWarn;
+  }
 });
