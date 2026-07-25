@@ -23,8 +23,7 @@ class ExecutionPolicyValues:
         if not isinstance(value, Mapping):
             raise _invalid(f"{field} must be an object")
         raw_values = {
-            key: value.get(key)
-            for key in ("max_turns", "timeout_seconds", "max_tool_calls")
+            key: value.get(key) for key in ("max_turns", "timeout_seconds", "max_tool_calls")
         }
         if any(type(item) is not int for item in raw_values.values()):
             raise _invalid(f"{field} is missing required strict integer fields")
@@ -98,13 +97,9 @@ class JobExecutionPolicySnapshot:
         if effective.max_turns > requested.max_turns:
             raise _invalid("effective.max_turns cannot exceed requested.max_turns")
         if effective.timeout_seconds > requested.timeout_seconds:
-            raise _invalid(
-                "effective.timeout_seconds cannot exceed requested.timeout_seconds"
-            )
+            raise _invalid("effective.timeout_seconds cannot exceed requested.timeout_seconds")
         if effective.max_tool_calls != requested.max_tool_calls:
-            raise _invalid(
-                "effective.max_tool_calls must equal requested.max_tool_calls"
-            )
+            raise _invalid("effective.max_tool_calls must equal requested.max_tool_calls")
         return cls(
             requested=requested,
             effective=effective,
@@ -163,9 +158,7 @@ class EffectiveExecutionPolicyResolver:
         else:
             requested = agent_values
             effective = agent_values
-            source_kind = (
-                "agent_publication" if _mapping(agent_snapshot) else "runtime_default"
-            )
+            source_kind = "agent_publication" if _mapping(agent_snapshot) else "runtime_default"
         normalized_sources = {
             "source_kind": source_kind,
             **{
@@ -219,9 +212,7 @@ def _validate_sources(source_kind: str, sources: Mapping[str, str]) -> None:
     }[source_kind]
     missing = [key for key in required if not str(sources.get(key) or "")]
     if missing:
-        raise _invalid(
-            "execution policy sources are missing: " + ", ".join(missing)
-        )
+        raise _invalid("execution policy sources are missing: " + ", ".join(missing))
 
 
 def _invalid(message: str) -> NonRetryableExecutionError:

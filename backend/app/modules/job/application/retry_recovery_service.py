@@ -33,10 +33,7 @@ class RetryRecoveryService:
     ) -> dict[str, Any]:
         now = datetime.now(UTC)
         lock_stale_before = (
-            now
-            - timedelta(
-                seconds=max(self.queue_settings.consumer_heartbeat_seconds * 2, 300)
-            )
+            now - timedelta(seconds=max(self.queue_settings.consumer_heartbeat_seconds * 2, 300))
         ).isoformat()
         legacy = self.repository.list_stranded_retry_jobs(
             job_ids, lock_stale_before=lock_stale_before

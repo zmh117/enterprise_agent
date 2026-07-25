@@ -77,6 +77,7 @@ class AgentJob:
     execution_policy: dict[str, Any] | None = None
     execution_policy_tool_call_count: int = 0
     execution_policy_exhausted: bool = False
+    model_runtime_provenance: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

@@ -118,6 +118,7 @@ COPY backend/app/modules/job/application /app/backend/app/modules/job/applicatio
 COPY backend/app/modules/job/domain /app/backend/app/modules/job/domain
 COPY backend/app/modules/job/infrastructure /app/backend/app/modules/job/infrastructure
 COPY backend/app/modules/message_bus /app/backend/app/modules/message_bus
+COPY backend/app/modules/model_connection /app/backend/app/modules/model_connection
 COPY backend/app/modules/permission /app/backend/app/modules/permission
 COPY backend/app/modules/platform_config /app/backend/app/modules/platform_config
 COPY backend/app/modules/workflow /app/backend/app/modules/workflow

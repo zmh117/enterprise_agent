@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 
 import pytest
@@ -9,7 +10,11 @@ from app.modules.job.application.create_agent_job_service import (
     CreateAgentJobCommand,
 )
 from app.shared.config import IdentitySettings, Settings
-from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError, ToolPolicyError
+from app.shared.exceptions import (
+    NonRetryableExecutionError,
+    RetryableExecutionError,
+    ToolPolicyError,
+)
 from backend.tests.helpers import test_settings as base_test_settings
 
 
@@ -146,14 +151,40 @@ def test_publication_is_immutable_jobs_are_pinned_and_retry_keeps_original_versi
     old_job = create_job(c, "old-publication")
     assert old_job.agent_publication_id == original["id"]
 
+    connection = c.model_connection_service.get("default-deepseek-anthropic")
+    c.model_connection_service.dns_resolver = lambda *args, **kwargs: [
+        (2, 1, 6, "", ("1.1.1.1", 443))
+    ]
+    connection_revision = c.model_connection_service.save_revision(
+        actor_id=ADMIN_ID,
+        code="default-deepseek-anthropic",
+        expected_revision=connection["revision"],
+        config={
+            "protocol": "anthropic_compatible",
+            "base_url": "https://api.deepseek.com/anthropic",
+            "model": "claude-sonnet-4-20250514",
+            "default_opus_model": "claude-sonnet-4-20250514",
+            "default_sonnet_model": "claude-sonnet-4-20250514",
+            "default_haiku_model": "claude-sonnet-4-20250514",
+            "subagent_model": "claude-sonnet-4-20250514",
+            "effort_level": "max",
+        },
+        api_key=hashlib.sha256(b"runtime-generated-publication-test-value").hexdigest(),
+    )
+    publishable_config = config(
+        instructions="Investigate using assigned evidence and report uncertainty.",
+        tools=["get_er_context"],
+    )
+    publishable_config["model_policy"] = {
+        "runtime": "claude_agent_sdk",
+        "model": "claude-sonnet-4-20250514",
+        "model_connection_revision_id": connection_revision["id"],
+    }
     revision = service.save_draft(
         actor_id=ADMIN_ID,
         agent_code=AGENT_CODE,
         expected_revision=1,
-        config=config(
-            instructions="Investigate using assigned evidence and report uncertainty.",
-            tools=["get_er_context"],
-        ),
+        config=publishable_config,
     )
     with pytest.raises(NonRetryableExecutionError) as stale:
         service.save_draft(

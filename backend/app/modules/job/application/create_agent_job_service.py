@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 import hashlib
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from app.modules.agent_config.application import AgentConfigService
 from app.modules.audit.application.audit_service import AuditService
@@ -175,6 +176,10 @@ class CreateAgentJobService:
         agent_revision = 0
         agent_config_hash = ""
         agent_snapshot: dict[str, Any] = {}
+        model_runtime_provenance: dict[str, Any] = {
+            "legacy": True,
+            "runtime": "claude_agent_sdk",
+        }
         if self.published_agent_runtime_enabled or command.fixed_agent_publication_id:
             if self.agent_config_service is None:
                 raise NonRetryableExecutionError(
@@ -219,6 +224,28 @@ class CreateAgentJobService:
             agent_revision = int(publication["revision"])
             agent_config_hash = str(publication["config_hash"])
             agent_snapshot = dict(publication.get("snapshot") or {})
+            model_connection = agent_snapshot.get("model_connection") or {}
+            model_config = model_connection.get("config") or {}
+            model_runtime_provenance = (
+                {
+                    "legacy": False,
+                    "runtime": "claude_agent_sdk",
+                    "connection_id": str(model_connection.get("id") or ""),
+                    "connection_code": str(model_connection.get("code") or ""),
+                    "connection_revision_id": str(model_connection.get("revision_id") or ""),
+                    "connection_revision": int(model_connection.get("revision") or 0),
+                    "config_hash": str(model_connection.get("config_hash") or ""),
+                    "provider_host": _provider_host(str(model_config.get("base_url") or "")),
+                    "model": str(model_config.get("model") or ""),
+                    "effort_level": str(model_config.get("effort_level") or ""),
+                }
+                if model_connection
+                else {
+                    "legacy": True,
+                    "runtime": "claude_agent_sdk",
+                    "model": str((agent_snapshot.get("model_policy") or {}).get("model") or ""),
+                }
+            )
             if command.source_connector_id and not self.agent_config_service.connector_allowed(
                 publication_id=agent_publication_id,
                 direction="ingress",
@@ -250,9 +277,7 @@ class CreateAgentJobService:
                 "business_application_publication_id": (
                     command.business_application_publication_id
                 ),
-                "business_application_config_hash": (
-                    command.business_application_config_hash
-                ),
+                "business_application_config_hash": (command.business_application_config_hash),
                 "agent_publication_id": agent_publication_id,
                 "agent_revision": agent_revision,
                 "agent_config_hash": agent_config_hash,
@@ -343,6 +368,7 @@ class CreateAgentJobService:
                 business_application_runtime_status=(command.business_application_runtime_status),
                 business_application_route_decision=(command.business_application_route_decision),
                 execution_policy=execution_policy.to_dict(),
+                model_runtime_provenance=model_runtime_provenance,
             )
             message_id = self.repository.add_message(
                 session_id=session.id,
@@ -386,6 +412,7 @@ class CreateAgentJobService:
                     "agent_publication_id": agent_publication_id,
                     "agent_revision": agent_revision,
                     "agent_config_hash": agent_config_hash,
+                    "model_runtime_provenance": model_runtime_provenance,
                     "webhook_event_id": command.webhook_event_id,
                     "webhook_trigger_id": command.webhook_trigger_id,
                     "webhook_trigger_publication_id": command.webhook_trigger_publication_id,
@@ -514,3 +541,10 @@ def _session_key(
         ]
     )
     return "session-key:" + hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _provider_host(base_url: str) -> str:
+    try:
+        return (urlsplit(base_url).hostname or "invalid").lower()[:255]
+    except ValueError:
+        return "invalid"

@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.shared.exceptions import ExecutionPolicyExceeded
+from app.modules.model_connection.domain import ModelRuntimeBinding
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,7 @@ class AgentExecutionContext:
     max_tool_calls: int = 30
     publication_id: str = ""
     config_hash: str = ""
+    model_runtime_binding: ModelRuntimeBinding | None = None
 
 
 @dataclass(frozen=True)

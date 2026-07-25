@@ -3,6 +3,7 @@ import {
   ActivityIcon,
   LayoutDashboardIcon,
   PackageCheckIcon,
+  BotIcon,
   UsersIcon,
 } from "lucide-react"
 
@@ -28,7 +29,9 @@ export type NavigationGroup = {
 export const navigationGroups: NavigationGroup[] = [
   {
     label: "工作台",
-    items: [{ label: "总览", icon: LayoutDashboardIcon, active: true, href: "/" }],
+    items: [
+      { label: "总览", icon: LayoutDashboardIcon, active: true, href: "/" },
+    ],
   },
   {
     label: "业务应用",
@@ -38,6 +41,17 @@ export const navigationGroups: NavigationGroup[] = [
         icon: PackageCheckIcon,
         active: true,
         href: "/applications",
+      },
+    ],
+  },
+  {
+    label: "Agent 配置",
+    items: [
+      {
+        label: "Agent Profile",
+        icon: BotIcon,
+        active: true,
+        href: "/agent-profiles",
       },
     ],
   },

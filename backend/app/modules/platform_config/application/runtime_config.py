@@ -46,7 +46,9 @@ class RuntimeConfigDefinitionSpec:
 RUNTIME_CONFIG_DEFINITIONS: tuple[RuntimeConfigDefinitionSpec, ...] = (
     RuntimeConfigDefinitionSpec("DATABASE_DSN", "string", "", bootstrap_only=True),
     RuntimeConfigDefinitionSpec("RABBITMQ_URL", "string", "", bootstrap_only=True),
-    RuntimeConfigDefinitionSpec("APP_CONFIG_MASTER_KEY", "secret_ref", "", sensitive=True, bootstrap_only=True),
+    RuntimeConfigDefinitionSpec(
+        "APP_CONFIG_MASTER_KEY", "secret_ref", "", sensitive=True, bootstrap_only=True
+    ),
     RuntimeConfigDefinitionSpec("APP_ENV", "string", "local", bootstrap_only=True),
     RuntimeConfigDefinitionSpec("APP_STARTUP_MIGRATE", "bool", True, bootstrap_only=True),
     RuntimeConfigDefinitionSpec("SEED_LOCAL_CONFIG", "bool", False, bootstrap_only=True),
@@ -148,47 +150,212 @@ RUNTIME_CONFIG_DEFINITIONS: tuple[RuntimeConfigDefinitionSpec, ...] = (
         target="PERMISSION_SHADOW_MODE runtime policy",
         deprecated_version="0.3.0",
     ),
-    RuntimeConfigDefinitionSpec("INTERNAL_API_BASE_URL", "url", "http://internal-api-platform.local", service_names=("api-server", "agent-worker")),
-    RuntimeConfigDefinitionSpec("INTERNAL_API_AUTH_TOKEN", "secret_ref", "", sensitive=True, service_names=("api-server", "agent-worker")),
-    RuntimeConfigDefinitionSpec("INTERNAL_API_TIMEOUT_SECONDS", "int", 10, service_names=("api-server", "agent-worker", "internal-api-platform")),
-    RuntimeConfigDefinitionSpec("INTERNAL_API_MAX_RESPONSE_CHARS", "int", 4000, service_names=("api-server", "agent-worker")),
-    RuntimeConfigDefinitionSpec("INTERNAL_PLATFORM_MAX_ROWS", "int", 100, service_names=("internal-api-platform",)),
-    RuntimeConfigDefinitionSpec("ANTHROPIC_BASE_URL", "url", "", service_names=("api-server", "agent-worker")),
-    RuntimeConfigDefinitionSpec("ANTHROPIC_MODEL", "string", "claude-sonnet-4-20250514", service_names=("api-server", "agent-worker")),
-    RuntimeConfigDefinitionSpec("CLAUDE_MODEL", "string", "claude-sonnet-4-20250514", service_names=("api-server", "agent-worker")),
-    RuntimeConfigDefinitionSpec("ANTHROPIC_API_KEY", "secret_ref", "", sensitive=True, service_names=("api-server", "agent-worker")),
-    RuntimeConfigDefinitionSpec("ANTHROPIC_AUTH_TOKEN", "secret_ref", "", sensitive=True, service_names=("api-server", "agent-worker")),
-    RuntimeConfigDefinitionSpec("CLAUDE_CODE_EFFORT_LEVEL", "string", "max", service_names=("api-server", "agent-worker")),
-    RuntimeConfigDefinitionSpec("AGENT_MAX_TURNS", "int", 12, service_names=("agent-worker", "api-server")),
-    RuntimeConfigDefinitionSpec("AGENT_TIMEOUT_SECONDS", "int", 300, service_names=("agent-worker",)),
-    RuntimeConfigDefinitionSpec("AGENT_MAX_TOOL_CALLS", "int", 30, service_names=("agent-worker", "api-server")),
-    RuntimeConfigDefinitionSpec("MAX_TOOL_RESPONSE_CHARS", "int", 4000, service_names=("agent-worker",)),
-    RuntimeConfigDefinitionSpec("MAX_LOKI_MINUTES", "int", 60, service_names=("agent-worker", "internal-api-platform")),
-    RuntimeConfigDefinitionSpec("MAX_LOKI_LINES", "int", 500, service_names=("agent-worker", "internal-api-platform")),
-    RuntimeConfigDefinitionSpec("REDIS_SCAN_LIMIT", "int", 200, service_names=("agent-worker", "internal-api-platform")),
-    RuntimeConfigDefinitionSpec("LOKI_BASE_URL", "url", "http://host.docker.internal:3100", service_names=("local-internal-api-platform", "internal-api-platform")),
-    RuntimeConfigDefinitionSpec("LOKI_MAX_MINUTES", "int", 60, service_names=("internal-api-platform",)),
-    RuntimeConfigDefinitionSpec("LOKI_MAX_LINES", "int", 500, service_names=("internal-api-platform",)),
-    RuntimeConfigDefinitionSpec("LOKI_MAX_RESPONSE_CHARS", "int", 4000, service_names=("internal-api-platform",)),
-    RuntimeConfigDefinitionSpec("LOKI_TENANT_ID", "string", "", service_names=("internal-api-platform",)),
-    RuntimeConfigDefinitionSpec("DINGTALK_CLIENT_ID", "string", "", service_names=("api-server", "dingtalk-stream-ingress")),
-    RuntimeConfigDefinitionSpec("DINGTALK_CLIENT_SECRET", "secret_ref", "", sensitive=True, service_names=("api-server", "dingtalk-stream-ingress")),
-    RuntimeConfigDefinitionSpec("DINGTALK_STREAM_ENABLED", "bool", False, service_names=("dingtalk-stream-ingress",)),
-    RuntimeConfigDefinitionSpec("DINGTALK_STREAM_CONNECTOR_ID", "string", "connector-dingtalk-stream-default", service_names=("dingtalk-stream-ingress",)),
-    RuntimeConfigDefinitionSpec("DINGTALK_DEFAULT_DELIVERY_TYPE", "string", "dingtalk_enterprise_robot", service_names=("api-server", "dingtalk-stream-ingress")),
-    RuntimeConfigDefinitionSpec("DINGTALK_DEFAULT_DELIVERY_CONNECTOR_ID", "string", "connector-dingtalk-enterprise-default", service_names=("api-server", "dingtalk-stream-ingress")),
-    RuntimeConfigDefinitionSpec("DINGTALK_DEFAULT_SOURCE_CONNECTOR_ID", "string", "connector-dingtalk-stream-default", service_names=("api-server", "dingtalk-stream-ingress")),
-    RuntimeConfigDefinitionSpec("DINGTALK_DEFAULT_PROJECT_CODE", "string", "default", service_names=("api-server", "dingtalk-stream-ingress")),
-    RuntimeConfigDefinitionSpec("DINGTALK_DEFAULT_ENVIRONMENT", "string", "", service_names=("api-server", "dingtalk-stream-ingress")),
-    RuntimeConfigDefinitionSpec("DINGTALK_DEFAULT_BASE", "string", "", service_names=("api-server", "dingtalk-stream-ingress")),
-    RuntimeConfigDefinitionSpec("DINGTALK_DEFAULT_WORKSHOP", "string", "", service_names=("api-server", "dingtalk-stream-ingress")),
-    RuntimeConfigDefinitionSpec("DINGTALK_DEFAULT_SERVICE", "string", "", service_names=("api-server", "dingtalk-stream-ingress")),
-    RuntimeConfigDefinitionSpec("DINGTALK_DEFAULT_OPEN_CONVERSATION_ID", "string", "", service_names=("api-server", "dingtalk-stream-ingress")),
-    RuntimeConfigDefinitionSpec("DINGTALK_DEFAULT_ROBOT_CODE", "string", "", service_names=("api-server", "dingtalk-stream-ingress")),
-    RuntimeConfigDefinitionSpec("RABBITMQ_CONSUMER_HEARTBEAT_SECONDS", "int", 900, service_names=("agent-worker",)),
-    RuntimeConfigDefinitionSpec("RABBITMQ_CONSUMER_RECONNECT_SECONDS", "int", 5, service_names=("agent-worker",)),
-    RuntimeConfigDefinitionSpec("AGENT_MAX_RETRY_COUNT", "int", 3, service_names=("api-server", "agent-worker")),
-    RuntimeConfigDefinitionSpec("AGENT_RETRY_DELAY_SECONDS", "int", 30, service_names=("api-server", "agent-worker")),
+    RuntimeConfigDefinitionSpec(
+        "INTERNAL_API_BASE_URL",
+        "url",
+        "http://internal-api-platform.local",
+        service_names=("api-server", "agent-worker"),
+    ),
+    RuntimeConfigDefinitionSpec(
+        "INTERNAL_API_AUTH_TOKEN",
+        "secret_ref",
+        "",
+        sensitive=True,
+        service_names=("api-server", "agent-worker"),
+    ),
+    RuntimeConfigDefinitionSpec(
+        "INTERNAL_API_TIMEOUT_SECONDS",
+        "int",
+        10,
+        service_names=("api-server", "agent-worker", "internal-api-platform"),
+    ),
+    RuntimeConfigDefinitionSpec(
+        "INTERNAL_API_MAX_RESPONSE_CHARS", "int", 4000, service_names=("api-server", "agent-worker")
+    ),
+    RuntimeConfigDefinitionSpec(
+        "INTERNAL_PLATFORM_MAX_ROWS", "int", 100, service_names=("internal-api-platform",)
+    ),
+    RuntimeConfigDefinitionSpec(
+        "ANTHROPIC_BASE_URL", "url", "", service_names=("api-server", "agent-worker")
+    ),
+    RuntimeConfigDefinitionSpec(
+        "ANTHROPIC_MODEL",
+        "string",
+        "claude-sonnet-4-20250514",
+        service_names=("api-server", "agent-worker"),
+    ),
+    RuntimeConfigDefinitionSpec(
+        "CLAUDE_MODEL",
+        "string",
+        "claude-sonnet-4-20250514",
+        service_names=("api-server", "agent-worker"),
+    ),
+    RuntimeConfigDefinitionSpec(
+        "ANTHROPIC_API_KEY",
+        "secret_ref",
+        "",
+        sensitive=True,
+        service_names=("api-server", "agent-worker"),
+    ),
+    RuntimeConfigDefinitionSpec(
+        "ANTHROPIC_AUTH_TOKEN",
+        "secret_ref",
+        "",
+        sensitive=True,
+        service_names=("api-server", "agent-worker"),
+    ),
+    RuntimeConfigDefinitionSpec(
+        "ANTHROPIC_DEFAULT_OPUS_MODEL", "string", "", service_names=("api-server", "agent-worker")
+    ),
+    RuntimeConfigDefinitionSpec(
+        "ANTHROPIC_DEFAULT_SONNET_MODEL", "string", "", service_names=("api-server", "agent-worker")
+    ),
+    RuntimeConfigDefinitionSpec(
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL", "string", "", service_names=("api-server", "agent-worker")
+    ),
+    RuntimeConfigDefinitionSpec(
+        "CLAUDE_CODE_SUBAGENT_MODEL", "string", "", service_names=("api-server", "agent-worker")
+    ),
+    RuntimeConfigDefinitionSpec(
+        "CLAUDE_CODE_EFFORT_LEVEL", "string", "max", service_names=("api-server", "agent-worker")
+    ),
+    RuntimeConfigDefinitionSpec(
+        "MODEL_PROVIDER_HOST_ALLOWLIST",
+        "string",
+        "api.deepseek.com",
+        bootstrap_only=True,
+        service_names=("api-server", "agent-worker"),
+    ),
+    RuntimeConfigDefinitionSpec(
+        "AGENT_MAX_TURNS", "int", 12, service_names=("agent-worker", "api-server")
+    ),
+    RuntimeConfigDefinitionSpec(
+        "AGENT_TIMEOUT_SECONDS", "int", 300, service_names=("agent-worker",)
+    ),
+    RuntimeConfigDefinitionSpec(
+        "AGENT_MAX_TOOL_CALLS", "int", 30, service_names=("agent-worker", "api-server")
+    ),
+    RuntimeConfigDefinitionSpec(
+        "MAX_TOOL_RESPONSE_CHARS", "int", 4000, service_names=("agent-worker",)
+    ),
+    RuntimeConfigDefinitionSpec(
+        "MAX_LOKI_MINUTES", "int", 60, service_names=("agent-worker", "internal-api-platform")
+    ),
+    RuntimeConfigDefinitionSpec(
+        "MAX_LOKI_LINES", "int", 500, service_names=("agent-worker", "internal-api-platform")
+    ),
+    RuntimeConfigDefinitionSpec(
+        "REDIS_SCAN_LIMIT", "int", 200, service_names=("agent-worker", "internal-api-platform")
+    ),
+    RuntimeConfigDefinitionSpec(
+        "LOKI_BASE_URL",
+        "url",
+        "http://host.docker.internal:3100",
+        service_names=("local-internal-api-platform", "internal-api-platform"),
+    ),
+    RuntimeConfigDefinitionSpec(
+        "LOKI_MAX_MINUTES", "int", 60, service_names=("internal-api-platform",)
+    ),
+    RuntimeConfigDefinitionSpec(
+        "LOKI_MAX_LINES", "int", 500, service_names=("internal-api-platform",)
+    ),
+    RuntimeConfigDefinitionSpec(
+        "LOKI_MAX_RESPONSE_CHARS", "int", 4000, service_names=("internal-api-platform",)
+    ),
+    RuntimeConfigDefinitionSpec(
+        "LOKI_TENANT_ID", "string", "", service_names=("internal-api-platform",)
+    ),
+    RuntimeConfigDefinitionSpec(
+        "DINGTALK_CLIENT_ID", "string", "", service_names=("api-server", "dingtalk-stream-ingress")
+    ),
+    RuntimeConfigDefinitionSpec(
+        "DINGTALK_CLIENT_SECRET",
+        "secret_ref",
+        "",
+        sensitive=True,
+        service_names=("api-server", "dingtalk-stream-ingress"),
+    ),
+    RuntimeConfigDefinitionSpec(
+        "DINGTALK_STREAM_ENABLED", "bool", False, service_names=("dingtalk-stream-ingress",)
+    ),
+    RuntimeConfigDefinitionSpec(
+        "DINGTALK_STREAM_CONNECTOR_ID",
+        "string",
+        "connector-dingtalk-stream-default",
+        service_names=("dingtalk-stream-ingress",),
+    ),
+    RuntimeConfigDefinitionSpec(
+        "DINGTALK_DEFAULT_DELIVERY_TYPE",
+        "string",
+        "dingtalk_enterprise_robot",
+        service_names=("api-server", "dingtalk-stream-ingress"),
+    ),
+    RuntimeConfigDefinitionSpec(
+        "DINGTALK_DEFAULT_DELIVERY_CONNECTOR_ID",
+        "string",
+        "connector-dingtalk-enterprise-default",
+        service_names=("api-server", "dingtalk-stream-ingress"),
+    ),
+    RuntimeConfigDefinitionSpec(
+        "DINGTALK_DEFAULT_SOURCE_CONNECTOR_ID",
+        "string",
+        "connector-dingtalk-stream-default",
+        service_names=("api-server", "dingtalk-stream-ingress"),
+    ),
+    RuntimeConfigDefinitionSpec(
+        "DINGTALK_DEFAULT_PROJECT_CODE",
+        "string",
+        "default",
+        service_names=("api-server", "dingtalk-stream-ingress"),
+    ),
+    RuntimeConfigDefinitionSpec(
+        "DINGTALK_DEFAULT_ENVIRONMENT",
+        "string",
+        "",
+        service_names=("api-server", "dingtalk-stream-ingress"),
+    ),
+    RuntimeConfigDefinitionSpec(
+        "DINGTALK_DEFAULT_BASE",
+        "string",
+        "",
+        service_names=("api-server", "dingtalk-stream-ingress"),
+    ),
+    RuntimeConfigDefinitionSpec(
+        "DINGTALK_DEFAULT_WORKSHOP",
+        "string",
+        "",
+        service_names=("api-server", "dingtalk-stream-ingress"),
+    ),
+    RuntimeConfigDefinitionSpec(
+        "DINGTALK_DEFAULT_SERVICE",
+        "string",
+        "",
+        service_names=("api-server", "dingtalk-stream-ingress"),
+    ),
+    RuntimeConfigDefinitionSpec(
+        "DINGTALK_DEFAULT_OPEN_CONVERSATION_ID",
+        "string",
+        "",
+        service_names=("api-server", "dingtalk-stream-ingress"),
+    ),
+    RuntimeConfigDefinitionSpec(
+        "DINGTALK_DEFAULT_ROBOT_CODE",
+        "string",
+        "",
+        service_names=("api-server", "dingtalk-stream-ingress"),
+    ),
+    RuntimeConfigDefinitionSpec(
+        "RABBITMQ_CONSUMER_HEARTBEAT_SECONDS", "int", 900, service_names=("agent-worker",)
+    ),
+    RuntimeConfigDefinitionSpec(
+        "RABBITMQ_CONSUMER_RECONNECT_SECONDS", "int", 5, service_names=("agent-worker",)
+    ),
+    RuntimeConfigDefinitionSpec(
+        "AGENT_MAX_RETRY_COUNT", "int", 3, service_names=("api-server", "agent-worker")
+    ),
+    RuntimeConfigDefinitionSpec(
+        "AGENT_RETRY_DELAY_SECONDS", "int", 30, service_names=("api-server", "agent-worker")
+    ),
     RuntimeConfigDefinitionSpec(
         "FEATURE_WEBHOOK_TRIGGERS",
         "bool",
@@ -199,18 +366,49 @@ RUNTIME_CONFIG_DEFINITIONS: tuple[RuntimeConfigDefinitionSpec, ...] = (
         target="published Connector/Trigger configuration",
         deprecated_version="0.3.0",
     ),
-    RuntimeConfigDefinitionSpec("WEBHOOK_DISPATCH_QUEUE", "string", "agent.webhook.dispatch.queue", service_names=("api-server", "webhook-worker")),
-    RuntimeConfigDefinitionSpec("WEBHOOK_DISPATCH_DEAD_QUEUE", "string", "agent.webhook.dispatch.dead.queue", service_names=("api-server", "webhook-worker")),
-    RuntimeConfigDefinitionSpec("WEBHOOK_MAX_BODY_BYTES", "int", 1048576, service_names=("api-server",)),
+    RuntimeConfigDefinitionSpec(
+        "WEBHOOK_DISPATCH_QUEUE",
+        "string",
+        "agent.webhook.dispatch.queue",
+        service_names=("api-server", "webhook-worker"),
+    ),
+    RuntimeConfigDefinitionSpec(
+        "WEBHOOK_DISPATCH_DEAD_QUEUE",
+        "string",
+        "agent.webhook.dispatch.dead.queue",
+        service_names=("api-server", "webhook-worker"),
+    ),
+    RuntimeConfigDefinitionSpec(
+        "WEBHOOK_MAX_BODY_BYTES", "int", 1048576, service_names=("api-server",)
+    ),
     RuntimeConfigDefinitionSpec("WEBHOOK_MAX_JSON_DEPTH", "int", 20, service_names=("api-server",)),
-    RuntimeConfigDefinitionSpec("WEBHOOK_MAX_COLLECTION_ITEMS", "int", 2000, service_names=("api-server",)),
-    RuntimeConfigDefinitionSpec("WEBHOOK_MAX_MESSAGE_CHARS", "int", 4000, service_names=("api-server", "webhook-worker")),
-    RuntimeConfigDefinitionSpec("WEBHOOK_MAX_SUMMARY_CHARS", "int", 4000, service_names=("api-server", "webhook-worker")),
-    RuntimeConfigDefinitionSpec("WEBHOOK_HMAC_WINDOW_SECONDS", "int", 300, service_names=("api-server",)),
-    RuntimeConfigDefinitionSpec("WEBHOOK_EVENT_RETENTION_DAYS", "int", 30, service_names=("api-server", "webhook-worker")),
-    RuntimeConfigDefinitionSpec("WEBHOOK_OUTBOX_SCAN_SECONDS", "int", 5, service_names=("webhook-worker",)),
-    RuntimeConfigDefinitionSpec("WEBHOOK_OUTBOX_MAX_ATTEMPTS", "int", 8, service_names=("api-server", "webhook-worker")),
-    RuntimeConfigDefinitionSpec("WEBHOOK_OUTBOX_RETRY_BASE_SECONDS", "int", 5, service_names=("api-server", "webhook-worker")),
+    RuntimeConfigDefinitionSpec(
+        "WEBHOOK_MAX_COLLECTION_ITEMS", "int", 2000, service_names=("api-server",)
+    ),
+    RuntimeConfigDefinitionSpec(
+        "WEBHOOK_MAX_MESSAGE_CHARS", "int", 4000, service_names=("api-server", "webhook-worker")
+    ),
+    RuntimeConfigDefinitionSpec(
+        "WEBHOOK_MAX_SUMMARY_CHARS", "int", 4000, service_names=("api-server", "webhook-worker")
+    ),
+    RuntimeConfigDefinitionSpec(
+        "WEBHOOK_HMAC_WINDOW_SECONDS", "int", 300, service_names=("api-server",)
+    ),
+    RuntimeConfigDefinitionSpec(
+        "WEBHOOK_EVENT_RETENTION_DAYS", "int", 30, service_names=("api-server", "webhook-worker")
+    ),
+    RuntimeConfigDefinitionSpec(
+        "WEBHOOK_OUTBOX_SCAN_SECONDS", "int", 5, service_names=("webhook-worker",)
+    ),
+    RuntimeConfigDefinitionSpec(
+        "WEBHOOK_OUTBOX_MAX_ATTEMPTS", "int", 8, service_names=("api-server", "webhook-worker")
+    ),
+    RuntimeConfigDefinitionSpec(
+        "WEBHOOK_OUTBOX_RETRY_BASE_SECONDS",
+        "int",
+        5,
+        service_names=("api-server", "webhook-worker"),
+    ),
 )
 
 
@@ -245,22 +443,14 @@ class RuntimeConfigRegistry:
                     else (
                         "bootstrap-only"
                         if item.bootstrap_only
-                        else (
-                            "secret-management"
-                            if item.sensitive
-                            else "governed-runtime-policy"
-                        )
+                        else ("secret-management" if item.sensitive else "governed-runtime-policy")
                     )
                 ),
                 "target": item.target
                 or (
                     "bootstrap-env"
                     if item.bootstrap_only
-                    else (
-                        "secret-management"
-                        if item.sensitive
-                        else "runtime-config"
-                    )
+                    else ("secret-management" if item.sensitive else "runtime-config")
                 ),
                 "deprecated_version": item.deprecated_version,
                 "restart_required": item.restart_required or item.bootstrap_only,
@@ -308,7 +498,9 @@ class RuntimeConfigSnapshotBuilder:
                 continue
             chosen = selected.get(key)
             if chosen:
-                source = f"db:{chosen['scope_type']}:{chosen['scope_code']}:{chosen['service_name']}"
+                source = (
+                    f"db:{chosen['scope_type']}:{chosen['scope_code']}:{chosen['service_name']}"
+                )
                 if chosen.get("secret_ref"):
                     effective[key] = {
                         "value": None,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import os
 
 from app.modules.agent.application.agent_context_builder import AgentContextBuilder
 from app.modules.agent.application.conversation_context import ConversationContextService
@@ -82,8 +83,14 @@ from app.modules.message_bus.application.message_publisher import MessageConsume
 from app.modules.message_bus.infrastructure.in_memory_bus import InMemoryMessageBus
 from app.modules.message_bus.infrastructure.rabbitmq_consumer import RabbitMQConsumer
 from app.modules.message_bus.infrastructure.rabbitmq_publisher import RabbitMQPublisher
+from app.modules.model_connection import (
+    ModelConnectionRepository,
+    ModelConnectionService,
+    UnavailableModelSecretProvider,
+)
 from app.modules.permission.application.permission_service import PermissionService
 from app.modules.platform_config.application import PlatformConfigService
+from app.modules.platform_config.application.secrets import EncryptedDbSecretProvider
 from app.modules.platform_config.infrastructure import PlatformConfigRepository
 from app.shared.config import Settings
 from app.shared.database import Database, default_migrations_dir
@@ -116,6 +123,7 @@ class Container:
     auth_service: AuthService
     authorization_evaluator: AuthorizationEvaluator
     agent_config_service: AgentConfigService
+    model_connection_service: ModelConnectionService
     audit_service: AuditService
     audit_repository: AuditRepository
     permission_service: PermissionService
@@ -241,6 +249,7 @@ def _build_container(
     identity_repository = IdentityRepository(database)
     platform_config_repository = PlatformConfigRepository(database)
     agent_config_repository = AgentConfigRepository(database)
+    model_connection_repository = ModelConnectionRepository(database)
     workflow_repository = WorkflowRepository(database)
     business_application_repository = BusinessApplicationRepository(database)
     webhook_trigger_repository = WebhookTriggerRepository(database)
@@ -280,16 +289,49 @@ def _build_container(
         authorization_evaluator,
         audit_service,
     )
+    platform_config_service = PlatformConfigService(
+        platform_config_repository,
+        permission_service,
+    )
+    model_secret_provider = (
+        EncryptedDbSecretProvider(
+            platform_config_repository,
+            master_key=settings.app_config_master_key,
+        )
+        if settings.app_config_master_key
+        else UnavailableModelSecretProvider()
+    )
+    model_connection_service = ModelConnectionService(
+        model_connection_repository,
+        platform_config_repository,
+        model_secret_provider,
+        authorization_evaluator,
+        audit_service,
+        allowed_hosts=set(settings.model_provider_host_allowlist),
+    )
+    model_connection_service.ensure_default_connection(
+        config={
+            "protocol": "anthropic_compatible",
+            "base_url": settings.anthropic_base_url or "https://api.deepseek.com/anthropic",
+            "model": settings.claude_model,
+            "default_opus_model": os.getenv("ANTHROPIC_DEFAULT_OPUS_MODEL", settings.claude_model),
+            "default_sonnet_model": os.getenv(
+                "ANTHROPIC_DEFAULT_SONNET_MODEL", settings.claude_model
+            ),
+            "default_haiku_model": os.getenv(
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL", settings.claude_model
+            ),
+            "subagent_model": os.getenv("CLAUDE_CODE_SUBAGENT_MODEL", settings.claude_model),
+            "effort_level": os.getenv("CLAUDE_CODE_EFFORT_LEVEL", "max"),
+        }
+    )
     agent_config_service = AgentConfigService(
         agent_config_repository,
         authorization_evaluator,
         audit_service,
         SkillLoader(),
+        model_connection_service=model_connection_service,
         allowed_models={settings.claude_model},
-    )
-    platform_config_service = PlatformConfigService(
-        platform_config_repository,
-        permission_service,
     )
     workflow_service = WorkflowService(
         workflow_repository,
@@ -459,10 +501,13 @@ def _build_container(
             limits=settings.execution,
             api_key=settings.anthropic_api_key,
             base_url=settings.anthropic_base_url,
+            secret_resolver=model_secret_provider.resolve,
         )
         if use_real_claude
         else StubClaudeCodeAgentClient()
     )
+    if isinstance(claude_client, RealClaudeCodeAgentClient):
+        model_connection_service.tester = claude_client.test_connection
     dingtalk_conversation_adapter = DingTalkConversationDeliveryAdapter(
         fallback_callback_url=settings.dingtalk.callback_url,
         host_allowlist=settings.dingtalk.callback_host_allowlist,
@@ -553,6 +598,7 @@ def _build_container(
         auth_service=auth_service,
         authorization_evaluator=authorization_evaluator,
         agent_config_service=agent_config_service,
+        model_connection_service=model_connection_service,
         audit_service=audit_service,
         audit_repository=audit_repository,
         permission_service=permission_service,

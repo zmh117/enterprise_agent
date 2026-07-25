@@ -9,6 +9,7 @@ from app.modules.agent.infrastructure.skill_loader import SkillLoader
 from app.modules.agent_config.infrastructure import AgentConfigRepository
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.identity.application.authorization import AuthorizationEvaluator
+from app.modules.model_connection.application import ModelConnectionService
 from app.shared.exceptions import NonRetryableExecutionError
 
 
@@ -60,12 +61,14 @@ class AgentConfigService:
         authorization: AuthorizationEvaluator,
         audit_service: AuditService,
         skill_loader: SkillLoader,
+        model_connection_service: ModelConnectionService | None = None,
         allowed_models: set[str] | None = None,
     ) -> None:
         self.repository = repository
         self.authorization = authorization
         self.audit_service = audit_service
         self.skill_loader = skill_loader
+        self.model_connection_service = model_connection_service
         self.allowed_models = allowed_models or {"claude-sonnet-4-20250514"}
 
     def get(self, agent_code: str = DEFAULT_AGENT_CODE) -> dict[str, Any]:
@@ -79,18 +82,64 @@ class AgentConfigService:
             "draft": latest,
             "current_publication": current,
             "catalog": self.catalog(),
+            "management_mode": (
+                "editable" if definition["code"] == DEFAULT_AGENT_CODE else "read_only"
+            ),
+            "model_connections": (
+                self.model_connection_service.list_connections()
+                if self.model_connection_service is not None
+                else []
+            ),
         }
 
     def list_agents(self) -> list[dict[str, Any]]:
-        return [
-            {
-                **definition,
-                "management_mode": (
-                    "editable" if definition["code"] == DEFAULT_AGENT_CODE else "read_only"
-                ),
-            }
-            for definition in self.repository.list_definitions()
-        ]
+        values: list[dict[str, Any]] = []
+        for definition in self.repository.list_definitions():
+            publication = None
+            if definition.get("current_publication_id"):
+                publication = self.repository.get_publication(
+                    str(definition["current_publication_id"])
+                )
+            model_connection = (
+                (publication.get("snapshot") or {}).get("model_connection") or {}
+                if publication
+                else {}
+            )
+            model_status = "legacy_global_connection"
+            if model_connection and self.model_connection_service is not None:
+                model_status = str(
+                    self.model_connection_service.public_revision(
+                        str(model_connection.get("revision_id") or "")
+                    ).get("status")
+                    or "unavailable"
+                )
+            usage = (
+                self.model_connection_service.repository.active_application_usage(
+                    str(publication["id"])
+                )
+                if publication and self.model_connection_service is not None
+                else []
+            )
+            values.append(
+                {
+                    **definition,
+                    "management_mode": (
+                        "editable" if definition["code"] == DEFAULT_AGENT_CODE else "read_only"
+                    ),
+                    "current_publication": (
+                        {
+                            "id": publication["id"],
+                            "revision": publication["revision"],
+                            "config_hash": publication["config_hash"],
+                        }
+                        if publication
+                        else None
+                    ),
+                    "model_connection_status": model_status,
+                    "active_application_count": len(usage),
+                }
+            )
+        return values
 
     def skill_catalog(self) -> list[dict[str, Any]]:
         return self.skill_loader.catalog()
@@ -190,12 +239,45 @@ class AgentConfigService:
                 field_errors=errors,
             )
         with self.repository.database.transaction():
+            snapshot = dict(revision["config"])
+            model_policy = snapshot.get("model_policy") or {}
+            connection_revision_id = str(model_policy.get("model_connection_revision_id") or "")
+            if self.model_connection_service is not None and not connection_revision_id:
+                raise NonRetryableExecutionError(
+                    "New Agent publications require a model connection revision",
+                    safe_message="Select a ready model connection before publishing",
+                    error_code="model_connection_required",
+                    field_errors=[
+                        {
+                            "field": "model_policy.model_connection_revision_id",
+                            "message": "A ready model connection is required",
+                        }
+                    ],
+                )
+            if self.model_connection_service is not None:
+                connection_revision = self.model_connection_service.public_revision(
+                    connection_revision_id
+                )
+                if connection_revision["status"] != "ready":
+                    raise NonRetryableExecutionError(
+                        "Model connection revision is not ready",
+                        safe_message="Rotate the model credential before publishing",
+                        error_code="model_connection_rotation_required",
+                    )
+                snapshot["model_connection"] = {
+                    "id": connection_revision["connection_id"],
+                    "code": connection_revision["connection_code"],
+                    "revision_id": connection_revision["id"],
+                    "revision": connection_revision["revision"],
+                    "config_hash": connection_revision["config_hash"],
+                    "config": connection_revision["config"],
+                }
             publication = self.repository.create_publication(
                 agent_id=str(definition["id"]),
                 revision_id=revision_id,
                 revision=int(revision["revision"]),
-                snapshot=revision["config"],
-                config_hash=str(revision["config_hash"]),
+                snapshot=snapshot,
+                config_hash=_hash(snapshot),
                 actor_id=actor_id,
             )
         self.audit_service.record(
@@ -208,6 +290,19 @@ class AgentConfigService:
                 "publication_id": publication["id"],
                 "revision": publication["revision"],
                 "config_hash": publication["config_hash"],
+                "model_connection_revision_id": connection_revision_id,
+                "model_connection_config_hash": (
+                    (snapshot.get("model_connection") or {}).get("config_hash") or ""
+                ),
+                "provider_host": _provider_host(
+                    str(
+                        ((snapshot.get("model_connection") or {}).get("config") or {}).get(
+                            "base_url"
+                        )
+                        or ""
+                    )
+                ),
+                "model": str(model_policy.get("model") or ""),
             },
         )
         return publication
@@ -221,7 +316,12 @@ class AgentConfigService:
             action="publish",
         )
         definition = self.repository.get_definition(agent_code)
-        self.publication(publication_id)
+        selected = self.publication(publication_id)
+        model_connection = (selected.get("snapshot") or {}).get("model_connection") or {}
+        if model_connection and self.model_connection_service is not None:
+            self.model_connection_service.runtime_binding(
+                str(model_connection.get("revision_id") or "")
+            )
         publication = self.repository.set_current_publication(
             agent_id=str(definition["id"]), publication_id=publication_id
         )
@@ -264,7 +364,21 @@ class AgentConfigService:
 
     def publications(self, agent_code: str) -> list[dict[str, Any]]:
         definition = self.repository.get_definition(agent_code)
-        return self.repository.list_publications(str(definition["id"]))
+        values = self.repository.list_publications(str(definition["id"]))
+        for publication in values:
+            publication["active_applications"] = (
+                self.model_connection_service.repository.active_application_usage(
+                    str(publication["id"])
+                )
+                if self.model_connection_service is not None
+                else []
+            )
+            publication["model_runtime_mode"] = (
+                "pinned_connection"
+                if (publication.get("snapshot") or {}).get("model_connection")
+                else "legacy_global_connection"
+            )
+        return values
 
     def allowed_tools(self, *, publication_id: str, user_id: str, project_code: str) -> list[str]:
         del project_code
@@ -309,7 +423,11 @@ class AgentConfigService:
         for key in sorted(set(config) - ALLOWED_CONFIG_KEYS):
             errors.append({"field": key, "message": "Field is not configurable"})
         nested = {
-            "model_policy": {"model"},
+            "model_policy": {
+                "runtime",
+                "model",
+                "model_connection_revision_id",
+            },
             "execution": {"max_turns", "timeout_seconds"},
             "routing": {"project_code"},
             "channels": {"ingress", "delivery"},
@@ -341,10 +459,59 @@ class AgentConfigService:
                 break
         model_policy = config.get("model_policy") or {}
         model = str(model_policy.get("model") or "") if isinstance(model_policy, dict) else ""
-        # The catalog is the allowlist. Provider-compatible model identifiers may
-        # legitimately contain brackets or other punctuation, so a second,
-        # narrower character regex would make the catalog and validator disagree.
-        if model not in self.allowed_models:
+        connection_revision_id = (
+            str(model_policy.get("model_connection_revision_id") or "")
+            if isinstance(model_policy, dict)
+            else ""
+        )
+        runtime = (
+            str(model_policy.get("runtime") or "claude_agent_sdk")
+            if isinstance(model_policy, dict)
+            else ""
+        )
+        if runtime != "claude_agent_sdk":
+            errors.append(
+                {
+                    "field": "model_policy.runtime",
+                    "message": "Only claude_agent_sdk is supported",
+                }
+            )
+        if connection_revision_id:
+            if self.model_connection_service is None:
+                errors.append(
+                    {
+                        "field": "model_policy.model_connection_revision_id",
+                        "message": "Model connection service is unavailable",
+                    }
+                )
+            else:
+                try:
+                    connection = self.model_connection_service.public_revision(
+                        connection_revision_id
+                    )
+                except Exception:
+                    errors.append(
+                        {
+                            "field": "model_policy.model_connection_revision_id",
+                            "message": "Model connection revision does not exist",
+                        }
+                    )
+                else:
+                    if connection["status"] != "ready":
+                        errors.append(
+                            {
+                                "field": "model_policy.model_connection_revision_id",
+                                "message": "Model connection requires credential rotation",
+                            }
+                        )
+                    if model != str(connection["config"]["model"]):
+                        errors.append(
+                            {
+                                "field": "model_policy.model",
+                                "message": "Model must match the selected connection revision",
+                            }
+                        )
+        elif model not in self.allowed_models:
             errors.append({"field": "model_policy.model", "message": "Model is not registered"})
         enabled_tools = self.repository.enabled_tools()
         for tool_name in config.get("tools") or []:
@@ -406,3 +573,12 @@ def _hash(config: dict[str, Any]) -> str:
     return hashlib.sha256(
         json.dumps(config, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+
+
+def _provider_host(base_url: str) -> str:
+    from urllib.parse import urlsplit
+
+    try:
+        return (urlsplit(base_url).hostname or "")[:255]
+    except ValueError:
+        return ""

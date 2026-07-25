@@ -25,6 +25,10 @@ from app.modules.agent.domain.runtime import (
 )
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
 from app.modules.internal_tools.infrastructure.internal_api_client import ToolResult
+from app.modules.model_connection.domain import (
+    ANTHROPIC_COMPATIBLE_PROTOCOL,
+    ModelRuntimeBinding,
+)
 from app.shared.config import ExecutionSettings
 from app.shared.exceptions import (
     DiagnosticLoopExhausted,
@@ -286,6 +290,7 @@ class RealClaudeCodeAgentClient:
         api_key: str,
         base_url: str = "",
         sdk_loader: Callable[[], ClaudeSdk] | None = None,
+        secret_resolver: Callable[[str], str] | None = None,
     ) -> None:
         self.model = model
         self.tool_registry = tool_registry
@@ -293,14 +298,19 @@ class RealClaudeCodeAgentClient:
         self.api_key = api_key
         self.base_url = base_url
         self.sdk_loader = sdk_loader or load_claude_agent_sdk
+        self.secret_resolver = secret_resolver
 
     def run(self, request: AgentRunRequest) -> AgentRunResult:
-        if not self.api_key:
+        binding = request.context.model_runtime_binding or self._legacy_binding(
+            request.context.model
+        )
+        api_key = self._resolve_api_key(binding)
+        if not api_key:
             raise NonRetryableExecutionError(
                 "ANTHROPIC_API_KEY is required when FEATURE_REAL_CLAUDE=true",
                 safe_message="Claude runtime API key is not configured",
             )
-        if _looks_placeholder_api_key(self.api_key):
+        if _looks_placeholder_api_key(api_key):
             raise NonRetryableExecutionError(
                 "ANTHROPIC_API_KEY is still a placeholder value",
                 safe_message="Claude runtime API key is still a placeholder; set a real DeepSeek API key in .env",
@@ -308,14 +318,14 @@ class RealClaudeCodeAgentClient:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.run(self._run_async(request))
+            return asyncio.run(self._run_async(request, binding, api_key))
         result: AgentRunResult | None = None
         error: BaseException | None = None
 
         def runner() -> None:
             nonlocal result, error
             try:
-                result = asyncio.run(self._run_async(request))
+                result = asyncio.run(self._run_async(request, binding, api_key))
             except BaseException as exc:
                 error = exc
 
@@ -331,15 +341,18 @@ class RealClaudeCodeAgentClient:
             )
         return result
 
-    async def _run_async(self, request: AgentRunRequest) -> AgentRunResult:
+    async def _run_async(
+        self,
+        request: AgentRunRequest,
+        binding: ModelRuntimeBinding,
+        api_key: str,
+    ) -> AgentRunResult:
         sdk = self._load_sdk()
         tool_events: list[dict[str, Any]] = []
         tool_budget = ToolCallBudget(maximum=request.context.max_tool_calls)
-        internal_server = self._build_internal_server(
-            sdk, request, tool_events, tool_budget
-        )
+        internal_server = self._build_internal_server(sdk, request, tool_events, tool_budget)
         cli_stderr: list[str] = []
-        options = self._build_options(sdk, request.context, internal_server, cli_stderr)
+        options = self._build_options(sdk, request.context, internal_server, cli_stderr, binding)
         prompt = request.context.user_question
         assistant_texts: list[str] = []
         parsed_tool_events: list[dict[str, Any]] = []
@@ -352,9 +365,7 @@ class RealClaudeCodeAgentClient:
                 if error_result is not None:
                     detail, inconsistent = error_result
                     error_code = (
-                        "claude_inconsistent_result"
-                        if inconsistent
-                        else "claude_error_result"
+                        "claude_inconsistent_result" if inconsistent else "claude_error_result"
                     )
                     raise RetryableExecutionError(
                         detail,
@@ -366,7 +377,7 @@ class RealClaudeCodeAgentClient:
                         tool_events=tool_events,
                         error_code=error_code,
                         diagnostics=self._safe_runtime_diagnostics(
-                            RuntimeError(detail), cli_stderr
+                            RuntimeError(detail), cli_stderr, binding
                         ),
                     )
                 assistant_texts.extend(_extract_text_blocks(message))
@@ -376,7 +387,7 @@ class RealClaudeCodeAgentClient:
                     final_answer = result_text
 
         try:
-            with _temporary_claude_env(self.api_key, self.base_url):
+            with _temporary_claude_env(api_key, binding):
                 await asyncio.wait_for(
                     consume(),
                     timeout=request.context.timeout_seconds,
@@ -389,7 +400,7 @@ class RealClaudeCodeAgentClient:
                 error_code="runtime_timeout",
             ) from exc
         except Exception as exc:
-            self._raise_mapped_sdk_error(exc, cli_stderr, tool_events)
+            self._raise_mapped_sdk_error(exc, cli_stderr, tool_events, binding)
 
         if not final_answer:
             final_answer = "\n".join(text for text in assistant_texts if text).strip()
@@ -401,6 +412,115 @@ class RealClaudeCodeAgentClient:
         return AgentRunResult(
             final_answer=final_answer,
             tool_events=tool_events if tool_events else parsed_tool_events,
+        )
+
+    def test_connection(
+        self,
+        binding: ModelRuntimeBinding,
+        api_key: str,
+        timeout_seconds: int,
+    ) -> dict[str, Any]:
+        if _looks_placeholder_api_key(api_key):
+            raise NonRetryableExecutionError(
+                "Model connection credential is missing or placeholder",
+                safe_message="Model connection credential is not configured",
+                error_code="model_connection_credential_unavailable",
+            )
+
+        async def probe() -> dict[str, Any]:
+            sdk = self._load_sdk()
+            stderr: list[str] = []
+            options = sdk.options(
+                model=binding.model,
+                system_prompt=(
+                    "You are performing an administrator-requested connection test. Return only OK."
+                ),
+                mcp_servers={},
+                allowed_tools=[],
+                permission_mode="dontAsk",
+                max_turns=1,
+                stderr=lambda line: _append_cli_stderr(
+                    stderr, line, self.limits.max_tool_response_chars
+                ),
+            )
+            received = False
+
+            async def consume() -> None:
+                nonlocal received
+                async for message in sdk.query(prompt="Reply OK.", options=options):
+                    error_result = _result_error_details(message)
+                    if error_result is not None:
+                        raise RetryableExecutionError(
+                            error_result[0],
+                            safe_message="Model provider rejected the connection test",
+                            error_code="model_connection_provider_rejected",
+                        )
+                    if _extract_result_text(message) or _extract_text_blocks(message):
+                        received = True
+
+            try:
+                with _temporary_claude_env(api_key, binding):
+                    await asyncio.wait_for(consume(), timeout=timeout_seconds)
+            except asyncio.TimeoutError as exc:
+                raise RetryableExecutionError(
+                    "Model connection test timed out",
+                    safe_message="Model connection test timed out",
+                    error_code="model_connection_test_timeout",
+                ) from exc
+            except Exception as exc:
+                self._raise_mapped_sdk_error(exc, stderr, [], binding)
+            if not received:
+                raise RetryableExecutionError(
+                    "Model connection test returned no content",
+                    safe_message="Model connection test returned no content",
+                    error_code="model_connection_empty_result",
+                )
+            return {"detail": "Connection succeeded"}
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(probe())
+        result: dict[str, Any] | None = None
+        error: BaseException | None = None
+
+        def runner() -> None:
+            nonlocal result, error
+            try:
+                result = asyncio.run(probe())
+            except BaseException as exc:
+                error = exc
+
+        thread = threading.Thread(target=runner, name="model-connection-test")
+        thread.start()
+        thread.join()
+        if error is not None:
+            raise error
+        return result or {"detail": "Connection succeeded"}
+
+    def _resolve_api_key(self, binding: ModelRuntimeBinding) -> str:
+        if binding.legacy:
+            return self.api_key
+        if self.secret_resolver is None:
+            raise NonRetryableExecutionError(
+                "Model connection secret resolver is unavailable",
+                safe_message="Model runtime credential resolver is unavailable",
+                error_code="model_connection_credential_unavailable",
+            )
+        return self.secret_resolver(binding.secret_ref)
+
+    def _legacy_binding(self, context_model: str) -> ModelRuntimeBinding:
+        model = context_model or self.model
+        return ModelRuntimeBinding(
+            protocol=ANTHROPIC_COMPATIBLE_PROTOCOL,
+            base_url=self.base_url,
+            model=model,
+            default_opus_model=os.getenv("ANTHROPIC_DEFAULT_OPUS_MODEL", model) or model,
+            default_sonnet_model=(os.getenv("ANTHROPIC_DEFAULT_SONNET_MODEL", model) or model),
+            default_haiku_model=os.getenv("ANTHROPIC_DEFAULT_HAIKU_MODEL", model) or model,
+            subagent_model=os.getenv("CLAUDE_CODE_SUBAGENT_MODEL", model) or model,
+            effort_level=os.getenv("CLAUDE_CODE_EFFORT_LEVEL", "max") or "max",
+            legacy=True,
         )
 
     def _load_sdk(self) -> ClaudeSdk:
@@ -502,9 +622,10 @@ class RealClaudeCodeAgentClient:
         context: AgentExecutionContext,
         server: Any,
         cli_stderr: list[str],
+        binding: ModelRuntimeBinding,
     ) -> Any:
         return sdk.options(
-            model=context.model or self.model,
+            model=binding.model,
             system_prompt=_build_system_prompt(context),
             mcp_servers={"internal": server},
             allowed_tools=["mcp__internal__*"],
@@ -522,6 +643,7 @@ class RealClaudeCodeAgentClient:
         exc: Exception,
         cli_stderr: list[str],
         tool_events: list[dict[str, Any]] | None = None,
+        binding: ModelRuntimeBinding | None = None,
     ) -> None:
         tool_events = tool_events or []
         if isinstance(exc, (RetryableExecutionError, NonRetryableExecutionError)):
@@ -535,7 +657,7 @@ class RealClaudeCodeAgentClient:
             ) from exc
         name = exc.__class__.__name__
         message = _sdk_error_message(exc, cli_stderr)
-        diagnostics = self._safe_runtime_diagnostics(exc, cli_stderr)
+        diagnostics = self._safe_runtime_diagnostics(exc, cli_stderr, binding)
         if _looks_inconsistent_result(message):
             raise RetryableExecutionError(
                 message,
@@ -589,7 +711,10 @@ class RealClaudeCodeAgentClient:
         ) from exc
 
     def _safe_runtime_diagnostics(
-        self, exc: Exception, cli_stderr: list[str]
+        self,
+        exc: Exception,
+        cli_stderr: list[str],
+        binding: ModelRuntimeBinding | None = None,
     ) -> dict[str, object]:
         subtype = getattr(exc, "subtype", None)
         errors = getattr(exc, "errors", None)
@@ -597,8 +722,8 @@ class RealClaudeCodeAgentClient:
             "exception_class": exc.__class__.__name__[:120],
             "sdk_version": _package_version(),
             "cli_version": _claude_cli_version(),
-            "model_policy_ref": self.model[:120],
-            "provider_host": _provider_host(self.base_url),
+            "model_policy_ref": (binding.model if binding else self.model)[:120],
+            "provider_host": _provider_host(binding.base_url if binding else self.base_url),
             "subtype": _bounded_safe_diagnostic(subtype),
             "errors": _bounded_safe_diagnostic(errors),
             "stderr": _bounded_safe_diagnostic("\n".join(cli_stderr)),
@@ -816,9 +941,7 @@ def _looks_transient(message: str) -> bool:
 
 def _looks_inconsistent_result(message: str) -> bool:
     lower = message.lower()
-    return "error result: success" in lower or (
-        "is_error=true" in lower and "success" in lower
-    )
+    return "error result: success" in lower or ("is_error=true" in lower and "success" in lower)
 
 
 def _looks_invalid_model(message: str) -> bool:
@@ -969,21 +1092,35 @@ def _looks_placeholder_api_key(value: str) -> bool:
     )
 
 
+_CLAUDE_ENV_LOCK = threading.RLock()
+
+
 @contextmanager
-def _temporary_claude_env(api_key: str, base_url: str) -> Iterator[None]:
-    previous_key = os.environ.get("ANTHROPIC_API_KEY")
-    previous_auth_token = os.environ.get("ANTHROPIC_AUTH_TOKEN")
-    previous_base_url = os.environ.get("ANTHROPIC_BASE_URL")
-    os.environ["ANTHROPIC_API_KEY"] = api_key
-    os.environ["ANTHROPIC_AUTH_TOKEN"] = api_key
-    if base_url:
-        os.environ["ANTHROPIC_BASE_URL"] = base_url
-    try:
-        yield
-    finally:
-        _restore_env("ANTHROPIC_API_KEY", previous_key)
-        _restore_env("ANTHROPIC_AUTH_TOKEN", previous_auth_token)
-        _restore_env("ANTHROPIC_BASE_URL", previous_base_url)
+def _temporary_claude_env(api_key: str, binding: ModelRuntimeBinding) -> Iterator[None]:
+    values = {
+        "ANTHROPIC_API_KEY": api_key,
+        "ANTHROPIC_AUTH_TOKEN": api_key,
+        "ANTHROPIC_BASE_URL": binding.base_url,
+        "ANTHROPIC_MODEL": binding.model,
+        "CLAUDE_MODEL": binding.model,
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": binding.default_opus_model,
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": binding.default_sonnet_model,
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": binding.default_haiku_model,
+        "CLAUDE_CODE_SUBAGENT_MODEL": binding.subagent_model,
+        "CLAUDE_CODE_EFFORT_LEVEL": binding.effort_level,
+    }
+    with _CLAUDE_ENV_LOCK:
+        previous = {name: os.environ.get(name) for name in values}
+        for name, value in values.items():
+            if value:
+                os.environ[name] = value
+            else:
+                os.environ.pop(name, None)
+        try:
+            yield
+        finally:
+            for name, value in previous.items():
+                _restore_env(name, value)
 
 
 def _restore_env(name: str, value: str | None) -> None:

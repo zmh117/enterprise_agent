@@ -69,9 +69,7 @@ export function PlatformNavigation() {
                           item.active ? item.label : `${item.label}，规划中`
                         }
                         className="disabled:pointer-events-auto disabled:cursor-not-allowed disabled:opacity-75"
-                        render={
-                          item.href ? <Link to={item.href} /> : undefined
-                        }
+                        render={item.href ? <Link to={item.href} /> : undefined}
                       >
                         <Icon aria-hidden="true" />
                         <span>{item.label}</span>
@@ -104,7 +102,7 @@ export function PlatformNavigation() {
             MVP 已接线
           </div>
           <p className="mt-1.5 leading-5">
-            当前仅开放业务应用、用户与外部身份
+            当前开放业务应用、Agent Profile、用户与外部身份
           </p>
         </div>
       </SidebarFooter>

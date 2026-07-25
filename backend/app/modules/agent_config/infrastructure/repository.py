@@ -14,22 +14,16 @@ class AgentConfigRepository:
 
     def list_definitions(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
         where = "" if include_disabled else "where status = 'enabled'"
-        return self.database.execute(
-            f"select * from agent_definition {where} order by code"
-        )
+        return self.database.execute(f"select * from agent_definition {where} order by code")
 
     def get_definition(self, code: str) -> dict[str, Any]:
-        row = self.database.execute_one(
-            "select * from agent_definition where code = ?", (code,)
-        )
+        row = self.database.execute_one("select * from agent_definition where code = ?", (code,))
         if not row:
             raise NotFound("Agent not found", safe_message="Agent not found")
         return row
 
     def get_definition_by_id(self, agent_id: str) -> dict[str, Any]:
-        row = self.database.execute_one(
-            "select * from agent_definition where id = ?", (agent_id,)
-        )
+        row = self.database.execute_one("select * from agent_definition where id = ?", (agent_id,))
         if not row:
             raise NotFound("Agent not found", safe_message="Agent not found")
         return row
@@ -45,9 +39,7 @@ class AgentConfigRepository:
         return self._revision(row) if row else None
 
     def get_revision(self, revision_id: str) -> dict[str, Any]:
-        row = self.database.execute_one(
-            "select * from agent_revision where id = ?", (revision_id,)
-        )
+        row = self.database.execute_one("select * from agent_revision where id = ?", (revision_id,))
         if not row:
             raise NotFound("Agent revision not found", safe_message="Agent revision not found")
         return self._revision(row)
@@ -204,7 +196,9 @@ class AgentConfigRepository:
             "select * from agent_publication where id = ?", (publication_id,)
         )
         if not row:
-            raise NotFound("Agent publication not found", safe_message="Agent publication not found")
+            raise NotFound(
+                "Agent publication not found", safe_message="Agent publication not found"
+            )
         return self._publication(row)
 
     def current_publication(self, agent_code: str) -> dict[str, Any]:
@@ -234,9 +228,7 @@ class AgentConfigRepository:
         )
         return [self._publication(row) for row in rows]
 
-    def set_current_publication(
-        self, *, agent_id: str, publication_id: str
-    ) -> dict[str, Any]:
+    def set_current_publication(self, *, agent_id: str, publication_id: str) -> dict[str, Any]:
         publication = self.get_publication(publication_id)
         if str(publication["agent_id"]) != agent_id:
             raise NonRetryableExecutionError(

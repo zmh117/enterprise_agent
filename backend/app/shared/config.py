@@ -190,6 +190,7 @@ class Settings:
     claude_model: str = "claude-sonnet-4-20250514"
     anthropic_api_key: str = ""
     anthropic_base_url: str = ""
+    model_provider_host_allowlist: tuple[str, ...] = ("api.deepseek.com",)
     environment: str = "local"
     feature_real_claude: bool = False
     feature_real_internal_tools: bool = False
@@ -256,6 +257,9 @@ def load_settings() -> Settings:
         ),
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", os.getenv("ANTHROPIC_AUTH_TOKEN", "")),
         anthropic_base_url=os.getenv("ANTHROPIC_BASE_URL", ""),
+        model_provider_host_allowlist=_csv_tuple(
+            os.getenv("MODEL_PROVIDER_HOST_ALLOWLIST", "api.deepseek.com")
+        ),
         environment=environment,
         feature_real_claude=features.real_claude_enabled,
         feature_real_internal_tools=features.real_internal_tools_enabled,
@@ -324,20 +328,14 @@ def load_settings() -> Settings:
         queue=QueueSettings(
             job_queue=os.getenv("AGENT_JOB_QUEUE", "agent.job.queue"),
             retry_queue=os.getenv("AGENT_RETRY_QUEUE", "agent.job.retry.delay.v1.queue"),
-            legacy_retry_queue=os.getenv(
-                "AGENT_LEGACY_RETRY_QUEUE", "agent.job.retry.queue"
-            ),
+            legacy_retry_queue=os.getenv("AGENT_LEGACY_RETRY_QUEUE", "agent.job.retry.queue"),
             dead_queue=os.getenv("AGENT_DEAD_QUEUE", "agent.job.dead.queue"),
             attachment_queue=os.getenv("ATTACHMENT_QUEUE", "agent.attachment.queue"),
             attachment_retry_queue=os.getenv(
                 "ATTACHMENT_RETRY_QUEUE", "agent.attachment.retry.queue"
             ),
-            attachment_dead_queue=os.getenv(
-                "ATTACHMENT_DEAD_QUEUE", "agent.attachment.dead.queue"
-            ),
-            webhook_queue=os.getenv(
-                "WEBHOOK_DISPATCH_QUEUE", "agent.webhook.dispatch.queue"
-            ),
+            attachment_dead_queue=os.getenv("ATTACHMENT_DEAD_QUEUE", "agent.attachment.dead.queue"),
+            webhook_queue=os.getenv("WEBHOOK_DISPATCH_QUEUE", "agent.webhook.dispatch.queue"),
             webhook_dead_queue=os.getenv(
                 "WEBHOOK_DISPATCH_DEAD_QUEUE", "agent.webhook.dispatch.dead.queue"
             ),
@@ -388,15 +386,11 @@ def load_settings() -> Settings:
             max_extract_chars=int(os.getenv("ATTACHMENT_MAX_EXTRACT_CHARS", "50000")),
             max_image_pixels=int(os.getenv("ATTACHMENT_MAX_IMAGE_PIXELS", "25000000")),
             max_spreadsheet_rows=int(os.getenv("ATTACHMENT_MAX_SPREADSHEET_ROWS", "2000")),
-            max_spreadsheet_columns=int(
-                os.getenv("ATTACHMENT_MAX_SPREADSHEET_COLUMNS", "100")
-            ),
+            max_spreadsheet_columns=int(os.getenv("ATTACHMENT_MAX_SPREADSHEET_COLUMNS", "100")),
             max_slides=int(os.getenv("ATTACHMENT_MAX_SLIDES", "300")),
             timeout_seconds=int(os.getenv("ATTACHMENT_TIMEOUT_SECONDS", "60")),
             retention_days=int(os.getenv("ATTACHMENT_RETENTION_DAYS", "180")),
-            credential_ttl_seconds=int(
-                os.getenv("ATTACHMENT_CREDENTIAL_TTL_SECONDS", "900")
-            ),
+            credential_ttl_seconds=int(os.getenv("ATTACHMENT_CREDENTIAL_TTL_SECONDS", "900")),
         ),
         object_storage=ObjectStorageSettings(
             endpoint_url=os.getenv("S3_ENDPOINT_URL", "http://minio:9000"),
@@ -409,25 +403,17 @@ def load_settings() -> Settings:
         identity=IdentitySettings(
             enabled=features.unified_identity_enabled,
             web_admin_enabled=features.web_admin_enabled,
-            published_agent_runtime_enabled=(
-                features.published_agent_runtime_enabled
-            ),
+            published_agent_runtime_enabled=(features.published_agent_runtime_enabled),
             test_identity_headers_enabled=features.test_identity_headers_enabled,
             permission_shadow_mode=features.permission_shadow_mode,
-            session_cookie_name=os.getenv(
-                "WEB_SESSION_COOKIE_NAME", "enterprise_agent_session"
-            ),
+            session_cookie_name=os.getenv("WEB_SESSION_COOKIE_NAME", "enterprise_agent_session"),
             csrf_cookie_name=os.getenv("WEB_CSRF_COOKIE_NAME", "enterprise_agent_csrf"),
             session_idle_seconds=int(os.getenv("WEB_SESSION_IDLE_SECONDS", "28800")),
-            session_absolute_seconds=int(
-                os.getenv("WEB_SESSION_ABSOLUTE_SECONDS", "604800")
-            ),
+            session_absolute_seconds=int(os.getenv("WEB_SESSION_ABSOLUTE_SECONDS", "604800")),
             cookie_secure=_env_bool("WEB_COOKIE_SECURE", True),
             allowed_origins=_csv_tuple(os.getenv("WEB_ALLOWED_ORIGINS", "")),
             dingtalk_tenant_code=os.getenv("DINGTALK_TENANT_CODE", "default"),
-            default_agent_code=os.getenv(
-                "DEFAULT_AGENT_CODE", "default-diagnostic-agent"
-            ),
+            default_agent_code=os.getenv("DEFAULT_AGENT_CODE", "default-diagnostic-agent"),
         ),
         ones_identity=OnesIdentitySettings(
             instance_code=os.getenv("ONES_IDENTITY_INSTANCE_CODE", "default"),
@@ -435,12 +421,8 @@ def load_settings() -> Settings:
             base_url=os.getenv("ONES_IDENTITY_BASE_URL", ""),
             allowed_hosts=_csv_tuple(os.getenv("ONES_IDENTITY_ALLOWED_HOSTS", "")),
             timeout_seconds=int(os.getenv("ONES_IDENTITY_TIMEOUT_SECONDS", "5")),
-            max_response_bytes=int(
-                os.getenv("ONES_IDENTITY_MAX_RESPONSE_BYTES", str(64 * 1024))
-            ),
-            allow_insecure_local=_env_bool(
-                "ONES_IDENTITY_ALLOW_INSECURE_LOCAL", False
-            ),
+            max_response_bytes=int(os.getenv("ONES_IDENTITY_MAX_RESPONSE_BYTES", str(64 * 1024))),
+            allow_insecure_local=_env_bool("ONES_IDENTITY_ALLOW_INSECURE_LOCAL", False),
         ),
         webhooks=WebhookSettings(
             enabled=features.webhook_ingress_compatibility_enabled,
@@ -495,9 +477,7 @@ def synchronize_feature_configuration(settings: Settings) -> Settings:
         real_claude=settings.feature_real_claude,
         real_internal_tools=settings.feature_real_internal_tools,
         unified_identity=settings.identity.enabled,
-        business_application_control_plane=(
-            settings.feature_business_application_control_plane
-        ),
+        business_application_control_plane=(settings.feature_business_application_control_plane),
         test_identity_headers=settings.identity.test_identity_headers_enabled,
         permission_shadow_mode=settings.identity.permission_shadow_mode,
         webhook_ingress=settings.webhooks.enabled,

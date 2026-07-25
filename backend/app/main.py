@@ -189,6 +189,7 @@ def create_app(
     from app.modules.business_application.api import build_business_application_router
     from app.modules.admin.api import build_admin_router
     from app.modules.agent_config.api import build_agent_config_router
+    from app.modules.model_connection.api import build_model_connection_router
     from app.modules.dingding.api.dingding_webhook_controller import build_dingding_router
     from app.modules.identity.api import build_auth_router, build_identity_admin_router
     from app.modules.job.api.agent_job_debug_controller import build_agent_job_debug_router
@@ -217,6 +218,7 @@ def create_app(
         app.include_router(build_business_application_router())
         app.include_router(build_admin_router())
         app.include_router(build_agent_config_router())
+        app.include_router(build_model_connection_router())
         app.include_router(build_auth_router())
         app.include_router(build_identity_admin_router())
         app.include_router(build_webhook_admin_router())

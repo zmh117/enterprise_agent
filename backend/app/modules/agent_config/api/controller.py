@@ -20,7 +20,9 @@ class StrictRequest(BaseModel):
 
 
 class ModelPolicyRequest(StrictRequest):
+    runtime: str = Field(default="claude_agent_sdk", pattern="^claude_agent_sdk$")
     model: str = Field(min_length=1, max_length=200)
+    model_connection_revision_id: str = Field(default="", max_length=200)
 
 
 class ExecutionRequest(StrictRequest):
@@ -71,9 +73,34 @@ def build_agent_config_router() -> APIRouter:
 
     @router.get("/{agent_code}")
     def get_agent(request: Request, agent_code: str) -> dict[str, Any]:
-        require_action(request, resource_type="agent", resource_code=agent_code, action="edit")
+        principal = require_action(
+            request,
+            resource_type="agent",
+            resource_code=agent_code,
+            action="edit",
+        )
         try:
-            return {"agent": container(request).agent_config_service.get(agent_code)}
+            agent = container(request).agent_config_service.get(agent_code)
+            authorization = container(request).authorization_evaluator
+            agent["permissions"] = {
+                "can_edit_profile": True,
+                "can_publish": authorization.decide(
+                    user_id=principal.user_id,
+                    resource_type="agent",
+                    resource_code=agent_code,
+                    action="publish",
+                ).allowed,
+                "can_manage_credential": authorization.decide(
+                    user_id=principal.user_id,
+                    resource_type="secret",
+                    resource_code="*",
+                    action="manage",
+                ).allowed,
+            }
+            agent["permissions"]["can_test_connection"] = agent["permissions"][
+                "can_manage_credential"
+            ]
+            return {"agent": agent}
         except Exception as exc:
             raise handle_exception(exc) from exc
 

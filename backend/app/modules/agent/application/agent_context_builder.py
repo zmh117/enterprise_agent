@@ -9,6 +9,7 @@ from app.modules.agent.infrastructure.skill_loader import SkillLoader
 from app.modules.agent_config.application import AgentConfigService
 from app.modules.job.domain.agent_job import AgentJob
 from app.modules.job.domain.execution_policy import JobExecutionPolicySnapshot
+from app.shared.exceptions import NonRetryableExecutionError
 
 
 class AgentContextBuilder:
@@ -31,6 +32,35 @@ class AgentContextBuilder:
         snapshot = publication.get("snapshot") if publication else {}
         if not isinstance(snapshot, dict):
             snapshot = {}
+        model_policy = snapshot.get("model_policy") or {}
+        model_runtime_binding = None
+        model_connection = snapshot.get("model_connection") or {}
+        if model_connection:
+            if self.agent_config_service is None:
+                raise NonRetryableExecutionError(
+                    "Model connection runtime service is missing",
+                    safe_message="Model connection runtime is unavailable",
+                    error_code="model_connection_runtime_unavailable",
+                )
+            service = self.agent_config_service.model_connection_service
+            if service is None:
+                raise NonRetryableExecutionError(
+                    "Model connection runtime service is missing",
+                    safe_message="Model connection runtime is unavailable",
+                    error_code="model_connection_runtime_unavailable",
+                )
+            revision_id = str(model_connection.get("revision_id") or "")
+            model_runtime_binding = service.runtime_binding(revision_id)
+            if model_runtime_binding.config_hash != str(
+                model_connection.get("config_hash") or ""
+            ) or model_runtime_binding.connection_revision != int(
+                model_connection.get("revision") or 0
+            ):
+                raise NonRetryableExecutionError(
+                    "Pinned model connection does not match the Agent publication",
+                    safe_message="Pinned model connection integrity check failed",
+                    error_code="model_connection_integrity_failed",
+                )
         allowed_tools = self._allowed_tools(job, publication)
         er_context = self._context_tool(
             job, allowed_tools, "get_er_context", {"query": job.user_message}
@@ -45,11 +75,9 @@ class AgentContextBuilder:
         schema_context = self._schema_context(job, er_summary, allowed_tools)
         conversation = self.conversation_service.build(job) if self.conversation_service else None
         skill_names = tuple(str(item) for item in snapshot.get("skills") or [])
-        model_policy = snapshot.get("model_policy") or {}
         return AgentExecutionContext(
             system_role=str(
-                snapshot.get("business_role")
-                or "Enterprise internal read-only diagnostic Agent"
+                snapshot.get("business_role") or "Enterprise internal read-only diagnostic Agent"
             ),
             safety_rules=[
                 "Use only registered internal read-only tools.",
@@ -84,9 +112,7 @@ class AgentContextBuilder:
                 ),
             ],
             skills=(
-                self.skill_loader.load(skill_names)
-                if publication
-                else self.skill_loader.load()
+                self.skill_loader.load(skill_names) if publication else self.skill_loader.load()
             ),
             retrieved_context={
                 "er": er_summary,
@@ -118,6 +144,7 @@ class AgentContextBuilder:
             max_tool_calls=execution_policy.effective.max_tool_calls,
             publication_id=str(publication.get("id") or "") if publication else "",
             config_hash=str(publication.get("config_hash") or "") if publication else "",
+            model_runtime_binding=model_runtime_binding,
         )
 
     def _publication(self, job: AgentJob) -> dict[str, Any]:
@@ -133,9 +160,7 @@ class AgentContextBuilder:
             raise RuntimeError("Pinned Agent publication does not match the job snapshot reference")
         return publication
 
-    def _allowed_tools(
-        self, job: AgentJob, publication: dict[str, Any]
-    ) -> list[str]:
+    def _allowed_tools(self, job: AgentJob, publication: dict[str, Any]) -> list[str]:
         if not publication:
             return self.tool_registry.available_tools()
         assert self.agent_config_service is not None
@@ -199,6 +224,7 @@ class AgentContextBuilder:
                 "error": getattr(exc, "safe_message", str(exc)),
                 "diagnostic_action": "stop_and_report_insufficient_evidence",
             }
+
 
 def _resolve_single_target(message: str, addressing: Any) -> dict[str, str] | None:
     if not isinstance(addressing, dict):

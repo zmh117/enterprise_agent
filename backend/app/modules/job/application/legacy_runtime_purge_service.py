@@ -89,9 +89,7 @@ class LegacyRuntimePurgeService:
         objects = self._object_references()
         return {
             "runtime_rows": self._counts(RUNTIME_TABLE_DELETE_ORDER),
-            "preserved_control_plane_rows": self._counts(
-                PRESERVED_CONTROL_PLANE_TABLES
-            ),
+            "preserved_control_plane_rows": self._counts(PRESERVED_CONTROL_PLANE_TABLES),
             "preserved_unattributed_audit_rows": self._unattributed_audit_count(),
             "object_count": len(objects),
             "object_summaries": [item.summary for item in objects],
@@ -118,8 +116,7 @@ class LegacyRuntimePurgeService:
                 raise NonRetryableExecutionError(
                     f"Could not delete runtime object {item.summary}",
                     safe_message=(
-                        "旧运行数据对象清理失败，数据库尚未删除，"
-                        f"对象摘要：{item.summary}"
+                        f"旧运行数据对象清理失败，数据库尚未删除，对象摘要：{item.summary}"
                     ),
                     error_code="legacy_runtime_object_delete_failed",
                 ) from exc
@@ -136,10 +133,7 @@ class LegacyRuntimePurgeService:
             summaries = ", ".join(item.summary for item in remaining[:10])
             raise NonRetryableExecutionError(
                 f"Runtime objects remain after deletion: {summaries}",
-                safe_message=(
-                    "旧运行数据对象删除后仍可见，数据库尚未删除，"
-                    f"对象摘要：{summaries}"
-                ),
+                safe_message=(f"旧运行数据对象删除后仍可见，数据库尚未删除，对象摘要：{summaries}"),
                 error_code="legacy_runtime_object_verification_failed",
             )
 
@@ -161,9 +155,7 @@ class LegacyRuntimePurgeService:
 
         after = {
             "runtime_rows": self._counts(RUNTIME_TABLE_DELETE_ORDER),
-            "preserved_control_plane_rows": self._counts(
-                PRESERVED_CONTROL_PLANE_TABLES
-            ),
+            "preserved_control_plane_rows": self._counts(PRESERVED_CONTROL_PLANE_TABLES),
             "preserved_unattributed_audit_rows": self._unattributed_audit_count(),
         }
         return {

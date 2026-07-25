@@ -3,6 +3,10 @@ import { createBrowserRouter } from "react-router-dom"
 import { PlatformShell } from "@/app/shell/platform-shell"
 import { ApplicationDetailPage } from "@/contexts/applications/presentation/application-detail-page"
 import { ApplicationsPage } from "@/contexts/applications/presentation/applications-page"
+import {
+  AgentProfilePage,
+  AgentProfilesPage,
+} from "@/contexts/agent-profiles/presentation/agent-profile-page"
 import { DashboardPage } from "@/contexts/overview/presentation/dashboard-page"
 import {
   ConversationDetailPage,
@@ -18,6 +22,14 @@ export const appRouter = createBrowserRouter([
       { path: "/", element: <DashboardPage /> },
       { path: "/applications", element: <ApplicationsPage /> },
       { path: "/applications/:code", element: <ApplicationDetailPage /> },
+      {
+        path: "/agent-profiles",
+        element: <AgentProfilesPage />,
+      },
+      {
+        path: "/agent-profiles/:code",
+        element: <AgentProfilePage />,
+      },
       { path: "/operations/jobs", element: <RuntimeRecordsPage /> },
       { path: "/operations/jobs/:jobId", element: <RuntimeJobDetailPage /> },
       {

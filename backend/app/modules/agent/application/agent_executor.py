@@ -138,8 +138,7 @@ class AgentExecutor:
                 job.id,
                 tool_call_count=len(tool_events),
                 exhausted=(
-                    getattr(exc, "error_code", "")
-                    == "execution_policy_max_tool_calls_exhausted"
+                    getattr(exc, "error_code", "") == "execution_policy_max_tool_calls_exhausted"
                 ),
             )
             self.repository.add_step(
