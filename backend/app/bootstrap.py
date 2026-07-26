@@ -68,6 +68,10 @@ from app.modules.identity.application import (
     IdentityService,
 )
 from app.modules.identity.infrastructure import IdentityRepository
+from app.modules.identity_discovery import (
+    DingTalkIdentityDiscoveryRepository,
+    DingTalkIdentityDiscoveryService,
+)
 from app.modules.identity.infrastructure.ones_identity_verifier import (
     UrllibOnesIdentityVerifier,
 )
@@ -130,6 +134,8 @@ class Container:
     agent_repository: AgentRepository
     identity_repository: IdentityRepository
     identity_service: IdentityService
+    identity_discovery_repository: DingTalkIdentityDiscoveryRepository
+    identity_discovery_service: DingTalkIdentityDiscoveryService
     identity_admin_service: IdentityAdminService
     auth_service: AuthService
     authorization_evaluator: AuthorizationEvaluator
@@ -271,6 +277,7 @@ def _build_container(
     webhook_trigger_repository = WebhookTriggerRepository(database)
     webhook_event_repository = WebhookEventRepository(database)
     managed_channel_repository = ManagedChannelRepository(database)
+    identity_discovery_repository = DingTalkIdentityDiscoveryRepository(database)
     audit_service = AuditService(
         audit_repository,
         max_chars=settings.execution.max_tool_response_chars,
@@ -298,6 +305,13 @@ def _build_container(
         ones_verifier=ones_identity_verifier,
         ones_instance_code=settings.ones_identity.instance_code,
         ones_display_name=settings.ones_identity.display_name,
+    )
+    identity_discovery_service = DingTalkIdentityDiscoveryService(
+        store=identity_discovery_repository,
+        database=database,
+        identity_repository=identity_repository,
+        identity_service=identity_service,
+        audit_service=audit_service,
     )
     authorization_evaluator = AuthorizationEvaluator(identity_repository, audit_service)
     permission_service = PermissionService(
@@ -497,6 +511,7 @@ def _build_container(
         rejection_notifier=DingTalkStreamSessionRejectionNotifier(
             dingtalk_stream_session_webhook_adapter
         ),
+        identity_discovery_service=identity_discovery_service,
     )
     channel_credential_cipher = (
         AttachmentCredentialCipher(settings.app_config_master_key)
@@ -530,6 +545,7 @@ def _build_container(
         repository=managed_channel_repository,
         stream_service=dingtalk_stream_service,
         credential_cipher=channel_credential_cipher,
+        identity_discovery_service=identity_discovery_service,
     )
     internal_api_client: InternalApiClient = FakeInternalApiClient()
     if settings.feature_configuration.real_internal_tools_enabled and message_bus is None:
@@ -647,6 +663,8 @@ def _build_container(
         agent_repository=agent_repository,
         identity_repository=identity_repository,
         identity_service=identity_service,
+        identity_discovery_repository=identity_discovery_repository,
+        identity_discovery_service=identity_discovery_service,
         identity_admin_service=identity_admin_service,
         auth_service=auth_service,
         authorization_evaluator=authorization_evaluator,

@@ -5,6 +5,7 @@ import {
   LayoutDashboardIcon,
   PackageCheckIcon,
   BotIcon,
+  UserSearchIcon,
   UsersIcon,
 } from "lucide-react"
 
@@ -20,6 +21,7 @@ export type NavigationItem = {
   icon: LucideIcon
   active?: boolean
   href?: string
+  badge?: "dingtalk_identity_candidates"
 }
 
 export type NavigationGroup = {
@@ -63,13 +65,20 @@ export const navigationGroups: NavigationGroup[] = [
     ],
   },
   {
-    label: "系统管理",
+    label: "用户与外部身份",
     items: [
       {
-        label: "用户与外部身份",
+        label: "人员管理",
         icon: UsersIcon,
         active: true,
         href: "/users",
+      },
+      {
+        label: "未绑定钉钉用户",
+        icon: UserSearchIcon,
+        active: true,
+        href: "/users/dingtalk-discovery",
+        badge: "dingtalk_identity_candidates",
       },
     ],
   },

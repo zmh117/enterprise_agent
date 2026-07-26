@@ -17,9 +17,11 @@ import {
 } from "@/components/ui/sidebar"
 import { navigationGroups } from "@/mocks/dashboard"
 import { resolveActiveNavigationHref } from "@/app/navigation/navigation-match"
+import { useDingTalkIdentityCandidateCount } from "@/contexts/dingtalk-identity-discovery"
 
 export function PlatformNavigation() {
   const location = useLocation()
+  const candidateCount = useDingTalkIdentityCandidateCount()
   return (
     <Sidebar collapsible="offcanvas" variant="sidebar">
       <SidebarHeader className="h-16 justify-center border-b px-3">
@@ -75,6 +77,18 @@ export function PlatformNavigation() {
                       >
                         <Icon aria-hidden="true" />
                         <span>{item.label}</span>
+                        {item.badge === "dingtalk_identity_candidates" &&
+                        candidateCount.data ? (
+                          <Badge
+                            variant="secondary"
+                            className="ml-auto h-5 min-w-5 px-1.5 text-[10px]"
+                            aria-label={`${candidateCount.data} 个未绑定钉钉用户`}
+                          >
+                            {candidateCount.data > 99
+                              ? "99+"
+                              : candidateCount.data}
+                          </Badge>
+                        ) : null}
                         {!item.active ? (
                           <Badge
                             variant="outline"

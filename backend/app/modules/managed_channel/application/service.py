@@ -11,6 +11,7 @@ from app.modules.audit.application.audit_service import AuditService
 from app.modules.dingding.application.dingtalk_stream_service import (
     DingTalkStreamMessageService,
 )
+from app.modules.identity_discovery.application import DingTalkIdentityDiscoveryService
 from app.modules.message_bus.application.message_publisher import (
     ChannelEventMessage,
     MessagePublisher,
@@ -598,10 +599,12 @@ class ChannelDispatchService:
         repository: ManagedChannelRepository,
         stream_service: DingTalkStreamMessageService,
         credential_cipher: ChannelCredentialCipher,
+        identity_discovery_service: DingTalkIdentityDiscoveryService | None = None,
     ) -> None:
         self.repository = repository
         self.stream_service = stream_service
         self.credential_cipher = credential_cipher
+        self.identity_discovery_service = identity_discovery_service
 
     def handle(self, message: ChannelEventMessage) -> None:
         event = self.repository.get_event(message.channel_event_id)
@@ -619,6 +622,7 @@ class ChannelDispatchService:
                 payload=payload,
                 correlation_id=str(event["correlation_id"]),
                 connector_id=str(event["connector_id"]),
+                defer_rejection_notification=True,
             )
         except AppError as exc:
             self.repository.mark_event_rejected(
@@ -630,11 +634,23 @@ class ChannelDispatchService:
         if result.job_id:
             self.repository.attach_job(str(event["id"]), result.job_id)
         elif result.status not in {"ignored"}:
-            self.repository.mark_event_rejected(
-                str(event["id"]),
-                error_code=result.status,
-                error_summary=result.reason or result.ack_message,
-            )
+            with self.repository.database.transaction():
+                if (
+                    result.discovery_observation is not None
+                    and self.identity_discovery_service is not None
+                ):
+                    self.identity_discovery_service.observe_rejection(
+                        result.discovery_observation,
+                        source_ingress_event_id=str(event["id"]),
+                        received_at=str(event["received_at"]),
+                        rejection_code=result.error_code,
+                    )
+                self.repository.mark_event_rejected(
+                    str(event["id"]),
+                    error_code=result.error_code or result.status,
+                    error_summary=result.reason or result.ack_message,
+                )
+            self.stream_service.notify_deferred_rejection(result)
 
 
 class UnavailableChannelCredentialCipher:

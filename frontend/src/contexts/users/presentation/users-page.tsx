@@ -8,7 +8,7 @@ import {
   SearchIcon,
   UsersIcon,
 } from "lucide-react"
-import { Link } from "react-router-dom"
+import { Link, useNavigate, useSearchParams } from "react-router-dom"
 
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -34,6 +34,7 @@ import {
   useCreateUser,
   useUsers,
 } from "@/contexts/users/application/user-queries"
+import { useDingTalkIdentityCandidate } from "@/contexts/dingtalk-identity-discovery"
 import {
   Field,
   RequestError,
@@ -44,6 +45,12 @@ import { formatDate } from "@/contexts/users/presentation/format-date"
 const PAGE_SIZE = 20
 
 export function UsersPage() {
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const candidateId = searchParams.get("candidate")?.trim() ?? ""
+  const candidate = useDingTalkIdentityCandidate(candidateId)
+  const candidateSelectable =
+    !candidateId || candidate.data?.identity_state === "waiting_bind"
   const [draftSearch, setDraftSearch] = useState("")
   const [search, setSearch] = useState("")
   const [page, setPage] = useState(1)
@@ -52,7 +59,7 @@ export function UsersPage() {
     search,
     page,
     pageSize: PAGE_SIZE,
-    includeDisabled: true,
+    includeDisabled: !candidateId,
   })
 
   const submitSearch = (event: FormEvent) => {
@@ -70,11 +77,11 @@ export function UsersPage() {
             USERS & EXTERNAL IDENTITIES
           </div>
           <h1 className="mt-2 text-2xl font-semibold tracking-tight">
-            用户与外部身份
+            人员管理
           </h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-            维护内部人员，并在用户详情中绑定钉钉和 ONES 身份。身份关联用于确认主体，
-            不会自动授予角色或业务数据权限。
+            维护内部人员，并在用户详情中绑定钉钉和 ONES
+            身份。身份关联用于确认主体， 不会自动授予角色或业务数据权限。
           </p>
         </div>
         <div className="flex gap-2">
@@ -90,12 +97,58 @@ export function UsersPage() {
             />
             刷新
           </Button>
-          <Button type="button" onClick={() => setCreating(true)}>
+          <Button
+            type="button"
+            onClick={() => setCreating(true)}
+            disabled={Boolean(candidateId) && !candidateSelectable}
+          >
             <PlusIcon aria-hidden="true" />
             新建用户
           </Button>
         </div>
       </header>
+
+      {candidateId ? (
+        <Card className="border-indigo-200 bg-indigo-50/60 shadow-none">
+          <CardContent>
+            {candidate.isLoading ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
+                正在加载待绑定钉钉用户…
+              </div>
+            ) : null}
+            {candidate.isError ? (
+              <RequestError error={candidate.error} />
+            ) : null}
+            {candidate.data ? (
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="font-medium">请选择要绑定的人员</div>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    钉钉用户：
+                    {candidate.data.display_name || "未提供用户名"} · 用户 ID{" "}
+                    <span className="font-mono">
+                      {candidate.data.external_subject_id}
+                    </span>
+                  </p>
+                  {!candidateSelectable ? (
+                    <p className="mt-2 text-sm text-amber-700">
+                      该身份已有历史归属，只能前往原人员详情恢复。
+                    </p>
+                  ) : null}
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => navigate("/users/dingtalk-discovery")}
+                >
+                  取消绑定
+                </Button>
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card className="shadow-none">
         <CardContent>
@@ -172,15 +225,33 @@ export function UsersPage() {
                         {formatDate(user.updated_at)}
                       </TableCell>
                       <TableCell className="pr-4 text-right">
-                        <Link
-                          className={buttonVariants({
-                            variant: "outline",
-                            size: "sm",
-                          })}
-                          to={`/users/${encodeURIComponent(user.id)}`}
-                        >
-                          查看详情
-                        </Link>
+                        {candidateId &&
+                        (user.account_type !== "human" ||
+                          user.status !== "enabled" ||
+                          !candidateSelectable) ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled
+                          >
+                            不可绑定
+                          </Button>
+                        ) : (
+                          <Link
+                            className={buttonVariants({
+                              variant: "outline",
+                              size: "sm",
+                            })}
+                            to={
+                              candidateId
+                                ? `/users/${encodeURIComponent(user.id)}?candidate=${encodeURIComponent(candidateId)}`
+                                : `/users/${encodeURIComponent(user.id)}`
+                            }
+                          >
+                            {candidateId ? "选择并绑定" : "查看详情"}
+                          </Link>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -228,7 +299,14 @@ export function UsersPage() {
         </div>
       ) : null}
 
-      <CreateUserSheet open={creating} onOpenChange={setCreating} />
+      {creating ? (
+        <CreateUserSheet
+          open
+          onOpenChange={setCreating}
+          candidateId={candidateSelectable ? candidateId : ""}
+          candidateDisplayName={candidate.data?.display_name ?? ""}
+        />
+      ) : null}
     </div>
   )
 }
@@ -236,20 +314,30 @@ export function UsersPage() {
 function CreateUserSheet({
   open,
   onOpenChange,
+  candidateId,
+  candidateDisplayName,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
+  candidateId: string
+  candidateDisplayName: string
 }) {
+  const navigate = useNavigate()
   const mutation = useCreateUser()
   const [form, setForm] = useState({
     username: "",
-    display_name: "",
+    display_name: candidateDisplayName,
     email: "",
     password: "",
   })
 
   const reset = () =>
-    setForm({ username: "", display_name: "", email: "", password: "" })
+    setForm({
+      username: "",
+      display_name: candidateDisplayName,
+      email: "",
+      password: "",
+    })
 
   const changeOpen = (nextOpen: boolean) => {
     if (!nextOpen) {
@@ -262,7 +350,14 @@ function CreateUserSheet({
   const submit = (event: FormEvent) => {
     event.preventDefault()
     mutation.mutate(form, {
-      onSuccess: () => changeOpen(false),
+      onSuccess: (user) => {
+        if (candidateId) {
+          navigate(
+            `/users/${encodeURIComponent(user.id)}?candidate=${encodeURIComponent(candidateId)}`
+          )
+        }
+        changeOpen(false)
+      },
       onSettled: () => setForm((value) => ({ ...value, password: "" })),
     })
   }
@@ -273,7 +368,9 @@ function CreateUserSheet({
         <SheetHeader>
           <SheetTitle>新建内部用户</SheetTitle>
           <SheetDescription>
-            创建人员账号后，再进入详情绑定钉钉或 ONES 身份。
+            {candidateId
+              ? "创建人员后继续进入详情，确认并绑定当前钉钉身份。"
+              : "创建人员账号后，再进入详情绑定钉钉或 ONES 身份。"}
           </SheetDescription>
         </SheetHeader>
         <form className="space-y-4 px-4" onSubmit={submit}>

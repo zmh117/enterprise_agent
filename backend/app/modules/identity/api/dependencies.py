@@ -127,6 +127,7 @@ def handle_exception(exc: Exception) -> HTTPException:
                 "revision_conflict",
                 "identity_conflict",
                 "ones_identity_conflict",
+                "identity_restore_required",
                 "username_conflict",
                 "revision_already_published",
             }

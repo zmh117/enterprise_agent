@@ -54,12 +54,14 @@ describe("Managed channel navigation", () => {
   })
 
   it("highlights only channels on the independent channel route", () => {
-    render(
-      <MemoryRouter initialEntries={["/applications/channels"]}>
-        <SidebarProvider>
-          <PlatformNavigation />
-        </SidebarProvider>
-      </MemoryRouter>
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      response({ count: 0 })
+    )
+    renderWithQuery(
+      <SidebarProvider>
+        <PlatformNavigation />
+      </SidebarProvider>,
+      ["/applications/channels"]
     )
 
     expect(screen.getByRole("link", { name: "渠道与触发器" })).toHaveAttribute(

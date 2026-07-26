@@ -7,6 +7,8 @@ import {
   PlusIcon,
   UnlinkIcon,
 } from "lucide-react"
+import { useNavigate } from "react-router-dom"
+import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -42,17 +44,30 @@ import type {
 } from "@/contexts/external-identities/domain/external-identity"
 import type { User } from "@/contexts/users/domain/user"
 import {
+  useBindDingTalkIdentityCandidate,
+  useDingTalkIdentityCandidate,
+} from "@/contexts/dingtalk-identity-discovery/application/dingtalk-identity-candidate-queries"
+import type { DingTalkIdentityCandidate } from "@/contexts/dingtalk-identity-discovery/domain/dingtalk-identity-candidate"
+import {
   ConfirmationSheet,
   Field,
   RequestError,
 } from "@/contexts/users/presentation/user-ui"
 import { formatDate } from "@/contexts/users/presentation/format-date"
 
-export function ExternalIdentityPanel({ user }: { user: User }) {
+export function ExternalIdentityPanel({
+  user,
+  discoveryCandidateId = "",
+}: {
+  user: User
+  discoveryCandidateId?: string
+}) {
   const identities = useExternalIdentities(user.id)
   const providers = useIdentityProviders()
   const tenants = useDingTalkTenants()
+  const candidate = useDingTalkIdentityCandidate(discoveryCandidateId)
   const [binding, setBinding] = useState<"dingtalk" | "ones" | null>(null)
+  const [candidateDismissed, setCandidateDismissed] = useState(false)
   const canBind = user.account_type === "human" && user.status === "enabled"
   const dingtalkAvailable =
     providers.data?.find((item) => item.code === "dingtalk")?.available &&
@@ -100,6 +115,16 @@ export function ExternalIdentityPanel({ user }: { user: User }) {
         ) : null}
       </CardHeader>
       <CardContent>
+        {discoveryCandidateId &&
+        candidate.data?.identity_state === "restore_required" ? (
+          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm">
+            <div className="font-medium text-amber-900">恢复历史钉钉身份</div>
+            <p className="mt-1 text-amber-800">
+              此身份原属于当前人员。请先确保人员已启用，再在下方找到对应钉钉身份并点击“恢复身份”。
+            </p>
+          </div>
+        ) : null}
+        {candidate.isError ? <RequestError error={candidate.error} /> : null}
         {identities.isLoading || providers.isLoading || tenants.isLoading ? (
           <div className="flex min-h-28 items-center justify-center gap-2 text-sm text-muted-foreground">
             <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
@@ -121,6 +146,7 @@ export function ExternalIdentityPanel({ user }: { user: User }) {
                 key={identity.id}
                 identity={identity}
                 userId={user.id}
+                discoveryCandidate={candidate.data ?? null}
               />
             ))}
           </div>
@@ -132,6 +158,17 @@ export function ExternalIdentityPanel({ user }: { user: User }) {
         onOpenChange={(open) => setBinding(open ? "dingtalk" : null)}
         user={user}
         tenants={tenants.data ?? []}
+      />
+      <CandidateDingTalkBindingSheet
+        open={
+          !candidateDismissed &&
+          candidate.data?.identity_state === "waiting_bind"
+        }
+        onOpenChange={(open) => {
+          if (!open) setCandidateDismissed(true)
+        }}
+        user={user}
+        candidateId={discoveryCandidateId}
       />
       <OnesBindingSheet
         open={binding === "ones"}
@@ -146,10 +183,14 @@ export function ExternalIdentityPanel({ user }: { user: User }) {
 function IdentityCard({
   identity,
   userId,
+  discoveryCandidate,
 }: {
   identity: ExternalIdentity
   userId: string
+  discoveryCandidate: DingTalkIdentityCandidate | null
 }) {
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const updateStatus = useUpdateIdentityStatus(userId)
   const unbind = useUnbindIdentity(userId)
   const [confirmUnbind, setConfirmUnbind] = useState(false)
@@ -161,11 +202,31 @@ function IdentityCard({
   const nextStatus = identity.status === "enabled" ? "disabled" : "enabled"
 
   const changeStatus = () => {
-    updateStatus.mutate({
-      identityId: identity.id,
-      expectedRevision: identity.revision,
-      status: nextStatus,
-    })
+    updateStatus.mutate(
+      {
+        identityId: identity.id,
+        expectedRevision: identity.revision,
+        status: nextStatus,
+      },
+      {
+        onSuccess: async () => {
+          const matchesCandidate =
+            nextStatus === "enabled" &&
+            discoveryCandidate?.identity_state === "restore_required" &&
+            identity.provider === "dingtalk" &&
+            identity.tenant_code === discoveryCandidate.tenant_code &&
+            identity.external_subject_id ===
+              discoveryCandidate.external_subject_id
+          if (matchesCandidate) {
+            await queryClient.invalidateQueries({
+              queryKey: ["dingtalk-identity-candidates"],
+            })
+            toast.success("钉钉身份已恢复")
+            navigate("/users/dingtalk-discovery")
+          }
+        },
+      }
+    )
   }
 
   const remove = () => {
@@ -174,7 +235,7 @@ function IdentityCard({
         identityId: identity.id,
         expectedRevision: identity.revision,
       },
-      { onSuccess: () => setConfirmUnbind(false) },
+      { onSuccess: () => setConfirmUnbind(false) }
     )
   }
 
@@ -185,17 +246,24 @@ function IdentityCard({
           {identity.provider === "dingtalk" ? (
             <Link2Icon className="size-4 text-blue-600" aria-hidden="true" />
           ) : (
-            <KeyRoundIcon className="size-4 text-indigo-600" aria-hidden="true" />
+            <KeyRoundIcon
+              className="size-4 text-indigo-600"
+              aria-hidden="true"
+            />
           )}
         </span>
-        <Badge variant={identity.status === "enabled" ? "secondary" : "outline"}>
+        <Badge
+          variant={identity.status === "enabled" ? "secondary" : "outline"}
+        >
           {statusLabel}
         </Badge>
       </div>
       <h3 className="mt-3 font-semibold">
         {identity.provider === "dingtalk" ? "钉钉身份" : "ONES 身份"}
       </h3>
-      <p className="mt-1 text-sm">{identity.display_name || "未设置展示名称"}</p>
+      <p className="mt-1 text-sm">
+        {identity.display_name || "未设置展示名称"}
+      </p>
       <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-2">
         <IdentityField label="租户 / 实例" value={identity.tenant_code} />
         <IdentityField
@@ -207,35 +275,45 @@ function IdentityCard({
           label="连接器"
           value={identity.connector_id || "服务端 ONES 实例"}
         />
-        <IdentityField label="验证时间" value={formatDate(identity.verified_at)} />
+        <IdentityField
+          label="验证时间"
+          value={formatDate(identity.verified_at)}
+        />
         <IdentityField
           label="最近使用"
           value={formatDate(identity.last_seen_at)}
         />
         <IdentityField label="修订" value={`r${identity.revision}`} />
       </dl>
-      {identity.provider === "ones" &&
-      identity.metadata.team_uuids?.length ? (
+      {identity.provider === "ones" && identity.metadata.team_uuids?.length ? (
         <div className="mt-3 flex flex-wrap gap-1">
           {identity.metadata.team_uuids.map((team) => (
-            <Badge key={team} variant="outline" className="font-mono font-normal">
+            <Badge
+              key={team}
+              variant="outline"
+              className="font-mono font-normal"
+            >
               {team}
             </Badge>
           ))}
         </div>
       ) : null}
       <RequestError error={updateStatus.error || unbind.error} />
-      {identity.status !== "unbound" ? (
-        <div className="mt-4 flex flex-wrap gap-2">
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={updateStatus.isPending || unbind.isPending}
-            onClick={changeStatus}
-          >
-            {identity.status === "enabled" ? "停用身份" : "启用身份"}
-          </Button>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={updateStatus.isPending || unbind.isPending}
+          onClick={changeStatus}
+        >
+          {identity.status === "enabled"
+            ? "停用身份"
+            : identity.status === "unbound"
+              ? "恢复身份"
+              : "启用身份"}
+        </Button>
+        {identity.status !== "unbound" ? (
           <Button
             type="button"
             size="sm"
@@ -246,8 +324,8 @@ function IdentityCard({
             <UnlinkIcon aria-hidden="true" />
             解绑
           </Button>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
       <ConfirmationSheet
         open={confirmUnbind}
         onOpenChange={setConfirmUnbind}
@@ -259,6 +337,125 @@ function IdentityCard({
         onConfirm={remove}
       />
     </article>
+  )
+}
+
+function CandidateDingTalkBindingSheet({
+  open,
+  onOpenChange,
+  user,
+  candidateId,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  user: User
+  candidateId: string
+}) {
+  const navigate = useNavigate()
+  const candidate = useDingTalkIdentityCandidate(candidateId)
+  const mutation = useBindDingTalkIdentityCandidate(candidateId, user.id)
+
+  const changeOpen = (next: boolean) => {
+    if (!next) mutation.reset()
+    onOpenChange(next)
+  }
+  const submit = (event: FormEvent) => {
+    event.preventDefault()
+    if (!candidate.data) return
+    mutation.mutate(
+      {
+        target_user_id: user.id,
+        expected_candidate_revision: candidate.data.revision,
+        expected_user_revision: user.revision,
+      },
+      {
+        onSuccess: () => {
+          toast.success("钉钉用户已绑定")
+          navigate("/users/dingtalk-discovery")
+        },
+      }
+    )
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={changeOpen}>
+      <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
+        <SheetHeader>
+          <SheetTitle>确认绑定钉钉用户</SheetTitle>
+          <SheetDescription>
+            身份来源字段由服务端候选记录确定，不可在客户端修改。
+          </SheetDescription>
+        </SheetHeader>
+        {candidate.isLoading ? (
+          <div className="flex items-center gap-2 px-4 text-sm text-muted-foreground">
+            <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
+            正在加载候选信息…
+          </div>
+        ) : null}
+        {candidate.data ? (
+          <form className="space-y-4 px-4" onSubmit={submit}>
+            <dl className="grid gap-4 rounded-lg border bg-muted/20 p-4 text-sm">
+              <IdentityField
+                label="钉钉企业"
+                value={candidate.data.tenant_code}
+              />
+              <IdentityField
+                label="连接器"
+                value={
+                  candidate.data.latest_message?.connector_name ||
+                  candidate.data.latest_message?.connector_id ||
+                  "连接器名称不可用"
+                }
+              />
+              <IdentityField
+                label="钉钉用户 ID"
+                value={candidate.data.external_subject_id}
+                mono
+              />
+              <IdentityField
+                label="钉钉用户名"
+                value={candidate.data.display_name || "未提供钉钉用户名"}
+              />
+              <IdentityField
+                label="目标人员"
+                value={`${user.display_name}（${user.username}）`}
+              />
+            </dl>
+            <RequestError error={mutation.error} />
+            <SheetFooter className="px-0">
+              <Button
+                type="submit"
+                disabled={
+                  mutation.isPending ||
+                  user.account_type !== "human" ||
+                  user.status !== "enabled"
+                }
+              >
+                {mutation.isPending ? (
+                  <LoaderCircleIcon
+                    className="animate-spin"
+                    aria-hidden="true"
+                  />
+                ) : null}
+                确认绑定
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => changeOpen(false)}
+              >
+                取消
+              </Button>
+            </SheetFooter>
+          </form>
+        ) : null}
+        {candidate.isError ? (
+          <div className="px-4">
+            <RequestError error={candidate.error} />
+          </div>
+        ) : null}
+      </SheetContent>
+    </Sheet>
   )
 }
 
@@ -300,7 +497,7 @@ function DingTalkBindingSheet({
         connector_id: tenant.connector_id,
         display_name: displayName.trim(),
       },
-      { onSuccess: () => changeOpen(false) },
+      { onSuccess: () => changeOpen(false) }
     )
   }
 

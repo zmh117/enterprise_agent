@@ -1,11 +1,35 @@
 import { render, screen } from "@testing-library/react"
-import { describe, expect, it, vi } from "vitest"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { App } from "@/App"
 
+function renderApp() {
+  return render(
+    <QueryClientProvider
+      client={
+        new QueryClient({
+          defaultOptions: { queries: { retry: false } },
+        })
+      }
+    >
+      <App />
+    </QueryClientProvider>
+  )
+}
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
 describe("Agent 应用平台 MVP 首页", () => {
   it("只展示已接线的业务应用和用户身份入口", () => {
-    render(<App />)
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ count: 0 }), {
+        headers: { "Content-Type": "application/json" },
+      })
+    )
+    renderApp()
 
     expect(screen.getAllByText("Agent 应用平台").length).toBeGreaterThan(0)
     expect(screen.getAllByText("业务应用").length).toBeGreaterThan(0)
@@ -16,7 +40,8 @@ describe("Agent 应用平台 MVP 首页", () => {
   })
 
   it("不保留旧模板业务文案", () => {
-    const { container } = render(<App />)
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"))
+    const { container } = renderApp()
     const page = container.textContent ?? ""
 
     for (const legacyText of [
@@ -31,7 +56,7 @@ describe("Agent 应用平台 MVP 首页", () => {
     }
   })
 
-  it("加载和渲染不产生网络或流式连接", () => {
+  it("加载时只轮询候选计数且不建立流式连接", () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockRejectedValue(new Error("not expected"))
@@ -41,16 +66,20 @@ describe("Agent 应用平台 MVP 首页", () => {
     vi.stubGlobal("WebSocket", websocketSpy)
     vi.stubGlobal("EventSource", eventSourceSpy)
 
-    render(<App />)
+    renderApp()
 
-    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/admin/dingtalk-identity-candidates/count",
+      expect.any(Object)
+    )
     expect(xhrOpenSpy).not.toHaveBeenCalled()
     expect(websocketSpy).not.toHaveBeenCalled()
     expect(eventSourceSpy).not.toHaveBeenCalled()
   })
 
   it("不展示本次变更之外的规划入口", () => {
-    const { container } = render(<App />)
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"))
+    const { container } = renderApp()
     const page = container.textContent ?? ""
 
     for (const outOfScopeEntry of [
@@ -70,7 +99,8 @@ describe("Agent 应用平台 MVP 首页", () => {
   })
 
   it("不暴露底层连接配置、凭据或可执行入口", () => {
-    const { container } = render(<App />)
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"))
+    const { container } = renderApp()
     const page = container.textContent ?? ""
 
     for (const forbiddenEntry of [

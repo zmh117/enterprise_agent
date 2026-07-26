@@ -36,6 +36,7 @@ class IdentityService:
             provider=descriptor.provider,
             tenant_code=descriptor.tenant_code,
             external_subject_id=descriptor.external_subject_id,
+            include_disabled=True,
         )
         if not identity:
             self.audit_service.record(
@@ -53,6 +54,44 @@ class IdentityService:
                 "External identity is not bound",
                 safe_message="你的钉钉账号尚未获得授权，请联系管理员",
                 error_code="identity_not_bound",
+            )
+        if str(identity["status"]) != "enabled":
+            self.audit_service.record(
+                "identity.external.denied",
+                status="DENIED",
+                summary="External identity is disabled or unbound",
+                actor_id=str(identity["user_id"]),
+                payload={
+                    "external_identity_id": identity["id"],
+                    "provider": descriptor.provider,
+                    "tenant_code": descriptor.tenant_code,
+                    "connector_id": descriptor.connector_id,
+                    "reason_code": "identity_inactive",
+                },
+            )
+            raise PermissionDenied(
+                "External identity is disabled or unbound",
+                safe_message="你的钉钉账号尚未获得授权，请联系管理员",
+                error_code="identity_inactive",
+            )
+        if str(identity.get("user_status") or "") != "enabled":
+            self.audit_service.record(
+                "identity.external.denied",
+                status="DENIED",
+                summary="External identity owner is disabled",
+                actor_id=str(identity["user_id"]),
+                payload={
+                    "external_identity_id": identity["id"],
+                    "provider": descriptor.provider,
+                    "tenant_code": descriptor.tenant_code,
+                    "connector_id": descriptor.connector_id,
+                    "reason_code": "identity_user_inactive",
+                },
+            )
+            raise PermissionDenied(
+                "External identity owner is disabled",
+                safe_message="你的钉钉账号尚未获得授权，请联系管理员",
+                error_code="identity_user_inactive",
             )
         self.repository.touch_external_identity(str(identity["id"]))
         user = self.repository.get_user(str(identity["user_id"]))

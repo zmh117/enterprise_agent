@@ -17,6 +17,10 @@ from app.modules.channel.domain.channel_event import (
 )
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.identity.domain import ExternalIdentityDescriptor
+from app.modules.identity_discovery.application import (
+    DingTalkIdentityDiscoveryService,
+)
+from app.modules.identity_discovery.domain import PendingDingTalkIdentityObservation
 from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
 
 logger = logging.getLogger(__name__)
@@ -49,6 +53,10 @@ class DingTalkStreamHandleResult:
     ack_message: str
     job_id: str = ""
     reason: str = ""
+    error_code: str = ""
+    discovery_observation: PendingDingTalkIdentityObservation | None = None
+    rejection_message: DingTalkStreamIncomingMessage | None = None
+    rejection_connector_id: str = ""
 
 
 class UnsupportedDingTalkStreamEvent(ValueError):
@@ -94,6 +102,7 @@ class DingTalkStreamMessageService:
         connector_registry: ConnectorRegistry | None = None,
         default_tenant_code: str = "default",
         rejection_notifier: DingTalkStreamRejectionNotifier | None = None,
+        identity_discovery_service: DingTalkIdentityDiscoveryService | None = None,
     ) -> None:
         self.channel_ingress_service = channel_ingress_service
         self.audit_service = audit_service
@@ -112,6 +121,7 @@ class DingTalkStreamMessageService:
         self.connector_registry = connector_registry
         self.default_tenant_code = default_tenant_code
         self.rejection_notifier = rejection_notifier
+        self.identity_discovery_service = identity_discovery_service
 
     def handle_callback(
         self,
@@ -119,6 +129,7 @@ class DingTalkStreamMessageService:
         payload: dict[str, Any],
         correlation_id: str,
         connector_id: str | None = None,
+        defer_rejection_notification: bool = False,
     ) -> DingTalkStreamHandleResult:
         source_connector_id = connector_id or self.default_source_connector_id
         self.audit_service.record(
@@ -177,6 +188,7 @@ class DingTalkStreamMessageService:
                 reason=exc.reason,
             )
 
+        event: ChannelEvent | None = None
         try:
             event = self.to_channel_event(
                 message=message,
@@ -199,10 +211,26 @@ class DingTalkStreamMessageService:
                 actor_id=message.user_id,
                 payload={"connector_id": source_connector_id, "event_id": message.event_id},
             )
-            self._notify_rejection(
-                message=message,
-                reason=exc.safe_message,
-                connector_id=source_connector_id,
+            if not defer_rejection_notification:
+                self._notify_rejection(
+                    message=message,
+                    reason=exc.safe_message,
+                    connector_id=source_connector_id,
+                )
+            observation = (
+                self.identity_discovery_service.build_pending_observation(
+                    event=event,
+                    message_kind=payload.get("msgtype")
+                    or payload.get("messageType"),
+                    occurred_at=payload.get("createAt")
+                    or payload.get("create_at"),
+                )
+                if event is not None
+                and self.identity_discovery_service is not None
+                and self.identity_discovery_service.is_discoverable_rejection(
+                    exc.error_code
+                )
+                else None
             )
             return DingTalkStreamHandleResult(
                 accepted=False,
@@ -210,6 +238,12 @@ class DingTalkStreamMessageService:
                 ack_status="OK",
                 ack_message="PERMISSION_DENIED",
                 reason=exc.safe_message,
+                error_code=exc.error_code or "permission_denied",
+                discovery_observation=observation,
+                rejection_message=message if defer_rejection_notification else None,
+                rejection_connector_id=(
+                    source_connector_id if defer_rejection_notification else ""
+                ),
             )
         except NonRetryableExecutionError as exc:
             logger.info(
@@ -231,17 +265,23 @@ class DingTalkStreamMessageService:
                     "reason_code": exc.error_code or "non_retryable_execution_error",
                 },
             )
-            self._notify_rejection(
-                message=message,
-                reason=exc.safe_message,
-                connector_id=source_connector_id,
-            )
+            if not defer_rejection_notification:
+                self._notify_rejection(
+                    message=message,
+                    reason=exc.safe_message,
+                    connector_id=source_connector_id,
+                )
             return DingTalkStreamHandleResult(
                 accepted=False,
                 status="rejected",
                 ack_status="OK",
                 ack_message="REJECTED",
                 reason=exc.safe_message,
+                error_code=exc.error_code or "non_retryable_execution_error",
+                rejection_message=message if defer_rejection_notification else None,
+                rejection_connector_id=(
+                    source_connector_id if defer_rejection_notification else ""
+                ),
             )
 
         self.audit_service.record(
@@ -265,6 +305,15 @@ class DingTalkStreamMessageService:
             ack_status="OK",
             ack_message="任务已受理，正在开始分析",
             job_id=job.id,
+        )
+
+    def notify_deferred_rejection(self, result: DingTalkStreamHandleResult) -> None:
+        if result.rejection_message is None:
+            return
+        self._notify_rejection(
+            message=result.rejection_message,
+            reason=result.reason,
+            connector_id=result.rejection_connector_id,
         )
 
     def _notify_rejection(

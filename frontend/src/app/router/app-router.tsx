@@ -15,6 +15,7 @@ import {
   RuntimeRecordsPage,
 } from "@/contexts/operations/presentation/runtime-records-page"
 import { UserDetailPage, UsersPage } from "@/contexts/users"
+import { DingTalkIdentityDiscoveryPage } from "@/contexts/dingtalk-identity-discovery"
 
 export const appRouter = createBrowserRouter([
   {
@@ -42,6 +43,10 @@ export const appRouter = createBrowserRouter([
         element: <ConversationDetailPage />,
       },
       { path: "/users", element: <UsersPage /> },
+      {
+        path: "/users/dingtalk-discovery",
+        element: <DingTalkIdentityDiscoveryPage />,
+      },
       { path: "/users/:userId", element: <UserDetailPage /> },
     ],
   },

@@ -109,6 +109,7 @@ COPY backend/app/modules/dingding/__init__.py /app/backend/app/modules/dingding/
 COPY backend/app/modules/dingding/application /app/backend/app/modules/dingding/application
 COPY backend/app/modules/dingding/infrastructure /app/backend/app/modules/dingding/infrastructure
 COPY backend/app/modules/identity /app/backend/app/modules/identity
+COPY backend/app/modules/identity_discovery /app/backend/app/modules/identity_discovery
 COPY backend/app/modules/internal_tools /app/backend/app/modules/internal_tools
 COPY backend/app/modules/internal_api_platform/__init__.py /app/backend/app/modules/internal_api_platform/
 COPY backend/app/modules/internal_api_platform/domain /app/backend/app/modules/internal_api_platform/domain

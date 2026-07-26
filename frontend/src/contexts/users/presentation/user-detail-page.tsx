@@ -5,7 +5,7 @@ import {
   SaveIcon,
   ShieldOffIcon,
 } from "lucide-react"
-import { Link, useParams } from "react-router-dom"
+import { Link, useParams, useSearchParams } from "react-router-dom"
 
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -34,6 +34,8 @@ import { ApiError } from "@/shared/api/api-client"
 
 export function UserDetailPage() {
   const { userId = "" } = useParams()
+  const [searchParams] = useSearchParams()
+  const candidateId = searchParams.get("candidate")?.trim() ?? ""
   const query = useUser(userId)
 
   if (query.isLoading) {
@@ -45,17 +47,15 @@ export function UserDetailPage() {
     )
   }
   if (query.isError) {
-    const missing = query.error instanceof ApiError && query.error.status === 404
+    const missing =
+      query.error instanceof ApiError && query.error.status === 404
     return (
       <div className="mx-auto max-w-3xl space-y-4 px-4 py-8">
         <h1 className="text-2xl font-semibold">
           {missing ? "用户不存在" : "无法加载用户"}
         </h1>
         <RequestError error={query.error} />
-        <Link
-          to="/users"
-          className={buttonVariants({ variant: "outline" })}
-        >
+        <Link to="/users" className={buttonVariants({ variant: "outline" })}>
           返回用户列表
         </Link>
       </div>
@@ -95,7 +95,10 @@ export function UserDetailPage() {
       </header>
 
       <UserProfileCard key={query.data.revision} user={query.data} />
-      <ExternalIdentityPanel user={query.data} />
+      <ExternalIdentityPanel
+        user={query.data}
+        discoveryCandidateId={candidateId}
+      />
     </div>
   )
 }
@@ -125,7 +128,7 @@ function UserProfileCard({ user }: { user: User }) {
         email,
         status: next,
       },
-      { onSuccess: () => setConfirmStatus(false) },
+      { onSuccess: () => setConfirmStatus(false) }
     )
   }
 

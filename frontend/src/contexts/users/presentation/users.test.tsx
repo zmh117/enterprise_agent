@@ -11,7 +11,7 @@ function response(body: unknown, status = 200) {
     new Response(JSON.stringify(body), {
       status,
       headers: { "Content-Type": "application/json" },
-    }),
+    })
   )
 }
 
@@ -87,22 +87,60 @@ function renderUsers() {
       <MemoryRouter>
         <UsersPage />
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   )
 }
 
-function renderDetail() {
+function discoveryCandidate(overrides: Record<string, unknown> = {}) {
+  const message = {
+    id: "candidate-message-1",
+    connector_id: "connector-dingtalk-stream-default",
+    connector_name: "默认钉钉 Stream",
+    robot_code: "robot-default",
+    conversation_type: "direct",
+    conversation_id: "staff-001",
+    message_kind: "text",
+    safe_text: "请给我开通",
+    text_truncated: false,
+    attachment_type: "",
+    attachment_name: "",
+    attachment_size: null,
+    occurred_at: "2026-07-26T01:00:00+00:00",
+    received_at: "2026-07-26T01:00:01+00:00",
+  }
+  return {
+    id: "candidate-1",
+    tenant_code: "default",
+    external_subject_id: "staff-001",
+    display_name: "待绑定张三",
+    first_seen_at: "2026-07-26T01:00:01+00:00",
+    last_seen_at: "2026-07-26T01:00:01+00:00",
+    observation_count: 1,
+    revision: 2,
+    identity_state: "waiting_bind",
+    conversation_scope: "direct",
+    group_ids: [],
+    robot_codes: ["robot-default"],
+    connector_names: ["默认钉钉 Stream"],
+    latest_message: message,
+    messages: [message],
+    historical_identity: null,
+    ...overrides,
+  }
+}
+
+function renderDetail(initialEntry = "/users/user-1") {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={["/users/user-1"]}>
+      <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
           <Route path="/users/:userId" element={<UserDetailPage />} />
         </Routes>
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   )
 }
 
@@ -130,8 +168,12 @@ describe("User and external identity management", () => {
     })
     fireEvent.click(screen.getByRole("button", { name: "搜索" }))
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
-    expect(new URL(String(fetch.mock.calls[1][0]), "http://admin.test").searchParams.get("search"))
-      .toBe("036957")
+    expect(
+      new URL(
+        String(fetch.mock.calls[1][0]),
+        "http://admin.test"
+      ).searchParams.get("search")
+    ).toBe("036957")
   })
 
   it("creates a user and clears the optional password after submission", async () => {
@@ -139,7 +181,9 @@ describe("User and external identity management", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((_input, init) => {
       if (init?.method === "POST") {
         submittedBody = JSON.parse(String(init.body))
-        return response({ user: user({ id: "user-new", username: "new-user" }) })
+        return response({
+          user: user({ id: "user-new", username: "new-user" }),
+        })
       }
       return response({
         users: [],
@@ -164,10 +208,12 @@ describe("User and external identity management", () => {
       expect(submittedBody).toMatchObject({
         username: "new-user",
         password: "new-user-password",
-      }),
+      })
     )
     await waitFor(() =>
-      expect(screen.queryByLabelText("初始密码（可选）")).not.toBeInTheDocument(),
+      expect(
+        screen.queryByLabelText("初始密码（可选）")
+      ).not.toBeInTheDocument()
     )
   })
 
@@ -175,7 +221,8 @@ describe("User and external identity management", () => {
     let bindingBody: Record<string, unknown> | undefined
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = String(input)
-      if (url.endsWith("/external-identity-providers")) return response(providers())
+      if (url.endsWith("/external-identity-providers"))
+        return response(providers())
       if (url.endsWith("/dingtalk-tenants")) return response(tenants())
       if (url.endsWith("/dingtalk-identities") && init?.method === "POST") {
         bindingBody = JSON.parse(String(init.body))
@@ -188,8 +235,9 @@ describe("User and external identity management", () => {
     })
     renderDetail()
     expect(await screen.findByText("基本资料")).toBeInTheDocument()
-    expect(await screen.findByText("该用户尚未绑定钉钉或 ONES 身份。"))
-      .toBeInTheDocument()
+    expect(
+      await screen.findByText("该用户尚未绑定钉钉或 ONES 身份。")
+    ).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole("button", { name: "绑定钉钉" }))
     fireEvent.change(screen.getByLabelText("钉钉租户 / 连接器"), {
@@ -206,14 +254,151 @@ describe("User and external identity management", () => {
         external_subject_id: "03695725024624053732",
         connector_id: "connector-dingtalk-stream-default",
         display_name: "",
-      }),
+      })
     )
+  })
+
+  it("uses only server-loaded candidate fields for trusted binding and keeps failures open", async () => {
+    let bindingBody: Record<string, unknown> | undefined
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.endsWith("/external-identity-providers"))
+        return response(providers())
+      if (url.endsWith("/dingtalk-tenants")) return response(tenants())
+      if (url.endsWith("/dingtalk-identity-candidates/candidate-1")) {
+        return response({ candidate: discoveryCandidate() })
+      }
+      if (
+        url.endsWith("/dingtalk-identity-candidates/candidate-1/bind") &&
+        init?.method === "POST"
+      ) {
+        bindingBody = JSON.parse(String(init.body))
+        return response(
+          {
+            detail: {
+              code: "revision_conflict",
+              message: "候选信息已发生变化，请刷新后重试",
+            },
+          },
+          409
+        )
+      }
+      if (url.endsWith("/users/user-1")) {
+        return response({ user: user(), identities: [] })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    renderDetail("/users/user-1?candidate=candidate-1")
+
+    expect(
+      await screen.findByRole("heading", { name: "确认绑定钉钉用户" })
+    ).toBeInTheDocument()
+    expect(screen.getByText("default")).toBeInTheDocument()
+    expect(screen.getByText("默认钉钉 Stream")).toBeInTheDocument()
+    expect(screen.getByText("staff-001")).toBeInTheDocument()
+    expect(screen.getByText("待绑定张三")).toBeInTheDocument()
+    expect(screen.queryByLabelText("senderStaffId")).toBeNull()
+
+    fireEvent.click(screen.getByRole("button", { name: "确认绑定" }))
+    expect(
+      await screen.findByText("候选信息已发生变化，请刷新后重试")
+    ).toBeInTheDocument()
+    expect(bindingBody).toEqual({
+      target_user_id: "user-1",
+      expected_candidate_revision: 2,
+      expected_user_revision: 3,
+    })
+    for (const forbidden of [
+      "tenant_code",
+      "external_subject_id",
+      "connector_id",
+      "display_name",
+    ]) {
+      expect(bindingBody).not.toHaveProperty(forbidden)
+    }
+    expect(
+      screen.getByRole("heading", { name: "确认绑定钉钉用户" })
+    ).toBeInTheDocument()
+  })
+
+  it("prefills a new person from the candidate and preserves the candidate context", async () => {
+    const requestedUrls: string[] = []
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = String(input)
+      requestedUrls.push(url)
+      if (url.endsWith("/dingtalk-identity-candidates/candidate-1")) {
+        return response({ candidate: discoveryCandidate() })
+      }
+      if (url.endsWith("/api/admin/users") && init?.method === "POST") {
+        return response({
+          user: user({
+            id: "user-new",
+            username: "new-person",
+            display_name: "待绑定张三",
+          }),
+        })
+      }
+      if (url.includes("/api/admin/users?")) {
+        return response({
+          users: [],
+          pagination: { page: 1, page_size: 20, total: 0, total_pages: 0 },
+        })
+      }
+      if (url.endsWith("/users/user-new")) {
+        return response({
+          user: user({
+            id: "user-new",
+            username: "new-person",
+            display_name: "待绑定张三",
+          }),
+          identities: [],
+        })
+      }
+      if (url.endsWith("/external-identity-providers"))
+        return response(providers())
+      if (url.endsWith("/dingtalk-tenants")) return response(tenants())
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={["/users?candidate=candidate-1"]}>
+          <Routes>
+            <Route path="/users" element={<UsersPage />} />
+            <Route path="/users/:userId" element={<UserDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    )
+
+    expect(await screen.findByText("请选择要绑定的人员")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "新建用户" }))
+    expect(screen.getByLabelText("显示名称")).toHaveValue("待绑定张三")
+    fireEvent.change(screen.getByLabelText("用户名"), {
+      target: { value: "new-person" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "创建用户" }))
+
+    expect(
+      await screen.findByRole("heading", { name: "确认绑定钉钉用户" })
+    ).toBeInTheDocument()
+    expect(
+      requestedUrls.filter((url) =>
+        url.endsWith("/dingtalk-identity-candidates/candidate-1")
+      ).length
+    ).toBeGreaterThanOrEqual(1)
   })
 
   it("shows a stable revision conflict instead of overwriting newer user data", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = String(input)
-      if (url.endsWith("/external-identity-providers")) return response(providers())
+      if (url.endsWith("/external-identity-providers"))
+        return response(providers())
       if (url.endsWith("/dingtalk-tenants")) return response(tenants())
       if (url.endsWith("/users/user-1") && init?.method === "PUT") {
         return response(
@@ -223,7 +408,7 @@ describe("User and external identity management", () => {
               message: "用户信息已被修改，请刷新后重试",
             },
           },
-          409,
+          409
         )
       }
       if (url.endsWith("/users/user-1")) {
@@ -237,7 +422,7 @@ describe("User and external identity management", () => {
     })
     fireEvent.click(screen.getByRole("button", { name: "保存资料" }))
     expect(
-      await screen.findByText("用户信息已被修改，请刷新后重试"),
+      await screen.findByText("用户信息已被修改，请刷新后重试")
     ).toBeInTheDocument()
   })
 
@@ -245,7 +430,8 @@ describe("User and external identity management", () => {
     let bindingBody: Record<string, unknown> | undefined
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = String(input)
-      if (url.endsWith("/external-identity-providers")) return response(providers())
+      if (url.endsWith("/external-identity-providers"))
+        return response(providers())
       if (url.endsWith("/dingtalk-tenants")) return response(tenants())
       if (url.endsWith("/ones-identities") && init?.method === "POST") {
         bindingBody = JSON.parse(String(init.body))
@@ -256,7 +442,7 @@ describe("User and external identity management", () => {
               message: "ONES 邮箱或密码错误",
             },
           },
-          400,
+          400
         )
       }
       if (url.endsWith("/users/user-1")) {
@@ -274,9 +460,7 @@ describe("User and external identity management", () => {
     fireEvent.change(password, { target: { value: "ones-password" } })
     fireEvent.click(screen.getByRole("button", { name: "验证并绑定" }))
 
-    expect(
-      await screen.findByText("ONES 邮箱或密码错误"),
-    ).toBeInTheDocument()
+    expect(await screen.findByText("ONES 邮箱或密码错误")).toBeInTheDocument()
     expect(bindingBody).toEqual({
       expected_user_revision: 3,
       email: "zmh@example.test",
@@ -290,41 +474,55 @@ describe("User and external identity management", () => {
 
   it("changes identity state, confirms soft unbind, and disables personal binding for service accounts", async () => {
     let currentIdentity = identity()
-    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
-      const url = String(input)
-      if (url.endsWith("/external-identity-providers")) return response(providers())
-      if (url.endsWith("/dingtalk-tenants")) return response(tenants())
-      if (url.includes("/identities/identity-1/status") && init?.method === "PUT") {
-        currentIdentity = identity({ status: "disabled", revision: 2 })
-        return response({ identity: currentIdentity })
-      }
-      if (url.includes("/identities/identity-1?") && init?.method === "DELETE") {
-        currentIdentity = identity({ status: "unbound", revision: 3 })
-        return response({ identity: currentIdentity })
-      }
-      if (url.endsWith("/users/user-1")) {
-        return response({ user: user(), identities: [currentIdentity] })
-      }
-      throw new Error(`Unexpected request: ${url}`)
-    })
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((input, init) => {
+        const url = String(input)
+        if (url.endsWith("/external-identity-providers"))
+          return response(providers())
+        if (url.endsWith("/dingtalk-tenants")) return response(tenants())
+        if (
+          url.includes("/identities/identity-1/status") &&
+          init?.method === "PUT"
+        ) {
+          currentIdentity = identity({ status: "disabled", revision: 2 })
+          return response({ identity: currentIdentity })
+        }
+        if (
+          url.includes("/identities/identity-1?") &&
+          init?.method === "DELETE"
+        ) {
+          currentIdentity = identity({ status: "unbound", revision: 3 })
+          return response({ identity: currentIdentity })
+        }
+        if (url.endsWith("/users/user-1")) {
+          return response({ user: user(), identities: [currentIdentity] })
+        }
+        throw new Error(`Unexpected request: ${url}`)
+      })
     const firstRender = renderDetail()
     fireEvent.click(await screen.findByRole("button", { name: "停用身份" }))
     await waitFor(() =>
-      expect(fetch.mock.calls.some((call) => String(call[0]).includes("/status")))
-        .toBe(true),
+      expect(
+        fetch.mock.calls.some((call) => String(call[0]).includes("/status"))
+      ).toBe(true)
     )
     fireEvent.click(await screen.findByRole("button", { name: "解绑" }))
     fireEvent.click(screen.getByRole("button", { name: "确认解绑" }))
     await waitFor(() =>
-      expect(fetch.mock.calls.some((call) => String(call[0]).includes("?expected_revision=2")))
-        .toBe(true),
+      expect(
+        fetch.mock.calls.some((call) =>
+          String(call[0]).includes("?expected_revision=2")
+        )
+      ).toBe(true)
     )
 
     firstRender.unmount()
     vi.restoreAllMocks()
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input)
-      if (url.endsWith("/external-identity-providers")) return response(providers())
+      if (url.endsWith("/external-identity-providers"))
+        return response(providers())
       if (url.endsWith("/dingtalk-tenants")) return response(tenants())
       return response({
         user: user({ account_type: "service" }),
@@ -332,11 +530,12 @@ describe("User and external identity management", () => {
       })
     })
     renderDetail()
-    expect(await screen.findByRole("button", { name: "绑定钉钉" }))
-      .toBeDisabled()
+    expect(
+      await screen.findByRole("button", { name: "绑定钉钉" })
+    ).toBeDisabled()
     expect(screen.getByRole("button", { name: "绑定 ONES" })).toBeDisabled()
     expect(
-      screen.getByText("服务账号不能绑定个人外部身份。"),
+      screen.getByText("服务账号不能绑定个人外部身份。")
     ).toBeInTheDocument()
   })
 })
