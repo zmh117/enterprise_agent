@@ -78,6 +78,36 @@ function tenants() {
   }
 }
 
+function emptyRoles() {
+  return {
+    items: [],
+    page: { limit: 100, offset: 0, total: 0 },
+  }
+}
+
+function assignableRoles() {
+  return {
+    items: [1, 2].map((index) => ({
+      id: `role-${index}`,
+      code: `diagnostic-role-${index}`,
+      name: `诊断角色 ${index}`,
+      description: "",
+      status: "enabled",
+      origin: "custom",
+      protected: false,
+      purpose_tags: ["业务诊断"],
+      metadata_revision: 1,
+      admin_revision: 1,
+      business_revision: 1,
+      membership_revision: 1,
+      member_count: 0,
+      admin_capability_count: 0,
+      application_count: 1,
+    })),
+    page: { limit: 100, offset: 0, total: 2 },
+  }
+}
+
 function renderUsers() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -224,6 +254,8 @@ describe("User and external identity management", () => {
       if (url.endsWith("/external-identity-providers"))
         return response(providers())
       if (url.endsWith("/dingtalk-tenants")) return response(tenants())
+      if (url.includes("/api/admin/authorization/roles?"))
+        return response(emptyRoles())
       if (url.endsWith("/dingtalk-identities") && init?.method === "POST") {
         bindingBody = JSON.parse(String(init.body))
         return response({ identity: identity() })
@@ -265,6 +297,8 @@ describe("User and external identity management", () => {
       if (url.endsWith("/external-identity-providers"))
         return response(providers())
       if (url.endsWith("/dingtalk-tenants")) return response(tenants())
+      if (url.includes("/api/admin/authorization/roles?"))
+        return response(assignableRoles())
       if (url.endsWith("/dingtalk-identity-candidates/candidate-1")) {
         return response({ candidate: discoveryCandidate() })
       }
@@ -299,7 +333,15 @@ describe("User and external identity management", () => {
     expect(screen.getByText("待绑定张三")).toBeInTheDocument()
     expect(screen.queryByLabelText("senderStaffId")).toBeNull()
 
-    fireEvent.click(screen.getByRole("button", { name: "确认绑定" }))
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /诊断角色 1/ }),
+    )
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /诊断角色 2/ }),
+    )
+    fireEvent.click(
+      screen.getByRole("button", { name: "确认绑定并保存授权" }),
+    )
     expect(
       await screen.findByText("候选信息已发生变化，请刷新后重试")
     ).toBeInTheDocument()
@@ -307,6 +349,8 @@ describe("User and external identity management", () => {
       target_user_id: "user-1",
       expected_candidate_revision: 2,
       expected_user_revision: 3,
+      initial_role_ids: ["role-1", "role-2"],
+      bind_without_access_confirmed: false,
     })
     for (const forbidden of [
       "tenant_code",
@@ -357,6 +401,8 @@ describe("User and external identity management", () => {
       if (url.endsWith("/external-identity-providers"))
         return response(providers())
       if (url.endsWith("/dingtalk-tenants")) return response(tenants())
+      if (url.includes("/api/admin/authorization/roles?"))
+        return response(emptyRoles())
       throw new Error(`Unexpected request: ${url}`)
     })
     const client = new QueryClient({
@@ -400,6 +446,8 @@ describe("User and external identity management", () => {
       if (url.endsWith("/external-identity-providers"))
         return response(providers())
       if (url.endsWith("/dingtalk-tenants")) return response(tenants())
+      if (url.includes("/api/admin/authorization/roles?"))
+        return response(emptyRoles())
       if (url.endsWith("/users/user-1") && init?.method === "PUT") {
         return response(
           {
@@ -433,6 +481,8 @@ describe("User and external identity management", () => {
       if (url.endsWith("/external-identity-providers"))
         return response(providers())
       if (url.endsWith("/dingtalk-tenants")) return response(tenants())
+      if (url.includes("/api/admin/authorization/roles?"))
+        return response(emptyRoles())
       if (url.endsWith("/ones-identities") && init?.method === "POST") {
         bindingBody = JSON.parse(String(init.body))
         return response(
@@ -481,6 +531,8 @@ describe("User and external identity management", () => {
         if (url.endsWith("/external-identity-providers"))
           return response(providers())
         if (url.endsWith("/dingtalk-tenants")) return response(tenants())
+        if (url.includes("/api/admin/authorization/roles?"))
+          return response(emptyRoles())
         if (
           url.includes("/identities/identity-1/status") &&
           init?.method === "PUT"
@@ -524,6 +576,8 @@ describe("User and external identity management", () => {
       if (url.endsWith("/external-identity-providers"))
         return response(providers())
       if (url.endsWith("/dingtalk-tenants")) return response(tenants())
+      if (url.includes("/api/admin/authorization/roles?"))
+        return response(emptyRoles())
       return response({
         user: user({ account_type: "service" }),
         identities: [],

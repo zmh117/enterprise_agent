@@ -482,15 +482,13 @@ class RuntimeReadinessEvaluator:
         ]
         if capabilities:
             components["capabilities"] = RuntimeComponentStatus(
-                RuntimeComponentState.UNSUPPORTED,
-                RuntimeReason.CAPABILITY_UNSUPPORTED.value,
-                "API 能力运行时尚未接入",
-            )
-            blockers.append(
-                (
-                    RuntimeReason.CAPABILITY_UNSUPPORTED.value,
-                    "API 能力运行时不可用",
-                )
+                RuntimeComponentState.WIRED,
+                RuntimeReason.READY.value,
+                "已装配的只读业务能力将在角色、Agent 和数据范围交集中执行",
+                fields={
+                    str(value.get("capability_code") or ""): "wired"
+                    for value in capabilities
+                },
             )
         return components, blockers, tuple(affected_routes)
 

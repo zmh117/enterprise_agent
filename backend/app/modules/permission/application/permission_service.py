@@ -51,17 +51,7 @@ class PermissionService:
         project_code: str,
         scope: dict[str, str] | None = None,
     ) -> None:
-        tool = self.config_repository.get_tool(tool_name)
-        if not tool or int(tool["enabled"]) != 1:
-            raise ToolPolicyError(
-                f"Tool {tool_name} is disabled",
-                safe_message="工具已停用",
-            )
-        if int(tool["read_only"]) != 1:
-            raise ToolPolicyError(
-                f"Tool {tool_name} is not read-only",
-                safe_message="只允许使用只读工具",
-            )
+        self.assert_registered_readonly_tool(tool_name)
         if not self._is_allowed(
             user_id=user_id,
             resource_type="tool",
@@ -91,6 +81,19 @@ class PermissionService:
                     f"Platform scope denied: {decision.reason}",
                     safe_message="当前用户无权访问此数据范围",
                 )
+
+    def assert_registered_readonly_tool(self, tool_name: str) -> None:
+        tool = self.config_repository.get_tool(tool_name)
+        if not tool or int(tool["enabled"]) != 1:
+            raise ToolPolicyError(
+                f"Tool {tool_name} is disabled",
+                safe_message="工具已停用",
+            )
+        if int(tool["read_only"]) != 1:
+            raise ToolPolicyError(
+                f"Tool {tool_name} is not read-only",
+                safe_message="只允许使用只读工具",
+            )
 
     def require_action(
         self,

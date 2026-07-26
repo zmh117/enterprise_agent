@@ -4,6 +4,7 @@ from app.modules.agent_config.infrastructure import AgentConfigRepository
 from app.modules.business_application.application.ports import ComponentReference
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.identity.infrastructure import IdentityRepository
+from app.modules.job.infrastructure.repositories import ConfigurationRepository
 from app.modules.workflow.infrastructure import WorkflowRepository
 from app.shared.exceptions import NonRetryableExecutionError, NotFound
 
@@ -166,4 +167,51 @@ class EmptyCapabilityCatalogAdapter:
                     "message": f"暂时无法解析能力 {code}",
                 }
             ],
+        )
+
+
+class ToolCapabilityCatalogAdapter:
+    """Expose enabled read-only runtime tools as business capability codes."""
+
+    def __init__(self, repository: ConfigurationRepository) -> None:
+        self.repository = repository
+
+    def resolve(
+        self, code: str, version_constraint: str, environment: str
+    ) -> ComponentReference:
+        del version_constraint, environment
+        tool = self.repository.get_tool(code)
+        if tool is None:
+            raise NonRetryableExecutionError(
+                f"Capability is not registered: {code}",
+                safe_message="所选业务能力不存在",
+                error_code="capability_not_found",
+                field_errors=[
+                    {
+                        "field": "capabilities",
+                        "message": f"业务能力不存在：{code}",
+                    }
+                ],
+            )
+        enabled = bool(int(tool["enabled"])) and bool(int(tool["read_only"]))
+        if not enabled:
+            raise NonRetryableExecutionError(
+                f"Capability is not enabled and read-only: {code}",
+                safe_message="角色只能选择已启用的只读业务能力",
+                error_code="capability_not_readonly",
+                field_errors=[
+                    {
+                        "field": "capabilities",
+                        "message": f"业务能力不可授权：{code}",
+                    }
+                ],
+            )
+        return ComponentReference(
+            id=str(tool["id"]),
+            code=str(tool["name"]),
+            revision=1,
+            project_code="",
+            status="enabled",
+            config_hash="",
+            component_type="readonly_tool_capability",
         )

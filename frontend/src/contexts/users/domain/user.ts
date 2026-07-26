@@ -15,6 +15,48 @@ export const userSchema = z.object({
   updated_at: z.string(),
 })
 
+export const userRoleSchema = z.object({
+  id: z.string(),
+  code: z.string(),
+  name: z.string(),
+  description: z.string(),
+  status: z.string(),
+  origin: z.string(),
+  protected: z.union([z.boolean(), z.number()]).transform(Boolean),
+  membership_id: z.string(),
+  membership_status: z.string(),
+  membership_revision: z.number(),
+  expires_at: z.string().nullable().optional(),
+  assigned_by: z.string().optional(),
+  assignment_source: z.string().optional(),
+})
+
+export const userAuthorizationSummarySchema = z.object({
+  roles: z.array(userRoleSchema),
+  management_capabilities: z.array(z.string()),
+  business_applications: z.array(
+    z.object({
+      id: z.string(),
+      code: z.string(),
+      name: z.string(),
+      source_role_codes: z.array(z.string()),
+      capability_codes: z.array(z.string()),
+      scopes: z.array(z.record(z.string(), z.unknown())),
+    }),
+  ),
+  access_status: z.string(),
+})
+
+export const userDetailSchema = userSchema.extend({
+  roles: z.array(userRoleSchema).default([]),
+  authorization_summary: userAuthorizationSummarySchema.default({
+    roles: [],
+    management_capabilities: [],
+    business_applications: [],
+    access_status: "未获得应用权限",
+  }),
+})
+
 export const userPaginationSchema = z.object({
   page: z.number().int().positive(),
   page_size: z.number().int().positive(),
@@ -23,6 +65,7 @@ export const userPaginationSchema = z.object({
 })
 
 export type User = z.infer<typeof userSchema>
+export type UserDetail = z.infer<typeof userDetailSchema>
 export type UserStatus = z.infer<typeof userStatusSchema>
 export type UserPagination = z.infer<typeof userPaginationSchema>
 

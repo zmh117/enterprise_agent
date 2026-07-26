@@ -53,9 +53,14 @@ describe("Managed channel navigation", () => {
     ).toBe("/applications")
   })
 
-  it("highlights only channels on the independent channel route", () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
-      response({ count: 0 })
+  it("highlights only channels on the independent channel route", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      String(input).endsWith("/api/admin/capabilities")
+        ? response({
+            capabilities: ["applications.read", "channels.read"],
+            modules: {},
+          })
+        : response({ count: 0 })
     )
     renderWithQuery(
       <SidebarProvider>
@@ -64,7 +69,9 @@ describe("Managed channel navigation", () => {
       ["/applications/channels"]
     )
 
-    expect(screen.getByRole("link", { name: "渠道与触发器" })).toHaveAttribute(
+    expect(
+      await screen.findByRole("link", { name: "渠道与触发器" }),
+    ).toHaveAttribute(
       "data-active"
     )
     expect(screen.getByRole("link", { name: "应用列表" })).not.toHaveAttribute(

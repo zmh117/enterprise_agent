@@ -4,6 +4,7 @@ import {
   LoaderCircleIcon,
   SaveIcon,
   ShieldOffIcon,
+  UsersRoundIcon,
 } from "lucide-react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
 
@@ -17,12 +18,18 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Checkbox } from "@/components/ui/checkbox"
 import { ExternalIdentityPanel } from "@/contexts/external-identities"
 import {
   useUpdateUser,
   useUser,
 } from "@/contexts/users/application/user-queries"
 import type { User } from "@/contexts/users/domain/user"
+import type { UserDetail } from "@/contexts/users/domain/user"
+import {
+  useRoles,
+  useUpdateUserRoles,
+} from "@/contexts/authorization/application/role-authorization-queries"
 import {
   ConfirmationSheet,
   Field,
@@ -95,12 +102,136 @@ export function UserDetailPage() {
       </header>
 
       <UserProfileCard key={query.data.revision} user={query.data} />
+      <UserRolesCard key={`roles-${query.data.roles.map((role) => `${role.id}:${role.membership_revision}`).join(",")}`} user={query.data} />
       <ExternalIdentityPanel
         user={query.data}
         discoveryCandidateId={candidateId}
       />
     </div>
   )
+}
+
+function UserRolesCard({ user }: { user: UserDetail }) {
+  const roles = useRoles({ search: "", status: "enabled", origin: "" })
+  const mutation = useUpdateUserRoles(user.id)
+  const current = new Map(
+    user.roles.map((role) => [
+      role.id,
+      {
+        enabled: role.membership_status === "enabled",
+        expires_at: role.expires_at ?? "",
+      },
+    ]),
+  )
+  const [selection, setSelection] = useState(current)
+  const changedRoles = (roles.data?.items ?? []).filter(
+    (role) =>
+      JSON.stringify(current.get(role.id) ?? { enabled: false, expires_at: "" }) !==
+      JSON.stringify(selection.get(role.id) ?? { enabled: false, expires_at: "" }),
+  )
+
+  const save = () =>
+    mutation.mutate({
+      confirmed: changedRoles.some((role) => role.protected),
+      changes: changedRoles.map((role) => ({
+        role_id: role.id,
+        expected_role_revision: role.membership_revision,
+        enabled: selection.get(role.id)?.enabled ?? false,
+        expires_at: selection.get(role.id)?.expires_at || null,
+      })),
+    })
+
+  return (
+    <Card className="shadow-none">
+      <CardHeader className="border-b">
+        <CardTitle>角色与有效权限</CardTitle>
+        <CardDescription>
+          人员可以绑定多个角色；到期、停用的成员关系不会参与新的授权决策。
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid gap-3 lg:grid-cols-2">
+          {roles.data?.items.map((role) => {
+            const selected = selection.get(role.id)
+            return (
+              <div key={role.id} className="rounded-lg border p-3">
+                <label className="flex items-start gap-3">
+                  <Checkbox
+                    checked={Boolean(selected?.enabled)}
+                    onCheckedChange={(checked) => {
+                      const next = new Map(selection)
+                      next.set(role.id, {
+                        enabled: Boolean(checked),
+                        expires_at: selected?.expires_at ?? "",
+                      })
+                      setSelection(next)
+                    }}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex flex-wrap items-center gap-2 font-medium">
+                      {role.name}
+                      {role.protected ? <Badge>系统角色</Badge> : null}
+                    </span>
+                    <span className="mt-1 block font-mono text-xs text-muted-foreground">
+                      {role.code}
+                    </span>
+                  </span>
+                </label>
+                <Input
+                  className="mt-3"
+                  type="datetime-local"
+                  aria-label={`${role.name}的角色失效时间`}
+                  disabled={!selected?.enabled}
+                  value={toLocalDateTime(selected?.expires_at ?? "")}
+                  onChange={(event) => {
+                    const next = new Map(selection)
+                    next.set(role.id, {
+                      enabled: true,
+                      expires_at: event.target.value
+                        ? new Date(event.target.value).toISOString()
+                        : "",
+                    })
+                    setSelection(next)
+                  }}
+                />
+              </div>
+            )
+          })}
+        </div>
+        <RequestError error={roles.error ?? mutation.error} />
+        <Button
+          disabled={changedRoles.length === 0 || mutation.isPending}
+          onClick={save}
+        >
+          <UsersRoundIcon aria-hidden="true" />
+          原子保存角色分配
+        </Button>
+
+        <div className="rounded-lg border bg-muted/30 p-4">
+          <p className="font-medium">{user.authorization_summary.access_status}</p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            管理后台能力 {user.authorization_summary.management_capabilities.length} 项
+            · 业务应用 {user.authorization_summary.business_applications.length} 个
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {user.authorization_summary.business_applications.map((application) => (
+              <Badge key={application.id} variant="outline">
+                {application.name} · 来源 {application.source_role_codes.join("、")}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function toLocalDateTime(value: string) {
+  if (!value) return ""
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ""
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
+  return local.toISOString().slice(0, 16)
 }
 
 function UserProfileCard({ user }: { user: User }) {

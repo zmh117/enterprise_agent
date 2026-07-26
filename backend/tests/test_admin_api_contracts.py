@@ -45,7 +45,7 @@ def test_admin_capabilities_are_permission_derived_and_scope_safe() -> None:
     assert body["subject"]["id"] == "user_local_admin"
     assert "dashboard.read" in body["capabilities"]
     assert "tools.manage" in body["capabilities"]
-    assert body["data_scope"] == {"mode": "global", "grants": []}
+    assert body["data_scope"] == {"mode": "restricted", "grants": []}
     assert "matched_policy_ids" not in str(body)
     assert "subject_code" not in str(body)
 

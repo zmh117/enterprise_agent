@@ -96,7 +96,7 @@ def build_identity_admin_router() -> APIRouter:
         include_disabled: bool = True,
     ) -> dict[str, Any]:
         require_action(
-            request, resource_type="user", resource_code="*", action="manage"
+            request, resource_type="user", resource_code="*", action="read"
         )
         c = container(request)
         total = c.identity_repository.count_users(
@@ -142,12 +142,16 @@ def build_identity_admin_router() -> APIRouter:
     @router.get("/users/{user_id}")
     def get_user(request: Request, user_id: str) -> dict[str, Any]:
         require_action(
-            request, resource_type="user", resource_code=user_id, action="manage"
+            request, resource_type="user", resource_code=user_id, action="read"
         )
         c = container(request)
+        authorization_summary = c.authorization_center_service.effective_summary(
+            user_id
+        )
         return {
             "user": c.identity_repository.get_user(user_id),
-            "roles": c.identity_repository.list_user_roles(user_id),
+            "roles": authorization_summary["roles"],
+            "authorization_summary": authorization_summary,
             "identities": c.identity_repository.list_external_identities(user_id),
             "sessions": c.identity_repository.list_sessions(user_id),
         }

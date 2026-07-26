@@ -131,6 +131,7 @@ def multimodal_container() -> object:
         robot_code="robot-redacted",
         group_conversation_ids=("group-conversation-redacted",),
         attachments_enabled=True,
+        capabilities=("get_er_context", "get_business_flow_context"),
     )
     return container
 

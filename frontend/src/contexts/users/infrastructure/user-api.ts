@@ -2,6 +2,9 @@ import { z } from "zod"
 
 import {
   userPaginationSchema,
+  userDetailSchema,
+  userRoleSchema,
+  userAuthorizationSummarySchema,
   userSchema,
   type CreateUserInput,
   type UpdateUserInput,
@@ -18,6 +21,17 @@ const userResponseSchema = z.object({
   user: userSchema,
 })
 
+const userDetailResponseSchema = z.object({
+  user: userSchema,
+  roles: z.array(userRoleSchema).default([]),
+  authorization_summary: userAuthorizationSummarySchema.default({
+    roles: [],
+    management_capabilities: [],
+    business_applications: [],
+    access_status: "未获得应用权限",
+  }),
+})
+
 export async function listUsers(params: UserListParams) {
   const query = new URLSearchParams({
     search: params.search,
@@ -31,9 +45,14 @@ export async function listUsers(params: UserListParams) {
 }
 
 export async function getUser(userId: string) {
-  return userResponseSchema.parse(
+  const response = userDetailResponseSchema.parse(
     await apiRequest(`/api/admin/users/${encodeURIComponent(userId)}`),
-  ).user
+  )
+  return userDetailSchema.parse({
+    ...response.user,
+    roles: response.roles,
+    authorization_summary: response.authorization_summary,
+  })
 }
 
 export async function createUser(input: CreateUserInput) {

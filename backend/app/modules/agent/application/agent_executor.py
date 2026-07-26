@@ -8,10 +8,12 @@ from app.modules.agent.domain.runtime import AgentRunRequest
 from app.modules.agent.infrastructure.claude_code_agent_client import ClaudeCodeAgentClient
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
 from app.modules.audit.application.audit_service import AuditService
+from app.modules.authorization_center.application import BusinessAuthorizationService
 from app.modules.delivery.application.result_delivery_service import ResultDeliveryService
 from app.modules.job.application.job_status_service import JobStatusService
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.repositories import AgentRepository
+from app.shared.exceptions import PermissionDenied
 
 
 class AgentExecutor:
@@ -26,6 +28,7 @@ class AgentExecutor:
         tool_registry: ToolRegistry,
         result_service: AgentResultService,
         delivery_service: ResultDeliveryService,
+        business_authorization_service: BusinessAuthorizationService | None = None,
     ) -> None:
         self.repository = repository
         self.audit_service = audit_service
@@ -35,6 +38,7 @@ class AgentExecutor:
         self.tool_registry = tool_registry
         self.result_service = result_service
         self.delivery_service = delivery_service
+        self.business_authorization_service = business_authorization_service
 
     def execute(
         self,
@@ -44,6 +48,38 @@ class AgentExecutor:
         correlation_id: str = "",
         fail_on_error: bool = True,
     ) -> str:
+        pending = self.repository.get_job(job_id)
+        if pending.business_application_id:
+            if self.business_authorization_service is None:
+                self.status_service.fail(job_id, "业务应用授权服务暂时不可用")
+                raise PermissionDenied(
+                    "Business authorization service is unavailable",
+                    safe_message="业务应用授权服务暂时不可用",
+                    error_code="business_authorization_unavailable",
+                )
+            try:
+                decision = self.business_authorization_service.require(
+                    user_id=pending.internal_user_id or pending.user_id,
+                    application_id=pending.business_application_id,
+                    stage="worker_start",
+                )
+            except PermissionDenied as exc:
+                self.repository.add_step(
+                    job_id=job_id,
+                    step_type="authorization_denied",
+                    title="业务应用授权已失效",
+                    content=exc.safe_message,
+                )
+                self.status_service.fail(job_id, exc.safe_message)
+                raise
+            self.audit_service.record(
+                "authorization.business.worker_start",
+                status="SUCCEEDED",
+                summary="Business authorization allowed worker start",
+                job_id=job_id,
+                actor_id=pending.internal_user_id or pending.user_id,
+                payload=decision,
+            )
         claimed = self.status_service.claim(job_id, worker_id)
         if claimed is None:
             job = self.repository.get_job(job_id)

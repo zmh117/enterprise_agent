@@ -1,4 +1,5 @@
 import { createBrowserRouter } from "react-router-dom"
+import type { ReactNode } from "react"
 
 import { PlatformShell } from "@/app/shell/platform-shell"
 import { ApplicationDetailPage } from "@/contexts/applications/presentation/application-detail-page"
@@ -16,38 +17,85 @@ import {
 } from "@/contexts/operations/presentation/runtime-records-page"
 import { UserDetailPage, UsersPage } from "@/contexts/users"
 import { DingTalkIdentityDiscoveryPage } from "@/contexts/dingtalk-identity-discovery"
+import {
+  RoleAuthorizationPage,
+  RoleDetailPage,
+} from "@/contexts/authorization"
+import { CapabilityGate } from "@/contexts/auth/presentation/capability-gate"
+
+function protectedPage(capability: string, page: ReactNode) {
+  return <CapabilityGate capability={capability}>{page}</CapabilityGate>
+}
 
 export const appRouter = createBrowserRouter([
   {
     element: <PlatformShell />,
     children: [
-      { path: "/", element: <DashboardPage /> },
-      { path: "/applications", element: <ApplicationsPage /> },
+      {
+        path: "/",
+        element: protectedPage("dashboard.read", <DashboardPage />),
+      },
+      {
+        path: "/applications",
+        element: protectedPage("applications.read", <ApplicationsPage />),
+      },
       {
         path: "/applications/channels",
-        element: <ManagedChannelsPage />,
+        element: protectedPage("channels.read", <ManagedChannelsPage />),
       },
-      { path: "/applications/:code", element: <ApplicationDetailPage /> },
+      {
+        path: "/applications/:code",
+        element: protectedPage(
+          "applications.read",
+          <ApplicationDetailPage />,
+        ),
+      },
       {
         path: "/agent-profiles",
-        element: <AgentProfilesPage />,
+        element: protectedPage("agents.read", <AgentProfilesPage />),
       },
       {
         path: "/agent-profiles/:code",
-        element: <AgentProfilePage />,
+        element: protectedPage("agents.read", <AgentProfilePage />),
       },
-      { path: "/operations/jobs", element: <RuntimeRecordsPage /> },
-      { path: "/operations/jobs/:jobId", element: <RuntimeJobDetailPage /> },
+      {
+        path: "/operations/jobs",
+        element: protectedPage("jobs.read", <RuntimeRecordsPage />),
+      },
+      {
+        path: "/operations/jobs/:jobId",
+        element: protectedPage("jobs.read", <RuntimeJobDetailPage />),
+      },
       {
         path: "/operations/conversations/:sessionId",
-        element: <ConversationDetailPage />,
+        element: protectedPage("conversations.read", <ConversationDetailPage />),
       },
-      { path: "/users", element: <UsersPage /> },
+      {
+        path: "/users",
+        element: protectedPage("users.read", <UsersPage />),
+      },
+      {
+        path: "/users/roles",
+        element: protectedPage(
+          "authorization.read",
+          <RoleAuthorizationPage />,
+        ),
+      },
+      {
+        path: "/users/roles/:roleId",
+        element: protectedPage("authorization.read", <RoleDetailPage />),
+      },
       {
         path: "/users/dingtalk-discovery",
-        element: <DingTalkIdentityDiscoveryPage />,
+        element: protectedPage(
+          "identity.discovery.read",
+          <DingTalkIdentityDiscoveryPage />,
+        ),
       },
-      { path: "/users/:userId", element: <UserDetailPage /> },
+      {
+        path: "/users/:userId",
+        element: protectedPage("users.read", <UserDetailPage />),
+      },
     ],
   },
 ])

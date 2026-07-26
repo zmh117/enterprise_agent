@@ -163,6 +163,15 @@ class AgentContextBuilder:
     def _allowed_tools(self, job: AgentJob, publication: dict[str, Any]) -> list[str]:
         if not publication:
             return self.tool_registry.available_tools()
+        if job.business_application_id:
+            return [
+                tool_name
+                for tool_name in self.tool_registry.available_tools()
+                if self.tool_registry.tool_service.is_tool_visible_for_job(
+                    job_id=job.id,
+                    tool_name=tool_name,
+                )
+            ]
         assert self.agent_config_service is not None
         return self.agent_config_service.allowed_tools(
             publication_id=str(publication["id"]),

@@ -41,7 +41,17 @@ export function useCreateUser() {
   return useMutation({
     mutationFn: (input: CreateUserInput) => createUser(input),
     onSuccess: (user) => {
-      queryClient.setQueryData(userKeys.detail(user.id), user)
+      queryClient.setQueryData(userKeys.detail(user.id), {
+        ...user,
+        roles: [],
+        authorization_summary: {
+          roles: [],
+          management_capabilities: [],
+          business_applications: [],
+          access_status: "未获得应用权限",
+        },
+      })
+      void queryClient.invalidateQueries({ queryKey: userKeys.detail(user.id) })
       void queryClient.invalidateQueries({ queryKey: userKeys.listRoot() })
     },
   })
@@ -52,7 +62,7 @@ export function useUpdateUser(userId: string) {
   return useMutation({
     mutationFn: (input: UpdateUserInput) => updateUser(userId, input),
     onSuccess: (user) => {
-      queryClient.setQueryData(userKeys.detail(user.id), user)
+      void queryClient.invalidateQueries({ queryKey: userKeys.detail(user.id) })
       void queryClient.invalidateQueries({ queryKey: userKeys.listRoot() })
     },
   })

@@ -187,6 +187,7 @@ def create_app(
 
     from app.modules.channel.api.channel_webhook_controller import build_channel_router
     from app.modules.business_application.api import build_business_application_router
+    from app.modules.authorization_center.api import build_authorization_center_router
     from app.modules.admin.api import build_admin_router
     from app.modules.agent_config.api import build_agent_config_router
     from app.modules.model_connection.api import build_model_connection_router
@@ -222,6 +223,7 @@ def create_app(
     )
     if management_surface_enabled:
         app.include_router(build_business_application_router())
+        app.include_router(build_authorization_center_router())
         app.include_router(build_admin_router())
         app.include_router(build_agent_config_router())
         app.include_router(build_model_connection_router())

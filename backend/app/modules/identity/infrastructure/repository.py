@@ -389,16 +389,37 @@ class IdentityRepository:
             raise NotFound("External identity not found", safe_message="未找到身份")
         return self.get_external_identity(identity_id)
 
-    def create_role(self, *, code: str, name: str, description: str = "") -> dict[str, Any]:
+    def create_role(
+        self,
+        *,
+        code: str,
+        name: str,
+        description: str = "",
+        origin: str = "custom",
+        protected: bool = False,
+        purpose_tags: list[str] | None = None,
+    ) -> dict[str, Any]:
         role_id = new_id("role")
         timestamp = now_iso()
         self.database.execute(
             """
             insert into rbac_role
-              (id, code, name, description, status, revision, created_at, updated_at)
-            values (?, ?, ?, ?, 'enabled', 1, ?, ?)
+              (id, code, name, description, status, revision, origin, protected,
+               purpose_tags_json, metadata_revision, admin_revision,
+               business_revision, membership_revision, created_at, updated_at)
+            values (?, ?, ?, ?, 'enabled', 1, ?, ?, ?, 1, 1, 1, 1, ?, ?)
             """,
-            (role_id, code, name, description, timestamp, timestamp),
+            (
+                role_id,
+                code,
+                name,
+                description,
+                origin,
+                int(protected),
+                json.dumps(purpose_tags or [], ensure_ascii=False, separators=(",", ":")),
+                timestamp,
+                timestamp,
+            ),
         )
         return self.get_role(role_id)
 
@@ -424,6 +445,13 @@ class IdentityRepository:
         description: str,
         status: str,
     ) -> dict[str, Any]:
+        current = self.get_role(role_id)
+        if bool(current.get("protected")) and status != str(current["status"]):
+            raise NonRetryableExecutionError(
+                "Protected role status cannot be changed",
+                safe_message="受保护系统角色不能停用",
+                error_code="protected_role",
+            )
         rows = self.database.execute(
             """
             update rbac_role
@@ -448,6 +476,9 @@ class IdentityRepository:
         user_id: str,
         role_id: str,
         expected_revision: int | None = None,
+        expires_at: str | None = None,
+        assigned_by: str = "",
+        assignment_source: str = "manual",
     ) -> dict[str, Any]:
         self.get_user(user_id)
         self.get_role(role_id)
@@ -466,10 +497,17 @@ class IdentityRepository:
             self.database.execute(
                 """
                 update rbac_user_role
-                set status = 'enabled', revision = revision + 1, updated_at = ?
+                set status = 'enabled', expires_at = ?, assigned_by = ?,
+                    assignment_source = ?, revision = revision + 1, updated_at = ?
                 where id = ?
                 """,
-                (timestamp, existing["id"]),
+                (
+                    expires_at,
+                    assigned_by,
+                    assignment_source,
+                    timestamp,
+                    existing["id"],
+                ),
             )
             return (
                 self.database.execute_one(
@@ -487,10 +525,20 @@ class IdentityRepository:
         self.database.execute(
             """
             insert into rbac_user_role
-              (id, user_id, role_id, status, revision, created_at, updated_at)
-            values (?, ?, ?, 'enabled', 1, ?, ?)
+              (id, user_id, role_id, status, revision, expires_at, assigned_by,
+               assignment_source, created_at, updated_at)
+            values (?, ?, ?, 'enabled', 1, ?, ?, ?, ?, ?)
             """,
-            (membership_id, user_id, role_id, timestamp, timestamp),
+            (
+                membership_id,
+                user_id,
+                role_id,
+                expires_at,
+                assigned_by,
+                assignment_source,
+                timestamp,
+                timestamp,
+            ),
         )
         return (
             self.database.execute_one("select * from rbac_user_role where id = ?", (membership_id,))
@@ -522,21 +570,24 @@ class IdentityRepository:
             from rbac_user_role ur
             join rbac_role r on r.id = ur.role_id
             where ur.user_id = ? and ur.status = 'enabled' and r.status = 'enabled'
+              and (ur.expires_at is null or ur.expires_at > ?)
             order by r.code
             """,
-            (user_id,),
+            (user_id, now_iso()),
         )
         return tuple(str(row["code"]) for row in rows)
 
     def list_user_roles(self, user_id: str) -> list[dict[str, Any]]:
         return self.database.execute(
             """
-            select r.id, r.code, r.name, r.description, r.status,
+            select r.id, r.code, r.name, r.description, r.status, r.origin,
+                   r.protected, r.purpose_tags_json,
                    ur.id as membership_id, ur.status as membership_status,
-                   ur.revision as membership_revision
+                   ur.revision as membership_revision, ur.expires_at,
+                   ur.assigned_by, ur.assignment_source
             from rbac_user_role ur
             join rbac_role r on r.id = ur.role_id
-            where ur.user_id = ? and ur.status = 'enabled'
+            where ur.user_id = ?
             order by r.code
             """,
             (user_id,),
@@ -870,7 +921,10 @@ class IdentityRepository:
             where r.code = 'platform-admin' and r.status = 'enabled'
               and ur.status = 'enabled' and u.status = 'enabled'
               and u.account_type = 'human'
+              and (ur.expires_at is null or ur.expires_at > ?)
             """
+            ,
+            (now_iso(),),
         )
         return int(row["count"]) if row else 0
 
@@ -918,8 +972,10 @@ class IdentityRepository:
         return self.database.execute(
             """
             select u.id, u.username, u.display_name, u.email, u.status,
+                   u.account_type,
                    ur.id as membership_id, ur.status as membership_status,
-                   ur.revision as membership_revision
+                   ur.revision as membership_revision, ur.expires_at,
+                   ur.assigned_by, ur.assignment_source
             from rbac_user_role ur
             join app_user u on u.id = ur.user_id
             where ur.role_id = ?

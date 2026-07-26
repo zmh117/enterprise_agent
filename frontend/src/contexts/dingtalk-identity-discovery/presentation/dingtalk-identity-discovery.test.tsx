@@ -178,7 +178,14 @@ describe("未绑定钉钉用户发现", () => {
     })
     const fetch = vi
       .spyOn(globalThis, "fetch")
-      .mockImplementation(() => response({ count: 120 }))
+      .mockImplementation((input) =>
+        String(input).endsWith("/api/admin/capabilities")
+          ? response({
+              capabilities: ["identity.discovery.read"],
+              modules: {},
+            })
+          : response({ count: 120 }),
+      )
     renderWithQuery(
       <SidebarProvider>
         <PlatformNavigation />
@@ -187,12 +194,12 @@ describe("未绑定钉钉用户发现", () => {
     )
 
     expect(await screen.findByText("99+")).toBeInTheDocument()
-    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(fetch).toHaveBeenCalledTimes(2)
     vi.useFakeTimers()
     await act(async () => {
       await vi.advanceTimersByTimeAsync(60_000)
     })
-    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(fetch).toHaveBeenCalledTimes(2)
 
     Object.defineProperty(document, "visibilityState", {
       configurable: true,

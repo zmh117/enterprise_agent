@@ -7,6 +7,7 @@ import {
   BotIcon,
   UserSearchIcon,
   UsersIcon,
+  ShieldCheckIcon,
 } from "lucide-react"
 
 export const prototypeMeta = {
@@ -22,6 +23,7 @@ export type NavigationItem = {
   active?: boolean
   href?: string
   badge?: "dingtalk_identity_candidates"
+  requiredCapability?: string
 }
 
 export type NavigationGroup = {
@@ -33,7 +35,13 @@ export const navigationGroups: NavigationGroup[] = [
   {
     label: "工作台",
     items: [
-      { label: "总览", icon: LayoutDashboardIcon, active: true, href: "/" },
+      {
+        label: "总览",
+        icon: LayoutDashboardIcon,
+        active: true,
+        href: "/",
+        requiredCapability: "dashboard.read",
+      },
     ],
   },
   {
@@ -44,12 +52,14 @@ export const navigationGroups: NavigationGroup[] = [
         icon: PackageCheckIcon,
         active: true,
         href: "/applications",
+        requiredCapability: "applications.read",
       },
       {
         label: "渠道与触发器",
         icon: CableIcon,
         active: true,
         href: "/applications/channels",
+        requiredCapability: "channels.read",
       },
     ],
   },
@@ -61,6 +71,7 @@ export const navigationGroups: NavigationGroup[] = [
         icon: BotIcon,
         active: true,
         href: "/agent-profiles",
+        requiredCapability: "agents.read",
       },
     ],
   },
@@ -72,6 +83,14 @@ export const navigationGroups: NavigationGroup[] = [
         icon: UsersIcon,
         active: true,
         href: "/users",
+        requiredCapability: "users.read",
+      },
+      {
+        label: "角色与授权",
+        icon: ShieldCheckIcon,
+        active: true,
+        href: "/users/roles",
+        requiredCapability: "authorization.read",
       },
       {
         label: "未绑定钉钉用户",
@@ -79,6 +98,7 @@ export const navigationGroups: NavigationGroup[] = [
         active: true,
         href: "/users/dingtalk-discovery",
         badge: "dingtalk_identity_candidates",
+        requiredCapability: "identity.discovery.read",
       },
     ],
   },
@@ -90,6 +110,7 @@ export const navigationGroups: NavigationGroup[] = [
         icon: ActivityIcon,
         active: true,
         href: "/operations/jobs",
+        requiredCapability: "jobs.read",
       },
     ],
   },

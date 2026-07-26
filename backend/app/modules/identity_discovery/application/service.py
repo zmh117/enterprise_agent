@@ -6,8 +6,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.modules.audit.application.audit_service import AuditService
+from app.modules.admin.application import AdminCapabilityService
+from app.modules.authorization_center.infrastructure import AuthorizationCenterRepository
 from app.modules.channel.domain.channel_event import ChannelEvent
 from app.modules.identity.application import IdentityService
+from app.modules.identity.application import AuthorizationEvaluator
 from app.modules.identity.infrastructure import IdentityRepository
 from app.modules.identity_discovery.application.ports import DingTalkIdentityDiscoveryStore
 from app.modules.identity_discovery.domain import PendingDingTalkIdentityObservation
@@ -40,12 +43,16 @@ class DingTalkIdentityDiscoveryService:
         identity_repository: IdentityRepository,
         identity_service: IdentityService,
         audit_service: AuditService,
+        authorization: AuthorizationEvaluator,
+        authorization_repository: AuthorizationCenterRepository,
     ) -> None:
         self.store = store
         self.database = database
         self.identity_repository = identity_repository
         self.identity_service = identity_service
         self.audit_service = audit_service
+        self.authorization = authorization
+        self.authorization_repository = authorization_repository
 
     @staticmethod
     def is_discoverable_rejection(error_code: str) -> bool:
@@ -185,7 +192,28 @@ class DingTalkIdentityDiscoveryService:
         target_user_id: str,
         expected_candidate_revision: int,
         expected_user_revision: int,
+        initial_role_ids: list[str] | None = None,
+        bind_without_access_confirmed: bool = False,
     ) -> dict[str, object]:
+        role_ids = list(dict.fromkeys(initial_role_ids or []))
+        if not role_ids and not bind_without_access_confirmed:
+            raise NonRetryableExecutionError(
+                "Binding without access must be confirmed",
+                safe_message="请选择初始角色，或明确确认“仅绑定身份，暂不授权”",
+                error_code="bind_without_access_confirmation_required",
+                field_errors=[
+                    {
+                        "field": "bind_without_access_confirmed",
+                        "message": "仅绑定身份时必须明确确认",
+                    }
+                ],
+            )
+        if role_ids and bind_without_access_confirmed:
+            raise NonRetryableExecutionError(
+                "Initial roles conflict with bind-only confirmation",
+                safe_message="已选择初始角色时不能同时选择“仅绑定身份”",
+                error_code="validation_failed",
+            )
         try:
             with self.database.transaction():
                 candidate = self.store.get_visible_candidate(
@@ -218,6 +246,30 @@ class DingTalkIdentityDiscoveryService:
                         safe_message="候选来源渠道不可用，请刷新或检查渠道配置",
                         error_code="identity_discovery_connector_unavailable",
                     )
+                roles = []
+                actor_roles = self.identity_repository.role_codes_for_user(actor_id)
+                for role_id in role_ids:
+                    role = self.authorization_repository.get_role(role_id)
+                    if role["status"] != "enabled":
+                        raise NonRetryableExecutionError(
+                            "Initial role is disabled",
+                            safe_message=f"角色“{role['name']}”已停用，不能分配",
+                            error_code="role_disabled",
+                            field_errors=[
+                                {
+                                    "field": "initial_role_ids",
+                                    "message": f"角色“{role['name']}”已停用",
+                                }
+                            ],
+                        )
+                    if "platform-admin" not in actor_roles:
+                        self.authorization.require(
+                            user_id=actor_id,
+                            resource_type="role",
+                            resource_code=role_id,
+                            action="assign",
+                        )
+                    roles.append(role)
                 identity = self.identity_service.bind_dingtalk(
                     actor_id=actor_id,
                     user_id=target_user_id,
@@ -227,6 +279,27 @@ class DingTalkIdentityDiscoveryService:
                     display_name=str(candidate.get("display_name") or ""),
                     expected_user_revision=expected_user_revision,
                 )
+                memberships = []
+                for role in roles:
+                    current = self.database.execute_one(
+                        """
+                        select * from rbac_user_role
+                         where user_id = ? and role_id = ?
+                        """,
+                        (target_user_id, role["id"]),
+                    )
+                    self.authorization_repository.bump_membership_revision(
+                        str(role["id"]), int(role["membership_revision"])
+                    )
+                    memberships.append(
+                        self.identity_repository.assign_role(
+                            user_id=target_user_id,
+                            role_id=str(role["id"]),
+                            expected_revision=int(current["revision"]) if current else 0,
+                            assigned_by=actor_id,
+                            assignment_source="dingtalk_binding",
+                        )
+                    )
                 self.audit_service.record(
                     "identity.discovery.bound",
                     status="SUCCEEDED",
@@ -236,11 +309,47 @@ class DingTalkIdentityDiscoveryService:
                         "candidate_id": candidate_id,
                         "target_user_id": target_user_id,
                         "identity_id": identity["id"],
+                        "initial_role_ids": role_ids,
+                        "bind_without_access": not role_ids,
                     },
                 )
+                admin_summary = AdminCapabilityService(
+                    self.identity_repository,
+                    self.authorization,
+                ).summary(target_user_id)
+                business_access = [
+                    access
+                    for role in self.authorization_repository.active_role_rows_for_user(
+                        target_user_id
+                    )
+                    for access in self.authorization_repository.list_business_access(
+                        str(role["id"])
+                    )
+                    if access["status"] == "enabled"
+                ]
             return {
                 "candidate_id": candidate_id,
                 "identity": identity,
+                "memberships": memberships,
+                "authorization_summary": {
+                    "access_status": (
+                        "已获得角色授权"
+                        if business_access
+                        else "未获得应用权限"
+                    ),
+                    "role_ids": role_ids,
+                    "management_capabilities": admin_summary["capabilities"],
+                    "business_applications": [
+                        {
+                            "id": item["application_id"],
+                            "code": item["application_code"],
+                            "name": item["application_name"],
+                            "capability_codes": item["capability_codes"],
+                            "scopes": item["scopes"],
+                        }
+                        for item in business_access
+                    ],
+                },
             }
         except Exception as exc:
             error_code = (

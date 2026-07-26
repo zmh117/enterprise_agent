@@ -4,6 +4,7 @@ import time
 from typing import Any
 
 from app.modules.audit.application.audit_service import AuditService
+from app.modules.authorization_center.application import BusinessAuthorizationService
 from app.modules.audit.application.summaries import bounded_summary
 from app.modules.internal_tools.application.policies import (
     assert_loki_label,
@@ -19,7 +20,7 @@ from app.modules.internal_tools.infrastructure.internal_api_client import (
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.modules.permission.application.permission_service import PermissionService
 from app.shared.config import ExecutionSettings
-from app.shared.exceptions import ToolPolicyError
+from app.shared.exceptions import PermissionDenied, ToolPolicyError
 from app.shared.logging import correlation_id_var
 
 
@@ -32,12 +33,35 @@ class ReadOnlyToolService:
         audit_service: AuditService,
         repository: AgentRepository,
         limits: ExecutionSettings,
+        business_authorization_service: BusinessAuthorizationService | None = None,
     ) -> None:
         self.internal_api_client = internal_api_client
         self.permission_service = permission_service
         self.audit_service = audit_service
         self.repository = repository
         self.limits = limits
+        self.business_authorization_service = business_authorization_service
+
+    def is_tool_visible_for_job(self, *, job_id: str, tool_name: str) -> bool:
+        job = self.repository.get_job(job_id)
+        if not self.repository.job_allows_tool(job_id, tool_name):
+            return False
+        try:
+            self.permission_service.assert_registered_readonly_tool(tool_name)
+        except ToolPolicyError:
+            return False
+        if not job.business_application_id:
+            return True
+        if self.business_authorization_service is None:
+            return False
+        return bool(
+            self.business_authorization_service.decide(
+                user_id=job.internal_user_id or job.user_id,
+                application_id=job.business_application_id,
+                capability_code=tool_name,
+                stage="tool_exposure",
+            )["allowed"]
+        )
 
     def call_tool(
         self,
@@ -65,12 +89,46 @@ class ReadOnlyToolService:
                     safe_message="此 Agent 版本未分配该工具",
                 )
             scope = _addressing_from_arguments(arguments)
-            self.permission_service.assert_tool_allowed(
-                user_id=user_id,
-                tool_name=tool_name,
-                project_code=project_code,
-                scope=scope,
-            )
+            if job.business_application_id:
+                if self.business_authorization_service is None:
+                    raise ToolPolicyError(
+                        "Business authorization service is unavailable",
+                        safe_message="业务应用授权服务暂时不可用",
+                        error_code="business_authorization_unavailable",
+                    )
+                try:
+                    decision = self.business_authorization_service.require(
+                        user_id=user_id,
+                        application_id=job.business_application_id,
+                        capability_code=tool_name,
+                        environment=scope.get("environment", ""),
+                        base=scope.get("base", ""),
+                        workshop=scope.get("workshop", ""),
+                        stage="tool_call",
+                    )
+                except PermissionDenied as exc:
+                    raise ToolPolicyError(
+                        "Business application tool access denied",
+                        safe_message=exc.safe_message,
+                        error_code=exc.error_code,
+                    ) from exc
+                self.audit_service.record(
+                    "authorization.business.tool_call",
+                    status="SUCCEEDED",
+                    summary="Business authorization allowed tool call",
+                    job_id=job_id,
+                    actor_id=user_id,
+                    payload=decision,
+                )
+            if job.business_application_id:
+                self.permission_service.assert_registered_readonly_tool(tool_name)
+            else:
+                self.permission_service.assert_tool_allowed(
+                    user_id=user_id,
+                    tool_name=tool_name,
+                    project_code=project_code,
+                    scope=scope,
+                )
             self._assert_tool_policy(tool_name, arguments)
             audit_id = self.audit_service.record(
                 "tool.call.allowed",

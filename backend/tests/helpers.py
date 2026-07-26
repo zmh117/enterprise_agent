@@ -26,6 +26,7 @@ def activate_dingtalk_test_application(
     robot_code: str,
     group_conversation_ids: tuple[str, ...] = (),
     attachments_enabled: bool = False,
+    capabilities: tuple[str, ...] = (),
 ) -> dict[str, object]:
     triggers: list[dict[str, object]] = [
         {
@@ -94,7 +95,14 @@ def activate_dingtalk_test_application(
                     "config": {"target_reference": "", "reply_mode": "original"},
                 }
             ],
-            "capabilities": [],
+            "capabilities": [
+                {
+                    "capability_code": capability,
+                    "version_constraint": "*",
+                    "enabled": True,
+                }
+                for capability in capabilities
+            ],
         },
     )
     publication = container.business_application_service.publish(

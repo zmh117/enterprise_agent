@@ -20,6 +20,7 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Sheet,
   SheetContent,
@@ -54,6 +55,7 @@ import {
   RequestError,
 } from "@/contexts/users/presentation/user-ui"
 import { formatDate } from "@/contexts/users/presentation/format-date"
+import { useRoles } from "@/contexts/authorization/application/role-authorization-queries"
 
 export function ExternalIdentityPanel({
   user,
@@ -354,6 +356,9 @@ function CandidateDingTalkBindingSheet({
   const navigate = useNavigate()
   const candidate = useDingTalkIdentityCandidate(candidateId)
   const mutation = useBindDingTalkIdentityCandidate(candidateId, user.id)
+  const roles = useRoles({ search: "", status: "enabled", origin: "" })
+  const [initialRoleIds, setInitialRoleIds] = useState<Set<string>>(new Set())
+  const [bindOnly, setBindOnly] = useState(false)
 
   const changeOpen = (next: boolean) => {
     if (!next) mutation.reset()
@@ -367,6 +372,8 @@ function CandidateDingTalkBindingSheet({
         target_user_id: user.id,
         expected_candidate_revision: candidate.data.revision,
         expected_user_revision: user.revision,
+        initial_role_ids: [...initialRoleIds],
+        bind_without_access_confirmed: bindOnly,
       },
       {
         onSuccess: () => {
@@ -421,6 +428,53 @@ function CandidateDingTalkBindingSheet({
                 value={`${user.display_name}（${user.username}）`}
               />
             </dl>
+            <div className="space-y-3 rounded-lg border p-4">
+              <div>
+                <h3 className="text-sm font-medium">初始角色</h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  身份绑定和全部初始角色会在同一个事务中完成；任一角色失败会整体回滚。
+                </p>
+              </div>
+              <div className="grid gap-2">
+                {roles.data?.items.map((role) => (
+                  <label
+                    key={role.id}
+                    className="flex items-center gap-2 rounded-md border p-3 text-sm"
+                  >
+                    <Checkbox
+                      checked={initialRoleIds.has(role.id)}
+                      disabled={bindOnly}
+                      onCheckedChange={(checked) => {
+                        const next = new Set(initialRoleIds)
+                        if (checked) next.add(role.id)
+                        else next.delete(role.id)
+                        setInitialRoleIds(next)
+                      }}
+                    />
+                    <span>
+                      {role.name}
+                      <span className="ml-2 font-mono text-xs text-muted-foreground">
+                        {role.code}
+                      </span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <label className="flex items-start gap-2 rounded-md bg-amber-50 p-3 text-sm">
+                <Checkbox
+                  checked={bindOnly}
+                  disabled={initialRoleIds.size > 0}
+                  onCheckedChange={(checked) => setBindOnly(Boolean(checked))}
+                />
+                <span>
+                  <span className="font-medium">仅绑定身份，暂不授权</span>
+                  <span className="mt-1 block text-xs text-muted-foreground">
+                    绑定后候选会立即消失，但该用户会显示“未获得应用权限”。
+                  </span>
+                </span>
+              </label>
+            </div>
+            <RequestError error={roles.error} />
             <RequestError error={mutation.error} />
             <SheetFooter className="px-0">
               <Button
@@ -428,7 +482,8 @@ function CandidateDingTalkBindingSheet({
                 disabled={
                   mutation.isPending ||
                   user.account_type !== "human" ||
-                  user.status !== "enabled"
+                  user.status !== "enabled" ||
+                  (initialRoleIds.size === 0 && !bindOnly)
                 }
               >
                 {mutation.isPending ? (
@@ -437,7 +492,7 @@ function CandidateDingTalkBindingSheet({
                     aria-hidden="true"
                   />
                 ) : null}
-                确认绑定
+                确认绑定并保存授权
               </Button>
               <Button
                 type="button"

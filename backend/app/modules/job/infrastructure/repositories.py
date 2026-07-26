@@ -796,7 +796,10 @@ class AgentRepository:
                 status,
                 error_message,
                 timestamp,
-                timestamp if status in {"SUCCEEDED", "FAILED", "SKIPPED"} else None,
+                timestamp
+                if status
+                in {"SUCCEEDED", "FAILED", "SKIPPED", "BLOCKED_BY_AUTHORIZATION"}
+                else None,
             ),
         )
         return attempt_id
@@ -813,7 +816,10 @@ class AgentRepository:
             (
                 status,
                 error_message,
-                now_iso() if status in {"SUCCEEDED", "FAILED", "SKIPPED"} else None,
+                now_iso()
+                if status
+                in {"SUCCEEDED", "FAILED", "SKIPPED", "BLOCKED_BY_AUTHORIZATION"}
+                else None,
                 attempt_id,
             ),
         )

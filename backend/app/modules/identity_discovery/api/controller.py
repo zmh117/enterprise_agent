@@ -21,6 +21,8 @@ class BindCandidateRequest(BaseModel):
     target_user_id: str = Field(min_length=1, max_length=200)
     expected_candidate_revision: int = Field(ge=1)
     expected_user_revision: int = Field(ge=1)
+    initial_role_ids: list[str] = Field(default_factory=list, max_length=100)
+    bind_without_access_confirmed: bool = False
 
 
 def build_identity_discovery_router() -> APIRouter:
@@ -41,7 +43,7 @@ def build_identity_discovery_router() -> APIRouter:
             request,
             resource_type="identity",
             resource_code="*",
-            action="manage",
+            action="read",
         )
         try:
             return container(request).identity_discovery_service.list_candidates(
@@ -59,7 +61,7 @@ def build_identity_discovery_router() -> APIRouter:
             request,
             resource_type="identity",
             resource_code="*",
-            action="manage",
+            action="read",
         )
         return {
             "count": container(request).identity_discovery_service.count_candidates()
@@ -71,7 +73,7 @@ def build_identity_discovery_router() -> APIRouter:
             request,
             resource_type="identity",
             resource_code="*",
-            action="manage",
+            action="read",
         )
         try:
             candidate = container(request).identity_discovery_service.get_candidate(
@@ -101,6 +103,8 @@ def build_identity_discovery_router() -> APIRouter:
                 target_user_id=payload.target_user_id,
                 expected_candidate_revision=payload.expected_candidate_revision,
                 expected_user_revision=payload.expected_user_revision,
+                initial_role_ids=payload.initial_role_ids,
+                bind_without_access_confirmed=payload.bind_without_access_confirmed,
             )
         except Exception as exc:
             raise handle_exception(exc) from exc

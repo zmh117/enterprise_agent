@@ -17,6 +17,11 @@ from app.modules.agent.infrastructure.skill_loader import SkillLoader
 from app.modules.agent_config.application import AgentConfigService
 from app.modules.agent_config.infrastructure import AgentConfigRepository
 from app.modules.audit.application.audit_service import AuditService
+from app.modules.authorization_center import (
+    AuthorizationCenterRepository,
+    AuthorizationCenterService,
+    BusinessAuthorizationService,
+)
 from app.modules.attachments.credentials import AttachmentCredentialCipher
 from app.modules.attachments.dingtalk_downloader import DingTalkMediaDownloader
 from app.modules.attachments.domain import ObjectStorage
@@ -32,7 +37,7 @@ from app.modules.business_application.infrastructure import BusinessApplicationR
 from app.modules.business_application.infrastructure.adapters import (
     AgentPublicationAdapter,
     ChannelConnectorAdapter,
-    EmptyCapabilityCatalogAdapter,
+    ToolCapabilityCatalogAdapter,
     IdentitySubjectAdapter,
     WorkflowPublicationAdapter,
 )
@@ -139,6 +144,9 @@ class Container:
     identity_admin_service: IdentityAdminService
     auth_service: AuthService
     authorization_evaluator: AuthorizationEvaluator
+    authorization_center_repository: AuthorizationCenterRepository
+    authorization_center_service: AuthorizationCenterService
+    business_authorization_service: BusinessAuthorizationService
     agent_config_service: AgentConfigService
     model_connection_service: ModelConnectionService
     audit_service: AuditService
@@ -306,14 +314,30 @@ def _build_container(
         ones_instance_code=settings.ones_identity.instance_code,
         ones_display_name=settings.ones_identity.display_name,
     )
+    authorization_evaluator = AuthorizationEvaluator(identity_repository, audit_service)
+    authorization_center_repository = AuthorizationCenterRepository(database)
+    authorization_center_service = AuthorizationCenterService(
+        authorization_center_repository,
+        identity_repository,
+        authorization_evaluator,
+        audit_service,
+    )
+    business_authorization_service = BusinessAuthorizationService(
+        authorization_center_repository,
+        identity_repository,
+        authorization_evaluator,
+        mode=settings.identity.business_application_authorization_mode,
+        audit_service=audit_service,
+    )
     identity_discovery_service = DingTalkIdentityDiscoveryService(
         store=identity_discovery_repository,
         database=database,
         identity_repository=identity_repository,
         identity_service=identity_service,
         audit_service=audit_service,
+        authorization=authorization_evaluator,
+        authorization_repository=authorization_center_repository,
     )
-    authorization_evaluator = AuthorizationEvaluator(identity_repository, audit_service)
     permission_service = PermissionService(
         config_repository,
         authorization_evaluator=authorization_evaluator,
@@ -383,7 +407,7 @@ def _build_container(
         WorkflowPublicationAdapter(workflow_repository),
         ChannelConnectorAdapter(connector_registry),
         IdentitySubjectAdapter(identity_repository),
-        EmptyCapabilityCatalogAdapter(),
+        ToolCapabilityCatalogAdapter(config_repository),
         business_application_runtime_evaluator,
     )
     business_application_resolver = BusinessApplicationResolver(
@@ -411,6 +435,7 @@ def _build_container(
             settings.feature_configuration.published_agent_runtime_enabled
         ),
         default_agent_code=settings.identity.default_agent_code,
+        business_authorization_service=business_authorization_service,
     )
     channel_ingress_service = ChannelIngressService(
         create_job_service=create_job_service,
@@ -561,6 +586,7 @@ def _build_container(
         audit_service=audit_service,
         repository=agent_repository,
         limits=settings.execution,
+        business_authorization_service=business_authorization_service,
     )
     tool_registry = ToolRegistry(tool_service)
     claude_client = (
@@ -604,6 +630,7 @@ def _build_container(
             "webhook": http_adapter,
         },
         chunker=ReportChunker(settings.delivery.chunk_max_chars),
+        business_authorization_service=business_authorization_service,
     )
     object_storage: ObjectStorage = InMemoryObjectStorage(settings.object_storage.bucket)
     if service_name == "attachment-worker" and message_bus is None:
@@ -650,6 +677,7 @@ def _build_container(
         tool_registry=tool_registry,
         result_service=AgentResultService(agent_repository),
         delivery_service=result_delivery_service,
+        business_authorization_service=business_authorization_service,
     )
     retry_service = JobRetryService(
         repository=agent_repository,
@@ -668,6 +696,9 @@ def _build_container(
         identity_admin_service=identity_admin_service,
         auth_service=auth_service,
         authorization_evaluator=authorization_evaluator,
+        authorization_center_repository=authorization_center_repository,
+        authorization_center_service=authorization_center_service,
+        business_authorization_service=business_authorization_service,
         agent_config_service=agent_config_service,
         model_connection_service=model_connection_service,
         audit_service=audit_service,

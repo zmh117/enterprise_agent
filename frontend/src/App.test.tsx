@@ -1,8 +1,34 @@
-import { render, screen } from "@testing-library/react"
+import { render, screen, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { App } from "@/App"
+
+const platformCapabilities = {
+  capabilities: [
+    "dashboard.read",
+    "applications.read",
+    "channels.read",
+    "agents.read",
+    "users.read",
+    "authorization.read",
+    "identity.discovery.read",
+    "jobs.read",
+  ],
+  modules: {},
+}
+
+function platformResponse(input: RequestInfo | URL) {
+  const url = String(input)
+  const body = url.endsWith("/api/admin/capabilities")
+    ? platformCapabilities
+    : { count: 0 }
+  return Promise.resolve(
+    new Response(JSON.stringify(body), {
+      headers: { "Content-Type": "application/json" },
+    }),
+  )
+}
 
 function renderApp() {
   return render(
@@ -23,16 +49,14 @@ afterEach(() => {
 })
 
 describe("Agent 应用平台 MVP 首页", () => {
-  it("只展示已接线的业务应用和用户身份入口", () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ count: 0 }), {
-        headers: { "Content-Type": "application/json" },
-      })
-    )
+  it("只展示已接线的业务应用和用户身份入口", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(platformResponse)
     renderApp()
 
     expect(screen.getAllByText("Agent 应用平台").length).toBeGreaterThan(0)
-    expect(screen.getAllByText("业务应用").length).toBeGreaterThan(0)
+    expect(
+      (await screen.findAllByText("业务应用")).length,
+    ).toBeGreaterThan(0)
     expect(screen.getAllByText("用户与外部身份").length).toBeGreaterThan(0)
     expect(screen.getByText("统一身份边界")).toBeInTheDocument()
     expect(screen.getByText("钉钉身份")).toBeInTheDocument()
@@ -40,7 +64,7 @@ describe("Agent 应用平台 MVP 首页", () => {
   })
 
   it("不保留旧模板业务文案", () => {
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"))
+    vi.spyOn(globalThis, "fetch").mockImplementation(platformResponse)
     const { container } = renderApp()
     const page = container.textContent ?? ""
 
@@ -56,10 +80,10 @@ describe("Agent 应用平台 MVP 首页", () => {
     }
   })
 
-  it("加载时只轮询候选计数且不建立流式连接", () => {
+  it("加载时只轮询候选计数且不建立流式连接", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
-      .mockRejectedValue(new Error("not expected"))
+      .mockImplementation(platformResponse)
     const xhrOpenSpy = vi.spyOn(XMLHttpRequest.prototype, "open")
     const websocketSpy = vi.fn()
     const eventSourceSpy = vi.fn()
@@ -69,8 +93,14 @@ describe("Agent 应用平台 MVP 首页", () => {
     renderApp()
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      "/api/admin/dingtalk-identity-candidates/count",
-      expect.any(Object)
+      "/api/admin/capabilities",
+      expect.any(Object),
+    )
+    await waitFor(() =>
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "/api/admin/dingtalk-identity-candidates/count",
+        expect.any(Object),
+      ),
     )
     expect(xhrOpenSpy).not.toHaveBeenCalled()
     expect(websocketSpy).not.toHaveBeenCalled()
@@ -78,12 +108,11 @@ describe("Agent 应用平台 MVP 首页", () => {
   })
 
   it("不展示本次变更之外的规划入口", () => {
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"))
+    vi.spyOn(globalThis, "fetch").mockImplementation(platformResponse)
     const { container } = renderApp()
     const page = container.textContent ?? ""
 
     for (const outOfScopeEntry of [
-      "角色与授权",
       "审计日志",
       "环境管理",
       "API Capability",
@@ -98,8 +127,8 @@ describe("Agent 应用平台 MVP 首页", () => {
     }
   })
 
-  it("不暴露底层连接配置、凭据或可执行入口", () => {
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"))
+  it("不暴露底层连接配置、凭据或可执行入口", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(platformResponse)
     const { container } = renderApp()
     const page = container.textContent ?? ""
 
@@ -116,6 +145,6 @@ describe("Agent 应用平台 MVP 首页", () => {
     ]) {
       expect(page).not.toContain(forbiddenEntry)
     }
-    expect(screen.getByText("统一身份边界")).toBeInTheDocument()
+    expect(await screen.findByText("统一身份边界")).toBeInTheDocument()
   })
 })

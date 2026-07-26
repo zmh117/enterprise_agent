@@ -68,4 +68,6 @@ export type BindCandidateInput = {
   target_user_id: string
   expected_candidate_revision: number
   expected_user_revision: number
+  initial_role_ids: string[]
+  bind_without_access_confirmed: boolean
 }

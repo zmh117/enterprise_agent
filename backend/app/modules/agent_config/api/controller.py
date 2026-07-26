@@ -68,7 +68,7 @@ def build_agent_config_router() -> APIRouter:
 
     @router.get("")
     def list_agents(request: Request) -> dict[str, Any]:
-        require_action(request, resource_type="agent", resource_code="*", action="edit")
+        require_action(request, resource_type="agent", resource_code="*", action="read")
         return {"agents": container(request).agent_config_service.list_agents()}
 
     @router.get("/{agent_code}")
@@ -77,7 +77,7 @@ def build_agent_config_router() -> APIRouter:
             request,
             resource_type="agent",
             resource_code=agent_code,
-            action="edit",
+            action="read",
         )
         try:
             agent = container(request).agent_config_service.get(agent_code)
@@ -183,7 +183,7 @@ def build_agent_config_router() -> APIRouter:
 
     @router.get("/{agent_code}/publications")
     def publications(request: Request, agent_code: str) -> dict[str, Any]:
-        require_action(request, resource_type="agent", resource_code=agent_code, action="edit")
+        require_action(request, resource_type="agent", resource_code=agent_code, action="read")
         try:
             values = container(request).agent_config_service.publications(agent_code)
         except Exception as exc:
@@ -192,7 +192,7 @@ def build_agent_config_router() -> APIRouter:
 
     @router.get("/{agent_code}/effective-config")
     def effective(request: Request, agent_code: str) -> dict[str, Any]:
-        require_action(request, resource_type="agent", resource_code=agent_code, action="edit")
+        require_action(request, resource_type="agent", resource_code=agent_code, action="read")
         try:
             publication = container(request).agent_config_service.current_publication(agent_code)
         except Exception as exc:

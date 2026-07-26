@@ -53,10 +53,11 @@ export function useDingTalkIdentityCandidates(params: CandidateListParams) {
   return query
 }
 
-export function useDingTalkIdentityCandidateCount() {
+export function useDingTalkIdentityCandidateCount(enabled = true) {
   const query = useQuery({
     queryKey: dingtalkIdentityCandidateKeys.count(),
     queryFn: countDingTalkIdentityCandidates,
+    enabled,
     retry: false,
     refetchInterval: foregroundInterval(30_000),
     refetchIntervalInBackground: false,

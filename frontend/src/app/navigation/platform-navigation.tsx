@@ -18,10 +18,14 @@ import {
 import { navigationGroups } from "@/mocks/dashboard"
 import { resolveActiveNavigationHref } from "@/app/navigation/navigation-match"
 import { useDingTalkIdentityCandidateCount } from "@/contexts/dingtalk-identity-discovery"
+import { useAdminCapabilitySummary } from "@/contexts/auth/application/admin-capability-query"
 
 export function PlatformNavigation() {
   const location = useLocation()
-  const candidateCount = useDingTalkIdentityCandidateCount()
+  const capabilityQuery = useAdminCapabilitySummary()
+  const capabilitySet = new Set(capabilityQuery.data?.capabilities ?? [])
+  const canReadCandidates = capabilitySet.has("identity.discovery.read")
+  const candidateCount = useDingTalkIdentityCandidateCount(canReadCandidates)
   return (
     <Sidebar collapsible="offcanvas" variant="sidebar">
       <SidebarHeader className="h-16 justify-center border-b px-3">
@@ -46,18 +50,25 @@ export function PlatformNavigation() {
       </SidebarHeader>
 
       <SidebarContent className="py-2">
-        {navigationGroups.map((group) => (
+        {navigationGroups.map((group) => {
+          const visibleItems = group.items.filter(
+            (item) =>
+              !item.requiredCapability ||
+              capabilitySet.has(item.requiredCapability),
+          )
+          if (visibleItems.length === 0) return null
+          return (
           <SidebarGroup key={group.label} className="py-1">
             <SidebarGroupLabel className="text-[11px] font-medium tracking-wide text-muted-foreground/80">
               {group.label}
             </SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
-                {group.items.map((item) => {
+                {visibleItems.map((item) => {
                   const Icon = item.icon
                   const activeHref = resolveActiveNavigationHref(
                     location.pathname,
-                    group.items
+                    visibleItems
                   )
                   return (
                     <SidebarMenuItem key={item.label}>
@@ -104,7 +115,8 @@ export function PlatformNavigation() {
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
-        ))}
+          )
+        })}
       </SidebarContent>
 
       <SidebarSeparator />

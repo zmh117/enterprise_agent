@@ -108,11 +108,14 @@ VALUES
 ON CONFLICT(id) DO NOTHING;
 
 INSERT INTO rbac_role
-  (id, code, name, description, status, revision, created_at, updated_at)
+  (id, code, name, description, status, revision, origin, protected,
+   purpose_tags_json, metadata_revision, admin_revision, business_revision,
+   membership_revision, created_at, updated_at)
 VALUES
   ('role_platform_admin', 'platform-admin', '平台管理员',
    'Manage users, roles, platform configuration and Agent publications',
-   'enabled', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+   'enabled', 1, 'system', 1, '["平台管理"]', 1, 1, 1, 1,
+   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 
 INSERT INTO rbac_user_role

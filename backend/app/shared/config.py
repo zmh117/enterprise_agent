@@ -113,6 +113,7 @@ class IdentitySettings:
     allowed_origins: tuple[str, ...] = ()
     dingtalk_tenant_code: str = "default"
     default_agent_code: str = "default-diagnostic-agent"
+    business_application_authorization_mode: str = "compatibility"
 
 
 @dataclass(frozen=True)
@@ -243,6 +244,16 @@ def _env_bool(name: str, default: bool = False) -> bool:
     if value is None:
         return default
     return value.lower() in {"1", "true", "yes", "on"}
+
+
+def _authorization_mode(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized not in {"compatibility", "strict_application_role"}:
+        raise ValueError(
+            "BUSINESS_APPLICATION_AUTHORIZATION_MODE must be "
+            "compatibility or strict_application_role"
+        )
+    return normalized
 
 
 def load_settings() -> Settings:
@@ -433,6 +444,12 @@ def load_settings() -> Settings:
             allowed_origins=_csv_tuple(os.getenv("WEB_ALLOWED_ORIGINS", "")),
             dingtalk_tenant_code=os.getenv("DINGTALK_TENANT_CODE", "default"),
             default_agent_code=os.getenv("DEFAULT_AGENT_CODE", "default-diagnostic-agent"),
+            business_application_authorization_mode=_authorization_mode(
+                os.getenv(
+                    "BUSINESS_APPLICATION_AUTHORIZATION_MODE",
+                    "compatibility",
+                )
+            ),
         ),
         ones_identity=OnesIdentitySettings(
             instance_code=os.getenv("ONES_IDENTITY_INSTANCE_CODE", "default"),

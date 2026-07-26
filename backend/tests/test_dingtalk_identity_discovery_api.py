@@ -282,6 +282,7 @@ def test_candidate_binding_is_trusted_csrf_protected_and_immediately_hidden() ->
             "target_user_id": target["id"],
             "expected_candidate_revision": candidate["revision"],
             "expected_user_revision": target["revision"],
+            "bind_without_access_confirmed": True,
         }
 
         missing_csrf = client.post(
@@ -327,6 +328,7 @@ def test_candidate_binding_is_trusted_csrf_protected_and_immediately_hidden() ->
                 "target_user_id": retained_user["id"],
                 "expected_candidate_revision": candidate["revision"] + 1,
                 "expected_user_revision": retained_user["revision"],
+                "bind_without_access_confirmed": True,
             },
         )
         assert failed_after_create.status_code == 409
@@ -426,9 +428,10 @@ def test_historical_identity_can_only_return_to_original_user() -> None:
             f"/api/admin/dingtalk-identity-candidates/{candidate['id']}/bind",
             headers=headers,
             json={
-                "target_user_id": target["id"],
-                "expected_candidate_revision": candidate["revision"],
-                "expected_user_revision": target["revision"],
+                    "target_user_id": target["id"],
+                    "expected_candidate_revision": candidate["revision"],
+                    "expected_user_revision": target["revision"],
+                    "bind_without_access_confirmed": True,
             },
         )
         assert conflict.status_code == 409
@@ -496,6 +499,7 @@ def test_candidate_binding_rejects_non_human_disabled_user_and_disabled_connecto
                     "target_user_id": user["id"],
                     "expected_candidate_revision": candidate["revision"],
                     "expected_user_revision": user["revision"],
+                    "bind_without_access_confirmed": True,
                 },
             )
 
@@ -515,6 +519,86 @@ def test_candidate_binding_rejects_non_human_disabled_user_and_disabled_connecto
         assert client.get(
             "/api/admin/dingtalk-identity-candidates/count"
         ).json() == {"count": 1}
+
+
+def test_private_and_group_candidates_bind_multiple_roles_atomically() -> None:
+    container, connector = _container()
+    connector_id = str(connector["id"])
+    roles = [
+        container.authorization_center_service.create_role(
+            actor_id="user_local_admin",
+            code=f"binding-role-{index}",
+            name=f"绑定角色 {index}",
+            description="",
+            purpose_tags=["身份绑定"],
+        )["role"]
+        for index in (1, 2)
+    ]
+    cases = [
+        ("private", "1", "private-binding-conversation"),
+        ("group", "2", "group-binding-conversation"),
+    ]
+    targets: dict[str, dict[str, Any]] = {}
+    for suffix, conversation_type, conversation_id in cases:
+        _dispatch(
+            container,
+            _submission(
+                connector_id,
+                f"event-multi-role-{suffix}",
+                sender_id=f"staff-multi-role-{suffix}",
+                sender_name=f"多角色{suffix}",
+                conversation_type=conversation_type,
+                conversation_id=conversation_id,
+            ),
+        )
+        targets[suffix] = container.identity_repository.create_user(
+            username=f"multi-role-{suffix}",
+            display_name=f"多角色目标{suffix}",
+        )
+
+    app = create_app(_settings(), container_factory=lambda _: container)
+    with TestClient(app) as client:
+        headers = _login(client)
+        candidates = client.get(
+            "/api/admin/dingtalk-identity-candidates"
+        ).json()["candidates"]
+        by_subject = {
+            candidate["external_subject_id"]: candidate for candidate in candidates
+        }
+        for suffix, _, _ in cases:
+            candidate = by_subject[f"staff-multi-role-{suffix}"]
+            target = targets[suffix]
+            bound = client.post(
+                f"/api/admin/dingtalk-identity-candidates/{candidate['id']}/bind",
+                headers=headers,
+                json={
+                    "target_user_id": target["id"],
+                    "expected_candidate_revision": candidate["revision"],
+                    "expected_user_revision": target["revision"],
+                    "initial_role_ids": [role["id"] for role in roles],
+                    "bind_without_access_confirmed": False,
+                },
+            )
+            assert bound.status_code == 200, bound.text
+            result = bound.json()
+            assert len(result["memberships"]) == 2
+            assert result["authorization_summary"]["role_ids"] == [
+                role["id"] for role in roles
+            ]
+            assert (
+                result["authorization_summary"]["access_status"]
+                == "未获得应用权限"
+            )
+            assert {
+                row["code"]
+                for row in container.identity_repository.list_user_roles(
+                    str(target["id"])
+                )
+                if row["membership_status"] == "enabled"
+            } == {"binding-role-1", "binding-role-2"}
+        assert client.get(
+            "/api/admin/dingtalk-identity-candidates/count"
+        ).json() == {"count": 0}
 
 
 def test_cleanup_removes_only_expired_projection() -> None:

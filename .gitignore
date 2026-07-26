@@ -18,3 +18,5 @@ node_modules/
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+dingtalk-runtime/node_modules/
+dingtalk-runtime/dist/

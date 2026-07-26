@@ -321,6 +321,41 @@ def routed_container(settings: Settings | None = None):
         project_code="default",
         owner_user_id="user_local_admin",
     )
+    runtime_role = current.authorization_center_service.create_role(
+        actor_id="user_local_admin",
+        code="dingtalk-stream-runtime-user",
+        name="钉钉 Stream 运行用户",
+        description="测试显式业务应用授权",
+        purpose_tags=["业务访问"],
+    )["role"]
+    current.authorization_center_service.replace_business_access(
+        actor_id="user_local_admin",
+        role_id=str(runtime_role["id"]),
+        expected_revision=1,
+        applications=[
+            {
+                "application_id": application["id"],
+                "capability_codes": [],
+                "scopes": [],
+            }
+        ],
+        confirmed=True,
+        reason="测试钉钉业务应用显式授权",
+    )
+    current.authorization_center_service.update_members(
+        actor_id="user_local_admin",
+        role_id=str(runtime_role["id"]),
+        expected_revision=1,
+        changes=[
+            {
+                "user_id": "user_local_admin",
+                "enabled": True,
+                "expires_at": None,
+                "source": "manual",
+            }
+        ],
+        confirmed=False,
+    )
     revision = current.business_application_service.save_draft(
         actor_id="user_local_admin",
         code="dingtalk-stream-test-application",

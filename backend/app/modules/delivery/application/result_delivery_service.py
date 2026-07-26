@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from app.modules.audit.application.audit_service import AuditService
+from app.modules.authorization_center.application import BusinessAuthorizationService
 from app.modules.channel.domain.channel_event import ReplyRoute, safe_payload_summary
 from app.modules.channel.infrastructure.connector_registry import Connector, ConnectorRegistry
 from app.modules.delivery.application.report_chunker import ReportChunker
@@ -20,22 +21,63 @@ class ResultDeliveryService:
         connector_registry: ConnectorRegistry,
         adapters: dict[str, DeliveryAdapter],
         chunker: ReportChunker,
+        business_authorization_service: BusinessAuthorizationService | None = None,
     ) -> None:
         self.repository = repository
         self.audit_service = audit_service
         self.connector_registry = connector_registry
         self.adapters = adapters
         self.chunker = chunker
+        self.business_authorization_service = business_authorization_service
         self.sent_messages: list[dict[str, str]] = []
 
     def deliver_job_result(self, job_id: str) -> None:
         job = self.repository.get_job(job_id)
         if not job.result:
             return
+        if job.business_application_id:
+            decision = (
+                self.business_authorization_service.decide(
+                    user_id=job.internal_user_id or job.user_id,
+                    application_id=job.business_application_id,
+                    stage="delivery",
+                )
+                if self.business_authorization_service is not None
+                else {
+                    "allowed": False,
+                    "stage": "delivery",
+                    "reason": "business_authorization_unavailable",
+                }
+            )
+            if not decision["allowed"]:
+                route = ReplyRoute.from_dict(job.reply_route)
+                self.repository.add_delivery_attempt(
+                    job_id=job.id,
+                    route_type=route.type,
+                    connector_id=route.connector_id,
+                    target_summary=_target_summary(route, None),
+                    status="BLOCKED_BY_AUTHORIZATION",
+                    error_message="投递前业务应用授权已失效",
+                )
+                self.audit_service.record(
+                    "authorization.business.delivery_blocked",
+                    status="DENIED",
+                    summary="Business result delivery blocked by authorization",
+                    job_id=job.id,
+                    actor_id=job.internal_user_id or job.user_id,
+                    payload=decision,
+                )
+                self._deliver(
+                    job_id=job.id,
+                    route=route,
+                    title="权限已变更",
+                    text="你的业务应用权限已变更，本次诊断结果未发送。请联系管理员确认角色授权。",
+                )
+                return
         self._deliver(
             job_id=job.id,
             route=ReplyRoute.from_dict(job.reply_route),
-            title="Agent diagnostic report",
+            title="Agent 诊断报告",
             text=job.result,
         )
 
@@ -59,7 +101,7 @@ class ResultDeliveryService:
         self._deliver(
             job_id=job.id,
             route=ReplyRoute.from_dict(job.reply_route),
-            title="Agent diagnostic failed",
+            title="Agent 诊断失败",
             text=text,
         )
 

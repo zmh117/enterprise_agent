@@ -98,10 +98,12 @@ COPY backend/app/__init__.py backend/app/bootstrap.py /app/backend/app/
 COPY backend/app/cli /app/backend/app/cli
 COPY backend/app/shared /app/backend/app/shared
 COPY backend/app/modules/__init__.py /app/backend/app/modules/
+COPY backend/app/modules/admin /app/backend/app/modules/admin
 COPY backend/app/modules/agent /app/backend/app/modules/agent
 COPY backend/app/modules/agent_config /app/backend/app/modules/agent_config
 COPY backend/app/modules/attachments /app/backend/app/modules/attachments
 COPY backend/app/modules/audit /app/backend/app/modules/audit
+COPY backend/app/modules/authorization_center /app/backend/app/modules/authorization_center
 COPY backend/app/modules/business_application /app/backend/app/modules/business_application
 COPY backend/app/modules/channel /app/backend/app/modules/channel
 COPY backend/app/modules/delivery /app/backend/app/modules/delivery

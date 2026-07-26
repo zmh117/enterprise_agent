@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from app.modules.agent_config.application import AgentConfigService
+from app.modules.authorization_center.application import BusinessAuthorizationService
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.attachments.credentials import AttachmentCredentialCipher
 from app.modules.channel.domain.channel_event import ChannelAttachment, ReplyRoute, RoutingContext
@@ -120,6 +121,7 @@ class CreateAgentJobService:
         agent_config_service: AgentConfigService | None = None,
         published_agent_runtime_enabled: bool = False,
         default_agent_code: str = "default-diagnostic-agent",
+        business_authorization_service: BusinessAuthorizationService | None = None,
     ) -> None:
         self.repository = repository
         self.permission_service = permission_service
@@ -134,6 +136,7 @@ class CreateAgentJobService:
         self.agent_config_service = agent_config_service
         self.published_agent_runtime_enabled = published_agent_runtime_enabled
         self.default_agent_code = default_agent_code
+        self.business_authorization_service = business_authorization_service
 
     def execute(self, command: CreateAgentJobCommand) -> AgentJob:
         existing = self.repository.get_job_by_idempotency_key(command.idempotency_key)
@@ -154,6 +157,27 @@ class CreateAgentJobService:
         project_code = str(project_code or command.project_code)
         reply_route = command.effective_reply_route
         self._assert_connectors_allowed(command, reply_route)
+        business_application_authorized = False
+        if command.business_application_id:
+            if self.business_authorization_service is None:
+                raise NonRetryableExecutionError(
+                    "Business authorization service is unavailable",
+                    safe_message="业务应用授权服务暂时不可用",
+                    error_code="business_authorization_unavailable",
+                )
+            business_decision = self.business_authorization_service.require(
+                user_id=requester_id,
+                application_id=command.business_application_id,
+                stage="job_create",
+            )
+            business_application_authorized = True
+            self.audit_service.record(
+                "authorization.business.job_create",
+                status="SUCCEEDED",
+                summary="Business authorization allowed Agent job creation",
+                actor_id=requester_id,
+                payload=business_decision,
+            )
         self.audit_service.record(
             "permission.job_create.start",
             status="STARTED",
@@ -167,10 +191,11 @@ class CreateAgentJobService:
                 "delivery_connector_id": reply_route.get("connector_id"),
             },
         )
-        self.permission_service.assert_user_can_create_job(
-            user_id=requester_id,
-            project_code=project_code,
-        )
+        if not business_application_authorized:
+            self.permission_service.assert_user_can_create_job(
+                user_id=requester_id,
+                project_code=project_code,
+            )
         agent_definition_id = ""
         agent_publication_id = ""
         agent_revision = 0
@@ -187,12 +212,13 @@ class CreateAgentJobService:
                     safe_message="Agent 配置不可用",
                 )
             agent_code = command.agent_code or self.default_agent_code
-            self.permission_service.require_action(
-                user_id=requester_id,
-                resource_type="agent",
-                resource_code=agent_code,
-                action="use",
-            )
+            if not business_application_authorized:
+                self.permission_service.require_action(
+                    user_id=requester_id,
+                    resource_type="agent",
+                    resource_code=agent_code,
+                    action="use",
+                )
             definition = self.agent_config_service.repository.get_definition(agent_code)
             publication = (
                 self.agent_config_service.publication(command.fixed_agent_publication_id)
