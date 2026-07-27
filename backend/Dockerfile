@@ -48,10 +48,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 COPY backend/app/__init__.py backend/app/internal_api_platform.py /app/backend/app/
 COPY backend/app/agent_test_data /app/backend/app/agent_test_data
 COPY backend/app/shared /app/backend/app/shared
-COPY backend/app/modules/__init__.py /app/backend/app/modules/
-COPY backend/app/modules/internal_api_platform /app/backend/app/modules/internal_api_platform
-COPY backend/app/modules/platform_config /app/backend/app/modules/platform_config
-COPY backend/app/modules/local_internal_api_platform /app/backend/app/modules/local_internal_api_platform
+COPY backend/app/modules /app/backend/app/modules
 COPY backend/config /app/backend/config
 COPY backend/migrations /app/backend/migrations
 RUN python -c "import app.internal_api_platform; import app.modules.internal_api_platform.app"

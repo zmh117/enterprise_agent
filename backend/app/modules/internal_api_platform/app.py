@@ -1,17 +1,24 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from typing import Any
 from urllib.request import urlopen
 
 from fastapi import FastAPI
 
-from app.shared.config import Settings, load_settings
-from app.shared.database import Database, default_migrations_dir
+from app.modules.authorization_center.application import BusinessAuthorizationService
+from app.modules.authorization_center.infrastructure.repository import (
+    AuthorizationCenterRepository,
+)
+from app.modules.identity.application.authorization import AuthorizationEvaluator
+from app.modules.identity.infrastructure import IdentityRepository
 from app.modules.platform_config.application.snapshot import RuntimeTopologySnapshot
 from app.modules.platform_config.application.snapshot import PlatformTopologySnapshotBuilder
 from app.modules.platform_config.infrastructure import PlatformConfigRepository
+from app.shared.config import Settings, load_settings
+from app.shared.database import Database, default_migrations_dir
 from app.shared.runtime_config_loader import load_settings_with_db_overlay
 
 from .application.platform_service import PlatformService
@@ -29,6 +36,7 @@ from .infrastructure.db.schema_directory import (
     SqlServerSchemaInspector,
 )
 from .infrastructure.loki_gateway import HttpLokiClient
+from .infrastructure.job_authorization import BusinessApplicationJobAccessAuthorizer
 from .infrastructure.redis_gateway import RealRedisGateway
 from .infrastructure.registry import TopologyRegistry
 from .infrastructure.secrets import DbBackedSecretResolver
@@ -70,6 +78,20 @@ def build_service(
         migrate=settings.app_startup_migrate,
     )
     snapshot = _load_topology_snapshot(settings)
+    job_authorization_database = Database(settings.database_dsn)
+    if settings.app_startup_migrate:
+        job_authorization_database.run_migrations(default_migrations_dir())
+    identity_repository = IdentityRepository(job_authorization_database)
+    authorization_repository = AuthorizationCenterRepository(job_authorization_database)
+    job_access_authorizer = BusinessApplicationJobAccessAuthorizer(
+        job_authorization_database,
+        BusinessAuthorizationService(
+            authorization_repository,
+            identity_repository,
+            AuthorizationEvaluator(identity_repository),
+            mode=settings.identity.business_application_authorization_mode,
+        ),
+    )
     return PlatformService(
         registry=TopologyRegistry(snapshot.topology),
         access_policy=snapshot.access_policy,
@@ -90,6 +112,7 @@ def build_service(
         config_hash=snapshot.config_hash,
         config_errors=snapshot.errors,
         config_resource_count=snapshot.resource_count,
+        job_access_authorizer=job_access_authorizer,
     )
 
 
@@ -152,6 +175,18 @@ def create_app(
 ) -> FastAPI:
     settings = settings or load_settings()
     service = service or build_service(settings, urlopen_func=urlopen_func)
-    app = FastAPI(title="Internal API Platform", version="1.0.0")
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            service.close()
+
+    app = FastAPI(
+        title="Internal API Platform",
+        version="1.0.0",
+        lifespan=lifespan,
+    )
     register_routes(app, service=service)
     return app

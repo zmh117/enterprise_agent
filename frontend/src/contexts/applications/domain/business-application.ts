@@ -30,7 +30,7 @@ export const runtimeStateSchema = z.object({
         trigger_type: z.string(),
         connector_id: z.string(),
         routing_key_summary: z.string(),
-      }),
+      })
     )
     .default([]),
   legacy_fallback_enabled: z.boolean().default(false),
@@ -53,7 +53,10 @@ const triggerSchema = z
     routing_key: z.string(),
     normalized_routing_key: z.string().optional(),
     actor_policy: z.string(),
-    service_account_user_id: z.string().nullish().transform((value) => value ?? ""),
+    service_account_user_id: z
+      .string()
+      .nullish()
+      .transform((value) => value ?? ""),
     enabled: z.boolean(),
     config: z.record(z.string(), z.unknown()).default({}),
   })
@@ -201,5 +204,9 @@ export type SaveDraftInput = {
       reply_mode: string
     }
   }>
-  capabilities: []
+  capabilities: Array<{
+    capability_code: string
+    version_constraint: string
+    enabled: boolean
+  }>
 }

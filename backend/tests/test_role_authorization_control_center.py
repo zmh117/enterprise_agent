@@ -16,6 +16,12 @@ from app.modules.admin.domain import (
     validate_admin_capability_catalog,
 )
 from app.modules.authorization_center.application import BusinessAuthorizationService
+from app.modules.internal_api_platform.domain.addressing import TargetRef
+from app.modules.internal_api_platform.domain.errors import AuthorizationError
+from app.modules.internal_api_platform.domain.topology import ResourceKind
+from app.modules.internal_api_platform.infrastructure.job_authorization import (
+    BusinessApplicationJobAccessAuthorizer,
+)
 from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
 from app.modules.job.domain.job_status import JobStatus
 from app.shared.config import IdentitySettings, Settings
@@ -209,9 +215,7 @@ def test_migration_is_additive_preserves_legacy_rows_and_is_idempotent() -> None
     database.execute_script(migration.read_text())
 
     role = database.execute_one("select * from rbac_role where id = 'role-preserved'")
-    member = database.execute_one(
-        "select * from rbac_user_role where id = 'member-preserved'"
-    )
+    member = database.execute_one("select * from rbac_user_role where id = 'member-preserved'")
     assert role and role["origin"] == "custom"
     assert role["metadata_revision"] == role["admin_revision"] == 1
     assert member and member["assignment_source"] == "manual"
@@ -229,9 +233,9 @@ def test_capability_catalog_is_unique_closed_and_platform_admin_has_no_data_bypa
         assert capability.display_name_zh
 
     c = _container()
-    summary = AdminCapabilityService(
-        c.identity_repository, c.authorization_evaluator
-    ).summary(ADMIN_ID)
+    summary = AdminCapabilityService(c.identity_repository, c.authorization_evaluator).summary(
+        ADMIN_ID
+    )
     assert set(summary["capabilities"]) == set(ADMIN_CAPABILITY_BY_CODE)
     assert summary["data_scope"]["mode"] == "restricted"
 
@@ -266,22 +270,15 @@ def test_capability_catalog_is_unique_closed_and_platform_admin_has_no_data_bypa
 
 def test_navigation_and_management_api_capability_mapping_are_reconciled() -> None:
     repository_root = Path(__file__).resolve().parents[2]
-    navigation_source = (
-        repository_root / "frontend/src/mocks/dashboard.ts"
-    ).read_text()
-    navigation_codes = set(
-        re.findall(r'requiredCapability:\s*"([^"]+)"', navigation_source)
-    )
+    navigation_source = (repository_root / "frontend/src/mocks/dashboard.ts").read_text()
+    navigation_codes = set(re.findall(r'requiredCapability:\s*"([^"]+)"', navigation_source))
     assert navigation_codes
     assert navigation_codes <= set(ADMIN_CAPABILITY_BY_CODE)
 
-    catalog_pairs = {
-        (item.resource_type, item.action) for item in ADMIN_CAPABILITIES
-    }
+    catalog_pairs = {(item.resource_type, item.action) for item in ADMIN_CAPABILITIES}
     management_sources = [
         *repository_root.glob("backend/app/modules/*/api/*controller.py"),
-        repository_root
-        / "backend/app/modules/business_application/application/service.py",
+        repository_root / "backend/app/modules/business_application/application/service.py",
     ]
     enforced_pairs: set[tuple[str, str]] = set()
     for path in management_sources:
@@ -368,9 +365,7 @@ def test_role_sections_use_independent_revisions_and_dependency_closure() -> Non
 def test_expired_membership_is_immediately_excluded() -> None:
     c = _container()
     role = c.identity_repository.create_role(code="temporary", name="临时角色")
-    user = c.identity_repository.create_user(
-        username="temporary-user", display_name="临时用户"
-    )
+    user = c.identity_repository.create_user(username="temporary-user", display_name="临时用户")
     c.identity_repository.assign_role(
         user_id=user["id"],
         role_id=role["id"],
@@ -618,9 +613,7 @@ def test_current_all_saves_explicit_set_and_excludes_future_base() -> None:
         ],
     )
     stored = c.authorization_center_repository.list_business_access(str(role["id"]))
-    assert [scope["scope_key"] for scope in stored[0]["scopes"]] == [
-        "local/base-one"
-    ]
+    assert [scope["scope_key"] for scope in stored[0]["scopes"]] == ["local/base-one"]
 
     c.database.execute(
         """
@@ -748,9 +741,7 @@ def test_grant_delegation_is_resource_bounded_and_cannot_self_escalate() -> None
 
 def test_last_platform_admin_and_confirmed_self_removal_revokes_sessions() -> None:
     c = _container()
-    platform_role = c.authorization_center_repository.get_role_by_code(
-        "platform-admin"
-    )
+    platform_role = c.authorization_center_repository.get_role_by_code("platform-admin")
     assert platform_role is not None
     admin_membership = c.database.execute_one(
         "select * from rbac_user_role where user_id = ? and role_id = ?",
@@ -884,17 +875,13 @@ def test_four_stage_reauthorization_blocks_revoked_access_without_data_leak() ->
         fixed_agent_publication_id="agent_publication_default_v1",
         fixed_agent_revision=1,
         fixed_agent_config_hash=(
-            c.agent_config_service.publication(
-                "agent_publication_default_v1"
-            )["config_hash"]
+            c.agent_config_service.publication("agent_publication_default_v1")["config_hash"]
         ),
         agent_code="default-diagnostic-agent",
     )
     job = c.create_agent_job_service.execute(command)
     assert job.status == JobStatus.PENDING
-    assert c.tool_service.is_tool_visible_for_job(
-        job_id=job.id, tool_name="query_database"
-    )
+    assert c.tool_service.is_tool_visible_for_job(job_id=job.id, tool_name="query_database")
 
     membership = c.database.execute_one(
         "select * from rbac_user_role where user_id = ? and role_id = ?",
@@ -906,9 +893,7 @@ def test_four_stage_reauthorization_blocks_revoked_access_without_data_leak() ->
         role_id=str(role["id"]),
         expected_revision=int(membership["revision"]),
     )
-    assert not c.tool_service.is_tool_visible_for_job(
-        job_id=job.id, tool_name="query_database"
-    )
+    assert not c.tool_service.is_tool_visible_for_job(job_id=job.id, tool_name="query_database")
 
     with pytest.raises(PermissionDenied):
         c.agent_executor.execute(job.id)
@@ -953,6 +938,89 @@ def test_four_stage_reauthorization_blocks_revoked_access_without_data_leak() ->
     )
     assert "安全诊断请求" not in audit_text
     assert "不得投递的业务结果" not in audit_text
+    c.database.close()
+
+
+def test_internal_api_platform_rechecks_job_bound_business_scope() -> None:
+    c = _container(mode="strict_application_role")
+    application = _active_application(
+        c,
+        "internal-platform-job-app",
+        capabilities=("query_database",),
+    )
+    base_one, _ = _topology(c)
+    user = c.identity_repository.create_user(
+        username="internal-platform-job-user",
+        display_name="内部平台任务用户",
+    )
+    role = _business_role(
+        c,
+        code="internal-platform-job-reader",
+        user_id=str(user["id"]),
+        applications=[
+            {
+                "application_id": application["id"],
+                "capability_codes": ["query_database"],
+                "scopes": [base_one],
+            }
+        ],
+    )
+    job = c.create_agent_job_service.execute(
+        CreateAgentJobCommand(
+            idempotency_key="internal-platform-job-authorization",
+            user_message="验证内部平台授权",
+            requester_id=str(user["id"]),
+            source_channel="debug_api",
+            reply_route={"type": "debug_api", "target": {}, "options": {}},
+            business_application_id=str(application["id"]),
+            business_application_code=str(application["code"]),
+            fixed_agent_publication_id="agent_publication_default_v1",
+            fixed_agent_revision=1,
+            fixed_agent_config_hash=(
+                c.agent_config_service.publication("agent_publication_default_v1")["config_hash"]
+            ),
+            agent_code="default-diagnostic-agent",
+        )
+    )
+    c.database.execute(
+        "update agent_job set status = 'RUNNING' where id = ?",
+        (job.id,),
+    )
+    authorizer = BusinessApplicationJobAccessAuthorizer(
+        c.database,
+        c.business_authorization_service,
+    )
+    target = TargetRef(
+        environment="local",
+        base="base-one",
+        workshop=None,
+        kind=ResourceKind.DATABASE,
+    )
+
+    assert authorizer.authorize(
+        job_id=job.id,
+        user_id=str(user["id"]),
+        capability_code="query_database",
+        target=target,
+    )
+
+    membership = c.database.execute_one(
+        "select * from rbac_user_role where user_id = ? and role_id = ?",
+        (user["id"], role["id"]),
+    )
+    assert membership is not None
+    c.identity_repository.remove_role(
+        user_id=str(user["id"]),
+        role_id=str(role["id"]),
+        expected_revision=int(membership["revision"]),
+    )
+    with pytest.raises(AuthorizationError):
+        authorizer.authorize(
+            job_id=job.id,
+            user_id=str(user["id"]),
+            capability_code="query_database",
+            target=target,
+        )
     c.database.close()
 
 

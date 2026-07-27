@@ -97,6 +97,7 @@ def _service(
     schema_reader: FakeSchemaDirectoryReader | None = None,
     redis: FakeRedisGateway | None = None,
     loki: FakeLokiClient | None = None,
+    job_access_authorizer: Any | None = None,
 ) -> PlatformService:
     registry, access = _load()
     return PlatformService(
@@ -113,7 +114,122 @@ def _service(
         loki_client=loki or FakeLokiClient(),
         max_rows=100,
         redis_scan_limit=200,
+        job_access_authorizer=job_access_authorizer,
     )
+
+
+class FakeJobAccessAuthorizer:
+    def __init__(self, *, allowed: bool = True) -> None:
+        self.allowed = allowed
+        self.calls: list[dict[str, Any]] = []
+        self.closed = False
+
+    def authorize(self, **kwargs: Any) -> bool:
+        from app.modules.internal_api_platform.domain.errors import AuthorizationError
+
+        self.calls.append(kwargs)
+        if not self.allowed:
+            raise AuthorizationError("Business application scope denied")
+        return True
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class JobAccessAdapterTests(unittest.TestCase):
+    def test_adapter_rechecks_persisted_job_identity_and_business_scope(self) -> None:
+        from app.modules.internal_api_platform.domain.addressing import TargetRef
+        from app.modules.internal_api_platform.domain.topology import ResourceKind
+        from app.modules.internal_api_platform.infrastructure.job_authorization import (
+            BusinessApplicationJobAccessAuthorizer,
+        )
+
+        class FakeDatabase:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def execute_one(self, _sql: str, params: tuple[str]) -> dict[str, Any]:
+                self.last_job_id = params[0]
+                return {
+                    "id": params[0],
+                    "user_id": "legacy-user",
+                    "internal_user_id": "internal-user",
+                    "business_application_id": "business-app-1",
+                    "status": "RUNNING",
+                }
+
+            def close(self) -> None:
+                self.closed = True
+
+        class FakeBusinessAuthorization:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, Any]] = []
+
+            def require(self, **kwargs: Any) -> dict[str, Any]:
+                self.calls.append(kwargs)
+                return {"allowed": True}
+
+        database = FakeDatabase()
+        business = FakeBusinessAuthorization()
+        adapter = BusinessApplicationJobAccessAuthorizer(
+            database,  # type: ignore[arg-type]
+            business,  # type: ignore[arg-type]
+        )
+        allowed = adapter.authorize(
+            job_id="job-1",
+            user_id="internal-user",
+            capability_code="get_schema_directory",
+            target=TargetRef(
+                environment="agent_test",
+                base="mysql",
+                workshop=None,
+                kind=ResourceKind.DATABASE,
+            ),
+        )
+
+        self.assertTrue(allowed)
+        self.assertEqual("job-1", database.last_job_id)
+        self.assertEqual("internal_api_platform", business.calls[0]["stage"])
+        self.assertEqual("agent_test", business.calls[0]["environment"])
+        self.assertEqual("mysql", business.calls[0]["base"])
+
+    def test_adapter_rejects_mismatched_job_identity(self) -> None:
+        from app.modules.internal_api_platform.domain.addressing import TargetRef
+        from app.modules.internal_api_platform.domain.errors import AuthorizationError
+        from app.modules.internal_api_platform.domain.topology import ResourceKind
+        from app.modules.internal_api_platform.infrastructure.job_authorization import (
+            BusinessApplicationJobAccessAuthorizer,
+        )
+
+        class FakeDatabase:
+            def execute_one(self, _sql: str, _params: tuple[str]) -> dict[str, Any]:
+                return {
+                    "id": "job-1",
+                    "user_id": "legacy-user",
+                    "internal_user_id": "internal-user",
+                    "business_application_id": "business-app-1",
+                    "status": "RUNNING",
+                }
+
+            def close(self) -> None:
+                return None
+
+        adapter = BusinessApplicationJobAccessAuthorizer(
+            FakeDatabase(),  # type: ignore[arg-type]
+            object(),  # type: ignore[arg-type]
+        )
+        with self.assertRaises(AuthorizationError):
+            adapter.authorize(
+                job_id="job-1",
+                user_id="other-user",
+                capability_code="get_schema_directory",
+                target=TargetRef(
+                    environment="agent_test",
+                    base="mysql",
+                    workshop=None,
+                    kind=ResourceKind.DATABASE,
+                ),
+            )
 
 
 class ConfigTests(unittest.TestCase):
@@ -455,6 +571,51 @@ class ServiceTests(unittest.TestCase):
 
 
 class SchemaDirectoryTests(unittest.TestCase):
+    def test_job_scoped_business_access_replaces_legacy_user_grant(self) -> None:
+        authorizer = FakeJobAccessAuthorizer()
+        service = _service(job_access_authorizer=authorizer)
+
+        result = service.schema_directory(
+            user_id="bound-user",
+            job_id="job-business-1",
+            environment="sanjiu",
+            base="guanlan",
+            workshop="GL001",
+        )
+
+        self.assertEqual("mysql", result.summary["engine"])
+        self.assertEqual(1, len(authorizer.calls))
+        self.assertEqual(
+            "get_schema_directory",
+            authorizer.calls[0]["capability_code"],
+        )
+        self.assertEqual("job-business-1", authorizer.calls[0]["job_id"])
+
+    def test_job_scoped_business_deny_does_not_fall_back_to_legacy_grant(self) -> None:
+        from app.modules.internal_api_platform.domain.errors import AuthorizationError
+
+        service = _service(job_access_authorizer=FakeJobAccessAuthorizer(allowed=False))
+        with self.assertRaises(AuthorizationError):
+            service.schema_directory(
+                user_id="operator",
+                job_id="job-business-denied",
+                environment="sanjiu",
+                base="guanlan",
+                workshop="GL001",
+            )
+
+    def test_non_job_call_still_uses_legacy_platform_access_grant(self) -> None:
+        from app.modules.internal_api_platform.domain.errors import AuthorizationError
+
+        service = _service(job_access_authorizer=FakeJobAccessAuthorizer())
+        with self.assertRaises(AuthorizationError):
+            service.schema_directory(
+                user_id="bound-user",
+                environment="sanjiu",
+                base="guanlan",
+                workshop="GL001",
+            )
+
     def test_schema_directory_filters_by_workshop_and_hides_secrets(self) -> None:
         service = _service()
         result = service.schema_directory(
@@ -639,6 +800,32 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(200, response.status_code)
         self.assertEqual("internal-api-platform-schema", response.json()["metadata"]["source"])
         self.assertEqual("GL001_EBR_order", response.json()["summary"]["tables"][0]["name"])
+
+    def test_schema_directory_route_passes_job_context_to_business_authorizer(self) -> None:
+        authorizer = FakeJobAccessAuthorizer()
+        client = TestClient(create_app(service=_service(job_access_authorizer=authorizer)))
+        response = client.post(
+            "/tools/schema/directory",
+            json={
+                "environment": "sanjiu",
+                "base": "guanlan",
+                "workshop": "GL001",
+            },
+            headers={
+                "x-agent-user-id": "bound-user",
+                "x-agent-job-id": "job-business-route",
+            },
+        )
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual("job-business-route", authorizer.calls[0]["job_id"])
+
+    def test_app_lifespan_closes_job_authorization_database(self) -> None:
+        authorizer = FakeJobAccessAuthorizer()
+        with TestClient(create_app(service=_service(job_access_authorizer=authorizer))):
+            self.assertFalse(authorizer.closed)
+
+        self.assertTrue(authorizer.closed)
 
     def test_er_context_route_returns_addressing(self) -> None:
         response = self._client().post(

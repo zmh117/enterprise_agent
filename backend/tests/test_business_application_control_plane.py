@@ -672,6 +672,80 @@ def test_capability_can_be_drafted_but_blocks_validation_and_publication() -> No
     assert invalid.value.error_code == "validation_failed"
 
 
+def test_capability_catalog_lists_readonly_tools_and_enforces_agent_binding() -> None:
+    container = build_test_container(control_plane_settings(), migrate=True, seed=True)
+    service = container.business_application_service
+    application = service.create(
+        actor_id="user_local_admin",
+        code="capability-catalog-test",
+        name="Capability Catalog Test",
+        description="",
+        project_code="default",
+        owner_user_id="user_local_admin",
+    )
+
+    catalog = service.catalog(
+        actor_id="user_local_admin",
+        code="capability-catalog-test",
+    )
+    assert catalog["capability_catalog_connected"] is True
+    assert "get_schema_directory" in {item["code"] for item in catalog["capabilities"]}
+
+    valid_revision = service.save_draft(
+        actor_id="user_local_admin",
+        code="capability-catalog-test",
+        expected_revision=int(application["revision"]),
+        payload=draft_payload(
+            capabilities=[
+                {
+                    "capability_code": "get_schema_directory",
+                    "version_constraint": "1",
+                    "enabled": True,
+                }
+            ]
+        ),
+    )
+    validated = service.validate(
+        actor_id="user_local_admin",
+        code="capability-catalog-test",
+        revision_id=str(valid_revision["id"]),
+    )
+    assert validated["validation"] == {"valid": True, "errors": []}
+
+    container.database.execute(
+        """
+        insert into tool_definition
+          (id, name, risk_level, read_only, enabled, description, created_at, updated_at)
+        values
+          ('tool-unbound-readonly', 'unbound_readonly', 'low', 1, 1,
+           'Not bound to the selected Agent publication', CURRENT_TIMESTAMP,
+           CURRENT_TIMESTAMP)
+        """
+    )
+    current = container.business_application_repository.get_by_code("capability-catalog-test")
+    invalid_revision = service.save_draft(
+        actor_id="user_local_admin",
+        code="capability-catalog-test",
+        expected_revision=int(current["revision"]),
+        payload=draft_payload(
+            capabilities=[
+                {
+                    "capability_code": "unbound_readonly",
+                    "version_constraint": "1",
+                    "enabled": True,
+                }
+            ]
+        ),
+    )
+    invalid = service.validate(
+        actor_id="user_local_admin",
+        code="capability-catalog-test",
+        revision_id=str(invalid_revision["id"]),
+    )
+    assert invalid["validation"]["valid"] is False
+    assert "所选 Agent 发布版本未绑定业务能力" in str(invalid["validation"]["errors"])
+
+
 def test_admin_api_enforces_feature_auth_csrf_unknown_fields_and_conflict() -> None:
     enabled = control_plane_settings()
     container = build_test_container(enabled, migrate=True, seed=True)

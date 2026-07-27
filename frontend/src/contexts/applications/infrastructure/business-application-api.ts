@@ -35,8 +35,8 @@ export const catalogSchema = z.object({
   agents: z.array(componentReferenceSchema),
   workflows: z.array(componentReferenceSchema),
   connectors: z.array(componentReferenceSchema),
-  capabilities: z.array(z.never()),
-  capability_catalog_connected: z.literal(false),
+  capabilities: z.array(componentReferenceSchema),
+  capability_catalog_connected: z.boolean(),
 })
 
 export async function listApplications() {

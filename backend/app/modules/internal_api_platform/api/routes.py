@@ -15,6 +15,10 @@ def _user_id(request: FastAPIRequest) -> str:
     return request.headers.get("x-agent-user-id", "").strip()
 
 
+def _job_id(request: FastAPIRequest) -> str:
+    return request.headers.get("x-agent-job-id", "").strip()
+
+
 def _require(payload: dict[str, Any], key: str) -> str:
     value = payload.get(key)
     if not isinstance(value, str) or not value.strip():
@@ -55,7 +59,11 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
     @app.post("/tools/context/er")
     async def er_context(request: FastAPIRequest, payload: dict[str, Any]) -> dict[str, Any]:
         started = time.monotonic()
-        result = service.er_context(user_id=_user_id(request), query=str(payload.get("query", "")))
+        result = service.er_context(
+            user_id=_user_id(request),
+            job_id=_job_id(request),
+            query=str(payload.get("query", "")),
+        )
         return _envelope(request, started, result)
 
     @app.post("/tools/context/business-flow")
@@ -64,7 +72,9 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
     ) -> dict[str, Any]:
         started = time.monotonic()
         result = service.business_flow_context(
-            user_id=_user_id(request), query=str(payload.get("query", ""))
+            user_id=_user_id(request),
+            job_id=_job_id(request),
+            query=str(payload.get("query", "")),
         )
         return _envelope(request, started, result)
 
@@ -74,6 +84,7 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
         try:
             result = service.describe_target(
                 user_id=_user_id(request),
+                job_id=_job_id(request),
                 environment=_require(payload, "environment"),
                 base=_require(payload, "base"),
                 workshop=_optional(payload, "workshop"),
@@ -89,6 +100,7 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
         try:
             result = service.query_database(
                 user_id=_user_id(request),
+                job_id=_job_id(request),
                 environment=_require(payload, "environment"),
                 base=_require(payload, "base"),
                 workshop=_optional(payload, "workshop"),
@@ -105,6 +117,7 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
         try:
             result = service.schema_directory(
                 user_id=_user_id(request),
+                job_id=_job_id(request),
                 environment=_require(payload, "environment"),
                 base=_require(payload, "base"),
                 workshop=_optional(payload, "workshop"),
@@ -121,6 +134,7 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
         try:
             result = service.redis_get(
                 user_id=_user_id(request),
+                job_id=_job_id(request),
                 environment=_require(payload, "environment"),
                 base=_require(payload, "base"),
                 workshop=_optional(payload, "workshop"),
@@ -136,6 +150,7 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
         try:
             result = service.redis_scan(
                 user_id=_user_id(request),
+                job_id=_job_id(request),
                 environment=_require(payload, "environment"),
                 base=_require(payload, "base"),
                 workshop=_optional(payload, "workshop"),
@@ -152,6 +167,7 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
         try:
             result = service.query_loki(
                 user_id=_user_id(request),
+                job_id=_job_id(request),
                 environment=_require(payload, "environment"),
                 base=_require(payload, "base"),
                 workshop=_optional(payload, "workshop"),
@@ -170,6 +186,7 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
         try:
             result = service.loki_labels(
                 user_id=_user_id(request),
+                job_id=_job_id(request),
                 environment=_require(payload, "environment"),
                 base=_require(payload, "base"),
                 workshop=_optional(payload, "workshop"),
@@ -186,6 +203,7 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
         try:
             result = service.loki_label_values(
                 user_id=_user_id(request),
+                job_id=_job_id(request),
                 environment=_require(payload, "environment"),
                 base=_require(payload, "base"),
                 workshop=_optional(payload, "workshop"),
@@ -203,6 +221,7 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
         try:
             result = service.loki_probe(
                 user_id=_user_id(request),
+                job_id=_job_id(request),
                 environment=_require(payload, "environment"),
                 base=_require(payload, "base"),
                 workshop=_optional(payload, "workshop"),

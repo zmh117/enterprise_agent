@@ -17,6 +17,7 @@ import { Link, useParams } from "react-router-dom"
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -256,7 +257,10 @@ function OverviewTab({ application }: { application: BusinessApplication }) {
                 application.deployments.filter((item) => item.active).length
               ),
             ],
-            ["能力目录", "未接入"],
+            [
+              "能力目录",
+              application.capability_catalog_connected ? "已接入" : "未接入",
+            ],
             [
               "数据面",
               application.runtime_status === "wired"
@@ -352,11 +356,109 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
         <CardHeader>
           <CardTitle>API 能力</CardTitle>
         </CardHeader>
-        <CardContent>
-          <div className="rounded-md border border-dashed p-4 text-sm leading-6 text-muted-foreground">
-            能力目录尚未接入，当前列表必须为空。这里不提供任意 能力编码、HTTP
-            URL、SQL、Redis、Loki、Shell 或工具名输入。
-          </div>
+        <CardContent className="space-y-3">
+          {!catalog.data?.capability_catalog_connected ? (
+            <div className="rounded-md border border-dashed p-4 text-sm leading-6 text-muted-foreground">
+              能力目录尚未接入，当前列表必须为空。这里不提供任意能力编码、HTTP
+              URL、SQL、Redis、Loki、Shell 或工具名输入。
+            </div>
+          ) : catalog.data.capabilities.length === 0 ? (
+            <div className="rounded-md border border-dashed p-4 text-sm leading-6 text-muted-foreground">
+              能力目录已接入，但当前没有可授权的只读业务能力。
+            </div>
+          ) : (
+            <>
+              <p className="text-sm leading-6 text-muted-foreground">
+                仅展示平台已登记并启用的只读能力。所选能力还必须已绑定到当前
+                Agent 发布版本，服务端会在校验和发布时再次检查。
+              </p>
+              <div className="grid gap-2 md:grid-cols-2">
+                {catalog.data.capabilities.map((item) => {
+                  const selected = form.capabilities.some(
+                    (capability) =>
+                      capability.enabled &&
+                      capability.capability_code === item.code
+                  )
+                  return (
+                    <label
+                      key={item.id}
+                      className="flex items-start gap-3 rounded-md border p-3 text-sm"
+                    >
+                      <Checkbox
+                        aria-label={`选择业务能力 ${item.code}`}
+                        checked={selected}
+                        onCheckedChange={(checked) => {
+                          const remaining = form.capabilities.filter(
+                            (capability) =>
+                              capability.capability_code !== item.code
+                          )
+                          setForm({
+                            ...form,
+                            capabilities: checked
+                              ? [
+                                  ...remaining,
+                                  {
+                                    capability_code: item.code,
+                                    version_constraint: String(item.revision),
+                                    enabled: true,
+                                  },
+                                ]
+                              : remaining,
+                          })
+                        }}
+                      />
+                      <span className="min-w-0">
+                        <span className="block font-mono font-medium break-all text-foreground">
+                          {item.code}
+                        </span>
+                        <span className="mt-1 block text-xs text-muted-foreground">
+                          只读能力 · 版本 {item.revision}
+                        </span>
+                      </span>
+                    </label>
+                  )
+                })}
+              </div>
+              {form.capabilities
+                .filter(
+                  (selected) =>
+                    selected.enabled &&
+                    !catalog.data.capabilities.some(
+                      (item) => item.code === selected.capability_code
+                    )
+                )
+                .map((selected) => (
+                  <div
+                    key={selected.capability_code}
+                    className="flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm"
+                  >
+                    <span>
+                      已失效的能力：
+                      <span className="font-mono">
+                        {selected.capability_code}
+                      </span>
+                    </span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        setForm({
+                          ...form,
+                          capabilities: form.capabilities.filter(
+                            (capability) =>
+                              capability.capability_code !==
+                              selected.capability_code
+                          ),
+                        })
+                      }
+                    >
+                      移除
+                    </Button>
+                  </div>
+                ))}
+            </>
+          )}
         </CardContent>
       </Card>
 
@@ -1320,7 +1422,12 @@ function draftToForm(application: BusinessApplication): SaveDraftInput {
           reply_mode: String(item.config.reply_mode ?? ""),
         },
       })) ?? [],
-    capabilities: [],
+    capabilities:
+      draft?.capabilities.map((item) => ({
+        capability_code: item.capability_code,
+        version_constraint: item.version_constraint,
+        enabled: item.enabled,
+      })) ?? [],
   }
 }
 

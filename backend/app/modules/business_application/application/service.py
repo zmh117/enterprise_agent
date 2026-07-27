@@ -402,8 +402,8 @@ class BusinessApplicationService:
             "agents": [vars(item) for item in self.agent_reader.catalog(project_code)],
             "workflows": [vars(item) for item in self.workflow_reader.catalog(project_code)],
             "connectors": [vars(item) for item in self.connector_reader.catalog()],
-            "capabilities": [],
-            "capability_catalog_connected": False,
+            "capabilities": [vars(item) for item in self.capability_reader.catalog()],
+            "capability_catalog_connected": self.capability_reader.connected,
         }
 
     def _validate_revision(
@@ -477,7 +477,8 @@ class BusinessApplicationService:
         for index, capability in enumerate(revision["capabilities"]):
             if not capability["enabled"]:
                 continue
-            self._resolve_component(
+            capability_code = str(capability["capability_code"])
+            reference = self._resolve_component(
                 errors,
                 f"capabilities.{index}.capability_code",
                 lambda capability=capability: self.capability_reader.resolve(
@@ -486,10 +487,19 @@ class BusinessApplicationService:
                     "",
                 ),
             )
+            if (
+                reference is not None
+                and agent is not None
+                and not self.agent_reader.allows_capability(agent.id, capability_code)
+            ):
+                errors.append(
+                    {
+                        "field": f"capabilities.{index}.capability_code",
+                        "message": f"所选 Agent 发布版本未绑定业务能力：{capability_code}",
+                    }
+                )
         if agent is None and not str(revision.get("agent_publication_id") or ""):
-            errors.append(
-                {"field": "agent_publication_id", "message": "必须选择 Agent 发布版本"}
-            )
+            errors.append({"field": "agent_publication_id", "message": "必须选择 Agent 发布版本"})
         return errors, components
 
     @staticmethod
@@ -610,9 +620,7 @@ class BusinessApplicationService:
                     "Capability reference must be an object",
                     safe_message="业务应用配置无效",
                     error_code="validation_failed",
-                    field_errors=[
-                        {"field": f"capabilities.{index}", "message": "必须是对象"}
-                    ],
+                    field_errors=[{"field": f"capabilities.{index}", "message": "必须是对象"}],
                 )
             unknown = set(raw) - {
                 "capability_code",
@@ -769,7 +777,7 @@ class BusinessApplicationService:
             "publications": publications,
             "deployments": deployments,
             **readiness.to_dict(),
-            "capability_catalog_connected": False,
+            "capability_catalog_connected": self.capability_reader.connected,
         }
 
     def _snapshot_summary(self, snapshot: dict[str, Any]) -> dict[str, Any]:

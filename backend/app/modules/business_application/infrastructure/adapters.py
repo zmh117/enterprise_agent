@@ -23,8 +23,7 @@ class AgentPublicationAdapter:
             project_code=str(definition["project_code"]),
             status=(
                 "enabled"
-                if str(definition["status"]) == "enabled"
-                and str(publication["status"]) == "active"
+                if str(definition["status"]) == "enabled" and str(publication["status"]) == "active"
                 else "disabled"
             ),
             config_hash=str(publication["config_hash"]),
@@ -40,6 +39,9 @@ class AgentPublicationAdapter:
                 if str(publication["status"]) == "active":
                     values.append(self.resolve(str(publication["id"])))
         return values
+
+    def allows_capability(self, publication_id: str, capability_code: str) -> bool:
+        return capability_code in self.repository.publication_tools(publication_id)
 
 
 class WorkflowPublicationAdapter:
@@ -83,18 +85,14 @@ class ChannelConnectorAdapter:
                 f"Channel connector not found: {connector_id}",
                 safe_message="未找到渠道连接器",
             )
-        allowed = (
-            connector.allow_ingress if direction == "ingress" else connector.allow_delivery
-        )
+        allowed = connector.allow_ingress if direction == "ingress" else connector.allow_delivery
         if direction == "ingress" and trigger_type in {
             "dingtalk_private",
             "dingtalk_group",
         }:
             allowed = allowed and connector.connector_type == "dingtalk_enterprise_stream"
             capability = (
-                "allow_private_chat"
-                if trigger_type == "dingtalk_private"
-                else "allow_group_chat"
+                "allow_private_chat" if trigger_type == "dingtalk_private" else "allow_group_chat"
             )
             allowed = allowed and bool(connector.metadata.get(capability, True))
         elif direction == "ingress" and trigger_type == "webhook":
@@ -153,9 +151,14 @@ class IdentitySubjectAdapter:
 
 
 class EmptyCapabilityCatalogAdapter:
-    def resolve(
-        self, code: str, version_constraint: str, environment: str
-    ) -> ComponentReference:
+    @property
+    def connected(self) -> bool:
+        return False
+
+    def catalog(self) -> list[ComponentReference]:
+        return []
+
+    def resolve(self, code: str, version_constraint: str, environment: str) -> ComponentReference:
         del version_constraint, environment
         raise NonRetryableExecutionError(
             f"Capability Catalog is not connected: {code}",
@@ -176,9 +179,19 @@ class ToolCapabilityCatalogAdapter:
     def __init__(self, repository: ConfigurationRepository) -> None:
         self.repository = repository
 
-    def resolve(
-        self, code: str, version_constraint: str, environment: str
-    ) -> ComponentReference:
+    @property
+    def connected(self) -> bool:
+        return True
+
+    def catalog(self) -> list[ComponentReference]:
+        result: list[ComponentReference] = []
+        for tool in sorted(self.repository.enabled_tools(), key=lambda item: str(item["name"])):
+            if not bool(int(tool["read_only"])):
+                continue
+            result.append(self._reference(tool))
+        return result
+
+    def resolve(self, code: str, version_constraint: str, environment: str) -> ComponentReference:
         del version_constraint, environment
         tool = self.repository.get_tool(code)
         if tool is None:
@@ -206,6 +219,10 @@ class ToolCapabilityCatalogAdapter:
                     }
                 ],
             )
+        return self._reference(tool)
+
+    @staticmethod
+    def _reference(tool: dict[str, object]) -> ComponentReference:
         return ComponentReference(
             id=str(tool["id"]),
             code=str(tool["name"]),

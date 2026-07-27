@@ -205,9 +205,7 @@ describe("Business Application workbench", () => {
     )
     expect(await screen.findAllByText("真实诊断应用")).not.toHaveLength(0)
     fireEvent.click(screen.getAllByRole("tab", { name: "组成配置" })[0])
-    expect(
-      await screen.findByText(/能力目录尚未接入/)
-    ).toBeInTheDocument()
+    expect(await screen.findByText(/能力目录尚未接入/)).toBeInTheDocument()
     expect(screen.queryByLabelText(/SQL/i)).not.toBeInTheDocument()
 
     fireEvent.click(screen.getAllByRole("tab", { name: "发布与运行" })[0])
@@ -222,6 +220,122 @@ describe("Business Application workbench", () => {
     expect(
       within(publicationCard).getByRole("status").parentElement
     ).toHaveClass("sm:col-span-2")
+  })
+
+  it("lists governed readonly capabilities and includes selections in the draft", async () => {
+    let savedBody: Record<string, unknown> | undefined
+    const draft = {
+      id: "revision_capability_1",
+      application_id: "business_app_capability",
+      revision: 1,
+      status: "draft",
+      agent_publication_id: "agent_publication_default_v1",
+      workflow_publication_id: "",
+      session_policy: {},
+      execution_policy: {},
+      validation: { valid: false, errors: [] },
+      config_hash: "",
+      triggers: [],
+      deliveries: [],
+      capabilities: [],
+    }
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.endsWith("/catalog")) {
+        return response({
+          agents: [
+            {
+              id: "agent_publication_default_v1",
+              code: "default-diagnostic-agent",
+              revision: 29,
+              project_code: "default",
+              status: "enabled",
+              config_hash: "agent-hash",
+              direction: "",
+              component_type: "agent_publication",
+            },
+          ],
+          workflows: [],
+          connectors: [],
+          capabilities: [
+            {
+              id: "tool-get-schema-directory",
+              code: "get_schema_directory",
+              revision: 1,
+              project_code: "",
+              status: "enabled",
+              config_hash: "",
+              direction: "",
+              component_type: "readonly_tool_capability",
+            },
+          ],
+          capability_catalog_connected: true,
+        })
+      }
+      if (init?.method === "PUT" && url.endsWith("/draft")) {
+        savedBody = JSON.parse(String(init.body)) as Record<string, unknown>
+        return response({ revision: { ...draft, revision: 2 } })
+      }
+      return response({
+        application: {
+          id: "business_app_capability",
+          code: "capability-app",
+          name: "能力配置应用",
+          description: "",
+          project_code: "default",
+          owner_user_id: "user_admin",
+          status: "enabled",
+          revision: 1,
+          capability_catalog_connected: true,
+          draft,
+          publications: [],
+          deployments: [],
+        },
+      })
+    })
+
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: {
+              queries: { retry: false },
+              mutations: { retry: false },
+            },
+          })
+        }
+      >
+        <MemoryRouter initialEntries={["/applications/capability-app"]}>
+          <Routes>
+            <Route
+              path="/applications/:code"
+              element={<ApplicationDetailPage />}
+            />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    )
+
+    expect(await screen.findByText("能力配置应用")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("tab", { name: "组成配置" }))
+    const capability = await screen.findByLabelText(
+      "选择业务能力 get_schema_directory"
+    )
+    fireEvent.click(capability)
+    expect(capability).toBeChecked()
+    fireEvent.click(screen.getByRole("button", { name: "保存新草稿" }))
+
+    await waitFor(() =>
+      expect(savedBody).toMatchObject({
+        capabilities: [
+          {
+            capability_code: "get_schema_directory",
+            version_constraint: "1",
+            enabled: true,
+          },
+        ],
+      })
+    )
   })
 
   it("injects CSRF for writes and exposes stable conflict metadata", async () => {

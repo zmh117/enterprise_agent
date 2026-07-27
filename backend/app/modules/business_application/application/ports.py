@@ -21,6 +21,8 @@ class AgentPublicationReader(Protocol):
 
     def catalog(self, project_code: str) -> list[ComponentReference]: ...
 
+    def allows_capability(self, publication_id: str, capability_code: str) -> bool: ...
+
 
 class WorkflowPublicationReader(Protocol):
     def resolve(self, publication_id: str) -> ComponentReference: ...
@@ -41,6 +43,11 @@ class IdentitySubjectReader(Protocol):
 
 
 class CapabilityCatalogReader(Protocol):
+    @property
+    def connected(self) -> bool: ...
+
+    def catalog(self) -> list[ComponentReference]: ...
+
     def resolve(
         self, code: str, version_constraint: str, environment: str
     ) -> ComponentReference: ...

@@ -21,6 +21,7 @@ from ..infrastructure.db.schema_directory import SchemaInspectorFactory
 from ..infrastructure.loki_gateway import LokiClient
 from ..infrastructure.redis_gateway import RedisGateway
 from ..infrastructure.registry import TopologyRegistry
+from .job_authorization import JobAccessAuthorizer
 
 _audit_logger = logging.getLogger("internal_api_platform.audit")
 
@@ -45,6 +46,7 @@ class PlatformService:
         config_hash: str = "",
         config_errors: list[str] | None = None,
         config_resource_count: int = 0,
+        job_access_authorizer: JobAccessAuthorizer | None = None,
     ) -> None:
         self._registry = registry
         self._access = access_policy
@@ -62,6 +64,7 @@ class PlatformService:
         self._config_hash = config_hash
         self._config_errors = config_errors or []
         self._config_resource_count = config_resource_count
+        self._job_access_authorizer = job_access_authorizer
 
     def config_status(self) -> dict[str, Any]:
         return {
@@ -73,6 +76,10 @@ class PlatformService:
             "resource_count": self._config_resource_count,
         }
 
+    def close(self) -> None:
+        if self._job_access_authorizer is not None:
+            self._job_access_authorizer.close()
+
     def _authorize_and_resolve(
         self,
         *,
@@ -81,10 +88,17 @@ class PlatformService:
         base: str,
         workshop: str | None,
         kind: ResourceKind,
+        job_id: str = "",
+        capability_code: str = "",
     ) -> ResourceBinding:
         target = TargetRef(environment=environment, base=base, kind=kind, workshop=workshop)
         try:
-            self._access.authorize(user_id=user_id, target=target)
+            self._authorize_target(
+                user_id=user_id,
+                job_id=job_id,
+                capability_code=capability_code,
+                target=target,
+            )
         except PlatformError as exc:
             self._audit(user_id, target, "deny", exc.code)
             raise
@@ -96,7 +110,31 @@ class PlatformService:
         self._audit(user_id, target, "allow", "ok")
         return binding
 
-    def topology_directory(self, *, user_id: str) -> dict[str, Any]:
+    def _authorize_target(
+        self,
+        *,
+        user_id: str,
+        job_id: str,
+        capability_code: str,
+        target: TargetRef,
+    ) -> None:
+        if self._job_access_authorizer is not None and job_id:
+            if self._job_access_authorizer.authorize(
+                job_id=job_id,
+                user_id=user_id,
+                capability_code=capability_code,
+                target=target,
+            ):
+                return
+        self._access.authorize(user_id=user_id, target=target)
+
+    def topology_directory(
+        self,
+        *,
+        user_id: str,
+        job_id: str = "",
+        capability_code: str = "",
+    ) -> dict[str, Any]:
         """Non-secret addressing directory filtered to what the caller may access.
 
         Lets the model map natural language (观澜 / GL001) to environment/base/workshop
@@ -111,13 +149,27 @@ class PlatformService:
                     workshops = [
                         self._workshop_entry(ws)
                         for ws in base.workshops.values()
-                        if self._can_access(user_id, environment.code, base.code, ws.code)
+                        if self._can_access(
+                            user_id,
+                            environment.code,
+                            base.code,
+                            ws.code,
+                            job_id=job_id,
+                            capability_code=capability_code,
+                        )
                     ]
                     if not workshops:
                         continue
                     bases.append(self._base_entry(base, workshops))
                 else:
-                    if not self._can_access(user_id, environment.code, base.code, None):
+                    if not self._can_access(
+                        user_id,
+                        environment.code,
+                        base.code,
+                        None,
+                        job_id=job_id,
+                        capability_code=capability_code,
+                    ):
                         continue
                     bases.append(self._base_entry(base, []))
             if bases:
@@ -131,12 +183,16 @@ class PlatformService:
                 )
         return {"environments": environments}
 
-    def er_context(self, *, user_id: str, query: str) -> ToolResponse:
+    def er_context(self, *, user_id: str, query: str, job_id: str = "") -> ToolResponse:
         return ToolResponse(
             summary={
                 "source": "internal-platform-er",
                 "query": query,
-                "addressing": self.topology_directory(user_id=user_id),
+                "addressing": self.topology_directory(
+                    user_id=user_id,
+                    job_id=job_id,
+                    capability_code="get_er_context",
+                ),
                 "tables": [],
                 "fields": [],
                 "relationships": [],
@@ -148,12 +204,16 @@ class PlatformService:
             metadata={"source": "internal-api-platform"},
         )
 
-    def business_flow_context(self, *, user_id: str, query: str) -> ToolResponse:
+    def business_flow_context(self, *, user_id: str, query: str, job_id: str = "") -> ToolResponse:
         return ToolResponse(
             summary={
                 "source": "internal-platform-business-flow",
                 "query": query,
-                "addressing": self.topology_directory(user_id=user_id),
+                "addressing": self.topology_directory(
+                    user_id=user_id,
+                    job_id=job_id,
+                    capability_code="get_business_flow_context",
+                ),
                 "nodes": [],
                 "edges": [],
                 "note": (
@@ -164,14 +224,32 @@ class PlatformService:
             metadata={"source": "internal-api-platform"},
         )
 
-    def _can_access(self, user_id: str, environment: str, base: str, workshop: str | None) -> bool:
+    def _can_access(
+        self,
+        user_id: str,
+        environment: str,
+        base: str,
+        workshop: str | None,
+        *,
+        job_id: str = "",
+        capability_code: str = "",
+    ) -> bool:
         target = TargetRef(
             environment=environment,
             base=base,
             kind=ResourceKind.DATABASE,
             workshop=workshop,
         )
-        return self._access.allows(user_id=user_id, target=target)
+        try:
+            self._authorize_target(
+                user_id=user_id,
+                job_id=job_id,
+                capability_code=capability_code,
+                target=target,
+            )
+        except PlatformError:
+            return False
+        return True
 
     @staticmethod
     def _base_entry(base: Any, workshops: list[dict[str, Any]]) -> dict[str, Any]:
@@ -196,13 +274,19 @@ class PlatformService:
         self,
         *,
         user_id: str,
+        job_id: str = "",
         environment: str,
         base: str,
         workshop: str | None,
         kind: ResourceKind,
     ) -> ToolResponse:
         binding = self._authorize_and_resolve(
-            user_id=user_id, environment=environment, base=base, workshop=workshop, kind=kind
+            user_id=user_id,
+            environment=environment,
+            base=base,
+            workshop=workshop,
+            kind=kind,
+            job_id=job_id,
         )
         return ToolResponse(
             summary={
@@ -220,6 +304,7 @@ class PlatformService:
         self,
         *,
         user_id: str,
+        job_id: str = "",
         environment: str,
         base: str,
         workshop: str | None,
@@ -232,6 +317,8 @@ class PlatformService:
             base=base,
             workshop=workshop,
             kind=ResourceKind.DATABASE,
+            job_id=job_id,
+            capability_code="query_database",
         )
         max_rows = self._effective_rows(limit)
         table_prefix = binding.workshop.table_prefix if binding.workshop else None
@@ -275,6 +362,7 @@ class PlatformService:
         self,
         *,
         user_id: str,
+        job_id: str = "",
         environment: str,
         base: str,
         workshop: str | None,
@@ -287,6 +375,8 @@ class PlatformService:
             base=base,
             workshop=workshop,
             kind=ResourceKind.DATABASE,
+            job_id=job_id,
+            capability_code="get_schema_directory",
         )
         table_limit = self._effective_schema_limit(limit)
         schema = self._schema_directory_for_binding(binding, query=query, table_limit=table_limit)
@@ -318,6 +408,7 @@ class PlatformService:
         self,
         *,
         user_id: str,
+        job_id: str = "",
         environment: str,
         base: str,
         workshop: str | None,
@@ -329,6 +420,8 @@ class PlatformService:
             base=base,
             workshop=workshop,
             kind=ResourceKind.REDIS,
+            job_id=job_id,
+            capability_code="query_redis_get",
         )
         assert_read_command("get")
         enforce_key_namespace(key, key_prefix=self._redis_prefix(binding))
@@ -340,6 +433,7 @@ class PlatformService:
         self,
         *,
         user_id: str,
+        job_id: str = "",
         environment: str,
         base: str,
         workshop: str | None,
@@ -352,6 +446,8 @@ class PlatformService:
             base=base,
             workshop=workshop,
             kind=ResourceKind.REDIS,
+            job_id=job_id,
+            capability_code="query_redis_scan",
         )
         assert_read_command("scan")
         effective_limit = limit or self._redis_scan_limit
@@ -369,6 +465,7 @@ class PlatformService:
         self,
         *,
         user_id: str,
+        job_id: str = "",
         environment: str,
         base: str,
         workshop: str | None,
@@ -383,6 +480,8 @@ class PlatformService:
             base=base,
             workshop=workshop,
             kind=ResourceKind.LOKI,
+            job_id=job_id,
+            capability_code="query_loki",
         )
         effective_selector = build_effective_selector(selector, workshop=binding.workshop)
         response = self._loki.query(
@@ -399,6 +498,7 @@ class PlatformService:
         self,
         *,
         user_id: str,
+        job_id: str = "",
         environment: str,
         base: str,
         workshop: str | None,
@@ -411,6 +511,8 @@ class PlatformService:
             base=base,
             workshop=workshop,
             kind=ResourceKind.LOKI,
+            job_id=job_id,
+            capability_code="diagnose_loki_labels",
         )
         response = self._loki.labels(
             binding,
@@ -425,6 +527,7 @@ class PlatformService:
         self,
         *,
         user_id: str,
+        job_id: str = "",
         environment: str,
         base: str,
         workshop: str | None,
@@ -439,6 +542,8 @@ class PlatformService:
             base=base,
             workshop=workshop,
             kind=ResourceKind.LOKI,
+            job_id=job_id,
+            capability_code="diagnose_loki_label_values",
         )
         response = self._loki.label_values(
             binding,
@@ -454,6 +559,7 @@ class PlatformService:
         self,
         *,
         user_id: str,
+        job_id: str = "",
         environment: str,
         base: str,
         workshop: str | None,
@@ -468,6 +574,8 @@ class PlatformService:
             base=base,
             workshop=workshop,
             kind=ResourceKind.LOKI,
+            job_id=job_id,
+            capability_code="diagnose_loki_probe",
         )
         effective_selector = build_effective_selector(selector, workshop=binding.workshop)
         response = self._loki.probe(
