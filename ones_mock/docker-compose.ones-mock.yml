@@ -183,9 +183,13 @@ services:
 volumes:
   agent-test-mysql-data:
     name: enterprise_agent_agent_test_mysql_data
+    external: true
   agent-test-sqlserver-data:
     name: enterprise_agent_agent_test_sqlserver_data
+    external: true
   agent-test-redis-mysql-data:
     name: enterprise_agent_agent_test_redis_mysql_data
+    external: true
   agent-test-redis-sqlserver-data:
     name: enterprise_agent_agent_test_redis_sqlserver_data
+    external: true

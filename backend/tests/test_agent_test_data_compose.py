@@ -48,6 +48,8 @@ class AgentTestDataComposeTests(unittest.TestCase):
             },
             {volumes[key]["name"] for key in agent_test_volume_keys},
         )
+        for key in agent_test_volume_keys:
+            self.assertTrue(volumes[key].get("external") is True)
 
     def test_main_compose_does_not_define_agent_test_data_services(self) -> None:
         services = self._main_compose()["services"]  # type: ignore[index]
