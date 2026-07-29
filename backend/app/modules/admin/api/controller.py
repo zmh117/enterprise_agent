@@ -9,7 +9,10 @@ from app.modules.admin.application import AdminCapabilityService, PageWindow, Ti
 from app.modules.admin.application.dashboard_service import DashboardQueryService
 from app.modules.admin.application.channel_provider_service import ChannelProviderService
 from app.modules.admin.application.resource_provider_service import ResourceProviderService
-from app.modules.admin.application.scope import AdminScope
+from app.modules.admin.application.scope import (
+    AdminScope,
+    strict_business_scope_summary,
+)
 from app.modules.admin.infrastructure import (
     AdminConnectorRepository,
     AdminReadRepository,
@@ -94,9 +97,9 @@ def build_admin_router() -> APIRouter:
         )
         c = container(request)
         try:
-            scope_summary = c.identity_repository.safe_platform_scope_summary(
+            scope_summary = strict_business_scope_summary(
+                c.database,
                 user_id=principal.user_id,
-                role_codes=principal.role_codes,
                 global_access="platform-admin" in principal.role_codes,
             )
             service = DashboardQueryService(
@@ -669,9 +672,9 @@ def _correlation_id(request: Request) -> str:
 
 def _scope(c: Any, principal: Any) -> AdminScope:
     return AdminScope(
-        c.identity_repository.safe_platform_scope_summary(
+        strict_business_scope_summary(
+            c.database,
             user_id=principal.user_id,
-            role_codes=principal.role_codes,
             global_access="platform-admin" in principal.role_codes,
         ),
         principal.user_id,

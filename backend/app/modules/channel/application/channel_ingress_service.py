@@ -95,7 +95,11 @@ class ChannelIngressService:
         execution_policy = snapshot.get("execution_policy") or {}
         agent = snapshot.get("agent") or {}
         self._assert_application_agent_precedence(event, resolution, agent)
-        self._assert_application_delivery(event, resolution, snapshot)
+        reply_route = self._application_reply_route(
+            event,
+            resolution,
+            snapshot,
+        )
         application = runtime.get("application") or {}
         publication = runtime.get("publication") or {}
         deployment = runtime.get("deployment") or {}
@@ -111,7 +115,7 @@ class ChannelIngressService:
             source_connector_id=event.source.connector_id,
             external_event_id=event.source.event_id,
             routing_context=event.routing.to_dict(),
-            reply_route=event.delivery.to_dict(),
+            reply_route=reply_route,
             correlation_id=event.correlation_id,
             external_message_id=str(event.source.metadata.get("message_id") or ""),
             conversation_type=str(event.source.metadata.get("conversation_type") or "direct"),
@@ -186,7 +190,12 @@ class ChannelIngressService:
         return job
 
     def _resolve_business_application(self, event: ChannelEvent) -> RuntimeRouteResolution | None:
-        if event.source.type != "dingding_stream":
+        if event.source.type not in {
+            "dingding_stream",
+            "grafana_alert",
+            "managed_webhook",
+            "webhook",
+        }:
             return None
         if self.business_application_resolver is None:
             self.audit_service.record(
@@ -296,15 +305,63 @@ class ChannelIngressService:
             )
 
     @staticmethod
-    def _assert_application_delivery(
+    def _application_reply_route(
         event: ChannelEvent,
         resolution: RuntimeRouteResolution | None,
         snapshot: dict[str, object],
-    ) -> None:
+    ) -> dict[str, object]:
         if resolution is None or resolution.outcome != RouteResolutionOutcome.MATCHED:
-            return
+            return event.delivery.to_dict()
         raw_deliveries = snapshot.get("deliveries")
         deliveries = raw_deliveries if isinstance(raw_deliveries, list) else []
+        trigger_type = _trigger_type(event)
+        if trigger_type == "webhook":
+            supported = [
+                value
+                for value in deliveries
+                if isinstance(value, dict)
+                and bool(value.get("enabled", True))
+                and str(value.get("delivery_type") or "")
+                in {"dingtalk_group", "webhook_callback"}
+            ]
+            if len(supported) != 1:
+                raise NonRetryableExecutionError(
+                    "Business Application Webhook delivery is invalid",
+                    safe_message="业务应用结果投递不可用",
+                    error_code=RuntimeReason.MISSING_DELIVERY_BINDING.value,
+                )
+            binding = supported[0]
+            config = binding.get("config") or {}
+            if not isinstance(config, dict):
+                config = {}
+            delivery_type = str(binding.get("delivery_type") or "")
+            target_reference = str(
+                config.get("target_reference") or ""
+            )
+            if not target_reference:
+                raise NonRetryableExecutionError(
+                    "Business Application Webhook delivery target is missing",
+                    safe_message="业务应用结果投递目标未配置",
+                    error_code=RuntimeReason.MISSING_DELIVERY_BINDING.value,
+                )
+            if delivery_type == "dingtalk_group":
+                route_type = "dingtalk_enterprise_robot"
+                target = {
+                    "open_conversation_id": target_reference,
+                }
+            else:
+                route_type = "webhook"
+                target = {"target_reference": target_reference}
+            return {
+                "type": route_type,
+                "connector_id": str(
+                    binding.get("connector_id") or ""
+                ),
+                "target": target,
+                "options": {
+                    "business_application_delivery_type": delivery_type,
+                },
+            }
         bindings = [
             value
             for value in deliveries
@@ -330,6 +387,7 @@ class ChannelIngressService:
                 safe_message="原钉钉会话无法接收结果",
                 error_code=RuntimeReason.UNSUPPORTED_DELIVERY.value,
             )
+        return event.delivery.to_dict()
 
     @staticmethod
     def _safe_route_decision(
@@ -398,6 +456,9 @@ def _business_application_routing_key(event: ChannelEvent, trigger_type: str) ->
     if trigger_type == "dingtalk_group":
         identity = event.source.conversation_id.strip().lower()
         return f"conversation:{identity}" if identity else ""
+    if trigger_type == "webhook":
+        identity = event.webhook_trigger_id.strip().lower()
+        return f"webhook:{identity}" if identity else ""
     return ""
 
 

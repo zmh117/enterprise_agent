@@ -114,7 +114,6 @@ class IdentitySettings:
     web_admin_enabled: bool = False
     published_agent_runtime_enabled: bool = False
     test_identity_headers_enabled: bool = False
-    permission_shadow_mode: bool = True
     session_cookie_name: str = "enterprise_agent_session"
     csrf_cookie_name: str = "enterprise_agent_csrf"
     session_idle_seconds: int = 8 * 60 * 60
@@ -474,7 +473,6 @@ def load_settings() -> Settings:
             web_admin_enabled=features.web_admin_enabled,
             published_agent_runtime_enabled=(features.published_agent_runtime_enabled),
             test_identity_headers_enabled=features.test_identity_headers_enabled,
-            permission_shadow_mode=features.permission_shadow_mode,
             session_cookie_name=os.getenv("WEB_SESSION_COOKIE_NAME", "enterprise_agent_session"),
             csrf_cookie_name=os.getenv("WEB_CSRF_COOKIE_NAME", "enterprise_agent_csrf"),
             session_idle_seconds=int(os.getenv("WEB_SESSION_IDLE_SECONDS", "28800")),
@@ -535,7 +533,6 @@ def synchronize_feature_configuration(settings: Settings) -> Settings:
         settings.identity.enabled,
         settings.feature_business_application_control_plane,
         settings.identity.test_identity_headers_enabled,
-        settings.identity.permission_shadow_mode,
         settings.webhooks.enabled,
         settings.conversation.enabled,
         settings.attachments.enabled,
@@ -548,7 +545,6 @@ def synchronize_feature_configuration(settings: Settings) -> Settings:
         features.unified_identity_enabled,
         features.business_application_control_plane_enabled,
         features.test_identity_headers_enabled,
-        features.permission_shadow_mode,
         features.webhook_ingress_compatibility_enabled,
         features.continuous_conversation_compatibility_enabled,
         features.message_attachments_compatibility_enabled,
@@ -563,7 +559,6 @@ def synchronize_feature_configuration(settings: Settings) -> Settings:
         unified_identity=settings.identity.enabled,
         business_application_control_plane=(settings.feature_business_application_control_plane),
         test_identity_headers=settings.identity.test_identity_headers_enabled,
-        permission_shadow_mode=settings.identity.permission_shadow_mode,
         webhook_ingress=settings.webhooks.enabled,
         continuous_conversation=settings.conversation.enabled,
         message_attachments=settings.attachments.enabled,

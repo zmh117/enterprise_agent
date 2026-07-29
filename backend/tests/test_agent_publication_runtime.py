@@ -29,7 +29,6 @@ def settings() -> Settings:
         identity=IdentitySettings(
             enabled=True,
             published_agent_runtime_enabled=True,
-            permission_shadow_mode=False,
             cookie_secure=False,
         ),
     )

@@ -85,13 +85,6 @@ RUNTIME_CONFIG_DEFINITIONS: tuple[RuntimeConfigDefinitionSpec, ...] = (
         restart_required=True,
     ),
     RuntimeConfigDefinitionSpec(
-        "PERMISSION_SHADOW_MODE",
-        "bool",
-        True,
-        service_names=("api-server", "agent-worker"),
-        classification="governed-runtime-policy",
-    ),
-    RuntimeConfigDefinitionSpec(
         "FEATURE_UNIFIED_IDENTITY",
         "bool",
         False,
@@ -138,15 +131,6 @@ RUNTIME_CONFIG_DEFINITIONS: tuple[RuntimeConfigDefinitionSpec, ...] = (
         target="test-only application configuration",
         deprecated_version="0.3.0",
         restart_required=True,
-    ),
-    RuntimeConfigDefinitionSpec(
-        "FEATURE_PERMISSION_SHADOW_MODE",
-        "bool",
-        True,
-        bootstrap_only=True,
-        classification="deprecated",
-        target="PERMISSION_SHADOW_MODE runtime policy",
-        deprecated_version="0.3.0",
     ),
     RuntimeConfigDefinitionSpec(
         "INTERNAL_API_BASE_URL",

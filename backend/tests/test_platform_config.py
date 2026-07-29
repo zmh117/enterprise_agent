@@ -16,7 +16,7 @@ from app.modules.internal_api_platform.app import (
     create_app as create_internal_platform_app,
 )
 from app.modules.internal_api_platform.application.platform_service import PlatformService
-from app.modules.internal_api_platform.domain.errors import AuthorizationError, PolicyViolation
+from app.modules.internal_api_platform.domain.errors import AuthorizationError
 from app.modules.internal_api_platform.domain.topology import DatabaseEngine, ResourceKind
 from app.modules.internal_api_platform.infrastructure.db.executor import FakeQueryExecutor
 from app.modules.internal_api_platform.infrastructure.db.schema_directory import (
@@ -187,7 +187,7 @@ class PlatformConfigRepositoryTests(unittest.TestCase):
         public = c.platform_config_service.public_snapshot()
         self.assertEqual("database", public["source"])
         self.assertEqual(_EXAMPLE_RESOURCE_COUNT, public["resource_count"])
-        self.assertEqual(3, public["access_grant_count"])
+        self.assertNotIn("access_grant_count", public)
         self.assertRegex(public["config_hash"], r"^[0-9a-f]{64}$")
         encoded = str(public)
         self.assertIn(
@@ -207,7 +207,7 @@ class PlatformConfigRepositoryTests(unittest.TestCase):
         self.assertEqual([], runtime.errors)
         guanlan = runtime.topology.environment("sanjiu").base("guanlan_cloud")  # type: ignore[union-attr]
         self.assertEqual("10.0.102.240", guanlan.database.host)  # type: ignore[union-attr]
-        self.assertIn("local-user", runtime.access_policy.scopes)
+        self.assertEqual({}, runtime.access_policy.scopes)
 
     def test_runtime_snapshot_empty_invalid_and_disabled_resource_paths(self) -> None:
         tmp, database, _ = _file_database()
@@ -322,7 +322,7 @@ class PlatformConfigApiTests(unittest.TestCase):
             snapshot_body = snapshot.json()["snapshot"]
             self.assertEqual("database", snapshot_body["source"])
             self.assertEqual(_EXAMPLE_RESOURCE_COUNT, snapshot_body["resource_count"])
-            self.assertEqual(3, snapshot_body["access_grant_count"])
+            self.assertNotIn("access_grant_count", snapshot_body)
             self.assertRegex(snapshot_body["config_hash"], r"^[0-9a-f]{64}$")
 
             rejected = client.post(
@@ -533,10 +533,7 @@ class InternalApiPlatformDbConfigTests(unittest.TestCase):
             self.assertTrue(service.config_status()["valid"])
             self.assertRegex(service.config_status()["config_hash"], r"^[0-9a-f]{64}$")
             directory = service.topology_directory(user_id="local-user")
-            self.assertIn(
-                "sanjiu",
-                {environment["code"] for environment in directory["environments"]},
-            )
+            self.assertEqual([], directory["environments"])
             self.assertNotIn("yaml_only", str(directory))
 
     def test_internal_api_platform_empty_db_can_fallback_to_yaml(self) -> None:
@@ -597,7 +594,9 @@ class InternalApiPlatformDbConfigTests(unittest.TestCase):
         self.assertEqual("degraded", health.json()["status"])
         self.assertEqual("database-invalid", health.json()["config"]["source"])
 
-    def test_db_backed_tools_preserve_policies_and_do_not_leak_secrets(self) -> None:
+    def test_db_backed_tools_require_strict_job_context_and_do_not_leak_secrets(
+        self,
+    ) -> None:
         c = container()
         c.platform_config_service.import_topology_yaml(
             path=_example_yaml_path(), actor_id="local-user"
@@ -609,79 +608,56 @@ class InternalApiPlatformDbConfigTests(unittest.TestCase):
             loki=FakeLokiClient(),
         )
 
-        resolved = service.describe_target(
-            user_id="local-user",
-            environment="sanjiu",
-            base="guanlan_cloud",
-            workshop="GL001",
-            kind=ResourceKind.DATABASE,
-        )
-        self.assertEqual("sanjiu", resolved.summary["environment"])
-        self.assertEqual("guanlan_cloud", resolved.summary["base"])
-        self.assertEqual("GL001", resolved.summary["workshop"])
-
-        database_result = service.query_database(
-            user_id="local-user",
-            environment="sanjiu",
-            base="guanlan_cloud",
-            workshop="GL001",
-            sql="select * from GL001_EBR_order",
-            limit=10,
-        )
-        self.assertEqual(1, database_result.summary["row_count"])
-        with self.assertRaises(PolicyViolation):
+        with self.assertRaises(AuthorizationError):
+            service.describe_target(
+                user_id="local-user",
+                environment="sanjiu",
+                base="guanlan_cloud",
+                workshop="GL001",
+                kind=ResourceKind.DATABASE,
+            )
+        with self.assertRaises(AuthorizationError):
             service.query_database(
                 user_id="local-user",
                 environment="sanjiu",
                 base="guanlan_cloud",
                 workshop="GL001",
-                sql="select * from GL002_EBR_order",
+                sql="select * from GL001_EBR_order",
+                limit=10,
             )
-
-        redis_result = service.redis_get(
-            user_id="local-user",
-            environment="sanjiu",
-            base="guanlan_cloud",
-            workshop="GL001",
-            key="GL001:order:1",
-        )
-        self.assertEqual("WAIT", redis_result.summary["value_summary"])
-        with self.assertRaises(PolicyViolation):
+        with self.assertRaises(AuthorizationError):
             service.redis_get(
                 user_id="local-user",
                 environment="sanjiu",
                 base="guanlan_cloud",
                 workshop="GL001",
-                key="GL002:order:1",
+                key="GL001:order:1",
             )
 
         health_text = str(service.config_status())
         self.assertNotIn("db-password", health_text)
         self.assertNotIn("10.0.102.240", health_text)
 
-    def test_db_backed_access_grants_allow_deny_and_disabled_resource(self) -> None:
+    def test_legacy_access_grant_is_ignored_and_disabled_resource_is_absent(
+        self,
+    ) -> None:
         c = container()
         c.platform_config_service.import_topology_yaml(
             path=_example_yaml_path(), actor_id="local-user"
         )
         repository = PlatformConfigRepository(c.database)
-        repository.upsert_access_grant(
-            subject_type="user",
-            subject_code="limited-user",
-            effect="allow",
-            environment_code="sanjiu",
-            base_code="guanlan_cloud",
-            workshop_code="GL001",
-            priority=100,
-        )
-        deny = repository.upsert_access_grant(
-            subject_type="user",
-            subject_code="limited-user",
-            effect="deny",
-            environment_code="sanjiu",
-            base_code="guanlan_cloud",
-            workshop_code="GL001",
-            priority=1,
+        c.database.execute(
+            """
+            insert into platform_access_grant
+              (id, subject_type, subject_code, effect,
+               tool_scope_json, resource_scope_json, condition_json,
+               priority, status, revision, created_at, updated_at)
+            values (
+              'legacy-ignored-grant', 'user', 'limited-user', 'allow',
+              '["*"]', '{}', '{}', 1, 'enabled', 1,
+              CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
         )
         service = _db_backed_service(c.database)
         with self.assertRaises(AuthorizationError):
@@ -692,19 +668,6 @@ class InternalApiPlatformDbConfigTests(unittest.TestCase):
                 workshop="GL001",
                 kind=ResourceKind.DATABASE,
             )
-
-        repository.set_access_grant_status(deny["id"], "disabled")
-        service = _db_backed_service(c.database)
-        allowed = service.describe_target(
-            user_id="limited-user",
-            environment="sanjiu",
-            base="guanlan_cloud",
-            workshop="GL001",
-            kind=ResourceKind.DATABASE,
-        )
-        self.assertEqual("sanjiu", allowed.summary["environment"])
-        self.assertEqual("guanlan_cloud", allowed.summary["base"])
-        self.assertEqual("GL001", allowed.summary["workshop"])
 
         repository.set_resource_binding_status("sanjiu_guanlan_cloud_database", "disabled")
         disabled_snapshot = PlatformTopologySnapshotBuilder(repository).build_runtime_snapshot()

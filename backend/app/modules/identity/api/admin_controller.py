@@ -71,19 +71,6 @@ class IdentityStatusRequest(BaseModel):
     status: Status
 
 
-class PermissionRequest(BaseModel):
-    id: str | None = None
-    subject_type: Literal["user", "role"]
-    subject_code: str
-    resource_type: str
-    resource_code: str = "*"
-    action: str = "use"
-    effect: Literal["allow", "deny"] = "allow"
-    priority: int = 100
-    status: Status = "enabled"
-    expected_revision: int = Field(ge=0)
-
-
 def build_identity_admin_router() -> APIRouter:
     router = APIRouter(prefix="/api/admin", tags=["identity-admin"])
 
@@ -313,7 +300,6 @@ def build_identity_admin_router() -> APIRouter:
         return {
             "role": role,
             "members": repository.list_role_members(role_id),
-            "permissions": repository.list_role_policies(str(role["code"])),
         }
 
     @router.post("/roles")
@@ -359,42 +345,6 @@ def build_identity_admin_router() -> APIRouter:
         except Exception as exc:
             raise handle_exception(exc) from exc
         return {"role": role}
-
-    @router.post("/permissions")
-    def upsert_permission(
-        request: Request, payload: PermissionRequest
-    ) -> dict[str, Any]:
-        principal = require_action(
-            request,
-            resource_type="user" if payload.subject_type == "user" else "role",
-            resource_code=payload.subject_code,
-            action="manage",
-            csrf=True,
-        )
-        try:
-            policy = container(request).identity_admin_service.upsert_policy(
-                actor_id=principal.user_id,
-                policy_id=payload.id,
-                subject_type=payload.subject_type,
-                subject_code=payload.subject_code,
-                resource_type=payload.resource_type,
-                resource_code=payload.resource_code,
-                action=payload.action,
-                effect=payload.effect,
-                priority=payload.priority,
-                status=payload.status,
-                expected_revision=payload.expected_revision,
-            )
-        except Exception as exc:
-            raise handle_exception(exc) from exc
-        return {"permission": policy}
-
-    @router.get("/permissions")
-    def list_permissions(request: Request) -> dict[str, Any]:
-        require_action(
-            request, resource_type="role", resource_code="*", action="manage"
-        )
-        return {"permissions": container(request).identity_repository.list_policies()}
 
     @router.get("/audit-events")
     def list_audit_events(request: Request, limit: int = 200) -> dict[str, Any]:

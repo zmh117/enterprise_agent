@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 from app.modules.internal_api_platform.domain.addressing import RevisionResource
 
-from app.modules.internal_api_platform.domain.access import AccessPolicy, AccessScope, ScopeRule
+from app.modules.internal_api_platform.domain.access import AccessPolicy
 from app.modules.internal_api_platform.domain.topology import (
     Base,
     DatabaseConnection,
@@ -75,7 +75,6 @@ class PlatformTopologySnapshotBuilder:
             "errors": runtime.errors,
             "resource_count": runtime.resource_count,
             "environments": self._public_environments(),
-            "access_grant_count": len(self.repository.list_access_grants(include_disabled=False)),
         }
 
     def build_runtime_snapshot(self, *, resolve_secrets: bool = True) -> RuntimeTopologySnapshot:
@@ -172,19 +171,7 @@ class PlatformTopologySnapshotBuilder:
         )
 
     def build_access_policy(self) -> AccessPolicy:
-        scopes: dict[str, AccessScope] = {}
-        for grant in self.repository.list_access_grants(include_disabled=False):
-            subject = str(grant["subject_code"])
-            scopes.setdefault(subject, AccessScope()).rules.append(
-                ScopeRule(
-                    environment=str(grant.get("environment_code") or "*"),
-                    base=str(grant.get("base_code") or "*"),
-                    workshop=str(grant.get("workshop_code") or "*"),
-                    effect=str(grant.get("effect") or "allow"),
-                    priority=int(grant.get("priority") or 100),
-                )
-            )
-        return AccessPolicy(scopes=scopes)
+        return AccessPolicy()
 
     def _public_environments(self) -> list[dict[str, Any]]:
         bases = self.repository.list_bases(include_disabled=False)
@@ -454,7 +441,6 @@ class PlatformTopologySnapshotBuilder:
             "bases": self.repository.list_bases(include_disabled=False),
             "workshops": self.repository.list_workshops(include_disabled=False),
             "resources": self.repository.list_resource_bindings(include_disabled=False),
-            "access": self.repository.list_access_grants(include_disabled=False),
         }
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()

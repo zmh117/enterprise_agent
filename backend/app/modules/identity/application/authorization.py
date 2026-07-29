@@ -38,27 +38,7 @@ class AuthorizationEvaluator:
                 (),
                 "user_disabled",
             )
-        policies = self.repository.policies_for_principals(
-            user_id=user_id,
-            role_codes=roles,
-            resource_type=resource_type,
-            resource_code=resource_code,
-            action=action,
-        )
-        denies = [row for row in policies if str(row["effect"]) == "deny"]
-        allows = [row for row in policies if str(row["effect"]) == "allow"]
-        matched = tuple(str(row["id"]) for row in policies)
-        if denies:
-            return self._decision(
-                False,
-                user_id,
-                roles,
-                resource_type,
-                resource_code,
-                action,
-                matched,
-                "explicit_deny",
-            )
+        matched: tuple[str, ...] = ()
         capability_codes = tuple(
             item.code
             for item in ADMIN_CAPABILITIES
@@ -104,14 +84,14 @@ class AuthorizationEvaluator:
                 },
             )
         return self._decision(
-            bool(allows),
+            False,
             user_id,
             roles,
             resource_type,
             resource_code,
             action,
             matched,
-            "allow" if allows else "no_matching_allow",
+            "no_strict_admin_capability",
         )
 
     def _role_admin_bindings(
@@ -179,29 +159,15 @@ class AuthorizationEvaluator:
                 (),
                 "scope_required",
             )
-        grants = self.repository.platform_grants_for_principals(
-            user_id=user_id,
-            role_codes=roles,
-            environment=environment,
-            base=base,
-            workshop=workshop,
-            tool_name=tool_name,
-        )
-        denies = [row for row in grants if str(row["effect"]) == "deny"]
-        allows = [row for row in grants if str(row["effect"]) == "allow"]
-        reason = "explicit_scope_deny" if denies else (
-            "scope_allow" if allows else "no_matching_scope_allow"
-        )
         return self._decision(
-            bool(allows) and not denies,
+            False,
             user_id,
             roles,
             "platform_scope",
             resource_code,
             "use",
             (),
-            reason,
-            matched_grants=tuple(str(row["id"]) for row in grants),
+            "business_application_scope_required",
             extra_trace={
                 "environment": environment,
                 "base": base,
@@ -234,27 +200,6 @@ class AuthorizationEvaluator:
                 error_code="platform_scope_denied",
             )
         return decision
-
-    def record_shadow_comparison(
-        self,
-        *,
-        user_id: str,
-        legacy_allowed: bool,
-        decision: AuthorizationDecision,
-    ) -> None:
-        if not self.audit_service or legacy_allowed == decision.allowed:
-            return
-        self.audit_service.record(
-            "permission.rbac.shadow_mismatch",
-            status="DIFFERENT",
-            summary="Legacy and unified authorization decisions differ",
-            actor_id=user_id,
-            payload={
-                "legacy_allowed": legacy_allowed,
-                "unified_allowed": decision.allowed,
-                "decision": decision.trace,
-            },
-        )
 
     def require(
         self,

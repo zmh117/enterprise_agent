@@ -34,7 +34,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
     assert len({item.version for item in catalog}) == len(catalog)
     assert len({item.name for item in catalog}) == len(catalog)
     assert [item.version for item in catalog][8:11] == ["009", "009a", "010"]
-    assert catalog[-1].version == "023"
+    assert catalog[-1].version == "024"
     assert all(len(item.checksum) == 64 for item in catalog)
 
     baseline = legacy_baseline_artifacts(catalog)
@@ -114,16 +114,17 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
     first = migrator.run()
     second = migrator.run()
 
-    assert first.head == "023"
+    assert first.head == "024"
     assert first.baselined == 0
-    assert first.applied[-5:] == (
+    assert first.applied[-6:] == (
         "019",
         "020",
         "021",
         "022",
         "023",
+        "024",
     )
-    assert second.head == "023"
+    assert second.head == "024"
     assert second.baselined == 0
     assert second.applied == ()
     assert len(SchemaMigrationLedger(database).list_records()) == len(
@@ -219,7 +220,7 @@ def test_schema_head_validator_is_read_only_and_rejects_missing_ledger() -> None
 
     with pytest.raises(
         SchemaHeadError,
-        match="ledger is missing; expected head 023",
+        match="ledger is missing; expected head 024",
     ):
         SchemaHeadValidator(
             database,

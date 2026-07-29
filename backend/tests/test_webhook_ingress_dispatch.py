@@ -11,6 +11,7 @@ from app.shared.config import ConversationSettings, IdentitySettings
 from app.shared.exceptions import PermissionDenied
 from app.modules.webhook.domain.models import config_hash
 from backend.tests.helpers import (
+    activate_webhook_test_application,
     publish_pending_agent_jobs,
     test_settings as build_test_settings,
 )
@@ -27,11 +28,46 @@ def _container():
             enabled=True,
             web_admin_enabled=True,
             published_agent_runtime_enabled=True,
-            permission_shadow_mode=False,
             cookie_secure=False,
         ),
     )
-    return build_test_container(settings, migrate=True, seed=True)
+    runtime = build_test_container(
+        settings,
+        migrate=True,
+        seed=True,
+    )
+    trigger = runtime.database.execute_one(
+        """
+        select d.id, d.service_account_id
+          from webhook_trigger_publication p
+          join webhook_trigger_definition d on d.id = p.trigger_id
+         where p.id = ?
+        """,
+        ("webhook_trigger_publication_grafana_v1",),
+    )
+    assert trigger is not None
+    capabilities = tuple(
+        sorted(
+            runtime.agent_config_service.repository.publication_tools(
+                "agent_publication_default_v1"
+            )
+        )
+    )
+    activate_webhook_test_application(
+        runtime,
+        code="grafana-strict-runtime",
+        webhook_definition_id=str(trigger["id"]),
+        service_account_user_id=str(
+            trigger["service_account_id"]
+        ),
+        ingress_connector_id="connector-grafana-default",
+        delivery_connector_id=(
+            "connector-dingtalk-enterprise-default"
+        ),
+        delivery_target_reference="test-alert-group",
+        capabilities=capabilities,
+    )
+    return runtime
 
 
 def _firing(group_key: str = "orders-prod") -> dict[str, object]:
@@ -103,7 +139,12 @@ def test_firing_is_persisted_then_dispatches_one_pinned_agent_job() -> None:
     assert job.agent_revision == 1
     assert job.webhook_event_id == acknowledgement.event_id
     assert job.webhook_trigger_publication_id == "webhook_trigger_publication_grafana_v1"
-    assert job.reply_route["target"] == {"webhook_id": "grafana-alert"}
+    assert job.reply_route["target"] == {
+        "open_conversation_id": "test-alert-group"
+    }
+    assert job.business_application_code == (
+        "grafana-strict-runtime"
+    )
     publish_pending_agent_jobs(c)
     assert len(c.message_bus.jobs) == 1
 

@@ -486,15 +486,19 @@ def test_legacy_permission_policy_never_grants_business_application_access() -> 
         username="legacy-business-user",
         display_name="旧授权用户",
     )
-    c.identity_repository.upsert_policy(
-        policy_id=None,
-        subject_type="user",
-        subject_code=str(legacy_user["id"]),
-        resource_type="project",
-        resource_code="default",
-        action="use",
-        effect="allow",
-        expected_revision=0,
+    c.database.execute(
+        """
+        insert into permission_policy
+          (id, subject_type, subject_code, resource_type, resource_code,
+           action, effect, priority, status, revision,
+           created_at, updated_at)
+        values (
+          'legacy-business-allow', 'user', ?, 'project', 'default',
+          'use', 'allow', 100, 'enabled', 1,
+          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+        )
+        """,
+        (str(legacy_user["id"]),),
     )
     c.database.execute(
         """
@@ -594,15 +598,19 @@ def test_multi_role_union_deny_precedence_and_application_scope_isolation() -> N
     assert cross_scope["reason"] == "application_scope_denied"
     assert isolated["allowed"] is False
 
-    c.identity_repository.upsert_policy(
-        policy_id=None,
-        subject_type="user",
-        subject_code=str(user["id"]),
-        resource_type="business_application",
-        resource_code=str(application["code"]),
-        action="use",
-        effect="deny",
-        expected_revision=0,
+    c.database.execute(
+        """
+        insert into permission_policy
+          (id, subject_type, subject_code, resource_type, resource_code,
+           action, effect, priority, status, revision,
+           created_at, updated_at)
+        values (
+          'legacy-business-deny', 'user', ?,
+          'business_application', ?, 'use', 'deny',
+          1, 'enabled', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+        )
+        """,
+        (str(user["id"]), str(application["code"])),
     )
     unaffected_by_legacy_deny = c.business_authorization_service.decide(
         user_id=str(user["id"]),

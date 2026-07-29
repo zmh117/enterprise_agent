@@ -323,10 +323,14 @@ class RuntimeReadinessEvaluator:
                     "routing_key_summary": summarize_routing_key(routing_key),
                 }
             )
-            if trigger_type not in {"dingtalk_private", "dingtalk_group"}:
-                continue
-            expected_prefix = "bot:" if trigger_type == "dingtalk_private" else "conversation:"
+            expected_prefix = {
+                "dingtalk_private": "bot:",
+                "dingtalk_group": "conversation:",
+                "webhook": "webhook:",
+            }.get(trigger_type, "")
             if (
+                not expected_prefix
+                or
                 not routing_key.startswith(expected_prefix)
                 or not routing_key[len(expected_prefix) :]
             ):
@@ -334,15 +338,20 @@ class RuntimeReadinessEvaluator:
                 blockers.append(
                     (
                         RuntimeReason.LEGACY_ROUTING_KEY.value,
-                        "钉钉路由使用了不受支持的旧版路由键",
+                        "接入路由使用了不受支持的路由键",
                     )
                 )
-            if str(trigger.get("actor_policy") or "") != "CURRENT_SENDER":
+            expected_actor = (
+                "SERVICE_ACCOUNT"
+                if trigger_type == "webhook"
+                else "CURRENT_SENDER"
+            )
+            if str(trigger.get("actor_policy") or "") != expected_actor:
                 trigger_blocked = True
                 blockers.append(
                     (
                         RuntimeReason.UNSUPPORTED_ACTOR_POLICY.value,
-                        "钉钉路由必须使用 CURRENT_SENDER 主体策略",
+                        "接入路由使用了不受支持的主体策略",
                     )
                 )
         if trigger_blocked:
@@ -351,20 +360,17 @@ class RuntimeReadinessEvaluator:
                 blockers[0][0],
                 blockers[0][1],
             )
-        elif any(
-            str(value.get("trigger_type") or "") in {"dingtalk_private", "dingtalk_group"}
-            for value in triggers
-        ):
+        elif triggers:
             components["trigger_routing"] = RuntimeComponentStatus(
                 RuntimeComponentState.WIRED,
                 RuntimeReason.READY.value,
-                "已配置受支持的钉钉路由",
+                "已配置受支持的接入路由",
             )
         else:
             components["trigger_routing"] = RuntimeComponentStatus(
                 RuntimeComponentState.STORED_ONLY,
                 RuntimeReason.UNSUPPORTED_TRIGGER.value,
-                "尚未配置受支持的钉钉路由",
+                "尚未配置受支持的接入路由",
             )
 
         deliveries = [
@@ -382,8 +388,21 @@ class RuntimeReadinessEvaluator:
             for value in triggers
             if str(value.get("trigger_type") or "") in {"dingtalk_private", "dingtalk_group"}
         ]
+        webhook_triggers = [
+            value
+            for value in triggers
+            if str(value.get("trigger_type") or "") == "webhook"
+        ]
+        webhook_deliveries = [
+            value
+            for value in deliveries
+            if str(value.get("delivery_type") or "")
+            in {"dingtalk_group", "webhook_callback"}
+        ]
+        delivery_blocked = False
         if supported_triggers:
             if not reply_deliveries:
+                delivery_blocked = True
                 components["delivery"] = RuntimeComponentStatus(
                     RuntimeComponentState.BLOCKED,
                     RuntimeReason.MISSING_DELIVERY_BINDING.value,
@@ -396,6 +415,7 @@ class RuntimeReadinessEvaluator:
                     )
                 )
             elif len(reply_deliveries) != 1:
+                delivery_blocked = True
                 components["delivery"] = RuntimeComponentStatus(
                     RuntimeComponentState.BLOCKED,
                     RuntimeReason.DUPLICATE_DELIVERY_BINDING.value,
@@ -414,6 +434,7 @@ class RuntimeReadinessEvaluator:
                     for trigger in supported_triggers
                 )
                 if mismatched:
+                    delivery_blocked = True
                     components["delivery"] = RuntimeComponentStatus(
                         RuntimeComponentState.BLOCKED,
                         RuntimeReason.DELIVERY_CONNECTOR_MISMATCH.value,
@@ -425,13 +446,52 @@ class RuntimeReadinessEvaluator:
                             "业务应用投递连接器与接入连接器不匹配",
                         )
                     )
-                else:
-                    components["delivery"] = RuntimeComponentStatus(
-                        RuntimeComponentState.WIRED,
-                        RuntimeReason.READY.value,
-                        "已配置原会话回复投递",
+        if webhook_triggers:
+            if len(webhook_deliveries) != 1:
+                delivery_blocked = True
+                reason = (
+                    RuntimeReason.MISSING_DELIVERY_BINDING
+                    if not webhook_deliveries
+                    else RuntimeReason.DUPLICATE_DELIVERY_BINDING
+                )
+                components["delivery"] = RuntimeComponentStatus(
+                    RuntimeComponentState.BLOCKED,
+                    reason.value,
+                    "Webhook 必须且只能配置一个受支持的结果投递",
+                )
+                blockers.append(
+                    (
+                        reason.value,
+                        "Webhook 业务应用结果投递配置无效",
                     )
-        elif deliveries:
+                )
+            else:
+                config = webhook_deliveries[0].get("config") or {}
+                target_reference = (
+                    str(config.get("target_reference") or "")
+                    if isinstance(config, dict)
+                    else ""
+                )
+                if not target_reference:
+                    delivery_blocked = True
+                    components["delivery"] = RuntimeComponentStatus(
+                        RuntimeComponentState.BLOCKED,
+                        RuntimeReason.MISSING_DELIVERY_BINDING.value,
+                        "Webhook 结果投递目标未配置",
+                    )
+                    blockers.append(
+                        (
+                            RuntimeReason.MISSING_DELIVERY_BINDING.value,
+                            "Webhook 业务应用缺少结果投递目标",
+                        )
+                    )
+        if (supported_triggers or webhook_triggers) and not delivery_blocked:
+            components["delivery"] = RuntimeComponentStatus(
+                RuntimeComponentState.WIRED,
+                RuntimeReason.READY.value,
+                "已配置受支持的结果投递",
+            )
+        elif not (supported_triggers or webhook_triggers) and deliveries:
             components["delivery"] = RuntimeComponentStatus(
                 RuntimeComponentState.STORED_ONLY,
                 RuntimeReason.UNSUPPORTED_DELIVERY.value,

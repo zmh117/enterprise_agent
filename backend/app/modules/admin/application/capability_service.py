@@ -3,6 +3,9 @@ from __future__ import annotations
 from typing import Any
 
 from app.modules.admin.domain import ADMIN_CAPABILITIES
+from app.modules.admin.application.scope import (
+    strict_business_scope_summary,
+)
 from app.modules.identity.application.authorization import AuthorizationEvaluator
 from app.modules.identity.infrastructure import IdentityRepository
 from app.modules.job.infrastructure.repositories import now_iso
@@ -50,9 +53,9 @@ class AdminCapabilityService:
         return {
             "capabilities": capabilities,
             "modules": {key: sorted(set(value)) for key, value in sorted(modules.items())},
-            "data_scope": self.repository.safe_platform_scope_summary(
+            "data_scope": strict_business_scope_summary(
+                self.repository.database,
                 user_id=user_id,
-                role_codes=roles,
                 global_access=False,
             ),
         }

@@ -187,6 +187,170 @@ def activate_dingtalk_test_application(
     return publication
 
 
+def activate_webhook_test_application(
+    container: Container,
+    *,
+    code: str,
+    webhook_definition_id: str,
+    service_account_user_id: str,
+    ingress_connector_id: str,
+    delivery_connector_id: str,
+    delivery_target_reference: str,
+    capabilities: tuple[str, ...] = (),
+    environment_code: str = "prod",
+    base_code: str = "guanlan",
+    workshop_code: str = "GL001",
+) -> dict[str, object]:
+    application = container.business_application_service.create(
+        actor_id="user_local_admin",
+        code=code,
+        name=f"{code} test application",
+        description="Strict Webhook Business Application test route",
+        project_code="default",
+        owner_user_id="user_local_admin",
+    )
+    revision = container.business_application_service.save_draft(
+        actor_id="user_local_admin",
+        code=code,
+        expected_revision=int(application["revision"]),
+        payload={
+            "agent_publication_id": "agent_publication_default_v1",
+            "workflow_publication_id": "",
+            "session_policy": {
+                "conversation_mode": "channel",
+                "recent_message_limit": 20,
+                "retention_days": 30,
+                "continuous_conversation_enabled": False,
+                "attachments_enabled": False,
+            },
+            "execution_policy": {
+                "max_turns": 12,
+                "timeout_seconds": 300,
+                "max_tool_calls": 30,
+            },
+            "triggers": [
+                {
+                    "trigger_type": "webhook",
+                    "connector_id": ingress_connector_id,
+                    "routing_key": (
+                        f"webhook:{webhook_definition_id}"
+                    ),
+                    "actor_policy": "SERVICE_ACCOUNT",
+                    "service_account_user_id": (
+                        service_account_user_id
+                    ),
+                    "enabled": True,
+                    "config": {
+                        "conversation_type": "event",
+                        "require_mention": False,
+                        "webhook_definition_id": (
+                            webhook_definition_id
+                        ),
+                    },
+                }
+            ],
+            "deliveries": [
+                {
+                    "delivery_type": "dingtalk_group",
+                    "connector_id": delivery_connector_id,
+                    "enabled": True,
+                    "config": {
+                        "target_reference": (
+                            delivery_target_reference
+                        ),
+                        "reply_mode": "fixed",
+                    },
+                }
+            ],
+            "capabilities": [
+                {
+                    "capability_code": capability,
+                    "version_constraint": "*",
+                    "enabled": True,
+                }
+                for capability in capabilities
+            ],
+        },
+    )
+    publication = container.business_application_service.publish(
+        actor_id="user_local_admin",
+        code=code,
+        revision_id=str(revision["id"]),
+    )
+    container.business_application_service.activate(
+        actor_id="user_local_admin",
+        code=code,
+        environment="local",
+        publication_id=str(publication["id"]),
+        expected_revision=0,
+    )
+    timestamp = datetime.now(UTC).isoformat()
+    environment_id = f"environment-{code}"
+    base_id = f"base-{code}"
+    workshop_id = f"workshop-{code}"
+    container.database.execute(
+        """
+        insert into platform_environment
+          (id, code, display_name, status, created_at, updated_at)
+        values (?, ?, ?, 'enabled', ?, ?)
+        """,
+        (
+            environment_id,
+            environment_code,
+            environment_code,
+            timestamp,
+            timestamp,
+        ),
+    )
+    container.database.execute(
+        """
+        insert into platform_base
+          (id, environment_id, code, display_name, engine, status,
+           created_at, updated_at)
+        values (?, ?, ?, ?, 'postgresql', 'enabled', ?, ?)
+        """,
+        (
+            base_id,
+            environment_id,
+            base_code,
+            base_code,
+            timestamp,
+            timestamp,
+        ),
+    )
+    container.database.execute(
+        """
+        insert into platform_workshop
+          (id, base_id, code, display_name, status,
+           created_at, updated_at)
+        values (?, ?, ?, ?, 'enabled', ?, ?)
+        """,
+        (
+            workshop_id,
+            base_id,
+            workshop_code,
+            workshop_code,
+            timestamp,
+            timestamp,
+        ),
+    )
+    grant_test_application_access(
+        container,
+        application_id=str(application["id"]),
+        role_code=f"{code}-runtime",
+        user_id=service_account_user_id,
+        capabilities=capabilities,
+        scopes=(
+            {
+                "environment_id": environment_id,
+                "base_id": base_id,
+                "workshop_id": workshop_id,
+            },
+        ),
+    )
+    return publication
+
+
 def grant_test_application_access(
     container: Container,
     *,

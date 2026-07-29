@@ -653,35 +653,6 @@ def build_platform_config_router() -> APIRouter:
     def disable_resource_binding(request: Request, code: str) -> dict[str, Any]:
         return _set_resource_binding_status(request, code, "disabled")
 
-    @router.get("/access-grants")
-    def list_access_grants(
-        request: Request,
-        include_disabled: bool = Query(default=True),
-    ) -> dict[str, Any]:
-        _require_management_read(request, resource_type="platform_config")
-        service = _container(request).platform_config_service
-        return {"access_grants": service.list_access_grants(include_disabled=include_disabled)}
-
-    @router.post("/access-grants")
-    async def upsert_access_grant(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
-        try:
-            entity = _container(request).platform_config_service.upsert_access_grant(
-                payload,
-                actor_id=_actor(request),
-                correlation_id=_correlation_id(request),
-            )
-        except Exception as exc:
-            raise _handle(exc) from exc
-        return {"access_grant": entity}
-
-    @router.post("/access-grants/{grant_id}/enable")
-    def enable_access_grant(request: Request, grant_id: str) -> dict[str, Any]:
-        return _set_access_grant_status(request, grant_id, "enabled")
-
-    @router.post("/access-grants/{grant_id}/disable")
-    def disable_access_grant(request: Request, grant_id: str) -> dict[str, Any]:
-        return _set_access_grant_status(request, grant_id, "disabled")
-
     @router.post("/import/topology-yaml")
     async def import_topology_yaml(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -763,19 +734,6 @@ def _set_resource_binding_status(request: Request, code: str, status: str) -> di
     except Exception as exc:
         raise _handle(exc) from exc
     return {"resource_binding": entity}
-
-
-def _set_access_grant_status(request: Request, grant_id: str, status: str) -> dict[str, Any]:
-    try:
-        entity = _container(request).platform_config_service.set_access_grant_status(
-            grant_id,
-            status,
-            actor_id=_actor(request),
-            correlation_id=_correlation_id(request),
-        )
-    except Exception as exc:
-        raise _handle(exc) from exc
-    return {"access_grant": entity}
 
 
 def _set_runtime_config_value_status(

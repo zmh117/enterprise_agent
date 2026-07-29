@@ -77,6 +77,14 @@ class PlatformTopologyYamlImporter:
                 "Topology YAML root must be an object",
                 safe_message="拓扑 YAML 根节点必须是对象",
             )
+        if raw.get("access"):
+            raise PlatformConfigValidationError(
+                "Legacy topology access grants are not supported",
+                safe_message=(
+                    "拓扑 YAML 不再支持 access；"
+                    "请在业务应用角色中配置数据范围"
+                ),
+            )
         stats = ImportStats()
         for env_code, env_data in (raw.get("environments") or {}).items():
             env_data = env_data or {}
@@ -97,7 +105,6 @@ class PlatformTopologyYamlImporter:
                     actor_id=actor_id,
                     correlation_id=correlation_id,
                 )
-        self._import_access(raw.get("access") or {}, stats, actor_id, correlation_id)
         return stats.to_dict()
 
     def _import_base(
@@ -220,60 +227,6 @@ class PlatformTopologyYamlImporter:
         )
         stats.record(before)
         self._audit("resource_binding", binding, "import", actor_id, before, correlation_id)
-
-    def _import_access(
-        self,
-        access_data: dict[str, Any],
-        stats: ImportStats,
-        actor_id: str,
-        correlation_id: str,
-    ) -> None:
-        for subject_code, grants in access_data.items():
-            for grant in grants or []:
-                env = str(grant.get("environment") or "*")
-                base = str(grant.get("base") or "*")
-                workshop = str(grant.get("workshop") or "*")
-                ids = self._grant_ids(env, base, workshop)
-                before = self.repository.find_access_grant(
-                    subject_type="user",
-                    subject_code=str(subject_code),
-                    effect="allow",
-                    environment_id=ids["environment_id"],
-                    base_id=ids["base_id"],
-                    workshop_id=ids["workshop_id"],
-                )
-                access_grant = self.repository.upsert_access_grant(
-                    subject_type="user",
-                    subject_code=str(subject_code),
-                    effect="allow",
-                    environment_code=env,
-                    base_code=base,
-                    workshop_code=workshop,
-                    tool_scope=["read_only"],
-                    priority=100,
-                )
-                stats.record(before)
-                self._audit(
-                    "access_grant",
-                    access_grant,
-                    "import",
-                    actor_id,
-                    before,
-                    correlation_id,
-                )
-
-    def _grant_ids(self, env: str, base: str, workshop: str) -> dict[str, str | None]:
-        environment_id, base_id, workshop_id = self.repository.resolve_scope_ids(
-            environment_code=env,
-            base_code=base,
-            workshop_code=workshop,
-            allow_wildcard=True,
-        )
-        return {
-            "environment_id": environment_id,
-            "base_id": base_id,
-            "workshop_id": workshop_id,
-        }
 
     def _audit(
         self,

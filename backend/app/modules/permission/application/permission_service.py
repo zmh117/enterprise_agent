@@ -22,14 +22,10 @@ class PermissionService:
         self,
         config_repository: ConfigurationRepository,
         *,
-        authorization_evaluator: AuthorizationEvaluator | None = None,
-        unified_enabled: bool = False,
-        shadow_mode: bool = False,
+        authorization_evaluator: AuthorizationEvaluator,
     ) -> None:
         self.config_repository = config_repository
         self.authorization_evaluator = authorization_evaluator
-        self.unified_enabled = unified_enabled
-        self.shadow_mode = shadow_mode
 
     def assert_user_can_create_job(self, *, user_id: str, project_code: str) -> None:
         if not self._is_allowed(
@@ -63,11 +59,7 @@ class PermissionService:
                 safe_message="当前用户无权调用此工具",
             )
         self.assert_user_can_create_job(user_id=user_id, project_code=project_code)
-        if (
-            self.unified_enabled
-            and self.authorization_evaluator is not None
-            and tool_name in DATA_SCOPED_TOOLS
-        ):
+        if tool_name in DATA_SCOPED_TOOLS:
             scope = scope or {}
             decision = self.authorization_evaluator.decide_platform_scope(
                 user_id=user_id,
@@ -122,28 +114,13 @@ class PermissionService:
         resource_code: str,
         action: str,
     ) -> bool:
-        legacy_allowed = self.config_repository.is_allowed(
-            subject_code=user_id,
-            resource_type=resource_type,
-            resource_code=resource_code,
-            action=action,
-        )
-        evaluator = self.authorization_evaluator
-        if evaluator is None:
-            return legacy_allowed
         try:
-            decision = evaluator.decide(
+            decision = self.authorization_evaluator.decide(
                 user_id=user_id,
                 resource_type=resource_type,
                 resource_code=resource_code,
                 action=action,
             )
         except NotFound:
-            return legacy_allowed if not self.unified_enabled else False
-        if self.shadow_mode:
-            evaluator.record_shadow_comparison(
-                user_id=user_id,
-                legacy_allowed=legacy_allowed,
-                decision=decision,
-            )
-        return decision.allowed if self.unified_enabled else legacy_allowed
+            return False
+        return decision.allowed

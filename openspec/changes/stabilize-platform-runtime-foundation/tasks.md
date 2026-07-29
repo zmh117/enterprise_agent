@@ -112,12 +112,12 @@
 ## 10. 维护窗口切换与旧路径清理
 
 - [ ] 10.1 冻结配置写入并创建 PostgreSQL、Master Key、RabbitMQ 定义和运行配置的可恢复备份，校验备份引用
-- [ ] 10.2 重新生成 strict RBAC 预检并实际登录验证至少两名人类 platform-admin；缺少新授权先修复 RBAC，不启用 compatibility
+- [x] 10.2 重新生成 strict RBAC 预检并实际登录验证至少两名人类 platform-admin；缺少新授权先修复 RBAC，不启用 compatibility
 - [ ] 10.3 展示旧授权数据精确数量/digest 并再次获得用户确认后，事务清理 `permission_policy`、`platform_access_grant` 及其运行时代码/配置
-- [ ] 10.4 停止旧 Worker/Dispatcher，排空或幂等 backfill pending/retry Job 与 Delivery，隔离无法转换的记录并核验新 Outbox
+- [x] 10.4 停止旧 Worker/Dispatcher，排空或幂等 backfill pending/retry Job 与 Delivery，隔离无法转换的记录并核验新 Outbox
 - [ ] 10.5 展示旧 RabbitMQ 拓扑精确清单并再次获得用户确认后，只按精确名称删除已排空且无消费者的旧 exchange/queue/binding
 - [ ] 10.6 显式导入仍需保留的旧 `env:` Secret 引用并核验新资源引用；不迁移或声明 `vault:`/`kms:` 可用
-- [ ] 10.7 按 Phase 4 重新生成的 report/prepare 及用户确认执行全量 DB/Redis/Loki reset，并保存 verify 证据
+- [x] 10.7 按 Phase 4 重新生成的 report/prepare 及用户确认执行全量 DB/Redis/Loki reset，并保存 verify 证据
 - [ ] 10.8 从空配置建立并发布本地验收所需 MySQL 或 SQL Server、Redis、Loki 资源及业务应用 binding；Oracle 保持未发布
 - [ ] 10.9 完成维护切换核验：无 compatibility、无旧消息消费者、无运行时 YAML 资源 fallback、无悬空 binding、核心服务 ready
 

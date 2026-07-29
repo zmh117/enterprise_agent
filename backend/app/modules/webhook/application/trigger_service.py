@@ -44,13 +44,11 @@ class TriggerValidator:
         identity_repository: IdentityRepository,
         connector_registry: ConnectorRegistry,
         agent_config_service: AgentConfigService,
-        authorization: AuthorizationEvaluator,
     ) -> None:
         self.repository = repository
         self.identity_repository = identity_repository
         self.connector_registry = connector_registry
         self.agent_config_service = agent_config_service
-        self.authorization = authorization
 
     def validate(
         self, *, definition: dict[str, Any], config: dict[str, Any]
@@ -256,22 +254,6 @@ class TriggerValidator:
                 }
             )
 
-        project_rule = (config.get("routing") or {}).get("project_code") or {}
-        project_values = (
-            [str(project_rule.get("value") or "")]
-            if project_rule.get("mode") == "fixed"
-            else [str(item) for item in project_rule.get("allowed_values") or []]
-        )
-        if agent_code and not self.authorization.decide(
-            user_id=str(account["id"]), resource_type="agent", resource_code=agent_code, action="use"
-        ).allowed:
-            errors.append({"field": "service_account", "message": "服务账号不能使用此 Agent"})
-        for project_code in project_values:
-            if project_code and not self.authorization.decide(
-                user_id=str(account["id"]), resource_type="project", resource_code=project_code, action="use"
-            ).allowed:
-                errors.append({"field": "routing.project_code", "message": f"服务账号不能使用项目 {project_code}"})
-
         assigned_tools = sorted(
             self.agent_config_service.repository.publication_tools(agent_publication_id)
         ) if agent_publication else []
@@ -286,18 +268,11 @@ class TriggerValidator:
                     "message": f"Agent 发布版本包含无效工具：{', '.join(invalid_tools)}",
                 }
             )
-        allowed_tools = self.agent_config_service.allowed_tools(
-            publication_id=agent_publication_id,
-            user_id=str(account["id"]),
-            project_code=project_values[0] if project_values else "",
-        ) if agent_publication else []
-        if assigned_tools and not allowed_tools:
-            errors.append(
-                {
-                    "field": "service_account",
-                    "message": "服务账号不能使用任何已分配的只读 Agent 工具",
-                }
-            )
+        allowed_tools = [
+            tool_name
+            for tool_name in assigned_tools
+            if tool_name in enabled_read_only_tools
+        ]
         summary = {
             "agent_publication_id": agent_publication_id,
             "agent_revision": int(agent_publication["revision"]) if agent_publication else 0,

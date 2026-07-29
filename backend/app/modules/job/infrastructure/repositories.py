@@ -2805,32 +2805,6 @@ class ConfigurationRepository:
         row["metadata"] = self._json_from_text(str(row.get("metadata") or "{}"))
         return row
 
-    def is_allowed(
-        self,
-        *,
-        subject_code: str,
-        resource_type: str,
-        resource_code: str,
-        action: str = "use",
-    ) -> bool:
-        # Legacy permission rows predate action-level authorization. The unified
-        # evaluator owns action semantics; compatibility mode must preserve the
-        # original subject/resource allow behavior until cutover.
-        del action
-        row = self.database.execute_one(
-            """
-            select * from permission_policy
-            where subject_code = ?
-              and resource_type = ?
-              and (resource_code = ? or resource_code = '*')
-              and effect = 'allow'
-              and status = 'enabled'
-            limit 1
-            """,
-            (subject_code, resource_type, resource_code),
-        )
-        return row is not None
-
     def _json_from_text(self, value: str) -> Any:
         try:
             return json.loads(value)

@@ -1130,161 +1130,6 @@ class PlatformConfigRepository:
         )
         return self.get_resource_binding(existing["id"])
 
-    def upsert_access_grant(
-        self,
-        *,
-        subject_type: str,
-        subject_code: str,
-        effect: str,
-        environment_code: str | None = None,
-        base_code: str | None = None,
-        workshop_code: str | None = None,
-        tool_scope: list[str] | None = None,
-        resource_scope: dict[str, Any] | None = None,
-        condition: dict[str, Any] | None = None,
-        priority: int = 100,
-        status: str = "enabled",
-    ) -> dict[str, Any]:
-        environment_id, base_id, workshop_id = self.resolve_scope_ids(
-            environment_code=environment_code,
-            base_code=base_code,
-            workshop_code=workshop_code,
-            allow_wildcard=True,
-        )
-        existing = self.find_access_grant(
-            subject_type=subject_type,
-            subject_code=subject_code,
-            effect=effect,
-            environment_id=environment_id,
-            base_id=base_id,
-            workshop_id=workshop_id,
-        )
-        timestamp = now_iso()
-        params = (
-            subject_type,
-            subject_code,
-            effect,
-            environment_id,
-            base_id,
-            workshop_id,
-            json_text(tool_scope or []),
-            json_text(resource_scope or {}),
-            json_text(condition or {}),
-            priority,
-            status,
-        )
-        if existing:
-            self.database.execute(
-                """
-                update platform_access_grant
-                set subject_type = ?, subject_code = ?, effect = ?, environment_id = ?,
-                    base_id = ?, workshop_id = ?, tool_scope_json = ?,
-                    resource_scope_json = ?, condition_json = ?, priority = ?, status = ?,
-                    revision = revision + 1, updated_at = ?
-                where id = ?
-                """,
-                (*params, timestamp, existing["id"]),
-            )
-            return self.get_access_grant(existing["id"])
-        entity_id = new_id("grant")
-        self.database.execute(
-            """
-            insert into platform_access_grant
-              (id, subject_type, subject_code, effect, environment_id, base_id,
-               workshop_id, tool_scope_json, resource_scope_json, condition_json,
-               priority, status, revision, created_at, updated_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (entity_id, *params, 1, timestamp, timestamp),
-        )
-        return self.get_access_grant(entity_id)
-
-    def list_access_grants(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
-        where = "" if include_disabled else "where g.status = 'enabled'"
-        rows = self.database.execute(
-            f"""
-            select g.*, e.code as environment_code, b.code as base_code, w.code as workshop_code
-            from platform_access_grant g
-            left join platform_environment e on e.id = g.environment_id
-            left join platform_base b on b.id = g.base_id
-            left join platform_workshop w on w.id = g.workshop_id
-            {where}
-            order by g.subject_code, g.priority, g.id
-            """
-        )
-        return [self._parse_access_grant(row) for row in rows]
-
-    def get_access_grant(self, grant_id: str) -> dict[str, Any]:
-        row = self.database.execute_one(
-            """
-            select g.*, e.code as environment_code, b.code as base_code, w.code as workshop_code
-            from platform_access_grant g
-            left join platform_environment e on e.id = g.environment_id
-            left join platform_base b on b.id = g.base_id
-            left join platform_workshop w on w.id = g.workshop_id
-            where g.id = ?
-            """,
-            (grant_id,),
-        )
-        if not row:
-            raise NotFound(f"Platform access grant not found: {grant_id}")
-        return self._parse_access_grant(row)
-
-    def find_access_grant(
-        self,
-        *,
-        subject_type: str,
-        subject_code: str,
-        effect: str,
-        environment_id: str | None,
-        base_id: str | None,
-        workshop_id: str | None,
-    ) -> dict[str, Any] | None:
-        scope_clauses: list[str] = []
-        scope_params: list[Any] = []
-        for column, value in (
-            ("g.environment_id", environment_id),
-            ("g.base_id", base_id),
-            ("g.workshop_id", workshop_id),
-        ):
-            if value is None:
-                scope_clauses.append(f"{column} is null")
-            else:
-                scope_clauses.append(f"{column} = ?")
-                scope_params.append(value)
-        row = self.database.execute_one(
-            f"""
-            select g.*, e.code as environment_code, b.code as base_code, w.code as workshop_code
-            from platform_access_grant g
-            left join platform_environment e on e.id = g.environment_id
-            left join platform_base b on b.id = g.base_id
-            left join platform_workshop w on w.id = g.workshop_id
-            where g.subject_type = ?
-              and g.subject_code = ?
-              and g.effect = ?
-              and {" and ".join(scope_clauses)}
-            limit 1
-            """,
-            (
-                subject_type,
-                subject_code,
-                effect,
-                *scope_params,
-            ),
-        )
-        return self._parse_access_grant(row) if row else None
-
-    def set_access_grant_status(self, grant_id: str, status: str) -> dict[str, Any]:
-        self.database.execute(
-            """
-            update platform_access_grant
-            set status = ?, revision = revision + 1, updated_at = ?
-            where id = ?
-            """,
-            (status, now_iso(), grant_id),
-        )
-        return self.get_access_grant(grant_id)
-
     def record_config_audit(
         self,
         *,
@@ -1343,7 +1188,6 @@ class PlatformConfigRepository:
               union all select revision from platform_base
               union all select revision from platform_workshop
               union all select revision from platform_resource_binding
-              union all select revision from platform_access_grant
             ) revisions
             """
         )
@@ -1465,16 +1309,6 @@ class PlatformConfigRepository:
             **row,
             "config": self._json_from_text(row.get("config_json") or "{}"),
             "secret_refs": self._json_from_text(row.get("secret_refs_json") or "{}"),
-            "revision": int(row.get("revision") or 0),
-        }
-
-    def _parse_access_grant(self, row: dict[str, Any]) -> dict[str, Any]:
-        return {
-            **row,
-            "tool_scope": self._json_from_text(row.get("tool_scope_json") or "[]"),
-            "resource_scope": self._json_from_text(row.get("resource_scope_json") or "{}"),
-            "condition": self._json_from_text(row.get("condition_json") or "{}"),
-            "priority": int(row.get("priority") or 100),
             "revision": int(row.get("revision") or 0),
         }
 

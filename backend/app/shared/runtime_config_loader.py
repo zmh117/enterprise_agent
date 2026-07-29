@@ -88,8 +88,6 @@ def apply_runtime_config_overlay(
             "FEATURE_PUBLISHED_AGENT_RUNTIME",
             "FEATURE_REAL_CLAUDE",
             "FEATURE_REAL_INTERNAL_TOOLS",
-            "PERMISSION_SHADOW_MODE",
-            "FEATURE_PERMISSION_SHADOW_MODE",
         )
         if runtime_value(key) is not None
     }
@@ -255,7 +253,6 @@ def apply_runtime_config_overlay(
                 features.published_agent_runtime_enabled
             ),
             test_identity_headers_enabled=features.test_identity_headers_enabled,
-            permission_shadow_mode=features.permission_shadow_mode,
         ),
         webhooks=replace(
             settings.webhooks,

@@ -1,18 +1,22 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import unittest
 from typing import Any
 
 from fastapi.testclient import TestClient
 
+from app.bootstrap import build_test_container
 from app.main import create_app
 from app.modules.channel.domain.channel_event import ReplyRoute
 from app.modules.channel.infrastructure.connector_registry import Connector
 from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
 from app.modules.job.application.job_status_service import JobStatusService
 from app.modules.job.domain.job_status import JobStatus
+from app.shared.config import IdentitySettings
 from app.shared.exceptions import NonRetryableExecutionError
 from backend.tests.helpers import (
+    activate_webhook_test_application,
     container,
     dispatch_pending_deliveries,
     enqueue_job_result_for_delivery,
@@ -42,7 +46,7 @@ class ChannelIngressAndDeliveryTests(unittest.TestCase):
         built = []
 
         def factory(_: Any):
-            c = container()
+            c = build_test_container(settings, migrate=True, seed=True)
             built.append(c)
             return c
 
@@ -67,11 +71,42 @@ class ChannelIngressAndDeliveryTests(unittest.TestCase):
             self.assertEqual(0, c.agent_repository.count_rows("agent_job"))
 
     def test_grafana_firing_creates_job_and_resolved_is_ignored(self) -> None:
-        settings = make_settings()
+        settings = replace(
+            make_settings(),
+            identity=IdentitySettings(
+                enabled=True,
+                web_admin_enabled=True,
+                published_agent_runtime_enabled=True,
+                cookie_secure=False,
+            ),
+        )
         built = []
 
         def factory(_: Any):
-            c = container()
+            c = build_test_container(settings, migrate=True, seed=True)
+            capabilities = tuple(
+                sorted(
+                    c.agent_config_service.repository.publication_tools(
+                        "agent_publication_default_v1"
+                    )
+                )
+            )
+            activate_webhook_test_application(
+                c,
+                code="grafana-channel-ingress",
+                webhook_definition_id=(
+                    "webhook_trigger_grafana_default"
+                ),
+                service_account_user_id=(
+                    "user_webhook_grafana_default"
+                ),
+                ingress_connector_id="connector-grafana-default",
+                delivery_connector_id=(
+                    "connector-dingtalk-enterprise-default"
+                ),
+                delivery_target_reference="test-alert-group",
+                capabilities=capabilities,
+            )
             built.append(c)
             return c
 

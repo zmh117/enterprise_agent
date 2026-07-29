@@ -54,7 +54,7 @@ def test_governed_resource_schema_has_stable_version_and_activation_records() ->
         migrator_build="resource-schema-test",
     ).run()
 
-    assert result.head == "023"
+    assert result.head == "024"
     tables = {
         row["name"]
         for row in database.execute(

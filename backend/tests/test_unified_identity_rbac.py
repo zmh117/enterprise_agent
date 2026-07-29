@@ -9,9 +9,6 @@ from fastapi.testclient import TestClient
 
 from app.bootstrap import Container, build_test_container
 from app.main import create_app
-from app.modules.identity.application.legacy_migration import (
-    LegacyIdentityMigrationService,
-)
 from app.modules.platform_config.infrastructure import PlatformConfigRepository
 from app.shared.config import IdentitySettings, Settings
 from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
@@ -33,7 +30,6 @@ def unified_settings() -> Settings:
             web_admin_enabled=True,
             published_agent_runtime_enabled=True,
             test_identity_headers_enabled=False,
-            permission_shadow_mode=False,
             cookie_secure=False,
             allowed_origins=(ORIGIN,),
         ),
@@ -354,7 +350,7 @@ def test_trusted_dingtalk_binding_tenant_isolation_conflict_and_unknown_fail_clo
     assert "super-sensitive-token" not in audit_text
 
 
-def test_rbac_deny_wins_disabled_role_and_platform_scope_are_enforced() -> None:
+def test_legacy_policy_and_platform_grant_never_authorize_strict_runtime() -> None:
     container = unified_container()
     repository = container.identity_repository
     user = repository.create_user(username="diagnostic-user", display_name="Diagnostic User")
@@ -362,15 +358,19 @@ def test_rbac_deny_wins_disabled_role_and_platform_scope_are_enforced() -> None:
     membership = repository.assign_role(
         user_id=str(user["id"]), role_id=str(role["id"]), expected_revision=0
     )
-    repository.upsert_policy(
-        policy_id="policy-diagnostic-reader-tool",
-        subject_type="role",
-        subject_code="diagnostic-reader",
-        resource_type="tool",
-        resource_code="query_database",
-        action="use",
-        effect="allow",
-        expected_revision=0,
+    container.database.execute(
+        """
+        insert into permission_policy
+          (id, subject_type, subject_code, resource_type, resource_code,
+           action, effect, priority, status, revision,
+           created_at, updated_at)
+        values (
+          'policy-diagnostic-reader-tool', 'role',
+          'diagnostic-reader', 'tool', 'query_database',
+          'use', 'allow', 100, 'enabled', 1,
+          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+        )
+        """
     )
     allowed = container.authorization_evaluator.decide(
         user_id=str(user["id"]),
@@ -378,18 +378,22 @@ def test_rbac_deny_wins_disabled_role_and_platform_scope_are_enforced() -> None:
         resource_code="query_database",
         action="use",
     )
-    assert allowed.allowed is True
+    assert allowed.allowed is False
+    assert allowed.reason == "no_strict_admin_capability"
 
-    repository.upsert_policy(
-        policy_id="policy-diagnostic-user-deny",
-        subject_type="user",
-        subject_code=str(user["id"]),
-        resource_type="tool",
-        resource_code="query_database",
-        action="use",
-        effect="deny",
-        priority=1,
-        expected_revision=0,
+    container.database.execute(
+        """
+        insert into permission_policy
+          (id, subject_type, subject_code, resource_type, resource_code,
+           action, effect, priority, status, revision,
+           created_at, updated_at)
+        values (
+          'policy-diagnostic-user-deny', 'user', ?,
+          'tool', 'query_database', 'use', 'deny',
+          1, 'enabled', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+        )
+        """,
+        (str(user["id"]),),
     )
     denied = container.authorization_evaluator.decide(
         user_id=str(user["id"]),
@@ -398,7 +402,8 @@ def test_rbac_deny_wins_disabled_role_and_platform_scope_are_enforced() -> None:
         action="use",
     )
     assert denied.allowed is False
-    assert denied.reason == "explicit_deny"
+    assert denied.reason == "no_strict_admin_capability"
+    assert denied.trace["matched_policy_ids"] == []
     assert "password" not in json.dumps(denied.trace).lower()
 
     with pytest.raises(NonRetryableExecutionError):
@@ -420,31 +425,30 @@ def test_rbac_deny_wins_disabled_role_and_platform_scope_are_enforced() -> None:
     topology.upsert_workshop(
         environment_code="prod", base_code="base-a", code="ws-denied"
     )
-    topology.upsert_access_grant(
-        subject_type="role",
-        subject_code="scope-reader",
-        effect="allow",
-        environment_code="prod",
-        base_code="base-a",
-        tool_scope=["query_database"],
-    )
-    topology.upsert_access_grant(
-        subject_type="role",
-        subject_code="scope-reader",
-        effect="deny",
-        environment_code="prod",
-        base_code="base-a",
-        workshop_code="ws-denied",
-        tool_scope=["query_database"],
-        priority=1,
+    container.database.execute(
+        """
+        insert into platform_access_grant
+          (id, subject_type, subject_code, effect,
+           tool_scope_json, resource_scope_json, condition_json,
+           priority, status, revision, created_at, updated_at)
+        values
+          ('legacy-scope-allow', 'role', 'scope-reader', 'allow',
+           '["query_database"]', '{}', '{}', 100, 'enabled', 1,
+           CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+          ('legacy-scope-deny', 'role', 'scope-reader', 'deny',
+           '["query_database"]', '{}', '{}', 1, 'enabled', 1,
+           CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        """
     )
     evaluator = container.authorization_evaluator
-    assert evaluator.decide_platform_scope(
+    allowed_scope = evaluator.decide_platform_scope(
         user_id=str(scope_user["id"]),
         environment="prod",
         base="base-a",
         tool_name="query_database",
-    ).allowed
+    )
+    assert allowed_scope.allowed is False
+    assert allowed_scope.reason == "business_application_scope_required"
     denied_workshop = evaluator.decide_platform_scope(
         user_id=str(scope_user["id"]),
         environment="prod",
@@ -453,7 +457,7 @@ def test_rbac_deny_wins_disabled_role_and_platform_scope_are_enforced() -> None:
         tool_name="query_database",
     )
     assert denied_workshop.allowed is False
-    assert denied_workshop.reason == "explicit_scope_deny"
+    assert denied_workshop.reason == "business_application_scope_required"
     assert not evaluator.decide_platform_scope(
         user_id=str(scope_user["id"]),
         environment="prod",
@@ -474,78 +478,6 @@ def test_rbac_deny_wins_disabled_role_and_platform_scope_are_enforced() -> None:
         base="base-a",
         tool_name="query_database",
     ).allowed
-
-
-def test_legacy_reconciliation_dry_run_is_read_only_and_ambiguous_subject_is_not_copied() -> None:
-    container = unified_container()
-    repository = container.identity_repository
-    unique_user = repository.create_user(username="legacy-unique", display_name="Legacy Unique")
-    repository.bind_external_identity(
-        user_id=str(unique_user["id"]),
-        provider="dingtalk",
-        tenant_code="tenant-unique",
-        external_subject_id="legacy-staff-unique",
-        connector_id="legacy-test-connector",
-    )
-    repository.upsert_policy(
-        policy_id="legacy-policy-unique",
-        subject_type="user",
-        subject_code="legacy-staff-unique",
-        resource_type="project",
-        resource_code="default",
-        action="use",
-        effect="allow",
-        expected_revision=0,
-    )
-
-    ambiguous_a = repository.create_user(username="legacy-a", display_name="Legacy A")
-    ambiguous_b = repository.create_user(username="legacy-b", display_name="Legacy B")
-    for user, tenant in ((ambiguous_a, "tenant-a"), (ambiguous_b, "tenant-b")):
-        repository.bind_external_identity(
-            user_id=str(user["id"]),
-            provider="dingtalk",
-            tenant_code=tenant,
-            external_subject_id="legacy-staff-ambiguous",
-            connector_id=f"legacy-{tenant}",
-        )
-    repository.upsert_policy(
-        policy_id="legacy-policy-ambiguous",
-        subject_type="user",
-        subject_code="legacy-staff-ambiguous",
-        resource_type="project",
-        resource_code="default",
-        action="use",
-        effect="allow",
-        expected_revision=0,
-    )
-
-    migration = LegacyIdentityMigrationService(repository)
-    before_audit = container.agent_repository.count_rows("identity_migration_audit")
-    before_policies = container.agent_repository.count_rows("permission_policy")
-    dry_run = migration.reconcile(apply=False)
-    assert container.agent_repository.count_rows("identity_migration_audit") == before_audit
-    assert container.agent_repository.count_rows("permission_policy") == before_policies
-    statuses = {
-        item["legacy_subject_code"]: item["status"] for item in dry_run["subjects"]
-    }
-    assert statuses["legacy-staff-unique"] == "ready"
-    assert statuses["legacy-staff-ambiguous"] == "ambiguous"
-
-    migration.reconcile(apply=True)
-    copied = container.database.execute_one(
-        """
-        select id from permission_policy
-        where subject_type = 'user' and subject_code = ?
-          and resource_type = 'project' and resource_code = 'default'
-        """,
-        (unique_user["id"],),
-    )
-    assert copied is not None
-    for user in (ambiguous_a, ambiguous_b):
-        assert container.database.execute_one(
-            "select id from permission_policy where subject_type = 'user' and subject_code = ?",
-            (user["id"],),
-        ) is None
 
 
 def test_admin_api_revision_conflicts_and_typed_agent_draft_errors() -> None:

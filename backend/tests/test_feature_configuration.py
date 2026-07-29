@@ -16,7 +16,7 @@ from app.shared.feature_configuration import (
     resolve_feature_configuration,
 )
 from app.shared.runtime_config_loader import apply_runtime_config_overlay
-from backend.tests.helpers import test_settings
+from backend.tests.helpers import test_settings as make_test_settings
 from backend.tests.test_unified_identity_rbac import csrf_headers, login
 
 
@@ -129,41 +129,12 @@ def test_runtime_database_cannot_enable_a_closed_deployment_gate() -> None:
     )
 
 
-def test_permission_shadow_mode_is_audited_runtime_policy() -> None:
-    settings = replace(
-        test_settings(),
-        identity=IdentitySettings(permission_shadow_mode=True),
-    )
-    container = build_test_container(settings, migrate=True, seed=True)
-    container.platform_config_service.upsert_runtime_config_value(
-        {
-            "key": "PERMISSION_SHADOW_MODE",
-            "value": False,
-            "service_name": "api-server",
-        },
-        actor_id="local-user",
-    )
-
-    overlaid = apply_runtime_config_overlay(
-        settings,
-        container.database,
-        service_name="api-server",
-    )
-
-    assert overlaid.identity.permission_shadow_mode is False
-    assert (
-        overlaid.feature_configuration.item("PERMISSION_SHADOW_MODE").source
-        == "db:runtime-policy"
-    )
-
-
 def test_migration_audit_is_read_only_and_builds_unpublished_policy_draft() -> None:
     report = build_report(
         {
             "APP_ENV": "test",
             "FEATURE_CONTINUOUS_CONVERSATION": "true",
             "FEATURE_MESSAGE_ATTACHMENTS": "false",
-            "FEATURE_PERMISSION_SHADOW_MODE": "true",
         }
     )
 
@@ -172,12 +143,11 @@ def test_migration_audit_is_read_only_and_builds_unpublished_policy_draft() -> N
     assert report["policy_draft"] == {
         "continuous_conversation_enabled": True,
         "attachments_enabled": False,
-        "permission_shadow_mode": True,
     }
 
 
 def test_management_routes_are_absent_when_web_admin_is_disabled() -> None:
-    settings = test_settings()
+    settings = make_test_settings()
     container = build_test_container(settings, migrate=True, seed=True)
 
     with TestClient(
@@ -192,7 +162,7 @@ def test_management_routes_are_absent_when_web_admin_is_disabled() -> None:
 
 
 def test_authorized_admin_can_read_masked_effective_feature_snapshot() -> None:
-    base = test_settings()
+    base = make_test_settings()
     settings = replace(
         base,
         environment="test",
@@ -200,7 +170,6 @@ def test_authorized_admin_can_read_masked_effective_feature_snapshot() -> None:
             enabled=True,
             web_admin_enabled=True,
             published_agent_runtime_enabled=False,
-            permission_shadow_mode=False,
             cookie_secure=False,
             allowed_origins=("http://admin.test",),
         ),

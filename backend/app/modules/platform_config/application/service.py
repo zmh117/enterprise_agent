@@ -43,14 +43,11 @@ from .resource_reset import resource_reset_in_progress
 from .validation import (
     assert_no_secret_payload,
     coerce_runtime_value,
-    assert_readonly_tool_scope,
     normalize_aliases,
-    normalize_json_list,
     normalize_json_object,
     normalize_oracle_database_config,
     normalize_redis_resource_config,
     validate_config_value_type,
-    validate_access_effect,
     validate_code,
     validate_engine,
     validate_resource_kind,
@@ -59,7 +56,6 @@ from .validation import (
     validate_secret_provider,
     validate_secret_ref,
     validate_status,
-    validate_subject_type,
 )
 
 
@@ -616,68 +612,6 @@ class PlatformConfigService:
                 safe_message="工具资源处于重置维护模式，暂不允许修改",
                 error_code="resource_reset_maintenance",
             )
-
-    def list_access_grants(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
-        return self.repository.list_access_grants(include_disabled=include_disabled)
-
-    @operation_unit_of_work(lambda service: service.repository.database)
-    def upsert_access_grant(
-        self, payload: dict[str, Any], *, actor_id: str, correlation_id: str = ""
-    ) -> dict[str, Any]:
-        self.require_admin(actor_id)
-        subject_type = validate_subject_type(str(payload.get("subject_type") or ""))
-        subject_code = validate_code(str(payload.get("subject_code") or ""), field="subject_code")
-        effect = validate_access_effect(str(payload.get("effect") or "allow"))
-        tool_scope = [
-            str(item) for item in normalize_json_list(payload.get("tool_scope"), field="tool_scope")
-        ]
-        assert_readonly_tool_scope(tool_scope)
-        environment_code = payload.get("environment_code")
-        base_code = payload.get("base_code")
-        workshop_code = payload.get("workshop_code")
-        ids = self.repository.resolve_scope_ids(
-            environment_code=environment_code,
-            base_code=base_code,
-            workshop_code=workshop_code,
-            allow_wildcard=True,
-        )
-        before = self.repository.find_access_grant(
-            subject_type=subject_type.value,
-            subject_code=subject_code,
-            effect=effect.value,
-            environment_id=ids[0],
-            base_id=ids[1],
-            workshop_id=ids[2],
-        )
-        entity = self.repository.upsert_access_grant(
-            subject_type=subject_type.value,
-            subject_code=subject_code,
-            effect=effect.value,
-            environment_code=environment_code,
-            base_code=base_code,
-            workshop_code=workshop_code,
-            tool_scope=tool_scope,
-            resource_scope=normalize_json_object(
-                payload.get("resource_scope"), field="resource_scope"
-            ),
-            condition=normalize_json_object(payload.get("condition"), field="condition"),
-            priority=int(payload.get("priority") or 100),
-            status=validate_status(str(payload.get("status") or "enabled")).value,
-        )
-        self._audit("access_grant", entity, "upsert", actor_id, before, correlation_id)
-        return entity
-
-    @operation_unit_of_work(lambda service: service.repository.database)
-    def set_access_grant_status(
-        self, grant_id: str, status: str, *, actor_id: str, correlation_id: str = ""
-    ) -> dict[str, Any]:
-        self.require_admin(actor_id)
-        before = self.repository.get_access_grant(grant_id)
-        entity = self.repository.set_access_grant_status(
-            validate_code(grant_id, field="grant_id"), validate_status(status).value
-        )
-        self._audit("access_grant", entity, status, actor_id, before, correlation_id)
-        return entity
 
     @operation_unit_of_work(lambda service: service.repository.database)
     def import_topology_yaml(

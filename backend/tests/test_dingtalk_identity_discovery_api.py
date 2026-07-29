@@ -28,7 +28,6 @@ def _settings() -> Settings:
             enabled=True,
             web_admin_enabled=True,
             published_agent_runtime_enabled=False,
-            permission_shadow_mode=False,
             cookie_secure=False,
             allowed_origins=(ORIGIN,),
             dingtalk_tenant_code="tenant-discovery",

@@ -405,20 +405,10 @@ class AgentConfigService:
         return values
 
     def allowed_tools(self, *, publication_id: str, user_id: str, project_code: str) -> list[str]:
-        del project_code
+        del user_id, project_code
         assigned = self.repository.publication_tools(publication_id)
         enabled = self.repository.enabled_tools()
-        result: list[str] = []
-        for tool_name in sorted(ToolRegistry.READONLY_TOOLS & assigned & enabled):
-            decision = self.authorization.decide(
-                user_id=user_id,
-                resource_type="tool",
-                resource_code=tool_name,
-                action="use",
-            )
-            if decision.allowed:
-                result.append(tool_name)
-        return result
+        return sorted(ToolRegistry.READONLY_TOOLS & assigned & enabled)
 
     @staticmethod
     def _require_mvp_write_agent(agent_code: str) -> None:

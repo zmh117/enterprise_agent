@@ -317,12 +317,3 @@ environments:
         loki:
           base_url_ref: secret://platform/agent_test_loki_base_url
           tenant: tenant1
-
-access:
-  local-user:
-    - { environment: '*', base: '*', workshop: '*' }
-  # 钉钉 Stream 本地联调账号（senderStaffId）
-  "03695725024624053732":
-    - { environment: '*', base: '*', workshop: '*' }
-  guanlan-gl001-operator:
-    - { environment: sanjiu, base: guanlan_cloud, workshop: GL001 }

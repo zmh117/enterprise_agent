@@ -97,10 +97,6 @@ class EffectiveFeatureConfiguration:
         return self.value("TEST_IDENTITY_HEADERS")
 
     @property
-    def permission_shadow_mode(self) -> bool:
-        return self.value("PERMISSION_SHADOW_MODE")
-
-    @property
     def webhook_ingress_compatibility_enabled(self) -> bool:
         return self.value("WEBHOOK_INGRESS_COMPATIBILITY")
 
@@ -148,7 +144,6 @@ LEGACY_FEATURE_TARGETS: dict[str, str] = {
     "FEATURE_CONTINUOUS_CONVERSATION": "Business Application session_policy",
     "FEATURE_MESSAGE_ATTACHMENTS": "Business Application session_policy",
     "FEATURE_TEST_IDENTITY_HEADERS": "test-only application configuration",
-    "FEATURE_PERMISSION_SHADOW_MODE": "PERMISSION_SHADOW_MODE runtime policy",
 }
 
 
@@ -165,7 +160,6 @@ def feature_configuration_from_values(
     unified_identity: bool | None = None,
     business_application_control_plane: bool | None = None,
     test_identity_headers: bool = False,
-    permission_shadow_mode: bool = True,
     webhook_ingress: bool = True,
     continuous_conversation: bool = False,
     message_attachments: bool = False,
@@ -231,15 +225,6 @@ def feature_configuration_from_values(
                 if source.startswith("legacy:")
                 else (),
                 restart=True,
-            ),
-            _value(
-                "PERMISSION_SHADOW_MODE",
-                permission_shadow_mode,
-                source,
-                FeatureClassification.GOVERNED_RUNTIME_POLICY,
-                deprecated=("FEATURE_PERMISSION_SHADOW_MODE",)
-                if source.startswith("legacy:")
-                else (),
             ),
             _value(
                 "WEBHOOK_INGRESS_COMPATIBILITY",
@@ -334,7 +319,6 @@ def resolve_feature_configuration(
             f"cannot be enabled in {normalized_environment or 'production'}"
         )
 
-    permission_shadow = _optional_bool(environ, "FEATURE_PERMISSION_SHADOW_MODE")
     webhook_enabled = _optional_bool(environ, "FEATURE_WEBHOOK_TRIGGERS")
     conversation_enabled = _optional_bool(
         environ, "FEATURE_CONTINUOUS_CONVERSATION"
@@ -353,9 +337,6 @@ def resolve_feature_configuration(
         unified_identity=unified_identity,
         business_application_control_plane=business_control_plane,
         test_identity_headers=test_headers,
-        permission_shadow_mode=True
-        if permission_shadow is None
-        else permission_shadow,
         webhook_ingress=True if webhook_enabled is None else webhook_enabled,
         continuous_conversation=False
         if conversation_enabled is None
@@ -414,30 +395,6 @@ def apply_runtime_feature_policies(
             )
         )
 
-    shadow = _coerce_optional_bool(
-        runtime_values.get("PERMISSION_SHADOW_MODE")
-    )
-    if shadow is None:
-        shadow = _coerce_optional_bool(
-            runtime_values.get("FEATURE_PERMISSION_SHADOW_MODE")
-        )
-    if shadow is not None:
-        values = [
-            replace(
-                current,
-                effective_value=shadow,
-                source="db:runtime-policy",
-                deprecated_inputs=(
-                    ("FEATURE_PERMISSION_SHADOW_MODE",)
-                    if "FEATURE_PERMISSION_SHADOW_MODE" in runtime_values
-                    else ()
-                ),
-            )
-            if current.key == "PERMISSION_SHADOW_MODE"
-            else current
-            for current in values
-        ]
-
     return EffectiveFeatureConfiguration(
         values=tuple(values),
         diagnostics=tuple(diagnostics),
@@ -467,8 +424,6 @@ def feature_migration_report(
             policy_draft["continuous_conversation_enabled"] = bool(value)
         elif key == "FEATURE_MESSAGE_ATTACHMENTS":
             policy_draft["attachments_enabled"] = bool(value)
-        elif key == "FEATURE_PERMISSION_SHADOW_MODE":
-            policy_draft["permission_shadow_mode"] = bool(value)
         elif key == "FEATURE_WEBHOOK_TRIGGERS":
             policy_draft["webhook_ingress_enabled"] = bool(value)
     return {
@@ -490,7 +445,6 @@ def _mark_configuration_sources(
             "FEATURE_BUSINESS_APPLICATION_CONTROL_PLANE"
         ),
         "TEST_IDENTITY_HEADERS": "FEATURE_TEST_IDENTITY_HEADERS",
-        "PERMISSION_SHADOW_MODE": "FEATURE_PERMISSION_SHADOW_MODE",
         "WEBHOOK_INGRESS_COMPATIBILITY": "FEATURE_WEBHOOK_TRIGGERS",
         "CONTINUOUS_CONVERSATION_COMPATIBILITY": (
             "FEATURE_CONTINUOUS_CONVERSATION"

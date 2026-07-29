@@ -196,6 +196,10 @@ class Container:
 
 
 ContainerFactory = Callable[[Settings], Container]
+PermissionServiceFactory = Callable[
+    [ConfigurationRepository, AuthorizationEvaluator],
+    PermissionService,
+]
 
 
 def build_api_container(
@@ -248,6 +252,8 @@ def build_test_container(
     seed: bool = False,
     configure_seed_secrets: bool = True,
 ) -> Container:
+    from app.testing.permission_service import SeedPolicyTestPermissionService
+
     database = Database(settings.database_dsn)
     try:
         if migrate:
@@ -265,6 +271,19 @@ def build_test_container(
         database.close()
         raise
     message_bus = InMemoryMessageBus()
+
+    def test_permission_service_factory(
+        repository: ConfigurationRepository,
+        evaluator: AuthorizationEvaluator,
+    ) -> PermissionService:
+        return SeedPolicyTestPermissionService(
+            repository,
+            authorization_evaluator=evaluator,
+            unified_enabled=(
+                settings.feature_configuration.unified_identity_enabled
+            ),
+        )
+
     runtime = _build_container(
         settings=settings,
         service_name="test-runtime",
@@ -274,6 +293,7 @@ def build_test_container(
         database=database,
         seed=seed,
         use_real_claude=False,
+        permission_service_factory=test_permission_service_factory,
     )
     if seed and configure_seed_secrets:
         _configure_test_seed_secrets(runtime)
@@ -332,6 +352,7 @@ def _build_container(
     database: Database | None = None,
     seed: bool,
     use_real_claude: bool,
+    permission_service_factory: PermissionServiceFactory | None = None,
 ) -> Container:
     database = database or Database(settings.database_dsn)
     if seed:
@@ -401,11 +422,16 @@ def _build_container(
         authorization=authorization_evaluator,
         authorization_repository=authorization_center_repository,
     )
-    permission_service = PermissionService(
-        config_repository,
-        authorization_evaluator=authorization_evaluator,
-        unified_enabled=settings.feature_configuration.unified_identity_enabled,
-        shadow_mode=settings.feature_configuration.permission_shadow_mode,
+    permission_service = (
+        permission_service_factory(
+            config_repository,
+            authorization_evaluator,
+        )
+        if permission_service_factory is not None
+        else PermissionService(
+            config_repository,
+            authorization_evaluator=authorization_evaluator,
+        )
     )
     auth_service = AuthService(
         identity_repository,
@@ -539,7 +565,6 @@ def _build_container(
         identity_repository=identity_repository,
         connector_registry=connector_registry,
         agent_config_service=agent_config_service,
-        authorization=authorization_evaluator,
     )
     webhook_trigger_service = WebhookTriggerService(
         repository=webhook_trigger_repository,

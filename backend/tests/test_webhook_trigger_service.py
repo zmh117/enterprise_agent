@@ -45,16 +45,6 @@ def _service(monkeypatch: pytest.MonkeyPatch) -> tuple[object, WebhookTriggerSer
         value="dingtalk-enterprise-client-secret",
         actor_id=ADMIN_ID,
     )
-    for action in ("read", "edit", "publish", "rotate", "manage_service_account"):
-        c.identity_repository.upsert_policy(
-            policy_id=f"policy-admin-webhook-{action}",
-            subject_type="role",
-            subject_code="platform-admin",
-            resource_type="webhook_trigger",
-            resource_code="*",
-            action=action,
-            effect="allow",
-        )
     c.database.execute(
         """
         insert into agent_channel_binding
@@ -71,7 +61,6 @@ def _service(monkeypatch: pytest.MonkeyPatch) -> tuple[object, WebhookTriggerSer
         identity_repository=c.identity_repository,
         connector_registry=c.connector_registry,
         agent_config_service=c.agent_config_service,
-        authorization=c.authorization_evaluator,
     )
     service = WebhookTriggerService(
         repository=repository,
@@ -118,24 +107,6 @@ def _config() -> dict[str, object]:
     }
 
 
-def _grant_runtime_permissions(c: object, service_account_id: str) -> None:
-    repository = c.identity_repository
-    for resource_type, resource_code in (
-        ("agent", "default-diagnostic-agent"),
-        ("project", "default"),
-        ("tool", "*"),
-    ):
-        repository.upsert_policy(
-            policy_id=f"policy-{service_account_id}-{resource_type}",
-            subject_type="user",
-            subject_code=service_account_id,
-            resource_type=resource_type,
-            resource_code=resource_code,
-            action="use",
-            effect="allow",
-        )
-
-
 def test_trigger_lifecycle_uses_dedicated_service_account_and_pinned_agent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -155,26 +126,14 @@ def test_trigger_lifecycle_uses_dedicated_service_account_and_pinned_agent(
     assert c.agent_repository.count_rows("app_user") == before_users + 1
     assert service_account["account_type"] == "service"
     assert service_account["username"] == "svc-webhook-grafana-orders"
-    assert c.identity_repository.policies_for_principals(
-        user_id=str(service_account["id"]),
-        role_codes=(),
-        resource_type="tool",
-        resource_code="query_database",
-        action="use",
-    ) == []
+    assert c.database.execute_one(
+        """
+        select id from permission_policy
+         where subject_type = 'user' and subject_code = ?
+        """,
+        (str(service_account["id"]),),
+    ) is None
 
-    invalid = service.validate_revision(
-        actor_id=ADMIN_ID,
-        code="grafana-orders",
-        revision_id=str(draft["id"]),
-    )
-    assert invalid["validation"]["valid"] is False
-    assert {item["field"] for item in invalid["validation"]["errors"]} >= {
-        "service_account",
-        "routing.project_code",
-    }
-
-    _grant_runtime_permissions(c, str(service_account["id"]))
     validated = service.validate_revision(
         actor_id=ADMIN_ID,
         code="grafana-orders",
@@ -248,7 +207,6 @@ def test_trigger_requires_unique_strong_bearer_tokens(
         connector_id="connector-grafana-default",
         config=_config(),
     )
-    _grant_runtime_permissions(c, str(first["service_account"]["id"]))
     validated = service.validate_revision(
         actor_id=ADMIN_ID,
         code="grafana-unique-one",
@@ -269,7 +227,6 @@ def test_trigger_requires_unique_strong_bearer_tokens(
         connector_id="connector-grafana-default",
         config=_config(),
     )
-    _grant_runtime_permissions(c, str(duplicate["service_account"]["id"]))
     duplicate_validation = service.validate_revision(
         actor_id=ADMIN_ID,
         code="grafana-unique-two",
@@ -299,7 +256,6 @@ def test_trigger_requires_unique_strong_bearer_tokens(
         connector_id="connector-grafana-default",
         config=weak_config,
     )
-    _grant_runtime_permissions(c, str(weak["service_account"]["id"]))
     weak_validation = service.validate_revision(
         actor_id=ADMIN_ID,
         code="grafana-weak-token",
@@ -322,7 +278,6 @@ def test_trigger_requires_unique_strong_bearer_tokens(
         connector_id="connector-grafana-default",
         config=unsupported_config,
     )
-    _grant_runtime_permissions(c, str(unsupported["service_account"]["id"]))
     unsupported_validation = service.validate_revision(
         actor_id=ADMIN_ID,
         code="grafana-hmac-rejected",

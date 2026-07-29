@@ -102,7 +102,6 @@ def identity_settings() -> Settings:
             web_admin_enabled=True,
             published_agent_runtime_enabled=True,
             test_identity_headers_enabled=False,
-            permission_shadow_mode=False,
             cookie_secure=False,
             allowed_origins=(ORIGIN,),
         ),

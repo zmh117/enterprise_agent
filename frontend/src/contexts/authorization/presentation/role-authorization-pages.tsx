@@ -162,14 +162,6 @@ export function RoleAuthorizationPage() {
         ))}
       </div>
 
-      <Card className="border-dashed bg-muted/20 shadow-none">
-        <CardHeader>
-          <CardTitle className="text-base">高级授权例外</CardTitle>
-          <CardDescription>
-            旧的用户直接策略和平台范围 grant 保留为兼容数据，仅平台管理员可以审查。普通角色配置不会写入这些表。
-          </CardDescription>
-        </CardHeader>
-      </Card>
     </div>
   )
 }

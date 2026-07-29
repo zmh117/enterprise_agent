@@ -40,7 +40,6 @@ def container():
         identity=IdentitySettings(
             enabled=True,
             published_agent_runtime_enabled=True,
-            permission_shadow_mode=False,
             cookie_secure=False,
         ),
     )
@@ -59,7 +58,6 @@ def web_container():
             enabled=True,
             web_admin_enabled=True,
             published_agent_runtime_enabled=True,
-            permission_shadow_mode=False,
             cookie_secure=False,
             allowed_origins=("http://admin.test",),
         ),

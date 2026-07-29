@@ -284,43 +284,6 @@ def build_authorization_center_router() -> APIRouter:
         except Exception as exc:
             raise handle_exception(exc) from exc
 
-    @router.get("/advanced-exceptions")
-    def advanced_exceptions(request: Request) -> dict[str, Any]:
-        principal = current_principal(request)
-        service = _service(request)
-        try:
-            service._require_catalog(principal.user_id, "authorization.manage")
-            if "platform-admin" not in container(request).identity_repository.role_codes_for_user(
-                principal.user_id
-            ):
-                raise PermissionError
-            c = container(request)
-            return {
-                "permission_policies": c.identity_repository.list_policies(),
-                "platform_access_grants": c.database.execute(
-                    """
-                    select id, subject_type, subject_code, environment_id, base_id,
-                           workshop_id, effect, status, priority, revision,
-                           created_at, updated_at
-                      from platform_access_grant
-                     order by subject_type, subject_code, priority, id
-                    """
-                ),
-                "notice": "高级授权例外仅供平台管理员审查；此接口不返回连接信息或凭据。",
-            }
-        except PermissionError as exc:
-            from app.shared.exceptions import PermissionDenied
-
-            raise handle_exception(
-                PermissionDenied(
-                    "Advanced exceptions require platform-admin",
-                    safe_message="仅平台管理员可以查看高级授权例外",
-                    error_code="permission_denied",
-                )
-            ) from exc
-        except Exception as exc:
-            raise handle_exception(exc) from exc
-
     return router
 
 
