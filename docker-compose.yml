@@ -710,9 +710,9 @@ secrets:
   dingtalk_runtime_auth_token:
     environment: DINGTALK_RUNTIME_AUTH_TOKEN
   internal_api_server_auth_tokens:
-    environment: INTERNAL_API_SERVER_AUTH_TOKENS
+    file: ${INTERNAL_API_SERVER_AUTH_TOKENS_FILE:-${HOME}/.config/enterprise-agent/internal-api-server-auth-tokens}
   internal_api_client_auth_token:
-    environment: INTERNAL_API_CLIENT_AUTH_TOKEN
+    file: ${INTERNAL_API_CLIENT_AUTH_TOKEN_FILE:-${HOME}/.config/enterprise-agent/internal-api-client-auth-token}
 
 volumes:
   postgres18-data:

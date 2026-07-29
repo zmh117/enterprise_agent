@@ -311,7 +311,7 @@ class ExampleConfigTests(unittest.TestCase):
             {mysql.redis.host, sqlserver.redis.host},  # type: ignore[union-attr]
         )
         self.assertEqual("agent_test_reader", mysql.redis.username)  # type: ignore[union-attr]
-        self.assertIn("local-user", access.scopes)
+        self.assertEqual({}, access.scopes)
 
 
 class LokiClientTests(unittest.TestCase):

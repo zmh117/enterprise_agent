@@ -111,7 +111,7 @@
 
 ## 10. 维护窗口切换与旧路径清理
 
-- [ ] 10.1 冻结配置写入并创建 PostgreSQL、Master Key、RabbitMQ 定义和运行配置的可恢复备份，校验备份引用
+- [x] 10.1 冻结配置写入并创建 PostgreSQL、Master Key、RabbitMQ 定义和运行配置的可恢复备份，校验备份引用
 - [x] 10.2 重新生成 strict RBAC 预检并实际登录验证至少两名人类 platform-admin；缺少新授权先修复 RBAC，不启用 compatibility
 - [ ] 10.3 展示旧授权数据精确数量/digest 并再次获得用户确认后，事务清理 `permission_policy`、`platform_access_grant` 及其运行时代码/配置
 - [x] 10.4 停止旧 Worker/Dispatcher，排空或幂等 backfill pending/retry Job 与 Delivery，隔离无法转换的记录并核验新 Outbox

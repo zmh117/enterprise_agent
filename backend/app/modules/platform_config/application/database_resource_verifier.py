@@ -10,11 +10,6 @@ from app.modules.platform_config.domain.provider_contracts import (
     ProviderContractRegistry,
 )
 from app.shared.database import assert_external_io_allowed
-from app.modules.internal_api_platform.domain.topology import OracleClientMode
-from app.modules.internal_api_platform.infrastructure.db.oracle_client import (
-    assert_oracle_client_mode_ready,
-    thick_init_result,
-)
 
 from .governed_resources import ResourceVerificationOutcome
 
@@ -267,6 +262,13 @@ class Oracle11gReadonlyAccountProbe:
     ) -> dict[str, Any]:
         assert_external_io_allowed("resource_verify.oracle")
         if self._client_ready is None:
+            from app.modules.internal_api_platform.domain.topology import (
+                OracleClientMode,
+            )
+            from app.modules.internal_api_platform.infrastructure.db.oracle_client import (
+                assert_oracle_client_mode_ready,
+            )
+
             assert_oracle_client_mode_ready(OracleClientMode.THICK)
         else:
             self._client_ready()
@@ -371,7 +373,18 @@ class Oracle11gReadonlyAccountProbe:
             finally:
                 cursor.close()
             connection.rollback()
-            client = thick_init_result()
+            client_version = "19c"
+            client_architecture = "verified"
+            if self._client_ready is None:
+                from app.modules.internal_api_platform.infrastructure.db.oracle_client import (
+                    thick_init_result,
+                )
+
+                client = thick_init_result()
+                client_version = client.client_version or client_version
+                client_architecture = (
+                    client.architecture or client_architecture
+                )
             return {
                 "connection": True,
                 "readonly_account": True,
@@ -379,8 +392,8 @@ class Oracle11gReadonlyAccountProbe:
                 "server_version": "11.2.0.4",
                 "character_sets": character_sets,
                 "client_mode": "thick",
-                "client_version": client.client_version or "19c",
-                "client_architecture": client.architecture or "verified",
+                "client_version": client_version,
+                "client_architecture": client_architecture,
             }
         finally:
             connection.close()

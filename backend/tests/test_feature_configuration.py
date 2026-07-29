@@ -15,7 +15,6 @@ from app.shared.feature_configuration import (
     apply_runtime_feature_policies,
     resolve_feature_configuration,
 )
-from app.shared.runtime_config_loader import apply_runtime_config_overlay
 from backend.tests.helpers import test_settings as make_test_settings
 from backend.tests.test_unified_identity_rbac import csrf_headers, login
 
