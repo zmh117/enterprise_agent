@@ -7,14 +7,19 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
+MAIN_COMPOSE = ROOT / "docker-compose.yml"
+AGENT_TEST_DATA_COMPOSE = ROOT / "ones_mock" / "docker-compose.ones-mock.yml"
 
 
 class AgentTestDataComposeTests(unittest.TestCase):
-    def _compose(self) -> dict[str, object]:
-        return yaml.safe_load((ROOT / "docker-compose.yml").read_text())
+    def _main_compose(self) -> dict[str, object]:
+        return yaml.safe_load(MAIN_COMPOSE.read_text())
+
+    def _agent_test_data_compose(self) -> dict[str, object]:
+        return yaml.safe_load(AGENT_TEST_DATA_COMPOSE.read_text())
 
     def test_agent_test_data_profile_has_four_persistent_services_and_seeder(self) -> None:
-        compose = self._compose()
+        compose = self._agent_test_data_compose()
         services = compose["services"]  # type: ignore[index]
         expected = {
             "agent-test-mysql",
@@ -43,11 +48,25 @@ class AgentTestDataComposeTests(unittest.TestCase):
             },
             {volumes[key]["name"] for key in agent_test_volume_keys},
         )
+
+    def test_main_compose_does_not_define_agent_test_data_services(self) -> None:
+        services = self._main_compose()["services"]  # type: ignore[index]
+        for name in (
+            "agent-test-mysql",
+            "agent-test-sqlserver",
+            "agent-test-redis-mysql",
+            "agent-test-redis-sqlserver",
+            "agent-test-data-seeder",
+        ):
+            self.assertNotIn(name, services)
+
+    def test_main_compose_keeps_core_runtime_volumes(self) -> None:
+        volumes = self._main_compose()["volumes"]  # type: ignore[index]
         self.assertEqual("enterprise_agent_postgres18_data", volumes["postgres18-data"]["name"])
         self.assertEqual("enterprise_agent_rabbitmq4_data", volumes["rabbitmq4-data"]["name"])
 
     def test_runtime_services_do_not_receive_agent_test_admin_credentials(self) -> None:
-        services = self._compose()["services"]  # type: ignore[index]
+        services = self._main_compose()["services"]  # type: ignore[index]
         forbidden_prefixes = (
             "AGENT_TEST_MYSQL_ROOT_PASSWORD",
             "AGENT_TEST_SQLSERVER_SA_PASSWORD",
@@ -67,6 +86,7 @@ class AgentTestDataLifecycleScriptTests(unittest.TestCase):
         script = (ROOT / "scripts" / "agent_test_data.sh").read_text()
         self.assertIn("reset --yes", script)
         self.assertNotIn("down -v", script)
+        self.assertIn("ones_mock/docker-compose.ones-mock.yml", script)
         for volume in (
             "enterprise_agent_agent_test_mysql_data",
             "enterprise_agent_agent_test_sqlserver_data",

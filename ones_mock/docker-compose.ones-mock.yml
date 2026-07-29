@@ -11,7 +11,7 @@ services:
       # 挂载配置，改 mock.yaml 后重启容器即可，无需重建镜像
       - ./mock.yaml:/app/mock.yaml:ro
     ports:
-      - "127.0.0.1:${ONES_MOCK_PORT:-19121}:19121"
+      - "127.0.0.1:19121:19121"
     healthcheck:
       test:
         [
@@ -33,3 +33,159 @@ services:
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
+
+  agent-test-mysql:
+    # profiles: ["agent-test-data"]
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: AgentTest_mysql_root_2026
+      MYSQL_DATABASE: agent_test
+    ports:
+      - "3307:3306"
+    volumes:
+      - agent-test-mysql-data:/var/lib/mysql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  agent-test-sqlserver:
+    # profiles: ["agent-test-data"]
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    platform: linux/amd64
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: AgentTest_sqlserver_sa_2026!
+    ports:
+      - "14330:1433"
+    volumes:
+      - agent-test-sqlserver-data:/var/opt/mssql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "/opt/mssql-tools18/bin/sqlcmd -C -S 127.0.0.1 -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q \"SELECT 1\" -b -o /dev/null",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 60s
+
+  agent-test-redis-mysql:
+    # profiles: ["agent-test-data"]
+    image: redis:7.4
+    command:
+      [
+        "redis-server",
+        "--appendonly",
+        "yes",
+        "--requirepass",
+        "agent_test_redis_mysql_admin",
+      ]
+    environment:
+      AGENT_TEST_REDIS_MYSQL_ADMIN_PASSWORD: agent_test_redis_mysql_admin
+    ports:
+      - "6381:6379"
+    volumes:
+      - agent-test-redis-mysql-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "redis-cli -a \"$$AGENT_TEST_REDIS_MYSQL_ADMIN_PASSWORD\" ping | grep PONG",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  agent-test-redis-sqlserver:
+    # profiles: ["agent-test-data"]
+    image: redis:7.4
+    command:
+      [
+        "redis-server",
+        "--appendonly",
+        "yes",
+        "--requirepass",
+        "agent_test_redis_sqlserver_admin",
+      ]
+    environment:
+      AGENT_TEST_REDIS_SQLSERVER_ADMIN_PASSWORD: agent_test_redis_sqlserver_admin
+    ports:
+      - "6382:6379"
+    volumes:
+      - agent-test-redis-sqlserver-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "redis-cli -a \"$$AGENT_TEST_REDIS_SQLSERVER_ADMIN_PASSWORD\" ping | grep PONG",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  agent-test-data-seeder:
+    # profiles: ["agent-test-data"]
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+      target: agent-test-data-seeder
+    command: ["python", "-m", "app.agent_test_data.seeder", "seed"]
+    environment:
+      AGENT_TEST_MYSQL_HOST: agent-test-mysql
+      AGENT_TEST_MYSQL_PORT: 3306
+      AGENT_TEST_MYSQL_DATABASE: agent_test
+      AGENT_TEST_MYSQL_ROOT_PASSWORD: AgentTest_mysql_root_2026
+      AGENT_TEST_SQLSERVER_HOST: agent-test-sqlserver
+      AGENT_TEST_SQLSERVER_PORT: 1433
+      AGENT_TEST_SQLSERVER_DATABASE: agent_test
+      AGENT_TEST_SQLSERVER_SA_PASSWORD: AgentTest_sqlserver_sa_2026!
+      AGENT_TEST_REDIS_MYSQL_HOST: agent-test-redis-mysql
+      AGENT_TEST_REDIS_MYSQL_PORT: 6379
+      AGENT_TEST_REDIS_MYSQL_ADMIN_PASSWORD: agent_test_redis_mysql_admin
+      AGENT_TEST_REDIS_MYSQL_SEEDER_USER: agent_test_seeder
+      AGENT_TEST_REDIS_MYSQL_SEEDER_PASSWORD: agent_test_seeder_redis_mysql
+      AGENT_TEST_REDIS_SQLSERVER_HOST: agent-test-redis-sqlserver
+      AGENT_TEST_REDIS_SQLSERVER_PORT: 6379
+      AGENT_TEST_REDIS_SQLSERVER_ADMIN_PASSWORD: agent_test_redis_sqlserver_admin
+      AGENT_TEST_REDIS_SQLSERVER_SEEDER_USER: agent_test_seeder
+      AGENT_TEST_REDIS_SQLSERVER_SEEDER_PASSWORD: agent_test_seeder_redis_sqlserver
+      SECRET_AGENT_TEST_MYSQL_DB_HOST: agent-test-mysql
+      SECRET_AGENT_TEST_MYSQL_DB_USER: agent_test_reader
+      SECRET_AGENT_TEST_MYSQL_DB_PASSWORD: agent_test_reader_mysql
+      SECRET_AGENT_TEST_MYSQL_REDIS_HOST: agent-test-redis-mysql
+      SECRET_AGENT_TEST_MYSQL_REDIS_USER: agent_test_reader
+      SECRET_AGENT_TEST_MYSQL_REDIS_PASSWORD: agent_test_reader_redis_mysql
+      SECRET_AGENT_TEST_SQLSERVER_DB_HOST: agent-test-sqlserver
+      SECRET_AGENT_TEST_SQLSERVER_DB_USER: agent_test_reader
+      SECRET_AGENT_TEST_SQLSERVER_DB_PASSWORD: AgentTest_reader_sqlserver_2026
+      SECRET_AGENT_TEST_SQLSERVER_REDIS_HOST: agent-test-redis-sqlserver
+      SECRET_AGENT_TEST_SQLSERVER_REDIS_USER: agent_test_reader
+      SECRET_AGENT_TEST_SQLSERVER_REDIS_PASSWORD: agent_test_reader_redis_sqlserver
+    depends_on:
+      agent-test-mysql:
+        condition: service_healthy
+      agent-test-sqlserver:
+        condition: service_healthy
+      agent-test-redis-mysql:
+        condition: service_healthy
+      agent-test-redis-sqlserver:
+        condition: service_healthy
+
+volumes:
+  agent-test-mysql-data:
+    name: enterprise_agent_agent_test_mysql_data
+  agent-test-sqlserver-data:
+    name: enterprise_agent_agent_test_sqlserver_data
+  agent-test-redis-mysql-data:
+    name: enterprise_agent_agent_test_redis_mysql_data
+  agent-test-redis-sqlserver-data:
+    name: enterprise_agent_agent_test_redis_sqlserver_data
