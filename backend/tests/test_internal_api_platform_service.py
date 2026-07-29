@@ -22,6 +22,7 @@ from app.modules.internal_api_platform.infrastructure.loki_gateway import FakeLo
 from app.modules.internal_api_platform.infrastructure.redis_gateway import FakeRedisGateway
 from app.modules.internal_api_platform.infrastructure.registry import TopologyRegistry
 from app.modules.internal_api_platform.infrastructure.secrets import MappingSecretResolver
+from app.shared.config import Settings
 
 _CONFIG = textwrap.dedent(
     """
@@ -73,6 +74,7 @@ _CONFIG = textwrap.dedent(
         - { environment: "*", base: "*", workshop: "*" }
     """
 )
+_TEST_SETTINGS = Settings(environment="test")
 
 
 def _load() -> tuple[TopologyRegistry, object]:
@@ -98,6 +100,7 @@ def _service(
     redis: FakeRedisGateway | None = None,
     loki: FakeLokiClient | None = None,
     job_access_authorizer: Any | None = None,
+    max_response_bytes: int = 1024 * 1024,
 ) -> PlatformService:
     registry, access = _load()
     return PlatformService(
@@ -113,6 +116,7 @@ def _service(
         redis_gateway=redis or FakeRedisGateway(),
         loki_client=loki or FakeLokiClient(),
         max_rows=100,
+        max_response_bytes=max_response_bytes,
         redis_scan_limit=200,
         job_access_authorizer=job_access_authorizer,
     )
@@ -137,8 +141,9 @@ class FakeJobAccessAuthorizer:
 
 
 class JobAccessAdapterTests(unittest.TestCase):
-    def test_adapter_rechecks_persisted_job_identity_and_business_scope(self) -> None:
+    def test_adapter_rejects_running_job_without_pinned_runtime_facts(self) -> None:
         from app.modules.internal_api_platform.domain.addressing import TargetRef
+        from app.modules.internal_api_platform.domain.errors import AuthorizationError
         from app.modules.internal_api_platform.domain.topology import ResourceKind
         from app.modules.internal_api_platform.infrastructure.job_authorization import (
             BusinessApplicationJobAccessAuthorizer,
@@ -154,44 +159,34 @@ class JobAccessAdapterTests(unittest.TestCase):
                     "id": params[0],
                     "user_id": "legacy-user",
                     "internal_user_id": "internal-user",
+                    "project_code": "default",
                     "business_application_id": "business-app-1",
+                    "business_application_publication_id": "publication-1",
+                    "business_application_config_hash": "hash-1",
+                    "business_application_route_decision_json": "{}",
                     "status": "RUNNING",
                 }
 
             def close(self) -> None:
                 self.closed = True
 
-        class FakeBusinessAuthorization:
-            def __init__(self) -> None:
-                self.calls: list[dict[str, Any]] = []
-
-            def require(self, **kwargs: Any) -> dict[str, Any]:
-                self.calls.append(kwargs)
-                return {"allowed": True}
-
         database = FakeDatabase()
-        business = FakeBusinessAuthorization()
-        adapter = BusinessApplicationJobAccessAuthorizer(
-            database,  # type: ignore[arg-type]
-            business,  # type: ignore[arg-type]
-        )
-        allowed = adapter.authorize(
-            job_id="job-1",
-            user_id="internal-user",
-            capability_code="get_schema_directory",
-            target=TargetRef(
-                environment="agent_test",
-                base="mysql",
-                workshop=None,
-                kind=ResourceKind.DATABASE,
-            ),
-        )
-
-        self.assertTrue(allowed)
+        adapter = BusinessApplicationJobAccessAuthorizer(database)  # type: ignore[arg-type]
+        with self.assertRaises(AuthorizationError):
+            adapter.authorize(
+                job_id="job-1",
+                user_id="internal-user",
+                project_code="default",
+                application_id="business-app-1",
+                capability_code="get_schema_directory",
+                target=TargetRef(
+                    environment="agent_test",
+                    base="mysql",
+                    workshop=None,
+                    kind=ResourceKind.DATABASE,
+                ),
+            )
         self.assertEqual("job-1", database.last_job_id)
-        self.assertEqual("internal_api_platform", business.calls[0]["stage"])
-        self.assertEqual("agent_test", business.calls[0]["environment"])
-        self.assertEqual("mysql", business.calls[0]["base"])
 
     def test_adapter_rejects_mismatched_job_identity(self) -> None:
         from app.modules.internal_api_platform.domain.addressing import TargetRef
@@ -207,6 +202,7 @@ class JobAccessAdapterTests(unittest.TestCase):
                     "id": "job-1",
                     "user_id": "legacy-user",
                     "internal_user_id": "internal-user",
+                    "project_code": "default",
                     "business_application_id": "business-app-1",
                     "status": "RUNNING",
                 }
@@ -215,13 +211,14 @@ class JobAccessAdapterTests(unittest.TestCase):
                 return None
 
         adapter = BusinessApplicationJobAccessAuthorizer(
-            FakeDatabase(),  # type: ignore[arg-type]
-            object(),  # type: ignore[arg-type]
+            FakeDatabase()  # type: ignore[arg-type]
         )
         with self.assertRaises(AuthorizationError):
             adapter.authorize(
                 job_id="job-1",
                 user_id="other-user",
+                project_code="default",
+                application_id="business-app-1",
                 capability_code="get_schema_directory",
                 target=TargetRef(
                     environment="agent_test",
@@ -244,6 +241,35 @@ class ConfigTests(unittest.TestCase):
         self.assertFalse(mmk.is_partitioned)
 
 
+class DatabaseResponseBoundaryTests(unittest.TestCase):
+    def test_database_rows_are_bounded_by_utf8_bytes(self) -> None:
+        canary = "敏感结果" * 100
+        service = _service(
+            executor=FakeQueryExecutor(
+                rows=[
+                    {"id": 1, "value": "small"},
+                    {"id": 2, "value": canary},
+                ]
+            ),
+            max_response_bytes=40,
+        )
+
+        response = service.query_database(
+            user_id="operator",
+            environment="sanjiu",
+            base="guanlan",
+            workshop="GL001",
+            sql="select * from GL001_EBR_order",
+        )
+
+        self.assertTrue(response.truncated)
+        self.assertEqual(
+            [{"id": 1, "value": "small"}],
+            response.summary["rows"],
+        )
+        self.assertNotIn(canary, str(response.summary))
+
+
 class ExampleConfigTests(unittest.TestCase):
     def test_shipped_example_topology_is_valid(self) -> None:
         path = (
@@ -255,9 +281,9 @@ class ExampleConfigTests(unittest.TestCase):
             path,
             resolver=MappingSecretResolver(
                 {
-                    "secret://agent_test/mysql/redis_host": "agent-test-redis-mysql",
-                    "secret://agent_test/mysql/redis_user": "agent_test_reader",
-                    "secret://agent_test/sqlserver/redis_host": "agent-test-redis-sqlserver",
+                    "secret://platform/agent_test_mysql_redis_host": "agent-test-redis-mysql",
+                    "secret://platform/agent_test_mysql_redis_user": "agent_test_reader",
+                    "secret://platform/agent_test_sqlserver_redis_host": "agent-test-redis-sqlserver",
                 }
             ),
         )
@@ -302,7 +328,10 @@ class LokiClientTests(unittest.TestCase):
         base = Base(
             code="main",
             engine=DatabaseEngine.MYSQL,
-            loki=LokiConnection("http://loki:3100", tenant="tenant1"),
+            loki=LokiConnection(
+                "http://loki:3100",
+                tenant_id="tenant1",
+            ),
         )
         return ResourceBinding(
             environment=Environment(code="mmk", bases={"main": base}),
@@ -335,6 +364,92 @@ class LokiClientTests(unittest.TestCase):
         with self.assertRaises(UpstreamUnavailable):
             client.query(self._binding(), selector={"service": "s"}, query="", minutes=5, limit=10)
 
+    def test_resource_revision_controls_loki_auth_timeout_and_limits(
+        self,
+    ) -> None:
+        from dataclasses import replace
+
+        from app.modules.internal_api_platform.domain.errors import (
+            PolicyViolation,
+        )
+        from app.modules.internal_api_platform.infrastructure.loki_gateway import (
+            HttpLokiClient,
+        )
+
+        captured: dict[str, object] = {}
+
+        class Response:
+            def __enter__(self) -> "Response":
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            @staticmethod
+            def read(_size: int = -1) -> bytes:
+                return (
+                    b'{"status":"success","data":'
+                    b'{"resultType":"streams","result":[]}}'
+                )
+
+        def fetch(request: object, timeout: int) -> Response:
+            captured["request"] = request
+            captured["timeout"] = timeout
+            return Response()
+
+        binding = self._binding()
+        assert binding.loki is not None
+        constrained = replace(
+            binding,
+            loki=replace(
+                binding.loki,
+                tenant_id="tenant-bound",
+                auth_token="loki-canary-token",
+                timeout_seconds=3,
+                max_minutes=2,
+                max_lines=1,
+                max_response_bytes=1024,
+            ),
+        )
+        client = HttpLokiClient(
+            max_minutes=60,
+            max_lines=500,
+            max_response_chars=4000,
+            urlopen_func=fetch,
+        )
+        result = client.query(
+            constrained,
+            selector={"service": "orders"},
+            query="error",
+            minutes=2,
+            limit=1,
+        )
+        self.assertEqual(3, captured["timeout"])
+        request = captured["request"]
+        headers = dict(request.header_items())  # type: ignore[union-attr]
+        self.assertEqual("tenant-bound", headers["X-scope-orgid"])
+        self.assertEqual(
+            "Bearer loki-canary-token",
+            headers["Authorization"],
+        )
+        self.assertNotIn("loki-canary-token", str(result.summary))
+        with self.assertRaises(PolicyViolation):
+            client.query(
+                constrained,
+                selector={"service": "orders"},
+                query="",
+                minutes=3,
+                limit=1,
+            )
+        with self.assertRaises(PolicyViolation):
+            client.query(
+                constrained,
+                selector={"service": "orders"},
+                query="",
+                minutes=1,
+                limit=2,
+            )
+
     def test_diagnostic_labels_from_series_are_filtered_and_truncated(self) -> None:
         from app.modules.internal_api_platform.infrastructure.loki_gateway import HttpLokiClient
 
@@ -345,7 +460,7 @@ class LokiClientTests(unittest.TestCase):
             def __exit__(self, *_: object) -> None:
                 return None
 
-            def read(self) -> bytes:
+            def read(self, _size: int = -1) -> bytes:
                 return (
                     b'{"status":"success","data":['
                     b'{"service":"order-service","workshop":"GL001","token":"secret"},'
@@ -757,7 +872,7 @@ class TopologyDirectoryTests(unittest.TestCase):
 
 class RouteTests(unittest.TestCase):
     def _client(self) -> TestClient:
-        return TestClient(create_app(service=_service()))
+        return TestClient(create_app(_TEST_SETTINGS, service=_service()))
 
     def test_database_route_requires_identity(self) -> None:
         response = self._client().post(
@@ -803,7 +918,12 @@ class RouteTests(unittest.TestCase):
 
     def test_schema_directory_route_passes_job_context_to_business_authorizer(self) -> None:
         authorizer = FakeJobAccessAuthorizer()
-        client = TestClient(create_app(service=_service(job_access_authorizer=authorizer)))
+        client = TestClient(
+            create_app(
+                _TEST_SETTINGS,
+                service=_service(job_access_authorizer=authorizer),
+            )
+        )
         response = client.post(
             "/tools/schema/directory",
             json={
@@ -822,7 +942,12 @@ class RouteTests(unittest.TestCase):
 
     def test_app_lifespan_closes_job_authorization_database(self) -> None:
         authorizer = FakeJobAccessAuthorizer()
-        with TestClient(create_app(service=_service(job_access_authorizer=authorizer))):
+        with TestClient(
+            create_app(
+                _TEST_SETTINGS,
+                service=_service(job_access_authorizer=authorizer),
+            )
+        ):
             self.assertFalse(authorizer.closed)
 
         self.assertTrue(authorizer.closed)

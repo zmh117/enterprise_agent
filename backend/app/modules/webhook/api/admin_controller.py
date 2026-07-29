@@ -13,12 +13,8 @@ class StrictRequest(BaseModel):
 
 
 class AuthenticationRequest(StrictRequest):
-    type: Literal["bearer_v1", "hmac_sha256_v1"]
+    type: Literal["bearer_v1"]
     secret_ref: str = Field(min_length=1, max_length=500)
-    timestamp_header: str = Field(default="x-webhook-timestamp", max_length=100)
-    nonce_header: str = Field(default="x-webhook-nonce", max_length=100)
-    signature_header: str = Field(default="x-webhook-signature", max_length=100)
-    window_seconds: int = Field(default=300, ge=30, le=900)
 
 
 class FilterRequest(StrictRequest):
@@ -433,8 +429,11 @@ def _event_evidence(c: Any, event: dict[str, Any]) -> dict[str, Any]:
             "job": None,
             "tool_calls": [],
             "audit": [],
-            "delivery_attempts": [],
-            "delivery_chunks": [],
+            "deliveries": {
+                "events": [],
+                "attempts": [],
+                "chunks": [],
+            },
         }
     job = c.agent_repository.get_job_detail(job_id)
     job.pop("result", None)
@@ -457,28 +456,13 @@ def _event_evidence(c: Any, event: dict[str, Any]) -> dict[str, Any]:
         """,
         (job_id,),
     )
-    delivery = c.database.execute(
-        """
-        select id, route_type, connector_id, target_summary, status,
-               error_message, created_at, finished_at
-        from delivery_attempt where job_id = ? order by created_at, id
-        """,
-        (job_id,),
-    )
-    chunks = c.database.execute(
-        """
-        select c.id, c.attempt_id, c.chunk_index, c.chunk_count, c.status,
-               c.payload_summary, c.error_message, c.created_at
-        from delivery_chunk c
-        join delivery_attempt a on a.id = c.attempt_id
-        where a.job_id = ? order by c.created_at, c.id
-        """,
-        (job_id,),
-    )
     return {
         "job": job,
         "tool_calls": tool_calls,
         "audit": audit,
-        "delivery_attempts": delivery,
-        "delivery_chunks": chunks,
+        "deliveries": {
+            "events": c.agent_repository.list_delivery_events(job_id),
+            "attempts": c.agent_repository.list_delivery_attempts(job_id),
+            "chunks": c.agent_repository.list_delivery_chunks(job_id),
+        },
     }

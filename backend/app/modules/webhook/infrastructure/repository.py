@@ -96,6 +96,43 @@ class WebhookTriggerRepository:
         )
         return self._definition(row) if row else None
 
+    def active_authentication_bindings(
+        self, *, exclude_trigger_id: str = ""
+    ) -> list[dict[str, str]]:
+        rows = self.database.execute(
+            """
+            select d.id as trigger_id, d.code, p.snapshot_json
+              from webhook_trigger_definition d
+              join webhook_trigger_publication p
+                on p.id = d.current_publication_id
+             where p.status = 'active'
+               and d.id <> ?
+             order by d.code
+            """,
+            (exclude_trigger_id,),
+        )
+        result: list[dict[str, str]] = []
+        for row in rows:
+            try:
+                snapshot = json.loads(str(row.get("snapshot_json") or "{}"))
+            except json.JSONDecodeError:
+                continue
+            authentication = (
+                snapshot.get("authentication")
+                if isinstance(snapshot, dict)
+                else None
+            )
+            if not isinstance(authentication, dict):
+                continue
+            result.append(
+                {
+                    "trigger_id": str(row["trigger_id"]),
+                    "code": str(row["code"]),
+                    "secret_ref": str(authentication.get("secret_ref") or ""),
+                }
+            )
+        return result
+
     def create_definition(
         self,
         *,

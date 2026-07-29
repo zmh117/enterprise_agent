@@ -11,6 +11,7 @@ from app.modules.admin.application.contracts import PageWindow, TimeWindow
 from app.modules.admin.application.dashboard_service import DashboardQueryService
 from app.modules.admin.application.scope import AdminScope
 from app.modules.admin.infrastructure import AdminReadRepository
+from app.modules.job.application.create_agent_job_service import _execution_scope_hash
 from app.modules.job.domain.job_status import JobStatus
 from app.shared.exceptions import NonRetryableExecutionError
 from backend.tests.test_unified_identity_rbac import csrf_headers, login, unified_settings
@@ -288,6 +289,14 @@ def test_tool_resource_contract_rejects_plaintext_and_enforces_revision() -> Non
         {"code": "prod", "display_name": "Production", "status": "enabled"},
         actor_id="user_local_admin",
     )
+    container.platform_config_service.create_platform_secret(
+        {
+            "code": "loki_token",
+            "value": "loki-contract-test-token",
+            "purpose": "tool-resource-test",
+        },
+        actor_id="user_local_admin",
+    )
     app = create_app(settings, container_factory=lambda _: container)
     payload = {
         "expected_revision": 0,
@@ -363,8 +372,11 @@ def test_channel_validation_rejects_unavailable_direction_and_plaintext_secret()
                 "connector_type": "dingtalk_enterprise_stream",
                 "name": "stream",
                 "allow_delivery": True,
-                "secret_ref": "env:DINGTALK_CLIENT_SECRET",
-                "metadata": {"client_id_ref": "env:DINGTALK_CLIENT_ID", "tenant_code": "default"},
+                "secret_ref": "secret://platform/dingtalk_client_secret",
+                "metadata": {
+                    "client_id_ref": "secret://platform/dingtalk_client_id",
+                    "tenant_code": "default",
+                },
             },
         )
         plaintext = client.post(
@@ -376,11 +388,35 @@ def test_channel_validation_rejects_unavailable_direction_and_plaintext_secret()
                 "name": "stream",
                 "allow_ingress": True,
                 "secret_ref": "actual-secret",
-                "metadata": {"client_id_ref": "env:DINGTALK_CLIENT_ID", "tenant_code": "default"},
+                "metadata": {
+                    "client_id_ref": "secret://platform/dingtalk_client_id",
+                    "tenant_code": "default",
+                },
+            },
+        )
+        legacy_env = client.post(
+            "/api/admin/connectors/validate",
+            headers=csrf_headers(csrf),
+            json={
+                "expected_revision": 0,
+                "connector_type": "dingtalk_enterprise_stream",
+                "name": "legacy-stream",
+                "allow_ingress": True,
+                "secret_ref": "env:DINGTALK_CLIENT_SECRET",
+                "metadata": {
+                    "client_id_ref": "env:DINGTALK_CLIENT_ID",
+                    "tenant_code": "default",
+                },
             },
         )
 
-    assert unavailable.status_code == wrong_direction.status_code == plaintext.status_code == 400
+    assert (
+        unavailable.status_code
+        == wrong_direction.status_code
+        == plaintext.status_code
+        == legacy_env.status_code
+        == 400
+    )
     assert "actual-secret" not in plaintext.text
 
 
@@ -399,6 +435,14 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
         session_key="ops-session",
         business_application_id="application-ops",
         business_application_code="operations-application",
+        application_publication_id="publication-ops",
+        execution_scope_hash=_execution_scope_hash(
+            {
+                "project_code": "default",
+                "environment": "prod",
+                "base": "guanlan",
+            }
+        ),
         conversation_mode="channel",
         recent_message_limit=20,
         session_policy={"conversation_mode": "channel", "retention_days": 30},
@@ -425,6 +469,20 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
             "resolution_outcome": "matched",
         },
         execution_policy=execution_policy_snapshot(),
+        reply_route={
+            "type": "dingtalk_private",
+            "connector_id": "connector-ops",
+            "target": {
+                "webhook_url": "https://must-never-leak.example.test/hook",
+                "conversation_id": "conversation-ops",
+            },
+        },
+    )
+    delivery_id = container.result_delivery_service.enqueue_job_failure(
+        job_id=job.id,
+        reason="safe synthetic failure",
+        error_code="synthetic_failure",
+        correlation_id="correlation-ops",
     )
     message_id = container.agent_repository.add_message(
         session_id=session.id,
@@ -457,6 +515,7 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
         queue_response = client.get("/api/admin/queues")
         jobs = client.get("/api/admin/jobs")
         summary = client.get("/api/admin/jobs/summary")
+        delivery_metrics = client.get("/api/admin/deliveries/metrics")
         detail = client.get(f"/api/admin/jobs/{job.id}")
         conversations = client.get("/api/admin/conversations")
         conversation = client.get(f"/api/admin/conversations/{session.id}")
@@ -465,7 +524,13 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
         routes = client.get("/openapi.json").json()["paths"]
 
     assert queue_response.status_code == 200
-    assert jobs.status_code == summary.status_code == detail.status_code == 200
+    assert (
+        jobs.status_code
+        == summary.status_code
+        == delivery_metrics.status_code
+        == detail.status_code
+        == 200
+    )
     assert conversations.status_code == conversation.status_code == 200
     assert attachments.status_code == attachment_detail.status_code == 200
     assert jobs.json()["page"]["limit"] == 25
@@ -473,10 +538,21 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
     assert jobs.json()["items"][0]["business_application_publication_id"] == "publication-ops"
     assert jobs.json()["items"][0]["correlation_id"] == "correlation-ops"
     assert detail.json()["job"]["business_application_deployment_id"] == "deployment-ops"
+    delivery = detail.json()["deliveries"]
+    assert delivery["events"][0]["id"] == delivery_id
+    assert delivery["events"][0]["status"] == "PENDING"
+    assert delivery["events"][0]["delivered"] is False
+    assert delivery["attempts"] == delivery["chunks"] == []
+    assert delivery_metrics.json()["delivery"]["counts"]["PENDING"] == 1
+    assert delivery_metrics.json()["delivery"]["active_count"] == 1
     assert conversations.json()["page"]["limit"] == 25
     assert conversation.json()["session"]["business_application_code"] == "operations-application"
     assert conversation.json()["session"]["conversation_mode"] == "channel"
     assert "request_payload" not in str(detail.json())
+    serialized_delivery = str(delivery)
+    assert "delivery_binding_json" not in serialized_delivery
+    assert "route_hash" not in serialized_delivery
+    assert "https://must-never-leak.example.test/hook" not in serialized_delivery
     serialized_attachment = str(attachment_detail.json())
     assert "must-never-leak" not in serialized_attachment
     assert "tenant/private/report.docx" not in serialized_attachment

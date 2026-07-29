@@ -215,7 +215,7 @@ class DingTalkIdentityDiscoveryService:
                 error_code="validation_failed",
             )
         try:
-            with self.database.transaction():
+            with self.database.unit_of_work():
                 candidate = self.store.get_visible_candidate(
                     candidate_id,
                     cutoff=self.cutoff(),

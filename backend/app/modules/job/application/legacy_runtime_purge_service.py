@@ -19,6 +19,7 @@ RUNTIME_TABLE_DELETE_ORDER = (
     "agent_artifact",
     "agent_step",
     "audit_event",
+    "job_dispatch_outbox",
     "webhook_outbox",
     "webhook_event",
     "webhook_replay_nonce",
@@ -36,6 +37,7 @@ RUNTIME_DELETE_SQL = {
     "agent_artifact": "delete from agent_artifact",
     "agent_step": "delete from agent_step",
     "audit_event": "delete from audit_event where job_id is not null",
+    "job_dispatch_outbox": "delete from job_dispatch_outbox",
     "webhook_outbox": "delete from webhook_outbox",
     "webhook_event": "delete from webhook_event",
     "webhook_replay_nonce": "delete from webhook_replay_nonce",
@@ -137,7 +139,7 @@ class LegacyRuntimePurgeService:
                 error_code="legacy_runtime_object_verification_failed",
             )
 
-        with self.database.transaction():
+        with self.database.unit_of_work():
             self.database.execute(
                 "update agent_job set webhook_event_id = null where webhook_event_id is not null"
             )

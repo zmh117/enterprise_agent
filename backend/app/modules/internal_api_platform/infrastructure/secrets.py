@@ -44,18 +44,16 @@ class MappingSecretResolver:
 
 
 class DbBackedSecretResolver:
-    """Resolve Web-managed platform secrets and keep env fallback behavior."""
+    """Resolve only Web-managed platform secrets during normal runtime."""
 
     def __init__(
         self,
         repository: object,
         *,
         master_key: str = "",
-        fallback: SecretResolver | None = None,
     ) -> None:
         self._repository = repository
         self._master_key = master_key
-        self._fallback = fallback or EnvSecretResolver()
 
     def resolve(self, ref: str) -> str:
         if ref.startswith("secret://platform/"):
@@ -67,7 +65,15 @@ class DbBackedSecretResolver:
             ).resolve(ref)
         if ref.startswith(("vault:", "kms:")):
             raise NonRetryableExecutionError(
-                "External secret provider is not configured",
-                safe_message="尚未配置外部凭据提供方",
+                "Reserved secret provider is not implemented",
+                safe_message="Provider 尚未实现",
             )
-        return self._fallback.resolve(ref)
+        if ref.startswith("env:"):
+            raise NonRetryableExecutionError(
+                "env secret references require explicit import",
+                safe_message="env 凭据引用必须先导入凭据中心",
+            )
+        raise NonRetryableExecutionError(
+            "Unsupported secret reference",
+            safe_message="新配置只能使用凭据中心 Secret",
+        )

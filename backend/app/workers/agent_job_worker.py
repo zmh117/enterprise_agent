@@ -6,6 +6,7 @@ import uuid
 from app.bootstrap import Container, build_worker_container
 from app.modules.message_bus.application.message_publisher import AgentJobMessage
 from app.shared.config import Settings, load_settings
+from app.shared.exceptions import NotFound
 from app.shared.logging import configure_logging, with_correlation
 
 logger = logging.getLogger(__name__)
@@ -16,23 +17,55 @@ class AgentJobWorker:
         self.settings = settings
         self.container = container or build_worker_container(
             settings,
-            migrate=settings.app_startup_migrate,
             seed=settings.seed_local_config,
         )
         self.worker_id = f"agent-worker-{uuid.uuid4().hex[:8]}"
 
     def handle(self, message: AgentJobMessage) -> None:
+        try:
+            dispatch_event = self.container.agent_repository.get_dispatch_event(
+                message.event_id
+            )
+        except NotFound:
+            self.container.audit_service.record(
+                "job.dispatch.message_rejected",
+                status="REJECTED",
+                summary="Agent job message referenced an unknown dispatch event",
+                actor_id=self.worker_id,
+                payload={
+                    "event_id": message.event_id,
+                    "reason": "dispatch_event_not_found",
+                },
+            )
+            return
+        if (
+            dispatch_event.job_id != message.job_id
+            or dispatch_event.correlation_id != message.correlation_id
+        ):
+            self.container.audit_service.record(
+                "job.dispatch.message_rejected",
+                status="REJECTED",
+                summary="Agent job message identifiers did not match persisted dispatch facts",
+                job_id=dispatch_event.job_id,
+                actor_id=self.worker_id,
+                payload={
+                    "event_id": dispatch_event.id,
+                    "reason": "dispatch_identifiers_mismatch",
+                },
+            )
+            return
+
         def run() -> None:
-            current = self.container.agent_repository.get_job(message.job_id)
+            current = self.container.agent_repository.get_job(dispatch_event.job_id)
             if self.container.retry_service.reschedule_if_early(
-                current, message.correlation_id
+                current, dispatch_event.correlation_id
             ):
                 return
             try:
                 self.container.agent_executor.execute(
-                    message.job_id,
+                    dispatch_event.job_id,
                     worker_id=self.worker_id,
-                    correlation_id=message.correlation_id,
+                    correlation_id=dispatch_event.correlation_id,
                     fail_on_error=False,
                 )
             except Exception as exc:
@@ -41,7 +74,7 @@ class AgentJobWorker:
                 action = self.container.retry_service.handle_failure(
                     job,
                     exc,
-                    message.correlation_id,
+                    dispatch_event.correlation_id,
                 )
                 self.container.audit_service.record(
                     f"job.failure.{action}",
@@ -50,12 +83,6 @@ class AgentJobWorker:
                     job_id=job.id,
                     actor_id=self.worker_id,
                 )
-                if action in {"dead", "timeout"}:
-                    self.container.result_delivery_service.deliver_job_failure(
-                        job.id,
-                        safe_message,
-                        error_code=getattr(exc, "error_code", "") or "agent_runtime_error",
-                    )
                 logger.warning(
                     "Agent job failed; routed to %s job_id=%s error_type=%s safe_message=%s",
                     action,
@@ -64,7 +91,7 @@ class AgentJobWorker:
                     safe_message,
                 )
 
-        with_correlation(message.correlation_id, run)
+        with_correlation(dispatch_event.correlation_id, run)
 
     def run_once(self) -> None:
         if self.container.consumer is None:

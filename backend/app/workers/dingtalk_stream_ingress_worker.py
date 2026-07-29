@@ -37,7 +37,6 @@ class DingTalkStreamIngressWorker:
         self.settings = settings
         self.container = container or build_api_container(
             settings,
-            migrate=settings.app_startup_migrate,
             seed=settings.seed_local_config,
         )
         self.stream_client_factory = stream_client_factory or self._sdk_client_factory
@@ -162,7 +161,21 @@ class DingTalkStreamIngressWorker:
                 connector_id
             )
         except PermissionDenied as exc:
-            raise NonRetryableExecutionError(str(exc), safe_message=exc.safe_message) from exc
+            self.container.audit_service.record(
+                "dingtalk.stream.config_failed",
+                status="FAILED",
+                summary="DingTalk Stream connector configuration is unavailable",
+                actor_id=self.worker_id,
+                payload={
+                    "connector_id": connector_id,
+                    "error_code": exc.error_code or "channel_misconfigured",
+                },
+            )
+            raise NonRetryableExecutionError(
+                str(exc),
+                safe_message=exc.safe_message,
+                error_code=exc.error_code,
+            ) from exc
         client_id = (
             self.container.connector_registry.resolve_metadata_reference(connector, "client_id_ref")
             or self.container.connector_registry.metadata_value(connector, "client_id")

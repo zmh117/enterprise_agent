@@ -11,8 +11,10 @@ from app.modules.audit.application.audit_service import AuditService
 from app.modules.authorization_center.application import BusinessAuthorizationService
 from app.modules.delivery.application.result_delivery_service import ResultDeliveryService
 from app.modules.job.application.job_status_service import JobStatusService
+from app.modules.job.domain.agent_job import AgentJob
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.repositories import AgentRepository
+from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import PermissionDenied
 
 
@@ -48,8 +50,14 @@ class AgentExecutor:
         correlation_id: str = "",
         fail_on_error: bool = True,
     ) -> str:
-        pending = self.repository.get_job(job_id)
-        if pending.business_application_id:
+        claimed = self.status_service.claim(job_id, worker_id)
+        if claimed is None:
+            persisted = self.repository.get_job(job_id)
+            if persisted.status == JobStatus.SUCCEEDED and persisted.result:
+                return persisted.result
+            return ""
+        job = claimed
+        if job.business_application_id:
             if self.business_authorization_service is None:
                 self.status_service.fail(job_id, "业务应用授权服务暂时不可用")
                 raise PermissionDenied(
@@ -59,8 +67,8 @@ class AgentExecutor:
                 )
             try:
                 decision = self.business_authorization_service.require(
-                    user_id=pending.internal_user_id or pending.user_id,
-                    application_id=pending.business_application_id,
+                    user_id=job.internal_user_id or job.user_id,
+                    application_id=job.business_application_id,
                     stage="worker_start",
                 )
             except PermissionDenied as exc:
@@ -77,16 +85,9 @@ class AgentExecutor:
                 status="SUCCEEDED",
                 summary="Business authorization allowed worker start",
                 job_id=job_id,
-                actor_id=pending.internal_user_id or pending.user_id,
+                actor_id=job.internal_user_id or job.user_id,
                 payload=decision,
             )
-        claimed = self.status_service.claim(job_id, worker_id)
-        if claimed is None:
-            job = self.repository.get_job(job_id)
-            if job.status == JobStatus.SUCCEEDED and job.result:
-                return job.result
-            return ""
-        job = claimed
         self.audit_service.record(
             "worker.claimed",
             status="SUCCEEDED",
@@ -151,19 +152,11 @@ class AgentExecutor:
                 title="Model execution completed",
                 content="Claude runtime returned a final diagnostic report.",
             )
-            self.result_service.save_result(job, result.final_answer)
-            self.status_service.succeed(job.id, result.final_answer)
-            self.delivery_service.deliver_job_result(job.id)
-            self.audit_service.record(
-                "result.delivery.requested",
-                status="SUCCEEDED",
-                summary="Final report delivery requested",
-                job_id=job.id,
-                actor_id=worker_id,
-                payload={
-                    "correlation_id": correlation_id,
-                    **_business_application_context(job),
-                },
+            self._persist_success(
+                job=job,
+                final_answer=result.final_answer,
+                worker_id=worker_id,
+                correlation_id=correlation_id,
             )
             return result.final_answer
         except Exception as exc:
@@ -186,6 +179,35 @@ class AgentExecutor:
             if fail_on_error:
                 self.status_service.fail(job.id, safe_message)
             raise
+
+    @operation_unit_of_work(lambda executor: executor.repository.database)
+    def _persist_success(
+        self,
+        *,
+        job: AgentJob,
+        final_answer: str,
+        worker_id: str,
+        correlation_id: str,
+    ) -> None:
+        artifact_id = self.result_service.save_result(job, final_answer)
+        self.status_service.succeed(job.id, final_answer)
+        delivery_id = self.delivery_service.enqueue_job_result(
+            job_id=job.id,
+            artifact_id=artifact_id,
+            correlation_id=correlation_id,
+        )
+        self.audit_service.record(
+            "result.delivery.requested",
+            status="PENDING",
+            summary="Final report delivery persisted for independent dispatch",
+            job_id=job.id,
+            actor_id=worker_id,
+            payload={
+                "delivery_id": delivery_id,
+                "correlation_id": correlation_id,
+                **_business_application_context(job),
+            },
+        )
 
     def _persist_tool_events(self, job_id: str, tool_events: list[dict[str, object]]) -> None:
         existing = {

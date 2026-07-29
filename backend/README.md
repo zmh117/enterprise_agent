@@ -69,9 +69,13 @@ make check
 docker compose up --build
 ```
 
+Compose 的 `migrator` 是唯一 schema 写入入口；业务服务通过
+`service_completed_successfully` 等待它成功退出，随后只读校验账本 head/checksum。
+
 本地启动 API：
 
 ```bash
+.venv/bin/python -m app.cli.migrate
 .venv/bin/python -m uvicorn app.main:create_app --factory --app-dir backend --host 0.0.0.0 --port 8000
 ```
 
@@ -345,7 +349,7 @@ Grafana firing alert 指定投递到 webhook 群机器人时，设置 labels：
 
 后端现在支持把大部分 `.env` 运行参数逐步迁移到 PostgreSQL：
 
-- `bootstrap-only`：`DATABASE_DSN`、`RABBITMQ_URL`、`APP_CONFIG_MASTER_KEY`、`APP_ENV`、`APP_STARTUP_MIGRATE`、`SEED_LOCAL_CONFIG`。
+- `bootstrap-only`：`DATABASE_DSN`、`RABBITMQ_URL`、`APP_CONFIG_MASTER_KEY_FILE`、`APP_ENV`、`SEED_LOCAL_CONFIG`。Master Key 本体只存在于仓库外的只读固定文件。
 - `deployment-safety-gate`：`FEATURE_WEB_ADMIN`、`FEATURE_PUBLISHED_AGENT_RUNTIME`、`FEATURE_REAL_CLAUDE`、`FEATURE_REAL_INTERNAL_TOOLS`；数据库不能越过关闭的部署闸门。
 - `db-configurable`：`PERMISSION_SHADOW_MODE`、`ANTHROPIC_BASE_URL`、`ANTHROPIC_MODEL`、`INTERNAL_API_BASE_URL`、`LOKI_MAX_LINES`、`AGENT_MAX_TURNS`、DingTalk 默认路由等。
 - `secret-managed`：`ANTHROPIC_API_KEY`、`DINGTALK_CLIENT_SECRET`、数据库密码、Redis 密码、Loki token 等。
@@ -366,7 +370,7 @@ Grafana firing alert 指定投递到 webhook 群机器人时，设置 labels：
 
 - `DATABASE_DSN`：PostgreSQL DSN。
 - `RABBITMQ_URL`：RabbitMQ URL。
-- `APP_STARTUP_MIGRATE`：启动时执行 migration，默认 `true`。
+- schema 只能由 `python -m app.cli.migrate` one-shot 入口修改；API、Worker 和 Internal API Platform 启动时只读校验 migration head。
 - `SEED_LOCAL_CONFIG`：启动时写入本地工具、数据源和权限 seed。
 - `DEBUG_AGENT_USER_ID`：调试 API 默认用户。
 - `DINGTALK_SECRET`：钉钉机器人签名密钥。
@@ -383,7 +387,8 @@ Grafana firing alert 指定投递到 webhook 群机器人时，设置 labels：
 - `DINGTALK_WEBHOOK_ROBOT_SECRET`：钉钉 webhook 群机器人加签密钥，不要提交真实值。
 - `INTERNAL_API_BASE_URL`：内部 API 平台地址。
 - `FEATURE_REAL_INTERNAL_TOOLS`：是否启用 HTTP Internal API Platform，默认 `false`。
-- `INTERNAL_API_AUTH_TOKEN`：内部 API 平台 Bearer token，不要提交真实值。
+- `INTERNAL_API_AUTH_TOKEN_FILE`：仓库外 JSON Token 文件路径；格式为
+  `{"current":"<至少32字符>","next":"<轮换窗口可选>"}`，Token 不进入环境变量、数据库或日志。
 - `INTERNAL_API_TIMEOUT_SECONDS`：内部平台单次请求超时时间，默认 `10`。
 - `INTERNAL_API_MAX_RESPONSE_CHARS`：内部平台响应解析和安全摘要上限，默认 `4000`。
 - `CLAUDE_MODEL`：Claude 模型名。
@@ -472,7 +477,7 @@ FEATURE_REAL_INTERNAL_TOOLS=false
 ```env
 FEATURE_REAL_INTERNAL_TOOLS=true
 INTERNAL_API_BASE_URL=http://mock-internal-api-platform:9000
-INTERNAL_API_AUTH_TOKEN=
+INTERNAL_API_AUTH_TOKEN_FILE=/run/secrets/internal_api_auth_token
 ```
 
 启动：
@@ -581,7 +586,7 @@ selector only      -> {cluster="<cluster>"}
 ```env
 FEATURE_REAL_INTERNAL_TOOLS=true
 INTERNAL_API_BASE_URL=http://internal-api-platform:9000
-INTERNAL_API_AUTH_TOKEN=
+INTERNAL_API_AUTH_TOKEN_FILE=/run/secrets/internal_api_auth_token
 INTERNAL_API_TIMEOUT_SECONDS=10
 INTERNAL_API_MAX_RESPONSE_CHARS=4000
 INTERNAL_PLATFORM_TOPOLOGY_FILE=/app/backend/config/internal_platform_topology.example.yaml
@@ -628,7 +633,7 @@ POST /tools/redis/scan
 通用 headers：
 
 ```text
-Authorization: Bearer <INTERNAL_API_AUTH_TOKEN>
+Authorization: Bearer <Token 文件中的 current>
 X-Agent-Job-Id: <job_id>
 X-Agent-User-Id: <user_id>
 X-Agent-Project-Code: <project_code>
@@ -719,9 +724,11 @@ curl -s http://127.0.0.1:8000/api/agent/jobs/job_xxx/tool-calls
 
 ## 队列
 
-- `agent.job.queue`：正常 Agent 任务。
-- `agent.job.retry.queue`：可重试失败。
-- `agent.job.dead.queue`：最终失败死信。
+- `agent.job.queue`：Job Dispatch Outbox 的唯一当前 Agent 执行目标队列。
+- Agent 执行重试由 PostgreSQL `agent_job + job_dispatch_outbox` 到期状态驱动，不再创建
+  新的 Agent retry/dead queue 消息。
+- 旧 `agent.job.retry.delay.v1.queue`、`agent.job.retry.queue` 和
+  `agent.job.dead.queue` 只允许通过精确切换 CLI 盘点、转换、隔离和删除。
 
 应用服务只依赖 `MessagePublisher` / `MessageConsumer`，RabbitMQ 细节在 `modules/message_bus/infrastructure`。
 
@@ -731,6 +738,8 @@ curl -s http://127.0.0.1:8000/api/agent/jobs/job_xxx/tool-calls
 
 - `agent_session`
 - `agent_job`
+- `job_dispatch_outbox`
+- `job_dispatch_cutover_quarantine`
 - `agent_message`
 - `agent_step`
 - `agent_tool_call`

@@ -38,6 +38,7 @@ class SecretStatus(str, Enum):
 
 
 class SecretVersionStatus(str, Enum):
+    STAGED = "staged"
     ACTIVE = "active"
     SUPERSEDED = "superseded"
     DISABLED = "disabled"

@@ -137,6 +137,27 @@ def test_user_disable_revokes_web_sessions_but_identity_disable_only_blocks_ding
 
     with TestClient(app) as client:
         login(client)
+        platform_role = container.identity_repository.get_role_by_code(
+            "platform-admin"
+        )
+        assert platform_role is not None
+        for ordinal in (2, 3):
+            username = f"verified-admin-{ordinal}"
+            password = f"verified-admin-{ordinal}-password"
+            additional_admin = container.identity_repository.create_user(
+                username=username,
+                display_name=username,
+            )
+            container.identity_repository.set_password_hash(
+                str(additional_admin["id"]),
+                container.auth_service.passwords.hash(password),
+            )
+            container.identity_repository.assign_role(
+                user_id=str(additional_admin["id"]),
+                role_id=str(platform_role["id"]),
+                assigned_by=ADMIN_ID,
+            )
+            container.auth_service.login(username=username, password=password)
         identity = container.identity_repository.get_external_identity(
             "identity_local_dingtalk"
         )
@@ -224,6 +245,16 @@ def test_session_expiry_password_change_and_owned_revocation_fail_closed() -> No
 
 def test_trusted_dingtalk_binding_tenant_isolation_conflict_and_unknown_fail_closed() -> None:
     container = unified_container()
+    container.platform_config_service.secret_provider.rotate_secret(
+        code="dingtalk_client_secret",
+        value="default-tenant-client-secret",
+        actor_id=ADMIN_ID,
+    )
+    container.platform_config_service.secret_provider.create_secret(
+        code="tenant_b_client_secret",
+        value="tenant-b-client-secret",
+        actor_id=ADMIN_ID,
+    )
     first = container.identity_repository.create_user(
         username="tenant-user-a", display_name="Tenant User A"
     )
@@ -266,8 +297,9 @@ def test_trusted_dingtalk_binding_tenant_isolation_conflict_and_unknown_fail_clo
         """
         insert into integration_connector
           (id, connector_type, name, base_url, enabled, metadata,
-           allow_ingress, allow_delivery, created_at, updated_at)
+           allow_ingress, allow_delivery, secret_ref, created_at, updated_at)
         values (?, 'dingtalk_enterprise_stream', ?, '', 1, ?, 1, 0,
+                'secret://platform/tenant_b_client_secret',
                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """,
         (

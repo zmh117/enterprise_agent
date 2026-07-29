@@ -231,7 +231,11 @@ describe("Business Application workbench", () => {
       status: "draft",
       agent_publication_id: "agent_publication_default_v1",
       workflow_publication_id: "",
-      session_policy: {},
+      session_policy: {
+        conversation_mode: "actor",
+        recent_message_limit: 20,
+        retention_days: 30,
+      },
       execution_policy: {},
       validation: { valid: false, errors: [] },
       config_hash: "",
@@ -318,6 +322,16 @@ describe("Business Application workbench", () => {
 
     expect(await screen.findByText("能力配置应用")).toBeInTheDocument()
     fireEvent.click(screen.getByRole("tab", { name: "组成配置" }))
+    const conversationMode = (await screen.findByLabelText(
+      "会话范围"
+    )) as HTMLSelectElement
+    expect(conversationMode).toHaveValue("channel")
+    expect(within(conversationMode).getAllByRole("option")).toHaveLength(1)
+    expect(
+      within(conversationMode).getByRole("option", {
+        name: "按渠道、发布版本与数据范围隔离",
+      })
+    ).toBeInTheDocument()
     const capability = await screen.findByLabelText(
       "选择业务能力 get_schema_directory"
     )
@@ -327,6 +341,9 @@ describe("Business Application workbench", () => {
 
     await waitFor(() =>
       expect(savedBody).toMatchObject({
+        session_policy: {
+          conversation_mode: "channel",
+        },
         capabilities: [
           {
             capability_code: "get_schema_directory",

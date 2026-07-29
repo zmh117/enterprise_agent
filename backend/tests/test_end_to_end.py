@@ -3,7 +3,12 @@ from __future__ import annotations
 import unittest
 
 from app.modules.job.domain.job_status import JobStatus
-from backend.tests.helpers import container, dingtalk_payload, dingtalk_sign
+from backend.tests.helpers import (
+    container,
+    dingtalk_payload,
+    dingtalk_sign,
+    publish_pending_agent_jobs,
+)
 
 
 class EndToEndTests(unittest.TestCase):
@@ -18,6 +23,7 @@ class EndToEndTests(unittest.TestCase):
         )
 
         self.assertTrue(result["accepted"])
+        publish_pending_agent_jobs(c)
         c.message_bus.consume_agent_jobs(
             lambda message: c.agent_executor.execute(message.job_id, fail_on_error=True)
         )
@@ -46,6 +52,7 @@ class EndToEndTests(unittest.TestCase):
 
         self.assertEqual(first["job_id"], second["job_id"])
         self.assertEqual(1, c.agent_repository.count_rows("agent_job"))
+        publish_pending_agent_jobs(c)
         self.assertEqual(1, len(c.message_bus.jobs))
 
 

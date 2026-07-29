@@ -81,8 +81,9 @@ def analyze_readonly_query(
     if effective < 1:
         effective = 1
 
-    if engine is DatabaseEngine.ORACLE and oracle_compat is OracleCompat.LEGACY:
-        # Avoid FETCH FIRST (12c+); use ROWNUM wrapper for older servers.
+    if engine is DatabaseEngine.ORACLE:
+        # The supported Oracle target is 11.2.0.4. Always avoid FETCH FIRST
+        # regardless of a legacy topology flag.
         base_sql = expression.sql(dialect=dialect)
         return AnalyzedQuery(
             sql=_apply_oracle_legacy_rownum(base_sql, max_rows=effective),

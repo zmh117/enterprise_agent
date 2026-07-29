@@ -60,6 +60,41 @@ function job(overrides: Record<string, unknown> = {}) {
   }
 }
 
+function deliveryEvent(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "delivery-1",
+    job_id: "job-1",
+    result_artifact_id: "artifact-1",
+    application_publication_id: "publication-1",
+    route_type: "dingtalk_private",
+    connector_id: "connector-dingtalk-stream-default",
+    delivery_kind: "result",
+    target_summary: {
+      route_type: "dingtalk_private",
+      connector_id: "connector-dingtalk-stream-default",
+      target: { conversation_id: "***" },
+    },
+    correlation_id: "correlation-1",
+    status: "PENDING",
+    attempt_count: 0,
+    max_attempts: 8,
+    replay_count: 0,
+    max_replay_count: 3,
+    next_attempt_at: "2026-07-24T10:01:00+00:00",
+    last_error_code: "",
+    last_error_summary: "",
+    started_at: null,
+    finished_at: null,
+    dead_at: null,
+    last_replayed_at: null,
+    created_at: "2026-07-24T10:00:10+00:00",
+    updated_at: "2026-07-24T10:00:10+00:00",
+    terminal: false,
+    delivered: false,
+    ...overrides,
+  }
+}
+
 function renderRoute(
   path: string,
   routePattern: string,
@@ -114,7 +149,7 @@ describe("runtime provenance records", () => {
         session_ref: { id: "session-1" },
         steps: [],
         tool_calls: [],
-        delivery_attempts: [],
+        deliveries: { events: [], attempts: [], chunks: [] },
         webhook_events: [],
       })
     )
@@ -131,6 +166,34 @@ describe("runtime provenance records", () => {
       screen.getByText("12 轮 · 300 秒 · 10 次工具调用")
     ).toBeInTheDocument()
     expect(screen.getByText("agent-publication-1")).toBeInTheDocument()
+  })
+
+  it("does not report a completed Agent job as delivered while Delivery is pending", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      response({
+        job: job(),
+        session_ref: { id: "session-1" },
+        steps: [],
+        tool_calls: [],
+        deliveries: {
+          events: [deliveryEvent()],
+          attempts: [],
+          chunks: [],
+        },
+        webhook_events: [],
+      })
+    )
+    renderRoute(
+      "/operations/jobs/job-1",
+      "/operations/jobs/:jobId",
+      <RuntimeJobDetailPage />
+    )
+    expect(
+      await screen.findByText("Agent 已完成 · 投递待处理")
+    ).toBeInTheDocument()
+    expect(screen.getByText("投递待处理")).toBeInTheDocument()
+    expect(screen.queryByText("Agent 已完成 · 已送达")).not.toBeInTheDocument()
+    expect(screen.getByText("尚无投递尝试。")).toBeInTheDocument()
   })
 
   it("shows application-scoped conversation policy and job provenance", async () => {

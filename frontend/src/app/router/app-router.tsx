@@ -15,12 +15,12 @@ import {
   RuntimeJobDetailPage,
   RuntimeRecordsPage,
 } from "@/contexts/operations/presentation/runtime-records-page"
+import { DebugJobPage } from "@/contexts/operations/presentation/debug-job-page"
+import { CredentialCenterPage } from "@/contexts/platform-governance/presentation/credential-center-page"
+import { ToolResourcesPage } from "@/contexts/platform-governance/presentation/tool-resources-page"
 import { UserDetailPage, UsersPage } from "@/contexts/users"
 import { DingTalkIdentityDiscoveryPage } from "@/contexts/dingtalk-identity-discovery"
-import {
-  RoleAuthorizationPage,
-  RoleDetailPage,
-} from "@/contexts/authorization"
+import { RoleAuthorizationPage, RoleDetailPage } from "@/contexts/authorization"
 import { CapabilityGate } from "@/contexts/auth/presentation/capability-gate"
 
 function protectedPage(capability: string, page: ReactNode) {
@@ -45,10 +45,7 @@ export const appRouter = createBrowserRouter([
       },
       {
         path: "/applications/:code",
-        element: protectedPage(
-          "applications.read",
-          <ApplicationDetailPage />,
-        ),
+        element: protectedPage("applications.read", <ApplicationDetailPage />),
       },
       {
         path: "/agent-profiles",
@@ -63,12 +60,19 @@ export const appRouter = createBrowserRouter([
         element: protectedPage("jobs.read", <RuntimeRecordsPage />),
       },
       {
+        path: "/operations/debug",
+        element: protectedPage("agent.debug.execute", <DebugJobPage />),
+      },
+      {
         path: "/operations/jobs/:jobId",
         element: protectedPage("jobs.read", <RuntimeJobDetailPage />),
       },
       {
         path: "/operations/conversations/:sessionId",
-        element: protectedPage("conversations.read", <ConversationDetailPage />),
+        element: protectedPage(
+          "conversations.read",
+          <ConversationDetailPage />
+        ),
       },
       {
         path: "/users",
@@ -76,10 +80,7 @@ export const appRouter = createBrowserRouter([
       },
       {
         path: "/users/roles",
-        element: protectedPage(
-          "authorization.read",
-          <RoleAuthorizationPage />,
-        ),
+        element: protectedPage("authorization.read", <RoleAuthorizationPage />),
       },
       {
         path: "/users/roles/:roleId",
@@ -89,12 +90,20 @@ export const appRouter = createBrowserRouter([
         path: "/users/dingtalk-discovery",
         element: protectedPage(
           "identity.discovery.read",
-          <DingTalkIdentityDiscoveryPage />,
+          <DingTalkIdentityDiscoveryPage />
         ),
       },
       {
         path: "/users/:userId",
         element: protectedPage("users.read", <UserDetailPage />),
+      },
+      {
+        path: "/platform/secrets",
+        element: protectedPage("secrets.read", <CredentialCenterPage />),
+      },
+      {
+        path: "/platform/resources",
+        element: protectedPage("platform.read", <ToolResourcesPage />),
       },
     ],
   },

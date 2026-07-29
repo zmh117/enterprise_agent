@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from app.modules.job.domain.job_status import JobStatus
-from backend.tests.helpers import container
+from backend.tests.helpers import container, publish_pending_agent_jobs
 
 
 class RepositoryAndJobTests(unittest.TestCase):
@@ -27,6 +27,7 @@ class RepositoryAndJobTests(unittest.TestCase):
         self.assertEqual(first.id, second.id)
         self.assertEqual(1, c.agent_repository.count_rows("agent_job"))
         self.assertEqual(1, c.agent_repository.count_rows("agent_message"))
+        publish_pending_agent_jobs(c)
         self.assertEqual(1, len(c.message_bus.jobs))
 
     def test_job_claim_and_status_transition(self) -> None:

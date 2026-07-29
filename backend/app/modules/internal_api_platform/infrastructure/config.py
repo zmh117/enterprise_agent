@@ -149,7 +149,7 @@ def _build_redis(data: dict[str, Any], resolver: SecretResolver) -> RedisConnect
 def _build_loki(data: dict[str, Any], resolver: SecretResolver) -> LokiConnection:
     return LokiConnection(
         base_url=_value(data, "base_url", resolver),
-        tenant=str(data.get("tenant", "")),
+        tenant_id=str(data.get("tenant_id") or data.get("tenant") or ""),
     )
 
 

@@ -22,6 +22,10 @@ from app.modules.model_connection.domain import (
 from app.modules.model_connection.infrastructure import ModelConnectionRepository
 from app.modules.platform_config.application.secrets import SecretProviderPort
 from app.modules.platform_config.infrastructure.repository import PlatformConfigRepository
+from app.shared.database import (
+    assert_external_io_allowed,
+    operation_unit_of_work,
+)
 from app.shared.exceptions import NonRetryableExecutionError, NotFound
 
 
@@ -80,7 +84,7 @@ class UnavailableModelSecretProvider:
     @staticmethod
     def _raise() -> None:
         raise NonRetryableExecutionError(
-            "APP_CONFIG_MASTER_KEY is required for model credentials",
+            "Master Key file is required for model credentials",
             safe_message="尚未配置模型凭据加密",
             error_code="model_credential_encryption_unavailable",
         )
@@ -139,8 +143,26 @@ class ModelConnectionService:
         api_key: str = "",
     ) -> dict[str, Any]:
         self._require_agent_editor(actor_id)
-        connection = self.repository.get_connection(code)
         normalized = self.normalize_config(config, validate_dns=True)
+        return self._save_normalized_revision(
+            actor_id=actor_id,
+            code=code,
+            expected_revision=expected_revision,
+            normalized=normalized,
+            api_key=api_key,
+        )
+
+    @operation_unit_of_work(lambda service: service.repository.database)
+    def _save_normalized_revision(
+        self,
+        *,
+        actor_id: str,
+        code: str,
+        expected_revision: int,
+        normalized: dict[str, str | int],
+        api_key: str,
+    ) -> dict[str, Any]:
+        connection = self.repository.get_connection(code)
         current_revision = (
             self.repository.get_revision(str(connection["current_revision_id"]))
             if connection.get("current_revision_id")
@@ -171,7 +193,7 @@ class ModelConnectionService:
             if self._secret_ready(secret_id) and (bool(api_key) or current_status == "ready")
             else "rotation_required"
         )
-        with self.repository.database.transaction():
+        with self.repository.database.unit_of_work():
             revision = self.repository.append_revision(
                 connection_id=str(connection["id"]),
                 expected_revision=expected_revision,
@@ -200,6 +222,7 @@ class ModelConnectionService:
         )
         return public
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def rotate_credential(
         self,
         *,
@@ -229,7 +252,7 @@ class ModelConnectionService:
             )
         current = self.repository.get_revision(revision_id)
         secret_id = str(current.get("api_key_secret_id") or "")
-        with self.repository.database.transaction():
+        with self.repository.database.unit_of_work():
             if secret_id:
                 secret = self.platform_repository.get_platform_secret(secret_id)
                 self.secret_provider.rotate_secret(
@@ -273,6 +296,7 @@ class ModelConnectionService:
         )
         return public
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def set_enabled(
         self,
         *,
@@ -450,6 +474,7 @@ class ModelConnectionService:
             )
         return self.secret_provider.resolve(binding.secret_ref)
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def ensure_default_connection(
         self,
         *,
@@ -462,7 +487,7 @@ class ModelConnectionService:
             pass
         normalized = self.normalize_config(config, validate_dns=False)
         secret_id = self._runtime_anthropic_secret_id()
-        with self.repository.database.transaction():
+        with self.repository.database.unit_of_work():
             connection = self.repository.create_connection(
                 code=DEFAULT_MODEL_CONNECTION_CODE,
                 name="默认 DeepSeek Anthropic 连接",
@@ -546,6 +571,7 @@ class ModelConnectionService:
             raise _validation_error("base_url", "不允许使用此模型提供方主机")
         if not validate_dns:
             return
+        assert_external_io_allowed("model.dns")
         try:
             answers = self.dns_resolver(host, parsed.port or 443, type=socket.SOCK_STREAM)
         except OSError as exc:
@@ -714,6 +740,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def _assert_provider_does_not_redirect(base_url: str, timeout_seconds: int) -> None:
+    assert_external_io_allowed("model.redirect_probe")
     opener = urllib.request.build_opener(_NoRedirect)
     request = urllib.request.Request(
         base_url,

@@ -15,7 +15,12 @@ import {
   useRuntimeJob,
   useRuntimeJobs,
 } from "@/contexts/operations/application/runtime-record-queries"
-import type { RuntimeJob } from "@/contexts/operations/domain/runtime-record"
+import type {
+  DeliveryAttempt,
+  DeliveryChunk,
+  DeliveryEvent,
+  RuntimeJob,
+} from "@/contexts/operations/domain/runtime-record"
 import { ApplicationState } from "@/contexts/applications/presentation/application-state"
 
 export function RuntimeRecordsPage() {
@@ -139,10 +144,7 @@ export function RuntimeJobDetailPage() {
               job.business_application_code || "legacy_unattributed",
             ],
             ["业务应用 ID", job.business_application_id || "未归因"],
-            [
-              "发布版本",
-              job.business_application_publication_id || "未归因",
-            ],
+            ["发布版本", job.business_application_publication_id || "未归因"],
             ["部署 ID", job.business_application_deployment_id || "未归因"],
             ["路由 ID", job.business_application_route_id || "未归因"],
             [
@@ -182,6 +184,18 @@ export function RuntimeJobDetailPage() {
           ]}
         />
       </div>
+      <ExecutionEvidenceTimeline
+        job={job}
+        dispatch={query.data.dispatch}
+        steps={query.data.steps}
+        toolCalls={query.data.tool_calls}
+      />
+      <DeliveryTimeline
+        jobStatus={job.status}
+        events={query.data.deliveries.events}
+        attempts={query.data.deliveries.attempts}
+        chunks={query.data.deliveries.chunks}
+      />
       <Card className="mt-4 shadow-none">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -199,6 +213,270 @@ export function RuntimeJobDetailPage() {
         </CardContent>
       </Card>
     </PageFrame>
+  )
+}
+
+function ExecutionEvidenceTimeline({
+  job,
+  dispatch,
+  steps,
+  toolCalls,
+}: {
+  job: RuntimeJob
+  dispatch: Record<string, unknown> | null | undefined
+  steps: Array<Record<string, unknown>>
+  toolCalls: Array<Record<string, unknown>>
+}) {
+  return (
+    <div className="mt-4 grid gap-4 xl:grid-cols-3">
+      <Card className="shadow-none">
+        <CardHeader>
+          <CardTitle>Agent 时间线</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ol className="space-y-3" aria-label="Agent 执行时间线">
+            <TimelineItem label="Job 创建" value={formatDate(job.created_at)} />
+            {job.started_at ? (
+              <TimelineItem
+                label="开始执行"
+                value={formatDate(job.started_at)}
+              />
+            ) : null}
+            {steps.map((step, index) => (
+              <TimelineItem
+                key={String(step.id ?? index)}
+                label={String(step.title ?? step.step_type ?? "执行步骤")}
+                value={String(step.content ?? "")}
+              />
+            ))}
+            {job.finished_at ? (
+              <TimelineItem
+                label="执行结束"
+                value={formatDate(job.finished_at)}
+              />
+            ) : null}
+          </ol>
+        </CardContent>
+      </Card>
+      <Card className="shadow-none">
+        <CardHeader>
+          <CardTitle>Dispatch 时间线</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {dispatch ? (
+            <dl className="grid gap-2 text-sm sm:grid-cols-[7rem_1fr]">
+              <dt className="text-muted-foreground">状态</dt>
+              <dd>{String(dispatch.status ?? "")}</dd>
+              <dt className="text-muted-foreground">尝试</dt>
+              <dd>
+                {String(dispatch.attempt_count ?? 0)} /{" "}
+                {String(dispatch.max_attempts ?? 0)}
+              </dd>
+              <dt className="text-muted-foreground">重放</dt>
+              <dd>{String(dispatch.replay_count ?? 0)}</dd>
+              <dt className="text-muted-foreground">下次处理</dt>
+              <dd>{formatDate(String(dispatch.next_attempt_at ?? ""))}</dd>
+              {dispatch.last_error_code || dispatch.last_error_summary ? (
+                <>
+                  <dt className="text-muted-foreground">安全错误</dt>
+                  <dd className="break-all text-destructive">
+                    {[dispatch.last_error_code, dispatch.last_error_summary]
+                      .filter(Boolean)
+                      .map(String)
+                      .join(" · ")}
+                  </dd>
+                </>
+              ) : null}
+            </dl>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              尚未找到 Job Dispatch Outbox 事件。
+            </p>
+          )}
+        </CardContent>
+      </Card>
+      <Card className="shadow-none">
+        <CardHeader>
+          <CardTitle>Tool Call 时间线</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {toolCalls.length ? (
+            <ol className="space-y-3" aria-label="工具调用时间线">
+              {toolCalls.map((toolCall, index) => (
+                <TimelineItem
+                  key={String(toolCall.id ?? index)}
+                  label={`${String(toolCall.tool_name ?? "tool")} · ${String(toolCall.status ?? "")}`}
+                  value={String(toolCall.response_summary ?? "")}
+                />
+              ))}
+            </ol>
+          ) : (
+            <p className="text-sm text-muted-foreground">尚无工具调用。</p>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+function TimelineItem({ label, value }: { label: string; value: string }) {
+  return (
+    <li className="border-l-2 pl-3">
+      <p className="text-sm font-medium">{label}</p>
+      <p className="mt-1 line-clamp-4 text-xs whitespace-pre-wrap text-muted-foreground">
+        {value || "无摘要"}
+      </p>
+    </li>
+  )
+}
+
+function DeliveryTimeline({
+  jobStatus,
+  events,
+  attempts,
+  chunks,
+}: {
+  jobStatus: string
+  events: DeliveryEvent[]
+  attempts: DeliveryAttempt[]
+  chunks: DeliveryChunk[]
+}) {
+  const jobFinished = ["SUCCEEDED", "FAILED", "TIMEOUT"].includes(jobStatus)
+  return (
+    <Card className="mt-4 shadow-none">
+      <CardHeader>
+        <CardTitle>投递时间线</CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Agent 执行与结果投递是两个独立状态；只有投递状态为 SUCCEEDED
+          才表示已送达。
+        </p>
+      </CardHeader>
+      <CardContent>
+        {events.length ? (
+          <ol className="space-y-4" aria-label="投递事件时间线">
+            {events.map((event) => {
+              const eventAttempts = attempts.filter(
+                (attempt) => attempt.delivery_outbox_id === event.id
+              )
+              return (
+                <li key={event.id} className="rounded-lg border p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-mono text-xs break-all">{event.id}</p>
+                      <p className="mt-1 text-sm font-medium">
+                        {deliveryOutcomeText(jobStatus, event.status)}
+                      </p>
+                    </div>
+                    <Badge variant={deliveryBadgeVariant(event.status)}>
+                      {deliveryStatusLabel(event.status)}
+                    </Badge>
+                  </div>
+                  <dl className="mt-4 grid gap-2 text-xs sm:grid-cols-[minmax(7rem,9rem)_minmax(0,1fr)]">
+                    <dt className="text-muted-foreground">路由</dt>
+                    <dd className="break-all">
+                      {event.route_type}
+                      {event.connector_id ? ` · ${event.connector_id}` : ""}
+                    </dd>
+                    <dt className="text-muted-foreground">尝试次数</dt>
+                    <dd>
+                      {event.attempt_count} / {event.max_attempts}
+                    </dd>
+                    <dt className="text-muted-foreground">重放次数</dt>
+                    <dd>
+                      {event.replay_count} / {event.max_replay_count}
+                    </dd>
+                    {["PENDING", "RETRY_WAIT"].includes(event.status) ? (
+                      <>
+                        <dt className="text-muted-foreground">下次处理</dt>
+                        <dd>{formatDate(event.next_attempt_at)}</dd>
+                      </>
+                    ) : null}
+                    {event.last_error_code || event.last_error_summary ? (
+                      <>
+                        <dt className="text-muted-foreground">安全错误</dt>
+                        <dd className="break-all text-destructive">
+                          {[event.last_error_code, event.last_error_summary]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </dd>
+                      </>
+                    ) : null}
+                  </dl>
+                  <AttemptTimeline attempts={eventAttempts} chunks={chunks} />
+                </li>
+              )
+            })}
+          </ol>
+        ) : (
+          <p className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">
+            {jobFinished
+              ? "任务已结束，但缺少对应的投递事件；请检查事务与 Dispatcher。"
+              : "Agent 尚未结束，暂未生成投递事件。"}
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function AttemptTimeline({
+  attempts,
+  chunks,
+}: {
+  attempts: DeliveryAttempt[]
+  chunks: DeliveryChunk[]
+}) {
+  if (!attempts.length) {
+    return (
+      <p className="mt-4 border-t pt-3 text-xs text-muted-foreground">
+        尚无投递尝试。
+      </p>
+    )
+  }
+  return (
+    <ol className="mt-4 space-y-3 border-t pt-3" aria-label="投递尝试时间线">
+      {attempts.map((attempt) => {
+        const attemptChunks = chunks.filter(
+          (chunk) => chunk.attempt_id === attempt.id
+        )
+        return (
+          <li key={attempt.id} className="text-xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-medium">
+                {attempt.replay_no
+                  ? `重放 ${attempt.replay_no} · 尝试 ${attempt.attempt_no}`
+                  : `尝试 ${attempt.attempt_no}`}
+              </span>
+              <Badge variant={deliveryBadgeVariant(attempt.status)}>
+                {deliveryAttemptStatusLabel(attempt.status)}
+              </Badge>
+              <span className="text-muted-foreground">
+                {formatDate(attempt.created_at)}
+              </span>
+            </div>
+            {attempt.error_code || attempt.error_message ? (
+              <p className="mt-1 break-all text-destructive">
+                {[attempt.error_code, attempt.error_message]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+            ) : null}
+            {attemptChunks.length ? (
+              <ul className="mt-2 flex flex-wrap gap-2" aria-label="投递分片">
+                {attemptChunks.map((chunk) => (
+                  <li key={chunk.id}>
+                    <Badge variant={deliveryBadgeVariant(chunk.status)}>
+                      分片 {chunk.chunk_index + 1}/{chunk.chunk_count} ·{" "}
+                      {deliveryChunkStatusLabel(chunk.status)}
+                    </Badge>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </li>
+        )
+      })}
+    </ol>
   )
 }
 
@@ -364,6 +642,30 @@ const conversationModeLabels: Record<string, string> = {
   legacy: "旧版兼容模式",
 }
 
+const deliveryStatusLabels: Record<string, string> = {
+  PENDING: "投递待处理",
+  RUNNING: "投递中",
+  RETRY_WAIT: "投递等待重试",
+  SUCCEEDED: "已送达",
+  FAILED: "投递失败",
+  DEAD: "投递已耗尽",
+  SKIPPED: "无需投递",
+}
+
+const deliveryAttemptStatusLabels: Record<string, string> = {
+  RUNNING: "处理中",
+  SUCCEEDED: "尝试成功",
+  FAILED: "尝试失败",
+  SKIPPED: "已跳过",
+}
+
+const deliveryChunkStatusLabels: Record<string, string> = {
+  RUNNING: "处理中",
+  SUCCEEDED: "已送达",
+  FAILED: "发送失败",
+  SKIPPED: "已跳过",
+}
+
 function jobStatusLabel(status: string): string {
   return jobStatusLabels[status] ?? status
 }
@@ -374,6 +676,36 @@ function runtimeStatusLabel(status: string): string {
 
 function conversationModeLabel(mode: string): string {
   return conversationModeLabels[mode] ?? mode
+}
+
+function deliveryStatusLabel(status: string): string {
+  return deliveryStatusLabels[status] ?? status
+}
+
+function deliveryAttemptStatusLabel(status: string): string {
+  return deliveryAttemptStatusLabels[status] ?? status
+}
+
+function deliveryChunkStatusLabel(status: string): string {
+  return deliveryChunkStatusLabels[status] ?? status
+}
+
+function deliveryOutcomeText(
+  jobStatus: string,
+  deliveryStatus: string
+): string {
+  const job =
+    jobStatus === "SUCCEEDED" ? "Agent 已完成" : jobStatusLabel(jobStatus)
+  return `${job} · ${deliveryStatusLabel(deliveryStatus)}`
+}
+
+function deliveryBadgeVariant(
+  status: string
+): "default" | "secondary" | "destructive" | "outline" {
+  if (status === "SUCCEEDED") return "default"
+  if (status === "FAILED" || status === "DEAD") return "destructive"
+  if (status === "RUNNING" || status === "RETRY_WAIT") return "secondary"
+  return "outline"
 }
 
 function PageFrame({ children }: { children: React.ReactNode }) {

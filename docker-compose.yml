@@ -1,7 +1,6 @@
 x-database-env: &database-env
   DATABASE_DSN: postgresql://enterprise_agent:enterprise_agent@postgres:5432/enterprise_agent
-  APP_CONFIG_MASTER_KEY: ${APP_CONFIG_MASTER_KEY:-local-dev-config-master-key}
-  APP_STARTUP_MIGRATE: "true"
+  APP_CONFIG_MASTER_KEY_FILE: /run/secrets/app_config_master_key
 
 x-runtime-env: &runtime-env
   <<: *database-env
@@ -27,11 +26,12 @@ x-runtime-env: &runtime-env
   ONES_IDENTITY_MAX_RESPONSE_BYTES: ${ONES_IDENTITY_MAX_RESPONSE_BYTES:-65536}
   ONES_IDENTITY_ALLOW_INSECURE_LOCAL: ${ONES_IDENTITY_ALLOW_INSECURE_LOCAL:-false}
   INTERNAL_API_BASE_URL: ${INTERNAL_API_BASE_URL:-http://internal-api-platform:9000}
-  INTERNAL_API_AUTH_TOKEN: ${INTERNAL_API_AUTH_TOKEN:-}
+  INTERNAL_API_AUTH_TOKEN_FILE: /run/secrets/internal_api_auth_token
   INTERNAL_API_TIMEOUT_SECONDS: ${INTERNAL_API_TIMEOUT_SECONDS:-10}
   INTERNAL_API_MAX_RESPONSE_CHARS: ${INTERNAL_API_MAX_RESPONSE_CHARS:-4000}
   INTERNAL_PLATFORM_TOPOLOGY_FILE: ${INTERNAL_PLATFORM_TOPOLOGY_FILE:-/app/backend/config/internal_platform_topology.example.yaml}
   INTERNAL_PLATFORM_MAX_ROWS: ${INTERNAL_PLATFORM_MAX_ROWS:-100}
+  INTERNAL_PLATFORM_MAX_RESPONSE_BYTES: ${INTERNAL_PLATFORM_MAX_RESPONSE_BYTES:-1048576}
   LOKI_BASE_URL: ${LOKI_BASE_URL:-http://host.docker.internal:3100}
   LOKI_MAX_MINUTES: ${LOKI_MAX_MINUTES:-60}
   LOKI_MAX_LINES: ${LOKI_MAX_LINES:-500}
@@ -63,12 +63,19 @@ x-runtime-env: &runtime-env
   CLAUDE_CODE_EFFORT_LEVEL: ${CLAUDE_CODE_EFFORT_LEVEL:-}
   AGENT_MAX_TURNS: ${AGENT_MAX_TURNS:-12}
   AGENT_MAX_TOOL_CALLS: ${AGENT_MAX_TOOL_CALLS:-30}
+  JOB_DISPATCH_OUTBOX_MAX_ATTEMPTS: ${JOB_DISPATCH_OUTBOX_MAX_ATTEMPTS:-8}
+  JOB_DISPATCH_OUTBOX_MAX_REPLAYS: ${JOB_DISPATCH_OUTBOX_MAX_REPLAYS:-3}
+  JOB_DISPATCH_OUTBOX_RETRY_BASE_SECONDS: ${JOB_DISPATCH_OUTBOX_RETRY_BASE_SECONDS:-5}
+  JOB_DISPATCH_OUTBOX_CLAIM_TIMEOUT_SECONDS: ${JOB_DISPATCH_OUTBOX_CLAIM_TIMEOUT_SECONDS:-300}
+  JOB_DISPATCH_OUTBOX_SCAN_SECONDS: ${JOB_DISPATCH_OUTBOX_SCAN_SECONDS:-1}
+  DELIVERY_OUTBOX_MAX_ATTEMPTS: ${DELIVERY_OUTBOX_MAX_ATTEMPTS:-8}
+  DELIVERY_OUTBOX_MAX_REPLAYS: ${DELIVERY_OUTBOX_MAX_REPLAYS:-3}
+  DELIVERY_OUTBOX_RETRY_BASE_SECONDS: ${DELIVERY_OUTBOX_RETRY_BASE_SECONDS:-5}
+  DELIVERY_OUTBOX_CLAIM_TIMEOUT_SECONDS: ${DELIVERY_OUTBOX_CLAIM_TIMEOUT_SECONDS:-300}
+  DELIVERY_OUTBOX_SCAN_SECONDS: ${DELIVERY_OUTBOX_SCAN_SECONDS:-1}
   RABBITMQ_CONSUMER_HEARTBEAT_SECONDS: ${RABBITMQ_CONSUMER_HEARTBEAT_SECONDS:-900}
   RABBITMQ_CONSUMER_RECONNECT_SECONDS: ${RABBITMQ_CONSUMER_RECONNECT_SECONDS:-5}
   AGENT_JOB_QUEUE: ${AGENT_JOB_QUEUE:-agent.job.queue}
-  AGENT_RETRY_QUEUE: ${AGENT_RETRY_QUEUE:-agent.job.retry.delay.v1.queue}
-  AGENT_LEGACY_RETRY_QUEUE: ${AGENT_LEGACY_RETRY_QUEUE:-agent.job.retry.queue}
-  AGENT_DEAD_QUEUE: ${AGENT_DEAD_QUEUE:-agent.job.dead.queue}
   WEBHOOK_DISPATCH_QUEUE: ${WEBHOOK_DISPATCH_QUEUE:-agent.webhook.dispatch.queue}
   WEBHOOK_DISPATCH_DEAD_QUEUE: ${WEBHOOK_DISPATCH_DEAD_QUEUE:-agent.webhook.dispatch.dead.queue}
   CHANNEL_DISPATCH_QUEUE: ${CHANNEL_DISPATCH_QUEUE:-agent.channel.dispatch.queue}
@@ -85,7 +92,6 @@ x-runtime-env: &runtime-env
   WEBHOOK_MAX_COLLECTION_ITEMS: ${WEBHOOK_MAX_COLLECTION_ITEMS:-2000}
   WEBHOOK_MAX_MESSAGE_CHARS: ${WEBHOOK_MAX_MESSAGE_CHARS:-4000}
   WEBHOOK_MAX_SUMMARY_CHARS: ${WEBHOOK_MAX_SUMMARY_CHARS:-4000}
-  WEBHOOK_HMAC_WINDOW_SECONDS: ${WEBHOOK_HMAC_WINDOW_SECONDS:-300}
   WEBHOOK_EVENT_RETENTION_DAYS: ${WEBHOOK_EVENT_RETENTION_DAYS:-30}
   WEBHOOK_OUTBOX_SCAN_SECONDS: ${WEBHOOK_OUTBOX_SCAN_SECONDS:-5}
   WEBHOOK_OUTBOX_MAX_ATTEMPTS: ${WEBHOOK_OUTBOX_MAX_ATTEMPTS:-8}
@@ -174,6 +180,20 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+  migrator:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: migrator
+    environment:
+      DATABASE_DSN: postgresql://enterprise_agent:enterprise_agent@postgres:5432/enterprise_agent
+      APP_ENV: ${APP_ENV:-local}
+      MIGRATOR_BUILD: ${MIGRATOR_BUILD:-local-compose}
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   rabbitmq:
     image: ${RABBITMQ_IMAGE:-rabbitmq:4-management}
@@ -392,6 +412,9 @@ services:
       <<: *runtime-env
     expose:
       - "9000"
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
 
   # real-tools: 拓扑感知、多数据源、只读 Internal API Platform。
   internal-api-platform:
@@ -415,11 +438,27 @@ services:
       <<: *runtime-env
     volumes:
       - ./backend/config:/app/backend/config:ro
+    secrets:
+      - source: internal_api_server_auth_tokens
+        target: internal_api_auth_token
+      - app_config_master_key
     expose:
       - "9000"
     depends_on:
       postgres:
         condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/ready', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
 
   api-server:
     build:
@@ -433,6 +472,9 @@ services:
       SEED_LOCAL_CONFIG: "true"
     secrets:
       - dingtalk_runtime_auth_token
+      - source: internal_api_client_auth_token
+        target: internal_api_auth_token
+      - app_config_master_key
     ports:
       - "8000:8000"
     depends_on:
@@ -440,12 +482,14 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
     healthcheck:
       test:
         - CMD
         - python
         - -c
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/ready', timeout=3)"
       interval: 10s
       timeout: 5s
       retries: 12
@@ -500,11 +544,77 @@ services:
     environment:
       <<: *worker-env
       SEED_LOCAL_CONFIG: "true"
+    secrets:
+      - source: internal_api_client_auth_token
+        target: internal_api_auth_token
+      - app_config_master_key
     depends_on:
       postgres:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+
+  job-dispatch-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: agent-worker
+    command: ["python", "-m", "app.workers.job_dispatch_worker"]
+    environment:
+      <<: *worker-env
+      SEED_LOCAL_CONFIG: "true"
+    secrets:
+      - source: internal_api_client_auth_token
+        target: internal_api_auth_token
+      - app_config_master_key
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import time; from pathlib import Path; p=Path('/tmp/job-dispatch-worker.heartbeat'); raise SystemExit(0 if p.exists() and time.time()-p.stat().st_mtime < 60 else 1)"
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 20s
+
+  delivery-dispatch-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: agent-worker
+    command: ["python", "-m", "app.workers.delivery_dispatch_worker"]
+    environment:
+      <<: *worker-env
+      SEED_LOCAL_CONFIG: "true"
+    secrets:
+      - source: internal_api_client_auth_token
+        target: internal_api_auth_token
+      - app_config_master_key
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import time; from pathlib import Path; p=Path('/tmp/delivery-dispatch-worker.heartbeat'); raise SystemExit(0 if p.exists() and time.time()-p.stat().st_mtime < 60 else 1)"
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 20s
 
   webhook-worker:
     build:
@@ -515,11 +625,17 @@ services:
     environment:
       <<: *worker-env
       SEED_LOCAL_CONFIG: "true"
+    secrets:
+      - source: internal_api_client_auth_token
+        target: internal_api_auth_token
+      - app_config_master_key
     depends_on:
       postgres:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
     healthcheck:
       test:
         - CMD
@@ -540,11 +656,17 @@ services:
     environment:
       <<: *worker-env
       SEED_LOCAL_CONFIG: "true"
+    secrets:
+      - source: internal_api_client_auth_token
+        target: internal_api_auth_token
+      - app_config_master_key
     depends_on:
       postgres:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
     healthcheck:
       test:
         - CMD
@@ -566,19 +688,31 @@ services:
     environment:
       <<: *worker-env
       SEED_LOCAL_CONFIG: "true"
+    secrets:
+      - source: internal_api_client_auth_token
+        target: internal_api_auth_token
+      - app_config_master_key
     depends_on:
       postgres:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
       minio:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
 
 secrets:
+  app_config_master_key:
+    file: ${APP_CONFIG_MASTER_KEY_FILE:-${HOME}/.config/enterprise-agent/app-config-master-key}
   dingtalk_runtime_auth_token:
     environment: DINGTALK_RUNTIME_AUTH_TOKEN
+  internal_api_server_auth_tokens:
+    environment: INTERNAL_API_SERVER_AUTH_TOKENS
+  internal_api_client_auth_token:
+    environment: INTERNAL_API_CLIENT_AUTH_TOKEN
 
 volumes:
   postgres18-data:

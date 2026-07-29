@@ -13,6 +13,7 @@ from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.modules.message_bus.application.message_publisher import MessagePublisher
 from app.shared.config import AttachmentSettings
+from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
 
 
@@ -152,6 +153,7 @@ class AttachmentProcessingService:
             )
         return self._release_if_ready(attachment.job_id, correlation_id)
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def _release_if_ready(self, job_id: str, correlation_id: str) -> str:
         attachments = self.repository.list_attachments(job_id)
         if not attachments or any(item.status not in TERMINAL_ATTACHMENT_STATUSES for item in attachments):
@@ -162,7 +164,6 @@ class AttachmentProcessingService:
         usable = bool(job.user_message.strip()) or any(item.status == "READY" for item in attachments)
         if usable:
             self.repository.transition_job(job_id=job_id, target=JobStatus.PENDING)
-            self.publisher.publish_agent_job(job_id, correlation_id)
             return "released"
         message = "当前MVP无法理解仅图片消息，或附件没有可用文本；请补充文字或上传支持的文档"
         self.repository.transition_job(
@@ -171,7 +172,12 @@ class AttachmentProcessingService:
             error_message=message,
         )
         if self.delivery_service is not None:
-            self.delivery_service.deliver_job_failure(job_id, message)
+            self.delivery_service.enqueue_job_failure(
+                job_id=job_id,
+                reason=message,
+                error_code="attachment_input_unusable",
+                correlation_id=correlation_id,
+            )
         return "failed"
 
     def report_orphan_objects(self) -> list[str]:

@@ -9,12 +9,37 @@ from app.modules.platform_config.application.runtime_config import (
     validate_runtime_config_definition_payload,
 )
 from app.modules.permission.application.permission_service import PermissionService
-from app.shared.exceptions import PermissionDenied
+from app.modules.platform_config.application.governed_resources import (
+    GovernedResourceService,
+)
+from app.modules.platform_config.application.handler_governance import (
+    HandlerGovernanceService,
+)
+from app.modules.platform_config.application.database_resource_verifier import (
+    GovernedResourceTechnicalVerifier,
+)
+from app.modules.platform_config.infrastructure.governed_resource_repository import (
+    GovernedResourceRepository,
+)
+from app.modules.platform_config.infrastructure.runtime_generation_repository import (
+    RuntimeGenerationRepository,
+)
+from app.modules.platform_config.infrastructure.handler_governance_repository import (
+    HandlerGovernanceRepository,
+)
+from app.shared.database import operation_unit_of_work
+from app.shared.exceptions import (
+    NonRetryableExecutionError,
+    PermissionDenied,
+)
 
 from ..infrastructure.repository import PlatformConfigRepository
 from .importer import PlatformTopologyYamlImporter
-from .secrets import EncryptedDbSecretProvider
+from .legacy_env_import import LegacyEnvSecretImportService
+from .secrets import SecretProviderPort
+from .secret_usage import PlatformSecretUsageService
 from .snapshot import PlatformTopologySnapshotBuilder, RuntimeTopologySnapshot
+from .resource_reset import resource_reset_in_progress
 from .validation import (
     assert_no_secret_payload,
     coerce_runtime_value,
@@ -43,13 +68,33 @@ class PlatformConfigService:
         self,
         repository: PlatformConfigRepository,
         permission_service: PermissionService,
+        secret_provider: SecretProviderPort,
     ) -> None:
         self.repository = repository
         self.permission_service = permission_service
+        self.secret_provider = secret_provider
+        self.legacy_env_secret_importer = LegacyEnvSecretImportService(
+            repository,
+            secret_provider,
+        )
+        self.secret_usage_service = PlatformSecretUsageService(repository)
         self.snapshot_builder = PlatformTopologySnapshotBuilder(repository)
         self.yaml_importer = PlatformTopologyYamlImporter(repository)
         self.runtime_registry = RuntimeConfigRegistry(repository)
         self.runtime_snapshot_builder = RuntimeConfigSnapshotBuilder(repository)
+        self.governed_resources = GovernedResourceService(
+            GovernedResourceRepository(repository.database),
+            repository,
+            permission_service,
+            verifier=GovernedResourceTechnicalVerifier(
+                resolve_secret=secret_provider.resolve,
+            ),
+        )
+        self.handlers = HandlerGovernanceService(
+            HandlerGovernanceRepository(repository.database),
+            repository,
+            permission_service,
+        )
 
     def require_admin(self, actor_id: str) -> None:
         if not actor_id:
@@ -80,6 +125,7 @@ class PlatformConfigService:
     def list_environments(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
         return self.repository.list_environments(include_disabled=include_disabled)
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def upsert_environment(
         self,
         payload: dict[str, Any],
@@ -100,6 +146,7 @@ class PlatformConfigService:
         self._audit("environment", entity, "upsert", actor_id, before, correlation_id)
         return entity
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def set_environment_status(
         self, code: str, status: str, *, actor_id: str, correlation_id: str = ""
     ) -> dict[str, Any]:
@@ -119,6 +166,7 @@ class PlatformConfigService:
             include_disabled=include_disabled,
         )
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def upsert_base(
         self, payload: dict[str, Any], *, actor_id: str, correlation_id: str = ""
     ) -> dict[str, Any]:
@@ -140,6 +188,7 @@ class PlatformConfigService:
         self._audit("base", entity, "upsert", actor_id, before, correlation_id)
         return entity
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def set_base_status(
         self,
         *,
@@ -172,6 +221,7 @@ class PlatformConfigService:
             include_disabled=include_disabled,
         )
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def upsert_workshop(
         self, payload: dict[str, Any], *, actor_id: str, correlation_id: str = ""
     ) -> dict[str, Any]:
@@ -202,6 +252,7 @@ class PlatformConfigService:
         self._audit("workshop", entity, "upsert", actor_id, before, correlation_id)
         return entity
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def set_workshop_status(
         self,
         *,
@@ -230,6 +281,7 @@ class PlatformConfigService:
     def list_secret_references(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
         return self.repository.list_secret_references(include_disabled=include_disabled)
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def upsert_secret_reference(
         self, payload: dict[str, Any], *, actor_id: str, correlation_id: str = ""
     ) -> dict[str, Any]:
@@ -237,6 +289,7 @@ class PlatformConfigService:
         code = validate_code(str(payload.get("code") or ""))
         ref = validate_secret_ref(str(payload.get("ref") or ""))
         provider = validate_secret_provider(str(payload.get("provider") or ref.split(":", 1)[0]))
+        self._require_available_platform_secret(ref)
         before = self.repository.get_secret_reference_by_code(code)
         entity = self.repository.upsert_secret_reference(
             code=code,
@@ -263,37 +316,90 @@ class PlatformConfigService:
             raise NotFound(f"Platform secret not found: {code}")
         return self._public_secret(secret)
 
+    def legacy_env_secret_report(self) -> dict[str, Any]:
+        return self.legacy_env_secret_importer.report()
+
+    def get_platform_secret_usage(self, code: str) -> dict[str, Any]:
+        secret = self.repository.get_platform_secret_by_code(
+            validate_code(code)
+        )
+        if not secret:
+            from app.shared.exceptions import NotFound
+
+            raise NotFound(f"Platform secret not found: {code}")
+        dependencies = self.secret_usage_service.dependencies(
+            secret_id=str(secret["id"]),
+            secret_ref=str(secret["ref"]),
+        )
+        return {
+            "secret": self._public_secret(secret),
+            "usage_count": len(dependencies),
+            "active_usage_count": sum(
+                1 for item in dependencies if item["active"]
+            ),
+            "dependencies": dependencies,
+        }
+
+    @operation_unit_of_work(lambda service: service.repository.database)
+    def import_legacy_env_secret(
+        self,
+        payload: dict[str, Any],
+        *,
+        actor_id: str,
+        correlation_id: str = "",
+    ) -> dict[str, Any]:
+        self.require_secret_admin(actor_id)
+        return self.legacy_env_secret_importer.import_reference(
+            env_ref=str(payload.get("env_ref") or ""),
+            code=str(payload.get("code") or ""),
+            actor_id=actor_id,
+            correlation_id=correlation_id,
+            dry_run=bool(payload.get("dry_run", True)),
+            expected_digest=str(payload.get("expected_digest") or ""),
+        )
+
+    @operation_unit_of_work(lambda service: service.repository.database)
     def create_platform_secret(
         self, payload: dict[str, Any], *, actor_id: str, correlation_id: str = ""
     ) -> dict[str, Any]:
         self.require_secret_admin(actor_id)
         code = validate_code(str(payload.get("code") or ""))
         before = self.repository.get_platform_secret_by_code(code)
-        secret = self._secret_provider().create_secret(
-            code=code,
-            value=str(payload.get("value") or ""),
-            purpose=str(payload.get("purpose") or ""),
-            actor_id=actor_id,
-            metadata=normalize_json_object(payload.get("metadata"), field="metadata"),
-        )
+        value = str(payload.pop("value", "") or "")
+        try:
+            secret = self._secret_provider().create_secret(
+                code=code,
+                value=value,
+                purpose=str(payload.get("purpose") or ""),
+                actor_id=actor_id,
+                metadata=normalize_json_object(payload.get("metadata"), field="metadata"),
+            )
+        finally:
+            value = ""
         public = self._public_secret(secret)
         self._audit("platform_secret", public, "create", actor_id, before, correlation_id)
         return public
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def rotate_platform_secret(
         self, code: str, payload: dict[str, Any], *, actor_id: str, correlation_id: str = ""
     ) -> dict[str, Any]:
         self.require_secret_admin(actor_id)
         before = self.repository.get_platform_secret_by_code(validate_code(code))
-        secret = self._secret_provider().rotate_secret(
-            code=code,
-            value=str(payload.get("value") or ""),
-            actor_id=actor_id,
-        )
+        value = str(payload.pop("value", "") or "")
+        try:
+            secret = self._secret_provider().rotate_secret(
+                code=code,
+                value=value,
+                actor_id=actor_id,
+            )
+        finally:
+            value = ""
         public = self._public_secret(secret)
         self._audit("platform_secret", public, "rotate", actor_id, before, correlation_id)
         return public
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def disable_platform_secret(
         self, code: str, *, actor_id: str, correlation_id: str = ""
     ) -> dict[str, Any]:
@@ -307,6 +413,10 @@ class PlatformConfigService:
     def list_resource_bindings(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
         return self.repository.list_resource_bindings(include_disabled=include_disabled)
 
+    def list_provider_contracts(self) -> list[dict[str, Any]]:
+        return self.governed_resources.provider_contracts.public_contracts()
+
+    @operation_unit_of_work(lambda service: service.repository.database)
     def upsert_resource_binding(
         self,
         payload: dict[str, Any],
@@ -316,6 +426,7 @@ class PlatformConfigService:
         expected_revision: int | None = None,
     ) -> dict[str, Any]:
         self.require_admin(actor_id)
+        self._assert_resource_writes_available()
         code = validate_code(str(payload.get("code") or ""))
         config = normalize_json_object(payload.get("config"), field="config")
         assert_no_secret_payload(config)
@@ -325,6 +436,8 @@ class PlatformConfigService:
                 payload.get("secret_refs"), field="secret_refs"
             ).items()
         }
+        for ref in secret_refs.values():
+            self._require_available_platform_secret(ref)
         kind = validate_resource_kind(str(payload.get("resource_kind") or ""))
         if kind.value == "redis":
             config = normalize_redis_resource_config(config)
@@ -353,6 +466,7 @@ class PlatformConfigService:
         self._audit("resource_binding", entity, "upsert", actor_id, before, correlation_id)
         return entity
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def ensure_runtime_config_definitions(
         self, *, actor_id: str = "", correlation_id: str = ""
     ) -> dict[str, Any]:
@@ -381,6 +495,7 @@ class PlatformConfigService:
     ) -> list[dict[str, Any]]:
         return self.repository.list_runtime_config_definitions(include_disabled=include_disabled)
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def upsert_runtime_config_definition(
         self, payload: dict[str, Any], *, actor_id: str, correlation_id: str = ""
     ) -> dict[str, Any]:
@@ -409,6 +524,7 @@ class PlatformConfigService:
             )
         ]
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def upsert_runtime_config_value(
         self, payload: dict[str, Any], *, actor_id: str, correlation_id: str = ""
     ) -> dict[str, Any]:
@@ -440,6 +556,7 @@ class PlatformConfigService:
             secret_ref = validate_secret_ref(
                 str(payload.get("secret_ref") or payload.get("value") or "")
             )
+            self._require_available_platform_secret(secret_ref)
         else:
             value = coerce_runtime_value(payload.get("value"), value_type)
             assert_no_secret_payload({key: value})
@@ -456,6 +573,7 @@ class PlatformConfigService:
         self._audit("runtime_config_value", public, "upsert", actor_id, before, correlation_id)
         return public
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def set_runtime_config_value_status(
         self, value_id: str, status: str, *, actor_id: str, correlation_id: str = ""
     ) -> dict[str, Any]:
@@ -478,10 +596,12 @@ class PlatformConfigService:
             scopes=scopes or {},
         )
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def set_resource_binding_status(
         self, code: str, status: str, *, actor_id: str, correlation_id: str = ""
     ) -> dict[str, Any]:
         self.require_admin(actor_id)
+        self._assert_resource_writes_available()
         before = self.repository.get_resource_binding_by_code(code)
         entity = self.repository.set_resource_binding_status(
             validate_code(code), validate_status(status).value
@@ -489,9 +609,18 @@ class PlatformConfigService:
         self._audit("resource_binding", entity, status, actor_id, before, correlation_id)
         return entity
 
+    def _assert_resource_writes_available(self) -> None:
+        if resource_reset_in_progress(self.repository.database):
+            raise NonRetryableExecutionError(
+                "Resource configuration is in maintenance mode",
+                safe_message="工具资源处于重置维护模式，暂不允许修改",
+                error_code="resource_reset_maintenance",
+            )
+
     def list_access_grants(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
         return self.repository.list_access_grants(include_disabled=include_disabled)
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def upsert_access_grant(
         self, payload: dict[str, Any], *, actor_id: str, correlation_id: str = ""
     ) -> dict[str, Any]:
@@ -538,6 +667,7 @@ class PlatformConfigService:
         self._audit("access_grant", entity, "upsert", actor_id, before, correlation_id)
         return entity
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def set_access_grant_status(
         self, grant_id: str, status: str, *, actor_id: str, correlation_id: str = ""
     ) -> dict[str, Any]:
@@ -549,6 +679,7 @@ class PlatformConfigService:
         self._audit("access_grant", entity, status, actor_id, before, correlation_id)
         return entity
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def import_topology_yaml(
         self,
         *,
@@ -573,7 +704,12 @@ class PlatformConfigService:
         )
 
     def public_snapshot(self) -> dict[str, Any]:
-        return self.snapshot_builder.build_public_snapshot()
+        return {
+            **self.snapshot_builder.build_public_snapshot(),
+            "governed_runtime": RuntimeGenerationRepository(
+                self.repository.database
+            ).public_status(),
+        }
 
     def runtime_snapshot(self) -> RuntimeTopologySnapshot:
         return self.snapshot_builder.build_runtime_snapshot(resolve_secrets=True)
@@ -597,11 +733,21 @@ class PlatformConfigService:
             correlation_id=correlation_id,
         )
 
-    def _secret_provider(self) -> EncryptedDbSecretProvider:
-        return EncryptedDbSecretProvider(self.repository)
+    def _secret_provider(self) -> SecretProviderPort:
+        return self.secret_provider
 
     def resolve_secret(self, ref: str) -> str:
         return self._secret_provider().resolve(ref)
+
+    def _require_available_platform_secret(self, ref: str) -> None:
+        secret = self.repository.get_platform_secret_by_ref(ref)
+        if not secret or not secret.get("configured"):
+            from .validation import PlatformConfigValidationError
+
+            raise PlatformConfigValidationError(
+                f"Platform secret is unavailable: {ref}",
+                safe_message="所选凭据不存在、已禁用或没有活动版本",
+            )
 
     def _public_secret(self, secret: dict[str, Any]) -> dict[str, Any]:
         return {

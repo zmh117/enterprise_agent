@@ -191,7 +191,7 @@ class AuthorizationCenterRepository:
         bindings: list[dict[str, str]],
     ) -> dict[str, Any]:
         timestamp = now_iso()
-        with self.database.transaction():
+        with self.database.unit_of_work():
             rows = self.database.execute(
                 """
                 update rbac_role
@@ -286,7 +286,7 @@ class AuthorizationCenterRepository:
         applications: list[dict[str, Any]],
     ) -> dict[str, Any]:
         timestamp = now_iso()
-        with self.database.transaction():
+        with self.database.unit_of_work():
             rows = self.database.execute(
                 """
                 update rbac_role
@@ -434,7 +434,8 @@ class AuthorizationCenterRepository:
             ]
             row["scopes"] = self.database.execute(
                 """
-                select s.scope_key, e.code as environment_code,
+                select s.id, s.scope_key, s.environment_id, s.base_id,
+                       s.workshop_id, e.code as environment_code,
                        b.code as base_code, w.code as workshop_code
                   from rbac_role_application_scope s
                   join platform_environment e on e.id = s.environment_id

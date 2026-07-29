@@ -11,6 +11,9 @@ from app.modules.business_application.application.ports import (
     IdentitySubjectReader,
     WorkflowPublicationReader,
 )
+from app.modules.business_application.application.publication_bindings import (
+    ApplicationPublicationBindingService,
+)
 from app.modules.business_application.domain.policies import (
     canonical_json,
     normalize_routing_key,
@@ -35,6 +38,7 @@ from app.modules.business_application.domain.runtime import (
 )
 from app.modules.business_application.infrastructure import BusinessApplicationRepository
 from app.modules.identity.application.authorization import AuthorizationEvaluator
+from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import NonRetryableExecutionError, NotFound
 
 SCHEMA_VERSION = 1
@@ -52,6 +56,9 @@ class BusinessApplicationService:
         identity_reader: IdentitySubjectReader,
         capability_reader: CapabilityCatalogReader,
         runtime_evaluator: RuntimeReadinessEvaluator | None = None,
+        publication_binding_service: (
+            ApplicationPublicationBindingService | None
+        ) = None,
     ) -> None:
         self.repository = repository
         self.authorization = authorization
@@ -64,6 +71,12 @@ class BusinessApplicationService:
         self.runtime_evaluator = runtime_evaluator or RuntimeReadinessEvaluator(
             data_plane_enabled=False,
             runtime_environment="local",
+        )
+        self.publication_binding_service = (
+            publication_binding_service
+            or ApplicationPublicationBindingService(
+                repository.database
+            )
         )
 
     def list_applications(
@@ -97,6 +110,7 @@ class BusinessApplicationService:
         self._require(actor_id, code, "read")
         return self._detail(application)
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def create(
         self,
         *,
@@ -122,6 +136,7 @@ class BusinessApplicationService:
         self._audit("created", actor_id, application)
         return self._detail(application)
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def update_metadata(
         self,
         *,
@@ -152,6 +167,7 @@ class BusinessApplicationService:
         self._audit(event, actor_id, application)
         return self._detail(application)
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def save_draft(
         self,
         *,
@@ -206,6 +222,7 @@ class BusinessApplicationService:
         self._audit("draft_saved", actor_id, application, revision=revision)
         return revision
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def validate(
         self,
         *,
@@ -233,12 +250,14 @@ class BusinessApplicationService:
         self._audit("validated", actor_id, application, revision=result)
         return result
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def publish(
         self,
         *,
         actor_id: str,
         code: str,
         revision_id: str,
+        handler_bindings: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         normalized_code = validate_code(code)
         self._require(actor_id, normalized_code, "publish")
@@ -264,18 +283,44 @@ class BusinessApplicationService:
                 error_code="validation_failed",
                 field_errors=errors,
             )
+        prepared_bindings = self.publication_binding_service.prepare(
+            application_id=str(application["id"]),
+            agent_publication_id=str(
+                revision["agent_publication_id"]
+            ),
+            capabilities=revision["capabilities"],
+            raw_bindings=handler_bindings or [],
+        )
         snapshot = self._snapshot(application, revision, components)
+        if prepared_bindings:
+            snapshot["handler_bindings"] = (
+                self.publication_binding_service.snapshot(
+                    prepared_bindings
+                )
+            )
+        publication_hash = snapshot_hash(snapshot)
         publication = self.repository.create_publication(
             application_id=str(application["id"]),
             revision_id=str(revision["id"]),
             revision=int(revision["revision"]),
             snapshot=snapshot,
-            config_hash=snapshot_hash(snapshot),
+            config_hash=publication_hash,
             actor_id=actor_id,
+        )
+        if str(publication["config_hash"]) != publication_hash:
+            raise NonRetryableExecutionError(
+                "Existing Business Application publication binding differs",
+                safe_message="该修订版本已使用不同的 Handler 绑定发布",
+                error_code="publication_binding_conflict",
+            )
+        self.publication_binding_service.persist(
+            application_publication_id=str(publication["id"]),
+            bindings=prepared_bindings,
         )
         self._audit("published", actor_id, application, publication=publication)
         return publication
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def activate(
         self,
         *,
@@ -355,6 +400,7 @@ class BusinessApplicationService:
         )
         return {**deployment, **readiness.to_dict()}
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def deactivate(
         self,
         *,
@@ -487,6 +533,45 @@ class BusinessApplicationService:
                     "",
                 ),
             )
+            internal_definition = next(
+                (
+                    definition
+                    for definition in (
+                        self.publication_binding_service.registry.definitions()
+                    )
+                    if capability_code
+                    in definition.required_permissions
+                    and definition.visibility
+                    == "internal_diagnostic"
+                ),
+                None,
+            )
+            if internal_definition is not None and agent is not None:
+                classification = self.repository.database.execute_one(
+                    """
+                    select d.classification
+                      from agent_publication p
+                      join agent_definition d on d.id = p.agent_id
+                     where p.id = ?
+                    """,
+                    (agent.id,),
+                )
+                if (
+                    classification is None
+                    or classification["classification"]
+                    != "internal_diagnostic"
+                ):
+                    errors.append(
+                        {
+                            "field": (
+                                f"capabilities.{index}."
+                                "capability_code"
+                            ),
+                            "message": (
+                                "内部诊断能力只能绑定到内部诊断 Agent"
+                            ),
+                        }
+                    )
             if (
                 reference is not None
                 and agent is not None

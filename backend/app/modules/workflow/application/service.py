@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 from app.modules.permission.application.permission_service import PermissionService
+from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import PermissionDenied
 
 from app.modules.platform_config.application.validation import normalize_json_object, validate_code
@@ -43,6 +44,7 @@ class WorkflowService:
             include_disabled=include_disabled,
         )
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def upsert_template(self, payload: dict[str, Any], *, actor_id: str) -> dict[str, Any]:
         self.require_admin(actor_id)
         code = validate_code(str(payload.get("code") or ""))
@@ -64,6 +66,7 @@ class WorkflowService:
         self._validate_template_graph(code)
         return entity
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def set_template_status(self, code: str, status: str, *, actor_id: str) -> dict[str, Any]:
         self.require_admin(actor_id)
         return self.repository.set_template_status(
@@ -71,6 +74,7 @@ class WorkflowService:
             validate_workflow_status(status).value,
         )
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def upsert_node(
         self, template_code: str, payload: dict[str, Any], *, actor_id: str
     ) -> dict[str, Any]:
@@ -83,6 +87,7 @@ class WorkflowService:
     def list_nodes(self, template_code: str) -> list[dict[str, Any]]:
         return self.repository.list_nodes(validate_code(template_code))
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def upsert_edge(
         self, template_code: str, payload: dict[str, Any], *, actor_id: str
     ) -> dict[str, Any]:
@@ -121,6 +126,7 @@ class WorkflowService:
     def list_edges(self, template_code: str) -> list[dict[str, Any]]:
         return self.repository.list_edges(validate_code(template_code))
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def publish(self, template_code: str, *, actor_id: str) -> dict[str, Any]:
         self.require_admin(actor_id)
         template_code = validate_code(template_code)

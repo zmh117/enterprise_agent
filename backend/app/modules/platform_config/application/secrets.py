@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import os
 from typing import Protocol
 
@@ -32,7 +33,9 @@ class SecretProviderPort(Protocol):
 
 
 class EncryptedDbSecretProvider:
-    algorithm = "AES-256-GCM"
+    algorithm = "AES-256-GCM-AAD-V1"
+    legacy_algorithm = "AES-256-GCM"
+    max_secret_bytes = 65_536
 
     def __init__(
         self,
@@ -42,7 +45,7 @@ class EncryptedDbSecretProvider:
     ) -> None:
         self.repository = repository
         self.master_key = _normalize_master_key(
-            master_key if master_key is not None else os.getenv("APP_CONFIG_MASTER_KEY", "")
+            master_key if master_key is not None else ""
         )
         self.key_id = hashlib.sha256(self.master_key).hexdigest()[:16]
 
@@ -68,6 +71,9 @@ class EncryptedDbSecretProvider:
         return self._decrypt(
             ciphertext=str(version["ciphertext"]),
             nonce=str(version["nonce"]),
+            algorithm=str(version["algorithm"]),
+            secret_id=str(secret["id"]),
+            version=int(version["version"]),
         )
 
     def create_secret(
@@ -82,9 +88,18 @@ class EncryptedDbSecretProvider:
         code = validate_code(code)
         self._require_value(value)
         ref = f"secret://platform/{code}"
+        metadata = metadata or {}
+        self._require_safe_metadata(
+            value=value,
+            purpose=purpose,
+            metadata=metadata,
+        )
         existing = self.repository.get_platform_secret_by_code(code)
         if existing:
-            return self.rotate_secret(code=code, value=value, actor_id=actor_id)
+            raise PlatformConfigValidationError(
+                f"Platform secret already exists: {code}",
+                safe_message="凭据已存在，请使用轮换操作",
+            )
         secret = self.repository.upsert_platform_secret(
             code=code,
             provider="encrypted_db",
@@ -93,24 +108,26 @@ class EncryptedDbSecretProvider:
             status="enabled",
             active_version=0,
             masked_summary=mask_secret(value),
-            metadata=metadata or {},
+            metadata=metadata,
         )
-        encrypted = self._encrypt(value)
-        self.repository.insert_secret_version(
+        encrypted = self._encrypt(
+            value,
             secret_id=str(secret["id"]),
             version=1,
-            ciphertext=encrypted["ciphertext"],
-            nonce=encrypted["nonce"],
-            key_id=self.key_id,
-            algorithm=self.algorithm,
-            status="active",
-            created_by=actor_id,
         )
-        return self.repository.set_secret_active_version(
+        self._insert_version(
+            secret_id=str(secret["id"]),
+            version=1,
+            encrypted=encrypted,
+            actor_id=actor_id,
+        )
+        activated = self.repository.set_secret_active_version(
             secret_id=str(secret["id"]),
             active_version=1,
             masked_summary=mask_secret(value),
         )
+        self._notify_change(activated, action="create")
+        return activated
 
     def rotate_secret(self, *, code: str, value: str, actor_id: str = "") -> dict[str, object]:
         code = validate_code(code)
@@ -119,43 +136,130 @@ class EncryptedDbSecretProvider:
         if not secret:
             raise NotFound(f"Platform secret not found: {code}")
         next_version = int(secret.get("active_version") or 0) + 1
-        encrypted = self._encrypt(value)
-        self.repository.insert_secret_version(
+        encrypted = self._encrypt(
+            value,
             secret_id=str(secret["id"]),
             version=next_version,
-            ciphertext=encrypted["ciphertext"],
-            nonce=encrypted["nonce"],
-            key_id=self.key_id,
-            algorithm=self.algorithm,
-            status="active",
-            created_by=actor_id,
         )
-        return self.repository.set_secret_active_version(
+        self._insert_version(
+            secret_id=str(secret["id"]),
+            version=next_version,
+            encrypted=encrypted,
+            actor_id=actor_id,
+        )
+        activated = self.repository.set_secret_active_version(
             secret_id=str(secret["id"]),
             active_version=next_version,
             masked_summary=mask_secret(value),
         )
+        self._notify_change(activated, action="rotate")
+        return activated
 
     def disable_secret(self, *, code: str, actor_id: str = "") -> dict[str, object]:
         del actor_id
-        return self.repository.set_platform_secret_status(validate_code(code), "disabled")
+        disabled = self.repository.set_platform_secret_status(
+            validate_code(code),
+            "disabled",
+        )
+        self._notify_change(disabled, action="disable")
+        return disabled
 
-    def _encrypt(self, value: str) -> dict[str, str]:
-        nonce = os.urandom(12)
-        ciphertext = AESGCM(self.master_key).encrypt(nonce, value.encode("utf-8"), None)
-        return {
-            "ciphertext": _b64(ciphertext),
-            "nonce": _b64(nonce),
-        }
+    def _notify_change(
+        self,
+        secret: dict[str, object],
+        *,
+        action: str,
+    ) -> None:
+        self.repository.insert_secret_change_event(
+            secret_id=str(secret["id"]),
+            secret_revision=int(secret["revision"]),
+            action=action,
+        )
 
-    def _decrypt(self, *, ciphertext: str, nonce: str) -> str:
+    def _insert_version(
+        self,
+        *,
+        secret_id: str,
+        version: int,
+        encrypted: dict[str, str],
+        actor_id: str,
+    ) -> None:
         try:
-            plaintext = AESGCM(self.master_key).decrypt(_unb64(nonce), _unb64(ciphertext), None)
-        except Exception as exc:
+            self.repository.insert_secret_version(
+                secret_id=secret_id,
+                version=version,
+                ciphertext=encrypted["ciphertext"],
+                nonce=encrypted["nonce"],
+                key_id=self.key_id,
+                algorithm=self.algorithm,
+                status="staged",
+                created_by=actor_id,
+            )
+        except Exception:
+            raise NonRetryableExecutionError(
+                "Platform secret persistence failed",
+                safe_message="平台凭据保存失败",
+            ) from None
+
+    def _encrypt(
+        self,
+        value: str,
+        *,
+        secret_id: str,
+        version: int,
+    ) -> dict[str, str]:
+        nonce = os.urandom(12)
+        plaintext = bytearray(value.encode("utf-8"))
+        try:
+            ciphertext = AESGCM(self.master_key).encrypt(
+                nonce,
+                plaintext,
+                _aad(secret_id=secret_id, version=version),
+            )
+            return {
+                "ciphertext": _b64(ciphertext),
+                "nonce": _b64(nonce),
+            }
+        finally:
+            _zero(plaintext)
+
+    def _decrypt(
+        self,
+        *,
+        ciphertext: str,
+        nonce: str,
+        algorithm: str,
+        secret_id: str,
+        version: int,
+    ) -> str:
+        plaintext: bytearray | None = None
+        aad = (
+            _aad(secret_id=secret_id, version=version)
+            if algorithm == self.algorithm
+            else None
+        )
+        if algorithm not in {self.algorithm, self.legacy_algorithm}:
+            raise NonRetryableExecutionError(
+                "Unsupported platform secret encryption algorithm",
+                safe_message="平台凭据加密格式不受支持",
+            )
+        try:
+            plaintext = bytearray(
+                AESGCM(self.master_key).decrypt(
+                    _unb64(nonce),
+                    _unb64(ciphertext),
+                    aad,
+                )
+            )
+            return plaintext.decode("utf-8")
+        except Exception:
             raise NonRetryableExecutionError(
                 "Platform secret decrypt failed",
                 safe_message="平台凭据解密失败",
-            ) from exc
+            ) from None
+        finally:
+            if plaintext is not None:
+                _zero(plaintext)
         return plaintext.decode("utf-8")
 
     def _require_value(self, value: str) -> None:
@@ -163,23 +267,41 @@ class EncryptedDbSecretProvider:
             raise PlatformConfigValidationError(
                 "Secret value is required", safe_message="必须填写凭据值"
             )
+        if len(value.encode("utf-8")) > self.max_secret_bytes:
+            raise PlatformConfigValidationError(
+                "Secret value is too large",
+                safe_message="凭据值超过允许长度",
+            )
+
+    @staticmethod
+    def _require_safe_metadata(
+        *,
+        value: str,
+        purpose: str,
+        metadata: dict[str, object],
+    ) -> None:
+        metadata_text = json.dumps(
+            {"purpose": purpose, "metadata": metadata},
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        if value and value in metadata_text:
+            raise PlatformConfigValidationError(
+                "Secret plaintext must not be copied into metadata",
+                safe_message="凭据明文不得写入用途或元数据",
+            )
 
 
 def mask_secret(value: str) -> str:
-    text = str(value or "")
-    if not text:
-        return ""
-    if len(text) <= 8:
-        return "****"
-    return f"{text[:3]}****{text[-4:]}"
+    return "********" if str(value or "") else ""
 
 
 def _normalize_master_key(value: str) -> bytes:
     text = str(value or "").strip()
     if not text or text in {"change-me", "<your-master-key>"}:
         raise NonRetryableExecutionError(
-            "APP_CONFIG_MASTER_KEY is required for encrypted DB secrets",
-            safe_message="加密数据库凭据需要配置 APP_CONFIG_MASTER_KEY",
+            "Master Key file is required for encrypted DB secrets",
+            safe_message="加密数据库凭据需要配置 Master Key 文件",
         )
     for candidate in (text, text + "=" * (-len(text) % 4)):
         try:
@@ -198,3 +320,12 @@ def _b64(value: bytes) -> str:
 def _unb64(value: str) -> bytes:
     padded = value + "=" * (-len(value) % 4)
     return base64.urlsafe_b64decode(padded.encode("ascii"))
+
+
+def _aad(*, secret_id: str, version: int) -> bytes:
+    return f"platform-secret|v1|{secret_id}|{version}".encode("utf-8")
+
+
+def _zero(value: bytearray) -> None:
+    for index in range(len(value)):
+        value[index] = 0

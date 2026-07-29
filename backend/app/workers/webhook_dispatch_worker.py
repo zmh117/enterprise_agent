@@ -20,7 +20,6 @@ def main() -> None:
     settings = load_settings()
     container = build_worker_container(
         settings,
-        migrate=settings.app_startup_migrate,
         seed=settings.seed_local_config,
         service_name="webhook-worker",
     )

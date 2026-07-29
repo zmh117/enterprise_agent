@@ -8,6 +8,7 @@ from urllib.parse import quote, unquote, urlparse
 from urllib.request import Request, urlopen
 
 from app.shared.config import QueueSettings
+from app.shared.database import assert_external_io_allowed
 
 
 class RabbitMQQueueStatusAdapter:
@@ -18,6 +19,10 @@ class RabbitMQQueueStatusAdapter:
         self.queue_settings = queue_settings
 
     def collect(self) -> dict[str, Any]:
+        # Keep the programming error outside the availability fallback below:
+        # a transaction boundary violation must never be reported as a broker
+        # outage.
+        assert_external_io_allowed("rabbitmq.management_status")
         collected_at = datetime.now(timezone.utc).isoformat()
         try:
             items = [self._status(item) for item in self._allowlist()]
@@ -84,24 +89,6 @@ class RabbitMQQueueStatusAdapter:
                 "name": q.job_queue,
                 "purpose": "Agent jobs",
                 "retry_of": None,
-                "dead_letter_of": None,
-            },
-            {
-                "name": q.retry_queue,
-                "purpose": "Agent retry delay",
-                "retry_of": q.job_queue,
-                "dead_letter_of": None,
-            },
-            {
-                "name": q.dead_queue,
-                "purpose": "Agent dead letters",
-                "retry_of": None,
-                "dead_letter_of": q.job_queue,
-            },
-            {
-                "name": q.legacy_retry_queue,
-                "purpose": "Legacy retry compatibility",
-                "retry_of": q.job_queue,
                 "dead_letter_of": None,
             },
             {

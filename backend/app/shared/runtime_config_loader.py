@@ -10,24 +10,41 @@ from app.modules.platform_config.infrastructure import PlatformConfigRepository
 from app.shared.config import Settings, synchronize_feature_configuration
 from app.shared.database import Database, default_migrations_dir
 from app.shared.feature_configuration import apply_runtime_feature_policies
+from app.shared.migrations import SchemaHeadError, SchemaHeadValidator
+from app.shared.master_key import load_master_key_settings
 
 
 def load_settings_with_db_overlay(
     settings: Settings,
     *,
     service_name: str,
-    migrate: bool = True,
+    database: Database | None = None,
 ) -> Settings:
+    settings = load_master_key_settings(settings)
     settings = synchronize_feature_configuration(settings)
+    runtime_database = database or Database(settings.database_dsn)
+    owns_database = database is None
     try:
-        database = Database(settings.database_dsn)
+        SchemaHeadValidator(
+            runtime_database,
+            default_migrations_dir(),
+        ).require_current()
         try:
-            if migrate:
-                database.run_migrations(default_migrations_dir())
-            return apply_runtime_config_overlay(settings, database, service_name=service_name)
+            return apply_runtime_config_overlay(
+                settings,
+                runtime_database,
+                service_name=service_name,
+            )
         finally:
-            database.close()
+            if owns_database:
+                runtime_database.close()
+    except SchemaHeadError:
+        if owns_database:
+            runtime_database.close()
+        raise
     except Exception as exc:
+        if owns_database:
+            runtime_database.close()
         return replace(
             settings,
             runtime_config_source="env-fallback",
@@ -48,7 +65,10 @@ def apply_runtime_config_overlay(
     snapshot = RuntimeConfigSnapshotBuilder(repository).build_snapshot(service_name=service_name)
     effective = snapshot["effective"]
     errors = list(snapshot.get("errors") or [])
-    resolver = DbBackedSecretResolver(repository, master_key=_bootstrap_master_key())
+    resolver = DbBackedSecretResolver(
+        repository,
+        master_key=settings.app_config_master_key,
+    )
 
     def runtime_value(key: str) -> Any | None:
         item = effective.get(key) or {}
@@ -84,10 +104,6 @@ def apply_runtime_config_overlay(
     updated = replace(
         settings,
         internal_api_base_url=_str(runtime_value("INTERNAL_API_BASE_URL"), settings.internal_api_base_url),
-        internal_api_auth_token=_str(
-            runtime_value("INTERNAL_API_AUTH_TOKEN"),
-            settings.internal_api_auth_token,
-        ),
         internal_api_timeout_seconds=_int(
             runtime_value("INTERNAL_API_TIMEOUT_SECONDS"),
             settings.internal_api_timeout_seconds,
@@ -202,6 +218,26 @@ def apply_runtime_config_overlay(
                 runtime_value("AGENT_RETRY_DELAY_SECONDS"),
                 settings.queue.retry_delay_seconds,
             ),
+            dispatch_outbox_max_attempts=_int(
+                runtime_value("JOB_DISPATCH_OUTBOX_MAX_ATTEMPTS"),
+                settings.queue.dispatch_outbox_max_attempts,
+            ),
+            dispatch_outbox_max_replays=_int(
+                runtime_value("JOB_DISPATCH_OUTBOX_MAX_REPLAYS"),
+                settings.queue.dispatch_outbox_max_replays,
+            ),
+            dispatch_outbox_retry_base_seconds=_int(
+                runtime_value("JOB_DISPATCH_OUTBOX_RETRY_BASE_SECONDS"),
+                settings.queue.dispatch_outbox_retry_base_seconds,
+            ),
+            dispatch_outbox_claim_timeout_seconds=_int(
+                runtime_value("JOB_DISPATCH_OUTBOX_CLAIM_TIMEOUT_SECONDS"),
+                settings.queue.dispatch_outbox_claim_timeout_seconds,
+            ),
+            dispatch_outbox_scan_seconds=_int(
+                runtime_value("JOB_DISPATCH_OUTBOX_SCAN_SECONDS"),
+                settings.queue.dispatch_outbox_scan_seconds,
+            ),
             consumer_heartbeat_seconds=_int(
                 runtime_value("RABBITMQ_CONSUMER_HEARTBEAT_SECONDS"),
                 settings.queue.consumer_heartbeat_seconds,
@@ -241,10 +277,6 @@ def apply_runtime_config_overlay(
             max_summary_chars=_int(
                 runtime_value("WEBHOOK_MAX_SUMMARY_CHARS"),
                 settings.webhooks.max_summary_chars,
-            ),
-            default_hmac_window_seconds=_int(
-                runtime_value("WEBHOOK_HMAC_WINDOW_SECONDS"),
-                settings.webhooks.default_hmac_window_seconds,
             ),
             event_retention_days=_int(
                 runtime_value("WEBHOOK_EVENT_RETENTION_DAYS"),
@@ -297,12 +329,6 @@ def apply_runtime_config_overlay(
         runtime_config_degraded=bool(errors),
         runtime_config_errors=tuple(errors),
     )
-
-
-def _bootstrap_master_key() -> str:
-    import os
-
-    return os.getenv("APP_CONFIG_MASTER_KEY", "")
 
 
 def _str(value: Any | None, default: str) -> str:

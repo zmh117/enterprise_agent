@@ -10,6 +10,7 @@ from typing import Any, Protocol
 from urllib.request import Request, urlopen
 
 from app.modules.audit.application.summaries import mask_sensitive
+from app.shared.database import assert_external_io_allowed
 from app.shared.exceptions import (
     NonRetryableExecutionError,
     RetryableExecutionError,
@@ -565,6 +566,7 @@ class HttpInternalApiClient:
         return self._post("/tools/redis/scan", payload, context)
 
     def _post(self, path: str, payload: dict[str, Any], context: ToolRequestContext) -> ToolResult:
+        assert_external_io_allowed("internal_api.http")
         request = Request(
             f"{self.base_url}{path}",
             data=json.dumps(payload).encode("utf-8"),

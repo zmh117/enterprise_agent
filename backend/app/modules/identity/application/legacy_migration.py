@@ -72,7 +72,7 @@ class LegacyIdentityMigrationService:
                 continue
             tenant_code, user_id = next(iter(unique))
             if apply:
-                with database.transaction():
+                with database.unit_of_work():
                     self._copy_policies(subject_code, user_id)
                     self._copy_platform_grants(subject_code, user_id)
                     self.repository.record_migration(

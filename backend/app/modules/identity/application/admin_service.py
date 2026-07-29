@@ -7,6 +7,7 @@ from app.modules.identity.application.authorization import AuthorizationEvaluato
 from app.modules.identity.application.identity_service import IdentityService
 from app.modules.identity.application.passwords import PasswordService
 from app.modules.identity.infrastructure import IdentityRepository
+from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import NonRetryableExecutionError
 
 
@@ -66,7 +67,7 @@ class IdentityAdminService:
                     {"field": "username", "message": "用户名已被使用"}
                 ],
             )
-        with self.repository.database.transaction():
+        with self.repository.database.unit_of_work():
             user = self.repository.create_user(
                 username=normalized_username,
                 display_name=normalized_display_name,
@@ -105,35 +106,107 @@ class IdentityAdminService:
             resource_code=user_id,
             action="manage",
         )
-        with self.repository.database.transaction():
-            before = self.repository.get_user(user_id)
-            user = self.repository.update_user(
-                user_id,
-                expected_revision=expected_revision,
-                display_name=display_name.strip(),
-                email=email.strip(),
-                status=status,
-            )
-            if status != "enabled":
-                self.repository.revoke_user_sessions(user_id)
-            self.audit_service.record(
-                "admin.user.updated",
-                status="SUCCEEDED",
-                summary="Internal user updated",
-                actor_id=actor_id,
-                payload={
-                    "user_id": user_id,
-                    "before": {
-                        "display_name": before["display_name"],
-                        "email": before["email"],
-                        "status": before["status"],
-                        "revision": before["revision"],
+        try:
+            with self.repository.database.unit_of_work():
+                if status != "enabled":
+                    self.repository.lock_platform_admin_invariant()
+                before = self.repository.get_user(user_id)
+                reduces_verified_admins = bool(
+                    status != "enabled"
+                    and str(before["status"]) == "enabled"
+                    and self.repository.is_verified_human_platform_admin(user_id)
+                )
+                user = self.repository.update_user(
+                    user_id,
+                    expected_revision=expected_revision,
+                    display_name=display_name.strip(),
+                    email=email.strip(),
+                    status=status,
+                )
+                if reduces_verified_admins:
+                    self.repository.require_verified_human_platform_admins()
+                if status != "enabled":
+                    self.repository.revoke_user_sessions(user_id)
+                self.audit_service.record(
+                    "admin.user.updated",
+                    status="SUCCEEDED",
+                    summary="Internal user updated",
+                    actor_id=actor_id,
+                    payload={
+                        "user_id": user_id,
+                        "before": {
+                            "display_name": before["display_name"],
+                            "email": before["email"],
+                            "status": before["status"],
+                            "revision": before["revision"],
+                        },
+                        "after": user,
                     },
-                    "after": user,
-                },
+                )
+        except NonRetryableExecutionError as exc:
+            self._record_platform_admin_invariant_denied(
+                exc,
+                actor_id=actor_id,
+                operation="user.disable",
+                target_id=user_id,
             )
+            raise
         return user
 
+    def delete_user(
+        self,
+        *,
+        actor_id: str,
+        user_id: str,
+        expected_revision: int,
+        confirmed: bool,
+    ) -> dict[str, Any]:
+        self.authorization.require(
+            user_id=actor_id,
+            resource_type="user",
+            resource_code=user_id,
+            action="manage",
+        )
+        if not confirmed:
+            raise NonRetryableExecutionError(
+                "User deletion requires confirmation",
+                safe_message="删除用户前需要二次确认",
+                error_code="confirmation_required",
+            )
+        try:
+            with self.repository.database.unit_of_work():
+                self.repository.lock_platform_admin_invariant()
+                reduces_verified_admins = (
+                    self.repository.is_verified_human_platform_admin(user_id)
+                )
+                deleted = self.repository.delete_user(
+                    user_id,
+                    expected_revision=expected_revision,
+                )
+                if reduces_verified_admins:
+                    self.repository.require_verified_human_platform_admins()
+                self.audit_service.record(
+                    "admin.user.deleted",
+                    status="SUCCEEDED",
+                    summary="Internal user deleted",
+                    actor_id=actor_id,
+                    payload={
+                        "user_id": user_id,
+                        "username": deleted["username"],
+                        "account_type": deleted["account_type"],
+                    },
+                )
+        except NonRetryableExecutionError as exc:
+            self._record_platform_admin_invariant_denied(
+                exc,
+                actor_id=actor_id,
+                operation="user.delete",
+                target_id=user_id,
+            )
+            raise
+        return deleted
+
+    @operation_unit_of_work(lambda service: service.repository.database)
     def create_role(
         self, *, actor_id: str, code: str, name: str, description: str
     ) -> dict[str, Any]:
@@ -155,6 +228,7 @@ class IdentityAdminService:
         )
         return role
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def update_role(
         self,
         *,
@@ -209,32 +283,70 @@ class IdentityAdminService:
             resource_code=role_id,
             action="manage",
         )
-        if enabled:
-            membership = self.repository.assign_role(
-                user_id=user_id,
-                role_id=role_id,
-                expected_revision=expected_revision,
+        try:
+            with self.repository.database.unit_of_work():
+                role = self.repository.get_role(role_id)
+                reduces_verified_admins = False
+                if not enabled and str(role["code"]) == "platform-admin":
+                    self.repository.lock_platform_admin_invariant()
+                    reduces_verified_admins = (
+                        self.repository.is_verified_human_platform_admin(user_id)
+                    )
+                if enabled:
+                    membership = self.repository.assign_role(
+                        user_id=user_id,
+                        role_id=role_id,
+                        expected_revision=expected_revision,
+                    )
+                else:
+                    membership = self.repository.remove_role(
+                        user_id=user_id,
+                        role_id=role_id,
+                        expected_revision=expected_revision,
+                    )
+                if reduces_verified_admins:
+                    self.repository.require_verified_human_platform_admins()
+                self.audit_service.record(
+                    "admin.membership.changed",
+                    status="SUCCEEDED",
+                    summary="User role membership changed",
+                    actor_id=actor_id,
+                    payload={
+                        "user_id": user_id,
+                        "role_id": role_id,
+                        "expected_revision": expected_revision,
+                        "after": membership,
+                    },
+                )
+        except NonRetryableExecutionError as exc:
+            self._record_platform_admin_invariant_denied(
+                exc,
+                actor_id=actor_id,
+                operation="platform_admin_membership.disable",
+                target_id=user_id,
             )
-        else:
-            membership = self.repository.remove_role(
-                user_id=user_id,
-                role_id=role_id,
-                expected_revision=expected_revision,
-            )
-        self.audit_service.record(
-            "admin.membership.changed",
-            status="SUCCEEDED",
-            summary="User role membership changed",
-            actor_id=actor_id,
-            payload={
-                "user_id": user_id,
-                "role_id": role_id,
-                "expected_revision": expected_revision,
-                "after": membership,
-            },
-        )
+            raise
         return membership
 
+    def _record_platform_admin_invariant_denied(
+        self,
+        exc: NonRetryableExecutionError,
+        *,
+        actor_id: str,
+        operation: str,
+        target_id: str,
+    ) -> None:
+        if exc.error_code != "platform_admin_invariant":
+            return
+        self.audit_service.record(
+            "platform_admin_invariant_denied",
+            status="DENIED",
+            summary="Platform administrator invariant denied mutation",
+            actor_id=actor_id,
+            payload={"operation": operation, "target_id": target_id},
+        )
+
+    @operation_unit_of_work(lambda service: service.repository.database)
     def upsert_policy(
         self,
         *,

@@ -31,14 +31,14 @@ INSERT INTO integration_connector
 VALUES
   ('connector-debug-api', 'debug_api', 'debug-api', '', 1, '{}', 1, 0, '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('connector-dingtalk-stream-default', 'dingtalk_enterprise_stream', 'dingtalk-stream-default', '', 1,
-   '{"client_id_ref":"env:DINGTALK_CLIENT_ID","tenant_code":"default"}',
-   1, 0, 'env:DINGTALK_CLIENT_SECRET', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+   '{"client_id_ref":"secret://platform/dingtalk_client_id","tenant_code":"default"}',
+   1, 0, 'secret://platform/dingtalk_client_secret', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('connector-dingtalk-enterprise-default', 'dingtalk_enterprise_robot', 'dingtalk-enterprise-default', '', 1,
-   '{"client_id_ref":"env:DINGTALK_CLIENT_ID","default_open_conversation_id":"test-open-conversation","default_robot_code":"test-robot-code"}',
-   0, 1, 'env:DINGTALK_CLIENT_SECRET', '', 'api.dingtalk.com,oapi.dingtalk.com', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+   '{"client_id_ref":"secret://platform/dingtalk_client_id","default_open_conversation_id":"test-open-conversation","default_robot_code":"test-robot-code"}',
+   0, 1, 'secret://platform/dingtalk_client_secret', '', 'api.dingtalk.com,oapi.dingtalk.com', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('connector-dingtalk-webhook-default', 'dingtalk_webhook_robot', 'dingtalk-webhook-default', '', 1, '{}',
-   0, 1, 'env:DINGTALK_WEBHOOK_ROBOT_SECRET', 'env:DINGTALK_WEBHOOK_ROBOT_URL', 'oapi.dingtalk.com,api.dingtalk.com', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('connector-grafana-default', 'grafana_alert', 'grafana-default', '', 1, '{}', 1, 0, 'env:GRAFANA_WEBHOOK_TOKEN', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+   0, 1, 'secret://platform/dingtalk_webhook_robot_secret', 'secret://platform/dingtalk_webhook_robot_url', 'oapi.dingtalk.com,api.dingtalk.com', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('connector-grafana-default', 'grafana_alert', 'grafana-default', '', 1, '{}', 1, 0, 'secret://platform/grafana_webhook_token', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('connector-email-default', 'email', 'email-default', '', 1, '{}', 0, 1, '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('connector-webhook-default', 'webhook', 'webhook-default', '', 1, '{}', 0, 1, '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('connector-none', 'none', 'none', '', 1, '{}', 0, 1, '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -48,7 +48,7 @@ UPDATE integration_connector
 SET connector_type = 'grafana_alert',
     allow_ingress = 1,
     allow_delivery = 0,
-    secret_ref = 'env:GRAFANA_WEBHOOK_TOKEN',
+    secret_ref = 'secret://platform/grafana_webhook_token',
     updated_at = CURRENT_TIMESTAMP
 WHERE id = 'connector-grafana-default';
 
@@ -56,8 +56,8 @@ UPDATE integration_connector
 SET connector_type = 'dingtalk_enterprise_stream',
     allow_ingress = 1,
     allow_delivery = 0,
-    secret_ref = 'env:DINGTALK_CLIENT_SECRET',
-    metadata = '{"client_id_ref":"env:DINGTALK_CLIENT_ID","tenant_code":"default"}',
+    secret_ref = 'secret://platform/dingtalk_client_secret',
+    metadata = '{"client_id_ref":"secret://platform/dingtalk_client_id","tenant_code":"default"}',
     updated_at = CURRENT_TIMESTAMP
 WHERE id = 'connector-dingtalk-stream-default';
 
@@ -65,7 +65,7 @@ UPDATE integration_connector
 SET connector_type = 'dingtalk_enterprise_robot',
     allow_ingress = 0,
     allow_delivery = 1,
-    secret_ref = 'env:DINGTALK_CLIENT_SECRET',
+    secret_ref = 'secret://platform/dingtalk_client_secret',
     updated_at = CURRENT_TIMESTAMP
 WHERE id = 'connector-dingtalk-enterprise-default';
 
@@ -210,12 +210,12 @@ ON CONFLICT(id) DO NOTHING;
 
 INSERT INTO agent_definition
   (id, code, name, description, project_code, status, current_publication_id,
-   revision, created_by, created_at, updated_at)
+   classification, revision, created_by, created_at, updated_at)
 VALUES
   ('agent_default_diagnostic', 'default-diagnostic-agent', '默认诊断 Agent',
    'Enterprise internal read-only diagnostic Agent', 'default', 'enabled',
-   'agent_publication_default_v1', 1, 'user_local_admin', CURRENT_TIMESTAMP,
-   CURRENT_TIMESTAMP)
+   'agent_publication_default_v1', 'internal_diagnostic', 1,
+   'user_local_admin', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 
 INSERT INTO agent_revision
@@ -297,8 +297,8 @@ INSERT INTO webhook_trigger_revision
 VALUES
   ('webhook_trigger_revision_grafana_v1', 'webhook_trigger_grafana_default', 1,
    'published', 1,
-   '{"adapter":"grafana_alertmanager_v1","agent":{"code":"default-diagnostic-agent","publication_id":"agent_publication_default_v1"},"authentication":{"nonce_header":"x-webhook-nonce","secret_ref":"secret://connector/connector-grafana-default","signature_header":"x-webhook-signature","timestamp_header":"x-webhook-timestamp","type":"bearer_v1","window_seconds":300},"delivery":{"connector_id":"connector-dingtalk-webhook-default","options":{},"target":{"webhook_id":"grafana-alert"},"type":"dingtalk_webhook_robot"},"idempotency":{"cooldown_seconds":300},"limits":{"max_alerts":20,"max_in_flight":10,"requests_per_minute":60},"mapping":{"event_id_pointer":"","filters":[],"message_template":"Diagnose this firing alert: {summary}","status_pointer":"","variables":{"summary":"/commonAnnotations/summary"}},"routing":{"base":{"allowed_values":["guanlan","longhua","songshan"],"mode":"extract","pointer":"/commonLabels/ea_base","value":""},"environment":{"allowed_values":["prod","test"],"mode":"extract","pointer":"/commonLabels/ea_environment","value":""},"project_code":{"allowed_values":["default"],"mode":"extract","pointer":"/commonLabels/ea_project_code","value":""},"service":{"allowed_values":["mes-service","order-service"],"mode":"extract","pointer":"/commonLabels/ea_service","value":""},"workshop":{"allowed_values":["GL001","assembly","packing","smt"],"mode":"extract","pointer":"/commonLabels/ea_workshop","value":""}},"schema_version":1}',
-   'fda47d53486bb616baa4089590c5496461211a5e335dbe7eba5d5dbea69cb9bd',
+   '{"adapter":"grafana_alertmanager_v1","agent":{"code":"default-diagnostic-agent","publication_id":"agent_publication_default_v1"},"authentication":{"nonce_header":"x-webhook-nonce","secret_ref":"secret://platform/grafana_webhook_token","signature_header":"x-webhook-signature","timestamp_header":"x-webhook-timestamp","type":"bearer_v1","window_seconds":300},"delivery":{"connector_id":"connector-dingtalk-webhook-default","options":{},"target":{"webhook_id":"grafana-alert"},"type":"dingtalk_webhook_robot"},"idempotency":{"cooldown_seconds":300},"limits":{"max_alerts":20,"max_in_flight":10,"requests_per_minute":60},"mapping":{"event_id_pointer":"","filters":[],"message_template":"Diagnose this firing alert: {summary}","status_pointer":"","variables":{"summary":"/commonAnnotations/summary"}},"routing":{"base":{"allowed_values":["guanlan","longhua","songshan"],"mode":"extract","pointer":"/commonLabels/ea_base","value":""},"environment":{"allowed_values":["prod","test"],"mode":"extract","pointer":"/commonLabels/ea_environment","value":""},"project_code":{"allowed_values":["default"],"mode":"extract","pointer":"/commonLabels/ea_project_code","value":""},"service":{"allowed_values":["mes-service","order-service"],"mode":"extract","pointer":"/commonLabels/ea_service","value":""},"workshop":{"allowed_values":["GL001","assembly","packing","smt"],"mode":"extract","pointer":"/commonLabels/ea_workshop","value":""}},"schema_version":1}',
+   'fc5f064e955301b104fe7577f1a1c52c9656890e622de40514fa5fdc3d6313de',
    '{"valid":true,"errors":[]}', 'user_local_admin', CURRENT_TIMESTAMP,
    CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
@@ -310,8 +310,8 @@ INSERT INTO webhook_trigger_publication
 VALUES
   ('webhook_trigger_publication_grafana_v1', 'webhook_trigger_grafana_default',
    'webhook_trigger_revision_grafana_v1', 1, 1,
-   '{"adapter":"grafana_alertmanager_v1","agent":{"code":"default-diagnostic-agent","publication_id":"agent_publication_default_v1","revision":1,"config_hash":"acee515709597912f04ba4e181575c14314121f084dbe561e9e04599179df1b9","read_only_tools":["diagnose_loki_label_values","diagnose_loki_labels","diagnose_loki_probe","get_business_flow_context","get_er_context","get_schema_directory","query_database","query_loki","query_redis_get","query_redis_scan"]},"authentication":{"nonce_header":"x-webhook-nonce","secret_ref":"secret://connector/connector-grafana-default","signature_header":"x-webhook-signature","timestamp_header":"x-webhook-timestamp","type":"bearer_v1","window_seconds":300},"delivery":{"connector_id":"connector-dingtalk-webhook-default","options":{},"target":{"webhook_id":"grafana-alert"},"type":"dingtalk_webhook_robot"},"idempotency":{"cooldown_seconds":300},"limits":{"max_alerts":20,"max_in_flight":10,"requests_per_minute":60},"mapping":{"event_id_pointer":"","filters":[],"message_template":"Diagnose this firing alert: {summary}","status_pointer":"","variables":{"summary":"/commonAnnotations/summary"}},"routing":{"base":{"allowed_values":["guanlan","longhua","songshan"],"mode":"extract","pointer":"/commonLabels/ea_base","value":""},"environment":{"allowed_values":["prod","test"],"mode":"extract","pointer":"/commonLabels/ea_environment","value":""},"project_code":{"allowed_values":["default"],"mode":"extract","pointer":"/commonLabels/ea_project_code","value":""},"service":{"allowed_values":["mes-service","order-service"],"mode":"extract","pointer":"/commonLabels/ea_service","value":""},"workshop":{"allowed_values":["GL001","assembly","packing","smt"],"mode":"extract","pointer":"/commonLabels/ea_workshop","value":""}},"schema_version":1,"service_account_id":"user_webhook_grafana_default","source_connector_id":"connector-grafana-default"}',
-   'fda47d53486bb616baa4089590c5496461211a5e335dbe7eba5d5dbea69cb9bd',
+   '{"adapter":"grafana_alertmanager_v1","agent":{"code":"default-diagnostic-agent","publication_id":"agent_publication_default_v1","revision":1,"config_hash":"acee515709597912f04ba4e181575c14314121f084dbe561e9e04599179df1b9","read_only_tools":["diagnose_loki_label_values","diagnose_loki_labels","diagnose_loki_probe","get_business_flow_context","get_er_context","get_schema_directory","query_database","query_loki","query_redis_get","query_redis_scan"]},"authentication":{"nonce_header":"x-webhook-nonce","secret_ref":"secret://platform/grafana_webhook_token","signature_header":"x-webhook-signature","timestamp_header":"x-webhook-timestamp","type":"bearer_v1","window_seconds":300},"delivery":{"connector_id":"connector-dingtalk-webhook-default","options":{},"target":{"webhook_id":"grafana-alert"},"type":"dingtalk_webhook_robot"},"idempotency":{"cooldown_seconds":300},"limits":{"max_alerts":20,"max_in_flight":10,"requests_per_minute":60},"mapping":{"event_id_pointer":"","filters":[],"message_template":"Diagnose this firing alert: {summary}","status_pointer":"","variables":{"summary":"/commonAnnotations/summary"}},"routing":{"base":{"allowed_values":["guanlan","longhua","songshan"],"mode":"extract","pointer":"/commonLabels/ea_base","value":""},"environment":{"allowed_values":["prod","test"],"mode":"extract","pointer":"/commonLabels/ea_environment","value":""},"project_code":{"allowed_values":["default"],"mode":"extract","pointer":"/commonLabels/ea_project_code","value":""},"service":{"allowed_values":["mes-service","order-service"],"mode":"extract","pointer":"/commonLabels/ea_service","value":""},"workshop":{"allowed_values":["GL001","assembly","packing","smt"],"mode":"extract","pointer":"/commonLabels/ea_workshop","value":""}},"schema_version":1,"service_account_id":"user_webhook_grafana_default","source_connector_id":"connector-grafana-default"}',
+   'fc5f064e955301b104fe7577f1a1c52c9656890e622de40514fa5fdc3d6313de',
    'agent_publication_default_v1', 1,
    'acee515709597912f04ba4e181575c14314121f084dbe561e9e04599179df1b9',
    'active', 'user_local_admin', CURRENT_TIMESTAMP)
@@ -331,5 +331,5 @@ ON CONFLICT(id) DO NOTHING;
 INSERT INTO platform_secret_reference
   (id, code, provider, ref, purpose, status, metadata_json, revision, created_at, updated_at)
 VALUES
-  ('secret-example-order-db-password', 'secret_example_order_db_password', 'env', 'env:ORDER_DB_PASSWORD', 'example database password reference', 'disabled', '{}', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  ('secret-example-order-db-password', 'secret_example_order_db_password', 'secret', 'secret://platform/example_order_db_password', 'example database password reference', 'disabled', '{}', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;

@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from app.modules.delivery.domain import DeliveryEvent, DeliveryStatus
 from app.modules.job.domain.agent_job import AgentJob, AgentSession, MessageAttachment
 from app.modules.job.domain.execution_policy import JobExecutionPolicySnapshot
+from app.modules.job.domain.job_dispatch import JobDispatchEvent, JobDispatchStatus
 from app.modules.job.domain.job_status import JobStatus, can_transition
 from app.shared.database import Database
 from app.shared.exceptions import NotFound, NonRetryableExecutionError
+from app.shared.secret_redaction import (
+    redact_sensitive_text,
+    sanitize_for_persistence,
+)
 
 
 def now_iso() -> str:
@@ -44,10 +51,20 @@ class AgentRepository:
         external_identity_id: str = "",
         business_application_id: str = "",
         business_application_code: str = "",
+        application_publication_id: str = "",
+        execution_scope_hash: str = "",
+        isolation_key_version: int = 2,
+        history_read_only: bool = False,
         conversation_mode: str = "legacy",
         recent_message_limit: int | None = None,
         session_policy: dict[str, Any] | None = None,
     ) -> AgentSession:
+        if conversation_mode in {"application", "actor"}:
+            raise NonRetryableExecutionError(
+                "Legacy shared session mode is read-only",
+                safe_message="旧共享会话模式仅可查看历史，请改为按渠道会话",
+                error_code="session_mode_unsupported",
+            )
         session_id = new_id("session")
         timestamp = now_iso()
         source_channel = source_channel or source
@@ -63,9 +80,12 @@ class AgentRepository:
                source_channel, source_connector_id, external_conversation_id, requester_id,
                requester_display_name, routing_context_json, reply_route_json, created_at, updated_at,
                session_key, conversation_type, bot_identity, external_identity_id,
-               business_application_id, business_application_code, conversation_mode,
+               business_application_id, business_application_code,
+               application_publication_id, execution_scope_hash,
+               isolation_key_version, history_read_only, conversation_mode,
                recent_message_limit, session_policy_json)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?)
             on conflict(session_key) do nothing
             """,
             (
@@ -89,6 +109,10 @@ class AgentRepository:
                 external_identity_id or None,
                 business_application_id or None,
                 business_application_code,
+                application_publication_id or None,
+                execution_scope_hash or None,
+                isolation_key_version,
+                1 if history_read_only else 0,
                 conversation_mode,
                 recent_message_limit,
                 json.dumps(session_policy or {}, ensure_ascii=False),
@@ -102,7 +126,24 @@ class AgentRepository:
                 "Agent session could not be resolved",
                 safe_message="无法确定 Agent 会话",
             )
-        return self.get_session(str(row["id"]))
+        session = self.get_session(str(row["id"]))
+        if session.history_read_only:
+            raise NonRetryableExecutionError(
+                "Historical Agent session is read-only",
+                safe_message="该历史会话只读，不能继续创建任务",
+                error_code="session_history_read_only",
+            )
+        if application_publication_id and (
+            session.application_publication_id != application_publication_id
+            or session.execution_scope_hash != execution_scope_hash
+            or session.isolation_key_version != isolation_key_version
+        ):
+            raise NonRetryableExecutionError(
+                "Agent session isolation facts do not match",
+                safe_message="会话隔离上下文已变化，请创建新会话",
+                error_code="session_isolation_mismatch",
+            )
+        return session
 
     def create_job(
         self,
@@ -144,6 +185,32 @@ class AgentRepository:
         existing = self.get_job_by_idempotency_key(idempotency_key)
         if existing:
             return existing
+        session_row = self.database.execute_one(
+            """
+            select history_read_only, application_publication_id
+              from agent_session where id = ?
+            """,
+            (session_id,),
+        )
+        if session_row is None:
+            raise NotFound(f"Agent session not found: {session_id}")
+        if bool(session_row.get("history_read_only")):
+            raise NonRetryableExecutionError(
+                "Historical Agent session is read-only",
+                safe_message="该历史会话只读，不能继续创建任务",
+                error_code="session_history_read_only",
+            )
+        session_publication_id = str(
+            session_row.get("application_publication_id") or ""
+        )
+        if business_application_publication_id and (
+            session_publication_id != business_application_publication_id
+        ):
+            raise NonRetryableExecutionError(
+                "Job publication does not match its Agent session",
+                safe_message="会话发布版本已变化，请创建新会话",
+                error_code="session_isolation_mismatch",
+            )
         job_id = new_id("job")
         timestamp = now_iso()
         source_channel = source_channel or source
@@ -231,6 +298,596 @@ class AgentRepository:
             """,
             (max(int(tool_call_count), 0), int(exhausted), job_id),
         )
+
+    def create_execution_scope(
+        self,
+        *,
+        job_id: str,
+        runtime_authorization: dict[str, Any],
+    ) -> dict[str, Any]:
+        if int(runtime_authorization.get("schema_version") or 0) != 2:
+            raise NonRetryableExecutionError(
+                "Governed Job Execution Scope requires schema version 2",
+                safe_message="Job 执行范围版本无效",
+                error_code="job_execution_scope_invalid",
+            )
+        publication = runtime_authorization.get(
+            "application_publication"
+        )
+        requested_scope = runtime_authorization.get("requested_scope")
+        bindings = runtime_authorization.get("bindings")
+        if (
+            not isinstance(publication, dict)
+            or not isinstance(requested_scope, dict)
+            or not isinstance(bindings, list)
+        ):
+            raise NonRetryableExecutionError(
+                "Governed Job Execution Scope facts are incomplete",
+                safe_message="Job 执行范围事实不完整",
+                error_code="job_execution_scope_invalid",
+            )
+        existing = self.database.execute_one(
+            "select * from agent_job_execution_scope where job_id = ?",
+            (job_id,),
+        )
+        if existing is not None:
+            return {
+                **existing,
+                "snapshot": json.loads(
+                    str(existing["snapshot_json"])
+                ),
+            }
+        execution_scope_id = new_id("job_execution_scope")
+        snapshot = {
+            "job_id": job_id,
+            **runtime_authorization,
+        }
+        canonical = json.dumps(
+            snapshot,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        scope_hash = hashlib.sha256(
+            canonical.encode("utf-8")
+        ).hexdigest()
+        timestamp = now_iso()
+        self.database.execute(
+            """
+            insert into agent_job_execution_scope
+              (id, job_id, business_application_id,
+               application_publication_id, agent_publication_id,
+               environment_id, base_id, workshop_id, scope_hash,
+               schema_version, snapshot_json, created_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, 2, ?, ?)
+            """,
+            (
+                execution_scope_id,
+                job_id,
+                str(publication.get("application_id") or ""),
+                str(publication.get("id") or ""),
+                str(
+                    runtime_authorization.get(
+                        "agent_publication_id"
+                    )
+                    or ""
+                ),
+                str(requested_scope.get("environment_id") or ""),
+                str(requested_scope.get("base_id") or "") or None,
+                str(requested_scope.get("workshop_id") or "")
+                or None,
+                scope_hash,
+                canonical,
+                timestamp,
+            ),
+        )
+        for binding in bindings:
+            if not isinstance(binding, dict):
+                raise NonRetryableExecutionError(
+                    "Job Execution Handler binding is invalid",
+                    safe_message="Job Handler 绑定无效",
+                    error_code="job_execution_scope_invalid",
+                )
+            resources = binding.get("resource_revisions")
+            if not isinstance(resources, list):
+                raise NonRetryableExecutionError(
+                    "Job Execution resource bindings are invalid",
+                    safe_message="Job 资源绑定无效",
+                    error_code="job_execution_scope_invalid",
+                )
+            for resource in resources:
+                if not isinstance(resource, dict):
+                    raise NonRetryableExecutionError(
+                        "Job Execution resource binding is invalid",
+                        safe_message="Job 资源绑定无效",
+                        error_code="job_execution_scope_invalid",
+                    )
+                self.database.execute(
+                    """
+                    insert into agent_job_execution_binding
+                      (id, execution_scope_id, capability_code,
+                       handler_id, handler_version, resource_slot,
+                       resource_revision_id, constraints_json,
+                       binding_hash, created_at)
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        new_id("job_execution_binding"),
+                        execution_scope_id,
+                        str(binding.get("capability_code") or ""),
+                        str(binding.get("handler_id") or ""),
+                        str(binding.get("handler_version") or ""),
+                        str(resource.get("resource_slot") or ""),
+                        str(
+                            resource.get(
+                                "resource_revision_id"
+                            )
+                            or ""
+                        ),
+                        json.dumps(
+                            resource.get("constraints") or {},
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                            sort_keys=True,
+                        ),
+                        str(resource.get("binding_hash") or ""),
+                        timestamp,
+                    ),
+                )
+        changed = self.database.execute(
+            """
+            update agent_job
+               set execution_scope_id = ?, execution_scope_hash = ?
+             where id = ? and execution_scope_id is null
+            returning id
+            """,
+            (execution_scope_id, scope_hash, job_id),
+        )
+        if not changed:
+            raise NonRetryableExecutionError(
+                "Agent Job Execution Scope is already fixed",
+                safe_message="Job 执行范围已固化，不能替换",
+                error_code="job_execution_scope_immutable",
+            )
+        return {
+            "id": execution_scope_id,
+            "job_id": job_id,
+            "scope_hash": scope_hash,
+            "schema_version": 2,
+            "snapshot": snapshot,
+        }
+
+    def create_dispatch_event(
+        self,
+        *,
+        job_id: str,
+        job_idempotency_key: str,
+        correlation_id: str,
+        max_attempts: int = 8,
+        max_replay_count: int = 3,
+    ) -> JobDispatchEvent:
+        timestamp = now_iso()
+        event_id = new_id("job_dispatch")
+        self.database.execute(
+            """
+            insert into job_dispatch_outbox
+              (id, event_key, idempotency_key, job_id, correlation_id,
+               status, attempt_count, max_attempts, replay_count,
+               max_replay_count, next_attempt_at,
+               created_at, updated_at)
+            values (?, ?, ?, ?, ?, 'PENDING', 0, ?, 0, ?, ?, ?, ?)
+            on conflict(job_id) do nothing
+            """,
+            (
+                event_id,
+                f"job.dispatch:{job_id}",
+                f"job.dispatch:{job_idempotency_key}",
+                job_id,
+                correlation_id,
+                max(1, int(max_attempts)),
+                max(0, int(max_replay_count)),
+                timestamp,
+                timestamp,
+                timestamp,
+            ),
+        )
+        row = self.database.execute_one(
+            "select * from job_dispatch_outbox where job_id = ?",
+            (job_id,),
+        )
+        if row is None:
+            raise NonRetryableExecutionError(
+                "Job dispatch event could not be persisted",
+                safe_message="任务调度事件保存失败",
+                error_code="job_dispatch_persistence_failed",
+            )
+        return self._dispatch_event_from_row(row)
+
+    def get_dispatch_event_for_job(self, job_id: str) -> JobDispatchEvent | None:
+        row = self.database.execute_one(
+            "select * from job_dispatch_outbox where job_id = ?",
+            (job_id,),
+        )
+        return self._dispatch_event_from_row(row) if row else None
+
+    def get_dispatch_event(self, event_id: str) -> JobDispatchEvent:
+        row = self.database.execute_one(
+            "select * from job_dispatch_outbox where id = ?",
+            (event_id,),
+        )
+        if row is None:
+            raise NotFound(f"Job dispatch event not found: {event_id}")
+        return self._dispatch_event_from_row(row)
+
+    def claim_dispatch_event(
+        self,
+        *,
+        worker_id: str,
+        now: str | None = None,
+    ) -> JobDispatchEvent | None:
+        timestamp = now or now_iso()
+        with self.database.unit_of_work():
+            if self.database.engine == "postgres":
+                rows = self.database.execute(
+                    """
+                    with candidate as (
+                      select outbox.id
+                        from job_dispatch_outbox outbox
+                        join agent_job job on job.id = outbox.job_id
+                       where outbox.status in ('PENDING', 'RETRY_WAIT')
+                         and outbox.next_attempt_at <= ?
+                         and outbox.attempt_count < outbox.max_attempts
+                         and job.status in ('PENDING', 'RETRY_WAIT')
+                       order by outbox.next_attempt_at, outbox.created_at, outbox.id
+                       for update of outbox skip locked
+                       limit 1
+                    )
+                    update job_dispatch_outbox
+                       set status = 'RUNNING', claimed_by = ?, claimed_at = ?,
+                           attempt_count = attempt_count + 1, updated_at = ?
+                     where id = (select id from candidate)
+                    returning *
+                    """,
+                    (timestamp, worker_id, timestamp, timestamp),
+                )
+            else:
+                rows = self.database.execute(
+                    """
+                    update job_dispatch_outbox
+                       set status = 'RUNNING', claimed_by = ?, claimed_at = ?,
+                           attempt_count = attempt_count + 1, updated_at = ?
+                     where id = (
+                       select outbox.id
+                         from job_dispatch_outbox outbox
+                         join agent_job job on job.id = outbox.job_id
+                        where outbox.status in ('PENDING', 'RETRY_WAIT')
+                          and outbox.next_attempt_at <= ?
+                          and outbox.attempt_count < outbox.max_attempts
+                          and job.status in ('PENDING', 'RETRY_WAIT')
+                        order by outbox.next_attempt_at, outbox.created_at, outbox.id
+                        limit 1
+                     )
+                       and status in ('PENDING', 'RETRY_WAIT')
+                    returning *
+                    """,
+                    (worker_id, timestamp, timestamp, timestamp),
+                )
+        return self._dispatch_event_from_row(rows[0]) if rows else None
+
+    def mark_dispatch_published(self, *, event_id: str, worker_id: str) -> bool:
+        timestamp = now_iso()
+        with self.database.unit_of_work():
+            rows = self.database.execute(
+                """
+                update job_dispatch_outbox
+                   set status = 'PUBLISHED', published_at = ?, claimed_by = '',
+                       claimed_at = null, last_error_code = '',
+                       last_error_summary = '', updated_at = ?
+                 where id = ? and status = 'RUNNING' and claimed_by = ?
+                returning id
+                """,
+                (timestamp, timestamp, event_id, worker_id),
+            )
+        return bool(rows)
+
+    def mark_dispatch_failed(
+        self,
+        *,
+        event_id: str,
+        worker_id: str,
+        error_code: str,
+        error_summary: str,
+        retry_base_seconds: int,
+    ) -> JobDispatchEvent:
+        with self.database.unit_of_work():
+            current = self.database.execute_one(
+                """
+                select * from job_dispatch_outbox
+                 where id = ? and status = 'RUNNING' and claimed_by = ?
+                """,
+                (event_id, worker_id),
+            )
+            if current is None:
+                raise NonRetryableExecutionError(
+                    "Job dispatch claim ownership was lost",
+                    safe_message="任务调度事件领取权已失效",
+                    error_code="job_dispatch_claim_lost",
+                )
+            attempt_count = int(current["attempt_count"])
+            max_attempts = int(current["max_attempts"])
+            dead = attempt_count >= max_attempts
+            delay_seconds = min(
+                max(1, int(retry_base_seconds))
+                * (2 ** max(attempt_count - 1, 0)),
+                3600,
+            )
+            timestamp = now_iso()
+            next_attempt_at = (
+                timestamp
+                if dead
+                else (
+                    datetime.now(UTC) + timedelta(seconds=delay_seconds)
+                ).isoformat()
+            )
+            rows = self.database.execute(
+                """
+                update job_dispatch_outbox
+                   set status = ?, next_attempt_at = ?, claimed_by = '',
+                       claimed_at = null, dead_at = ?, last_error_code = ?,
+                       last_error_summary = ?, updated_at = ?
+                 where id = ? and status = 'RUNNING' and claimed_by = ?
+                returning *
+                """,
+                (
+                    JobDispatchStatus.DEAD.value
+                    if dead
+                    else JobDispatchStatus.RETRY_WAIT.value,
+                    next_attempt_at,
+                    timestamp if dead else None,
+                    error_code[:100],
+                    error_summary[:500],
+                    timestamp,
+                    event_id,
+                    worker_id,
+                ),
+            )
+            if not rows:
+                raise NonRetryableExecutionError(
+                    "Job dispatch failure state could not be saved",
+                    safe_message="任务调度失败状态保存失败",
+                    error_code="job_dispatch_claim_lost",
+                )
+        return self._dispatch_event_from_row(rows[0])
+
+    def rearm_dispatch_for_retry(
+        self,
+        *,
+        job_id: str,
+        next_attempt_at: str,
+    ) -> JobDispatchEvent:
+        timestamp = now_iso()
+        rows = self.database.execute(
+            """
+            update job_dispatch_outbox
+               set status = 'RETRY_WAIT', attempt_count = 0,
+                   next_attempt_at = ?, claimed_by = '', claimed_at = null,
+                   published_at = null, dead_at = null,
+                   last_error_code = '', last_error_summary = '', updated_at = ?
+             where job_id = ?
+               and status in ('PENDING', 'RUNNING', 'RETRY_WAIT', 'PUBLISHED')
+            returning *
+            """,
+            (next_attempt_at, timestamp, job_id),
+        )
+        if not rows:
+            raise NonRetryableExecutionError(
+                "Job dispatch event is not eligible for retry rearming",
+                safe_message="任务调度事件当前状态不允许安排执行重试",
+                error_code="job_dispatch_retry_rearm_conflict",
+            )
+        return self._dispatch_event_from_row(rows[0])
+
+    def rearm_dispatch_for_cutover(
+        self,
+        *,
+        job_id: str,
+        target_status: JobDispatchStatus,
+        next_attempt_at: str,
+    ) -> JobDispatchEvent:
+        if target_status not in {
+            JobDispatchStatus.PENDING,
+            JobDispatchStatus.RETRY_WAIT,
+        }:
+            raise ValueError("Cutover target must be PENDING or RETRY_WAIT")
+        timestamp = now_iso()
+        rows = self.database.execute(
+            """
+            update job_dispatch_outbox
+               set status = ?, attempt_count = 0,
+                   next_attempt_at = ?, claimed_by = '', claimed_at = null,
+                   published_at = null, dead_at = null,
+                   last_error_code = '', last_error_summary = '', updated_at = ?
+             where job_id = ?
+               and status in ('PENDING', 'RUNNING', 'RETRY_WAIT', 'PUBLISHED')
+            returning *
+            """,
+            (target_status.value, next_attempt_at, timestamp, job_id),
+        )
+        if not rows:
+            raise NonRetryableExecutionError(
+                "Job dispatch event cannot be converted from its current state",
+                safe_message="任务调度事件当前状态无法安全切换",
+                error_code="job_dispatch_cutover_state_conflict",
+            )
+        return self._dispatch_event_from_row(rows[0])
+
+    def record_dispatch_cutover_quarantine(
+        self,
+        *,
+        source_queue: str,
+        message_digest: str,
+        reason_code: str,
+        actor_id: str,
+        job_id: str = "",
+    ) -> bool:
+        rows = self.database.execute(
+            """
+            insert into job_dispatch_cutover_quarantine
+              (id, source_queue, message_digest, job_id, reason_code,
+               observed_at, observed_by)
+            values (?, ?, ?, ?, ?, ?, ?)
+            on conflict(source_queue, message_digest) do nothing
+            returning id
+            """,
+            (
+                new_id("job_dispatch_quarantine"),
+                source_queue,
+                message_digest,
+                job_id or None,
+                reason_code,
+                now_iso(),
+                actor_id[:200],
+            ),
+        )
+        return bool(rows)
+
+    def dispatch_cutover_quarantine_count(self) -> int:
+        row = self.database.execute_one(
+            "select count(*) as count from job_dispatch_cutover_quarantine"
+        )
+        return int(row["count"]) if row else 0
+
+    def recover_stale_dispatch_claims(
+        self,
+        *,
+        stale_before: str,
+    ) -> tuple[int, int]:
+        timestamp = now_iso()
+        with self.database.unit_of_work():
+            rows = self.database.execute(
+                """
+                update job_dispatch_outbox
+                   set status = case
+                         when attempt_count >= max_attempts then 'DEAD'
+                         else 'RETRY_WAIT'
+                       end,
+                       next_attempt_at = ?,
+                       claimed_by = '',
+                       claimed_at = null,
+                       dead_at = case
+                         when attempt_count >= max_attempts then ?
+                         else dead_at
+                       end,
+                       last_error_code = 'job_dispatch_claim_expired',
+                       last_error_summary = 'Dispatcher claim expired before completion',
+                       updated_at = ?
+                 where status = 'RUNNING' and claimed_at <= ?
+                returning status
+                """,
+                (timestamp, timestamp, timestamp, stale_before),
+            )
+        return (
+            sum(row["status"] == JobDispatchStatus.RETRY_WAIT.value for row in rows),
+            sum(row["status"] == JobDispatchStatus.DEAD.value for row in rows),
+        )
+
+    def expire_terminal_job_dispatches(self) -> int:
+        timestamp = now_iso()
+        with self.database.unit_of_work():
+            rows = self.database.execute(
+                """
+                update job_dispatch_outbox
+                   set status = 'DEAD', dead_at = ?,
+                       last_error_code = 'job_not_dispatchable',
+                       last_error_summary = 'Job reached a terminal state before dispatch',
+                       updated_at = ?
+                 where status in ('PENDING', 'RETRY_WAIT')
+                   and exists (
+                     select 1 from agent_job
+                      where agent_job.id = job_dispatch_outbox.job_id
+                        and agent_job.status in ('SUCCEEDED', 'FAILED', 'TIMEOUT', 'CANCELLED')
+                   )
+                returning id
+                """,
+                (timestamp, timestamp),
+            )
+        return len(rows)
+
+    def replay_dead_dispatch(
+        self,
+        *,
+        event_id: str,
+        actor_id: str,
+    ) -> JobDispatchEvent:
+        timestamp = now_iso()
+        rows = self.database.execute(
+            """
+            update job_dispatch_outbox
+               set status = 'PENDING', attempt_count = 0,
+                   replay_count = replay_count + 1,
+                   next_attempt_at = ?, claimed_by = '', claimed_at = null,
+                   published_at = null, dead_at = null,
+                   last_replayed_at = ?, last_replayed_by = ?,
+                   last_error_code = '', last_error_summary = '', updated_at = ?
+             where id = ? and status = 'DEAD'
+               and replay_count < max_replay_count
+               and exists (
+                 select 1 from agent_job
+                  where agent_job.id = job_dispatch_outbox.job_id
+                    and agent_job.status = 'PENDING'
+               )
+            returning *
+            """,
+            (timestamp, timestamp, actor_id[:200], timestamp, event_id),
+        )
+        if rows:
+            return self._dispatch_event_from_row(rows[0])
+        current = self.get_dispatch_event(event_id)
+        if current.status != JobDispatchStatus.DEAD:
+            raise NonRetryableExecutionError(
+                "Only DEAD dispatch events can be replayed",
+                safe_message="只有 DEAD 调度事件可以重放",
+                error_code="job_dispatch_replay_status_invalid",
+            )
+        if current.replay_count >= current.max_replay_count:
+            raise NonRetryableExecutionError(
+                "Job dispatch replay limit is exhausted",
+                safe_message="任务调度事件已达到允许的重放次数上限",
+                error_code="job_dispatch_replay_limit_exhausted",
+            )
+        job = self.get_job(current.job_id)
+        raise NonRetryableExecutionError(
+            f"Job is not dispatchable in status {job.status.value}",
+            safe_message="任务当前状态不允许重新调度",
+            error_code="job_dispatch_replay_job_not_pending",
+        )
+
+    def dispatch_metrics(self) -> dict[str, Any]:
+        counts = {
+            status.value: 0
+            for status in JobDispatchStatus
+        }
+        for row in self.database.execute(
+            """
+            select status, count(*) as count
+              from job_dispatch_outbox
+             group by status
+            """
+        ):
+            counts[str(row["status"])] = int(row["count"])
+        oldest = self.database.execute_one(
+            """
+            select min(next_attempt_at) as oldest_due_at,
+                   max(attempt_count) as max_attempt_count
+              from job_dispatch_outbox
+             where status in ('PENDING', 'RETRY_WAIT', 'RUNNING')
+            """
+        ) or {}
+        return {
+            "counts": counts,
+            "oldest_due_at": oldest.get("oldest_due_at"),
+            "max_attempt_count": int(oldest.get("max_attempt_count") or 0),
+        }
 
     def add_message(
         self,
@@ -572,6 +1229,781 @@ class AgentRepository:
         )
         return artifact_id
 
+    def get_artifact(self, artifact_id: str) -> dict[str, Any]:
+        row = self.database.execute_one(
+            """
+            select id, job_id, artifact_type, name, content, file_path, created_at
+              from agent_artifact
+             where id = ?
+            """,
+            (artifact_id,),
+        )
+        if row is None:
+            raise NotFound(f"Agent artifact not found: {artifact_id}")
+        return row
+
+    def get_artifact_for_job(
+        self,
+        *,
+        job_id: str,
+        artifact_type: str,
+        name: str,
+    ) -> dict[str, Any] | None:
+        return self.database.execute_one(
+            """
+            select id, job_id, artifact_type, name, content, file_path, created_at
+              from agent_artifact
+             where job_id = ? and artifact_type = ? and name = ?
+             order by created_at, id
+             limit 1
+            """,
+            (job_id, artifact_type, name),
+        )
+
+    def create_delivery_event(
+        self,
+        *,
+        job_id: str,
+        result_artifact_id: str,
+        application_publication_id: str,
+        delivery_binding: dict[str, Any],
+        target_summary: dict[str, Any],
+        correlation_id: str,
+        max_attempts: int,
+        max_replay_count: int,
+    ) -> DeliveryEvent:
+        artifact = self.get_artifact(result_artifact_id)
+        if str(artifact["job_id"]) != job_id:
+            raise NonRetryableExecutionError(
+                "Delivery artifact does not belong to the Job",
+                safe_message="投递结果产物与任务不匹配",
+                error_code="delivery_artifact_job_mismatch",
+            )
+        timestamp = now_iso()
+        event_id = new_id("delivery_outbox")
+        self.database.execute(
+            """
+            insert into delivery_outbox
+              (id, event_key, job_id, result_artifact_id,
+               application_publication_id, delivery_binding_json,
+               target_summary, correlation_id, status, attempt_count,
+               max_attempts, replay_count, max_replay_count,
+               next_attempt_at, created_at, updated_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 0, ?, 0, ?, ?, ?, ?)
+            on conflict(job_id, result_artifact_id) do nothing
+            """,
+            (
+                event_id,
+                f"delivery.result:{result_artifact_id}",
+                job_id,
+                result_artifact_id,
+                application_publication_id,
+                json.dumps(delivery_binding, ensure_ascii=False, sort_keys=True),
+                json.dumps(target_summary, ensure_ascii=False, sort_keys=True),
+                correlation_id,
+                max(1, int(max_attempts)),
+                max(0, int(max_replay_count)),
+                timestamp,
+                timestamp,
+                timestamp,
+            ),
+        )
+        row = self.database.execute_one(
+            """
+            select * from delivery_outbox
+             where job_id = ? and result_artifact_id = ?
+            """,
+            (job_id, result_artifact_id),
+        )
+        if row is None:
+            raise NonRetryableExecutionError(
+                "Delivery event could not be persisted",
+                safe_message="投递事件保存失败",
+                error_code="delivery_outbox_persistence_failed",
+            )
+        return self._delivery_event_from_row(row)
+
+    def get_delivery_event(self, delivery_id: str) -> DeliveryEvent:
+        row = self.database.execute_one(
+            "select * from delivery_outbox where id = ?",
+            (delivery_id,),
+        )
+        if row is None:
+            raise NotFound(f"Delivery event not found: {delivery_id}")
+        return self._delivery_event_from_row(row)
+
+    def get_delivery_event_for_job(self, job_id: str) -> DeliveryEvent | None:
+        row = self.database.execute_one(
+            """
+            select * from delivery_outbox
+             where job_id = ?
+             order by created_at desc, id desc
+             limit 1
+            """,
+            (job_id,),
+        )
+        return self._delivery_event_from_row(row) if row else None
+
+    def list_delivery_events(self, job_id: str) -> list[dict[str, Any]]:
+        """Return the safe, read-only Delivery lifecycle for a Job.
+
+        The frozen binding and artifact body are deliberately not returned.
+        Only the adapter identity and already-redacted target summary cross the
+        API boundary.
+        """
+        self.get_job(job_id)
+        rows = self.database.execute(
+            """
+            select id, job_id, result_artifact_id,
+                   application_publication_id, delivery_binding_json,
+                   target_summary, correlation_id, status,
+                   attempt_count, max_attempts, replay_count, max_replay_count,
+                   next_attempt_at, last_error_code, last_error_summary,
+                   started_at, finished_at, dead_at,
+                   last_replayed_at, created_at, updated_at
+              from delivery_outbox
+             where job_id = ?
+             order by created_at, id
+            """,
+            (job_id,),
+        )
+        events: list[dict[str, Any]] = []
+        for row in rows:
+            binding = self._json_from_text(
+                str(row.pop("delivery_binding_json", "{}") or "{}")
+            )
+            if not isinstance(binding, dict):
+                binding = {}
+            target_summary = self._json_from_text(
+                str(row.get("target_summary") or "{}")
+            )
+            events.append(
+                {
+                    **row,
+                    "route_type": str(binding.get("route_type") or "none"),
+                    "connector_id": str(binding.get("connector_id") or ""),
+                    "delivery_kind": str(binding.get("delivery_kind") or "result"),
+                    "target_summary": (
+                        target_summary
+                        if isinstance(target_summary, dict)
+                        else {}
+                    ),
+                    "terminal": str(row["status"])
+                    in {"SUCCEEDED", "FAILED", "DEAD", "SKIPPED"},
+                    "delivered": str(row["status"]) == "SUCCEEDED",
+                }
+            )
+        return events
+
+    def delivery_metrics(self) -> dict[str, Any]:
+        counts = {status.value: 0 for status in DeliveryStatus}
+        for row in self.database.execute(
+            """
+            select status, count(*) as count
+              from delivery_outbox
+             group by status
+            """
+        ):
+            counts[str(row["status"])] = int(row["count"])
+        active = self.database.execute_one(
+            """
+            select min(next_attempt_at) as oldest_due_at,
+                   max(attempt_count) as max_attempt_count
+              from delivery_outbox
+             where status in ('PENDING', 'RETRY_WAIT', 'RUNNING')
+            """
+        ) or {}
+        return {
+            "counts": counts,
+            "active_count": sum(
+                counts[status]
+                for status in ("PENDING", "RETRY_WAIT", "RUNNING")
+            ),
+            "terminal_failure_count": counts["FAILED"] + counts["DEAD"],
+            "oldest_due_at": active.get("oldest_due_at"),
+            "max_attempt_count": int(active.get("max_attempt_count") or 0),
+        }
+
+    def replay_dead_delivery(
+        self,
+        *,
+        delivery_id: str,
+        actor_id: str,
+    ) -> DeliveryEvent:
+        timestamp = now_iso()
+        rows = self.database.execute(
+            """
+            update delivery_outbox
+               set status = 'PENDING',
+                   attempt_count = 0,
+                   replay_count = replay_count + 1,
+                   next_attempt_at = ?,
+                   claimed_by = '',
+                   claim_token = '',
+                   claimed_at = null,
+                   claim_expires_at = null,
+                   last_error_code = '',
+                   last_error_summary = '',
+                   started_at = null,
+                   finished_at = null,
+                   dead_at = null,
+                   last_replayed_at = ?,
+                   last_replayed_by = ?,
+                   updated_at = ?
+             where id = ?
+               and status = 'DEAD'
+               and replay_count < max_replay_count
+               and exists (
+                 select 1
+                   from agent_job
+                  where agent_job.id = delivery_outbox.job_id
+                    and agent_job.status in ('SUCCEEDED', 'FAILED', 'TIMEOUT')
+               )
+            returning *
+            """,
+            (
+                timestamp,
+                timestamp,
+                actor_id[:200],
+                timestamp,
+                delivery_id,
+            ),
+        )
+        if rows:
+            return self._delivery_event_from_row(rows[0])
+        current = self.get_delivery_event(delivery_id)
+        if current.status != DeliveryStatus.DEAD:
+            raise NonRetryableExecutionError(
+                "Only DEAD Delivery events can be replayed",
+                safe_message="只有 DEAD 投递事件可以重放",
+                error_code="delivery_replay_status_invalid",
+            )
+        if current.replay_count >= current.max_replay_count:
+            raise NonRetryableExecutionError(
+                "Delivery replay limit is exhausted",
+                safe_message="投递事件已达到允许的重放次数上限",
+                error_code="delivery_replay_limit_exhausted",
+            )
+        job = self.get_job(current.job_id)
+        raise NonRetryableExecutionError(
+            f"Job is not terminal in status {job.status.value}",
+            safe_message="任务尚未结束，不能重放投递",
+            error_code="delivery_replay_job_not_terminal",
+        )
+
+    def claim_delivery_event(
+        self,
+        *,
+        worker_id: str,
+        claim_timeout_seconds: int,
+        now: str | None = None,
+    ) -> DeliveryEvent | None:
+        timestamp = now or now_iso()
+        now_value = datetime.fromisoformat(timestamp)
+        if now_value.tzinfo is None:
+            now_value = now_value.replace(tzinfo=UTC)
+        claim_expires_at = (
+            now_value + timedelta(seconds=max(1, int(claim_timeout_seconds)))
+        ).isoformat()
+        claim_token = new_id("delivery_claim")
+        with self.database.unit_of_work():
+            if self.database.engine == "postgres":
+                rows = self.database.execute(
+                    """
+                    with candidate as (
+                      select outbox.id
+                        from delivery_outbox outbox
+                        join agent_job job on job.id = outbox.job_id
+                       where outbox.status in ('PENDING', 'RETRY_WAIT')
+                         and outbox.next_attempt_at <= ?
+                         and outbox.attempt_count < outbox.max_attempts
+                         and job.status in ('SUCCEEDED', 'FAILED', 'TIMEOUT')
+                       order by outbox.next_attempt_at,
+                                outbox.created_at,
+                                outbox.id
+                       for update of outbox skip locked
+                       limit 1
+                    )
+                    update delivery_outbox
+                       set status = 'RUNNING',
+                           claimed_by = ?,
+                           claim_token = ?,
+                           claimed_at = ?,
+                           claim_expires_at = ?,
+                           started_at = coalesce(started_at, ?),
+                           attempt_count = attempt_count + 1,
+                           updated_at = ?
+                     where id = (select id from candidate)
+                    returning *
+                    """,
+                    (
+                        timestamp,
+                        worker_id,
+                        claim_token,
+                        timestamp,
+                        claim_expires_at,
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+            else:
+                rows = self.database.execute(
+                    """
+                    update delivery_outbox
+                       set status = 'RUNNING',
+                           claimed_by = ?,
+                           claim_token = ?,
+                           claimed_at = ?,
+                           claim_expires_at = ?,
+                           started_at = coalesce(started_at, ?),
+                           attempt_count = attempt_count + 1,
+                           updated_at = ?
+                     where id = (
+                       select outbox.id
+                         from delivery_outbox outbox
+                         join agent_job job on job.id = outbox.job_id
+                        where outbox.status in ('PENDING', 'RETRY_WAIT')
+                          and outbox.next_attempt_at <= ?
+                          and outbox.attempt_count < outbox.max_attempts
+                          and job.status in ('SUCCEEDED', 'FAILED', 'TIMEOUT')
+                        order by outbox.next_attempt_at,
+                                 outbox.created_at,
+                                 outbox.id
+                        limit 1
+                     )
+                       and status in ('PENDING', 'RETRY_WAIT')
+                    returning *
+                    """,
+                    (
+                        worker_id,
+                        claim_token,
+                        timestamp,
+                        claim_expires_at,
+                        timestamp,
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+        return self._delivery_event_from_row(rows[0]) if rows else None
+
+    def create_delivery_attempt(
+        self,
+        *,
+        event: DeliveryEvent,
+    ) -> dict[str, Any]:
+        attempt_id = new_id("delivery")
+        idempotency_key = (
+            f"delivery.attempt:{event.id}:{event.replay_count}:"
+            f"{event.attempt_count}"
+        )
+        timestamp = now_iso()
+        self.database.execute(
+            """
+            insert into delivery_attempt
+              (id, job_id, route_type, connector_id, target_summary,
+               status, error_message, created_at, finished_at,
+               delivery_outbox_id, replay_no, attempt_no, correlation_id,
+               idempotency_key, error_code)
+            values (?, ?, ?, ?, ?, 'RUNNING', null, ?, null, ?, ?, ?, ?, ?, '')
+            on conflict(idempotency_key) do nothing
+            """,
+            (
+                attempt_id,
+                event.job_id,
+                str(event.delivery_binding.get("route_type") or "none"),
+                str(event.delivery_binding.get("connector_id") or ""),
+                json.dumps(
+                    event.target_summary,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                timestamp,
+                event.id,
+                event.replay_count,
+                event.attempt_count,
+                event.correlation_id,
+                idempotency_key,
+            ),
+        )
+        row = self.database.execute_one(
+            """
+            select * from delivery_attempt
+             where idempotency_key = ?
+            """,
+            (idempotency_key,),
+        )
+        if row is None:
+            raise NonRetryableExecutionError(
+                "Delivery attempt could not be persisted",
+                safe_message="投递尝试保存失败",
+                error_code="delivery_attempt_persistence_failed",
+            )
+        return row
+
+    def has_successful_delivery_chunk(
+        self,
+        *,
+        delivery_id: str,
+        chunk_index: int,
+        payload_hash: str,
+    ) -> bool:
+        row = self.database.execute_one(
+            """
+            select payload_hash
+              from delivery_chunk
+             where delivery_outbox_id = ?
+               and chunk_index = ?
+               and status = 'SUCCEEDED'
+            """,
+            (delivery_id, chunk_index),
+        )
+        if row is None:
+            return False
+        if str(row["payload_hash"]) != payload_hash:
+            raise NonRetryableExecutionError(
+                "Successful Delivery chunk payload hash changed",
+                safe_message="投递分片内容与已成功记录不一致",
+                error_code="delivery_chunk_payload_drift",
+            )
+        return True
+
+    def record_delivery_chunk(
+        self,
+        *,
+        event: DeliveryEvent,
+        attempt_id: str,
+        chunk_index: int,
+        chunk_count: int,
+        payload_hash: str,
+        payload_summary: dict[str, Any],
+        status: str,
+        error_message: str = "",
+    ) -> str:
+        existing = self.database.execute_one(
+            """
+            select id from delivery_chunk
+             where delivery_outbox_id = ?
+               and replay_no = ?
+               and attempt_no = ?
+               and chunk_index = ?
+            """,
+            (
+                event.id,
+                event.replay_count,
+                event.attempt_count,
+                chunk_index,
+            ),
+        )
+        sent_at = now_iso() if status == "SUCCEEDED" else None
+        if existing is not None:
+            self.database.execute(
+                """
+                update delivery_chunk
+                   set status = ?, payload_summary = ?, error_message = ?,
+                       payload_hash = ?, sent_at = ?
+                 where id = ?
+                """,
+                (
+                    status,
+                    json.dumps(
+                        payload_summary,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    error_message or None,
+                    payload_hash,
+                    sent_at,
+                    str(existing["id"]),
+                ),
+            )
+            return str(existing["id"])
+        chunk_id = new_id("chunk")
+        self.database.execute(
+            """
+            insert into delivery_chunk
+              (id, attempt_id, chunk_index, chunk_count, status,
+               payload_summary, error_message, created_at,
+               delivery_outbox_id, replay_no, attempt_no, idempotency_key,
+               payload_hash, sent_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                chunk_id,
+                attempt_id,
+                chunk_index,
+                chunk_count,
+                status,
+                json.dumps(
+                    payload_summary,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                error_message or None,
+                now_iso(),
+                event.id,
+                event.replay_count,
+                event.attempt_count,
+                f"delivery.chunk:{event.id}:{chunk_index}:{payload_hash}",
+                payload_hash,
+                sent_at,
+            ),
+        )
+        return chunk_id
+
+    def mark_delivery_succeeded(
+        self,
+        *,
+        event: DeliveryEvent,
+        attempt_id: str,
+    ) -> DeliveryEvent:
+        timestamp = now_iso()
+        with self.database.unit_of_work():
+            rows = self.database.execute(
+                """
+                update delivery_outbox
+                   set status = 'SUCCEEDED',
+                       claimed_by = '',
+                       claim_token = '',
+                       claimed_at = null,
+                       claim_expires_at = null,
+                       last_error_code = '',
+                       last_error_summary = '',
+                       finished_at = ?,
+                       updated_at = ?
+                 where id = ? and status = 'RUNNING'
+                   and claimed_by = ? and claim_token = ?
+                returning *
+                """,
+                (
+                    timestamp,
+                    timestamp,
+                    event.id,
+                    event.claimed_by,
+                    event.claim_token,
+                ),
+            )
+            if not rows:
+                raise NonRetryableExecutionError(
+                    "Delivery claim ownership was lost",
+                    safe_message="投递事件领取权已失效",
+                    error_code="delivery_claim_lost",
+                )
+            self.database.execute(
+                """
+                update delivery_attempt
+                   set status = 'SUCCEEDED', error_code = '',
+                       error_message = null, finished_at = ?
+                 where id = ? and delivery_outbox_id = ?
+                """,
+                (timestamp, attempt_id, event.id),
+            )
+        return self._delivery_event_from_row(rows[0])
+
+    def mark_delivery_skipped(
+        self,
+        *,
+        event: DeliveryEvent,
+        attempt_id: str,
+    ) -> DeliveryEvent:
+        timestamp = now_iso()
+        with self.database.unit_of_work():
+            rows = self.database.execute(
+                """
+                update delivery_outbox
+                   set status = 'SKIPPED',
+                       claimed_by = '',
+                       claim_token = '',
+                       claimed_at = null,
+                       claim_expires_at = null,
+                       finished_at = ?,
+                       updated_at = ?
+                 where id = ? and status = 'RUNNING'
+                   and claimed_by = ? and claim_token = ?
+                returning *
+                """,
+                (
+                    timestamp,
+                    timestamp,
+                    event.id,
+                    event.claimed_by,
+                    event.claim_token,
+                ),
+            )
+            if not rows:
+                raise NonRetryableExecutionError(
+                    "Delivery claim ownership was lost",
+                    safe_message="投递事件领取权已失效",
+                    error_code="delivery_claim_lost",
+                )
+            self.database.execute(
+                """
+                update delivery_attempt
+                   set status = 'SKIPPED', finished_at = ?
+                 where id = ? and delivery_outbox_id = ?
+                """,
+                (timestamp, attempt_id, event.id),
+            )
+        return self._delivery_event_from_row(rows[0])
+
+    def mark_delivery_failed(
+        self,
+        *,
+        event: DeliveryEvent,
+        attempt_id: str,
+        retryable: bool,
+        error_code: str,
+        error_summary: str,
+        retry_base_seconds: int,
+    ) -> DeliveryEvent:
+        with self.database.unit_of_work():
+            current = self.database.execute_one(
+                """
+                select * from delivery_outbox
+                 where id = ? and status = 'RUNNING'
+                   and claimed_by = ? and claim_token = ?
+                """,
+                (event.id, event.claimed_by, event.claim_token),
+            )
+            if current is None:
+                raise NonRetryableExecutionError(
+                    "Delivery claim ownership was lost",
+                    safe_message="投递事件领取权已失效",
+                    error_code="delivery_claim_lost",
+                )
+            attempt_count = int(current["attempt_count"])
+            max_attempts = int(current["max_attempts"])
+            exhausted = retryable and attempt_count >= max_attempts
+            if not retryable:
+                target = DeliveryStatus.FAILED
+            elif exhausted:
+                target = DeliveryStatus.DEAD
+            else:
+                target = DeliveryStatus.RETRY_WAIT
+            timestamp = now_iso()
+            delay_seconds = min(
+                max(1, int(retry_base_seconds))
+                * (2 ** max(attempt_count - 1, 0)),
+                3600,
+            )
+            next_attempt_at = (
+                timestamp
+                if target.terminal
+                else (
+                    datetime.now(UTC) + timedelta(seconds=delay_seconds)
+                ).isoformat()
+            )
+            rows = self.database.execute(
+                """
+                update delivery_outbox
+                   set status = ?,
+                       next_attempt_at = ?,
+                       claimed_by = '',
+                       claim_token = '',
+                       claimed_at = null,
+                       claim_expires_at = null,
+                       last_error_code = ?,
+                       last_error_summary = ?,
+                       finished_at = ?,
+                       dead_at = ?,
+                       updated_at = ?
+                 where id = ? and status = 'RUNNING'
+                   and claimed_by = ? and claim_token = ?
+                returning *
+                """,
+                (
+                    target.value,
+                    next_attempt_at,
+                    error_code[:100],
+                    error_summary[:500],
+                    timestamp if target.terminal else None,
+                    timestamp if target == DeliveryStatus.DEAD else None,
+                    timestamp,
+                    event.id,
+                    event.claimed_by,
+                    event.claim_token,
+                ),
+            )
+            if not rows:
+                raise NonRetryableExecutionError(
+                    "Delivery failure state could not be saved",
+                    safe_message="投递失败状态保存失败",
+                    error_code="delivery_claim_lost",
+                )
+            self.database.execute(
+                """
+                update delivery_attempt
+                   set status = 'FAILED', error_code = ?,
+                       error_message = ?, finished_at = ?
+                 where id = ? and delivery_outbox_id = ?
+                """,
+                (
+                    error_code[:100],
+                    error_summary[:500],
+                    timestamp,
+                    attempt_id,
+                    event.id,
+                ),
+            )
+        return self._delivery_event_from_row(rows[0])
+
+    def recover_stale_delivery_claims(self, *, now: str | None = None) -> tuple[int, int]:
+        timestamp = now or now_iso()
+        with self.database.unit_of_work():
+            rows = self.database.execute(
+                """
+                update delivery_outbox
+                   set status = case
+                         when attempt_count >= max_attempts then 'DEAD'
+                         else 'RETRY_WAIT'
+                       end,
+                       next_attempt_at = ?,
+                       claimed_by = '',
+                       claim_token = '',
+                       claimed_at = null,
+                       claim_expires_at = null,
+                       last_error_code = 'delivery_claim_expired',
+                       last_error_summary =
+                         'Delivery Dispatcher claim expired before completion',
+                       finished_at = case
+                         when attempt_count >= max_attempts then ?
+                         else null
+                       end,
+                       dead_at = case
+                         when attempt_count >= max_attempts then ?
+                         else dead_at
+                       end,
+                       updated_at = ?
+                 where status = 'RUNNING'
+                   and claim_expires_at is not null
+                   and claim_expires_at <= ?
+                returning id, status
+                """,
+                (
+                    timestamp,
+                    timestamp,
+                    timestamp,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            for row in rows:
+                self.database.execute(
+                    """
+                    update delivery_attempt
+                       set status = 'FAILED',
+                           error_code = 'delivery_claim_expired',
+                           error_message =
+                             'Delivery Dispatcher claim expired before completion',
+                           finished_at = ?
+                     where delivery_outbox_id = ? and status = 'RUNNING'
+                    """,
+                    (timestamp, str(row["id"])),
+                )
+        return (
+            sum(row["status"] == DeliveryStatus.RETRY_WAIT.value for row in rows),
+            sum(row["status"] == DeliveryStatus.DEAD.value for row in rows),
+        )
+
     def add_tool_call(
         self,
         *,
@@ -585,10 +2017,12 @@ class AgentRepository:
         audit_id: str | None = None,
     ) -> str:
         tool_call_id = new_id("tool")
+        safe_request = sanitize_for_persistence(request_payload)
+        safe_response = sanitize_for_persistence(response_summary)
         response = (
-            response_summary
-            if isinstance(response_summary, str)
-            else json.dumps(response_summary, ensure_ascii=False)
+            safe_response
+            if isinstance(safe_response, str)
+            else json.dumps(safe_response, ensure_ascii=False)
         )
         self.database.execute(
             """
@@ -601,7 +2035,7 @@ class AgentRepository:
                 tool_call_id,
                 job_id,
                 tool_name,
-                json.dumps(request_payload, ensure_ascii=False),
+                json.dumps(safe_request, ensure_ascii=False),
                 response,
                 status,
                 duration_ms,
@@ -665,6 +2099,10 @@ class AgentRepository:
             external_identity_id=row.get("external_identity_id") or "",
             business_application_id=row.get("business_application_id") or "",
             business_application_code=row.get("business_application_code") or "",
+            application_publication_id=row.get("application_publication_id") or "",
+            execution_scope_hash=row.get("execution_scope_hash") or "",
+            isolation_key_version=int(row.get("isolation_key_version") or 1),
+            history_read_only=bool(row.get("history_read_only")),
             conversation_mode=row.get("conversation_mode") or "legacy",
             recent_message_limit=(
                 int(row["recent_message_limit"])
@@ -860,7 +2298,9 @@ class AgentRepository:
         rows = self.database.execute(
             """
             select id, job_id, route_type, connector_id, target_summary, status,
-                   error_message, created_at, finished_at
+                   error_message, created_at, finished_at,
+                   delivery_outbox_id, replay_no, attempt_no, correlation_id,
+                   idempotency_key, error_code
             from delivery_attempt
             where job_id = ?
             order by created_at, id
@@ -880,7 +2320,9 @@ class AgentRepository:
         rows = self.database.execute(
             """
             select c.id, c.attempt_id, a.job_id, c.chunk_index, c.chunk_count, c.status,
-                   c.payload_summary, c.error_message, c.created_at
+                   c.payload_summary, c.error_message, c.created_at,
+                   c.delivery_outbox_id, c.replay_no, c.attempt_no, c.idempotency_key,
+                   c.payload_hash, c.sent_at
             from delivery_chunk c
             join delivery_attempt a on a.id = c.attempt_id
             where a.job_id = ?
@@ -1116,6 +2558,82 @@ class AgentRepository:
             failure_code=str(row.get("failure_code") or ""),
         )
 
+    def _dispatch_event_from_row(self, row: dict[str, Any]) -> JobDispatchEvent:
+        return JobDispatchEvent(
+            id=str(row["id"]),
+            event_key=str(row["event_key"]),
+            idempotency_key=str(row["idempotency_key"]),
+            job_id=str(row["job_id"]),
+            correlation_id=str(row["correlation_id"]),
+            status=JobDispatchStatus(str(row["status"])),
+            attempt_count=int(row["attempt_count"]),
+            max_attempts=int(row["max_attempts"]),
+            replay_count=int(row["replay_count"]),
+            max_replay_count=int(row["max_replay_count"]),
+            next_attempt_at=str(row["next_attempt_at"]),
+            claimed_by=str(row.get("claimed_by") or ""),
+            claimed_at=row.get("claimed_at"),
+            published_at=row.get("published_at"),
+            dead_at=row.get("dead_at"),
+            last_replayed_at=row.get("last_replayed_at"),
+            last_replayed_by=str(row.get("last_replayed_by") or ""),
+            last_error_code=str(row.get("last_error_code") or ""),
+            last_error_summary=str(row.get("last_error_summary") or ""),
+            created_at=str(row["created_at"]),
+            updated_at=str(row["updated_at"]),
+        )
+
+    def _delivery_event_from_row(self, row: dict[str, Any]) -> DeliveryEvent:
+        return DeliveryEvent(
+            id=str(row["id"]),
+            event_key=str(row["event_key"]),
+            job_id=str(row["job_id"]),
+            result_artifact_id=str(row["result_artifact_id"]),
+            application_publication_id=str(
+                row.get("application_publication_id") or ""
+            ),
+            delivery_binding=self._json_from_text(
+                row.get("delivery_binding_json") or "{}"
+            ),
+            target_summary=self._json_from_text(
+                row.get("target_summary") or "{}"
+            ),
+            correlation_id=str(row.get("correlation_id") or ""),
+            status=DeliveryStatus(str(row["status"])),
+            attempt_count=int(row.get("attempt_count") or 0),
+            max_attempts=int(row["max_attempts"]),
+            replay_count=int(row.get("replay_count") or 0),
+            max_replay_count=int(row.get("max_replay_count") or 0),
+            next_attempt_at=str(row["next_attempt_at"]),
+            claimed_by=str(row.get("claimed_by") or ""),
+            claim_token=str(row.get("claim_token") or ""),
+            claimed_at=(
+                str(row["claimed_at"]) if row.get("claimed_at") else None
+            ),
+            claim_expires_at=(
+                str(row["claim_expires_at"])
+                if row.get("claim_expires_at")
+                else None
+            ),
+            last_error_code=str(row.get("last_error_code") or ""),
+            last_error_summary=str(row.get("last_error_summary") or ""),
+            started_at=(
+                str(row["started_at"]) if row.get("started_at") else None
+            ),
+            finished_at=(
+                str(row["finished_at"]) if row.get("finished_at") else None
+            ),
+            dead_at=str(row["dead_at"]) if row.get("dead_at") else None,
+            last_replayed_at=(
+                str(row["last_replayed_at"])
+                if row.get("last_replayed_at")
+                else None
+            ),
+            last_replayed_by=str(row.get("last_replayed_by") or ""),
+            created_at=str(row["created_at"]),
+            updated_at=str(row["updated_at"]),
+        )
+
     def _job_from_row(self, row: dict[str, Any]) -> AgentJob:
         return AgentJob(
             id=row["id"],
@@ -1179,8 +2697,12 @@ class AgentRepository:
             "id": row["id"],
             "job_id": row["job_id"],
             "tool_name": row["tool_name"],
-            "request_payload": self._json_from_text(row["request_payload"]),
-            "response_summary": self._json_from_text(row["response_summary"]),
+            "request_payload": sanitize_for_persistence(
+                self._json_from_text(row["request_payload"])
+            ),
+            "response_summary": sanitize_for_persistence(
+                self._json_from_text(row["response_summary"])
+            ),
             "status": row["status"],
             "duration_ms": int(row["duration_ms"]),
             "risk_level": row["risk_level"],
@@ -1210,6 +2732,8 @@ class AuditRepository:
         payload_summary: dict[str, Any] | None = None,
     ) -> str:
         audit_id = new_id("audit")
+        safe_summary = redact_sensitive_text(summary)
+        safe_payload = sanitize_for_persistence(payload_summary or {})
         self.database.execute(
             """
             insert into audit_event
@@ -1222,8 +2746,8 @@ class AuditRepository:
                 event_type,
                 actor_id,
                 status,
-                summary,
-                json.dumps(payload_summary or {}, ensure_ascii=False),
+                safe_summary,
+                json.dumps(safe_payload, ensure_ascii=False),
                 now_iso(),
             ),
         )
@@ -1257,11 +2781,8 @@ class AuditRepository:
             return {}
         if not isinstance(parsed, dict):
             return {}
-        forbidden = {"password", "password_hash", "token", "secret", "api_key"}
-        return {
-            key: ("[REDACTED]" if key.lower() in forbidden else item)
-            for key, item in parsed.items()
-        }
+        sanitized = sanitize_for_persistence(parsed)
+        return sanitized if isinstance(sanitized, dict) else {}
 
 
 class ConfigurationRepository:

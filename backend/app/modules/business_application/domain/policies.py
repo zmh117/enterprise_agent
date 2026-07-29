@@ -103,9 +103,10 @@ def validate_session_policy(value: dict[str, Any]) -> dict[str, Any]:
         ),
         "attachments_enabled": bool(value.get("attachments_enabled", False)),
     }
-    if normalized["conversation_mode"] not in {"channel", "actor", "application"}:
+    if normalized["conversation_mode"] != "channel":
         raise validation_error(
-            "session_policy.conversation_mode", "不支持此会话模式"
+            "session_policy.conversation_mode",
+            "仅支持按渠道会话；旧按主体/按应用模式只可查看历史",
         )
     if not 1 <= normalized["recent_message_limit"] <= 100:
         raise validation_error("session_policy.recent_message_limit", "必须在 1 到 100 之间")

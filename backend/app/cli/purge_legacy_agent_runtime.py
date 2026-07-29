@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 
 from app.modules.attachments.storage import S3ObjectStorage
 from app.modules.job.application.legacy_runtime_purge_service import (
@@ -10,6 +9,7 @@ from app.modules.job.application.legacy_runtime_purge_service import (
 )
 from app.shared.config import load_settings
 from app.shared.database import Database, default_migrations_dir
+from app.shared.migrations import SchemaHeadValidator
 
 
 CONFIRMATION = "delete-legacy-agent-runtime"
@@ -34,8 +34,7 @@ def main() -> int:
     settings = load_settings()
     database = Database(settings.database_dsn)
     try:
-        migration = default_migrations_dir() / "013_agent_job_execution_policy.sql"
-        database.execute_script(Path(migration).read_text())
+        SchemaHeadValidator(database, default_migrations_dir()).require_current()
         storage = S3ObjectStorage(settings.object_storage)
         service = LegacyRuntimePurgeService(
             database=database,

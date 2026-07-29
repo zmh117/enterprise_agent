@@ -4,6 +4,9 @@ from app.modules.agent_config.infrastructure import AgentConfigRepository
 from app.modules.business_application.application.ports import ComponentReference
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.identity.infrastructure import IdentityRepository
+from app.modules.internal_tools.domain import (
+    build_builtin_handler_registry,
+)
 from app.modules.job.infrastructure.repositories import ConfigurationRepository
 from app.modules.workflow.infrastructure import WorkflowRepository
 from app.shared.exceptions import NonRetryableExecutionError, NotFound
@@ -178,6 +181,12 @@ class ToolCapabilityCatalogAdapter:
 
     def __init__(self, repository: ConfigurationRepository) -> None:
         self.repository = repository
+        self.application_handler_codes = {
+            definition.handler_id
+            for definition in (
+                build_builtin_handler_registry().application_catalog()
+            )
+        }
 
     @property
     def connected(self) -> bool:
@@ -186,7 +195,11 @@ class ToolCapabilityCatalogAdapter:
     def catalog(self) -> list[ComponentReference]:
         result: list[ComponentReference] = []
         for tool in sorted(self.repository.enabled_tools(), key=lambda item: str(item["name"])):
-            if not bool(int(tool["read_only"])):
+            if (
+                not bool(int(tool["read_only"]))
+                or str(tool["name"])
+                not in self.application_handler_codes
+            ):
                 continue
             result.append(self._reference(tool))
         return result

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.bootstrap import build_test_container
@@ -14,6 +15,7 @@ from app.modules.managed_channel.domain import (
     DingTalkApplicationInput,
     RuntimeConnectorState,
 )
+from app.shared.exceptions import NonRetryableExecutionError
 from app.shared.config import ManagedChannelSettings, Settings
 
 
@@ -242,6 +244,127 @@ def test_updating_bootstrap_connector_migrates_env_secret_to_managed_secret():
     assert "replacement-secret" not in str(updated)
 
 
+def test_disabled_platform_secret_marks_only_affected_connector_misconfigured_and_rebinds():
+    container = _container()
+    affected = _create(container, "ding-secret-disabled")
+    healthy = _create(container, "ding-secret-healthy")
+    lease = container.runtime_control_service.acquire("runtime-one")
+    assert lease is not None
+
+    before = container.runtime_control_service.desired_snapshot(
+        "runtime-one", lease["lease_token"]
+    )
+    assert {item["connector_id"] for item in before["connectors"]} == {
+        affected["id"],
+        healthy["id"],
+    }
+    row = container.database.execute_one(
+        "select secret_ref from integration_connector where id = ?",
+        (affected["id"],),
+    )
+    assert row is not None
+    secret_ref = str(row["secret_ref"])
+    container.managed_channel_service.secret_provider.disable_secret(
+        code=secret_ref.removeprefix("secret://platform/"),
+        actor_id="test-admin",
+    )
+
+    after_disable = container.runtime_control_service.desired_snapshot(
+        "runtime-one", lease["lease_token"]
+    )
+    assert [item["connector_id"] for item in after_disable["connectors"]] == [
+        healthy["id"]
+    ]
+    public = container.managed_channel_service.get_channel(affected["id"])
+    assert public["runtime"]["status"] == "MISCONFIGURED"
+    assert public["runtime"]["last_error"] == (
+        "连接器凭据缺失、已停用或无法解析，请重新绑定后测试"
+    )
+    assert affected["id"] not in {
+        item["id"]
+        for item in container.managed_channel_service.eligible("dingtalk_private")
+    }
+    with pytest.raises(NonRetryableExecutionError) as ingress_error:
+        container.runtime_control_service.receive(
+            "runtime-one",
+            lease["lease_token"],
+            _submission(affected["id"], "blocked-event"),
+        )
+    assert ingress_error.value.error_code == "channel_misconfigured"
+    with pytest.raises(NonRetryableExecutionError) as test_error:
+        container.managed_channel_service.test_configuration(
+            affected["id"], actor_id="test-admin"
+        )
+    assert test_error.value.error_code == "connector_secret_unavailable"
+    assert (
+        container.database.execute_one(
+            "select count(*) as count from channel_ingress_event"
+        )["count"]
+        == 0
+    )
+
+    rebound = container.managed_channel_service.update_dingtalk(
+        affected["id"],
+        DingTalkApplicationInput(
+            name="恢复后的机器人",
+            client_id="ding-secret-disabled",
+            client_secret="replacement-secret",
+            tenant_code="default",
+        ),
+        expected_revision=affected["revision"],
+        actor_id="test-admin",
+        rotate_secret=True,
+    )
+    assert rebound["runtime"]["status"] == "RECONNECTING"
+    tested = container.managed_channel_service.test_configuration(
+        affected["id"], actor_id="test-admin"
+    )
+    assert tested["status"] == "READY"
+    assert "未执行外部网络请求" in tested["summary"]
+    after_rebind = container.runtime_control_service.desired_snapshot(
+        "runtime-one", lease["lease_token"]
+    )
+    assert {item["connector_id"] for item in after_rebind["connectors"]} == {
+        affected["id"],
+        healthy["id"],
+    }
+
+
+def test_disabled_delivery_secret_is_rejected_before_delivery_authorization():
+    container = _container()
+    provider = container.managed_channel_service.secret_provider
+    provider.create_secret(
+        code="delivery-disabled-test",
+        value="delivery-secret",
+        purpose="delivery_test",
+        actor_id="test-admin",
+    )
+    timestamp = "2026-07-26T00:00:00+00:00"
+    connector_id = "connector-delivery-disabled-test"
+    container.database.execute(
+        """
+        insert into integration_connector
+          (id, connector_type, name, base_url, enabled, metadata,
+           allow_ingress, allow_delivery, secret_ref, endpoint_ref,
+           host_allowlist, revision, created_at, updated_at, deleted)
+        values (?, 'dingtalk_webhook_robot', '投递凭据测试', '', 1, '{}',
+                0, 1, 'secret://platform/delivery-disabled-test',
+                'env:DINGTALK_WEBHOOK_ROBOT_URL', 'oapi.dingtalk.com',
+                1, ?, ?, 0)
+        """,
+        (connector_id, timestamp, timestamp),
+    )
+    assert container.connector_registry.require_delivery(connector_id).id == connector_id
+
+    provider.disable_secret(code="delivery-disabled-test", actor_id="test-admin")
+    with pytest.raises(NonRetryableExecutionError) as error:
+        container.connector_registry.require_delivery(connector_id)
+    assert error.value.error_code == "connector_secret_unavailable"
+    assert error.value.safe_message == (
+        "连接器凭据缺失、已停用或无法解析，请重新绑定后测试"
+    )
+
+
 def test_internal_runtime_api_requires_service_auth_and_rate_limits_safe_errors():
     settings = Settings(
         database_dsn="sqlite:///:memory:",
@@ -369,6 +492,11 @@ def test_managed_channel_audit_contains_no_client_secret():
 
 def test_webhook_connector_options_are_application_independent_and_ingress_only():
     container = _container()
+    container.platform_config_service.secret_provider.create_secret(
+        code="grafana_webhook_token",
+        value="managed-channel-grafana-token",
+        actor_id="test-admin",
+    )
     timestamp = "2026-07-26T00:00:00+00:00"
     rows = [
         (
@@ -405,13 +533,18 @@ def test_webhook_connector_options_are_application_independent_and_ingress_only(
         ),
     ]
     for connector_id, connector_type, name, enabled, ingress, delivery in rows:
+        secret_ref = (
+            "secret://platform/grafana_webhook_token"
+            if connector_id == "connector-webhook-ingress"
+            else ""
+        )
         container.database.execute(
             """
             insert into integration_connector
               (id, connector_type, name, base_url, enabled, metadata,
                allow_ingress, allow_delivery, secret_ref, endpoint_ref,
                host_allowlist, revision, created_at, updated_at, deleted)
-            values (?, ?, ?, '', ?, '{}', ?, ?, '', '', '', 1, ?, ?, 0)
+            values (?, ?, ?, '', ?, '{}', ?, ?, ?, '', '', 1, ?, ?, 0)
             """,
             (
                 connector_id,
@@ -420,6 +553,7 @@ def test_webhook_connector_options_are_application_independent_and_ingress_only(
                 enabled,
                 ingress,
                 delivery,
+                secret_ref,
                 timestamp,
                 timestamp,
             ),

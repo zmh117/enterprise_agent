@@ -36,3 +36,24 @@ class ResourceBinding:
     database: DatabaseConnection | None = None
     redis: RedisConnection | None = None
     loki: LokiConnection | None = None
+
+
+@dataclass(frozen=True)
+class RevisionResource:
+    """A generation-local exact Resource Revision projection.
+
+    The connection values exist only in the immutable in-memory generation.
+    Persisted generation metadata stores IDs and active Secret versions, never
+    these resolved values.
+    """
+
+    resource_revision_id: str
+    resource_id: str
+    environment_code: str
+    base_code: str
+    workshop_code: str
+    kind: ResourceKind
+    engine: DatabaseEngine
+    database: DatabaseConnection | None = None
+    redis: RedisConnection | None = None
+    loki: LokiConnection | None = None

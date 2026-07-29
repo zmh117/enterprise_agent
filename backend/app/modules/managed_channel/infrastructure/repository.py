@@ -194,7 +194,7 @@ class ManagedChannelRepository:
         now = datetime.now(UTC)
         expires_at = (now + timedelta(seconds=max(ttl_seconds, 5))).isoformat()
         token = secrets.token_urlsafe(24)
-        with self.database.transaction():
+        with self.database.unit_of_work():
             current = self.database.execute_one(
                 "select * from channel_runtime_lease where lease_name = ?", (lease_name,)
             )
@@ -349,7 +349,7 @@ class ManagedChannelRepository:
     ) -> tuple[dict[str, Any], bool]:
         event_id = new_id("channel_event")
         timestamp = now_iso()
-        with self.database.transaction():
+        with self.database.unit_of_work():
             rows = self.database.execute(
                 """
                 insert into channel_ingress_event

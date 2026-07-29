@@ -22,6 +22,7 @@ from app.shared.config import IdentitySettings, OnesIdentitySettings, Settings
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
 from backend.tests.helpers import (
     activate_dingtalk_test_application,
+    grant_test_application_access,
     test_settings as base_test_settings,
 )
 
@@ -119,6 +120,14 @@ def identity_container(verifier: FakeOnesVerifier | None = None) -> Container:
         container,
         code="identity-test-application",
         robot_code="test-robot-code",
+    )
+    application = container.business_application_repository.get_by_code(
+        "identity-test-application"
+    )
+    grant_test_application_access(
+        container,
+        application_id=str(application["id"]),
+        role_code="identity-runtime-reader",
     )
     return container
 

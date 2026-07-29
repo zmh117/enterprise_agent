@@ -19,6 +19,7 @@ from app.modules.identity.application.ones_identity import (
     VerifiedOnesIdentity,
 )
 from app.shared.config import OnesIdentitySettings
+from app.shared.database import assert_external_io_allowed
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
 
 ONES_LOGIN_PATH = "/project/api/project/auth/login"
@@ -60,6 +61,7 @@ class UrllibOnesIdentityVerifier(OnesIdentityVerifier):
         return bool(self._url)
 
     def verify(self, *, email: str, password: str) -> VerifiedOnesIdentity:
+        assert_external_io_allowed("ones_identity.verify")
         if not self._url:
             raise NonRetryableExecutionError(
                 "ONES identity provider is not configured",

@@ -15,6 +15,7 @@ from app.modules.dingding.infrastructure.dingtalk_delivery_clients import (
     DingTalkWebhookRobotClient,
     JsonPostTransport,
 )
+from app.shared.database import assert_external_io_allowed
 from app.shared.exceptions import NonRetryableExecutionError
 
 
@@ -43,6 +44,7 @@ class DingTalkConversationDeliveryAdapter:
     def send(
         self, *, connector: Connector | None, route: ReplyRoute, title: str, text: str
     ) -> None:
+        assert_external_io_allowed("dingtalk.conversation_delivery")
         callback_url = (
             connector.base_url if connector and connector.base_url else self.fallback_callback_url
         )
@@ -72,6 +74,7 @@ class DingTalkEnterpriseAppDeliveryAdapter:
     def send(
         self, *, connector: Connector | None, route: ReplyRoute, title: str, text: str
     ) -> None:
+        assert_external_io_allowed("dingtalk.enterprise_delivery")
         if connector is None:
             raise ValueError("DingTalk enterprise connector is required")
         client_id = self.connector_registry.resolve_metadata_reference(connector, "client_id_ref")
@@ -156,6 +159,7 @@ class DingTalkWebhookRobotDeliveryAdapter:
     def send(
         self, *, connector: Connector | None, route: ReplyRoute, title: str, text: str
     ) -> None:
+        assert_external_io_allowed("dingtalk.webhook_delivery")
         if connector is None:
             raise ValueError("DingTalk webhook robot connector is required")
         webhook_url = self.connector_registry.endpoint_url(connector)
@@ -195,6 +199,7 @@ class DingTalkStreamSessionWebhookDeliveryAdapter:
     def send(
         self, *, connector: Connector | None, route: ReplyRoute, title: str, text: str
     ) -> None:
+        assert_external_io_allowed("dingtalk.session_webhook_delivery")
         session_webhook = str(route.target.get("session_webhook") or "")
         expires_at = (
             route.target.get("session_webhook_expired_time")
@@ -269,6 +274,7 @@ class HttpDeliveryAdapter:
     def send(
         self, *, connector: Connector | None, route: ReplyRoute, title: str, text: str
     ) -> None:
+        assert_external_io_allowed("http.delivery")
         url = connector.base_url if connector else ""
         if not url:
             self.sent_messages.append({"title": title, "text": text, "route_type": route.type})

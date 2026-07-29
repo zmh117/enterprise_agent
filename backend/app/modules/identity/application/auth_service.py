@@ -9,6 +9,7 @@ from app.modules.identity.application.passwords import PasswordService
 from app.modules.identity.domain import AuthenticatedPrincipal
 from app.modules.identity.infrastructure import IdentityRepository
 from app.shared.config import IdentitySettings
+from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import PermissionDenied
 
 
@@ -64,29 +65,31 @@ class AuthService:
         token = secrets.token_urlsafe(32)
         csrf = secrets.token_urlsafe(32)
         now = datetime.now(UTC)
-        session = self.repository.create_session(
-            user_id=str(user["id"]),
-            token_hash=_sha256(token),
-            csrf_hash=_sha256(csrf),
-            idle_expires_at=(
-                now + timedelta(seconds=self.settings.session_idle_seconds)
-            ).isoformat(),
-            absolute_expires_at=(
-                now + timedelta(seconds=self.settings.session_absolute_seconds)
-            ).isoformat(),
-            user_agent_summary=user_agent_summary[:200],
-            remote_address_summary=remote_address_summary[:100],
-        )
-        principal = self._principal(user, session_id=str(session["id"]))
-        self.audit_service.record(
-            "auth.login.succeeded",
-            status="SUCCEEDED",
-            summary="Local administrator login succeeded",
-            actor_id=principal.user_id,
-            payload={"session_id": principal.session_id},
-        )
+        with self.repository.database.unit_of_work():
+            session = self.repository.create_session(
+                user_id=str(user["id"]),
+                token_hash=_sha256(token),
+                csrf_hash=_sha256(csrf),
+                idle_expires_at=(
+                    now + timedelta(seconds=self.settings.session_idle_seconds)
+                ).isoformat(),
+                absolute_expires_at=(
+                    now + timedelta(seconds=self.settings.session_absolute_seconds)
+                ).isoformat(),
+                user_agent_summary=user_agent_summary[:200],
+                remote_address_summary=remote_address_summary[:100],
+            )
+            principal = self._principal(user, session_id=str(session["id"]))
+            self.audit_service.record(
+                "auth.login.succeeded",
+                status="SUCCEEDED",
+                summary="Local administrator login succeeded",
+                actor_id=principal.user_id,
+                payload={"session_id": principal.session_id},
+            )
         return principal, token, csrf
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def authenticate_session(self, token: str) -> AuthenticatedPrincipal:
         if not token:
             raise PermissionDenied(
@@ -129,6 +132,7 @@ class AuthService:
         row = self.repository.get_session_by_token_hash(_sha256(token))
         return bool(row and secrets.compare_digest(str(row["csrf_hash"]), _sha256(csrf)))
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def logout(self, principal: AuthenticatedPrincipal) -> None:
         if principal.session_id:
             self.repository.revoke_session(principal.session_id)
@@ -162,14 +166,16 @@ class AuthService:
                 "Current password is invalid",
                 safe_message="当前密码不正确",
             )
-        self.repository.set_password_hash(principal.user_id, self.passwords.hash(new))
-        self.repository.revoke_user_sessions(principal.user_id)
-        self.audit_service.record(
-            "auth.password.changed",
-            status="SUCCEEDED",
-            summary="User password changed and sessions revoked",
-            actor_id=principal.user_id,
-        )
+        new_password_hash = self.passwords.hash(new)
+        with self.repository.database.unit_of_work():
+            self.repository.set_password_hash(principal.user_id, new_password_hash)
+            self.repository.revoke_user_sessions(principal.user_id)
+            self.audit_service.record(
+                "auth.password.changed",
+                status="SUCCEEDED",
+                summary="User password changed and sessions revoked",
+                actor_id=principal.user_id,
+            )
 
     def bootstrap_admin(
         self, *, username: str, display_name: str, password: str
@@ -179,7 +185,7 @@ class AuthService:
                 "Administrator already exists",
                 safe_message="系统中已存在管理员",
             )
-        with self.repository.database.transaction():
+        with self.repository.database.unit_of_work():
             user = self.repository.create_user(
                 username=username, display_name=display_name
             )

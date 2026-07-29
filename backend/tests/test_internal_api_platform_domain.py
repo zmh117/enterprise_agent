@@ -80,6 +80,20 @@ class SqlSafetyTests(unittest.TestCase):
                     table_prefix="GL001_EBR_",
                 )
 
+    def test_allows_readonly_cte_and_comment_prefix(self) -> None:
+        analyzed = analyze_readonly_query(
+            """
+            /* diagnostic */ WITH current_orders AS (
+                SELECT * FROM GL001_EBR_order
+            )
+            SELECT * FROM current_orders
+            """,
+            engine=DatabaseEngine.MYSQL,
+            max_rows=50,
+            table_prefix="GL001_EBR_",
+        )
+        self.assertIn("WITH current_orders", analyzed.sql)
+
     def test_rejects_select_into_on_sqlserver(self) -> None:
         with self.assertRaises(PolicyViolation):
             analyze_readonly_query(
@@ -105,7 +119,8 @@ class SqlSafetyTests(unittest.TestCase):
             max_rows=10,
             table_prefix="gl001_ebr_",
         )
-        self.assertIn("FETCH FIRST 10 ROWS ONLY", analyzed.sql)
+        self.assertIn("ROWNUM <= 10", analyzed.sql)
+        self.assertNotIn("FETCH FIRST", analyzed.sql)
 
     def test_sqlserver_uses_top(self) -> None:
         analyzed = analyze_readonly_query(

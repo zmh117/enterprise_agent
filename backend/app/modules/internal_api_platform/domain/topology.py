@@ -40,8 +40,8 @@ class DatabaseConnection:
     user: str
     password: str
     schema: str = ""
-    oracle_client_mode: OracleClientMode = OracleClientMode.AUTO
-    oracle_compat: OracleCompat = OracleCompat.MODERN
+    oracle_client_mode: OracleClientMode = OracleClientMode.THICK
+    oracle_compat: OracleCompat = OracleCompat.LEGACY
     use_sid: bool = False
     connect_descriptor: str = ""
 
@@ -59,6 +59,8 @@ class RedisConnection:
     db: int = 0
     username: str = ""
     password: str = ""
+    tls_enabled: bool = False
+    tls_verify_certificate: bool = True
     mode: RedisMode = RedisMode.STANDALONE
     nodes: tuple[RedisNode, ...] = ()
 
@@ -75,7 +77,12 @@ class RedisConnection:
 @dataclass(frozen=True)
 class LokiConnection:
     base_url: str
-    tenant: str = ""
+    tenant_id: str = ""
+    auth_token: str = ""
+    timeout_seconds: int = 10
+    max_minutes: int = 60
+    max_lines: int = 500
+    max_response_bytes: int = 1024 * 1024
 
 
 @dataclass(frozen=True)

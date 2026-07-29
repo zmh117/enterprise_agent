@@ -147,6 +147,38 @@ class IdentityRepository:
             raise NotFound("User not found", safe_message="未找到用户")
         return self.get_user(user_id)
 
+    def delete_user(self, user_id: str, *, expected_revision: int) -> dict[str, Any]:
+        current = self.get_user(user_id)
+        if int(current["revision"]) != expected_revision:
+            raise NonRetryableExecutionError(
+                "User revision conflict",
+                safe_message="用户信息已发生变化，请刷新后重试",
+                error_code="revision_conflict",
+            )
+        self.database.execute(
+            "update identity_migration_audit set internal_user_id = null where internal_user_id = ?",
+            (user_id,),
+        )
+        self.database.execute(
+            "delete from user_external_identity where user_id = ?", (user_id,)
+        )
+        self.database.execute("delete from user_session where user_id = ?", (user_id,))
+        self.database.execute(
+            "delete from user_password_credential where user_id = ?", (user_id,)
+        )
+        self.database.execute("delete from rbac_user_role where user_id = ?", (user_id,))
+        rows = self.database.execute(
+            "delete from app_user where id = ? and revision = ? returning id",
+            (user_id, expected_revision),
+        )
+        if not rows:
+            raise NonRetryableExecutionError(
+                "User revision conflict",
+                safe_message="用户信息已发生变化，请刷新后重试",
+                error_code="revision_conflict",
+            )
+        return current
+
     def set_password_hash(self, user_id: str, password_hash: str) -> None:
         user = self.get_user(user_id)
         if str(user["account_type"]) != "human":
@@ -927,6 +959,97 @@ class IdentityRepository:
             (now_iso(),),
         )
         return int(row["count"]) if row else 0
+
+    def lock_platform_admin_invariant(self) -> None:
+        if self.database.engine == "postgres":
+            self.database.execute(
+                """
+                select id
+                  from rbac_role
+                 where code = 'platform-admin'
+                   for update
+                """
+            )
+            return
+        # SQLite has no row-level FOR UPDATE. A no-op write acquires its
+        # database write lock so independent application connections serialize
+        # the check-and-mutate sequence.
+        self.database.execute(
+            """
+            update rbac_role
+               set updated_at = updated_at
+             where code = 'platform-admin'
+            """
+        )
+
+    def is_verified_human_platform_admin(self, user_id: str) -> bool:
+        return (
+            self.database.execute_one(
+                """
+                select u.id
+                  from app_user u
+                  join rbac_user_role ur on ur.user_id = u.id
+                  join rbac_role r on r.id = ur.role_id
+                 where u.id = ?
+                   and u.status = 'enabled'
+                   and u.account_type = 'human'
+                   and r.code = 'platform-admin'
+                   and r.status = 'enabled'
+                   and ur.status = 'enabled'
+                   and (ur.expires_at is null or ur.expires_at > ?)
+                   and exists (
+                       select 1
+                         from user_password_credential pc
+                        where pc.user_id = u.id
+                          and pc.password_hash <> ''
+                   )
+                   and exists (
+                       select 1
+                         from user_session s
+                        where s.user_id = u.id
+                   )
+                """,
+                (user_id, now_iso()),
+            )
+            is not None
+        )
+
+    def verified_human_platform_admin_count(self) -> int:
+        row = self.database.execute_one(
+            """
+            select count(*) as count
+              from app_user u
+              join rbac_user_role ur on ur.user_id = u.id
+              join rbac_role r on r.id = ur.role_id
+             where u.status = 'enabled'
+               and u.account_type = 'human'
+               and r.code = 'platform-admin'
+               and r.status = 'enabled'
+               and ur.status = 'enabled'
+               and (ur.expires_at is null or ur.expires_at > ?)
+               and exists (
+                   select 1
+                     from user_password_credential pc
+                    where pc.user_id = u.id
+                      and pc.password_hash <> ''
+               )
+               and exists (
+                   select 1
+                     from user_session s
+                    where s.user_id = u.id
+               )
+            """,
+            (now_iso(),),
+        )
+        return int(row["count"]) if row else 0
+
+    def require_verified_human_platform_admins(self, minimum: int = 2) -> None:
+        if self.verified_human_platform_admin_count() < minimum:
+            raise NonRetryableExecutionError(
+                "Platform administrator invariant would be violated",
+                safe_message="系统必须至少保留两名已完成登录验证的启用人类平台管理员",
+                error_code="platform_admin_invariant",
+            )
 
     def record_migration(
         self,

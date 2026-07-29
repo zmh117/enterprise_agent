@@ -5,22 +5,9 @@ from typing import Any
 from app.shared.config import QueueSettings
 
 
-def retry_queue_arguments(queue: QueueSettings) -> dict[str, object]:
-    return {
-        "x-dead-letter-exchange": "",
-        "x-dead-letter-routing-key": queue.job_queue,
-    }
-
-
 def declare_agent_job_topology(channel: Any, queue: QueueSettings) -> None:
-    """Declare only the current topology; never redeclare the incompatible legacy queue."""
-    channel.queue_declare(queue=queue.dead_queue, durable=True)
+    """Declare only the current Outbox target queue."""
     channel.queue_declare(queue=queue.job_queue, durable=True)
-    channel.queue_declare(
-        queue=queue.retry_queue,
-        durable=True,
-        arguments=retry_queue_arguments(queue),
-    )
 
 
 def declare_channel_event_topology(channel: Any, queue: QueueSettings) -> None:
@@ -48,13 +35,19 @@ def inspect_agent_job_topology(rabbitmq_url: str, queue: QueueSettings) -> dict[
         result: dict[str, object] = {
             "job_queue": _queue_summary(channel, queue.job_queue),
             "retry_queue": {
-                **_queue_summary(channel, queue.retry_queue),
-                "arguments": retry_queue_arguments(queue),
+                "name": queue.retry_queue,
+                **_passive_queue_summary(connection.channel(), queue.retry_queue),
             },
-            "dead_queue": _queue_summary(channel, queue.dead_queue),
+            "dead_queue": {
+                "name": queue.dead_queue,
+                **_passive_queue_summary(connection.channel(), queue.dead_queue),
+            },
             "legacy_retry_queue": {
                 "name": queue.legacy_retry_queue,
-                **_passive_queue_summary(channel, queue.legacy_retry_queue),
+                **_passive_queue_summary(
+                    connection.channel(),
+                    queue.legacy_retry_queue,
+                ),
             },
         }
         return result
@@ -83,3 +76,6 @@ def _passive_queue_summary(channel: Any, name: str) -> dict[str, object]:
     except Exception:
         # RabbitMQ closes a channel after a passive declare of a missing queue.
         return {"exists": False, "messages": 0, "consumers": 0}
+    finally:
+        if channel.is_open:
+            channel.close()

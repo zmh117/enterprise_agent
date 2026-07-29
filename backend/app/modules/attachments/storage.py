@@ -5,6 +5,7 @@ from typing import Any
 
 from app.modules.attachments.domain import StoredObject
 from app.shared.config import ObjectStorageSettings
+from app.shared.database import assert_external_io_allowed
 from app.shared.exceptions import NonRetryableExecutionError
 
 
@@ -61,12 +62,14 @@ class S3ObjectStorage:
         self.bucket = settings.bucket
 
     def ensure_bucket(self) -> None:
+        assert_external_io_allowed("object_storage.ensure_bucket")
         try:
             self.client.head_bucket(Bucket=self.bucket)
         except Exception:
             self.client.create_bucket(Bucket=self.bucket)
 
     def put(self, *, key: str, data: bytes, content_type: str, sha256: str) -> StoredObject:
+        assert_external_io_allowed("object_storage.put")
         try:
             head = self.client.head_object(Bucket=self.bucket, Key=key)
         except Exception:
@@ -88,12 +91,15 @@ class S3ObjectStorage:
         return StoredObject(self.bucket, key, len(data), sha256)
 
     def get(self, *, key: str) -> bytes:
+        assert_external_io_allowed("object_storage.get")
         body = self.client.get_object(Bucket=self.bucket, Key=key)["Body"]
         return bytes(body.read())
 
     def delete(self, *, key: str) -> None:
+        assert_external_io_allowed("object_storage.delete")
         self.client.delete_object(Bucket=self.bucket, Key=key)
 
     def list_keys(self) -> list[str]:
+        assert_external_io_allowed("object_storage.list")
         response = self.client.list_objects_v2(Bucket=self.bucket)
         return sorted(str(item["Key"]) for item in response.get("Contents") or [])

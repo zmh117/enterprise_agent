@@ -2,6 +2,7 @@ import { z } from "zod"
 
 import {
   managedChannelSchema,
+  managedChannelTestResultSchema,
   webhookConnectorOptionSchema,
   type DingTalkChannelInput,
   type WebhookChannelInput,
@@ -13,6 +14,7 @@ const webhookConnectorOptionsSchema = z.object({
   items: z.array(webhookConnectorOptionSchema),
 })
 const channelSchema = z.object({ channel: managedChannelSchema })
+const testResultSchema = z.object({ result: managedChannelTestResultSchema })
 
 export async function listManagedChannels() {
   return itemsSchema.parse(await apiRequest("/api/admin/managed-channels"))
@@ -77,6 +79,15 @@ export async function restartManagedChannel(
       { method: "POST", body: { expected_revision: revision } }
     )
   ).channel
+}
+
+export async function testManagedChannel(channelId: string) {
+  return testResultSchema.parse(
+    await apiRequest(
+      `/api/admin/managed-channels/${encodeURIComponent(channelId)}/test`,
+      { method: "POST", body: {} }
+    )
+  ).result
 }
 
 export async function deleteManagedChannel(

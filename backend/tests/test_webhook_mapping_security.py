@@ -20,7 +20,10 @@ def _generic_config() -> dict[str, object]:
     fixed = {"mode": "fixed", "value": ""}
     return {
         "adapter": "generic_json_v1",
-        "authentication": {"type": "bearer_v1", "secret_ref": "env:UNUSED"},
+        "authentication": {
+            "type": "bearer_v1",
+            "secret_ref": "secret://platform/unused",
+        },
         "mapping": {
             "variables": {"message": "/payload/a~1b/~0key", "url": "/callback_url"},
             "message_template": "Investigate {message} {url}",
@@ -84,13 +87,20 @@ def test_public_api_rejects_deep_and_oversized_json_without_persisting_body() ->
         webhooks=WebhookSettings(max_body_bytes=256, max_json_depth=4, max_collection_items=20),
     )
     c = unified_container()
+    c.platform_config_service.secret_provider.rotate_secret(
+        code="grafana_webhook_token",
+        value="test-grafana-token-0123456789abcdefABCDEF",
+        actor_id="user_local_admin",
+    )
     c.webhook_ingress_service.settings = settings.webhooks
     with TestClient(create_app(settings, container_factory=lambda _: c)) as client:
         deep = {"status": "firing", "groupKey": "deep", "value": {"a": {"b": {"c": {}}}}}
         response = client.post(
             f"/webhooks/v1/{PUBLIC_ID}",
             json=deep,
-            headers={"authorization": "Bearer test-grafana-token"},
+            headers={
+                "authorization": "Bearer test-grafana-token-0123456789abcdefABCDEF"
+            },
         )
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "webhook_payload_invalid"
@@ -100,7 +110,9 @@ def test_public_api_rejects_deep_and_oversized_json_without_persisting_body() ->
             f"/webhooks/v1/{PUBLIC_ID}",
             content=json.dumps({"status": "firing", "value": oversized_secret}),
             headers={
-                "authorization": "Bearer test-grafana-token",
+                "authorization": (
+                    "Bearer test-grafana-token-0123456789abcdefABCDEF"
+                ),
                 "content-type": "application/json",
             },
         )

@@ -6,6 +6,7 @@ from typing import Protocol
 
 @dataclass(frozen=True)
 class AgentJobMessage:
+    event_id: str
     job_id: str
     correlation_id: str
 
@@ -29,11 +30,12 @@ class ChannelEventMessage:
 
 
 class MessagePublisher(Protocol):
-    def publish_agent_job(self, job_id: str, correlation_id: str) -> None: ...
-
-    def publish_retry(self, job_id: str, correlation_id: str, delay_seconds: int) -> None: ...
-
-    def publish_dead_letter(self, job_id: str, correlation_id: str, reason: str) -> None: ...
+    def publish_agent_job(
+        self,
+        event_id: str,
+        job_id: str,
+        correlation_id: str,
+    ) -> None: ...
 
     def publish_attachment(self, attachment_id: str, correlation_id: str) -> None: ...
 

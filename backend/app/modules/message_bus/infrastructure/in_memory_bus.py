@@ -17,8 +17,6 @@ from app.modules.message_bus.application.message_publisher import (
 class InMemoryMessageBus:
     def __init__(self) -> None:
         self.jobs: deque[AgentJobMessage] = deque()
-        self.retries: deque[tuple[AgentJobMessage, int]] = deque()
-        self.dead_letters: deque[tuple[AgentJobMessage, str]] = deque()
         self.attachments: deque[AttachmentTaskMessage] = deque()
         self.attachment_retries: deque[tuple[AttachmentTaskMessage, int]] = deque()
         self.attachment_dead_letters: deque[tuple[AttachmentTaskMessage, str]] = deque()
@@ -27,17 +25,18 @@ class InMemoryMessageBus:
         self.channel_events: deque[ChannelEventMessage] = deque()
         self.channel_dead_letters: deque[tuple[ChannelEventMessage, str]] = deque()
 
-    def publish_agent_job(self, job_id: str, correlation_id: str) -> None:
-        self.jobs.append(AgentJobMessage(job_id=job_id, correlation_id=correlation_id))
-
-    def publish_retry(self, job_id: str, correlation_id: str, delay_seconds: int) -> None:
-        self.retries.append(
-            (AgentJobMessage(job_id=job_id, correlation_id=correlation_id), delay_seconds)
-        )
-
-    def publish_dead_letter(self, job_id: str, correlation_id: str, reason: str) -> None:
-        self.dead_letters.append(
-            (AgentJobMessage(job_id=job_id, correlation_id=correlation_id), reason)
+    def publish_agent_job(
+        self,
+        event_id: str,
+        job_id: str,
+        correlation_id: str,
+    ) -> None:
+        self.jobs.append(
+            AgentJobMessage(
+                event_id=event_id,
+                job_id=job_id,
+                correlation_id=correlation_id,
+            )
         )
 
     def consume_agent_jobs(self, handler: AgentJobHandler) -> None:
@@ -92,8 +91,3 @@ class InMemoryMessageBus:
     def consume_channel_events(self, handler: ChannelEventHandler) -> None:
         while self.channel_events:
             handler(self.channel_events.popleft())
-
-    def drain_retry_to_jobs(self) -> None:
-        while self.retries:
-            message, _delay = self.retries.popleft()
-            self.jobs.append(message)

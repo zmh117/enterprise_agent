@@ -7,6 +7,21 @@ from sqlglot import exp
 from ..errors import PolicyViolation
 
 _FORBIDDEN_FIRST_KEYWORDS = {"select", "with"}
+_FORBIDDEN_EXPRESSIONS = (
+    exp.Alter,
+    exp.Command,
+    exp.Create,
+    exp.Delete,
+    exp.Drop,
+    exp.Execute,
+    exp.Grant,
+    exp.Insert,
+    exp.Merge,
+    exp.Revoke,
+    exp.Transaction,
+    exp.TruncateTable,
+    exp.Update,
+)
 
 
 def strip_sql_comments(sql: str) -> str:
@@ -34,6 +49,11 @@ def assert_readonly_expression(expression: exp.Expression) -> None:
         raise PolicyViolation("Only read-only SELECT or WITH queries are allowed")
     if list(expression.find_all(exp.Command)):
         raise PolicyViolation("Statement could not be parsed as a read-only query")
+    for expression_type in _FORBIDDEN_EXPRESSIONS:
+        if list(expression.find_all(expression_type)):
+            raise PolicyViolation(
+                "Mutating or administrative SQL nodes are not allowed"
+            )
     if list(expression.find_all(exp.Into)):
         raise PolicyViolation("SELECT ... INTO is not allowed")
     if list(expression.find_all(exp.Lock)):

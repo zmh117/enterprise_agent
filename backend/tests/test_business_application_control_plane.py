@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import replace
 from pathlib import Path
 
@@ -17,6 +18,8 @@ from app.modules.business_application.domain.policies import (
 )
 from app.shared.database import Database, default_migrations_dir
 from app.shared.exceptions import NonRetryableExecutionError
+from app.shared.migrations import Migrator
+from backend.tests.helpers import grant_test_application_access
 from backend.tests.test_unified_identity_rbac import (
     csrf_headers,
     login,
@@ -148,11 +151,21 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
         )
     migration_names = [path.name for path in sorted(default_migrations_dir().glob("*.sql"))]
     assert migration_names.index("009_admin_web_read_models.sql") < migration_names.index(
-        "009_agent_job_retry_failure_delivery.sql"
+        "009a_agent_job_retry_failure_delivery.sql"
     )
     assert migration_names.index(
-        "009_agent_job_retry_failure_delivery.sql"
+        "009a_agent_job_retry_failure_delivery.sql"
     ) < migration_names.index("010_business_application_control_plane.sql")
+    session_columns = {
+        str(row["name"])
+        for row in db.execute("pragma table_info(agent_session)")
+    }
+    assert {
+        "application_publication_id",
+        "execution_scope_hash",
+        "isolation_key_version",
+        "history_read_only",
+    } <= session_columns
 
 
 def test_domain_policies_reject_unsafe_or_unknown_configuration() -> None:
@@ -179,6 +192,38 @@ def test_domain_policies_reject_unsafe_or_unknown_configuration() -> None:
     right = {"a": {"list": [2, 1], "z": None}, "b": 2}
     assert canonical_json(left) == canonical_json(right)
     assert snapshot_hash(left) == snapshot_hash(right)
+
+
+@pytest.mark.parametrize("legacy_mode", ["actor", "application"])
+def test_new_drafts_reject_legacy_shared_session_modes(legacy_mode: str) -> None:
+    container = build_test_container(control_plane_settings(), migrate=True, seed=True)
+    application = container.business_application_service.create(
+        actor_id="user_local_admin",
+        code=f"reject-{legacy_mode}-session",
+        name=f"reject {legacy_mode} session",
+        description="legacy mode must stay history-only",
+        project_code="default",
+        owner_user_id="user_local_admin",
+    )
+    payload = draft_payload()
+    session_policy = dict(payload["session_policy"])
+    session_policy["conversation_mode"] = legacy_mode
+    payload["session_policy"] = session_policy
+
+    with pytest.raises(NonRetryableExecutionError) as rejected:
+        container.business_application_service.save_draft(
+            actor_id="user_local_admin",
+            code=str(application["code"]),
+            expected_revision=int(application["revision"]),
+            payload=payload,
+        )
+    assert rejected.value.error_code == "validation_failed"
+    assert rejected.value.field_errors == [
+        {
+            "field": "session_policy.conversation_mode",
+            "message": "仅支持按渠道会话；旧按主体/按应用模式只可查看历史",
+        }
+    ]
 
 
 def test_repository_is_append_only_and_enforces_revision_conflicts() -> None:
@@ -526,6 +571,11 @@ def test_active_business_application_policy_controls_live_channel_sessions() -> 
         publication_id=str(publication["id"]),
         expected_revision=0,
     )
+    grant_test_application_access(
+        container,
+        application_id=str(application["id"]),
+        role_code="live-session-runtime-reader",
+    )
 
     first = container.dingtalk_stream_message_service.handle_callback(
         payload={
@@ -689,7 +739,11 @@ def test_capability_catalog_lists_readonly_tools_and_enforces_agent_binding() ->
         code="capability-catalog-test",
     )
     assert catalog["capability_catalog_connected"] is True
-    assert "get_schema_directory" in {item["code"] for item in catalog["capabilities"]}
+    capability_codes = {
+        item["code"] for item in catalog["capabilities"]
+    }
+    assert "get_schema_directory" in capability_codes
+    assert "query_database" not in capability_codes
 
     valid_revision = service.save_draft(
         actor_id="user_local_admin",
@@ -878,24 +932,46 @@ def test_local_seed_and_default_application_cli_are_idempotent(
     from app.cli.seed_default_business_application import main
 
     database_path = tmp_path / "control-plane-seed.db"
+    master_key_path = tmp_path / "app-config-master-key"
+    encoded_key = base64.urlsafe_b64encode(b"x" * 32).decode().rstrip("=")
+    master_key_path.write_text(
+        f"EA_MASTER_KEY_V1:{encoded_key}\n",
+        encoding="utf-8",
+    )
+    master_key_path.chmod(0o400)
     monkeypatch.setenv("DATABASE_DSN", f"sqlite:///{database_path}")
     monkeypatch.setenv("APP_ENV", "local")
+    monkeypatch.setenv("APP_CONFIG_MASTER_KEY_FILE", str(master_key_path))
     monkeypatch.setenv("FEATURE_UNIFIED_IDENTITY", "true")
     monkeypatch.setenv("FEATURE_WEB_ADMIN", "true")
     monkeypatch.setenv("FEATURE_BUSINESS_APPLICATION_CONTROL_PLANE", "true")
+    migration_database = Database(f"sqlite:///{database_path}")
+    try:
+        Migrator(
+            migration_database,
+            default_migrations_dir(),
+            migrator_build="test-cli",
+        ).run()
+    finally:
+        migration_database.close()
     assert main() == 0
     assert main() == 0
     db = Database(f"sqlite:///{database_path}")
-    assert (
-        db.execute_one(
+    try:
+        assert (
+            db.execute_one(
+                """
+            select count(*) as count from business_application
+             where code = 'default-diagnostic-application'
             """
-        select count(*) as count from business_application
-         where code = 'default-diagnostic-application'
-        """
-        )["count"]
-        == 1
-    )
-    assert (
-        db.execute_one("select count(*) as count from business_application_deployment")["count"]
-        == 0
-    )
+            )["count"]
+            == 1
+        )
+        assert (
+            db.execute_one(
+                "select count(*) as count from business_application_deployment"
+            )["count"]
+            == 0
+        )
+    finally:
+        db.close()

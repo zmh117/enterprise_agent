@@ -21,7 +21,7 @@ class DingTalkIdentityDiscoveryRepository:
     def observe(self, observation: DingTalkIdentityObservation) -> dict[str, object]:
         timestamp = now_iso()
         candidate_id = new_id("dingtalk_candidate")
-        with self.database.transaction():
+        with self.database.unit_of_work():
             self.database.execute(
                 """
                 insert into dingtalk_identity_candidate
@@ -249,7 +249,7 @@ class DingTalkIdentityDiscoveryRepository:
         if not candidate_ids:
             return 0
         placeholders = ",".join("?" for _ in candidate_ids)
-        with self.database.transaction():
+        with self.database.unit_of_work():
             self.database.execute(
                 f"delete from dingtalk_identity_candidate where id in ({placeholders})",
                 tuple(candidate_ids),

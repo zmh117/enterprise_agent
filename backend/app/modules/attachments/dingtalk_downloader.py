@@ -7,6 +7,7 @@ from app.modules.dingding.infrastructure.dingtalk_delivery_clients import (
     JsonPostTransport,
     UrllibJsonPostTransport,
 )
+from app.shared.database import assert_external_io_allowed
 from app.shared.exceptions import RetryableExecutionError
 
 
@@ -27,6 +28,7 @@ class DingTalkMediaDownloader:
         self.timeout_seconds = timeout_seconds
 
     def download(self, *, download_code: str, max_bytes: int) -> bytes:
+        assert_external_io_allowed("dingtalk.media_download")
         response = self.transport.post_json(
             self.download_api_url,
             {"robotCode": self.robot_code, "downloadCode": download_code},

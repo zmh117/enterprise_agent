@@ -43,6 +43,7 @@ from app.modules.internal_api_platform.infrastructure.db.schema_directory import
 from app.modules.internal_api_platform.infrastructure.loki_gateway import FakeLokiClient
 from app.modules.internal_api_platform.infrastructure.redis_gateway import FakeRedisGateway
 from app.modules.internal_api_platform.infrastructure.registry import TopologyRegistry
+from app.shared.config import Settings
 
 
 class _ScriptedCursor:
@@ -489,7 +490,9 @@ class MultiDialectSchemaDirectoryServiceTests(unittest.TestCase):
                         SchemaTable("order_lines", [SchemaColumn("id", "number", False)]),
                     ],
                 )
-                response = TestClient(create_app(service=service)).post(
+                response = TestClient(
+                    create_app(Settings(environment="test"), service=service)
+                ).post(
                     "/tools/schema/directory",
                     json={
                         "environment": "prod",
@@ -516,7 +519,9 @@ class MultiDialectSchemaDirectoryServiceTests(unittest.TestCase):
             DatabaseEngine.SQLSERVER,
             tables=[SchemaTable("orders", [SchemaColumn("id", "int", False)])],
         )
-        response = TestClient(create_app(service=service)).post(
+        response = TestClient(
+            create_app(Settings(environment="test"), service=service)
+        ).post(
             "/tools/schema/directory",
             json={"environment": "prod", "base": "main"},
             headers={"x-agent-user-id": "unauthorized"},

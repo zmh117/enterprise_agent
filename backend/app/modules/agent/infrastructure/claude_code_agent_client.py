@@ -30,6 +30,7 @@ from app.modules.model_connection.domain import (
     ModelRuntimeBinding,
 )
 from app.shared.config import ExecutionSettings
+from app.shared.database import assert_external_io_allowed
 from app.shared.exceptions import (
     DiagnosticLoopExhausted,
     ExecutionPolicyExceeded,
@@ -301,6 +302,7 @@ class RealClaudeCodeAgentClient:
         self.secret_resolver = secret_resolver
 
     def run(self, request: AgentRunRequest) -> AgentRunResult:
+        assert_external_io_allowed("model.run")
         binding = request.context.model_runtime_binding or self._legacy_binding(
             request.context.model
         )
@@ -420,6 +422,7 @@ class RealClaudeCodeAgentClient:
         api_key: str,
         timeout_seconds: int,
     ) -> dict[str, Any]:
+        assert_external_io_allowed("model.test_connection")
         if _looks_placeholder_api_key(api_key):
             raise NonRetryableExecutionError(
                 "Model connection credential is missing or placeholder",

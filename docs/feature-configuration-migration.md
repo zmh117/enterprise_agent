@@ -13,7 +13,7 @@
 
 开启 `FEATURE_WEB_ADMIN` 不会联动后三项。三个数据面开关只能由部署环境开启，数据库运行配置不能越过关闭的部署闸门。
 
-`DATABASE_DSN`、`RABBITMQ_URL`、`APP_CONFIG_MASTER_KEY`、`APP_ENV` 和启动迁移参数仍是 bootstrap 配置，不属于功能开关。
+`DATABASE_DSN`、`RABBITMQ_URL`、`APP_CONFIG_MASTER_KEY_FILE`、`APP_ENV` 和启动迁移参数仍是 bootstrap 配置，不属于功能开关；Master Key 本体只存在于该路径指向的仓库外固定文件。
 
 ## 代码读取边界
 

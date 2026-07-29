@@ -4,6 +4,7 @@ from typing import Any
 
 from app.modules.audit.application.summaries import bounded_summary
 from app.modules.job.infrastructure.repositories import AuditRepository
+from app.shared.database import operation_unit_of_work
 
 
 class AuditService:
@@ -11,6 +12,7 @@ class AuditService:
         self.repository = repository
         self.max_chars = max_chars
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def record(
         self,
         event_type: str,

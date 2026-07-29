@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-import math
 from datetime import UTC, datetime, timedelta
 
 from app.modules.audit.application.audit_service import AuditService
+from app.modules.delivery.application.result_delivery_service import (
+    ResultDeliveryService,
+)
 from app.modules.job.domain.agent_job import AgentJob
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.repositories import AgentRepository
-from app.modules.message_bus.application.message_publisher import MessagePublisher
 from app.shared.config import QueueSettings
+from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import (
     ExecutionTimeout,
     DiagnosticLoopExhausted,
@@ -24,14 +26,14 @@ class JobRetryService:
         self,
         *,
         repository: AgentRepository,
-        publisher: MessagePublisher,
         queue_settings: QueueSettings,
         audit_service: AuditService,
+        delivery_service: ResultDeliveryService,
     ) -> None:
         self.repository = repository
-        self.publisher = publisher
         self.queue_settings = queue_settings
         self.audit_service = audit_service
+        self.delivery_service = delivery_service
 
     def is_retryable(self, exc: Exception) -> bool:
         if isinstance(
@@ -48,6 +50,7 @@ class JobRetryService:
             exc, (RetryableExecutionError, ExecutionTimeout, TimeoutError, ConnectionError)
         )
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def handle_failure(self, job: AgentJob, exc: Exception, correlation_id: str) -> str:
         safe_message = getattr(exc, "safe_message", str(exc))
         error_code = getattr(exc, "error_code", "") or "agent_runtime_error"
@@ -61,23 +64,10 @@ class JobRetryService:
                 error_code=error_code,
                 next_retry_at=next_retry_at,
             )
-            try:
-                self.publisher.publish_retry(job.id, correlation_id, delay_seconds)
-            except Exception as publish_exc:
-                self.audit_service.record(
-                    "job.retry.publish_failed",
-                    status="FAILED",
-                    summary="Retry dispatch failed; recovery is required",
-                    job_id=job.id,
-                    payload={
-                        "correlation_id": correlation_id,
-                        "retry_count": scheduled.retry_count,
-                        "error_code": error_code,
-                        "publish_error_type": publish_exc.__class__.__name__,
-                        **_business_application_context(job),
-                    },
-                )
-                return "retry_dispatch_failed"
+            dispatch_event = self.repository.rearm_dispatch_for_retry(
+                job_id=job.id,
+                next_attempt_at=next_retry_at,
+            )
             self.audit_service.record(
                 "job.retry.scheduled",
                 status="SUCCEEDED",
@@ -87,6 +77,7 @@ class JobRetryService:
                     "correlation_id": correlation_id,
                     "retry_count": scheduled.retry_count,
                     "next_retry_at": scheduled.next_retry_at,
+                    "dispatch_event_id": dispatch_event.id,
                     "error_code": error_code,
                     "diagnostics": diagnostics,
                     **_business_application_context(job),
@@ -104,32 +95,24 @@ class JobRetryService:
             error_message=safe_message,
             error_code=error_code,
         )
-        try:
-            self.publisher.publish_dead_letter(job.id, correlation_id, safe_message)
-            self.audit_service.record(
-                "job.dead_letter.published",
-                status="SUCCEEDED",
-                summary="Terminal Agent job published to dead-letter queue",
-                job_id=job.id,
-                payload={
-                    "correlation_id": correlation_id,
-                    "error_code": error_code,
-                    **_business_application_context(job),
-                },
-            )
-        except Exception as publish_exc:
-            self.audit_service.record(
-                "job.dead_letter.publish_failed",
-                status="FAILED",
-                summary="Terminal dead-letter publish failed",
-                job_id=job.id,
-                payload={
-                    "correlation_id": correlation_id,
-                    "error_code": error_code,
-                    "publish_error_type": publish_exc.__class__.__name__,
-                    **_business_application_context(job),
-                },
-            )
+        delivery_id = self.delivery_service.enqueue_job_failure(
+            job_id=job.id,
+            reason=safe_message,
+            error_code=error_code,
+            correlation_id=correlation_id,
+        )
+        self.audit_service.record(
+            "job.dead.persisted",
+            status="SUCCEEDED",
+            summary="Terminal Agent job failure persisted without broker replay",
+            job_id=job.id,
+            payload={
+                "correlation_id": correlation_id,
+                "error_code": error_code,
+                "delivery_id": delivery_id,
+                **_business_application_context(job),
+            },
+        )
         return "timeout" if terminal.status == JobStatus.TIMEOUT else "dead"
 
     def reschedule_if_early(self, job: AgentJob, correlation_id: str) -> bool:
@@ -141,31 +124,14 @@ class JobRetryService:
         remaining = (due_at - datetime.now(UTC)).total_seconds()
         if remaining <= 0:
             return False
-        delay_seconds = max(math.ceil(remaining), 1)
-        try:
-            self.publisher.publish_retry(job.id, correlation_id, delay_seconds)
-        except Exception as publish_exc:
-            self.audit_service.record(
-                "job.retry.early_reschedule_failed",
-                status="FAILED",
-                summary="Early retry message could not be rescheduled",
-                job_id=job.id,
-                payload={
-                    "correlation_id": correlation_id,
-                    "remaining_seconds": delay_seconds,
-                    "publish_error_type": publish_exc.__class__.__name__,
-                    **_business_application_context(job),
-                },
-            )
-            return True
         self.audit_service.record(
-            "job.retry.early_rescheduled",
+            "job.retry.early_duplicate_ignored",
             status="SUCCEEDED",
-            summary="Early retry message rescheduled for its remaining delay",
+            summary="Early duplicate retry message ignored; Outbox remains authoritative",
             job_id=job.id,
             payload={
                 "correlation_id": correlation_id,
-                "remaining_seconds": delay_seconds,
+                "remaining_seconds": max(int(remaining), 1),
                 **_business_application_context(job),
             },
         )

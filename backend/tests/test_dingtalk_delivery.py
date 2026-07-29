@@ -18,7 +18,11 @@ from app.modules.dingding.infrastructure.dingtalk_delivery_clients import (
 from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
 from app.modules.job.application.job_status_service import JobStatusService
 from app.modules.job.domain.job_status import JobStatus
-from backend.tests.helpers import container
+from backend.tests.helpers import (
+    container,
+    dispatch_pending_deliveries,
+    enqueue_job_result_for_delivery,
+)
 
 
 class FakeDingTalkTransport:
@@ -90,7 +94,8 @@ class DingTalkDeliveryTests(unittest.TestCase):
             self.assertIsNotNone(status_service.claim(job.id, "worker-1"))
             status_service.succeed(job.id, "done")
 
-            c.result_delivery_service.deliver_job_result(job.id)
+            enqueue_job_result_for_delivery(c, job.id)
+            dispatch_pending_deliveries(c)
 
         self.assertEqual(JobStatus.SUCCEEDED, c.agent_repository.get_job(job.id).status)
         attempts = c.agent_repository.list_delivery_attempts(job.id)
@@ -141,7 +146,8 @@ class DingTalkDeliveryTests(unittest.TestCase):
             self.assertIsNotNone(status_service.claim(job.id, "worker-1"))
             status_service.succeed(job.id, "done")
 
-            c.result_delivery_service.deliver_job_result(job.id)
+            enqueue_job_result_for_delivery(c, job.id)
+            dispatch_pending_deliveries(c)
 
         self.assertEqual(1, len(transport.calls))
         self.assertIn("timestamp=", transport.calls[0]["url"])
@@ -158,6 +164,11 @@ class DingTalkDeliveryTests(unittest.TestCase):
         transport = FakeDingTalkTransport()
         with patched_env(DINGTALK_WEBHOOK_ROBOT_URL="https://evil.example/robot/send"):
             c = container()
+            c.platform_config_service.secret_provider.rotate_secret(
+                code="dingtalk_webhook_robot_url",
+                value="https://evil.example/robot/send",
+                actor_id="test-fixture",
+            )
             c.result_delivery_service.adapters["dingtalk_webhook_robot"] = (
                 DingTalkWebhookRobotDeliveryAdapter(
                     connector_registry=c.connector_registry,
@@ -183,7 +194,8 @@ class DingTalkDeliveryTests(unittest.TestCase):
             self.assertIsNotNone(status_service.claim(job.id, "worker-1"))
             status_service.succeed(job.id, "done")
 
-            c.result_delivery_service.deliver_job_result(job.id)
+            enqueue_job_result_for_delivery(c, job.id)
+            c.delivery_dispatcher.dispatch_pending(limit=1)
 
         self.assertEqual([], transport.calls)
         attempts = c.agent_repository.list_delivery_attempts(job.id)

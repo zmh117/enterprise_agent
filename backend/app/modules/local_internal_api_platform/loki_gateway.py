@@ -11,6 +11,7 @@ from typing import Any
 from urllib.request import Request, urlopen
 
 from app.shared.config import LokiSettings
+from app.shared.database import assert_external_io_allowed
 
 from .envelope import LocalPlatformError, redact_text, safe_error_text
 from .schemas import LokiQuery, LocalToolResult
@@ -61,6 +62,7 @@ class LokiGateway:
         return summarize_loki_response(body, loki_query, self.settings.max_response_chars)
 
     def _query_loki(self, loki_query: LokiQuery) -> dict[str, Any]:
+        assert_external_io_allowed("tool_loki.local_query")
         end_ns = time.time_ns()
         start_ns = end_ns - loki_query.minutes * 60 * 1_000_000_000
         query_params = urllib.parse.urlencode(

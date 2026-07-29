@@ -13,6 +13,7 @@ import {
   listWebhookConnectorOptions,
   restartManagedChannel,
   setManagedChannelEnabled,
+  testManagedChannel,
   updateDingTalkChannel,
 } from "@/contexts/applications/infrastructure/managed-channel-api"
 
@@ -79,6 +80,12 @@ export function useRestartManagedChannel() {
   return useRefreshChannelsMutation(
     (input: { channelId: string; revision: number }) =>
       restartManagedChannel(input.channelId, input.revision)
+  )
+}
+
+export function useTestManagedChannel() {
+  return useRefreshChannelsMutation((channelId: string) =>
+    testManagedChannel(channelId)
   )
 }
 

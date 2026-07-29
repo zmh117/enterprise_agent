@@ -349,20 +349,22 @@ def build_admin_router() -> APIRouter:
         try:
             ChannelProviderService().validate(data)
             expected = int(data.pop("expected_revision"))
-            item = AdminConnectorRepository(container(request).database).save(
-                data, expected_revision=expected
-            )
-            container(request).audit_service.record(
-                "admin.channel_connector.saved",
-                status="SUCCEEDED",
-                summary="Channel connector configuration saved",
-                actor_id=principal.user_id,
-                payload={
-                    "connector_id": item["id"],
-                    "connector_type": item["connector_type"],
-                    "correlation_id": _correlation_id(request),
-                },
-            )
+            c = container(request)
+            with c.database.unit_of_work():
+                item = AdminConnectorRepository(c.database).save(
+                    data, expected_revision=expected
+                )
+                c.audit_service.record(
+                    "admin.channel_connector.saved",
+                    status="SUCCEEDED",
+                    summary="Channel connector configuration saved",
+                    actor_id=principal.user_id,
+                    payload={
+                        "connector_id": item["id"],
+                        "connector_type": item["connector_type"],
+                        "correlation_id": _correlation_id(request),
+                    },
+                )
             return {"connector": item}
         except Exception as exc:
             raise handle_exception(exc) from exc
@@ -378,24 +380,26 @@ def build_admin_router() -> APIRouter:
             action="manage",
             csrf=True,
         )
-        repository = AdminConnectorRepository(container(request).database)
+        c = container(request)
+        repository = AdminConnectorRepository(c.database)
         try:
-            existing = repository.get(connector_id)
-            item = repository.save(
-                {**existing, "enabled": payload.status == "enabled"},
-                expected_revision=payload.expected_revision,
-            )
-            container(request).audit_service.record(
-                "admin.channel_connector.status_changed",
-                status="SUCCEEDED",
-                summary="Channel connector status changed",
-                actor_id=principal.user_id,
-                payload={
-                    "connector_id": connector_id,
-                    "status": payload.status,
-                    "correlation_id": _correlation_id(request),
-                },
-            )
+            with c.database.unit_of_work():
+                existing = repository.get(connector_id)
+                item = repository.save(
+                    {**existing, "enabled": payload.status == "enabled"},
+                    expected_revision=payload.expected_revision,
+                )
+                c.audit_service.record(
+                    "admin.channel_connector.status_changed",
+                    status="SUCCEEDED",
+                    summary="Channel connector status changed",
+                    actor_id=principal.user_id,
+                    payload={
+                        "connector_id": connector_id,
+                        "status": payload.status,
+                        "correlation_id": _correlation_id(request),
+                    },
+                )
             return {"connector": item}
         except Exception as exc:
             raise handle_exception(exc) from exc
@@ -492,6 +496,18 @@ def build_admin_router() -> APIRouter:
             }
         except Exception as exc:
             raise handle_exception(exc) from exc
+
+    @router.get("/deliveries/metrics")
+    def delivery_metrics(request: Request) -> dict[str, Any]:
+        require_action(
+            request,
+            resource_type="agent_job",
+            resource_code="*",
+            action="read",
+        )
+        return {
+            "delivery": container(request).agent_repository.delivery_metrics()
+        }
 
     @router.get("/jobs/{job_id}")
     def job_detail(request: Request, job_id: str) -> dict[str, Any]:

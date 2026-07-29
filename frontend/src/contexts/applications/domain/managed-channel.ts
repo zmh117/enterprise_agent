@@ -50,6 +50,16 @@ export type WebhookConnectorOption = z.infer<
   typeof webhookConnectorOptionSchema
 >
 
+export const managedChannelTestResultSchema = z.object({
+  status: z.literal("READY"),
+  summary: z.string(),
+  tested_at: z.string(),
+})
+
+export type ManagedChannelTestResult = z.infer<
+  typeof managedChannelTestResultSchema
+>
+
 export type DingTalkChannelInput = {
   expected_revision: number
   name: string

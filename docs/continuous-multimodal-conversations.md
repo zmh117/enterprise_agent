@@ -30,7 +30,7 @@
 
 ## 凭证安全
 
-钉钉download code使用`APP_CONFIG_MASTER_KEY`以AES-GCM短期加密落库，RabbitMQ只传attachment ID。下载完成、拒绝、最终失败或过期后清除密文。明文/密文、临时URL、access token和session webhook不得出现在API、调试接口、日志或审计中。
+钉钉 download code 使用 `APP_CONFIG_MASTER_KEY_FILE` 指向的固定 Master Key，以 AES-GCM 短期加密落库，RabbitMQ 只传 attachment ID。下载完成、拒绝、最终失败或过期后清除密文。明文/密文、临时 URL、access token 和 session webhook 不得出现在 API、调试接口、日志或审计中。
 
 ## 本地启动
 

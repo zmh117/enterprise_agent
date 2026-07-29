@@ -11,6 +11,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse, urlunparse
 from urllib.request import Request, urlopen
 
+from app.shared.database import assert_external_io_allowed
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
 
 
@@ -25,6 +26,7 @@ class UrllibJsonPostTransport:
     def post_json(
         self, url: str, payload: dict[str, Any], headers: dict[str, str], timeout_seconds: int
     ) -> dict[str, Any]:
+        assert_external_io_allowed("dingtalk.http")
         request = Request(
             url,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),

@@ -375,21 +375,15 @@ describe("角色授权中心", () => {
 
   it.each([
     [
-      "legacy_compatible",
-      true,
-      "当前由旧授权兼容链路允许，建议迁移到业务角色。",
-      "旧授权兼容模式",
-    ],
-    [
       "application_capability_safety_ceiling",
       false,
       "所选能力超出业务应用和只读工具安全上限，角色不能授予。",
       "",
     ],
     [
-      "explicit_application_deny",
+      "application_scope_denied",
       false,
-      "高级显式拒绝覆盖了角色允许。",
+      "角色未授予所选数据范围。",
       "",
     ],
   ])(
@@ -460,7 +454,6 @@ describe("角色授权中心", () => {
               application: { id: "app-test", code: "diagnostic-app" },
               capability_code: "",
               scope: {},
-              legacy_compatible: reason === "legacy_compatible",
             },
             notice: "只显示安全摘要",
           })

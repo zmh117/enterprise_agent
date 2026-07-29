@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from app.shared.database import assert_external_io_allowed
+
 from ..domain.addressing import ResourceBinding
 from ..domain.errors import ResolutionError, UpstreamUnavailable
 from ..domain.results import ToolResponse
@@ -59,6 +61,14 @@ class RealRedisGateway:
                     username=conn.username or None,
                     password=conn.password or None,
                     socket_timeout=5,
+                    socket_connect_timeout=5,
+                    ssl=conn.tls_enabled,
+                    ssl_cert_reqs=(
+                        "required"
+                        if conn.tls_verify_certificate
+                        else None
+                    ),
+                    ssl_check_hostname=conn.tls_verify_certificate,
                     decode_responses=True,
                 )
             return redis.Redis(
@@ -68,6 +78,16 @@ class RealRedisGateway:
                 username=conn.username or None,
                 password=conn.password or None,
                 socket_timeout=5,
+                socket_connect_timeout=5,
+                ssl=conn.tls_enabled,
+                ssl_cert_reqs=(
+                    "required"
+                    if conn.tls_verify_certificate
+                    else None
+                ),
+                ssl_check_hostname=(
+                    conn.tls_enabled and conn.tls_verify_certificate
+                ),
                 decode_responses=True,
             )
         except ResolutionError:
@@ -76,6 +96,7 @@ class RealRedisGateway:
             raise UpstreamUnavailable(f"Redis connection failed: {type(exc).__name__}") from exc
 
     def get(self, binding: ResourceBinding, key: str) -> ToolResponse:  # pragma: no cover
+        assert_external_io_allowed("tool_redis.get")
         client = self._connect(binding)
         try:
             value = client.get(key)
@@ -86,6 +107,7 @@ class RealRedisGateway:
     def scan(
         self, binding: ResourceBinding, pattern: str, limit: int
     ) -> ToolResponse:  # pragma: no cover
+        assert_external_io_allowed("tool_redis.scan")
         # Policy (workshop key prefix / bounded pattern) is enforced in PlatformService
         # before this method; both standalone and cluster clients honor match/count.
         client = self._connect(binding)

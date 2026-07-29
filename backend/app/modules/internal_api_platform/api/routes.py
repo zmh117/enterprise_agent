@@ -6,7 +6,12 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request as FastAPIRequest
 
 from ..application.platform_service import PlatformService
-from ..domain.errors import PlatformError, PolicyViolation, ResolutionError
+from ..domain.errors import (
+    AuthorizationError,
+    PlatformError,
+    PolicyViolation,
+    ResolutionError,
+)
 from ..domain.results import ToolResponse
 from ..domain.topology import ResourceKind
 
@@ -17,6 +22,14 @@ def _user_id(request: FastAPIRequest) -> str:
 
 def _job_id(request: FastAPIRequest) -> str:
     return request.headers.get("x-agent-job-id", "").strip()
+
+
+def _project_code(request: FastAPIRequest) -> str:
+    return request.headers.get("x-agent-project-code", "").strip()
+
+
+def _application_id(request: FastAPIRequest) -> str:
+    return request.headers.get("x-agent-application-id", "").strip()
 
 
 def _require(payload: dict[str, Any], key: str) -> str:
@@ -33,6 +46,25 @@ def _optional(payload: dict[str, Any], key: str) -> str | None:
     if not isinstance(value, str) or not value.strip():
         raise PolicyViolation(f"Field '{key}' must be a non-empty string when provided")
     return value.strip()
+
+
+def _target(
+    request: FastAPIRequest,
+    payload: dict[str, Any],
+) -> tuple[str, str, str | None]:
+    environment = _require(payload, "environment")
+    base = _require(payload, "base")
+    workshop = _optional(payload, "workshop")
+    expected = {
+        "x-agent-environment": environment,
+        "x-agent-base": base,
+        "x-agent-workshop": workshop or "",
+    }
+    for header, expected_value in expected.items():
+        supplied = request.headers.get(header, "").strip()
+        if supplied and supplied != expected_value:
+            raise AuthorizationError("Agent Job authorization context is invalid")
+    return environment, base, workshop
 
 
 def _envelope(request: FastAPIRequest, started: float, result: ToolResponse) -> dict[str, Any]:
@@ -59,11 +91,16 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
     @app.post("/tools/context/er")
     async def er_context(request: FastAPIRequest, payload: dict[str, Any]) -> dict[str, Any]:
         started = time.monotonic()
-        result = service.er_context(
-            user_id=_user_id(request),
-            job_id=_job_id(request),
-            query=str(payload.get("query", "")),
-        )
+        try:
+            result = service.er_context(
+                user_id=_user_id(request),
+                job_id=_job_id(request),
+                project_code=_project_code(request),
+                application_id=_application_id(request),
+                query=str(payload.get("query", "")),
+            )
+        except PlatformError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.body) from exc
         return _envelope(request, started, result)
 
     @app.post("/tools/context/business-flow")
@@ -71,23 +108,31 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
         request: FastAPIRequest, payload: dict[str, Any]
     ) -> dict[str, Any]:
         started = time.monotonic()
-        result = service.business_flow_context(
-            user_id=_user_id(request),
-            job_id=_job_id(request),
-            query=str(payload.get("query", "")),
-        )
+        try:
+            result = service.business_flow_context(
+                user_id=_user_id(request),
+                job_id=_job_id(request),
+                project_code=_project_code(request),
+                application_id=_application_id(request),
+                query=str(payload.get("query", "")),
+            )
+        except PlatformError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.body) from exc
         return _envelope(request, started, result)
 
     @app.post("/tools/resolve")
     async def resolve(request: FastAPIRequest, payload: dict[str, Any]) -> dict[str, Any]:
         started = time.monotonic()
         try:
+            environment, base, workshop = _target(request, payload)
             result = service.describe_target(
                 user_id=_user_id(request),
                 job_id=_job_id(request),
-                environment=_require(payload, "environment"),
-                base=_require(payload, "base"),
-                workshop=_optional(payload, "workshop"),
+                project_code=_project_code(request),
+                application_id=_application_id(request),
+                environment=environment,
+                base=base,
+                workshop=workshop,
                 kind=_resource_kind(payload.get("kind", "database")),
             )
         except PlatformError as exc:
@@ -98,12 +143,15 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
     async def database_query(request: FastAPIRequest, payload: dict[str, Any]) -> dict[str, Any]:
         started = time.monotonic()
         try:
+            environment, base, workshop = _target(request, payload)
             result = service.query_database(
                 user_id=_user_id(request),
                 job_id=_job_id(request),
-                environment=_require(payload, "environment"),
-                base=_require(payload, "base"),
-                workshop=_optional(payload, "workshop"),
+                project_code=_project_code(request),
+                application_id=_application_id(request),
+                environment=environment,
+                base=base,
+                workshop=workshop,
                 sql=_require(payload, "sql"),
                 limit=_int_or_none(payload.get("limit")),
             )
@@ -115,12 +163,15 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
     async def schema_directory(request: FastAPIRequest, payload: dict[str, Any]) -> dict[str, Any]:
         started = time.monotonic()
         try:
+            environment, base, workshop = _target(request, payload)
             result = service.schema_directory(
                 user_id=_user_id(request),
                 job_id=_job_id(request),
-                environment=_require(payload, "environment"),
-                base=_require(payload, "base"),
-                workshop=_optional(payload, "workshop"),
+                project_code=_project_code(request),
+                application_id=_application_id(request),
+                environment=environment,
+                base=base,
+                workshop=workshop,
                 query=str(payload.get("query", "")),
                 limit=_int_or_none(payload.get("limit")),
             )
@@ -132,12 +183,15 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
     async def redis_get(request: FastAPIRequest, payload: dict[str, Any]) -> dict[str, Any]:
         started = time.monotonic()
         try:
+            environment, base, workshop = _target(request, payload)
             result = service.redis_get(
                 user_id=_user_id(request),
                 job_id=_job_id(request),
-                environment=_require(payload, "environment"),
-                base=_require(payload, "base"),
-                workshop=_optional(payload, "workshop"),
+                project_code=_project_code(request),
+                application_id=_application_id(request),
+                environment=environment,
+                base=base,
+                workshop=workshop,
                 key=_require(payload, "key"),
             )
         except PlatformError as exc:
@@ -148,12 +202,15 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
     async def redis_scan(request: FastAPIRequest, payload: dict[str, Any]) -> dict[str, Any]:
         started = time.monotonic()
         try:
+            environment, base, workshop = _target(request, payload)
             result = service.redis_scan(
                 user_id=_user_id(request),
                 job_id=_job_id(request),
-                environment=_require(payload, "environment"),
-                base=_require(payload, "base"),
-                workshop=_optional(payload, "workshop"),
+                project_code=_project_code(request),
+                application_id=_application_id(request),
+                environment=environment,
+                base=base,
+                workshop=workshop,
                 pattern=_require(payload, "pattern"),
                 limit=_int_or_none(payload.get("limit")),
             )
@@ -165,12 +222,15 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
     async def loki_query(request: FastAPIRequest, payload: dict[str, Any]) -> dict[str, Any]:
         started = time.monotonic()
         try:
+            environment, base, workshop = _target(request, payload)
             result = service.query_loki(
                 user_id=_user_id(request),
                 job_id=_job_id(request),
-                environment=_require(payload, "environment"),
-                base=_require(payload, "base"),
-                workshop=_optional(payload, "workshop"),
+                project_code=_project_code(request),
+                application_id=_application_id(request),
+                environment=environment,
+                base=base,
+                workshop=workshop,
                 selector=_selector(payload),
                 query=str(payload.get("query", "")),
                 minutes=_int_or_none(payload.get("minutes")) or 15,
@@ -184,12 +244,15 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
     async def loki_labels(request: FastAPIRequest, payload: dict[str, Any]) -> dict[str, Any]:
         started = time.monotonic()
         try:
+            environment, base, workshop = _target(request, payload)
             result = service.loki_labels(
                 user_id=_user_id(request),
                 job_id=_job_id(request),
-                environment=_require(payload, "environment"),
-                base=_require(payload, "base"),
-                workshop=_optional(payload, "workshop"),
+                project_code=_project_code(request),
+                application_id=_application_id(request),
+                environment=environment,
+                base=base,
+                workshop=workshop,
                 minutes=_int_or_none(payload.get("minutes")) or 15,
                 limit=_int_or_none(payload.get("limit")) or 100,
             )
@@ -201,12 +264,15 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
     async def loki_label_values(request: FastAPIRequest, payload: dict[str, Any]) -> dict[str, Any]:
         started = time.monotonic()
         try:
+            environment, base, workshop = _target(request, payload)
             result = service.loki_label_values(
                 user_id=_user_id(request),
                 job_id=_job_id(request),
-                environment=_require(payload, "environment"),
-                base=_require(payload, "base"),
-                workshop=_optional(payload, "workshop"),
+                project_code=_project_code(request),
+                application_id=_application_id(request),
+                environment=environment,
+                base=base,
+                workshop=workshop,
                 label=_require(payload, "label"),
                 minutes=_int_or_none(payload.get("minutes")) or 15,
                 limit=_int_or_none(payload.get("limit")) or 100,
@@ -219,12 +285,15 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
     async def loki_probe(request: FastAPIRequest, payload: dict[str, Any]) -> dict[str, Any]:
         started = time.monotonic()
         try:
+            environment, base, workshop = _target(request, payload)
             result = service.loki_probe(
                 user_id=_user_id(request),
                 job_id=_job_id(request),
-                environment=_require(payload, "environment"),
-                base=_require(payload, "base"),
-                workshop=_optional(payload, "workshop"),
+                project_code=_project_code(request),
+                application_id=_application_id(request),
+                environment=environment,
+                base=base,
+                workshop=workshop,
                 selector=_selector(payload),
                 query=str(payload.get("query", "")),
                 minutes=_int_or_none(payload.get("minutes")) or 15,

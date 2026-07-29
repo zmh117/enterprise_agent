@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 from typing import Any
+
+from app.shared.database import assert_external_io_allowed
 
 from ...domain.addressing import ResourceBinding
 from ...domain.errors import PolicyViolation, ResolutionError, UpstreamUnavailable
@@ -19,18 +22,46 @@ def _require_db(binding: ResourceBinding) -> Any:
     return binding.database
 
 
-def _rows_from_cursor(cursor: Any, max_rows: int) -> ExecutedRows:
+def _rows_from_cursor(
+    cursor: Any,
+    max_rows: int,
+    *,
+    max_response_bytes: int,
+) -> ExecutedRows:
     fetched = cursor.fetchmany(max_rows + 1)
     columns = [desc[0] for desc in (cursor.description or [])]
     truncated = len(fetched) > max_rows
-    rows = [dict(zip(columns, row)) for row in fetched[:max_rows]]
-    return ExecutedRows(columns=columns, rows=rows, truncated=truncated)
+    rows: list[dict[str, Any]] = []
+    response_bytes = 0
+    for raw_row in fetched[:max_rows]:
+        row = dict(zip(columns, raw_row))
+        encoded = json.dumps(
+            row,
+            ensure_ascii=False,
+            default=str,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        if response_bytes + len(encoded) > max_response_bytes:
+            truncated = True
+            break
+        rows.append(row)
+        response_bytes += len(encoded)
+    return ExecutedRows(
+        columns=columns,
+        rows=rows,
+        truncated=truncated,
+        response_bytes=response_bytes,
+    )
 
 
 class MysqlExecutor:
+    def __init__(self, *, max_response_bytes: int = 1024 * 1024) -> None:
+        self.max_response_bytes = max_response_bytes
+
     def execute(
         self, binding: ResourceBinding, sql: str, *, timeout_seconds: int, max_rows: int
     ) -> ExecutedRows:
+        assert_external_io_allowed("tool_database.mysql")
         db = _require_db(binding)
         try:
             import pymysql
@@ -52,8 +83,15 @@ class MysqlExecutor:
         try:
             with conn.cursor() as cursor:
                 cursor.execute("SET SESSION TRANSACTION READ ONLY")
+                cursor.execute(
+                    f"SET SESSION MAX_EXECUTION_TIME = {timeout_seconds * 1000}"
+                )
                 cursor.execute(sql)
-                return _rows_from_cursor(cursor, max_rows)
+                return _rows_from_cursor(
+                    cursor,
+                    max_rows,
+                    max_response_bytes=self.max_response_bytes,
+                )
         except Exception as exc:  # pragma: no cover - needs live DB
             raise PolicyViolation(f"MySQL query failed: {type(exc).__name__}") from exc
         finally:
@@ -61,9 +99,13 @@ class MysqlExecutor:
 
 
 class SqlServerExecutor:
+    def __init__(self, *, max_response_bytes: int = 1024 * 1024) -> None:
+        self.max_response_bytes = max_response_bytes
+
     def execute(
         self, binding: ResourceBinding, sql: str, *, timeout_seconds: int, max_rows: int
     ) -> ExecutedRows:
+        assert_external_io_allowed("tool_database.sqlserver")
         db = _require_db(binding)
         try:
             import pymssql
@@ -85,8 +127,13 @@ class SqlServerExecutor:
             ) from exc
         try:
             cursor = conn.cursor()
+            cursor.execute(f"SET LOCK_TIMEOUT {timeout_seconds * 1000}")
             cursor.execute(sql)
-            return _rows_from_cursor(cursor, max_rows)
+            return _rows_from_cursor(
+                cursor,
+                max_rows,
+                max_response_bytes=self.max_response_bytes,
+            )
         except Exception as exc:  # pragma: no cover - needs live DB
             raise PolicyViolation(f"SQL Server query failed: {type(exc).__name__}") from exc
         finally:
@@ -94,13 +141,16 @@ class SqlServerExecutor:
 
 
 class OracleExecutor:
+    def __init__(self, *, max_response_bytes: int = 1024 * 1024) -> None:
+        self.max_response_bytes = max_response_bytes
+
     def execute(
         self, binding: ResourceBinding, sql: str, *, timeout_seconds: int, max_rows: int
     ) -> ExecutedRows:
+        assert_external_io_allowed("tool_database.oracle")
         db = _require_db(binding)
-        mode = getattr(db, "oracle_client_mode", OracleClientMode.AUTO)
         try:
-            assert_oracle_client_mode_ready(mode)
+            assert_oracle_client_mode_ready(OracleClientMode.THICK)
         except ResolutionError:
             raise
         try:
@@ -109,6 +159,10 @@ class OracleExecutor:
             raise UpstreamUnavailable("Oracle driver is not installed") from exc
 
         connect_descriptor = str(getattr(db, "connect_descriptor", "") or "")
+        if connect_descriptor.strip():
+            raise ResolutionError(
+                "Arbitrary Oracle connect descriptors are not allowed"
+            )
         use_sid = bool(getattr(db, "use_sid", False))
         if connect_descriptor.strip():
             dsn = build_oracle_dsn(
@@ -145,7 +199,11 @@ class OracleExecutor:
         try:
             cursor = conn.cursor()
             cursor.execute(sql)
-            return _rows_from_cursor(cursor, max_rows)
+            return _rows_from_cursor(
+                cursor,
+                max_rows,
+                max_response_bytes=self.max_response_bytes,
+            )
         except Exception as exc:  # pragma: no cover - needs live DB
             raise PolicyViolation(f"Oracle query failed: {type(exc).__name__}") from exc
         finally:

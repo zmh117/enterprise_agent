@@ -16,11 +16,10 @@ from app.modules.job.domain.execution_policy import (
     JobExecutionPolicySnapshot,
 )
 from app.modules.job.domain.job_status import JobStatus
-from app.modules.message_bus.application.message_publisher import AgentJobMessage
 from app.shared.config import ExecutionSettings
 from app.shared.exceptions import ExecutionPolicyExceeded, NonRetryableExecutionError
 from app.workers.agent_job_worker import AgentJobWorker
-from backend.tests.helpers import container
+from backend.tests.helpers import container, persisted_agent_job_message
 
 
 class _CaptureFailureDeliveryAdapter(DeliveryAdapter):
@@ -282,10 +281,11 @@ def test_worker_delivers_safe_non_retryable_tool_budget_failure_once() -> None:
 
     c.agent_executor.claude_client = ExhaustingClient()
     worker = AgentJobWorker(c.settings, container=c)
-    message = AgentJobMessage(job.id, "corr-policy-exhaustion")
+    message = persisted_agent_job_message(c, job.id)
 
     worker.handle(message)
     worker.handle(message)
+    delivery = c.delivery_dispatcher.dispatch_pending(limit=1)
 
     persisted = c.agent_repository.get_job(job.id)
     assert persisted.status == JobStatus.FAILED
@@ -293,8 +293,11 @@ def test_worker_delivers_safe_non_retryable_tool_budget_failure_once() -> None:
     assert persisted.last_error_code == "execution_policy_max_tool_calls_exhausted"
     assert persisted.execution_policy_tool_call_count == 2
     assert persisted.execution_policy_exhausted is True
-    assert len(c.message_bus.retries) == 0
-    assert len(c.message_bus.dead_letters) == 1
+    assert c.agent_repository.get_dispatch_event_for_job(job.id) is not None
+    assert "job.dead.persisted" in {
+        row["event_type"] for row in c.audit_repository.list_for_job(job.id)
+    }
+    assert delivery.succeeded == 1
     assert len(adapter.messages) == 1
     delivered = json.loads(adapter.messages[0])
     assert delivered["error_code"] == "execution_policy_max_tool_calls_exhausted"

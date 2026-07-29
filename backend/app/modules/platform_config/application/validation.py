@@ -259,12 +259,27 @@ def validate_secret_ref(value: str) -> str:
             safe_message="凭据引用必须包含提供方前缀",
         )
     provider = value.split(":", 1)[0]
-    if provider == "secret" and not value.startswith("secret://"):
+    if provider in {"vault", "kms"}:
         raise PlatformConfigValidationError(
-            "Secret ref must use secret:// format",
-            safe_message="凭据引用必须使用 secret:// 格式",
+            f"Reserved secret provider is not implemented: {provider}",
+            safe_message="Provider 尚未实现",
         )
-    validate_secret_provider(provider)
+    if provider == "env":
+        raise PlatformConfigValidationError(
+            "env secret references require explicit import",
+            safe_message="env 凭据引用必须先导入凭据中心",
+        )
+    if provider != "secret" or not value.startswith("secret://platform/"):
+        raise PlatformConfigValidationError(
+            "New bindings require secret://platform/<code>",
+            safe_message="新配置只能选择凭据中心的 secret://platform/<code>",
+        )
+    code = value.removeprefix("secret://platform/")
+    if not code or "/" in code or value != f"secret://platform/{validate_code(code)}":
+        raise PlatformConfigValidationError(
+            "Platform secret ref must use secret://platform/<code>",
+            safe_message="平台凭据引用格式无效",
+        )
     return value
 
 

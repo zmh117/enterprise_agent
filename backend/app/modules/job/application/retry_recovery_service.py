@@ -6,8 +6,8 @@ from typing import Any
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.job.domain.agent_job import AgentJob
 from app.modules.job.infrastructure.repositories import AgentRepository
-from app.modules.message_bus.application.message_publisher import MessagePublisher
 from app.shared.config import QueueSettings
+from app.shared.database import operation_unit_of_work
 
 
 class RetryRecoveryService:
@@ -15,12 +15,10 @@ class RetryRecoveryService:
         self,
         *,
         repository: AgentRepository,
-        publisher: MessagePublisher,
         audit_service: AuditService,
         queue_settings: QueueSettings,
     ) -> None:
         self.repository = repository
-        self.publisher = publisher
         self.audit_service = audit_service
         self.queue_settings = queue_settings
 
@@ -53,12 +51,18 @@ class RetryRecoveryService:
         return {
             "mode": "apply" if apply else "dry-run",
             "candidate_count": len(rows),
-            "current_retry_queue": self.queue_settings.retry_queue,
-            "legacy_retry_queue": self.queue_settings.legacy_retry_queue,
-            "legacy_queue_action": "report-only; never consumed, purged, or deleted",
+            "dispatch_transport": "job_dispatch_outbox",
+            "old_retry_queues": sorted(
+                {
+                    self.queue_settings.retry_queue,
+                    self.queue_settings.legacy_retry_queue,
+                }
+            ),
+            "old_queue_action": "use exact job_dispatch_cutover CLI",
             "jobs": rows,
         }
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def _apply(
         self,
         job: AgentJob,
@@ -86,36 +90,32 @@ class RetryRecoveryService:
             if updated is None:
                 return {"apply_status": "skipped_state_changed"}
             recovered = updated
-        try:
-            self.publisher.publish_retry(job.id, f"recovery:{job.id}", delay)
-        except Exception as exc:
-            self.audit_service.record(
-                "job.retry.recovery_publish_failed",
-                status="FAILED",
-                summary="Retry recovery publish failed",
+        dispatch_event = self.repository.get_dispatch_event_for_job(job.id)
+        if dispatch_event is None:
+            dispatch_event = self.repository.create_dispatch_event(
                 job_id=job.id,
-                actor_id=actor_id,
-                payload={
-                    "before_status": job.status.value,
-                    "after_status": recovered.status.value,
-                    "queue": self.queue_settings.retry_queue,
-                    "publish_error_type": exc.__class__.__name__,
-                },
+                job_idempotency_key=job.idempotency_key,
+                correlation_id=f"retry-recovery:{job.id}",
+                max_attempts=self.queue_settings.dispatch_outbox_max_attempts,
+                max_replay_count=self.queue_settings.dispatch_outbox_max_replays,
             )
-            return {"apply_status": "publish_failed", "status": recovered.status.value}
+        dispatch_event = self.repository.rearm_dispatch_for_retry(
+            job_id=job.id,
+            next_attempt_at=next_retry_at,
+        )
         self.audit_service.record(
             "job.retry.recovered",
             status="SUCCEEDED",
-            summary="Stranded Agent retry recovered",
+            summary="Stranded Agent retry recovered into Job Dispatch Outbox",
             job_id=job.id,
             actor_id=actor_id,
             payload={
                 "before_status": job.status.value,
                 "after_status": recovered.status.value,
-                "queue": self.queue_settings.retry_queue,
+                "dispatch_event_id": dispatch_event.id,
             },
         )
-        return {"apply_status": "published", "status": recovered.status.value}
+        return {"apply_status": "rearmed", "status": recovered.status.value}
 
     def _safe_summary(self, job: AgentJob, candidate_type: str) -> dict[str, Any]:
         route = job.reply_route or {}

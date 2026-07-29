@@ -21,11 +21,10 @@ def main() -> None:
     args = parser.parse_args()
 
     settings = load_settings()
-    container = build_worker_container(settings, migrate=True, seed=False)
+    container = build_worker_container(settings, seed=False)
     try:
         report = RetryRecoveryService(
             repository=container.agent_repository,
-            publisher=container.publisher,
             audit_service=container.audit_service,
             queue_settings=container.settings.queue,
         ).reconcile(

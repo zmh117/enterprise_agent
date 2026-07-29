@@ -119,6 +119,23 @@ def ready_connection(c):
     )
 
 
+def test_model_connection_dns_validation_runs_outside_database_uow() -> None:
+    c = container()
+    observed: list[bool] = []
+
+    def resolve(*args: object, **kwargs: object) -> list[tuple[object, ...]]:
+        del args, kwargs
+        observed.append(c.database.current_unit_of_work is None)
+        return [(2, 1, 6, "", ("1.1.1.1", 443))]
+
+    c.model_connection_service.dns_resolver = resolve
+    try:
+        ready_connection(c)
+        assert observed == [True]
+    finally:
+        c.database.close()
+
+
 def test_model_connection_secret_is_encrypted_and_public_projection_is_sanitized() -> None:
     c = container()
     revision = ready_connection(c)

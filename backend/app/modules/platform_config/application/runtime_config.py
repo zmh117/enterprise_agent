@@ -17,9 +17,8 @@ from .validation import (
 BOOTSTRAP_ONLY_KEYS = {
     "DATABASE_DSN",
     "RABBITMQ_URL",
-    "APP_CONFIG_MASTER_KEY",
+    "APP_CONFIG_MASTER_KEY_FILE",
     "APP_ENV",
-    "APP_STARTUP_MIGRATE",
     "SEED_LOCAL_CONFIG",
     "FEATURE_WEB_ADMIN",
     "FEATURE_PUBLISHED_AGENT_RUNTIME",
@@ -47,10 +46,9 @@ RUNTIME_CONFIG_DEFINITIONS: tuple[RuntimeConfigDefinitionSpec, ...] = (
     RuntimeConfigDefinitionSpec("DATABASE_DSN", "string", "", bootstrap_only=True),
     RuntimeConfigDefinitionSpec("RABBITMQ_URL", "string", "", bootstrap_only=True),
     RuntimeConfigDefinitionSpec(
-        "APP_CONFIG_MASTER_KEY", "secret_ref", "", sensitive=True, bootstrap_only=True
+        "APP_CONFIG_MASTER_KEY_FILE", "string", "", bootstrap_only=True
     ),
     RuntimeConfigDefinitionSpec("APP_ENV", "string", "local", bootstrap_only=True),
-    RuntimeConfigDefinitionSpec("APP_STARTUP_MIGRATE", "bool", True, bootstrap_only=True),
     RuntimeConfigDefinitionSpec("SEED_LOCAL_CONFIG", "bool", False, bootstrap_only=True),
     RuntimeConfigDefinitionSpec(
         "FEATURE_WEB_ADMIN",
@@ -161,7 +159,10 @@ RUNTIME_CONFIG_DEFINITIONS: tuple[RuntimeConfigDefinitionSpec, ...] = (
         "secret_ref",
         "",
         sensitive=True,
-        service_names=("api-server", "agent-worker"),
+        bootstrap_only=True,
+        classification="deprecated",
+        target="INTERNAL_API_AUTH_TOKEN_FILE deployment secret",
+        deprecated_version="0.4.0",
     ),
     RuntimeConfigDefinitionSpec(
         "INTERNAL_API_TIMEOUT_SECONDS",
@@ -357,6 +358,36 @@ RUNTIME_CONFIG_DEFINITIONS: tuple[RuntimeConfigDefinitionSpec, ...] = (
         "AGENT_RETRY_DELAY_SECONDS", "int", 30, service_names=("api-server", "agent-worker")
     ),
     RuntimeConfigDefinitionSpec(
+        "JOB_DISPATCH_OUTBOX_MAX_ATTEMPTS",
+        "int",
+        8,
+        service_names=("api-server", "job-dispatch-worker"),
+    ),
+    RuntimeConfigDefinitionSpec(
+        "JOB_DISPATCH_OUTBOX_MAX_REPLAYS",
+        "int",
+        3,
+        service_names=("api-server",),
+    ),
+    RuntimeConfigDefinitionSpec(
+        "JOB_DISPATCH_OUTBOX_RETRY_BASE_SECONDS",
+        "int",
+        5,
+        service_names=("job-dispatch-worker",),
+    ),
+    RuntimeConfigDefinitionSpec(
+        "JOB_DISPATCH_OUTBOX_CLAIM_TIMEOUT_SECONDS",
+        "int",
+        300,
+        service_names=("job-dispatch-worker",),
+    ),
+    RuntimeConfigDefinitionSpec(
+        "JOB_DISPATCH_OUTBOX_SCAN_SECONDS",
+        "int",
+        1,
+        service_names=("job-dispatch-worker",),
+    ),
+    RuntimeConfigDefinitionSpec(
         "FEATURE_WEBHOOK_TRIGGERS",
         "bool",
         True,
@@ -390,9 +421,6 @@ RUNTIME_CONFIG_DEFINITIONS: tuple[RuntimeConfigDefinitionSpec, ...] = (
     ),
     RuntimeConfigDefinitionSpec(
         "WEBHOOK_MAX_SUMMARY_CHARS", "int", 4000, service_names=("api-server", "webhook-worker")
-    ),
-    RuntimeConfigDefinitionSpec(
-        "WEBHOOK_HMAC_WINDOW_SECONDS", "int", 300, service_names=("api-server",)
     ),
     RuntimeConfigDefinitionSpec(
         "WEBHOOK_EVENT_RETENTION_DAYS", "int", 30, service_names=("api-server", "webhook-worker")

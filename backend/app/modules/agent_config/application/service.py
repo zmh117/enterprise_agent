@@ -10,6 +10,7 @@ from app.modules.agent_config.infrastructure import AgentConfigRepository
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.identity.application.authorization import AuthorizationEvaluator
 from app.modules.model_connection.application import ModelConnectionService
+from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import NonRetryableExecutionError
 
 
@@ -152,6 +153,7 @@ class AgentConfigService:
             "connectors": self.repository.connector_catalog(),
         }
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def save_draft(
         self,
         *,
@@ -177,7 +179,7 @@ class AgentConfigService:
                 field_errors=raw_errors,
             )
         normalized = self._normalize(config)
-        with self.repository.database.transaction():
+        with self.repository.database.unit_of_work():
             revision = self.repository.save_draft(
                 agent_id=str(definition["id"]),
                 expected_revision=expected_revision,
@@ -198,6 +200,7 @@ class AgentConfigService:
         )
         return revision
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def validate_revision(
         self, *, actor_id: str, agent_code: str, revision_id: str
     ) -> dict[str, Any]:
@@ -218,6 +221,7 @@ class AgentConfigService:
         errors = self._validate_config(revision["config"])
         return self.repository.set_validation(revision_id, valid=not errors, errors=errors)
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def publish(self, *, actor_id: str, agent_code: str, revision_id: str) -> dict[str, Any]:
         self._require_mvp_write_agent(agent_code)
         self.authorization.require(
@@ -257,7 +261,7 @@ class AgentConfigService:
                 error_code="validation_failed",
                 field_errors=errors,
             )
-        with self.repository.database.transaction():
+        with self.repository.database.unit_of_work():
             snapshot = dict(revision["config"])
             model_policy = snapshot.get("model_policy") or {}
             connection_revision_id = str(model_policy.get("model_connection_revision_id") or "")
@@ -326,6 +330,7 @@ class AgentConfigService:
         )
         return publication
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def rollback(self, *, actor_id: str, agent_code: str, publication_id: str) -> dict[str, Any]:
         self._require_mvp_write_agent(agent_code)
         self.authorization.require(

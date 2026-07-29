@@ -169,7 +169,7 @@ export type SaveDraftInput = {
   agent_publication_id: string
   workflow_publication_id: string
   session_policy: {
-    conversation_mode: "channel" | "actor" | "application"
+    conversation_mode: "channel"
     recent_message_limit: number
     retention_days: number
   }

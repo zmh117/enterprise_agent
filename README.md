@@ -51,7 +51,7 @@ scripts/agent_test_data.sh reset --yes
 
 ## Web 管理配置与密钥
 
-平台配置分为 `bootstrap-only`、`db-configurable` 和 `secret-managed` 三类。最小 bootstrap env 仍保留 `DATABASE_DSN`、`APP_CONFIG_MASTER_KEY`、`APP_ENV`、`APP_STARTUP_MIGRATE`、`SEED_LOCAL_CONFIG`；Claude/DeepSeek、Internal API、Loki、DingTalk 默认路由和 Agent limits 可逐步通过 PostgreSQL runtime config 管理。
+平台配置分为 `bootstrap-only`、`db-configurable` 和 `secret-managed` 三类。最小 bootstrap env 只保留 `DATABASE_DSN`、`APP_CONFIG_MASTER_KEY_FILE`、`APP_ENV`、`SEED_LOCAL_CONFIG`；Master Key 本体位于仓库外的只读固定文件中，schema 只允许由 one-shot Migrator 修改，业务服务只读校验 head。Claude/DeepSeek、Internal API、Loki、DingTalk 默认路由和 Agent limits 可逐步通过 PostgreSQL runtime config 管理。
 
 Web 管理端后续可以调用 `/api/platform/secrets` 保存 API key、password、token，后端只返回 `secret://platform/<code>`，不会回显明文。运行参数通过 `/api/platform/runtime-config/*` 管理，第一版修改后重启服务生效。
 
@@ -74,6 +74,9 @@ make check
 ```bash
 docker compose up --build
 ```
+
+Compose 会先运行一次 `migrator`；只有它以成功状态退出，API、Internal API 和
+Worker 才会启动。migration 失败时不要绕过依赖或在业务容器内补跑 migration。
 
 创建调试任务：
 
@@ -131,7 +134,7 @@ FEATURE_REAL_INTERNAL_TOOLS=false
 FEATURE_REAL_CLAUDE=false
 FEATURE_REAL_INTERNAL_TOOLS=true
 INTERNAL_API_BASE_URL=http://mock-internal-api-platform:9000
-INTERNAL_API_AUTH_TOKEN=
+INTERNAL_API_AUTH_TOKEN_FILE=/run/secrets/internal_api_auth_token
 ```
 
 启动：
@@ -194,7 +197,7 @@ Redis/Loki 基地级路由和 Loki 诊断。
 ```env
 FEATURE_REAL_INTERNAL_TOOLS=true
 INTERNAL_API_BASE_URL=http://internal-api-platform:9000
-INTERNAL_API_AUTH_TOKEN=
+INTERNAL_API_AUTH_TOKEN_FILE=/run/secrets/internal_api_auth_token
 INTERNAL_API_TIMEOUT_SECONDS=10
 INTERNAL_API_MAX_RESPONSE_CHARS=4000
 INTERNAL_PLATFORM_TOPOLOGY_FILE=/app/backend/config/internal_platform_topology.example.yaml
@@ -261,7 +264,8 @@ docker compose --profile real-tools exec internal-api-platform python -c "import
 ```
 
 如果使用外部/生产 Internal API Platform，把 `INTERNAL_API_BASE_URL` 改为实际 HTTPS 地址，
-并设置 `INTERNAL_API_AUTH_TOKEN`。
+并通过 `INTERNAL_API_AUTH_TOKEN_FILE` 挂载仓库外 Token 文件。服务端文件可在轮换窗口
+同时包含 `current`/`next`，调用方只发送其文件中的 `current`。
 
 真实 Claude/DeepSeek 联调时，必须默认使用合成问题、合成日志或已脱敏工具摘要：
 

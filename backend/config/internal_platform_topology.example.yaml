@@ -1,7 +1,7 @@
 # Internal API Platform topology (example / local real-tools).
 #
-# Secrets use `*_ref: secret://...` → env `SECRET_<UPPER_SNAKE_OF_PATH>`.
-# Never inline real credentials in this file.
+# Secrets use only `*_ref: secret://platform/<code>`.
+# Create the referenced value in the credential center first; never inline credentials.
 #
 # Oracle: `database` = Easy Connect service name (SERVICE).
 # Workshop codes = PLANT + workshop number (e.g. GL + 001 → GL001).
@@ -17,18 +17,18 @@ environments:
         aliases: [观澜云端, 观澜, guanlan]
         engine: oracle
         database:
-          host_ref: secret://sanjiu/guanlan_cloud/db_host
+          host_ref: secret://platform/sanjiu_guanlan_cloud_db_host
           port: 1521
           database: CRMES
           schema: CRMES_TEST_CLOUD_GL
-          user_ref: secret://sanjiu/guanlan_cloud/db_user
-          password_ref: secret://sanjiu/guanlan_cloud/db_password
+          user_ref: secret://platform/sanjiu_guanlan_cloud_db_user
+          password_ref: secret://platform/sanjiu_guanlan_cloud_db_password
           oracle_client_mode: thick
           oracle_compat: legacy
           use_sid: false
         redis:
           mode: cluster
-          password_ref: secret://sanjiu/cloud/redis_password
+          password_ref: secret://platform/sanjiu_cloud_redis_password
           nodes:
             - { host: 10.0.102.103, port: 6380 }
             - { host: 10.0.102.103, port: 6381 }
@@ -58,18 +58,18 @@ environments:
         aliases: [观澜边端]
         engine: oracle
         database:
-          host_ref: secret://sanjiu/guanlan_edge/db_host
+          host_ref: secret://platform/sanjiu_guanlan_edge_db_host
           port: 1521
           database: CRMES
           schema: CRMES_TEST_EDGE_GL
-          user_ref: secret://sanjiu/guanlan_edge/db_user
-          password_ref: secret://sanjiu/guanlan_edge/db_password
+          user_ref: secret://platform/sanjiu_guanlan_edge_db_user
+          password_ref: secret://platform/sanjiu_guanlan_edge_db_password
           oracle_client_mode: thick
           oracle_compat: legacy
           use_sid: false
         redis:
           mode: cluster
-          password_ref: secret://sanjiu/guanlan_edge/redis_password
+          password_ref: secret://platform/sanjiu_guanlan_edge_redis_password
           nodes:
             - { host: 10.0.102.113, port: 6380 }
             - { host: 10.0.102.113, port: 6381 }
@@ -99,18 +99,18 @@ environments:
         aliases: [顺丰云端, 顺峰云端]
         engine: oracle
         database:
-          host_ref: secret://sanjiu/shunfeng_cloud/db_host
+          host_ref: secret://platform/sanjiu_shunfeng_cloud_db_host
           port: 1521
           database: CRMES
           schema: CRMES_TEST_CLOUD_SF
-          user_ref: secret://sanjiu/shunfeng_cloud/db_user
-          password_ref: secret://sanjiu/shunfeng_cloud/db_password
+          user_ref: secret://platform/sanjiu_shunfeng_cloud_db_user
+          password_ref: secret://platform/sanjiu_shunfeng_cloud_db_password
           oracle_client_mode: thick
           oracle_compat: legacy
           use_sid: false
         redis:
           mode: cluster
-          password_ref: secret://sanjiu/cloud/redis_password
+          password_ref: secret://platform/sanjiu_cloud_redis_password
           nodes:
             - { host: 10.0.102.103, port: 6380 }
             - { host: 10.0.102.103, port: 6381 }
@@ -135,18 +135,18 @@ environments:
         aliases: [顺丰边端, 顺峰边端]
         engine: oracle
         database:
-          host_ref: secret://sanjiu/shunfeng_edge/db_host
+          host_ref: secret://platform/sanjiu_shunfeng_edge_db_host
           port: 1521
           database: CRMES
           schema: CRMES_TEST_EDGE_SF
-          user_ref: secret://sanjiu/shunfeng_edge/db_user
-          password_ref: secret://sanjiu/shunfeng_edge/db_password
+          user_ref: secret://platform/sanjiu_shunfeng_edge_db_user
+          password_ref: secret://platform/sanjiu_shunfeng_edge_db_password
           oracle_client_mode: thick
           oracle_compat: legacy
           use_sid: false
         redis:
           mode: cluster
-          password_ref: secret://sanjiu/shunfeng_edge/redis_password
+          password_ref: secret://platform/sanjiu_shunfeng_edge_redis_password
           nodes:
             - { host: 10.0.102.123, port: 6380 }
             - { host: 10.0.102.123, port: 6381 }
@@ -171,18 +171,18 @@ environments:
         aliases: [郴州云端]
         engine: oracle
         database:
-          host_ref: secret://sanjiu/chenzhou_cloud/db_host
+          host_ref: secret://platform/sanjiu_chenzhou_cloud_db_host
           port: 1521
           database: CRMES
           schema: CRMES_TEST_CLOUD_CZ
-          user_ref: secret://sanjiu/chenzhou_cloud/db_user
-          password_ref: secret://sanjiu/chenzhou_cloud/db_password
+          user_ref: secret://platform/sanjiu_chenzhou_cloud_db_user
+          password_ref: secret://platform/sanjiu_chenzhou_cloud_db_password
           oracle_client_mode: thick
           oracle_compat: legacy
           use_sid: false
         redis:
           mode: cluster
-          password_ref: secret://sanjiu/cloud/redis_password
+          password_ref: secret://platform/sanjiu_cloud_redis_password
           nodes:
             - { host: 10.0.102.103, port: 6380 }
             - { host: 10.0.102.103, port: 6381 }
@@ -207,18 +207,18 @@ environments:
         aliases: [郴州边端]
         engine: oracle
         database:
-          host_ref: secret://sanjiu/chenzhou_edge/db_host
+          host_ref: secret://platform/sanjiu_chenzhou_edge_db_host
           port: 1521
           database: CRMES
           schema: CRMES_TEST_EDGE_CZ
-          user_ref: secret://sanjiu/chenzhou_edge/db_user
-          password_ref: secret://sanjiu/chenzhou_edge/db_password
+          user_ref: secret://platform/sanjiu_chenzhou_edge_db_user
+          password_ref: secret://platform/sanjiu_chenzhou_edge_db_password
           oracle_client_mode: thick
           oracle_compat: legacy
           use_sid: false
         redis:
           mode: cluster
-          password_ref: secret://sanjiu/chenzhou_edge/redis_password
+          password_ref: secret://platform/sanjiu_chenzhou_edge_redis_password
           nodes:
             - { host: 10.0.102.93, port: 6380 }
             - { host: 10.0.102.93, port: 6381 }
@@ -248,11 +248,11 @@ environments:
         aliases: [MES51]
         engine: mysql
         database:
-          host_ref: secret://xt/mes51/db_host
+          host_ref: secret://platform/xt_mes51_db_host
           port: 3306
           database: MES51
-          user_ref: secret://xt/mes51/db_user
-          password_ref: secret://xt/mes51/db_password
+          user_ref: secret://platform/xt_mes51_db_user
+          password_ref: secret://platform/xt_mes51_db_password
 
   # 蒙牛 / MKK SQL Server（无车间分层）
   mmk:
@@ -264,12 +264,12 @@ environments:
         aliases: [MKK, 主库]
         engine: sqlserver
         database:
-          host_ref: secret://mmk/main/db_host
+          host_ref: secret://platform/mmk_main_db_host
           port: 1433
           database: MKKUTF8
           schema: dbo
-          user_ref: secret://mmk/main/db_user
-          password_ref: secret://mmk/main/db_password
+          user_ref: secret://platform/mmk_main_db_user
+          password_ref: secret://platform/mmk_main_db_password
 
   # Agent 本地测试数据：MySQL / SQL Server × 独立 Redis（无车间分层）
   agent_test:
@@ -281,20 +281,20 @@ environments:
         aliases: [mysql-test]
         engine: mysql
         database:
-          host_ref: secret://agent_test/mysql/db_host
+          host_ref: secret://platform/agent_test_mysql_db_host
           port: 3306
           database: agent_test
-          user_ref: secret://agent_test/mysql/db_user
-          password_ref: secret://agent_test/mysql/db_password
+          user_ref: secret://platform/agent_test_mysql_db_user
+          password_ref: secret://platform/agent_test_mysql_db_password
         redis:
           mode: standalone
-          host_ref: secret://agent_test/mysql/redis_host
+          host_ref: secret://platform/agent_test_mysql_redis_host
           port: 6379
-          user_ref: secret://agent_test/mysql/redis_user
-          password_ref: secret://agent_test/mysql/redis_password
+          user_ref: secret://platform/agent_test_mysql_redis_user
+          password_ref: secret://platform/agent_test_mysql_redis_password
         loki:
           # 与 .env 中 LOKI_BASE_URL / LOKI_TENANT_ID 对齐；查询窗口等限制仍用全局 LOKI_MAX_*
-          base_url_ref: secret://agent_test/loki/base_url
+          base_url_ref: secret://platform/agent_test_loki_base_url
           tenant: tenant1
 
       sqlserver:
@@ -302,20 +302,20 @@ environments:
         aliases: [sqlserver-test, mssql-test]
         engine: sqlserver
         database:
-          host_ref: secret://agent_test/sqlserver/db_host
+          host_ref: secret://platform/agent_test_sqlserver_db_host
           port: 1433
           database: agent_test
           schema: dbo
-          user_ref: secret://agent_test/sqlserver/db_user
-          password_ref: secret://agent_test/sqlserver/db_password
+          user_ref: secret://platform/agent_test_sqlserver_db_user
+          password_ref: secret://platform/agent_test_sqlserver_db_password
         redis:
           mode: standalone
-          host_ref: secret://agent_test/sqlserver/redis_host
+          host_ref: secret://platform/agent_test_sqlserver_redis_host
           port: 6379
-          user_ref: secret://agent_test/sqlserver/redis_user
-          password_ref: secret://agent_test/sqlserver/redis_password
+          user_ref: secret://platform/agent_test_sqlserver_redis_user
+          password_ref: secret://platform/agent_test_sqlserver_redis_password
         loki:
-          base_url_ref: secret://agent_test/loki/base_url
+          base_url_ref: secret://platform/agent_test_loki_base_url
           tenant: tenant1
 
 access:

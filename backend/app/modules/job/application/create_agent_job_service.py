@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 import hashlib
+import json
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -12,18 +13,24 @@ from app.modules.audit.application.audit_service import AuditService
 from app.modules.attachments.credentials import AttachmentCredentialCipher
 from app.modules.channel.domain.channel_event import ChannelAttachment, ReplyRoute, RoutingContext
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
-from app.modules.job.domain.agent_job import AgentJob
+from app.modules.job.domain.agent_job import AgentJob, AgentSession
 from app.modules.job.domain.execution_policy import EffectiveExecutionPolicyResolver
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.modules.message_bus.application.message_publisher import MessagePublisher
 from app.modules.permission.application.permission_service import PermissionService
 from app.shared.config import AttachmentSettings, ExecutionSettings, QueueSettings
-from app.shared.exceptions import NonRetryableExecutionError
+from app.shared.exceptions import NonRetryableExecutionError, NotFound, PermissionDenied
 from app.shared.logging import new_correlation_id
 
 DEFAULT_DINGTALK_SOURCE_CONNECTOR_ID = "connector-dingtalk-stream-default"
 DEFAULT_DINGTALK_DELIVERY_CONNECTOR_ID = "connector-dingtalk-enterprise-default"
+ISOLATED_SESSION_SOURCE_CHANNELS = {
+    "debug_api",
+    "grafana_alert",
+    "managed_webhook",
+    "webhook",
+}
 
 
 @dataclass(frozen=True)
@@ -69,6 +76,7 @@ class CreateAgentJobCommand:
     recent_message_limit: int | None = None
     session_policy: dict[str, Any] = field(default_factory=dict)
     application_execution_policy: dict[str, Any] = field(default_factory=dict)
+    continue_session_id: str = ""
 
     @property
     def effective_requester_id(self) -> str:
@@ -142,6 +150,13 @@ class CreateAgentJobService:
         existing = self.repository.get_job_by_idempotency_key(command.idempotency_key)
         if existing is not None:
             return existing
+        self._assert_application_runtime_available(command)
+        if command.conversation_mode in {"application", "actor"}:
+            raise NonRetryableExecutionError(
+                "Legacy shared session mode cannot create new Jobs",
+                safe_message="旧共享会话模式已停用，请将应用重新发布为按渠道会话",
+                error_code="session_mode_unsupported",
+            )
         attachments_enabled = (
             self.attachment_settings.enabled
             if command.attachments_enabled is None
@@ -158,6 +173,7 @@ class CreateAgentJobService:
         reply_route = command.effective_reply_route
         self._assert_connectors_allowed(command, reply_route)
         business_application_authorized = False
+        business_authorization_snapshot: dict[str, Any] = {}
         if command.business_application_id:
             if self.business_authorization_service is None:
                 raise NonRetryableExecutionError(
@@ -168,9 +184,13 @@ class CreateAgentJobService:
             business_decision = self.business_authorization_service.require(
                 user_id=requester_id,
                 application_id=command.business_application_id,
+                environment=str(command.effective_routing_context.get("environment") or ""),
+                base=str(command.effective_routing_context.get("base") or ""),
+                workshop=str(command.effective_routing_context.get("workshop") or ""),
                 stage="job_create",
             )
             business_application_authorized = True
+            business_authorization_snapshot = dict(business_decision)
             self.audit_service.record(
                 "authorization.business.job_create",
                 status="SUCCEEDED",
@@ -272,10 +292,14 @@ class CreateAgentJobService:
                     "model": str((agent_snapshot.get("model_policy") or {}).get("model") or ""),
                 }
             )
-            if command.source_connector_id and not self.agent_config_service.connector_allowed(
-                publication_id=agent_publication_id,
-                direction="ingress",
-                connector_id=command.source_connector_id,
+            if (
+                source_channel != "debug_api"
+                and command.source_connector_id
+                and not self.agent_config_service.connector_allowed(
+                    publication_id=agent_publication_id,
+                    direction="ingress",
+                    connector_id=command.source_connector_id,
+                )
             ):
                 raise NonRetryableExecutionError(
                     "Source connector is not assigned to the Agent publication",
@@ -319,6 +343,23 @@ class CreateAgentJobService:
             if command.continuous_conversation_enabled is None
             else command.continuous_conversation_enabled
         )
+        if source_channel in ISOLATED_SESSION_SOURCE_CHANNELS:
+            continuous_enabled = False
+        execution_scope_hash = (
+            _execution_scope_hash(command.effective_routing_context)
+            if command.business_application_id
+            else ""
+        )
+        if command.business_application_id and (
+            not command.business_application_publication_id
+            or not execution_scope_hash
+            or (continuous_enabled and command.conversation_mode != "channel")
+        ):
+            raise NonRetryableExecutionError(
+                "Business Application session isolation facts are incomplete",
+                safe_message="业务应用会话隔离配置不完整，请重新发布应用",
+                error_code="session_isolation_incomplete",
+            )
         session_key = (
             _session_key(
                 source_channel=source_channel,
@@ -329,6 +370,10 @@ class CreateAgentJobService:
                 requester_id=requester_id,
                 bot_identity=command.bot_identity,
                 business_application_id=command.business_application_id,
+                business_application_publication_id=(
+                    command.business_application_publication_id
+                ),
+                execution_scope_hash=execution_scope_hash,
                 conversation_mode=command.conversation_mode,
             )
             if continuous_enabled
@@ -336,28 +381,59 @@ class CreateAgentJobService:
         )
         correlation_id = command.correlation_id or new_correlation_id()
         attachment_ids: list[str] = []
-        with self.repository.database.transaction():
-            session = self.repository.create_session(
-                dingding_conversation_id=command.effective_conversation_id,
-                dingding_user_id=requester_id,
-                source=source_channel,
-                project_code=project_code,
-                source_channel=source_channel,
-                source_connector_id=command.source_connector_id,
-                external_conversation_id=command.effective_conversation_id,
-                requester_id=requester_id,
-                requester_display_name=command.requester_display_name,
-                routing_context=command.effective_routing_context,
-                reply_route=reply_route,
-                session_key=session_key,
-                conversation_type=command.conversation_type,
-                bot_identity=command.bot_identity,
-                external_identity_id=command.external_identity_id,
-                business_application_id=command.business_application_id,
-                business_application_code=command.business_application_code,
-                conversation_mode=command.conversation_mode,
-                recent_message_limit=command.recent_message_limit,
-                session_policy=command.session_policy,
+        with self.repository.database.unit_of_work():
+            runtime_authorization_snapshot: dict[str, Any] = {}
+            if command.business_application_id:
+                assert self.business_authorization_service is not None
+                runtime_authorization_snapshot = (
+                    self.business_authorization_service.capture_runtime_facts(
+                        user_id=requester_id,
+                        application_id=command.business_application_id,
+                        publication_id=command.business_application_publication_id,
+                        publication_config_hash=command.business_application_config_hash,
+                        environment=str(
+                            command.effective_routing_context.get("environment") or ""
+                        ),
+                        base=str(command.effective_routing_context.get("base") or ""),
+                        workshop=str(
+                            command.effective_routing_context.get("workshop") or ""
+                        ),
+                    )
+                )
+            session = (
+                self._require_continuable_session(
+                    command=command,
+                    requester_id=requester_id,
+                    execution_scope_hash=execution_scope_hash,
+                )
+                if command.continue_session_id
+                else self.repository.create_session(
+                    dingding_conversation_id=command.effective_conversation_id,
+                    dingding_user_id=requester_id,
+                    source=source_channel,
+                    project_code=project_code,
+                    source_channel=source_channel,
+                    source_connector_id=command.source_connector_id,
+                    external_conversation_id=command.effective_conversation_id,
+                    requester_id=requester_id,
+                    requester_display_name=command.requester_display_name,
+                    routing_context=command.effective_routing_context,
+                    reply_route=reply_route,
+                    session_key=session_key,
+                    conversation_type=command.conversation_type,
+                    bot_identity=command.bot_identity,
+                    external_identity_id=command.external_identity_id,
+                    business_application_id=command.business_application_id,
+                    business_application_code=command.business_application_code,
+                    application_publication_id=(
+                        command.business_application_publication_id
+                    ),
+                    execution_scope_hash=execution_scope_hash,
+                    isolation_key_version=2,
+                    conversation_mode=command.conversation_mode,
+                    recent_message_limit=command.recent_message_limit,
+                    session_policy=command.session_policy,
+                )
             )
             job = self.repository.create_job(
                 session_id=session.id,
@@ -392,10 +468,32 @@ class CreateAgentJobService:
                 business_application_route_id=command.business_application_route_id,
                 business_application_config_hash=(command.business_application_config_hash),
                 business_application_runtime_status=(command.business_application_runtime_status),
-                business_application_route_decision=(command.business_application_route_decision),
+                business_application_route_decision={
+                    **command.business_application_route_decision,
+                    "authorization_snapshot": business_authorization_snapshot,
+                    "runtime_authorization": runtime_authorization_snapshot,
+                },
                 execution_policy=execution_policy.to_dict(),
                 model_runtime_provenance=model_runtime_provenance,
             )
+            execution_scope_snapshot: dict[str, Any] = {}
+            if (
+                int(
+                    runtime_authorization_snapshot.get(
+                        "schema_version"
+                    )
+                    or 0
+                )
+                == 2
+            ):
+                execution_scope_snapshot = (
+                    self.repository.create_execution_scope(
+                        job_id=job.id,
+                        runtime_authorization=(
+                            runtime_authorization_snapshot
+                        ),
+                    )
+                )
             message_id = self.repository.add_message(
                 session_id=session.id,
                 job_id=job.id,
@@ -424,6 +522,19 @@ class CreateAgentJobService:
                     credential_expires_at=attachment.source_credential_expires_at,
                 )
                 attachment_ids.append(created.id)
+            dispatch_event = self.repository.create_dispatch_event(
+                job_id=job.id,
+                job_idempotency_key=job.idempotency_key,
+                correlation_id=correlation_id,
+                max_attempts=max(
+                    1,
+                    self.queue_settings.dispatch_outbox_max_attempts,
+                ),
+                max_replay_count=max(
+                    0,
+                    self.queue_settings.dispatch_outbox_max_replays,
+                ),
+            )
             self.audit_service.record(
                 "job.created",
                 status="SUCCEEDED",
@@ -453,20 +564,102 @@ class CreateAgentJobService:
                     "business_application_runtime_status": (
                         command.business_application_runtime_status
                     ),
+                    "execution_scope_id": str(
+                        execution_scope_snapshot.get("id") or ""
+                    ),
+                    "execution_scope_hash": str(
+                        execution_scope_snapshot.get(
+                            "scope_hash"
+                        )
+                        or ""
+                    ),
+                },
+            )
+            self.audit_service.record(
+                "job.dispatch.enqueued",
+                status="PENDING",
+                summary="Agent job dispatch event persisted",
+                job_id=job.id,
+                actor_id=requester_id,
+                payload={
+                    "event_id": dispatch_event.id,
+                    "event_key": dispatch_event.event_key,
+                    "correlation_id": dispatch_event.correlation_id,
                 },
             )
         for attachment_id in attachment_ids:
             self.publisher.publish_attachment(attachment_id, correlation_id)
-        if not command.attachments:
-            self.publisher.publish_agent_job(job.id, correlation_id)
-            self.audit_service.record(
-                "queue.dispatched",
-                status="SUCCEEDED",
-                summary="Agent job dispatched to message bus",
-                job_id=job.id,
-                actor_id=requester_id,
-            )
         return job
+
+    def _assert_application_runtime_available(
+        self,
+        command: CreateAgentJobCommand,
+    ) -> None:
+        publication_id = command.business_application_publication_id
+        if not publication_id:
+            return
+        reset = self.repository.database.execute_one(
+            """
+            select id
+              from resource_reset_operation
+             where status in (
+               'PREPARING', 'PREPARED', 'CONFIRMED', 'APPLYING'
+             )
+             order by created_at desc
+             limit 1
+            """
+        )
+        if reset is not None:
+            resource_binding = self.repository.database.execute_one(
+                """
+                select r.id
+                  from business_application_publication_handler h
+                  join business_application_publication_resource r
+                    on r.application_handler_id = h.id
+                 where h.application_publication_id = ?
+                 limit 1
+                """,
+                (publication_id,),
+            )
+            if resource_binding is None:
+                resource_binding = (
+                    self.repository.database.execute_one(
+                        """
+                        select id
+                          from business_application_resource_binding
+                         where publication_id = ?
+                         limit 1
+                        """,
+                        (publication_id,),
+                    )
+                )
+            if resource_binding is not None:
+                raise NonRetryableExecutionError(
+                    "Resource reset maintenance blocks new Jobs",
+                    safe_message="工具资源正在维护，暂不接受新的资源依赖任务",
+                    error_code="resource_reset_maintenance",
+                )
+        state = self.repository.database.execute_one(
+            """
+            select a.status, a.reason_codes_json,
+                   g.id as generation_id, g.generation_no
+              from runtime_snapshot_generation g
+              join business_application_runtime_state a
+                on a.generation_id = g.id
+             where g.status = 'ACTIVE'
+               and a.application_publication_id = ?
+             order by g.generation_no desc
+             limit 1
+            """,
+            (publication_id,),
+        )
+        if state is None or str(state["status"]) != "BLOCKED":
+            return
+        raise NonRetryableExecutionError(
+            "Business application runtime is blocked",
+            safe_message="业务应用所需工具资源尚未成功装载",
+            error_code="application_runtime_blocked",
+        )
 
     def _validate_attachments(
         self,
@@ -532,6 +725,41 @@ class CreateAgentJobService:
                 payload={"connector_id": route.connector_id, "route_type": route.type},
             )
 
+    def _require_continuable_session(
+        self,
+        *,
+        command: CreateAgentJobCommand,
+        requester_id: str,
+        execution_scope_hash: str,
+    ) -> AgentSession:
+        try:
+            session = self.repository.get_session(command.continue_session_id)
+        except NotFound as exc:
+            raise PermissionDenied(
+                "Debug session cannot be continued",
+                safe_message="无法继续该调试会话，请使用当前应用和数据范围创建新会话",
+                error_code="session_continue_denied",
+            ) from exc
+        if (
+            command.effective_source_channel != "debug_api"
+            or session.source_channel != "debug_api"
+            or session.requester_id != requester_id
+            or session.source_connector_id != command.source_connector_id
+            or session.business_application_id != command.business_application_id
+            or session.application_publication_id
+            != command.business_application_publication_id
+            or session.execution_scope_hash != execution_scope_hash
+            or session.isolation_key_version != 2
+            or session.history_read_only
+            or session.conversation_mode != "channel"
+        ):
+            raise PermissionDenied(
+                "Debug session cannot be continued in this runtime context",
+                safe_message="无法继续该调试会话，请使用当前应用和数据范围创建新会话",
+                error_code="session_continue_denied",
+            )
+        return session
+
 
 def _session_key(
     *,
@@ -543,15 +771,44 @@ def _session_key(
     requester_id: str,
     bot_identity: str,
     business_application_id: str = "",
+    business_application_publication_id: str = "",
+    execution_scope_hash: str = "",
     conversation_mode: str = "legacy",
 ) -> str:
-    if business_application_id and conversation_mode == "application":
-        identity = business_application_id
-    elif business_application_id and conversation_mode == "actor":
-        identity = f"{requester_id}:{bot_identity or connector_id}"
-    elif business_application_id and conversation_mode == "channel":
-        identity = conversation_id
-    elif conversation_type == "group":
+    if conversation_mode in {"application", "actor"}:
+        raise NonRetryableExecutionError(
+            "Legacy shared session mode is unsupported",
+            safe_message="旧共享会话模式已停用，请改为按渠道会话",
+            error_code="session_mode_unsupported",
+        )
+    if business_application_id:
+        if (
+            conversation_mode != "channel"
+            or not business_application_publication_id
+            or not execution_scope_hash
+            or not conversation_id
+        ):
+            raise NonRetryableExecutionError(
+                "Session isolation facts are incomplete",
+                safe_message="会话隔离上下文不完整",
+                error_code="session_isolation_incomplete",
+            )
+        requester_scope = "" if conversation_type == "group" else requester_id
+        canonical = "|".join(
+            [
+                "v2",
+                business_application_id,
+                business_application_publication_id,
+                source_channel,
+                connector_id,
+                conversation_type,
+                conversation_id,
+                requester_scope,
+                execution_scope_hash,
+            ]
+        )
+        return "session-key:v2:" + hashlib.sha256(canonical.encode()).hexdigest()
+    if conversation_type == "group":
         identity = conversation_id
     else:
         identity = f"{requester_id}:{bot_identity or connector_id}"
@@ -567,6 +824,32 @@ def _session_key(
         ]
     )
     return "session-key:" + hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _execution_scope_hash(routing_context: dict[str, Any]) -> str:
+    fields = (
+        "project_code",
+        "environment",
+        "environment_id",
+        "base",
+        "base_id",
+        "workshop",
+        "workshop_id",
+        "service",
+        "execution_scope_id",
+    )
+    canonical = {
+        field: str(routing_context.get(field) or "").strip()
+        for field in fields
+    }
+    return hashlib.sha256(
+        json.dumps(
+            canonical,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 def _provider_host(base_url: str) -> str:

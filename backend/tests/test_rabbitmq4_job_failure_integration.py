@@ -54,7 +54,7 @@ class _StaticContextBuilder:
     "set RUN_RABBITMQ4_FAILURE_INTEGRATION=1 to run against live PostgreSQL/RabbitMQ 4",
 )
 class RabbitMQ4JobFailureIntegrationTests(unittest.TestCase):
-    """Validates DB status, audit, retry and dead queues as one live boundary."""
+    """Validates DB status, audit and persistent retry/DEAD as one live boundary."""
 
     def setUp(self) -> None:
         import pika
@@ -80,7 +80,7 @@ class RabbitMQ4JobFailureIntegrationTests(unittest.TestCase):
             feature_real_internal_tools=False,
             queue=self.queue,
         )
-        self.container = build_worker_container(settings, migrate=True, seed=False)
+        self.container = build_worker_container(settings, seed=False)
         # DB runtime overlay can tune retry settings, but test queue names must stay isolated.
         self.container.settings = replace(self.container.settings, queue=self.queue)
         self.container.agent_executor.context_builder = _StaticContextBuilder()  # type: ignore[assignment]
@@ -91,8 +91,6 @@ class RabbitMQ4JobFailureIntegrationTests(unittest.TestCase):
         if hasattr(self, "channel"):
             for queue_name in (
                 self.queue.job_queue,
-                self.queue.retry_queue,
-                self.queue.dead_queue,
             ):
                 self.channel.queue_delete(queue=queue_name)
             self.connection.close()
@@ -112,25 +110,20 @@ class RabbitMQ4JobFailureIntegrationTests(unittest.TestCase):
                 correlation_id=f"corr-{label}",
             )
         )
+        result = self.container.job_dispatcher.publish_pending(limit=1)
+        self.assertEqual(1, result.published)
         method, _, body = self.channel.basic_get(queue=self.queue.job_queue, auto_ack=False)
         self.assertIsNotNone(method)
         payload = json.loads(body.decode("utf-8"))
         self.assertEqual(job.id, payload["job_id"])
         self.channel.basic_ack(method.delivery_tag)
         return AgentJobMessage(
+            event_id=payload["event_id"],
             job_id=payload["job_id"],
             correlation_id=payload["correlation_id"],
         )
 
-    def _take_routed_payload(self, queue_name: str) -> dict[str, object]:
-        method, properties, body = self.channel.basic_get(queue=queue_name, auto_ack=False)
-        self.assertIsNotNone(method, f"No routed message in {queue_name}")
-        self.assertEqual(2, properties.delivery_mode)
-        payload = json.loads(body.decode("utf-8"))
-        self.channel.basic_ack(method.delivery_tag)
-        return payload
-
-    def test_retry_and_dead_routes_match_persisted_job_and_audit_state(self) -> None:
+    def test_retry_outbox_and_terminal_state_match_persisted_audit(self) -> None:
         worker = AgentJobWorker(self.container.settings, container=self.container)
 
         retry_message = self._create_and_take_job_message("retry")
@@ -139,7 +132,9 @@ class RabbitMQ4JobFailureIntegrationTests(unittest.TestCase):
         )
         worker.handle(retry_message)
         retry_job = self.container.agent_repository.get_job(retry_message.job_id)
-        retry_payload = self._take_routed_payload(self.queue.retry_queue)
+        retry_event = self.container.agent_repository.get_dispatch_event(
+            retry_message.event_id
+        )
         retry_audit = self.container.database.execute(
             "select event_type, status from audit_event where job_id = ? order by created_at",
             (retry_message.job_id,),
@@ -147,7 +142,7 @@ class RabbitMQ4JobFailureIntegrationTests(unittest.TestCase):
 
         self.assertEqual(JobStatus.RETRY_WAIT, retry_job.status)
         self.assertEqual(1, retry_job.retry_count)
-        self.assertEqual(retry_message.job_id, retry_payload["job_id"])
+        self.assertEqual("RETRY_WAIT", retry_event.status.value)
         self.assertIn("job.failure.retry", [row["event_type"] for row in retry_audit])
 
         dead_message = self._create_and_take_job_message("dead")
@@ -156,15 +151,14 @@ class RabbitMQ4JobFailureIntegrationTests(unittest.TestCase):
         )
         worker.handle(dead_message)
         dead_job = self.container.agent_repository.get_job(dead_message.job_id)
-        dead_payload = self._take_routed_payload(self.queue.dead_queue)
         dead_audit = self.container.database.execute(
             "select event_type, status from audit_event where job_id = ? order by created_at",
             (dead_message.job_id,),
         )
 
         self.assertEqual(JobStatus.FAILED, dead_job.status)
-        self.assertEqual(dead_message.job_id, dead_payload["job_id"])
         self.assertIn("job.failure.dead", [row["event_type"] for row in dead_audit])
+        self.assertIn("job.dead.persisted", [row["event_type"] for row in dead_audit])
 
 
 if __name__ == "__main__":

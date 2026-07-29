@@ -254,6 +254,24 @@ def build_managed_channel_router() -> APIRouter:
         except Exception as exc:
             raise handle_exception(exc) from exc
 
+    @router.post("/{connector_id}/test")
+    def test_configuration(request: Request, connector_id: str) -> dict[str, Any]:
+        principal = require_action(
+            request,
+            resource_type="channel_connector",
+            resource_code="*",
+            action="manage",
+            csrf=True,
+        )
+        try:
+            result = container(request).managed_channel_service.test_configuration(
+                connector_id,
+                actor_id=principal.user_id,
+            )
+            return {"result": result}
+        except Exception as exc:
+            raise handle_exception(exc) from exc
+
     @router.delete("/{connector_id}")
     def delete(
         request: Request, connector_id: str, expected_revision: int

@@ -12,7 +12,16 @@ from app.modules.job.application.create_agent_job_service import CreateAgentJobC
 from app.modules.job.application.job_status_service import JobStatusService
 from app.modules.job.domain.job_status import JobStatus
 from app.shared.exceptions import NonRetryableExecutionError
-from backend.tests.helpers import container, test_settings as make_settings
+from backend.tests.helpers import (
+    container,
+    dispatch_pending_deliveries,
+    enqueue_job_result_for_delivery,
+    test_settings as make_settings,
+)
+
+
+PUBLIC_ID = "wh_local_grafana_default_00000000000000000001"
+BEARER = "test-grafana-token-0123456789abcdefABCDEF"
 
 
 class FailingAdapter:
@@ -28,7 +37,7 @@ class FailingAdapter:
 
 
 class ChannelIngressAndDeliveryTests(unittest.TestCase):
-    def test_generic_channel_creates_job_with_none_delivery_and_minimal_queue_payload(self) -> None:
+    def test_unbound_generic_channel_route_is_removed(self) -> None:
         settings = make_settings()
         built = []
 
@@ -54,18 +63,8 @@ class ChannelIngressAndDeliveryTests(unittest.TestCase):
                 },
             )
 
-            self.assertEqual(200, response.status_code)
-            job_id = response.json()["job_id"]
-            detail = c.agent_repository.get_job_detail(job_id)
-            self.assertEqual("debug_api", detail["source_channel"])
-            self.assertEqual(
-                {"type": "none", "connector_id": "", "target": {}, "options": {}},
-                detail["reply_route"],
-            )
-            self.assertIsNotNone(c.message_bus)
-            queue_message = c.message_bus.jobs[0]
-            self.assertEqual(job_id, queue_message.job_id)
-            self.assertTrue(queue_message.correlation_id)
+            self.assertEqual(404, response.status_code)
+            self.assertEqual(0, c.agent_repository.count_rows("agent_job"))
 
     def test_grafana_firing_creates_job_and_resolved_is_ignored(self) -> None:
         settings = make_settings()
@@ -94,21 +93,24 @@ class ChannelIngressAndDeliveryTests(unittest.TestCase):
         with TestClient(create_app(settings, container_factory=factory)) as client:
             c = built[0]
             firing = client.post(
-                "/webhooks/grafana/alert",
+                f"/webhooks/v1/{PUBLIC_ID}",
                 json=payload,
-                headers={"x-grafana-token": "test-grafana-token"},
+                headers={"authorization": f"Bearer {BEARER}"},
             )
             resolved = client.post(
-                "/webhooks/grafana/alert",
+                f"/webhooks/v1/{PUBLIC_ID}",
                 json={**payload, "status": "resolved"},
-                headers={"x-grafana-token": "test-grafana-token"},
+                headers={"authorization": f"Bearer {BEARER}"},
             )
 
-            self.assertEqual(200, firing.status_code)
+            self.assertEqual(202, firing.status_code)
             self.assertEqual(200, resolved.status_code)
             self.assertTrue(resolved.json()["ignored"])
+            self.assertIsNotNone(c.message_bus)
+            c.message_bus.consume_webhook_events(c.webhook_dispatcher.handle)
             self.assertEqual(1, c.agent_repository.count_rows("agent_job"))
-            job = c.agent_repository.get_job(firing.json()["job_id"])
+            event = c.webhook_event_repository.get(firing.json()["event_id"])
+            job = c.agent_repository.get_job(str(event["job_id"]))
             self.assertEqual("grafana_alert", job.source_channel)
             self.assertEqual("prod", (job.routing_context or {})["environment"])
 
@@ -124,13 +126,13 @@ class ChannelIngressAndDeliveryTests(unittest.TestCase):
         with TestClient(create_app(settings, container_factory=factory)) as client:
             c = built[0]
             response = client.post(
-                "/webhooks/grafana/alert",
+                f"/webhooks/v1/{PUBLIC_ID}",
                 json={
                     "status": "firing",
                     "groupKey": "bad-alert",
                     "commonLabels": {"ea_project_code": "default"},
                 },
-                headers={"x-grafana-token": "test-grafana-token"},
+                headers={"authorization": f"Bearer {BEARER}"},
             )
 
             self.assertEqual(400, response.status_code)
@@ -138,7 +140,7 @@ class ChannelIngressAndDeliveryTests(unittest.TestCase):
             self.assertIsNotNone(c.message_bus)
             self.assertEqual(0, len(c.message_bus.jobs))
 
-    def test_webhook_robot_connector_cannot_be_used_as_ingress(self) -> None:
+    def test_old_grafana_header_translation_route_is_removed(self) -> None:
         settings = make_settings()
         built = []
 
@@ -150,21 +152,16 @@ class ChannelIngressAndDeliveryTests(unittest.TestCase):
         with TestClient(create_app(settings, container_factory=factory)) as client:
             c = built[0]
             response = client.post(
-                "/webhooks/channel/agent",
+                "/webhooks/grafana/alert",
                 json={
-                    "from": {
-                        "type": "dingtalk_webhook_robot",
-                        "connector_id": "connector-dingtalk-webhook-default",
-                        "event_id": "bad-ingress",
-                        "actor_id": "local-user",
-                    },
-                    "delivery": {"type": "none"},
-                    "routing": {"project_code": "default"},
-                    "message": "should be rejected",
+                    "status": "firing",
+                    "groupKey": "legacy-header",
+                    "commonLabels": {"ea_project_code": "default"},
                 },
+                headers={"x-grafana-token": BEARER},
             )
 
-            self.assertEqual(403, response.status_code)
+            self.assertEqual(404, response.status_code)
             self.assertEqual(0, c.agent_repository.count_rows("agent_job"))
             self.assertIsNotNone(c.message_bus)
             self.assertEqual(0, len(c.message_bus.jobs))
@@ -192,7 +189,8 @@ class ChannelIngressAndDeliveryTests(unittest.TestCase):
         self.assertIsNotNone(status_service.claim(job.id, "worker-1"))
         status_service.succeed(job.id, "abcdefghijklmnopqrstuvwxyz")
 
-        c.result_delivery_service.deliver_job_result(job.id)
+        enqueue_job_result_for_delivery(c, job.id)
+        dispatch_pending_deliveries(c)
         chunks = c.agent_repository.list_delivery_chunks(job.id)
 
         self.assertGreater(len(chunks), 1)
@@ -212,7 +210,8 @@ class ChannelIngressAndDeliveryTests(unittest.TestCase):
         )
         self.assertIsNotNone(status_service.claim(none_job.id, "worker-1"))
         status_service.succeed(none_job.id, "done")
-        c.result_delivery_service.deliver_job_result(none_job.id)
+        enqueue_job_result_for_delivery(c, none_job.id)
+        dispatch_pending_deliveries(c)
         attempts = c.agent_repository.list_delivery_attempts(none_job.id)
         self.assertEqual("SKIPPED", attempts[0]["status"])
 
@@ -239,7 +238,8 @@ class ChannelIngressAndDeliveryTests(unittest.TestCase):
         self.assertIsNotNone(status_service.claim(job.id, "worker-1"))
         status_service.succeed(job.id, "done")
 
-        c.result_delivery_service.deliver_job_result(job.id)
+        enqueue_job_result_for_delivery(c, job.id)
+        c.delivery_dispatcher.dispatch_pending(limit=1)
 
         self.assertEqual(JobStatus.SUCCEEDED, c.agent_repository.get_job(job.id).status)
         attempts = c.agent_repository.list_delivery_attempts(job.id)

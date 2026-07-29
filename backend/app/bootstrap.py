@@ -44,6 +44,9 @@ from app.modules.business_application.infrastructure.adapters import (
 from app.modules.channel.application.channel_ingress_service import ChannelIngressService
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.delivery.application.report_chunker import ReportChunker
+from app.modules.delivery.application.delivery_dispatch_service import (
+    DeliveryOutboxDispatcher,
+)
 from app.modules.delivery.application.result_delivery_service import ResultDeliveryService
 from app.modules.delivery.infrastructure.adapters import (
     DingTalkConversationDeliveryAdapter,
@@ -81,6 +84,8 @@ from app.modules.identity.infrastructure.ones_identity_verifier import (
     UrllibOnesIdentityVerifier,
 )
 from app.modules.job.application.create_agent_job_service import CreateAgentJobService
+from app.modules.job.application.debug_job_access_service import DebugJobAccessService
+from app.modules.job.application.job_dispatch_service import JobDispatchOutboxDispatcher
 from app.modules.job.application.job_retry_service import JobRetryService
 from app.modules.job.application.job_status_service import JobStatusService
 from app.modules.job.infrastructure.repositories import (
@@ -114,7 +119,9 @@ from app.modules.platform_config.application.secrets import EncryptedDbSecretPro
 from app.modules.platform_config.infrastructure import PlatformConfigRepository
 from app.shared.config import Settings
 from app.shared.database import Database, default_migrations_dir
+from app.shared.migrations import Migrator
 from app.shared.runtime_config_loader import load_settings_with_db_overlay
+from app.shared.service_token import ServiceTokenSet
 from app.modules.workflow.application import WorkflowService
 from app.modules.workflow.infrastructure import WorkflowRepository
 from app.modules.webhook.application import (
@@ -163,11 +170,14 @@ class Container:
     business_application_repository: BusinessApplicationRepository
     business_application_service: BusinessApplicationService
     business_application_resolver: BusinessApplicationResolver
+    debug_job_access_service: DebugJobAccessService
     channel_ingress_service: ChannelIngressService
     create_agent_job_service: CreateAgentJobService
+    job_dispatcher: JobDispatchOutboxDispatcher
     dingtalk_message_service: DingTalkMessageService
     dingtalk_stream_message_service: DingTalkStreamMessageService
     result_delivery_service: ResultDeliveryService
+    delivery_dispatcher: DeliveryOutboxDispatcher
     agent_executor: AgentExecutor
     retry_service: JobRetryService
     object_storage: ObjectStorage
@@ -189,9 +199,9 @@ ContainerFactory = Callable[[Settings], Container]
 
 
 def build_api_container(
-    settings: Settings, *, migrate: bool = True, seed: bool = False
+    settings: Settings, *, seed: bool = False
 ) -> Container:
-    settings = load_settings_with_db_overlay(settings, service_name="api-server", migrate=migrate)
+    settings = load_settings_with_db_overlay(settings, service_name="api-server")
     publisher = RabbitMQPublisher(settings.rabbitmq_url, settings.queue)
     return _build_container(
         settings=settings,
@@ -199,7 +209,6 @@ def build_api_container(
         publisher=publisher,
         consumer=None,
         message_bus=None,
-        migrate=migrate,
         seed=seed,
         use_real_claude=settings.feature_configuration.real_claude_enabled,
     )
@@ -208,11 +217,10 @@ def build_api_container(
 def build_worker_container(
     settings: Settings,
     *,
-    migrate: bool = True,
     seed: bool = False,
     service_name: str = "agent-worker",
 ) -> Container:
-    settings = load_settings_with_db_overlay(settings, service_name=service_name, migrate=migrate)
+    settings = load_settings_with_db_overlay(settings, service_name=service_name)
     publisher = RabbitMQPublisher(settings.rabbitmq_url, settings.queue)
     consumer = RabbitMQConsumer(
         settings.rabbitmq_url,
@@ -228,31 +236,90 @@ def build_worker_container(
         publisher=publisher,
         consumer=consumer,
         message_bus=None,
-        migrate=migrate,
         seed=seed,
         use_real_claude=settings.feature_configuration.real_claude_enabled,
     )
 
 
 def build_test_container(
-    settings: Settings, *, migrate: bool = True, seed: bool = False
+    settings: Settings,
+    *,
+    migrate: bool = True,
+    seed: bool = False,
+    configure_seed_secrets: bool = True,
 ) -> Container:
-    settings = load_settings_with_db_overlay(settings, service_name="api-server", migrate=migrate)
+    database = Database(settings.database_dsn)
+    try:
+        if migrate:
+            Migrator(
+                database,
+                default_migrations_dir(),
+                migrator_build="test-runtime",
+            ).run()
+        settings = load_settings_with_db_overlay(
+            settings,
+            service_name="api-server",
+            database=database,
+        )
+    except Exception:
+        database.close()
+        raise
     message_bus = InMemoryMessageBus()
-    return _build_container(
+    runtime = _build_container(
         settings=settings,
         service_name="test-runtime",
         publisher=message_bus,
         consumer=message_bus,
         message_bus=message_bus,
-        migrate=migrate,
+        database=database,
         seed=seed,
         use_real_claude=False,
     )
+    if seed and configure_seed_secrets:
+        _configure_test_seed_secrets(runtime)
+    return runtime
 
 
-def build_container(settings: Settings, *, migrate: bool = True, seed: bool = False) -> Container:
-    return build_test_container(settings, migrate=migrate, seed=seed)
+def build_container(
+    settings: Settings,
+    *,
+    migrate: bool = True,
+    seed: bool = False,
+    configure_seed_secrets: bool = True,
+) -> Container:
+    return build_test_container(
+        settings,
+        migrate=migrate,
+        seed=seed,
+        configure_seed_secrets=configure_seed_secrets,
+    )
+
+
+def _configure_test_seed_secrets(runtime: Container) -> None:
+    if not runtime.settings.app_config_master_key:
+        return
+    for code, value in (
+        ("dingtalk_client_id", "test-dingtalk-client-id"),
+        ("dingtalk_client_secret", "test-dingtalk-client-secret"),
+        (
+            "dingtalk_webhook_robot_secret",
+            "test-dingtalk-webhook-robot-secret",
+        ),
+        (
+            "dingtalk_webhook_robot_url",
+            "https://oapi.dingtalk.com/robot/send?access_token=test-only",
+        ),
+        (
+            "grafana_webhook_token",
+            "test-grafana-token-0123456789abcdefABCDEF",
+        ),
+    ):
+        runtime.platform_config_service.secret_provider.create_secret(
+            code=code,
+            value=value,
+            actor_id="test-fixture",
+        )
+    runtime.database.execute("delete from platform_secret_change_event")
 
 
 def _build_container(
@@ -262,13 +329,11 @@ def _build_container(
     publisher: MessagePublisher,
     consumer: MessageConsumer | None,
     message_bus: InMemoryMessageBus | None,
-    migrate: bool,
+    database: Database | None = None,
     seed: bool,
     use_real_claude: bool,
 ) -> Container:
-    database = Database(settings.database_dsn)
-    if migrate:
-        database.run_migrations(default_migrations_dir())
+    database = database or Database(settings.database_dsn)
     if seed:
         seed_path = default_migrations_dir().parent / "seeds" / "local_seed.sql"
         database.execute_script(seed_path.read_text())
@@ -325,8 +390,6 @@ def _build_container(
     business_authorization_service = BusinessAuthorizationService(
         authorization_center_repository,
         identity_repository,
-        authorization_evaluator,
-        mode=settings.identity.business_application_authorization_mode,
         audit_service=audit_service,
     )
     identity_discovery_service = DingTalkIdentityDiscoveryService(
@@ -358,6 +421,7 @@ def _build_container(
     platform_config_service = PlatformConfigService(
         platform_config_repository,
         permission_service,
+        model_secret_provider,
     )
     model_connection_service = ModelConnectionService(
         model_connection_repository,
@@ -437,6 +501,21 @@ def _build_container(
         default_agent_code=settings.identity.default_agent_code,
         business_authorization_service=business_authorization_service,
     )
+    job_dispatcher = JobDispatchOutboxDispatcher(
+        repository=agent_repository,
+        publisher=publisher,
+        audit_service=audit_service,
+        settings=settings.queue,
+        worker_id=f"{service_name}-job-dispatch-outbox",
+    )
+    debug_job_access_service = DebugJobAccessService(
+        database=database,
+        agent_repository=agent_repository,
+        identity_repository=identity_repository,
+        authorization_center_repository=authorization_center_repository,
+        authorization_evaluator=authorization_evaluator,
+        create_job_service=create_job_service,
+    )
     channel_ingress_service = ChannelIngressService(
         create_job_service=create_job_service,
         audit_service=audit_service,
@@ -475,8 +554,8 @@ def _build_container(
         event_repository=webhook_event_repository,
         authenticator=WebhookAuthenticator(
             connector_registry=connector_registry,
-            event_repository=webhook_event_repository,
         ),
+        connector_registry=connector_registry,
         mapper=webhook_mapper,
         audit_service=audit_service,
         settings=settings.webhooks,
@@ -548,8 +627,10 @@ def _build_container(
         webhook_provider=ManagedWebhookProviderAdapter(
             repository=webhook_trigger_repository,
             service=webhook_trigger_service,
+            connector_registry=connector_registry,
         ),
         secret_provider=model_secret_provider,
+        connector_registry=connector_registry,
         audit_service=audit_service,
         stale_seconds=settings.managed_channels.stale_seconds,
     )
@@ -574,9 +655,17 @@ def _build_container(
     )
     internal_api_client: InternalApiClient = FakeInternalApiClient()
     if settings.feature_configuration.real_internal_tools_enabled and message_bus is None:
+        internal_api_tokens = ServiceTokenSet.from_file(
+            settings.internal_api_auth_token_file,
+            required=settings.environment not in {"test", "testing"},
+        )
         internal_api_client = HttpInternalApiClient(
             settings.internal_api_base_url,
-            auth_token=settings.internal_api_auth_token,
+            auth_token=(
+                internal_api_tokens.outbound_token
+                if internal_api_tokens is not None
+                else ""
+            ),
             timeout_seconds=settings.internal_api_timeout_seconds,
             max_response_chars=settings.internal_api_max_response_chars,
         )
@@ -630,7 +719,15 @@ def _build_container(
             "webhook": http_adapter,
         },
         chunker=ReportChunker(settings.delivery.chunk_max_chars),
+        settings=settings.delivery,
         business_authorization_service=business_authorization_service,
+    )
+    delivery_dispatcher = DeliveryOutboxDispatcher(
+        repository=agent_repository,
+        delivery_service=result_delivery_service,
+        audit_service=audit_service,
+        settings=settings.delivery,
+        worker_id=f"{service_name}-delivery-dispatcher",
     )
     object_storage: ObjectStorage = InMemoryObjectStorage(settings.object_storage.bucket)
     if service_name == "attachment-worker" and message_bus is None:
@@ -681,9 +778,9 @@ def _build_container(
     )
     retry_service = JobRetryService(
         repository=agent_repository,
-        publisher=publisher,
         queue_settings=settings.queue,
         audit_service=audit_service,
+        delivery_service=result_delivery_service,
     )
     return Container(
         settings=settings,
@@ -715,11 +812,14 @@ def _build_container(
         business_application_repository=business_application_repository,
         business_application_service=business_application_service,
         business_application_resolver=business_application_resolver,
+        debug_job_access_service=debug_job_access_service,
         channel_ingress_service=channel_ingress_service,
         create_agent_job_service=create_job_service,
+        job_dispatcher=job_dispatcher,
         dingtalk_message_service=dingtalk_service,
         dingtalk_stream_message_service=dingtalk_stream_service,
         result_delivery_service=result_delivery_service,
+        delivery_dispatcher=delivery_dispatcher,
         agent_executor=agent_executor,
         retry_service=retry_service,
         object_storage=object_storage,

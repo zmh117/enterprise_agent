@@ -4,11 +4,15 @@ import unittest
 
 from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
 from app.modules.job.domain.job_status import JobStatus
-from app.modules.message_bus.application.message_publisher import AgentJobMessage
 from app.modules.agent.domain.runtime import AgentRunResult
 from app.shared.exceptions import DiagnosticLoopExhausted, RetryableExecutionError
 from app.workers.agent_job_worker import AgentJobWorker
-from backend.tests.helpers import container
+from backend.tests.helpers import (
+    container,
+    dispatch_pending_deliveries,
+    persisted_agent_job_message,
+    publish_pending_agent_jobs,
+)
 
 
 class FailingClaudeClient:
@@ -111,7 +115,7 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
         )
         c.agent_executor.claude_client = FailingClaudeClient()  # type: ignore[assignment]
 
-        message = AgentJobMessage(job_id=job.id, correlation_id="corr-1")
+        message = persisted_agent_job_message(c, job.id)
         try:
             c.agent_executor.execute(message.job_id, fail_on_error=False)
         except RetryableExecutionError as exc:
@@ -122,7 +126,9 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
             action = "none"
 
         self.assertEqual("retry", action)
-        self.assertEqual(1, len(c.message_bus.retries))
+        dispatch = c.agent_repository.get_dispatch_event_for_job(job.id)
+        self.assertIsNotNone(dispatch)
+        self.assertEqual("RETRY_WAIT", dispatch.status.value)
         self.assertEqual(JobStatus.RETRY_WAIT, c.agent_repository.get_job(job.id).status)
 
     def test_retry_pending_job_keeps_failure_tool_events(self) -> None:
@@ -137,7 +143,7 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
             )
         )
         c.agent_executor.claude_client = FailingClaudeClientWithEvents()  # type: ignore[assignment]
-        message = AgentJobMessage(job_id=job.id, correlation_id="corr-1")
+        message = persisted_agent_job_message(c, job.id)
 
         try:
             c.agent_executor.execute(message.job_id, fail_on_error=False)
@@ -165,7 +171,7 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
             )
         )
         c.agent_executor.claude_client = MaxTurnsClaudeClient()  # type: ignore[assignment]
-        message = AgentJobMessage(job_id=job.id, correlation_id="corr-1")
+        message = persisted_agent_job_message(c, job.id)
 
         try:
             c.agent_executor.execute(message.job_id, fail_on_error=False)
@@ -216,12 +222,15 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
         )
         worker = AgentJobWorker(c.settings, container=c)
 
+        publish_pending_agent_jobs(c)
         worker.run_once()
+        dispatch_pending_deliveries(c)
         stored = c.agent_repository.get_job(job.id)
         self.assertEqual(JobStatus.SUCCEEDED, stored.status)
         self.assertEqual(1, len(c.result_delivery_service.sent_messages))
 
-        worker.handle(AgentJobMessage(job_id=job.id, correlation_id="duplicate"))
+        worker.handle(persisted_agent_job_message(c, job.id))
+        dispatch_pending_deliveries(c)
         self.assertEqual(JobStatus.SUCCEEDED, c.agent_repository.get_job(job.id).status)
         self.assertEqual(1, len(c.result_delivery_service.sent_messages))
 

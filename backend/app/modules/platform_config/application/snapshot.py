@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Mapping
+
+from app.modules.internal_api_platform.domain.addressing import RevisionResource
 
 from app.modules.internal_api_platform.domain.access import AccessPolicy, AccessScope, ScopeRule
 from app.modules.internal_api_platform.domain.topology import (
@@ -37,6 +39,16 @@ class RuntimeTopologySnapshot:
     config_hash: str
     resource_count: int
     errors: list[str] = field(default_factory=list)
+    generation_id: str = ""
+    generation_no: int = 0
+    published_digest: str = ""
+    effective_digest: str = ""
+    revision_resources: Mapping[str, RevisionResource] = field(
+        default_factory=dict,
+        repr=False,
+    )
+    resource_states: tuple[dict[str, Any], ...] = ()
+    application_states: tuple[dict[str, Any], ...] = ()
 
     @property
     def valid(self) -> bool:
@@ -306,7 +318,12 @@ class PlatformTopologySnapshotBuilder:
             errors.append(f"Resource {binding['code']} has invalid redis mode")
             mode = RedisMode.STANDALONE
         nodes = self._redis_nodes(config, errors=errors)
-        host = self._optional_value(binding, "host", resolve_secrets=resolve_secrets)
+        host = self._optional_value(
+            binding,
+            "host",
+            errors=errors,
+            resolve_secrets=resolve_secrets,
+        )
         port = int(config.get("port") or 6379)
         if mode is RedisMode.CLUSTER:
             if not host and nodes:
@@ -329,8 +346,18 @@ class PlatformTopologySnapshotBuilder:
             host=host,
             port=port,
             db=db,
-            username=self._optional_value(binding, "user", resolve_secrets=resolve_secrets),
-            password=self._optional_value(binding, "password", resolve_secrets=resolve_secrets),
+            username=self._optional_value(
+                binding,
+                "user",
+                errors=errors,
+                resolve_secrets=resolve_secrets,
+            ),
+            password=self._optional_value(
+                binding,
+                "password",
+                errors=errors,
+                resolve_secrets=resolve_secrets,
+            ),
             mode=mode,
             nodes=nodes,
         )
@@ -373,7 +400,9 @@ class PlatformTopologySnapshotBuilder:
             base_url=self._value(
                 binding, "base_url", errors=errors, resolve_secrets=resolve_secrets
             ),
-            tenant=str(config.get("tenant") or ""),
+            tenant_id=str(
+                config.get("tenant_id") or config.get("tenant") or ""
+            ),
         )
 
     def _value(
@@ -384,12 +413,24 @@ class PlatformTopologySnapshotBuilder:
         errors: list[str],
         resolve_secrets: bool,
     ) -> str:
-        value = self._optional_value(binding, key, resolve_secrets=resolve_secrets)
+        value = self._optional_value(
+            binding,
+            key,
+            errors=errors,
+            resolve_secrets=resolve_secrets,
+        )
         if not value:
             errors.append(f"Resource {binding['code']} missing required field: {key}")
         return value
 
-    def _optional_value(self, binding: dict[str, Any], key: str, *, resolve_secrets: bool) -> str:
+    def _optional_value(
+        self,
+        binding: dict[str, Any],
+        key: str,
+        *,
+        errors: list[str],
+        resolve_secrets: bool,
+    ) -> str:
         config = binding.get("config") or {}
         secret_refs = binding.get("secret_refs") or {}
         if key in config:
@@ -397,7 +438,15 @@ class PlatformTopologySnapshotBuilder:
         ref = secret_refs.get(key)
         if not ref:
             return ""
-        return self.resolver.resolve(str(ref)) if resolve_secrets else str(ref)
+        if not resolve_secrets:
+            return str(ref)
+        try:
+            return self.resolver.resolve(str(ref))
+        except Exception:
+            errors.append(
+                f"Resource {binding['code']} secret is unavailable: {key}"
+            )
+            return ""
 
     def _config_hash(self) -> str:
         payload = {

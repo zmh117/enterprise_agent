@@ -4,6 +4,8 @@ import re
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from app.shared.database import assert_external_io_allowed
+
 from ...domain.addressing import ResourceBinding
 from ...domain.errors import ResolutionError, UpstreamUnavailable
 from ...domain.schema_directory import (
@@ -112,6 +114,7 @@ class MySqlSchemaInspector:
         table_limit: int,
         column_limit: int,
     ) -> SchemaDirectory:
+        assert_external_io_allowed("tool_database.mysql_schema")
         db = _require_database(binding)
         try:
             import pymysql
@@ -182,15 +185,19 @@ class OracleSchemaInspector:
         table_limit: int,
         column_limit: int,
     ) -> SchemaDirectory:
+        assert_external_io_allowed("tool_database.oracle_schema")
         db = _require_database(binding)
-        mode = getattr(db, "oracle_client_mode", OracleClientMode.AUTO)
-        assert_oracle_client_mode_ready(mode)
+        assert_oracle_client_mode_ready(OracleClientMode.THICK)
         try:
             import oracledb
         except ModuleNotFoundError as exc:  # pragma: no cover - driver optional
             raise ResolutionError("Oracle driver is not installed") from exc
 
         owner = self._owner(db.schema or db.user)
+        if str(getattr(db, "connect_descriptor", "") or "").strip():
+            raise ResolutionError(
+                "Arbitrary Oracle connect descriptors are not allowed"
+            )
         dsn = (
             build_oracle_dsn(
                 host=db.host,
@@ -290,6 +297,7 @@ class SqlServerSchemaInspector:
         table_limit: int,
         column_limit: int,
     ) -> SchemaDirectory:
+        assert_external_io_allowed("tool_database.sqlserver_schema")
         db = _require_database(binding)
         try:
             import pymssql

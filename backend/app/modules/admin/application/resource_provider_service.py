@@ -6,6 +6,10 @@ from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 
 from app.modules.admin.domain.providers import TOOL_PROVIDERS
+from app.shared.database import (
+    ExternalIOInUnitOfWorkError,
+    assert_external_io_allowed,
+)
 from app.shared.exceptions import NonRetryableExecutionError
 
 
@@ -58,6 +62,7 @@ class ResourceProviderService:
         resource: dict[str, Any],
         resolve_secret: Callable[[str], str],
     ) -> dict[str, Any]:
+        assert_external_io_allowed("resource.probe")
         self.validate(resource)
         started = time.monotonic()
         kind = str(resource["resource_kind"])
@@ -68,6 +73,8 @@ class ResourceProviderService:
                 self._probe_redis(resource, resolve_secret)
             else:
                 self._probe_loki(resource, resolve_secret)
+        except ExternalIOInUnitOfWorkError:
+            raise
         except Exception as exc:
             raise NonRetryableExecutionError(
                 f"Resource probe failed: {type(exc).__name__}",

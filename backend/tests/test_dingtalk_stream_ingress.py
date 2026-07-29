@@ -18,6 +18,11 @@ from app.modules.job.domain.job_status import JobStatus
 from app.shared.config import DingTalkSettings, Settings
 from app.shared.exceptions import NonRetryableExecutionError
 from app.workers.dingtalk_stream_ingress_worker import DingTalkStreamIngressWorker
+from backend.tests.helpers import (
+    dispatch_pending_deliveries,
+    enqueue_job_result_for_delivery,
+    publish_pending_agent_jobs,
+)
 from backend.tests.test_business_application_control_plane import (
     control_plane_settings,
     draft_payload,
@@ -81,6 +86,7 @@ class DingTalkStreamIngressTests(unittest.TestCase):
         self.assertEqual("received", result.status)
         self.assertEqual("OK", result.ack_status)
         self.assertEqual(1, c.agent_repository.count_rows("agent_job"))
+        publish_pending_agent_jobs(c)
         self.assertEqual(1, len(c.message_bus.jobs))
         job = c.agent_repository.get_job(result.job_id)
         self.assertEqual("dingding_stream", job.source_channel)
@@ -106,6 +112,7 @@ class DingTalkStreamIngressTests(unittest.TestCase):
 
         self.assertEqual(first.job_id, second.job_id)
         self.assertEqual(1, c.agent_repository.count_rows("agent_job"))
+        publish_pending_agent_jobs(c)
         self.assertEqual(1, len(c.message_bus.jobs))
 
     def test_unsupported_stream_event_is_ignored_without_job(self) -> None:
@@ -160,7 +167,8 @@ class DingTalkStreamIngressTests(unittest.TestCase):
         self.assertIsNotNone(status_service.claim(result.job_id, "worker-1"))
         status_service.succeed(result.job_id, "diagnostic done")
 
-        c.result_delivery_service.deliver_job_result(result.job_id)
+        enqueue_job_result_for_delivery(c, result.job_id)
+        dispatch_pending_deliveries(c)
 
         self.assertEqual(1, len(adapter.calls))
         self.assertEqual("dingtalk_stream_session_webhook", adapter.calls[0]["route_type"])
@@ -186,11 +194,13 @@ class DingTalkStreamIngressTests(unittest.TestCase):
             error_code="claude_runtime_error",
         )
 
-        c.result_delivery_service.deliver_job_failure(
-            result.job_id,
-            "模型运行失败",
+        c.result_delivery_service.enqueue_job_failure(
+            job_id=result.job_id,
+            reason="模型运行失败",
             error_code="claude_runtime_error",
+            correlation_id="corr-expired-session-webhook",
         )
+        c.delivery_dispatcher.dispatch_pending(limit=1)
 
         attempts = c.agent_repository.list_delivery_attempts(result.job_id)
         self.assertEqual(1, len(attempts))
@@ -226,6 +236,16 @@ class DingTalkStreamIngressTests(unittest.TestCase):
         with patched_env(DINGTALK_CLIENT_ID="client-id", DINGTALK_CLIENT_SECRET="client-secret"):
             settings = stream_settings()
             c = routed_container(settings)
+            c.platform_config_service.secret_provider.rotate_secret(
+                code="dingtalk_client_id",
+                value="client-id",
+                actor_id="test-fixture",
+            )
+            c.platform_config_service.secret_provider.rotate_secret(
+                code="dingtalk_client_secret",
+                value="client-secret",
+                actor_id="test-fixture",
+            )
 
             def factory(client_id: str, client_secret: str, callback: Any) -> FakeStreamClient:
                 self.assertEqual("client-id", client_id)
@@ -248,6 +268,10 @@ class DingTalkStreamIngressTests(unittest.TestCase):
         with patched_env(DINGTALK_CLIENT_ID="", DINGTALK_CLIENT_SECRET=""):
             settings = stream_settings()
             c = routed_container(settings)
+            c.platform_config_service.secret_provider.disable_secret(
+                code="dingtalk_client_secret",
+                actor_id="test-fixture",
+            )
             worker = DingTalkStreamIngressWorker(settings, container=c)
 
             with self.assertRaises(NonRetryableExecutionError):

@@ -5,8 +5,13 @@ from typing import Any
 from app.bootstrap import Container, ContainerFactory, build_api_container
 from app.modules.agent.infrastructure.claude_code_agent_client import is_claude_cli_available
 from app.shared.config import Settings, load_settings, synchronize_feature_configuration
-from app.shared.database import Database, default_migrations_dir
+from app.shared.database import Database
+from app.shared.database import default_migrations_dir
 from app.shared.logging import configure_logging, set_correlation_id
+from app.shared.migrations import SchemaHeadError, SchemaHeadValidator
+from app.modules.platform_config.infrastructure.runtime_generation_repository import (
+    RuntimeGenerationRepository,
+)
 
 
 class FallbackApp:
@@ -15,16 +20,75 @@ class FallbackApp:
 
 
 def _build_health(settings: Settings) -> dict[str, Any]:
-    database = Database(settings.database_dsn)
     return {
         "status": "ok",
-        "database": database.ping(),
-        "rabbitmq": _check_rabbitmq(settings.rabbitmq_url),
         "claude_invoked": False,
-        **_claude_runtime_status(settings),
-        **_internal_tools_status(settings),
+    }
+
+
+def _build_readiness(
+    settings: Settings,
+    *,
+    database: Database | None = None,
+) -> dict[str, Any]:
+    owned_database = database is None
+    database = database or Database(settings.database_dsn)
+    database_ready = database.ping()
+    schema_ready = False
+    schema_head = ""
+    if database_ready:
+        try:
+            schema_head = SchemaHeadValidator(
+                database,
+                default_migrations_dir(),
+            ).require_current()
+            schema_ready = True
+        except SchemaHeadError:
+            schema_ready = False
+    rabbitmq_ready = _check_rabbitmq(settings.rabbitmq_url)
+    master_key_ready = bool(settings.app_config_master_key)
+    token_required = settings.feature_real_internal_tools
+    token_ready = (
+        not token_required
+        or bool(settings.internal_api_auth_token_file)
+    )
+    core_ready = all(
+        (
+            database_ready,
+            schema_ready,
+            rabbitmq_ready,
+            master_key_ready,
+            token_ready,
+        )
+    )
+    try:
+        governed_runtime = RuntimeGenerationRepository(
+            database
+        ).public_status()
+    except Exception:
+        governed_runtime = {
+            "status": "UNAVAILABLE",
+            "resources": [],
+            "applications": [],
+        }
+    result = {
+        "status": "ready" if core_ready else "not_ready",
+        "core": {
+            "database": database_ready,
+            "schema": schema_ready,
+            "schema_head": schema_head,
+            "rabbitmq": rabbitmq_ready,
+            "internal_api_token": token_ready,
+            "master_key": master_key_ready,
+            "runtime_assembly": True,
+        },
+        "resources": governed_runtime,
+        "claude_invoked": False,
         **_runtime_config_status(settings),
     }
+    if owned_database:
+        database.close()
+    return result
 
 
 def _check_rabbitmq(rabbitmq_url: str) -> bool:
@@ -52,7 +116,9 @@ def _internal_tools_status(settings: Settings) -> dict[str, Any]:
     return {
         "feature_real_internal_tools": settings.feature_real_internal_tools,
         "internal_api_base_url_configured": bool(settings.internal_api_base_url),
-        "internal_api_auth_token_configured": bool(settings.internal_api_auth_token),
+        "internal_api_auth_token_file_configured": bool(
+            settings.internal_api_auth_token_file
+        ),
     }
 
 
@@ -76,7 +142,6 @@ def _runtime_config_status(settings: Settings) -> dict[str, Any]:
 def _build_api_runtime(settings: Settings) -> Container:
     return build_api_container(
         settings,
-        migrate=settings.app_startup_migrate,
         seed=settings.seed_local_config,
     )
 
@@ -103,7 +168,7 @@ def create_app(
         return FallbackApp(
             routes={
                 "GET /api/health": lambda: _build_health(settings),
-                "GET /api/ready": lambda: _build_health(settings),
+                "GET /api/ready": lambda: _build_readiness(settings),
             }
         )
 
@@ -172,20 +237,14 @@ def create_app(
     def ready() -> dict[str, Any]:
         container = _app_container(app)
         runtime_settings = container.settings
-        status = {
-            "status": "ok",
-            "database": container.database.ping(),
-            "rabbitmq": _check_rabbitmq(runtime_settings.rabbitmq_url),
-            "claude_invoked": False,
-            **_claude_runtime_status(runtime_settings),
-            **_internal_tools_status(runtime_settings),
-            **_runtime_config_status(runtime_settings),
-        }
-        if not status["database"] or not status["rabbitmq"]:
+        status = _build_readiness(
+            runtime_settings,
+            database=container.database,
+        )
+        if status["status"] != "ready":
             raise HTTPException(status_code=503, detail=status)
         return status
 
-    from app.modules.channel.api.channel_webhook_controller import build_channel_router
     from app.modules.business_application.api import build_business_application_router
     from app.modules.authorization_center.api import build_authorization_center_router
     from app.modules.admin.api import build_admin_router
@@ -206,7 +265,6 @@ def create_app(
         build_runtime_control_router,
     )
 
-    app.include_router(build_channel_router())
     app.include_router(build_dingding_router())
     app.include_router(build_agent_job_debug_router())
     app.include_router(build_platform_config_router())
@@ -232,20 +290,6 @@ def create_app(
         app.include_router(build_identity_discovery_router())
         app.include_router(build_webhook_admin_router())
         app.include_router(build_managed_channel_router())
-
-        @app.post("/api/admin/migrate")
-        def migrate(request: Request) -> dict[str, Any]:
-            from app.modules.identity.api.dependencies import require_action
-
-            require_action(
-                request,
-                resource_type="platform_config",
-                resource_code="*",
-                action="manage",
-                csrf=True,
-            )
-            _app_container(app).database.run_migrations(default_migrations_dir())
-            return {"status": "migrated"}
 
     return app
 

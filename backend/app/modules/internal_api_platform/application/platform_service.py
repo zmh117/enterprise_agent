@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
 from ..domain.access import AccessPolicy
 from ..domain.addressing import ResourceBinding, TargetRef
-from ..domain.errors import PlatformError, PolicyViolation
+from ..domain.errors import AuthorizationError, PlatformError, PolicyViolation
 from ..domain.loki_policy import assert_loki_label_allowed, build_effective_selector
 from ..domain.redis_policy import (
     assert_read_command,
@@ -21,7 +22,16 @@ from ..infrastructure.db.schema_directory import SchemaInspectorFactory
 from ..infrastructure.loki_gateway import LokiClient
 from ..infrastructure.redis_gateway import RedisGateway
 from ..infrastructure.registry import TopologyRegistry
-from .job_authorization import JobAccessAuthorizer
+from .job_authorization import AuthorizedJobContext, JobAccessAuthorizer
+from app.modules.platform_config.application.secret_reload import (
+    SecretChangeReloader,
+)
+from app.modules.platform_config.application.runtime_generation import (
+    PublishedRuntimeGenerationReloader,
+)
+from app.modules.platform_config.application.snapshot import (
+    RuntimeTopologySnapshot,
+)
 
 _audit_logger = logging.getLogger("internal_api_platform.audit")
 
@@ -38,6 +48,7 @@ class PlatformService:
         loki_client: LokiClient,
         max_rows: int = 100,
         query_timeout_seconds: int = 15,
+        max_response_bytes: int = 1024 * 1024,
         redis_scan_limit: int = 200,
         schema_table_limit: int = 50,
         schema_column_limit: int = 80,
@@ -47,15 +58,21 @@ class PlatformService:
         config_errors: list[str] | None = None,
         config_resource_count: int = 0,
         job_access_authorizer: JobAccessAuthorizer | None = None,
+        secret_change_reloader: SecretChangeReloader | None = None,
+        runtime_generation_reloader: (
+            PublishedRuntimeGenerationReloader | None
+        ) = None,
     ) -> None:
         self._registry = registry
         self._access = access_policy
+        self._effective_runtime = (registry.capture(), access_policy)
         self._executors = executors
         self._schema_inspectors = schema_inspector_factory or SchemaInspectorFactory()
         self._redis = redis_gateway
         self._loki = loki_client
         self._max_rows = max_rows
         self._query_timeout_seconds = query_timeout_seconds
+        self._max_response_bytes = max_response_bytes
         self._redis_scan_limit = redis_scan_limit
         self._schema_table_limit = schema_table_limit
         self._schema_column_limit = schema_column_limit
@@ -65,6 +82,26 @@ class PlatformService:
         self._config_errors = config_errors or []
         self._config_resource_count = config_resource_count
         self._job_access_authorizer = job_access_authorizer
+        self._secret_change_reloader = secret_change_reloader
+        self._runtime_generation_reloader = (
+            runtime_generation_reloader
+        )
+        self._last_known_good = {
+            "source": config_source,
+            "revision": config_revision,
+            "config_hash": config_hash,
+            "resource_count": config_resource_count,
+        }
+        self._reload_degraded = False
+        self._active_snapshot = RuntimeTopologySnapshot(
+            topology=registry.topology,
+            access_policy=access_policy,
+            source=config_source,
+            revision=config_revision,
+            config_hash=config_hash,
+            resource_count=config_resource_count,
+            errors=list(config_errors or []),
+        )
 
     def config_status(self) -> dict[str, Any]:
         return {
@@ -74,11 +111,102 @@ class PlatformService:
             "valid": not self._config_errors,
             "errors": self._config_errors,
             "resource_count": self._config_resource_count,
+            "degraded": self._reload_degraded,
+            "last_known_good": dict(self._last_known_good),
+            "generation": {
+                "id": self._active_snapshot.generation_id,
+                "number": self._active_snapshot.generation_no,
+                "published_digest": self._active_snapshot.published_digest,
+                "effective_digest": self._active_snapshot.effective_digest,
+            },
+            "resource_states": [
+                dict(value) for value in self._active_snapshot.resource_states
+            ],
+            "application_states": [
+                dict(value)
+                for value in self._active_snapshot.application_states
+            ],
         }
 
+    def capture_runtime_snapshot(self) -> RuntimeTopologySnapshot:
+        """Capture the exact immutable generation used by one request."""
+
+        return self._active_snapshot
+
     def close(self) -> None:
+        if self._secret_change_reloader is not None:
+            self._secret_change_reloader.close()
+        if self._runtime_generation_reloader is not None:
+            self._runtime_generation_reloader.close()
         if self._job_access_authorizer is not None:
             self._job_access_authorizer.close()
+
+    def attach_secret_change_reloader(
+        self,
+        reloader: SecretChangeReloader,
+    ) -> None:
+        self._secret_change_reloader = reloader
+
+    def poll_secret_changes(self) -> dict[str, int]:
+        if self._secret_change_reloader is None:
+            return {"claimed": 0, "succeeded": 0, "failed": 0}
+        return self._secret_change_reloader.poll_once()
+
+    def attach_runtime_generation_reloader(
+        self,
+        reloader: PublishedRuntimeGenerationReloader,
+    ) -> None:
+        self._runtime_generation_reloader = reloader
+
+    def poll_runtime_generation(self) -> dict[str, Any]:
+        if self._runtime_generation_reloader is None:
+            return {
+                "observed": False,
+                "activated": False,
+                "retained_lkg": False,
+            }
+        result = self._runtime_generation_reloader.poll_once()
+        return {
+            "observed": result.observed,
+            "activated": result.activated,
+            "retained_lkg": result.retained_lkg,
+            "generation_id": result.generation_id,
+            "generation_no": result.generation_no,
+            "published_digest": result.published_digest,
+            "error_code": result.error_code,
+        }
+
+    def apply_runtime_snapshot(
+        self,
+        snapshot: RuntimeTopologySnapshot,
+    ) -> bool:
+        if not snapshot.valid or snapshot.source == "database-invalid":
+            self._reload_degraded = True
+            self._config_errors = ["相关资源凭据重载失败，继续使用 Last Known Good"]
+            return False
+        registry_generation = self._registry.replace(
+            snapshot.topology,
+            revision_resources=snapshot.revision_resources,
+        )
+        self._access = snapshot.access_policy
+        self._effective_runtime = (
+            registry_generation,
+            snapshot.access_policy,
+        )
+        self._active_snapshot = snapshot
+        self._config_source = snapshot.source
+        self._config_revision = snapshot.revision
+        self._config_hash = snapshot.config_hash
+        self._config_resource_count = snapshot.resource_count
+        self._config_errors = []
+        self._reload_degraded = False
+        self._last_known_good = {
+            "source": snapshot.source,
+            "revision": snapshot.revision,
+            "config_hash": snapshot.config_hash,
+            "resource_count": snapshot.resource_count,
+        }
+        return True
 
     def _authorize_and_resolve(
         self,
@@ -89,21 +217,40 @@ class PlatformService:
         workshop: str | None,
         kind: ResourceKind,
         job_id: str = "",
+        project_code: str = "",
+        application_id: str = "",
         capability_code: str = "",
     ) -> ResourceBinding:
         target = TargetRef(environment=environment, base=base, kind=kind, workshop=workshop)
+        registry_generation, access_policy = self._effective_runtime
         try:
-            self._authorize_target(
+            authorized = self._authorize_target(
                 user_id=user_id,
                 job_id=job_id,
+                project_code=project_code,
+                application_id=application_id,
                 capability_code=capability_code,
                 target=target,
+                access_policy=access_policy,
             )
         except PlatformError as exc:
             self._audit(user_id, target, "deny", exc.code)
             raise
         try:
-            binding = self._registry.resolve(target)
+            if (
+                isinstance(authorized, AuthorizedJobContext)
+                and authorized.schema_version == 2
+            ):
+                binding = self._registry.resolve_revision(
+                    target,
+                    resource_revision_id=authorized.resource_revision_id,
+                    generation=registry_generation,
+                )
+            else:
+                binding = self._registry.resolve(
+                    target,
+                    generation=registry_generation,
+                )
         except PlatformError as exc:
             self._audit(user_id, target, "deny", exc.code)
             raise
@@ -115,24 +262,36 @@ class PlatformService:
         *,
         user_id: str,
         job_id: str,
+        project_code: str,
+        application_id: str,
         capability_code: str,
         target: TargetRef,
-    ) -> None:
-        if self._job_access_authorizer is not None and job_id:
-            if self._job_access_authorizer.authorize(
+        access_policy: AccessPolicy | None = None,
+    ) -> AuthorizedJobContext | None:
+        if self._job_access_authorizer is not None and capability_code:
+            if not job_id:
+                raise AuthorizationError("Agent Job authorization context is invalid")
+            return self._job_access_authorizer.authorize(
                 job_id=job_id,
                 user_id=user_id,
+                project_code=project_code,
+                application_id=application_id,
                 capability_code=capability_code,
                 target=target,
-            ):
-                return
-        self._access.authorize(user_id=user_id, target=target)
+            )
+        (access_policy or self._access).authorize(
+            user_id=user_id,
+            target=target,
+        )
+        return None
 
     def topology_directory(
         self,
         *,
         user_id: str,
         job_id: str = "",
+        project_code: str = "",
+        application_id: str = "",
         capability_code: str = "",
     ) -> dict[str, Any]:
         """Non-secret addressing directory filtered to what the caller may access.
@@ -155,6 +314,8 @@ class PlatformService:
                             base.code,
                             ws.code,
                             job_id=job_id,
+                            project_code=project_code,
+                            application_id=application_id,
                             capability_code=capability_code,
                         )
                     ]
@@ -168,6 +329,8 @@ class PlatformService:
                         base.code,
                         None,
                         job_id=job_id,
+                        project_code=project_code,
+                        application_id=application_id,
                         capability_code=capability_code,
                     ):
                         continue
@@ -181,9 +344,23 @@ class PlatformService:
                         "bases": bases,
                     }
                 )
+        if (
+            self._job_access_authorizer is not None
+            and capability_code
+            and not environments
+        ):
+            raise AuthorizationError("Agent Job authorization context is invalid")
         return {"environments": environments}
 
-    def er_context(self, *, user_id: str, query: str, job_id: str = "") -> ToolResponse:
+    def er_context(
+        self,
+        *,
+        user_id: str,
+        query: str,
+        job_id: str = "",
+        project_code: str = "",
+        application_id: str = "",
+    ) -> ToolResponse:
         return ToolResponse(
             summary={
                 "source": "internal-platform-er",
@@ -191,6 +368,8 @@ class PlatformService:
                 "addressing": self.topology_directory(
                     user_id=user_id,
                     job_id=job_id,
+                    project_code=project_code,
+                    application_id=application_id,
                     capability_code="get_er_context",
                 ),
                 "tables": [],
@@ -204,7 +383,15 @@ class PlatformService:
             metadata={"source": "internal-api-platform"},
         )
 
-    def business_flow_context(self, *, user_id: str, query: str, job_id: str = "") -> ToolResponse:
+    def business_flow_context(
+        self,
+        *,
+        user_id: str,
+        query: str,
+        job_id: str = "",
+        project_code: str = "",
+        application_id: str = "",
+    ) -> ToolResponse:
         return ToolResponse(
             summary={
                 "source": "internal-platform-business-flow",
@@ -212,6 +399,8 @@ class PlatformService:
                 "addressing": self.topology_directory(
                     user_id=user_id,
                     job_id=job_id,
+                    project_code=project_code,
+                    application_id=application_id,
                     capability_code="get_business_flow_context",
                 ),
                 "nodes": [],
@@ -232,6 +421,8 @@ class PlatformService:
         workshop: str | None,
         *,
         job_id: str = "",
+        project_code: str = "",
+        application_id: str = "",
         capability_code: str = "",
     ) -> bool:
         target = TargetRef(
@@ -244,6 +435,8 @@ class PlatformService:
             self._authorize_target(
                 user_id=user_id,
                 job_id=job_id,
+                project_code=project_code,
+                application_id=application_id,
                 capability_code=capability_code,
                 target=target,
             )
@@ -275,6 +468,8 @@ class PlatformService:
         *,
         user_id: str,
         job_id: str = "",
+        project_code: str = "",
+        application_id: str = "",
         environment: str,
         base: str,
         workshop: str | None,
@@ -287,6 +482,9 @@ class PlatformService:
             workshop=workshop,
             kind=kind,
             job_id=job_id,
+            project_code=project_code,
+            application_id=application_id,
+            capability_code="get_schema_directory",
         )
         return ToolResponse(
             summary={
@@ -305,6 +503,8 @@ class PlatformService:
         *,
         user_id: str,
         job_id: str = "",
+        project_code: str = "",
+        application_id: str = "",
         environment: str,
         base: str,
         workshop: str | None,
@@ -318,6 +518,8 @@ class PlatformService:
             workshop=workshop,
             kind=ResourceKind.DATABASE,
             job_id=job_id,
+            project_code=project_code,
+            application_id=application_id,
             capability_code="query_database",
         )
         max_rows = self._effective_rows(limit)
@@ -344,6 +546,7 @@ class PlatformService:
             timeout_seconds=self._query_timeout_seconds,
             max_rows=max_rows,
         )
+        executed = self._bound_database_response(executed)
         return ToolResponse(
             summary={
                 "engine": binding.engine.value,
@@ -358,11 +561,34 @@ class PlatformService:
             metadata={"source": "internal-api-platform-db"},
         )
 
+    def _bound_database_response(self, executed: Any) -> Any:
+        rows: list[dict[str, Any]] = []
+        response_bytes = 0
+        truncated = bool(executed.truncated)
+        for row in executed.rows:
+            encoded = json.dumps(
+                row,
+                ensure_ascii=False,
+                default=str,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            if response_bytes + len(encoded) > self._max_response_bytes:
+                truncated = True
+                break
+            rows.append(row)
+            response_bytes += len(encoded)
+        executed.rows = rows
+        executed.truncated = truncated
+        executed.response_bytes = response_bytes
+        return executed
+
     def schema_directory(
         self,
         *,
         user_id: str,
         job_id: str = "",
+        project_code: str = "",
+        application_id: str = "",
         environment: str,
         base: str,
         workshop: str | None,
@@ -376,6 +602,8 @@ class PlatformService:
             workshop=workshop,
             kind=ResourceKind.DATABASE,
             job_id=job_id,
+            project_code=project_code,
+            application_id=application_id,
             capability_code="get_schema_directory",
         )
         table_limit = self._effective_schema_limit(limit)
@@ -409,6 +637,8 @@ class PlatformService:
         *,
         user_id: str,
         job_id: str = "",
+        project_code: str = "",
+        application_id: str = "",
         environment: str,
         base: str,
         workshop: str | None,
@@ -421,6 +651,8 @@ class PlatformService:
             workshop=workshop,
             kind=ResourceKind.REDIS,
             job_id=job_id,
+            project_code=project_code,
+            application_id=application_id,
             capability_code="query_redis_get",
         )
         assert_read_command("get")
@@ -434,6 +666,8 @@ class PlatformService:
         *,
         user_id: str,
         job_id: str = "",
+        project_code: str = "",
+        application_id: str = "",
         environment: str,
         base: str,
         workshop: str | None,
@@ -447,6 +681,8 @@ class PlatformService:
             workshop=workshop,
             kind=ResourceKind.REDIS,
             job_id=job_id,
+            project_code=project_code,
+            application_id=application_id,
             capability_code="query_redis_scan",
         )
         assert_read_command("scan")
@@ -466,6 +702,8 @@ class PlatformService:
         *,
         user_id: str,
         job_id: str = "",
+        project_code: str = "",
+        application_id: str = "",
         environment: str,
         base: str,
         workshop: str | None,
@@ -481,6 +719,8 @@ class PlatformService:
             workshop=workshop,
             kind=ResourceKind.LOKI,
             job_id=job_id,
+            project_code=project_code,
+            application_id=application_id,
             capability_code="query_loki",
         )
         effective_selector = build_effective_selector(selector, workshop=binding.workshop)
@@ -499,6 +739,8 @@ class PlatformService:
         *,
         user_id: str,
         job_id: str = "",
+        project_code: str = "",
+        application_id: str = "",
         environment: str,
         base: str,
         workshop: str | None,
@@ -512,6 +754,8 @@ class PlatformService:
             workshop=workshop,
             kind=ResourceKind.LOKI,
             job_id=job_id,
+            project_code=project_code,
+            application_id=application_id,
             capability_code="diagnose_loki_labels",
         )
         response = self._loki.labels(
@@ -528,6 +772,8 @@ class PlatformService:
         *,
         user_id: str,
         job_id: str = "",
+        project_code: str = "",
+        application_id: str = "",
         environment: str,
         base: str,
         workshop: str | None,
@@ -543,6 +789,8 @@ class PlatformService:
             workshop=workshop,
             kind=ResourceKind.LOKI,
             job_id=job_id,
+            project_code=project_code,
+            application_id=application_id,
             capability_code="diagnose_loki_label_values",
         )
         response = self._loki.label_values(
@@ -560,6 +808,8 @@ class PlatformService:
         *,
         user_id: str,
         job_id: str = "",
+        project_code: str = "",
+        application_id: str = "",
         environment: str,
         base: str,
         workshop: str | None,
@@ -575,6 +825,8 @@ class PlatformService:
             workshop=workshop,
             kind=ResourceKind.LOKI,
             job_id=job_id,
+            project_code=project_code,
+            application_id=application_id,
             capability_code="diagnose_loki_probe",
         )
         effective_selector = build_effective_selector(selector, workshop=binding.workshop)

@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Never, Protocol
 
 from app.modules.audit.application.audit_service import AuditService
+from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.dingding.application.dingtalk_stream_service import (
     DingTalkStreamMessageService,
 )
@@ -17,6 +18,7 @@ from app.modules.message_bus.application.message_publisher import (
     MessagePublisher,
 )
 from app.modules.platform_config.application.secrets import SecretProviderPort
+from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import AppError, NonRetryableExecutionError
 
 from ..domain import ChannelIngressSubmission, DingTalkApplicationInput, RuntimeConnectorState
@@ -48,18 +50,24 @@ class ManagedChannelService:
         repository: ManagedChannelRepository,
         webhook_provider: ManagedWebhookProviderPort,
         secret_provider: SecretProviderPort,
+        connector_registry: ConnectorRegistry,
         audit_service: AuditService,
         stale_seconds: int = 30,
     ) -> None:
         self.repository = repository
         self.webhook_provider = webhook_provider
         self.secret_provider = secret_provider
+        self.connector_registry = connector_registry
         self.audit_service = audit_service
         self.stale_seconds = max(stale_seconds, 10)
 
     def list_channels(self) -> list[dict[str, Any]]:
         result = [self._dingtalk_public(item) for item in self.repository.list_dingtalk_connectors()]
         for item in self.webhook_provider.list_channels():
+            runtime_status = str(
+                item.get("runtime_status")
+                or ("READY" if str(item["status"]) == "enabled" else "STOPPED")
+            )
             result.append(
                 {
                     "id": str(item["connector_id"]),
@@ -71,9 +79,9 @@ class ManagedChannelService:
                     "enabled": str(item["status"]) == "enabled",
                     "revision": int(item["revision"]),
                     "runtime": {
-                        "status": "READY" if str(item["status"]) == "enabled" else "STOPPED",
+                        "status": runtime_status,
                         "last_message_at": item.get("recent_event_at"),
-                        "last_error": "",
+                        "last_error": str(item.get("last_error_summary") or ""),
                     },
                     "capabilities": {"private_chat": False, "group_chat": False},
                 }
@@ -81,8 +89,17 @@ class ManagedChannelService:
         return sorted(result, key=lambda item: (str(item["kind"]), str(item["name"])))
 
     def webhook_connector_options(self) -> list[dict[str, Any]]:
-        return self.repository.list_webhook_connector_options()
+        result: list[dict[str, Any]] = []
+        for item in self.repository.list_webhook_connector_options():
+            connector = self.connector_registry.get(str(item["id"]))
+            if (
+                connector is not None
+                and self.connector_registry.operational_status(connector).status == "READY"
+            ):
+                result.append(item)
+        return result
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def create_webhook(
         self,
         *,
@@ -103,6 +120,7 @@ class ManagedChannelService:
     def get_channel(self, channel_id: str) -> dict[str, Any]:
         return self._dingtalk_public(self.repository.get_connector(channel_id))
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def create_dingtalk(
         self,
         payload: DingTalkApplicationInput,
@@ -118,7 +136,7 @@ class ManagedChannelService:
                 error_code="channel_client_id_conflict",
             )
         secret_code = self._secret_code(normalized.client_id)
-        with self.repository.database.transaction():
+        with self.repository.database.unit_of_work():
             self.secret_provider.create_secret(
                 code=secret_code,
                 value=normalized.client_secret,
@@ -135,6 +153,7 @@ class ManagedChannelService:
         self._audit("created", actor_id, item)
         return self._dingtalk_public(item)
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def update_dingtalk(
         self,
         connector_id: str,
@@ -154,7 +173,7 @@ class ManagedChannelService:
                 error_code="channel_client_id_conflict",
             )
         secret_ref = str(current["secret_ref"])
-        with self.repository.database.transaction():
+        with self.repository.database.unit_of_work():
             if rotate_secret:
                 if secret_ref.startswith("secret://platform/"):
                     self.secret_provider.rotate_secret(
@@ -187,6 +206,7 @@ class ManagedChannelService:
         self._audit("updated", actor_id, item)
         return self._dingtalk_public(item)
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def set_enabled(
         self,
         connector_id: str,
@@ -207,6 +227,7 @@ class ManagedChannelService:
         self._audit("enabled" if enabled else "disabled", actor_id, item)
         return self._dingtalk_public(item)
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def restart(
         self, connector_id: str, *, expected_revision: int, actor_id: str
     ) -> dict[str, Any]:
@@ -223,6 +244,52 @@ class ManagedChannelService:
         self._audit("restart_requested", actor_id, item)
         return self._dingtalk_public(item)
 
+    @operation_unit_of_work(lambda service: service.repository.database)
+    def test_configuration(
+        self,
+        connector_id: str,
+        *,
+        actor_id: str,
+    ) -> dict[str, Any]:
+        connector = self.connector_registry.get(connector_id)
+        if connector is None:
+            raise NonRetryableExecutionError(
+                f"Unknown connector: {connector_id}",
+                safe_message="连接器尚未配置",
+                error_code="connector_not_found",
+            )
+        status = self.connector_registry.operational_status(connector)
+        if status.status == "MISCONFIGURED":
+            self.audit_service.record(
+                "managed_channel.configuration_tested",
+                status="FAILED",
+                summary="Managed channel configuration test failed",
+                actor_id=actor_id,
+                payload={
+                    "connector_id": connector_id,
+                    "error_code": status.error_code,
+                },
+            )
+            raise NonRetryableExecutionError(
+                f"Connector {connector_id} configuration test failed",
+                safe_message=status.safe_message,
+                error_code=status.error_code,
+            )
+        result = {
+            "status": "READY",
+            "summary": "已保存的连接器凭据引用可以安全解析；未执行外部网络请求",
+            "tested_at": datetime.now(UTC).isoformat(),
+        }
+        self.audit_service.record(
+            "managed_channel.configuration_tested",
+            status="SUCCEEDED",
+            summary="Managed channel configuration test succeeded",
+            actor_id=actor_id,
+            payload={"connector_id": connector_id},
+        )
+        return result
+
+    @operation_unit_of_work(lambda service: service.repository.database)
     def delete(
         self, connector_id: str, *, expected_revision: int, actor_id: str
     ) -> None:
@@ -268,12 +335,17 @@ class ManagedChannelService:
                 item
                 for item in items
                 if (
-                    trigger_type == "dingtalk_private"
-                    and item["capabilities"]["private_chat"]
-                )
-                or (
-                    trigger_type == "dingtalk_group"
-                    and item["capabilities"]["group_chat"]
+                    item["runtime"]["status"] != "MISCONFIGURED"
+                    and (
+                        (
+                            trigger_type == "dingtalk_private"
+                            and item["capabilities"]["private_chat"]
+                        )
+                        or (
+                            trigger_type == "dingtalk_group"
+                            and item["capabilities"]["group_chat"]
+                        )
+                    )
                 )
             ]
         if trigger_type == "webhook":
@@ -290,6 +362,7 @@ class ManagedChannelService:
                 }
                 for item in self.webhook_provider.list_channels()
                 if str(item["status"]) == "enabled"
+                and str(item.get("runtime_status") or "READY") != "MISCONFIGURED"
             ]
         raise NonRetryableExecutionError(
             f"Unsupported trigger provider: {trigger_type}",
@@ -302,7 +375,17 @@ class ManagedChannelService:
         heartbeat = str(item.get("last_heartbeat_at") or "")
         observed = str(item.get("runtime_status") or "STOPPED")
         status = observed
-        if bool(item["enabled"]) and (not heartbeat or self._stale(heartbeat)):
+        connector = self.connector_registry.get(str(item["id"]))
+        operational = (
+            self.connector_registry.operational_status(connector)
+            if connector is not None
+            else None
+        )
+        if operational is not None and operational.status == "MISCONFIGURED":
+            status = "MISCONFIGURED"
+        elif observed == "MISCONFIGURED":
+            status = "RECONNECTING" if bool(item["enabled"]) else "STOPPED"
+        elif bool(item["enabled"]) and (not heartbeat or self._stale(heartbeat)):
             status = "STALE"
         elif observed == "REGISTERED" and bool(item.get("registered")):
             status = "READY"
@@ -325,7 +408,12 @@ class ManagedChannelService:
                 "loaded_revision": item.get("loaded_revision"),
                 "last_heartbeat_at": item.get("last_heartbeat_at"),
                 "last_message_at": item.get("last_message_at"),
-                "last_error": str(item.get("last_error_summary") or ""),
+                "last_error": (
+                    operational.safe_message
+                    if operational is not None
+                    and operational.status == "MISCONFIGURED"
+                    else str(item.get("last_error_summary") or "")
+                ),
             },
             "updated_at": item.get("updated_at"),
         }
@@ -413,6 +501,7 @@ class RuntimeControlService:
         self.max_event_bytes = max_event_bytes
         self.lease_ttl_seconds = lease_ttl_seconds
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def acquire(self, runtime_id: str) -> dict[str, Any] | None:
         return self.repository.acquire_lease(
             lease_name=self.lease_name,
@@ -420,6 +509,7 @@ class RuntimeControlService:
             ttl_seconds=self.lease_ttl_seconds,
         )
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def renew(self, runtime_id: str, lease_token: str) -> dict[str, Any] | None:
         return self.repository.renew_lease(
             lease_name=self.lease_name,
@@ -428,6 +518,7 @@ class RuntimeControlService:
             ttl_seconds=self.lease_ttl_seconds,
         )
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def release(self, runtime_id: str, lease_token: str) -> bool:
         return self.repository.release_lease(
             lease_name=self.lease_name,
@@ -435,27 +526,38 @@ class RuntimeControlService:
             lease_token=lease_token,
         )
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def desired_snapshot(self, runtime_id: str, lease_token: str) -> dict[str, Any]:
         self.repository.require_lease(runtime_id=_runtime_id(runtime_id), lease_token=lease_token)
         items: list[dict[str, Any]] = []
         for connector in self.repository.list_dingtalk_connectors(include_disabled=False):
-            secret = self.secret_resolver(connector["secret_ref"])
+            try:
+                secret = self.secret_resolver(connector["secret_ref"])
+            except Exception:
+                secret = ""
             metadata = dict(connector["metadata"])
-            client_id = str(metadata.get("client_id") or "") or self.secret_resolver(
-                metadata.get("client_id_ref")
-            )
+            try:
+                client_id = str(metadata.get("client_id") or "") or self.secret_resolver(
+                    metadata.get("client_id_ref")
+                )
+            except Exception:
+                client_id = ""
             if not secret:
-                raise NonRetryableExecutionError(
-                    "DingTalk connector secret is unavailable",
-                    safe_message="钉钉渠道凭据不可用",
+                self._mark_misconfigured(
+                    connector,
+                    runtime_id=runtime_id,
                     error_code="channel_secret_unavailable",
+                    error_summary="钉钉渠道凭据缺失、已停用或无法解析，请重新绑定后测试",
                 )
+                continue
             if not client_id:
-                raise NonRetryableExecutionError(
-                    "DingTalk connector Client ID is unavailable",
-                    safe_message="钉钉渠道 Client ID 不可用",
+                self._mark_misconfigured(
+                    connector,
+                    runtime_id=runtime_id,
                     error_code="channel_client_id_unavailable",
+                    error_summary="钉钉渠道 Client ID 缺失或无法解析，请修正后测试",
                 )
+                continue
             items.append(
                 {
                     "connector_id": str(connector["id"]),
@@ -472,6 +574,7 @@ class RuntimeControlService:
         revision = max((int(item["revision"]) for item in items), default=0)
         return {"revision": revision, "connectors": items}
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def report_states(
         self,
         runtime_id: str,
@@ -486,6 +589,18 @@ class RuntimeControlService:
             connector = self.repository.get_connector(state.connector_id)
             if int(connector["revision"]) < state.revision:
                 raise _invalid("revision", "Runtime 配置修订超前")
+            try:
+                secret = self.secret_resolver(connector["secret_ref"])
+            except Exception:
+                secret = ""
+            if not secret:
+                self._mark_misconfigured(
+                    connector,
+                    runtime_id=runtime_id,
+                    error_code="channel_secret_unavailable",
+                    error_summary="钉钉渠道凭据缺失、已停用或无法解析，请重新绑定后测试",
+                )
+                continue
             self.repository.upsert_runtime_state(
                 connector_id=state.connector_id,
                 runtime_id=runtime_id,
@@ -497,6 +612,7 @@ class RuntimeControlService:
                 error_summary=_safe_error(state.error_summary),
             )
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def receive(
         self,
         runtime_id: str,
@@ -511,6 +627,22 @@ class RuntimeControlService:
                 "Connector is not enabled for ingress",
                 safe_message="渠道未启用或不允许接入",
                 error_code="channel_not_eligible",
+            )
+        try:
+            secret = self.secret_resolver(connector["secret_ref"])
+        except Exception:
+            secret = ""
+        if not secret:
+            self._mark_misconfigured(
+                connector,
+                runtime_id=runtime_id,
+                error_code="channel_secret_unavailable",
+                error_summary="钉钉渠道凭据缺失、已停用或无法解析，请重新绑定后测试",
+            )
+            raise NonRetryableExecutionError(
+                "DingTalk connector secret is unavailable",
+                safe_message="钉钉渠道配置不可用",
+                error_code="channel_misconfigured",
             )
         if submission.request_bytes > self.max_event_bytes:
             raise NonRetryableExecutionError(
@@ -549,6 +681,25 @@ class RuntimeControlService:
             message_received=True,
         )
         return event, created
+
+    def _mark_misconfigured(
+        self,
+        connector: dict[str, Any],
+        *,
+        runtime_id: str,
+        error_code: str,
+        error_summary: str,
+    ) -> None:
+        self.repository.upsert_runtime_state(
+            connector_id=str(connector["id"]),
+            runtime_id=runtime_id,
+            runtime_status="ERROR",
+            loaded_revision=int(connector["revision"]),
+            connected=False,
+            registered=False,
+            error_code=error_code,
+            error_summary=error_summary,
+        )
 
 
 class ChannelOutboxPublisher:
@@ -634,7 +785,7 @@ class ChannelDispatchService:
         if result.job_id:
             self.repository.attach_job(str(event["id"]), result.job_id)
         elif result.status not in {"ignored"}:
-            with self.repository.database.transaction():
+            with self.repository.database.unit_of_work():
                 if (
                     result.discovery_observation is not None
                     and self.identity_discovery_service is not None
@@ -665,7 +816,7 @@ class UnavailableChannelCredentialCipher:
     @staticmethod
     def _raise() -> Never:
         raise NonRetryableExecutionError(
-            "APP_CONFIG_MASTER_KEY is required for channel credentials",
+            "Master Key file is required for channel credentials",
             safe_message="尚未配置渠道凭据加密",
             error_code="channel_credential_encryption_unavailable",
         )

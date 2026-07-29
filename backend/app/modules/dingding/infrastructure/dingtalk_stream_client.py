@@ -6,6 +6,7 @@ from typing import Any, Protocol
 from app.modules.dingding.application.dingtalk_stream_service import (
     DingTalkStreamHandleResult,
 )
+from app.shared.database import assert_external_io_allowed
 from app.shared.exceptions import NonRetryableExecutionError
 
 
@@ -30,6 +31,7 @@ class DingTalkStreamSdkClient:
         self.callback = callback
 
     def start_forever(self) -> None:
+        assert_external_io_allowed("dingtalk.stream")
         try:
             import dingtalk_stream
         except ModuleNotFoundError as exc:

@@ -29,6 +29,11 @@ class QueueSettings:
     channel_dead_queue: str = "agent.channel.dispatch.dead.queue"
     max_retry_count: int = 3
     retry_delay_seconds: int = 30
+    dispatch_outbox_max_attempts: int = 8
+    dispatch_outbox_max_replays: int = 3
+    dispatch_outbox_retry_base_seconds: int = 5
+    dispatch_outbox_claim_timeout_seconds: int = 300
+    dispatch_outbox_scan_seconds: int = 1
     consumer_heartbeat_seconds: int = 900
     consumer_reconnect_seconds: int = 5
 
@@ -48,6 +53,11 @@ class ExecutionSettings:
 class DeliverySettings:
     chunk_max_chars: int = 3500
     timeout_seconds: int = 5
+    outbox_max_attempts: int = 8
+    outbox_max_replays: int = 3
+    outbox_retry_base_seconds: int = 5
+    outbox_claim_timeout_seconds: int = 300
+    outbox_scan_seconds: int = 1
 
 
 @dataclass(frozen=True)
@@ -113,7 +123,6 @@ class IdentitySettings:
     allowed_origins: tuple[str, ...] = ()
     dingtalk_tenant_code: str = "default"
     default_agent_code: str = "default-diagnostic-agent"
-    business_application_authorization_mode: str = "compatibility"
 
 
 @dataclass(frozen=True)
@@ -135,7 +144,6 @@ class WebhookSettings:
     max_collection_items: int = 2000
     max_message_chars: int = 4000
     max_summary_chars: int = 4000
-    default_hmac_window_seconds: int = 300
     event_retention_days: int = 30
     outbox_scan_seconds: int = 5
     outbox_max_attempts: int = 8
@@ -196,12 +204,15 @@ class LokiSettings:
 class Settings:
     database_dsn: str = "sqlite:///./enterprise_agent.db"
     rabbitmq_url: str = "amqp://guest:guest@localhost:5672/"
-    app_config_master_key: str = "test-master-key"
+    app_config_master_key: str = field(default="", repr=False)
+    app_config_master_key_file: str = ""
+    master_key_file_required: bool = False
     internal_api_base_url: str = "http://internal-api-platform.local"
-    internal_api_auth_token: str = ""
+    internal_api_auth_token_file: str = ""
     internal_api_timeout_seconds: int = 10
     internal_api_max_response_chars: int = 4000
     internal_platform_max_rows: int = 100
+    internal_platform_max_response_bytes: int = 1024 * 1024
     claude_model: str = "claude-sonnet-4-20250514"
     anthropic_api_key: str = ""
     anthropic_base_url: str = ""
@@ -213,7 +224,6 @@ class Settings:
     feature_configuration: EffectiveFeatureConfiguration = field(
         default_factory=default_feature_configuration
     )
-    app_startup_migrate: bool = True
     seed_local_config: bool = False
     runtime_config_source: str = "env"
     runtime_config_degraded: bool = False
@@ -246,16 +256,6 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return value.lower() in {"1", "true", "yes", "on"}
 
 
-def _authorization_mode(value: str) -> str:
-    normalized = value.strip().lower()
-    if normalized not in {"compatibility", "strict_application_role"}:
-        raise ValueError(
-            "BUSINESS_APPLICATION_AUTHORIZATION_MODE must be "
-            "compatibility or strict_application_role"
-        )
-    return normalized
-
-
 def load_settings() -> Settings:
     environment = os.getenv("APP_ENV", "local")
     features = resolve_feature_configuration(environment, os.environ)
@@ -269,14 +269,24 @@ def load_settings() -> Settings:
     return Settings(
         database_dsn=os.getenv("DATABASE_DSN", "sqlite:///./enterprise_agent.db"),
         rabbitmq_url=os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"),
-        app_config_master_key=os.getenv("APP_CONFIG_MASTER_KEY", ""),
+        app_config_master_key_file=os.getenv(
+            "APP_CONFIG_MASTER_KEY_FILE",
+            "",
+        ),
+        master_key_file_required=environment not in {"test", "testing"},
         internal_api_base_url=os.getenv(
             "INTERNAL_API_BASE_URL", "http://internal-api-platform.local"
         ),
-        internal_api_auth_token=os.getenv("INTERNAL_API_AUTH_TOKEN", ""),
+        internal_api_auth_token_file=os.getenv("INTERNAL_API_AUTH_TOKEN_FILE", ""),
         internal_api_timeout_seconds=int(os.getenv("INTERNAL_API_TIMEOUT_SECONDS", "10")),
         internal_api_max_response_chars=int(os.getenv("INTERNAL_API_MAX_RESPONSE_CHARS", "4000")),
         internal_platform_max_rows=int(os.getenv("INTERNAL_PLATFORM_MAX_ROWS", "100")),
+        internal_platform_max_response_bytes=int(
+            os.getenv(
+                "INTERNAL_PLATFORM_MAX_RESPONSE_BYTES",
+                str(1024 * 1024),
+            )
+        ),
         claude_model=os.getenv(
             "CLAUDE_MODEL",
             os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
@@ -293,7 +303,6 @@ def load_settings() -> Settings:
             features.business_application_control_plane_enabled
         ),
         feature_configuration=features,
-        app_startup_migrate=_env_bool("APP_STARTUP_MIGRATE", True),
         seed_local_config=_env_bool("SEED_LOCAL_CONFIG"),
         debug_agent_user_id=os.getenv("DEBUG_AGENT_USER_ID", "local-user"),
         dingtalk=DingTalkSettings(
@@ -371,6 +380,21 @@ def load_settings() -> Settings:
             ),
             max_retry_count=int(os.getenv("AGENT_MAX_RETRY_COUNT", "3")),
             retry_delay_seconds=int(os.getenv("AGENT_RETRY_DELAY_SECONDS", "30")),
+            dispatch_outbox_max_attempts=int(
+                os.getenv("JOB_DISPATCH_OUTBOX_MAX_ATTEMPTS", "8")
+            ),
+            dispatch_outbox_max_replays=int(
+                os.getenv("JOB_DISPATCH_OUTBOX_MAX_REPLAYS", "3")
+            ),
+            dispatch_outbox_retry_base_seconds=int(
+                os.getenv("JOB_DISPATCH_OUTBOX_RETRY_BASE_SECONDS", "5")
+            ),
+            dispatch_outbox_claim_timeout_seconds=int(
+                os.getenv("JOB_DISPATCH_OUTBOX_CLAIM_TIMEOUT_SECONDS", "300")
+            ),
+            dispatch_outbox_scan_seconds=int(
+                os.getenv("JOB_DISPATCH_OUTBOX_SCAN_SECONDS", "1")
+            ),
             consumer_heartbeat_seconds=int(os.getenv("RABBITMQ_CONSUMER_HEARTBEAT_SECONDS", "900")),
             consumer_reconnect_seconds=int(os.getenv("RABBITMQ_CONSUMER_RECONNECT_SECONDS", "5")),
         ),
@@ -386,6 +410,21 @@ def load_settings() -> Settings:
         delivery=DeliverySettings(
             chunk_max_chars=int(os.getenv("DELIVERY_CHUNK_MAX_CHARS", "3500")),
             timeout_seconds=int(os.getenv("DELIVERY_TIMEOUT_SECONDS", "5")),
+            outbox_max_attempts=int(
+                os.getenv("DELIVERY_OUTBOX_MAX_ATTEMPTS", "8")
+            ),
+            outbox_max_replays=int(
+                os.getenv("DELIVERY_OUTBOX_MAX_REPLAYS", "3")
+            ),
+            outbox_retry_base_seconds=int(
+                os.getenv("DELIVERY_OUTBOX_RETRY_BASE_SECONDS", "5")
+            ),
+            outbox_claim_timeout_seconds=int(
+                os.getenv("DELIVERY_OUTBOX_CLAIM_TIMEOUT_SECONDS", "300")
+            ),
+            outbox_scan_seconds=int(
+                os.getenv("DELIVERY_OUTBOX_SCAN_SECONDS", "1")
+            ),
         ),
         conversation=ConversationSettings(
             enabled=features.continuous_conversation_compatibility_enabled,
@@ -444,12 +483,6 @@ def load_settings() -> Settings:
             allowed_origins=_csv_tuple(os.getenv("WEB_ALLOWED_ORIGINS", "")),
             dingtalk_tenant_code=os.getenv("DINGTALK_TENANT_CODE", "default"),
             default_agent_code=os.getenv("DEFAULT_AGENT_CODE", "default-diagnostic-agent"),
-            business_application_authorization_mode=_authorization_mode(
-                os.getenv(
-                    "BUSINESS_APPLICATION_AUTHORIZATION_MODE",
-                    "compatibility",
-                )
-            ),
         ),
         ones_identity=OnesIdentitySettings(
             instance_code=os.getenv("ONES_IDENTITY_INSTANCE_CODE", "default"),
@@ -467,7 +500,6 @@ def load_settings() -> Settings:
             max_collection_items=int(os.getenv("WEBHOOK_MAX_COLLECTION_ITEMS", "2000")),
             max_message_chars=int(os.getenv("WEBHOOK_MAX_MESSAGE_CHARS", "4000")),
             max_summary_chars=int(os.getenv("WEBHOOK_MAX_SUMMARY_CHARS", "4000")),
-            default_hmac_window_seconds=int(os.getenv("WEBHOOK_HMAC_WINDOW_SECONDS", "300")),
             event_retention_days=int(os.getenv("WEBHOOK_EVENT_RETENTION_DAYS", "30")),
             outbox_scan_seconds=int(os.getenv("WEBHOOK_OUTBOX_SCAN_SECONDS", "5")),
             outbox_max_attempts=int(os.getenv("WEBHOOK_OUTBOX_MAX_ATTEMPTS", "8")),

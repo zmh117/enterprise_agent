@@ -29,9 +29,11 @@ from app.modules.internal_api_platform.infrastructure.registry import TopologyRe
 from app.modules.internal_api_platform.infrastructure.secrets import MappingSecretResolver
 from app.modules.internal_api_platform.infrastructure.secrets import DbBackedSecretResolver
 from app.modules.platform_config.application.snapshot import PlatformTopologySnapshotBuilder
+from app.modules.platform_config.application.secrets import EncryptedDbSecretProvider
 from app.modules.platform_config.infrastructure import PlatformConfigRepository
 from app.shared.config import Settings
 from app.shared.database import Database, default_migrations_dir
+from app.shared.migrations import Migrator
 from app.shared.runtime_config_loader import apply_runtime_config_overlay
 from backend.tests.helpers import container, test_settings as make_settings
 
@@ -43,7 +45,7 @@ def _example_yaml_path() -> Path:
 
 
 def _secret_values() -> dict[str, str]:
-    return {
+    legacy_values = {
         "secret://sanjiu/guanlan_cloud/db_host": "10.0.102.240",
         "secret://sanjiu/guanlan_cloud/db_user": "system",
         "secret://sanjiu/guanlan_cloud/db_password": "db-password",
@@ -86,6 +88,11 @@ def _secret_values() -> dict[str, str]:
         "secret://agent_test/sqlserver/redis_password": "sqlserver-redis-reader-password",
         "secret://agent_test/loki/base_url": "http://loki:3100",
     }
+    return {
+        "secret://platform/"
+        + ref.removeprefix("secret://").replace("/", "_").replace("-", "_"): value
+        for ref, value in legacy_values.items()
+    }
 
 
 # 6 Oracle bases × (db+redis) + xt db + mmk db + agent_test × (2 db + 2 redis + 2 loki)
@@ -97,7 +104,11 @@ def _file_database() -> tuple[tempfile.TemporaryDirectory[str], Database, str]:
     db_path = Path(tmp.name) / "platform.db"
     dsn = f"sqlite:///{db_path}"
     database = Database(dsn)
-    database.run_migrations(default_migrations_dir())
+    Migrator(
+        database,
+        default_migrations_dir(),
+        migrator_build="platform-config-test",
+    ).run()
     return tmp, database, dsn
 
 
@@ -105,7 +116,18 @@ def _import_example_to_file_database() -> tuple[tempfile.TemporaryDirectory[str]
     tmp, database, dsn = _file_database()
     from app.modules.platform_config.application.importer import PlatformTopologyYamlImporter
 
-    PlatformTopologyYamlImporter(PlatformConfigRepository(database)).import_file(
+    repository = PlatformConfigRepository(database)
+    provider = EncryptedDbSecretProvider(
+        repository,
+        master_key="test-only-master-key",
+    )
+    for ref, value in _secret_values().items():
+        provider.create_secret(
+            code=ref.removeprefix("secret://platform/"),
+            value=value,
+            actor_id="local-user",
+        )
+    PlatformTopologyYamlImporter(repository).import_file(
         _example_yaml_path(),
         actor_id="local-user",
     )
@@ -168,7 +190,10 @@ class PlatformConfigRepositoryTests(unittest.TestCase):
         self.assertEqual(3, public["access_grant_count"])
         self.assertRegex(public["config_hash"], r"^[0-9a-f]{64}$")
         encoded = str(public)
-        self.assertIn("secret://sanjiu/guanlan_cloud/db_password", encoded)
+        self.assertIn(
+            "secret://platform/sanjiu_guanlan_cloud_db_password",
+            encoded,
+        )
         self.assertNotIn("db-password", encoded)
 
         builder = PlatformTopologySnapshotBuilder(
@@ -497,7 +522,12 @@ class InternalApiPlatformDbConfigTests(unittest.TestCase):
                 "INTERNAL_PLATFORM_TOPOLOGY_FILE": str(yaml_path),
             }
             with patch.dict(os.environ, env_values, clear=False):
-                service = build_service(Settings(database_dsn=dsn, app_startup_migrate=True))
+                service = build_service(
+                    Settings(
+                        database_dsn=dsn,
+                        app_config_master_key="test-only-master-key",
+                    )
+                )
 
             self.assertEqual("database", service.config_status()["source"])
             self.assertTrue(service.config_status()["valid"])
@@ -519,12 +549,12 @@ class InternalApiPlatformDbConfigTests(unittest.TestCase):
             {"INTERNAL_PLATFORM_TOPOLOGY_FILE": str(_example_yaml_path())},
             clear=False,
         ):
-            fallback = _load_topology_snapshot(Settings(database_dsn=dsn, app_startup_migrate=True))
+            fallback = _load_topology_snapshot(Settings(database_dsn=dsn))
         self.assertEqual("yaml", fallback.source)
         self.assertEqual(_EXAMPLE_RESOURCE_COUNT, fallback.resource_count)
 
         with patch.dict(os.environ, {"INTERNAL_PLATFORM_TOPOLOGY_FILE": ""}, clear=False):
-            empty = _load_topology_snapshot(Settings(database_dsn=dsn, app_startup_migrate=True))
+            empty = _load_topology_snapshot(Settings(database_dsn=dsn))
         self.assertEqual("database-empty", empty.source)
 
     def test_invalid_db_snapshot_does_not_fallback_to_yaml_and_health_is_degraded(self) -> None:
@@ -549,14 +579,19 @@ class InternalApiPlatformDbConfigTests(unittest.TestCase):
             {"INTERNAL_PLATFORM_TOPOLOGY_FILE": str(_example_yaml_path())},
             clear=False,
         ):
-            service = build_service(Settings(database_dsn=dsn, app_startup_migrate=True))
+            service = build_service(Settings(database_dsn=dsn))
 
         status = service.config_status()
         self.assertEqual("database-invalid", status["source"])
         self.assertFalse(status["valid"])
         self.assertIn("missing required field: host", str(status["errors"]))
 
-        with TestClient(create_internal_platform_app(service=service)) as client:
+        with TestClient(
+            create_internal_platform_app(
+                Settings(environment="test"),
+                service=service,
+            )
+        ) as client:
             health = client.get("/health")
         self.assertEqual(200, health.status_code)
         self.assertEqual("degraded", health.json()["status"])
@@ -681,7 +716,7 @@ class InternalApiPlatformDbConfigTests(unittest.TestCase):
 
 class PlatformSecretAndRuntimeConfigTests(unittest.TestCase):
     def test_encrypted_db_secret_provider_does_not_persist_plaintext(self) -> None:
-        c = container()
+        c = container(configure_seed_secrets=False)
         repository = PlatformConfigRepository(c.database)
 
         with patch.dict(os.environ, {"APP_CONFIG_MASTER_KEY": "test-master-key"}, clear=False):
@@ -699,7 +734,10 @@ class PlatformSecretAndRuntimeConfigTests(unittest.TestCase):
             encoded = str(stored_versions)
             self.assertNotIn("sk-sensitive-value", encoded)
 
-            resolver = DbBackedSecretResolver(repository, master_key="test-master-key")
+            resolver = DbBackedSecretResolver(
+                repository,
+                master_key=c.settings.app_config_master_key,
+            )
             self.assertEqual(
                 "sk-sensitive-value",
                 resolver.resolve("secret://platform/deepseek_api_key"),
@@ -784,7 +822,7 @@ class PlatformSecretAndRuntimeConfigTests(unittest.TestCase):
         self.assertFalse(overlaid.runtime_config_degraded)
 
     def test_runtime_config_overlay_covers_internal_platform_and_dingtalk(self) -> None:
-        c = container()
+        c = container(configure_seed_secrets=False)
         base = make_settings()
 
         with patch.dict(os.environ, {"APP_CONFIG_MASTER_KEY": "test-master-key"}, clear=False):
@@ -830,13 +868,12 @@ class PlatformSecretAndRuntimeConfigTests(unittest.TestCase):
         self.assertFalse(dingtalk_settings.runtime_config_degraded)
 
         with patch.dict(os.environ, {"APP_CONFIG_MASTER_KEY": "test-master-key"}, clear=False):
-            c.platform_config_service.upsert_runtime_config_value(
-                {
-                    "key": "DINGTALK_CLIENT_SECRET",
-                    "secret_ref": "secret://platform/missing_secret",
-                    "service_name": "dingtalk-stream-ingress",
-                },
-                actor_id="local-user",
+            c.platform_config_service.repository.upsert_runtime_config_value(
+                key="DINGTALK_CLIENT_SECRET",
+                scope_type="global",
+                scope_code="*",
+                service_name="dingtalk-stream-ingress",
+                secret_ref="secret://platform/missing_secret",
             )
             degraded = apply_runtime_config_overlay(
                 base,

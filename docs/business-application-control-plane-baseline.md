@@ -23,5 +23,5 @@
 ## 迁移顺序
 
 仓库已有 `009_admin_web_read_models.sql` 和
-`009_agent_job_retry_failure_delivery.sql`。迁移器按完整文件名字典序执行，
+`009a_agent_job_retry_failure_delivery.sql`。迁移器按唯一版本和完整文件名字典序执行，
 两者顺序保持不变；Business Application 使用 `010`。

@@ -4,6 +4,7 @@ import json
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from app.shared.database import assert_external_io_allowed
 from app.shared.exceptions import NonRetryableExecutionError
 
 
@@ -18,6 +19,7 @@ class DingTalkCallbackClient:
         self.sent_messages.append(payload)
         if not self.callback_url:
             return
+        assert_external_io_allowed("dingtalk.callback")
         parsed = urlparse(self.callback_url)
         if self.host_allowlist and parsed.hostname not in self.host_allowlist:
             raise NonRetryableExecutionError(

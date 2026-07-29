@@ -5,6 +5,7 @@ from app.modules.channel.infrastructure.connector_registry import ConnectorRegis
 from app.modules.identity.application.ones_identity import OnesIdentityVerifier
 from app.modules.identity.domain import AuthenticatedPrincipal, ExternalIdentityDescriptor
 from app.modules.identity.infrastructure import IdentityRepository
+from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import AppError, NonRetryableExecutionError, PermissionDenied
 
 
@@ -117,6 +118,7 @@ class IdentityService:
             auth_source=descriptor.provider,
         )
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def bind_dingtalk(
         self,
         *,
@@ -238,7 +240,7 @@ class IdentityService:
             )
             raise
         try:
-            with self.repository.database.transaction():
+            with self.repository.database.unit_of_work():
                 current = self._require_bindable_user(
                     user_id=user_id,
                     expected_user_revision=expected_user_revision,
@@ -287,6 +289,7 @@ class IdentityService:
             raise
         return identity
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def set_identity_status(
         self,
         *,
@@ -313,6 +316,7 @@ class IdentityService:
         )
         return identity
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def unbind_identity(
         self,
         *,

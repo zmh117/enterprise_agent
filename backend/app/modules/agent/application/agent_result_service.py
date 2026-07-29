@@ -8,14 +8,14 @@ class AgentResultService:
     def __init__(self, repository: AgentRepository) -> None:
         self.repository = repository
 
-    def save_result(self, job: AgentJob, final_answer: str) -> None:
+    def save_result(self, job: AgentJob, final_answer: str) -> str:
         self.repository.add_message(
             session_id=job.session_id,
             job_id=job.id,
             role="assistant",
             content=final_answer,
         )
-        self.repository.add_artifact(
+        artifact_id = self.repository.add_artifact(
             job_id=job.id,
             artifact_type="report",
             name="diagnostic-report.md",
@@ -27,3 +27,4 @@ class AgentResultService:
             title="Final report generated",
             content="Evidence-based diagnostic report persisted.",
         )
+        return artifact_id

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
 from app.modules.admin.application import AdminCapabilityService
 from app.modules.admin.domain import ADMIN_CAPABILITIES, ADMIN_CAPABILITY_BY_CODE
 from app.modules.audit.application.audit_service import AuditService
+from app.modules.business_application.domain.policies import verify_snapshot
 from app.modules.authorization_center.infrastructure.repository import (
     AuthorizationCenterRepository,
 )
@@ -151,7 +153,7 @@ class AuthorizationCenterService:
                 error_code="role_name_required",
                 field_errors=[{"field": "name", "message": "请输入角色名称"}],
             )
-        with self.repository.database.transaction():
+        with self.repository.database.unit_of_work():
             role = self.repository.create_role(
                 code=normalized_code,
                 name=name.strip(),
@@ -217,7 +219,7 @@ class AuthorizationCenterService:
         before = self.repository.get_role(role_id)
         if status == "disabled" and before["status"] == "enabled" and not confirmed:
             self._confirmation_required("停用角色前需要确认受影响成员")
-        with self.repository.database.transaction():
+        with self.repository.database.unit_of_work():
             role = self.repository.update_metadata(
                 role_id,
                 expected_revision=expected_revision,
@@ -254,7 +256,7 @@ class AuthorizationCenterService:
         normalized = self._validate_admin_bindings(
             actor_id, bindings, confirmed=confirmed, reason=reason
         )
-        with self.repository.database.transaction():
+        with self.repository.database.unit_of_work():
             before = self.repository.list_admin_bindings(role_id)
             result = self.repository.replace_admin_bindings(
                 role_id,
@@ -292,7 +294,7 @@ class AuthorizationCenterService:
             confirmed=confirmed,
             reason=reason,
         )
-        with self.repository.database.transaction():
+        with self.repository.database.unit_of_work():
             before = self.repository.list_business_access(role_id)
             result = self.repository.replace_business_access(
                 role_id,
@@ -333,69 +335,88 @@ class AuthorizationCenterService:
         )
         if self_removal and not confirmed:
             self._confirmation_required("撤销自己的角色前需要二次确认")
-        with self.repository.database.transaction():
-            if role["code"] == "platform-admin":
-                self.repository.lock_platform_admin_memberships()
-            self.repository.bump_membership_revision(role_id, expected_revision)
-            for change in changes:
-                user_id = str(change.get("user_id") or "")
-                enabled = bool(change.get("enabled"))
-                user = self.identity_repository.get_user(user_id)
-                if (
-                    enabled
-                    and str(user["account_type"]) == "service"
-                    and self._role_has_admin_capabilities(role)
-                ):
-                    self._field_error(
-                        "changes",
-                        "服务账号不能加入包含管理后台能力的角色",
+        try:
+            with self.repository.database.unit_of_work():
+                verified_admins_before: int | None = None
+                if role["code"] == "platform-admin":
+                    self.identity_repository.lock_platform_admin_invariant()
+                    self.repository.lock_platform_admin_memberships()
+                    verified_admins_before = (
+                        self.identity_repository.verified_human_platform_admin_count()
                     )
-                membership = self.repository.database.execute_one(
-                    "select * from rbac_user_role where user_id = ? and role_id = ?",
-                    (user_id, role_id),
-                )
-                if enabled:
-                    self.identity_repository.assign_role(
-                        user_id=user_id,
-                        role_id=role_id,
-                        expected_revision=(
-                            int(membership["revision"]) if membership else 0
-                        ),
-                        expires_at=change.get("expires_at") or None,
-                        assigned_by=actor_id,
-                        assignment_source=str(change.get("source") or "manual"),
-                    )
-                else:
-                    if membership is None:
-                        continue
-                    if role["code"] == "platform-admin" and self.identity_repository.admin_count() <= 1:
-                        raise NonRetryableExecutionError(
-                            "Cannot remove the last platform administrator",
-                            safe_message="系统必须至少保留一名启用的平台管理员",
-                            error_code="last_platform_admin",
+                self.repository.bump_membership_revision(role_id, expected_revision)
+                for change in changes:
+                    user_id = str(change.get("user_id") or "")
+                    enabled = bool(change.get("enabled"))
+                    user = self.identity_repository.get_user(user_id)
+                    if (
+                        enabled
+                        and str(user["account_type"]) == "service"
+                        and self._role_has_admin_capabilities(role)
+                    ):
+                        self._field_error(
+                            "changes",
+                            "服务账号不能加入包含管理后台能力的角色",
                         )
-                    self.identity_repository.remove_role(
-                        user_id=user_id,
-                        role_id=role_id,
-                        expected_revision=int(membership["revision"]),
+                    membership = self.repository.database.execute_one(
+                        "select * from rbac_user_role where user_id = ? and role_id = ?",
+                        (user_id, role_id),
                     )
-            self.audit_service.record(
-                "authorization.role.members.updated",
-                status="SUCCEEDED",
-                summary="Role memberships updated",
-                actor_id=actor_id,
-                payload={
-                    "role_id": role_id,
-                    "changes": [
-                        {
-                            "user_id": str(item.get("user_id") or ""),
-                            "enabled": bool(item.get("enabled")),
-                            "expires_at": item.get("expires_at"),
-                        }
-                        for item in changes
-                    ],
-                },
-            )
+                    if enabled:
+                        self.identity_repository.assign_role(
+                            user_id=user_id,
+                            role_id=role_id,
+                            expected_revision=(
+                                int(membership["revision"]) if membership else 0
+                            ),
+                            expires_at=change.get("expires_at") or None,
+                            assigned_by=actor_id,
+                            assignment_source=str(change.get("source") or "manual"),
+                        )
+                    else:
+                        if membership is None:
+                            continue
+                        self.identity_repository.remove_role(
+                            user_id=user_id,
+                            role_id=role_id,
+                            expected_revision=int(membership["revision"]),
+                        )
+                if verified_admins_before is not None:
+                    verified_admins_after = (
+                        self.identity_repository.verified_human_platform_admin_count()
+                    )
+                    if verified_admins_after < verified_admins_before:
+                        self.identity_repository.require_verified_human_platform_admins()
+                self.audit_service.record(
+                    "authorization.role.members.updated",
+                    status="SUCCEEDED",
+                    summary="Role memberships updated",
+                    actor_id=actor_id,
+                    payload={
+                        "role_id": role_id,
+                        "changes": [
+                            {
+                                "user_id": str(item.get("user_id") or ""),
+                                "enabled": bool(item.get("enabled")),
+                                "expires_at": item.get("expires_at"),
+                            }
+                            for item in changes
+                        ],
+                    },
+                )
+        except NonRetryableExecutionError as exc:
+            if exc.error_code == "platform_admin_invariant":
+                self.audit_service.record(
+                    "platform_admin_invariant_denied",
+                    status="DENIED",
+                    summary="Platform administrator invariant denied mutation",
+                    actor_id=actor_id,
+                    payload={
+                        "operation": "platform_admin_membership.batch",
+                        "target_id": role_id,
+                    },
+                )
+            raise
         if self_removal:
             self.identity_repository.revoke_user_sessions(actor_id)
         return {
@@ -412,7 +433,7 @@ class AuthorizationCenterService:
         confirmed: bool,
     ) -> dict[str, Any]:
         self.identity_repository.get_user(user_id)
-        with self.repository.database.transaction():
+        with self.repository.database.unit_of_work():
             for change in changes:
                 self.update_members(
                     actor_id=actor_id,
@@ -787,15 +808,11 @@ class BusinessAuthorizationService:
         self,
         repository: AuthorizationCenterRepository,
         identity_repository: IdentityRepository,
-        legacy_authorization: AuthorizationEvaluator,
         *,
-        mode: str = "compatibility",
         audit_service: AuditService | None = None,
     ) -> None:
         self.repository = repository
         self.identity_repository = identity_repository
-        self.legacy_authorization = legacy_authorization
-        self.mode = mode
         self.audit_service = audit_service
 
     def decide(
@@ -821,59 +838,13 @@ class BusinessAuthorizationService:
             )
         )
         if application is None:
-            return self._decision(False, stage, "application_not_found", [], {}, False)
+            return self._decision(False, stage, "application_not_found", [], {})
         if str(user["status"]) != "enabled":
-            return self._decision(False, stage, "user_disabled", [], application, False)
+            return self._decision(False, stage, "user_disabled", [], application)
         if str(application["status"]) != "enabled":
-            return self._decision(False, stage, "application_disabled", [], application, False)
+            return self._decision(False, stage, "application_disabled", [], application)
         role_codes = self.identity_repository.role_codes_for_user(user_id)
-        explicit = self.legacy_authorization.decide(
-            user_id=user_id,
-            resource_type="business_application",
-            resource_code=str(application["code"]),
-            action="use",
-        )
-        application_alias_policies = self._legacy_user_alias_policies(
-            user_id=user_id,
-            resource_type="business_application",
-            resource_code=str(application["code"]),
-        )
-        if explicit.reason == "explicit_deny" or self._has_effect(
-            application_alias_policies, "deny"
-        ):
-            return self._decision(
-                False,
-                stage,
-                "explicit_application_deny",
-                list(role_codes),
-                application,
-                False,
-            )
         if capability_code:
-            capability_exception = self.legacy_authorization.decide(
-                user_id=user_id,
-                resource_type="business_application_capability",
-                resource_code=f"{application['code']}:{capability_code}",
-                action="use",
-            )
-            capability_alias_policies = self._legacy_user_alias_policies(
-                user_id=user_id,
-                resource_type="business_application_capability",
-                resource_code=f"{application['code']}:{capability_code}",
-            )
-            if capability_exception.reason == "explicit_deny" or self._has_effect(
-                capability_alias_policies, "deny"
-            ):
-                return self._decision(
-                    False,
-                    stage,
-                    "explicit_capability_deny",
-                    list(role_codes),
-                    application,
-                    False,
-                    capability_code=capability_code,
-                    scope=self._scope_summary(environment, base, workshop),
-                )
             if not self.repository.application_capability_is_effective(
                 str(application["id"]), capability_code
             ):
@@ -883,36 +854,6 @@ class BusinessAuthorizationService:
                     "application_capability_safety_ceiling",
                     list(role_codes),
                     application,
-                    False,
-                    capability_code=capability_code,
-                    scope=self._scope_summary(environment, base, workshop),
-                )
-        if environment or base or workshop:
-            scope_resource_code = (
-                f"{application['code']}:"
-                + "/".join(value for value in (environment, base, workshop) if value)
-            )
-            scope_exception = self.legacy_authorization.decide(
-                user_id=user_id,
-                resource_type="business_application_scope",
-                resource_code=scope_resource_code,
-                action="use",
-            )
-            scope_alias_policies = self._legacy_user_alias_policies(
-                user_id=user_id,
-                resource_type="business_application_scope",
-                resource_code=scope_resource_code,
-            )
-            if scope_exception.reason == "explicit_deny" or self._has_effect(
-                scope_alias_policies, "deny"
-            ):
-                return self._decision(
-                    False,
-                    stage,
-                    "explicit_scope_deny",
-                    list(role_codes),
-                    application,
-                    False,
                     capability_code=capability_code,
                     scope=self._scope_summary(environment, base, workshop),
                 )
@@ -946,7 +887,6 @@ class BusinessAuthorizationService:
                 "application_role_allow",
                 matching_roles,
                 application,
-                False,
                 capability_code=capability_code,
                 scope=self._scope_summary(environment, base, workshop),
             )
@@ -958,140 +898,497 @@ class BusinessAuthorizationService:
                 reason,
                 [str(item["role_code"]) for item in accesses],
                 application,
-                False,
                 capability_code=capability_code,
                 scope=self._scope_summary(environment, base, workshop),
             )
-        if self.mode == "compatibility":
-            legacy = self.legacy_authorization.decide(
-                user_id=user_id,
-                resource_type="project",
-                resource_code=str(application["project_code"]),
-                action="use",
-            )
-            legacy_alias_policies = self._legacy_user_alias_policies(
-                user_id=user_id,
-                resource_type="project",
-                resource_code=str(application["project_code"]),
-            )
-            if self._has_effect(legacy_alias_policies, "deny"):
-                return self._decision(
-                    False,
-                    stage,
-                    "explicit_application_deny",
-                    list(role_codes),
-                    application,
-                    False,
-                    capability_code=capability_code,
-                    scope=self._scope_summary(environment, base, workshop),
-                )
-            legacy_agent = None
-            agent_code = self.repository.active_application_agent_code(
-                str(application["id"])
-            )
-            if agent_code:
-                legacy_agent = self.legacy_authorization.decide(
-                    user_id=user_id,
-                    resource_type="agent",
-                    resource_code=agent_code,
-                    action="use",
-                )
-            if (
-                legacy.allowed
-                and (
-                    self._has_non_platform_admin_allow(legacy.matched_policy_ids)
-                    or self._has_effect(legacy_alias_policies, "allow")
-                )
-                and (
-                    legacy_agent is None
-                    or legacy_agent.allowed
-                )
-            ):
-                return self._decision(
-                    True,
-                    stage,
-                    "legacy_compatible",
-                    list(role_codes),
-                    application,
-                    True,
-                    capability_code=capability_code,
-                    scope=self._scope_summary(environment, base, workshop),
-                )
         return self._decision(
             False,
             stage,
             "no_application_role",
             list(role_codes),
             application,
-            False,
             capability_code=capability_code,
             scope=self._scope_summary(environment, base, workshop),
         )
 
-    def _legacy_user_alias_policies(
+    def capture_runtime_facts(
         self,
         *,
         user_id: str,
-        resource_type: str,
-        resource_code: str,
-    ) -> list[dict[str, Any]]:
-        user = self.identity_repository.get_user(user_id)
-        identities = self.repository.database.execute(
+        application_id: str,
+        publication_id: str,
+        publication_config_hash: str,
+        environment: str = "",
+        base: str = "",
+        workshop: str = "",
+    ) -> dict[str, Any]:
+        """Capture the strict, immutable authorization boundary for one Job."""
+
+        publication = self.repository.database.execute_one(
             """
-            select external_subject_id
-              from user_external_identity
-             where user_id = ? and status = 'enabled'
+            select id, application_id, revision, schema_version, snapshot_json,
+                   config_hash
+              from business_application_publication
+             where id = ?
             """,
-            (user_id,),
+            (publication_id,),
         )
-        aliases = {
-            str(user["username"]),
-            *(str(row["external_subject_id"]) for row in identities),
-        }
-        aliases.discard(user_id)
-        aliases.discard("")
-        if not aliases:
-            return []
-        placeholders = ",".join("?" for _ in aliases)
-        return self.repository.database.execute(
-            f"""
-            select id, effect
-              from permission_policy
-             where status = 'enabled'
-               and subject_type = 'user'
-               and subject_code in ({placeholders})
-               and resource_type = ?
-               and (resource_code = ? or resource_code = '*')
-               and (action = 'use' or action = '*')
-             order by priority, id
+        if (
+            publication is None
+            or str(publication.get("application_id") or "") != application_id
+            or str(publication.get("config_hash") or "") != publication_config_hash
+        ):
+            raise PermissionDenied(
+                "Business Application publication cannot be pinned for this Job",
+                safe_message="业务应用发布版本不可用",
+                error_code="job_runtime_facts_invalid",
+            )
+        try:
+            snapshot = json.loads(str(publication.get("snapshot_json") or "{}"))
+        except json.JSONDecodeError as exc:
+            raise PermissionDenied(
+                "Business Application publication snapshot is invalid",
+                safe_message="业务应用发布版本不可用",
+                error_code="job_runtime_facts_invalid",
+            ) from exc
+        if (
+            not isinstance(snapshot, dict)
+            or int(publication.get("schema_version") or 0) != 1
+            or not verify_snapshot(snapshot, publication_config_hash)
+        ):
+            raise PermissionDenied(
+                "Business Application publication integrity check failed",
+                safe_message="业务应用发布版本完整性校验失败",
+                error_code="job_runtime_facts_invalid",
+            )
+
+        accesses = self.repository.business_access_for_user(
+            user_id=user_id,
+            application_id=application_id,
+        )
+        governed_handlers = self.repository.database.execute(
+            """
+            select ah.id as application_handler_id,
+                   ah.capability_code,
+                   hp.id as handler_publication_id,
+                   hp.handler_id,
+                   hp.handler_version
+              from business_application_publication_handler ah
+              join handler_publication hp
+                on hp.id = ah.handler_publication_id
+             where ah.application_publication_id = ?
+             order by ah.capability_code
             """,
-            (*sorted(aliases), resource_type, resource_code),
+            (publication_id,),
+        )
+        if governed_handlers:
+            return self._capture_governed_runtime_facts(
+                user_id=user_id,
+                application_id=application_id,
+                publication=publication,
+                snapshot=snapshot,
+                agent_publication_id=str(
+                    (
+                        snapshot.get("agent")
+                        if isinstance(snapshot.get("agent"), dict)
+                        else {}
+                    ).get("id")
+                    or ""
+                ),
+                governed_handlers=governed_handlers,
+                environment=environment,
+                base=base,
+                workshop=workshop,
+            )
+
+        application_capabilities = {
+            str(item.get("capability_code") or "")
+            for item in snapshot.get("capabilities") or []
+            if isinstance(item, dict) and bool(item.get("enabled", True))
+        }
+        agent = snapshot.get("agent")
+        agent_publication_id = (
+            str(agent.get("id") or "") if isinstance(agent, dict) else ""
+        )
+        handler_rows = self.repository.database.execute(
+            """
+            select t.id, t.name
+              from tool_definition t
+              join agent_tool_binding b
+                on b.tool_name = t.name and b.publication_id = ?
+             where t.enabled = 1 and t.read_only = 1
+             order by t.name
+            """,
+            (agent_publication_id,),
+        )
+        handlers = {
+            str(row["name"]): {
+                "handler_id": str(row["id"]),
+                "handler_version": "legacy-v1",
+                "capability_code": str(row["name"]),
+            }
+            for row in handler_rows
+            if str(row["name"]) in application_capabilities
+        }
+
+        resources = self.repository.database.execute(
+            """
+            select r.id, r.code, r.revision, r.resource_kind, r.scope_type,
+                   r.environment_id, r.base_id, r.workshop_id,
+                   e.code as environment_code, b.code as base_code,
+                   w.code as workshop_code
+              from platform_resource_binding r
+              left join platform_environment e on e.id = r.environment_id
+              left join platform_base b on b.id = r.base_id
+              left join platform_workshop w on w.id = r.workshop_id
+             where r.status = 'enabled'
+             order by r.code
+            """
+        )
+        requested_scope = {
+            "environment_code": environment,
+            "base_code": base,
+            "workshop_code": workshop,
+        }
+        bindings: dict[tuple[str, str, str, str, str, str], dict[str, Any]] = {}
+        for access in accesses:
+            role_code = str(access["role_code"])
+            allowed_handlers = sorted(
+                set(str(value) for value in access["capability_codes"]) & handlers.keys()
+            )
+            for scope in access["scopes"]:
+                if not self._scope_matches(
+                    scope,
+                    environment=environment,
+                    base=base,
+                    workshop=workshop,
+                ):
+                    continue
+                normalized_scope = {
+                    "scope_key": str(scope.get("scope_key") or ""),
+                    "environment_id": str(scope.get("environment_id") or ""),
+                    "environment_code": str(scope.get("environment_code") or ""),
+                    "base_id": str(scope.get("base_id") or ""),
+                    "base_code": str(scope.get("base_code") or ""),
+                    "workshop_id": str(scope.get("workshop_id") or ""),
+                    "workshop_code": str(scope.get("workshop_code") or ""),
+                }
+                pinned_resources = [
+                    self._runtime_resource_fact(resource)
+                    for resource in resources
+                    if self._resource_within_scope(
+                        resource,
+                        normalized_scope,
+                        requested_scope,
+                    )
+                ]
+                for capability_code in allowed_handlers:
+                    handler = handlers[capability_code]
+                    key = (
+                        str(handler["handler_id"]),
+                        str(handler["handler_version"]),
+                        normalized_scope["environment_id"],
+                        normalized_scope["base_id"],
+                        normalized_scope["workshop_id"],
+                        role_code,
+                    )
+                    bindings[key] = {
+                        **handler,
+                        "source_role_code": role_code,
+                        "execution_scope": normalized_scope,
+                        "resource_revisions": pinned_resources,
+                    }
+
+        return {
+            "schema_version": 1,
+            "application_publication": {
+                "id": publication_id,
+                "application_id": application_id,
+                "revision": int(publication.get("revision") or 0),
+                "config_hash": publication_config_hash,
+            },
+            "agent_publication_id": agent_publication_id,
+            "requested_scope": requested_scope,
+            "bindings": sorted(
+                bindings.values(),
+                key=lambda item: (
+                    str(item["capability_code"]),
+                    str(item["source_role_code"]),
+                    str(item["execution_scope"]["scope_key"]),
+                ),
+            ),
+        }
+
+    def _capture_governed_runtime_facts(
+        self,
+        *,
+        user_id: str,
+        application_id: str,
+        publication: dict[str, Any],
+        snapshot: dict[str, Any],
+        agent_publication_id: str,
+        governed_handlers: list[dict[str, Any]],
+        environment: str,
+        base: str,
+        workshop: str,
+    ) -> dict[str, Any]:
+        from app.modules.internal_tools.application.handler_resolution import (
+            BusinessRoleAuthorizerAdapter,
+            HandlerExecutionResolver,
+            HandlerResolutionRequest,
+        )
+        from app.modules.internal_tools.domain import (
+            build_builtin_handler_registry,
+        )
+
+        if not agent_publication_id:
+            raise self._runtime_facts_invalid(
+                "Application publication does not pin an Agent publication"
+            )
+        agent = self.repository.database.execute_one(
+            """
+            select d.classification
+              from agent_publication p
+              join agent_definition d on d.id = p.agent_id
+             where p.id = ?
+            """,
+            (agent_publication_id,),
+        )
+        if agent is None:
+            raise self._runtime_facts_invalid(
+                "Application Agent publication is unavailable"
+            )
+        requested_scope = self._resolve_execution_scope_nodes(
+            environment=environment,
+            base=base,
+            workshop=workshop,
+        )
+        resolver = HandlerExecutionResolver(
+            self.repository.database,
+            build_builtin_handler_registry(),
+            BusinessRoleAuthorizerAdapter(self),
+        )
+        bindings: list[dict[str, Any]] = []
+        for row in governed_handlers:
+            capability_code = str(row["capability_code"])
+            decision = self.decide(
+                user_id=user_id,
+                application_id=application_id,
+                capability_code=capability_code,
+                environment=environment,
+                base=base,
+                workshop=workshop,
+                stage="job_execution_scope",
+            )
+            if not decision["allowed"]:
+                continue
+            resolved = resolver.resolve(
+                HandlerResolutionRequest(
+                    user_id=user_id,
+                    application_id=application_id,
+                    application_publication_id=str(publication["id"]),
+                    agent_publication_id=agent_publication_id,
+                    agent_classification=str(agent["classification"]),
+                    capability_code=capability_code,
+                    handler_id=str(row["handler_id"]),
+                    handler_version=str(row["handler_version"]),
+                    environment_code=environment,
+                    base_code=base,
+                    workshop_code=workshop,
+                )
+            )
+            bindings.append(
+                {
+                    "capability_code": capability_code,
+                    "handler_publication_id": (
+                        resolved.handler_publication_id
+                    ),
+                    "application_handler_id": (
+                        resolved.application_handler_id
+                    ),
+                    "handler_id": resolved.definition.handler_id,
+                    "handler_version": (
+                        resolved.definition.handler_version
+                    ),
+                    "source_role_codes": sorted(
+                        str(value)
+                        for value in decision.get(
+                            "source_role_codes"
+                        )
+                        or []
+                    ),
+                    "execution_scope": requested_scope,
+                    "resource_revisions": [
+                        {
+                            "resource_slot": resource.slot_code,
+                            "resource_revision_id": (
+                                resource.resource_revision_id
+                            ),
+                            "resource_id": resource.resource_id,
+                            "resource_code": resource.resource_code,
+                            "revision": resource.revision,
+                            "resource_kind": (
+                                resource.resource_kind
+                            ),
+                            "scope_type": resource.scope_type,
+                            "environment_id": (
+                                resource.environment_id
+                            ),
+                            "environment_code": (
+                                resource.environment_code
+                            ),
+                            "base_id": resource.base_id,
+                            "base_code": resource.base_code,
+                            "workshop_id": resource.workshop_id,
+                            "workshop_code": (
+                                resource.workshop_code
+                            ),
+                            "constraints": resource.constraints,
+                            "binding_hash": (
+                                resource.binding_hash
+                            ),
+                        }
+                        for resource in resolved.resources
+                    ],
+                }
+            )
+        return {
+            "schema_version": 2,
+            "application_publication": {
+                "id": str(publication["id"]),
+                "application_id": application_id,
+                "revision": int(publication.get("revision") or 0),
+                "config_hash": str(publication["config_hash"]),
+            },
+            "agent_publication_id": agent_publication_id,
+            "agent_classification": str(agent["classification"]),
+            "requested_scope": requested_scope,
+            "bindings": bindings,
+        }
+
+    def _resolve_execution_scope_nodes(
+        self,
+        *,
+        environment: str,
+        base: str,
+        workshop: str,
+    ) -> dict[str, str]:
+        environment_row = self.repository.database.execute_one(
+            """
+            select id, code from platform_environment
+             where code = ? and status = 'enabled'
+            """,
+            (environment,),
+        )
+        if environment_row is None:
+            raise self._runtime_facts_invalid(
+                "Execution Scope environment is unavailable"
+            )
+        base_row: dict[str, Any] | None = None
+        if base:
+            base_row = self.repository.database.execute_one(
+                """
+                select id, code from platform_base
+                 where environment_id = ? and code = ?
+                   and status = 'enabled'
+                """,
+                (environment_row["id"], base),
+            )
+            if base_row is None:
+                raise self._runtime_facts_invalid(
+                    "Execution Scope base is unavailable"
+                )
+        workshop_row: dict[str, Any] | None = None
+        if workshop:
+            if base_row is None:
+                raise self._runtime_facts_invalid(
+                    "Execution Scope workshop has no base"
+                )
+            workshop_row = self.repository.database.execute_one(
+                """
+                select id, code from platform_workshop
+                 where base_id = ? and code = ? and status = 'enabled'
+                """,
+                (base_row["id"], workshop),
+            )
+            if workshop_row is None:
+                raise self._runtime_facts_invalid(
+                    "Execution Scope workshop is unavailable"
+                )
+        scope_key = "|".join(
+            (
+                str(environment_row["id"]),
+                str((base_row or {}).get("id") or ""),
+                str((workshop_row or {}).get("id") or ""),
+            )
+        )
+        return {
+            "scope_key": scope_key,
+            "environment_id": str(environment_row["id"]),
+            "environment_code": str(environment_row["code"]),
+            "base_id": str((base_row or {}).get("id") or ""),
+            "base_code": str((base_row or {}).get("code") or ""),
+            "workshop_id": str((workshop_row or {}).get("id") or ""),
+            "workshop_code": str(
+                (workshop_row or {}).get("code") or ""
+            ),
+        }
+
+    @staticmethod
+    def _runtime_facts_invalid(message: str) -> PermissionDenied:
+        return PermissionDenied(
+            message,
+            safe_message="Job 执行范围无法固化",
+            error_code="job_runtime_facts_invalid",
         )
 
     @staticmethod
-    def _has_effect(rows: list[dict[str, Any]], effect: str) -> bool:
-        return any(str(row["effect"]) == effect for row in rows)
+    def _runtime_resource_fact(resource: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "resource_revision_id": str(resource.get("id") or ""),
+            "resource_code": str(resource.get("code") or ""),
+            "revision": int(resource.get("revision") or 0),
+            "resource_kind": str(resource.get("resource_kind") or ""),
+            "scope_type": str(resource.get("scope_type") or ""),
+            "environment_id": str(resource.get("environment_id") or ""),
+            "environment_code": str(resource.get("environment_code") or ""),
+            "base_id": str(resource.get("base_id") or ""),
+            "base_code": str(resource.get("base_code") or ""),
+            "workshop_id": str(resource.get("workshop_id") or ""),
+            "workshop_code": str(resource.get("workshop_code") or ""),
+        }
 
-    def _has_non_platform_admin_allow(self, policy_ids: tuple[str, ...]) -> bool:
-        if not policy_ids:
+    @staticmethod
+    def _resource_within_scope(
+        resource: dict[str, Any],
+        scope: dict[str, str],
+        requested_scope: dict[str, str],
+    ) -> bool:
+        resource_environment = str(resource.get("environment_code") or "")
+        resource_base = str(resource.get("base_code") or "")
+        resource_workshop = str(resource.get("workshop_code") or "")
+        if resource_environment != scope["environment_code"]:
             return False
-        placeholders = ",".join("?" for _ in policy_ids)
-        rows = self.repository.database.execute(
-            f"""
-            select subject_type, subject_code, effect
-              from permission_policy
-             where id in ({placeholders}) and status = 'enabled'
-            """,
-            policy_ids,
-        )
-        return any(
-            str(row["effect"]) == "allow"
-            and not (
-                str(row["subject_type"]) == "role"
-                and str(row["subject_code"]) == "platform-admin"
-            )
-            for row in rows
-        )
+        if scope["base_code"] and resource_base != scope["base_code"]:
+            return False
+        if scope["workshop_code"] and (
+            resource_base != scope["base_code"]
+            or (resource_workshop and resource_workshop != scope["workshop_code"])
+        ):
+            return False
+        if (
+            requested_scope["environment_code"]
+            and resource_environment != requested_scope["environment_code"]
+        ):
+            return False
+        if requested_scope["base_code"] and resource_base != requested_scope["base_code"]:
+            return False
+        if requested_scope["workshop_code"] and (
+            resource_workshop
+            and resource_workshop != requested_scope["workshop_code"]
+        ):
+            return False
+        return True
 
     def require(self, **kwargs: Any) -> dict[str, Any]:
         decision = self.decide(**kwargs)
@@ -1123,9 +1420,11 @@ class BusinessAuthorizationService:
     ) -> bool:
         if environment and str(scope.get("environment_code") or "") != environment:
             return False
-        if base and str(scope.get("base_code") or "") != base:
+        scope_base = str(scope.get("base_code") or "")
+        scope_workshop = str(scope.get("workshop_code") or "")
+        if base and scope_base and scope_base != base:
             return False
-        if workshop and str(scope.get("workshop_code") or "") != workshop:
+        if workshop and scope_workshop and scope_workshop != workshop:
             return False
         return True
 
@@ -1140,7 +1439,6 @@ class BusinessAuthorizationService:
         reason: str,
         role_codes: list[str],
         application: dict[str, Any],
-        legacy_compatible: bool,
         *,
         capability_code: str = "",
         scope: dict[str, str] | None = None,
@@ -1156,7 +1454,6 @@ class BusinessAuthorizationService:
             },
             "capability_code": capability_code,
             "scope": scope or {},
-            "legacy_compatible": legacy_compatible,
         }
 
 

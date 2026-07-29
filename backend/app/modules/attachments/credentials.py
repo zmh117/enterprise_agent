@@ -16,7 +16,7 @@ class AttachmentCredentialCipher:
         value = str(master_key or "").strip()
         if not value or value in {"change-me", "<your-master-key>"}:
             raise NonRetryableExecutionError(
-                "APP_CONFIG_MASTER_KEY is required for attachment credentials",
+                "Master Key file is required for attachment credentials",
                 safe_message="尚未配置附件凭据加密",
             )
         self.key = hashlib.sha256(value.encode()).digest()

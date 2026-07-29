@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 import json
+from pathlib import Path
+import tempfile
 import unittest
 import urllib.error
 from typing import Any
@@ -15,6 +17,8 @@ from app.modules.local_internal_api_platform.loki_gateway import (
     summarize_loki_response,
 )
 from app.shared.config import LokiSettings, Settings
+from app.shared.database import Database, default_migrations_dir
+from app.shared.migrations import Migrator
 
 
 class FakeResponse:
@@ -32,6 +36,25 @@ class FakeResponse:
 
 
 class LocalInternalApiPlatformTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._temporary_directory = tempfile.TemporaryDirectory()
+        database_path = Path(cls._temporary_directory.name) / "local-tools.db"
+        cls._database_dsn = f"sqlite:///{database_path}"
+        database = Database(cls._database_dsn)
+        try:
+            Migrator(
+                database,
+                default_migrations_dir(),
+                migrator_build="local-tools-test",
+            ).run()
+        finally:
+            database.close()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._temporary_directory.cleanup()
+
     def test_health_reports_loki_configuration(self) -> None:
         client = TestClient(create_app(self._settings()))
 
@@ -177,6 +200,7 @@ class LocalInternalApiPlatformTests(unittest.TestCase):
         tenant_id: str = "",
     ) -> Settings:
         return Settings(
+            database_dsn=self._database_dsn,
             loki=LokiSettings(
                 base_url="http://loki.test:3100",
                 max_minutes=5,

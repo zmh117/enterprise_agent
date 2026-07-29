@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import urlparse
@@ -21,6 +20,15 @@ INGRESS_ONLY_CONNECTOR_TYPES = {
     "grafana_alert",
     DINGTALK_STREAM_CONNECTOR_TYPE,
 }
+SECRET_REQUIRED_CONNECTOR_TYPES = {
+    DINGTALK_STREAM_CONNECTOR_TYPE,
+    "dingtalk_callback",
+    "dingtalk_enterprise_robot",
+    "dingtalk_webhook_robot",
+    "email",
+    "grafana_alert",
+    "webhook",
+}
 
 
 @dataclass(frozen=True)
@@ -36,6 +44,13 @@ class Connector:
     endpoint_ref: str
     host_allowlist: tuple[str, ...]
     metadata: dict[str, object]
+
+
+@dataclass(frozen=True)
+class ConnectorOperationalStatus:
+    status: str
+    error_code: str = ""
+    safe_message: str = ""
 
 
 class ConnectorRegistry:
@@ -62,6 +77,7 @@ class ConnectorRegistry:
                 f"Connector {connector_id} is not allowed for ingress",
                 safe_message="该连接器不允许用于消息接入",
             )
+        self._require_configured(connector, for_ingress=True)
         return connector
 
     def require_delivery(self, connector_id: str) -> Connector:
@@ -75,6 +91,7 @@ class ConnectorRegistry:
                 f"Connector {connector_id} is not allowed for delivery",
                 safe_message="该连接器不允许用于结果投递",
             )
+        self._require_configured(connector, for_ingress=False)
         return connector
 
     def require_dingtalk_stream_ingress(self, connector_id: str) -> Connector:
@@ -90,22 +107,47 @@ class ConnectorRegistry:
         return self.resolve_reference(connector.secret_ref)
 
     def resolve_reference(self, value: object) -> str:
+        return self._resolve_reference(value)
+
+    def operational_status(self, connector: Connector) -> ConnectorOperationalStatus:
+        if self.requires_secret(connector):
+            try:
+                secret = self.resolve_secret(connector)
+            except Exception:
+                secret = ""
+            if not secret:
+                return ConnectorOperationalStatus(
+                    status="MISCONFIGURED",
+                    error_code="connector_secret_unavailable",
+                    safe_message="连接器凭据缺失、已停用或无法解析，请重新绑定后测试",
+                )
+        if not connector.enabled:
+            return ConnectorOperationalStatus(status="DISABLED")
+        return ConnectorOperationalStatus(status="READY")
+
+    def requires_secret(self, connector: Connector) -> bool:
+        return connector.connector_type in SECRET_REQUIRED_CONNECTOR_TYPES
+
+    def _resolve_reference(self, value: object) -> str:
         text = str(value or "")
         if not text:
             return ""
         if text.startswith("env:"):
-            return os.getenv(text.removeprefix("env:"), "")
-        connector_prefix = "secret://connector/"
-        if text.startswith(connector_prefix):
-            connector = self.get(text.removeprefix(connector_prefix))
-            if connector is None or connector.secret_ref == text:
-                return ""
-            return self.resolve_reference(connector.secret_ref)
+            raise NonRetryableExecutionError(
+                "env connector references require explicit import",
+                safe_message="env 凭据引用必须先导入凭据中心",
+            )
         if text.startswith("secret://platform/") and self.reference_resolver is not None:
             return self.reference_resolver(text)
-        if text.startswith(("secret://", "vault:", "kms:")):
-            return ""
-        return text
+        if text.startswith(("vault:", "kms:")):
+            raise NonRetryableExecutionError(
+                "Reserved secret provider is not implemented",
+                safe_message="Provider 尚未实现",
+            )
+        raise NonRetryableExecutionError(
+            "Unsupported connector secret reference",
+            safe_message="连接器只能使用凭据中心 Secret",
+        )
 
     def resolve_metadata_reference(self, connector: Connector, key: str) -> str:
         value = connector.metadata.get(key)
@@ -130,13 +172,6 @@ class ConnectorRegistry:
     def resolved_endpoint_url(self, connector: Connector) -> str:
         return self.resolve_reference(connector.endpoint_ref) or connector.base_url
 
-    def resolve_secret_legacy(self, connector: Connector) -> str:
-        if not connector.secret_ref:
-            return ""
-        if connector.secret_ref.startswith("env:"):
-            return os.getenv(connector.secret_ref.removeprefix("env:"), "")
-        return connector.secret_ref
-
     def endpoint_url(self, connector: Connector) -> str:
         return self.resolved_endpoint_url(connector)
 
@@ -158,6 +193,17 @@ class ConnectorRegistry:
                 safe_message="连接器尚未配置",
             )
         return connector
+
+    def _require_configured(self, connector: Connector, *, for_ingress: bool) -> None:
+        status = self.operational_status(connector)
+        if status.status != "MISCONFIGURED":
+            return
+        error_type = PermissionDenied if for_ingress else NonRetryableExecutionError
+        raise error_type(
+            f"Connector {connector.id} is misconfigured",
+            safe_message=status.safe_message,
+            error_code=status.error_code,
+        )
 
 
 def _connector_from_row(row: dict[str, object]) -> Connector:

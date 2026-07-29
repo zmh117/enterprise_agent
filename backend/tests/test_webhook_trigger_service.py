@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 
 import pytest
@@ -14,8 +15,36 @@ ADMIN_ID = "user_local_admin"
 
 
 def _service(monkeypatch: pytest.MonkeyPatch) -> tuple[object, WebhookTriggerService]:
-    monkeypatch.setenv("GRAFANA_WEBHOOK_TOKEN", "managed-test-token")
-    c = container()
+    del monkeypatch
+    c = container(configure_seed_secrets=False)
+    c.platform_config_service.secret_provider.create_secret(
+        code="grafana_webhook_token",
+        value="managed-test-token-0123456789abcdefABCDEF",
+        actor_id=ADMIN_ID,
+    )
+    c.platform_config_service.secret_provider.create_secret(
+        code="grafana_orders_webhook_token",
+        value="orders-webhook-token-0123456789abcdefABCDEF",
+        actor_id=ADMIN_ID,
+    )
+    c.platform_config_service.secret_provider.create_secret(
+        code="dingtalk_webhook_robot_secret",
+        value="dingtalk-webhook-signing-secret",
+        actor_id=ADMIN_ID,
+    )
+    c.platform_config_service.secret_provider.create_secret(
+        code="dingtalk_webhook_robot_url",
+        value=(
+            "https://oapi.dingtalk.com/robot/send"
+            "?access_token=webhook-test-token"
+        ),
+        actor_id=ADMIN_ID,
+    )
+    c.platform_config_service.secret_provider.create_secret(
+        code="dingtalk_client_secret",
+        value="dingtalk-enterprise-client-secret",
+        actor_id=ADMIN_ID,
+    )
     for action in ("read", "edit", "publish", "rotate", "manage_service_account"):
         c.identity_repository.upsert_policy(
             policy_id=f"policy-admin-webhook-{action}",
@@ -61,7 +90,7 @@ def _config() -> dict[str, object]:
         "adapter": "grafana_alertmanager_v1",
         "authentication": {
             "type": "bearer_v1",
-            "secret_ref": "env:GRAFANA_WEBHOOK_TOKEN",
+            "secret_ref": "secret://platform/grafana_orders_webhook_token",
         },
         "mapping": {
             "variables": {"summary": "/commonAnnotations/summary"},
@@ -181,7 +210,10 @@ def test_trigger_lifecycle_uses_dedicated_service_account_and_pinned_agent(
     assert publication["agent_config_hash"]
     assert publication["snapshot"]["service_account_id"] == service_account["id"]
     assert "secret_ref" in json.dumps(publication["snapshot"])
-    assert "managed-test-token" not in json.dumps(publication["snapshot"])
+    assert (
+        "orders-webhook-token-0123456789abcdefABCDEF"
+        not in json.dumps(publication["snapshot"])
+    )
 
     with pytest.raises(NonRetryableExecutionError):
         service.repository.save_draft(
@@ -202,6 +234,105 @@ def test_trigger_lifecycle_uses_dedicated_service_account_and_pinned_agent(
     )
     assert rotated["public_id"] != old_public_id
     assert service.repository.get_definition_by_public_id(old_public_id) is None
+
+
+def test_trigger_requires_unique_strong_bearer_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    c, service = _service(monkeypatch)
+    first = service.create(
+        actor_id=ADMIN_ID,
+        code="grafana-unique-one",
+        name="Grafana Unique One",
+        trigger_type="grafana",
+        connector_id="connector-grafana-default",
+        config=_config(),
+    )
+    _grant_runtime_permissions(c, str(first["service_account"]["id"]))
+    validated = service.validate_revision(
+        actor_id=ADMIN_ID,
+        code="grafana-unique-one",
+        revision_id=str(first["draft"]["id"]),
+    )
+    assert validated["validation"]["valid"] is True
+    service.publish(
+        actor_id=ADMIN_ID,
+        code="grafana-unique-one",
+        revision_id=str(first["draft"]["id"]),
+    )
+
+    duplicate = service.create(
+        actor_id=ADMIN_ID,
+        code="grafana-unique-two",
+        name="Grafana Unique Two",
+        trigger_type="grafana",
+        connector_id="connector-grafana-default",
+        config=_config(),
+    )
+    _grant_runtime_permissions(c, str(duplicate["service_account"]["id"]))
+    duplicate_validation = service.validate_revision(
+        actor_id=ADMIN_ID,
+        code="grafana-unique-two",
+        revision_id=str(duplicate["draft"]["id"]),
+    )
+    assert duplicate_validation["validation"]["valid"] is False
+    assert {
+        item["message"]
+        for item in duplicate_validation["validation"]["errors"]
+        if item["field"] == "authentication.secret_ref"
+    } == {"每个 Webhook binding 必须使用唯一 Bearer Token"}
+
+    c.platform_config_service.secret_provider.create_secret(
+        code="weak_webhook_token",
+        value="too-short",
+        actor_id=ADMIN_ID,
+    )
+    weak_config = deepcopy(_config())
+    weak_config["authentication"][
+        "secret_ref"
+    ] = "secret://platform/weak_webhook_token"
+    weak = service.create(
+        actor_id=ADMIN_ID,
+        code="grafana-weak-token",
+        name="Grafana Weak Token",
+        trigger_type="grafana",
+        connector_id="connector-grafana-default",
+        config=weak_config,
+    )
+    _grant_runtime_permissions(c, str(weak["service_account"]["id"]))
+    weak_validation = service.validate_revision(
+        actor_id=ADMIN_ID,
+        code="grafana-weak-token",
+        revision_id=str(weak["draft"]["id"]),
+    )
+    assert weak_validation["validation"]["valid"] is False
+    assert any(
+        item["field"] == "authentication.secret_ref"
+        and "至少包含 32" in item["message"]
+        for item in weak_validation["validation"]["errors"]
+    )
+
+    unsupported_config = deepcopy(_config())
+    unsupported_config["authentication"]["type"] = "hmac_sha256_v1"
+    unsupported = service.create(
+        actor_id=ADMIN_ID,
+        code="grafana-hmac-rejected",
+        name="Grafana HMAC Rejected",
+        trigger_type="grafana",
+        connector_id="connector-grafana-default",
+        config=unsupported_config,
+    )
+    _grant_runtime_permissions(c, str(unsupported["service_account"]["id"]))
+    unsupported_validation = service.validate_revision(
+        actor_id=ADMIN_ID,
+        code="grafana-hmac-rejected",
+        revision_id=str(unsupported["draft"]["id"]),
+    )
+    assert unsupported_validation["validation"]["valid"] is False
+    assert any(
+        item["field"] == "authentication.type"
+        for item in unsupported_validation["validation"]["errors"]
+    )
 
 
 def test_trigger_rejects_secret_values_scripts_and_unbounded_routing(

@@ -152,7 +152,6 @@ export async function explainAuthorization(input: ExplanationInput) {
         application: z.object({ id: z.string(), code: z.string() }),
         capability_code: z.string(),
         scope: z.record(z.string(), z.string()),
-        legacy_compatible: z.boolean(),
       }),
       notice: z.string(),
     })

@@ -509,23 +509,58 @@ class PlatformConfigRepository:
         return self.get_platform_secret(entity_id)
 
     def list_platform_secrets(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
-        where = "" if include_disabled else "where status = 'enabled'"
-        rows = self.database.execute(f"select * from platform_secret {where} order by code")
+        where = "" if include_disabled else "where s.status = 'enabled'"
+        rows = self.database.execute(
+            f"""
+            select s.*,
+              exists(
+                select 1
+                from platform_secret_version v
+                where v.secret_id = s.id
+                  and v.version = s.active_version
+                  and v.status = 'active'
+              ) as active_version_present
+            from platform_secret s
+            {where}
+            order by s.code
+            """
+        )
         return [self._parse_platform_secret(row) for row in rows]
 
     def get_platform_secret(self, secret_id: str) -> dict[str, Any]:
-        row = self.database.execute_one("select * from platform_secret where id = ?", (secret_id,))
+        row = self._get_platform_secret("s.id = ?", secret_id)
         if not row:
             raise NotFound(f"Platform secret not found: {secret_id}")
         return self._parse_platform_secret(row)
 
     def get_platform_secret_by_code(self, code: str) -> dict[str, Any] | None:
-        row = self.database.execute_one("select * from platform_secret where code = ?", (code,))
+        row = self._get_platform_secret("s.code = ?", code)
         return self._parse_platform_secret(row) if row else None
 
     def get_platform_secret_by_ref(self, ref: str) -> dict[str, Any] | None:
-        row = self.database.execute_one("select * from platform_secret where ref = ?", (ref,))
+        row = self._get_platform_secret("s.ref = ?", ref)
         return self._parse_platform_secret(row) if row else None
+
+    def _get_platform_secret(
+        self,
+        predicate: str,
+        value: str,
+    ) -> dict[str, Any] | None:
+        return self.database.execute_one(
+            f"""
+            select s.*,
+              exists(
+                select 1
+                from platform_secret_version v
+                where v.secret_id = s.id
+                  and v.version = s.active_version
+                  and v.status = 'active'
+              ) as active_version_present
+            from platform_secret s
+            where {predicate}
+            """,
+            (value,),
+        )
 
     def insert_secret_version(
         self,
@@ -536,7 +571,7 @@ class PlatformConfigRepository:
         nonce: str,
         key_id: str,
         algorithm: str,
-        status: str = "active",
+        status: str = "staged",
         created_by: str = "",
     ) -> dict[str, Any]:
         entity_id = new_id("secret_version")
@@ -570,6 +605,22 @@ class PlatformConfigRepository:
             raise NotFound(f"Platform secret version not found: {version_id}")
         return self._parse_secret_version(row)
 
+    def get_secret_version_number(
+        self,
+        *,
+        secret_id: str,
+        version: int,
+    ) -> dict[str, Any] | None:
+        row = self.database.execute_one(
+            """
+            select *
+            from platform_secret_version
+            where secret_id = ? and version = ?
+            """,
+            (secret_id, version),
+        )
+        return self._parse_secret_version(row) if row else None
+
     def get_active_secret_version(self, secret_id: str) -> dict[str, Any] | None:
         row = self.database.execute_one(
             """
@@ -589,6 +640,14 @@ class PlatformConfigRepository:
         active_version: int,
         masked_summary: str,
     ) -> dict[str, Any]:
+        staged = self.get_secret_version_number(
+            secret_id=secret_id,
+            version=active_version,
+        )
+        if not staged or staged["status"] not in {"staged", "active"}:
+            raise NotFound(
+                f"Staged platform secret version not found: {secret_id}/{active_version}"
+            )
         self.database.execute(
             """
             update platform_secret_version
@@ -638,6 +697,117 @@ class PlatformConfigRepository:
                 (existing["id"],),
             )
         return self.get_platform_secret(existing["id"])
+
+    def insert_secret_change_event(
+        self,
+        *,
+        secret_id: str,
+        secret_revision: int,
+        action: str,
+    ) -> dict[str, Any]:
+        event_id = new_id("secret_change")
+        self.database.execute(
+            """
+            insert into platform_secret_change_event
+              (id, secret_id, secret_revision, action, status, attempt_count,
+               error_summary, created_at)
+            values (?, ?, ?, ?, 'PENDING', 0, '', ?)
+            on conflict(secret_id, secret_revision, action) do nothing
+            """,
+            (
+                event_id,
+                secret_id,
+                secret_revision,
+                action,
+                now_iso(),
+            ),
+        )
+        row = self.database.execute_one(
+            """
+            select *
+            from platform_secret_change_event
+            where secret_id = ? and secret_revision = ? and action = ?
+            """,
+            (secret_id, secret_revision, action),
+        )
+        if not row:
+            raise NotFound("Platform secret change event was not persisted")
+        return row
+
+    def claim_secret_change_events(
+        self,
+        *,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        pending = self.database.execute(
+            """
+            select id
+            from platform_secret_change_event
+            where status = 'PENDING'
+            order by created_at, id
+            limit ?
+            """,
+            (max(1, min(int(limit), 200)),),
+        )
+        claimed: list[dict[str, Any]] = []
+        for item in pending:
+            rows = self.database.execute(
+                """
+                update platform_secret_change_event
+                set status = 'RUNNING', attempt_count = attempt_count + 1,
+                    claimed_at = ?
+                where id = ? and status = 'PENDING'
+                returning *
+                """,
+                (now_iso(), item["id"]),
+            )
+            if rows:
+                claimed.append(rows[0])
+        return claimed
+
+    def complete_secret_change_event(
+        self,
+        *,
+        event_id: str,
+        succeeded: bool,
+        error_summary: str = "",
+    ) -> None:
+        self.database.execute(
+            """
+            update platform_secret_change_event
+            set status = ?, error_summary = ?, processed_at = ?
+            where id = ? and status = 'RUNNING'
+            """,
+            (
+                "SUCCEEDED" if succeeded else "FAILED",
+                "" if succeeded else str(error_summary or "resource reload failed")[:200],
+                now_iso(),
+                event_id,
+            ),
+        )
+
+    def list_secret_change_events(
+        self,
+        *,
+        secret_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if secret_id:
+            return self.database.execute(
+                """
+                select *
+                from platform_secret_change_event
+                where secret_id = ?
+                order by created_at, id
+                """,
+                (secret_id,),
+            )
+        return self.database.execute(
+            """
+            select *
+            from platform_secret_change_event
+            order by created_at, id
+            """
+        )
 
     def upsert_runtime_config_definition(
         self,
@@ -1261,7 +1431,7 @@ class PlatformConfigRepository:
             "metadata": self._json_from_text(row.get("metadata_json") or "{}"),
             "revision": int(row.get("revision") or 0),
             "configured": row.get("status") == "enabled"
-            and int(row.get("active_version") or 0) > 0,
+            and bool(row.get("active_version_present")),
         }
 
     def _parse_secret_version(self, row: dict[str, Any]) -> dict[str, Any]:

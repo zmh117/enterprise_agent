@@ -46,7 +46,7 @@ class BusinessApplicationRepository:
         application_id = new_id("business_app")
         revision_id = new_id("business_app_revision")
         try:
-            with self.database.transaction():
+            with self.database.unit_of_work():
                 self.database.execute(
                     """
                     insert into business_application
@@ -208,7 +208,7 @@ class BusinessApplicationRepository:
         next_revision = expected_revision + 1
         revision_id = new_id("business_app_revision")
         timestamp = now_iso()
-        with self.database.transaction():
+        with self.database.unit_of_work():
             self.database.execute(
                 """
                 update business_application
@@ -381,7 +381,7 @@ class BusinessApplicationRepository:
             return self._publication(existing)
         publication_id = new_id("business_app_publication")
         timestamp = now_iso()
-        with self.database.transaction():
+        with self.database.unit_of_work():
             self.database.execute(
                 """
                 insert into business_application_publication
@@ -479,7 +479,7 @@ class BusinessApplicationRepository:
         timestamp = now_iso()
         deployment_id = str(existing["id"]) if existing else new_id("business_app_deployment")
         try:
-            with self.database.transaction():
+            with self.database.unit_of_work():
                 if existing:
                     self.database.execute(
                         """
@@ -581,7 +581,7 @@ class BusinessApplicationRepository:
             )
         self._expect_revision(existing, expected_revision)
         timestamp = now_iso()
-        with self.database.transaction():
+        with self.database.unit_of_work():
             self.database.execute(
                 "delete from business_application_active_route where deployment_id = ?",
                 (existing["id"],),

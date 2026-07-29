@@ -1,7 +1,10 @@
 import type { LucideIcon } from "lucide-react"
 import {
   ActivityIcon,
+  BugPlayIcon,
   CableIcon,
+  DatabaseZapIcon,
+  KeyRoundIcon,
   LayoutDashboardIcon,
   PackageCheckIcon,
   BotIcon,
@@ -106,11 +109,37 @@ export const navigationGroups: NavigationGroup[] = [
     label: "运行中心",
     items: [
       {
+        label: "发起调试",
+        icon: BugPlayIcon,
+        active: true,
+        href: "/operations/debug",
+        requiredCapability: "agent.debug.execute",
+      },
+      {
         label: "Agent 运行记录",
         icon: ActivityIcon,
         active: true,
         href: "/operations/jobs",
         requiredCapability: "jobs.read",
+      },
+    ],
+  },
+  {
+    label: "平台治理",
+    items: [
+      {
+        label: "工具资源",
+        icon: DatabaseZapIcon,
+        active: true,
+        href: "/platform/resources",
+        requiredCapability: "platform.read",
+      },
+      {
+        label: "凭据中心",
+        icon: KeyRoundIcon,
+        active: true,
+        href: "/platform/secrets",
+        requiredCapability: "secrets.read",
       },
     ],
   },

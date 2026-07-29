@@ -224,6 +224,54 @@ def build_platform_config_router() -> APIRouter:
             raise _handle(exc) from exc
         return {"secret": entity}
 
+    @router.get("/secrets/{code}/usage")
+    def get_platform_secret_usage(
+        request: Request,
+        code: str,
+    ) -> dict[str, Any]:
+        _require_management_read(request, resource_type="secret")
+        try:
+            usage = (
+                _container(request)
+                .platform_config_service
+                .get_platform_secret_usage(code)
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"usage": usage}
+
+    @router.get("/secrets/legacy-env/report")
+    def legacy_env_secret_report(request: Request) -> dict[str, Any]:
+        _require_management_read(request, resource_type="secret")
+        try:
+            report = (
+                _container(request)
+                .platform_config_service
+                .legacy_env_secret_report()
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"report": report}
+
+    @router.post("/secrets/legacy-env/import")
+    async def import_legacy_env_secret(
+        request: Request,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            result = (
+                _container(request)
+                .platform_config_service
+                .import_legacy_env_secret(
+                    payload,
+                    actor_id=_actor(request),
+                    correlation_id=_correlation_id(request),
+                )
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"result": result}
+
     @router.post("/secrets/{code}/rotate")
     async def rotate_platform_secret(
         request: Request, code: str, payload: dict[str, Any]
@@ -363,6 +411,226 @@ def build_platform_config_router() -> APIRouter:
         service = _container(request).platform_config_service
         return {
             "resource_bindings": service.list_resource_bindings(include_disabled=include_disabled)
+        }
+
+    @router.get("/provider-contracts")
+    def list_provider_contracts(request: Request) -> dict[str, Any]:
+        _require_management_read(
+            request,
+            resource_type="platform_config",
+        )
+        return {
+            "contracts": (
+                _container(request)
+                .platform_config_service
+                .list_provider_contracts()
+            )
+        }
+
+    @router.get("/resources")
+    def list_governed_resources(
+        request: Request,
+        resource_kind: str = "",
+        scope_type: str = "",
+        lifecycle_status: str = "",
+        activation_status: str = "",
+    ) -> dict[str, Any]:
+        _require_management_read(
+            request,
+            resource_type="platform_config",
+        )
+        resources = (
+            _container(request)
+            .platform_config_service
+            .governed_resources
+            .list_resources()
+        )
+        filters = {
+            "resource_kind": resource_kind.lower(),
+            "scope_type": scope_type.lower(),
+            "status": lifecycle_status.lower(),
+            "activation_status": activation_status.upper(),
+        }
+        for key, expected in filters.items():
+            if expected:
+                resources = [
+                    item
+                    for item in resources
+                    if str(item.get(key) or "").lower()
+                    == expected.lower()
+                ]
+        return {"resources": resources}
+
+    @router.post("/resources")
+    async def create_governed_resource(
+        request: Request,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            return (
+                _container(request)
+                .platform_config_service
+                .governed_resources
+                .create_resource(
+                    payload,
+                    actor_id=_actor(request),
+                    correlation_id=_correlation_id(request),
+                )
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+
+    @router.put("/resources/{code}/draft")
+    async def save_governed_resource_draft(
+        request: Request,
+        code: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            expected_revision = int(payload.pop("expected_revision", 0))
+            draft = (
+                _container(request)
+                .platform_config_service
+                .governed_resources
+                .save_draft(
+                    code,
+                    payload,
+                    expected_revision=expected_revision,
+                    actor_id=_actor(request),
+                    correlation_id=_correlation_id(request),
+                )
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"draft": draft}
+
+    @router.delete("/resources/{code}/draft")
+    def delete_governed_resource_draft(
+        request: Request,
+        code: str,
+        expected_revision: int = Query(gt=0),
+    ) -> dict[str, Any]:
+        try:
+            (
+                _container(request)
+                .platform_config_service
+                .governed_resources
+                .delete_draft(
+                    code,
+                    expected_revision=expected_revision,
+                    actor_id=_actor(request),
+                    correlation_id=_correlation_id(request),
+                )
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"deleted": True}
+
+    @router.post("/resources/{code}/verify")
+    def verify_governed_resource_draft(
+        request: Request,
+        code: str,
+    ) -> dict[str, Any]:
+        try:
+            verification = (
+                _container(request)
+                .platform_config_service
+                .governed_resources
+                .verify_draft(
+                    code,
+                    actor_id=_actor(request),
+                    correlation_id=_correlation_id(request),
+                )
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"verification": verification}
+
+    @router.post("/resources/{code}/publish")
+    def publish_governed_resource_draft(
+        request: Request,
+        code: str,
+    ) -> dict[str, Any]:
+        try:
+            revision = (
+                _container(request)
+                .platform_config_service
+                .governed_resources
+                .publish_draft(
+                    code,
+                    actor_id=_actor(request),
+                    correlation_id=_correlation_id(request),
+                )
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"revision": revision}
+
+    @router.post("/resources/{code}/draft/from-revision")
+    async def create_governed_resource_draft_from_revision(
+        request: Request,
+        code: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            draft = (
+                _container(request)
+                .platform_config_service
+                .governed_resources
+                .create_draft_from_revision(
+                    code,
+                    str(payload.get("revision_id") or ""),
+                    actor_id=_actor(request),
+                    correlation_id=_correlation_id(request),
+                )
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"draft": draft}
+
+    @router.post("/resources/{code}/revisions/{revision_id}/{action}")
+    def set_governed_resource_revision_status(
+        request: Request,
+        code: str,
+        revision_id: str,
+        action: str,
+    ) -> dict[str, Any]:
+        if action not in {"disable", "archive"}:
+            raise HTTPException(
+                status_code=404,
+                detail="不支持此资源版本操作",
+            )
+        try:
+            revision = (
+                _container(request)
+                .platform_config_service
+                .governed_resources
+                .set_revision_status(
+                    code,
+                    revision_id,
+                    action,
+                    actor_id=_actor(request),
+                    correlation_id=_correlation_id(request),
+                )
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"revision": revision}
+
+    @router.get("/runtime-generation/status")
+    def runtime_generation_status(request: Request) -> dict[str, Any]:
+        _require_management_read(
+            request,
+            resource_type="platform_config",
+        )
+        from app.modules.platform_config.infrastructure.runtime_generation_repository import (
+            RuntimeGenerationRepository,
+        )
+
+        return {
+            "runtime": RuntimeGenerationRepository(
+                _container(request).database
+            ).public_status()
         }
 
     @router.post("/resource-bindings")

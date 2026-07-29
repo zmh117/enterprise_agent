@@ -29,6 +29,10 @@ class AgentSession:
     external_identity_id: str = ""
     business_application_id: str = ""
     business_application_code: str = ""
+    application_publication_id: str = ""
+    execution_scope_hash: str = ""
+    isolation_key_version: int = 1
+    history_read_only: bool = False
     conversation_mode: str = "legacy"
     recent_message_limit: int | None = None
     session_policy: dict[str, Any] | None = None

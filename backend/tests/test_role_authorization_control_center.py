@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 import re
+from threading import Barrier
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,7 +18,6 @@ from app.modules.admin.domain import (
     ADMIN_CAPABILITY_BY_CODE,
     validate_admin_capability_catalog,
 )
-from app.modules.authorization_center.application import BusinessAuthorizationService
 from app.modules.internal_api_platform.domain.addressing import TargetRef
 from app.modules.internal_api_platform.domain.errors import AuthorizationError
 from app.modules.internal_api_platform.domain.topology import ResourceKind
@@ -31,6 +33,7 @@ from app.shared.exceptions import (
     PermissionDenied,
     ToolPolicyError,
 )
+from backend.tests.helpers import enqueue_job_result_for_delivery
 from backend.tests.test_business_application_control_plane import draft_payload
 
 
@@ -38,9 +41,10 @@ ADMIN_ID = "user_local_admin"
 ORIGIN = "http://admin.test"
 
 
-def _settings(*, mode: str = "compatibility") -> Settings:
+def _settings() -> Settings:
     return Settings(
         database_dsn="sqlite:///:memory:",
+        app_config_master_key="test-only-master-key",
         environment="test",
         identity=IdentitySettings(
             enabled=True,
@@ -49,13 +53,50 @@ def _settings(*, mode: str = "compatibility") -> Settings:
             test_identity_headers_enabled=True,
             cookie_secure=False,
             allowed_origins=(ORIGIN,),
-            business_application_authorization_mode=mode,
         ),
     )
 
 
-def _container(*, mode: str = "compatibility"):
-    return build_test_container(_settings(mode=mode), migrate=True, seed=True)
+def _container():
+    return build_test_container(_settings(), migrate=True, seed=True)
+
+
+def _complete_login_verification(
+    c: object,
+    *,
+    user_id: str,
+    username: str,
+    password: str,
+) -> None:
+    c.identity_repository.set_password_hash(
+        user_id,
+        c.auth_service.passwords.hash(password),
+    )
+    c.auth_service.login(username=username, password=password)
+
+
+def _create_verified_platform_admin(
+    c: object,
+    *,
+    role_id: str,
+    username: str,
+) -> dict[str, object]:
+    user = c.identity_repository.create_user(
+        username=username,
+        display_name=username,
+    )
+    _complete_login_verification(
+        c,
+        user_id=str(user["id"]),
+        username=username,
+        password=f"{username}-verified-password",
+    )
+    c.identity_repository.assign_role(
+        user_id=str(user["id"]),
+        role_id=role_id,
+        assigned_by=ADMIN_ID,
+    )
+    return user
 
 
 def _admin_headers() -> dict[str, str]:
@@ -108,6 +149,7 @@ def _active_application(
     return {
         **application,
         "publication_id": publication["id"],
+        "publication_config_hash": publication["config_hash"],
     }
 
 
@@ -134,6 +176,23 @@ def _topology(c: object) -> tuple[dict[str, str], dict[str, str]]:
                 f"base-auth-{suffix}",
                 f"base-{suffix}",
                 f"基地 {suffix}",
+                timestamp,
+                timestamp,
+            ),
+        )
+        c.database.execute(
+            """
+            insert into platform_resource_binding
+              (id, code, scope_type, environment_id, base_id, resource_kind,
+               engine, config_json, secret_refs_json, status, revision,
+               created_at, updated_at)
+            values (?, ?, 'base', 'environment-auth-local', ?, 'database',
+                    'postgresql', '{}', '{}', 'enabled', 1, ?, ?)
+            """,
+            (
+                f"resource-auth-{suffix}",
+                f"database.base-{suffix}",
+                f"base-auth-{suffix}",
                 timestamp,
                 timestamp,
             ),
@@ -421,7 +480,7 @@ def test_service_account_cannot_join_role_with_web_capabilities() -> None:
     c.database.close()
 
 
-def test_compatibility_and_strict_application_modes() -> None:
+def test_legacy_permission_policy_never_grants_business_application_access() -> None:
     c = _container()
     legacy_user = c.identity_repository.create_user(
         username="legacy-business-user",
@@ -447,27 +506,17 @@ def test_compatibility_and_strict_application_modes() -> None:
         """,
         (ADMIN_ID,),
     )
-    compatible = c.business_authorization_service.decide(
+    decision = c.business_authorization_service.decide(
         user_id=str(legacy_user["id"]), application_id="app-legacy"
     )
-    assert compatible["allowed"] is True
-    assert compatible["reason"] == "legacy_compatible"
-    assert compatible["legacy_compatible"] is True
-
-    strict = BusinessAuthorizationService(
-        c.authorization_center_repository,
-        c.identity_repository,
-        c.authorization_evaluator,
-        mode="strict_application_role",
-        audit_service=c.audit_service,
-    ).decide(user_id=str(legacy_user["id"]), application_id="app-legacy")
-    assert strict["allowed"] is False
-    assert strict["reason"] == "no_application_role"
+    assert decision["allowed"] is False
+    assert decision["reason"] == "no_application_role"
+    assert "legacy_compatible" not in decision
     c.database.close()
 
 
 def test_multi_role_union_deny_precedence_and_application_scope_isolation() -> None:
-    c = _container(mode="strict_application_role")
+    c = _container()
     application = _active_application(
         c,
         "role-union-app",
@@ -555,17 +604,20 @@ def test_multi_role_union_deny_precedence_and_application_scope_isolation() -> N
         effect="deny",
         expected_revision=0,
     )
-    denied = c.business_authorization_service.decide(
+    unaffected_by_legacy_deny = c.business_authorization_service.decide(
         user_id=str(user["id"]),
         application_id=str(application["id"]),
     )
-    assert denied["allowed"] is False
-    assert denied["reason"] == "explicit_application_deny"
+    assert unaffected_by_legacy_deny["allowed"] is True
+    assert unaffected_by_legacy_deny["reason"] == "application_role_allow"
+    assert unaffected_by_legacy_deny["source_role_codes"] == sorted(
+        [first["code"], second["code"]]
+    )
     c.database.close()
 
 
 def test_current_all_saves_explicit_set_and_excludes_future_base() -> None:
-    c = _container(mode="strict_application_role")
+    c = _container()
     application = _active_application(
         c,
         "current-all-app",
@@ -739,10 +791,16 @@ def test_grant_delegation_is_resource_bounded_and_cannot_self_escalate() -> None
     c.database.close()
 
 
-def test_last_platform_admin_and_confirmed_self_removal_revokes_sessions() -> None:
+def test_two_verified_human_platform_admins_and_confirmed_self_removal() -> None:
     c = _container()
     platform_role = c.authorization_center_repository.get_role_by_code("platform-admin")
     assert platform_role is not None
+    _complete_login_verification(
+        c,
+        user_id=ADMIN_ID,
+        username="local-user",
+        password="local-admin-verified-password",
+    )
     admin_membership = c.database.execute_one(
         "select * from rbac_user_role where user_id = ? and role_id = ?",
         (ADMIN_ID, platform_role["id"]),
@@ -763,25 +821,38 @@ def test_last_platform_admin_and_confirmed_self_removal_revokes_sessions() -> No
             ],
             confirmed=True,
         )
-    assert last.value.error_code == "last_platform_admin"
+    assert last.value.error_code == "platform_admin_invariant"
+    assert c.identity_repository.verified_human_platform_admin_count() == 1
 
-    second = c.identity_repository.create_user(
-        username="second-platform-admin",
-        display_name="第二管理员",
-    )
-    c.identity_repository.assign_role(
-        user_id=str(second["id"]),
+    second = _create_verified_platform_admin(
+        c,
         role_id=str(platform_role["id"]),
-        assigned_by=ADMIN_ID,
+        username="second-platform-admin",
     )
-    future = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
-    c.identity_repository.create_session(
-        user_id=ADMIN_ID,
-        token_hash="safe-fixture-token-hash",
-        csrf_hash="safe-fixture-csrf-hash",
-        idle_expires_at=future,
-        absolute_expires_at=future,
+    assert c.identity_repository.verified_human_platform_admin_count() == 2
+    with pytest.raises(NonRetryableExecutionError) as two_admins:
+        c.authorization_center_service.update_members(
+            actor_id=ADMIN_ID,
+            role_id=str(platform_role["id"]),
+            expected_revision=int(platform_role["membership_revision"]),
+            changes=[
+                {
+                    "user_id": str(second["id"]),
+                    "enabled": False,
+                    "expires_at": None,
+                    "source": "manual",
+                }
+            ],
+            confirmed=True,
+        )
+    assert two_admins.value.error_code == "platform_admin_invariant"
+
+    _create_verified_platform_admin(
+        c,
+        role_id=str(platform_role["id"]),
+        username="third-platform-admin",
     )
+    assert c.identity_repository.verified_human_platform_admin_count() == 3
     with pytest.raises(NonRetryableExecutionError) as confirmation:
         c.authorization_center_service.update_members(
             actor_id=ADMIN_ID,
@@ -814,9 +885,149 @@ def test_last_platform_admin_and_confirmed_self_removal_revokes_sessions() -> No
         confirmed=True,
     )
     assert result["revision"] == int(platform_role["membership_revision"]) + 1
+    assert c.identity_repository.verified_human_platform_admin_count() == 2
     sessions = c.identity_repository.list_sessions(ADMIN_ID)
     assert sessions[0]["status"] == "revoked"
+    denied = c.database.execute(
+        """
+        select event_type, status from audit_event
+         where event_type = 'platform_admin_invariant_denied'
+         order by created_at
+        """
+    )
+    assert len(denied) == 2
+    assert {row["status"] for row in denied} == {"DENIED"}
     c.database.close()
+
+
+def test_user_disable_and_delete_preserve_two_verified_human_admins() -> None:
+    c = _container()
+    platform_role = c.authorization_center_repository.get_role_by_code("platform-admin")
+    assert platform_role is not None
+    _complete_login_verification(
+        c,
+        user_id=ADMIN_ID,
+        username="local-user",
+        password="local-admin-disable-delete-password",
+    )
+    second = _create_verified_platform_admin(
+        c,
+        role_id=str(platform_role["id"]),
+        username="disable-delete-second-admin",
+    )
+    assert c.identity_repository.verified_human_platform_admin_count() == 2
+
+    with pytest.raises(NonRetryableExecutionError) as disabled:
+        c.identity_admin_service.update_user(
+            actor_id=ADMIN_ID,
+            user_id=str(second["id"]),
+            expected_revision=int(second["revision"]),
+            display_name=str(second["display_name"]),
+            email=str(second["email"]),
+            status="disabled",
+        )
+    assert disabled.value.error_code == "platform_admin_invariant"
+    with pytest.raises(NonRetryableExecutionError) as deleted:
+        c.identity_admin_service.delete_user(
+            actor_id=ADMIN_ID,
+            user_id=str(second["id"]),
+            expected_revision=int(second["revision"]),
+            confirmed=True,
+        )
+    assert deleted.value.error_code == "platform_admin_invariant"
+
+    _create_verified_platform_admin(
+        c,
+        role_id=str(platform_role["id"]),
+        username="disable-delete-third-admin",
+    )
+    removed = c.identity_admin_service.delete_user(
+        actor_id=ADMIN_ID,
+        user_id=str(second["id"]),
+        expected_revision=int(second["revision"]),
+        confirmed=True,
+    )
+    assert removed["id"] == second["id"]
+    assert (
+        c.database.execute_one("select id from app_user where id = ?", (second["id"],))
+        is None
+    )
+    assert c.identity_repository.verified_human_platform_admin_count() == 2
+    c.database.close()
+
+
+def test_concurrent_platform_admin_removals_cannot_commit_below_two(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "platform-admin-invariant.sqlite3"
+    settings = replace(_settings(), database_dsn=f"sqlite:///{database_path}")
+    first = build_test_container(settings, migrate=True, seed=True)
+    platform_role = first.authorization_center_repository.get_role_by_code(
+        "platform-admin"
+    )
+    assert platform_role is not None
+    _complete_login_verification(
+        first,
+        user_id=ADMIN_ID,
+        username="local-user",
+        password="local-admin-concurrency-password",
+    )
+    second_admin = _create_verified_platform_admin(
+        first,
+        role_id=str(platform_role["id"]),
+        username="concurrent-second-admin",
+    )
+    third_admin = _create_verified_platform_admin(
+        first,
+        role_id=str(platform_role["id"]),
+        username="concurrent-third-admin",
+    )
+    second = build_test_container(settings, migrate=False, seed=False)
+    barrier = Barrier(2)
+
+    def remove_membership(container: object, user_id: str) -> str:
+        membership = container.database.execute_one(
+            "select revision from rbac_user_role where user_id = ? and role_id = ?",
+            (user_id, platform_role["id"]),
+        )
+        assert membership is not None
+        barrier.wait()
+        try:
+            container.identity_admin_service.assign_role(
+                actor_id=ADMIN_ID,
+                user_id=user_id,
+                role_id=str(platform_role["id"]),
+                enabled=False,
+                expected_revision=int(membership["revision"]),
+            )
+        except NonRetryableExecutionError as exc:
+            return exc.error_code
+        return "committed"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(
+            executor.map(
+                lambda args: remove_membership(*args),
+                (
+                    (first, str(second_admin["id"])),
+                    (second, str(third_admin["id"])),
+                ),
+            )
+        )
+
+    assert sorted(results) == ["committed", "platform_admin_invariant"]
+    assert first.identity_repository.verified_human_platform_admin_count() == 2
+    assert (
+        first.database.execute_one(
+            """
+            select count(*) as count from audit_event
+             where event_type = 'platform_admin_invariant_denied'
+            """
+        )["count"]
+        == 1
+    )
+    second.database.close()
+    first.database.close()
 
 
 class _RecordingDeliveryAdapter:
@@ -836,7 +1047,7 @@ class _RecordingDeliveryAdapter:
 
 
 def test_four_stage_reauthorization_blocks_revoked_access_without_data_leak() -> None:
-    c = _container(mode="strict_application_role")
+    c = _container()
     application = _active_application(
         c,
         "four-stage-app",
@@ -872,6 +1083,17 @@ def test_four_stage_reauthorization_blocks_revoked_access_without_data_leak() ->
         },
         business_application_id=str(application["id"]),
         business_application_code=str(application["code"]),
+        business_application_publication_id=str(application["publication_id"]),
+        business_application_config_hash=str(
+            application["publication_config_hash"]
+        ),
+        routing_context={
+            "project_code": "default",
+            "environment": "local",
+            "base": "base-one",
+            "workshop": "",
+            "service": "",
+        },
         fixed_agent_publication_id="agent_publication_default_v1",
         fixed_agent_revision=1,
         fixed_agent_config_hash=(
@@ -920,12 +1142,12 @@ def test_four_stage_reauthorization_blocks_revoked_access_without_data_leak() ->
     )
     adapter = _RecordingDeliveryAdapter()
     c.result_delivery_service.adapters["dingtalk_conversation"] = adapter
-    c.result_delivery_service.deliver_job_result(job.id)
+    enqueue_job_result_for_delivery(c, job.id)
+    c.delivery_dispatcher.dispatch_pending(limit=1)
     attempts = c.agent_repository.list_delivery_attempts(job.id)
-    assert attempts[0]["status"] == "BLOCKED_BY_AUTHORIZATION"
-    assert adapter.messages == [
-        "你的业务应用权限已变更，本次诊断结果未发送。请联系管理员确认角色授权。"
-    ]
+    assert attempts[0]["status"] == "FAILED"
+    assert attempts[0]["error_code"] == "delivery_authorization_denied"
+    assert adapter.messages == []
     assert all("不得投递的业务结果" not in message for message in adapter.messages)
     audit_text = str(
         c.database.execute(
@@ -941,8 +1163,8 @@ def test_four_stage_reauthorization_blocks_revoked_access_without_data_leak() ->
     c.database.close()
 
 
-def test_internal_api_platform_rechecks_job_bound_business_scope() -> None:
-    c = _container(mode="strict_application_role")
+def test_internal_api_platform_rechecks_immutable_job_runtime_facts() -> None:
+    c = _container()
     application = _active_application(
         c,
         "internal-platform-job-app",
@@ -974,6 +1196,17 @@ def test_internal_api_platform_rechecks_job_bound_business_scope() -> None:
             reply_route={"type": "debug_api", "target": {}, "options": {}},
             business_application_id=str(application["id"]),
             business_application_code=str(application["code"]),
+            business_application_publication_id=str(application["publication_id"]),
+            business_application_config_hash=str(
+                application["publication_config_hash"]
+            ),
+            routing_context={
+                "project_code": "default",
+                "environment": "local",
+                "base": "base-one",
+                "workshop": "",
+                "service": "",
+            },
             fixed_agent_publication_id="agent_publication_default_v1",
             fixed_agent_revision=1,
             fixed_agent_config_hash=(
@@ -986,10 +1219,7 @@ def test_internal_api_platform_rechecks_job_bound_business_scope() -> None:
         "update agent_job set status = 'RUNNING' where id = ?",
         (job.id,),
     )
-    authorizer = BusinessApplicationJobAccessAuthorizer(
-        c.database,
-        c.business_authorization_service,
-    )
+    authorizer = BusinessApplicationJobAccessAuthorizer(c.database)
     target = TargetRef(
         environment="local",
         base="base-one",
@@ -997,12 +1227,43 @@ def test_internal_api_platform_rechecks_job_bound_business_scope() -> None:
         kind=ResourceKind.DATABASE,
     )
 
-    assert authorizer.authorize(
+    authorized = authorizer.authorize(
         job_id=job.id,
         user_id=str(user["id"]),
+        project_code="default",
+        application_id=str(application["id"]),
         capability_code="query_database",
         target=target,
     )
+    assert authorized.application_publication_id == str(
+        application["publication_id"]
+    )
+    assert authorized.resource_revision_id == "resource-auth-one"
+    assert authorized.handler_version == "legacy-v1"
+
+    with pytest.raises(AuthorizationError):
+        authorizer.authorize(
+            job_id=job.id,
+            user_id=str(user["id"]),
+            project_code="forged-project",
+            application_id=str(application["id"]),
+            capability_code="query_database",
+            target=target,
+        )
+    with pytest.raises(AuthorizationError):
+        authorizer.authorize(
+            job_id=job.id,
+            user_id=str(user["id"]),
+            project_code="default",
+            application_id=str(application["id"]),
+            capability_code="query_database",
+            target=TargetRef(
+                environment="local",
+                base="base-two",
+                workshop=None,
+                kind=ResourceKind.DATABASE,
+            ),
+        )
 
     membership = c.database.execute_one(
         "select * from rbac_user_role where user_id = ? and role_id = ?",
@@ -1014,10 +1275,42 @@ def test_internal_api_platform_rechecks_job_bound_business_scope() -> None:
         role_id=str(role["id"]),
         expected_revision=int(membership["revision"]),
     )
+    assert authorizer.authorize(
+        job_id=job.id,
+        user_id=str(user["id"]),
+        project_code="default",
+        application_id=str(application["id"]),
+        capability_code="query_database",
+        target=target,
+    )
+
+    c.database.execute(
+        "update tool_definition set enabled = 0 where id = ?",
+        (authorized.handler_id,),
+    )
     with pytest.raises(AuthorizationError):
         authorizer.authorize(
             job_id=job.id,
             user_id=str(user["id"]),
+            project_code="default",
+            application_id=str(application["id"]),
+            capability_code="query_database",
+            target=target,
+        )
+    c.database.execute(
+        "update tool_definition set enabled = 1 where id = ?",
+        (authorized.handler_id,),
+    )
+    c.database.execute(
+        "update platform_resource_binding set revision = 2 where id = ?",
+        ("resource-auth-one",),
+    )
+    with pytest.raises(AuthorizationError):
+        authorizer.authorize(
+            job_id=job.id,
+            user_id=str(user["id"]),
+            project_code="default",
+            application_id=str(application["id"]),
             capability_code="query_database",
             target=target,
         )

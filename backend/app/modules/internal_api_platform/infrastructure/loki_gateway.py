@@ -15,6 +15,7 @@ from app.modules.local_internal_api_platform.loki_gateway import (
     summarize_loki_response,
 )
 from app.modules.local_internal_api_platform.schemas import LokiQuery
+from app.shared.database import assert_external_io_allowed
 
 from ..domain.addressing import ResourceBinding
 from ..domain.errors import PolicyViolation, ResolutionError, UpstreamUnavailable
@@ -90,12 +91,11 @@ class HttpLokiClient:
         minutes: int,
         limit: int,
     ) -> ToolResponse:
-        if binding.loki is None:
-            raise ResolutionError("Base has no loki connection configured")
-        if minutes < 1 or minutes > self._max_minutes:
-            raise PolicyViolation("Loki time range exceeds configured maximum")
-        if limit < 1 or limit > self._max_lines:
-            raise PolicyViolation("Loki result size exceeds configured maximum")
+        self._validate_binding_and_bounds(
+            binding,
+            minutes=minutes,
+            limit=limit,
+        )
 
         logql = build_logql(selector, query)
         loki_query = LokiQuery(
@@ -148,7 +148,9 @@ class HttpLokiClient:
                 "minutes": minutes,
                 "labels": bounded,
                 "label_count": len(bounded),
-                "tenant_configured": bool(binding.loki and binding.loki.tenant),
+                "tenant_configured": bool(
+                    binding.loki and binding.loki.tenant_id
+                ),
                 "truncated": truncated,
             },
             raw={"label_count": len(values)},
@@ -194,7 +196,9 @@ class HttpLokiClient:
                 "minutes": minutes,
                 "values": bounded,
                 "value_count": len(bounded),
-                "tenant_configured": bool(binding.loki and binding.loki.tenant),
+                "tenant_configured": bool(
+                    binding.loki and binding.loki.tenant_id
+                ),
                 "truncated": truncated,
             },
             raw={"value_count": len(values)},
@@ -250,16 +254,31 @@ class HttpLokiClient:
         path: str,
         params: dict[str, str] | list[tuple[str, str]],
     ) -> dict[str, Any]:
+        assert_external_io_allowed("tool_loki.http")
         assert binding.loki is not None
         query_string = urllib.parse.urlencode(params)
         url = f"{binding.loki.base_url.rstrip('/')}{path}?{query_string}"
         headers = {"accept": "application/json"}
-        if binding.loki.tenant:
-            headers["X-Scope-OrgID"] = binding.loki.tenant
+        if binding.loki.tenant_id:
+            headers["X-Scope-OrgID"] = binding.loki.tenant_id
+        if binding.loki.auth_token:
+            headers["Authorization"] = (
+                f"Bearer {binding.loki.auth_token}"
+            )
         request = Request(url, headers=headers, method="GET")
         try:
-            with self._urlopen_func(request, timeout=10) as response:
-                parsed = json.loads(response.read().decode("utf-8"))
+            with self._urlopen_func(
+                request,
+                timeout=binding.loki.timeout_seconds,
+            ) as response:
+                raw = response.read(
+                    binding.loki.max_response_bytes + 1
+                )
+                if len(raw) > binding.loki.max_response_bytes:
+                    raise PolicyViolation(
+                        "Loki response exceeds configured byte limit"
+                    )
+                parsed = json.loads(raw.decode("utf-8"))
         except urllib.error.HTTPError as exc:
             if exc.code in _RETRYABLE_UPSTREAM_STATUSES:
                 raise UpstreamUnavailable(f"Loki transient error ({exc.code})") from exc
@@ -284,9 +303,14 @@ class HttpLokiClient:
     ) -> None:
         if binding.loki is None:
             raise ResolutionError("Base has no loki connection configured")
-        if minutes < 1 or minutes > self._max_minutes:
+        max_minutes = min(
+            self._max_minutes,
+            binding.loki.max_minutes,
+        )
+        max_lines = min(self._max_lines, binding.loki.max_lines)
+        if minutes < 1 or minutes > max_minutes:
             raise PolicyViolation("Loki time range exceeds configured maximum")
-        if limit < 1 or limit > self._max_lines:
+        if limit < 1 or limit > max_lines:
             raise PolicyViolation("Loki result size exceeds configured maximum")
 
     @staticmethod
@@ -337,7 +361,9 @@ class FakeLokiClient:
                 "minutes": minutes,
                 "labels": labels,
                 "label_count": len(labels),
-                "tenant_configured": bool(binding.loki and binding.loki.tenant),
+                "tenant_configured": bool(
+                    binding.loki and binding.loki.tenant_id
+                ),
                 "truncated": False,
             },
             raw={"label_count": len(labels)},
@@ -364,7 +390,9 @@ class FakeLokiClient:
                 "minutes": minutes,
                 "values": values[:limit],
                 "value_count": len(values[:limit]),
-                "tenant_configured": bool(binding.loki and binding.loki.tenant),
+                "tenant_configured": bool(
+                    binding.loki and binding.loki.tenant_id
+                ),
                 "truncated": len(values) > limit,
             },
             raw={"value_count": len(values)},

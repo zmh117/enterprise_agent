@@ -5,6 +5,7 @@ import hashlib
 from datetime import datetime
 from typing import Any
 
+from app.modules.job.infrastructure.repositories import AgentRepository
 from app.shared.database import Database
 
 
@@ -78,6 +79,8 @@ class AdminReadRepository:
                    source_connector_id, external_conversation_id,
                    routing_context_json, business_application_id,
                    business_application_code, conversation_mode,
+                   application_publication_id, execution_scope_hash,
+                   isolation_key_version, history_read_only,
                    recent_message_limit, updated_at
             from agent_session
             where updated_at >= ? and updated_at < ?
@@ -107,6 +110,8 @@ class AdminReadRepository:
                    source_channel, source_connector_id, external_conversation_id,
                    routing_context_json, business_application_id,
                    business_application_code, conversation_mode,
+                   application_publication_id, execution_scope_hash,
+                   isolation_key_version, history_read_only,
                    recent_message_limit, created_at, updated_at
             from agent_session where id = ?
             """,
@@ -227,14 +232,10 @@ class AdminReadRepository:
             """,
             (job_id,),
         )
-        deliveries = self.database.execute(
-            """
-            select id, route_type, connector_id, status,
-                   substr(error_message, 1, 500) as error_summary, created_at, finished_at
-            from delivery_attempt where job_id = ? order by created_at, id
-            """,
-            (job_id,),
-        )
+        agent_repository = AgentRepository(self.database)
+        delivery_events = agent_repository.list_delivery_events(job_id)
+        delivery_attempts = agent_repository.list_delivery_attempts(job_id)
+        delivery_chunks = agent_repository.list_delivery_chunks(job_id)
         webhooks = self.database.execute(
             """
             select id, external_event_id, correlation_id, status, error_code,
@@ -248,7 +249,11 @@ class AdminReadRepository:
             "session_ref": {"id": job["session_id"]},
             "steps": [_safe_times(row) for row in steps],
             "tool_calls": [_safe_times(row) for row in tools],
-            "delivery_attempts": [_safe_times(row) for row in deliveries],
+            "deliveries": {
+                "events": [_safe_times(row) for row in delivery_events],
+                "attempts": [_safe_times(row) for row in delivery_attempts],
+                "chunks": [_safe_times(row) for row in delivery_chunks],
+            },
             "webhook_events": [_safe_times(row) for row in webhooks],
             "retry": {
                 "count": int(job.get("retry_count") or 0),
@@ -289,6 +294,7 @@ class AdminReadRepository:
     def _session(row: dict[str, Any]) -> dict[str, Any]:
         item = dict(row)
         item["routing"] = _json_object(item.pop("routing_context_json", {}))
+        item["history_read_only"] = bool(item.get("history_read_only"))
         return _safe_times(item)
 
     @staticmethod

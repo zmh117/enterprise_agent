@@ -513,9 +513,7 @@ function PolicyEditor({
               })
             }
           >
-            <option value="channel">按渠道会话</option>
-            <option value="actor">按当前主体</option>
-            <option value="application">按应用</option>
+            <option value="channel">按渠道、发布版本与数据范围隔离</option>
           </select>
         </Field>
         <NumberField
@@ -1380,9 +1378,7 @@ function draftToForm(application: BusinessApplication): SaveDraftInput {
     agent_publication_id: draft?.agent_publication_id ?? "",
     workflow_publication_id: draft?.workflow_publication_id ?? "",
     session_policy: {
-      conversation_mode:
-        (draft?.session_policy.conversation_mode as
-          "channel" | "actor" | "application") ?? "channel",
+      conversation_mode: "channel",
       recent_message_limit: Number(
         draft?.session_policy.recent_message_limit ?? 20
       ),

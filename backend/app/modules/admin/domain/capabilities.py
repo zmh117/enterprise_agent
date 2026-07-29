@@ -249,6 +249,15 @@ ADMIN_CAPABILITIES: tuple[CapabilityDefinition, ...] = (
     ),
     _capability("jobs.read", "operations", "agent_job", "read", "查看 Agent 运行记录"),
     _capability(
+        "agent.debug.execute",
+        "operations",
+        "agent_job",
+        "debug_execute",
+        "执行 Agent 调试",
+        risk_level="medium",
+        dependencies=("jobs.read",),
+    ),
+    _capability(
         "jobs.manage",
         "operations",
         "agent_job",

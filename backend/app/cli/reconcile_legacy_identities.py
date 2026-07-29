@@ -7,6 +7,7 @@ from app.modules.identity.application import LegacyIdentityMigrationService
 from app.modules.identity.infrastructure import IdentityRepository
 from app.shared.config import load_settings
 from app.shared.database import Database, default_migrations_dir
+from app.shared.migrations import SchemaHeadValidator
 
 
 def main() -> None:
@@ -18,7 +19,7 @@ def main() -> None:
     settings = load_settings()
     database = Database(settings.database_dsn)
     try:
-        database.run_migrations(default_migrations_dir())
+        SchemaHeadValidator(database, default_migrations_dir()).require_current()
         report = LegacyIdentityMigrationService(
             IdentityRepository(database)
         ).reconcile(apply=args.apply)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 
@@ -8,8 +9,9 @@ from app.modules.authorization_center.application import BusinessAuthorizationSe
 from app.modules.channel.domain.channel_event import ReplyRoute, safe_payload_summary
 from app.modules.channel.infrastructure.connector_registry import Connector, ConnectorRegistry
 from app.modules.delivery.application.report_chunker import ReportChunker
-from app.modules.delivery.infrastructure.adapters import DeliveryAdapter, NoneDeliveryAdapter
+from app.modules.delivery.infrastructure.adapters import DeliveryAdapter
 from app.modules.job.infrastructure.repositories import AgentRepository
+from app.shared.config import DeliverySettings
 
 
 class ResultDeliveryService:
@@ -21,6 +23,7 @@ class ResultDeliveryService:
         connector_registry: ConnectorRegistry,
         adapters: dict[str, DeliveryAdapter],
         chunker: ReportChunker,
+        settings: DeliverySettings,
         business_authorization_service: BusinessAuthorizationService | None = None,
     ) -> None:
         self.repository = repository
@@ -28,230 +31,118 @@ class ResultDeliveryService:
         self.connector_registry = connector_registry
         self.adapters = adapters
         self.chunker = chunker
+        self.settings = settings
         self.business_authorization_service = business_authorization_service
         self.sent_messages: list[dict[str, str]] = []
 
-    def deliver_job_result(self, job_id: str) -> None:
-        job = self.repository.get_job(job_id)
-        if not job.result:
-            return
-        if job.business_application_id:
-            decision = (
-                self.business_authorization_service.decide(
-                    user_id=job.internal_user_id or job.user_id,
-                    application_id=job.business_application_id,
-                    stage="delivery",
-                )
-                if self.business_authorization_service is not None
-                else {
-                    "allowed": False,
-                    "stage": "delivery",
-                    "reason": "business_authorization_unavailable",
-                }
-            )
-            if not decision["allowed"]:
-                route = ReplyRoute.from_dict(job.reply_route)
-                self.repository.add_delivery_attempt(
-                    job_id=job.id,
-                    route_type=route.type,
-                    connector_id=route.connector_id,
-                    target_summary=_target_summary(route, None),
-                    status="BLOCKED_BY_AUTHORIZATION",
-                    error_message="投递前业务应用授权已失效",
-                )
-                self.audit_service.record(
-                    "authorization.business.delivery_blocked",
-                    status="DENIED",
-                    summary="Business result delivery blocked by authorization",
-                    job_id=job.id,
-                    actor_id=job.internal_user_id or job.user_id,
-                    payload=decision,
-                )
-                self._deliver(
-                    job_id=job.id,
-                    route=route,
-                    title="权限已变更",
-                    text="你的业务应用权限已变更，本次诊断结果未发送。请联系管理员确认角色授权。",
-                )
-                return
-        self._deliver(
-            job_id=job.id,
-            route=ReplyRoute.from_dict(job.reply_route),
+    def enqueue_job_result(
+        self,
+        *,
+        job_id: str,
+        artifact_id: str,
+        correlation_id: str,
+    ) -> str:
+        return self._enqueue(
+            job_id=job_id,
+            artifact_id=artifact_id,
+            correlation_id=correlation_id,
+            delivery_kind="result",
             title="Agent 诊断报告",
-            text=job.result,
         )
 
-    def deliver_job_failure(
+    def enqueue_job_failure(
         self,
+        *,
         job_id: str,
         reason: str,
-        *,
-        error_code: str = "agent_runtime_error",
-    ) -> None:
-        job = self.repository.get_job(job_id)
-        text = json.dumps(
-            {
-                "status": "failed",
-                "error_code": _safe_error_code(error_code),
-                "message": _safe_failure_message(reason),
-                "job_id": job.id,
-            },
-            ensure_ascii=False,
-        )
-        self._deliver(
-            job_id=job.id,
-            route=ReplyRoute.from_dict(job.reply_route),
-            title="Agent 诊断失败",
-            text=text,
-        )
-
-    def has_completed_delivery(self, job_id: str) -> bool:
-        attempts = self.repository.list_delivery_attempts(job_id)
-        return any(str(attempt["status"]) in {"SUCCEEDED", "SKIPPED"} for attempt in attempts)
-
-    def _deliver(self, *, job_id: str, route: ReplyRoute, title: str, text: str) -> None:
-        if self.has_completed_delivery(job_id):
-            return
-        job = self.repository.get_job(job_id)
-        runtime_context = _runtime_context(job)
-        connector: Connector | None = None
-        if route.type != "none" and route.connector_id:
-            try:
-                connector = self.connector_registry.require_delivery(route.connector_id)
-                self.audit_service.record(
-                    "delivery.connector_authorized",
-                    status="SUCCEEDED",
-                    summary="Delivery connector authorized",
-                    job_id=job_id,
-                    payload={
-                        "route_type": route.type,
-                        "connector_id": route.connector_id,
-                        **runtime_context,
-                    },
-                )
-                endpoint = self.connector_registry.endpoint_url(connector)
-                self.connector_registry.assert_host_allowed(connector, endpoint)
-            except Exception as exc:
-                self._record_config_failure(job_id, route, exc)
-                return
-        target_summary = _target_summary(route, connector)
-        attempt_id = self.repository.add_delivery_attempt(
+        error_code: str,
+        correlation_id: str,
+    ) -> str:
+        artifact = self.repository.get_artifact_for_job(
             job_id=job_id,
-            route_type=route.type,
-            connector_id=route.connector_id,
-            target_summary=target_summary,
-            status="STARTED",
+            artifact_type="failure_notification",
+            name="delivery-failure.json",
         )
-        self.audit_service.record(
-            "delivery.started",
-            status="STARTED",
-            summary="Result delivery started",
-            job_id=job_id,
-            payload={
-                "route_type": route.type,
-                "connector_id": route.connector_id,
-                **runtime_context,
-            },
-        )
-        if route.type == "none":
-            self.repository.update_delivery_attempt(attempt_id, status="SKIPPED")
-            self.audit_service.record(
-                "delivery.skipped",
-                status="SKIPPED",
-                summary="Delivery route is none",
-                job_id=job_id,
-                payload={"attempt_id": attempt_id, **runtime_context},
+        if artifact is None:
+            content = json.dumps(
+                {
+                    "status": "failed",
+                    "error_code": _safe_error_code(error_code),
+                    "message": _safe_failure_message(reason),
+                    "job_id": job_id,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
             )
-            return
-        adapter = self.adapters.get(route.type, self.adapters.get("webhook", NoneDeliveryAdapter()))
-        chunks = self.chunker.titled_chunks(title=title, text=text)
-        for index, (chunk_title, chunk_text) in enumerate(chunks, start=1):
-            try:
-                adapter.send(connector=connector, route=route, title=chunk_title, text=chunk_text)
-                self.sent_messages.append(
-                    {"title": chunk_title, "text": chunk_text, "route_type": route.type}
-                )
-                self.repository.add_delivery_chunk(
-                    attempt_id=attempt_id,
-                    chunk_index=index,
-                    chunk_count=len(chunks),
-                    status="SUCCEEDED",
-                    payload_summary={"title": chunk_title, "chars": len(chunk_text)},
-                )
-                self.audit_service.record(
-                    "delivery.chunk_sent",
-                    status="SUCCEEDED",
-                    summary="Delivery chunk sent",
-                    job_id=job_id,
-                    payload={
-                        "attempt_id": attempt_id,
-                        "chunk_index": index,
-                        "chunk_count": len(chunks),
-                        **runtime_context,
-                    },
-                )
-            except Exception as exc:
-                safe_message = getattr(exc, "safe_message", str(exc))
-                self.repository.add_delivery_chunk(
-                    attempt_id=attempt_id,
-                    chunk_index=index,
-                    chunk_count=len(chunks),
-                    status="FAILED",
-                    payload_summary={"title": chunk_title, "chars": len(chunk_text)},
-                    error_message=safe_message,
-                )
-                self.repository.update_delivery_attempt(
-                    attempt_id, status="FAILED", error_message=safe_message
-                )
-                self.audit_service.record(
-                    "delivery.failed",
-                    status="FAILED",
-                    summary=safe_message,
-                    job_id=job_id,
-                    payload={
-                        "attempt_id": attempt_id,
-                        "chunk_index": index,
-                        **runtime_context,
-                    },
-                )
-                return
-        self.repository.update_delivery_attempt(attempt_id, status="SUCCEEDED")
-        self.audit_service.record(
-            "delivery.completed",
-            status="SUCCEEDED",
-            summary="Result delivery completed",
+            artifact_id = self.repository.add_artifact(
+                job_id=job_id,
+                artifact_type="failure_notification",
+                name="delivery-failure.json",
+                content=content,
+            )
+        else:
+            artifact_id = str(artifact["id"])
+        return self._enqueue(
             job_id=job_id,
-            payload={
-                "attempt_id": attempt_id,
-                "chunk_count": len(chunks),
-                **runtime_context,
-            },
+            artifact_id=artifact_id,
+            correlation_id=correlation_id,
+            delivery_kind="failure",
+            title="Agent 诊断失败",
         )
 
-    def _record_config_failure(self, job_id: str, route: ReplyRoute, exc: Exception) -> None:
-        safe_message = getattr(exc, "safe_message", str(exc))
-        runtime_context = _runtime_context(self.repository.get_job(job_id))
-        attempt_id = self.repository.add_delivery_attempt(
-            job_id=job_id,
-            route_type=route.type,
-            connector_id=route.connector_id,
-            target_summary=_target_summary(route, None),
-            status="FAILED",
-            error_message=safe_message,
+    def _enqueue(
+        self,
+        *,
+        job_id: str,
+        artifact_id: str,
+        correlation_id: str,
+        delivery_kind: str,
+        title: str,
+    ) -> str:
+        job = self.repository.get_job(job_id)
+        route = ReplyRoute.from_dict(job.reply_route)
+        canonical_route = json.dumps(
+            job.reply_route or {"type": "none"},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
         )
-        self.audit_service.record(
-            "delivery.failed",
-            status="FAILED",
-            summary=safe_message,
-            job_id=job_id,
-            payload={
-                "attempt_id": attempt_id,
+        event = self.repository.create_delivery_event(
+            job_id=job.id,
+            result_artifact_id=artifact_id,
+            application_publication_id=(
+                job.business_application_publication_id
+                or job.agent_publication_id
+            ),
+            delivery_binding={
+                "delivery_kind": delivery_kind,
+                "title": title,
                 "route_type": route.type,
                 "connector_id": route.connector_id,
-                **runtime_context,
+                "route_hash": hashlib.sha256(
+                    canonical_route.encode("utf-8")
+                ).hexdigest(),
+                "route_source": "agent_job.reply_route_json",
+            },
+            target_summary=_target_summary(route, None),
+            correlation_id=correlation_id,
+            max_attempts=self.settings.outbox_max_attempts,
+            max_replay_count=self.settings.outbox_max_replays,
+        )
+        self.audit_service.record(
+            "delivery.outbox.created",
+            status="PENDING",
+            summary="Delivery intent persisted for independent dispatch",
+            job_id=job.id,
+            payload={
+                "delivery_id": event.id,
+                "delivery_kind": delivery_kind,
+                "route_type": route.type,
+                "connector_id": route.connector_id,
+                **_runtime_context(job),
             },
         )
-
+        return event.id
 
 def _target_summary(route: ReplyRoute, connector: Connector | None) -> dict[str, Any]:
     summary = {
@@ -267,7 +158,21 @@ def _safe_target(target: dict[str, Any]) -> dict[str, Any]:
     safe: dict[str, Any] = {}
     for key, value in target.items():
         lowered = key.lower()
-        if any(token in lowered for token in ("token", "secret", "sign", "url", "mobile")):
+        if any(
+            token in lowered
+            for token in (
+                "authorization",
+                "callback",
+                "credential",
+                "endpoint",
+                "mobile",
+                "secret",
+                "sign",
+                "token",
+                "url",
+                "webhook",
+            )
+        ):
             if isinstance(value, list):
                 safe[f"{key}_count"] = len(value)
             elif value:

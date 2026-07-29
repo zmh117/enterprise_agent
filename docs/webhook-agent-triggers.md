@@ -31,16 +31,17 @@ WebhookIngressService
 第一版固定名称：
 
 - Trigger schema：`grafana_alertmanager_v1`、`generic_json_v1`
-- 认证：`bearer_v1`、`hmac_sha256_v1`
+- 认证：仅 `bearer_v1`
 - 事件状态：`REJECTED_AUTH`、`IGNORED`、`ACCEPTED`、`DISPATCH_PENDING`、`JOB_CREATED`、`DISPATCH_FAILED`
 - RabbitMQ queue：`agent.webhook.dispatch.queue`、`agent.webhook.dead.queue`
 - 管理资源：`webhook_trigger`
 - 管理 actions：`read`、`edit`、`publish`、`rotate`、`manage_service_account`
 
-## 兼容规则
+## 入口规则
 
 - 新入口为 `POST /webhooks/v1/{public_id}`。
-- 旧 `/webhooks/grafana/alert` 保留，并委托同一 WebhookIngressService。
+- 旧 `/webhooks/grafana/alert`、`X-Grafana-Token` 翻译和未绑定的
+  `/webhooks/channel/agent` 已删除。
 - Grafana 只处理 `firing`；`resolved` 只记录为 ignored。
 - 一个 `groupKey` 或稳定 fingerprint group 只创建一个 job。
 - 外部 payload 不能覆盖服务账号、Agent、工具、Connector、secret 或 Delivery target。
@@ -48,7 +49,7 @@ WebhookIngressService
 
 ## 安全与排障证据
 
-原始 body、Bearer/HMAC secret、签名原文和完整 Webhook URL不得进入数据库、RabbitMQ、普通日志或 Agent prompt。事件只保存 payload hash、请求大小、显式提取字段和脱敏有界摘要。
+原始 body、Bearer secret 和完整 Webhook URL 不得进入数据库、RabbitMQ、普通日志或 Agent prompt。事件只保存 payload hash、请求大小、显式提取字段和脱敏有界摘要。
 
 排障顺序：
 
@@ -63,10 +64,17 @@ webhook_event auth/filter/status
 
 ## 启动和发布
 
-1. 启用 ingress Connector，并为其 `secret_ref` 提供真实 secret。默认 Grafana connector 引用 `env:GRAFANA_WEBHOOK_TOKEN`，SQL seed 和 Trigger snapshot 均不保存值。
+1. 启用 ingress Connector，并为每个 binding 配置独立、至少 32 字符的高熵
+   Bearer Token 引用。默认 Grafana connector 当前兼容读取
+   `env:GRAFANA_WEBHOOK_TOKEN`；SQL seed 和 Trigger snapshot 均不保存值。
 2. 启动 `api-server`、`rabbitmq`、`agent-worker`、`webhook-worker` 和固定 Delivery 所需配置。
 3. 管理员在 `/admin/webhooks` 创建草稿，完成 preview、validate 后再 publish。新 Trigger 会创建一个不可登录的 service account；需通过统一 RBAC 明确授予 Agent、project、工具和平台数据范围。
 4. 只有已启用 Trigger、已启用 service account、已发布 Trigger revision 和固定 Agent publication 同时有效时，公共 URL 才接受事件。
+
+如果 source Connector 或发布 binding 的 Bearer Secret 缺失、停用或无法解析，
+管理端将其显示为 `MISCONFIGURED`，入口返回通用不可用/认证失败响应且不会创建
+Inbox 事件。修复时重新绑定平台 Secret、重新验证并发布 Trigger，再执行渠道
+“测试配置”；不得生成临时 Token、使用空值或绕过认证。
 
 `202 Accepted` 只表示事件和 outbox 已在 PostgreSQL 中持久化，Agent 尚不一定执行完成。调用方不得因超时自行改写 event ID；重复发送相同稳定身份会返回同一个 event。
 
@@ -90,26 +98,8 @@ curl -i \
   http://127.0.0.1:8000/webhooks/v1/<public_id>
 ```
 
-旧 `/webhooks/grafana/alert` 仍委托同一 ingress service，响应带弃用提示；回退时可以短期恢复旧 Contact Point，但不能绕开受管 Trigger。
-
-## HMAC-SHA256 规范
-
-请求头默认使用：
-
-```text
-X-Webhook-Timestamp: Unix 秒
-X-Webhook-Nonce: 调用方生成的单次随机值
-X-Webhook-Signature: 十六进制小写 HMAC-SHA256
-```
-
-签名输入是原始字节，不能先解析再序列化：
-
-```text
-canonical = timestamp ASCII bytes + "." + exact raw request body bytes
-signature = hex(HMAC-SHA256(secret, canonical))
-```
-
-时间戳超出 Trigger 窗口、nonce 重复、secret 无法解析或签名不一致都会拒绝，且不会建立第二个 event/job。验证 HMAC 时必须让发送程序直接读取 fixture 字节；不要用会改变空白或换行的 JSON 格式化工具。
+当前只用于本地/Compose HTTP 功能验证，不实现 HMAC、timestamp、nonce 或 HTTPS，
+也不能表述为公网生产安全。生产网络安全边界需在后续独立任务中实现。
 
 ## 通用 JSON Trigger
 
@@ -122,7 +112,7 @@ signature = hex(HMAC-SHA256(secret, canonical))
 - `webhook_event` 是 Inbox 事实，`webhook_outbox` 是可靠发布事实；RabbitMQ 消息只有 `webhook_event_id` 和 `correlation_id`。
 - publisher confirm 失败时 outbox 指数退避；超过 `WEBHOOK_OUTBOX_MAX_ATTEMPTS` 后进入 `dead` 并在事件页可见。恢复 RabbitMQ 后，先处理配置或连接问题，再将经审核的 dead 记录重新置为 pending。
 - dispatcher 重投递先检查 event 是否已有 job；Delivery 失败只重试投递，不重新运行 Agent。
-- HMAC nonce 按到期时间清理；无 job 的 rejected/ignored/dispatch-failed 事件按 `WEBHOOK_EVENT_RETENTION_DAYS` 清理，已有 job/audit/delivery 证据不级联删除。
+- 无 job 的 rejected/ignored/dispatch-failed 事件按 `WEBHOOK_EVENT_RETENTION_DAYS` 清理，已有 job/audit/delivery 证据不级联删除。
 - 安全负路径只记录 public ID hash、payload hash、大小、error code 和远端地址 hash。普通日志、数据库和队列不得出现原始 Authorization、签名、完整 endpoint 或 payload 正文。
 - Trigger 列表返回最近事件状态及累计 accepted/rejected/failed 计数，作为第一版无额外 Prometheus 依赖的运维指标；事件详情和结构化日志用于继续下钻。
 

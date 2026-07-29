@@ -12,13 +12,12 @@
 
 ```bash
 DATABASE_DSN=postgresql://...
-APP_CONFIG_MASTER_KEY=...
+APP_CONFIG_MASTER_KEY_FILE=/absolute/path/to/app-config-master-key
 APP_ENV=local
-APP_STARTUP_MIGRATE=true
 SEED_LOCAL_CONFIG=false
 ```
 
-`APP_CONFIG_MASTER_KEY` 用于 encrypted DB secret provider。它不能存到同一个数据库里，否则服务无法在连接数据库前解密配置。
+`APP_CONFIG_MASTER_KEY_FILE` 指向仓库外的只读固定 Master Key 文件。Key 本体不能放入环境变量或同一个数据库，否则服务无法安全完成 bootstrap 解密。
 
 ## Web 输入密钥流程
 

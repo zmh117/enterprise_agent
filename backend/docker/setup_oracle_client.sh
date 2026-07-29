@@ -1,28 +1,28 @@
 #!/usr/bin/env bash
-# Install Oracle Instant Client into the image when vendor files are present.
-# Skip apt entirely when Instant Client is absent (common local/dev path).
+# Install only an approved 64-bit Oracle Instant Client 19c.
+# Unrelated or unsupported archives are ignored and Oracle remains unavailable.
 set -euo pipefail
 
 DEBIAN_MIRROR="${DEBIAN_MIRROR:-https://mirrors.aliyun.com/debian}"
 DEBIAN_SECURITY_MIRROR="${DEBIAN_SECURITY_MIRROR:-https://mirrors.aliyun.com/debian-security}"
 VENDOR_DIR="${ORACLE_VENDOR_DIR:-/tmp/oracle-vendor}"
 INSTALL_DIR="${ORACLE_CLIENT_LIB_DIR:-/opt/oracle/instantclient}"
+VERIFIER="${ORACLE_CLIENT_VERIFIER:-/tmp/verify_oracle_client.py}"
 
-has_libs=0
-has_zip=0
-if [[ -d "${VENDOR_DIR}/instantclient" ]] \
-  && find "${VENDOR_DIR}/instantclient" -maxdepth 1 \( -name '*.so*' -o -name 'libclntsh*' \) | grep -q .; then
-  has_libs=1
-fi
-if compgen -G "${VENDOR_DIR}/instantclient*.zip" >/dev/null; then
-  has_zip=1
-fi
+client_library="$(find "${VENDOR_DIR}" -type f -name 'libclntsh.so.19*' -print -quit 2>/dev/null || true)"
+client_zip=""
+while IFS= read -r archive; do
+  if "${VERIFIER}" --find-in-archive "${archive}" >/dev/null; then
+    client_zip="${archive}"
+    break
+  fi
+done < <(find "${VENDOR_DIR}" -maxdepth 2 -type f -name '*.zip' -print 2>/dev/null)
 
 mkdir -p "${INSTALL_DIR}"
 echo "${INSTALL_DIR}" >/etc/ld.so.conf.d/oracle-instantclient.conf
 
-if [[ "${has_libs}" -eq 0 && "${has_zip}" -eq 0 ]]; then
-  echo "Oracle Instant Client not found under ${VENDOR_DIR}; skipping apt and thick-mode setup"
+if [[ -z "${client_library}" && -z "${client_zip}" ]]; then
+  echo "Approved Oracle Instant Client 19c not found; Oracle remains blocked"
   rm -rf "${VENDOR_DIR}"
   exit 0
 fi
@@ -60,14 +60,18 @@ fi
 apt_retry apt-get install -y --no-install-recommends unzip ca-certificates "${libaio_pkg}"
 rm -rf /var/lib/apt/lists/*
 
-if [[ "${has_libs}" -eq 1 ]]; then
-  cp -a "${VENDOR_DIR}/instantclient/." "${INSTALL_DIR}/"
+if [[ -n "${client_library}" ]]; then
+  client_dir="$(dirname "${client_library}")"
 else
   mkdir -p /tmp/oracle-unzip
-  unzip -q "${VENDOR_DIR}"/instantclient*.zip -d /tmp/oracle-unzip
-  client_dir="$(find /tmp/oracle-unzip -maxdepth 1 -type d -name 'instantclient*' | head -n 1)"
-  cp -a "${client_dir}/." "${INSTALL_DIR}/"
+  unzip -q "${client_zip}" -d /tmp/oracle-unzip
+  client_library="$(find /tmp/oracle-unzip -type f -name 'libclntsh.so.19*' -print -quit)"
+  client_dir="$(dirname "${client_library}")"
 fi
+
+"${VERIFIER}" "${client_library}"
+cp -a "${client_dir}/." "${INSTALL_DIR}/"
+"${VERIFIER}" "$(find "${INSTALL_DIR}" -maxdepth 1 -type f -name 'libclntsh.so.19*' -print -quit)"
 
 rm -rf "${VENDOR_DIR}" /tmp/oracle-unzip
 ldconfig || true

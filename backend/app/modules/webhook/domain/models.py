@@ -16,7 +16,6 @@ class TriggerSchema(StrEnum):
 
 class AuthenticationType(StrEnum):
     BEARER_V1 = "bearer_v1"
-    HMAC_SHA256_V1 = "hmac_sha256_v1"
 
 
 class WebhookEventStatus(StrEnum):
@@ -39,8 +38,6 @@ WEBHOOK_ERROR_CODES = frozenset(
         "webhook_payload_invalid",
         "webhook_auth_required",
         "webhook_auth_failed",
-        "webhook_signature_expired",
-        "webhook_replay_detected",
         "webhook_rate_limited",
         "webhook_mapping_failed",
         "webhook_scope_denied",
@@ -57,7 +54,7 @@ ROUTING_FIELDS = ("project_code", "environment", "base", "workshop", "service")
 PUBLIC_ID_RE = re.compile(r"^wh_[A-Za-z0-9_-]{32,96}$")
 CODE_RE = re.compile(r"^[a-z][a-z0-9-]{2,63}$")
 SERVICE_CODE_RE = re.compile(r"^[A-Za-z0-9_.:-]{0,128}$")
-SECRET_REF_PREFIXES = ("env:", "secret://", "vault:", "kms:")
+SECRET_REF_PREFIXES = ("secret://platform/",)
 ALLOWED_CONFIG_KEYS = frozenset(
     {
         "schema_version",
@@ -102,16 +99,6 @@ def normalize_config(config: dict[str, Any]) -> dict[str, Any]:
         "authentication": {
             "type": str(authentication.get("type") or ""),
             "secret_ref": str(authentication.get("secret_ref") or ""),
-            "timestamp_header": str(
-                authentication.get("timestamp_header") or "x-webhook-timestamp"
-            ).lower(),
-            "nonce_header": str(
-                authentication.get("nonce_header") or "x-webhook-nonce"
-            ).lower(),
-            "signature_header": str(
-                authentication.get("signature_header") or "x-webhook-signature"
-            ).lower(),
-            "window_seconds": int(authentication.get("window_seconds") or 300),
         },
         "mapping": {
             "variables": {
@@ -151,6 +138,15 @@ def normalize_config(config: dict[str, Any]) -> dict[str, Any]:
             "max_alerts": int(limits.get("max_alerts") or 20),
         },
     }
+
+
+def is_strong_bearer_token(value: str) -> bool:
+    encoded = value.encode("utf-8")
+    return (
+        32 <= len(encoded) <= 4096
+        and value == value.strip()
+        and all(33 <= ord(character) <= 126 for character in value)
+    )
 
 
 def config_hash(config: dict[str, Any]) -> str:

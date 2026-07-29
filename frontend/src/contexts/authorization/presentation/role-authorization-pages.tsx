@@ -1219,9 +1219,6 @@ function AuthorizationPreviewPanel() {
             <p className="mt-2 text-xs text-muted-foreground">
               来源角色：
               {mutation.data.decision.source_role_codes.join("、") || "无"}
-              {mutation.data.decision.legacy_compatible
-                ? " · 旧授权兼容模式"
-                : ""}
             </p>
           </div>
         ) : null}
@@ -1398,15 +1395,11 @@ function toLocalDateTime(value: string) {
 function decisionMessage(reason: string) {
   const messages: Record<string, string> = {
     application_role_allow: "用户通过有效角色获得该业务应用权限。",
-    legacy_compatible: "当前由旧授权兼容链路允许，建议迁移到业务角色。",
     no_application_role: "用户未获得该业务应用的使用权限。",
     application_capability_safety_ceiling:
       "所选能力超出业务应用和只读工具安全上限，角色不能授予。",
     application_capability_denied: "角色未授予所选业务能力。",
     application_scope_denied: "角色未授予所选数据范围。",
-    explicit_application_deny: "高级显式拒绝覆盖了角色允许。",
-    explicit_capability_deny: "高级能力拒绝覆盖了角色允许。",
-    explicit_scope_deny: "高级数据范围拒绝覆盖了角色允许。",
     user_disabled: "用户已停用。",
     application_disabled: "业务应用已停用。",
   }

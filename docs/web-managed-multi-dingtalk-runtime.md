@@ -51,8 +51,16 @@ Web 保存 Connector 和 Platform Secret
 - `CONNECTED`：WebSocket 已连接，但尚未确认注册，不等于可用。
 - `STARTING` / `RECONNECTING`：正在连接或自动重连。
 - `AUTH_FAILED`：该 Connector 凭据失败，不影响其他 Client。
+- `MISCONFIGURED`：必需凭据缺失、被停用或无法解析。控制面保留 Connector
+  与历史，但不向 Runtime 下发该 Connector，也拒绝其延迟到达的入站消息。
 - `STALE`：控制面长时间未收到 Runtime 心跳。
 - `STOPPED`：管理员停用或 Runtime 未加载。
+
+出现 `MISCONFIGURED` 时，在渠道编辑页重新填写 Client Secret 并保存，系统会
+轮换或迁移到平台凭据引用。随后执行“测试配置”；该测试只确认已保存引用可以
+安全解析，不会向钉钉发起网络请求。测试通过后 Runtime 会在下一次 reconcile
+重新加载该 Connector；实际可用性仍以 `READY` 为准。一个 Connector
+配置异常不得阻断其他 Connector 的配置下发。
 
 ## 回滚
 

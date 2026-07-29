@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import re
 from typing import Any
 
@@ -9,6 +10,7 @@ from app.modules.audit.application.audit_service import AuditService
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.identity.application.authorization import AuthorizationEvaluator
 from app.modules.identity.infrastructure import IdentityRepository
+from app.modules.platform_config.application.validation import validate_secret_ref
 from app.modules.webhook.application.mapping import WebhookMapper, validate_pointer
 from app.modules.webhook.domain.models import (
     AuthenticationType,
@@ -20,9 +22,11 @@ from app.modules.webhook.domain.models import (
     TriggerSchema,
     config_hash,
     ensure_no_secret_values,
+    is_strong_bearer_token,
     normalize_config,
 )
 from app.modules.webhook.infrastructure import WebhookTriggerRepository
+from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import NonRetryableExecutionError
 
 
@@ -85,15 +89,71 @@ class TriggerValidator:
 
         auth = config.get("authentication") or {}
         auth_type = str(auth.get("type") or "")
-        if auth_type not in {item.value for item in AuthenticationType}:
-            errors.append({"field": "authentication.type", "message": "不支持此身份验证类型"})
+        if auth_type != AuthenticationType.BEARER_V1.value:
+            errors.append(
+                {
+                    "field": "authentication.type",
+                    "message": "外部 Webhook 只支持标准 Bearer Token",
+                }
+            )
         secret_ref = str(auth.get("secret_ref") or "")
         if not secret_ref.startswith(SECRET_REF_PREFIXES):
-            errors.append({"field": "authentication.secret_ref", "message": "必须选择受管凭据引用"})
-        elif not self.connector_registry.resolve_reference(secret_ref):
-            errors.append({"field": "authentication.secret_ref", "message": "无法解析凭据引用"})
-        if not 30 <= int(auth.get("window_seconds") or 0) <= 900:
-            errors.append({"field": "authentication.window_seconds", "message": "必须在 30 到 900 之间"})
+            if secret_ref.startswith(("vault:", "kms:")):
+                message = "Provider 尚未实现"
+            elif secret_ref.startswith("env:"):
+                message = "env 凭据引用必须先导入凭据中心"
+            else:
+                message = "必须选择凭据中心 Secret"
+            errors.append(
+                {
+                    "field": "authentication.secret_ref",
+                    "message": message,
+                }
+            )
+        else:
+            try:
+                secret = self.connector_registry.resolve_reference(secret_ref)
+            except Exception:
+                secret = ""
+            if not secret:
+                errors.append(
+                    {
+                        "field": "authentication.secret_ref",
+                        "message": "无法解析凭据引用",
+                    }
+                )
+            elif not is_strong_bearer_token(secret):
+                errors.append(
+                    {
+                        "field": "authentication.secret_ref",
+                        "message": "Bearer Token 必须至少包含 32 个高熵字符",
+                    }
+                )
+            else:
+                for binding in self.repository.active_authentication_bindings(
+                    exclude_trigger_id=str(definition["id"])
+                ):
+                    existing_ref = str(binding["secret_ref"])
+                    try:
+                        existing = self.connector_registry.resolve_reference(
+                            existing_ref
+                        )
+                    except Exception:
+                        existing = ""
+                    if existing_ref == secret_ref or (
+                        existing
+                        and hmac.compare_digest(
+                            secret.encode("utf-8"),
+                            existing.encode("utf-8"),
+                        )
+                    ):
+                        errors.append(
+                            {
+                                "field": "authentication.secret_ref",
+                                "message": "每个 Webhook binding 必须使用唯一 Bearer Token",
+                            }
+                        )
+                        break
 
         mapping = config.get("mapping") or {}
         variables = mapping.get("variables") or {}
@@ -284,6 +344,7 @@ class WebhookTriggerService:
             "publications": self.repository.list_publications(str(definition["id"])),
         }
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def create(
         self,
         *,
@@ -303,7 +364,7 @@ class WebhookTriggerService:
                 field_errors=[{"field": "code", "message": "只能使用小写字母、数字和连字符"}],
             )
         self.validator.connector_registry.require_ingress(connector_id)
-        with self.repository.database.transaction():
+        with self.repository.database.unit_of_work():
             service = self.identity_repository.create_user(
                 username=f"svc-webhook-{code}",
                 display_name=f"Webhook: {name}",
@@ -336,6 +397,7 @@ class WebhookTriggerService:
         )
         return {"definition": definition, "draft": draft, "service_account": service}
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def save_draft(
         self,
         *,
@@ -363,6 +425,7 @@ class WebhookTriggerService:
         )
         return revision
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def validate_revision(
         self, *, actor_id: str, code: str, revision_id: str
     ) -> dict[str, Any]:
@@ -408,6 +471,7 @@ class WebhookTriggerService:
             "side_effects": False,
         }
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def publish(
         self, *, actor_id: str, code: str, revision_id: str
     ) -> dict[str, Any]:
@@ -438,7 +502,7 @@ class WebhookTriggerService:
                 "read_only_tools": summary["effective_read_only_tools"],
             },
         }
-        with self.repository.database.transaction():
+        with self.repository.database.unit_of_work():
             self.repository.set_validation(revision_id, errors=[], summary=summary)
             publication = self.repository.create_publication(
                 trigger_id=str(definition["id"]),
@@ -458,6 +522,7 @@ class WebhookTriggerService:
         )
         return publication
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def update_definition(
         self,
         *,
@@ -487,6 +552,7 @@ class WebhookTriggerService:
         )
         return updated
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def rollback(
         self,
         *,
@@ -511,6 +577,7 @@ class WebhookTriggerService:
         )
         return publication
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def rotate_public_id(
         self, *, actor_id: str, code: str, expected_revision: int, confirm: bool
     ) -> dict[str, Any]:
@@ -532,6 +599,7 @@ class WebhookTriggerService:
         )
         return updated
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def set_service_account_enabled(
         self,
         *,
@@ -555,7 +623,25 @@ class WebhookTriggerService:
 
     def _normalize(self, config: dict[str, Any]) -> dict[str, Any]:
         ensure_no_secret_values(config)
-        return normalize_config(config)
+        normalized = normalize_config(config)
+        secret_ref = str(
+            (normalized.get("authentication") or {}).get("secret_ref") or ""
+        )
+        try:
+            validate_secret_ref(secret_ref)
+        except NonRetryableExecutionError as exc:
+            raise NonRetryableExecutionError(
+                "Invalid Webhook secret reference",
+                safe_message=exc.safe_message,
+                error_code="validation_failed",
+                field_errors=[
+                    {
+                        "field": "authentication.secret_ref",
+                        "message": exc.safe_message,
+                    }
+                ],
+            ) from None
+        return normalized
 
     def _assert_revision_owner(
         self, definition: dict[str, Any], revision: dict[str, Any]

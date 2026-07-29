@@ -7,7 +7,7 @@
 ```env
 FEATURE_REAL_CLAUDE=false
 FEATURE_REAL_INTERNAL_TOOLS=false
-APP_CONFIG_MASTER_KEY=local-dev-config-master-key
+APP_CONFIG_MASTER_KEY_FILE=/absolute/path/to/app-config-master-key
 ```
 
 这能验证配置链路和 worker 消费链路，同时避免外部模型数据出境。
@@ -15,7 +15,7 @@ APP_CONFIG_MASTER_KEY=local-dev-config-master-key
 ## 1. 启动基础服务
 
 ```bash
-APP_CONFIG_MASTER_KEY=local-dev-config-master-key \
+APP_CONFIG_MASTER_KEY_FILE=/absolute/path/to/app-config-master-key \
 FEATURE_REAL_CLAUDE=false \
 FEATURE_REAL_INTERNAL_TOOLS=false \
 docker compose up -d --build postgres rabbitmq api-server agent-worker
@@ -36,7 +36,7 @@ api-server    running
 agent-worker  running
 ```
 
-`APP_CONFIG_MASTER_KEY` 是 bootstrap-only 配置，用于解密 `secret://platform/<code>`。它不能存到同一个 PostgreSQL 配置库里。
+`APP_CONFIG_MASTER_KEY_FILE` 是 bootstrap-only 配置，指向仓库外的固定只读文件；文件内容用于解密 `secret://platform/<code>`，不能存到同一个 PostgreSQL 配置库或环境变量中。
 
 ## 2. 检查 API Ready
 
@@ -135,7 +135,7 @@ snapshot.config_hash 存在
 第一版 runtime config 是启动时 overlay，不是热更新。写入 DB 后必须重启相关服务：
 
 ```bash
-APP_CONFIG_MASTER_KEY=local-dev-config-master-key \
+APP_CONFIG_MASTER_KEY_FILE=/absolute/path/to/app-config-master-key \
 docker compose restart api-server agent-worker
 ```
 
@@ -226,7 +226,7 @@ Anthropic/DeepSeek token
 
 ## 9. 一键 Smoke 脚本
 
-脚本会使用 `docker compose` 当前解析到的 `APP_CONFIG_MASTER_KEY`，不会覆盖 `.env`。同一个 Postgres 数据卷内不要随意切换 `APP_CONFIG_MASTER_KEY`；如果切换了，需要重新 rotate Web-managed secrets，否则会出现：
+脚本会使用 `docker compose` 当前解析到的 `APP_CONFIG_MASTER_KEY_FILE`，不会覆盖 `.env`。同一个 Postgres 数据卷必须使用匹配的固定 Master Key 文件；误换文件会导致已有 Web-managed secrets 无法解密：
 
 ```text
 Platform secret decrypt failed
@@ -263,10 +263,10 @@ REAL_CLAUDE=true scripts/smoke_db_backed_config.sh
 
 ### secret 创建失败
 
-检查 `APP_CONFIG_MASTER_KEY`：
+检查 Master Key 文件挂载与权限（不得输出文件内容）：
 
 ```bash
-docker compose exec api-server env | grep APP_CONFIG_MASTER_KEY
+docker compose exec api-server sh -c 'test -r /run/secrets/app_config_master_key'
 docker compose logs --tail=100 api-server
 ```
 
@@ -285,7 +285,7 @@ curl --noproxy '*' -s \
 secret_ref 指向不存在的 secret
 secret 已禁用
 value 类型错误
-APP_CONFIG_MASTER_KEY 不一致
+Master Key 文件与现有密文不匹配
 ```
 
 ### job 一直 PENDING

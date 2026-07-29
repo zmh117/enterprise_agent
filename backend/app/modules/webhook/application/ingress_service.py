@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Mapping
 
 from app.modules.audit.application.audit_service import AuditService
+from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.webhook.application.authentication import WebhookAuthenticator
 from app.modules.webhook.application.mapping import WebhookMapper
 from app.modules.webhook.domain.models import PUBLIC_ID_RE, WebhookEventStatus, config_hash
@@ -34,6 +35,7 @@ class WebhookIngressService:
         trigger_repository: WebhookTriggerRepository,
         event_repository: WebhookEventRepository,
         authenticator: WebhookAuthenticator,
+        connector_registry: ConnectorRegistry,
         mapper: WebhookMapper,
         audit_service: AuditService,
         settings: WebhookSettings,
@@ -41,6 +43,7 @@ class WebhookIngressService:
         self.trigger_repository = trigger_repository
         self.event_repository = event_repository
         self.authenticator = authenticator
+        self.connector_registry = connector_registry
         self.mapper = mapper
         self.audit_service = audit_service
         self.settings = settings
@@ -80,6 +83,14 @@ class WebhookIngressService:
                 error_code="webhook_disabled",
             )
         try:
+            self.connector_registry.require_ingress(str(definition["connector_id"]))
+        except Exception as exc:
+            raise PermissionDenied(
+                "Webhook source connector is unavailable",
+                safe_message="Webhook 端点不可用",
+                error_code="webhook_disabled",
+            ) from exc
+        try:
             publication = self.trigger_repository.current_publication(str(definition["id"]))
         except NotFound as exc:
             raise PermissionDenied(
@@ -109,10 +120,8 @@ class WebhookIngressService:
         payload_hash = hashlib.sha256(raw_body).hexdigest()
         try:
             auth_result = self.authenticator.authenticate(
-                trigger_id=str(definition["id"]),
                 config=snapshot,
                 headers=headers,
-                raw_body=raw_body,
             )
         except PermissionDenied as exc:
             self._record_rejection(
@@ -212,7 +221,7 @@ class WebhookIngressService:
             import time
 
             dedup_key = f"{dedup_key}:window:{int(time.time()) // cooldown_seconds}"
-        with self.event_repository.database.transaction():
+        with self.event_repository.database.unit_of_work():
             event, created = self.event_repository.receive(
                 trigger_id=str(definition["id"]),
                 trigger_publication_id=str(publication["id"]),

@@ -8,7 +8,12 @@ from fastapi.testclient import TestClient
 from app.bootstrap import build_test_container
 from app.main import create_app
 from app.shared.config import DingTalkSettings, Settings
-from backend.tests.helpers import container, dingtalk_payload, dingtalk_sign
+from backend.tests.helpers import (
+    container,
+    dingtalk_payload,
+    dingtalk_sign,
+    publish_pending_agent_jobs,
+)
 
 
 class DingTalkIngressTests(unittest.TestCase):
@@ -37,6 +42,7 @@ class DingTalkIngressTests(unittest.TestCase):
         timestamp = "1710000000000"
         settings = Settings(
             database_dsn="sqlite:///:memory:",
+            app_config_master_key="test-only-master-key",
             dingtalk=DingTalkSettings(secret="test-secret", http_webhook_enabled=True),
         )
         built = []
@@ -72,6 +78,7 @@ class DingTalkIngressTests(unittest.TestCase):
         self.assertTrue(result["accepted"])
         self.assertEqual("received", result["status"])
         self.assertEqual(1, c.agent_repository.count_rows("agent_job"))
+        publish_pending_agent_jobs(c)
         self.assertEqual(1, len(c.message_bus.jobs))
         job = c.agent_repository.get_job(str(result["job_id"]))
         self.assertEqual("dingtalk_enterprise_robot", job.reply_route["type"])

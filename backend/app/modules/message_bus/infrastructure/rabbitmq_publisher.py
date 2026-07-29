@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 
-from app.shared.config import QueueSettings
 from app.modules.message_bus.infrastructure.rabbitmq_topology import (
     declare_agent_job_topology,
     declare_channel_event_topology,
 )
+from app.shared.config import QueueSettings
+from app.shared.database import assert_external_io_allowed
 
 
 class RabbitMQPublisher:
@@ -14,32 +15,27 @@ class RabbitMQPublisher:
         self.rabbitmq_url = rabbitmq_url
         self.queue = queue
 
-    def publish_agent_job(self, job_id: str, correlation_id: str) -> None:
+    def publish_agent_job(
+        self,
+        event_id: str,
+        job_id: str,
+        correlation_id: str,
+    ) -> None:
         self._publish_agent_message(
             self.queue.job_queue,
-            {"job_id": job_id, "correlation_id": correlation_id},
-        )
-
-    def publish_retry(self, job_id: str, correlation_id: str, delay_seconds: int) -> None:
-        self._publish_agent_message(
-            self.queue.retry_queue,
-            {"job_id": job_id, "correlation_id": correlation_id},
-            expiration_ms=max(delay_seconds, 1) * 1000,
-        )
-
-    def publish_dead_letter(self, job_id: str, correlation_id: str, reason: str) -> None:
-        self._publish_agent_message(
-            self.queue.dead_queue,
-            {"job_id": job_id, "correlation_id": correlation_id, "reason": reason},
+            {
+                "event_id": event_id,
+                "job_id": job_id,
+                "correlation_id": correlation_id,
+            },
         )
 
     def _publish_agent_message(
         self,
         queue_name: str,
         payload: dict[str, object],
-        *,
-        expiration_ms: int | None = None,
     ) -> None:
+        assert_external_io_allowed("rabbitmq.publish_agent_message")
         try:
             import pika
         except ModuleNotFoundError as exc:
@@ -49,14 +45,11 @@ class RabbitMQPublisher:
             channel = connection.channel()
             declare_agent_job_topology(channel, self.queue)
             channel.confirm_delivery()
-            properties_kwargs: dict[str, object] = {"delivery_mode": 2}
-            if expiration_ms is not None:
-                properties_kwargs["expiration"] = str(expiration_ms)
             confirmed = channel.basic_publish(
                 exchange="",
                 routing_key=queue_name,
                 body=json.dumps(payload).encode("utf-8"),
-                properties=pika.BasicProperties(**properties_kwargs),
+                properties=pika.BasicProperties(delivery_mode=2),
                 mandatory=True,
             )
             if confirmed is False:
@@ -125,6 +118,7 @@ class RabbitMQPublisher:
         )
 
     def _publish(self, queue_name: str, payload: dict[str, object]) -> None:
+        assert_external_io_allowed("rabbitmq.publish")
         try:
             import pika
         except ModuleNotFoundError as exc:
@@ -148,6 +142,7 @@ class RabbitMQPublisher:
     def _publish_attachment_retry(
         self, payload: dict[str, object], delay_seconds: int
     ) -> None:
+        assert_external_io_allowed("rabbitmq.publish_attachment_retry")
         try:
             import pika
         except ModuleNotFoundError as exc:
@@ -176,6 +171,7 @@ class RabbitMQPublisher:
             connection.close()
 
     def _publish_webhook(self, payload: dict[str, object]) -> None:
+        assert_external_io_allowed("rabbitmq.publish_webhook")
         try:
             import pika
         except ModuleNotFoundError as exc:
@@ -205,6 +201,7 @@ class RabbitMQPublisher:
             connection.close()
 
     def _publish_channel(self, payload: dict[str, object]) -> None:
+        assert_external_io_allowed("rabbitmq.publish_channel")
         try:
             import pika
         except ModuleNotFoundError as exc:

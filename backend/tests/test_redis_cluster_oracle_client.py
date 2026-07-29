@@ -35,6 +35,7 @@ from app.modules.internal_api_platform.infrastructure.db.oracle_client import (
     build_oracle_dsn,
     build_oracle_makedsn,
     ensure_oracle_client_initialized,
+    inspect_oracle_client,
     reset_oracle_client_state_for_tests,
 )
 from app.modules.internal_api_platform.infrastructure.redis_gateway import RealRedisGateway
@@ -197,6 +198,35 @@ class RedisClusterConfigTests(unittest.TestCase):
         redis_mod.Redis.assert_called_once()  # type: ignore[attr-defined]
         self.assertEqual(1, redis_mod.Redis.call_args.kwargs["db"])  # type: ignore[attr-defined]
 
+    def test_gateway_applies_controlled_tls_settings(self) -> None:
+        import sys
+        import types
+
+        binding = self._redis_binding(
+            RedisConnection(
+                host="redis.internal",
+                port=6380,
+                db=2,
+                username="reader",
+                password="pw",
+                tls_enabled=True,
+                tls_verify_certificate=True,
+            )
+        )
+        fake_client = MagicMock(name="Redis")
+        redis_mod = types.ModuleType("redis")
+        redis_mod.Redis = MagicMock(  # type: ignore[attr-defined]
+            return_value=fake_client
+        )
+        with patch.dict(sys.modules, {"redis": redis_mod}):
+            client = RealRedisGateway()._connect(binding)
+        self.assertIs(fake_client, client)
+        kwargs = redis_mod.Redis.call_args.kwargs  # type: ignore[attr-defined]
+        self.assertTrue(kwargs["ssl"])
+        self.assertEqual("required", kwargs["ssl_cert_reqs"])
+        self.assertTrue(kwargs["ssl_check_hostname"])
+        self.assertEqual("reader", kwargs["username"])
+
     def test_cluster_still_enforces_workshop_prefix(self) -> None:
         enforce_key_namespace("GL001:order:1", key_prefix="GL001:")
         with self.assertRaises(PolicyViolation):
@@ -213,7 +243,7 @@ class OracleCompatAndClientTests(unittest.TestCase):
     def tearDown(self) -> None:
         reset_oracle_client_state_for_tests()
 
-    def test_modern_oracle_uses_fetch_first(self) -> None:
+    def test_modern_legacy_flag_cannot_enable_oracle_12c_syntax(self) -> None:
         analyzed = analyze_readonly_query(
             "select * from GL001_EBR_order",
             engine=DatabaseEngine.ORACLE,
@@ -221,8 +251,8 @@ class OracleCompatAndClientTests(unittest.TestCase):
             table_prefix="gl001_ebr_",
             oracle_compat=OracleCompat.MODERN,
         )
-        self.assertIn("FETCH FIRST 10 ROWS ONLY", analyzed.sql)
-        self.assertNotIn("ROWNUM", analyzed.sql)
+        self.assertIn("ROWNUM <= 10", analyzed.sql)
+        self.assertNotIn("FETCH FIRST", analyzed.sql)
 
     def test_legacy_oracle_uses_rownum(self) -> None:
         analyzed = analyze_readonly_query(
@@ -274,15 +304,13 @@ class OracleCompatAndClientTests(unittest.TestCase):
             "dsn:{'service_name': 'ORCL'}",
             build_oracle_makedsn(fake, host="h", port=1521, database="ORCL", use_sid=False),
         )
-        self.assertEqual(
-            "(DESCRIPTION=...)",
+        with self.assertRaises(ResolutionError):
             build_oracle_dsn(
                 host="h",
                 port=1521,
                 database="ORCL",
                 connect_descriptor="(DESCRIPTION=...)",
-            ),
-        )
+            )
 
     def test_thick_required_without_client_fails(self) -> None:
         with patch(
@@ -295,13 +323,52 @@ class OracleCompatAndClientTests(unittest.TestCase):
             with self.assertRaises(ResolutionError):
                 assert_oracle_client_mode_ready(OracleClientMode.THICK)
 
-    def test_auto_allows_thin_when_no_client(self) -> None:
+    def test_auto_cannot_fall_back_to_thin_when_no_client(self) -> None:
         with patch(
             "app.modules.internal_api_platform.infrastructure.db.oracle_client.resolve_oracle_client_lib_dir",
             return_value="",
         ):
             reset_oracle_client_state_for_tests()
-            assert_oracle_client_mode_ready(OracleClientMode.AUTO)
+            with self.assertRaises(ResolutionError):
+                assert_oracle_client_mode_ready(OracleClientMode.AUTO)
+
+    def test_client_architecture_must_be_64_bit_19c_and_match_runtime(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            library = Path(tmp) / "libclntsh.so.19.1"
+            header = bytearray(20)
+            header[:4] = b"\x7fELF"
+            header[4] = 2
+            header[5] = 1
+            header[18:20] = (62).to_bytes(2, "little")
+            library.write_bytes(header)
+            with patch(
+                "app.modules.internal_api_platform.infrastructure.db.oracle_client.platform.machine",
+                return_value="x86_64",
+            ):
+                self.assertEqual(
+                    ("19c", "x86_64"),
+                    inspect_oracle_client(tmp),
+                )
+
+    def test_client_architecture_mismatch_fails_closed(self) -> None:
+        with TemporaryDirectory() as tmp:
+            library = Path(tmp) / "libclntsh.so.19.1"
+            header = bytearray(20)
+            header[:4] = b"\x7fELF"
+            header[4] = 2
+            header[5] = 1
+            header[18:20] = (62).to_bytes(2, "little")
+            library.write_bytes(header)
+            with (
+                patch(
+                    "app.modules.internal_api_platform.infrastructure.db.oracle_client.platform.machine",
+                    return_value="aarch64",
+                ),
+                self.assertRaises(ResolutionError),
+            ):
+                inspect_oracle_client(tmp)
 
     def test_normalize_oracle_database_config(self) -> None:
         normalized = normalize_oracle_database_config(
@@ -313,12 +380,12 @@ class OracleCompatAndClientTests(unittest.TestCase):
 
 
 class DatabaseConnectionDefaultsTests(unittest.TestCase):
-    def test_defaults_preserve_compat(self) -> None:
+    def test_defaults_enforce_oracle_11g_contract(self) -> None:
         db = DatabaseConnection(
             host="h", port=1521, database="ORCL", user="u", password="p"
         )
-        self.assertEqual(OracleClientMode.AUTO, db.oracle_client_mode)
-        self.assertEqual(OracleCompat.MODERN, db.oracle_compat)
+        self.assertEqual(OracleClientMode.THICK, db.oracle_client_mode)
+        self.assertEqual(OracleCompat.LEGACY, db.oracle_compat)
         self.assertFalse(db.use_sid)
 
 

@@ -6,6 +6,7 @@ import {
   PlusIcon,
   RefreshCwIcon,
   RotateCwIcon,
+  ShieldCheckIcon,
   Trash2Icon,
   WebhookIcon,
 } from "lucide-react"
@@ -30,6 +31,7 @@ import {
   useManagedChannels,
   useRestartManagedChannel,
   useSetManagedChannelEnabled,
+  useTestManagedChannel,
   useUpdateDingTalkChannel,
   useWebhookConnectorOptions,
 } from "@/contexts/applications/application/managed-channel-queries"
@@ -151,8 +153,10 @@ function ManagedChannelCard({
 }) {
   const setEnabled = useSetManagedChannelEnabled()
   const restart = useRestartManagedChannel()
+  const testConfiguration = useTestManagedChannel()
   const remove = useDeleteManagedChannel()
-  const mutationError = setEnabled.error ?? restart.error ?? remove.error
+  const mutationError =
+    setEnabled.error ?? restart.error ?? testConfiguration.error ?? remove.error
   const status =
     channel.runtime?.status ?? (channel.enabled ? "READY" : "STOPPED")
   const dingTalk = channel.kind === "DINGTALK_APP_ROBOT"
@@ -217,6 +221,27 @@ function ManagedChannelCard({
             danger={Boolean(channel.runtime?.last_error)}
           />
         </dl>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={testConfiguration.isPending}
+            onClick={() => testConfiguration.mutate(channel.id)}
+          >
+            {testConfiguration.isPending ? (
+              <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
+            ) : (
+              <ShieldCheckIcon aria-hidden="true" />
+            )}
+            测试配置
+          </Button>
+          {testConfiguration.data ? (
+            <span className="text-xs text-emerald-700">
+              {testConfiguration.data.summary}
+            </span>
+          ) : null}
+        </div>
         {dingTalk ? (
           <>
             <div className="flex flex-wrap gap-2">
@@ -370,6 +395,9 @@ function DingTalkEditorForm({
         <SheetTitle>{channel ? "编辑钉钉机器人" : "新建钉钉机器人"}</SheetTitle>
         <SheetDescription>
           Client Secret 保存后不再显示；编辑时留空表示保持原凭据。
+          {channel?.runtime?.status === "MISCONFIGURED"
+            ? " 当前凭据不可用，请填写新 Secret 保存，再执行配置测试。"
+            : ""}
         </SheetDescription>
       </SheetHeader>
       <div className="space-y-4 px-4">
@@ -638,7 +666,9 @@ function WebhookEditor({
 
 function RuntimeBadge({ status }: { status: string }) {
   const ready = status === "READY"
-  const bad = ["AUTH_FAILED", "ERROR", "STALE"].includes(status)
+  const bad = ["AUTH_FAILED", "ERROR", "MISCONFIGURED", "STALE"].includes(
+    status
+  )
   return (
     <Badge variant={bad ? "destructive" : ready ? "default" : "secondary"}>
       {runtimeLabel(status)}
@@ -739,6 +769,7 @@ function runtimeLabel(status: string) {
     RECONNECTING: "重连中",
     AUTH_FAILED: "认证失败",
     ERROR: "运行异常",
+    MISCONFIGURED: "配置异常",
     STALE: "状态过期",
     STOPPED: "已停止",
   }

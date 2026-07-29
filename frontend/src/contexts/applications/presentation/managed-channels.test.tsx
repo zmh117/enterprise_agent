@@ -111,6 +111,57 @@ describe("Managed channels", () => {
     })
   })
 
+  it("shows MISCONFIGURED safely and tests only the saved credential reference", async () => {
+    const misconfigured = {
+      ...dingTalkChannel,
+      runtime: {
+        ...dingTalkChannel.runtime,
+        status: "MISCONFIGURED",
+        last_error: "连接器凭据缺失、已停用或无法解析，请重新绑定后测试",
+      },
+    }
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input)
+      if (
+        url.endsWith("/api/admin/managed-channels/webhook-connector-options")
+      ) {
+        return response({ items: [] })
+      }
+      if (
+        url.endsWith(
+          "/api/admin/managed-channels/connector-dingtalk-a/test"
+        )
+      ) {
+        return response({
+          result: {
+            status: "READY",
+            summary: "已保存的连接器凭据引用可以安全解析；未执行外部网络请求",
+            tested_at: "2026-07-28T18:00:00+08:00",
+          },
+        })
+      }
+      return response({ items: [misconfigured] })
+    })
+
+    renderWithQuery(<ManagedChannelsPanel />)
+    expect(await screen.findByText("配置异常")).toBeInTheDocument()
+    expect(
+      screen.getByText("连接器凭据缺失、已停用或无法解析，请重新绑定后测试")
+    ).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: "测试配置" }))
+    expect(
+      await screen.findByText(
+        "已保存的连接器凭据引用可以安全解析；未执行外部网络请求"
+      )
+    ).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }))
+    expect(
+      await screen.findByText(/当前凭据不可用，请填写新 Secret 保存/)
+    ).toBeInTheDocument()
+  })
+
   it("filters trigger choices through the eligible channel endpoint", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input)

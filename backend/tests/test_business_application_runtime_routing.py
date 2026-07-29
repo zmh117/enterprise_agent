@@ -25,9 +25,20 @@ from app.modules.channel.domain.channel_event import (
     RoutingContext,
 )
 from app.modules.agent.application.conversation_context import ConversationContextService
-from app.modules.job.application.create_agent_job_service import _session_key
+from app.modules.job.application.create_agent_job_service import (
+    _execution_scope_hash,
+    _session_key,
+)
 from app.modules.job.application.job_status_service import JobStatusService
+from app.modules.platform_config.infrastructure.repository import (
+    PlatformConfigRepository,
+)
 from app.shared.exceptions import NonRetryableExecutionError
+from backend.tests.helpers import (
+    dispatch_pending_deliveries,
+    enqueue_job_result_for_delivery,
+    publish_pending_agent_jobs,
+)
 from backend.tests.test_business_application_control_plane import (
     control_plane_settings,
     draft_payload,
@@ -131,6 +142,39 @@ def _publish(
         actor_id="user_local_admin",
         code=code,
         revision_id=str(revision["id"]),
+    )
+    platform_config = PlatformConfigRepository(container.database)
+    sanjiu = platform_config.get_environment_by_code("sanjiu")
+    if sanjiu is None:
+        sanjiu = platform_config.upsert_environment(
+            code="sanjiu",
+            display_name="三九测试环境",
+        )
+    role = container.authorization_center_service.create_role(
+        actor_id="user_local_admin",
+        code=f"runtime-{code}",
+        name=f"{code} runtime role",
+        description="Strict runtime routing test authorization",
+        purpose_tags=["业务运行"],
+    )["role"]
+    container.authorization_center_service.replace_business_access(
+        actor_id="user_local_admin",
+        role_id=str(role["id"]),
+        expected_revision=1,
+        applications=[
+            {
+                "application_id": application["id"],
+                "capability_codes": [],
+                "scopes": [{"environment_id": sanjiu["id"]}],
+            }
+        ],
+        confirmed=True,
+        reason="自动化严格授权测试",
+    )
+    container.identity_repository.assign_role(
+        user_id="user_local_admin",
+        role_id=str(role["id"]),
+        assigned_by="user_local_admin",
     )
     return application, revision, publication
 
@@ -401,6 +445,8 @@ def test_matched_job_pins_provenance_and_duplicate_event_is_idempotent() -> None
     )
     assert first.job_id == repeated.job_id
     assert container.agent_repository.count_rows("agent_job") == 1
+    assert not container.message_bus.jobs
+    publish_pending_agent_jobs(container)
     assert len(container.message_bus.jobs) == 1
     job = container.agent_repository.get_job(first.job_id)
     assert job.business_application_code == "provenance-route"
@@ -411,7 +457,7 @@ def test_matched_job_pins_provenance_and_duplicate_event_is_idempotent() -> None
     assert job.business_application_route_decision["resolution_outcome"] == "matched"
     assert "sessionWebhook" not in json.dumps(job.business_application_route_decision)
     queued = container.message_bus.jobs[0]
-    assert set(vars(queued)) == {"job_id", "correlation_id"}
+    assert set(vars(queued)) == {"event_id", "job_id", "correlation_id"}
 
 
 def test_activation_is_local_only_and_rejects_invalid_runtime_bindings() -> None:
@@ -480,7 +526,7 @@ def test_activation_is_local_only_and_rejects_invalid_runtime_bindings() -> None
     assert mismatch_error.value.field_errors[0]["reason_code"] == "delivery_connector_mismatch"
 
 
-def test_session_policy_is_application_scoped_and_publication_upgrade_does_not_split_session() -> (
+def test_session_policy_is_publication_scoped_and_publication_upgrade_splits_session() -> (
     None
 ):
     container = _container()
@@ -539,13 +585,18 @@ def test_session_policy_is_application_scoped_and_publication_upgrade_does_not_s
     )
     first_job = container.agent_repository.get_job(first.job_id)
     second_job = container.agent_repository.get_job(second.job_id)
-    assert first_job.session_id == second_job.session_id
+    assert first_job.session_id != second_job.session_id
     assert first_job.business_application_publication_id == publication_v1["id"]
     assert second_job.business_application_publication_id == publication_v2["id"]
-    session = container.agent_repository.get_session(second_job.session_id)
-    assert session.business_application_id == application["id"]
-    assert session.recent_message_limit == 1
-    assert session.session_policy["retention_days"] == 30
+    first_session = container.agent_repository.get_session(first_job.session_id)
+    second_session = container.agent_repository.get_session(second_job.session_id)
+    assert second_session.business_application_id == application["id"]
+    assert first_session.application_publication_id == publication_v1["id"]
+    assert second_session.application_publication_id == publication_v2["id"]
+    assert first_session.execution_scope_hash == second_session.execution_scope_hash
+    assert second_session.isolation_key_version == 2
+    assert second_session.recent_message_limit == 1
+    assert second_session.session_policy["retention_days"] == 30
 
 
 def test_event_fixed_agent_conflict_is_rejected_before_job_creation() -> None:
@@ -697,7 +748,8 @@ def test_same_bot_group_routes_are_split_by_conversation_and_reply_to_original_s
     status_service = JobStatusService(container.agent_repository)
     assert status_service.claim(first.job_id, "runtime-test-worker") is not None
     status_service.succeed(first.job_id, "group result")
-    container.result_delivery_service.deliver_job_result(first.job_id)
+    enqueue_job_result_for_delivery(container, first.job_id)
+    dispatch_pending_deliveries(container)
     assert len(adapter.routes) == 1
     assert adapter.routes[0].target["conversation_id"] == "group-a"
     assert adapter.routes[0].target["at_user_ids"] == ["local-user"]
@@ -790,6 +842,15 @@ def test_missing_group_conversation_id_is_rejected_without_route_guessing() -> N
 
 
 def test_session_key_modes_and_different_applications_are_isolated() -> None:
+    scope_hash = _execution_scope_hash(
+        {
+            "project_code": "default",
+            "environment": "local",
+            "base": "base-a",
+            "workshop": "workshop-a",
+            "service": "orders",
+        }
+    )
     common = {
         "source_channel": "dingding_stream",
         "connector_id": CONNECTOR_ID,
@@ -798,28 +859,77 @@ def test_session_key_modes_and_different_applications_are_isolated() -> None:
         "conversation_id": "group-a",
         "requester_id": "user-a",
         "bot_identity": "diagnostic-bot",
+        "business_application_id": "application-a",
+        "business_application_publication_id": "publication-a-v1",
+        "execution_scope_hash": scope_hash,
+        "conversation_mode": "channel",
     }
     channel = _session_key(
         **common,
-        business_application_id="application-a",
-        conversation_mode="channel",
     )
-    actor = _session_key(
-        **common,
-        business_application_id="application-a",
-        conversation_mode="actor",
+    same_channel = _session_key(**common)
+    same_group_other_requester = _session_key(
+        **{
+            **common,
+            "requester_id": "user-b",
+        }
     )
-    application = _session_key(
-        **common,
-        business_application_id="application-a",
-        conversation_mode="application",
+    other_publication = _session_key(
+        **{
+            **common,
+            "business_application_publication_id": "publication-a-v2",
+        },
+    )
+    other_scope = _session_key(
+        **{
+            **common,
+            "execution_scope_hash": _execution_scope_hash(
+                {
+                    "project_code": "default",
+                    "environment": "local",
+                    "base": "base-b",
+                    "workshop": "workshop-a",
+                    "service": "orders",
+                }
+            ),
+        },
     )
     other_application = _session_key(
-        **common,
-        business_application_id="application-b",
-        conversation_mode="channel",
+        **{
+            **common,
+            "business_application_id": "application-b",
+        },
     )
-    assert len({channel, actor, application, other_application}) == 4
+    direct_user_b = _session_key(
+        **{
+            **common,
+            "conversation_type": "direct",
+            "requester_id": "user-b",
+        }
+    )
+    direct_user_a = _session_key(
+        **{
+            **common,
+            "conversation_type": "direct",
+            "requester_id": "user-a",
+        }
+    )
+    assert channel == same_channel
+    assert channel == same_group_other_requester
+    assert len(
+        {
+            channel,
+            other_publication,
+            other_scope,
+            other_application,
+            direct_user_a,
+            direct_user_b,
+        }
+    ) == 6
+    for old_mode in ("actor", "application"):
+        with pytest.raises(NonRetryableExecutionError) as unsupported:
+            _session_key(**{**common, "conversation_mode": old_mode})
+        assert unsupported.value.error_code == "session_mode_unsupported"
 
     container = _container()
     _, _, first_publication = _publish(

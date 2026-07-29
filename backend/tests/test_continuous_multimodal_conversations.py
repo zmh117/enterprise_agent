@@ -21,10 +21,15 @@ from app.modules.channel.domain.channel_event import ChannelAttachment
 from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.agent.application.conversation_context import ConversationContextService
+from app.modules.admin.infrastructure.read_repository import AdminReadRepository
 from app.shared.database import Database, default_migrations_dir
 from app.shared.exceptions import PermissionDenied, RetryableExecutionError
+from app.shared.exceptions import NonRetryableExecutionError
 from app.shared.config import AttachmentSettings, ConversationSettings, DingTalkSettings, Settings
-from backend.tests.helpers import activate_dingtalk_test_application
+from backend.tests.helpers import (
+    activate_dingtalk_test_application,
+    grant_test_application_access,
+)
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "dingtalk_stream"
@@ -133,6 +138,15 @@ def multimodal_container() -> object:
         attachments_enabled=True,
         capabilities=("get_er_context", "get_business_flow_context"),
     )
+    application = container.business_application_repository.get_by_code(
+        "multimodal-test-application"
+    )
+    grant_test_application_access(
+        container,
+        application_id=str(application["id"]),
+        role_code="multimodal-runtime-reader",
+        capabilities=("get_er_context", "get_business_flow_context"),
+    )
     return container
 
 
@@ -215,6 +229,49 @@ def test_direct_sessions_are_isolated_by_requester() -> None:
             )
         )
     assert jobs[0].session_id != jobs[1].session_id
+
+
+def test_legacy_actor_session_remains_readable_but_cannot_accept_new_job() -> None:
+    c = multimodal_container()
+    session = c.agent_repository.create_session(
+        dingding_conversation_id="legacy-conversation",
+        dingding_user_id="user_local_admin",
+        source="dingding_stream",
+        project_code="default",
+        source_channel="dingding_stream",
+        source_connector_id="connector-dingtalk-stream-default",
+        session_key="legacy-read-only-session",
+    )
+    c.database.execute(
+        """
+        update agent_session
+           set conversation_mode = 'actor', history_read_only = 1,
+               isolation_key_version = 1
+         where id = ?
+        """,
+        (session.id,),
+    )
+
+    historical = c.agent_repository.get_session(session.id)
+    assert historical.history_read_only is True
+    assert historical.conversation_mode == "actor"
+    admin_view = AdminReadRepository(c.database).session_detail(session.id)
+    assert admin_view is not None
+    assert admin_view["history_read_only"] is True
+    assert admin_view["isolation_key_version"] == 1
+
+    with pytest.raises(NonRetryableExecutionError) as blocked:
+        c.agent_repository.create_job(
+            session_id=session.id,
+            idempotency_key="legacy-read-only-job",
+            user_id="user_local_admin",
+            project_code="default",
+            source="dingding_stream",
+            user_message="must not attach",
+            max_retry_count=0,
+        )
+    assert blocked.value.error_code == "session_history_read_only"
+    assert c.agent_repository.get_job_by_idempotency_key("legacy-read-only-job") is None
 
 
 def test_multimodal_persistence_rolls_back_before_any_queue_publish() -> None:

@@ -220,7 +220,7 @@ class UpdateApplicationRequest(StrictRequest):
 
 
 class SessionPolicyRequest(StrictRequest):
-    conversation_mode: Literal["channel", "actor", "application"] = "channel"
+    conversation_mode: Literal["channel"] = "channel"
     recent_message_limit: int = Field(default=20, ge=1, le=100)
     retention_days: int = Field(default=30, ge=1, le=3650)
     continuous_conversation_enabled: bool = False
@@ -269,6 +269,23 @@ class CapabilityRequest(StrictRequest):
     enabled: bool = True
 
 
+class HandlerResourceBindingRequest(StrictRequest):
+    resource_slot: str = Field(min_length=1, max_length=120)
+    resource_revision_id: str = Field(min_length=1, max_length=200)
+    constraints: dict[str, str | int] = Field(default_factory=dict)
+
+
+class HandlerBindingRequest(StrictRequest):
+    capability_code: str = Field(min_length=2, max_length=120)
+    handler_id: str = Field(min_length=2, max_length=128)
+    handler_version: str = Field(min_length=5, max_length=80)
+    constraints: dict[str, str | int] = Field(default_factory=dict)
+    resources: list[HandlerResourceBindingRequest] = Field(
+        default_factory=list,
+        max_length=20,
+    )
+
+
 class SaveDraftRequest(StrictRequest):
     expected_revision: int = Field(ge=1)
     agent_publication_id: str = Field(default="", max_length=200)
@@ -286,6 +303,10 @@ class ValidateRequest(StrictRequest):
 
 class PublishRequest(StrictRequest):
     revision_id: str = Field(min_length=1, max_length=200)
+    handler_bindings: list[HandlerBindingRequest] = Field(
+        default_factory=list,
+        max_length=100,
+    )
 
 
 class ActivateRequest(StrictRequest):
@@ -432,6 +453,10 @@ def build_business_application_router() -> APIRouter:
                 actor_id=principal.user_id,
                 code=code,
                 revision_id=payload.revision_id,
+                handler_bindings=[
+                    item.model_dump()
+                    for item in payload.handler_bindings
+                ],
             )
         except Exception as exc:
             raise _http_error(exc) from exc

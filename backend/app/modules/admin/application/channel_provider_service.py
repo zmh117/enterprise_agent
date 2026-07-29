@@ -4,6 +4,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from app.modules.admin.domain.channel_providers import CHANNEL_PROVIDERS
+from app.modules.platform_config.application.validation import validate_secret_ref
 from app.shared.exceptions import NonRetryableExecutionError
 
 
@@ -31,8 +32,12 @@ class ChannelProviderService:
                 raise _invalid(field, "Field is required")
         for field in ("secret_ref", "endpoint_ref"):
             value = str(payload.get(field) or "")
-            if value and not value.startswith(("env:", "secret://", "vault:", "kms:")):
-                raise _invalid(field, "Only managed references are allowed")
+            if value:
+                try:
+                    validate_secret_ref(value)
+                except NonRetryableExecutionError as exc:
+                    raise _invalid(field, exc.safe_message) from None
+        self._validate_metadata_references(payload.get("metadata") or {})
         base_url = str(payload.get("base_url") or "")
         if base_url:
             parsed = urlparse(base_url)
@@ -43,6 +48,27 @@ class ChannelProviderService:
         if any(key in text for key in ("password", "access_token", "client_secret", "api_key")):
             raise _invalid("metadata", "Plaintext credentials are forbidden")
         return {"status": "valid", "summary": "Configuration is valid; no message was sent"}
+
+    @staticmethod
+    def _validate_metadata_references(value: Any, *, path: str = "metadata") -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                child_path = f"{path}.{key}"
+                if str(key).endswith("_ref") and child:
+                    try:
+                        validate_secret_ref(str(child))
+                    except NonRetryableExecutionError as exc:
+                        raise _invalid(child_path, exc.safe_message) from None
+                ChannelProviderService._validate_metadata_references(
+                    child,
+                    path=child_path,
+                )
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                ChannelProviderService._validate_metadata_references(
+                    child,
+                    path=f"{path}[{index}]",
+                )
 
 
 def _invalid(field: str, message: str) -> NonRetryableExecutionError:

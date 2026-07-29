@@ -9,6 +9,7 @@ from app.modules.identity.infrastructure import IdentityRepository
 from app.modules.job.infrastructure.repositories import AuditRepository
 from app.shared.config import load_settings
 from app.shared.database import Database, default_migrations_dir
+from app.shared.migrations import SchemaHeadValidator
 
 
 def main() -> None:
@@ -26,7 +27,7 @@ def main() -> None:
     settings = load_settings()
     database = Database(settings.database_dsn)
     try:
-        database.run_migrations(default_migrations_dir())
+        SchemaHeadValidator(database, default_migrations_dir()).require_current()
         repository = IdentityRepository(database)
         service = AuthService(
             repository,

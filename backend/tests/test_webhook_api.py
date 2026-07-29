@@ -38,7 +38,9 @@ def test_public_webhook_returns_202_and_stable_safe_errors() -> None:
         accepted = client.post(
             f"/webhooks/v1/{PUBLIC_ID}",
             json=_payload(),
-            headers={"authorization": "Bearer test-grafana-token"},
+            headers={
+                "authorization": "Bearer test-grafana-token-0123456789abcdefABCDEF"
+            },
         )
         assert accepted.status_code == 202, accepted.text
         body = accepted.json()
@@ -51,7 +53,9 @@ def test_public_webhook_returns_202_and_stable_safe_errors() -> None:
         duplicate = client.post(
             f"/webhooks/v1/{PUBLIC_ID}",
             json=_payload(),
-            headers={"authorization": "Bearer test-grafana-token"},
+            headers={
+                "authorization": "Bearer test-grafana-token-0123456789abcdefABCDEF"
+            },
         )
         assert duplicate.status_code == 202
         assert duplicate.json()["duplicate"] is True
@@ -70,11 +74,24 @@ def test_public_webhook_returns_202_and_stable_safe_errors() -> None:
                 "field_errors": [],
             }
         }
+        legacy_header_only = client.post(
+            f"/webhooks/v1/{PUBLIC_ID}",
+            json=_payload(),
+            headers={
+                "x-grafana-token": (
+                    "test-grafana-token-0123456789abcdefABCDEF"
+                )
+            },
+        )
+        assert legacy_header_only.status_code == 401
+        assert legacy_header_only.json()["error"]["code"] == "webhook_auth_failed"
 
         unknown = client.post(
             "/webhooks/v1/wh_00000000000000000000000000000000",
             json=_payload(),
-            headers={"authorization": "Bearer test-grafana-token"},
+            headers={
+                "authorization": "Bearer test-grafana-token-0123456789abcdefABCDEF"
+            },
         )
         assert unknown.status_code == 404
         assert unknown.json()["error"]["code"] == "webhook_not_found"
@@ -91,8 +108,8 @@ def test_webhook_admin_api_enforces_session_csrf_actions_and_redaction() -> None
         detail = client.get("/api/admin/webhook-triggers/grafana-default")
         assert detail.status_code == 200, detail.text
         serialized = json.dumps(detail.json(), ensure_ascii=False)
-        assert "test-grafana-token" not in serialized
-        assert "secret://connector/connector-grafana-default" in serialized
+        assert "test-grafana-token-0123456789abcdefABCDEF" not in serialized
+        assert "secret://platform/grafana_webhook_token" in serialized
 
         no_csrf = client.post(
             "/api/admin/webhook-triggers/grafana-default/rotate-public-id",
@@ -112,6 +129,8 @@ def test_webhook_admin_api_enforces_session_csrf_actions_and_redaction() -> None
         old = client.post(
             f"/webhooks/v1/{PUBLIC_ID}",
             json=_payload(),
-            headers={"authorization": "Bearer test-grafana-token"},
+            headers={
+                "authorization": "Bearer test-grafana-token-0123456789abcdefABCDEF"
+            },
         )
         assert old.status_code == 404

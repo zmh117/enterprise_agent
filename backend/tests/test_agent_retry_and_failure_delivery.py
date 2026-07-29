@@ -8,10 +8,14 @@ from app.modules.delivery.infrastructure.adapters import DeliveryAdapter
 from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
 from app.modules.job.application.retry_recovery_service import RetryRecoveryService
 from app.modules.job.domain.job_status import JobStatus
-from app.modules.message_bus.application.message_publisher import AgentJobMessage
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
 from app.workers.agent_job_worker import AgentJobWorker
-from backend.tests.helpers import container
+from backend.tests.helpers import (
+    container,
+    dispatch_pending_deliveries,
+    persisted_agent_job_message,
+    publish_pending_agent_jobs,
+)
 
 
 class _CaptureAdapter(DeliveryAdapter):
@@ -21,15 +25,6 @@ class _CaptureAdapter(DeliveryAdapter):
     def send(self, *, connector: object, route: object, title: str, text: str) -> None:
         del connector, route, title
         self.sent.append(text)
-
-
-class _FailingPublisher:
-    def publish_retry(self, job_id: str, correlation_id: str, delay_seconds: int) -> None:
-        del job_id, correlation_id, delay_seconds
-        raise RuntimeError("broker unavailable secret=do-not-store")
-
-    def __getattr__(self, name: str) -> object:
-        raise AssertionError(f"Unexpected publisher call: {name}")
 
 
 class _FailOnceClient:
@@ -115,28 +110,34 @@ class AgentRetryAndFailureDeliveryTests(unittest.TestCase):
         self.assertEqual(job.agent_publication_id, retry_claim.agent_publication_id)
         self.assertEqual(job.reply_route, retry_claim.reply_route)
 
-    def test_retry_publish_failure_leaves_recoverable_retry_wait(self) -> None:
+    def test_retry_outbox_failure_rolls_back_job_retry_state(self) -> None:
         c = container()
         job = self._create_job(c, "publish-failure")
         claimed = c.agent_repository.claim_job(job.id, "worker")
-        c.retry_service.publisher = _FailingPublisher()  # type: ignore[assignment]
+        original = c.agent_repository.rearm_dispatch_for_retry
 
-        action = c.retry_service.handle_failure(
-            claimed,
-            RetryableExecutionError(
-                "transport failed",
-                safe_message="模型服务暂时不可用",
-                error_code="claude_transient_error",
-            ),
-            "corr-publish-failure",
-        )
+        def fail_rearm(**kwargs: object) -> object:
+            original(**kwargs)  # type: ignore[arg-type]
+            raise RuntimeError("synthetic outbox write failure")
+
+        c.agent_repository.rearm_dispatch_for_retry = fail_rearm  # type: ignore[method-assign]
+
+        with self.assertRaisesRegex(RuntimeError, "outbox write failure"):
+            c.retry_service.handle_failure(
+                claimed,
+                RetryableExecutionError(
+                    "transport failed",
+                    safe_message="模型服务暂时不可用",
+                    error_code="claude_transient_error",
+                ),
+                "corr-publish-failure",
+            )
         persisted = c.agent_repository.get_job(job.id)
-        self.assertEqual("retry_dispatch_failed", action)
-        self.assertEqual(JobStatus.RETRY_WAIT, persisted.status)
-        events = c.database.execute(
-            "select event_type from audit_event where job_id = ?", (job.id,)
-        )
-        self.assertIn("job.retry.publish_failed", [row["event_type"] for row in events])
+        dispatch = c.agent_repository.get_dispatch_event_for_job(job.id)
+        self.assertEqual(JobStatus.RUNNING, persisted.status)
+        self.assertEqual(0, persisted.retry_count)
+        self.assertIsNotNone(dispatch)
+        self.assertEqual("PENDING", dispatch.status.value)
 
     def test_early_retry_message_is_rescheduled_without_model_call(self) -> None:
         c = container()
@@ -147,10 +148,11 @@ class AgentRetryAndFailureDeliveryTests(unittest.TestCase):
             RetryableExecutionError("temporary", error_code="temporary"),
             "corr-early",
         )
-        before = len(c.message_bus.retries)
+        before = c.agent_repository.get_dispatch_event_for_job(job.id)
         worker = AgentJobWorker(c.settings, container=c)
-        worker.handle(AgentJobMessage(job.id, "corr-early-duplicate"))
-        self.assertEqual(before + 1, len(c.message_bus.retries))
+        worker.handle(persisted_agent_job_message(c, job.id))
+        after = c.agent_repository.get_dispatch_event_for_job(job.id)
+        self.assertEqual(before, after)
         self.assertEqual(JobStatus.RETRY_WAIT, c.agent_repository.get_job(job.id).status)
 
     def test_terminal_failure_is_safe_and_delivered_once(self) -> None:
@@ -170,12 +172,8 @@ class AgentRetryAndFailureDeliveryTests(unittest.TestCase):
         )
         action = c.retry_service.handle_failure(claimed, error, "corr-terminal")
         self.assertEqual("dead", action)
-        c.result_delivery_service.deliver_job_failure(
-            job.id, error.safe_message, error_code=error.error_code
-        )
-        c.result_delivery_service.deliver_job_failure(
-            job.id, error.safe_message, error_code=error.error_code
-        )
+        dispatch_pending_deliveries(c)
+        dispatch_pending_deliveries(c)
         self.assertEqual(1, len(adapter.sent))
         payload = json.loads(adapter.sent[0])
         self.assertEqual("provider_failure", payload["error_code"])
@@ -195,7 +193,6 @@ class AgentRetryAndFailureDeliveryTests(unittest.TestCase):
         )
         service = RetryRecoveryService(
             repository=c.agent_repository,
-            publisher=c.publisher,
             audit_service=c.audit_service,
             queue_settings=c.settings.queue,
         )
@@ -206,11 +203,11 @@ class AgentRetryAndFailureDeliveryTests(unittest.TestCase):
 
         applied = service.reconcile(apply=True, job_ids=[job.id], actor_id="test-admin")
         repeated = service.reconcile(apply=True, job_ids=[job.id], actor_id="test-admin")
-        self.assertEqual("published", applied["jobs"][0]["apply_status"])
+        self.assertEqual("rearmed", applied["jobs"][0]["apply_status"])
         self.assertEqual(JobStatus.RETRY_WAIT, c.agent_repository.get_job(job.id).status)
         self.assertEqual(0, repeated["candidate_count"])
 
-    def test_recovery_publish_failure_is_audited_and_remains_retry_wait(self) -> None:
+    def test_recovery_outbox_failure_rolls_back_recovered_job(self) -> None:
         c = container()
         job = self._create_job(
             c,
@@ -229,15 +226,21 @@ class AgentRetryAndFailureDeliveryTests(unittest.TestCase):
         )
         service = RetryRecoveryService(
             repository=c.agent_repository,
-            publisher=_FailingPublisher(),  # type: ignore[arg-type]
             audit_service=c.audit_service,
             queue_settings=c.settings.queue,
         )
         dry_run = service.reconcile(job_ids=[job.id])
         self.assertNotIn("secret.invalid", json.dumps(dry_run))
-        applied = service.reconcile(apply=True, job_ids=[job.id])
-        self.assertEqual("publish_failed", applied["jobs"][0]["apply_status"])
-        self.assertEqual(JobStatus.RETRY_WAIT, c.agent_repository.get_job(job.id).status)
+        original = c.agent_repository.rearm_dispatch_for_retry
+
+        def fail_rearm(**kwargs: object) -> object:
+            original(**kwargs)  # type: ignore[arg-type]
+            raise RuntimeError("synthetic recovery outbox failure")
+
+        c.agent_repository.rearm_dispatch_for_retry = fail_rearm  # type: ignore[method-assign]
+        with self.assertRaisesRegex(RuntimeError, "recovery outbox failure"):
+            service.reconcile(apply=True, job_ids=[job.id])
+        self.assertEqual(JobStatus.PENDING, c.agent_repository.get_job(job.id).status)
 
     def test_recovery_reports_stale_lock_but_not_recent_lock(self) -> None:
         c = container()
@@ -263,7 +266,6 @@ class AgentRetryAndFailureDeliveryTests(unittest.TestCase):
         )
         service = RetryRecoveryService(
             repository=c.agent_repository,
-            publisher=c.publisher,
             audit_service=c.audit_service,
             queue_settings=c.settings.queue,
         )
@@ -275,6 +277,7 @@ class AgentRetryAndFailureDeliveryTests(unittest.TestCase):
         client = _FailOnceClient()
         c.agent_executor.claude_client = client  # type: ignore[assignment]
         job = self._create_job(c, "fail-once")
+        publish_pending_agent_jobs(c)
         message = c.message_bus.jobs.popleft()
         worker = AgentJobWorker(c.settings, container=c)
         worker.handle(message)
@@ -284,7 +287,12 @@ class AgentRetryAndFailureDeliveryTests(unittest.TestCase):
             "update agent_job set next_retry_at = ? where id = ?",
             ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), job.id),
         )
-        retry_message, _ = c.message_bus.retries.popleft()
+        c.database.execute(
+            "update job_dispatch_outbox set next_attempt_at = ? where job_id = ?",
+            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), job.id),
+        )
+        publish_pending_agent_jobs(c)
+        retry_message = c.message_bus.jobs.popleft()
         worker.handle(retry_message)
         completed = c.agent_repository.get_job(job.id)
         self.assertEqual(JobStatus.SUCCEEDED, completed.status)
@@ -303,6 +311,7 @@ class AgentRetryAndFailureDeliveryTests(unittest.TestCase):
             reply_route={"type": "test_capture", "target": {}},
         )
         worker = AgentJobWorker(c.settings, container=c)
+        publish_pending_agent_jobs(c)
         message = c.message_bus.jobs.popleft()
 
         for expected_retry in range(1, job.max_retry_count + 1):
@@ -315,14 +324,23 @@ class AgentRetryAndFailureDeliveryTests(unittest.TestCase):
                 "update agent_job set next_retry_at = ? where id = ?",
                 ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), job.id),
             )
-            message, _ = c.message_bus.retries.popleft()
+            c.database.execute(
+                "update job_dispatch_outbox set next_attempt_at = ? where job_id = ?",
+                ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), job.id),
+            )
+            publish_pending_agent_jobs(c)
+            message = c.message_bus.jobs.popleft()
 
         worker.handle(message)
+        dispatch_pending_deliveries(c)
         failed = c.agent_repository.get_job(job.id)
         self.assertEqual(JobStatus.FAILED, failed.status)
         self.assertEqual(job.max_retry_count + 1, client.calls)
         self.assertEqual(1, len(adapter.sent))
-        self.assertEqual(1, len(c.message_bus.dead_letters))
+        event_types = {
+            row["event_type"] for row in c.audit_repository.list_for_job(job.id)
+        }
+        self.assertIn("job.dead.persisted", event_types)
         event_types = [
             row["event_type"]
             for row in c.database.execute(
@@ -330,7 +348,7 @@ class AgentRetryAndFailureDeliveryTests(unittest.TestCase):
             )
         ]
         self.assertEqual(job.max_retry_count, event_types.count("job.retry.scheduled"))
-        self.assertIn("job.dead_letter.published", event_types)
+        self.assertIn("job.dead.persisted", event_types)
 
 
 if __name__ == "__main__":
