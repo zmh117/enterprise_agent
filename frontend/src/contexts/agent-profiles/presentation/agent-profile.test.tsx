@@ -54,7 +54,7 @@ describe("Agent Profile management", () => {
               revision: 3,
               config_hash: "publication-hash",
             },
-            model_connection_status: "ready",
+            model_connection_status: "missing_revision",
             active_application_count: 1,
           },
         ],
@@ -77,7 +77,9 @@ describe("Agent Profile management", () => {
 
     expect(await screen.findByText("默认诊断 Agent")).toBeInTheDocument()
     expect(screen.getByText("r3")).toBeInTheDocument()
-    expect(screen.getByText("已就绪")).toBeInTheDocument()
+    expect(
+      screen.getByText("引用版本已删除，请重新配置")
+    ).toBeInTheDocument()
     expect(screen.getByRole("link", { name: "进入配置" })).toHaveAttribute(
       "href",
       "/agent-profiles/default-diagnostic-agent"
@@ -314,5 +316,99 @@ describe("Agent Profile management", () => {
       )
     )
     expect(document.body.textContent).not.toContain("secret://platform/")
+  })
+
+  it("allows rebuilding model configuration after every revision was reset", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input)
+      if (url.includes("/model-connections/")) {
+        return response({
+          connection: {
+            id: "model_connection_1",
+            code: "default-deepseek-anthropic",
+            name: "默认 DeepSeek Anthropic 连接",
+            protocol: "anthropic_compatible",
+            status: "rotation_required",
+            revision: 0,
+            current_revision_id: "",
+            created_at: "2026-07-25T00:00:00+08:00",
+            updated_at: "2026-07-29T00:00:00+08:00",
+            current_revision: null,
+            revisions: [],
+          },
+        })
+      }
+      return response({
+        agent: {
+          definition: {
+            id: "agent_1",
+            code: "default-diagnostic-agent",
+            name: "默认诊断 Agent",
+            description: "",
+            project_code: "default",
+            status: "enabled",
+            revision: 29,
+            current_publication_id: "agent_publication_29",
+          },
+          draft: {
+            id: "agent_revision_29",
+            revision: 29,
+            status: "published",
+            config_hash: "agent-hash",
+            config,
+            validation: { valid: true, errors: [] },
+            created_at: "2026-07-25T00:00:00+08:00",
+            updated_at: "2026-07-25T00:00:00+08:00",
+          },
+          current_publication: {
+            id: "agent_publication_29",
+            revision: 29,
+            config_hash: "publication-hash",
+            snapshot: config,
+            published_at: "2026-07-25T00:00:00+08:00",
+            published_by: "user_local_admin",
+          },
+          permissions: {
+            can_edit_profile: true,
+            can_publish: true,
+            can_manage_credential: true,
+            can_test_connection: true,
+          },
+          catalog: {
+            models: ["deepseek-v4-flash"],
+            tools: ["get_er_context"],
+            skills: [],
+            connectors: [],
+          },
+        },
+      })
+    })
+
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: {
+              queries: { retry: false },
+              mutations: { retry: false },
+            },
+          })
+        }
+      >
+        <MemoryRouter>
+          <AgentProfilePage />
+        </MemoryRouter>
+      </QueryClientProvider>
+    )
+
+    expect(await screen.findByText("默认诊断 Agent")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("tab", { name: "模型连接" }))
+    expect(
+      screen.getByRole("textbox", { name: "服务地址（Base URL）" })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: "保存为新连接版本" })
+    ).toBeEnabled()
+    expect(screen.getByText("请先保存连接配置，再配置 API Key。")).toBeInTheDocument()
   })
 })

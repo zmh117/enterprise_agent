@@ -11,7 +11,7 @@ from app.modules.audit.application.audit_service import AuditService
 from app.modules.identity.application.authorization import AuthorizationEvaluator
 from app.modules.model_connection.application import ModelConnectionService
 from app.shared.database import operation_unit_of_work
-from app.shared.exceptions import NonRetryableExecutionError
+from app.shared.exceptions import NotFound, NonRetryableExecutionError
 
 
 DEFAULT_AGENT_CODE = "default-diagnostic-agent"
@@ -108,12 +108,15 @@ class AgentConfigService:
             )
             model_status = "legacy_global_connection"
             if model_connection and self.model_connection_service is not None:
-                model_status = str(
-                    self.model_connection_service.public_revision(
-                        str(model_connection.get("revision_id") or "")
-                    ).get("status")
-                    or "unavailable"
-                )
+                try:
+                    model_status = str(
+                        self.model_connection_service.public_revision(
+                            str(model_connection.get("revision_id") or "")
+                        ).get("status")
+                        or "unavailable"
+                    )
+                except NotFound:
+                    model_status = "missing_revision"
             usage = (
                 self.model_connection_service.repository.active_application_usage(
                     str(publication["id"])

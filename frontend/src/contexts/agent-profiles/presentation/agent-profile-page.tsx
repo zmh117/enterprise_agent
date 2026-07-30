@@ -303,7 +303,6 @@ function ConnectionForm({
     subagent_model: current?.config.subagent_model ?? "",
     effort_level: current?.config.effort_level ?? "max",
   })
-  if (!current) return <p>模型连接尚未初始化。</p>
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -445,11 +444,12 @@ function ConnectionForm({
               variant="outline"
               disabled={
                 test.isPending ||
+                !current ||
                 !current.credential.configured ||
                 current.credential.rotation_required ||
                 !canTestConnection
               }
-              onClick={() => test.mutate(current.id)}
+              onClick={() => current && test.mutate(current.id)}
             >
               {test.isPending ? (
                 <LoaderCircleIcon className="animate-spin" />
@@ -475,35 +475,46 @@ function ConnectionForm({
             <CardTitle>当前凭据</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
-            <StatusLine
-              label="状态"
-              value={
-                current.credential.configured &&
-                !current.credential.rotation_required
-                  ? "已配置"
-                  : "需要轮换"
-              }
-            />
-            <StatusLine
-              label="脱敏值"
-              value={current.credential.masked || "未保存"}
-              mono
-            />
-            <StatusLine
-              label="凭据版本"
-              value={`v${current.credential.version}`}
-            />
-            <StatusLine label="连接版本" value={`r${current.revision}`} />
-            <StatusLine
-              label="提供方主机"
-              value={current.provider_host}
-              mono
-            />
-            <CredentialSheet
-              connectionRevision={connection.revision}
-              configured={current.credential.configured}
-              allowed={canManageCredential}
-            />
+            {current ? (
+              <>
+                <StatusLine
+                  label="状态"
+                  value={
+                    current.credential.configured &&
+                    !current.credential.rotation_required
+                      ? "已配置"
+                      : "需要轮换"
+                  }
+                />
+                <StatusLine
+                  label="脱敏值"
+                  value={current.credential.masked || "未保存"}
+                  mono
+                />
+                <StatusLine
+                  label="凭据版本"
+                  value={`v${current.credential.version}`}
+                />
+                <StatusLine
+                  label="连接版本"
+                  value={`r${current.revision}`}
+                />
+                <StatusLine
+                  label="提供方主机"
+                  value={current.provider_host}
+                  mono
+                />
+                <CredentialSheet
+                  connectionRevision={connection.revision}
+                  configured={current.credential.configured}
+                  allowed={canManageCredential}
+                />
+              </>
+            ) : (
+              <p className="text-muted-foreground">
+                请先保存连接配置，再配置 API Key。
+              </p>
+            )}
             {!canManageCredential ? (
               <p className="text-xs text-muted-foreground">
                 当前账号没有凭据管理权限，只能查看凭据状态。
@@ -1019,6 +1030,7 @@ function modelConnectionStatusLabel(status: string): string {
     {
       ready: "已就绪",
       rotation_required: "需要轮换凭据",
+      missing_revision: "引用版本已删除，请重新配置",
       disabled: "已停用",
       legacy_global_connection: "旧版全局连接",
       unconfigured: "未配置",

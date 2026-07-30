@@ -249,6 +249,46 @@ def test_bootstrap_connection_stays_rotation_required_until_credential_is_rotate
     assert rotated["credential"]["rotation_required"] is False
 
 
+def test_model_connection_can_be_reinitialized_after_all_revisions_are_reset() -> None:
+    c = container()
+    connection = c.model_connection_service.get(DEFAULT_MODEL_CONNECTION_CODE)
+    with c.database.unit_of_work():
+        c.database.execute(
+            """
+            update model_connection
+               set current_revision_id = null,
+                   status = 'rotation_required',
+                   revision = 0
+             where id = ?
+            """,
+            (connection["id"],),
+        )
+        c.database.execute(
+            "delete from model_connection_revision where connection_id = ?",
+            (connection["id"],),
+        )
+
+    recreated = c.model_connection_service.save_revision(
+        actor_id=ADMIN_ID,
+        code=DEFAULT_MODEL_CONNECTION_CODE,
+        expected_revision=0,
+        config=deepseek_config(),
+    )
+    assert recreated["revision"] == 1
+    assert recreated["status"] == "rotation_required"
+    assert recreated["credential"]["configured"] is False
+
+    rotated = c.model_connection_service.rotate_credential(
+        actor_id=ADMIN_ID,
+        code=DEFAULT_MODEL_CONNECTION_CODE,
+        expected_revision=1,
+        api_key=fake_secret("after-full-reset"),
+    )
+    assert rotated["revision"] == 2
+    assert rotated["status"] == "ready"
+    assert rotated["credential"]["configured"] is True
+
+
 def test_agent_publication_pins_connection_and_job_records_safe_provenance() -> None:
     c = container()
     connection_revision = ready_connection(c)
@@ -296,6 +336,53 @@ def test_agent_publication_pins_connection_and_job_records_safe_provenance() -> 
     assert c.model_connection_service.resolve_api_key(context.model_runtime_binding) == fake_secret(
         "connection-v1"
     )
+
+
+def test_agent_list_degrades_missing_published_model_revision_instead_of_500() -> None:
+    settings, c = web_container()
+    connection_revision = ready_connection(c)
+    agent = c.agent_config_service.get(AGENT_CODE)
+    draft = c.agent_config_service.save_draft(
+        actor_id=ADMIN_ID,
+        agent_code=AGENT_CODE,
+        expected_revision=int(agent["draft"]["revision"]),
+        config=agent_config(str(connection_revision["id"])),
+    )
+    c.agent_config_service.publish(
+        actor_id=ADMIN_ID,
+        agent_code=AGENT_CODE,
+        revision_id=str(draft["id"]),
+    )
+    with c.database.unit_of_work():
+        c.database.execute(
+            """
+            update model_connection
+               set current_revision_id = null,
+                   status = 'rotation_required',
+                   revision = 0
+             where id = ?
+            """,
+            (connection_revision["connection_id"],),
+        )
+        c.database.execute(
+            "delete from model_connection_revision where id = ?",
+            (connection_revision["id"],),
+        )
+
+    app = create_app(settings, container_factory=lambda _: c)
+    with TestClient(app) as client:
+        login = client.post(
+            "/api/auth/login",
+            json={"username": "local-user", "password": "local-admin-change-me"},
+        )
+        assert login.status_code == 200
+        response = client.get("/api/admin/agents")
+
+    assert response.status_code == 200, response.text
+    summary = next(
+        item for item in response.json()["agents"] if item["code"] == AGENT_CODE
+    )
+    assert summary["model_connection_status"] == "missing_revision"
 
 
 def test_agent_publication_is_idempotent_and_published_revision_stays_published() -> None:
