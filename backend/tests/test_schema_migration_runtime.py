@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from collections.abc import Callable
 from pathlib import Path
+import shutil
 import uuid
 
 import pytest
@@ -26,6 +27,7 @@ from app.shared.migrations import (
     migration_checksum,
     normalized_migration_sql,
 )
+from app.modules.identity.infrastructure import IdentityRepository
 
 
 def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums() -> None:
@@ -34,7 +36,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
     assert len({item.version for item in catalog}) == len(catalog)
     assert len({item.name for item in catalog}) == len(catalog)
     assert [item.version for item in catalog][8:11] == ["009", "009a", "010"]
-    assert catalog[-1].version == "024"
+    assert catalog[-1].version == "025"
     assert all(len(item.checksum) == 64 for item in catalog)
 
     baseline = legacy_baseline_artifacts(catalog)
@@ -114,22 +116,93 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
     first = migrator.run()
     second = migrator.run()
 
-    assert first.head == "024"
+    assert first.head == "025"
     assert first.baselined == 0
     assert first.applied[-6:] == (
-        "019",
         "020",
         "021",
         "022",
         "023",
         "024",
+        "025",
     )
-    assert second.head == "024"
+    assert second.head == "025"
     assert second.baselined == 0
     assert second.applied == ()
     assert len(SchemaMigrationLedger(database).list_records()) == len(
         load_migration_catalog(default_migrations_dir())
     )
+
+
+def test_025_upgrade_preserves_existing_ones_identity_without_fabricating_credential(
+    tmp_path: Path,
+) -> None:
+    migrations_dir = default_migrations_dir()
+    for path in migrations_dir.glob("*.sql"):
+        if path.name != "025_governed_api_capabilities.sql":
+            shutil.copy2(path, tmp_path / path.name)
+
+    database = Database("sqlite:///:memory:")
+    try:
+        before = Migrator(
+            database,
+            tmp_path,
+            migrator_build="pre-governed-api-test",
+        ).run()
+        assert before.head == "024"
+        timestamp = "2026-07-31T00:00:00+00:00"
+        database.execute(
+            """
+            insert into app_user
+              (id, username, display_name, status, created_at, updated_at)
+            values ('legacy-ones-user', 'legacy-ones-user', 'Legacy ONES User',
+                    'enabled', ?, ?)
+            """,
+            (timestamp, timestamp),
+        )
+        database.execute(
+            """
+            insert into user_external_identity
+              (id, user_id, provider, tenant_code, external_subject_id,
+               display_name, status, verified_at, metadata_json,
+               created_at, updated_at)
+            values ('legacy-ones-identity', 'legacy-ones-user', 'ones',
+                    'ones', 'legacy-ones-subject', 'Legacy ONES',
+                    'enabled', ?, '{}', ?, ?)
+            """,
+            (timestamp, timestamp, timestamp),
+        )
+
+        shutil.copy2(
+            migrations_dir / "025_governed_api_capabilities.sql",
+            tmp_path / "025_governed_api_capabilities.sql",
+        )
+        upgraded = Migrator(
+            database,
+            tmp_path,
+            migrator_build="governed-api-upgrade-test",
+        ).run()
+
+        assert upgraded.head == "025"
+        assert upgraded.applied == ("025",)
+        identity = IdentityRepository(database).get_external_identity(
+            "legacy-ones-identity"
+        )
+        assert identity["external_subject_id"] == "legacy-ones-subject"
+        assert identity["status"] == "enabled"
+        assert identity["credential_status"] == "missing"
+        assert (
+            database.execute_one(
+                """
+                select count(*) as count
+                  from external_api_credential
+                 where user_id = 'legacy-ones-user'
+                """
+            )
+            == {"count": 0}
+        )
+    finally:
+        database.close()
 
 
 def test_migrator_rolls_back_entire_failed_version_and_ledger_record(
@@ -220,7 +293,7 @@ def test_schema_head_validator_is_read_only_and_rejects_missing_ledger() -> None
 
     with pytest.raises(
         SchemaHeadError,
-        match="ledger is missing; expected head 024",
+        match="ledger is missing; expected head 025",
     ):
         SchemaHeadValidator(
             database,

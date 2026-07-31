@@ -186,6 +186,10 @@ class HandlerRegistry:
     def _validate_definition(definition: HandlerDefinition) -> None:
         if not _CODE_PATTERN.fullmatch(definition.handler_id):
             raise HandlerRegistryError("Handler ID is invalid")
+        if definition.handler_id.startswith("cap__"):
+            raise HandlerRegistryError(
+                "The cap__ namespace is reserved for governed API capabilities"
+            )
         if not _VERSION_PATTERN.fullmatch(
             definition.handler_version
         ):

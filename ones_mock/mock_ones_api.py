@@ -8,6 +8,7 @@ from typing import Any
 
 import yaml
 from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 
@@ -37,6 +38,7 @@ class MockOnesConfig:
     priorities: dict[str, dict[str, Any]]
     statuses: dict[str, dict[str, Any]]
     tasks: tuple[dict[str, Any], ...]
+    additional_teams: tuple[dict[str, str], ...] = ()
 
     @property
     def primary_user(self) -> MockOnesUser:
@@ -61,6 +63,13 @@ class MockOnesConfig:
             if user.uuid == user_uuid:
                 return user
         return None
+
+    @property
+    def teams(self) -> tuple[dict[str, str], ...]:
+        return (
+            {"uuid": self.team_uuid, "name": self.team_name},
+            *self.additional_teams,
+        )
 
 
 @dataclass(frozen=True)
@@ -185,6 +194,29 @@ def load_config(path: str | Path | None = None) -> MockOnesConfig:
             }
         )
 
+    additional_teams_raw = data.get("additional_teams") or []
+    if not isinstance(additional_teams_raw, list):
+        raise ValueError("additional_teams must be a list")
+    additional_teams = tuple(
+        {
+            "uuid": _require_str(
+                _require_mapping(
+                    value,
+                    f"additional_teams[{index}]",
+                ).get("uuid"),
+                f"additional_teams[{index}].uuid",
+            ),
+            "name": _require_str(
+                _require_mapping(
+                    value,
+                    f"additional_teams[{index}]",
+                ).get("name"),
+                f"additional_teams[{index}].name",
+            ),
+        }
+        for index, value in enumerate(additional_teams_raw)
+    )
+
     return MockOnesConfig(
         users=tuple(users),
         team_uuid=_require_str(team.get("uuid"), "team.uuid"),
@@ -213,6 +245,7 @@ def load_config(path: str | Path | None = None) -> MockOnesConfig:
             for key, value in statuses.items()
         },
         tasks=tuple(tasks),
+        additional_teams=additional_teams,
     )
 
 
@@ -463,12 +496,109 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
                 "name": user.name,
                 "token": user.token,
             },
-            "teams": [
+            "teams": list(config.teams),
+        }
+
+    @app.post("/project/api/project/items/graphql")
+    async def governed_work_item_search(
+        payload: GraphqlRequest,
+        ones_auth_token: str | None = Header(
+            default=None,
+            alias="Ones-Auth-Token",
+        ),
+    ) -> Any:
+        variables = payload.variables
+        user_id = str(variables.get("user_id") or "")
+        team_id = str(variables.get("team_id") or "")
+        keyword = str(variables.get("keyword") or "")
+        issue_type = str(variables.get("issue_type") or "")
+        limit = variables.get("limit")
+        user = config.find_user_by_auth(
+            token=str(ones_auth_token or ""),
+            user_uuid=user_id,
+        )
+        if keyword == "__401__" or user is None:
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "code": "unauthorized",
+                    "message": "invalid ONES credential",
+                },
+            )
+        if keyword in {"__403__", "__team_revoked__"}:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "forbidden",
+                    "message": "team access revoked",
+                },
+            )
+        if keyword == "__429__":
+            raise HTTPException(
+                status_code=429,
+                detail={"code": "rate_limited"},
+            )
+        if keyword == "__500__":
+            raise HTTPException(
+                status_code=500,
+                detail={"code": "server_error"},
+            )
+        if keyword == "__bad_json__":
+            return Response(
+                content="{not-json",
+                media_type="application/json",
+            )
+        if keyword == "__oversize__":
+            return Response(
+                content='{"padding":"' + ("x" * 2_000_000) + '"}',
+                media_type="application/json",
+            )
+        if team_id not in {
+            str(item["uuid"]) for item in config.teams
+        }:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "team_not_found"},
+            )
+        if (
+            issue_type not in {"demand", "task", "defect"}
+            or not isinstance(limit, int)
+            or isinstance(limit, bool)
+            or not 1 <= limit <= 50
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "invalid_search_input"},
+            )
+        matches = [
+            task
+            for task in config.tasks
+            if str(task["issue_type"]) == issue_type
+            and _matches_keyword(task, keyword)
+        ]
+        items = [
+            {
+                "number": int(task["number"]),
+                "name": str(task["name"]),
+                "type": str(task["issue_type"]),
+            }
+            for task in matches[:limit]
+        ]
+        if keyword == "__missing_field__":
+            items = [
                 {
-                    "uuid": config.team_uuid,
-                    "name": config.team_name,
+                    "name": "Malformed item",
+                    "type": issue_type,
                 }
-            ],
+            ]
+        return {
+            "data": {
+                "workItems": {
+                    "items": items,
+                    "total": len(matches),
+                    "truncated": len(matches) > len(items),
+                }
+            }
         }
 
     @app.post("/project/api/project/team/{team_uuid}/items/graphql")
@@ -488,7 +618,9 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
                 status_code=401,
                 detail={"code": "unauthorized", "message": "invalid ONES auth headers"},
             )
-        if team_uuid != config.team_uuid:
+        if team_uuid not in {
+            str(item["uuid"]) for item in config.teams
+        }:
             raise HTTPException(
                 status_code=404,
                 detail={"code": "team_not_found", "message": "mock team does not exist"},

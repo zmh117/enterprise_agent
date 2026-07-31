@@ -48,6 +48,10 @@ class AgentDraftConfigRequest(StrictRequest):
     skills: list[str] = Field(default_factory=list)
     routing: RoutingRequest
     channels: ChannelsRequest
+    api_capability_release_ids: list[str] = Field(
+        default_factory=list,
+        max_length=100,
+    )
 
 
 class AgentDraftRequest(StrictRequest):

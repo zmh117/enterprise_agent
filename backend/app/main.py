@@ -250,8 +250,16 @@ def create_app(
     from app.modules.admin.api import build_admin_router
     from app.modules.agent_config.api import build_agent_config_router
     from app.modules.model_connection.api import build_model_connection_router
+    from app.modules.api_capability.api import (
+        build_api_capability_router,
+        build_api_connection_router,
+    )
     from app.modules.dingding.api.dingding_webhook_controller import build_dingding_router
-    from app.modules.identity.api import build_auth_router, build_identity_admin_router
+    from app.modules.identity.api import (
+        build_auth_router,
+        build_external_credential_router,
+        build_identity_admin_router,
+    )
     from app.modules.identity_discovery.api import build_identity_discovery_router
     from app.modules.job.api.agent_job_debug_controller import build_agent_job_debug_router
     from app.modules.platform_config.api import build_platform_config_router
@@ -285,7 +293,10 @@ def create_app(
         app.include_router(build_admin_router())
         app.include_router(build_agent_config_router())
         app.include_router(build_model_connection_router())
+        app.include_router(build_api_connection_router())
+        app.include_router(build_api_capability_router())
         app.include_router(build_auth_router())
+        app.include_router(build_external_credential_router())
         app.include_router(build_identity_admin_router())
         app.include_router(build_identity_discovery_router())
         app.include_router(build_webhook_admin_router())

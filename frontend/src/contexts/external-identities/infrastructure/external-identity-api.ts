@@ -4,6 +4,8 @@ import {
   dingtalkTenantSchema,
   externalIdentitySchema,
   identityProviderSchema,
+  onesBindingChallengeSchema,
+  onesBindingStatusSchema,
   type BindDingTalkInput,
   type BindOnesInput,
 } from "@/contexts/external-identities/domain/external-identity"
@@ -79,4 +81,76 @@ export async function unbindIdentity(
       { method: "DELETE" },
     ),
   ).identity
+}
+
+export async function getSelfOnesBinding() {
+  return onesBindingStatusSchema.parse(
+    await apiRequest("/api/me/external-identities/ones"),
+  )
+}
+
+export async function beginSelfOnesBinding(input: {
+  email: string
+  password: string
+  connection_revision_id?: string
+}) {
+  return z.object({ challenge: onesBindingChallengeSchema }).parse(
+    await apiRequest("/api/me/external-identities/ones/challenges", {
+      method: "POST",
+      body: input,
+    }),
+  ).challenge
+}
+
+export async function confirmSelfOnesBinding(input: {
+  challenge_id: string
+  connection_revision_id: string
+  default_team_id: string
+  replace_existing: boolean
+}) {
+  return z.object({
+    identity: externalIdentitySchema,
+    credential: onesBindingStatusSchema.shape.credential.unwrap(),
+  }).parse(
+    await apiRequest("/api/me/external-identities/ones/confirm", {
+      method: "POST",
+      body: input,
+    }),
+  )
+}
+
+export async function unbindSelfOnesBinding() {
+  return z.object({ status: z.literal("unbound") }).parse(
+    await apiRequest("/api/me/external-identities/ones", {
+      method: "DELETE",
+    }),
+  )
+}
+
+export async function getAdminOnesCredential(userId: string) {
+  return onesBindingStatusSchema.parse(
+    await apiRequest(
+      `/api/admin/users/${encodeURIComponent(userId)}/external-credentials/ones`,
+    ),
+  )
+}
+
+export async function disableAdminOnesCredential(userId: string) {
+  return z.object({
+    credential: onesBindingStatusSchema.shape.credential.unwrap(),
+  }).parse(
+    await apiRequest(
+      `/api/admin/users/${encodeURIComponent(userId)}/external-credentials/ones/disable`,
+      { method: "PUT" },
+    ),
+  ).credential
+}
+
+export async function unbindAdminOnesCredential(userId: string) {
+  return z.object({ status: z.literal("unbound") }).parse(
+    await apiRequest(
+      `/api/admin/users/${encodeURIComponent(userId)}/external-credentials/ones`,
+      { method: "DELETE" },
+    ),
+  )
 }

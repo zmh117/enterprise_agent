@@ -7,6 +7,10 @@ team:
   uuid: MOCK-ONES-TEAM-001
   name: Mock ONES Team
 
+additional_teams:
+  - uuid: MOCK-ONES-TEAM-002
+    name: Mock ONES Secondary Team
+
 project:
   uuid: MOCK-ONES-PROJECT-001
   name: Mock Manufacturing Project

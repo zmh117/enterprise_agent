@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { UserDetailPage } from "@/contexts/users/presentation/user-detail-page"
 import { UsersPage } from "@/contexts/users/presentation/users-page"
+import { MyExternalIdentitiesPage } from "@/contexts/external-identities"
 
 function response(body: unknown, status = 200) {
   return Promise.resolve(
@@ -118,6 +119,25 @@ function renderUsers() {
         <UsersPage />
       </MemoryRouter>
     </QueryClientProvider>
+  )
+}
+
+function renderMyExternalIdentities() {
+  return render(
+    <QueryClientProvider
+      client={
+        new QueryClient({
+          defaultOptions: {
+            queries: { retry: false },
+            mutations: { retry: false },
+          },
+        })
+      }
+    >
+      <MemoryRouter>
+        <MyExternalIdentitiesPage />
+      </MemoryRouter>
+    </QueryClientProvider>,
   )
 }
 
@@ -474,16 +494,21 @@ describe("User and external identity management", () => {
     ).toBeInTheDocument()
   })
 
-  it("submits only ONES email/password and clears password after a failed request", async () => {
+  it("submits only ONES email/password in self mode and clears password after a failed request", async () => {
     let bindingBody: Record<string, unknown> | undefined
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = String(input)
-      if (url.endsWith("/external-identity-providers"))
-        return response(providers())
-      if (url.endsWith("/dingtalk-tenants")) return response(tenants())
-      if (url.includes("/api/admin/authorization/roles?"))
-        return response(emptyRoles())
-      if (url.endsWith("/ones-identities") && init?.method === "POST") {
+      if (
+        url.endsWith("/api/me/external-identities/ones") &&
+        (!init?.method || init.method === "GET")
+      ) {
+        return response({
+          user: { id: "user-1", display_name: "庄慕焕" },
+          identity: null,
+          credential: null,
+        })
+      }
+      if (url.endsWith("/ones/challenges") && init?.method === "POST") {
         bindingBody = JSON.parse(String(init.body))
         return response(
           {
@@ -495,24 +520,20 @@ describe("User and external identity management", () => {
           400
         )
       }
-      if (url.endsWith("/users/user-1")) {
-        return response({ user: user(), identities: [] })
-      }
       throw new Error(`Unexpected request: ${url}`)
     })
-    renderDetail()
-    await screen.findByText("基本资料")
+    renderMyExternalIdentities()
+    await screen.findByText("ONES 本人身份")
     fireEvent.click(await screen.findByRole("button", { name: "绑定 ONES" }))
     fireEvent.change(screen.getByLabelText("ONES 邮箱"), {
       target: { value: "zmh@example.test" },
     })
     const password = screen.getByLabelText("一次性验证密码")
     fireEvent.change(password, { target: { value: "ones-password" } })
-    fireEvent.click(screen.getByRole("button", { name: "验证并绑定" }))
+    fireEvent.click(screen.getByRole("button", { name: "验证并读取 Team" }))
 
     expect(await screen.findByText("ONES 邮箱或密码错误")).toBeInTheDocument()
     expect(bindingBody).toEqual({
-      expected_user_revision: 3,
       email: "zmh@example.test",
       password: "ones-password",
     })
@@ -520,6 +541,104 @@ describe("User and external identity management", () => {
     for (const forbidden of ["uuid", "token", "url", "metadata", "team"]) {
       expect(bindingBody).not.toHaveProperty(forbidden)
     }
+  })
+
+  it("completes two-phase self binding and saves one verified default Team", async () => {
+    let confirmBody: Record<string, unknown> | undefined
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((input, init) => {
+        const url = String(input)
+        if (
+          url.endsWith("/api/me/external-identities/ones") &&
+          (!init?.method || init.method === "GET")
+        ) {
+          return response({
+            user: { id: "user-1", display_name: "庄慕焕" },
+            identity: null,
+            credential: null,
+          })
+        }
+        if (url.endsWith("/ones/challenges") && init?.method === "POST") {
+          return response({
+            challenge: {
+              id: "challenge-1",
+              provider: "ones",
+              connection_revision_id: "connection-revision-1",
+              external_user_id: "ones-user-1",
+              display_name: "庄慕焕",
+              teams: [
+                { id: "team-a", name: "Team A" },
+                { id: "team-b", name: "Team B" },
+              ],
+              team_ids: ["team-a", "team-b"],
+              expires_at: "2026-08-01T00:00:00Z",
+              status: "PENDING",
+              created_at: "2026-07-31T00:00:00Z",
+            },
+          })
+        }
+        if (url.endsWith("/ones/confirm") && init?.method === "POST") {
+          confirmBody = JSON.parse(String(init.body))
+          return response({
+            identity: identity({
+              provider: "ones",
+              external_subject_id: "ones-user-1",
+              display_name: "庄慕焕",
+              connector_id: "",
+              metadata: {
+                team_uuids: ["team-a", "team-b"],
+                default_team_id: "team-b",
+              },
+            }),
+            credential: {
+              id: "credential-1",
+              user_id: "user-1",
+              external_identity_id: "identity-1",
+              provider: "ones",
+              connection_revision_id: "connection-revision-1",
+              status: "ACTIVE",
+              revision: 1,
+              last_error_code: "",
+              verified_at: "2026-07-31T00:00:00Z",
+              created_at: "2026-07-31T00:00:00Z",
+              updated_at: "2026-07-31T00:00:00Z",
+            },
+          })
+        }
+        throw new Error(`Unexpected request: ${url}`)
+      })
+
+    renderMyExternalIdentities()
+    const bindButton = await screen.findByRole("button", { name: "绑定 ONES" })
+    await waitFor(() => expect(bindButton).toBeEnabled())
+    fireEvent.click(bindButton)
+    fireEvent.change(screen.getByLabelText("ONES 邮箱"), {
+      target: { value: "zmh@example.test" },
+    })
+    fireEvent.change(screen.getByLabelText("一次性验证密码"), {
+      target: { value: "ones-password" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "验证并读取 Team" }))
+    const team = await screen.findByLabelText("默认 Team")
+    fireEvent.change(team, { target: { value: "team-b" } })
+    fireEvent.click(
+      screen.getByRole("button", { name: "保存身份与默认 Team" }),
+    )
+
+    await waitFor(() =>
+      expect(confirmBody).toEqual({
+        challenge_id: "challenge-1",
+        connection_revision_id: "connection-revision-1",
+        default_team_id: "team-b",
+        replace_existing: false,
+      }),
+    )
+    expect(
+      fetch.mock.calls.some((call) =>
+        String(call[0]).includes("/api/admin/users"),
+      ),
+    ).toBe(false)
   })
 
   it("changes identity state, confirms soft unbind, and disables personal binding for service accounts", async () => {
@@ -587,7 +706,9 @@ describe("User and external identity management", () => {
     expect(
       await screen.findByRole("button", { name: "绑定钉钉" })
     ).toBeDisabled()
-    expect(screen.getByRole("button", { name: "绑定 ONES" })).toBeDisabled()
+    expect(
+      screen.getByRole("button", { name: "ONES 由本人绑定" })
+    ).toBeDisabled()
     expect(
       screen.getByText("服务账号不能绑定个人外部身份。")
     ).toBeInTheDocument()

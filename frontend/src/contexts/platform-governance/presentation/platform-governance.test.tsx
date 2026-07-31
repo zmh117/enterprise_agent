@@ -92,10 +92,12 @@ describe("Phase 5 platform governance UI", () => {
   it("exposes governance navigation with separate resources and credential center", () => {
     const group = navigationGroups.find((item) => item.label === "平台治理")
     expect(group?.items.map((item) => item.href)).toEqual([
+      "/platform/api-capabilities",
       "/platform/resources",
       "/platform/secrets",
     ])
     expect(group?.items.map((item) => item.requiredCapability)).toEqual([
+      "api_capabilities.read",
       "platform.read",
       "secrets.read",
     ])

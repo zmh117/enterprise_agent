@@ -26,6 +26,8 @@ class AgentExecutionContext:
     publication_id: str = ""
     config_hash: str = ""
     model_runtime_binding: ModelRuntimeBinding | None = None
+    governed_capabilities: tuple[dict[str, Any], ...] = ()
+    application_publication_id: str = ""
 
 
 @dataclass(frozen=True)

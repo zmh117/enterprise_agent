@@ -42,6 +42,7 @@ const config = {
     ingress: ["connector-dingtalk-stream-default"],
     delivery: ["connector-dingtalk-stream-default"],
   },
+  api_capability_release_ids: [],
 }
 
 const modelConfig = {
@@ -133,6 +134,17 @@ function agentPayload(
         tools: [],
         skills: [],
         connectors: [],
+        api_capabilities: [
+          {
+            id: "capability-release-1",
+            identifier: "cap__ones__work_item__search",
+            release_revision: 1,
+            name: "搜索 ONES 工作项",
+            description: "搜索当前用户默认 Team 的 ONES 工作项",
+            status: "ACTIVE",
+            release_note: "首版",
+          },
+        ],
       },
     },
   }
@@ -862,5 +874,62 @@ describe("Agent Profile management", () => {
       )
     ).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "发现可用模型" })).toBeDisabled()
+  })
+
+  it("selects an exact ACTIVE Capability Release and saves its description-backed id", async () => {
+    let savedConfig: Record<string, unknown> | undefined
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.includes("/model-connections/")) {
+        return response({ connection: modelConnection })
+      }
+      if (url.endsWith("/draft") && init?.method === "PUT") {
+        const body = JSON.parse(String(init.body)) as {
+          config: Record<string, unknown>
+        }
+        savedConfig = body.config
+        return response({
+          revision: {
+            ...agentPayload().agent.draft,
+            revision: 3,
+            config: body.config,
+          },
+        })
+      }
+      return response(agentPayload())
+    })
+
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: {
+              queries: { retry: false },
+              mutations: { retry: false },
+            },
+          })
+        }
+      >
+        <MemoryRouter>
+          <AgentProfilePage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    expect(
+      await screen.findByText("搜索当前用户默认 Team 的 ONES 工作项"),
+    ).toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /搜索 ONES 工作项/,
+      }),
+    )
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }))
+
+    await waitFor(() =>
+      expect(savedConfig).toMatchObject({
+        api_capability_release_ids: ["capability-release-1"],
+      }),
+    )
   })
 })

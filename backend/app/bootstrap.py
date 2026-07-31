@@ -41,6 +41,18 @@ from app.modules.business_application.infrastructure.adapters import (
     IdentitySubjectAdapter,
     WorkflowPublicationAdapter,
 )
+from app.modules.api_capability.application import (
+    ApiCapabilityService,
+    ApiConnectionService,
+    GovernedApiRuntimeExecutor,
+    GovernedCapabilityReleaseResolver,
+)
+from app.modules.api_capability.infrastructure import (
+    ApiCapabilityRepository,
+    ApiConnectionRepository,
+    CapabilityPublicationRepository,
+    GovernedApiExecutionRepository,
+)
 from app.modules.channel.application.channel_ingress_service import ChannelIngressService
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.delivery.application.report_chunker import ReportChunker
@@ -75,7 +87,14 @@ from app.modules.identity.application import (
     IdentityAdminService,
     IdentityService,
 )
-from app.modules.identity.infrastructure import IdentityRepository
+from app.modules.identity.application.external_credentials import (
+    ExternalCredentialBindingService,
+)
+from app.modules.identity.infrastructure import (
+    ExternalApiCredentialCipher,
+    ExternalApiCredentialRepository,
+    IdentityRepository,
+)
 from app.modules.identity_discovery import (
     DingTalkIdentityDiscoveryRepository,
     DingTalkIdentityDiscoveryService,
@@ -156,6 +175,10 @@ class Container:
     business_authorization_service: BusinessAuthorizationService
     agent_config_service: AgentConfigService
     model_connection_service: ModelConnectionService
+    api_connection_service: ApiConnectionService
+    api_capability_service: ApiCapabilityService
+    governed_api_runtime_executor: GovernedApiRuntimeExecutor
+    external_credential_binding_service: ExternalCredentialBindingService
     audit_service: AuditService
     audit_repository: AuditRepository
     permission_service: PermissionService
@@ -366,6 +389,15 @@ def _build_container(
     platform_config_repository = PlatformConfigRepository(database)
     agent_config_repository = AgentConfigRepository(database)
     model_connection_repository = ModelConnectionRepository(database)
+    api_connection_repository = ApiConnectionRepository(database)
+    api_capability_repository = ApiCapabilityRepository(database)
+    capability_publication_repository = CapabilityPublicationRepository(
+        database
+    )
+    governed_api_execution_repository = GovernedApiExecutionRepository(
+        database
+    )
+    external_credential_repository = ExternalApiCredentialRepository(database)
     workflow_repository = WorkflowRepository(database)
     business_application_repository = BusinessApplicationRepository(database)
     webhook_trigger_repository = WebhookTriggerRepository(database)
@@ -458,6 +490,44 @@ def _build_container(
         audit_service,
         allowed_hosts=set(settings.model_provider_host_allowlist),
     )
+    api_connection_service = ApiConnectionService(
+        api_connection_repository,
+        authorization_evaluator,
+        audit_service,
+        environment=settings.environment,
+    )
+    external_credential_cipher = (
+        ExternalApiCredentialCipher(settings.app_config_master_key)
+        if settings.app_config_master_key
+        else None
+    )
+    external_credential_binding_service = ExternalCredentialBindingService(
+        identity_repository=identity_repository,
+        credential_repository=external_credential_repository,
+        connection_repository=api_connection_repository,
+        credential_cipher=external_credential_cipher,
+        audit_service=audit_service,
+        authorization=authorization_evaluator,
+    )
+    api_capability_service = ApiCapabilityService(
+        repository=api_capability_repository,
+        connection_repository=api_connection_repository,
+        identity_repository=identity_repository,
+        credential_repository=external_credential_repository,
+        credential_cipher=external_credential_cipher,
+        authorization=authorization_evaluator,
+        audit_service=audit_service,
+    )
+    governed_api_runtime_executor = GovernedApiRuntimeExecutor(
+        resolver=GovernedCapabilityReleaseResolver(
+            api_capability_repository,
+            api_connection_repository,
+        ),
+        execution_repository=governed_api_execution_repository,
+        identity_repository=identity_repository,
+        credential_repository=external_credential_repository,
+        credential_cipher=external_credential_cipher,
+    )
     model_connection_service.ensure_default_connection(
         config={
             "protocol": "anthropic_compatible",
@@ -481,6 +551,10 @@ def _build_container(
         SkillLoader(),
         model_connection_service=model_connection_service,
         allowed_models={settings.claude_model},
+        api_capability_repository=api_capability_repository,
+        capability_publication_repository=(
+            capability_publication_repository
+        ),
     )
     workflow_service = WorkflowService(
         workflow_repository,
@@ -500,6 +574,9 @@ def _build_container(
         IdentitySubjectAdapter(identity_repository),
         ToolCapabilityCatalogAdapter(config_repository),
         business_application_runtime_evaluator,
+        capability_publication_repository=(
+            capability_publication_repository
+        ),
     )
     business_application_resolver = BusinessApplicationResolver(
         business_application_repository,
@@ -527,6 +604,16 @@ def _build_container(
         ),
         default_agent_code=settings.identity.default_agent_code,
         business_authorization_service=business_authorization_service,
+        capability_publication_repository=(
+            capability_publication_repository
+        ),
+        governed_api_execution_repository=(
+            governed_api_execution_repository
+        ),
+        external_api_credential_repository=(
+            external_credential_repository
+        ),
+        identity_repository=identity_repository,
     )
     job_dispatcher = JobDispatchOutboxDispatcher(
         repository=agent_repository,
@@ -712,6 +799,8 @@ def _build_container(
             api_key=settings.anthropic_api_key,
             base_url=settings.anthropic_base_url,
             secret_resolver=model_secret_provider.resolve,
+            governed_api_runtime_executor=governed_api_runtime_executor,
+            agent_repository=agent_repository,
         )
         if use_real_claude
         else StubClaudeCodeAgentClient()
@@ -795,6 +884,9 @@ def _build_container(
                 agent_repository, settings.conversation
             ),
             agent_config_service=agent_config_service,
+            governed_api_runtime_executor=(
+                governed_api_runtime_executor
+            ),
         ),
         claude_client=claude_client,
         tool_registry=tool_registry,
@@ -824,6 +916,10 @@ def _build_container(
         business_authorization_service=business_authorization_service,
         agent_config_service=agent_config_service,
         model_connection_service=model_connection_service,
+        api_connection_service=api_connection_service,
+        api_capability_service=api_capability_service,
+        governed_api_runtime_executor=governed_api_runtime_executor,
+        external_credential_binding_service=external_credential_binding_service,
         audit_service=audit_service,
         audit_repository=audit_repository,
         permission_service=permission_service,

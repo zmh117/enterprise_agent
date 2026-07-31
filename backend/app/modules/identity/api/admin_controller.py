@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from fastapi import APIRouter, Query, Request
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.modules.identity.api.dependencies import (
     container,
@@ -56,14 +56,6 @@ class BindDingTalkRequest(BaseModel):
     external_subject_id: str = Field(min_length=1, max_length=200)
     connector_id: str = Field(min_length=1, max_length=200)
     display_name: str = Field(default="", max_length=200)
-
-
-class BindOnesRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    expected_user_revision: int = Field(ge=1)
-    email: str = Field(min_length=3, max_length=320)
-    password: SecretStr = Field(min_length=1, max_length=512)
 
 
 class IdentityStatusRequest(BaseModel):
@@ -219,26 +211,23 @@ def build_identity_admin_router() -> APIRouter:
     def bind_ones(
         request: Request,
         user_id: str,
-        payload: BindOnesRequest,
     ) -> dict[str, Any]:
-        principal = require_action(
+        require_action(
             request,
             resource_type="identity",
             resource_code=user_id,
             action="manage",
             csrf=True,
         )
-        try:
-            identity = container(request).identity_service.bind_ones(
-                actor_id=principal.user_id,
-                user_id=user_id,
-                email=payload.email,
-                password=payload.password.get_secret_value(),
-                expected_user_revision=payload.expected_user_revision,
-            )
-        except Exception as exc:
-            raise handle_exception(exc) from exc
-        return {"identity": identity}
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "external_credential_self_service_required",
+                "message": "ONES 必须由用户本人在“我的外部身份”中绑定",
+            },
+        )
 
     @router.put("/identities/{identity_id}/status")
     def set_identity_status(

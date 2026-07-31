@@ -253,7 +253,7 @@ def test_user_create_conflict_revision_and_session_revocation() -> None:
         assert stale.json()["detail"]["code"] == "revision_conflict"
 
 
-def test_provider_catalog_and_ones_binding_do_not_persist_credentials_or_token() -> None:
+def test_provider_catalog_and_admin_ones_binding_requires_user_self_service() -> None:
     verifier = FakeOnesVerifier()
     container = identity_container(verifier)
     app = create_app(identity_settings(), container_factory=lambda _: container)
@@ -290,22 +290,17 @@ def test_provider_catalog_and_ones_binding_do_not_persist_credentials_or_token()
                 "password": secret_password,
             },
         )
-        assert bound.status_code == 200, bound.text
-        identity = bound.json()["identity"]
-        assert identity["provider"] == "ones"
-        assert identity["tenant_code"] == "ones-test"
-        assert identity["external_subject_id"] == "ONES-USER-001"
-        assert identity["connector_id"] == ""
-        assert identity["metadata"] == {
-            "verification_method": "ones_password_login",
-            "team_uuids": ["TEAM-002", "TEAM-001"],
-        }
+        assert bound.status_code == 409, bound.text
+        assert bound.json()["detail"]["code"] == (
+            "external_credential_self_service_required"
+        )
+        assert verifier.calls == []
 
         raw = json.dumps(
             {
-                "identity": container.database.execute_one(
-                    "select * from user_external_identity where id = ?",
-                    (identity["id"],),
+                "identities": container.database.execute(
+                    "select * from user_external_identity where user_id = ?",
+                    (user["id"],),
                 ),
                 "audit": container.database.execute(
                     "select * from audit_event order by created_at"
@@ -327,17 +322,16 @@ def test_provider_catalog_and_ones_binding_do_not_persist_credentials_or_token()
                 "password": secret_password,
             },
         )
-        assert repeated.status_code == 200
-        assert repeated.json()["identity"]["id"] == identity["id"]
+        assert repeated.status_code == 409
         assert (
             container.database.execute_one(
                 "select count(*) as count from user_external_identity where provider = 'ones'"
             )["count"]
-            == 1
+            == 0
         )
 
 
-def test_ones_binding_rejects_untrusted_fields_invalid_credentials_and_conflicts() -> None:
+def test_admin_ones_binding_fails_closed_before_using_untrusted_fields() -> None:
     verifier = FakeOnesVerifier()
     container = identity_container(verifier)
     app = create_app(identity_settings(), container_factory=lambda _: container)
@@ -358,7 +352,10 @@ def test_ones_binding_rejects_untrusted_fields_invalid_credentials_and_conflicts
                 "url": "http://attacker.invalid",
             },
         )
-        assert extra.status_code == 422
+        assert extra.status_code == 409
+        assert extra.json()["detail"]["code"] == (
+            "external_credential_self_service_required"
+        )
         assert verifier.calls == []
 
         invalid = client.post(
@@ -370,8 +367,10 @@ def test_ones_binding_rejects_untrusted_fields_invalid_credentials_and_conflicts
                 "password": "wrong-password",
             },
         )
-        assert invalid.status_code == 400
-        assert invalid.json()["detail"]["code"] == "ones_invalid_credentials"
+        assert invalid.status_code == 409
+        assert invalid.json()["detail"]["code"] == (
+            "external_credential_self_service_required"
+        )
         assert (
             container.database.execute_one(
                 "select count(*) as count from user_external_identity where provider = 'ones'"
@@ -388,7 +387,7 @@ def test_ones_binding_rejects_untrusted_fields_invalid_credentials_and_conflicts
                 "password": "valid-password",
             },
         )
-        assert first_bound.status_code == 200
+        assert first_bound.status_code == 409
         conflict = client.post(
             f"/api/admin/users/{second['id']}/ones-identities",
             headers=headers,
@@ -399,7 +398,10 @@ def test_ones_binding_rejects_untrusted_fields_invalid_credentials_and_conflicts
             },
         )
         assert conflict.status_code == 409
-        assert conflict.json()["detail"]["code"] == "identity_conflict"
+        assert conflict.json()["detail"]["code"] == (
+            "external_credential_self_service_required"
+        )
+        assert verifier.calls == []
 
 
 def test_identity_lifecycle_is_optimistic_and_soft_unbinds() -> None:
@@ -409,12 +411,14 @@ def test_identity_lifecycle_is_optimistic_and_soft_unbinds() -> None:
         headers = login(client)
         user = create_user(client, headers, username="lifecycle", display_name="Lifecycle")
         bound = client.post(
-            f"/api/admin/users/{user['id']}/ones-identities",
+            f"/api/admin/users/{user['id']}/dingtalk-identities",
             headers=headers,
             json={
                 "expected_user_revision": user["revision"],
-                "email": "lifecycle@example.test",
-                "password": "valid-password",
+                "tenant_code": "default",
+                "external_subject_id": "lifecycle-dingtalk-user",
+                "connector_id": "connector-dingtalk-stream-default",
+                "display_name": "Lifecycle",
             },
         ).json()["identity"]
 
@@ -448,12 +452,14 @@ def test_identity_lifecycle_is_optimistic_and_soft_unbinds() -> None:
         )
 
         rebound = client.post(
-            f"/api/admin/users/{user['id']}/ones-identities",
+            f"/api/admin/users/{user['id']}/dingtalk-identities",
             headers=headers,
             json={
                 "expected_user_revision": user["revision"],
-                "email": "lifecycle@example.test",
-                "password": "valid-password",
+                "tenant_code": "default",
+                "external_subject_id": "lifecycle-dingtalk-user",
+                "connector_id": "connector-dingtalk-stream-default",
+                "display_name": "Lifecycle",
             },
         )
         assert rebound.status_code == 200
@@ -490,7 +496,10 @@ def test_service_accounts_and_unsupported_providers_fail_closed() -> None:
                 "password": "valid-password",
             },
         )
-        assert rejected.status_code == 403
+        assert rejected.status_code == 409
+        assert rejected.json()["detail"]["code"] == (
+            "external_credential_self_service_required"
+        )
         assert (
             container.database.execute_one(
                 "select count(*) as count from user_external_identity where user_id = ?",
@@ -535,7 +544,7 @@ def test_dingtalk_binding_state_controls_ingress_and_replies_with_safe_rejection
     )
     assert denied_disabled.accepted is False
     assert denied_disabled.status == "permission_denied"
-    assert notifier.calls[-1]["reason"] == "你的钉钉账号尚未获得授权，请联系管理员"
+    assert notifier.calls[-1]["reason"] == "你的钉钉身份已停用，请联系管理员"
     assert "https://oapi.dingtalk.com/robot/sendBySession" not in json.dumps(
         container.database.execute("select payload_summary from audit_event")
     )
@@ -560,6 +569,7 @@ def test_dingtalk_binding_state_controls_ingress_and_replies_with_safe_rejection
     )
     assert denied_user.accepted is False
     assert len(notifier.calls) == 2
+    assert notifier.calls[-1]["reason"] == "你的平台账号已停用，请联系管理员"
 
     container.identity_repository.update_user(
         "user_local_admin",
@@ -580,6 +590,9 @@ def test_dingtalk_binding_state_controls_ingress_and_replies_with_safe_rejection
     )
     assert denied_unbound.accepted is False
     assert len(notifier.calls) == 3
+    assert notifier.calls[-1]["reason"] == (
+        "你的钉钉账号尚未绑定平台用户，请联系管理员完成绑定"
+    )
 
     jobs = container.database.execute(
         "select id from agent_job where external_event_id like 'message-%'"

@@ -94,6 +94,7 @@ export const revisionSchema = z
     triggers: z.array(triggerSchema).default([]),
     deliveries: z.array(deliverySchema).default([]),
     capabilities: z.array(capabilitySchema).default([]),
+    api_capability_release_ids: z.array(z.string()).default([]),
     created_at: z.string().default(""),
     updated_at: z.string().default(""),
   })
@@ -209,4 +210,5 @@ export type SaveDraftInput = {
     version_constraint: string
     enabled: boolean
   }>
+  api_capability_release_ids: string[]
 }

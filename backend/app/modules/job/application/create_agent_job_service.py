@@ -8,6 +8,10 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from app.modules.agent_config.application import AgentConfigService
+from app.modules.api_capability.infrastructure import (
+    CapabilityPublicationRepository,
+    GovernedApiExecutionRepository,
+)
 from app.modules.authorization_center.application import BusinessAuthorizationService
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.attachments.credentials import AttachmentCredentialCipher
@@ -17,6 +21,10 @@ from app.modules.job.domain.agent_job import AgentJob, AgentSession
 from app.modules.job.domain.execution_policy import EffectiveExecutionPolicyResolver
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.repositories import AgentRepository
+from app.modules.identity.infrastructure import (
+    ExternalApiCredentialRepository,
+    IdentityRepository,
+)
 from app.modules.message_bus.application.message_publisher import MessagePublisher
 from app.modules.permission.application.permission_service import PermissionService
 from app.shared.config import AttachmentSettings, ExecutionSettings, QueueSettings
@@ -130,6 +138,16 @@ class CreateAgentJobService:
         published_agent_runtime_enabled: bool = False,
         default_agent_code: str = "default-diagnostic-agent",
         business_authorization_service: BusinessAuthorizationService | None = None,
+        capability_publication_repository: (
+            CapabilityPublicationRepository | None
+        ) = None,
+        governed_api_execution_repository: (
+            GovernedApiExecutionRepository | None
+        ) = None,
+        external_api_credential_repository: (
+            ExternalApiCredentialRepository | None
+        ) = None,
+        identity_repository: IdentityRepository | None = None,
     ) -> None:
         self.repository = repository
         self.permission_service = permission_service
@@ -145,6 +163,16 @@ class CreateAgentJobService:
         self.published_agent_runtime_enabled = published_agent_runtime_enabled
         self.default_agent_code = default_agent_code
         self.business_authorization_service = business_authorization_service
+        self.capability_publication_repository = (
+            capability_publication_repository
+        )
+        self.governed_api_execution_repository = (
+            governed_api_execution_repository
+        )
+        self.external_api_credential_repository = (
+            external_api_credential_repository
+        )
+        self.identity_repository = identity_repository
 
     def execute(self, command: CreateAgentJobCommand) -> AgentJob:
         existing = self.repository.get_job_by_idempotency_key(command.idempotency_key)
@@ -175,28 +203,60 @@ class CreateAgentJobService:
         business_application_authorized = False
         business_authorization_snapshot: dict[str, Any] = {}
         if command.business_application_id:
-            if self.business_authorization_service is None:
+            if source_channel in {"dingding", "dingding_stream"}:
+                business_application_authorized = True
+                business_authorization_snapshot = {
+                    "allowed": True,
+                    "stage": "job_create",
+                    "reason": "dingtalk_active_application_route",
+                    "application_id": command.business_application_id,
+                    "application_publication_id": (
+                        command.business_application_publication_id
+                    ),
+                    "source_connector_id": (
+                        command.source_connector_id
+                    ),
+                }
+            elif self.business_authorization_service is None:
                 raise NonRetryableExecutionError(
                     "Business authorization service is unavailable",
                     safe_message="业务应用授权服务暂时不可用",
                     error_code="business_authorization_unavailable",
                 )
-            business_decision = self.business_authorization_service.require(
-                user_id=requester_id,
-                application_id=command.business_application_id,
-                environment=str(command.effective_routing_context.get("environment") or ""),
-                base=str(command.effective_routing_context.get("base") or ""),
-                workshop=str(command.effective_routing_context.get("workshop") or ""),
-                stage="job_create",
-            )
-            business_application_authorized = True
-            business_authorization_snapshot = dict(business_decision)
+            else:
+                business_decision = (
+                    self.business_authorization_service.require(
+                        user_id=requester_id,
+                        application_id=command.business_application_id,
+                        environment=str(
+                            command.effective_routing_context.get(
+                                "environment"
+                            )
+                            or ""
+                        ),
+                        base=str(
+                            command.effective_routing_context.get("base")
+                            or ""
+                        ),
+                        workshop=str(
+                            command.effective_routing_context.get(
+                                "workshop"
+                            )
+                            or ""
+                        ),
+                        stage="job_create",
+                    )
+                )
+                business_application_authorized = True
+                business_authorization_snapshot = dict(
+                    business_decision
+                )
             self.audit_service.record(
                 "authorization.business.job_create",
                 status="SUCCEEDED",
                 summary="Business authorization allowed Agent job creation",
                 actor_id=requester_id,
-                payload=business_decision,
+                payload=business_authorization_snapshot,
             )
         self.audit_service.record(
             "permission.job_create.start",
@@ -476,6 +536,15 @@ class CreateAgentJobService:
                 execution_policy=execution_policy.to_dict(),
                 model_runtime_provenance=model_runtime_provenance,
             )
+            external_subject_snapshot = (
+                self._freeze_available_external_subject(
+                    job_id=job.id,
+                    requester_id=requester_id,
+                    application_publication_id=(
+                        command.business_application_publication_id
+                    ),
+                )
+            )
             execution_scope_snapshot: dict[str, Any] = {}
             if (
                 int(
@@ -573,6 +642,9 @@ class CreateAgentJobService:
                         )
                         or ""
                     ),
+                    "external_subject_snapshot_id": str(
+                        external_subject_snapshot.get("id") or ""
+                    ),
                 },
             )
             self.audit_service.record(
@@ -590,6 +662,68 @@ class CreateAgentJobService:
         for attachment_id in attachment_ids:
             self.publisher.publish_attachment(attachment_id, correlation_id)
         return job
+
+    def _freeze_available_external_subject(
+        self,
+        *,
+        job_id: str,
+        requester_id: str,
+        application_publication_id: str,
+    ) -> dict[str, Any]:
+        if (
+            not application_publication_id
+            or self.capability_publication_repository is None
+            or self.governed_api_execution_repository is None
+            or self.external_api_credential_repository is None
+            or self.identity_repository is None
+        ):
+            return {}
+        allowlist = (
+            self.capability_publication_repository.get_application_allowlist(
+                application_publication_id
+            )
+        )
+        if not any(
+            str(item.identifier).startswith("cap__ones__")
+            for item in allowlist
+        ):
+            return {}
+        try:
+            credential = (
+                self.external_api_credential_repository.get_current_public(
+                    user_id=requester_id
+                )
+            )
+            identity = self.identity_repository.get_external_identity(
+                str(credential["external_identity_id"])
+            )
+        except NotFound:
+            return {}
+        metadata = identity.get("metadata") or {}
+        default_team_id = str(
+            metadata.get("default_team_id") or ""
+        )
+        team_ids = {
+            str(value)
+            for value in metadata.get("team_uuids") or []
+            if str(value)
+        }
+        if (
+            str(credential.get("status") or "") != "ACTIVE"
+            or str(identity.get("status") or "") != "enabled"
+            or str(identity.get("provider") or "") != "ones"
+            or str(identity.get("user_id") or "") != requester_id
+            or not default_team_id
+            or default_team_id not in team_ids
+        ):
+            return {}
+        return self.governed_api_execution_repository.freeze_external_subject(
+            job_id=job_id,
+            external_identity_id=str(identity["id"]),
+            external_user_id=str(identity["external_subject_id"]),
+            default_team_id=default_team_id,
+            binding_revision=int(identity["revision"]),
+        )
 
     def _assert_application_runtime_available(
         self,

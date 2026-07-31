@@ -5,6 +5,7 @@ import {
   CableIcon,
   DatabaseZapIcon,
   KeyRoundIcon,
+  BracesIcon,
   LayoutDashboardIcon,
   PackageCheckIcon,
   BotIcon,
@@ -82,6 +83,12 @@ export const navigationGroups: NavigationGroup[] = [
     label: "用户与外部身份",
     items: [
       {
+        label: "我的外部身份",
+        icon: KeyRoundIcon,
+        active: true,
+        href: "/me/external-identities",
+      },
+      {
         label: "人员管理",
         icon: UsersIcon,
         active: true,
@@ -127,6 +134,13 @@ export const navigationGroups: NavigationGroup[] = [
   {
     label: "平台治理",
     items: [
+      {
+        label: "API Capability 配置",
+        icon: BracesIcon,
+        active: true,
+        href: "/platform/api-capabilities",
+        requiredCapability: "api_capabilities.read",
+      },
       {
         label: "工具资源",
         icon: DatabaseZapIcon,

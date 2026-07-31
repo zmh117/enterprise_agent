@@ -306,7 +306,11 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
               required
               value={form.agent_publication_id}
               onChange={(event) =>
-                setForm({ ...form, agent_publication_id: event.target.value })
+                setForm({
+                  ...form,
+                  agent_publication_id: event.target.value,
+                  api_capability_release_ids: [],
+                })
               }
             >
               <option value="">请选择已发布 Agent</option>
@@ -354,111 +358,39 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
 
       <Card className="shadow-none">
         <CardHeader>
-          <CardTitle>API 能力</CardTitle>
+          <CardTitle>API Capability Allowlist</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          {!catalog.data?.capability_catalog_connected ? (
+          {!form.agent_publication_id ? (
             <div className="rounded-md border border-dashed p-4 text-sm leading-6 text-muted-foreground">
-              能力目录尚未接入，当前列表必须为空。这里不提供任意能力编码、HTTP
-              URL、SQL、Redis、Loki、Shell 或工具名输入。
+              请先选择 Agent 发布版本。应用不能配置 Agent Envelope 之外的 Capability。
             </div>
-          ) : catalog.data.capabilities.length === 0 ? (
+          ) : !catalog.data?.capability_catalog_connected ? (
             <div className="rounded-md border border-dashed p-4 text-sm leading-6 text-muted-foreground">
-              能力目录已接入，但当前没有可授权的只读业务能力。
+              Capability 发布目录尚未接入，当前 Allowlist 必须为空。
             </div>
           ) : (
-            <>
-              <p className="text-sm leading-6 text-muted-foreground">
-                仅展示平台已登记并启用的只读能力。所选能力还必须已绑定到当前
-                Agent 发布版本，服务端会在校验和发布时再次检查。
-              </p>
-              <div className="grid gap-2 md:grid-cols-2">
-                {catalog.data.capabilities.map((item) => {
-                  const selected = form.capabilities.some(
-                    (capability) =>
-                      capability.enabled &&
-                      capability.capability_code === item.code
-                  )
-                  return (
-                    <label
-                      key={item.id}
-                      className="flex items-start gap-3 rounded-md border p-3 text-sm"
-                    >
-                      <Checkbox
-                        aria-label={`选择业务能力 ${item.code}`}
-                        checked={selected}
-                        onCheckedChange={(checked) => {
-                          const remaining = form.capabilities.filter(
-                            (capability) =>
-                              capability.capability_code !== item.code
-                          )
-                          setForm({
-                            ...form,
-                            capabilities: checked
-                              ? [
-                                  ...remaining,
-                                  {
-                                    capability_code: item.code,
-                                    version_constraint: String(item.revision),
-                                    enabled: true,
-                                  },
-                                ]
-                              : remaining,
-                          })
-                        }}
-                      />
-                      <span className="min-w-0">
-                        <span className="block font-mono font-medium break-all text-foreground">
-                          {item.code}
-                        </span>
-                        <span className="mt-1 block text-xs text-muted-foreground">
-                          只读能力 · 版本 {item.revision}
-                        </span>
-                      </span>
-                    </label>
-                  )
-                })}
-              </div>
-              {form.capabilities
-                .filter(
-                  (selected) =>
-                    selected.enabled &&
-                    !catalog.data.capabilities.some(
-                      (item) => item.code === selected.capability_code
-                    )
-                )
-                .map((selected) => (
-                  <div
-                    key={selected.capability_code}
-                    className="flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm"
-                  >
-                    <span>
-                      已失效的能力：
-                      <span className="font-mono">
-                        {selected.capability_code}
-                      </span>
-                    </span>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() =>
-                        setForm({
-                          ...form,
-                          capabilities: form.capabilities.filter(
-                            (capability) =>
-                              capability.capability_code !==
-                              selected.capability_code
-                          ),
-                        })
-                      }
-                    >
-                      移除
-                    </Button>
-                  </div>
-                ))}
-            </>
+            <ApplicationCapabilitySelector
+              releases={
+                catalog.data.api_capabilities_by_agent_publication[
+                  form.agent_publication_id
+                ] ?? []
+              }
+              selected={form.api_capability_release_ids}
+              onChange={(api_capability_release_ids) =>
+                setForm({ ...form, api_capability_release_ids })
+              }
+            />
           )}
+          {form.agent_publication_id &&
+          catalog.data?.capability_catalog_connected &&
+          (catalog.data.api_capabilities_by_agent_publication[
+            form.agent_publication_id
+          ] ?? []).length === 0 ? (
+            <div className="rounded-md border border-dashed p-4 text-sm leading-6 text-muted-foreground">
+              所选 Agent 发布版本没有冻结任何 Capability，因此应用不能配置 Capability。
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -481,6 +413,109 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
         <p className="sr-only">当前草稿修订为 {draft.revision}</p>
       ) : null}
     </form>
+  )
+}
+
+function ApplicationCapabilitySelector({
+  releases,
+  selected,
+  onChange,
+}: {
+  releases: Array<{
+    identifier: string
+    release_id: string
+    description: string
+    release_revision: number
+    status: string
+    release_note: string
+    deprecation_reason: string
+    replacement_release_id?: string | null
+    selectable: boolean
+  }>
+  selected: string[]
+  onChange: (value: string[]) => void
+}) {
+  return (
+    <div className="space-y-3">
+      <p className="text-sm leading-6 text-muted-foreground">
+        这里只展示所选 Agent Publication 已冻结的精确 Release。
+        Application Allowlist 是它的显式子集，不接受任意 Identifier 或版本输入。
+      </p>
+      <div className="grid gap-2 md:grid-cols-2">
+        {releases.map((release) => {
+          const checked = selected.includes(release.release_id)
+          return (
+            <label
+              key={release.release_id}
+              className={`flex items-start gap-3 rounded-md border p-3 text-sm ${
+                release.selectable ? "" : "bg-muted/40"
+              }`}
+            >
+              <Checkbox
+                aria-label={`选择 Capability ${release.identifier}`}
+                checked={checked}
+                disabled={!release.selectable}
+                onCheckedChange={(value) =>
+                  onChange(
+                    value
+                      ? [...selected, release.release_id]
+                      : selected.filter((item) => item !== release.release_id),
+                  )
+                }
+              />
+              <span className="min-w-0 flex-1">
+                <span className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono font-medium break-all text-foreground">
+                    {release.identifier}
+                  </span>
+                  <Badge variant="outline">
+                    r{release.release_revision} · {release.status}
+                  </Badge>
+                </span>
+                <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                  {release.description}
+                </span>
+                {release.release_note ? (
+                  <span className="mt-1 block text-xs text-muted-foreground">
+                    发布备注：{release.release_note}
+                  </span>
+                ) : null}
+                {!release.selectable ? (
+                  <span className="mt-1 block text-xs text-amber-700">
+                    不兼容原因：Release 已为 {release.status}
+                    {release.deprecation_reason
+                      ? `（${release.deprecation_reason}）`
+                      : ""}
+                    ，新应用发布不能选择。
+                  </span>
+                ) : null}
+              </span>
+            </label>
+          )
+        })}
+      </div>
+      {selected
+        .filter((id) => !releases.some((item) => item.release_id === id))
+        .map((id) => (
+          <div
+            key={id}
+            className="flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm"
+          >
+            <span>
+              不兼容原因：Release <span className="font-mono">{id}</span>{" "}
+              不属于当前 Agent Publication Envelope。
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => onChange(selected.filter((item) => item !== id))}
+            >
+              移除
+            </Button>
+          </div>
+        ))}
+    </div>
   )
 }
 
@@ -1424,6 +1459,7 @@ function draftToForm(application: BusinessApplication): SaveDraftInput {
         version_constraint: item.version_constraint,
         enabled: item.enabled,
       })) ?? [],
+    api_capability_release_ids: draft?.api_capability_release_ids ?? [],
   }
 }
 

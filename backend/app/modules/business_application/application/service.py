@@ -3,6 +3,9 @@ from __future__ import annotations
 from typing import Any
 
 from app.modules.audit.application.audit_service import AuditService
+from app.modules.api_capability.infrastructure import (
+    CapabilityPublicationRepository,
+)
 from app.modules.business_application.application.ports import (
     AgentPublicationReader,
     CapabilityCatalogReader,
@@ -59,6 +62,9 @@ class BusinessApplicationService:
         publication_binding_service: (
             ApplicationPublicationBindingService | None
         ) = None,
+        capability_publication_repository: (
+            CapabilityPublicationRepository | None
+        ) = None,
     ) -> None:
         self.repository = repository
         self.authorization = authorization
@@ -77,6 +83,9 @@ class BusinessApplicationService:
             or ApplicationPublicationBindingService(
                 repository.database
             )
+        )
+        self.capability_publication_repository = (
+            capability_publication_repository
         )
 
     def list_applications(
@@ -197,6 +206,15 @@ class BusinessApplicationService:
             for index, value in enumerate(payload.get("deliveries") or [])
         ]
         capabilities = self._normalize_capabilities(payload.get("capabilities") or [])
+        api_capability_release_ids = self._normalize_release_ids(
+            payload.get("api_capability_release_ids") or []
+        )
+        self._require_application_capability_subset(
+            agent_publication_id=str(
+                payload.get("agent_publication_id") or ""
+            ).strip(),
+            release_ids=api_capability_release_ids,
+        )
         normalized = {
             "agent_publication_id": str(payload.get("agent_publication_id") or "").strip(),
             "workflow_publication_id": str(payload.get("workflow_publication_id") or "").strip(),
@@ -205,6 +223,7 @@ class BusinessApplicationService:
             "triggers": triggers,
             "deliveries": deliveries,
             "capabilities": capabilities,
+            "api_capability_release_ids": api_capability_release_ids,
         }
         revision = self.repository.save_revision(
             code=normalized_code,
@@ -218,6 +237,7 @@ class BusinessApplicationService:
             triggers=triggers,
             deliveries=deliveries,
             capabilities=capabilities,
+            api_capability_release_ids=api_capability_release_ids,
         )
         self._audit("draft_saved", actor_id, application, revision=revision)
         return revision
@@ -292,6 +312,20 @@ class BusinessApplicationService:
             raw_bindings=handler_bindings or [],
         )
         snapshot = self._snapshot(application, revision, components)
+        release_ids = list(
+            revision.get("api_capability_release_ids") or []
+        )
+        if self.capability_publication_repository is not None:
+            snapshot["capability_allowlist"] = (
+                self.capability_publication_repository.prepare_application_allowlist(
+                    str(revision["agent_publication_id"]),
+                    release_ids,
+                    require_active=True,
+                )
+            )
+            snapshot["capability_agent_publication_id"] = str(
+                revision["agent_publication_id"]
+            )
         if prepared_bindings:
             snapshot["handler_bindings"] = (
                 self.publication_binding_service.snapshot(
@@ -317,6 +351,27 @@ class BusinessApplicationService:
             application_publication_id=str(publication["id"]),
             bindings=prepared_bindings,
         )
+        if self.capability_publication_repository is not None:
+            persisted = self.repository.database.execute_one(
+                """
+                select id
+                  from business_application_publication_api_capability
+                 where application_publication_id = ?
+                 limit 1
+                """,
+                (str(publication["id"]),),
+            )
+            if persisted is None and release_ids:
+                self.capability_publication_repository.freeze_application_allowlist(
+                    str(publication["id"]),
+                    agent_publication_id=str(
+                        revision["agent_publication_id"]
+                    ),
+                    release_ids=release_ids,
+                )
+            publication = self.repository.get_publication(
+                str(publication["id"])
+            )
         self._audit("published", actor_id, application, publication=publication)
         return publication
 
@@ -444,12 +499,27 @@ class BusinessApplicationService:
         application = self.repository.get_by_code(validate_code(code))
         self._require(actor_id, code, "read")
         project_code = str(application["project_code"])
+        agents = [
+            vars(item) for item in self.agent_reader.catalog(project_code)
+        ]
         return {
-            "agents": [vars(item) for item in self.agent_reader.catalog(project_code)],
+            "agents": agents,
             "workflows": [vars(item) for item in self.workflow_reader.catalog(project_code)],
             "connectors": [vars(item) for item in self.connector_reader.catalog()],
             "capabilities": [vars(item) for item in self.capability_reader.catalog()],
             "capability_catalog_connected": self.capability_reader.connected,
+            "api_capabilities_by_agent_publication": (
+                {
+                    str(item["id"]): (
+                        self.capability_publication_repository.agent_envelope_catalog(
+                            str(item["id"])
+                        )
+                    )
+                    for item in agents
+                }
+                if self.capability_publication_repository is not None
+                else {}
+            ),
         }
 
     def _validate_revision(
@@ -467,6 +537,22 @@ class BusinessApplicationService:
         if agent:
             components["agent"] = agent
             self._validate_component_scope(errors, application, agent, "agent_publication_id")
+        if self.capability_publication_repository is not None:
+            try:
+                self.capability_publication_repository.prepare_application_allowlist(
+                    str(revision.get("agent_publication_id") or ""),
+                    list(
+                        revision.get("api_capability_release_ids") or []
+                    ),
+                    require_active=True,
+                )
+            except (NotFound, NonRetryableExecutionError) as exc:
+                errors.append(
+                    {
+                        "field": "api_capability_release_ids",
+                        "message": exc.safe_message,
+                    }
+                )
         workflow_id = str(revision.get("workflow_publication_id") or "")
         if workflow_id:
             workflow = self._resolve_component(
@@ -674,6 +760,9 @@ class BusinessApplicationService:
                 }
                 for item in revision["capabilities"]
             ],
+            "api_capability_release_ids": list(
+                revision.get("api_capability_release_ids") or []
+            ),
         }
         reject_dangerous_content(snapshot)
         canonical_json(snapshot)
@@ -754,6 +843,89 @@ class BusinessApplicationService:
                 }
             )
         return result
+
+    @staticmethod
+    def _normalize_release_ids(values: list[Any]) -> list[str]:
+        if not isinstance(values, list):
+            raise NonRetryableExecutionError(
+                "API Capability Release selection must be an array",
+                safe_message="Capability Release 选择必须是数组",
+                error_code="validation_failed",
+                field_errors=[
+                    {
+                        "field": "api_capability_release_ids",
+                        "message": "必须是 Release ID 数组",
+                    }
+                ],
+            )
+        result: list[str] = []
+        for index, value in enumerate(values):
+            if not isinstance(value, str) or not value.strip():
+                raise NonRetryableExecutionError(
+                    "API Capability Release ID is invalid",
+                    safe_message="Capability Release ID 无效",
+                    error_code="validation_failed",
+                    field_errors=[
+                        {
+                            "field": (
+                                f"api_capability_release_ids.{index}"
+                            ),
+                            "message": "必须是非空 Release ID",
+                        }
+                    ],
+                )
+            release_id = value.strip()
+            if release_id in result:
+                raise NonRetryableExecutionError(
+                    "API Capability Release ID is duplicated",
+                    safe_message="不能重复选择同一个 Capability Release",
+                    error_code="validation_failed",
+                    field_errors=[
+                        {
+                            "field": (
+                                f"api_capability_release_ids.{index}"
+                            ),
+                            "message": "Release ID 重复",
+                        }
+                    ],
+                )
+            result.append(release_id)
+        return result
+
+    def _require_application_capability_subset(
+        self,
+        *,
+        agent_publication_id: str,
+        release_ids: list[str],
+    ) -> None:
+        if self.capability_publication_repository is None:
+            if release_ids:
+                raise NonRetryableExecutionError(
+                    "API Capability publication service is unavailable",
+                    safe_message="Capability 发布服务不可用",
+                    error_code="capability_catalog_unavailable",
+                )
+            return
+        if not agent_publication_id and not release_ids:
+            return
+        try:
+            self.capability_publication_repository.prepare_application_allowlist(
+                agent_publication_id,
+                release_ids,
+                require_active=True,
+            )
+        except (NotFound, NonRetryableExecutionError) as exc:
+            raise NonRetryableExecutionError(
+                "Application Capability selection is invalid",
+                safe_message=exc.safe_message,
+                error_code=exc.error_code,
+                field_errors=[
+                    {
+                        "field": "api_capability_release_ids",
+                        "message": exc.safe_message,
+                    }
+                ],
+            ) from exc
 
     @staticmethod
     def _validate_metadata(name: str, description: str, owner_user_id: str) -> None:

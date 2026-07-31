@@ -200,6 +200,7 @@ class BusinessApplicationRepository:
         triggers: list[dict[str, Any]],
         deliveries: list[dict[str, Any]],
         capabilities: list[dict[str, Any]],
+        api_capability_release_ids: list[str],
         config_hash: str,
         actor_id: str,
     ) -> dict[str, Any]:
@@ -228,9 +229,10 @@ class BusinessApplicationRepository:
                 insert into business_application_revision
                   (id, application_id, revision, status, agent_publication_id,
                    workflow_publication_id, session_policy_json,
-                   execution_policy_json, validation_json, config_hash,
+                   execution_policy_json, api_capability_release_ids_json,
+                   validation_json, config_hash,
                    created_by, created_at, updated_at)
-                values (?, ?, ?, 'draft', ?, ?, ?, ?,
+                values (?, ?, ?, 'draft', ?, ?, ?, ?, ?,
                         '{"valid":false,"errors":[]}', ?, ?, ?, ?)
                 """,
                 (
@@ -241,6 +243,7 @@ class BusinessApplicationRepository:
                     workflow_publication_id or None,
                     json_text(session_policy),
                     json_text(execution_policy),
+                    json_text(api_capability_release_ids),
                     config_hash,
                     actor_id,
                     timestamp,
@@ -724,6 +727,10 @@ class BusinessApplicationRepository:
                 }
                 for item in capabilities
             ],
+            "api_capability_release_ids": json_value(
+                row.get("api_capability_release_ids_json"),
+                [],
+            ),
         }
 
     @staticmethod

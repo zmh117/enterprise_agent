@@ -45,6 +45,7 @@ class MockOnesApiTests(unittest.TestCase):
         self.assertEqual(self.settings.user_uuid, body["user"]["uuid"])
         self.assertEqual(self.settings.token, body["user"]["token"])
         self.assertEqual(self.settings.team_uuid, body["teams"][0]["uuid"])
+        self.assertGreaterEqual(len(body["teams"]), 2)
 
     def test_login_rejects_wrong_password_without_echoing_it(self) -> None:
         response = self.client.post(
@@ -151,6 +152,66 @@ class MockOnesApiTests(unittest.TestCase):
         self.assertEqual("team_not_found", wrong_team.json()["detail"]["code"])
         self.assertEqual(400, unsupported.status_code)
         self.assertEqual("unsupported_query_type", unsupported.json()["detail"]["code"])
+
+    def test_governed_search_returns_bounded_normalized_contract(self) -> None:
+        response = self.client.post(
+            "/project/api/project/items/graphql",
+            headers={"Ones-Auth-Token": self.settings.token},
+            json={
+                "query": "query SearchWorkItems { workItems { total } }",
+                "variables": {
+                    "keyword": "status",
+                    "issue_type": "defect",
+                    "limit": 1,
+                    "user_id": self.settings.user_uuid,
+                    "team_id": self.settings.team_uuid,
+                },
+            },
+        )
+        self.assertEqual(200, response.status_code)
+        result = response.json()["data"]["workItems"]
+        self.assertEqual(1, result["total"])
+        self.assertEqual(
+            {
+                "number": 900103,
+                "name": "Mock defect: order status is not refreshed",
+                "type": "defect",
+            },
+            result["items"][0],
+        )
+        self.assertFalse(result["truncated"])
+
+    def test_governed_search_covers_safe_failure_scenarios(self) -> None:
+        def request(keyword: str) -> Any:
+            return self.client.post(
+                "/project/api/project/items/graphql",
+                headers={"Ones-Auth-Token": self.settings.token},
+                json={
+                    "query": "query SearchWorkItems { workItems { total } }",
+                    "variables": {
+                        "keyword": keyword,
+                        "issue_type": "defect",
+                        "limit": 1,
+                        "user_id": self.settings.user_uuid,
+                        "team_id": self.settings.team_uuid,
+                    },
+                },
+            )
+
+        self.assertEqual(401, request("__401__").status_code)
+        self.assertEqual(403, request("__403__").status_code)
+        self.assertEqual(429, request("__429__").status_code)
+        self.assertEqual(500, request("__500__").status_code)
+        self.assertEqual("{not-json", request("__bad_json__").text)
+        self.assertGreater(
+            len(request("__oversize__").content),
+            1_000_000,
+        )
+        malformed = request("__missing_field__").json()
+        self.assertNotIn(
+            "number",
+            malformed["data"]["workItems"]["items"][0],
+        )
 
 
 if __name__ == "__main__":

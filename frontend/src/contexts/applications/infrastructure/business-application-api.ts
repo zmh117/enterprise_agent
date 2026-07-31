@@ -37,6 +37,24 @@ export const catalogSchema = z.object({
   connectors: z.array(componentReferenceSchema),
   capabilities: z.array(componentReferenceSchema),
   capability_catalog_connected: z.boolean(),
+  api_capabilities_by_agent_publication: z.record(
+    z.string(),
+    z.array(
+      z
+        .object({
+          identifier: z.string(),
+          release_id: z.string(),
+          description: z.string(),
+          release_revision: z.number(),
+          status: z.string(),
+          release_note: z.string().default(""),
+          deprecation_reason: z.string().default(""),
+          replacement_release_id: z.string().nullable().optional(),
+          selectable: z.boolean(),
+        })
+        .passthrough(),
+    ),
+  ).default({}),
 })
 
 export async function listApplications() {

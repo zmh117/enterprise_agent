@@ -132,6 +132,7 @@ describe("Business Application workbench", () => {
           connectors: [],
           capabilities: [],
           capability_catalog_connected: false,
+          api_capabilities_by_agent_publication: {},
         })
       }
       return response({
@@ -205,7 +206,7 @@ describe("Business Application workbench", () => {
     )
     expect(await screen.findAllByText("真实诊断应用")).not.toHaveLength(0)
     fireEvent.click(screen.getAllByRole("tab", { name: "组成配置" })[0])
-    expect(await screen.findByText(/能力目录尚未接入/)).toBeInTheDocument()
+    expect(await screen.findByText(/请先选择 Agent 发布版本/)).toBeInTheDocument()
     expect(screen.queryByLabelText(/SQL/i)).not.toBeInTheDocument()
 
     fireEvent.click(screen.getAllByRole("tab", { name: "发布与运行" })[0])
@@ -242,6 +243,7 @@ describe("Business Application workbench", () => {
       triggers: [],
       deliveries: [],
       capabilities: [],
+      api_capability_release_ids: [],
     }
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = String(input)
@@ -261,29 +263,23 @@ describe("Business Application workbench", () => {
           ],
           workflows: [],
           connectors: [],
-          capabilities: [
-            {
-              id: "tool-get-schema-directory",
-              code: "get_schema_directory",
-              revision: 1,
-              project_code: "",
-              status: "enabled",
-              config_hash: "",
-              direction: "",
-              component_type: "readonly_tool_capability",
-            },
-            {
-              id: "tool-query-database",
-              code: "query_database",
-              revision: 1,
-              project_code: "",
-              status: "enabled",
-              config_hash: "",
-              direction: "",
-              component_type: "readonly_tool_capability",
-            },
-          ],
+          capabilities: [],
           capability_catalog_connected: true,
+          api_capabilities_by_agent_publication: {
+            agent_publication_default_v1: [
+              {
+                identifier: "cap__ones__work_item__search",
+                release_id: "capability-release-1",
+                description: "搜索当前用户默认 Team 的 ONES 工作项",
+                release_revision: 1,
+                status: "ACTIVE",
+                release_note: "首版",
+                deprecation_reason: "",
+                replacement_release_id: null,
+                selectable: true,
+              },
+            ],
+          },
         })
       }
       if (init?.method === "PUT" && url.endsWith("/draft")) {
@@ -343,10 +339,12 @@ describe("Business Application workbench", () => {
       })
     ).toBeInTheDocument()
     expect(
-      await screen.findByLabelText("选择业务能力 get_schema_directory")
+      await screen.findByLabelText(
+        "选择 Capability cap__ones__work_item__search"
+      )
     ).toBeInTheDocument()
     const capability = await screen.findByLabelText(
-      "选择业务能力 query_database"
+      "选择 Capability cap__ones__work_item__search"
     )
     fireEvent.click(capability)
     expect(capability).toBeChecked()
@@ -357,13 +355,8 @@ describe("Business Application workbench", () => {
         session_policy: {
           conversation_mode: "channel",
         },
-        capabilities: [
-          {
-            capability_code: "query_database",
-            version_constraint: "1",
-            enabled: true,
-          },
-        ],
+        capabilities: [],
+        api_capability_release_ids: ["capability-release-1"],
       })
     )
   })

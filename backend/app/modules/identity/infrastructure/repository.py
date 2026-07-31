@@ -320,7 +320,12 @@ class IdentityRepository:
         self.get_user(user_id)
         rows = self.database.execute(
             """
-            select * from user_external_identity where user_id = ?
+            select i.*, c.status as credential_status
+              from user_external_identity i
+              left join external_api_credential c
+                on c.external_identity_id = i.id
+               and c.status in ('ACTIVE', 'INVALID')
+             where i.user_id = ?
             order by provider, tenant_code, external_subject_id
             """,
             (user_id,),
@@ -329,7 +334,15 @@ class IdentityRepository:
 
     def get_external_identity(self, identity_id: str) -> dict[str, Any]:
         row = self.database.execute_one(
-            "select * from user_external_identity where id = ?", (identity_id,)
+            """
+            select i.*, c.status as credential_status
+              from user_external_identity i
+              left join external_api_credential c
+                on c.external_identity_id = i.id
+               and c.status in ('ACTIVE', 'INVALID')
+             where i.id = ?
+            """,
+            (identity_id,),
         )
         if not row:
             raise NotFound("External identity not found", safe_message="未找到身份")
@@ -347,9 +360,13 @@ class IdentityRepository:
         row = self.database.execute_one(
             f"""
             select i.*, u.username, u.display_name as user_display_name,
+                   c.status as credential_status,
                    u.status as user_status, u.account_type as user_account_type
             from user_external_identity i
             join app_user u on u.id = i.user_id
+            left join external_api_credential c
+              on c.external_identity_id = i.id
+             and c.status in ('ACTIVE', 'INVALID')
             where i.provider = ? and i.tenant_code = ? and i.external_subject_id = ?
               {status}
             """,
@@ -888,6 +905,12 @@ class IdentityRepository:
         )
 
     def _external_public(self, row: dict[str, Any]) -> dict[str, Any]:
+        credential_status = str(row.get("credential_status") or "")
+        if (
+            not credential_status
+            and str(row.get("provider") or "") == ExternalIdentityProvider.ONES.value
+        ):
+            credential_status = "missing"
         return {
             "id": row["id"],
             "user_id": row["user_id"],
@@ -911,6 +934,7 @@ class IdentityRepository:
             "username": row.get("username") or "",
             "user_display_name": row.get("user_display_name") or "",
             "user_status": row.get("user_status") or "",
+            "credential_status": credential_status,
         }
 
     @staticmethod
@@ -930,6 +954,9 @@ class IdentityRepository:
                         if str(value).strip()
                     )
                 )
+            default_team_id = str(metadata.get("default_team_id") or "").strip()
+            if default_team_id:
+                result["default_team_id"] = default_team_id
         return result
 
     @staticmethod

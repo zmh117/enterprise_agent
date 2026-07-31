@@ -96,6 +96,7 @@ class RevisionResponse(BaseModel):
     triggers: list[TriggerResponse] = Field(default_factory=list)
     deliveries: list[DeliveryResponse] = Field(default_factory=list)
     capabilities: list[CapabilityResponse] = Field(default_factory=list)
+    api_capability_release_ids: list[str] = Field(default_factory=list)
     created_by: str = ""
     created_at: str = ""
     updated_at: str = ""
@@ -188,6 +189,9 @@ class CatalogResponse(BaseModel):
     connectors: list[ComponentReferenceResponse]
     capabilities: list[dict[str, Any]]
     capability_catalog_connected: bool = False
+    api_capabilities_by_agent_publication: dict[
+        str, list[dict[str, Any]]
+    ] = Field(default_factory=dict)
 
 
 class EffectiveApplicationResponse(BaseModel):
@@ -295,6 +299,10 @@ class SaveDraftRequest(StrictRequest):
     triggers: list[TriggerRequest] = Field(default_factory=list, max_length=20)
     deliveries: list[DeliveryRequest] = Field(default_factory=list, max_length=20)
     capabilities: list[CapabilityRequest] = Field(default_factory=list, max_length=100)
+    api_capability_release_ids: list[str] = Field(
+        default_factory=list,
+        max_length=100,
+    )
 
 
 class ValidateRequest(StrictRequest):

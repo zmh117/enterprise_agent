@@ -95,6 +95,7 @@ export const agentConfigSchema = z.object({
     ingress: z.array(z.string()),
     delivery: z.array(z.string()),
   }),
+  api_capability_release_ids: z.array(z.string()).default([]),
 })
 
 export const agentRevisionSchema = z.object({
@@ -174,6 +175,19 @@ export const agentDetailSchema = z.object({
         allow_delivery: z.union([z.boolean(), z.number()]),
       })
     ),
+    api_capabilities: z.array(
+      z
+        .object({
+          id: z.string(),
+          identifier: z.string(),
+          release_revision: z.number(),
+          name: z.string(),
+          description: z.string(),
+          status: z.string(),
+          release_note: z.string().default(""),
+        })
+        .passthrough(),
+    ).default([]),
   }),
 })
 

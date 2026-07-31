@@ -222,6 +222,8 @@ class AgentExecutor:
             for row in self.repository.list_tool_calls(job_id)
         }
         for event in tool_events:
+            if event.get("persisted_tool_call_id"):
+                continue
             key = _event_key(event)
             if key in existing:
                 continue

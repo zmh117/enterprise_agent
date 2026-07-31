@@ -2046,6 +2046,37 @@ class AgentRepository:
         )
         return tool_call_id
 
+    def complete_tool_call(
+        self,
+        tool_call_id: str,
+        *,
+        response_summary: dict[str, Any] | str,
+        status: str,
+        duration_ms: int,
+    ) -> None:
+        safe_response = sanitize_for_persistence(response_summary)
+        response = (
+            safe_response
+            if isinstance(safe_response, str)
+            else json.dumps(safe_response, ensure_ascii=False)
+        )
+        changed = self.database.execute(
+            """
+            update agent_tool_call
+               set response_summary = ?, status = ?, duration_ms = ?
+             where id = ?
+            returning id
+            """,
+            (
+                response,
+                status,
+                max(0, duration_ms),
+                tool_call_id,
+            ),
+        )
+        if not changed:
+            raise NotFound(f"Agent tool call not found: {tool_call_id}")
+
     def get_job(self, job_id: str) -> AgentJob:
         row = self.database.execute_one("select * from agent_job where id = ?", (job_id,))
         if not row:

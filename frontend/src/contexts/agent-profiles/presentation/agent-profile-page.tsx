@@ -812,6 +812,7 @@ function ProfileForm({
     skills: base?.skills ?? [],
     routing: base?.routing ?? { project_code: agent.definition.project_code },
     channels: base?.channels ?? { ingress: [], delivery: [] },
+    api_capability_release_ids: base?.api_capability_release_ids ?? [],
   }))
   const save = useSaveAgentDraft()
   const validate = useValidateAgentDraft()
@@ -938,6 +939,13 @@ function ProfileForm({
             </Field>
           </div>
           <ReadOnlyModelSummary connection={connection} />
+          <AgentCapabilitySelector
+            releases={agent.catalog.api_capabilities}
+            selected={form.api_capability_release_ids}
+            onChange={(api_capability_release_ids) =>
+              setForm({ ...form, api_capability_release_ids })
+            }
+          />
           <Checklist
             title="只读工具"
             items={agent.catalog.tools}
@@ -1080,6 +1088,111 @@ function ProfileForm({
         </Card>
       </div>
     </div>
+  )
+}
+
+function AgentCapabilitySelector({
+  releases,
+  selected,
+  onChange,
+}: {
+  releases: Array<{
+    id: string
+    identifier: string
+    release_revision: number
+    name: string
+    description: string
+    status: string
+    release_note: string
+  }>
+  selected: string[]
+  onChange: (value: string[]) => void
+}) {
+  const identifiers = new Set(releases.map((item) => item.identifier))
+  return (
+    <fieldset className="rounded-lg border p-4">
+      <legend className="px-1 text-sm font-medium">
+        API Capability Release
+      </legend>
+      <p className="mb-3 text-xs leading-5 text-muted-foreground">
+        每个 Identifier 最多选择一个精确 ACTIVE Release。description
+        会进入模型 Tool 定义；Release Note 仅供管理员判断版本。
+      </p>
+      <div className="space-y-2">
+        {releases.map((release) => {
+          const checked = selected.includes(release.id)
+          const sameIdentifierSelected = releases.some(
+            (candidate) =>
+              candidate.identifier === release.identifier &&
+              selected.includes(candidate.id) &&
+              candidate.id !== release.id,
+          )
+          return (
+            <label
+              key={release.id}
+              className="flex items-start gap-3 rounded-lg border p-3 text-sm"
+            >
+              <input
+                type="checkbox"
+                checked={checked}
+                disabled={release.status !== "ACTIVE"}
+                onChange={() => {
+                  const withoutIdentifier = selected.filter(
+                    (id) =>
+                      !releases.some(
+                        (candidate) =>
+                          candidate.id === id &&
+                          candidate.identifier === release.identifier,
+                      ),
+                  )
+                  onChange(checked ? withoutIdentifier : [...withoutIdentifier, release.id])
+                }}
+              />
+              <span className="min-w-0 flex-1">
+                <span className="flex flex-wrap items-center gap-2 font-medium">
+                  {release.name}
+                  <Badge variant="outline">
+                    r{release.release_revision} · {release.status}
+                  </Badge>
+                </span>
+                <span className="mt-1 block font-mono text-xs text-indigo-700">
+                  {release.identifier}
+                </span>
+                <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                  {release.description}
+                </span>
+                {release.release_note ? (
+                  <span className="mt-1 block text-xs text-muted-foreground">
+                    发布备注：{release.release_note}
+                  </span>
+                ) : null}
+                {sameIdentifierSelected ? (
+                  <span className="mt-1 block text-xs text-amber-700">
+                    选择此版本会替换同 Identifier 的当前版本。
+                  </span>
+                ) : null}
+              </span>
+            </label>
+          )
+        })}
+        {releases.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            当前没有可供新 Agent 发布选择的 ACTIVE Capability Release。
+          </p>
+        ) : null}
+        {selected
+          .filter((id) => !releases.some((item) => item.id === id))
+          .map((id) => (
+            <div
+              key={id}
+              className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900"
+            >
+              历史精确 Release {id} 不在 ACTIVE 目录中；请移除或显式替换后再发布。
+            </div>
+          ))}
+      </div>
+      <span className="sr-only">目录 Identifier 数量 {identifiers.size}</span>
+    </fieldset>
   )
 }
 

@@ -22,6 +22,8 @@ import { UserDetailPage, UsersPage } from "@/contexts/users"
 import { DingTalkIdentityDiscoveryPage } from "@/contexts/dingtalk-identity-discovery"
 import { RoleAuthorizationPage, RoleDetailPage } from "@/contexts/authorization"
 import { CapabilityGate } from "@/contexts/auth/presentation/capability-gate"
+import { ApiCapabilityConfigurationPage } from "@/contexts/api-capabilities/presentation/api-capability-configuration-page"
+import { MyExternalIdentitiesPage } from "@/contexts/external-identities"
 
 function protectedPage(capability: string, page: ReactNode) {
   return <CapabilityGate capability={capability}>{page}</CapabilityGate>
@@ -96,6 +98,17 @@ export const appRouter = createBrowserRouter([
       {
         path: "/users/:userId",
         element: protectedPage("users.read", <UserDetailPage />),
+      },
+      {
+        path: "/me/external-identities",
+        element: <MyExternalIdentitiesPage />,
+      },
+      {
+        path: "/platform/api-capabilities",
+        element: protectedPage(
+          "api_capabilities.read",
+          <ApiCapabilityConfigurationPage />,
+        ),
       },
       {
         path: "/platform/secrets",

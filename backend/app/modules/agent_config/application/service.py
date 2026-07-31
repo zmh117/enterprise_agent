@@ -7,6 +7,10 @@ from typing import Any
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
 from app.modules.agent.infrastructure.skill_loader import SkillLoader
 from app.modules.agent_config.infrastructure import AgentConfigRepository
+from app.modules.api_capability.infrastructure import (
+    ApiCapabilityRepository,
+    CapabilityPublicationRepository,
+)
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.identity.application.authorization import AuthorizationEvaluator
 from app.modules.model_connection.application import ModelConnectionService
@@ -39,6 +43,7 @@ ALLOWED_CONFIG_KEYS = {
     "skills",
     "routing",
     "channels",
+    "api_capability_release_ids",
 }
 FORBIDDEN_INSTRUCTION_PATTERNS = (
     "ignore safety",
@@ -64,6 +69,10 @@ class AgentConfigService:
         skill_loader: SkillLoader,
         model_connection_service: ModelConnectionService | None = None,
         allowed_models: set[str] | None = None,
+        api_capability_repository: ApiCapabilityRepository | None = None,
+        capability_publication_repository: (
+            CapabilityPublicationRepository | None
+        ) = None,
     ) -> None:
         self.repository = repository
         self.authorization = authorization
@@ -71,6 +80,10 @@ class AgentConfigService:
         self.skill_loader = skill_loader
         self.model_connection_service = model_connection_service
         self.allowed_models = allowed_models or {"claude-sonnet-4-20250514"}
+        self.api_capability_repository = api_capability_repository
+        self.capability_publication_repository = (
+            capability_publication_repository
+        )
 
     def get(self, agent_code: str = DEFAULT_AGENT_CODE) -> dict[str, Any]:
         definition = self.repository.get_definition(agent_code)
@@ -154,6 +167,13 @@ class AgentConfigService:
             "tools": sorted(self.repository.enabled_tools() & ToolRegistry.READONLY_TOOLS),
             "skills": sorted(self.skill_loader.load()),
             "connectors": self.repository.connector_catalog(),
+            "api_capabilities": (
+                self.api_capability_repository.list_catalog(
+                    selectable_only=True
+                )
+                if self.api_capability_repository is not None
+                else []
+            ),
         }
 
     @operation_unit_of_work(lambda service: service.repository.database)
@@ -266,6 +286,15 @@ class AgentConfigService:
             )
         with self.repository.database.unit_of_work():
             snapshot = dict(revision["config"])
+            release_ids = list(
+                snapshot.pop("api_capability_release_ids", []) or []
+            )
+            if self.capability_publication_repository is not None:
+                snapshot["capability_envelope"] = (
+                    self.capability_publication_repository.prepare_agent_envelope(
+                        release_ids
+                    )
+                )
             model_policy = snapshot.get("model_policy") or {}
             connection_revision_id = str(model_policy.get("model_connection_revision_id") or "")
             if self.model_connection_service is not None and not connection_revision_id:
@@ -306,6 +335,14 @@ class AgentConfigService:
                 config_hash=_hash(snapshot),
                 actor_id=actor_id,
             )
+            if self.capability_publication_repository is not None:
+                self.capability_publication_repository.freeze_agent_envelope(
+                    str(publication["id"]),
+                    release_ids=release_ids,
+                )
+                publication = self.repository.get_publication(
+                    str(publication["id"])
+                )
         self.audit_service.record(
             "agent.config.published",
             status="SUCCEEDED",
@@ -432,6 +469,15 @@ class AgentConfigService:
             "skills": sorted({str(item) for item in (config.get("skills") or [])}),
             "routing": dict(config.get("routing") or {}),
             "channels": dict(config.get("channels") or {}),
+            "api_capability_release_ids": sorted(
+                {
+                    str(item).strip()
+                    for item in (
+                        config.get("api_capability_release_ids") or []
+                    )
+                    if str(item).strip()
+                }
+            ),
         }
         return normalized
 
@@ -439,6 +485,17 @@ class AgentConfigService:
         errors: list[dict[str, str]] = []
         for key in sorted(set(config) - ALLOWED_CONFIG_KEYS):
             errors.append({"field": key, "message": "此字段不可配置"})
+        release_ids = config.get("api_capability_release_ids") or []
+        if not isinstance(release_ids, list) or any(
+            not isinstance(item, str) or not item.strip()
+            for item in release_ids
+        ):
+            errors.append(
+                {
+                    "field": "api_capability_release_ids",
+                    "message": "必须是非空 Release ID 数组",
+                }
+            )
         nested = {
             "model_policy": {
                 "runtime",
@@ -562,6 +619,18 @@ class AgentConfigService:
                                 "message": f"连接器 {connector_id} 不可用",
                             }
                         )
+        if self.capability_publication_repository is not None:
+            try:
+                self.capability_publication_repository.prepare_agent_envelope(
+                    list(config.get("api_capability_release_ids") or [])
+                )
+            except (NotFound, NonRetryableExecutionError) as exc:
+                errors.append(
+                    {
+                        "field": "api_capability_release_ids",
+                        "message": exc.safe_message,
+                    }
+                )
         execution = config.get("execution") or {}
         if isinstance(execution, dict):
             try:

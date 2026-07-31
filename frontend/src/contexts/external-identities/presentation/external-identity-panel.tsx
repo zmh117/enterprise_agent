@@ -31,17 +31,23 @@ import {
 } from "@/components/ui/sheet"
 import {
   useBindDingTalkIdentity,
+  useAdminOnesCredential,
+  useBeginSelfOnesBinding,
+  useConfirmSelfOnesBinding,
+  useDisableAdminOnesCredential,
   useDingTalkTenants,
   useExternalIdentities,
   useIdentityProviders,
+  useSelfOnesBinding,
+  useUnbindAdminOnesCredential,
   useUnbindIdentity,
+  useUnbindSelfOnesBinding,
   useUpdateIdentityStatus,
-  externalIdentityKeys,
-  verifyAndBindOnesIdentity,
 } from "@/contexts/external-identities/application/external-identity-queries"
 import type {
   DingTalkTenant,
   ExternalIdentity,
+  OnesBindingChallenge,
 } from "@/contexts/external-identities/domain/external-identity"
 import type { User } from "@/contexts/users/domain/user"
 import {
@@ -57,7 +63,29 @@ import {
 import { formatDate } from "@/contexts/users/presentation/format-date"
 import { useRoles } from "@/contexts/authorization/application/role-authorization-queries"
 
-export function ExternalIdentityPanel({
+type ExternalIdentityPanelProps =
+  | {
+      mode: "self"
+      user?: never
+      discoveryCandidateId?: never
+    }
+  | {
+      mode?: "admin"
+      user: User
+      discoveryCandidateId?: string
+    }
+
+export function ExternalIdentityPanel(props: ExternalIdentityPanelProps) {
+  if (props.mode === "self") return <SelfExternalIdentityPanel />
+  return (
+    <AdminExternalIdentityPanel
+      user={props.user}
+      discoveryCandidateId={props.discoveryCandidateId}
+    />
+  )
+}
+
+function AdminExternalIdentityPanel({
   user,
   discoveryCandidateId = "",
 }: {
@@ -68,7 +96,7 @@ export function ExternalIdentityPanel({
   const providers = useIdentityProviders()
   const tenants = useDingTalkTenants()
   const candidate = useDingTalkIdentityCandidate(discoveryCandidateId)
-  const [binding, setBinding] = useState<"dingtalk" | "ones" | null>(null)
+  const [binding, setBinding] = useState<"dingtalk" | null>(null)
   const [candidateDismissed, setCandidateDismissed] = useState(false)
   const canBind = user.account_type === "human" && user.status === "enabled"
   const dingtalkAvailable =
@@ -100,11 +128,11 @@ export function ExternalIdentityPanel({
             <Button
               type="button"
               variant="outline"
-              disabled={!canBind || !onesProvider?.available}
-              onClick={() => setBinding("ones")}
+              disabled
+              title="ONES 凭据只能由用户本人验证"
             >
-              <PlusIcon aria-hidden="true" />
-              绑定 ONES
+              <KeyRoundIcon aria-hidden="true" />
+              ONES 由本人绑定
             </Button>
           </div>
         </div>
@@ -172,12 +200,9 @@ export function ExternalIdentityPanel({
         user={user}
         candidateId={discoveryCandidateId}
       />
-      <OnesBindingSheet
-        open={binding === "ones"}
-        onOpenChange={(open) => setBinding(open ? "ones" : null)}
-        user={user}
-        instanceName={onesProvider?.display_name ?? "ONES"}
-      />
+      {!onesProvider?.available ? (
+        <p className="sr-only">ONES Provider 当前不可用</p>
+      ) : null}
     </Card>
   )
 }
@@ -195,6 +220,11 @@ function IdentityCard({
   const queryClient = useQueryClient()
   const updateStatus = useUpdateIdentityStatus(userId)
   const unbind = useUnbindIdentity(userId)
+  const credential = useAdminOnesCredential(
+    identity.provider === "ones" ? userId : "",
+  )
+  const disableCredential = useDisableAdminOnesCredential(userId)
+  const unbindCredential = useUnbindAdminOnesCredential(userId)
   const [confirmUnbind, setConfirmUnbind] = useState(false)
   const statusLabel = {
     enabled: "已启用",
@@ -286,6 +316,19 @@ function IdentityCard({
           value={formatDate(identity.last_seen_at)}
         />
         <IdentityField label="修订" value={`r${identity.revision}`} />
+        {identity.provider === "ones" ? (
+          <IdentityField
+            label="个人凭据"
+            value={credential.data?.credential?.status ?? "credential missing"}
+          />
+        ) : null}
+        {identity.provider === "ones" &&
+        credential.data?.credential?.last_error_code ? (
+          <IdentityField
+            label="最近错误"
+            value={credential.data.credential.last_error_code}
+          />
+        ) : null}
       </dl>
       {identity.provider === "ones" && identity.metadata.team_uuids?.length ? (
         <div className="mt-3 flex flex-wrap gap-1">
@@ -300,31 +343,67 @@ function IdentityCard({
           ))}
         </div>
       ) : null}
-      <RequestError error={updateStatus.error || unbind.error} />
+      <RequestError
+        error={
+          updateStatus.error ||
+          unbind.error ||
+          credential.error ||
+          disableCredential.error ||
+          unbindCredential.error
+        }
+      />
       <div className="mt-4 flex flex-wrap gap-2">
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={updateStatus.isPending || unbind.isPending}
-          onClick={changeStatus}
-        >
-          {identity.status === "enabled"
-            ? "停用身份"
-            : identity.status === "unbound"
-              ? "恢复身份"
-              : "启用身份"}
-        </Button>
-        {identity.status !== "unbound" ? (
+        {identity.provider === "dingtalk" ? (
+          <>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={updateStatus.isPending || unbind.isPending}
+              onClick={changeStatus}
+            >
+              {identity.status === "enabled"
+                ? "停用身份"
+                : identity.status === "unbound"
+                  ? "恢复身份"
+                  : "启用身份"}
+            </Button>
+            {identity.status !== "unbound" ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="destructive"
+                disabled={updateStatus.isPending || unbind.isPending}
+                onClick={() => setConfirmUnbind(true)}
+              >
+                <UnlinkIcon aria-hidden="true" />
+                解绑
+              </Button>
+            ) : null}
+          </>
+        ) : null}
+        {identity.provider === "ones" &&
+        credential.data?.credential?.status === "ACTIVE" ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={disableCredential.isPending}
+            onClick={() => disableCredential.mutate()}
+          >
+            停用个人凭据
+          </Button>
+        ) : null}
+        {identity.provider === "ones" && identity.status !== "unbound" ? (
           <Button
             type="button"
             size="sm"
             variant="destructive"
-            disabled={updateStatus.isPending || unbind.isPending}
+            disabled={unbindCredential.isPending}
             onClick={() => setConfirmUnbind(true)}
           >
             <UnlinkIcon aria-hidden="true" />
-            解绑
+            软解绑 ONES
           </Button>
         ) : null}
       </div>
@@ -336,7 +415,14 @@ function IdentityCard({
         confirmLabel="确认解绑"
         destructive
         pending={unbind.isPending}
-        onConfirm={remove}
+        onConfirm={
+          identity.provider === "ones"
+            ? () =>
+                unbindCredential.mutate(undefined, {
+                  onSuccess: () => setConfirmUnbind(false),
+                })
+            : remove
+        }
       />
     </article>
   )
@@ -625,51 +711,202 @@ function DingTalkBindingSheet({
   )
 }
 
-function OnesBindingSheet({
+function SelfExternalIdentityPanel() {
+  const status = useSelfOnesBinding()
+  const unbind = useUnbindSelfOnesBinding()
+  const [binding, setBinding] = useState(false)
+  const [confirmUnbind, setConfirmUnbind] = useState(false)
+  const identity = status.data?.identity
+  const credential = status.data?.credential
+  const credentialLabel = credential
+    ? {
+        ACTIVE: "凭据有效",
+        INVALID: "凭据无效，请重新验证",
+        DISABLED: "凭据已被管理员停用，请重新验证",
+        UNBOUND: "已解绑",
+      }[credential.status]
+    : identity
+      ? "credential missing，请重新验证"
+      : "尚未绑定"
+
+  return (
+    <Card className="shadow-none">
+      <CardHeader className="border-b">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <CardTitle>ONES 本人身份</CardTitle>
+            <CardDescription className="mt-1">
+              登录验证后保存 ONES User ID、Team 候选、默认 Team
+              与加密 Token；密码不会保存。
+            </CardDescription>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={status.isLoading || status.isError}
+            onClick={() => setBinding(true)}
+          >
+            <KeyRoundIcon />
+            {identity ? "重新验证 / 切换默认 Team" : "绑定 ONES"}
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {status.isLoading ? (
+          <div className="flex min-h-28 items-center justify-center gap-2 text-sm text-muted-foreground">
+            <LoaderCircleIcon className="animate-spin" />
+            正在加载本人 ONES 状态…
+          </div>
+        ) : null}
+        <RequestError error={status.error || unbind.error} />
+        <article className="rounded-xl border bg-muted/20 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="font-semibold">
+              {identity?.display_name || status.data?.user?.display_name || "ONES"}
+            </h3>
+            <Badge variant={credential?.status === "ACTIVE" ? "secondary" : "outline"}>
+              {credentialLabel}
+            </Badge>
+          </div>
+          {identity ? (
+            <>
+              <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-2">
+                <IdentityField
+                  label="ONES User ID"
+                  value={identity.external_subject_id}
+                  mono
+                />
+                <IdentityField
+                  label="默认 Team"
+                  value={identity.metadata.default_team_id || "未选择"}
+                  mono
+                />
+                <IdentityField
+                  label="凭据 Revision"
+                  value={credential ? `r${credential.revision}` : "missing"}
+                />
+                <IdentityField
+                  label="最近验证"
+                  value={formatDate(credential?.verified_at)}
+                />
+              </dl>
+              <div className="mt-3 flex flex-wrap gap-1">
+                {(identity.metadata.team_uuids ?? []).map((team) => (
+                  <Badge
+                    key={team}
+                    variant={
+                      team === identity.metadata.default_team_id
+                        ? "secondary"
+                        : "outline"
+                    }
+                    className="font-mono font-normal"
+                  >
+                    {team}
+                  </Badge>
+                ))}
+              </div>
+              {identity.status !== "unbound" ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="destructive"
+                  className="mt-4"
+                  onClick={() => setConfirmUnbind(true)}
+                >
+                  <UnlinkIcon />
+                  解绑 ONES
+                </Button>
+              ) : null}
+            </>
+          ) : (
+            <p className="mt-3 text-sm text-muted-foreground">
+              尚未绑定 ONES。钉钉身份由消息入口或管理员人员详情治理，本页面不会请求其他用户资料。
+            </p>
+          )}
+        </article>
+      </CardContent>
+      <SelfOnesBindingSheet
+        open={binding}
+        onOpenChange={setBinding}
+        hasExisting={Boolean(identity)}
+      />
+      <ConfirmationSheet
+        open={confirmUnbind}
+        onOpenChange={setConfirmUnbind}
+        title="解绑本人 ONES"
+        description="解绑会软停用当前 ONES 身份和个人凭据并保留审计历史。"
+        confirmLabel="确认解绑"
+        destructive
+        pending={unbind.isPending}
+        onConfirm={() =>
+          unbind.mutate(undefined, {
+            onSuccess: () => setConfirmUnbind(false),
+          })
+        }
+      />
+    </Card>
+  )
+}
+
+function SelfOnesBindingSheet({
   open,
   onOpenChange,
-  user,
-  instanceName,
+  hasExisting,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  user: User
-  instanceName: string
+  hasExisting: boolean
 }) {
-  const queryClient = useQueryClient()
+  const begin = useBeginSelfOnesBinding()
+  const confirm = useConfirmSelfOnesBinding()
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<unknown>(null)
+  const [challenge, setChallenge] = useState<OnesBindingChallenge | null>(null)
+  const [teamId, setTeamId] = useState("")
+  const [replaceExisting, setReplaceExisting] = useState(false)
 
   const reset = () => {
     setEmail("")
     setPassword("")
-    setError(null)
+    setChallenge(null)
+    setTeamId("")
+    setReplaceExisting(false)
+    begin.reset()
+    confirm.reset()
   }
   const changeOpen = (next: boolean) => {
     if (!next) reset()
     onOpenChange(next)
   }
-  const submit = async (event: FormEvent) => {
+  const verify = async (event: FormEvent) => {
     event.preventDefault()
-    setSubmitting(true)
-    setError(null)
     try {
-      await verifyAndBindOnesIdentity(user.id, {
-        expected_user_revision: user.revision,
+      const next = await begin.mutateAsync({
         email: email.trim(),
         password,
       })
-      await queryClient.invalidateQueries({
-        queryKey: externalIdentityKeys.user(user.id),
-      })
-      changeOpen(false)
-    } catch (caught) {
-      setError(caught)
+      setChallenge(next)
+      setTeamId(next.teams[0]?.id ?? "")
+    } catch {
+      // The mutation error is rendered in the sheet.
     } finally {
       setPassword("")
-      setSubmitting(false)
+    }
+  }
+  const save = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!challenge) return
+    try {
+      await confirm.mutateAsync({
+        challenge_id: challenge.id,
+        connection_revision_id: challenge.connection_revision_id,
+        default_team_id: teamId,
+        replace_existing: replaceExisting,
+      })
+      toast.success("ONES 身份与默认 Team 已保存")
+      changeOpen(false)
+    } catch {
+      // The mutation error is rendered in the sheet.
     }
   }
 
@@ -677,12 +914,13 @@ function OnesBindingSheet({
     <Sheet open={open} onOpenChange={changeOpen}>
       <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
         <SheetHeader>
-          <SheetTitle>绑定 {instanceName} 身份</SheetTitle>
+          <SheetTitle>本人验证 ONES 身份</SheetTitle>
           <SheetDescription>
-            邮箱和密码只用于本次服务端验证。系统不会保存密码、Token 或原始响应。
+            第一步验证邮箱密码并读取最新 Team；第二步选择默认 Team 后原子保存身份与加密凭据。
           </SheetDescription>
         </SheetHeader>
-        <form className="space-y-4 px-4" onSubmit={submit}>
+        {!challenge ? (
+        <form className="space-y-4 px-4" onSubmit={verify}>
           <Field label="ONES 邮箱" htmlFor="ones-email">
             <Input
               id="ones-email"
@@ -709,13 +947,13 @@ function OnesBindingSheet({
               onChange={(event) => setPassword(event.target.value)}
             />
           </Field>
-          <RequestError error={error} />
+          <RequestError error={begin.error} />
           <SheetFooter className="px-0">
-            <Button type="submit" disabled={submitting}>
-              {submitting ? (
+            <Button type="submit" disabled={begin.isPending}>
+              {begin.isPending ? (
                 <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
               ) : null}
-              验证并绑定
+              验证并读取 Team
             </Button>
             <Button
               type="button"
@@ -726,6 +964,67 @@ function OnesBindingSheet({
             </Button>
           </SheetFooter>
         </form>
+        ) : (
+          <form className="space-y-4 px-4" onSubmit={save}>
+            <div className="rounded-lg border bg-muted/20 p-4 text-sm">
+              <p className="font-medium">{challenge.display_name}</p>
+              <p className="mt-1 font-mono text-xs text-muted-foreground">
+                {challenge.external_user_id}
+              </p>
+            </div>
+            <Field
+              label="默认 Team"
+              htmlFor="ones-default-team"
+              hint="Agent 调用时从用户绑定快照注入，不能由 Agent 参数覆盖。"
+            >
+              <select
+                id="ones-default-team"
+                required
+                className="h-8 w-full rounded-lg border border-input bg-background px-2.5 text-sm"
+                value={teamId}
+                onChange={(event) => setTeamId(event.target.value)}
+              >
+                {challenge.teams.map((team) => (
+                  <option key={team.id} value={team.id}>
+                    {team.name || team.id} · {team.id}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            {hasExisting ? (
+              <label className="flex items-start gap-2 rounded-lg border p-3 text-sm">
+                <Checkbox
+                  checked={replaceExisting}
+                  onCheckedChange={(checked) =>
+                    setReplaceExisting(Boolean(checked))
+                  }
+                />
+                <span>
+                  如果验证结果是另一个 ONES User ID，确认换绑当前账号
+                </span>
+              </label>
+            ) : null}
+            <p className="text-xs text-muted-foreground">
+              Challenge 将于 {formatDate(challenge.expires_at)} 失效，且只能消费一次。
+            </p>
+            <RequestError error={confirm.error} />
+            <SheetFooter className="px-0">
+              <Button type="submit" disabled={confirm.isPending || !teamId}>
+                {confirm.isPending ? (
+                  <LoaderCircleIcon className="animate-spin" />
+                ) : null}
+                保存身份与默认 Team
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setChallenge(null)}
+              >
+                返回重新验证
+              </Button>
+            </SheetFooter>
+          </form>
+        )}
       </SheetContent>
     </Sheet>
   )
