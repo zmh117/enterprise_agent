@@ -52,21 +52,33 @@ _Avoid_: 外部身份、登录密码、平台 Session
 使用自己外部身份和凭据执行 Connection 或 Handler 真实验证的当前授权管理员，其凭据不进入发布版本。
 _Avoid_: 独立共享测试 Token、其他用户凭据、运行时回退账号
 
+**Agent Publication**:
+Agent 经过校验后形成的不可变运行版本，冻结模型、提示词、运行策略和 Agent 能力上限，供业务应用精确引用。
+_Avoid_: Agent Draft、最新 Agent、应用运行时重新解析
+
 **应用发布（Application Publication）**:
-业务应用经过校验后形成的不可变运行版本，冻结其 API 能力及全部解析后的执行依赖版本。
+业务应用经过校验后形成的不可变运行版本，冻结其 Agent Publication、应用能力子集及全部解析后的执行依赖版本。
 _Avoid_: 应用草稿、当前最新配置、动态别名
 
+**钉钉应用访问（DingTalk Application Access）**:
+钉钉消息命中绑定活动 Application Publication 的连接器，且实际发送人解析为已启用内部用户后获得的当前应用访问资格。
+_Avoid_: 群级共享访问、应用角色白名单、未绑定外部主体
+
 **用户能力可用状态（User Capability Availability）**:
-当前内部用户在一次调用中满足外部身份、默认 Team、凭据和授权交集后得到的个人可执行状态，不影响应用自身发布状态。
+当前内部用户在一次调用中满足应用访问、Agent 能力上限、应用能力子集、Release 运维状态、外部身份、默认 Team 和凭据交集后得到的个人可执行状态，不影响应用自身发布状态。
 _Avoid_: 应用就绪、全局 Capability 状态、用户已绑定即有权限
 
 **API 治理管理权限（Governed API Administration Permission）**:
 控制管理员查看、编辑、测试、验证或发布 API Connection 和 API 能力配置的操作级 RBAC 权限，与业务用户运行时调用能力分开授权。
-_Avoid_: 平台管理员全能开关、Capability 执行授权、用户凭据所有权
+_Avoid_: 平台管理员全能开关、应用运行时访问权、用户凭据所有权
 
-**Capability 执行授权（Capability Execution Grant）**:
-允许内部用户在业务应用上下文中以 `use` 操作调用某个具体 Capability Code 的运行时权限；它不能授予任何配置管理能力。
-_Avoid_: API 管理权限、应用发布权限、已绑定即授权
+**Agent 能力上限（Agent Capability Envelope）**:
+Agent Publication 显式配置并冻结的 Capability Release 集合，定义使用该 Agent 的应用最多可以选择哪些 API 能力。
+_Avoid_: Agent 自动获得全部能力、应用能力子集、用户角色授权
+
+**应用能力子集（Application Capability Allowlist）**:
+Application Publication 从所选 Agent 能力上限中显式选择并冻结的 Capability Release 子集，是该应用运行时唯一可以暴露和执行的 API 能力集合。
+_Avoid_: Capability 全局授权、Agent 全量能力、运行时动态添加
 
 **凭据主体策略（Credential Subject Policy）**:
 能力 Handler 用于确定外部 API 凭据所有者的显式规则，当前允许当前消息发送人或指定服务账号两类主体。
@@ -132,7 +144,11 @@ _Avoid_: 跨 Team 搜索、工作项详情、创建或修改工作项
 
 - 一个 **内部用户**可以绑定多个不同 Provider 或系统实例的**外部身份绑定**
 - 第一版只治理一个逻辑 ONES 实例，每个内部用户最多存在一个当前有效的 ONES 外部身份绑定；多 ONES 实例不属于本变更
-- 一条钉钉消息先把发送者解析为**内部用户**，再计算业务应用和 **API 能力**权限
+- 一条钉钉消息先计算**钉钉应用访问**，再计算该应用允许的 **API 能力**可用状态
+- 第一版**钉钉应用访问**只要求消息命中绑定活动应用发布的钉钉连接器，且实际发送人解析为已启用的内部用户
+- 第一版不为钉钉应用另设用户白名单或应用访问角色；未绑定钉钉身份或内部用户已停用时拒绝访问
+- 群聊中的**钉钉应用访问**和后续 Capability 可用性始终按每条消息的实际发送人计算，不存在群级共享主体
+- 应用访问失败时只返回安全的中文绑定或联系管理员提示，不暴露用户、连接器或授权内部细节
 - **外部身份绑定**与外部系统调用凭据是两个独立事实
 - 一个启用的**外部身份绑定**对同一**认证配置**版本至多关联一个当前有效的**外部 API 凭据**
 - **外部 API 凭据**失效后必须由用户重新验证，平台不得依靠持久化密码自动登录
@@ -162,11 +178,26 @@ _Avoid_: 跨 Team 搜索、工作项详情、创建或修改工作项
 - **Capability 测试预览**完整展示普通业务字段，不对关键词、工作项编号、名称、User ID 或 Team ID 做掩码
 - 密码、Token、Cookie 和认证 Header 必须在构建测试预览前从预览模型中排除，不能先写入响应再依赖字符串脱敏
 - 测试页只展示 Schema 过滤后的**规范化能力输出**，不得显示或保存外部 API 原始响应
-- API 治理管理权限、既有业务应用编辑/发布权限和**Capability 执行授权**必须分别判定，任一权限不得隐含授予另一层
+- API 治理管理权限与既有 Agent、业务应用编辑发布权限必须分别判定，任一管理权限不得隐含授予运行时应用访问
 - 管理员 Verify/Test 只能解析自己的 ONES 身份、默认 Team 和 Token，即使其拥有凭据治理权限也不得使用其他用户凭据
-- 运行时必须以具体 Capability Code 和 `use` 操作校验**Capability 执行授权**，不能把 `api_capabilities.read` 或平台管理员身份当作业务调用授权
 - 应用发布只验证 Capability、Handler、Connection、最近验证结果和治理授权，不枚举未来使用者或保存用户/Team ID
-- **用户能力可用状态**由当前用户的外部身份、默认 Team、有效 Token、角色和能力授权共同决定
+- `ACTIVE` 的 Capability Release 发布后进入 Agent 配置和业务应用配置的候选目录
+- Agent 配置显式选择 Capability Release 并在 Agent Publication 中冻结为**Agent 能力上限**
+- 同一 Agent Publication 对同一 Capability Code 最多选择一个精确的 `ACTIVE` Release
+- Agent 配置默认推荐最新 `ACTIVE` Release，但允许管理员展开版本列表选择仍处于 `ACTIVE` 的较旧 Release
+- `DEPRECATED` Release 只在既有引用中展示警告，不得用于新 Agent 配置
+- 业务应用选择 Agent Publication 后，只能从该**Agent 能力上限**中配置自己的**应用能力子集**；后端必须拒绝越过 Agent 上限的选择
+- 应用配置只勾选 Agent Publication 已冻结的精确 Capability Release，不提供独立版本选择器
+- Agent 和应用的 Capability 选择界面必须展示名称、稳定 Code、业务 `description`、Release Revision 和运维状态，不能只显示机器编码
+- 管理界面可以额外展示 `release_note`；模型 Tool 定义和运行时提示不得包含该管理备注
+- 钉钉用户取得业务应用访问权后，即取得该应用能力子集的运行时调用资格，不再额外配置逐用户或逐角色 Capability Code `use` 权限
+- 应用没有配置的 Capability、或所选 Agent Publication 没有配置的 Capability，均不得暴露或执行
+- **应用发布**同时冻结所选 Agent Publication 和**应用能力子集**中的精确 Capability Release
+- Agent 新增、移除或升级 Capability 时必须创建新的**Agent Publication**；既有应用发布不得自动解析新 Agent 版本
+- 应用升级 Agent 时必须显式选择新的 Agent Publication，并重新校验原应用能力子集是否仍属于新的 Agent 能力上限
+- 新 Agent 缺失原 Capability、只提供 `DEPRECATED` Release 或公开 Schema 不兼容时，应用发布必须被阻止并要求管理员明确替换或移除
+- Agent 升级不得静默删除应用能力、自动选择替代 Release 或改写既有应用发布
+- **用户能力可用状态**由当前用户的应用访问权、Agent 能力上限、应用能力子集、Release 运维状态、外部身份、默认 Team 和有效 Token 共同决定
 - 任一用户的**用户能力可用状态**失败只阻止该用户调用，不改变应用发布或其他用户的状态
 - 模型 Tool 暴露前必须计算**用户能力可用状态**，不可用的 API 能力不进入本次 Tool 列表
 - 不可用能力可以向模型提供安全原因和中文操作提示，但不得暴露身份、Token 或授权细节
@@ -174,6 +205,8 @@ _Avoid_: 跨 Team 搜索、工作项详情、创建或修改工作项
 - **API 能力**通过已发布的**能力 Handler**执行
 - **API 能力**拥有 Agent 可见的公开输入、输出和业务语义 Schema
 - Capability Code 是稳定业务标识，不包含 `v1`、`v2` 等版本后缀，也不得被复用于不同业务含义
+- API Capability Revision 必须包含 `description`，说明业务用途、适用场景和返回内容；该字段同时展示在 Agent、应用配置并作为模型 Tool 描述
+- Capability Release 可以包含仅管理端可见的可选 `release_note`，用于说明本次修改、替代关系和运维注意事项，不得进入模型上下文
 - API Capability Input Schema 允许管理员配置字段名称、类型、说明、必填性、枚举、默认值以及字符串、数值、对象和数组边界
 - Agent 每次调用只能提交 Input Schema 声明的字段，未知字段、类型不匹配和越界值必须在 Handler 执行前拒绝
 - **能力 Handler**必须证明其字段映射计划能够实现所绑定 **API 能力**版本的公开 Schema
@@ -206,7 +239,10 @@ _Avoid_: 跨 Team 搜索、工作项详情、创建或修改工作项
 - 用户更换默认 Team 必须重新完成 ONES 密码验证并创建新**ONES 验证 Challenge**，不得直接从历史 Team 集合切换
 - 更换确认时必须使用 ONES 当前返回的 Team 集合，原子刷新已验证 Team、默认 Team 和加密 Token
 - Agent Job 创建时冻结当前外部 User ID 和默认 Team ID 形成**外部执行主体快照**；默认 Team 变更只影响之后创建的 Job
-- 已创建 Job 的**外部执行主体快照**不得因用户重绑或切换默认 Team 而变化；Token 仍按被冻结的认证配置解析当前有效凭据
+- 已创建 Job 的**外部执行主体快照**不得因用户重绑或切换默认 Team 而变化，也不得自动切换到新主体或新默认 Team
+- 每次外部调用前必须确认快照 User ID 仍等于当前启用绑定主体、快照 Team 仍属于最新验证 Team 集合且当前个人 Token 有效
+- 用户解绑、换绑 ONES 账号、失去快照 Team 或凭据失效时，旧 Job 失败关闭，不得使用新主体或其他 Team 继续
+- 只轮换 Token 且快照 User ID 与 Team 仍有效时，旧 Job 可以按被冻结的认证配置解析新 Token 继续执行
 - API 能力、Handler 和业务应用配置不得保存 ONES User ID 或 Team ID
 - 运行时从当前发送人的外部身份绑定读取 ONES User ID 和**ONES 默认 Team**并安全注入请求
 - 消息、Agent 参数和**能力 Handler**输入不得提供或替换 ONES User ID 或 `team_uuid`
@@ -214,7 +250,7 @@ _Avoid_: 跨 Team 搜索、工作项详情、创建或修改工作项
 - `QUERY` 可以使用 HTTP POST，但 GraphQL Document 必须由 Handler 版本固定且不得包含 `mutation`
 - Agent 只能提供 Input Schema 允许的变量，不能提供原始 GraphQL、任意请求体或响应字段
 - Agent 可以通过**Agent 能力组合**使用前一个 Capability 的**规范化能力输出**组织后续 Capability 输入，但平台不自动在 Handler 之间传递数据
-- 每个组合调用必须独立重新校验 Capability 执行授权、用户能力可用状态、应用绑定、外部身份和凭据，不得继承上一次调用的授权结果
+- 每个组合调用必须独立重新校验 Agent 能力上限、应用能力子集、用户能力可用状态、应用访问、外部身份和凭据，不得继承上一次调用的结果
 - 外部 API 输出即使通过 Schema 规范化，仍必须作为不可信业务数据进入模型上下文，不能解释为系统、开发者或 Tool 指令
 - ONES User ID、默认 Team、Token 和其他系统上下文字段不得出现在 Agent 可写 Input Schema 中，也不得由前一个 Capability 输出覆盖
 - **能力 Handler**使用**字段映射计划**在 Capability 输入、系统上下文、外部请求和 Capability 输出之间投影字段
@@ -228,7 +264,7 @@ _Avoid_: 跨 Team 搜索、工作项详情、创建或修改工作项
 - 只有**规范化能力输出**可以提供给 Agent，并在数组、字段和总大小限制内正常写入 Tool Call 结果；Agent 最终回复按现有 Job 和会话模型正常保存
 - Audit 只保存版本、主体、Team、状态、耗时、结果数量和摘要 Hash，不保存原始请求响应或认证数据
 - API 能力版本必须声明**能力数据分级**，能力发布冻结该分级；`ones.work_item.search` 第一版固定为 `INTERNAL`
-- `INTERNAL` 规范化输出只能由具备对应业务应用、Job 和 Capability 权限的主体访问，不得复制到日志、审计或公共导出
+- `INTERNAL` 规范化输出只能由具备对应业务应用和 Job 访问权的主体访问，不得复制到日志、审计或公共导出
 - 本变更不对规范化结果或最终回复执行定时清理，现有 `session_policy.retention_days` 继续明确为仅保存、未执行
 - 后续记忆系统若摄取 `INTERNAL` 输出或最终回复，必须继承用户、业务应用、Capability 和数据分级来源边界；记忆摄取本身不属于本变更
 - 第一版通用框架只以 `ones.work_item.search` 实现**ONES 工作项查询**真实验收
@@ -237,7 +273,8 @@ _Avoid_: 跨 Team 搜索、工作项详情、创建或修改工作项
 - 能力 Handler 遵循 `DRAFT → VERIFIED → PUBLISHED`，任何 Draft 变更都会使旧验证结果失效
 - 只有最新 Draft 验证通过后才能创建**Handler 发布版本**
 - **Handler 发布版本**不可修改或普通删除；被禁用后所有新调用失败关闭，被归档后不再供新绑定选择
-- 业务应用和 Agent 只引用 **API 能力**，不得直接选择**能力 Handler**或 **API Connection**
+- Agent 和业务应用只引用 **API 能力**，不得直接选择**能力 Handler**或 **API Connection**
+- Agent Publication 先冻结**Agent 能力上限**，Application Publication 再冻结其中显式选择的**应用能力子集**
 - 一个已发布 **API 能力**版本解析到一个确定的**能力 Handler**版本
 - 一个**能力 Handler**绑定一个已发布的 **API Connection**版本，只保存受限 Method、相对路径和请求/响应映射
 - **能力 Handler**不得保存完整 URL、任意代码、脚本或直接引用 Secret
@@ -270,8 +307,12 @@ _Avoid_: 跨 Team 搜索、工作项详情、创建或修改工作项
 - “管理员设置 Handler”曾在代码插件和任意动态实现之间含糊；已解决为管理员配置受限 HTTP 规则，固定代码 Executor 负责执行。
 - “给应用配置 API”曾被用于表示直接绑定 Handler；已解决为应用和 Agent 只绑定业务层 API 能力，Handler 与 Connection 保持平台治理细节。
 - “发布新 Handler”曾被理解为线上应用自动获得新实现；已解决为应用发布冻结精确版本，升级只能通过显式重新发布完成。
+- “修改 Agent 的 Capability”曾可能自动改变所有使用它的应用；已解决为 Agent 与应用分别发布并冻结版本，应用显式升级且重新校验能力子集。
+- “Agent 与应用各自选择 Capability 版本”曾可能产生版本不一致；已解决为 Agent 冻结精确 Release，应用只选择其子集且同时展示业务描述。
+- “Capability 备注描述”曾可能把版本运维说明一并发送给模型；已解决为业务 `description` 模型可见，`release_note` 仅管理端可见。
 - “废弃 Capability”曾可能等同立即停用或删除；已解决为软废弃只阻止新选择，既有应用继续运行，紧急阻断必须显式禁用。
 - “群聊调用 ONES”曾可能被理解为共享会话凭据；已解决为每条消息按当前发送人独立解析凭据，且不得回退共享账号。
+- “钉钉用户访问应用”曾可能需要额外应用白名单或角色；第一版已解决为路由命中活动应用且发送人映射为启用内部用户即可访问。
 - “查询用户的 ONES”曾先被解决为应用固定 Team；该决定已被取代，现在使用当前用户绑定的 ONES User ID 和默认 Team，且不自动跨 Team。
 - “只读 Handler”曾被理解为只允许 HTTP GET；已解决为按业务操作语义判断，允许固定只读 GraphQL 的 POST，但禁止 mutation 和原始查询输入。
 - “修改已发布 Handler”曾被理解为直接编辑当前配置；已解决为发布版本不可变，任何调整都从新 Draft 开始并重新验证发布。
@@ -282,9 +323,11 @@ _Avoid_: 跨 Team 搜索、工作项详情、创建或修改工作项
 - “管理员绑定 ONES”曾可能表示管理员代输普通用户密码并持有 Token；已解决为个人凭据只能本人自助创建和轮换，管理员只治理状态。
 - “管理员不能操作其他用户凭据”曾可能同时禁止泄露处置；已解决为管理员可查看元数据、禁用或解绑，但不能查看 Token、绑定、代输密码或重新验证。
 - “新增我的外部身份”曾可能表示重做一套绑定页面；已解决为复用现有外部身份面板，仅按当前主体与目标用户切换本人或管理员模式。
-- “拥有 API 配置权限”曾可能自动允许业务调用；已解决为治理管理、业务应用发布和具体 Capability 执行是三层独立授权。
+- “拥有 API 配置权限”曾可能自动允许业务调用；已解决为治理管理权限只控制配置，运行时调用资格来自 Agent 能力上限、应用能力子集和用户应用访问权。
+- “Capability 还要按用户或角色单独授权”曾造成重复配置；已解决为不设独立 Capability Code `use` Grant，用户访问应用即获得该应用已选能力的调用资格。
 - “输入 ONES 密码后选择 Team”曾可能要求把 Token 暂存到浏览器；已解决为服务端短时单次 Challenge 返回安全候选，确认后原子绑定。
 - “切换默认 Team”曾可能表示从历史 Team 列表直接改值并影响正在执行的任务；已解决为重新验证后从当前 Team 集合选择，且只影响之后创建的 Job。
+- “Job 冻结外部主体”曾可能允许已撤销权限继续执行；已解决为快照防止身份漂移，但每次调用仍实时校验主体、Team 成员资格和当前 Token。
 - “不可用 Capability”曾可能仍暴露给模型并等待调用失败；已解决为暴露前隐藏并提供安全提示，执行前仍再次失败关闭检查。
 - “请求/响应映射”曾可能表示管理员可编写任意模板或表达式；已解决为只支持可静态验证的类型化字段投影。
 - “测试预览不脱敏”曾可能包含认证材料或原始响应；已解决为普通业务字段完整显示，但凭据字段从预览模型中直接排除，外部原始响应仍不展示。
