@@ -220,6 +220,7 @@ def test_sqlserver_probe_accepts_readonly_permissions_and_sets_timeout() -> None
     ).verify(config, timeout_seconds=4)
 
     assert checks["readonly_account"] is True
+    assert checks["privileged_account_allowed"] is False
     assert "SET LOCK_TIMEOUT 4000" in cursor.executed
     assert cursor.closed is True
     assert connection.closed is True
@@ -257,6 +258,44 @@ def test_sqlserver_probe_rejects_roles_and_write_permissions(
             {**_runtime_config(), "port": 1433},
             timeout_seconds=5,
         )
+    assert connection.closed is True
+
+
+def test_sqlserver_probe_allows_sa_only_when_explicit() -> None:
+    cursor = FakeCursor({})
+
+    def execute(sql: str) -> None:
+        cursor.executed.append(sql)
+        if sql.startswith("SELECT IS_SRVROLEMEMBER"):
+            cursor.current = [(1,) + (0,) * 13]
+        elif "fn_my_permissions" in sql:
+            cursor.current = [("CONNECT",), ("CONTROL",)]
+        elif sql == "SELECT 1":
+            cursor.current = [(1,)]
+        else:
+            cursor.current = []
+
+    cursor.execute = execute  # type: ignore[method-assign]
+    connection = FakeConnection(cursor)
+
+    checks = SqlServerReadonlyAccountProbe(
+        lambda **_kwargs: connection,
+        allow_privileged_account=True,
+    ).verify(
+        {
+            **_runtime_config(),
+            "port": 1433,
+            "user": "sa",
+        },
+        timeout_seconds=5,
+    )
+
+    assert checks["connection"] is True
+    assert checks["readonly_account"] is False
+    assert checks["privileged_account_allowed"] is True
+    assert checks["timeout_guard"] is True
+    assert "SELECT 1" in cursor.executed
+    assert cursor.closed is True
     assert connection.closed is True
 
 
@@ -409,6 +448,8 @@ def test_oracle_11g_probe_uses_structured_thick_readonly_contract(
     assert driver.connect_kwargs["dsn"] == "structured-oracle-dsn"
     assert connection.call_timeout == 8000
     assert "SET TRANSACTION READ ONLY" in cursor.executed
+    assert checks["readonly_account"] is True
+    assert checks["privileged_account_allowed"] is False
     assert checks["server_version"] == "11.2.0.4"
     assert checks["character_sets"] == {
         "NLS_CHARACTERSET": "AL32UTF8",
@@ -447,6 +488,59 @@ def test_oracle_probe_rejects_write_system_privilege() -> None:
             },
             timeout_seconds=8,
         )
+    assert connection.closed is True
+
+
+def test_oracle_probe_allows_system_only_when_explicit() -> None:
+    cursor = FakeCursor({})
+
+    def execute(sql: str) -> None:
+        cursor.executed.append(sql)
+        if sql == "SELECT privilege FROM session_privs":
+            cursor.current = [
+                ("CREATE SESSION",),
+                ("UPDATE ANY TABLE",),
+            ]
+        elif sql == "SELECT privilege FROM user_tab_privs_recd":
+            cursor.current = [("SELECT",), ("UPDATE",)]
+        elif sql == "SELECT granted_role FROM user_role_privs":
+            cursor.current = [("DBA",)]
+        elif "FROM nls_database_parameters" in sql:
+            cursor.current = [
+                ("NLS_CHARACTERSET", "AL32UTF8"),
+                ("NLS_NCHAR_CHARACTERSET", "AL16UTF16"),
+            ]
+        elif sql == "SELECT 1 FROM dual":
+            cursor.current = [(1,)]
+        else:
+            cursor.current = []
+
+    cursor.execute = execute  # type: ignore[method-assign]
+    connection = FakeOracleConnection(cursor)
+    driver = FakeOracleDriver(connection)
+
+    checks = Oracle11gReadonlyAccountProbe(
+        oracledb_module=driver,
+        client_ready=lambda: None,
+        allow_privileged_account=True,
+    ).verify(
+        {
+            "host": "oracle.internal",
+            "port": 1521,
+            "service_name": "ORCL",
+            "user": "SYSTEM",
+            "password": "oracle-canary-password",
+        },
+        timeout_seconds=8,
+    )
+
+    assert checks["connection"] is True
+    assert checks["readonly_account"] is False
+    assert checks["privileged_account_allowed"] is True
+    assert checks["readonly_transaction"] is True
+    assert "SET TRANSACTION READ ONLY" in cursor.executed
+    assert "SELECT 1 FROM dual" in cursor.executed
+    assert connection.rolled_back is True
     assert connection.closed is True
 
 

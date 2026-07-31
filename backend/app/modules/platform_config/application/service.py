@@ -86,7 +86,7 @@ class PlatformConfigService:
             permission_service,
             verifier=GovernedResourceTechnicalVerifier(
                 resolve_secret=secret_provider.resolve,
-                allow_privileged_mysql_account=environment == "local",
+                allow_privileged_database_accounts=environment == "local",
             ),
         )
         self.handlers = HandlerGovernanceService(

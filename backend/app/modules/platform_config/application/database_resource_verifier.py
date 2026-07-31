@@ -162,8 +162,11 @@ class SqlServerReadonlyAccountProbe:
     def __init__(
         self,
         connect_factory: Callable[..., Any] | None = None,
+        *,
+        allow_privileged_account: bool = False,
     ) -> None:
         self._connect_factory = connect_factory
+        self._allow_privileged_account = allow_privileged_account
 
     def verify(
         self,
@@ -203,10 +206,6 @@ class SqlServerReadonlyAccountProbe:
                 )
                 cursor.execute(f"SELECT {role_checks}")
                 membership = cursor.fetchone() or ()
-                if any(value == 1 for value in membership):
-                    raise ReadonlyAccountViolation(
-                        "SQL Server account belongs to a privileged role"
-                    )
                 cursor.execute(
                     "SELECT permission_name "
                     "FROM fn_my_permissions(NULL, 'DATABASE')"
@@ -220,18 +219,27 @@ class SqlServerReadonlyAccountProbe:
                     ).upper()
                     for row in permission_rows
                 }
-                if not permissions.issubset(
-                    _SQLSERVER_ALLOWED_DATABASE_PERMISSIONS
+                readonly_account = (
+                    not any(value == 1 for value in membership)
+                    and permissions.issubset(
+                        _SQLSERVER_ALLOWED_DATABASE_PERMISSIONS
+                    )
+                )
+                if (
+                    not readonly_account
+                    and not self._allow_privileged_account
                 ):
                     raise ReadonlyAccountViolation(
-                        "SQL Server account has non-readonly permissions"
+                        "SQL Server account has a privileged role "
+                        "or non-readonly permissions"
                     )
                 cursor.execute(f"SET LOCK_TIMEOUT {timeout_seconds * 1000}")
                 cursor.execute("SELECT 1")
                 cursor.fetchone()
                 return {
                     "connection": True,
-                    "readonly_account": True,
+                    "readonly_account": readonly_account,
+                    "privileged_account_allowed": not readonly_account,
                     "timeout_guard": True,
                     "permission_count": len(permissions),
                 }
@@ -260,9 +268,11 @@ class Oracle11gReadonlyAccountProbe:
         *,
         oracledb_module: Any | None = None,
         client_ready: Callable[[], None] | None = None,
+        allow_privileged_account: bool = False,
     ) -> None:
         self._oracledb_module = oracledb_module
         self._client_ready = client_ready
+        self._allow_privileged_account = allow_privileged_account
 
     def verify(
         self,
@@ -335,30 +345,29 @@ class Oracle11gReadonlyAccountProbe:
                     )
                 cursor.execute("SELECT privilege FROM session_privs")
                 system_privileges = self._first_column(cursor.fetchall())
-                if (
-                    "CREATE SESSION" not in system_privileges
-                    or not system_privileges.issubset(
-                        _ORACLE_ALLOWED_SYSTEM_PRIVILEGES
-                    )
-                ):
-                    raise ReadonlyAccountViolation(
-                        "Oracle account has non-readonly system privileges"
-                    )
                 cursor.execute(
                     "SELECT privilege FROM user_tab_privs_recd"
                 )
                 object_privileges = self._first_column(cursor.fetchall())
-                if not object_privileges.issubset(
-                    _ORACLE_ALLOWED_OBJECT_PRIVILEGES
-                ):
-                    raise ReadonlyAccountViolation(
-                        "Oracle account has non-readonly object privileges"
-                    )
                 cursor.execute("SELECT granted_role FROM user_role_privs")
                 roles = self._first_column(cursor.fetchall())
-                if not roles.issubset(_ORACLE_ALLOWED_ROLES):
+                readonly_account = (
+                    "CREATE SESSION" in system_privileges
+                    and system_privileges.issubset(
+                        _ORACLE_ALLOWED_SYSTEM_PRIVILEGES
+                    )
+                    and object_privileges.issubset(
+                        _ORACLE_ALLOWED_OBJECT_PRIVILEGES
+                    )
+                    and roles.issubset(_ORACLE_ALLOWED_ROLES)
+                )
+                if (
+                    not readonly_account
+                    and not self._allow_privileged_account
+                ):
                     raise ReadonlyAccountViolation(
-                        "Oracle account has an unverified role"
+                        "Oracle account has a privileged role "
+                        "or non-readonly permissions"
                     )
                 cursor.execute(
                     "SELECT parameter, value "
@@ -397,7 +406,8 @@ class Oracle11gReadonlyAccountProbe:
                 )
             return {
                 "connection": True,
-                "readonly_account": True,
+                "readonly_account": readonly_account,
+                "privileged_account_allowed": not readonly_account,
                 "readonly_transaction": True,
                 "server_version": "11.2.0.4",
                 "character_sets": character_sets,
@@ -541,7 +551,7 @@ class GovernedResourceTechnicalVerifier:
         probes: dict[str, DatabaseReadonlyProbe] | None = None,
         timeout_seconds: int = 10,
         allow_oracle_real_verification: bool = False,
-        allow_privileged_mysql_account: bool = False,
+        allow_privileged_database_accounts: bool = False,
     ) -> None:
         self._resolve_secret = resolve_secret
         self._provider_contracts = (
@@ -549,10 +559,14 @@ class GovernedResourceTechnicalVerifier:
         )
         self._probes = probes or {
             "mysql": MysqlReadonlyAccountProbe(
-                allow_privileged_account=allow_privileged_mysql_account,
+                allow_privileged_account=allow_privileged_database_accounts,
             ),
-            "sqlserver": SqlServerReadonlyAccountProbe(),
-            "oracle": Oracle11gReadonlyAccountProbe(),
+            "sqlserver": SqlServerReadonlyAccountProbe(
+                allow_privileged_account=allow_privileged_database_accounts,
+            ),
+            "oracle": Oracle11gReadonlyAccountProbe(
+                allow_privileged_account=allow_privileged_database_accounts,
+            ),
             "redis": RedisResourceProbe(),
             "loki": LokiResourceProbe(),
         }
@@ -612,7 +626,9 @@ class GovernedResourceTechnicalVerifier:
                 provider_contract_version=contract.contract_version,
                 checks=checks,
                 safe_error_summary=(
-                    "本地环境已允许高权限 MySQL 账号；技术测试会话仍强制只读"
+                    "本地环境已允许高权限 "
+                    f"{self._provider_label(provider_type)} 账号；"
+                    "技术测试仅执行只读探针"
                     if checks.get("privileged_account_allowed") is True
                     else ""
                 ),
@@ -651,6 +667,14 @@ class GovernedResourceTechnicalVerifier:
         finally:
             runtime.pop("password", None)
             runtime.pop("auth_token", None)
+
+    @staticmethod
+    def _provider_label(provider_type: str) -> str:
+        return {
+            "mysql": "MySQL",
+            "sqlserver": "SQL Server",
+            "oracle": "Oracle",
+        }.get(provider_type, provider_type)
 
 
 DatabaseResourceTechnicalVerifier = GovernedResourceTechnicalVerifier
