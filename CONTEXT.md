@@ -16,6 +16,10 @@ _Avoid_: 外部凭据、Token 绑定、外部授权
 向业务应用和 Agent 发布的版本化业务操作及其公开输入输出契约，不暴露底层接口地址、认证信息或传输细节。
 _Avoid_: Tool、Endpoint、API Handler
 
+**Capability 标识（Capability Identifier）**:
+同时作为业务标识、模型 Tool 名、Agent/Application 引用和审计键的稳定名称，使用保留的 `cap__` 命名空间，例如 `cap__ones__work_item__search`。
+_Avoid_: 点号 Code、运行时名称转换、内部 Tool 名、版本后缀
+
 **API 能力配置（API Capability Configuration）**:
 管理员在单一工作台维护的聚合配置，同时包含 API 能力业务定义和对应 Handler 调用配置。
 _Avoid_: 两个独立配置流程、直接 Handler 绑定、外部 URL 表单
@@ -81,7 +85,7 @@ Application Publication 从所选 Agent 能力上限中显式选择并冻结的 
 _Avoid_: Capability 全局授权、Agent 全量能力、运行时动态添加
 
 **凭据主体策略（Credential Subject Policy）**:
-能力 Handler 用于确定外部 API 凭据所有者的显式规则，当前允许当前消息发送人或指定服务账号两类主体。
+能力 Handler 用于确定外部 API 凭据所有者的显式规则；第一版只允许当前消息发送人的 `CURRENT_ACTOR`，指定服务账号策略延期。
 _Avoid_: 自动回退、会话共享凭据、任意用户
 
 **ONES 默认 Team（ONES Default Team）**:
@@ -204,7 +208,11 @@ _Avoid_: 跨 Team 搜索、工作项详情、创建或修改工作项
 - Handler 执行前必须再次计算**用户能力可用状态**，不得依赖会话或模型暴露阶段的旧结果
 - **API 能力**通过已发布的**能力 Handler**执行
 - **API 能力**拥有 Agent 可见的公开输入、输出和业务语义 Schema
-- Capability Code 是稳定业务标识，不包含 `v1`、`v2` 等版本后缀，也不得被复用于不同业务含义
+- Capability Code 与模型 Tool 名统一为**Capability 标识**，不再进行点号到下划线或其他运行时名称转换
+- **Capability 标识**采用 `cap__<provider>__<domain>__<operation>` 结构：双下划线分隔层级，层级内使用小写 snake_case，总长不超过 128 字符
+- `cap__` 前缀由受治理 API Capability 独占，现有和未来内部 Tool 不得使用该前缀
+- **Capability 标识**不包含 `v1`、`v2` 等版本后缀，也不得被复用于不同业务含义；发布时必须校验全局唯一
+- Capability 使用专用标识校验器，不能复用会拒绝连续下划线的通用业务 Code 校验规则
 - API Capability Revision 必须包含 `description`，说明业务用途、适用场景和返回内容；该字段同时展示在 Agent、应用配置并作为模型 Tool 描述
 - Capability Release 可以包含仅管理端可见的可选 `release_note`，用于说明本次修改、替代关系和运维注意事项，不得进入模型上下文
 - API Capability Input Schema 允许管理员配置字段名称、类型、说明、必填性、枚举、默认值以及字符串、数值、对象和数组边界
@@ -259,6 +267,10 @@ _Avoid_: 跨 Team 搜索、工作项详情、创建或修改工作项
 - **能力 Handler**使用**字段映射计划**在 Capability 输入、系统上下文、外部请求和 Capability 输出之间投影字段
 - **字段映射计划**只能读取声明的输入、常量和系统上下文，不能读取 Token、Secret、环境变量或动态主机
 - **字段映射计划**必须通过字段存在性、类型、系统字段所有权、数组数量、字符串长度和响应大小校验
+- 第一版 Mapping Plan 只支持字段重命名、对象层级调整、受限字段路径读取、固定常量和数组逐项投影
+- 第一版允许管理员显式选择字符串、整数、数字和布尔值之间的基础类型转换，并为可选缺失字段配置固定默认值
+- Mapping Plan 不支持条件判断、过滤表达式、字符串拼接、日期计算、正则替换、函数、脚本或部分成功策略
+- 类型转换失败、必填字段缺失、数组越界或输出 Schema 不匹配时，整个调用按契约错误失败，不得返回部分规范化结果
 - `401` 使当前**外部 API 凭据**失效且不重试；`403` 表示外部授权不足但不自动使 Token 失效
 - `400`、`404`、响应过大、JSON 无效和 Schema 不匹配不重试
 - `QUERY` 遇到网络错误、超时、`429`、`502`、`503` 或 `504` 时最多进行两次退避重试
@@ -266,15 +278,26 @@ _Avoid_: 跨 Team 搜索、工作项详情、创建或修改工作项
 - 原始外部响应只在当前 Attempt 内存中存在，映射完成后丢弃，不得进入数据库、日志、审计、错误或模型上下文
 - 只有**规范化能力输出**可以提供给 Agent，并在数组、字段和总大小限制内正常写入 Tool Call 结果；Agent 最终回复按现有 Job 和会话模型正常保存
 - Audit 只保存版本、主体、Team、状态、耗时、结果数量和摘要 Hash，不保存原始请求响应或认证数据
-- API 能力版本必须声明**能力数据分级**，能力发布冻结该分级；`ones.work_item.search` 第一版固定为 `INTERNAL`
+- API 能力版本必须声明**能力数据分级**，能力发布冻结该分级；`cap__ones__work_item__search` 第一版固定为 `INTERNAL`
 - `INTERNAL` 规范化输出只能由具备对应业务应用和 Job 访问权的主体访问，不得复制到日志、审计或公共导出
 - 本变更不对规范化结果或最终回复执行定时清理，现有 `session_policy.retention_days` 继续明确为仅保存、未执行
 - 后续记忆系统若摄取 `INTERNAL` 输出或最终回复，必须继承用户、业务应用、Capability 和数据分级来源边界；记忆摄取本身不属于本变更
-- 第一版通用框架只以 `ones.work_item.search` 实现**ONES 工作项查询**真实验收
+- 第一版通用框架只以 `cap__ones__work_item__search` 实现**ONES 工作项查询**真实验收
 - **ONES 工作项查询**输入仅包含关键词、工作项类型和有界数量，输出仅包含编号、名称、类型、总数和截断状态
 - 第一版通过测试专用的两个 Capability Fixture 验证“API A 规范化输出 → Agent 组织参数 → API B 输入”的组合链路，不新增第二个生产 ONES Capability
+- 第一版端到端验收必须覆盖首个 ONES Connection 启动验证与发布，以及管理员正式绑定自己的 ONES 账号和默认 Team
+- 第一版端到端验收必须覆盖管理员配置、测试、验证并发布 `cap__ones__work_item__search`
+- 第一版端到端验收必须覆盖 Agent 选择 Capability Release 并发布，以及应用只能从所选 Agent 能力上限中选择子集后绑定钉钉应用发布
+- 第一版端到端验收必须证明普通钉钉用户绑定自己的 ONES 后，查询使用该用户的 User ID、默认 Team 和 Token 返回规范化工作项
+- 第一版负向验收必须证明 Agent 未配置时应用不能选择、应用未选择时模型不能调用
+- 第一版负向验收必须分别覆盖用户未绑定、Token 失效、Team 权限撤销和 Release 禁用，且不得切换其他用户或 Team
+- 第一版回归验收必须证明现有内部 Tool 与未升级的 Agent/Application Publication 行为不变
 - 能力 Handler 遵循 `DRAFT → VERIFIED → PUBLISHED`，任何 Draft 变更都会使旧验证结果失效
 - 只有最新 Draft 验证通过后才能创建**Handler 发布版本**
+- Capability Draft 保存必须提交 `expected_revision` 并使用乐观锁；Revision 冲突时拒绝覆盖并要求管理员刷新后重新合并
+- Verify 证据必须绑定 Draft Revision 和规范化内容 Hash，任何业务 Schema、Handler、Connection 或映射字段变化都使旧验证失效
+- Publish 必须提交已验证 Revision、内容 Hash 和幂等键；相同幂等键重试返回同一 Capability Release
+- Publish 在单一事务中原子创建或引用 Capability Revision、创建 Handler Revision、Mapping Plan 和 Capability Release，任一失败整体回滚
 - **Handler 发布版本**不可修改或普通删除；被禁用后所有新调用失败关闭，被归档后不再供新绑定选择
 - Agent 和业务应用只引用 **API 能力**，不得直接选择**能力 Handler**或 **API Connection**
 - Agent Publication 先冻结**Agent 能力上限**，Application Publication 再冻结其中显式选择的**应用能力子集**
@@ -320,6 +343,7 @@ _Avoid_: 跨 Team 搜索、工作项详情、创建或修改工作项
 - “查询用户的 ONES”曾先被解决为应用固定 Team；该决定已被取代，现在使用当前用户绑定的 ONES User ID 和默认 Team，且不自动跨 Team。
 - “只读 Handler”曾被理解为只允许 HTTP GET；已解决为按业务操作语义判断，允许固定只读 GraphQL 的 POST，但禁止 mutation 和原始查询输入。
 - “修改已发布 Handler”曾被理解为直接编辑当前配置；已解决为发布版本不可变，任何调整都从新 Draft 开始并重新验证发布。
+- “多人编辑并发布 Capability”曾可能产生覆盖或重复 Release；已解决为 Draft 乐观锁、验证内容 Hash、幂等键和原子发布事务。
 - “测试 Handler”曾考虑使用 Connection 独立验证凭据；已解决为当前授权管理员使用自己的 ONES 身份和 Token，且该 Token 不进入发布或其他用户运行时。
 - “ONES 登录 API”曾可能被当作 Agent 可调用能力；已解决为 Connection Authentication Profile 的内部认证协议，永不进入 Capability Catalog。
 - “应用发布冻结凭据”曾可能被理解为把 Token 写入发布快照；已解决为只冻结认证协议版本，运行时读取当前用户最新有效 Token。
@@ -334,10 +358,12 @@ _Avoid_: 跨 Team 搜索、工作项详情、创建或修改工作项
 - “Job 冻结外部主体”曾可能允许已撤销权限继续执行；已解决为快照防止身份漂移，但每次调用仍实时校验主体、Team 成员资格和当前 Token。
 - “不可用 Capability”曾可能仍暴露给模型并等待调用失败；已解决为暴露前隐藏并提供安全提示，执行前仍再次失败关闭检查。
 - “请求/响应映射”曾可能表示管理员可编写任意模板或表达式；已解决为只支持可静态验证的类型化字段投影。
+- “受限字段映射”曾未明确允许哪些转换；已解决为确定性字段/数组投影、有限基础类型转换和固定默认值，任何契约错误整体失败。
 - “测试预览不脱敏”曾可能包含认证材料或原始响应；已解决为普通业务字段完整显示，但凭据字段从预览模型中直接排除，外部原始响应仍不展示。
 - “一个 API 的结果作为另一个 API 输入”曾可能表示 Handler 自动直连或透传原始响应；已解决为 Agent 只使用规范化输出组织下一个公开 Input Schema，并对每次调用独立授权。
 - “Handler Schema”曾可能同时表示 Agent 业务契约和外部接口结构；已解决为公开业务 Schema 属于 API 能力，Handler 只负责实现和验证该契约。
 - “Capability 版本”曾可能通过修改 Code 中的 `v1`、`v2` 表示；已解决为 Code 稳定、Release Revision 递增，并按实现、Schema 或业务语义变化选择不同版本路径。
+- “Capability 业务 Code 与模型 Tool 名分离”曾引入转换和碰撞处理；已解决为统一使用 `cap__` 保留命名空间中的同一个稳定标识。
 - “Capability 与 Handler 分离”曾可能表示管理员需要维护两个对象；已解决为产品上一体化 API 能力配置和一次发布，平台内部保留职责与版本分离。
 - “API 能力配置页面”曾可能继续拆成独立 Schema、Handler 和测试页面；已解决为五区单工作台，并通过一次验证和原子发布形成 Capability Release。
 - “配置 ONES API”曾可能在每个 Capability 中重复填写 Base URL 和认证；已解决为共享 API Connection 独立治理，Capability 只引用发布版本。
@@ -348,4 +374,4 @@ _Avoid_: 跨 Team 搜索、工作项详情、创建或修改工作项
 - “ONES 调用失败”曾被当作统一可重试错误；已解决为按认证、授权、输入、契约和瞬时故障分类，只有只读查询的瞬时故障有限重试。
 - “保存 Tool 调用结果”曾可能表示落盘整个外部响应；已解决为原始响应永不持久化，只有 Schema 允许的有界规范化输出可以保存。
 - “INTERNAL”曾可能被理解为自动过期或禁止保存；已解决为它只定义内部访问与后续记忆继承边界，规范化结果和最终回复正常保存且不定时清理。
-- “第一版查询 ONES”曾可能包含多个工作项能力；已解决为通用框架只用 `ones.work_item.search` 完成单 Team 只读端到端验收。
+- “第一版查询 ONES”曾可能包含多个工作项能力；已解决为通用框架只用 `cap__ones__work_item__search` 完成单 Team 只读端到端验收。
