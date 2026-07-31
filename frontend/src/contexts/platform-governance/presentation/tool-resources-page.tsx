@@ -74,6 +74,7 @@ import {
 import type {
   GovernedResource,
   ResourceFormInput,
+  ResourceVerification,
   TopologyItem,
 } from "@/contexts/platform-governance/domain/platform-governance"
 import { ApiError } from "@/shared/api/api-client"
@@ -288,6 +289,11 @@ export function ToolResourcesPage() {
             <ResourceCard
               key={resource.id}
               resource={resource}
+              verification={
+                verify.variables === resource.code
+                  ? verify.data
+                  : resource.draft_verification
+              }
               pending={
                 verify.isPending ||
                 publish.isPending ||
@@ -474,6 +480,7 @@ function ResourceFilters({
 
 function ResourceCard({
   resource,
+  verification,
   pending,
   onEdit,
   onVerify,
@@ -482,6 +489,7 @@ function ResourceCard({
   onConfirm,
 }: {
   resource: GovernedResource
+  verification: ResourceVerification | null | undefined
   pending: boolean
   onEdit: () => void
   onVerify: () => void
@@ -544,6 +552,21 @@ function ResourceCard({
         {resource.safe_error_summary ? (
           <p className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
             {resource.safe_error_summary}
+          </p>
+        ) : null}
+        {verification ? (
+          <p
+            role="status"
+            className={
+              verification.status === "PASSED"
+                ? "rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-sm text-emerald-700"
+                : "rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"
+            }
+          >
+            技术测试 {verification.status}
+            {verification.safe_error_summary
+              ? `：${verification.safe_error_summary}`
+              : ""}
           </p>
         ) : null}
         {resource.affected_applications.length ? (

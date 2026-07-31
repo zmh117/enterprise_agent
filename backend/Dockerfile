@@ -79,7 +79,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-deps --no-build-isolation .
 CMD ["python", "-m", "app.cli.migrate"]
 
-FROM python-deps AS api-server
+FROM database-deps AS api-server
 COPY backend/app/__init__.py backend/app/bootstrap.py backend/app/main.py /app/backend/app/
 COPY backend/app/cli /app/backend/app/cli
 COPY backend/app/shared /app/backend/app/shared

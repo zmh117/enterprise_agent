@@ -128,6 +128,15 @@ class GovernedResourceService:
         result: list[dict[str, Any]] = []
         for resource in self.repository.list_resources():
             draft = self.repository.find_draft(str(resource["id"]))
+            draft_verification = (
+                self.repository.matching_verification(
+                    resource_id=str(resource["id"]),
+                    draft_revision=int(draft["draft_revision"]),
+                    content_hash=str(draft["content_hash"]),
+                )
+                if draft
+                else None
+            )
             revisions = self.repository.list_revisions(str(resource["id"]))
             published = revisions[-1] if revisions else None
             activation = (
@@ -139,6 +148,7 @@ class GovernedResourceService:
                 {
                     **resource,
                     "draft": draft,
+                    "draft_verification": draft_verification,
                     "published_revision": published,
                     "effective_revision_id": (
                         str(activation["effective_revision_id"])

@@ -65,6 +65,8 @@ class PlatformConfigService:
         repository: PlatformConfigRepository,
         permission_service: PermissionService,
         secret_provider: SecretProviderPort,
+        *,
+        environment: str = "production",
     ) -> None:
         self.repository = repository
         self.permission_service = permission_service
@@ -84,6 +86,7 @@ class PlatformConfigService:
             permission_service,
             verifier=GovernedResourceTechnicalVerifier(
                 resolve_secret=secret_provider.resolve,
+                allow_privileged_mysql_account=environment == "local",
             ),
         )
         self.handlers = HandlerGovernanceService(

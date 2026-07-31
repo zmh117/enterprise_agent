@@ -43,6 +43,22 @@ class ExternalBoundaryVerifier(PassingVerifier):
         return super().verify(resource=resource, draft=draft)
 
 
+class FailingVerifier:
+    def verify(
+        self,
+        *,
+        resource: dict[str, object],
+        draft: dict[str, object],
+    ) -> ResourceVerificationOutcome:
+        del resource, draft
+        return ResourceVerificationOutcome(
+            status="FAILED",
+            provider_contract_version="mysql_v1",
+            checks={"connection": False},
+            safe_error_summary="测试连接失败",
+        )
+
+
 def _create_resource() -> tuple[object, object, dict[str, object]]:
     runtime = container()
     service = runtime.platform_config_service.governed_resources
@@ -145,6 +161,45 @@ def test_external_resource_probe_runs_outside_platform_database_uow() -> None:
             verifier=ExternalBoundaryVerifier(),
         )
         assert verification["status"] == "PASSED"
+    finally:
+        runtime.database.close()
+
+
+def test_repeated_verification_updates_the_same_result_without_500() -> None:
+    runtime, service, created = _create_resource()
+    try:
+        passed = service.verify_draft(
+            "governed_mysql",
+            actor_id="local-user",
+            verifier=PassingVerifier(),
+        )
+        assert passed["status"] == "PASSED"
+        assert created["draft"]["id"] == passed["draft_id"]
+        assert (
+            service.repository.get_draft(
+                str(created["resource"]["id"])
+            )["status"]
+            == "VERIFIED"
+        )
+
+        failed = service.verify_draft(
+            "governed_mysql",
+            actor_id="local-user",
+            verifier=FailingVerifier(),
+        )
+
+        assert failed["id"] == passed["id"]
+        assert failed["status"] == "FAILED"
+        assert failed["safe_error_summary"] == "测试连接失败"
+        assert (
+            service.repository.get_draft(
+                str(created["resource"]["id"])
+            )["status"]
+            == "DRAFT"
+        )
+        listed = service.list_resources()[0]
+        assert listed["draft_verification"]["id"] == passed["id"]
+        assert listed["draft_verification"]["status"] == "FAILED"
     finally:
         runtime.database.close()
 

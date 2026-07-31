@@ -250,6 +250,36 @@ describe("Phase 5 platform governance UI", () => {
     expect(screen.getByLabelText("Port")).toHaveAttribute("type", "number")
   })
 
+  it("shows the technical verification status and safe failure reason", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input)
+      if (url.endsWith("/verify")) {
+        return response({
+          verification: {
+            id: "verification-oracle",
+            status: "BLOCKED",
+            checks: { available: false },
+            safe_error_summary: "数据库客户端未安装，无法执行技术验证",
+          },
+        })
+      }
+      if (url.includes("/api/platform/resources")) {
+        return response({ resources: [governedOracleResource()] })
+      }
+      return response({ secrets: [] })
+    })
+    renderWithQuery(<ToolResourcesPage />)
+
+    expect(await screen.findByText("Oracle 订单库")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "技术测试" }))
+
+    expect(
+      await screen.findByText(
+        "技术测试 BLOCKED：数据库客户端未安装，无法执行技术验证"
+      )
+    ).toBeInTheDocument()
+  })
+
   it("serializes a resource Draft with only the selected Secret reference", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() =>
       response({

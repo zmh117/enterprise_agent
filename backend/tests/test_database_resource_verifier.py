@@ -128,6 +128,7 @@ def test_mysql_probe_accepts_only_readonly_grants_and_sets_guards() -> None:
     assert checks == {
         "connection": True,
         "readonly_account": True,
+        "privileged_account_allowed": False,
         "readonly_session": True,
         "grant_count": 2,
     }
@@ -158,6 +159,41 @@ def test_mysql_probe_fails_closed_for_non_readonly_grants(grant: str) -> None:
             _runtime_config(),
             timeout_seconds=5,
         )
+    assert connection.closed is True
+
+
+def test_mysql_probe_allows_privileged_account_only_when_explicit() -> None:
+    cursor = FakeCursor(
+        {
+            "SHOW GRANTS FOR CURRENT_USER": [
+                ("GRANT ALL PRIVILEGES ON *.* TO `root`@`%` WITH GRANT OPTION",),
+            ],
+            "SELECT 1": [(1,)],
+        }
+    )
+    connection = FakeConnection(cursor)
+
+    checks = MysqlReadonlyAccountProbe(
+        lambda **_kwargs: connection,
+        allow_privileged_account=True,
+    ).verify(
+        {
+            **_runtime_config(),
+            "user": "root",
+        },
+        timeout_seconds=5,
+    )
+
+    assert checks == {
+        "connection": True,
+        "readonly_account": False,
+        "privileged_account_allowed": True,
+        "readonly_session": True,
+        "grant_count": 1,
+    }
+    assert "SET SESSION TRANSACTION READ ONLY" in cursor.executed
+    assert "START TRANSACTION READ ONLY" in cursor.executed
+    assert connection.rolled_back is True
     assert connection.closed is True
 
 

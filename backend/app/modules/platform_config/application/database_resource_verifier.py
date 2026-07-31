@@ -40,8 +40,11 @@ class MysqlReadonlyAccountProbe:
     def __init__(
         self,
         connect_factory: Callable[..., Any] | None = None,
+        *,
+        allow_privileged_account: bool = False,
     ) -> None:
         self._connect_factory = connect_factory
+        self._allow_privileged_account = allow_privileged_account
 
     def verify(
         self,
@@ -74,7 +77,13 @@ class MysqlReadonlyAccountProbe:
                     str(row[0] if isinstance(row, (tuple, list)) else next(iter(row.values())))
                     for row in grant_rows
                 ]
-                self._assert_grants_readonly(grants)
+                readonly_account = True
+                try:
+                    self._assert_grants_readonly(grants)
+                except ReadonlyAccountViolation:
+                    if not self._allow_privileged_account:
+                        raise
+                    readonly_account = False
                 cursor.execute("SET SESSION TRANSACTION READ ONLY")
                 cursor.execute(
                     f"SET SESSION MAX_EXECUTION_TIME = {timeout_seconds * 1000}"
@@ -85,7 +94,8 @@ class MysqlReadonlyAccountProbe:
             connection.rollback()
             return {
                 "connection": True,
-                "readonly_account": True,
+                "readonly_account": readonly_account,
+                "privileged_account_allowed": not readonly_account,
                 "readonly_session": True,
                 "grant_count": len(grants),
             }
@@ -531,13 +541,16 @@ class GovernedResourceTechnicalVerifier:
         probes: dict[str, DatabaseReadonlyProbe] | None = None,
         timeout_seconds: int = 10,
         allow_oracle_real_verification: bool = False,
+        allow_privileged_mysql_account: bool = False,
     ) -> None:
         self._resolve_secret = resolve_secret
         self._provider_contracts = (
             provider_contracts or ProviderContractRegistry()
         )
         self._probes = probes or {
-            "mysql": MysqlReadonlyAccountProbe(),
+            "mysql": MysqlReadonlyAccountProbe(
+                allow_privileged_account=allow_privileged_mysql_account,
+            ),
             "sqlserver": SqlServerReadonlyAccountProbe(),
             "oracle": Oracle11gReadonlyAccountProbe(),
             "redis": RedisResourceProbe(),
@@ -598,6 +611,11 @@ class GovernedResourceTechnicalVerifier:
                 status="PASSED",
                 provider_contract_version=contract.contract_version,
                 checks=checks,
+                safe_error_summary=(
+                    "本地环境已允许高权限 MySQL 账号；技术测试会话仍强制只读"
+                    if checks.get("privileged_account_allowed") is True
+                    else ""
+                ),
             )
         except ModuleNotFoundError:
             return ResourceVerificationOutcome(

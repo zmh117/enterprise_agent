@@ -53,6 +53,15 @@ const resourceRevisionSchema = z
   })
   .passthrough()
 
+const resourceVerificationSchema = z
+  .object({
+    id: z.string(),
+    status: z.enum(["PASSED", "FAILED", "BLOCKED"]),
+    checks: z.record(z.string(), z.unknown()).default({}),
+    safe_error_summary: z.string().default(""),
+  })
+  .passthrough()
+
 const governedResourceSchema = z
   .object({
     id: z.string(),
@@ -71,6 +80,7 @@ const governedResourceSchema = z
       .transform((value) => value ?? ""),
     status: z.enum(["enabled", "disabled", "archived"]),
     draft: resourceDraftSchema.nullable(),
+    draft_verification: resourceVerificationSchema.nullable().default(null),
     published_revision: resourceRevisionSchema.nullable(),
     effective_revision_id: z.string().default(""),
     activation_status: z.string().default("EMPTY"),
@@ -153,14 +163,7 @@ export const resourceRevisionResponseSchema = z.object({
   revision: resourceRevisionSchema,
 })
 export const verificationResponseSchema = z.object({
-  verification: z
-    .object({
-      id: z.string(),
-      status: z.enum(["PASSED", "FAILED", "BLOCKED"]),
-      checks: z.record(z.string(), z.unknown()).default({}),
-      safe_error_summary: z.string().default(""),
-    })
-    .passthrough(),
+  verification: resourceVerificationSchema,
 })
 export const environmentResponseSchema = z.object({
   environments: z.array(topologyItemSchema),
@@ -177,6 +180,7 @@ export type PlatformSecret = z.infer<typeof secretSchema>
 export type GovernedResource = z.infer<typeof governedResourceSchema>
 export type ResourceDraft = z.infer<typeof resourceDraftSchema>
 export type ResourceRevision = z.infer<typeof resourceRevisionSchema>
+export type ResourceVerification = z.infer<typeof resourceVerificationSchema>
 export type TopologyItem = z.infer<typeof topologyItemSchema>
 
 export type ResourceFormInput = {

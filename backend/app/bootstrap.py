@@ -448,6 +448,7 @@ def _build_container(
         platform_config_repository,
         permission_service,
         model_secret_provider,
+        environment=settings.environment,
     )
     model_connection_service = ModelConnectionService(
         model_connection_repository,

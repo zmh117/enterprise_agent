@@ -240,13 +240,22 @@ class GovernedResourceRepository:
         actor_id: str,
     ) -> dict[str, Any]:
         verification_id = new_id("resource_verify")
-        self.database.execute(
+        rows = self.database.execute(
             """
             insert into platform_resource_verification
               (id, resource_id, draft_id, draft_revision, content_hash, status,
                provider_contract_version, checks_json, safe_error_summary,
                verified_by, verified_at)
             values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            on conflict(resource_id, draft_revision, content_hash) do update set
+              draft_id = excluded.draft_id,
+              status = excluded.status,
+              provider_contract_version = excluded.provider_contract_version,
+              checks_json = excluded.checks_json,
+              safe_error_summary = excluded.safe_error_summary,
+              verified_by = excluded.verified_by,
+              verified_at = excluded.verified_at
+            returning id
             """,
             (
                 verification_id,
@@ -262,28 +271,29 @@ class GovernedResourceRepository:
                 now_iso(),
             ),
         )
-        if status == "PASSED":
-            rows = self.database.execute(
-                """
-                update platform_resource_draft
-                   set status = 'VERIFIED', updated_by = ?, updated_at = ?
-                 where id = ? and draft_revision = ? and content_hash = ?
-                returning id
-                """,
-                (
-                    actor_id,
-                    now_iso(),
-                    draft_id,
-                    draft_revision,
-                    content_hash,
-                ),
+        verification_id = str(rows[0]["id"])
+        rows = self.database.execute(
+            """
+            update platform_resource_draft
+               set status = ?, updated_by = ?, updated_at = ?
+             where id = ? and draft_revision = ? and content_hash = ?
+            returning id
+            """,
+            (
+                "VERIFIED" if status == "PASSED" else "DRAFT",
+                actor_id,
+                now_iso(),
+                draft_id,
+                draft_revision,
+                content_hash,
+            ),
+        )
+        if not rows:
+            raise NonRetryableExecutionError(
+                "Resource Draft changed during verification",
+                safe_message="资源草稿已变化，请重新验证",
+                error_code="resource_verification_stale",
             )
-            if not rows:
-                raise NonRetryableExecutionError(
-                    "Resource Draft changed during verification",
-                    safe_message="资源草稿已变化，请重新验证",
-                    error_code="resource_verification_stale",
-                )
         return self.get_verification(verification_id)
 
     def get_verification(self, verification_id: str) -> dict[str, Any]:
