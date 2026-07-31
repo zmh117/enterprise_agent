@@ -32,9 +32,13 @@ Job 创建时 MUST 固化业务应用发布、Handler 版本、Resource Revision
 - **WHEN** 工具参数指定的基地不在 Job 固化 Execution Scope
 - **THEN** Internal API Platform 必须拒绝该调用且不访问目标资源
 
-### Requirement: 通用数据库查询只属于内部诊断能力
-`query_database` MUST 只作为受限诊断 Agent 的内部能力存在，不得自动成为普通业务 API Capability 或未来 Handler 目录条目。
+### Requirement: 通用数据库查询必须作为受治理的只读业务能力
+`query_database` MUST 出现在业务应用 API 能力目录，但仍只允许调用代码内置的只读 Handler；平台不得因此新增面向外部调用方的公共查询端点。
 
-#### Scenario: 普通业务应用请求通用 SQL Handler
-- **WHEN** 业务应用没有显式获准使用内部诊断能力
-- **THEN** 平台不得向该应用暴露 `query_database`
+#### Scenario: 业务应用选择通用数据库查询
+- **WHEN** 业务应用在组成配置中选择 `query_database`
+- **THEN** 平台必须允许保存和校验该能力，并继续要求 Agent、应用、角色、数据范围和数据库资源绑定全部通过
+
+#### Scenario: 通用数据库查询缺少治理条件
+- **WHEN** `query_database` 缺少已发布资源绑定、角色授权或 Execution Scope
+- **THEN** 平台必须在访问数据库前拒绝调用

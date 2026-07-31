@@ -1,3 +1,7 @@
+-- Additive local bootstrap only.
+-- Existing rows are managed by the control plane and must never be rewritten
+-- when a runtime service restarts with seeding enabled.
+
 INSERT INTO tool_definition
   (id, name, risk_level, read_only, enabled, description, created_at, updated_at)
 VALUES
@@ -19,12 +23,6 @@ VALUES
   ('connector-internal-api', 'internal_api', 'internal-api-platform', 'http://internal-api-platform:9000', 1, '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 
-UPDATE integration_connector
-SET allow_ingress = 0,
-    allow_delivery = 0,
-    updated_at = CURRENT_TIMESTAMP
-WHERE id = 'connector-internal-api';
-
 INSERT INTO integration_connector
   (id, connector_type, name, base_url, enabled, metadata, allow_ingress, allow_delivery,
    secret_ref, endpoint_ref, host_allowlist, created_at, updated_at)
@@ -43,38 +41,6 @@ VALUES
   ('connector-webhook-default', 'webhook', 'webhook-default', '', 1, '{}', 0, 1, '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('connector-none', 'none', 'none', '', 1, '{}', 0, 1, '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
-
-UPDATE integration_connector
-SET connector_type = 'grafana_alert',
-    allow_ingress = 1,
-    allow_delivery = 0,
-    secret_ref = 'secret://platform/grafana_webhook_token',
-    updated_at = CURRENT_TIMESTAMP
-WHERE id = 'connector-grafana-default';
-
-UPDATE integration_connector
-SET connector_type = 'dingtalk_enterprise_stream',
-    allow_ingress = 1,
-    allow_delivery = 0,
-    secret_ref = 'secret://platform/dingtalk_client_secret',
-    metadata = '{"client_id_ref":"secret://platform/dingtalk_client_id","tenant_code":"default"}',
-    updated_at = CURRENT_TIMESTAMP
-WHERE id = 'connector-dingtalk-stream-default';
-
-UPDATE integration_connector
-SET connector_type = 'dingtalk_enterprise_robot',
-    allow_ingress = 0,
-    allow_delivery = 1,
-    secret_ref = 'secret://platform/dingtalk_client_secret',
-    updated_at = CURRENT_TIMESTAMP
-WHERE id = 'connector-dingtalk-enterprise-default';
-
-UPDATE integration_connector
-SET connector_type = 'dingtalk_webhook_robot',
-    allow_ingress = 0,
-    allow_delivery = 1,
-    updated_at = CURRENT_TIMESTAMP
-WHERE id = 'connector-dingtalk-webhook-default';
 
 INSERT INTO datasource_registry
   (id, source_type, source_code, connector_id, enabled, metadata, created_at, updated_at)

@@ -355,22 +355,19 @@ def test_handler_resolution_requires_full_governance_intersection() -> None:
         runtime.database.close()
 
 
-def test_query_database_requires_internal_diagnostic_agent_classification() -> None:
+def test_query_database_is_available_to_business_agent_classification() -> None:
     runtime, resolver, request, _facts = _setup_resolution()
     try:
-        with pytest.raises(
-            PermissionDenied,
-            match="Internal diagnostic",
-        ):
-            resolver.resolve(
-                HandlerResolutionRequest(
-                    **{
-                        **request.__dict__,
-                        "agent_classification": "business",
-                    }
-                )
+        resolved = resolver.resolve(
+            HandlerResolutionRequest(
+                **{
+                    **request.__dict__,
+                    "agent_classification": "business",
+                }
             )
-        assert "query_database" not in {
+        )
+        assert resolved.definition.handler_id == "query_database"
+        assert "query_database" in {
             definition.handler_id
             for definition in resolver.registry.application_catalog()
         }

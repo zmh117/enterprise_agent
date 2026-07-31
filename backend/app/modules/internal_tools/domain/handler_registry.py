@@ -328,11 +328,7 @@ def build_builtin_handler_registry() -> HandlerRegistry:
                 if handler_id in slot_by_handler
                 else ()
             ),
-            visibility=(
-                "internal_diagnostic"
-                if handler_id == "query_database"
-                else "application"
-            ),
+            visibility="application",
             implementation_key=(
                 f"ReadOnlyToolService.call_tool:{handler_id}"
             ),

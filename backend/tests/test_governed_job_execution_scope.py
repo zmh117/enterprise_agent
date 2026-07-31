@@ -445,7 +445,7 @@ def test_publication_rejects_missing_required_resource_slot() -> None:
         runtime.database.close()
 
 
-def test_business_agent_cannot_validate_internal_database_handler() -> None:
+def test_business_agent_can_validate_database_query_capability() -> None:
     runtime = container()
     try:
         runtime.database.execute(
@@ -459,7 +459,7 @@ def test_business_agent_cannot_validate_internal_database_handler() -> None:
             actor_id="user_local_admin",
             code="ordinary-business-agent",
             name="Ordinary business Agent",
-            description="Must not expose generic SQL",
+            description="Uses governed read-only database query",
             project_code="default",
             owner_user_id="user_local_admin",
         )
@@ -500,16 +500,15 @@ def test_business_agent_cannot_validate_internal_database_handler() -> None:
             code="ordinary-business-agent",
             revision_id=str(revision["id"]),
         )
-        assert validated["validation"]["valid"] is False
-        assert any(
-            "内部诊断 Agent" in item["message"]
-            for item in validated["validation"]["errors"]
-        )
+        assert validated["validation"] == {
+            "valid": True,
+            "errors": [],
+        }
         catalog = runtime.business_application_service.catalog(
             actor_id="user_local_admin",
             code="ordinary-business-agent",
         )
-        assert "query_database" not in {
+        assert "query_database" in {
             item["code"] for item in catalog["capabilities"]
         }
     finally:

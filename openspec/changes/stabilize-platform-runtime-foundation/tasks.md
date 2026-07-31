@@ -79,9 +79,9 @@
 - [x] 7.6 更新 Oracle 镜像/客户端布局并完成静态、单元、镜像启动测试；因无真实 Oracle，将真实连接发布门禁保持 blocked 并标记 deferred
 - [x] 7.7 对齐 Redis `host/port/database/username/password_ref/TLS` 与 Loki `base_url/tenant_id/auth_ref/limits`，保留 prefix/label 只读边界
 - [x] 7.8 实现代码 Handler Registry 的稳定 ID、不可变版本、schema、风险、权限和逻辑资源槽，拒绝数据库动态 Python/脚本/SQL/URL 实现
-- [x] 7.9 实现 installed∩published∩resource-bound∩agent∩application∩role∩scope 解析，并把 `query_database` 限定为内部诊断能力
+- [x] 7.9 实现 installed∩published∩resource-bound∩agent∩application∩role∩scope 解析，并把 `query_database` 开放为受同一治理交集约束的只读业务能力
 - [x] 7.10 在业务应用发布时绑定具体 Handler version 和 Resource Revision，在 Job 创建时固化不可变 Execution Scope
-- [x] 7.11 增加资源状态机、并发发布、不可变性、Provider 字段、只读探针、Handler 交集、scope 越权和普通业务应用不可见通用 SQL 的测试
+- [x] 7.11 增加资源状态机、并发发布、不可变性、Provider 字段、只读探针、Handler 交集、scope 越权和普通业务应用可配置受治理通用 SQL 的测试
 - [x] 7.12 完成 Phase 3B Gate：所有新资源只含 `secret://platform/`、发布后不可变、应用/Job 不浮动版本且未实现 Provider 不可用
 
 ## 8. Phase 4：运行时热加载、Readiness 与受控资源重置

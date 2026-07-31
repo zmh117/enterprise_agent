@@ -743,7 +743,7 @@ def test_capability_catalog_lists_readonly_tools_and_enforces_agent_binding() ->
         item["code"] for item in catalog["capabilities"]
     }
     assert "get_schema_directory" in capability_codes
-    assert "query_database" not in capability_codes
+    assert "query_database" in capability_codes
 
     valid_revision = service.save_draft(
         actor_id="user_local_admin",

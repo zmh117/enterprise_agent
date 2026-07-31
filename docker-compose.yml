@@ -5,6 +5,9 @@ x-database-env: &database-env
 x-runtime-env: &runtime-env
   <<: *database-env
   APP_ENV: ${APP_ENV:-local}
+  # Local seed is an explicit bootstrap action. Runtime service restarts must
+  # not replay seed data over control-plane managed configuration.
+  SEED_LOCAL_CONFIG: ${SEED_LOCAL_CONFIG:-false}
   FEATURE_WEB_ADMIN: ${FEATURE_WEB_ADMIN:-false}
   FEATURE_PUBLISHED_AGENT_RUNTIME: ${FEATURE_PUBLISHED_AGENT_RUNTIME:-false}
   FEATURE_REAL_CLAUDE: ${FEATURE_REAL_CLAUDE:-false}
@@ -189,7 +192,6 @@ services:
       ["python", "-m", "uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
     environment:
       <<: *worker-env
-      SEED_LOCAL_CONFIG: "true"
     secrets:
       - dingtalk_runtime_auth_token
       - source: internal_api_client_auth_token
@@ -263,7 +265,6 @@ services:
     command: ["python", "-m", "app.workers.agent_job_worker"]
     environment:
       <<: *worker-env
-      SEED_LOCAL_CONFIG: "true"
     secrets:
       - source: internal_api_client_auth_token
         target: internal_api_auth_token
@@ -284,7 +285,6 @@ services:
     command: ["python", "-m", "app.workers.job_dispatch_worker"]
     environment:
       <<: *worker-env
-      SEED_LOCAL_CONFIG: "true"
     secrets:
       - source: internal_api_client_auth_token
         target: internal_api_auth_token
@@ -315,7 +315,6 @@ services:
     command: ["python", "-m", "app.workers.delivery_dispatch_worker"]
     environment:
       <<: *worker-env
-      SEED_LOCAL_CONFIG: "true"
     secrets:
       - source: internal_api_client_auth_token
         target: internal_api_auth_token
@@ -344,7 +343,6 @@ services:
     command: ["python", "-m", "app.workers.webhook_dispatch_worker"]
     environment:
       <<: *worker-env
-      SEED_LOCAL_CONFIG: "true"
     secrets:
       - source: internal_api_client_auth_token
         target: internal_api_auth_token
@@ -375,7 +373,6 @@ services:
     command: ["python", "-m", "app.workers.channel_dispatch_worker"]
     environment:
       <<: *worker-env
-      SEED_LOCAL_CONFIG: "true"
     secrets:
       - source: internal_api_client_auth_token
         target: internal_api_auth_token
@@ -407,7 +404,6 @@ services:
     command: ["python", "-m", "app.workers.attachment_worker"]
     environment:
       <<: *worker-env
-      SEED_LOCAL_CONFIG: "true"
     secrets:
       - source: internal_api_client_auth_token
         target: internal_api_auth_token

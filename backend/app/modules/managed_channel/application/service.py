@@ -19,7 +19,7 @@ from app.modules.message_bus.application.message_publisher import (
 )
 from app.modules.platform_config.application.secrets import SecretProviderPort
 from app.shared.database import operation_unit_of_work
-from app.shared.exceptions import AppError, NonRetryableExecutionError
+from app.shared.exceptions import AppError, NonRetryableExecutionError, NotFound
 
 from ..domain import ChannelIngressSubmission, DingTalkApplicationInput, RuntimeConnectorState
 from ..infrastructure import ManagedChannelRepository
@@ -176,11 +176,24 @@ class ManagedChannelService:
         with self.repository.database.unit_of_work():
             if rotate_secret:
                 if secret_ref.startswith("secret://platform/"):
-                    self.secret_provider.rotate_secret(
-                        code=secret_ref.removeprefix("secret://platform/"),
-                        value=normalized.client_secret,
-                        actor_id=actor_id,
-                    )
+                    secret_code = secret_ref.removeprefix("secret://platform/")
+                    try:
+                        self.secret_provider.rotate_secret(
+                            code=secret_code,
+                            value=normalized.client_secret,
+                            actor_id=actor_id,
+                        )
+                    except NotFound:
+                        self.secret_provider.create_secret(
+                            code=secret_code,
+                            value=normalized.client_secret,
+                            purpose="dingtalk_stream_client_secret",
+                            actor_id=actor_id,
+                            metadata={
+                                "managed_by": "managed_channel",
+                                "recovered_from": "dangling_reference",
+                            },
+                        )
                 else:
                     secret_code = self._secret_code(normalized.client_id)
                     self.secret_provider.create_secret(

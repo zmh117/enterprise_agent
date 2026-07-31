@@ -57,11 +57,11 @@ def test_builtin_handler_registry_is_stable_versioned_and_schema_complete() -> N
             assert slot.resource_kind in {"database", "redis", "loki"}
 
     query_database = first.require("query_database", "1.0.0")
-    assert query_database.visibility == "internal_diagnostic"
-    assert query_database not in first.application_catalog()
+    assert query_database.visibility == "application"
+    assert query_database in first.application_catalog()
     assert {
         item.handler_id for item in first.application_catalog()
-    } == set(TOOL_DEFINITIONS).difference({"query_database"})
+    } == set(TOOL_DEFINITIONS)
 
 
 @pytest.mark.parametrize(

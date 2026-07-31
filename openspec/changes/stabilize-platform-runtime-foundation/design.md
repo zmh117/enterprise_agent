@@ -132,7 +132,7 @@ Handler Registry 从代码加载稳定 Handler ID、不可变版本、输入/输
 
 `installed ∩ published ∩ resource-bound ∩ agent-allowed ∩ application-allowed ∩ role-allowed ∩ scope-allowed`
 
-业务应用发布时把每个逻辑资源槽绑定到具体 Resource Revision。Job 创建时复制应用发布 ID、Handler 版本、绑定 revision 和环境/基地/车间形成不可变 Execution Scope；Agent 与 Handler 均不能在运行时改选任意资源。通用 `query_database` 只保留为内部诊断 Agent 能力，不进入普通业务 API 能力目录。
+业务应用发布时把每个逻辑资源槽绑定到具体 Resource Revision。Job 创建时复制应用发布 ID、Handler 版本、绑定 revision 和环境/基地/车间形成不可变 Execution Scope；Agent 与 Handler 均不能在运行时改选任意资源。通用 `query_database` 进入业务 API 能力目录，但仍使用代码内置的只读 Handler，并继续受资源绑定、Agent、应用、角色和 Execution Scope 约束；本阶段不新增公共查询端点。
 
 ### 12. 会话按发布版本和 Execution Scope 隔离
 

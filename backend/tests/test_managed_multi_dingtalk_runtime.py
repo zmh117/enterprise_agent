@@ -15,6 +15,7 @@ from app.modules.managed_channel.domain import (
     DingTalkApplicationInput,
     RuntimeConnectorState,
 )
+from app.shared.database import default_migrations_dir
 from app.shared.exceptions import NonRetryableExecutionError
 from app.shared.config import ManagedChannelSettings, Settings
 
@@ -242,6 +243,94 @@ def test_updating_bootstrap_connector_migrates_env_secret_to_managed_secret():
     assert updated["client_id"] == "ding-managed"
     assert updated["revision"] == 2
     assert "replacement-secret" not in str(updated)
+
+
+def test_updating_connector_recreates_missing_managed_secret():
+    container = _container()
+    channel = _create(container, "ding-missing-secret")
+    missing_ref = "secret://platform/dingtalk-missing-secret"
+    container.database.execute(
+        "update integration_connector set secret_ref = ? where id = ?",
+        (missing_ref, channel["id"]),
+    )
+
+    updated = container.managed_channel_service.update_dingtalk(
+        channel["id"],
+        DingTalkApplicationInput(
+            name="恢复后的机器人",
+            client_id="ding-missing-secret",
+            client_secret="replacement-secret",
+            tenant_code="default",
+        ),
+        expected_revision=channel["revision"],
+        actor_id="test-admin",
+        rotate_secret=True,
+    )
+
+    row = container.database.execute_one(
+        "select secret_ref from integration_connector where id = ?",
+        (channel["id"],),
+    )
+    assert row is not None
+    assert row["secret_ref"] == missing_ref
+    assert container.managed_channel_service.secret_provider.resolve(missing_ref) == (
+        "replacement-secret"
+    )
+    assert updated["revision"] == channel["revision"] + 1
+    assert "replacement-secret" not in str(updated)
+
+
+def test_reapplying_local_seed_preserves_managed_dingtalk_configuration():
+    container = build_test_container(
+        Settings(
+            database_dsn="sqlite:///:memory:",
+            app_config_master_key="managed-channel-test-key",
+        ),
+        migrate=True,
+        seed=True,
+    )
+    current = container.managed_channel_service.get_channel(
+        "connector-dingtalk-stream-default"
+    )
+    updated = container.managed_channel_service.update_dingtalk(
+        current["id"],
+        DingTalkApplicationInput(
+            name="用户配置的钉钉机器人",
+            client_id="ding-user-managed-client-id",
+            client_secret="",
+            tenant_code="managed-tenant",
+            allow_private_chat=False,
+            allow_group_chat=True,
+            require_group_at=False,
+        ),
+        expected_revision=current["revision"],
+        actor_id="test-admin",
+        rotate_secret=False,
+    )
+    before = container.database.execute_one(
+        """
+        select name, metadata, secret_ref, revision, updated_at
+          from integration_connector
+         where id = ?
+        """,
+        (current["id"],),
+    )
+    assert before is not None
+
+    seed_path = default_migrations_dir().parent / "seeds" / "local_seed.sql"
+    container.database.execute_script(seed_path.read_text())
+
+    after = container.database.execute_one(
+        """
+        select name, metadata, secret_ref, revision, updated_at
+          from integration_connector
+         where id = ?
+        """,
+        (current["id"],),
+    )
+    assert after == before
+    assert updated["client_id"] == "ding-user-managed-client-id"
+    assert updated["tenant_code"] == "managed-tenant"
 
 
 def test_disabled_platform_secret_marks_only_affected_connector_misconfigured_and_rebinds():

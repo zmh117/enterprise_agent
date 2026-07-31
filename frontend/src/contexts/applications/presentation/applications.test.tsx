@@ -272,6 +272,16 @@ describe("Business Application workbench", () => {
               direction: "",
               component_type: "readonly_tool_capability",
             },
+            {
+              id: "tool-query-database",
+              code: "query_database",
+              revision: 1,
+              project_code: "",
+              status: "enabled",
+              config_hash: "",
+              direction: "",
+              component_type: "readonly_tool_capability",
+            },
           ],
           capability_catalog_connected: true,
         })
@@ -332,8 +342,11 @@ describe("Business Application workbench", () => {
         name: "按渠道、发布版本与数据范围隔离",
       })
     ).toBeInTheDocument()
+    expect(
+      await screen.findByLabelText("选择业务能力 get_schema_directory")
+    ).toBeInTheDocument()
     const capability = await screen.findByLabelText(
-      "选择业务能力 get_schema_directory"
+      "选择业务能力 query_database"
     )
     fireEvent.click(capability)
     expect(capability).toBeChecked()
@@ -346,7 +359,7 @@ describe("Business Application workbench", () => {
         },
         capabilities: [
           {
-            capability_code: "get_schema_directory",
+            capability_code: "query_database",
             version_constraint: "1",
             enabled: true,
           },
