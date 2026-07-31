@@ -5,9 +5,12 @@ import {
   agentPublicationSchema,
   agentRevisionSchema,
   agentSummarySchema,
+  modelDiscoveryResultSchema,
+  modelDraftTestResultSchema,
   modelConnectionRevisionSchema,
   modelConnectionSchema,
   type AgentConfig,
+  type CredentialSource,
   type ModelConnectionConfig,
 } from "@/contexts/agent-profiles/domain/agent-profile"
 import { apiRequest } from "@/shared/api/api-client"
@@ -35,59 +38,57 @@ export async function getModelConnection(code: string) {
     ).connection
 }
 
-export async function saveModelConnection(
-  code: string,
-  input: {
-    expected_revision: number
-    config: Omit<ModelConnectionConfig, "schema_version">
-  }
-) {
-  return z
-    .object({ revision: modelConnectionRevisionSchema })
-    .parse(
-      await apiRequest(
-        `/api/admin/model-connections/${encodeURIComponent(code)}/revision`,
-        { method: "PUT", body: input }
-      )
-    ).revision
+type CredentialInput = {
+  credential_source: CredentialSource
+  api_key: string
 }
 
-export async function rotateModelCredential(
-  code: string,
-  input: { expected_revision: number; api_key: string }
-) {
-  return z
-    .object({ revision: modelConnectionRevisionSchema })
-    .parse(
-      await apiRequest(
-        `/api/admin/model-connections/${encodeURIComponent(code)}/credential`,
-        { method: "PUT", body: input }
-      )
-    ).revision
+type DraftConnectionInput = CredentialInput & {
+  config: Omit<ModelConnectionConfig, "schema_version">
+  timeout_seconds?: number
 }
 
-export async function testModelConnection(code: string, revisionId: string) {
+export async function discoverModelConnection(
+  code: string,
+  input: CredentialInput & { base_url: string; timeout_seconds?: number }
+) {
   return z
-    .object({
-      result: z.object({
-        success: z.boolean(),
-        connection_revision_id: z.string(),
-        provider_host: z.string(),
-        model: z.string(),
-        duration_ms: z.number(),
-        runtime: z.string(),
-        detail: z.string(),
-      }),
-    })
+    .object({ result: modelDiscoveryResultSchema })
     .parse(
       await apiRequest(
-        `/api/admin/model-connections/${encodeURIComponent(code)}/test`,
-        {
-          method: "POST",
-          body: { revision_id: revisionId, timeout_seconds: 15 },
-        }
+        `/api/admin/model-connections/${encodeURIComponent(code)}/discover`,
+        { method: "POST", body: input }
       )
     ).result
+}
+
+export async function testDraftModelConnection(
+  code: string,
+  input: DraftConnectionInput
+) {
+  return z
+    .object({ result: modelDraftTestResultSchema })
+    .parse(
+      await apiRequest(
+        `/api/admin/model-connections/${encodeURIComponent(code)}/test-draft`,
+        { method: "POST", body: input }
+      )
+    ).result
+}
+
+export async function configureModelConnection(
+  code: string,
+  input: DraftConnectionInput & { expected_revision: number }
+) {
+  return z.object({ revision: modelConnectionRevisionSchema }).parse(
+    await apiRequest(
+      `/api/admin/model-connections/${encodeURIComponent(code)}/configure`,
+      {
+        method: "PUT",
+        body: input,
+      }
+    )
+  ).revision
 }
 
 export async function saveAgentDraft(

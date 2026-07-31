@@ -2,19 +2,20 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 import type {
   AgentConfig,
+  CredentialSource,
   ModelConnectionConfig,
 } from "@/contexts/agent-profiles/domain/agent-profile"
 import {
+  configureModelConnection,
+  discoverModelConnection,
   getAgentProfile,
   getModelConnection,
   listAgentPublications,
   listAgentProfiles,
   publishAgentDraft,
-  rotateModelCredential,
   rollbackAgentPublication,
   saveAgentDraft,
-  saveModelConnection,
-  testModelConnection,
+  testDraftModelConnection,
   validateAgentDraft,
 } from "@/contexts/agent-profiles/infrastructure/agent-profile-api"
 
@@ -61,30 +62,42 @@ function useRefreshAgent() {
     ])
 }
 
-export function useSaveConnection() {
-  const client = useQueryClient()
+type CredentialInput = {
+  credential_source: CredentialSource
+  api_key: string
+}
+
+type DraftConnectionInput = CredentialInput & {
+  config: Omit<ModelConnectionConfig, "schema_version">
+  timeout_seconds?: number
+}
+
+export function useDiscoverConnection() {
   return useMutation({
-    mutationFn: (input: {
-      expected_revision: number
-      config: Omit<ModelConnectionConfig, "schema_version">
-    }) => saveModelConnection(DEFAULT_CONNECTION_CODE, input),
-    onSuccess: () => client.invalidateQueries({ queryKey: connectionKey }),
+    mutationFn: (
+      input: CredentialInput & { base_url: string; timeout_seconds?: number }
+    ) => discoverModelConnection(DEFAULT_CONNECTION_CODE, input),
   })
 }
 
-export function useRotateCredential() {
-  const client = useQueryClient()
+export function useTestDraftConnection() {
   return useMutation({
-    mutationFn: (input: { expected_revision: number; api_key: string }) =>
-      rotateModelCredential(DEFAULT_CONNECTION_CODE, input),
-    onSuccess: () => client.invalidateQueries({ queryKey: connectionKey }),
+    mutationFn: (input: DraftConnectionInput) =>
+      testDraftModelConnection(DEFAULT_CONNECTION_CODE, input),
   })
 }
 
-export function useTestConnection() {
+export function useConfigureConnection() {
+  const client = useQueryClient()
   return useMutation({
-    mutationFn: (revisionId: string) =>
-      testModelConnection(DEFAULT_CONNECTION_CODE, revisionId),
+    mutationFn: (input: DraftConnectionInput & { expected_revision: number }) =>
+      configureModelConnection(DEFAULT_CONNECTION_CODE, input),
+    onSettled: (_data, error) => {
+      if (!error || (error instanceof Error && "currentRevision" in error)) {
+        return client.invalidateQueries({ queryKey: connectionKey })
+      }
+      return undefined
+    },
   })
 }
 

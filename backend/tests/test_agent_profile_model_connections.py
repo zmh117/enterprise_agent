@@ -162,8 +162,14 @@ def test_model_connection_secret_is_encrypted_and_public_projection_is_sanitized
     assert fake_secret("connection-v1") not in rows[0]["nonce"]
 
 
-def test_admin_api_manages_only_saved_connection_revisions_and_never_returns_key() -> None:
+def test_admin_api_configures_connection_atomically_and_removes_legacy_routes() -> None:
     settings, c = web_container()
+    c.model_connection_service.model_discoverer = lambda models_url, api_key, timeout_seconds: [
+        {"id": "deepseek-v4-flash"}
+    ]
+    c.model_connection_service.tester = lambda binding, api_key, timeout_seconds: {
+        "detail": "连接成功"
+    }
     app = create_app(settings, container_factory=lambda _: c)
     with TestClient(app) as client:
         login = client.post(
@@ -177,49 +183,72 @@ def test_admin_api_manages_only_saved_connection_revisions_and_never_returns_key
         assert response.status_code == 200
         connection = response.json()["connection"]
 
-        credential = client.put(
-            f"/api/admin/model-connections/{DEFAULT_MODEL_CONNECTION_CODE}/credential",
+        discovered = client.post(
+            f"/api/admin/model-connections/{DEFAULT_MODEL_CONNECTION_CODE}/discover",
+            headers={
+                "origin": "http://admin.test",
+                "x-csrf-token": csrf,
+            },
+            json={
+                "base_url": "https://api.deepseek.com/anthropic",
+                "credential_source": "submitted",
+                "api_key": fake_secret("api-only"),
+                "timeout_seconds": 15,
+            },
+        )
+        assert discovered.status_code == 200, discovered.text
+        tested = client.post(
+            f"/api/admin/model-connections/{DEFAULT_MODEL_CONNECTION_CODE}/test-draft",
+            headers={
+                "origin": "http://admin.test",
+                "x-csrf-token": csrf,
+            },
+            json={
+                "credential_source": "submitted",
+                "api_key": fake_secret("api-only"),
+                "config": deepseek_config(),
+                "timeout_seconds": 15,
+            },
+        )
+        assert tested.status_code == 200, tested.text
+        configured = client.put(
+            f"/api/admin/model-connections/{DEFAULT_MODEL_CONNECTION_CODE}/configure",
             headers={
                 "origin": "http://admin.test",
                 "x-csrf-token": csrf,
             },
             json={
                 "expected_revision": connection["revision"],
+                "credential_source": "submitted",
                 "api_key": fake_secret("api-only"),
-            },
-        )
-        assert credential.status_code == 200, credential.text
-        saved = client.put(
-            f"/api/admin/model-connections/{DEFAULT_MODEL_CONNECTION_CODE}/revision",
-            headers={
-                "origin": "http://admin.test",
-                "x-csrf-token": csrf,
-            },
-            json={
-                "expected_revision": credential.json()["revision"]["revision"],
                 "config": deepseek_config(),
-            },
-        )
-        rejected_probe = client.post(
-            f"/api/admin/model-connections/{DEFAULT_MODEL_CONNECTION_CODE}/test",
-            headers={
-                "origin": "http://admin.test",
-                "x-csrf-token": csrf,
-            },
-            json={
-                "revision_id": saved.json()["revision"]["id"],
                 "timeout_seconds": 15,
-                "api_key": fake_secret("forbidden-temporary"),
-                "base_url": "https://api.deepseek.com/anthropic",
             },
         )
-    assert saved.status_code == 200, saved.text
-    assert rejected_probe.status_code == 422
-    body = saved.text
+        legacy = [
+            client.put(
+                f"/api/admin/model-connections/{DEFAULT_MODEL_CONNECTION_CODE}/revision",
+                headers={"origin": "http://admin.test", "x-csrf-token": csrf},
+                json={"expected_revision": 0, "config": deepseek_config()},
+            ),
+            client.put(
+                f"/api/admin/model-connections/{DEFAULT_MODEL_CONNECTION_CODE}/credential",
+                headers={"origin": "http://admin.test", "x-csrf-token": csrf},
+                json={"expected_revision": 0, "api_key": fake_secret("legacy")},
+            ),
+            client.post(
+                f"/api/admin/model-connections/{DEFAULT_MODEL_CONNECTION_CODE}/test",
+                headers={"origin": "http://admin.test", "x-csrf-token": csrf},
+                json={"revision_id": "legacy", "timeout_seconds": 15},
+            ),
+        ]
+    assert configured.status_code == 200, configured.text
+    assert all(item.status_code in {404, 405} for item in legacy)
+    body = configured.text
     assert fake_secret("api-only") not in body
     assert "api_key_secret_id" not in body
     assert "secret://platform/" not in body
-    assert saved.json()["revision"]["credential"]["configured"] is True
+    assert configured.json()["revision"]["credential"]["configured"] is True
 
 
 def test_bootstrap_connection_stays_rotation_required_until_credential_is_rotated() -> None:
@@ -379,9 +408,7 @@ def test_agent_list_degrades_missing_published_model_revision_instead_of_500() -
         response = client.get("/api/admin/agents")
 
     assert response.status_code == 200, response.text
-    summary = next(
-        item for item in response.json()["agents"] if item["code"] == AGENT_CODE
-    )
+    summary = next(item for item in response.json()["agents"] if item["code"] == AGENT_CODE)
     assert summary["model_connection_status"] == "missing_revision"
 
 
@@ -458,7 +485,7 @@ def test_provider_url_rejects_private_dns_and_unapproved_hosts() -> None:
             expected_revision=connection["revision"],
             config=deepseek_config(),
         )
-    assert private.value.error_code == "validation_failed"
+    assert private.value.error_code == "deepseek_url_invalid"
 
     bad = deepseek_config()
     bad["base_url"] = "https://example.com/anthropic"
@@ -469,7 +496,7 @@ def test_provider_url_rejects_private_dns_and_unapproved_hosts() -> None:
             expected_revision=connection["revision"],
             config=bad,
         )
-    assert host.value.error_code == "validation_failed"
+    assert host.value.error_code == "deepseek_url_invalid"
 
 
 @pytest.mark.parametrize(
@@ -493,7 +520,7 @@ def test_provider_url_rejects_unsafe_url_shapes(url: str) -> None:
             expected_revision=connection["revision"],
             config=config,
         )
-    assert rejected.value.error_code == "validation_failed"
+    assert rejected.value.error_code == "deepseek_url_invalid"
 
 
 def test_revision_conflict_hash_integrity_and_disabled_credential_fail_closed() -> None:

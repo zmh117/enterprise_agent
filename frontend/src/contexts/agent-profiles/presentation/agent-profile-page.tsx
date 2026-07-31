@@ -1,9 +1,8 @@
-import { useState, type FormEvent } from "react"
+import { useEffect, useState, type FormEvent } from "react"
 import {
   BotIcon,
   CheckCircle2Icon,
   FlaskConicalIcon,
-  KeyRoundIcon,
   LoaderCircleIcon,
   RotateCcwIcon,
   SaveIcon,
@@ -18,31 +17,23 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from "@/components/ui/sheet"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   useAgentProfile,
   useAgentProfiles,
   useAgentPublications,
+  useConfigureConnection,
+  useDiscoverConnection,
   useModelConnection,
   usePublishAgentDraft,
   useRollbackAgentPublication,
-  useRotateCredential,
   useSaveAgentDraft,
-  useSaveConnection,
-  useTestConnection,
+  useTestDraftConnection,
   useValidateAgentDraft,
 } from "@/contexts/agent-profiles/application/agent-profile-queries"
 import type {
   AgentConfig,
+  CredentialSource,
   ModelConnectionConfig,
 } from "@/contexts/agent-profiles/domain/agent-profile"
 import { ApiError } from "@/shared/api/api-client"
@@ -105,7 +96,7 @@ export function AgentProfilesPage() {
                 <StatusLine
                   label="模型连接"
                   value={modelConnectionStatusLabel(
-                    profile.model_connection_status,
+                    profile.model_connection_status
                   )}
                 />
                 <StatusLine
@@ -190,7 +181,7 @@ export function AgentProfilePage() {
   }
   return (
     <Workspace
-      key={`${agent.data.draft?.revision ?? 0}:${connection.data.revision}`}
+      key={`${agent.data.draft?.revision ?? 0}`}
       agent={agent.data}
       connection={connection.data}
     />
@@ -246,8 +237,8 @@ function Workspace({
       <Card className="border-amber-300/70 bg-amber-50/40 shadow-none dark:bg-amber-950/10">
         <CardContent className="py-4 text-sm text-muted-foreground">
           发布 Agent 配置只会生成新的 Agent
-          发布版本，不会自动切换任何业务应用。已激活应用仍使用它自己固定的
-          Agent 发布版本，需进入应用详情手动更新并重新发布。
+          发布版本，不会自动切换任何业务应用。已激活应用仍使用它自己固定的 Agent
+          发布版本，需进入应用详情手动更新并重新发布。
         </CardContent>
       </Card>
 
@@ -278,6 +269,9 @@ function Workspace({
   )
 }
 
+type ConnectionWizardPhase =
+  "EDITING" | "DISCOVERED" | "MAPPED" | "TESTED" | "READY"
+
 function ConnectionForm({
   connection,
   canManageCredential,
@@ -288,14 +282,32 @@ function ConnectionForm({
   canTestConnection: boolean
 }) {
   const current = connection.current_revision
-  const save = useSaveConnection()
-  const test = useTestConnection()
-  const [saveError, setSaveError] = useState<unknown>(null)
+  const existingCredentialAvailable = Boolean(
+    current?.credential.configured &&
+    !current.credential.rotation_required &&
+    current.status === "ready"
+  )
+  const allowed = canManageCredential && canTestConnection
+  const discover = useDiscoverConnection()
+  const testDraft = useTestDraftConnection()
+  const configure = useConfigureConnection()
+  const [phase, setPhase] = useState<ConnectionWizardPhase>("EDITING")
+  const [credentialSource, setCredentialSource] = useState<CredentialSource>(
+    existingCredentialAvailable ? "existing" : "submitted"
+  )
+  const [apiKey, setApiKey] = useState("")
+  const [error, setError] = useState<unknown>(null)
+  const [discovery, setDiscovery] = useState<Awaited<
+    ReturnType<typeof discover.mutateAsync>
+  > | null>(null)
+  const [testResult, setTestResult] = useState<Awaited<
+    ReturnType<typeof testDraft.mutateAsync>
+  > | null>(null)
   const [form, setForm] = useState<
     Omit<ModelConnectionConfig, "schema_version">
   >({
     protocol: "anthropic_compatible",
-    base_url: current?.config.base_url ?? "",
+    base_url: current?.config.base_url ?? "https://api.deepseek.com/anthropic",
     model: current?.config.model ?? "",
     default_opus_model: current?.config.default_opus_model ?? "",
     default_sonnet_model: current?.config.default_sonnet_model ?? "",
@@ -304,20 +316,145 @@ function ConnectionForm({
     effort_level: current?.config.effort_level ?? "max",
   })
 
+  useEffect(
+    () => () => {
+      discover.reset()
+      testDraft.reset()
+      configure.reset()
+    },
+    // Mutation objects are stable for the lifetime of this wizard.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  )
+
+  const modelIds = new Set(discovery?.models.map((item) => item.id) ?? [])
+  const legacyModels = discovery
+    ? Array.from(
+        new Set(
+          [
+            current?.config.model,
+            current?.config.default_opus_model,
+            current?.config.default_sonnet_model,
+            current?.config.default_haiku_model,
+            current?.config.subagent_model,
+          ].filter((value): value is string =>
+            Boolean(value && !modelIds.has(value))
+          )
+        )
+      )
+    : []
+
+  function credentialInput() {
+    return {
+      credential_source: credentialSource,
+      api_key: credentialSource === "submitted" ? apiKey : "",
+    }
+  }
+
+  function invalidateDiscovery({ clearKey = true } = {}) {
+    setDiscovery(null)
+    setTestResult(null)
+    setPhase("EDITING")
+    setError(null)
+    discover.reset()
+    testDraft.reset()
+    configure.reset()
+    if (clearKey) setApiKey("")
+  }
+
+  function invalidateTest(nextForm: typeof form) {
+    setForm(nextForm)
+    setTestResult(null)
+    setPhase(nextForm.model ? "MAPPED" : "DISCOVERED")
+    setError(null)
+    testDraft.reset()
+    configure.reset()
+  }
+
+  async function runDiscovery() {
+    setError(null)
+    try {
+      const result = await discover.mutateAsync({
+        ...credentialInput(),
+        base_url: form.base_url,
+        timeout_seconds: 15,
+      })
+      setDiscovery(result)
+      setTestResult(null)
+      const available = new Set(result.models.map((item) => item.id))
+      setForm((value) => {
+        return {
+          ...value,
+          base_url: result.normalized_base_url,
+          model: available.has(value.model) ? value.model : "",
+          default_opus_model: available.has(value.default_opus_model)
+            ? value.default_opus_model
+            : "",
+          default_sonnet_model: available.has(value.default_sonnet_model)
+            ? value.default_sonnet_model
+            : "",
+          default_haiku_model: available.has(value.default_haiku_model)
+            ? value.default_haiku_model
+            : "",
+          subagent_model: available.has(value.subagent_model)
+            ? value.subagent_model
+            : "",
+        }
+      })
+      setPhase(available.has(form.model) ? "MAPPED" : "DISCOVERED")
+    } catch (caught) {
+      setError(caught)
+      setDiscovery(null)
+      setTestResult(null)
+      setPhase("EDITING")
+    } finally {
+      discover.reset()
+    }
+  }
+
+  async function runTest() {
+    setError(null)
+    try {
+      const result = await testDraft.mutateAsync({
+        ...credentialInput(),
+        config: form,
+        timeout_seconds: 15,
+      })
+      setTestResult(result)
+      setPhase("TESTED")
+    } catch (caught) {
+      setError(caught)
+      setTestResult(null)
+      setPhase("MAPPED")
+    } finally {
+      testDraft.reset()
+    }
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault()
-    setSaveError(null)
+    setError(null)
     try {
-      const revision = await save.mutateAsync({
+      const revision = await configure.mutateAsync({
         expected_revision: connection.revision,
+        ...credentialInput(),
         config: form,
+        timeout_seconds: 15,
       })
-      toast.success(`模型连接 r${revision.revision} 已保存`)
-    } catch (error) {
-      setSaveError(error)
+      setApiKey("")
+      setPhase("READY")
+      toast.success(`模型连接 r${revision.revision} 已就绪`)
+    } catch (caught) {
+      setError(caught)
+      setApiKey("")
+      setDiscovery(null)
+      setTestResult(null)
+      setPhase("EDITING")
+      if (caught instanceof ApiError && caught.code === "revision_conflict") {
+        toast.error("连接已被其他操作更新，请重新发现并测试")
+      }
     } finally {
-      // Do not leave the plaintext credential in TanStack Mutation variables.
-      save.reset()
+      configure.reset()
     }
   }
 
@@ -328,196 +465,276 @@ function ConnectionForm({
     >
       <Card className="shadow-none">
         <CardHeader>
-          <CardTitle>Anthropic 兼容连接</CardTitle>
+          <CardTitle>DeepSeek 模型连接向导</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-5">
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field label="协议" htmlFor="model-protocol">
-              <Input
-                id="model-protocol"
-                value="anthropic_compatible"
-                disabled
-              />
-            </Field>
-            <Field label="服务地址（Base URL）" htmlFor="model-base-url">
-              <Input
-                id="model-base-url"
-                value={form.base_url}
-                onChange={(event) =>
-                  setForm({ ...form, base_url: event.target.value })
-                }
-                placeholder="https://api.deepseek.com/anthropic"
-                required
-              />
-            </Field>
-            <Field label="主模型" htmlFor="model-primary">
-              <Input
-                id="model-primary"
-                value={form.model}
-                onChange={(event) =>
-                  setForm({ ...form, model: event.target.value })
-                }
-                required
-              />
-            </Field>
-            <Field label="Opus 默认模型" htmlFor="model-opus">
-              <Input
-                id="model-opus"
-                value={form.default_opus_model}
-                onChange={(event) =>
-                  setForm({ ...form, default_opus_model: event.target.value })
-                }
-                placeholder="留空则继承主模型"
-              />
-            </Field>
-            <Field label="Sonnet 默认模型" htmlFor="model-sonnet">
-              <Input
-                id="model-sonnet"
-                value={form.default_sonnet_model}
-                onChange={(event) =>
-                  setForm({ ...form, default_sonnet_model: event.target.value })
-                }
-                placeholder="留空则继承主模型"
-              />
-            </Field>
-            <Field label="Haiku 默认模型" htmlFor="model-haiku">
-              <Input
-                id="model-haiku"
-                value={form.default_haiku_model}
-                onChange={(event) =>
-                  setForm({ ...form, default_haiku_model: event.target.value })
-                }
-                placeholder="留空则继承主模型"
-              />
-            </Field>
-            <Field label="子 Agent 模型" htmlFor="model-subagent">
-              <Input
-                id="model-subagent"
-                value={form.subagent_model}
-                onChange={(event) =>
-                  setForm({ ...form, subagent_model: event.target.value })
-                }
-                placeholder="留空则继承主模型"
-              />
-            </Field>
-            <Field label="推理强度" htmlFor="model-effort">
-              <select
-                id="model-effort"
-                className={selectClass}
-                value={form.effort_level}
-                onChange={(event) =>
-                  setForm({
-                    ...form,
-                    effort_level: event.target
-                      .value as typeof form.effort_level,
-                  })
-                }
+        <CardContent className="space-y-6">
+          <div className="grid gap-2 sm:grid-cols-5">
+            {(
+              [
+                ["EDITING", "1 地址与 Key"],
+                ["DISCOVERED", "2 模型发现"],
+                ["MAPPED", "3 模型映射"],
+                ["TESTED", "4 配置测试"],
+                ["READY", "5 已保存"],
+              ] as const
+            ).map(([value, label]) => (
+              <Badge
+                key={value}
+                variant={phase === value ? "default" : "outline"}
+                className="justify-center py-1.5"
               >
-                {["low", "medium", "high", "max"].map((value) => (
-                  <option key={value} value={value}>
-                    {
-                      {
-                        low: "低",
-                        medium: "中",
-                        high: "高",
-                        max: "最高",
-                      }[value]
-                    }
-                  </option>
-                ))}
-              </select>
-            </Field>
+                {label}
+              </Badge>
+            ))}
           </div>
 
-          <MutationMessage error={saveError} />
-          <div className="flex flex-wrap gap-2">
-            <Button type="submit" disabled={save.isPending}>
-              {save.isPending ? (
-                <LoaderCircleIcon className="animate-spin" />
+          <section className="space-y-4">
+            <div>
+              <h3 className="font-medium">1. 地址与 Credential</h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                仅支持 DeepSeek 官方 HTTPS Anthropic 地址。API Key
+                只保存在当前页面内存，保存后立即清空。
+              </p>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="服务地址（Base URL）" htmlFor="model-base-url">
+                <Input
+                  id="model-base-url"
+                  value={form.base_url}
+                  onChange={(event) => {
+                    setForm((value) => ({
+                      ...value,
+                      base_url: event.target.value,
+                    }))
+                    invalidateDiscovery()
+                  }}
+                  placeholder="https://api.deepseek.com/anthropic"
+                  disabled={!allowed}
+                  required
+                />
+              </Field>
+              <Field label="Credential 来源" htmlFor="credential-source">
+                <select
+                  id="credential-source"
+                  className={selectClass}
+                  value={credentialSource}
+                  disabled={!allowed}
+                  onChange={(event) => {
+                    setCredentialSource(event.target.value as CredentialSource)
+                    invalidateDiscovery()
+                  }}
+                >
+                  <option value="submitted">使用新的 API Key</option>
+                  <option
+                    value="existing"
+                    disabled={!existingCredentialAvailable}
+                  >
+                    沿用当前有效 Credential
+                  </option>
+                </select>
+              </Field>
+              {credentialSource === "submitted" ? (
+                <Field label="新的 API Key" htmlFor="model-api-key">
+                  <Input
+                    id="model-api-key"
+                    type="password"
+                    autoComplete="new-password"
+                    value={apiKey}
+                    onChange={(event) => {
+                      setApiKey(event.target.value)
+                      invalidateDiscovery({ clearKey: false })
+                    }}
+                    placeholder="输入 DeepSeek API Key"
+                    disabled={!allowed}
+                    required
+                  />
+                </Field>
               ) : (
-                <SaveIcon />
+                <div className="rounded-md border bg-muted/30 p-3 text-sm">
+                  <p className="font-medium">沿用加密 Credential</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {current?.credential.masked} · v
+                    {current?.credential.version}
+                  </p>
+                </div>
               )}
-              保存为新连接版本
-            </Button>
+            </div>
             <Button
               type="button"
               variant="outline"
+              onClick={() => void runDiscovery()}
               disabled={
-                test.isPending ||
-                !current ||
-                !current.credential.configured ||
-                current.credential.rotation_required ||
-                !canTestConnection
+                !allowed ||
+                discover.isPending ||
+                !form.base_url ||
+                (credentialSource === "submitted" && !apiKey)
               }
-              onClick={() => current && test.mutate(current.id)}
             >
-              {test.isPending ? (
+              {discover.isPending ? (
                 <LoaderCircleIcon className="animate-spin" />
               ) : (
                 <FlaskConicalIcon />
               )}
-              测试已保存版本
+              发现可用模型
             </Button>
-          </div>
-          <MutationMessage error={test.error} />
-          {test.data ? (
-            <p className="text-sm text-emerald-700">
-              连接成功 · {test.data.provider_host} · {test.data.model} ·{" "}
-              {test.data.duration_ms}ms
-            </p>
+          </section>
+
+          {discovery ? (
+            <section className="space-y-4 border-t pt-5">
+              <div>
+                <h3 className="font-medium">2–3. 选择模型映射</h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  已从 {discovery.provider_host} 发现 {discovery.models.length}{" "}
+                  个模型，耗时 {discovery.duration_ms}ms。
+                </p>
+              </div>
+              {legacyModels.length ? (
+                <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                  历史模型已不可用：{legacyModels.join("、")}
+                  。历史版本保持不变， 本次必须重新选择。
+                </div>
+              ) : null}
+              <div className="grid gap-4 md:grid-cols-2">
+                <ModelChoice
+                  id="model-primary"
+                  label="主模型"
+                  value={form.model}
+                  models={discovery.models}
+                  required
+                  onChange={(value) =>
+                    invalidateTest({ ...form, model: value })
+                  }
+                />
+                <ModelChoice
+                  id="model-opus"
+                  label="Opus 默认模型"
+                  value={form.default_opus_model}
+                  models={discovery.models}
+                  onChange={(value) =>
+                    invalidateTest({ ...form, default_opus_model: value })
+                  }
+                />
+                <ModelChoice
+                  id="model-sonnet"
+                  label="Sonnet 默认模型"
+                  value={form.default_sonnet_model}
+                  models={discovery.models}
+                  onChange={(value) =>
+                    invalidateTest({ ...form, default_sonnet_model: value })
+                  }
+                />
+                <ModelChoice
+                  id="model-haiku"
+                  label="Haiku 默认模型"
+                  value={form.default_haiku_model}
+                  models={discovery.models}
+                  onChange={(value) =>
+                    invalidateTest({ ...form, default_haiku_model: value })
+                  }
+                />
+                <ModelChoice
+                  id="model-subagent"
+                  label="子 Agent 模型"
+                  value={form.subagent_model}
+                  models={discovery.models}
+                  onChange={(value) =>
+                    invalidateTest({ ...form, subagent_model: value })
+                  }
+                />
+                <Field label="推理强度" htmlFor="model-effort">
+                  <select
+                    id="model-effort"
+                    className={selectClass}
+                    value={form.effort_level}
+                    onChange={(event) =>
+                      invalidateTest({
+                        ...form,
+                        effort_level: event.target
+                          .value as typeof form.effort_level,
+                      })
+                    }
+                  >
+                    <option value="low">低</option>
+                    <option value="medium">中</option>
+                    <option value="high">高</option>
+                    <option value="max">最高</option>
+                  </select>
+                </Field>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void runTest()}
+                disabled={!allowed || testDraft.isPending || !form.model}
+              >
+                {testDraft.isPending ? (
+                  <LoaderCircleIcon className="animate-spin" />
+                ) : (
+                  <FlaskConicalIcon />
+                )}
+                测试当前配置
+              </Button>
+            </section>
           ) : null}
+
+          {testResult ? (
+            <section className="space-y-3 border-t pt-5">
+              <h3 className="font-medium">4. 测试通过</h3>
+              <p className="text-sm text-emerald-700">
+                连接成功 · {testResult.provider_host} · {testResult.model} ·{" "}
+                {testResult.duration_ms}ms
+              </p>
+              <p className="text-xs text-muted-foreground">
+                最终保存会在服务端重新发现模型并再次执行最小 SDK 测试。
+              </p>
+            </section>
+          ) : null}
+
+          <MutationMessage error={error} />
+          <Button
+            type="submit"
+            disabled={!allowed || phase !== "TESTED" || configure.isPending}
+          >
+            {configure.isPending ? (
+              <LoaderCircleIcon className="animate-spin" />
+            ) : (
+              <SaveIcon />
+            )}
+            验证并原子保存
+          </Button>
         </CardContent>
       </Card>
 
       <div className="space-y-5">
         <Card className="shadow-none">
           <CardHeader>
-            <CardTitle>当前凭据</CardTitle>
+            <CardTitle>当前连接</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
-            {current ? (
-              <>
-                <StatusLine
-                  label="状态"
-                  value={
-                    current.credential.configured &&
-                    !current.credential.rotation_required
-                      ? "已配置"
-                      : "需要轮换"
-                  }
-                />
-                <StatusLine
-                  label="脱敏值"
-                  value={current.credential.masked || "未保存"}
-                  mono
-                />
-                <StatusLine
-                  label="凭据版本"
-                  value={`v${current.credential.version}`}
-                />
-                <StatusLine
-                  label="连接版本"
-                  value={`r${current.revision}`}
-                />
-                <StatusLine
-                  label="提供方主机"
-                  value={current.provider_host}
-                  mono
-                />
-                <CredentialSheet
-                  connectionRevision={connection.revision}
-                  configured={current.credential.configured}
-                  allowed={canManageCredential}
-                />
-              </>
-            ) : (
-              <p className="text-muted-foreground">
-                请先保存连接配置，再配置 API Key。
-              </p>
-            )}
-            {!canManageCredential ? (
-              <p className="text-xs text-muted-foreground">
-                当前账号没有凭据管理权限，只能查看凭据状态。
+            <StatusLine
+              label="状态"
+              value={
+                existingCredentialAvailable ? "已就绪" : "需要新的 API Key"
+              }
+            />
+            <StatusLine
+              label="脱敏值"
+              value={current?.credential.masked || "未保存"}
+              mono
+            />
+            <StatusLine
+              label="凭据版本"
+              value={`v${current?.credential.version ?? 0}`}
+            />
+            <StatusLine label="连接版本" value={`r${connection.revision}`} />
+            <StatusLine
+              label="提供方主机"
+              value={current?.provider_host || "未配置"}
+              mono
+            />
+            {!allowed ? (
+              <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                当前账号需要 Agent 编辑和 Secret 管理权限才能配置模型连接。
               </p>
             ) : null}
           </CardContent>
@@ -527,9 +744,10 @@ function ConnectionForm({
             <CardTitle>安全边界</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm text-muted-foreground">
-            <p>仅允许 HTTPS 和部署侧提供方主机允许列表。</p>
-            <p>拒绝 URL 用户信息、fragment、私网和环回 DNS 结果。</p>
-            <p>连接测试只能使用已保存 revision 和加密凭据。</p>
+            <p>仅允许 DeepSeek 官方 HTTPS 地址与 443 端口。</p>
+            <p>拒绝 URL 凭据、重定向、私网和环回 DNS 结果。</p>
+            <p>发现与测试不保存 Key；最终配置才写入加密 Secret。</p>
+            <p>保存连接不会自动发布 Agent 或切换业务应用。</p>
           </CardContent>
         </Card>
       </div>
@@ -537,102 +755,38 @@ function ConnectionForm({
   )
 }
 
-function CredentialSheet({
-  connectionRevision,
-  configured,
-  allowed,
+function ModelChoice({
+  id,
+  label,
+  value,
+  models,
+  required = false,
+  onChange,
 }: {
-  connectionRevision: number
-  configured: boolean
-  allowed: boolean
+  id: string
+  label: string
+  value: string
+  models: Array<{ id: string; display_name: string }>
+  required?: boolean
+  onChange: (value: string) => void
 }) {
-  const [open, setOpen] = useState(false)
-  const [apiKey, setApiKey] = useState("")
-  const [error, setError] = useState<unknown>(null)
-  const rotate = useRotateCredential()
-
-  function resetPlaintext() {
-    setApiKey("")
-    setError(null)
-    rotate.reset()
-  }
-
-  async function submit(event: FormEvent) {
-    event.preventDefault()
-    setError(null)
-    try {
-      const revision = await rotate.mutateAsync({
-        expected_revision: connectionRevision,
-        api_key: apiKey,
-      })
-      toast.success(`模型凭据已轮换为 v${revision.credential.version}`)
-      resetPlaintext()
-      setOpen(false)
-    } catch (caught) {
-      setError(caught)
-    } finally {
-      // Do not retain plaintext in TanStack Mutation variables.
-      rotate.reset()
-    }
-  }
-
   return (
-    <Sheet
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next)
-        if (!next) resetPlaintext()
-      }}
-    >
-      <SheetTrigger
-        render={
-          <Button className="mt-2 w-full" variant="outline">
-            <KeyRoundIcon />
-            {configured ? "轮换 API Key" : "配置 API Key"}
-          </Button>
-        }
-        disabled={!allowed}
-      />
-      <SheetContent>
-        <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
-          <SheetHeader>
-            <SheetTitle>
-              {configured ? "轮换 API Key" : "配置 API Key"}
-            </SheetTitle>
-            <SheetDescription>
-              输入值只发送到加密凭据接口。关闭或保存后立即清空，不会回显旧值。
-            </SheetDescription>
-          </SheetHeader>
-          <div className="flex-1 space-y-4 overflow-y-auto px-4">
-            <Field label="新的 API Key" htmlFor="model-api-key">
-              <Input
-                id="model-api-key"
-                type="password"
-                autoComplete="new-password"
-                value={apiKey}
-                onChange={(event) => setApiKey(event.target.value)}
-                placeholder="输入新的 API Key"
-                required
-              />
-            </Field>
-            <MutationMessage error={error} />
-            <p className="text-xs leading-5 text-muted-foreground">
-              应先在模型提供方撤销旧 Key。保存成功后只显示脱敏摘要和活动版本。
-            </p>
-          </div>
-          <SheetFooter>
-            <Button type="submit" disabled={rotate.isPending || !apiKey}>
-              {rotate.isPending ? (
-                <LoaderCircleIcon className="animate-spin" />
-              ) : (
-                <KeyRoundIcon />
-              )}
-              保存并轮换
-            </Button>
-          </SheetFooter>
-        </form>
-      </SheetContent>
-    </Sheet>
+    <Field label={label} htmlFor={id}>
+      <select
+        id={id}
+        className={selectClass}
+        value={value}
+        required={required}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        <option value="">{required ? "请选择模型" : "继承主模型"}</option>
+        {models.map((model) => (
+          <option key={model.id} value={model.id}>
+            {model.display_name}
+          </option>
+        ))}
+      </select>
+    </Field>
   )
 }
 
@@ -1125,9 +1279,7 @@ function MutationMessage({ error }: { error: unknown }) {
       </div>
     )
   }
-  return (
-    <p className="text-sm text-destructive">操作失败，请稍后重试。</p>
-  )
+  return <p className="text-sm text-destructive">操作失败，请稍后重试。</p>
 }
 
 const selectClass =

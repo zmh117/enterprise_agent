@@ -48,6 +48,30 @@ export const modelConnectionSchema = z.object({
   revisions: z.array(modelConnectionRevisionSchema),
 })
 
+export const credentialSourceSchema = z.enum(["submitted", "existing"])
+
+export const modelOptionSchema = z.object({
+  id: z.string(),
+  display_name: z.string(),
+})
+
+export const modelDiscoveryResultSchema = z.object({
+  provider_host: z.string(),
+  normalized_base_url: z.string(),
+  models: z.array(modelOptionSchema),
+  duration_ms: z.number(),
+  credential_source: credentialSourceSchema,
+})
+
+export const modelDraftTestResultSchema = z.object({
+  success: z.boolean(),
+  provider_host: z.string(),
+  model: z.string(),
+  duration_ms: z.number(),
+  runtime: z.string(),
+  detail: z.string(),
+})
+
 const modelPolicySchema = z
   .object({
     runtime: z.string().optional(),
@@ -177,3 +201,6 @@ export type AgentConfig = z.infer<typeof agentConfigSchema>
 export type AgentDetail = z.infer<typeof agentDetailSchema>
 export type ModelConnection = z.infer<typeof modelConnectionSchema>
 export type ModelConnectionConfig = z.infer<typeof modelConnectionConfigSchema>
+export type CredentialSource = z.infer<typeof credentialSourceSchema>
+export type ModelDiscoveryResult = z.infer<typeof modelDiscoveryResultSchema>
+export type ModelDraftTestResult = z.infer<typeof modelDraftTestResultSchema>

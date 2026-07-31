@@ -27,14 +27,13 @@ def current_principal(request: Request) -> AuthenticatedPrincipal:
             )
         except PermissionDenied as exc:
             raise HTTPException(status_code=401, detail=exc.safe_message) from exc
-    if (
-        settings.test_identity_headers_enabled
-        and c.settings.environment in {"local", "test", "testing"}
-    ):
+    if settings.test_identity_headers_enabled and c.settings.environment in {
+        "local",
+        "test",
+        "testing",
+    }:
         subject = (
-            request.headers.get("x-admin-user-id")
-            or request.headers.get("x-agent-user-id")
-            or ""
+            request.headers.get("x-admin-user-id") or request.headers.get("x-agent-user-id") or ""
         ).strip()
         if subject:
             user = c.identity_repository.get_user_by_username(subject)
@@ -62,9 +61,7 @@ def optional_legacy_actor(request: Request) -> str:
     ):
         return current_principal(request).user_id
     return (
-        request.headers.get("x-admin-user-id")
-        or request.headers.get("x-agent-user-id")
-        or ""
+        request.headers.get("x-admin-user-id") or request.headers.get("x-agent-user-id") or ""
     ).strip()
 
 
@@ -130,16 +127,21 @@ def handle_exception(exc: Exception) -> HTTPException:
                 "identity_restore_required",
                 "username_conflict",
                 "revision_already_published",
+                "credential_ownership_conflict",
             }
             else 400
         )
+        detail: dict[str, object] = {
+            "message": exc.safe_message,
+            "code": exc.error_code or "invalid_request",
+            "field_errors": exc.field_errors,
+        }
+        current_revision = exc.diagnostics.get("current_revision")
+        if isinstance(current_revision, int):
+            detail["current_revision"] = current_revision
         return HTTPException(
             status_code=status,
-            detail={
-                "message": exc.safe_message,
-                "code": exc.error_code or "invalid_request",
-                "field_errors": exc.field_errors,
-            },
+            detail=detail,
         )
     if isinstance(exc, ValueError):
         return HTTPException(status_code=422, detail=str(exc))
