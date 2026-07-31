@@ -180,24 +180,32 @@ class GovernedResourceService:
         }
         rows = self.repository.database.execute(
             """
-            select distinct p.id as publication_id, a.id as application_id,
-                   a.code as application_code, a.name as application_name
-              from business_application_publication p
-              join business_application a on a.id = p.application_id
-              join (
-                    select publication_id, resource_revision_id
-                      from business_application_resource_binding
-                    union
-                    select h.application_publication_id as publication_id,
-                           r.resource_revision_id
-                      from business_application_publication_resource r
-                      join business_application_publication_handler h
-                        on h.id = r.application_handler_id
-                   ) binding on binding.publication_id = p.id
-              join platform_resource_revision revision
-                on revision.id = binding.resource_revision_id
-             where revision.resource_id = ?
-             order by a.code, p.revision
+            select affected.publication_id, affected.application_id,
+                   affected.application_code, affected.application_name
+              from (
+                    select distinct p.id as publication_id,
+                           a.id as application_id,
+                           a.code as application_code,
+                           a.name as application_name,
+                           p.revision as publication_revision
+                      from business_application_publication p
+                      join business_application a on a.id = p.application_id
+                      join (
+                            select publication_id, resource_revision_id
+                              from business_application_resource_binding
+                            union
+                            select h.application_publication_id as publication_id,
+                                   r.resource_revision_id
+                              from business_application_publication_resource r
+                              join business_application_publication_handler h
+                                on h.id = r.application_handler_id
+                           ) binding on binding.publication_id = p.id
+                      join platform_resource_revision revision
+                        on revision.id = binding.resource_revision_id
+                     where revision.resource_id = ?
+                   ) affected
+             order by affected.application_code,
+                      affected.publication_revision
             """,
             (resource_id,),
         )
