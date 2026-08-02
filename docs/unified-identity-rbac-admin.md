@@ -60,8 +60,10 @@ CLI 要求至少 12 位密码、二次确认，并拒绝重复 bootstrap。管�
 4. 让用户从钉钉发送一条测试消息，确认审计中的内部 requester 与 external identity。
 
 ONES 登录响应只提取 UUID、显示名称和团队 UUID。服务端立即丢弃 Token，且不保存
-邮箱、密码或原始响应。生产环境必须使用 HTTPS 和精确 Host 白名单；本地 HTTP 例外
-只能用于受控 Mock。ONES 身份当前只是人员映射，不会调用需求、任务或缺陷接口。
+邮箱、密码或原始响应。受治理 API Connection 默认使用 HTTPS；企业内网或本地
+ONES 使用 HTTP 时必须在对应 Connection Draft 中显式允许明文传输并完成验证。
+固定 Origin 仍不得由请求覆盖。ONES 身份当前只是人员映射，不会调用需求、任务或
+缺陷接口。
 
 系统不会按昵称、手机号或邮箱自动匹配，也不会在收到未知钉钉用户时自动创建账号。`provider + tenant_code + external_subject_id` 唯一；冲突、未知、已解绑或已停用身份在创建 session/job 和发布队列消息前 fail closed。
 

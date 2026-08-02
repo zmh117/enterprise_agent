@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ipaddress
 import re
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -20,7 +19,6 @@ from app.modules.identity.application.authorization import (
 from app.shared.exceptions import NonRetryableExecutionError
 
 
-PRODUCTION_ENVIRONMENTS = frozenset({"prod", "production"})
 _PROFILE_KEYS = frozenset({"schema_version", "login", "extract", "inject"})
 _LOGIN_KEYS = frozenset({"method", "relative_path", "email_field", "password_field"})
 _EXTRACT_KEYS = frozenset(
@@ -300,7 +298,7 @@ class ApiConnectionService:
                 "origin_scheme": draft["origin_scheme"],
                 "origin_host": draft["origin_host"],
                 "origin_port": draft["origin_port"],
-                "allow_insecure_local_http": draft["allow_insecure_local_http"],
+                "allow_plain_http": draft["allow_plain_http"],
                 "connect_timeout_ms": draft["connect_timeout_ms"],
                 "read_timeout_ms": draft["read_timeout_ms"],
                 "max_response_bytes": draft["max_response_bytes"],
@@ -455,10 +453,12 @@ def normalize_origin(
     *,
     environment: str,
 ) -> dict[str, Any]:
+    _ = environment
     allowed = {
         "scheme",
         "host",
         "port",
+        "allow_plain_http",
         "allow_insecure_local_http",
         "connect_timeout_ms",
         "read_timeout_ms",
@@ -473,7 +473,19 @@ def normalize_origin(
     scheme = str(value.get("scheme") or value.get("origin_scheme") or "").lower()
     host = str(value.get("host") or value.get("origin_host") or "").strip().lower()
     port = int(value.get("port") or value.get("origin_port") or 0)
-    allow_insecure = bool(value.get("allow_insecure_local_http", False))
+    plain_http_value = value.get("allow_plain_http")
+    legacy_local_http_value = value.get("allow_insecure_local_http")
+    if (
+        plain_http_value is not None
+        and legacy_local_http_value is not None
+        and bool(plain_http_value) != bool(legacy_local_http_value)
+    ):
+        raise _origin_error("plain HTTP authorization fields conflict")
+    allow_plain_http = bool(
+        plain_http_value
+        if plain_http_value is not None
+        else legacy_local_http_value
+    )
     if scheme not in {"https", "http"}:
         raise _origin_error("scheme must be https or http")
     if (
@@ -488,18 +500,15 @@ def normalize_origin(
         raise _origin_error("host is invalid") from None
     if port < 1 or port > 65535:
         raise _origin_error("port is invalid")
-    local_mock = _is_loopback_host(normalized_host)
-    if scheme == "http" and (
-        environment.strip().lower() in PRODUCTION_ENVIRONMENTS
-        or not allow_insecure
-        or not local_mock
-    ):
-        raise _origin_error("HTTP is allowed only for an explicit local Mock outside production")
+    if scheme == "http" and not allow_plain_http:
+        raise _origin_error("HTTP requires explicit plain transport authorization")
+    if scheme == "https":
+        allow_plain_http = False
     return {
         "scheme": scheme,
         "host": normalized_host,
         "port": port,
-        "allow_insecure_local_http": allow_insecure,
+        "allow_plain_http": allow_plain_http,
         "connect_timeout_ms": _bounded_int(
             value.get("connect_timeout_ms", 3000),
             minimum=100,
@@ -583,15 +592,6 @@ def _bounded_int(
     if result < minimum or result > maximum:
         raise _origin_error(f"{field_name} is out of range")
     return result
-
-
-def _is_loopback_host(host: str) -> bool:
-    if host == "localhost" or host.endswith(".localhost"):
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
 
 
 def _origin_error(reason: str) -> NonRetryableExecutionError:

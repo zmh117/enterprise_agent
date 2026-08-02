@@ -149,3 +149,11 @@
 - [x] 14.4 运行迁移升级/回退演练，确认旧snapshot可读、现有身份不丢失且Release禁用可作为运行时回退
 - [x] 14.5 更新管理API、运维状态、错误码和完整钉钉到ONES发布链文档，并明确延期范围
 - [ ] 14.6 执行 `openspec validate add-governed-api-capability-handlers --strict` 及仓库静态质量门，确保实现与全部规格场景一致
+
+## 15. 企业内网明文 HTTP Connection
+
+- [x] 15.1 更新 ADR、设计、Connection 规格和运维文档，明确 HTTPS 默认、HTTP 显式授权及明文链路风险
+- [x] 15.2 增加 026 兼容迁移和 `allow_plain_http` 后端契约，接受旧字段输入但统一输出新语义
+- [x] 15.3 更新管理端字段、警告和 Authentication Profile Mock 默认值，使企业内网与本地 ONES 配置可直接验证
+- [x] 15.4 增加生产 HTTP、未授权拒绝、HTTPS 规范化、旧字段兼容和迁移测试，并运行相关质量门
+- [x] 15.5 将 026 应用到当前运行环境，重新构建 API/Worker/管理端并完成 ONES Mock Connection 冒烟验证

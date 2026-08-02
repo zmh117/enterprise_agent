@@ -15,7 +15,7 @@ def _migrated_database() -> Database:
         default_migrations_dir(),
         migrator_build="governed-api-schema-test",
     ).run()
-    assert result.head == "025"
+    assert result.head == "026"
     return database
 
 
@@ -50,6 +50,13 @@ def test_governed_api_schema_contains_separate_control_plane_aggregates() -> Non
             "agent_tool_call_api_provenance",
             "agent_tool_call_http_attempt",
         }.issubset(tables)
+        for table in ("api_connection_draft", "api_connection_revision"):
+            columns = {
+                str(row["name"])
+                for row in database.execute(f"pragma table_info({table})")
+            }
+            assert "allow_plain_http" in columns
+            assert "allow_insecure_local_http" not in columns
     finally:
         database.close()
 

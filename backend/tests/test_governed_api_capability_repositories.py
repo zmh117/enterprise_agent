@@ -34,7 +34,7 @@ def database() -> Database:
         default_migrations_dir(),
         migrator_build="governed-api-repository-test",
     ).run()
-    assert result.head == "025"
+    assert result.head == "026"
     value.execute(
         """
         insert into app_user

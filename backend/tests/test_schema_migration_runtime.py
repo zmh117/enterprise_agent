@@ -36,7 +36,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
     assert len({item.version for item in catalog}) == len(catalog)
     assert len({item.name for item in catalog}) == len(catalog)
     assert [item.version for item in catalog][8:11] == ["009", "009a", "010"]
-    assert catalog[-1].version == "025"
+    assert catalog[-1].version == "026"
     assert all(len(item.checksum) == 64 for item in catalog)
 
     baseline = legacy_baseline_artifacts(catalog)
@@ -116,17 +116,18 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
     first = migrator.run()
     second = migrator.run()
 
-    assert first.head == "025"
+    assert first.head == "026"
     assert first.baselined == 0
-    assert first.applied[-6:] == (
+    assert first.applied[-7:] == (
         "020",
         "021",
         "022",
         "023",
         "024",
         "025",
+        "026",
     )
-    assert second.head == "025"
+    assert second.head == "026"
     assert second.baselined == 0
     assert second.applied == ()
     assert len(SchemaMigrationLedger(database).list_records()) == len(
@@ -139,7 +140,10 @@ def test_025_upgrade_preserves_existing_ones_identity_without_fabricating_creden
 ) -> None:
     migrations_dir = default_migrations_dir()
     for path in migrations_dir.glob("*.sql"):
-        if path.name != "025_governed_api_capabilities.sql":
+        if path.name not in {
+            "025_governed_api_capabilities.sql",
+            "026_allow_plain_http_api_connections.sql",
+        }:
             shutil.copy2(path, tmp_path / path.name)
 
     database = Database("sqlite:///:memory:")
@@ -201,6 +205,71 @@ def test_025_upgrade_preserves_existing_ones_identity_without_fabricating_creden
             )
             == {"count": 0}
         )
+    finally:
+        database.close()
+
+
+def test_026_upgrade_renames_plain_http_authorization_without_data_loss(
+    tmp_path: Path,
+) -> None:
+    migrations_dir = default_migrations_dir()
+    for path in migrations_dir.glob("*.sql"):
+        if path.name != "026_allow_plain_http_api_connections.sql":
+            shutil.copy2(path, tmp_path / path.name)
+
+    database = Database("sqlite:///:memory:")
+    try:
+        before = Migrator(
+            database,
+            tmp_path,
+            migrator_build="pre-plain-http-test",
+        ).run()
+        assert before.head == "025"
+        database.execute(
+            """
+            insert into api_connection
+              (id, code, name, provider, created_by, created_at, updated_at)
+            values ('connection-http', 'ones-http', 'ONES HTTP', 'ones',
+                    'test', '2026-08-02T00:00:00Z', '2026-08-02T00:00:00Z')
+            """
+        )
+        database.execute(
+            """
+            insert into api_connection_draft
+              (id, connection_id, origin_scheme, origin_host, origin_port,
+               allow_insecure_local_http, content_hash, created_by, updated_by,
+               created_at, updated_at)
+            values ('draft-http', 'connection-http', 'http',
+                    'ones.internal.example', 80, 1, ?, 'test', 'test',
+                    '2026-08-02T00:00:00Z', '2026-08-02T00:00:00Z')
+            """,
+            ("a" * 64,),
+        )
+
+        shutil.copy2(
+            migrations_dir / "026_allow_plain_http_api_connections.sql",
+            tmp_path / "026_allow_plain_http_api_connections.sql",
+        )
+        upgraded = Migrator(
+            database,
+            tmp_path,
+            migrator_build="plain-http-upgrade-test",
+        ).run()
+
+        assert upgraded.head == "026"
+        assert upgraded.applied == ("026",)
+        assert database.execute_one(
+            """
+            select allow_plain_http from api_connection_draft
+             where id = 'draft-http'
+            """
+        ) == {"allow_plain_http": 1}
+        columns = {
+            str(row["name"])
+            for row in database.execute("pragma table_info(api_connection_draft)")
+        }
+        assert "allow_plain_http" in columns
+        assert "allow_insecure_local_http" not in columns
     finally:
         database.close()
 
@@ -293,7 +362,7 @@ def test_schema_head_validator_is_read_only_and_rejects_missing_ledger() -> None
 
     with pytest.raises(
         SchemaHeadError,
-        match="ledger is missing; expected head 025",
+        match="ledger is missing; expected head 026",
     ):
         SchemaHeadValidator(
             database,

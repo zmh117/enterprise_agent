@@ -486,7 +486,10 @@ class Database:
                 except Exception as exc:
                     if (
                         not ignore_existing_errors
-                        or not self._is_ignorable_migration_error(exc)
+                        or not self._is_ignorable_migration_error(
+                            exc,
+                            statement=statement,
+                        )
                     ):
                         if implicit:
                             connection.rollback()
@@ -510,13 +513,29 @@ class Database:
             if statement.strip()
         ]
 
-    def _is_ignorable_migration_error(self, exc: Exception) -> bool:
+    def _is_ignorable_migration_error(
+        self,
+        exc: Exception,
+        *,
+        statement: str = "",
+    ) -> bool:
         message = str(exc).lower()
+        normalized_statement = " ".join(statement.lower().split())
+        repeated_column_rename = (
+            normalized_statement.startswith("alter table ")
+            and " rename column " in normalized_statement
+            and " to " in normalized_statement
+            and (
+                "no such column" in message
+                or "does not exist" in message
+            )
+        )
         return (
             "duplicate column" in message
             or "already exists" in message
             or "column" in message
             and "already" in message
+            or repeated_column_rename
         )
 
     def _is_postgres_comment_statement(self, statement: str) -> bool:

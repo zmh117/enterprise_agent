@@ -40,6 +40,10 @@ _Avoid_: 登录 Capability、登录 Handler、Agent Tool
 API Connection 固定的 Scheme、Host 和 Port 边界，Handler 只能在该 Origin 下使用相对路径，认证凭据不得发送到其他 Origin。
 _Avoid_: 完整 Network Zone、任意 URL、动态 Host
 
+**明文 HTTP 授权（Plain HTTP Opt-in）**:
+管理员针对一个固定 API Connection Origin 显式接受无 TLS 传输风险的发布事实；HTTPS 是默认值，HTTP 未授权时失败关闭，授权后仍不代表网络区或 SSRF 防护。
+_Avoid_: 本地 Mock 开关、关闭证书校验、全局 HTTP 开关、安全连接
+
 **Connection 发布版本（Connection Revision）**:
 API Connection 通过验证后形成的不可变连接与认证协议版本，可被禁用或归档但不能原地修改。
 _Avoid_: Connection Draft、可编辑当前连接、浮动 Base URL
@@ -316,6 +320,7 @@ _Avoid_: 跨 Team 搜索、工作项详情、创建或修改工作项
 - **Connection 发布版本**不可修改或普通删除；被禁用后所有依赖它的新调用失败关闭
 - Origin 或认证配置变化产生新**Connection 发布版本**，旧用户 Token 不得跨不兼容版本复用
 - 第一版暂不实现 Network Zone、CIDR 或完整 DNS/IP 出口策略，但每个 **API Connection**必须保留 **Connection Origin 边界**
+- HTTPS 是 API Connection 默认传输；企业内网或本地系统使用 HTTP 时必须逐个 Draft 显式记录**明文 HTTP 授权**并在发布前完成真实验证
 - Handler 只能配置相对路径，不得改变 Scheme、Host 或 Port；用户 Token 只能发送到被冻结的 Connection Origin
 - 跨 Origin 重定向必须拒绝；本变更不得宣称已经完成通用 SSRF 防护
 - **应用发布**冻结 API 能力、能力 Handler 和 API Connection 的精确发布版本

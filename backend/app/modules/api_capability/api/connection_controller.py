@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, SecretStr
 
 from app.modules.identity.api.dependencies import (
     container,
@@ -20,7 +20,13 @@ class OriginRequest(StrictRequest):
     scheme: Literal["https", "http"]
     host: str = Field(min_length=1, max_length=253)
     port: int = Field(ge=1, le=65535)
-    allow_insecure_local_http: bool = False
+    allow_plain_http: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "allow_plain_http",
+            "allow_insecure_local_http",
+        ),
+    )
     connect_timeout_ms: int = Field(default=3000, ge=100, le=30000)
     read_timeout_ms: int = Field(default=10000, ge=100, le=60000)
     max_response_bytes: int = Field(

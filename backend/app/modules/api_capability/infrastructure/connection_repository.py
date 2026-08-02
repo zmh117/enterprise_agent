@@ -66,7 +66,7 @@ class ApiConnectionRepository:
                 """
                 insert into api_connection_draft
                   (id, connection_id, draft_revision, origin_scheme,
-                   origin_host, origin_port, allow_insecure_local_http,
+                   origin_host, origin_port, allow_plain_http,
                    connect_timeout_ms, read_timeout_ms, max_response_bytes,
                    content_hash, status, created_by, updated_by,
                    created_at, updated_at)
@@ -78,7 +78,7 @@ class ApiConnectionRepository:
                     origin["scheme"],
                     origin["host"],
                     int(origin["port"]),
-                    int(bool(origin.get("allow_insecure_local_http", False))),
+                    int(bool(origin.get("allow_plain_http", False))),
                     int(origin.get("connect_timeout_ms", 3000)),
                     int(origin.get("read_timeout_ms", 10000)),
                     int(origin.get("max_response_bytes", 1048576)),
@@ -217,7 +217,7 @@ class ApiConnectionRepository:
                 update api_connection_draft
                    set draft_revision = draft_revision + 1,
                        origin_scheme = ?, origin_host = ?, origin_port = ?,
-                       allow_insecure_local_http = ?,
+                       allow_plain_http = ?,
                        connect_timeout_ms = ?, read_timeout_ms = ?,
                        max_response_bytes = ?, content_hash = ?,
                        status = 'DRAFT', updated_by = ?, updated_at = ?
@@ -228,7 +228,7 @@ class ApiConnectionRepository:
                     origin["scheme"],
                     origin["host"],
                     int(origin["port"]),
-                    int(bool(origin.get("allow_insecure_local_http", False))),
+                    int(bool(origin.get("allow_plain_http", False))),
                     int(origin.get("connect_timeout_ms", 3000)),
                     int(origin.get("read_timeout_ms", 10000)),
                     int(origin.get("max_response_bytes", 1048576)),
@@ -417,7 +417,7 @@ class ApiConnectionRepository:
                 insert into api_connection_revision
                   (id, connection_id, revision, schema_version,
                    origin_scheme, origin_host, origin_port,
-                   allow_insecure_local_http, connect_timeout_ms,
+                   allow_plain_http, connect_timeout_ms,
                    read_timeout_ms, max_response_bytes,
                    authentication_profile_revision_id, content_hash,
                    verification_id, status, published_by, published_at)
@@ -431,7 +431,7 @@ class ApiConnectionRepository:
                     str(draft["origin_scheme"]),
                     str(draft["origin_host"]),
                     int(draft["origin_port"]),
-                    int(draft["allow_insecure_local_http"]),
+                    int(draft["allow_plain_http"]),
                     int(draft["connect_timeout_ms"]),
                     int(draft["read_timeout_ms"]),
                     int(draft["max_response_bytes"]),
@@ -560,7 +560,7 @@ class ApiConnectionRepository:
         return {
             **draft,
             "draft_revision": int(draft["draft_revision"]),
-            "allow_insecure_local_http": bool(draft["allow_insecure_local_http"]),
+            "allow_plain_http": bool(draft["allow_plain_http"]),
             "authentication_profile": {
                 **profile_draft,
                 "draft_revision": int(profile_draft["draft_revision"]),

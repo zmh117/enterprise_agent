@@ -181,7 +181,7 @@ function CreateConnectionCard() {
     scheme: "https",
     host: "",
     port: 443,
-    allow_insecure_local_http: false,
+    allow_plain_http: false,
     connect_timeout_ms: 3000,
     read_timeout_ms: 10000,
     max_response_bytes: 1048576,
@@ -213,7 +213,8 @@ function CreateConnectionCard() {
       <CardHeader>
         <CardTitle>新建 ONES Connection</CardTitle>
         <CardDescription>
-          Origin 必须固定；生产环境仅允许 HTTPS，本地 Mock HTTP 必须显式声明。
+          Origin 必须固定；HTTPS 为默认值，企业内网或本地 ONES 使用 HTTP
+          时必须显式接受明文传输风险。
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -252,7 +253,7 @@ function ConnectionWorkbench({ connection }: { connection: ApiConnection }) {
     scheme: draft?.origin_scheme === "http" ? "http" : "https",
     host: draft?.origin_host ?? "",
     port: draft?.origin_port ?? 443,
-    allow_insecure_local_http: draft?.allow_insecure_local_http ?? false,
+    allow_plain_http: draft?.allow_plain_http ?? false,
     connect_timeout_ms: draft?.connect_timeout_ms ?? 3000,
     read_timeout_ms: draft?.read_timeout_ms ?? 10000,
     max_response_bytes: draft?.max_response_bytes ?? 1048576,
@@ -1029,11 +1030,16 @@ function OriginFields({
           className={selectClass}
           value={value.scheme}
           onChange={(event) =>
-            onChange({ ...value, scheme: event.target.value as "https" | "http" })
+            onChange({
+              ...value,
+              scheme: event.target.value as "https" | "http",
+              allow_plain_http:
+                event.target.value === "https" ? false : value.allow_plain_http,
+            })
           }
         >
           <option value="https">https</option>
-          <option value="http">http（仅本地 Mock）</option>
+          <option value="http">http（需接受明文传输风险）</option>
         </select>
       </label>
       <LabeledInput
@@ -1073,12 +1079,13 @@ function OriginFields({
       />
       <label className="flex items-center gap-2 text-sm md:col-span-3">
         <Checkbox
-          checked={value.allow_insecure_local_http}
+          checked={value.allow_plain_http}
+          disabled={value.scheme !== "http"}
           onCheckedChange={(checked) =>
-            onChange({ ...value, allow_insecure_local_http: Boolean(checked) })
+            onChange({ ...value, allow_plain_http: Boolean(checked) })
           }
         />
-        仅对本机 Mock 显式允许 HTTP
+        允许明文 HTTP（密码、Token 和业务数据可能被窃听或篡改）
       </label>
     </div>
   )

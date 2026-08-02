@@ -33,7 +33,7 @@ export const connectionRevisionSchema = z
     origin_scheme: z.string(),
     origin_host: z.string(),
     origin_port: z.number(),
-    allow_insecure_local_http: z.union([z.boolean(), z.number()]).transform(Boolean),
+    allow_plain_http: z.union([z.boolean(), z.number()]).transform(Boolean),
     connect_timeout_ms: z.number(),
     read_timeout_ms: z.number(),
     max_response_bytes: z.number(),
@@ -52,7 +52,7 @@ export const connectionDraftSchema = z
     origin_scheme: z.string(),
     origin_host: z.string(),
     origin_port: z.number(),
-    allow_insecure_local_http: z.union([z.boolean(), z.number()]).transform(Boolean),
+    allow_plain_http: z.union([z.boolean(), z.number()]).transform(Boolean),
     connect_timeout_ms: z.number(),
     read_timeout_ms: z.number(),
     max_response_bytes: z.number(),
@@ -160,7 +160,7 @@ export type ConnectionDraftInput = {
     scheme: "https" | "http"
     host: string
     port: number
-    allow_insecure_local_http: boolean
+    allow_plain_http: boolean
     connect_timeout_ms: number
     read_timeout_ms: number
     max_response_bytes: number
@@ -180,12 +180,12 @@ export const defaultOnesAuthenticationProfile: AuthenticationProfile = {
   schema_version: 1,
   login: {
     method: "POST",
-    relative_path: "/api/project/auth/login",
+    relative_path: "/project/api/project/auth/login",
     email_field: "email",
     password_field: "password",
   },
   extract: {
-    token_path: "$.token",
+    token_path: "$.user.token",
     user_id_path: "$.user.uuid",
     display_name_path: "$.user.name",
     teams_path: "$.teams",
@@ -193,8 +193,8 @@ export const defaultOnesAuthenticationProfile: AuthenticationProfile = {
     team_name_field: "name",
   },
   inject: {
-    header_name: "Authorization",
-    value_prefix: "Bearer ",
+    header_name: "Ones-Auth-Token",
+    value_prefix: "",
   },
 }
 

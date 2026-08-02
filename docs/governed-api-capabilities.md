@@ -21,6 +21,11 @@ Capability 是 Agent 可理解、可选择的业务能力；Handler 是这个能
 实现。两者不是同一个领域对象，但管理员在同一个五区域工作台保存、Test、
 Verify 和 Publish。
 
+HTTPS 是 Connection 默认传输。企业内网或本地 ONES 只提供 HTTP 时，管理员必须
+在该 Draft 显式启用“允许明文 HTTP”，接受密码、Token 和业务数据可能被窃听或
+篡改的风险；该选择进入内容 hash 和不可变 Connection Revision。它不是全局开关，
+也不表示平台已实现完整网络区或 SSRF 防护。
+
 ## 发布顺序
 
 1. 管理员创建 ONES Connection Draft 和 Authentication Profile Draft。
@@ -139,9 +144,9 @@ agent_tool_call_api_provenance → delivery_outbox`
 
 ## 明确延期范围
 
-- 只承诺固定 Origin、相对路径、生产 HTTPS、响应大小/超时限制及拒绝跨 Origin
-  redirect；尚未实现通用网络区、CIDR allowlist 或 DNS 重绑定防护，不能把当前
-  状态描述成完整 SSRF 防护。
+- 只承诺固定 Origin、相对路径、HTTP 显式授权、响应大小/超时限制及拒绝跨
+  Origin redirect；尚未实现通用网络区、CIDR allowlist 或 DNS 重绑定防护，
+  不能把当前状态描述成完整 SSRF 防护。明文 HTTP 不提供传输机密性或完整性。
 - V1 不支持写操作、任意脚本、模板语言、服务端 Handler-to-Handler 管道。
 - V1 不支持多 ONES 实例、同一用户多个 ONES 账号或跨 Team 查询。
 - V1 不执行 Tool 结果定时清理，也不实现记忆系统。

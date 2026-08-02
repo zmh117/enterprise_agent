@@ -10,6 +10,7 @@ from app.modules.api_capability.application import (
     AuthenticationProfileV1,
     normalize_origin,
 )
+from app.modules.api_capability.api.connection_controller import OriginRequest
 from app.modules.api_capability.infrastructure import (
     ApiConnectionRepository,
     RestrictedHttpJsonClient,
@@ -167,43 +168,93 @@ def _service(
     )
 
 
-def test_origin_allows_only_explicit_local_mock_http() -> None:
-    local = normalize_origin(
+def test_origin_allows_explicit_plain_http_in_all_environments() -> None:
+    production = normalize_origin(
         {
             "scheme": "http",
-            "host": "127.0.0.1",
-            "port": 18080,
-            "allow_insecure_local_http": True,
+            "host": "ones.internal.example",
+            "port": 80,
+            "allow_plain_http": True,
         },
-        environment="test",
+        environment="production",
     )
-    assert local["host"] == "127.0.0.1"
+    assert production["host"] == "ones.internal.example"
+    assert production["allow_plain_http"] is True
+
+    docker_desktop = normalize_origin(
+        {
+            "scheme": "http",
+            "host": "host.docker.internal",
+            "port": 19121,
+            "allow_plain_http": True,
+        },
+        environment="development",
+    )
+    assert docker_desktop["host"] == "host.docker.internal"
+
     with pytest.raises(NonRetryableExecutionError):
         normalize_origin(
             {
                 "scheme": "http",
                 "host": "ones.example.test",
                 "port": 80,
-                "allow_insecure_local_http": True,
             },
-            environment="test",
+            environment="production",
         )
+
+
+def test_origin_normalizes_https_and_accepts_legacy_plain_http_input() -> None:
+    https = normalize_origin(
+        {
+            "scheme": "https",
+            "host": "ones.example.test",
+            "port": 443,
+            "allow_plain_http": True,
+        },
+        environment="production",
+    )
+    assert https["allow_plain_http"] is False
+
+    legacy = normalize_origin(
+        {
+            "scheme": "http",
+            "host": "127.0.0.1",
+            "port": 19121,
+            "allow_insecure_local_http": True,
+        },
+        environment="test",
+    )
+    assert legacy["allow_plain_http"] is True
+
+    request = OriginRequest.model_validate(
+        {
+            "scheme": "http",
+            "host": "host.docker.internal",
+            "port": 19121,
+            "allow_insecure_local_http": True,
+        }
+    )
+    assert request.model_dump()["allow_plain_http"] is True
+
     with pytest.raises(NonRetryableExecutionError):
         normalize_origin(
             {
                 "scheme": "http",
-                "host": "localhost",
-                "port": 18080,
-                "allow_insecure_local_http": True,
+                "host": "host.docker.internal",
+                "port": 19121,
+                "allow_plain_http": True,
+                "allow_insecure_local_http": False,
             },
-            environment="production",
+            environment="test",
         )
+
     with pytest.raises(NonRetryableExecutionError):
         normalize_origin(
             {
-                "scheme": "https",
+                "scheme": "http",
                 "host": "user@ones.example.test",
-                "port": 443,
+                "port": 80,
+                "allow_plain_http": True,
             },
             environment="production",
         )

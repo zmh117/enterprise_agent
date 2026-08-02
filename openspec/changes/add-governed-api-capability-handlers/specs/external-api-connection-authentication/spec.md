@@ -30,16 +30,20 @@ Connection Revision MUST 固定 scheme、host 和 port；Handler 只能引用该
 - **WHEN** 请求响应要求跳转到不同 scheme、host 或 port
 - **THEN** 执行器不得携带认证材料跟随重定向，并将调用归类为非重试安全失败
 
-### Requirement: 生产 Connection 使用 HTTPS
-生产环境的外部 API Connection MUST 使用 HTTPS；只有显式测试配置且目标属于允许的本地 Mock 时 MAY 使用 HTTP。
+### Requirement: Connection 明文 HTTP 必须显式授权
+外部 API Connection SHALL 默认使用 HTTPS；管理员 MAY 在企业内网、开发、测试或生产 Connection Draft 中显式启用 `allow_plain_http` 以使用 HTTP。系统 MUST 拒绝未显式授权的 HTTP Origin，MUST 将授权纳入内容 hash 和不可变 Connection Revision，并 MUST 在管理界面说明密码、Token 和业务数据可能被窃听或篡改。该授权 MUST NOT 被描述为网络区限制或完整 SSRF 防护。
 
-#### Scenario: 生产配置 HTTP ONES
-- **WHEN** 管理员尝试在生产环境验证或发布 HTTP Origin
-- **THEN** 系统拒绝操作且不发起登录或业务调用
+#### Scenario: 企业内网显式配置 HTTP ONES
+- **WHEN** 管理员配置固定 HTTP Origin、显式启用明文 HTTP 并完成验证
+- **THEN** 系统允许在生产环境发布和调用该精确 Origin，并保留明文传输警告和不可变授权事实
 
-#### Scenario: 测试环境使用本地 ONES Mock
-- **WHEN** 测试环境显式启用本地 Mock HTTP Origin
-- **THEN** 系统允许受限调用并在状态中标记为测试配置
+#### Scenario: HTTP 未显式授权
+- **WHEN** 任一环境的 Connection 使用 HTTP 但未启用 `allow_plain_http`
+- **THEN** 系统拒绝保存、验证和发布，且不发起登录或业务调用
+
+#### Scenario: HTTPS Connection
+- **WHEN** Connection 使用 HTTPS
+- **THEN** 系统允许按固定 Origin 规则处理，并将无意义的明文 HTTP 授权规范化为 false
 
 ### Requirement: Authentication Profile 固定登录与认证协议
 Authentication Profile Revision MUST 定义固定登录相对路径、登录请求字段、Token/User/Team 提取规则和认证 Header 注入规则；系统 MUST 静态校验提取类型并 MUST NOT 将登录动作暴露为 Capability 或模型 Tool。
@@ -79,7 +83,7 @@ Published Connection Revision SHALL 支持禁用和归档；被禁用、无法�
 - **THEN** 既有 Release 继续冻结旧 Revision，不自动漂移到新版本
 
 ### Requirement: 网络调用边界不得被描述为完整 SSRF 防护
-系统 MUST 实施固定 Origin、相对路径、HTTPS 生产约束、拒绝跨 Origin 重定向、超时和响应大小限制；在完整网络区/CIDR/DNS 出站治理交付前，管理状态和文档 MUST NOT 宣称具备通用 SSRF 防护。
+系统 MUST 实施固定 Origin、相对路径、HTTP 显式授权、拒绝跨 Origin 重定向、超时和响应大小限制；在完整网络区/CIDR/DNS 出站治理交付前，管理状态和文档 MUST NOT 宣称具备通用 SSRF 防护。
 
 #### Scenario: 管理员查看 Connection 安全状态
 - **WHEN** Connection 只具备第一版 Origin 边界

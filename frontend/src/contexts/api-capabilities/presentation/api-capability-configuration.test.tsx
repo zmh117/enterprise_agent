@@ -18,19 +18,19 @@ const authentication = {
   schema_version: 1,
   login: {
     method: "POST",
-    relative_path: "/api/project/auth/login",
+    relative_path: "/project/api/project/auth/login",
     email_field: "email",
     password_field: "password",
   },
   extract: {
-    token_path: "$.token",
+    token_path: "$.user.token",
     user_id_path: "$.user.uuid",
     display_name_path: "$.user.name",
     teams_path: "$.teams",
     team_id_field: "uuid",
     team_name_field: "name",
   },
-  inject: { header_name: "Authorization", value_prefix: "Bearer " },
+  inject: { header_name: "Ones-Auth-Token", value_prefix: "" },
 }
 
 const connection = {
@@ -47,7 +47,7 @@ const connection = {
     origin_scheme: "https",
     origin_host: "ones.example.test",
     origin_port: 443,
-    allow_insecure_local_http: false,
+    allow_plain_http: false,
     connect_timeout_ms: 3000,
     read_timeout_ms: 10000,
     max_response_bytes: 1048576,
@@ -69,7 +69,7 @@ const connection = {
       origin_scheme: "https",
       origin_host: "ones.example.test",
       origin_port: 443,
-      allow_insecure_local_http: false,
+      allow_plain_http: false,
       connect_timeout_ms: 3000,
       read_timeout_ms: 10000,
       max_response_bytes: 1048576,
@@ -152,6 +152,71 @@ afterEach(() => {
 })
 
 describe("API Capability configuration workbench", () => {
+  it("creates an explicitly authorized plain HTTP ONES Connection", async () => {
+    let createBody: Record<string, unknown> | undefined
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = String(input)
+      if (
+        url.endsWith("/api/admin/api-connections") &&
+        (!init?.method || init.method === "GET")
+      ) {
+        return response({ items: [] })
+      }
+      if (url.endsWith("/api/admin/api-capabilities")) {
+        return response({ items: [] })
+      }
+      if (
+        url.endsWith("/api/admin/api-connections") &&
+        init?.method === "POST"
+      ) {
+        createBody = JSON.parse(String(init.body))
+        return response({ connection })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    renderPage()
+
+    fireEvent.click(
+      await screen.findByRole("tab", { name: "Connection 与认证" }),
+    )
+    expect(
+      screen.getByText(/密码、Token 和业务数据可能被窃听或篡改/),
+    ).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText("Scheme"), {
+      target: { value: "http" },
+    })
+    fireEvent.change(screen.getByLabelText("固定 Host"), {
+      target: { value: "host.docker.internal" },
+    })
+    fireEvent.change(screen.getByLabelText("Port"), {
+      target: { value: "19121" },
+    })
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /允许明文 HTTP/ }),
+    )
+    fireEvent.click(screen.getByRole("button", { name: "创建草稿" }))
+
+    await waitFor(() =>
+      expect(createBody).toMatchObject({
+        origin: {
+          scheme: "http",
+          host: "host.docker.internal",
+          port: 19121,
+          allow_plain_http: true,
+        },
+        authentication: {
+          login: {
+            relative_path: "/project/api/project/auth/login",
+          },
+          extract: { token_path: "$.user.token" },
+          inject: { header_name: "Ones-Auth-Token", value_prefix: "" },
+        },
+      }),
+    )
+    expect(createBody).not.toHaveProperty("origin.allow_insecure_local_http")
+  })
+
   it("renders five regions and displays only the structured safe preview", async () => {
     let testBody: Record<string, unknown> | undefined
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {

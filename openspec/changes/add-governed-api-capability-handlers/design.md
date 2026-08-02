@@ -9,7 +9,7 @@
 
 缺口是“声明式受治理外部 API”这条独立控制面和数据面。现有代码注册表 Handler 适合平台内置工具，不允许管理员创建动态 HTTP 映射；现有 ONES 身份只证明账号归属，不能为当前钉钉发送人提供可轮换的个人 API Token；现有 Agent/Application 发布快照也尚未冻结精确的外部 Capability Release。
 
-本设计受 ADR-0011 至 ADR-0047 约束。主要利益相关者包括平台管理员、Agent/应用配置管理员、普通钉钉用户、安全与运维人员，以及 Agent Job/Tool Runtime 的维护者。
+本设计受 ADR-0011 至 ADR-0048 约束。主要利益相关者包括平台管理员、Agent/应用配置管理员、普通钉钉用户、安全与运维人员，以及 Agent Job/Tool Runtime 的维护者。
 
 ## Goals / Non-Goals
 
@@ -90,7 +90,9 @@ Identifier 不带 `v1`/`v2`。公共 Schema 改变时创建新的 Capability Rev
 
 ### 5. Connection 固定 Origin，Authentication Profile 管理登录与注入
 
-Connection Revision 只保存规范化 Origin（scheme、host、port）和安全的超时/响应大小配置。Handler 只能保存相对路径；HTTP 客户端禁止跨 Origin 重定向，认证材料只能注入同一 Origin 请求。生产 ONES 要求 HTTPS；测试环境只有显式允许的本地 Mock 可使用 HTTP。
+Connection Revision 只保存规范化 Origin（scheme、host、port）、显式明文 HTTP 授权和安全的超时/响应大小配置。Handler 只能保存相对路径；HTTP 客户端禁止跨 Origin 重定向，认证材料只能注入同一 Origin 请求。HTTPS 是默认传输；企业内网或本地 ONES 使用 HTTP 时，管理员必须在 Draft 中显式启用 `allow_plain_http`，界面必须说明密码、Token 和业务数据可能被窃听或篡改。该授权在开发、测试和生产环境语义一致，并冻结到不可变 Connection Revision。
+
+旧 API 字段 `allow_insecure_local_http` 只作为升级期输入别名接受，规范化输出和新发布统一使用 `allow_plain_http`；数据库迁移将 Draft 与 Revision 的旧列名改为新列名。若 scheme 为 HTTPS，规范化结果强制把该授权置为 false，避免无意义或陈旧的明文授权进入内容 hash。
 
 Authentication Profile Revision 保存固定登录相对路径、登录请求字段、Token/User/Team 提取路径和认证 Header 注入规则。登录动作是身份基础设施能力，不作为 Capability 或模型 Tool 暴露。
 
@@ -205,6 +207,7 @@ Job 创建时，路由解析器冻结 Application Publication、Agent Publicatio
 - [在途内部 Handler 规格要求 role-allowed，易与本变更混淆] → 以 `cap__` 命名空间和独立 resolver 区分；Capability 无单独 `use` Grant，但管理动作仍使用细粒度 RBAC。
 - [声明式 Mapping 仍可能成长为难审计的表达式语言] → V1 使用带版本的封闭 AST 节点白名单，未知节点发布即拒绝，新增表达能力必须另行规格化。
 - [仅固定 Origin 不能覆盖 DNS 重绑定和复杂出站风险] → 明确安全承诺边界，禁止完整 URL/跨 Origin redirect；完整网络区治理作为后续变更。
+- [企业 ONES 使用 HTTP 时认证与业务数据没有传输加密] → HTTPS 保持默认；每个 HTTP Connection 必须显式授权并显示警告，授权进入不可变 Revision 和审计事实，但平台不声称能消除明文链路风险。
 - [Challenge 中需要短期保存 Token] → 使用应用级加密、用户/Connection 绑定、短 TTL、单次消费和最小字段；密码永不保存，过期 Challenge 永不可执行。
 - [发布状态变更可能使模型已看到的 Tool 在调用前失效] → 执行前再次校验，返回安全、非重试的 Capability 不可用错误。
 - [旧 Job 与用户重绑之间存在主体漂移风险] → Job 冻结 User/Team 且逐次调用比对当前绑定；任何不一致失败关闭。

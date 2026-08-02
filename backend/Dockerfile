@@ -111,6 +111,7 @@ COPY backend/app/modules/__init__.py /app/backend/app/modules/
 COPY backend/app/modules/admin /app/backend/app/modules/admin
 COPY backend/app/modules/agent /app/backend/app/modules/agent
 COPY backend/app/modules/agent_config /app/backend/app/modules/agent_config
+COPY backend/app/modules/api_capability /app/backend/app/modules/api_capability
 COPY backend/app/modules/attachments /app/backend/app/modules/attachments
 COPY backend/app/modules/audit /app/backend/app/modules/audit
 COPY backend/app/modules/authorization_center /app/backend/app/modules/authorization_center
