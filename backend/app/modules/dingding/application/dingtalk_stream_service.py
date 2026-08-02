@@ -64,9 +64,17 @@ class UnsupportedDingTalkStreamEvent(ValueError):
 
 
 class RejectedDingTalkStreamMessage(ValueError):
-    def __init__(self, reason: str) -> None:
+    def __init__(
+        self,
+        reason: str,
+        *,
+        message: DingTalkStreamIncomingMessage | None = None,
+        error_code: str = "",
+    ) -> None:
         super().__init__(reason)
         self.reason = reason
+        self.message = message
+        self.error_code = error_code
 
 
 class DingTalkStreamRejectionNotifier(Protocol):
@@ -180,12 +188,27 @@ class DingTalkStreamMessageService:
                     "payload": safe_payload_summary(payload),
                 },
             )
+            if not defer_rejection_notification and exc.message is not None:
+                self._notify_rejection(
+                    message=exc.message,
+                    reason=exc.reason,
+                    connector_id=source_connector_id,
+                )
             return DingTalkStreamHandleResult(
                 accepted=False,
                 status="rejected",
                 ack_status="OK",
                 ack_message="REJECTED",
                 reason=exc.reason,
+                error_code=exc.error_code or "dingtalk_stream_message_rejected",
+                rejection_message=(
+                    exc.message if defer_rejection_notification else None
+                ),
+                rejection_connector_id=(
+                    source_connector_id
+                    if defer_rejection_notification and exc.message is not None
+                    else ""
+                ),
             )
 
         event: ChannelEvent | None = None
@@ -369,7 +392,12 @@ class DingTalkStreamMessageService:
             if self.attachments_enabled
             else ()
         )
-        if not content and not attachments:
+        rich_text_without_supported_content = (
+            not content
+            and not attachments
+            and _first_text(payload, "msgtype", "messageType").lower() == "richtext"
+        )
+        if not content and not attachments and not rich_text_without_supported_content:
             raise UnsupportedDingTalkStreamEvent("Unsupported DingTalk Stream event")
 
         conversation_id = _first_text(
@@ -421,7 +449,7 @@ class DingTalkStreamMessageService:
 
         message_id = message_id or event_id
         event_id = event_id or message_id
-        return DingTalkStreamIncomingMessage(
+        message = DingTalkStreamIncomingMessage(
             conversation_id=conversation_id,
             user_id=user_id,
             message_id=message_id,
@@ -438,6 +466,13 @@ class DingTalkStreamMessageService:
             union_id=union_id,
             open_id=open_id,
         )
+        if rich_text_without_supported_content:
+            raise RejectedDingTalkStreamMessage(
+                "暂时无法读取这条钉钉富文本消息，请改用纯文本后重试",
+                message=message,
+                error_code="unsupported_rich_text_content",
+            )
+        return message
 
     def to_channel_event(
         self,
@@ -568,6 +603,26 @@ def _text_content(payload: dict[str, Any]) -> str | None:
         return str(content) if content is not None else None
     if isinstance(text, str):
         return text
+
+    content = payload.get("content")
+    if isinstance(content, dict):
+        rich_text = content.get("richText") or content.get("richtext")
+        if isinstance(rich_text, list):
+            fragments: list[str] = []
+            for item in rich_text:
+                if isinstance(item, str):
+                    fragments.append(item)
+                    continue
+                if not isinstance(item, dict):
+                    continue
+                fragment = item.get("text") or item.get("content")
+                if isinstance(fragment, str):
+                    fragments.append(fragment)
+            return "".join(fragments)
+        nested_text = content.get("content") or content.get("text")
+        if isinstance(nested_text, str):
+            return nested_text
+
     for key in ("content", "message", "message_text"):
         value = payload.get(key)
         if isinstance(value, str):

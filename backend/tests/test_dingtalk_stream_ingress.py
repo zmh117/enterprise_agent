@@ -100,6 +100,66 @@ class DingTalkStreamIngressTests(unittest.TestCase):
         )
         self.assertNotIn("at_user_ids", job.reply_route["target"])
 
+    def test_rich_text_stream_message_creates_job_with_ordered_text(self) -> None:
+        c = routed_container()
+        payload = stream_payload(
+            msg_id="rich-text-msg-1",
+            event_id="rich-text-event-1",
+        )
+        payload.pop("text")
+        payload.update(
+            {
+                "msgtype": "richText",
+                "content": {
+                    "richText": [
+                        {"text": "搜索 "},
+                        {"text": "ONES"},
+                        {"type": "paragraph-boundary"},
+                        {"text": " 全部的工作项"},
+                    ]
+                },
+            }
+        )
+
+        result = c.dingtalk_stream_message_service.handle_callback(
+            payload=payload,
+            correlation_id="corr-rich-text-1",
+        )
+
+        self.assertTrue(result.accepted, result)
+        self.assertEqual("received", result.status)
+        job = c.agent_repository.get_job(result.job_id)
+        self.assertEqual("搜索 ONES 全部的工作项", job.user_message)
+
+    def test_rich_text_without_text_is_rejected_instead_of_silently_ignored(self) -> None:
+        c = routed_container()
+        payload = stream_payload(
+            msg_id="empty-rich-text-msg-1",
+            event_id="empty-rich-text-event-1",
+        )
+        payload.pop("text")
+        payload.update(
+            {
+                "msgtype": "richText",
+                "content": {"richText": [{"type": "unknown"}]},
+            }
+        )
+
+        result = c.dingtalk_stream_message_service.handle_callback(
+            payload=payload,
+            correlation_id="corr-empty-rich-text-1",
+            defer_rejection_notification=True,
+        )
+
+        self.assertFalse(result.accepted)
+        self.assertEqual("rejected", result.status)
+        self.assertEqual(
+            "暂时无法读取这条钉钉富文本消息，请改用纯文本后重试",
+            result.reason,
+        )
+        self.assertIsNotNone(result.rejection_message)
+        self.assertEqual(0, c.agent_repository.count_rows("agent_job"))
+
     def test_duplicate_stream_event_returns_existing_job_without_second_queue_message(self) -> None:
         c = routed_container()
 
