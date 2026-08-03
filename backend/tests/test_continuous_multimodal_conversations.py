@@ -153,6 +153,8 @@ def multimodal_container() -> object:
 def load_fixture(name: str) -> dict[str, object]:
     payload = json.loads((FIXTURES / name).read_text())
     payload["senderStaffId"] = "user_local_admin"
+    payload["senderCorpId"] = "corp-test-enterprise"
+    payload["chatbotCorpId"] = "corp-test-enterprise"
     payload["sessionWebhook"] = "https://oapi.dingtalk.com/robot/sendBySession"
     payload["sessionWebhookExpiredTime"] = "2099-01-01T00:00:00+00:00"
     return payload

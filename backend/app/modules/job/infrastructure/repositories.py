@@ -27,6 +27,35 @@ def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex}"
 
 
+def source_connector_projection(row: dict[str, Any]) -> dict[str, str]:
+    connector_id = str(row.get("source_connector_id") or "")
+    connector_name = str(row.get("source_connector_name") or "")
+    if not connector_id:
+        availability = "NOT_APPLICABLE"
+    elif not row.get("source_connector_record_id"):
+        availability = "UNKNOWN"
+    else:
+        try:
+            metadata = json.loads(str(row.get("source_connector_metadata") or "{}"))
+        except (TypeError, json.JSONDecodeError):
+            metadata = {}
+        historical_status = (
+            str(metadata.get("historical_source_status") or "").upper()
+            if isinstance(metadata, dict)
+            else ""
+        )
+        if bool(row.get("source_connector_deleted")) or historical_status == "UNAVAILABLE":
+            availability = "UNAVAILABLE_HISTORICAL"
+        elif bool(row.get("source_connector_enabled")):
+            availability = "AVAILABLE"
+        else:
+            availability = "UNAVAILABLE"
+    return {
+        "source_connector_name": connector_name,
+        "source_connector_availability": availability,
+    }
+
+
 class AgentRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
@@ -200,9 +229,7 @@ class AgentRepository:
                 safe_message="该历史会话只读，不能继续创建任务",
                 error_code="session_history_read_only",
             )
-        session_publication_id = str(
-            session_row.get("application_publication_id") or ""
-        )
+        session_publication_id = str(session_row.get("application_publication_id") or "")
         if business_application_publication_id and (
             session_publication_id != business_application_publication_id
         ):
@@ -311,9 +338,7 @@ class AgentRepository:
                 safe_message="Job 执行范围版本无效",
                 error_code="job_execution_scope_invalid",
             )
-        publication = runtime_authorization.get(
-            "application_publication"
-        )
+        publication = runtime_authorization.get("application_publication")
         requested_scope = runtime_authorization.get("requested_scope")
         bindings = runtime_authorization.get("bindings")
         if (
@@ -333,9 +358,7 @@ class AgentRepository:
         if existing is not None:
             return {
                 **existing,
-                "snapshot": json.loads(
-                    str(existing["snapshot_json"])
-                ),
+                "snapshot": json.loads(str(existing["snapshot_json"])),
             }
         execution_scope_id = new_id("job_execution_scope")
         snapshot = {
@@ -348,9 +371,7 @@ class AgentRepository:
             separators=(",", ":"),
             sort_keys=True,
         )
-        scope_hash = hashlib.sha256(
-            canonical.encode("utf-8")
-        ).hexdigest()
+        scope_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         timestamp = now_iso()
         self.database.execute(
             """
@@ -366,16 +387,10 @@ class AgentRepository:
                 job_id,
                 str(publication.get("application_id") or ""),
                 str(publication.get("id") or ""),
-                str(
-                    runtime_authorization.get(
-                        "agent_publication_id"
-                    )
-                    or ""
-                ),
+                str(runtime_authorization.get("agent_publication_id") or ""),
                 str(requested_scope.get("environment_id") or ""),
                 str(requested_scope.get("base_id") or "") or None,
-                str(requested_scope.get("workshop_id") or "")
-                or None,
+                str(requested_scope.get("workshop_id") or "") or None,
                 scope_hash,
                 canonical,
                 timestamp,
@@ -418,12 +433,7 @@ class AgentRepository:
                         str(binding.get("handler_id") or ""),
                         str(binding.get("handler_version") or ""),
                         str(resource.get("resource_slot") or ""),
-                        str(
-                            resource.get(
-                                "resource_revision_id"
-                            )
-                            or ""
-                        ),
+                        str(resource.get("resource_revision_id") or ""),
                         json.dumps(
                             resource.get("constraints") or {},
                             ensure_ascii=False,
@@ -617,17 +627,14 @@ class AgentRepository:
             max_attempts = int(current["max_attempts"])
             dead = attempt_count >= max_attempts
             delay_seconds = min(
-                max(1, int(retry_base_seconds))
-                * (2 ** max(attempt_count - 1, 0)),
+                max(1, int(retry_base_seconds)) * (2 ** max(attempt_count - 1, 0)),
                 3600,
             )
             timestamp = now_iso()
             next_attempt_at = (
                 timestamp
                 if dead
-                else (
-                    datetime.now(UTC) + timedelta(seconds=delay_seconds)
-                ).isoformat()
+                else (datetime.now(UTC) + timedelta(seconds=delay_seconds)).isoformat()
             )
             rows = self.database.execute(
                 """
@@ -639,9 +646,7 @@ class AgentRepository:
                 returning *
                 """,
                 (
-                    JobDispatchStatus.DEAD.value
-                    if dead
-                    else JobDispatchStatus.RETRY_WAIT.value,
+                    JobDispatchStatus.DEAD.value if dead else JobDispatchStatus.RETRY_WAIT.value,
                     next_attempt_at,
                     timestamp if dead else None,
                     error_code[:100],
@@ -863,10 +868,7 @@ class AgentRepository:
         )
 
     def dispatch_metrics(self) -> dict[str, Any]:
-        counts = {
-            status.value: 0
-            for status in JobDispatchStatus
-        }
+        counts = {status.value: 0 for status in JobDispatchStatus}
         for row in self.database.execute(
             """
             select status, count(*) as count
@@ -875,14 +877,17 @@ class AgentRepository:
             """
         ):
             counts[str(row["status"])] = int(row["count"])
-        oldest = self.database.execute_one(
-            """
+        oldest = (
+            self.database.execute_one(
+                """
             select min(next_attempt_at) as oldest_due_at,
                    max(attempt_count) as max_attempt_count
               from job_dispatch_outbox
              where status in ('PENDING', 'RETRY_WAIT', 'RUNNING')
             """
-        ) or {}
+            )
+            or {}
+        )
         return {
             "counts": counts,
             "oldest_due_at": oldest.get("oldest_due_at"),
@@ -1369,27 +1374,18 @@ class AgentRepository:
         )
         events: list[dict[str, Any]] = []
         for row in rows:
-            binding = self._json_from_text(
-                str(row.pop("delivery_binding_json", "{}") or "{}")
-            )
+            binding = self._json_from_text(str(row.pop("delivery_binding_json", "{}") or "{}"))
             if not isinstance(binding, dict):
                 binding = {}
-            target_summary = self._json_from_text(
-                str(row.get("target_summary") or "{}")
-            )
+            target_summary = self._json_from_text(str(row.get("target_summary") or "{}"))
             events.append(
                 {
                     **row,
                     "route_type": str(binding.get("route_type") or "none"),
                     "connector_id": str(binding.get("connector_id") or ""),
                     "delivery_kind": str(binding.get("delivery_kind") or "result"),
-                    "target_summary": (
-                        target_summary
-                        if isinstance(target_summary, dict)
-                        else {}
-                    ),
-                    "terminal": str(row["status"])
-                    in {"SUCCEEDED", "FAILED", "DEAD", "SKIPPED"},
+                    "target_summary": (target_summary if isinstance(target_summary, dict) else {}),
+                    "terminal": str(row["status"]) in {"SUCCEEDED", "FAILED", "DEAD", "SKIPPED"},
                     "delivered": str(row["status"]) == "SUCCEEDED",
                 }
             )
@@ -1405,20 +1401,20 @@ class AgentRepository:
             """
         ):
             counts[str(row["status"])] = int(row["count"])
-        active = self.database.execute_one(
-            """
+        active = (
+            self.database.execute_one(
+                """
             select min(next_attempt_at) as oldest_due_at,
                    max(attempt_count) as max_attempt_count
               from delivery_outbox
              where status in ('PENDING', 'RETRY_WAIT', 'RUNNING')
             """
-        ) or {}
+            )
+            or {}
+        )
         return {
             "counts": counts,
-            "active_count": sum(
-                counts[status]
-                for status in ("PENDING", "RETRY_WAIT", "RUNNING")
-            ),
+            "active_count": sum(counts[status] for status in ("PENDING", "RETRY_WAIT", "RUNNING")),
             "terminal_failure_count": counts["FAILED"] + counts["DEAD"],
             "oldest_due_at": active.get("oldest_due_at"),
             "max_attempt_count": int(active.get("max_attempt_count") or 0),
@@ -1592,10 +1588,7 @@ class AgentRepository:
         event: DeliveryEvent,
     ) -> dict[str, Any]:
         attempt_id = new_id("delivery")
-        idempotency_key = (
-            f"delivery.attempt:{event.id}:{event.replay_count}:"
-            f"{event.attempt_count}"
-        )
+        idempotency_key = f"delivery.attempt:{event.id}:{event.replay_count}:{event.attempt_count}"
         timestamp = now_iso()
         self.database.execute(
             """
@@ -1881,16 +1874,13 @@ class AgentRepository:
                 target = DeliveryStatus.RETRY_WAIT
             timestamp = now_iso()
             delay_seconds = min(
-                max(1, int(retry_base_seconds))
-                * (2 ** max(attempt_count - 1, 0)),
+                max(1, int(retry_base_seconds)) * (2 ** max(attempt_count - 1, 0)),
                 3600,
             )
             next_attempt_at = (
                 timestamp
                 if target.terminal
-                else (
-                    datetime.now(UTC) + timedelta(seconds=delay_seconds)
-                ).isoformat()
+                else (datetime.now(UTC) + timedelta(seconds=delay_seconds)).isoformat()
             )
             rows = self.database.execute(
                 """
@@ -2150,7 +2140,21 @@ class AgentRepository:
         return self._job_from_row(row) if row else None
 
     def get_job_detail(self, job_id: str) -> dict[str, Any]:
-        row = self.database.execute_one("select * from agent_job where id = ?", (job_id,))
+        row = self.database.execute_one(
+            """
+            select j.*,
+                   c.id as source_connector_record_id,
+                   c.name as source_connector_name,
+                   c.enabled as source_connector_enabled,
+                   c.deleted as source_connector_deleted,
+                   c.metadata as source_connector_metadata
+              from agent_job j
+              left join integration_connector c
+                on c.id = j.source_connector_id
+             where j.id = ?
+            """,
+            (job_id,),
+        )
         if not row:
             raise NotFound(f"Agent job not found: {job_id}")
         return {
@@ -2162,6 +2166,7 @@ class AgentRepository:
             "source": row["source"],
             "source_channel": row.get("source_channel") or row["source"],
             "source_connector_id": row.get("source_connector_id") or "",
+            **source_connector_projection(row),
             "external_event_id": row.get("external_event_id") or "",
             "requester_id": row.get("requester_id") or row["user_id"],
             "internal_user_id": row.get("internal_user_id") or "",
@@ -2266,8 +2271,7 @@ class AgentRepository:
                 error_message,
                 timestamp,
                 timestamp
-                if status
-                in {"SUCCEEDED", "FAILED", "SKIPPED", "BLOCKED_BY_AUTHORIZATION"}
+                if status in {"SUCCEEDED", "FAILED", "SKIPPED", "BLOCKED_BY_AUTHORIZATION"}
                 else None,
             ),
         )
@@ -2286,8 +2290,7 @@ class AgentRepository:
                 status,
                 error_message,
                 now_iso()
-                if status
-                in {"SUCCEEDED", "FAILED", "SKIPPED", "BLOCKED_BY_AUTHORIZATION"}
+                if status in {"SUCCEEDED", "FAILED", "SKIPPED", "BLOCKED_BY_AUTHORIZATION"}
                 else None,
                 attempt_id,
             ),
@@ -2620,15 +2623,9 @@ class AgentRepository:
             event_key=str(row["event_key"]),
             job_id=str(row["job_id"]),
             result_artifact_id=str(row["result_artifact_id"]),
-            application_publication_id=str(
-                row.get("application_publication_id") or ""
-            ),
-            delivery_binding=self._json_from_text(
-                row.get("delivery_binding_json") or "{}"
-            ),
-            target_summary=self._json_from_text(
-                row.get("target_summary") or "{}"
-            ),
+            application_publication_id=str(row.get("application_publication_id") or ""),
+            delivery_binding=self._json_from_text(row.get("delivery_binding_json") or "{}"),
+            target_summary=self._json_from_text(row.get("target_summary") or "{}"),
             correlation_id=str(row.get("correlation_id") or ""),
             status=DeliveryStatus(str(row["status"])),
             attempt_count=int(row.get("attempt_count") or 0),
@@ -2638,27 +2635,17 @@ class AgentRepository:
             next_attempt_at=str(row["next_attempt_at"]),
             claimed_by=str(row.get("claimed_by") or ""),
             claim_token=str(row.get("claim_token") or ""),
-            claimed_at=(
-                str(row["claimed_at"]) if row.get("claimed_at") else None
-            ),
+            claimed_at=(str(row["claimed_at"]) if row.get("claimed_at") else None),
             claim_expires_at=(
-                str(row["claim_expires_at"])
-                if row.get("claim_expires_at")
-                else None
+                str(row["claim_expires_at"]) if row.get("claim_expires_at") else None
             ),
             last_error_code=str(row.get("last_error_code") or ""),
             last_error_summary=str(row.get("last_error_summary") or ""),
-            started_at=(
-                str(row["started_at"]) if row.get("started_at") else None
-            ),
-            finished_at=(
-                str(row["finished_at"]) if row.get("finished_at") else None
-            ),
+            started_at=(str(row["started_at"]) if row.get("started_at") else None),
+            finished_at=(str(row["finished_at"]) if row.get("finished_at") else None),
             dead_at=str(row["dead_at"]) if row.get("dead_at") else None,
             last_replayed_at=(
-                str(row["last_replayed_at"])
-                if row.get("last_replayed_at")
-                else None
+                str(row["last_replayed_at"]) if row.get("last_replayed_at") else None
             ),
             last_replayed_by=str(row.get("last_replayed_by") or ""),
             created_at=str(row["created_at"]),

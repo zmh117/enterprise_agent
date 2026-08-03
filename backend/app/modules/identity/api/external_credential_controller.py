@@ -12,6 +12,11 @@ from app.modules.identity.api.dependencies import (
     require_action,
     require_csrf,
 )
+from app.modules.identity.api.external_identity_schemas import (
+    AdminOnesStatusResponse,
+    SelfIdentityOverviewResponse,
+    SelfOnesStatusResponse,
+)
 
 
 class StrictRequest(BaseModel):
@@ -34,7 +39,10 @@ class ConfirmOnesBindingRequest(StrictRequest):
 def build_external_credential_router() -> APIRouter:
     router = APIRouter(tags=["external-credentials"])
 
-    @router.get("/api/me/external-identities")
+    @router.get(
+        "/api/me/external-identities",
+        response_model=SelfIdentityOverviewResponse,
+    )
     def self_overview(request: Request) -> dict[str, Any]:
         principal = current_principal(request)
         try:
@@ -47,7 +55,10 @@ def build_external_credential_router() -> APIRouter:
         except Exception as exc:
             raise handle_exception(exc) from exc
 
-    @router.get("/api/me/external-identities/ones")
+    @router.get(
+        "/api/me/external-identities/ones",
+        response_model=SelfOnesStatusResponse,
+    )
     def self_status(request: Request) -> dict[str, Any]:
         principal = current_principal(request)
         try:
@@ -78,7 +89,10 @@ def build_external_credential_router() -> APIRouter:
             raise handle_exception(exc) from exc
         return {"challenge": challenge}
 
-    @router.post("/api/me/external-identities/ones/confirm")
+    @router.post(
+        "/api/me/external-identities/ones/confirm",
+        response_model=SelfOnesStatusResponse,
+    )
     def confirm_self_binding(
         request: Request,
         payload: ConfirmOnesBindingRequest,
@@ -111,7 +125,10 @@ def build_external_credential_router() -> APIRouter:
             raise handle_exception(exc) from exc
         return {"status": "unbound"}
 
-    @router.get("/api/admin/users/{user_id}/external-credentials/ones")
+    @router.get(
+        "/api/admin/users/{user_id}/external-credentials/ones",
+        response_model=AdminOnesStatusResponse,
+    )
     def admin_status(
         request: Request,
         user_id: str,
@@ -133,7 +150,10 @@ def build_external_credential_router() -> APIRouter:
         except Exception as exc:
             raise handle_exception(exc) from exc
 
-    @router.put("/api/admin/users/{user_id}/external-credentials/ones/disable")
+    @router.put(
+        "/api/admin/users/{user_id}/external-credentials/ones/disable",
+        response_model=AdminOnesStatusResponse,
+    )
     def admin_disable(
         request: Request,
         user_id: str,
@@ -146,13 +166,12 @@ def build_external_credential_router() -> APIRouter:
             csrf=True,
         )
         try:
-            credential = container(request).external_credential_binding_service.admin_disable(
+            return container(request).external_credential_binding_service.admin_disable(
                 actor_id=principal.user_id,
                 user_id=user_id,
             )
         except Exception as exc:
             raise handle_exception(exc) from exc
-        return {"credential": credential}
 
     @router.delete("/api/admin/users/{user_id}/external-credentials/ones")
     def admin_unbind(

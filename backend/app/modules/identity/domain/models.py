@@ -23,6 +23,29 @@ class ExternalIdentityProvider(StrEnum):
             ) from exc
 
 
+class ExternalCredentialUsageSource(StrEnum):
+    ADMIN_TEST = "ADMIN_TEST"
+    RUNTIME = "RUNTIME"
+
+
+@dataclass(frozen=True)
+class DingTalkApplicationObservationInput:
+    external_identity_id: str
+    connector_id: str
+    source_ingress_event_id: str
+    observed_at: str
+
+
+@dataclass(frozen=True)
+class DingTalkNicknameObservationInput:
+    external_identity_id: str
+    connector_id: str
+    source_ingress_event_id: str
+    nickname: str
+    occurred_at: str
+    received_at: str
+
+
 @dataclass(frozen=True)
 class ExternalIdentityDescriptor:
     provider: str
@@ -32,6 +55,10 @@ class ExternalIdentityDescriptor:
     union_id: str = ""
     open_id: str = ""
     display_name: str = ""
+    dingtalk_enterprise_id: str = ""
+    source_ingress_event_id: str = ""
+    occurred_at: str = ""
+    received_at: str = ""
 
 
 @dataclass(frozen=True)

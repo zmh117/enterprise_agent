@@ -1,6 +1,7 @@
 import { z } from "zod"
 
 import {
+  dingtalkEnterpriseSchema,
   managedChannelSchema,
   managedChannelTestResultSchema,
   webhookConnectorOptionSchema,
@@ -15,10 +16,64 @@ const webhookConnectorOptionsSchema = z.object({
 })
 const channelSchema = z.object({ channel: managedChannelSchema })
 const testResultSchema = z.object({ result: managedChannelTestResultSchema })
+const enterprisesSchema = z.object({ items: z.array(dingtalkEnterpriseSchema) })
+const enterpriseSchema = z.object({ enterprise: dingtalkEnterpriseSchema })
 
 export async function listManagedChannels() {
   return itemsSchema.parse(await apiRequest("/api/admin/managed-channels"))
     .items
+}
+
+export async function listDingTalkEnterprises() {
+  return enterprisesSchema.parse(
+    await apiRequest("/api/admin/managed-channels/dingtalk-enterprises")
+  ).items
+}
+
+export async function getDingTalkEnterprise(enterpriseId: string) {
+  return enterpriseSchema.parse(
+    await apiRequest(
+      `/api/admin/managed-channels/dingtalk-enterprises/${encodeURIComponent(enterpriseId)}`
+    )
+  ).enterprise
+}
+
+export async function createDingTalkEnterprise(name: string) {
+  return enterpriseSchema.parse(
+    await apiRequest("/api/admin/managed-channels/dingtalk-enterprises", {
+      method: "POST",
+      body: { name },
+    })
+  ).enterprise
+}
+
+export async function renameDingTalkEnterprise(
+  enterpriseId: string,
+  name: string,
+  expectedRevision: number
+) {
+  return enterpriseSchema.parse(
+    await apiRequest(
+      `/api/admin/managed-channels/dingtalk-enterprises/${encodeURIComponent(enterpriseId)}`,
+      {
+        method: "PATCH",
+        body: { name, expected_revision: expectedRevision },
+      }
+    )
+  ).enterprise
+}
+
+export async function governDingTalkEnterprise(
+  enterpriseId: string,
+  action: "disable" | "archive" | "restore",
+  expectedRevision: number
+) {
+  return enterpriseSchema.parse(
+    await apiRequest(
+      `/api/admin/managed-channels/dingtalk-enterprises/${encodeURIComponent(enterpriseId)}/${action}`,
+      { method: "POST", body: { expected_revision: expectedRevision } }
+    )
+  ).enterprise
 }
 
 export async function listEligibleChannels(triggerType: string) {

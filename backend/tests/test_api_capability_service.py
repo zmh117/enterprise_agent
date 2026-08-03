@@ -224,25 +224,26 @@ class RecordingAudit:
 class CapabilityHttpClient:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.payload: dict[str, Any] = {
+            "data": {
+                "search": {
+                    "nodes": [
+                        {
+                            "number": "W-1",
+                            "name": "Fix defect",
+                            "type": "defect",
+                            "private": "must-not-pass-mapping",
+                        }
+                    ],
+                    "total": "1",
+                }
+            }
+        }
 
     def request(self, **values: Any) -> HttpJsonResponse:
         self.calls.append(values)
         return HttpJsonResponse(
-            payload={
-                "data": {
-                    "search": {
-                        "nodes": [
-                            {
-                                "number": "W-1",
-                                "name": "Fix defect",
-                                "type": "defect",
-                                "private": "must-not-pass-mapping",
-                            }
-                        ],
-                        "total": "1",
-                    }
-                }
-            },
+            payload=self.payload,
             status=200,
             duration_ms=1,
             response_size=256,
@@ -354,6 +355,8 @@ def _service(
 def _create_capability(
     service: ApiCapabilityService,
     connection: dict[str, Any],
+    *,
+    output_schema: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return service.create(
         actor_id=ACTOR_ID,
@@ -366,7 +369,7 @@ def _create_capability(
             "operation_semantics": "QUERY",
             "data_classification": "INTERNAL",
             "input_schema": _input_schema(),
-            "output_schema": _output_schema(),
+            "output_schema": output_schema or _output_schema(),
         },
         handler={
             "method": "POST",
@@ -581,6 +584,19 @@ def test_capability_test_verify_publish_and_preview_exclude_authentication(
         "Ones-Auth-Token",
         "actor-personal-token",
     )
+    credential = ExternalApiCredentialRepository(database).get_current_public(
+        user_id=ACTOR_ID
+    )
+    assert credential["last_attempt_at"] is not None
+    assert credential["last_success_at"] is not None
+    assert credential["last_error_at"] is None
+    usage_audit = next(
+        item
+        for item in audit.events
+        if item["event_type"] == "external_credential.business_api_used"
+    )
+    assert usage_audit["payload"]["source"] == "ADMIN_TEST"
+    assert usage_audit["status"] == "SUCCEEDED"
     verified = service.verify(
         str(capability["id"]),
         actor_id=ACTOR_ID,
@@ -616,6 +632,82 @@ def test_capability_test_verify_publish_and_preview_exclude_authentication(
     assert "capability" not in published_audit["payload"]
     assert "handler" not in published_audit["payload"]
     assert "mapping_ast" not in published_audit["payload"]
+
+
+def test_capability_test_mapping_failure_records_terminal_usage_error(
+    database: Database,
+) -> None:
+    service, connection, http, audit = _service(database)
+    capability = _create_capability(service, connection)
+    draft = capability["draft"]
+    http.payload = {
+        "data": {
+            "search": {
+                "nodes": [{"name": "Missing number", "type": "defect"}],
+                "total": "1",
+            }
+        }
+    }
+    with pytest.raises(NonRetryableExecutionError) as captured:
+        service.test(
+            str(capability["id"]),
+            actor_id=ACTOR_ID,
+            draft_revision=int(draft["draft_revision"]),
+            draft_hash=str(draft["content_hash"]),
+            agent_input={"keyword": "defect"},
+        )
+    assert captured.value.error_code == "mapping_execution_failed"
+    credential = ExternalApiCredentialRepository(database).get_current_public(
+        user_id=ACTOR_ID
+    )
+    assert credential["last_attempt_at"] is not None
+    assert credential["last_success_at"] is None
+    assert credential["last_error_code"] == "mapping_execution_failed"
+    assert credential["last_error_at"] is not None
+    usage_audit = next(
+        item
+        for item in audit.events
+        if item["event_type"] == "external_credential.business_api_used"
+    )
+    assert usage_audit["payload"]["source"] == "ADMIN_TEST"
+    assert usage_audit["status"] == "FAILED"
+
+
+def test_capability_test_output_schema_failure_records_terminal_usage_error(
+    database: Database,
+) -> None:
+    service, connection, _, audit = _service(database)
+    incompatible_schema = _output_schema()
+    incompatible_schema["properties"]["total"] = {"type": "string"}
+    capability = _create_capability(
+        service,
+        connection,
+        output_schema=incompatible_schema,
+    )
+    draft = capability["draft"]
+    with pytest.raises(NonRetryableExecutionError) as captured:
+        service.test(
+            str(capability["id"]),
+            actor_id=ACTOR_ID,
+            draft_revision=int(draft["draft_revision"]),
+            draft_hash=str(draft["content_hash"]),
+            agent_input={"keyword": "defect"},
+        )
+    assert captured.value.error_code == "capability_schema_validation_failed"
+    credential = ExternalApiCredentialRepository(database).get_current_public(
+        user_id=ACTOR_ID
+    )
+    assert credential["last_attempt_at"] is not None
+    assert credential["last_success_at"] is None
+    assert credential["last_error_code"] == "capability_schema_validation_failed"
+    assert credential["last_error_at"] is not None
+    usage_audit = next(
+        item
+        for item in audit.events
+        if item["event_type"] == "external_credential.business_api_used"
+    )
+    assert usage_audit["payload"]["source"] == "ADMIN_TEST"
+    assert usage_audit["status"] == "FAILED"
 
 
 def test_unverified_or_drifted_draft_cannot_publish_and_copy_is_new_draft(

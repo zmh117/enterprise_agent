@@ -209,7 +209,10 @@ def test_publication_is_immutable_jobs_are_pinned_and_retry_keeps_original_versi
     assert old_context.business_instructions == original["snapshot"]["business_instructions"]
     assert new_context.business_instructions == publication["snapshot"]["business_instructions"]
     assert new_context.allowed_tools == ["get_er_context"]
-    assert "Use only registered internal read-only tools." in new_context.safety_rules
+    assert (
+        "Use only registered internal read-only tools and registered governed QUERY capabilities."
+        in new_context.safety_rules
+    )
 
     with pytest.raises(ToolPolicyError, match="not assigned"):
         c.tool_service.call_tool(

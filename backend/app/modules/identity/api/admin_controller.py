@@ -3,12 +3,16 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from fastapi import APIRouter, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 from app.modules.identity.api.dependencies import (
     container,
     handle_exception,
     require_action,
+)
+from app.modules.identity.api.external_identity_schemas import (
+    AdminIdentityOverviewResponse,
+    IdentityMutationResponse,
 )
 
 
@@ -46,16 +50,6 @@ class MembershipRequest(BaseModel):
     role_id: str
     enabled: bool = True
     expected_revision: int = Field(ge=0)
-
-
-class BindDingTalkRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    expected_user_revision: int = Field(ge=1)
-    tenant_code: str = Field(min_length=1, max_length=120)
-    external_subject_id: str = Field(min_length=1, max_length=200)
-    connector_id: str = Field(min_length=1, max_length=200)
-    display_name: str = Field(default="", max_length=200)
 
 
 class IdentityStatusRequest(BaseModel):
@@ -131,9 +125,29 @@ def build_identity_admin_router() -> APIRouter:
             "user": c.identity_repository.get_user(user_id),
             "roles": authorization_summary["roles"],
             "authorization_summary": authorization_summary,
-            "identities": c.identity_repository.list_external_identities(user_id),
             "sessions": c.identity_repository.list_sessions(user_id),
         }
+
+    @router.get(
+        "/users/{user_id}/external-identities",
+        response_model=AdminIdentityOverviewResponse,
+    )
+    def get_user_external_identities(
+        request: Request,
+        user_id: str,
+    ) -> dict[str, Any]:
+        require_action(
+            request,
+            resource_type="identity",
+            resource_code=user_id,
+            action="manage",
+        )
+        try:
+            return container(
+                request
+            ).external_credential_binding_service.admin_overview(user_id=user_id)
+        except Exception as exc:
+            raise handle_exception(exc) from exc
 
     @router.put("/users/{user_id}")
     def update_user(
@@ -182,31 +196,6 @@ def build_identity_admin_router() -> APIRouter:
             raise handle_exception(exc) from exc
         return {"membership": membership}
 
-    @router.post("/users/{user_id}/dingtalk-identities")
-    def bind_dingtalk(
-        request: Request, user_id: str, payload: BindDingTalkRequest
-    ) -> dict[str, Any]:
-        principal = require_action(
-            request,
-            resource_type="identity",
-            resource_code=user_id,
-            action="manage",
-            csrf=True,
-        )
-        try:
-            identity = container(request).identity_service.bind_dingtalk(
-                actor_id=principal.user_id,
-                user_id=user_id,
-                tenant_code=payload.tenant_code,
-                external_subject_id=payload.external_subject_id,
-                connector_id=payload.connector_id,
-                display_name=payload.display_name,
-                expected_user_revision=payload.expected_user_revision,
-            )
-        except Exception as exc:
-            raise handle_exception(exc) from exc
-        return {"identity": identity}
-
     @router.post("/users/{user_id}/ones-identities")
     def bind_ones(
         request: Request,
@@ -229,7 +218,10 @@ def build_identity_admin_router() -> APIRouter:
             },
         )
 
-    @router.put("/identities/{identity_id}/status")
+    @router.put(
+        "/identities/{identity_id}/status",
+        response_model=IdentityMutationResponse,
+    )
     def set_identity_status(
         request: Request, identity_id: str, payload: IdentityStatusRequest
     ) -> dict[str, Any]:
@@ -249,9 +241,12 @@ def build_identity_admin_router() -> APIRouter:
             )
         except Exception as exc:
             raise handle_exception(exc) from exc
-        return {"identity": identity}
+        return {"identity": _identity_mutation_summary(identity)}
 
-    @router.delete("/identities/{identity_id}")
+    @router.delete(
+        "/identities/{identity_id}",
+        response_model=IdentityMutationResponse,
+    )
     def unbind_identity(
         request: Request, identity_id: str, expected_revision: int
     ) -> dict[str, Any]:
@@ -270,7 +265,7 @@ def build_identity_admin_router() -> APIRouter:
             )
         except Exception as exc:
             raise handle_exception(exc) from exc
-        return {"identity": identity}
+        return {"identity": _identity_mutation_summary(identity)}
 
     @router.get("/roles")
     def list_roles(request: Request) -> dict[str, Any]:
@@ -465,6 +460,14 @@ def build_identity_admin_router() -> APIRouter:
         return {"status": "revoked"}
 
     return router
+
+
+def _identity_mutation_summary(identity: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(identity["id"]),
+        "status": str(identity["status"]),
+        "revision": int(identity["revision"]),
+    }
 
 
 def _metadata_tenant(value: str, default: str) -> str:

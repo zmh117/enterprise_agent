@@ -46,26 +46,30 @@ class ExternalCredentialBindingService:
 
     def self_status(self, *, actor_id: str) -> dict[str, Any]:
         overview = self.self_overview(actor_id=actor_id)
-        identity = next(
-            (item for item in overview["identities"] if item["provider"] == "ones"),
-            None,
-        )
         return {
             "user": overview["user"],
-            "identity": identity,
-            "credential": overview["credentials"]["ones"],
+            "ones": overview["ones"],
         }
 
     def self_overview(self, *, actor_id: str) -> dict[str, Any]:
         user = self._require_self_user(actor_id)
         identities, credential = self._current_binding_snapshot(actor_id)
+        dingtalk = [
+            self._self_dingtalk_identity(identity)
+            for identity in identities
+            if identity["provider"] == "dingtalk"
+        ]
+        ones_identity = next(
+            (identity for identity in identities if identity["provider"] == "ones"),
+            None,
+        )
         return {
             "user": {
                 "id": user["id"],
                 "display_name": user["display_name"],
             },
-            "identities": identities,
-            "credentials": {"ones": credential},
+            "dingtalk": dingtalk,
+            "ones": self._self_ones_identity(ones_identity, credential),
         }
 
     def begin_self_binding(
@@ -182,7 +186,41 @@ class ExternalCredentialBindingService:
                 "result": "succeeded",
             },
         )
-        return {"identity": identity, "credential": credential}
+        return self.self_status(actor_id=actor_id)
+
+    def admin_overview(
+        self,
+        *,
+        user_id: str,
+    ) -> dict[str, Any]:
+        self.identity_repository.get_user(user_id)
+        identities = self.identity_repository.list_external_identities(user_id)
+        current: list[dict[str, Any]] = []
+        history: list[dict[str, Any]] = []
+        latest_credential = self.credential_repository.get_latest_public(
+            user_id=user_id
+        )
+        for identity in identities:
+            projected = (
+                self._admin_dingtalk_identity(identity)
+                if identity["provider"] == "dingtalk"
+                else self._admin_ones_identity_summary(
+                    identity,
+                    latest_credential
+                    if latest_credential
+                    and str(latest_credential["external_identity_id"])
+                    == str(identity["id"])
+                    else None,
+                )
+            )
+            (history if identity["status"] == "unbound" else current).append(
+                projected
+            )
+        return {
+            "user_id": user_id,
+            "current": current,
+            "history": history,
+        }
 
     def admin_status(
         self,
@@ -192,10 +230,14 @@ class ExternalCredentialBindingService:
     ) -> dict[str, Any]:
         self._require_admin(actor_id, "read", user_id)
         self.identity_repository.get_user(user_id)
-        _, credential = self._current_binding_snapshot(user_id)
+        identities, credential = self._current_binding_snapshot(user_id)
+        identity = next(
+            (item for item in identities if item["provider"] == "ones"),
+            None,
+        )
         return {
             "user_id": user_id,
-            "credential": credential,
+            "ones": self._admin_ones_technical(identity, credential),
         }
 
     def self_unbind(self, *, actor_id: str) -> None:
@@ -219,7 +261,7 @@ class ExternalCredentialBindingService:
         user_id: str,
     ) -> dict[str, Any]:
         self._require_admin(actor_id, "disable", user_id)
-        credential = self.credential_repository.set_status(
+        self.credential_repository.set_status(
             user_id=user_id,
             status="DISABLED",
             error_code="disabled_by_admin",
@@ -235,7 +277,7 @@ class ExternalCredentialBindingService:
                 "result": "succeeded",
             },
         )
-        return credential
+        return self.admin_status(actor_id=actor_id, user_id=user_id)
 
     def admin_unbind(
         self,
@@ -298,6 +340,178 @@ class ExternalCredentialBindingService:
         elif credential and str(credential["external_identity_id"]) != str(current_ones["id"]):
             raise self._identity_state_inconsistent()
         return identities, credential
+
+    def _self_dingtalk_identity(
+        self,
+        identity: dict[str, Any],
+    ) -> dict[str, Any]:
+        enterprise = self._dingtalk_enterprise(identity)
+        return {
+            "provider": "dingtalk",
+            "nickname": str(identity.get("display_name") or ""),
+            "status": str(identity["status"]),
+            "enterprise": enterprise,
+            "last_used_at": identity.get("last_seen_at"),
+            "staff_id": str(identity["external_subject_id"]),
+        }
+
+    def _admin_dingtalk_identity(
+        self,
+        identity: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            **self._self_dingtalk_identity(identity),
+            "identity_id": str(identity["id"]),
+            "revision": int(identity["revision"]),
+            "binding_confirmed_at": identity.get("verified_at"),
+            "observations": [
+                {
+                    "application_name": str(item["application_name"]),
+                    "first_observed_at": item.get("first_observed_at"),
+                    "last_observed_at": item.get("last_observed_at"),
+                }
+                for item in self.identity_repository.list_dingtalk_application_observations(
+                    str(identity["id"])
+                )
+            ],
+        }
+
+    def _dingtalk_enterprise(
+        self,
+        identity: dict[str, Any],
+    ) -> dict[str, str] | None:
+        enterprise_id = str(identity.get("dingtalk_enterprise_id") or "")
+        if not enterprise_id:
+            return None
+        row = self.identity_repository.database.execute_one(
+            "select name, corp_id from dingtalk_enterprise where id = ?",
+            (enterprise_id,),
+        )
+        if row is None:
+            return None
+        return {
+            "name": str(row.get("name") or ""),
+            "corp_id": str(row.get("corp_id") or ""),
+        }
+
+    @staticmethod
+    def _team_summaries(identity: dict[str, Any]) -> list[dict[str, str]]:
+        metadata = identity.get("metadata") or {}
+        teams = metadata.get("teams") or []
+        return [
+            {
+                "id": str(team.get("id") or ""),
+                "name": str(team.get("name") or ""),
+            }
+            for team in teams
+            if isinstance(team, dict) and str(team.get("id") or "")
+        ]
+
+    @classmethod
+    def _default_team(
+        cls,
+        identity: dict[str, Any],
+    ) -> dict[str, str] | None:
+        default_id = str(
+            (identity.get("metadata") or {}).get("default_team_id") or ""
+        )
+        if not default_id:
+            return None
+        return next(
+            (team for team in cls._team_summaries(identity) if team["id"] == default_id),
+            {"id": default_id, "name": ""},
+        )
+
+    @staticmethod
+    def _ones_availability(
+        identity: dict[str, Any] | None,
+        credential: dict[str, Any] | None,
+    ) -> str:
+        if identity is None or str(identity.get("status") or "") == "unbound":
+            return "UNBOUND"
+        if str(identity.get("status") or "") == "disabled" or str(
+            (credential or {}).get("status") or ""
+        ) == "DISABLED":
+            return "ADMIN_DISABLED"
+        if credential and str(credential.get("status") or "") == "ACTIVE":
+            return "AVAILABLE"
+        return "REVERIFY_REQUIRED"
+
+    @classmethod
+    def _self_ones_identity(
+        cls,
+        identity: dict[str, Any] | None,
+        credential: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if identity is None:
+            return None
+        return {
+            "provider": "ones",
+            "user_name": str(identity.get("display_name") or "ONES 未返回用户名称"),
+            "availability": cls._ones_availability(identity, credential),
+            "default_team": cls._default_team(identity),
+            "verified_at": (credential or {}).get("verified_at")
+            or identity.get("verified_at"),
+            "last_success_at": (credential or {}).get("last_success_at"),
+            "user_id": str(identity["external_subject_id"]),
+            "teams": cls._team_summaries(identity),
+        }
+
+    @classmethod
+    def _admin_ones_identity_summary(
+        cls,
+        identity: dict[str, Any],
+        credential: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        return {
+            **(cls._self_ones_identity(identity, credential) or {}),
+            "identity_id": str(identity["id"]),
+            "identity_status": str(identity["status"]),
+            "identity_revision": int(identity["revision"]),
+        }
+
+    def _admin_ones_technical(
+        self,
+        identity: dict[str, Any] | None,
+        credential: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if identity is None:
+            return None
+        summary = self._admin_ones_identity_summary(identity, credential)
+        if credential is None:
+            return {
+                **summary,
+                "credential": None,
+                "connection": None,
+            }
+        return {
+            **summary,
+            "credential": {
+                "status": str(credential["status"]),
+                "revision": int(credential["revision"]),
+                "last_attempt_at": credential.get("last_attempt_at"),
+                "last_success_at": credential.get("last_success_at"),
+                "last_error_code": str(credential.get("last_error_code") or ""),
+                "last_error_at": credential.get("last_error_at"),
+            },
+            "connection": self._connection_summary(
+                str(credential["connection_revision_id"])
+            ),
+        }
+
+    def _connection_summary(self, revision_id: str) -> dict[str, Any] | None:
+        try:
+            revision = self.connection_repository.get_revision(revision_id)
+            connection = self.connection_repository.get(
+                str(revision["connection_id"])
+            )
+        except Exception:
+            return None
+        return {
+            "name": str(connection.get("name") or ""),
+            "revision": int(revision["revision"]),
+            "status": str(revision["status"]),
+        }
 
     @staticmethod
     def _identity_state_inconsistent() -> NonRetryableExecutionError:

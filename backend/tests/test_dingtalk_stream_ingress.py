@@ -20,6 +20,7 @@ from app.shared.exceptions import NonRetryableExecutionError
 from app.workers.dingtalk_stream_ingress_worker import DingTalkStreamIngressWorker
 from backend.tests.helpers import (
     dispatch_pending_deliveries,
+    ensure_active_dingtalk_test_enterprise,
     enqueue_job_result_for_delivery,
     publish_pending_agent_jobs,
 )
@@ -397,6 +398,7 @@ def routed_container(settings: Settings | None = None):
         ),
     )
     current = build_test_container(settings, migrate=True, seed=True)
+    ensure_active_dingtalk_test_enterprise(current)
     application = current.business_application_service.create(
         actor_id="user_local_admin",
         code="dingtalk-stream-test-application",
@@ -473,6 +475,8 @@ def stream_payload(
         "openConversationId": "open-cid-1",
         "senderStaffId": user_id,
         "senderNick": "Local User",
+        "senderCorpId": "corp-test-enterprise",
+        "chatbotCorpId": "corp-test-enterprise",
         "msgId": msg_id,
         "eventId": event_id,
         "robotCode": "robot-code-1",

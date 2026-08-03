@@ -527,6 +527,7 @@ def _build_container(
         identity_repository=identity_repository,
         credential_repository=external_credential_repository,
         credential_cipher=external_credential_cipher,
+        audit_service=audit_service,
     )
     model_connection_service.ensure_default_connection(
         config={
@@ -729,6 +730,7 @@ def _build_container(
             dingtalk_stream_session_webhook_adapter
         ),
         identity_discovery_service=identity_discovery_service,
+        enterprise_connector_resolver=managed_channel_repository.get_connector,
     )
     channel_credential_cipher = (
         AttachmentCredentialCipher(settings.app_config_master_key)
@@ -751,6 +753,7 @@ def _build_container(
         repository=managed_channel_repository,
         secret_resolver=connector_registry.resolve_reference,
         credential_cipher=channel_credential_cipher,
+        audit_service=audit_service,
         max_event_bytes=settings.managed_channels.max_event_bytes,
         lease_ttl_seconds=settings.managed_channels.lease_ttl_seconds,
     )

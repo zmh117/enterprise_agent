@@ -9,10 +9,15 @@ from fastapi.testclient import TestClient
 
 from app.bootstrap import Container, build_test_container
 from app.main import create_app
+from app.modules.identity.domain import ExternalIdentityDescriptor
+from app.modules.managed_channel.domain import DingTalkApplicationInput
 from app.modules.platform_config.infrastructure import PlatformConfigRepository
 from app.shared.config import IdentitySettings, Settings
 from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
-from backend.tests.helpers import test_settings as base_test_settings
+from backend.tests.helpers import (
+    ensure_active_dingtalk_test_enterprise,
+    test_settings as base_test_settings,
+)
 
 
 ADMIN_ID = "user_local_admin"
@@ -239,17 +244,11 @@ def test_session_expiry_password_change_and_owned_revocation_fail_closed() -> No
         assert client.get("/api/auth/me").status_code == 401
 
 
-def test_trusted_dingtalk_binding_tenant_isolation_conflict_and_unknown_fail_closed() -> None:
+def test_dingtalk_enterprise_identity_isolation_conflict_and_unknown_fail_closed() -> None:
     container = unified_container()
-    container.platform_config_service.secret_provider.rotate_secret(
-        code="dingtalk_client_secret",
-        value="default-tenant-client-secret",
-        actor_id=ADMIN_ID,
-    )
-    container.platform_config_service.secret_provider.create_secret(
-        code="tenant_b_client_secret",
-        value="tenant-b-client-secret",
-        actor_id=ADMIN_ID,
+    default_enterprise = ensure_active_dingtalk_test_enterprise(
+        container,
+        corp_id="corp-test-enterprise",
     )
     first = container.identity_repository.create_user(
         username="tenant-user-a", display_name="Tenant User A"
@@ -258,61 +257,93 @@ def test_trusted_dingtalk_binding_tenant_isolation_conflict_and_unknown_fail_clo
         username="tenant-user-b", display_name="Tenant User B"
     )
 
-    bound = container.identity_service.bind_dingtalk(
-        actor_id=ADMIN_ID,
+    bound = container.identity_repository.bind_dingtalk_identity(
         user_id=str(first["id"]),
-        expected_user_revision=int(first["revision"]),
-        tenant_code="default",
+        dingtalk_enterprise_id=str(default_enterprise["id"]),
         external_subject_id="staff-shared",
-        connector_id="connector-dingtalk-stream-default",
+        display_name="共享 Staff A",
+        source_connector_id="connector-dingtalk-stream-default",
+        source_ingress_event_id="",
+        observed_at="2026-08-03T00:00:00+00:00",
+        replace_current=False,
     )
     assert bound["user_id"] == first["id"]
 
     with pytest.raises(NonRetryableExecutionError) as conflict:
-        container.identity_service.bind_dingtalk(
-            actor_id=ADMIN_ID,
+        container.identity_repository.bind_dingtalk_identity(
             user_id=str(second["id"]),
-            expected_user_revision=int(second["revision"]),
-            tenant_code="default",
+            dingtalk_enterprise_id=str(default_enterprise["id"]),
             external_subject_id="staff-shared",
-            connector_id="connector-dingtalk-stream-default",
+            display_name="冲突 Staff",
+            source_connector_id="connector-dingtalk-stream-default",
+            source_ingress_event_id="",
+            observed_at="2026-08-03T00:00:00+00:00",
+            replace_current=False,
         )
-    assert conflict.value.error_code == "identity_conflict"
+    assert conflict.value.error_code == "identity_restore_required"
 
-    with pytest.raises(PermissionDenied):
-        container.identity_service.bind_dingtalk(
-            actor_id=ADMIN_ID,
-            user_id=str(second["id"]),
-            expected_user_revision=int(second["revision"]),
-            tenant_code="tenant-b",
-            external_subject_id="staff-shared",
-            connector_id="connector-dingtalk-stream-default",
-        )
-
+    other_enterprise = container.managed_channel_service.create_dingtalk_enterprise(
+        name="隔离企业 B",
+        actor_id=ADMIN_ID,
+    )
     container.database.execute(
         """
-        insert into integration_connector
-          (id, connector_type, name, base_url, enabled, metadata,
-           allow_ingress, allow_delivery, secret_ref, created_at, updated_at)
-        values (?, 'dingtalk_enterprise_stream', ?, '', 1, ?, 1, 0,
-                'secret://platform/tenant_b_client_secret',
-                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        update dingtalk_enterprise
+           set corp_id = 'corp-test-enterprise-b', status = 'ACTIVE',
+               verified_at = '2026-08-03T00:00:00+00:00',
+               verification_event_id = 'test-enterprise-b-verification'
+         where id = ?
         """,
-        (
-            "connector-dingtalk-stream-tenant-b",
-            "tenant-b-stream",
-            '{"tenant_code":"tenant-b"}',
-        ),
+        (other_enterprise["id"],),
     )
-    isolated = container.identity_service.bind_dingtalk(
+    other_connector = container.managed_channel_service.create_dingtalk(
+        DingTalkApplicationInput(
+            name="隔离企业 B 应用",
+            client_id="tenant-b-client",
+            client_secret="tenant-b-client-secret",
+            dingtalk_enterprise_id=str(other_enterprise["id"]),
+        ),
         actor_id=ADMIN_ID,
+        enabled=True,
+    )
+    isolated = container.identity_repository.bind_dingtalk_identity(
         user_id=str(second["id"]),
-        expected_user_revision=int(second["revision"]),
-        tenant_code="tenant-b",
+        dingtalk_enterprise_id=str(other_enterprise["id"]),
         external_subject_id="staff-shared",
-        connector_id="connector-dingtalk-stream-tenant-b",
+        display_name="共享 Staff B",
+        source_connector_id=str(other_connector["id"]),
+        source_ingress_event_id="",
+        observed_at="2026-08-03T00:00:00+00:00",
+        replace_current=False,
     )
     assert isolated["user_id"] == second["id"]
+    assert container.identity_service.resolve_external(
+        ExternalIdentityDescriptor(
+            provider="dingtalk",
+            tenant_code=str(default_enterprise["id"]),
+            dingtalk_enterprise_id=str(default_enterprise["id"]),
+            external_subject_id="staff-shared",
+            connector_id="connector-dingtalk-stream-default",
+        )
+    ).user_id == first["id"]
+    assert container.identity_service.resolve_external(
+        ExternalIdentityDescriptor(
+            provider="dingtalk",
+            tenant_code=str(other_enterprise["id"]),
+            dingtalk_enterprise_id=str(other_enterprise["id"]),
+            external_subject_id="staff-shared",
+            connector_id=str(other_connector["id"]),
+        )
+    ).user_id == second["id"]
+    with pytest.raises(PermissionDenied):
+        container.identity_service.resolve_external(
+            ExternalIdentityDescriptor(
+                provider="dingtalk",
+                tenant_code="unknown-enterprise",
+                dingtalk_enterprise_id="unknown-enterprise",
+                external_subject_id="staff-shared",
+            )
+        )
 
     before_jobs = container.agent_repository.count_rows("agent_job")
     before_queue = len(container.message_bus.jobs) if container.message_bus else 0
@@ -320,6 +351,8 @@ def test_trusted_dingtalk_binding_tenant_isolation_conflict_and_unknown_fail_clo
         payload={
             "conversationId": "conversation-unknown",
             "senderStaffId": "unknown-staff",
+            "senderCorpId": "corp-test-enterprise",
+            "chatbotCorpId": "corp-test-enterprise",
             "msgId": "message-unknown",
             "text": {"content": "check status"},
         },
@@ -335,6 +368,8 @@ def test_trusted_dingtalk_binding_tenant_isolation_conflict_and_unknown_fail_clo
         payload={
             "conversationId": "conversation-sensitive",
             "senderStaffId": "unknown-staff",
+            "senderCorpId": "corp-test-enterprise",
+            "chatbotCorpId": "corp-test-enterprise",
             "msgId": "message-sensitive",
             "sessionWebhook": secret_marker,
             "accessToken": "super-sensitive-token",

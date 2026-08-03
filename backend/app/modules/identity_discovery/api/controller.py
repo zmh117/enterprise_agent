@@ -23,6 +23,7 @@ class BindCandidateRequest(BaseModel):
     expected_user_revision: int = Field(ge=1)
     initial_role_ids: list[str] = Field(default_factory=list, max_length=100)
     bind_without_access_confirmed: bool = False
+    replace_current_confirmed: bool = False
 
 
 def build_identity_discovery_router() -> APIRouter:
@@ -105,6 +106,7 @@ def build_identity_discovery_router() -> APIRouter:
                 expected_user_revision=payload.expected_user_revision,
                 initial_role_ids=payload.initial_role_ids,
                 bind_without_access_confirmed=payload.bind_without_access_confirmed,
+                replace_current_confirmed=payload.replace_current_confirmed,
             )
         except Exception as exc:
             raise handle_exception(exc) from exc

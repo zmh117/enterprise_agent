@@ -168,6 +168,32 @@ describe("runtime provenance records", () => {
     expect(screen.getByText("agent-publication-1")).toBeInTheDocument()
   })
 
+  it("labels a cleaned connector as an unavailable historical source", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      response({
+        job: job({
+          source_connector_name: "旧钉钉应用",
+          source_connector_availability: "UNAVAILABLE_HISTORICAL",
+        }),
+        session_ref: { id: "session-1" },
+        steps: [],
+        tool_calls: [],
+        deliveries: { events: [], attempts: [], chunks: [] },
+        webhook_events: [],
+      })
+    )
+    renderRoute(
+      "/operations/jobs/job-1",
+      "/operations/jobs/:jobId",
+      <RuntimeJobDetailPage />
+    )
+    expect(
+      await screen.findByText(
+        "旧钉钉应用（connector-dingtalk-stream-default） · 不可用历史来源"
+      )
+    ).toBeInTheDocument()
+  })
+
   it("does not report a completed Agent job as delivered while Delivery is pending", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(() =>
       response({

@@ -36,6 +36,7 @@ from app.modules.platform_config.infrastructure.repository import (
 from app.shared.exceptions import NonRetryableExecutionError
 from backend.tests.helpers import (
     dispatch_pending_deliveries,
+    ensure_active_dingtalk_test_enterprise,
     enqueue_job_result_for_delivery,
     publish_pending_agent_jobs,
 )
@@ -98,7 +99,9 @@ def _container(*, environment: str = "local", data_plane_enabled: bool = True) -
                 published_agent_runtime_enabled=False,
             ),
         )
-    return build_test_container(settings, migrate=True, seed=True)
+    container = build_test_container(settings, migrate=True, seed=True)
+    ensure_active_dingtalk_test_enterprise(container)
+    return container
 
 
 def _publish(
@@ -229,6 +232,8 @@ def _stream_payload(
         "conversationId": conversation_id,
         "conversationType": conversation_type,
         "senderStaffId": "local-user",
+        "senderCorpId": "corp-test-enterprise",
+        "chatbotCorpId": "corp-test-enterprise",
         "msgId": message_id,
         "robotCode": robot_code,
         "sessionWebhook": session_webhook,

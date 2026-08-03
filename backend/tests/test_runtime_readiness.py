@@ -36,7 +36,7 @@ def test_ready_checks_schema_database_rabbit_token_and_master_key(
         assert ready["core"] == {
             "database": True,
             "schema": True,
-            "schema_head": "026",
+            "schema_head": "027",
             "rabbitmq": True,
             "internal_api_token": True,
             "master_key": True,

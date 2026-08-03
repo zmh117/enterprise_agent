@@ -1,6 +1,6 @@
 # 统一身份、RBAC 与 Agent 管理端
 
-该能力把 Web 管理员和钉钉用户统一映射为内部 `app_user`。权限只授予内部用户或角色，钉钉 `senderStaffId` 只是受信 tenant/connector 下的外部身份键，不能直接充当授权主体。
+该能力把 Web 管理员和钉钉用户统一映射为内部 `app_user`。权限只授予内部用户或角色；钉钉 `senderStaffId` 只有在受治理企业和受信应用消息共同确认后才是外部身份键，不能直接充当授权主体。
 
 第一版 Web 只显示 `default-diagnostic-agent`，但数据库、服务和运行时使用多 Agent 的 definition、draft revision、immutable publication 模型。新 job 在创建时固定 publication ID、revision 和 hash，后续发布或回滚不会改变已经创建的 job。
 
@@ -55,19 +55,40 @@ CLI 要求至少 12 位密码、二次确认，并拒绝重复 bootstrap。管�
 推荐顺序：
 
 1. 在“用户与外部身份”创建内部用户。
-2. 选择受信钉钉 tenant/connector，录入该用户的 `senderStaffId`。
-3. 如需 ONES 映射，输入 ONES 邮箱与一次性密码，由服务端固定登录端点验证 UUID。
-4. 让用户从钉钉发送一条测试消息，确认审计中的内部 requester 与 external identity。
+2. 在“渠道与触发器”创建钉钉企业和应用连接，通过真实测试消息确认 Corp ID。
+3. 让用户从该企业任一受信应用发送消息，平台按“企业 + Staff ID”形成待绑定候选。
+4. 管理员在人员详情选择受信候选；Staff ID、Corp ID、昵称和来源应用不能手工输入。
+5. 用户如需 ONES，在“我的外部身份”输入邮箱和一次性密码，选择验证结果中的默认 Team。
 
-ONES 登录响应只提取 UUID、显示名称和团队 UUID。服务端立即丢弃 Token，且不保存
-邮箱、密码或原始响应。受治理 API Connection 默认使用 HTTPS；企业内网或本地
+钉钉身份按“企业 + Staff ID”唯一；每名内部用户在同一企业最多一个当前身份，但可
+拥有不同企业的身份。同企业换绑必须单独确认，旧当前身份软解绑；历史身份只能通过
+匹配的受信候选恢复给原人员。应用观察只记录首次／最近受信时间，用于解释该身份曾
+从哪些应用出现，不表示应用授权。
+
+ONES 登录响应提取 User ID、`user.name`、Team 名称与 ID 和个人 Token。密码与原始
+响应不会保存；Token 仅以加密个人凭据保存，运行时按当前人员、默认 Team 和已发布
+Connection 解析。受治理 API Connection 默认使用 HTTPS；企业内网或本地
 ONES 使用 HTTP 时必须在对应 Connection Draft 中显式允许明文传输并完成验证。
-固定 Origin 仍不得由请求覆盖。ONES 身份当前只是人员映射，不会调用需求、任务或
-缺陷接口。
+固定 Origin 仍不得由请求覆盖。重新验证会整体替换 Team 候选；切换默认 Team 必须
+重新验证。
 
-系统不会按昵称、手机号或邮箱自动匹配，也不会在收到未知钉钉用户时自动创建账号。`provider + tenant_code + external_subject_id` 唯一；冲突、未知、已解绑或已停用身份在创建 session/job 和发布队列消息前 fail closed。
+系统不会按昵称、手机号或邮箱自动匹配，也不会在收到未知钉钉用户时自动创建账号。
+企业未验证、Corp ID 不一致、候选不可信、身份冲突、已解绑或已停用时，在创建
+session/job 和发布队列消息前 fail closed。
 
 停用用户会立即阻止 Web 与钉钉新请求并撤销相关 Web session。停用或解绑外部身份会阻止该钉钉身份继续解析，但不会合并或改写历史 job/session/audit。
+
+### 本人视图与治理视图
+
+“我的外部身份”始终是本人视图：钉钉只读展示昵称、企业、状态、最近使用，并把
+Staff ID／Corp ID 收纳在展开区；ONES 展示用户名称、综合可用状态、默认 Team、
+最近验证和最近成功使用。用户只能在这里验证自己的 ONES 密码和默认 Team。
+
+“人员管理 → 人员详情”始终是治理视图，即使管理员查看自己：管理员从受信候选绑定
+钉钉、停用或软解绑身份；可查看身份 Revision、绑定确认和按应用名称汇总的观察，
+以及 ONES 身份／凭据分离状态、Connection 发布版本、最近尝试和安全错误码。页面和
+API 均不返回 Connector ID、Token、密码、密文、认证 Header、Client Secret、
+Session Webhook 或 Challenge 内部字段。
 
 ## 权限模型
 
@@ -133,7 +154,9 @@ idle/absolute 过期、用户是否停用，并确认浏览器访问的是 `admi
 
 写操作返回 409：页面数据 revision 已过期，刷新详情后重新应用变更，不能强制覆盖。
 
-钉钉绑定后仍被拒绝：检查 connector 是否受信、tenant 是否一致、解析字段是否为 `senderStaffId`、身份/用户是否启用，以及项目和工具数据范围。未知或冲突身份应在审计中有拒绝事件且 queue publish 为零。
+钉钉绑定后仍被拒绝：检查企业是否 `ACTIVE`、消息 Corp ID 是否匹配、来源应用是否
+受信、解析字段是否为 `senderStaffId`、身份/用户是否启用，以及项目和工具数据范围。
+未知或冲突身份应只形成候选或拒绝审计，且 queue publish 为零。
 
 Agent 无法发布：先查看字段级校验错误；确认模型、工具、Skill、connector 都仍在服务端 catalog 中，且没有明文 secret 或安全覆盖指令。
 

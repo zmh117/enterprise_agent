@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from collections.abc import Callable
 from typing import Any, Protocol
 
 from app.modules.audit.application.audit_service import AuditService
@@ -43,6 +44,9 @@ class DingTalkStreamIncomingMessage:
     attachments: tuple[ChannelAttachment, ...] = ()
     union_id: str = ""
     open_id: str = ""
+    sender_corp_id: str = ""
+    chatbot_corp_id: str = ""
+    occurred_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -111,6 +115,7 @@ class DingTalkStreamMessageService:
         default_tenant_code: str = "default",
         rejection_notifier: DingTalkStreamRejectionNotifier | None = None,
         identity_discovery_service: DingTalkIdentityDiscoveryService | None = None,
+        enterprise_connector_resolver: Callable[[str], dict[str, Any]] | None = None,
     ) -> None:
         self.channel_ingress_service = channel_ingress_service
         self.audit_service = audit_service
@@ -130,6 +135,7 @@ class DingTalkStreamMessageService:
         self.default_tenant_code = default_tenant_code
         self.rejection_notifier = rejection_notifier
         self.identity_discovery_service = identity_discovery_service
+        self.enterprise_connector_resolver = enterprise_connector_resolver
 
     def handle_callback(
         self,
@@ -439,6 +445,9 @@ class DingTalkStreamMessageService:
         bot_identity = _first_text(payload, "robotCode", "chatbotUserId", "chatbot_user_id")
         union_id = _first_text(payload, "senderUnionId", "unionId", "union_id")
         open_id = _first_text(payload, "senderOpenId", "openId", "open_id", "senderId")
+        sender_corp_id = _first_text(payload, "senderCorpId", "sender_corp_id")
+        chatbot_corp_id = _first_text(payload, "chatbotCorpId", "chatbot_corp_id")
+        occurred_at = _first_text(payload, "createAt", "create_at", "timestamp")
 
         if not conversation_id:
             raise RejectedDingTalkStreamMessage("DingTalk Stream payload missing conversation id")
@@ -465,6 +474,9 @@ class DingTalkStreamMessageService:
             attachments=attachments,
             union_id=union_id,
             open_id=open_id,
+            sender_corp_id=sender_corp_id,
+            chatbot_corp_id=chatbot_corp_id,
+            occurred_at=occurred_at,
         )
         if rich_text_without_supported_content:
             raise RejectedDingTalkStreamMessage(
@@ -486,18 +498,44 @@ class DingTalkStreamMessageService:
         delivery_payload = _dict_value(payload.get("delivery"))
         delivery = self._reply_route(message=message, delivery_payload=delivery_payload)
         tenant_code = self.default_tenant_code
+        dingtalk_enterprise_id = ""
         connector_bot_identity = ""
         if self.connector_registry is not None:
             connector = self.connector_registry.require_dingtalk_stream_ingress(source_connector_id)
-            tenant_code = self.connector_registry.metadata_value(connector, "tenant_code")
-            if not tenant_code:
-                raise PermissionDenied(
-                    "DingTalk connector has no trusted tenant metadata",
-                    safe_message="钉钉连接器尚未配置企业标识",
-                )
             connector_bot_identity = self.connector_registry.metadata_value(
                 connector, "default_robot_code"
             )
+        if self.enterprise_connector_resolver is not None:
+            governed = self.enterprise_connector_resolver(source_connector_id)
+            dingtalk_enterprise_id = str(
+                governed.get("dingtalk_enterprise_id") or ""
+            )
+            if (
+                not dingtalk_enterprise_id
+                or str(governed.get("dingtalk_enterprise_status") or "") != "ACTIVE"
+            ):
+                raise PermissionDenied(
+                    "DingTalk enterprise is not active",
+                    safe_message="钉钉企业尚未完成验证或已停用",
+                    error_code="dingtalk_enterprise_unavailable",
+                )
+            expected_corp_id = str(
+                governed.get("dingtalk_enterprise_corp_id") or ""
+            )
+            if (
+                not message.sender_corp_id
+                or not message.chatbot_corp_id
+                or message.sender_corp_id != message.chatbot_corp_id
+                or message.sender_corp_id != expected_corp_id
+            ):
+                raise PermissionDenied(
+                    "DingTalk Corp ID does not match governed enterprise",
+                    safe_message="消息所属钉钉企业与应用连接不一致",
+                    error_code="dingtalk_corp_id_mismatch",
+                )
+            tenant_code = dingtalk_enterprise_id
+        else:
+            dingtalk_enterprise_id = tenant_code
         bot_identity = (
             message.bot_identity
             or message.robot_code
@@ -519,6 +557,11 @@ class DingTalkStreamMessageService:
                     "session_webhook_expires": message.session_webhook_expired_time,
                     "conversation_type": message.conversation_type,
                     "bot_identity": bot_identity,
+                    "source_ingress_event_id": str(
+                        payload.get("_source_ingress_event_id") or ""
+                    ),
+                    "received_at": str(payload.get("_received_at") or ""),
+                    "occurred_at": message.occurred_at,
                 },
                 external_identity=ExternalIdentityDescriptor(
                     provider="dingtalk",
@@ -528,6 +571,12 @@ class DingTalkStreamMessageService:
                     union_id=message.union_id,
                     open_id=message.open_id,
                     display_name=message.sender_display_name,
+                    dingtalk_enterprise_id=dingtalk_enterprise_id,
+                    source_ingress_event_id=str(
+                        payload.get("_source_ingress_event_id") or ""
+                    ),
+                    occurred_at=message.occurred_at,
+                    received_at=str(payload.get("_received_at") or ""),
                 ),
             ),
             delivery=delivery,

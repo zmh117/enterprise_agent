@@ -30,15 +30,29 @@ class IdentityService:
     def ones_available(self) -> bool:
         return bool(self.ones_verifier and self.ones_verifier.available)
 
+    @operation_unit_of_work(lambda service: service.repository.database)
     def resolve_external(
         self, descriptor: ExternalIdentityDescriptor
     ) -> AuthenticatedPrincipal:
-        identity = self.repository.find_external_identity(
-            provider=descriptor.provider,
-            tenant_code=descriptor.tenant_code,
-            external_subject_id=descriptor.external_subject_id,
-            include_disabled=True,
-        )
+        if descriptor.provider == "dingtalk":
+            if not descriptor.dingtalk_enterprise_id:
+                raise PermissionDenied(
+                    "DingTalk enterprise identity is required",
+                    safe_message="钉钉应用尚未关联受治理企业",
+                    error_code="dingtalk_enterprise_required",
+                )
+            identity = self.repository.find_dingtalk_identity(
+                dingtalk_enterprise_id=descriptor.dingtalk_enterprise_id,
+                external_subject_id=descriptor.external_subject_id,
+                include_disabled=True,
+            )
+        else:
+            identity = self.repository.find_external_identity(
+                provider=descriptor.provider,
+                tenant_code=descriptor.tenant_code,
+                external_subject_id=descriptor.external_subject_id,
+                include_disabled=True,
+            )
         if not identity:
             self.audit_service.record(
                 "identity.external.denied",
@@ -113,7 +127,17 @@ class IdentityService:
                 safe_message="你的平台账号已停用，请联系管理员",
                 error_code="identity_user_inactive",
             )
-        self.repository.touch_external_identity(str(identity["id"]))
+        if descriptor.provider == "dingtalk" and descriptor.source_ingress_event_id:
+            self.repository.record_dingtalk_message_facts(
+                identity_id=str(identity["id"]),
+                connector_id=descriptor.connector_id,
+                source_ingress_event_id=descriptor.source_ingress_event_id,
+                nickname=descriptor.display_name,
+                occurred_at=descriptor.occurred_at,
+                received_at=descriptor.received_at,
+            )
+        else:
+            self.repository.touch_external_identity(str(identity["id"]))
         user = self.repository.get_user(str(identity["user_id"]))
         if str(user.get("account_type") or "human") != "human":
             self.audit_service.record(
@@ -138,29 +162,44 @@ class IdentityService:
         )
 
     @operation_unit_of_work(lambda service: service.repository.database)
-    def bind_dingtalk(
+    def bind_dingtalk_candidate(
         self,
         *,
         actor_id: str,
         user_id: str,
-        tenant_code: str,
+        dingtalk_enterprise_id: str,
         external_subject_id: str,
-        connector_id: str,
+        source_connector_id: str,
+        source_ingress_event_id: str,
+        observed_at: str,
         expected_user_revision: int,
         display_name: str = "",
+        replace_current: bool = False,
+        restore_historical: bool = False,
     ) -> dict[str, object]:
-        if self.connector_registry is None:
+        source = self.repository.database.execute_one(
+            """
+            select c.id, c.enabled, c.deleted, c.dingtalk_enterprise_id,
+                   e.status as enterprise_status
+              from integration_connector c
+              join dingtalk_enterprise e on e.id = c.dingtalk_enterprise_id
+              join channel_ingress_event ie on ie.connector_id = c.id
+             where c.id = ? and ie.id = ?
+               and c.connector_type = 'dingtalk_enterprise_stream'
+            """,
+            (source_connector_id, source_ingress_event_id),
+        )
+        if (
+            source is None
+            or not bool(source["enabled"])
+            or bool(source["deleted"])
+            or str(source["enterprise_status"]) != "ACTIVE"
+            or str(source["dingtalk_enterprise_id"]) != dingtalk_enterprise_id
+        ):
             raise PermissionDenied(
-                "Connector registry is unavailable",
-                safe_message="无法验证钉钉连接器",
-            )
-        connector = self.connector_registry.require_dingtalk_stream_ingress(connector_id)
-        trusted_tenant = self.connector_registry.metadata_value(connector, "tenant_code")
-        if not trusted_tenant or trusted_tenant != tenant_code:
-            raise PermissionDenied(
-                "DingTalk tenant does not match trusted connector metadata",
-                safe_message="钉钉企业与所选连接器不匹配",
-                error_code="tenant_mismatch",
+                "DingTalk candidate source is no longer trusted",
+                safe_message="候选来源应用或钉钉企业当前不可用，请刷新后重试",
+                error_code="identity_discovery_connector_unavailable",
             )
         user = self.repository.get_user(user_id)
         if str(user.get("account_type") or "human") != "human":
@@ -184,14 +223,16 @@ class IdentityService:
             )
         before = self.repository.list_external_identities(user_id)
         try:
-            identity = self.repository.bind_external_identity(
+            identity = self.repository.bind_dingtalk_identity(
                 user_id=user_id,
-                provider="dingtalk",
-                tenant_code=tenant_code,
+                dingtalk_enterprise_id=dingtalk_enterprise_id,
                 external_subject_id=external_subject_id,
-                connector_id=connector_id,
                 display_name=display_name,
-                metadata={"verification_method": "trusted_connector"},
+                source_connector_id=source_connector_id,
+                source_ingress_event_id=source_ingress_event_id,
+                observed_at=observed_at,
+                replace_current=replace_current,
+                restore_historical=restore_historical,
             )
         except NonRetryableExecutionError:
             self.audit_service.record(
@@ -201,8 +242,7 @@ class IdentityService:
                 actor_id=actor_id,
                 payload={
                     "user_id": user_id,
-                    "tenant_code": tenant_code,
-                    "connector_id": connector_id,
+                    "dingtalk_enterprise_id": dingtalk_enterprise_id,
                 },
             )
             raise
@@ -214,8 +254,7 @@ class IdentityService:
             payload={
                 "user_id": user_id,
                 "identity_id": identity["id"],
-                "tenant_code": tenant_code,
-                "connector_id": connector_id,
+                "dingtalk_enterprise_id": dingtalk_enterprise_id,
                 "before_count": len(before),
             },
         )

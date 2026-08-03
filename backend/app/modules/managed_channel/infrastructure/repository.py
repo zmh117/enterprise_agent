@@ -18,11 +18,17 @@ class ManagedChannelRepository:
         enabled = "" if include_disabled else "and c.enabled = 1"
         rows = self.database.execute(
             f"""
-            select c.*, r.runtime_id, r.runtime_status, r.loaded_revision,
+            select c.*, e.name as dingtalk_enterprise_name,
+                   e.corp_id as dingtalk_enterprise_corp_id,
+                   e.status as dingtalk_enterprise_status,
+                   e.verified_at as dingtalk_enterprise_verified_at,
+                   e.revision as dingtalk_enterprise_revision,
+                   r.runtime_id, r.runtime_status, r.loaded_revision,
                    r.connected, r.registered, r.connected_at, r.disconnected_at,
                    r.last_message_at, r.last_heartbeat_at, r.last_error_code,
                    r.last_error_summary
               from integration_connector c
+              left join dingtalk_enterprise e on e.id = c.dingtalk_enterprise_id
               left join channel_connector_runtime r on r.connector_id = c.id
              where c.connector_type = 'dingtalk_enterprise_stream'
                and c.deleted = 0 {enabled}
@@ -56,11 +62,17 @@ class ManagedChannelRepository:
     def get_connector(self, connector_id: str) -> dict[str, Any]:
         row = self.database.execute_one(
             """
-            select c.*, r.runtime_id, r.runtime_status, r.loaded_revision,
+            select c.*, e.name as dingtalk_enterprise_name,
+                   e.corp_id as dingtalk_enterprise_corp_id,
+                   e.status as dingtalk_enterprise_status,
+                   e.verified_at as dingtalk_enterprise_verified_at,
+                   e.revision as dingtalk_enterprise_revision,
+                   r.runtime_id, r.runtime_status, r.loaded_revision,
                    r.connected, r.registered, r.connected_at, r.disconnected_at,
                    r.last_message_at, r.last_heartbeat_at, r.last_error_code,
                    r.last_error_summary
               from integration_connector c
+              left join dingtalk_enterprise e on e.id = c.dingtalk_enterprise_id
               left join channel_connector_runtime r on r.connector_id = c.id
              where c.id = ? and c.connector_type = 'dingtalk_enterprise_stream'
                and c.deleted = 0
@@ -88,6 +100,7 @@ class ManagedChannelRepository:
         name: str,
         secret_ref: str,
         metadata: dict[str, Any],
+        dingtalk_enterprise_id: str,
         enabled: bool,
     ) -> dict[str, Any]:
         connector_id = new_id("connector")
@@ -97,9 +110,10 @@ class ManagedChannelRepository:
             insert into integration_connector
               (id, connector_type, name, base_url, enabled, metadata,
                allow_ingress, allow_delivery, secret_ref, endpoint_ref,
-               host_allowlist, revision, created_at, updated_at, deleted)
+               host_allowlist, revision, created_at, updated_at, deleted,
+               dingtalk_enterprise_id)
             values (?, 'dingtalk_enterprise_stream', ?, '', ?, ?, 1, 0, ?, '', '',
-                    1, ?, ?, 0)
+                    1, ?, ?, 0, ?)
             """,
             (
                 connector_id,
@@ -109,6 +123,7 @@ class ManagedChannelRepository:
                 secret_ref,
                 timestamp,
                 timestamp,
+                dingtalk_enterprise_id,
             ),
         )
         return self.get_connector(connector_id)
@@ -120,6 +135,7 @@ class ManagedChannelRepository:
         expected_revision: int,
         name: str,
         metadata: dict[str, Any],
+        dingtalk_enterprise_id: str,
         secret_ref: str,
         enabled: bool,
         force_revision: bool = False,
@@ -130,7 +146,8 @@ class ManagedChannelRepository:
         rows = self.database.execute(
             """
             update integration_connector
-               set name = ?, metadata = ?, secret_ref = ?, enabled = ?,
+               set name = ?, metadata = ?, dingtalk_enterprise_id = ?,
+                   secret_ref = ?, enabled = ?,
                    revision = revision + 1, updated_at = ?
              where id = ? and revision = ? and deleted = 0
              returning id
@@ -138,6 +155,7 @@ class ManagedChannelRepository:
             (
                 name,
                 json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+                dingtalk_enterprise_id,
                 secret_ref,
                 1 if enabled else 0,
                 now_iso(),
@@ -157,6 +175,209 @@ class ManagedChannelRepository:
                 (now_iso(), connector_id),
             )
         return self.get_connector(connector_id)
+
+    def list_dingtalk_enterprises(self) -> list[dict[str, Any]]:
+        rows = self.database.execute(
+            """
+            select e.*,
+                   count(c.id) as connector_count,
+                   coalesce(sum(case when c.enabled = 1 and c.deleted = 0
+                                     then 1 else 0 end), 0) as enabled_connector_count
+              from dingtalk_enterprise e
+              left join integration_connector c
+                on c.dingtalk_enterprise_id = e.id
+               and c.connector_type = 'dingtalk_enterprise_stream'
+             group by e.id, e.name, e.corp_id, e.status,
+                      e.verification_event_id, e.verified_at, e.revision,
+                      e.created_by, e.created_at, e.updated_at
+             order by e.name, e.id
+            """
+        )
+        return [self._enterprise(row) for row in rows]
+
+    def get_dingtalk_enterprise(self, enterprise_id: str) -> dict[str, Any]:
+        row = self.database.execute_one(
+            """
+            select e.*,
+                   count(c.id) as connector_count,
+                   coalesce(sum(case when c.enabled = 1 and c.deleted = 0
+                                     then 1 else 0 end), 0) as enabled_connector_count
+              from dingtalk_enterprise e
+              left join integration_connector c
+                on c.dingtalk_enterprise_id = e.id
+               and c.connector_type = 'dingtalk_enterprise_stream'
+             where e.id = ?
+             group by e.id, e.name, e.corp_id, e.status,
+                      e.verification_event_id, e.verified_at, e.revision,
+                      e.created_by, e.created_at, e.updated_at
+            """,
+            (enterprise_id,),
+        )
+        if row is None:
+            raise NotFound(
+                "DingTalk enterprise not found",
+                safe_message="未找到钉钉企业",
+            )
+        return self._enterprise(row)
+
+    def find_dingtalk_enterprise_by_corp_id(
+        self, corp_id: str
+    ) -> dict[str, Any] | None:
+        row = self.database.execute_one(
+            "select * from dingtalk_enterprise where corp_id = ?",
+            (corp_id,),
+        )
+        return self._enterprise(row) if row else None
+
+    def create_dingtalk_enterprise(
+        self,
+        *,
+        name: str,
+        actor_id: str,
+    ) -> dict[str, Any]:
+        enterprise_id = new_id("dingtalk_enterprise")
+        timestamp = now_iso()
+        self.database.execute(
+            """
+            insert into dingtalk_enterprise
+              (id, name, corp_id, status, verification_event_id, verified_at,
+               revision, created_by, created_at, updated_at)
+            values (?, ?, null, 'PENDING_VERIFICATION', '', null,
+                    1, ?, ?, ?)
+            """,
+            (enterprise_id, name, actor_id, timestamp, timestamp),
+        )
+        return self.get_dingtalk_enterprise(enterprise_id)
+
+    def rename_dingtalk_enterprise(
+        self,
+        enterprise_id: str,
+        *,
+        name: str,
+        expected_revision: int,
+    ) -> dict[str, Any]:
+        rows = self.database.execute(
+            """
+            update dingtalk_enterprise
+               set name = ?, revision = revision + 1, updated_at = ?
+             where id = ? and revision = ?
+             returning id
+            """,
+            (name, now_iso(), enterprise_id, expected_revision),
+        )
+        if not rows:
+            self.get_dingtalk_enterprise(enterprise_id)
+            raise _enterprise_revision_conflict()
+        return self.get_dingtalk_enterprise(enterprise_id)
+
+    def set_dingtalk_enterprise_status(
+        self,
+        enterprise_id: str,
+        *,
+        status: str,
+        expected_revision: int,
+        clear_verification: bool = False,
+    ) -> dict[str, Any]:
+        rows = self.database.execute(
+            """
+            update dingtalk_enterprise
+               set status = ?,
+                   verified_at = case when ? = 1 then null else verified_at end,
+                   verification_event_id = case when ? = 1 then ''
+                                                else verification_event_id end,
+                   revision = revision + 1,
+                   updated_at = ?
+             where id = ? and revision = ?
+             returning id
+            """,
+            (
+                status,
+                1 if clear_verification else 0,
+                1 if clear_verification else 0,
+                now_iso(),
+                enterprise_id,
+                expected_revision,
+            ),
+        )
+        if not rows:
+            self.get_dingtalk_enterprise(enterprise_id)
+            raise _enterprise_revision_conflict()
+        return self.get_dingtalk_enterprise(enterprise_id)
+
+    def verify_dingtalk_enterprise(
+        self,
+        enterprise_id: str,
+        *,
+        corp_id: str,
+        source_event_id: str,
+        expected_revision: int,
+    ) -> dict[str, Any]:
+        timestamp = now_iso()
+        rows = self.database.execute(
+            """
+            update dingtalk_enterprise
+               set corp_id = coalesce(corp_id, ?),
+                   status = 'ACTIVE',
+                   verification_event_id = ?,
+                   verified_at = ?,
+                   revision = revision + 1,
+                   updated_at = ?
+             where id = ? and revision = ?
+               and status = 'PENDING_VERIFICATION'
+               and (corp_id is null or corp_id = ?)
+             returning id
+            """,
+            (
+                corp_id,
+                source_event_id,
+                timestamp,
+                timestamp,
+                enterprise_id,
+                expected_revision,
+                corp_id,
+            ),
+        )
+        if not rows:
+            current = self.get_dingtalk_enterprise(enterprise_id)
+            if (
+                current["status"] == "ACTIVE"
+                and current["verification_event_id"] == source_event_id
+                and current["corp_id"] == corp_id
+            ):
+                return current
+            raise _enterprise_revision_conflict()
+        return self.get_dingtalk_enterprise(enterprise_id)
+
+    def dingtalk_enterprise_impacts(self, enterprise_id: str) -> list[dict[str, Any]]:
+        self.get_dingtalk_enterprise(enterprise_id)
+        rows = self.database.execute(
+            """
+            select c.id as connector_id, c.name as connector_name,
+                   c.enabled, c.deleted,
+                   a.id as application_id, a.name as application_name,
+                   r.revision as application_revision
+              from integration_connector c
+              left join business_application_revision_trigger t
+                on t.connector_id = c.id and t.enabled = 1
+              left join business_application_revision r on r.id = t.revision_id
+              left join business_application a on a.id = r.application_id
+             where c.dingtalk_enterprise_id = ?
+               and c.connector_type = 'dingtalk_enterprise_stream'
+             order by c.name, a.name, r.revision
+            """,
+            (enterprise_id,),
+        )
+        return [
+            {
+                "connector_id": str(row["connector_id"]),
+                "connector_name": str(row["connector_name"]),
+                "connector_enabled": bool(row["enabled"]) and not bool(row["deleted"]),
+                "application_id": str(row.get("application_id") or ""),
+                "application_name": str(row.get("application_name") or ""),
+                "application_revision": row.get("application_revision"),
+            }
+            for row in rows
+        ]
 
     def soft_delete(self, connector_id: str, *, expected_revision: int) -> None:
         current = self.get_connector(connector_id)
@@ -532,6 +753,19 @@ class ManagedChannelRepository:
         value["registered"] = bool(value.get("registered"))
         return value
 
+    @staticmethod
+    def _enterprise(row: dict[str, Any]) -> dict[str, Any]:
+        value = dict(row)
+        value["corp_id"] = str(value.get("corp_id") or "")
+        value["verification_event_id"] = str(
+            value.get("verification_event_id") or ""
+        )
+        value["connector_count"] = int(value.get("connector_count") or 0)
+        value["enabled_connector_count"] = int(
+            value.get("enabled_connector_count") or 0
+        )
+        return value
+
 
 def _json(value: object) -> dict[str, Any]:
     try:
@@ -545,5 +779,13 @@ def _revision_conflict() -> NonRetryableExecutionError:
     return NonRetryableExecutionError(
         "Managed channel revision conflict",
         safe_message="渠道配置已发生变化，请刷新后重试",
+        error_code="revision_conflict",
+    )
+
+
+def _enterprise_revision_conflict() -> NonRetryableExecutionError:
+    return NonRetryableExecutionError(
+        "DingTalk enterprise revision conflict",
+        safe_message="钉钉企业信息已发生变化，请刷新后重试",
         error_code="revision_conflict",
     )

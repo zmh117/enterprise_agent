@@ -8,6 +8,53 @@ const runtimeSummarySchema = z.object({
   last_error: z.string().default(""),
 })
 
+export const dingtalkEnterpriseStatusSchema = z.enum([
+  "PENDING_VERIFICATION",
+  "ACTIVE",
+  "DISABLED",
+  "ARCHIVED",
+])
+
+const dingtalkEnterpriseSummarySchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  status: z.union([dingtalkEnterpriseStatusSchema, z.literal("UNASSIGNED")]),
+  corp_id_verified: z.boolean(),
+  verified_at: z.string().nullable().optional(),
+})
+
+const dingtalkEnterpriseImpactSchema = z.object({
+  connector_id: z.string(),
+  connector_name: z.string(),
+  connector_enabled: z.boolean(),
+  application_id: z.string(),
+  application_name: z.string(),
+  application_revision: z.number().int().nullable().optional(),
+})
+
+const managedChannelReferenceSchema = z.object({
+  application_code: z.string(),
+  application_name: z.string(),
+  application_revision: z.number().int().nonnegative(),
+  trigger_type: z.string(),
+})
+
+export const dingtalkEnterpriseSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  corp_id: z.string(),
+  status: dingtalkEnterpriseStatusSchema,
+  verified_at: z.string().nullable().optional(),
+  revision: z.number().int().positive(),
+  connector_count: z.number().int().nonnegative(),
+  enabled_connector_count: z.number().int().nonnegative(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  impacts: z.array(dingtalkEnterpriseImpactSchema).optional(),
+})
+
+export type DingTalkEnterprise = z.infer<typeof dingtalkEnterpriseSchema>
+
 export const managedChannelSchema = z
   .object({
     id: z.string(),
@@ -15,7 +62,7 @@ export const managedChannelSchema = z
     name: z.string(),
     code: z.string().optional(),
     client_id: z.string().optional(),
-    tenant_code: z.string().optional(),
+    enterprise: dingtalkEnterpriseSummarySchema.optional(),
     webhook_trigger_id: z.string().optional(),
     routing_key: z.string().optional(),
     enabled: z.boolean(),
@@ -32,6 +79,7 @@ export const managedChannelSchema = z
         group_chat: false,
         require_group_at: false,
       }),
+    references: z.array(managedChannelReferenceSchema).default([]),
     runtime: runtimeSummarySchema.optional(),
     updated_at: z.string().nullable().optional(),
   })
@@ -65,7 +113,7 @@ export type DingTalkChannelInput = {
   name: string
   client_id: string
   client_secret: string
-  tenant_code: string
+  dingtalk_enterprise_id: string
   allow_private_chat: boolean
   allow_group_chat: boolean
   require_group_at: boolean

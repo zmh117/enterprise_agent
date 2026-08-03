@@ -126,8 +126,11 @@ describe("Managed channel navigation", () => {
     expect(
       screen.getByText(/此页面不会直接修改任何业务应用/)
     ).toBeInTheDocument()
-    await waitFor(() => expect(urls).toHaveLength(2))
+    await waitFor(() => expect(urls).toHaveLength(3))
     expect(urls).toContain("/api/admin/managed-channels")
+    expect(urls).toContain(
+      "/api/admin/managed-channels/dingtalk-enterprises"
+    )
     expect(urls).toContain(
       "/api/admin/managed-channels/webhook-connector-options"
     )

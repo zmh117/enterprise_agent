@@ -219,6 +219,10 @@ function CandidateRow({ candidate }: { candidate: DingTalkIdentityCandidate }) {
         <div className="mt-1 font-mono text-xs break-all text-muted-foreground">
           {candidate.external_subject_id}
         </div>
+        <div className="mt-1 text-xs text-muted-foreground">
+          {candidate.enterprise_name || "企业名称不可用"} · Corp ID{" "}
+          {candidate.corp_id}
+        </div>
         <div className="mt-2 flex flex-wrap gap-1">
           <Badge variant="outline">
             {candidate.conversation_scope === "direct"

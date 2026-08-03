@@ -19,7 +19,10 @@ from app.modules.business_application.domain.policies import (
 from app.shared.database import Database, default_migrations_dir
 from app.shared.exceptions import NonRetryableExecutionError
 from app.shared.migrations import Migrator
-from backend.tests.helpers import grant_test_application_access
+from backend.tests.helpers import (
+    ensure_active_dingtalk_test_enterprise,
+    grant_test_application_access,
+)
 from backend.tests.test_unified_identity_rbac import (
     csrf_headers,
     login,
@@ -536,6 +539,7 @@ def test_only_published_session_policy_is_visible_to_runtime_resolver() -> None:
 
 def test_active_business_application_policy_controls_live_channel_sessions() -> None:
     container = build_test_container(control_plane_settings(), migrate=True, seed=True)
+    ensure_active_dingtalk_test_enterprise(container)
     service = container.business_application_service
     application = service.create(
         actor_id="user_local_admin",
@@ -579,9 +583,11 @@ def test_active_business_application_policy_controls_live_channel_sessions() -> 
 
     first = container.dingtalk_stream_message_service.handle_callback(
         payload={
-            "conversationId": "conversation-policy-runtime",
-            "senderStaffId": "local-user",
-            "msgId": "policy-message-1",
+                "conversationId": "conversation-policy-runtime",
+                "senderStaffId": "local-user",
+                "senderCorpId": "corp-test-enterprise",
+                "chatbotCorpId": "corp-test-enterprise",
+                "msgId": "policy-message-1",
             "robotCode": "test-robot-code",
             "sessionWebhook": "https://oapi.dingtalk.com/robot/sendBySession",
             "text": {"content": "first"},
@@ -590,9 +596,11 @@ def test_active_business_application_policy_controls_live_channel_sessions() -> 
     )
     second = container.dingtalk_stream_message_service.handle_callback(
         payload={
-            "conversationId": "conversation-policy-runtime",
-            "senderStaffId": "local-user",
-            "msgId": "policy-message-2",
+                "conversationId": "conversation-policy-runtime",
+                "senderStaffId": "local-user",
+                "senderCorpId": "corp-test-enterprise",
+                "chatbotCorpId": "corp-test-enterprise",
+                "msgId": "policy-message-2",
             "robotCode": "test-robot-code",
             "sessionWebhook": "https://oapi.dingtalk.com/robot/sendBySession",
             "text": {"content": "second"},

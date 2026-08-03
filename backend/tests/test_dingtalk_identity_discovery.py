@@ -27,7 +27,32 @@ def discovery_container():
             dingtalk_tenant_code="tenant-discovery",
         ),
     )
-    return build_test_container(settings, migrate=True)
+    container = build_test_container(settings, migrate=True)
+    timestamp = "2026-08-03T00:00:00+00:00"
+    container.database.execute(
+        """
+        insert into app_user
+          (id, username, display_name, status, created_at, updated_at)
+        values ('fixture-admin', 'fixture-admin', 'Fixture Admin',
+                'enabled', ?, ?)
+        """,
+        (timestamp, timestamp),
+    )
+    enterprise = container.managed_channel_service.create_dingtalk_enterprise(
+        name="身份发现测试企业",
+        actor_id="fixture-admin",
+    )
+    container.database.execute(
+        """
+        update dingtalk_enterprise
+           set corp_id = 'corp-discovery', status = 'ACTIVE', verified_at = ?,
+               verification_event_id = 'fixture-verification'
+         where id = ?
+        """,
+        (timestamp, enterprise["id"]),
+    )
+    container._test_dingtalk_enterprise_id = enterprise["id"]
+    return container
 
 
 @pytest.fixture
@@ -37,7 +62,7 @@ def dingtalk_connector(discovery_container):
             name="身份发现测试机器人",
             client_id="identity-discovery-client",
             client_secret="fixture-only-secret",
-            tenant_code="tenant-discovery",
+            dingtalk_enterprise_id=discovery_container._test_dingtalk_enterprise_id,
         ),
         actor_id="fixture-admin",
         enabled=True,
@@ -55,6 +80,7 @@ def _submission(
     robot_code: str = "robot-discovery",
     create_at: object = 1_785_024_000_000,
     text: str = "请帮我查看系统状态",
+    corp_id: str = "corp-discovery",
     extra: dict[str, Any] | None = None,
 ) -> ChannelIngressSubmission:
     normalized_event: dict[str, Any] = {
@@ -62,6 +88,8 @@ def _submission(
         "conversationType": conversation_type,
         "senderStaffId": sender_id,
         "senderNick": sender_name,
+        "senderCorpId": corp_id,
+        "chatbotCorpId": corp_id,
         "msgId": event_id,
         "robotCode": robot_code,
         "createAt": create_at,
@@ -104,6 +132,32 @@ def _dispatch(discovery_container, connector_id: str, submission: ChannelIngress
     return discovery_container.managed_channel_repository.get_event(str(event["id"]))
 
 
+def _bind_dingtalk_fixture(
+    container,
+    *,
+    user_id: str,
+    external_subject_id: str,
+    display_name: str,
+):
+    identity = container.identity_repository.bind_external_identity(
+        user_id=user_id,
+        provider="dingtalk",
+        tenant_code=str(container._test_dingtalk_enterprise_id),
+        external_subject_id=external_subject_id,
+        connector_id="",
+        display_name=display_name,
+    )
+    container.database.execute(
+        """
+        update user_external_identity
+           set dingtalk_enterprise_id = ?, connector_id = ''
+         where id = ?
+        """,
+        (container._test_dingtalk_enterprise_id, identity["id"]),
+    )
+    return container.identity_repository.get_external_identity(str(identity["id"]))
+
+
 @pytest.mark.parametrize("historical_state", ["never_bound", "disabled", "unbound"])
 def test_identity_rejection_creates_candidate_without_agent_job(
     discovery_container,
@@ -116,12 +170,10 @@ def test_identity_rejection_creates_candidate_without_agent_job(
             username=f"user-{historical_state}",
             display_name=f"历史人员 {historical_state}",
         )
-        identity = discovery_container.identity_repository.bind_external_identity(
+        identity = _bind_dingtalk_fixture(
+            discovery_container,
             user_id=str(user["id"]),
-            provider="dingtalk",
-            tenant_code="tenant-discovery",
             external_subject_id=sender_id,
-            connector_id=str(dingtalk_connector["id"]),
             display_name="历史钉钉用户",
         )
         if historical_state == "disabled":
@@ -153,11 +205,11 @@ def test_identity_rejection_creates_candidate_without_agent_job(
     }
     candidate = discovery_container.database.execute_one(
         """
-        select tenant_code, external_subject_id
+        select dingtalk_enterprise_id, external_subject_id
         from dingtalk_identity_candidate
-        where tenant_code = ? and external_subject_id = ?
+        where dingtalk_enterprise_id = ? and external_subject_id = ?
         """,
-        ("tenant-discovery", sender_id),
+        (discovery_container._test_dingtalk_enterprise_id, sender_id),
     )
     assert candidate is not None
     assert (
@@ -175,12 +227,10 @@ def test_disabled_user_creates_restore_candidate(discovery_container, dingtalk_c
         username="disabled-owner",
         display_name="已停用原人员",
     )
-    discovery_container.identity_repository.bind_external_identity(
+    _bind_dingtalk_fixture(
+        discovery_container,
         user_id=str(user["id"]),
-        provider="dingtalk",
-        tenant_code="tenant-discovery",
         external_subject_id="staff-disabled-owner",
-        connector_id=str(dingtalk_connector["id"]),
         display_name="已停用原人员",
     )
     discovery_container.identity_repository.update_user(
@@ -223,12 +273,10 @@ def test_enabled_bound_identity_is_not_discovered(discovery_container, dingtalk_
         username="enabled-owner",
         display_name="已绑定人员",
     )
-    discovery_container.identity_repository.bind_external_identity(
+    _bind_dingtalk_fixture(
+        discovery_container,
         user_id=str(user["id"]),
-        provider="dingtalk",
-        tenant_code="tenant-discovery",
         external_subject_id="staff-enabled-owner",
-        connector_id=str(dingtalk_connector["id"]),
         display_name="已绑定人员",
     )
 
@@ -271,7 +319,7 @@ def test_discovery_fixture_covers_private_group_duplicate_truncation_and_attachm
             name="同企业第二个机器人",
             client_id="identity-discovery-client-second",
             client_secret="fixture-only-secret-second",
-            tenant_code="tenant-discovery",
+            dingtalk_enterprise_id=discovery_container._test_dingtalk_enterprise_id,
         ),
         actor_id="fixture-admin",
         enabled=True,
@@ -339,9 +387,9 @@ def test_discovery_fixture_covers_private_group_duplicate_truncation_and_attachm
         """
         select id, observation_count
         from dingtalk_identity_candidate
-        where tenant_code = ? and external_subject_id = ?
+        where dingtalk_enterprise_id = ? and external_subject_id = ?
         """,
-        ("tenant-discovery", "staff-aggregate"),
+        (discovery_container._test_dingtalk_enterprise_id, "staff-aggregate"),
     )
     assert candidate is not None
     assert int(candidate["observation_count"]) == 5
@@ -412,16 +460,30 @@ def test_projection_failure_keeps_channel_event_retryable_without_job(
     ).get("count") == 0
 
 
-def test_candidates_are_isolated_by_tenant_and_keep_only_twenty_messages(
+def test_candidates_are_isolated_by_enterprise_and_keep_only_twenty_messages(
     discovery_container,
     dingtalk_connector,
 ):
+    timestamp = "2026-08-03T00:00:00+00:00"
+    other_enterprise = discovery_container.managed_channel_service.create_dingtalk_enterprise(
+        name="另一个测试企业",
+        actor_id="fixture-admin",
+    )
+    discovery_container.database.execute(
+        """
+        update dingtalk_enterprise
+           set corp_id = 'corp-discovery-other', status = 'ACTIVE', verified_at = ?,
+               verification_event_id = 'fixture-other-verification'
+         where id = ?
+        """,
+        (timestamp, other_enterprise["id"]),
+    )
     other = discovery_container.managed_channel_service.create_dingtalk(
         DingTalkApplicationInput(
             name="另一个企业机器人",
             client_id="identity-discovery-client-other",
             client_secret="fixture-only-secret-other",
-            tenant_code="tenant-other",
+            dingtalk_enterprise_id=str(other_enterprise["id"]),
         ),
         actor_id="fixture-admin",
         enabled=True,
@@ -447,24 +509,28 @@ def test_candidates_are_isolated_by_tenant_and_keep_only_twenty_messages(
             "event-other-tenant",
             sender_id="staff-same-id",
             text="其它企业消息",
+            corp_id="corp-discovery-other",
         ),
     )
 
     candidates = discovery_container.database.execute(
         """
-        select id, tenant_code, observation_count
+        select id, dingtalk_enterprise_id, observation_count
         from dingtalk_identity_candidate
         where external_subject_id = ?
-        order by tenant_code
+        order by dingtalk_enterprise_id
         """,
         ("staff-same-id",),
     )
-    assert [row["tenant_code"] for row in candidates] == [
-        "tenant-discovery",
-        "tenant-other",
-    ]
+    assert {row["dingtalk_enterprise_id"] for row in candidates} == {
+        discovery_container._test_dingtalk_enterprise_id,
+        other_enterprise["id"],
+    }
     primary = next(
-        row for row in candidates if row["tenant_code"] == "tenant-discovery"
+        row
+        for row in candidates
+        if row["dingtalk_enterprise_id"]
+        == discovery_container._test_dingtalk_enterprise_id
     )
     assert int(primary["observation_count"]) == 21
     message_count = discovery_container.database.execute_one(
@@ -498,7 +564,7 @@ def test_projection_failure_rolls_back_candidate_aggregate(
         source_ingress_event_id=str(event["id"]),
         received_at=str(event["received_at"]),
         occurred_at=str(event["received_at"]),
-        tenant_code="tenant-discovery",
+        dingtalk_enterprise_id=discovery_container._test_dingtalk_enterprise_id,
         external_subject_id="staff-rollback",
         display_name="事务回滚用户",
         connector_id="connector-does-not-exist",

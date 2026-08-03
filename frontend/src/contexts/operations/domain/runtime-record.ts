@@ -25,6 +25,16 @@ export const runtimeJobSchema = z
     project_code: z.string().default(""),
     source_channel: z.string().default(""),
     source_connector_id: z.string().default(""),
+    source_connector_name: z.string().default(""),
+    source_connector_availability: z
+      .enum([
+        "AVAILABLE",
+        "UNAVAILABLE",
+        "UNAVAILABLE_HISTORICAL",
+        "UNKNOWN",
+        "NOT_APPLICABLE",
+      ])
+      .default("UNKNOWN"),
     agent_code: z.string().default(""),
     correlation_id: z.string().default(""),
     business_application_id: z

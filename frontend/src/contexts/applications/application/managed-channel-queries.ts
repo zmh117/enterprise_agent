@@ -5,13 +5,18 @@ import type {
   WebhookChannelInput,
 } from "@/contexts/applications/domain/managed-channel"
 import {
+  createDingTalkEnterprise,
   createDingTalkChannel,
   createWebhookChannel,
   deleteManagedChannel,
+  getDingTalkEnterprise,
+  governDingTalkEnterprise,
+  listDingTalkEnterprises,
   listEligibleChannels,
   listManagedChannels,
   listWebhookConnectorOptions,
   restartManagedChannel,
+  renameDingTalkEnterprise,
   setManagedChannelEnabled,
   testManagedChannel,
   updateDingTalkChannel,
@@ -24,6 +29,59 @@ export const managedChannelKeys = {
     [...managedChannelKeys.all, "eligible", triggerType] as const,
   webhookConnectorOptions: () =>
     [...managedChannelKeys.all, "webhook-connector-options"] as const,
+  enterprises: () =>
+    [...managedChannelKeys.all, "dingtalk-enterprises"] as const,
+  enterprise: (enterpriseId: string) =>
+    [...managedChannelKeys.enterprises(), enterpriseId] as const,
+}
+
+export function useDingTalkEnterprises() {
+  return useQuery({
+    queryKey: managedChannelKeys.enterprises(),
+    queryFn: listDingTalkEnterprises,
+    retry: false,
+  })
+}
+
+export function useDingTalkEnterprise(enterpriseId: string) {
+  return useQuery({
+    queryKey: managedChannelKeys.enterprise(enterpriseId),
+    queryFn: () => getDingTalkEnterprise(enterpriseId),
+    enabled: Boolean(enterpriseId),
+    retry: false,
+  })
+}
+
+export function useCreateDingTalkEnterprise() {
+  return useRefreshChannelsMutation((name: string) =>
+    createDingTalkEnterprise(name)
+  )
+}
+
+export function useRenameDingTalkEnterprise() {
+  return useRefreshChannelsMutation(
+    (input: { enterpriseId: string; name: string; expectedRevision: number }) =>
+      renameDingTalkEnterprise(
+        input.enterpriseId,
+        input.name,
+        input.expectedRevision
+      )
+  )
+}
+
+export function useGovernDingTalkEnterprise() {
+  return useRefreshChannelsMutation(
+    (input: {
+      enterpriseId: string
+      action: "disable" | "archive" | "restore"
+      expectedRevision: number
+    }) =>
+      governDingTalkEnterprise(
+        input.enterpriseId,
+        input.action,
+        input.expectedRevision
+      )
+  )
 }
 
 export function useManagedChannels(enabled = true) {

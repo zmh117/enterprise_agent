@@ -199,12 +199,185 @@ def test_user_directory_search_pagination_and_safe_detail() -> None:
             "total_pages": 1,
         }
 
-        detail = client.get(f"/api/admin/users/{first['id']}")
+        detail = client.get(
+            f"/api/admin/users/{first['id']}/external-identities"
+        )
         serialized = json.dumps(detail.json())
         assert detail.status_code == 200
-        assert detail.json()["identities"][0]["metadata"]["team_uuids"] == ["TEAM-001"]
+        assert detail.json()["current"][0]["teams"] == [
+            {"id": "TEAM-001", "name": ""}
+        ]
+        assert "identities" not in client.get(
+            f"/api/admin/users/{first['id']}"
+        ).json()
         for forbidden in ("password_hash", "token_hash", "csrf_hash"):
             assert forbidden not in serialized
+
+
+def test_self_and_admin_identity_contracts_are_whitelisted_and_fail_closed() -> None:
+    container = identity_container()
+    user = container.identity_repository.create_user(
+        username="identity-contract-user",
+        display_name="Identity Contract User",
+    )
+    password = "identity-contract-password"
+    container.identity_repository.set_password_hash(
+        str(user["id"]),
+        container.auth_service.passwords.hash(password),
+    )
+    service = container.external_credential_binding_service
+    connection = service.connection_repository.create(
+        code="ones-identity-contract-test",
+        name="ONES Identity Contract Test",
+        provider="ones",
+        origin={
+            "scheme": "https",
+            "host": "ones-contract.example.test",
+            "port": 443,
+        },
+        authentication={
+            "schema_version": 1,
+            "login": {
+                "method": "POST",
+                "relative_path": "/project/api/project/auth/login",
+                "email_field": "email",
+                "password_field": "password",
+            },
+            "extract": {
+                "token_path": "$.user.token",
+                "user_id_path": "$.user.uuid",
+                "display_name_path": "$.user.name",
+                "teams_path": "$.teams",
+                "team_id_field": "uuid",
+                "team_name_field": "name",
+            },
+            "inject": {
+                "header_name": "Ones-Auth-Token",
+                "value_prefix": "",
+            },
+        },
+        actor_id="user_local_admin",
+    )
+    draft = connection["draft"]
+    service.connection_repository.record_verification(
+        str(connection["id"]),
+        draft_revision=int(draft["draft_revision"]),
+        draft_hash=str(draft["content_hash"]),
+        actor_id="user_local_admin",
+        status="PASSED",
+        checks={"login": "passed"},
+    )
+    revision = service.connection_repository.publish(
+        str(connection["id"]),
+        draft_revision=int(draft["draft_revision"]),
+        draft_hash=str(draft["content_hash"]),
+        actor_id="user_local_admin",
+    )
+    secret_token = "ONES-CONTRACT-SECRET-TOKEN"
+    encrypted = service.credential_cipher.encrypt(secret_token)
+    challenge = service.credential_repository.create_challenge(
+        user_id=str(user["id"]),
+        connection_revision_id=str(revision["id"]),
+        external_user_id="ONES-CONTRACT-USER",
+        display_name="Contract ONES User",
+        teams=[
+            {"id": "TEAM-CONTRACT-A", "name": "Contract Team A"},
+            {"id": "TEAM-CONTRACT-B", "name": "Contract Team B"},
+        ],
+        encrypted_token=encrypted,
+        expires_at="2099-01-01T00:00:00+00:00",
+    )
+    credential = service.credential_repository.consume_challenge(
+        str(challenge["id"]),
+        user_id=str(user["id"]),
+        connection_revision_id=str(revision["id"]),
+        default_team_id="TEAM-CONTRACT-A",
+        replace_existing=False,
+    )
+    service.credential_repository.record_usage_failure(
+        credential_id=str(credential["id"]),
+        error_code="contract_internal_error",
+    )
+    app = create_app(identity_settings(), container_factory=lambda _: container)
+
+    with TestClient(app) as client:
+        login(client)
+        admin_overview = client.get(
+            f"/api/admin/users/{user['id']}/external-identities"
+        )
+        admin_technical = client.get(
+            f"/api/admin/users/{user['id']}/external-credentials/ones"
+        )
+        assert admin_overview.status_code == 200
+        assert admin_technical.status_code == 200
+
+        client.cookies.clear()
+        authenticated = client.post(
+            "/api/auth/login",
+            json={"username": user["username"], "password": password},
+        )
+        assert authenticated.status_code == 200
+        self_overview = client.get("/api/me/external-identities")
+        assert self_overview.status_code == 200
+        assert set(self_overview.json()) == {"user", "dingtalk", "ones"}
+        assert set(self_overview.json()["ones"]) == {
+            "provider",
+            "user_name",
+            "availability",
+            "default_team",
+            "verified_at",
+            "last_success_at",
+            "user_id",
+            "teams",
+        }
+        assert self_overview.json()["ones"]["default_team"] == {
+            "id": "TEAM-CONTRACT-A",
+            "name": "Contract Team A",
+        }
+
+        denied_other = client.get(
+            "/api/admin/users/user_local_admin/external-identities"
+        )
+        denied_observations = client.get(
+            f"/api/admin/users/{user['id']}/external-identities"
+        )
+        denied_technical = client.get(
+            f"/api/admin/users/{user['id']}/external-credentials/ones"
+        )
+        assert denied_other.status_code == 403
+        assert denied_observations.status_code == 403
+        assert denied_technical.status_code == 403
+
+        serialized = json.dumps(
+            {
+                "self": self_overview.json(),
+                "admin": admin_overview.json(),
+                "technical": admin_technical.json(),
+            },
+            ensure_ascii=False,
+        ).lower()
+        assert secret_token.lower() not in serialized
+        for forbidden in (
+            "token_ciphertext",
+            "encryption_key_id",
+            "password",
+            "authorization",
+            "client_secret",
+            "session_webhook",
+            "challenge_id",
+            "connector_id",
+        ):
+            assert forbidden not in serialized
+        self_serialized = json.dumps(self_overview.json()).lower()
+        for admin_only in (
+            "identity_id",
+            "identity_revision",
+            "credential",
+            "observations",
+            "last_error_code",
+            "last_attempt_at",
+        ):
+            assert admin_only not in self_serialized
 
 
 def test_user_create_conflict_revision_and_session_revocation() -> None:
@@ -400,7 +573,7 @@ def test_identity_lifecycle_is_optimistic_and_soft_unbinds() -> None:
     with TestClient(app) as client:
         headers = login(client)
         user = create_user(client, headers, username="lifecycle", display_name="Lifecycle")
-        bound = client.post(
+        manual = client.post(
             f"/api/admin/users/{user['id']}/dingtalk-identities",
             headers=headers,
             json={
@@ -410,7 +583,23 @@ def test_identity_lifecycle_is_optimistic_and_soft_unbinds() -> None:
                 "connector_id": "connector-dingtalk-stream-default",
                 "display_name": "Lifecycle",
             },
-        ).json()["identity"]
+        )
+        assert manual.status_code == 404
+        enterprise = container.database.execute_one(
+            "select id from dingtalk_enterprise where corp_id = ?",
+            ("corp-test-enterprise",),
+        )
+        assert enterprise is not None
+        bound = container.identity_repository.bind_dingtalk_identity(
+            user_id=str(user["id"]),
+            dingtalk_enterprise_id=str(enterprise["id"]),
+            external_subject_id="lifecycle-dingtalk-user",
+            display_name="Lifecycle",
+            source_connector_id="connector-dingtalk-stream-default",
+            source_ingress_event_id="",
+            observed_at="2026-08-03T00:00:00+00:00",
+            replace_current=False,
+        )
 
         disabled = client.put(
             f"/api/admin/identities/{bound['id']}/status",
@@ -452,9 +641,7 @@ def test_identity_lifecycle_is_optimistic_and_soft_unbinds() -> None:
                 "display_name": "Lifecycle",
             },
         )
-        assert rebound.status_code == 200
-        assert rebound.json()["identity"]["id"] == identity["id"]
-        assert rebound.json()["identity"]["status"] == "enabled"
+        assert rebound.status_code == 404
 
 
 def test_service_accounts_and_unsupported_providers_fail_closed() -> None:
@@ -506,6 +693,8 @@ def test_dingtalk_binding_state_controls_ingress_and_replies_with_safe_rejection
         return {
             "conversationId": f"conversation-{suffix}",
             "senderStaffId": "local-user",
+            "senderCorpId": "corp-test-enterprise",
+            "chatbotCorpId": "corp-test-enterprise",
             "msgId": f"message-{suffix}",
             "robotCode": "test-robot-code",
             "sessionWebhook": "https://oapi.dingtalk.com/robot/sendBySession",

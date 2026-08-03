@@ -35,7 +35,7 @@ class DingTalkApplicationRequest(StrictRequest):
     name: str = Field(min_length=2, max_length=120)
     client_id: str = Field(min_length=1, max_length=128)
     client_secret: str = Field(default="", max_length=512)
-    tenant_code: str = Field(min_length=1, max_length=128)
+    dingtalk_enterprise_id: str = Field(min_length=1, max_length=200)
     allow_private_chat: bool = True
     allow_group_chat: bool = True
     require_group_at: bool = True
@@ -45,6 +45,51 @@ class DingTalkApplicationRequest(StrictRequest):
 
 class RevisionRequest(StrictRequest):
     expected_revision: int = Field(ge=1)
+
+
+class DingTalkEnterpriseCreateRequest(StrictRequest):
+    name: str = Field(min_length=1, max_length=120)
+
+
+class DingTalkEnterpriseRenameRequest(StrictRequest):
+    name: str = Field(min_length=1, max_length=120)
+    expected_revision: int = Field(ge=1)
+
+
+class DingTalkEnterpriseImpactResponse(StrictRequest):
+    connector_id: str
+    connector_name: str
+    connector_enabled: bool
+    application_id: str
+    application_name: str
+    application_revision: int | None = None
+
+
+class DingTalkEnterpriseResponse(StrictRequest):
+    id: str
+    name: str
+    corp_id: str
+    status: Literal[
+        "PENDING_VERIFICATION",
+        "ACTIVE",
+        "DISABLED",
+        "ARCHIVED",
+    ]
+    verified_at: str | None = None
+    revision: int = Field(ge=1)
+    connector_count: int = Field(ge=0)
+    enabled_connector_count: int = Field(ge=0)
+    created_at: str
+    updated_at: str
+    impacts: list[DingTalkEnterpriseImpactResponse] = Field(default_factory=list)
+
+
+class DingTalkEnterpriseListResponse(StrictRequest):
+    items: list[DingTalkEnterpriseResponse]
+
+
+class DingTalkEnterpriseItemResponse(StrictRequest):
+    enterprise: DingTalkEnterpriseResponse
 
 
 class WebhookApplicationRequest(StrictRequest):
@@ -127,6 +172,153 @@ def build_managed_channel_router() -> APIRouter:
                     request
                 ).managed_channel_service.webhook_connector_options()
             }
+        except Exception as exc:
+            raise handle_exception(exc) from exc
+
+    @router.get(
+        "/dingtalk-enterprises",
+        response_model=DingTalkEnterpriseListResponse,
+    )
+    def list_dingtalk_enterprises(request: Request) -> dict[str, Any]:
+        require_action(
+            request,
+            resource_type="channel_connector",
+            resource_code="*",
+            action="read",
+        )
+        try:
+            return {
+                "items": container(
+                    request
+                ).managed_channel_service.list_dingtalk_enterprises()
+            }
+        except Exception as exc:
+            raise handle_exception(exc) from exc
+
+    @router.post(
+        "/dingtalk-enterprises",
+        response_model=DingTalkEnterpriseItemResponse,
+    )
+    def create_dingtalk_enterprise(
+        request: Request,
+        payload: DingTalkEnterpriseCreateRequest,
+    ) -> dict[str, Any]:
+        principal = require_action(
+            request,
+            resource_type="channel_connector",
+            resource_code="*",
+            action="manage",
+            csrf=True,
+        )
+        try:
+            item = container(
+                request
+            ).managed_channel_service.create_dingtalk_enterprise(
+                name=payload.name,
+                actor_id=principal.user_id,
+            )
+            return {"enterprise": item}
+        except Exception as exc:
+            raise handle_exception(exc) from exc
+
+    @router.get(
+        "/dingtalk-enterprises/{enterprise_id}",
+        response_model=DingTalkEnterpriseItemResponse,
+    )
+    def dingtalk_enterprise_detail(
+        request: Request,
+        enterprise_id: str,
+    ) -> dict[str, Any]:
+        require_action(
+            request,
+            resource_type="channel_connector",
+            resource_code="*",
+            action="read",
+        )
+        try:
+            return {
+                "enterprise": container(
+                    request
+                ).managed_channel_service.get_dingtalk_enterprise(enterprise_id)
+            }
+        except Exception as exc:
+            raise handle_exception(exc) from exc
+
+    @router.patch(
+        "/dingtalk-enterprises/{enterprise_id}",
+        response_model=DingTalkEnterpriseItemResponse,
+    )
+    def rename_dingtalk_enterprise(
+        request: Request,
+        enterprise_id: str,
+        payload: DingTalkEnterpriseRenameRequest,
+    ) -> dict[str, Any]:
+        principal = require_action(
+            request,
+            resource_type="channel_connector",
+            resource_code="*",
+            action="manage",
+            csrf=True,
+        )
+        try:
+            item = container(
+                request
+            ).managed_channel_service.rename_dingtalk_enterprise(
+                enterprise_id,
+                name=payload.name,
+                expected_revision=payload.expected_revision,
+                actor_id=principal.user_id,
+            )
+            return {"enterprise": item}
+        except Exception as exc:
+            raise handle_exception(exc) from exc
+
+    @router.post(
+        "/dingtalk-enterprises/{enterprise_id}/disable",
+        response_model=DingTalkEnterpriseItemResponse,
+    )
+    @router.post(
+        "/dingtalk-enterprises/{enterprise_id}/archive",
+        response_model=DingTalkEnterpriseItemResponse,
+    )
+    @router.post(
+        "/dingtalk-enterprises/{enterprise_id}/restore",
+        response_model=DingTalkEnterpriseItemResponse,
+    )
+    def govern_dingtalk_enterprise(
+        request: Request,
+        enterprise_id: str,
+        payload: RevisionRequest,
+    ) -> dict[str, Any]:
+        principal = require_action(
+            request,
+            resource_type="channel_connector",
+            resource_code="*",
+            action="manage",
+            csrf=True,
+        )
+        action = request.url.path.rsplit("/", 1)[-1]
+        service = container(request).managed_channel_service
+        try:
+            if action == "disable":
+                item = service.disable_dingtalk_enterprise(
+                    enterprise_id,
+                    expected_revision=payload.expected_revision,
+                    actor_id=principal.user_id,
+                )
+            elif action == "archive":
+                item = service.archive_dingtalk_enterprise(
+                    enterprise_id,
+                    expected_revision=payload.expected_revision,
+                    actor_id=principal.user_id,
+                )
+            else:
+                item = service.restore_dingtalk_enterprise(
+                    enterprise_id,
+                    expected_revision=payload.expected_revision,
+                    actor_id=principal.user_id,
+                )
+            return {"enterprise": item}
         except Exception as exc:
             raise handle_exception(exc) from exc
 
@@ -412,7 +604,7 @@ def _application_input(payload: DingTalkApplicationRequest) -> DingTalkApplicati
         name=payload.name,
         client_id=payload.client_id,
         client_secret=payload.client_secret,
-        tenant_code=payload.tenant_code,
+        dingtalk_enterprise_id=payload.dingtalk_enterprise_id,
         allow_private_chat=payload.allow_private_chat,
         allow_group_chat=payload.allow_group_chat,
         require_group_at=payload.require_group_at,

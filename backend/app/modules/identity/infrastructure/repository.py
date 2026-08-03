@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from datetime import UTC, datetime, timedelta
 
 from app.modules.identity.domain import ExternalIdentityProvider
 from app.modules.job.infrastructure.repositories import new_id, now_iso
@@ -374,6 +375,336 @@ class IdentityRepository:
         )
         return self._external_public(row) if row else None
 
+    def find_dingtalk_identity(
+        self,
+        *,
+        dingtalk_enterprise_id: str,
+        external_subject_id: str,
+        include_disabled: bool = False,
+    ) -> dict[str, Any] | None:
+        status = "" if include_disabled else "and i.status = 'enabled' and u.status = 'enabled'"
+        row = self.database.execute_one(
+            f"""
+            select i.*, u.username, u.display_name as user_display_name,
+                   u.status as user_status, u.account_type as user_account_type,
+                   e.name as dingtalk_enterprise_name,
+                   e.corp_id as dingtalk_enterprise_corp_id,
+                   e.status as dingtalk_enterprise_status,
+                   null as credential_status
+              from user_external_identity i
+              join app_user u on u.id = i.user_id
+              join dingtalk_enterprise e on e.id = i.dingtalk_enterprise_id
+             where i.provider = 'dingtalk'
+               and i.dingtalk_enterprise_id = ?
+               and i.external_subject_id = ?
+               {status}
+            """,
+            (dingtalk_enterprise_id, external_subject_id),
+        )
+        return self._external_public(row) if row else None
+
+    def bind_dingtalk_identity(
+        self,
+        *,
+        user_id: str,
+        dingtalk_enterprise_id: str,
+        external_subject_id: str,
+        display_name: str,
+        source_connector_id: str,
+        source_ingress_event_id: str,
+        observed_at: str,
+        replace_current: bool,
+        restore_historical: bool = False,
+    ) -> dict[str, Any]:
+        existing = self.find_dingtalk_identity(
+            dingtalk_enterprise_id=dingtalk_enterprise_id,
+            external_subject_id=external_subject_id,
+            include_disabled=True,
+        )
+        if existing:
+            if str(existing["user_id"]) != user_id:
+                raise NonRetryableExecutionError(
+                    "DingTalk identity has a historical owner",
+                    safe_message="该钉钉身份已有历史归属，只能由原人员恢复",
+                    error_code="identity_restore_required",
+                )
+            if (
+                str(existing["status"]) in {"unbound", "disabled"}
+                and not restore_historical
+            ):
+                raise NonRetryableExecutionError(
+                    "Historical DingTalk identity requires explicit restore",
+                    safe_message="请通过匹配的受信候选恢复该钉钉身份",
+                    error_code="identity_restore_required",
+                )
+            if str(existing["status"]) == "enabled":
+                return existing
+        current = self.database.execute_one(
+            """
+            select * from user_external_identity
+             where provider = 'dingtalk' and user_id = ?
+               and dingtalk_enterprise_id = ?
+               and status in ('enabled', 'disabled')
+            """,
+            (user_id, dingtalk_enterprise_id),
+        )
+        timestamp = now_iso()
+        replacing_other = bool(
+            current
+            and (
+                existing is None
+                or str(current["id"]) != str(existing["id"])
+            )
+        )
+        if replacing_other and not replace_current:
+            raise NonRetryableExecutionError(
+                "Explicit confirmation is required to replace DingTalk identity",
+                safe_message="该人员在此钉钉企业已有身份，请确认换绑影响",
+                error_code="dingtalk_rebind_confirmation_required",
+            )
+        if replacing_other and current:
+            self.database.execute(
+                """
+                update user_external_identity
+                   set status = 'unbound', revision = revision + 1, updated_at = ?
+                 where id = ? and status in ('enabled', 'disabled')
+                """,
+                (timestamp, current["id"]),
+            )
+        if existing is not None:
+            self.database.execute(
+                """
+                update user_external_identity
+                   set status = 'enabled', verified_at = ?,
+                       metadata_json = ?, revision = revision + 1,
+                       updated_at = ?
+                 where id = ? and user_id = ?
+                """,
+                (
+                    timestamp,
+                    json.dumps(
+                        {"verification_method": "trusted_candidate_restore"},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    timestamp,
+                    existing["id"],
+                    user_id,
+                ),
+            )
+            if source_ingress_event_id:
+                self.record_dingtalk_message_facts(
+                    identity_id=str(existing["id"]),
+                    connector_id=source_connector_id,
+                    source_ingress_event_id=source_ingress_event_id,
+                    nickname=display_name.strip(),
+                    occurred_at=observed_at,
+                    received_at=observed_at,
+                )
+            return self.get_external_identity(str(existing["id"]))
+        identity_id = new_id("identity")
+        nickname = display_name.strip()
+        nickname_time = observed_at or timestamp
+        self.database.execute(
+            """
+            insert into user_external_identity
+              (id, user_id, provider, tenant_code, external_subject_id,
+               connector_id, union_id, open_id, display_name, status,
+               verified_at, last_seen_at, metadata_json, revision,
+               created_at, updated_at, dingtalk_enterprise_id,
+               display_name_observed_at, display_name_event_id,
+               display_name_source_connector_id)
+            values (?, ?, 'dingtalk', ?, ?, '', '', '', ?, 'enabled',
+                    ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                identity_id,
+                user_id,
+                dingtalk_enterprise_id,
+                external_subject_id,
+                nickname,
+                timestamp,
+                nickname_time,
+                json.dumps(
+                    {"verification_method": "trusted_candidate"},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                timestamp,
+                timestamp,
+                dingtalk_enterprise_id,
+                nickname_time if nickname else None,
+                source_ingress_event_id if nickname else "",
+                source_connector_id if nickname else "",
+            ),
+        )
+        if source_ingress_event_id:
+            self.record_dingtalk_message_facts(
+                identity_id=identity_id,
+                connector_id=source_connector_id,
+                source_ingress_event_id=source_ingress_event_id,
+                nickname=nickname,
+                occurred_at=nickname_time,
+                received_at=nickname_time,
+            )
+        return self.get_external_identity(identity_id)
+
+    def record_dingtalk_message_facts(
+        self,
+        *,
+        identity_id: str,
+        connector_id: str,
+        source_ingress_event_id: str,
+        nickname: str,
+        occurred_at: str,
+        received_at: str,
+    ) -> None:
+        timestamp = now_iso()
+        observed_at = _trusted_dingtalk_event_time(
+            occurred_at=occurred_at,
+            received_at=received_at,
+        )
+        self.database.execute(
+            """
+            update user_external_identity
+               set last_seen_at = case
+                     when last_seen_at is null or last_seen_at < ? then ?
+                     else last_seen_at end,
+                   revision = revision + 1,
+                   updated_at = ?
+             where id = ? and provider = 'dingtalk'
+            """,
+            (observed_at, observed_at, timestamp, identity_id),
+        )
+        observation = self.database.execute_one(
+            """
+            select * from dingtalk_identity_application_observation
+             where external_identity_id = ? and connector_id = ?
+            """,
+            (identity_id, connector_id),
+        )
+        if observation is None:
+            self.database.execute(
+                """
+                insert into dingtalk_identity_application_observation
+                  (id, external_identity_id, connector_id, first_observed_at,
+                   last_observed_at, last_ingress_event_id, revision,
+                   created_at, updated_at)
+                values (?, ?, ?, ?, ?, ?, 1, ?, ?)
+                """,
+                (
+                    new_id("dingtalk_identity_observation"),
+                    identity_id,
+                    connector_id,
+                    observed_at,
+                    observed_at,
+                    source_ingress_event_id,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+        elif (
+            str(observation["last_ingress_event_id"]) != source_ingress_event_id
+            and (observed_at, source_ingress_event_id)
+            > (
+                str(observation["last_observed_at"]),
+                str(observation["last_ingress_event_id"]),
+            )
+        ):
+            self.database.execute(
+                """
+                update dingtalk_identity_application_observation
+                   set first_observed_at = case
+                         when first_observed_at > ? then ? else first_observed_at end,
+                       last_observed_at = ?, last_ingress_event_id = ?,
+                       revision = revision + 1, updated_at = ?
+                 where id = ?
+                """,
+                (
+                    observed_at,
+                    observed_at,
+                    observed_at,
+                    source_ingress_event_id,
+                    timestamp,
+                    observation["id"],
+                ),
+            )
+        normalized_nickname = nickname.strip()
+        if not normalized_nickname:
+            return
+        identity = self.database.execute_one(
+            "select * from user_external_identity where id = ?",
+            (identity_id,),
+        )
+        if identity is None:
+            raise NotFound("External identity not found", safe_message="未找到身份")
+        current_cursor = (
+            str(identity.get("display_name_observed_at") or ""),
+            str(identity.get("display_name_event_id") or ""),
+        )
+        incoming_cursor = (observed_at, source_ingress_event_id)
+        if incoming_cursor <= current_cursor:
+            return
+        previous = str(identity.get("display_name") or "")
+        if previous != normalized_nickname:
+            self.database.execute(
+                """
+                insert into dingtalk_identity_nickname_audit
+                  (id, external_identity_id, connector_id,
+                   source_ingress_event_id, previous_nickname,
+                   current_nickname, observed_at, created_at)
+                values (?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(source_ingress_event_id) do nothing
+                """,
+                (
+                    new_id("dingtalk_nickname_audit"),
+                    identity_id,
+                    connector_id,
+                    source_ingress_event_id,
+                    previous,
+                    normalized_nickname,
+                    observed_at,
+                    timestamp,
+                ),
+            )
+        self.database.execute(
+            """
+            update user_external_identity
+               set display_name = ?, display_name_observed_at = ?,
+                   display_name_event_id = ?,
+                   display_name_source_connector_id = ?,
+                   revision = revision + 1, updated_at = ?
+             where id = ?
+               and (coalesce(display_name_observed_at, ''), display_name_event_id)
+                   < (?, ?)
+            """,
+            (
+                normalized_nickname,
+                observed_at,
+                source_ingress_event_id,
+                connector_id,
+                timestamp,
+                identity_id,
+                observed_at,
+                source_ingress_event_id,
+            ),
+        )
+
+    def list_dingtalk_application_observations(
+        self, identity_id: str
+    ) -> list[dict[str, Any]]:
+        return self.database.execute(
+            """
+            select o.first_observed_at, o.last_observed_at,
+                   c.name as application_name
+              from dingtalk_identity_application_observation o
+              join integration_connector c on c.id = o.connector_id
+             where o.external_identity_id = ?
+             order by c.name, c.id
+            """,
+            (identity_id,),
+        )
+
     def touch_external_identity(self, identity_id: str) -> None:
         self.database.execute(
             """
@@ -392,6 +723,17 @@ class IdentityRepository:
                 "Invalid external identity status",
                 safe_message="身份状态无效",
                 error_code="identity_status_invalid",
+            )
+        current = self.get_external_identity(identity_id)
+        if (
+            current["provider"] == "dingtalk"
+            and current["status"] == "unbound"
+            and status == "enabled"
+        ):
+            raise NonRetryableExecutionError(
+                "Unbound DingTalk identity requires a trusted candidate",
+                safe_message="已解绑钉钉身份只能通过匹配的受信候选恢复",
+                error_code="identity_restore_required",
             )
         rows = self.database.execute(
             """
@@ -916,6 +1258,9 @@ class IdentityRepository:
             "user_id": row["user_id"],
             "provider": row["provider"],
             "tenant_code": row["tenant_code"],
+            "dingtalk_enterprise_id": str(
+                row.get("dingtalk_enterprise_id") or ""
+            ),
             "external_subject_id": row["external_subject_id"],
             "connector_id": row.get("connector_id") or "",
             "union_id": row.get("union_id") or "",
@@ -946,14 +1291,38 @@ class IdentityRepository:
             result["verification_method"] = verification_method
         if normalized_provider == ExternalIdentityProvider.ONES.value:
             team_uuids = metadata.get("team_uuids")
+            normalized_team_ids: list[str] = []
             if isinstance(team_uuids, (list, tuple)):
-                result["team_uuids"] = list(
+                normalized_team_ids = list(
                     dict.fromkeys(
                         str(value).strip()
                         for value in team_uuids
                         if str(value).strip()
                     )
                 )
+                result["team_uuids"] = normalized_team_ids
+            teams = metadata.get("teams")
+            normalized_teams: list[dict[str, str]] = []
+            seen_team_ids: set[str] = set()
+            if isinstance(teams, (list, tuple)):
+                for team in teams:
+                    if not isinstance(team, dict):
+                        continue
+                    team_id = str(team.get("id") or "").strip()
+                    if not team_id or team_id in seen_team_ids:
+                        continue
+                    seen_team_ids.add(team_id)
+                    normalized_teams.append(
+                        {
+                            "id": team_id,
+                            "name": str(team.get("name") or "").strip(),
+                        }
+                    )
+            for team_id in normalized_team_ids:
+                if team_id not in seen_team_ids:
+                    normalized_teams.append({"id": team_id, "name": ""})
+            if normalized_teams:
+                result["teams"] = normalized_teams
             default_team_id = str(metadata.get("default_team_id") or "").strip()
             if default_team_id:
                 result["default_team_id"] = default_team_id
@@ -1011,3 +1380,24 @@ def _json_object(value: object) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _trusted_dingtalk_event_time(*, occurred_at: str, received_at: str) -> str:
+    received = _parse_utc(received_at) or datetime.now(UTC)
+    occurred = _parse_utc(occurred_at)
+    if occurred is None or abs(occurred - received) > timedelta(hours=24):
+        occurred = received
+    return occurred.isoformat()
+
+
+def _parse_utc(value: object) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)

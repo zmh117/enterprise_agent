@@ -45,7 +45,9 @@ function candidate(overrides: Record<string, unknown> = {}) {
   }
   return {
     id: "candidate-1",
-    tenant_code: "tenant-east",
+    dingtalk_enterprise_id: "enterprise-east",
+    enterprise_name: "华东示例企业",
+    corp_id: "corp-east",
     external_subject_id: "staff-001",
     display_name: "张三",
     first_seen_at: "2026-07-26T01:00:01+00:00",

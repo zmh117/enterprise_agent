@@ -71,6 +71,7 @@ class RecordingAudit:
 class LoginHttpClient:
     def __init__(self) -> None:
         self.external_user_id = "ones-user-a"
+        self.display_name = "ONES User"
         self.token = "ones-token-a"
         self.teams = [
             {"uuid": "team-a", "name": "Team A"},
@@ -84,7 +85,7 @@ class LoginHttpClient:
             payload={
                 "user": {
                     "uuid": self.external_user_id,
-                    "name": "ONES User",
+                    "name": self.display_name,
                     "token": self.token,
                 },
                 "teams": self.teams,
@@ -196,9 +197,13 @@ def test_two_phase_binding_returns_candidates_and_persists_only_ciphertext(
         connection_revision_id=str(challenge["connection_revision_id"]),
         default_team_id="team-b",
     )
-    assert result["identity"]["metadata"]["default_team_id"] == "team-b"
-    assert result["identity"]["credential_status"] == "ACTIVE"
-    assert result["credential"]["status"] == "ACTIVE"
+    assert result["ones"]["default_team"] == {"id": "team-b", "name": "Team B"}
+    assert result["ones"]["teams"] == [
+        {"id": "team-a", "name": "Team A"},
+        {"id": "team-b", "name": "Team B"},
+    ]
+    assert result["ones"]["availability"] == "AVAILABLE"
+    assert result["ones"]["last_success_at"] is None
     persisted = json.dumps(
         {
             "challenge": database.execute("select * from external_api_verification_challenge"),
@@ -257,7 +262,7 @@ def test_self_overview_filters_history_and_links_current_ones_credential(
         email="user@example.test",
         password="password",
     )
-    confirmed = service.confirm_self_binding(
+    service.confirm_self_binding(
         actor_id=USER_ID,
         challenge_id=str(challenge["id"]),
         connection_revision_id=str(challenge["connection_revision_id"]),
@@ -266,15 +271,25 @@ def test_self_overview_filters_history_and_links_current_ones_credential(
 
     overview = service.self_overview(actor_id=USER_ID)
 
-    assert {item["id"] for item in overview["identities"]} == {
-        current_dingtalk["id"],
-        confirmed["identity"]["id"],
-    }
-    assert all(item["status"] != "unbound" for item in overview["identities"])
-    assert overview["credentials"]["ones"]["external_identity_id"] == confirmed["identity"]["id"]
+    assert overview["dingtalk"] == [
+        {
+            "provider": "dingtalk",
+            "nickname": "Current DingTalk User",
+            "status": "enabled",
+            "enterprise": None,
+            "last_used_at": current_dingtalk["last_seen_at"],
+            "staff_id": "dingtalk-current-user",
+        }
+    ]
+    assert overview["ones"]["user_id"] == "ones-user-a"
+    assert overview["ones"]["availability"] == "AVAILABLE"
     self_status = service.self_status(actor_id=USER_ID)
-    assert self_status["identity"]["id"] == confirmed["identity"]["id"]
-    assert self_status["credential"]["external_identity_id"] == confirmed["identity"]["id"]
+    assert self_status["ones"] == overview["ones"]
+    serialized = json.dumps(overview)
+    assert legacy_ones["id"] not in serialized
+    assert historical_dingtalk["id"] not in serialized
+    for forbidden in ("connector_id", "tenant_code", "revision", "credential_id"):
+        assert forbidden not in serialized
 
 
 def test_self_overview_fails_closed_for_active_credential_on_unbound_identity(
@@ -286,7 +301,7 @@ def test_self_overview_fails_closed_for_active_credential_on_unbound_identity(
         email="user@example.test",
         password="password",
     )
-    confirmed = service.confirm_self_binding(
+    service.confirm_self_binding(
         actor_id=USER_ID,
         challenge_id=str(challenge["id"]),
         connection_revision_id=str(challenge["connection_revision_id"]),
@@ -294,7 +309,11 @@ def test_self_overview_fails_closed_for_active_credential_on_unbound_identity(
     )
     database.execute(
         "update user_external_identity set status = 'unbound' where id = ?",
-        (confirmed["identity"]["id"],),
+        (
+            ExternalApiCredentialRepository(database).get_current_public(
+                user_id=USER_ID
+            )["external_identity_id"],
+        ),
     )
 
     with pytest.raises(NonRetryableExecutionError) as failure:
@@ -325,8 +344,7 @@ def test_self_unbind_soft_disables_identity_and_credential(
     identities = IdentityRepository(database).list_external_identities(USER_ID)
     assert identities[0]["status"] == "unbound"
     status = service.self_status(actor_id=USER_ID)
-    assert status["identity"] is None
-    assert status["credential"] is None
+    assert status["ones"] is None
     assert audit.events[-1]["event_type"] == "external_credential.self_unbound"
 
 
@@ -458,11 +476,11 @@ def test_default_team_switch_refreshes_teams_and_account_change_is_explicit(
         connection_revision_id=str(refreshed["connection_revision_id"]),
         default_team_id="team-c",
     )
-    assert switched["identity"]["metadata"]["team_uuids"] == [
-        "team-b",
-        "team-c",
+    assert switched["ones"]["teams"] == [
+        {"id": "team-b", "name": "Team B"},
+        {"id": "team-c", "name": "Team C"},
     ]
-    assert switched["identity"]["metadata"]["default_team_id"] == "team-c"
+    assert switched["ones"]["default_team"] == {"id": "team-c", "name": "Team C"}
 
     http_client.external_user_id = "ones-user-b"
     changed = service.begin_self_binding(
@@ -485,7 +503,7 @@ def test_default_team_switch_refreshes_teams_and_account_change_is_explicit(
         default_team_id="team-b",
         replace_existing=True,
     )
-    assert replaced["identity"]["external_subject_id"] == "ones-user-b"
+    assert replaced["ones"]["user_id"] == "ones-user-b"
     assert database.execute_one(
         """
             select count(*) as count from user_external_identity
@@ -515,10 +533,31 @@ def test_401_invalidates_credential_403_preserves_and_admin_never_reads_token(
     service.apply_http_status(user_id=USER_ID, status=401)
     assert credentials.get_current_public(user_id=USER_ID)["status"] == "INVALID"
     admin_view = service.admin_status(actor_id=ADMIN_ID, user_id=USER_ID)
-    assert admin_view["credential"]["status"] == "INVALID"
+    assert admin_view["ones"]["credential"]["status"] == "INVALID"
     assert "token" not in json.dumps(admin_view).lower()
     disabled = service.admin_disable(actor_id=ADMIN_ID, user_id=USER_ID)
-    assert disabled["status"] == "DISABLED"
+    assert disabled["ones"]["credential"]["status"] == "DISABLED"
     service.admin_unbind(actor_id=ADMIN_ID, user_id=USER_ID)
     identity = IdentityRepository(database).list_external_identities(USER_ID)[0]
     assert identity["status"] == "unbound"
+
+
+def test_missing_ones_user_name_uses_fixed_safe_placeholder(
+    database: Database,
+) -> None:
+    service, http_client, _, _ = _service(database)
+    http_client.display_name = ""
+    challenge = service.begin_self_binding(
+        actor_id=USER_ID,
+        email="must-not-become-display-name@example.test",
+        password="password",
+    )
+    assert challenge["display_name"] == "ONES 未返回用户名称"
+    result = service.confirm_self_binding(
+        actor_id=USER_ID,
+        challenge_id=str(challenge["id"]),
+        connection_revision_id=str(challenge["connection_revision_id"]),
+        default_team_id="team-a",
+    )
+    assert result["ones"]["user_name"] == "ONES 未返回用户名称"
+    assert "must-not-become-display-name" not in json.dumps(result)

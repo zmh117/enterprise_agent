@@ -36,7 +36,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
     assert len({item.version for item in catalog}) == len(catalog)
     assert len({item.name for item in catalog}) == len(catalog)
     assert [item.version for item in catalog][8:11] == ["009", "009a", "010"]
-    assert catalog[-1].version == "026"
+    assert catalog[-1].version == "027"
     assert all(len(item.checksum) == 64 for item in catalog)
 
     baseline = legacy_baseline_artifacts(catalog)
@@ -116,18 +116,18 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
     first = migrator.run()
     second = migrator.run()
 
-    assert first.head == "026"
+    assert first.head == "027"
     assert first.baselined == 0
     assert first.applied[-7:] == (
-        "020",
         "021",
         "022",
         "023",
         "024",
         "025",
         "026",
+        "027",
     )
-    assert second.head == "026"
+    assert second.head == "027"
     assert second.baselined == 0
     assert second.applied == ()
     assert len(SchemaMigrationLedger(database).list_records()) == len(
@@ -143,6 +143,7 @@ def test_025_upgrade_preserves_existing_ones_identity_without_fabricating_creden
         if path.name not in {
             "025_governed_api_capabilities.sql",
             "026_allow_plain_http_api_connections.sql",
+            "027_dingtalk_enterprise_identity_observations.sql",
         }:
             shutil.copy2(path, tmp_path / path.name)
 
@@ -214,7 +215,10 @@ def test_026_upgrade_renames_plain_http_authorization_without_data_loss(
 ) -> None:
     migrations_dir = default_migrations_dir()
     for path in migrations_dir.glob("*.sql"):
-        if path.name != "026_allow_plain_http_api_connections.sql":
+        if path.name not in {
+            "026_allow_plain_http_api_connections.sql",
+            "027_dingtalk_enterprise_identity_observations.sql",
+        }:
             shutil.copy2(path, tmp_path / path.name)
 
     database = Database("sqlite:///:memory:")
@@ -362,7 +366,7 @@ def test_schema_head_validator_is_read_only_and_rejects_missing_ledger() -> None
 
     with pytest.raises(
         SchemaHeadError,
-        match="ledger is missing; expected head 026",
+        match="ledger is missing; expected head 027",
     ):
         SchemaHeadValidator(
             database,

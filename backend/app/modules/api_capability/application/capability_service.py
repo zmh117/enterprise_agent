@@ -33,8 +33,8 @@ from app.modules.identity.infrastructure import (
     ExternalApiCredentialRepository,
     IdentityRepository,
 )
+from app.modules.identity.domain import ExternalCredentialUsageSource
 from app.shared.exceptions import (
-    AppError,
     NonRetryableExecutionError,
     NotFound,
 )
@@ -224,12 +224,16 @@ class ApiCapabilityService:
             actor_id=actor_id,
             draft=draft,
             agent_input=agent_input,
+            correlation_id=correlation_id,
         )
         self._audit(
             "api_capability.tested",
             actor_id,
             current,
-            extra={"result_hash": content_hash(result["normalized_output"])},
+            extra={
+                "result_hash": content_hash(result["normalized_output"]),
+                "usage_source": ExternalCredentialUsageSource.ADMIN_TEST.value,
+            },
             correlation_id=correlation_id,
         )
         return result
@@ -254,6 +258,7 @@ class ApiCapabilityService:
             actor_id=actor_id,
             draft=draft,
             agent_input=agent_input,
+            correlation_id=correlation_id,
         )
         identity = self._current_identity(actor_id)
         evidence = self.repository.record_verification(
@@ -444,6 +449,7 @@ class ApiCapabilityService:
         actor_id: str,
         draft: dict[str, Any],
         agent_input: dict[str, Any],
+        correlation_id: str = "",
     ) -> dict[str, Any]:
         capability = draft["capability"]
         validate_schema_instance(
@@ -498,7 +504,13 @@ class ApiCapabilityService:
             "query": query,
             "body": preview_body,
         }
+        credential_id = str(credential["id"])
+        attempted = False
         try:
+            self.credential_repository.record_usage_attempt(
+                credential_id=credential_id
+            )
+            attempted = True
             response = self.http_client.request(
                 connection=connection,
                 method=str(handler["method"]),
@@ -507,26 +519,73 @@ class ApiCapabilityService:
                 body=request_body if handler["method"] == "POST" else None,
                 authentication_header=profile.authentication_header(token),
             )
-        except AppError as exc:
-            if exc.error_code == "external_api_unauthorized":
-                self.credential_repository.set_status(
-                    user_id=actor_id,
-                    status="INVALID",
-                    error_code=exc.error_code,
+            normalized_output = self.mapping_interpreter.execute(
+                compiled["response_plan"],
+                agent_input=agent_input,
+                system_context=system_context,
+                response=response.payload,
+            )
+            validate_schema_instance(
+                capability["output_schema"],
+                normalized_output,
+                label="output",
+            )
+        except Exception as exc:
+            if attempted:
+                error_code = str(
+                    getattr(exc, "error_code", "")
+                    or "external_api_unexpected_failure"
+                )
+                self.credential_repository.record_usage_failure(
+                    credential_id=credential_id,
+                    error_code=error_code,
+                    invalidate=error_code == "external_api_unauthorized",
+                )
+                self._audit_credential_usage(
+                    actor_id=actor_id,
+                    credential_id=credential_id,
+                    source=ExternalCredentialUsageSource.ADMIN_TEST,
+                    status="FAILED",
+                    error_code=error_code,
+                    correlation_id=correlation_id,
                 )
             raise
-        normalized_output = self.mapping_interpreter.execute(
-            compiled["response_plan"],
-            agent_input=agent_input,
-            system_context=system_context,
-            response=response.payload,
+        self.credential_repository.record_usage_success(
+            credential_id=credential_id
         )
-        validate_schema_instance(
-            capability["output_schema"],
-            normalized_output,
-            label="output",
+        self._audit_credential_usage(
+            actor_id=actor_id,
+            credential_id=credential_id,
+            source=ExternalCredentialUsageSource.ADMIN_TEST,
+            status="SUCCEEDED",
+            correlation_id=correlation_id,
         )
         return {**preview, "normalized_output": normalized_output}
+
+    def _audit_credential_usage(
+        self,
+        *,
+        actor_id: str,
+        credential_id: str,
+        source: ExternalCredentialUsageSource,
+        status: str,
+        error_code: str = "",
+        correlation_id: str = "",
+    ) -> None:
+        self.audit_service.record(
+            "external_credential.business_api_used",
+            status=status,
+            summary="Persistent ONES credential used by governed API",
+            actor_id=actor_id,
+            payload={
+                "user_id": actor_id,
+                "credential_id": credential_id,
+                "source": source.value,
+                "result": status.lower(),
+                "error_code": error_code,
+                "correlation_id": correlation_id,
+            },
+        )
 
     def _matching_draft(
         self,

@@ -47,62 +47,73 @@ function authenticatedUser(
   }
 }
 
-function identity(overrides: Record<string, unknown> = {}) {
+function adminDingTalkIdentity(overrides: Record<string, unknown> = {}) {
   return {
-    id: "identity-1",
-    user_id: "user-1",
     provider: "dingtalk",
-    tenant_code: "default",
-    external_subject_id: "03695725024624053732",
-    connector_id: "connector-dingtalk-stream-default",
-    union_id: "",
-    open_id: "",
-    display_name: "庄慕焕",
+    identity_id: "identity-1",
+    nickname: "庄慕焕",
     status: "enabled",
-    verified_at: "2026-07-22T00:00:00+08:00",
-    last_seen_at: "2026-07-23T00:00:00+08:00",
-    metadata: { verification_method: "trusted_connector" },
+    enterprise: { name: "默认钉钉企业", corp_id: "corp-default" },
+    last_used_at: "2026-07-23T00:00:00+08:00",
+    staff_id: "03695725024624053732",
+    binding_confirmed_at: "2026-07-22T00:00:00+08:00",
     revision: 1,
-    created_at: "2026-07-22T00:00:00+08:00",
-    updated_at: "2026-07-23T00:00:00+08:00",
+    observations: [],
     ...overrides,
   }
 }
 
+function adminOnesIdentity(overrides: Record<string, unknown> = {}) {
+  return {
+    provider: "ones",
+    identity_id: "identity-ones",
+    identity_status: "enabled",
+    identity_revision: 2,
+    user_name: "ONES 用户",
+    availability: "AVAILABLE",
+    default_team: { id: "team-default", name: "默认 Team" },
+    verified_at: "2026-07-22T00:00:00+08:00",
+    last_success_at: "2026-07-23T00:00:00+08:00",
+    user_id: "ones-user-1",
+    teams: [{ id: "team-default", name: "默认 Team" }],
+    ...overrides,
+  }
+}
+
+function adminOverview(
+  current: Array<Record<string, unknown>> = [],
+  history: Array<Record<string, unknown>> = []
+) {
+  return { user_id: "user-1", current, history }
+}
+
+function selfDingTalkIdentity(overrides: Record<string, unknown> = {}) {
+  const identity: Record<string, unknown> = {
+    ...adminDingTalkIdentity(overrides),
+  }
+  delete identity.identity_id
+  delete identity.revision
+  return identity
+}
+
+function selfOnesIdentity(overrides: Record<string, unknown> = {}) {
+  const identity: Record<string, unknown> = {
+    ...adminOnesIdentity(overrides),
+  }
+  delete identity.identity_id
+  delete identity.identity_status
+  delete identity.identity_revision
+  return identity
+}
+
 function selfOverview(
-  identities: Array<ReturnType<typeof identity>> = [],
-  onesCredential: Record<string, unknown> | null = null
+  dingtalk: Array<Record<string, unknown>> = [],
+  ones: Record<string, unknown> | null = null
 ) {
   return {
     user: { id: "user-1", display_name: "庄慕焕" },
-    identities,
-    credentials: { ones: onesCredential },
-  }
-}
-
-function providers() {
-  return {
-    providers: [
-      { code: "dingtalk", display_name: "钉钉", available: true },
-      {
-        code: "ones",
-        display_name: "ONES",
-        available: true,
-        instance_code: "default",
-      },
-    ],
-  }
-}
-
-function tenants() {
-  return {
-    tenants: [
-      {
-        connector_id: "connector-dingtalk-stream-default",
-        name: "默认钉钉 Stream",
-        tenant_code: "default",
-      },
-    ],
+    dingtalk,
+    ones,
   }
 }
 
@@ -187,7 +198,9 @@ function discoveryCandidate(overrides: Record<string, unknown> = {}) {
   }
   return {
     id: "candidate-1",
-    tenant_code: "default",
+    dingtalk_enterprise_id: "enterprise-default",
+    enterprise_name: "默认钉钉企业",
+    corp_id: "corp-default",
     external_subject_id: "staff-001",
     display_name: "待绑定张三",
     first_seen_at: "2026-07-26T01:00:01+00:00",
@@ -299,78 +312,62 @@ describe("User and external identity management", () => {
     )
   })
 
-  it("shows user detail and binds DingTalk only through a trusted tenant option", async () => {
-    let bindingBody: Record<string, unknown> | undefined
-    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+  it("removes manual DingTalk binding and routes administrators to trusted candidates", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input)
-      if (url.endsWith("/external-identity-providers"))
-        return response(providers())
-      if (url.endsWith("/dingtalk-tenants")) return response(tenants())
       if (url.includes("/api/admin/authorization/roles?"))
         return response(emptyRoles())
-      if (url.endsWith("/dingtalk-identities") && init?.method === "POST") {
-        bindingBody = JSON.parse(String(init.body))
-        return response({ identity: identity() })
-      }
+      if (url.endsWith("/users/user-1/external-identities"))
+        return response(adminOverview())
       if (url.endsWith("/users/user-1")) {
-        return response({ user: user(), identities: [] })
+        return response({ user: user() })
       }
       throw new Error(`Unexpected request: ${url}`)
     })
     renderDetail()
     expect(await screen.findByText("基本资料")).toBeInTheDocument()
     expect(
-      await screen.findByText("该用户尚未绑定钉钉或 ONES 身份。")
+      await screen.findByText("该用户当前没有已绑定的钉钉或 ONES 身份。")
     ).toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole("button", { name: "绑定钉钉" }))
-    fireEvent.change(screen.getByLabelText("钉钉租户 / 连接器"), {
-      target: { value: "connector-dingtalk-stream-default" },
-    })
-    fireEvent.change(screen.getByLabelText("senderStaffId"), {
-      target: { value: "03695725024624053732" },
-    })
-    fireEvent.click(screen.getByRole("button", { name: "绑定钉钉" }))
-    await waitFor(() =>
-      expect(bindingBody).toEqual({
-        expected_user_revision: 3,
-        tenant_code: "default",
-        external_subject_id: "03695725024624053732",
-        connector_id: "connector-dingtalk-stream-default",
-        display_name: "",
-      })
-    )
+    expect(
+      screen.getByRole("button", { name: "从受信候选绑定钉钉" })
+    ).toBeInTheDocument()
+    expect(screen.queryByLabelText("senderStaffId")).toBeNull()
+    expect(screen.queryByLabelText("钉钉租户 / 连接器")).toBeNull()
+    fireEvent.click(screen.getByRole("button", { name: "从受信候选绑定钉钉" }))
+    expect(window.location.pathname).not.toContain("dingtalk-identities")
   })
 
   it("separates current identities from collapsed read-only history", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input)
-      if (url.endsWith("/external-identity-providers"))
-        return response(providers())
-      if (url.endsWith("/dingtalk-tenants")) return response(tenants())
       if (url.includes("/api/admin/authorization/roles?"))
         return response(emptyRoles())
+      if (url.endsWith("/users/user-1/external-identities")) {
+        return response(
+          adminOverview(
+            [
+              adminDingTalkIdentity({
+                identity_id: "identity-current",
+                nickname: "Current DingTalk User",
+              }),
+            ],
+            [
+              adminOnesIdentity({
+                identity_id: "identity-history",
+                identity_status: "unbound",
+                user_name: "Historical ONES User",
+                availability: "UNBOUND",
+                user_id: "ones-history-user",
+                teams: [{ id: "legacy-team", name: "" }],
+                default_team: null,
+              }),
+            ]
+          )
+        )
+      }
       if (url.endsWith("/users/user-1")) {
-        return response({
-          user: user(),
-          identities: [
-            identity({
-              id: "identity-current",
-              display_name: "Current DingTalk User",
-            }),
-            identity({
-              id: "identity-history",
-              provider: "ones",
-              tenant_code: "default",
-              external_subject_id: "ones-history-user",
-              connector_id: "",
-              display_name: "Historical ONES User",
-              status: "unbound",
-              metadata: { team_uuids: ["legacy-team"] },
-              revision: 2,
-            }),
-          ],
-        })
+        return response({ user: user() })
       }
       throw new Error(`Unexpected request: ${url}`)
     })
@@ -389,12 +386,125 @@ describe("User and external identity management", () => {
     expect(screen.queryByRole("button", { name: "软解绑 ONES" })).toBeNull()
   })
 
+  it("labels missing Team names and exposes governed ONES failure facts in Chinese", async () => {
+    const ones = adminOnesIdentity({
+      availability: "REVERIFY_REQUIRED",
+      default_team: { id: "team-id-only", name: "" },
+      teams: [{ id: "team-id-only", name: "" }],
+    })
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input)
+      if (url.includes("/api/admin/authorization/roles?")) {
+        return response(emptyRoles())
+      }
+      if (url.endsWith("/users/user-1/external-credentials/ones")) {
+        return response({
+          user_id: "user-1",
+          ones: {
+            ...ones,
+            credential: {
+              status: "INVALID",
+              revision: 6,
+              last_attempt_at: "2026-08-03T00:00:00+08:00",
+              last_success_at: null,
+              last_error_code: "ones_unauthorized",
+              last_error_at: "2026-08-03T00:00:01+08:00",
+            },
+            connection: null,
+          },
+        })
+      }
+      if (url.endsWith("/users/user-1/external-identities")) {
+        return response(adminOverview([ones]))
+      }
+      if (url.endsWith("/users/user-1")) {
+        return response({ user: user() })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    renderDetail()
+
+    expect(
+      (await screen.findAllByText("team-id-only（名称暂不可用）")).length
+    ).toBeGreaterThan(0)
+    expect(await screen.findByText("无效，需要重新验证")).toBeInTheDocument()
+    expect(screen.getByText("历史连接已清理")).toBeInTheDocument()
+    expect(screen.getByText("ones_unauthorized")).toBeInTheDocument()
+  })
+
+  it("shows an explicit governed empty state when the ONES credential is missing", async () => {
+    const ones = adminOnesIdentity({ availability: "REVERIFY_REQUIRED" })
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input)
+      if (url.includes("/api/admin/authorization/roles?")) {
+        return response(emptyRoles())
+      }
+      if (url.endsWith("/users/user-1/external-credentials/ones")) {
+        return response({
+          user_id: "user-1",
+          ones: { ...ones, credential: null, connection: null },
+        })
+      }
+      if (url.endsWith("/users/user-1/external-identities")) {
+        return response(adminOverview([ones]))
+      }
+      if (url.endsWith("/users/user-1")) {
+        return response({ user: user() })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    renderDetail()
+
+    expect(await screen.findByText("凭据缺失")).toBeInTheDocument()
+    expect(screen.getByText("历史连接已清理")).toBeInTheDocument()
+  })
+
+  it("labels an administrator-disabled ONES credential without exposing its raw status", async () => {
+    const ones = adminOnesIdentity({ availability: "ADMIN_DISABLED" })
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input)
+      if (url.includes("/api/admin/authorization/roles?")) {
+        return response(emptyRoles())
+      }
+      if (url.endsWith("/users/user-1/external-credentials/ones")) {
+        return response({
+          user_id: "user-1",
+          ones: {
+            ...ones,
+            credential: {
+              status: "DISABLED",
+              revision: 4,
+              last_attempt_at: null,
+              last_success_at: null,
+              last_error_code: "",
+              last_error_at: null,
+            },
+            connection: { name: "公司 ONES", revision: 3, status: "PUBLISHED" },
+          },
+        })
+      }
+      if (url.endsWith("/users/user-1/external-identities")) {
+        return response(adminOverview([ones]))
+      }
+      if (url.endsWith("/users/user-1")) {
+        return response({ user: user() })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    renderDetail()
+
+    expect(await screen.findByText("已被管理员停用")).toBeInTheDocument()
+    expect(await screen.findByText("公司 ONES · r3")).toBeInTheDocument()
+    expect(await screen.findByText("已停用")).toBeInTheDocument()
+    expect(screen.queryByText(/^DISABLED$/)).toBeNull()
+  })
+
   it("opens history and offers restore only for a matching trusted candidate", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input)
-      if (url.endsWith("/external-identity-providers"))
-        return response(providers())
-      if (url.endsWith("/dingtalk-tenants")) return response(tenants())
       if (url.includes("/api/admin/authorization/roles?"))
         return response(emptyRoles())
       if (url.endsWith("/dingtalk-identity-candidates/candidate-1")) {
@@ -413,19 +523,24 @@ describe("User and external identity management", () => {
           }),
         })
       }
+      if (url.endsWith("/users/user-1/external-identities")) {
+        return response(
+          adminOverview(
+            [],
+            [
+              adminDingTalkIdentity({
+                identity_id: "identity-history",
+                staff_id: "staff-001",
+                nickname: "Historical DingTalk User",
+                status: "unbound",
+                revision: 2,
+              }),
+            ]
+          )
+        )
+      }
       if (url.endsWith("/users/user-1")) {
-        return response({
-          user: user(),
-          identities: [
-            identity({
-              id: "identity-history",
-              external_subject_id: "staff-001",
-              display_name: "Historical DingTalk User",
-              status: "unbound",
-              revision: 2,
-            }),
-          ],
-        })
+        return response({ user: user() })
       }
       throw new Error(`Unexpected request: ${url}`)
     })
@@ -435,7 +550,10 @@ describe("User and external identity management", () => {
     const history = await screen.findByTestId("external-identity-history")
     await waitFor(() => expect(history).toHaveAttribute("open"))
     expect(
-      await screen.findByRole("button", { name: "恢复身份" })
+      await screen.findByRole("heading", { name: "确认受信钉钉候选" })
+    ).toBeVisible()
+    expect(
+      screen.getByRole("button", { name: "确认绑定并保存授权" })
     ).toBeVisible()
   })
 
@@ -443,9 +561,6 @@ describe("User and external identity management", () => {
     let bindingBody: Record<string, unknown> | undefined
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = String(input)
-      if (url.endsWith("/external-identity-providers"))
-        return response(providers())
-      if (url.endsWith("/dingtalk-tenants")) return response(tenants())
       if (url.includes("/api/admin/authorization/roles?"))
         return response(assignableRoles())
       if (url.endsWith("/dingtalk-identity-candidates/candidate-1")) {
@@ -466,20 +581,21 @@ describe("User and external identity management", () => {
           409
         )
       }
-      if (url.endsWith("/users/user-1")) {
-        return response({ user: user(), identities: [] })
-      }
+      if (url.endsWith("/users/user-1/external-identities"))
+        return response(adminOverview())
+      if (url.endsWith("/users/user-1")) return response({ user: user() })
       throw new Error(`Unexpected request: ${url}`)
     })
     renderDetail("/users/user-1?candidate=candidate-1")
 
     expect(
-      await screen.findByRole("heading", { name: "确认绑定钉钉用户" })
+      await screen.findByRole("heading", { name: "确认受信钉钉候选" })
     ).toBeInTheDocument()
-    expect(screen.getByText("default")).toBeInTheDocument()
-    expect(screen.getByText("默认钉钉 Stream")).toBeInTheDocument()
-    expect(screen.getByText("staff-001")).toBeInTheDocument()
-    expect(screen.getByText("待绑定张三")).toBeInTheDocument()
+    expect(await screen.findByText("默认钉钉企业")).toBeInTheDocument()
+    expect(await screen.findByText("corp-default")).toBeInTheDocument()
+    expect(await screen.findByText("默认钉钉 Stream")).toBeInTheDocument()
+    expect(await screen.findByText("staff-001")).toBeInTheDocument()
+    expect(await screen.findByText("待绑定张三")).toBeInTheDocument()
     expect(screen.queryByLabelText("senderStaffId")).toBeNull()
 
     fireEvent.click(screen.getByRole("checkbox", { name: /诊断角色 1/ }))
@@ -494,6 +610,7 @@ describe("User and external identity management", () => {
       expected_user_revision: 3,
       initial_role_ids: ["role-1", "role-2"],
       bind_without_access_confirmed: false,
+      replace_current_confirmed: false,
     })
     for (const forbidden of [
       "tenant_code",
@@ -504,7 +621,7 @@ describe("User and external identity management", () => {
       expect(bindingBody).not.toHaveProperty(forbidden)
     }
     expect(
-      screen.getByRole("heading", { name: "确认绑定钉钉用户" })
+      screen.getByRole("heading", { name: "确认受信钉钉候选" })
     ).toBeInTheDocument()
   })
 
@@ -538,12 +655,10 @@ describe("User and external identity management", () => {
             username: "new-person",
             display_name: "待绑定张三",
           }),
-          identities: [],
         })
       }
-      if (url.endsWith("/external-identity-providers"))
-        return response(providers())
-      if (url.endsWith("/dingtalk-tenants")) return response(tenants())
+      if (url.endsWith("/users/user-new/external-identities"))
+        return response({ user_id: "user-new", current: [], history: [] })
       if (url.includes("/api/admin/authorization/roles?"))
         return response(emptyRoles())
       throw new Error(`Unexpected request: ${url}`)
@@ -576,7 +691,7 @@ describe("User and external identity management", () => {
     fireEvent.click(screen.getByRole("button", { name: "创建用户" }))
 
     expect(
-      await screen.findByRole("heading", { name: "确认绑定钉钉用户" })
+      await screen.findByRole("heading", { name: "确认受信钉钉候选" })
     ).toBeInTheDocument()
     expect(
       requestedUrls.filter((url) =>
@@ -588,9 +703,6 @@ describe("User and external identity management", () => {
   it("shows a stable revision conflict instead of overwriting newer user data", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = String(input)
-      if (url.endsWith("/external-identity-providers"))
-        return response(providers())
-      if (url.endsWith("/dingtalk-tenants")) return response(tenants())
       if (url.includes("/api/admin/authorization/roles?"))
         return response(emptyRoles())
       if (url.endsWith("/users/user-1") && init?.method === "PUT") {
@@ -604,9 +716,9 @@ describe("User and external identity management", () => {
           409
         )
       }
-      if (url.endsWith("/users/user-1")) {
-        return response({ user: user(), identities: [] })
-      }
+      if (url.endsWith("/users/user-1/external-identities"))
+        return response(adminOverview())
+      if (url.endsWith("/users/user-1")) return response({ user: user() })
       throw new Error(`Unexpected request: ${url}`)
     })
     renderDetail()
@@ -624,13 +736,11 @@ describe("User and external identity management", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input)
       requestedUrls.push(url)
-      if (url.endsWith("/external-identity-providers"))
-        return response(providers())
-      if (url.endsWith("/dingtalk-tenants")) return response(tenants())
       if (url.includes("/api/admin/authorization/roles?"))
         return response(emptyRoles())
-      if (url.endsWith("/users/user-1"))
-        return response({ user: user(), identities: [identity()] })
+      if (url.endsWith("/users/user-1/external-identities"))
+        return response(adminOverview([adminDingTalkIdentity()]))
+      if (url.endsWith("/users/user-1")) return response({ user: user() })
       throw new Error(`Unexpected request: ${url}`)
     })
 
@@ -644,11 +754,15 @@ describe("User and external identity management", () => {
       await screen.findByRole("button", { name: "停用身份" })
     ).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "解绑" })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "绑定钉钉" })).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: "从受信候选绑定钉钉" })
+    ).toBeInTheDocument()
     expect(screen.queryByRole("textbox", { name: "租户 / 实例" })).toBeNull()
     expect(screen.queryByRole("textbox", { name: "外部主体" })).toBeNull()
     expect(
-      requestedUrls.some((url) => url.endsWith("/external-identity-providers"))
+      requestedUrls.some((url) =>
+        url.endsWith("/users/user-1/external-identities")
+      )
     ).toBe(true)
     expect(
       requestedUrls.some((url) => url.endsWith("/api/me/external-identities"))
@@ -659,7 +773,7 @@ describe("User and external identity management", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input)
       if (url.endsWith("/api/me/external-identities")) {
-        return response(selfOverview([identity()]))
+        return response(selfOverview([selfDingTalkIdentity({ nickname: "" })]))
       }
       throw new Error(`Unexpected request: ${url}`)
     })
@@ -668,7 +782,16 @@ describe("User and external identity management", () => {
 
     expect(await screen.findByText("ONES 本人身份")).toBeInTheDocument()
     expect(await screen.findByText("钉钉身份")).toBeInTheDocument()
+    expect(await screen.findByText("钉钉未返回昵称")).toBeInTheDocument()
     expect(await screen.findByText("已启用 · 只读")).toBeInTheDocument()
+    const identityDetails = screen.getByText("身份详情")
+    identityDetails.focus()
+    expect(identityDetails).toHaveFocus()
+    expect(identityDetails.closest("details")).toBeInTheDocument()
+    expect(identityDetails.closest("details")?.querySelector("dl")).toHaveClass(
+      "grid",
+      "sm:grid-cols-2"
+    )
     expect(screen.queryByRole("button", { name: "停用身份" })).toBeNull()
     expect(screen.queryByRole("button", { name: "解绑" })).toBeNull()
   })
@@ -752,29 +875,16 @@ describe("User and external identity management", () => {
         if (url.endsWith("/ones/confirm") && init?.method === "POST") {
           confirmBody = JSON.parse(String(init.body))
           return response({
-            identity: identity({
-              provider: "ones",
-              external_subject_id: "ones-user-1",
-              display_name: "庄慕焕",
-              connector_id: "",
-              metadata: {
-                team_uuids: ["team-a", "team-b"],
-                default_team_id: "team-b",
-              },
+            user: { id: "user-1", display_name: "庄慕焕" },
+            ones: selfOnesIdentity({
+              user_name: "庄慕焕",
+              user_id: "ones-user-1",
+              default_team: { id: "team-b", name: "Team B" },
+              teams: [
+                { id: "team-a", name: "Team A" },
+                { id: "team-b", name: "Team B" },
+              ],
             }),
-            credential: {
-              id: "credential-1",
-              user_id: "user-1",
-              external_identity_id: "identity-1",
-              provider: "ones",
-              connection_revision_id: "connection-revision-1",
-              status: "ACTIVE",
-              revision: 1,
-              last_error_code: "",
-              verified_at: "2026-07-31T00:00:00Z",
-              created_at: "2026-07-31T00:00:00Z",
-              updated_at: "2026-07-31T00:00:00Z",
-            },
           })
         }
         throw new Error(`Unexpected request: ${url}`)
@@ -793,7 +903,7 @@ describe("User and external identity management", () => {
     fireEvent.click(screen.getByRole("button", { name: "验证并读取 Team" }))
     const team = await screen.findByLabelText("默认 Team")
     fireEvent.change(team, { target: { value: "team-b" } })
-    fireEvent.click(screen.getByRole("button", { name: "保存身份与默认 Team" }))
+    fireEvent.click(screen.getByRole("button", { name: "保存绑定" }))
 
     await waitFor(() =>
       expect(confirmBody).toEqual({
@@ -811,33 +921,44 @@ describe("User and external identity management", () => {
   })
 
   it("changes identity state, confirms soft unbind, and disables personal binding for service accounts", async () => {
-    let currentIdentity = identity()
+    let currentIdentity = adminDingTalkIdentity()
     const fetch = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation((input, init) => {
         const url = String(input)
-        if (url.endsWith("/external-identity-providers"))
-          return response(providers())
-        if (url.endsWith("/dingtalk-tenants")) return response(tenants())
         if (url.includes("/api/admin/authorization/roles?"))
           return response(emptyRoles())
         if (
           url.includes("/identities/identity-1/status") &&
           init?.method === "PUT"
         ) {
-          currentIdentity = identity({ status: "disabled", revision: 2 })
-          return response({ identity: currentIdentity })
+          currentIdentity = adminDingTalkIdentity({
+            status: "disabled",
+            revision: 2,
+          })
+          return response({
+            identity: { id: "identity-1", status: "disabled", revision: 2 },
+          })
         }
         if (
           url.includes("/identities/identity-1?") &&
           init?.method === "DELETE"
         ) {
-          currentIdentity = identity({ status: "unbound", revision: 3 })
-          return response({ identity: currentIdentity })
+          currentIdentity = adminDingTalkIdentity({
+            status: "unbound",
+            revision: 3,
+          })
+          return response({
+            identity: { id: "identity-1", status: "unbound", revision: 3 },
+          })
         }
-        if (url.endsWith("/users/user-1")) {
-          return response({ user: user(), identities: [currentIdentity] })
-        }
+        if (url.endsWith("/users/user-1/external-identities"))
+          return response(
+            currentIdentity.status === "unbound"
+              ? adminOverview([], [currentIdentity])
+              : adminOverview([currentIdentity])
+          )
+        if (url.endsWith("/users/user-1")) return response({ user: user() })
         throw new Error(`Unexpected request: ${url}`)
       })
     const firstRender = renderDetail()
@@ -861,23 +982,19 @@ describe("User and external identity management", () => {
     vi.restoreAllMocks()
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input)
-      if (url.endsWith("/external-identity-providers"))
-        return response(providers())
-      if (url.endsWith("/dingtalk-tenants")) return response(tenants())
       if (url.includes("/api/admin/authorization/roles?"))
         return response(emptyRoles())
-      return response({
-        user: user({ account_type: "service" }),
-        identities: [],
-      })
+      if (url.endsWith("/users/user-1/external-identities"))
+        return response(adminOverview())
+      if (url.endsWith("/users/user-1"))
+        return response({ user: user({ account_type: "service" }) })
+      throw new Error(`Unexpected request: ${url}`)
     })
     renderDetail()
     expect(
-      await screen.findByRole("button", { name: "绑定钉钉" })
+      await screen.findByRole("button", { name: "从受信候选绑定钉钉" })
     ).toBeDisabled()
-    expect(
-      screen.getByRole("button", { name: "ONES 由本人绑定" })
-    ).toBeDisabled()
+    expect(screen.queryByRole("button", { name: /ONES.*绑定/ })).toBeNull()
     expect(
       screen.getByText("服务账号不能绑定个人外部身份。")
     ).toBeInTheDocument()

@@ -30,13 +30,50 @@ def _container():
     )
 
 
+def _active_enterprise(container, *, name: str = "测试钉钉企业") -> dict[str, object]:
+    timestamp = "2026-08-03T00:00:00+00:00"
+    container.database.execute(
+        """
+        insert into app_user
+          (id, username, display_name, status, created_at, updated_at)
+        values ('test-admin', 'test-admin', 'Test Admin', 'enabled', ?, ?)
+        on conflict(id) do nothing
+        """,
+        (timestamp, timestamp),
+    )
+    existing = container.database.execute_one(
+        "select * from dingtalk_enterprise where name = ?",
+        (name,),
+    )
+    if existing:
+        return existing
+    created = container.managed_channel_service.create_dingtalk_enterprise(
+        name=name,
+        actor_id="test-admin",
+    )
+    container.database.execute(
+        """
+        update dingtalk_enterprise
+           set corp_id = 'corp-managed-test', status = 'ACTIVE',
+               verified_at = ?, verification_event_id = 'test-fixture-event'
+         where id = ?
+        """,
+        (timestamp, created["id"]),
+    )
+    return container.database.execute_one(
+        "select * from dingtalk_enterprise where id = ?",
+        (created["id"],),
+    )
+
+
 def _create(container, client_id: str):
+    enterprise = _active_enterprise(container)
     return container.managed_channel_service.create_dingtalk(
         DingTalkApplicationInput(
             name=f"机器人 {client_id}",
             client_id=client_id,
             client_secret=f"secret-{client_id}",
-            tenant_code="default",
+            dingtalk_enterprise_id=str(enterprise["id"]),
         ),
         actor_id="test-admin",
         enabled=True,
@@ -52,6 +89,8 @@ def _submission(connector_id: str, event_id: str) -> ChannelIngressSubmission:
             "conversationId": "group-1",
             "conversationType": "2",
             "senderStaffId": "user-1",
+            "senderCorpId": "corp-managed-test",
+            "chatbotCorpId": "corp-managed-test",
             "msgId": event_id,
             "robotCode": connector_id,
             "sessionWebhook": "https://oapi.dingtalk.com/robot/sendBySession?token=private",
@@ -199,21 +238,23 @@ def test_restart_changes_only_selected_connector_revision():
 
 def test_updating_bootstrap_connector_migrates_env_secret_to_managed_secret():
     container = _container()
+    enterprise = _active_enterprise(container)
     timestamp = "2026-07-26T00:00:00+00:00"
     container.database.execute(
         """
         insert into integration_connector
           (id, connector_type, name, base_url, enabled, metadata,
            allow_ingress, allow_delivery, secret_ref, endpoint_ref,
-           host_allowlist, revision, created_at, updated_at, deleted)
+           host_allowlist, revision, created_at, updated_at, deleted,
+           dingtalk_enterprise_id)
         values (
           'connector-bootstrap-dingtalk', 'dingtalk_enterprise_stream',
           '旧启动配置机器人', '', 1,
           '{"client_id_ref":"env:DINGTALK_CLIENT_ID","tenant_code":"default"}',
-          1, 0, 'env:DINGTALK_CLIENT_SECRET', '', '', 1, ?, ?, 0
+          1, 0, 'env:DINGTALK_CLIENT_SECRET', '', '', 1, ?, ?, 0, ?
         )
         """,
-        (timestamp, timestamp),
+        (timestamp, timestamp, enterprise["id"]),
     )
 
     updated = container.managed_channel_service.update_dingtalk(
@@ -222,7 +263,7 @@ def test_updating_bootstrap_connector_migrates_env_secret_to_managed_secret():
             name="受管钉钉机器人",
             client_id="ding-managed",
             client_secret="replacement-secret",
-            tenant_code="default",
+            dingtalk_enterprise_id=str(enterprise["id"]),
         ),
         expected_revision=1,
         actor_id="test-admin",
@@ -260,7 +301,7 @@ def test_updating_connector_recreates_missing_managed_secret():
             name="恢复后的机器人",
             client_id="ding-missing-secret",
             client_secret="replacement-secret",
-            tenant_code="default",
+            dingtalk_enterprise_id=channel["enterprise"]["id"],
         ),
         expected_revision=channel["revision"],
         actor_id="test-admin",
@@ -292,13 +333,19 @@ def test_reapplying_local_seed_preserves_managed_dingtalk_configuration():
     current = container.managed_channel_service.get_channel(
         "connector-dingtalk-stream-default"
     )
+    enterprise = _active_enterprise(container, name="种子钉钉企业")
+    container.database.execute(
+        "update integration_connector set dingtalk_enterprise_id = ? where id = ?",
+        (enterprise["id"], current["id"]),
+    )
+    current = container.managed_channel_service.get_channel(current["id"])
     updated = container.managed_channel_service.update_dingtalk(
         current["id"],
         DingTalkApplicationInput(
             name="用户配置的钉钉机器人",
             client_id="ding-user-managed-client-id",
             client_secret="",
-            tenant_code="managed-tenant",
+            dingtalk_enterprise_id=str(enterprise["id"]),
             allow_private_chat=False,
             allow_group_chat=True,
             require_group_at=False,
@@ -330,7 +377,7 @@ def test_reapplying_local_seed_preserves_managed_dingtalk_configuration():
     )
     assert after == before
     assert updated["client_id"] == "ding-user-managed-client-id"
-    assert updated["tenant_code"] == "managed-tenant"
+    assert updated["enterprise"]["id"] == enterprise["id"]
 
 
 def test_disabled_platform_secret_marks_only_affected_connector_misconfigured_and_rebinds():
@@ -398,7 +445,7 @@ def test_disabled_platform_secret_marks_only_affected_connector_misconfigured_an
             name="恢复后的机器人",
             client_id="ding-secret-disabled",
             client_secret="replacement-secret",
-            tenant_code="default",
+            dingtalk_enterprise_id=affected["enterprise"]["id"],
         ),
         expected_revision=affected["revision"],
         actor_id="test-admin",
@@ -512,6 +559,8 @@ def test_internal_runtime_inbox_accepts_compact_utf8_json_byte_count():
         "conversationId": "group-中文",
         "conversationType": "2",
         "senderStaffId": "user-1",
+        "senderCorpId": "corp-managed-test",
+        "chatbotCorpId": "corp-managed-test",
         "msgId": "message-compact-json",
         "text": {"content": "帮我查询嵌套消息"},
     }

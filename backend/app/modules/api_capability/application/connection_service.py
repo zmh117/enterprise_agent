@@ -133,10 +133,9 @@ class AuthenticationProfileV1:
             str(extract["user_id_path"]),
             "User ID",
         )
-        display_name = _required_text_at(
-            payload,
-            str(extract["display_name_path"]),
-            "User display name",
+        display_name = (
+            str(_value_at(payload, str(extract["display_name_path"])) or "").strip()
+            or "ONES 未返回用户名称"
         )
         raw_teams = _value_at(payload, str(extract["teams_path"]))
         if not isinstance(raw_teams, list) or not raw_teams:

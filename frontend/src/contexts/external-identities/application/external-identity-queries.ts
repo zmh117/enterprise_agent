@@ -1,19 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
-import type {
-  BindDingTalkInput,
-  BindOnesInput,
-} from "@/contexts/external-identities/domain/external-identity"
 import {
-  bindDingTalkIdentity,
-  bindOnesIdentity,
   beginSelfOnesBinding,
   confirmSelfOnesBinding,
   disableAdminOnesCredential,
   getAdminOnesCredential,
   getSelfExternalIdentities,
   getSelfOnesBinding,
-  listDingTalkTenants,
   listExternalIdentities,
   listIdentityProviders,
   unbindIdentity,
@@ -25,7 +18,6 @@ import {
 export const externalIdentityKeys = {
   all: ["external-identities"] as const,
   providers: () => [...externalIdentityKeys.all, "providers"] as const,
-  tenants: () => [...externalIdentityKeys.all, "dingtalk-tenants"] as const,
   user: (userId: string) =>
     [...externalIdentityKeys.all, "user", userId] as const,
   self: () => [...externalIdentityKeys.all, "self"] as const,
@@ -49,27 +41,6 @@ export function useIdentityProviders() {
     queryFn: listIdentityProviders,
     retry: false,
   })
-}
-
-export function useDingTalkTenants() {
-  return useQuery({
-    queryKey: externalIdentityKeys.tenants(),
-    queryFn: listDingTalkTenants,
-    retry: false,
-  })
-}
-
-export function useBindDingTalkIdentity(userId: string) {
-  return useIdentityMutation(userId, (input: BindDingTalkInput) =>
-    bindDingTalkIdentity(userId, input)
-  )
-}
-
-export async function verifyAndBindOnesIdentity(
-  userId: string,
-  input: BindOnesInput
-) {
-  return bindOnesIdentity(userId, input)
 }
 
 export function useUpdateIdentityStatus(userId: string) {

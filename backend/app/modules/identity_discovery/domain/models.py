@@ -18,7 +18,7 @@ class ConversationScope(StrEnum):
 
 @dataclass(frozen=True)
 class PendingDingTalkIdentityObservation:
-    tenant_code: str
+    dingtalk_enterprise_id: str
     external_subject_id: str
     display_name: str
     connector_id: str
@@ -43,7 +43,7 @@ class PendingDingTalkIdentityObservation:
             source_ingress_event_id=source_ingress_event_id,
             received_at=received_at,
             occurred_at=self.occurred_at or received_at,
-            tenant_code=self.tenant_code,
+            dingtalk_enterprise_id=self.dingtalk_enterprise_id,
             external_subject_id=self.external_subject_id,
             display_name=self.display_name,
             connector_id=self.connector_id,
@@ -64,7 +64,7 @@ class DingTalkIdentityObservation:
     source_ingress_event_id: str
     received_at: str
     occurred_at: str
-    tenant_code: str
+    dingtalk_enterprise_id: str
     external_subject_id: str
     display_name: str
     connector_id: str

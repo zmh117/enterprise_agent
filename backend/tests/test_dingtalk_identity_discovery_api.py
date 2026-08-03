@@ -13,6 +13,7 @@ from app.modules.managed_channel.domain import (
     DingTalkApplicationInput,
 )
 from app.shared.config import IdentitySettings, Settings
+from backend.tests.helpers import ensure_active_dingtalk_test_enterprise
 
 
 ADMIN_PASSWORD = "local-admin-change-me"
@@ -37,12 +38,17 @@ def _settings() -> Settings:
 
 def _container():
     container = build_test_container(_settings(), migrate=True, seed=True)
+    enterprise = ensure_active_dingtalk_test_enterprise(
+        container,
+        corp_id="corp-discovery-api",
+        name="管理端身份发现测试企业",
+    )
     connector = container.managed_channel_service.create_dingtalk(
         DingTalkApplicationInput(
             name="管理端发现测试机器人",
             client_id="identity-discovery-api-client",
             client_secret="fixture-only-api-secret",
-            tenant_code="tenant-discovery",
+            dingtalk_enterprise_id=str(enterprise["id"]),
         ),
         actor_id="user_local_admin",
         enabled=True,
@@ -78,6 +84,8 @@ def _submission(
         "conversationType": conversation_type,
         "senderStaffId": sender_id,
         "senderNick": sender_name,
+        "senderCorpId": "corp-discovery-api",
+        "chatbotCorpId": "corp-discovery-api",
         "msgId": event_id,
         "robotCode": robot_code,
         "createAt": 1_785_024_000_000,
@@ -340,9 +348,9 @@ def test_candidate_binding_is_trusted_csrf_protected_and_immediately_hidden() ->
         )
         assert bound.status_code == 200, bound.text
         identity = bound.json()["identity"]
-        assert identity["tenant_code"] == "tenant-discovery"
+        assert identity["dingtalk_enterprise_id"] == connector["enterprise"]["id"]
         assert identity["external_subject_id"] == "staff-api-bind"
-        assert identity["connector_id"] == connector_id
+        assert identity["connector_id"] == ""
 
         assert client.get(
             "/api/admin/dingtalk-identity-candidates/count"
@@ -383,11 +391,16 @@ def test_historical_identity_can_only_return_to_original_user() -> None:
     identity = container.identity_repository.bind_external_identity(
         user_id=str(original["id"]),
         provider="dingtalk",
-        tenant_code="tenant-discovery",
+        tenant_code=connector["enterprise"]["id"],
         external_subject_id="staff-historical-api",
-        connector_id=connector_id,
+        connector_id="",
         display_name="历史原人员",
     )
+    container.database.execute(
+        "update user_external_identity set dingtalk_enterprise_id = ? where id = ?",
+        (connector["enterprise"]["id"], identity["id"]),
+    )
+    identity = container.identity_repository.get_external_identity(str(identity["id"]))
     unbound = container.identity_repository.unbind_external_identity(
         str(identity["id"]),
         expected_revision=int(identity["revision"]),
@@ -442,7 +455,7 @@ def test_historical_identity_can_only_return_to_original_user() -> None:
             == original["id"]
         )
 
-        restored = client.put(
+        direct_restore = client.put(
             f"/api/admin/identities/{identity['id']}/status",
             headers=headers,
             json={
@@ -450,7 +463,22 @@ def test_historical_identity_can_only_return_to_original_user() -> None:
                 "status": "enabled",
             },
         )
+        assert direct_restore.status_code == 409
+        assert direct_restore.json()["detail"]["code"] == "identity_restore_required"
+
+        restored = client.post(
+            f"/api/admin/dingtalk-identity-candidates/{candidate['id']}/bind",
+            headers=headers,
+            json={
+                "target_user_id": original["id"],
+                "expected_candidate_revision": candidate["revision"],
+                "expected_user_revision": original["revision"],
+                "bind_without_access_confirmed": True,
+            },
+        )
         assert restored.status_code == 200
+        assert restored.json()["identity"]["id"] == identity["id"]
+        assert restored.json()["identity"]["status"] == "enabled"
         assert client.get(
             "/api/admin/dingtalk-identity-candidates/count"
         ).json() == {"count": 0}
@@ -720,17 +748,19 @@ def test_time_fallback_thirty_day_boundary_and_large_count() -> None:
             insert into dingtalk_identity_candidate
               (id, tenant_code, external_subject_id, display_name,
                first_seen_at, last_seen_at, observation_count, revision,
-               created_at, updated_at)
-            values (?, 'tenant-count', ?, ?, ?, ?, 1, 1, ?, ?)
+               created_at, updated_at, dingtalk_enterprise_id)
+            values (?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?)
             """,
             (
                 f"candidate-count-{index:03d}",
+                connector["enterprise"]["id"],
                 f"staff-count-{index:03d}",
                 f"计数候选 {index + 1}",
                 now,
                 now,
                 now,
                 now,
+                connector["enterprise"]["id"],
             ),
         )
     assert (
@@ -738,8 +768,10 @@ def test_time_fallback_thirty_day_boundary_and_large_count() -> None:
             """
             select count(*) as count
             from dingtalk_identity_candidate
-            where tenant_code = 'tenant-count'
-            """
+            where dingtalk_enterprise_id = ?
+              and id like 'candidate-count-%'
+            """,
+            (connector["enterprise"]["id"],),
         )
         or {}
     ).get("count") == 100

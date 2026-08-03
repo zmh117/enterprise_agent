@@ -21,7 +21,15 @@ from app.modules.platform_config.application.secrets import SecretProviderPort
 from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import AppError, NonRetryableExecutionError, NotFound
 
-from ..domain import ChannelIngressSubmission, DingTalkApplicationInput, RuntimeConnectorState
+from ..domain import (
+    ChannelIngressSubmission,
+    DingTalkApplicationInput,
+    DingTalkEnterpriseStatus,
+    RuntimeConnectorState,
+    normalize_dingtalk_corp_id,
+    require_dingtalk_enterprise_transition,
+    require_immutable_dingtalk_corp_id,
+)
 from ..infrastructure import ManagedChannelRepository
 from .ports import ManagedWebhookProviderPort
 
@@ -120,6 +128,134 @@ class ManagedChannelService:
     def get_channel(self, channel_id: str) -> dict[str, Any]:
         return self._dingtalk_public(self.repository.get_connector(channel_id))
 
+    def list_dingtalk_enterprises(self) -> list[dict[str, Any]]:
+        return [
+            self._enterprise_public(item)
+            for item in self.repository.list_dingtalk_enterprises()
+        ]
+
+    def get_dingtalk_enterprise(self, enterprise_id: str) -> dict[str, Any]:
+        item = self.repository.get_dingtalk_enterprise(enterprise_id)
+        return self._enterprise_public(
+            item,
+            impacts=self.repository.dingtalk_enterprise_impacts(enterprise_id),
+        )
+
+    @operation_unit_of_work(lambda service: service.repository.database)
+    def create_dingtalk_enterprise(
+        self,
+        *,
+        name: str,
+        actor_id: str,
+    ) -> dict[str, Any]:
+        normalized = self._enterprise_name(name)
+        item = self.repository.create_dingtalk_enterprise(
+            name=normalized,
+            actor_id=actor_id,
+        )
+        self._audit_enterprise("created", actor_id, item)
+        return self._enterprise_public(item)
+
+    @operation_unit_of_work(lambda service: service.repository.database)
+    def rename_dingtalk_enterprise(
+        self,
+        enterprise_id: str,
+        *,
+        name: str,
+        expected_revision: int,
+        actor_id: str,
+    ) -> dict[str, Any]:
+        before = self.repository.get_dingtalk_enterprise(enterprise_id)
+        item = self.repository.rename_dingtalk_enterprise(
+            enterprise_id,
+            name=self._enterprise_name(name),
+            expected_revision=expected_revision,
+        )
+        self._audit_enterprise(
+            "renamed",
+            actor_id,
+            item,
+            extra={"previous_name": before["name"], "current_name": item["name"]},
+        )
+        return self._enterprise_public(item)
+
+    @operation_unit_of_work(lambda service: service.repository.database)
+    def disable_dingtalk_enterprise(
+        self,
+        enterprise_id: str,
+        *,
+        expected_revision: int,
+        actor_id: str,
+    ) -> dict[str, Any]:
+        current = self.repository.get_dingtalk_enterprise(enterprise_id)
+        require_dingtalk_enterprise_transition(
+            str(current["status"]), DingTalkEnterpriseStatus.DISABLED
+        )
+        item = self.repository.set_dingtalk_enterprise_status(
+            enterprise_id,
+            status=DingTalkEnterpriseStatus.DISABLED.value,
+            expected_revision=expected_revision,
+        )
+        self._audit_enterprise("disabled", actor_id, item)
+        return self._enterprise_public(item)
+
+    @operation_unit_of_work(lambda service: service.repository.database)
+    def archive_dingtalk_enterprise(
+        self,
+        enterprise_id: str,
+        *,
+        expected_revision: int,
+        actor_id: str,
+    ) -> dict[str, Any]:
+        current = self.repository.get_dingtalk_enterprise(enterprise_id)
+        require_dingtalk_enterprise_transition(
+            str(current["status"]), DingTalkEnterpriseStatus.ARCHIVED
+        )
+        impacts = self.repository.dingtalk_enterprise_impacts(enterprise_id)
+        enabled = [item for item in impacts if item["connector_enabled"]]
+        if enabled:
+            raise NonRetryableExecutionError(
+                "DingTalk enterprise still has enabled application connections",
+                safe_message="请先停用该企业下的全部钉钉应用连接，再归档企业",
+                error_code="dingtalk_enterprise_connectors_enabled",
+                field_errors=[
+                    {
+                        "field": "dingtalk_enterprise_id",
+                        "message": "、".join(
+                            sorted({str(item["connector_name"]) for item in enabled})
+                        )[:300],
+                    }
+                ],
+            )
+        item = self.repository.set_dingtalk_enterprise_status(
+            enterprise_id,
+            status=DingTalkEnterpriseStatus.ARCHIVED.value,
+            expected_revision=expected_revision,
+        )
+        self._audit_enterprise("archived", actor_id, item)
+        return self._enterprise_public(item)
+
+    @operation_unit_of_work(lambda service: service.repository.database)
+    def restore_dingtalk_enterprise(
+        self,
+        enterprise_id: str,
+        *,
+        expected_revision: int,
+        actor_id: str,
+    ) -> dict[str, Any]:
+        current = self.repository.get_dingtalk_enterprise(enterprise_id)
+        require_dingtalk_enterprise_transition(
+            str(current["status"]), DingTalkEnterpriseStatus.PENDING_VERIFICATION
+        )
+        item = self.repository.set_dingtalk_enterprise_status(
+            enterprise_id,
+            status=DingTalkEnterpriseStatus.PENDING_VERIFICATION.value,
+            expected_revision=expected_revision,
+            clear_verification=True,
+        )
+        self._audit_enterprise("restored_for_reverification", actor_id, item)
+        return self._enterprise_public(item)
+
     @operation_unit_of_work(lambda service: service.repository.database)
     def create_dingtalk(
         self,
@@ -129,6 +265,18 @@ class ManagedChannelService:
         enabled: bool,
     ) -> dict[str, Any]:
         normalized = self._validate(payload)
+        enterprise = self.repository.get_dingtalk_enterprise(
+            normalized.dingtalk_enterprise_id
+        )
+        if str(enterprise["status"]) in {
+            DingTalkEnterpriseStatus.DISABLED.value,
+            DingTalkEnterpriseStatus.ARCHIVED.value,
+        }:
+            raise NonRetryableExecutionError(
+                "DingTalk enterprise is unavailable",
+                safe_message="钉钉企业已停用或归档，不能新增应用连接",
+                error_code="dingtalk_enterprise_unavailable",
+            )
         if self.repository.find_by_client_id(normalized.client_id):
             raise NonRetryableExecutionError(
                 "DingTalk Client ID already exists",
@@ -148,6 +296,7 @@ class ManagedChannelService:
                 name=normalized.name,
                 secret_ref=f"secret://platform/{secret_code}",
                 metadata=self._metadata(normalized),
+                dingtalk_enterprise_id=normalized.dingtalk_enterprise_id,
                 enabled=enabled,
             )
         self._audit("created", actor_id, item)
@@ -164,7 +313,23 @@ class ManagedChannelService:
         rotate_secret: bool,
     ) -> dict[str, Any]:
         normalized = self._validate(payload, secret_required=rotate_secret)
+        enterprise = self.repository.get_dingtalk_enterprise(
+            normalized.dingtalk_enterprise_id
+        )
+        if str(enterprise["status"]) in {
+            DingTalkEnterpriseStatus.DISABLED.value,
+            DingTalkEnterpriseStatus.ARCHIVED.value,
+        }:
+            raise NonRetryableExecutionError(
+                "DingTalk enterprise is unavailable",
+                safe_message="钉钉企业已停用或归档，不能用于应用连接",
+                error_code="dingtalk_enterprise_unavailable",
+            )
         current = self.repository.get_connector(connector_id)
+        enterprise_changed = (
+            str(current.get("dingtalk_enterprise_id") or "")
+            != normalized.dingtalk_enterprise_id
+        )
         duplicate = self.repository.find_by_client_id(normalized.client_id)
         if duplicate and str(duplicate["id"]) != connector_id:
             raise NonRetryableExecutionError(
@@ -212,9 +377,10 @@ class ManagedChannelService:
                 expected_revision=expected_revision,
                 name=normalized.name,
                 metadata=self._metadata(normalized),
+                dingtalk_enterprise_id=normalized.dingtalk_enterprise_id,
                 secret_ref=secret_ref,
                 enabled=bool(current["enabled"]),
-                force_revision=rotate_secret,
+                force_revision=rotate_secret or enterprise_changed,
             )
         self._audit("updated", actor_id, item)
         return self._dingtalk_public(item)
@@ -229,11 +395,24 @@ class ManagedChannelService:
         actor_id: str,
     ) -> dict[str, Any]:
         current = self.repository.get_connector(connector_id)
+        enterprise = self.repository.get_dingtalk_enterprise(
+            str(current.get("dingtalk_enterprise_id") or "")
+        )
+        if enabled and str(enterprise["status"]) in {
+            DingTalkEnterpriseStatus.DISABLED.value,
+            DingTalkEnterpriseStatus.ARCHIVED.value,
+        }:
+            raise NonRetryableExecutionError(
+                "DingTalk enterprise is unavailable",
+                safe_message="钉钉企业已停用或归档，不能启用应用连接",
+                error_code="dingtalk_enterprise_unavailable",
+            )
         item = self.repository.update_dingtalk_connector(
             connector_id=connector_id,
             expected_revision=expected_revision,
             name=str(current["name"]),
             metadata=dict(current["metadata"]),
+            dingtalk_enterprise_id=str(current["dingtalk_enterprise_id"]),
             secret_ref=str(current["secret_ref"]),
             enabled=enabled,
         )
@@ -250,6 +429,7 @@ class ManagedChannelService:
             expected_revision=expected_revision,
             name=str(current["name"]),
             metadata=dict(current["metadata"]),
+            dingtalk_enterprise_id=str(current["dingtalk_enterprise_id"]),
             secret_ref=str(current["secret_ref"]),
             enabled=bool(current["enabled"]),
             force_revision=True,
@@ -349,6 +529,7 @@ class ManagedChannelService:
                 for item in items
                 if (
                     item["runtime"]["status"] != "MISCONFIGURED"
+                    and item["enterprise"]["status"] == "ACTIVE"
                     and (
                         (
                             trigger_type == "dingtalk_private"
@@ -402,12 +583,24 @@ class ManagedChannelService:
             status = "STALE"
         elif observed == "REGISTERED" and bool(item.get("registered")):
             status = "READY"
+        references = self.repository.connector_references(str(item["id"]))
         return {
             "id": str(item["id"]),
             "kind": "DINGTALK_APP_ROBOT",
             "name": str(item["name"]),
             "client_id": str(metadata.get("client_id") or ""),
-            "tenant_code": str(metadata.get("tenant_code") or ""),
+            "enterprise": {
+                "id": str(item.get("dingtalk_enterprise_id") or ""),
+                "name": str(item.get("dingtalk_enterprise_name") or ""),
+                "status": str(
+                    item.get("dingtalk_enterprise_status") or "UNASSIGNED"
+                ),
+                "corp_id_verified": bool(
+                    item.get("dingtalk_enterprise_corp_id")
+                    and item.get("dingtalk_enterprise_verified_at")
+                ),
+                "verified_at": item.get("dingtalk_enterprise_verified_at"),
+            },
             "enabled": bool(item["enabled"]),
             "revision": int(item.get("revision") or 1),
             "secret_configured": bool(item.get("secret_ref")),
@@ -416,6 +609,23 @@ class ManagedChannelService:
                 "group_chat": bool(metadata.get("allow_group_chat", True)),
                 "require_group_at": bool(metadata.get("require_group_at", True)),
             },
+            "references": [
+                {
+                    "application_code": str(
+                        reference.get("application_code") or ""
+                    ),
+                    "application_name": str(
+                        reference.get("application_name") or ""
+                    ),
+                    "application_revision": int(
+                        reference.get("application_revision") or 0
+                    ),
+                    "trigger_type": str(
+                        reference.get("trigger_type") or ""
+                    ),
+                }
+                for reference in references
+            ],
             "runtime": {
                 "status": status,
                 "loaded_revision": item.get("loaded_revision"),
@@ -444,21 +654,21 @@ class ManagedChannelService:
     ) -> DingTalkApplicationInput:
         name = payload.name.strip()
         client_id = payload.client_id.strip()
-        tenant_code = payload.tenant_code.strip()
+        enterprise_id = payload.dingtalk_enterprise_id.strip()
         secret = payload.client_secret.strip()
         if len(name) < 2 or len(name) > 120:
             raise _invalid("name", "渠道名称长度必须为 2 到 120")
         if not client_id or len(client_id) > 128:
             raise _invalid("client_id", "必须填写有效 Client ID")
-        if not tenant_code or len(tenant_code) > 128:
-            raise _invalid("tenant_code", "必须填写企业标识")
+        if not enterprise_id or len(enterprise_id) > 200:
+            raise _invalid("dingtalk_enterprise_id", "必须选择钉钉企业")
         if secret_required and not secret:
             raise _invalid("client_secret", "必须填写 Client Secret")
         return DingTalkApplicationInput(
             name=name,
             client_id=client_id,
             client_secret=secret,
-            tenant_code=tenant_code,
+            dingtalk_enterprise_id=enterprise_id,
             allow_private_chat=payload.allow_private_chat,
             allow_group_chat=payload.allow_group_chat,
             require_group_at=payload.require_group_at,
@@ -468,12 +678,63 @@ class ManagedChannelService:
     def _metadata(payload: DingTalkApplicationInput) -> dict[str, Any]:
         return {
             "client_id": payload.client_id,
-            "tenant_code": payload.tenant_code,
             "allow_private_chat": payload.allow_private_chat,
             "allow_group_chat": payload.allow_group_chat,
             "require_group_at": payload.require_group_at,
             "managed_channel_kind": "DINGTALK_APP_ROBOT",
         }
+
+    @staticmethod
+    def _enterprise_name(value: str) -> str:
+        normalized = value.strip()
+        if not (1 <= len(normalized) <= 120):
+            raise _invalid("name", "企业名称长度必须为 1 到 120")
+        return normalized
+
+    @staticmethod
+    def _enterprise_public(
+        item: dict[str, Any],
+        *,
+        impacts: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        result = {
+            "id": str(item["id"]),
+            "name": str(item["name"]),
+            "corp_id": str(item.get("corp_id") or ""),
+            "status": str(item["status"]),
+            "verified_at": item.get("verified_at"),
+            "revision": int(item["revision"]),
+            "connector_count": int(item.get("connector_count") or 0),
+            "enabled_connector_count": int(
+                item.get("enabled_connector_count") or 0
+            ),
+            "created_at": item["created_at"],
+            "updated_at": item["updated_at"],
+        }
+        if impacts is not None:
+            result["impacts"] = impacts
+        return result
+
+    def _audit_enterprise(
+        self,
+        event: str,
+        actor_id: str,
+        item: dict[str, Any],
+        *,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        self.audit_service.record(
+            f"dingtalk_enterprise.{event}",
+            status="SUCCEEDED",
+            summary=f"DingTalk enterprise {event}",
+            actor_id=actor_id,
+            payload={
+                "dingtalk_enterprise_id": item["id"],
+                "status": item["status"],
+                "revision": item["revision"],
+                **(extra or {}),
+            },
+        )
 
     @staticmethod
     def _secret_code(client_id: str) -> str:
@@ -505,12 +766,14 @@ class RuntimeControlService:
         repository: ManagedChannelRepository,
         secret_resolver: Callable[[object], str],
         credential_cipher: ChannelCredentialCipher,
+        audit_service: AuditService,
         max_event_bytes: int = 256 * 1024,
         lease_ttl_seconds: int = 15,
     ) -> None:
         self.repository = repository
         self.secret_resolver = secret_resolver
         self.credential_cipher = credential_cipher
+        self.audit_service = audit_service
         self.max_event_bytes = max_event_bytes
         self.lease_ttl_seconds = lease_ttl_seconds
 
@@ -544,6 +807,14 @@ class RuntimeControlService:
         self.repository.require_lease(runtime_id=_runtime_id(runtime_id), lease_token=lease_token)
         items: list[dict[str, Any]] = []
         for connector in self.repository.list_dingtalk_connectors(include_disabled=False):
+            enterprise_status = str(
+                connector.get("dingtalk_enterprise_status") or ""
+            )
+            if enterprise_status not in {
+                DingTalkEnterpriseStatus.PENDING_VERIFICATION.value,
+                DingTalkEnterpriseStatus.ACTIVE.value,
+            }:
+                continue
             try:
                 secret = self.secret_resolver(connector["secret_ref"])
             except Exception:
@@ -578,7 +849,10 @@ class RuntimeControlService:
                     "name": str(connector["name"]),
                     "client_id": client_id,
                     "client_secret": secret,
-                    "tenant_code": str(metadata.get("tenant_code") or ""),
+                    "dingtalk_enterprise_id": str(
+                        connector.get("dingtalk_enterprise_id") or ""
+                    ),
+                    "enterprise_status": enterprise_status,
                     "allow_private_chat": bool(metadata.get("allow_private_chat", True)),
                     "allow_group_chat": bool(metadata.get("allow_group_chat", True)),
                     "require_group_at": bool(metadata.get("require_group_at", True)),
@@ -640,6 +914,107 @@ class RuntimeControlService:
                 "Connector is not enabled for ingress",
                 safe_message="渠道未启用或不允许接入",
                 error_code="channel_not_eligible",
+            )
+        enterprise_id = str(connector.get("dingtalk_enterprise_id") or "")
+        if not enterprise_id:
+            raise NonRetryableExecutionError(
+                "DingTalk connector has no governed enterprise",
+                safe_message="钉钉应用连接尚未选择受治理企业",
+                error_code="dingtalk_enterprise_required",
+            )
+        enterprise = self.repository.get_dingtalk_enterprise(enterprise_id)
+        verification_key = (
+            f"{submission.connector_id}:{submission.external_event_id}"
+        )
+        if str(enterprise.get("verification_event_id") or "") == verification_key:
+            return (
+                {
+                    "id": verification_key,
+                    "status": "ENTERPRISE_VERIFIED",
+                    "correlation_id": submission.correlation_id,
+                },
+                False,
+            )
+        if str(enterprise["status"]) in {
+            DingTalkEnterpriseStatus.DISABLED.value,
+            DingTalkEnterpriseStatus.ARCHIVED.value,
+        }:
+            raise NonRetryableExecutionError(
+                "DingTalk enterprise is unavailable",
+                safe_message="钉钉企业已停用或归档",
+                error_code="dingtalk_enterprise_unavailable",
+            )
+        sender_corp_id = str(
+            submission.normalized_event.get("senderCorpId")
+            or submission.normalized_event.get("sender_corp_id")
+            or ""
+        )
+        chatbot_corp_id = str(
+            submission.normalized_event.get("chatbotCorpId")
+            or submission.normalized_event.get("chatbot_corp_id")
+            or ""
+        )
+        try:
+            sender_corp_id = normalize_dingtalk_corp_id(sender_corp_id)
+            chatbot_corp_id = normalize_dingtalk_corp_id(chatbot_corp_id)
+            if sender_corp_id != chatbot_corp_id:
+                raise NonRetryableExecutionError(
+                    "DingTalk sender and chatbot Corp IDs differ",
+                    safe_message="钉钉测试消息的企业信息不一致",
+                    error_code="dingtalk_corp_id_mismatch",
+                )
+            require_immutable_dingtalk_corp_id(
+                enterprise.get("corp_id"), sender_corp_id
+            )
+        except NonRetryableExecutionError as exc:
+            self.audit_service.record(
+                "dingtalk_enterprise.message_rejected",
+                status="DENIED",
+                summary="DingTalk enterprise Corp ID validation failed",
+                actor_id=None,
+                payload={
+                    "dingtalk_enterprise_id": enterprise_id,
+                    "connector_id": submission.connector_id,
+                    "external_event_id": submission.external_event_id,
+                    "error_code": exc.error_code,
+                },
+            )
+            raise
+        if str(enterprise["status"]) == DingTalkEnterpriseStatus.PENDING_VERIFICATION.value:
+            duplicate = self.repository.find_dingtalk_enterprise_by_corp_id(
+                sender_corp_id
+            )
+            if duplicate and str(duplicate["id"]) != enterprise_id:
+                raise NonRetryableExecutionError(
+                    "DingTalk Corp ID belongs to another enterprise",
+                    safe_message="该钉钉企业已在平台中完成接入",
+                    error_code="dingtalk_corp_id_conflict",
+                )
+            verified = self.repository.verify_dingtalk_enterprise(
+                enterprise_id,
+                corp_id=sender_corp_id,
+                source_event_id=verification_key,
+                expected_revision=int(enterprise["revision"]),
+            )
+            self.audit_service.record(
+                "dingtalk_enterprise.verified",
+                status="SUCCEEDED",
+                summary="DingTalk enterprise verified from trusted Stream message",
+                actor_id=None,
+                payload={
+                    "dingtalk_enterprise_id": enterprise_id,
+                    "connector_id": submission.connector_id,
+                    "external_event_id": submission.external_event_id,
+                    "revision": verified["revision"],
+                },
+            )
+            return (
+                {
+                    "id": verification_key,
+                    "status": "ENTERPRISE_VERIFIED",
+                    "correlation_id": submission.correlation_id,
+                },
+                True,
             )
         try:
             secret = self.secret_resolver(connector["secret_ref"])
@@ -778,6 +1153,8 @@ class ChannelDispatchService:
         }:
             return
         payload = dict(event["normalized_event"])
+        payload["_source_ingress_event_id"] = str(event["id"])
+        payload["_received_at"] = str(event["received_at"])
         ciphertext = str(event.get("reply_credential_ciphertext") or "")
         if ciphertext:
             payload["sessionWebhook"] = self.credential_cipher.decrypt(ciphertext)

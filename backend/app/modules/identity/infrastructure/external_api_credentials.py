@@ -256,7 +256,7 @@ class ExternalApiCredentialRepository:
                     user_id=user_id,
                     external_user_id=str(challenge["external_user_id"]),
                     display_name=str(challenge["display_name"]),
-                    team_ids=teams,
+                    teams=candidates,
                     default_team_id=default_team_id,
                     timestamp=timestamp,
                 )
@@ -338,6 +338,9 @@ class ExternalApiCredentialRepository:
             "status": row["status"],
             "revision": int(row["revision"]),
             "last_error_code": row["last_error_code"],
+            "last_attempt_at": row.get("last_attempt_at"),
+            "last_success_at": row.get("last_success_at"),
+            "last_error_at": row.get("last_error_at"),
             "verified_at": row["verified_at"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
@@ -360,6 +363,75 @@ class ExternalApiCredentialRepository:
             key_id=str(row["encryption_key_id"]),
         )
 
+    def record_usage_attempt(self, *, credential_id: str) -> dict[str, Any]:
+        rows = self.database.execute(
+            """
+            update external_api_credential
+               set last_attempt_at = ?, updated_at = ?
+             where id = ? and provider = 'ones'
+            returning *
+            """,
+            (now_iso(), now_iso(), credential_id),
+        )
+        if not rows:
+            raise NotFound(
+                "External API credential not found",
+                safe_message="未找到 ONES 凭据",
+            )
+        return self._public_credential(rows[0])
+
+    def record_usage_success(self, *, credential_id: str) -> dict[str, Any]:
+        timestamp = now_iso()
+        rows = self.database.execute(
+            """
+            update external_api_credential
+               set last_success_at = ?, updated_at = ?
+             where id = ? and provider = 'ones'
+            returning *
+            """,
+            (timestamp, timestamp, credential_id),
+        )
+        if not rows:
+            raise NotFound(
+                "External API credential not found",
+                safe_message="未找到 ONES 凭据",
+            )
+        return self._public_credential(rows[0])
+
+    def record_usage_failure(
+        self,
+        *,
+        credential_id: str,
+        error_code: str,
+        invalidate: bool = False,
+    ) -> dict[str, Any]:
+        timestamp = now_iso()
+        rows = self.database.execute(
+            """
+            update external_api_credential
+               set status = case
+                     when ? = 1 and status = 'ACTIVE' then 'INVALID'
+                     else status
+                   end,
+                   last_error_code = ?, last_error_at = ?, updated_at = ?
+             where id = ? and provider = 'ones'
+            returning *
+            """,
+            (
+                1 if invalidate else 0,
+                str(error_code or "external_api_failed"),
+                timestamp,
+                timestamp,
+                credential_id,
+            ),
+        )
+        if not rows:
+            raise NotFound(
+                "External API credential not found",
+                safe_message="未找到 ONES 凭据",
+            )
+        return self._public_credential(rows[0])
+
     def set_status(
         self,
         *,
@@ -369,15 +441,18 @@ class ExternalApiCredentialRepository:
     ) -> dict[str, Any]:
         if status not in {"ACTIVE", "INVALID", "DISABLED"}:
             raise ValueError("Unsupported credential status")
+        timestamp = now_iso()
         rows = self.database.execute(
             """
             update external_api_credential
-               set status = ?, last_error_code = ?, updated_at = ?
+               set status = ?, last_error_code = ?,
+                   last_error_at = case when ? <> '' then ? else last_error_at end,
+                   updated_at = ?
              where user_id = ? and provider = 'ones'
                and status in ('ACTIVE', 'INVALID')
             returning id
             """,
-            (status, error_code, now_iso(), user_id),
+            (status, error_code, error_code, timestamp, timestamp, user_id),
         )
         if not rows:
             raise NotFound(
@@ -417,7 +492,7 @@ class ExternalApiCredentialRepository:
         user_id: str,
         external_user_id: str,
         display_name: str,
-        team_ids: list[str],
+        teams: list[dict[str, str]],
         default_team_id: str,
         timestamp: str,
     ) -> dict[str, Any]:
@@ -429,10 +504,12 @@ class ExternalApiCredentialRepository:
             """,
             (external_user_id,),
         )
+        normalized_teams = _team_candidates(teams)
         metadata = json.dumps(
             {
                 "default_team_id": default_team_id,
-                "team_uuids": team_ids,
+                "team_uuids": [item["id"] for item in normalized_teams],
+                "teams": normalized_teams,
                 "verification_method": "credentials",
             },
             ensure_ascii=False,

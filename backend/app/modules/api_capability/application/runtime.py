@@ -20,6 +20,8 @@ from app.modules.api_capability.infrastructure import (
     GovernedApiExecutionRepository,
     RestrictedHttpJsonClient,
 )
+from app.modules.audit.application.audit_service import AuditService
+from app.modules.identity.domain import ExternalCredentialUsageSource
 from app.modules.identity.infrastructure import (
     ExternalApiCredentialCipher,
     ExternalApiCredentialRepository,
@@ -95,6 +97,7 @@ class GovernedApiRuntimeExecutor:
         identity_repository: IdentityRepository,
         credential_repository: ExternalApiCredentialRepository,
         credential_cipher: ExternalApiCredentialCipher | None,
+        audit_service: AuditService | None = None,
         http_client: RestrictedHttpJsonClient | None = None,
         mapping_interpreter: MappingInterpreter | None = None,
         sleeper: Callable[[float], None] = time.sleep,
@@ -105,6 +108,7 @@ class GovernedApiRuntimeExecutor:
         self.identity_repository = identity_repository
         self.credential_repository = credential_repository
         self.credential_cipher = credential_cipher
+        self.audit_service = audit_service
         self.http_client = http_client or RestrictedHttpJsonClient()
         self.mapping_interpreter = mapping_interpreter or MappingInterpreter()
         self.sleeper = sleeper
@@ -143,7 +147,7 @@ class GovernedApiRuntimeExecutor:
             agent_input,
             label="input",
         )
-        subject, token = self._current_subject_and_token(
+        subject, token, credential_id = self._current_subject_and_token(
             job_id=job_id,
             user_id=user_id,
             connection_revision_id=str(resolved.connection["id"]),
@@ -171,8 +175,17 @@ class GovernedApiRuntimeExecutor:
         maximum_attempts = max(1, min(int(attempt_budget), 3))
         deadline = self.monotonic() + max(0.1, timeout_seconds)
         last_error: AppError | None = None
+        outbound_started = False
         for attempt_no in range(1, maximum_attempts + 1):
             if self.monotonic() >= deadline:
+                if outbound_started:
+                    self._record_terminal_usage_failure(
+                        user_id=user_id,
+                        credential_id=credential_id,
+                        job_id=job_id,
+                        correlation_id=correlation_id,
+                        error_code="external_api_timeout_budget_exhausted",
+                    )
                 raise NonRetryableExecutionError(
                     "Governed API execution timeout budget exhausted",
                     safe_message="外部 API 调用超时",
@@ -182,6 +195,10 @@ class GovernedApiRuntimeExecutor:
             http_status: int | None = None
             response_size = 0
             try:
+                self.credential_repository.record_usage_attempt(
+                    credential_id=credential_id
+                )
+                outbound_started = True
                 response = self.http_client.request(
                     connection=resolved.connection,
                     method=str(release["method"]),
@@ -204,6 +221,16 @@ class GovernedApiRuntimeExecutor:
                     release["output_schema"],
                     normalized,
                     label="output",
+                )
+                self.credential_repository.record_usage_success(
+                    credential_id=credential_id
+                )
+                self._audit_credential_usage(
+                    user_id=user_id,
+                    credential_id=credential_id,
+                    job_id=job_id,
+                    correlation_id=correlation_id,
+                    status="SUCCEEDED",
                 )
                 encoded = json.dumps(
                     normalized,
@@ -240,12 +267,6 @@ class GovernedApiRuntimeExecutor:
             except AppError as exc:
                 last_error = exc
                 http_status = _http_status(exc)
-                if exc.error_code == "external_api_unauthorized":
-                    self.credential_repository.set_status(
-                        user_id=user_id,
-                        status="INVALID",
-                        error_code=exc.error_code,
-                    )
                 self.execution_repository.record_attempt(
                     tool_call_id=tool_call_id,
                     job_id=job_id,
@@ -264,9 +285,23 @@ class GovernedApiRuntimeExecutor:
                 )
                 retryable = isinstance(exc, RetryableExecutionError)
                 if not retryable or attempt_no >= maximum_attempts:
+                    self._record_terminal_usage_failure(
+                        user_id=user_id,
+                        credential_id=credential_id,
+                        job_id=job_id,
+                        correlation_id=correlation_id,
+                        error_code=exc.error_code,
+                    )
                     raise
                 delay = 0.1 * (2 ** (attempt_no - 1))
                 if self.monotonic() + delay >= deadline:
+                    self._record_terminal_usage_failure(
+                        user_id=user_id,
+                        credential_id=credential_id,
+                        job_id=job_id,
+                        correlation_id=correlation_id,
+                        error_code="external_api_timeout_budget_exhausted",
+                    )
                     raise NonRetryableExecutionError(
                         "Governed API retry would exceed timeout budget",
                         safe_message="外部 API 调用超时",
@@ -312,7 +347,7 @@ class GovernedApiRuntimeExecutor:
         job_id: str,
         user_id: str,
         connection_revision_id: str,
-    ) -> tuple[dict[str, Any], str]:
+    ) -> tuple[dict[str, Any], str, str]:
         snapshot = self.execution_repository.get_external_subject(job_id)
         identity = self.identity_repository.get_external_identity(
             str(snapshot["external_identity_id"])
@@ -348,9 +383,64 @@ class GovernedApiRuntimeExecutor:
                 error_code="external_credential_encryption_unavailable",
             )
         encrypted = self.credential_repository.get_current_encrypted(user_id=user_id)
-        return snapshot, self.credential_cipher.decrypt(
-            ciphertext=encrypted.ciphertext,
-            key_id=encrypted.key_id,
+        return (
+            snapshot,
+            self.credential_cipher.decrypt(
+                ciphertext=encrypted.ciphertext,
+                key_id=encrypted.key_id,
+            ),
+            str(credential["id"]),
+        )
+
+    def _record_terminal_usage_failure(
+        self,
+        *,
+        user_id: str,
+        credential_id: str,
+        job_id: str,
+        correlation_id: str,
+        error_code: str,
+    ) -> None:
+        self.credential_repository.record_usage_failure(
+            credential_id=credential_id,
+            error_code=error_code,
+            invalidate=error_code == "external_api_unauthorized",
+        )
+        self._audit_credential_usage(
+            user_id=user_id,
+            credential_id=credential_id,
+            job_id=job_id,
+            correlation_id=correlation_id,
+            status="FAILED",
+            error_code=error_code,
+        )
+
+    def _audit_credential_usage(
+        self,
+        *,
+        user_id: str,
+        credential_id: str,
+        job_id: str,
+        correlation_id: str,
+        status: str,
+        error_code: str = "",
+    ) -> None:
+        if self.audit_service is None:
+            return
+        self.audit_service.record(
+            "external_credential.business_api_used",
+            status=status,
+            summary="Persistent ONES credential used by governed API",
+            job_id=job_id,
+            actor_id=user_id,
+            payload={
+                "user_id": user_id,
+                "credential_id": credential_id,
+                "source": ExternalCredentialUsageSource.RUNTIME.value,
+                "result": status.lower(),
+                "error_code": error_code,
+                "correlation_id": correlation_id,
+            },
         )
 
     def _require_governance_intersection(

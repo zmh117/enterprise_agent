@@ -35,7 +35,9 @@ export const historicalIdentitySchema = z.object({
 
 export const dingtalkIdentityCandidateSchema = z.object({
   id: z.string(),
-  tenant_code: z.string(),
+  dingtalk_enterprise_id: z.string(),
+  enterprise_name: z.string(),
+  corp_id: z.string(),
   external_subject_id: z.string(),
   display_name: z.string(),
   first_seen_at: z.string(),
@@ -70,4 +72,5 @@ export type BindCandidateInput = {
   expected_user_revision: number
   initial_role_ids: string[]
   bind_without_access_confirmed: boolean
+  replace_current_confirmed: boolean
 }

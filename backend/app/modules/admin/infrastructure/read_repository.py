@@ -5,7 +5,10 @@ import hashlib
 from datetime import datetime
 from typing import Any
 
-from app.modules.job.infrastructure.repositories import AgentRepository
+from app.modules.job.infrastructure.repositories import (
+    AgentRepository,
+    source_connector_projection,
+)
 from app.shared.database import Database
 
 
@@ -33,9 +36,15 @@ class AdminReadRepository:
                    j.execution_policy_exhausted,
                    j.created_at, j.started_at, j.finished_at,
                    d.code as agent_code,
+                   c.id as source_connector_record_id,
+                   c.name as source_connector_name,
+                   c.enabled as source_connector_enabled,
+                   c.deleted as source_connector_deleted,
+                   c.metadata as source_connector_metadata,
                    (select w.correlation_id from webhook_event w where w.job_id = j.id order by w.received_at desc limit 1) as correlation_id
             from agent_job j
             left join agent_definition d on d.id = j.agent_definition_id
+            left join integration_connector c on c.id = j.source_connector_id
             where j.created_at >= ? and j.created_at < ?
             order by j.created_at desc, j.id desc
             limit ?
@@ -147,8 +156,16 @@ class AdminReadRepository:
                    j.execution_policy_json,
                    j.execution_policy_tool_call_count,
                    j.execution_policy_exhausted,
-                   j.created_at, j.started_at, j.finished_at, d.code as agent_code
-            from agent_job j left join agent_definition d on d.id = j.agent_definition_id
+                   j.created_at, j.started_at, j.finished_at,
+                   d.code as agent_code,
+                   c.id as source_connector_record_id,
+                   c.name as source_connector_name,
+                   c.enabled as source_connector_enabled,
+                   c.deleted as source_connector_deleted,
+                   c.metadata as source_connector_metadata
+            from agent_job j
+            left join agent_definition d on d.id = j.agent_definition_id
+            left join integration_connector c on c.id = j.source_connector_id
             where j.session_id = ? order by j.created_at, j.id limit ?
             """,
             (session_id, limit),
@@ -211,8 +228,15 @@ class AdminReadRepository:
                    j.execution_policy_exhausted,
                    j.error_message, j.last_error_code,
                    j.created_at, j.started_at, j.finished_at,
-                   d.code as agent_code
-            from agent_job j left join agent_definition d on d.id = j.agent_definition_id
+                   d.code as agent_code,
+                   c.id as source_connector_record_id,
+                   c.name as source_connector_name,
+                   c.enabled as source_connector_enabled,
+                   c.deleted as source_connector_deleted,
+                   c.metadata as source_connector_metadata
+            from agent_job j
+            left join agent_definition d on d.id = j.agent_definition_id
+            left join integration_connector c on c.id = j.source_connector_id
             where j.id = ?
             """,
             (job_id,),
@@ -265,19 +289,21 @@ class AdminReadRepository:
     @staticmethod
     def _job(row: dict[str, Any]) -> dict[str, Any]:
         item = dict(row)
+        item.update(source_connector_projection(item))
+        for field in (
+            "source_connector_record_id",
+            "source_connector_enabled",
+            "source_connector_deleted",
+            "source_connector_metadata",
+        ):
+            item.pop(field, None)
         item["routing"] = _json_object(item.pop("routing_context_json", {}))
         item["business_application_route_decision"] = _json_object(
             item.pop("business_application_route_decision_json", {})
         )
-        item["execution_policy"] = _json_object(
-            item.pop("execution_policy_json", {})
-        )
-        item["tool_call_count"] = int(
-            item.pop("execution_policy_tool_call_count", 0) or 0
-        )
-        item["execution_policy_exhausted"] = bool(
-            item.get("execution_policy_exhausted") or False
-        )
+        item["execution_policy"] = _json_object(item.pop("execution_policy_json", {}))
+        item["tool_call_count"] = int(item.pop("execution_policy_tool_call_count", 0) or 0)
+        item["execution_policy_exhausted"] = bool(item.get("execution_policy_exhausted") or False)
         item["correlation_id"] = str(
             item.get("correlation_id")
             or item["business_application_route_decision"].get("correlation_id")

@@ -9,6 +9,7 @@ enterprise_agent.db
 .env
 antvX6/
 .local/compose-infra-upgrade/
+.local/dingtalk-rebuild-*/
 # Oracle Instant Client binaries (license-restricted); keep README only in git.
 backend/vendor/oracle/instantclient/
 backend/vendor/oracle/instantclient*/

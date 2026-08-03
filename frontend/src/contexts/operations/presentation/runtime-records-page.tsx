@@ -160,7 +160,7 @@ export function RuntimeJobDetailPage() {
             ["Agent", job.agent_code],
             ["关联 ID", job.correlation_id || "无"],
             ["来源", job.source_channel],
-            ["连接器", job.source_connector_id],
+            ["连接器", sourceConnectorLabel(job)],
             ["创建时间", formatDate(job.created_at)],
           ]}
         />
@@ -672,6 +672,16 @@ function jobStatusLabel(status: string): string {
 
 function runtimeStatusLabel(status: string): string {
   return runtimeStatusLabels[status] ?? status
+}
+
+function sourceConnectorLabel(job: RuntimeJob): string {
+  if (!job.source_connector_id) return "未记录"
+  const identity = job.source_connector_name
+    ? `${job.source_connector_name}（${job.source_connector_id}）`
+    : job.source_connector_id
+  return job.source_connector_availability === "UNAVAILABLE_HISTORICAL"
+    ? `${identity} · 不可用历史来源`
+    : identity
 }
 
 function conversationModeLabel(mode: string): string {

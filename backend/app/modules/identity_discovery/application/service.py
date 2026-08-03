@@ -70,7 +70,7 @@ class DingTalkIdentityDiscoveryService:
             event.source.type != "dingding_stream"
             or descriptor is None
             or descriptor.provider != "dingtalk"
-            or not descriptor.tenant_code
+            or not descriptor.dingtalk_enterprise_id
             or not descriptor.external_subject_id
         ):
             return None
@@ -100,7 +100,7 @@ class DingTalkIdentityDiscoveryService:
             else (attachment_type or ("text" if safe_text else "unsupported"))
         )
         return PendingDingTalkIdentityObservation(
-            tenant_code=descriptor.tenant_code[:120],
+            dingtalk_enterprise_id=descriptor.dingtalk_enterprise_id[:200],
             external_subject_id=descriptor.external_subject_id[:200],
             display_name=descriptor.display_name[:200],
             connector_id=event.source.connector_id[:200],
@@ -194,6 +194,7 @@ class DingTalkIdentityDiscoveryService:
         expected_user_revision: int,
         initial_role_ids: list[str] | None = None,
         bind_without_access_confirmed: bool = False,
+        replace_current_confirmed: bool = False,
     ) -> dict[str, object]:
         role_ids = list(dict.fromkeys(initial_role_ids or []))
         if not role_ids and not bind_without_access_confirmed:
@@ -226,13 +227,17 @@ class DingTalkIdentityDiscoveryService:
                         safe_message="候选信息已发生变化，请刷新后重试",
                         error_code="revision_conflict",
                     )
-                historical = self.identity_repository.find_external_identity(
-                    provider="dingtalk",
-                    tenant_code=str(candidate["tenant_code"]),
+                historical = self.identity_repository.find_dingtalk_identity(
+                    dingtalk_enterprise_id=str(
+                        candidate["dingtalk_enterprise_id"]
+                    ),
                     external_subject_id=str(candidate["external_subject_id"]),
                     include_disabled=True,
                 )
-                if historical is not None:
+                if (
+                    historical is not None
+                    and str(historical["user_id"]) != target_user_id
+                ):
                     raise NonRetryableExecutionError(
                         "Historical identity must be restored by its original owner",
                         safe_message="该钉钉身份已有历史归属，请前往原人员恢复",
@@ -270,14 +275,22 @@ class DingTalkIdentityDiscoveryService:
                             action="assign",
                         )
                     roles.append(role)
-                identity = self.identity_service.bind_dingtalk(
+                identity = self.identity_service.bind_dingtalk_candidate(
                     actor_id=actor_id,
                     user_id=target_user_id,
-                    tenant_code=str(candidate["tenant_code"]),
+                    dingtalk_enterprise_id=str(
+                        candidate["dingtalk_enterprise_id"]
+                    ),
                     external_subject_id=str(candidate["external_subject_id"]),
-                    connector_id=str(latest["connector_id"]),
+                    source_connector_id=str(latest["connector_id"]),
+                    source_ingress_event_id=str(
+                        latest["source_ingress_event_id"]
+                    ),
+                    observed_at=str(latest["received_at"]),
                     display_name=str(candidate.get("display_name") or ""),
                     expected_user_revision=expected_user_revision,
+                    replace_current=replace_current_confirmed,
+                    restore_historical=historical is not None,
                 )
                 memberships = []
                 for role in roles:

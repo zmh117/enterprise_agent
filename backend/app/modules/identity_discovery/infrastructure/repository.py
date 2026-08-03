@@ -9,7 +9,7 @@ from app.modules.identity_discovery.domain import (
 )
 from app.modules.job.infrastructure.repositories import new_id, now_iso
 from app.shared.database import Database
-from app.shared.exceptions import NotFound
+from app.shared.exceptions import NonRetryableExecutionError, NotFound
 
 
 class DingTalkIdentityDiscoveryRepository:
@@ -22,33 +22,54 @@ class DingTalkIdentityDiscoveryRepository:
         timestamp = now_iso()
         candidate_id = new_id("dingtalk_candidate")
         with self.database.unit_of_work():
+            source = self.database.execute_one(
+                """
+                select c.id
+                  from integration_connector c
+                  join dingtalk_enterprise e on e.id = c.dingtalk_enterprise_id
+                 where c.id = ? and c.enabled = 1 and c.deleted = 0
+                   and c.allow_ingress = 1 and e.status = 'ACTIVE'
+                   and e.id = ?
+                """,
+                (observation.connector_id, observation.dingtalk_enterprise_id),
+            )
+            if source is None:
+                raise NonRetryableExecutionError(
+                    "DingTalk discovery source is not trusted",
+                    safe_message="候选来源应用或钉钉企业当前不可用",
+                    error_code="identity_discovery_connector_unavailable",
+                )
             self.database.execute(
                 """
                 insert into dingtalk_identity_candidate
                   (id, tenant_code, external_subject_id, display_name,
                    first_seen_at, last_seen_at, observation_count, revision,
-                   created_at, updated_at)
-                values (?, ?, ?, ?, ?, ?, 0, 1, ?, ?)
+                   created_at, updated_at, dingtalk_enterprise_id)
+                values (?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?)
                 on conflict(tenant_code, external_subject_id) do nothing
                 """,
                 (
                     candidate_id,
-                    observation.tenant_code,
+                    observation.dingtalk_enterprise_id,
                     observation.external_subject_id,
                     observation.display_name,
                     observation.received_at,
                     observation.received_at,
                     timestamp,
                     timestamp,
+                    observation.dingtalk_enterprise_id,
                 ),
             )
             candidate = self.database.execute_one(
                 """
                 select *
                 from dingtalk_identity_candidate
-                where tenant_code = ? and external_subject_id = ?
+                where dingtalk_enterprise_id = ? and external_subject_id = ?
                 """,
-                (observation.tenant_code, observation.external_subject_id),
+                (
+                    observation.dingtalk_enterprise_id,
+                    observation.external_subject_id,
+                ),
             )
             if candidate is None:
                 raise RuntimeError("DingTalk identity candidate could not be resolved")
@@ -152,7 +173,8 @@ class DingTalkIdentityDiscoveryRepository:
             params.extend((after_last_seen_at, after_last_seen_at, after_id))
         rows = self.database.execute(
             f"""
-            select c.*,
+            select c.*, e.name as dingtalk_enterprise_name,
+                   e.corp_id as dingtalk_enterprise_corp_id,
                    i.id as historical_identity_id,
                    i.status as historical_identity_status,
                    i.revision as historical_identity_revision,
@@ -161,9 +183,10 @@ class DingTalkIdentityDiscoveryRepository:
                    u.display_name as historical_user_display_name,
                    u.status as historical_user_status
             from dingtalk_identity_candidate c
+            join dingtalk_enterprise e on e.id = c.dingtalk_enterprise_id
             left join user_external_identity i
               on i.provider = 'dingtalk'
-             and i.tenant_code = c.tenant_code
+             and i.dingtalk_enterprise_id = c.dingtalk_enterprise_id
              and i.external_subject_id = c.external_subject_id
             left join app_user u on u.id = i.user_id
             where {where}
@@ -183,7 +206,8 @@ class DingTalkIdentityDiscoveryRepository:
     ) -> dict[str, object]:
         row = self.database.execute_one(
             """
-            select c.*,
+            select c.*, e.name as dingtalk_enterprise_name,
+                   e.corp_id as dingtalk_enterprise_corp_id,
                    i.id as historical_identity_id,
                    i.status as historical_identity_status,
                    i.revision as historical_identity_revision,
@@ -192,12 +216,14 @@ class DingTalkIdentityDiscoveryRepository:
                    u.display_name as historical_user_display_name,
                    u.status as historical_user_status
             from dingtalk_identity_candidate c
+            join dingtalk_enterprise e on e.id = c.dingtalk_enterprise_id
             left join user_external_identity i
               on i.provider = 'dingtalk'
-             and i.tenant_code = c.tenant_code
+             and i.dingtalk_enterprise_id = c.dingtalk_enterprise_id
              and i.external_subject_id = c.external_subject_id
             left join app_user u on u.id = i.user_id
             where c.id = ? and c.last_seen_at >= ?
+              and e.status = 'ACTIVE'
               and (
                 i.id is null
                 or i.status <> 'enabled'
@@ -218,12 +244,14 @@ class DingTalkIdentityDiscoveryRepository:
             """
             select count(*) as count
             from dingtalk_identity_candidate c
+            join dingtalk_enterprise e on e.id = c.dingtalk_enterprise_id
             left join user_external_identity i
               on i.provider = 'dingtalk'
-             and i.tenant_code = c.tenant_code
+             and i.dingtalk_enterprise_id = c.dingtalk_enterprise_id
              and i.external_subject_id = c.external_subject_id
             left join app_user u on u.id = i.user_id
             where c.last_seen_at >= ?
+              and e.status = 'ACTIVE'
               and (
                 i.id is null
                 or i.status <> 'enabled'
@@ -258,7 +286,13 @@ class DingTalkIdentityDiscoveryRepository:
 
     def _get_candidate_row(self, candidate_id: str) -> dict[str, Any]:
         row = self.database.execute_one(
-            "select * from dingtalk_identity_candidate where id = ?",
+            """
+            select c.*, e.name as dingtalk_enterprise_name,
+                   e.corp_id as dingtalk_enterprise_corp_id
+              from dingtalk_identity_candidate c
+              join dingtalk_enterprise e on e.id = c.dingtalk_enterprise_id
+             where c.id = ? and e.status = 'ACTIVE'
+            """,
             (candidate_id,),
         )
         if row is None:
@@ -294,7 +328,9 @@ class DingTalkIdentityDiscoveryRepository:
         )
         return {
             "id": str(row["id"]),
-            "tenant_code": str(row["tenant_code"]),
+            "dingtalk_enterprise_id": str(row["dingtalk_enterprise_id"]),
+            "enterprise_name": str(row.get("dingtalk_enterprise_name") or ""),
+            "corp_id": str(row.get("dingtalk_enterprise_corp_id") or ""),
             "external_subject_id": str(row["external_subject_id"]),
             "display_name": str(row.get("display_name") or ""),
             "first_seen_at": str(row["first_seen_at"]),
@@ -347,7 +383,8 @@ class DingTalkIdentityDiscoveryRepository:
     def _messages(self, candidate_id: str) -> list[dict[str, object]]:
         rows = self.database.execute(
             """
-            select m.id, m.connector_id, c.name as connector_name,
+            select m.id, m.source_ingress_event_id, m.connector_id,
+                   c.name as connector_name,
                    m.robot_code, m.conversation_type, m.conversation_id,
                    m.message_kind, m.safe_text, m.text_truncated,
                    m.attachment_type, m.attachment_name, m.attachment_size,
@@ -363,6 +400,7 @@ class DingTalkIdentityDiscoveryRepository:
         return [
             {
                 "id": str(row["id"]),
+                "source_ingress_event_id": str(row["source_ingress_event_id"]),
                 "connector_id": str(row["connector_id"]),
                 "connector_name": str(row.get("connector_name") or ""),
                 "robot_code": str(row.get("robot_code") or ""),
@@ -393,6 +431,7 @@ class DingTalkIdentityDiscoveryRepository:
     ) -> tuple[str, list[object]]:
         clauses = [
             "c.last_seen_at >= ?",
+            "e.status = 'ACTIVE'",
             "(i.id is null or i.status <> 'enabled' or u.status <> 'enabled')",
         ]
         params: list[object] = [cutoff]

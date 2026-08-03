@@ -34,6 +34,7 @@ from backend.tests.test_api_capability_service import (
     NOW,
     _create_capability,
     _service,
+    RecordingAudit,
 )
 
 
@@ -238,6 +239,7 @@ def _runtime(
     http: SequenceHttpClient,
     *,
     sleeps: list[float] | None = None,
+    audit: RecordingAudit | None = None,
 ) -> GovernedApiRuntimeExecutor:
     return GovernedApiRuntimeExecutor(
         resolver=GovernedCapabilityReleaseResolver(
@@ -248,6 +250,7 @@ def _runtime(
         identity_repository=IdentityRepository(database),
         credential_repository=ExternalApiCredentialRepository(database),
         credential_cipher=ExternalApiCredentialCipher("capability-service-test-key"),
+        audit_service=audit,  # type: ignore[arg-type]
         http_client=http,  # type: ignore[arg-type]
         sleeper=(sleeps.append if sleeps is not None else lambda _: None),
     )
@@ -365,8 +368,9 @@ def test_runtime_executes_exact_release_and_persists_only_safe_attempt_metadata(
 ) -> None:
     release, agent_publication_id, application_publication_id = _released_runtime(database)
     http = SequenceHttpClient([_success_response()])
+    audit = RecordingAudit()
     result = _execute(
-        _runtime(database, http),
+        _runtime(database, http, audit=audit),
         release,
         agent_publication_id,
         application_publication_id,
@@ -387,6 +391,19 @@ def test_runtime_executes_exact_release_and_persists_only_safe_attempt_metadata(
     assert "raw-private-body" not in persisted
     assert "actor-personal-token" not in persisted
     assert '\\"total\\":1' not in persisted
+    credential = ExternalApiCredentialRepository(database).get_current_public(
+        user_id=ACTOR_ID
+    )
+    assert credential["last_attempt_at"] is not None
+    assert credential["last_success_at"] is not None
+    assert credential["last_error_at"] is None
+    usage_audit = next(
+        item
+        for item in audit.events
+        if item["event_type"] == "external_credential.business_api_used"
+    )
+    assert usage_audit["payload"]["source"] == "RUNTIME"
+    assert usage_audit["status"] == "SUCCEEDED"
 
 
 def test_ones_search_template_enforces_input_mapping_and_all_or_nothing_output(
@@ -497,6 +514,13 @@ def test_ones_search_template_rejects_partial_malformed_output(
         )
     assert captured.value.error_code == "mapping_execution_failed"
     assert database.execute("select * from agent_tool_call_api_provenance") == []
+    credential = ExternalApiCredentialRepository(database).get_current_public(
+        user_id=ACTOR_ID
+    )
+    assert credential["last_attempt_at"] is not None
+    assert credential["last_success_at"] is None
+    assert credential["last_error_code"] == "mapping_execution_failed"
+    assert credential["last_error_at"] is not None
 
 
 def test_query_retries_at_most_twice_with_bounded_backoff(
@@ -519,6 +543,13 @@ def test_query_retries_at_most_twice_with_bounded_backoff(
     )
     assert result["total"] == 1
     assert sleeps == [0.1, 0.2]
+    credential = ExternalApiCredentialRepository(database).get_current_public(
+        user_id=ACTOR_ID
+    )
+    assert credential["last_attempt_at"] is not None
+    assert credential["last_success_at"] is not None
+    assert credential["last_error_code"] == ""
+    assert credential["last_error_at"] is None
     attempts = database.execute(
         """
         select attempt_no, status_class, http_status
@@ -554,6 +585,9 @@ def test_401_invalidates_credential_while_403_preserves_it(
     credential_status: str,
 ) -> None:
     release, agent_publication_id, application_publication_id = _released_runtime(database)
+    previous_success = ExternalApiCredentialRepository(database).get_current_public(
+        user_id=ACTOR_ID
+    )["last_success_at"]
     error = NonRetryableExecutionError(
         "denied",
         safe_message="ONES 拒绝了当前操作",
@@ -571,6 +605,14 @@ def test_401_invalidates_credential_while_403_preserves_it(
         )
     credential = ExternalApiCredentialRepository(database).get_current_public(user_id=ACTOR_ID)
     assert credential["status"] == credential_status
+    assert credential["last_attempt_at"] is not None
+    assert credential["last_success_at"] == previous_success
+    assert credential["last_error_code"] == (
+        "external_api_unauthorized"
+        if status_code == 401
+        else "external_api_forbidden"
+    )
+    assert credential["last_error_at"] is not None
     attempts = database.execute("select status_class from agent_tool_call_http_attempt")
     assert attempts == [
         {"status_class": ("CREDENTIAL_INVALID" if status_code == 401 else "FORBIDDEN")}
