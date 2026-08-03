@@ -179,10 +179,27 @@ def test_ones_unavailability_does_not_block_dingtalk_application_access() -> Non
             )
         )
         assert job.id
-        with pytest.raises(NotFound):
+        with pytest.raises(NotFound) as raised:
             GovernedApiExecutionRepository(container.database).get_external_subject(job.id)
+        assert raised.value.error_code == "job_external_subject_snapshot_missing"
         context = container.agent_executor.context_builder.build(job)
         assert context.governed_capabilities == ()
+        assert len(context.governed_capability_notices) == 1
+        notice = context.governed_capability_notices[0]
+        assert notice.identifier == "cap__ones__work_item__search"
+        assert notice.status == "unavailable"
+        assert notice.reason_code == "current_sender_ones_setup_required"
+        assert "我的外部身份" in notice.message
+        assert "重新发送请求" in notice.message
+        serialized_notice = json.dumps(
+            notice.to_prompt_payload(),
+            ensure_ascii=False,
+        )
+        assert ACTOR_ID not in serialized_notice
+        assert "ones-user-admin" not in serialized_notice
+        assert "team-b" not in serialized_notice
+        assert str(release["id"]) not in serialized_notice
+        assert str(release["connection_revision_id"]) not in serialized_notice
     finally:
         container.database.close()
 
@@ -276,6 +293,25 @@ def test_agent_context_catalog_is_exact_and_provider_scoped() -> None:
         assert tool["description"] == ("Search ONES work items for the current user.")
         assert "release_note" not in tool
         assert "token" not in json.dumps(tool).lower()
+        assert context.governed_capability_notices == ()
+
+        unselected_application, unselected_publication = _publish_application(
+            container,
+            agent_publication=agent_publication,
+            release_ids=[],
+            code="dingtalk-context-no-capability-app",
+        )
+        unselected_job = container.create_agent_job_service.execute(
+            _command(
+                application=unselected_application,
+                application_publication=unselected_publication,
+                agent_publication=agent_publication,
+                suffix="context-no-capability",
+            )
+        )
+        unselected_context = container.agent_executor.context_builder.build(unselected_job)
+        assert unselected_context.governed_capabilities == ()
+        assert unselected_context.governed_capability_notices == ()
 
         repository.set_release_status(
             str(release["id"]),
@@ -285,5 +321,6 @@ def test_agent_context_catalog_is_exact_and_provider_scoped() -> None:
         )
         disabled_context = container.agent_executor.context_builder.build(job)
         assert disabled_context.governed_capabilities == ()
+        assert disabled_context.governed_capability_notices == ()
     finally:
         container.database.close()

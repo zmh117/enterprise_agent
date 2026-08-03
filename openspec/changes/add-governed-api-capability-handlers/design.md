@@ -159,6 +159,14 @@ Job 创建时，路由解析器冻结 Application Publication、Agent Publicatio
 3. Release 对该历史 Application Publication 是否可继续运行；
 4. 当前用户的 Provider 可用性。
 
+Catalog 投影同时保留两个严格分离的通道：满足完整交集的 Capability 才进入
+可注册、可批准的 Tool 集合；已经属于精确 Agent/Application 发布交集、但当前
+发送者不满足 Provider 身份前置条件的 Capability，只生成固定白名单文案的
+`unavailable` 平台事实供模型解释。后者不是 Tool，不进入 MCP 注册或
+`allowed_tools`，不得携带用户、Team、Connection、Credential、Release 或底层异常
+细节。应用未选择、Release 不可运行或不符合 QUERY/INTERNAL 边界时，两条通道都
+不得暴露该 Capability，避免借提示泄露目录。
+
 模型发起调用后必须再次校验上述条件，并确认：
 
 - Job 快照 User ID 仍等于当前启用绑定主体；
@@ -214,6 +222,7 @@ Job 创建时，路由解析器冻结 Application Publication、Agent Publicatio
 - [企业 ONES 使用 HTTP 时认证与业务数据没有传输加密] → HTTPS 保持默认；每个 HTTP Connection 必须显式授权并显示警告，授权进入不可变 Revision 和审计事实，但平台不声称能消除明文链路风险。
 - [Challenge 中需要短期保存 Token] → 使用应用级加密、用户/Connection 绑定、短 TTL、单次消费和最小字段；密码永不保存，过期 Challenge 永不可执行。
 - [发布状态变更可能使模型已看到的 Tool 在调用前失效] → 执行前再次校验，返回安全、非重试的 Capability 不可用错误。
+- [隐藏不可用 Tool 会使模型误判平台未配置该能力] → 保持 Tool fail-closed，并通过独立、非可调用的固定安全提示说明当前发送者需要自助绑定或重新验证；提示不复用原始异常文本。
 - [旧 Job 与用户重绑之间存在主体漂移风险] → Job 冻结 User/Team 且逐次调用比对当前绑定；任何不一致失败关闭。
 - [第三方 5xx 重试增加 Tool 时延] → 仅 QUERY、最多两次、遵守 Tool 总预算并记录 attempt；其他错误不重试。
 - [规范化业务文本可能包含提示注入] → 只作为 Tool data block 返回，不拼入系统指令；模型上下文标注不可信来源并保持 Schema 边界。

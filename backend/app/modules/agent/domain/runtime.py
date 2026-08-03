@@ -8,6 +8,22 @@ from app.modules.model_connection.domain import ModelRuntimeBinding
 
 
 @dataclass(frozen=True)
+class GovernedCapabilityNotice:
+    identifier: str
+    reason_code: str
+    message: str
+    status: str = field(default="unavailable", init=False)
+
+    def to_prompt_payload(self) -> dict[str, str]:
+        return {
+            "identifier": self.identifier,
+            "status": self.status,
+            "reason_code": self.reason_code,
+            "message": self.message,
+        }
+
+
+@dataclass(frozen=True)
 class AgentExecutionContext:
     system_role: str
     safety_rules: list[str]
@@ -27,6 +43,7 @@ class AgentExecutionContext:
     config_hash: str = ""
     model_runtime_binding: ModelRuntimeBinding | None = None
     governed_capabilities: tuple[dict[str, Any], ...] = ()
+    governed_capability_notices: tuple[GovernedCapabilityNotice, ...] = ()
     application_publication_id: str = ""
 
 

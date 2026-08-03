@@ -13,7 +13,11 @@
 
 #### Scenario: 用户没有个人凭据
 - **WHEN** 应用允许 ONES Capability但当前用户只有身份元数据或凭据 invalid
-- **THEN** Tool Catalog 不暴露该 Tool，并允许上层返回安全的重新绑定提示
+- **THEN** Tool Catalog MUST 不暴露或批准该 Tool，同时 MUST 向模型投影一条不可调用的固定安全提示，说明当前发送者需要在“我的外部身份”完成绑定或重新验证、选择 default Team 并重新发送请求
+
+#### Scenario: 应用未选择 Capability 时不泄露提示
+- **WHEN** Agent Envelope 包含 Capability 但 Application Allowlist 不包含
+- **THEN** 运行时既不暴露该 Tool，也不向模型投影该 Capability 的不可用提示
 
 ### Requirement: 每次 Tool 执行重新校验授权和可用状态
 受治理 API Tool 在实际外部请求前 MUST 重新校验 Job 冻结的 Agent/Application 引用、Allowlist、Release 运维状态、当前用户身份、default Team 和个人 Token；模型参数、缓存 Catalog 或先前成功调用 MUST NOT 绕过复核。

@@ -60,3 +60,14 @@ Claude Tool循环 SHALL 能读取一个受治理Capability的规范化公开输�
 #### Scenario: Tool 输出包含提示注入
 - **WHEN** 外部字段内容声称自己是系统指令或要求调用被禁用Tool
 - **THEN** 内容保持普通Tool数据，系统提示、Tool集合和权限不发生变化
+
+### Requirement: 不可用 Capability 使用独立安全提示通道
+运行时 MUST 将受治理 Capability 的调用资格与模型解释事实分离：不满足当前发送者 Provider 身份前置条件的 Capability MUST 保持未注册、未批准，同时 MAY 仅在该 Capability 已属于精确 Agent/Application 发布交集时，以固定白名单文案向模型说明当前 Job 的不可用状态。提示 MUST NOT 复用原始异常，不得包含用户、Team、Connection、Credential、Release 或认证材料，也不得被模型视为可调用 Tool。
+
+#### Scenario: 当前发送者缺少 ONES 前置条件
+- **WHEN** 当前应用已发布 ONES Capability，但 Job 没有可用外部主体快照或当前绑定复核失败
+- **THEN** 系统提示模型说明“该能力对当前发送者暂不可用”并给出“我的外部身份”自助绑定、重新验证、选择 default Team 和重新发送请求的安全操作提示，且不得声称平台全局未注册 ONES Tool
+
+#### Scenario: 安全提示不扩大 Tool 权限
+- **WHEN** 系统提示中存在某个 Capability 的 `unavailable` 事实
+- **THEN** 该 Capability 不进入 MCP Server、`allowed_tools` 或 Tool 自动批准集合，模型也不得声称已经调用或验证其连通性

@@ -74,6 +74,7 @@ class GovernedApiExecutionRepository:
             raise NotFound(
                 "Job external subject snapshot not found",
                 safe_message="当前 Job 缺少外部主体快照",
+                error_code="job_external_subject_snapshot_missing",
             )
         return {**row, "binding_revision": int(row["binding_revision"])}
 

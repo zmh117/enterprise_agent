@@ -296,9 +296,7 @@ class RealClaudeCodeAgentClient:
         base_url: str = "",
         sdk_loader: Callable[[], ClaudeSdk] | None = None,
         secret_resolver: Callable[[str], str] | None = None,
-        governed_api_runtime_executor: (
-            GovernedApiRuntimeExecutor | None
-        ) = None,
+        governed_api_runtime_executor: (GovernedApiRuntimeExecutor | None) = None,
         agent_repository: AgentRepository | None = None,
     ) -> None:
         self.model = model
@@ -308,9 +306,7 @@ class RealClaudeCodeAgentClient:
         self.base_url = base_url
         self.sdk_loader = sdk_loader or load_claude_agent_sdk
         self.secret_resolver = secret_resolver
-        self.governed_api_runtime_executor = (
-            governed_api_runtime_executor
-        )
+        self.governed_api_runtime_executor = governed_api_runtime_executor
         self.agent_repository = agent_repository
 
     def run(self, request: AgentRunRequest) -> AgentRunResult:
@@ -586,10 +582,7 @@ class RealClaudeCodeAgentClient:
             arguments: dict[str, Any],
         ) -> dict[str, list[dict[str, str]]]:
             started = time.monotonic()
-            if (
-                self.governed_api_runtime_executor is None
-                or self.agent_repository is None
-            ):
+            if self.governed_api_runtime_executor is None or self.agent_repository is None:
                 raise NonRetryableExecutionError(
                     "Governed API runtime is unavailable",
                     safe_message="Capability 运行时不可用",
@@ -614,25 +607,15 @@ class RealClaudeCodeAgentClient:
                     job_id=request.job_id,
                     tool_call_id=tool_call_id,
                     user_id=request.user_id,
-                    application_publication_id=(
-                        request.context.application_publication_id
-                    ),
-                    agent_publication_id=(
-                        request.context.publication_id
-                    ),
-                    capability_release_id=str(
-                        capability["release_id"]
-                    ),
+                    application_publication_id=(request.context.application_publication_id),
+                    agent_publication_id=(request.context.publication_id),
+                    capability_release_id=str(capability["release_id"]),
                     identifier=tool_name,
                     agent_input=arguments,
                     correlation_id=f"tool:{tool_call_id}",
-                    timeout_seconds=float(
-                        request.context.timeout_seconds
-                    ),
+                    timeout_seconds=float(request.context.timeout_seconds),
                 )
-                duration_ms = int(
-                    (time.monotonic() - started) * 1000
-                )
+                duration_ms = int((time.monotonic() - started) * 1000)
                 encoded = json.dumps(
                     result,
                     ensure_ascii=False,
@@ -672,16 +655,12 @@ class RealClaudeCodeAgentClient:
                         "security": {
                             "trust": "untrusted_external_business_data",
                             "data_classification": "INTERNAL",
-                            "capability_release_id": (
-                                capability["release_id"]
-                            ),
+                            "capability_release_id": (capability["release_id"]),
                         },
                     }
                 )
             except Exception as exc:
-                duration_ms = int(
-                    (time.monotonic() - started) * 1000
-                )
+                duration_ms = int((time.monotonic() - started) * 1000)
                 summary = {
                     "error": getattr(exc, "safe_message", str(exc)),
                     "capability_release_id": capability["release_id"],
@@ -813,12 +792,8 @@ class RealClaudeCodeAgentClient:
         cli_stderr: list[str],
         binding: ModelRuntimeBinding,
     ) -> Any:
-        exact_tools = [
-            f"mcp__internal__{tool_name}"
-            for tool_name in context.allowed_tools
-        ] + [
-            f"mcp__internal__{item['identifier']}"
-            for item in context.governed_capabilities
+        exact_tools = [f"mcp__internal__{tool_name}" for tool_name in context.allowed_tools] + [
+            f"mcp__internal__{item['identifier']}" for item in context.governed_capabilities
         ]
         return sdk.options(
             model=binding.model,
@@ -881,9 +856,7 @@ class RealClaudeCodeAgentClient:
         if name in {"CLINotFoundError", "CLIConnectionError"}:
             raise NonRetryableExecutionError(
                 message,
-                safe_message=_safe_sdk_error_message(
-                    "Claude Code CLI 运行时不可用", message
-                ),
+                safe_message=_safe_sdk_error_message("Claude Code CLI 运行时不可用", message),
                 tool_events=tool_events,
                 error_code="claude_cli_unavailable",
                 diagnostics=diagnostics,
@@ -899,9 +872,7 @@ class RealClaudeCodeAgentClient:
         if name in {"ProcessError", "CLIJSONDecodeError"} or _looks_transient(message):
             raise RetryableExecutionError(
                 message,
-                safe_message=_safe_sdk_error_message(
-                    "Claude 运行时发生暂时性错误", message
-                ),
+                safe_message=_safe_sdk_error_message("Claude 运行时发生暂时性错误", message),
                 tool_events=tool_events,
                 error_code="claude_transient_error",
                 diagnostics=diagnostics,
@@ -985,6 +956,10 @@ def _build_system_prompt(context: AgentExecutionContext) -> str:
         f"## Skill: {name}\n{body}" for name, body in sorted(context.skills.items())
     )
     retrieved_context = json.dumps(context.retrieved_context, ensure_ascii=False, default=str)
+    governed_capability_notices = json.dumps(
+        [notice.to_prompt_payload() for notice in context.governed_capability_notices],
+        ensure_ascii=False,
+    )
     return "\n\n".join(
         [
             context.system_role,
@@ -1001,6 +976,35 @@ def _build_system_prompt(context: AgentExecutionContext) -> str:
             "Safety rules:\n" + _numbered(context.safety_rules),
             "Tool restrictions:\n" + _numbered(context.tool_restrictions),
             "Available internal tools:\n" + _numbered(context.allowed_tools),
+            (
+                "Governed capability availability notices for the current Job "
+                "(platform facts, not callable tools):\n" + governed_capability_notices
+                if context.governed_capability_notices
+                else ""
+            ),
+            (
+                "Governed capability notice rules:\n"
+                + _numbered(
+                    [
+                        (
+                            "A listed unavailable capability is configured for the current "
+                            "Application but is not callable by the current sender in this Job."
+                        ),
+                        (
+                            "When asked about a listed capability, explain its current-sender "
+                            "unavailability and repeat only the provided safe message. Do not "
+                            "claim the platform globally lacks or has not registered it."
+                        ),
+                        (
+                            "Do not call, simulate, or claim connectivity verification for an "
+                            "unavailable capability. Do not infer identity, credential, Team, "
+                            "Connection, Release, or exception details beyond the notice."
+                        ),
+                    ]
+                )
+                if context.governed_capability_notices
+                else ""
+            ),
             "Report structure:\n"
             + _numbered(
                 [

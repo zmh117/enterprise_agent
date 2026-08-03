@@ -6,7 +6,11 @@ import unittest
 from dataclasses import replace
 from typing import Any
 
-from app.modules.agent.domain.runtime import AgentExecutionContext, AgentRunRequest
+from app.modules.agent.domain.runtime import (
+    AgentExecutionContext,
+    AgentRunRequest,
+    GovernedCapabilityNotice,
+)
 from app.modules.agent.infrastructure.claude_code_agent_client import (
     ClaudeSdk,
     RealClaudeCodeAgentClient,
@@ -171,6 +175,55 @@ class RealClaudeCodeAgentClientTests(unittest.TestCase):
         self.assertIn("不具备诊断证据", options.system_prompt)
         self.assertIn("get_schema_directory", options.system_prompt)
 
+    def test_governed_unavailability_notice_is_prompt_only(self) -> None:
+        captured: dict[str, Any] = {}
+
+        async def query(prompt: str, options: FakeOptions) -> Any:
+            captured["options"] = options
+            yield {"result": "binding guidance returned"}
+
+        client, request = self._client_and_request(query)
+        request = replace(
+            request,
+            context=replace(
+                request.context,
+                governed_capability_notices=(
+                    GovernedCapabilityNotice(
+                        identifier="cap__ones__work_item__search",
+                        reason_code="current_sender_ones_setup_required",
+                        message=(
+                            "当前发送者暂不能使用 ONES 查询能力。请在“我的外部身份”"
+                            "完成 ONES 绑定或重新验证，并选择默认 Team，然后重新发送请求。"
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        result = client.run(request)
+        options = captured["options"]
+
+        self.assertEqual("binding guidance returned", result.final_answer)
+        self.assertEqual(
+            ["mcp__internal__query_database"],
+            options.allowed_tools,
+        )
+        self.assertNotIn(
+            "cap__ones__work_item__search",
+            options.mcp_servers["internal"]["tools"],
+        )
+        self.assertIn(
+            "cap__ones__work_item__search",
+            options.system_prompt,
+        )
+        self.assertIn("我的外部身份", options.system_prompt)
+        self.assertIn(
+            "Do not claim the platform globally lacks or has not registered it.",
+            options.system_prompt,
+        )
+        self.assertNotIn("external_subject_unavailable", options.system_prompt)
+        self.assertNotIn("credential-secret", options.system_prompt)
+
     def test_tool_loop_routes_through_tool_registry_and_returns_tool_events(self) -> None:
         async def query(prompt: str, options: FakeOptions) -> Any:
             tool = options.mcp_servers["internal"]["tools"]["query_database"]
@@ -219,9 +272,7 @@ class RealClaudeCodeAgentClientTests(unittest.TestCase):
         async def query(prompt: str, options: FakeOptions) -> Any:
             del prompt
             tools = options.mcp_servers["internal"]["tools"]
-            first = await tools["cap__fixture__work_item__search"](
-                {"keyword": "blocked"}
-            )
+            first = await tools["cap__fixture__work_item__search"]({"keyword": "blocked"})
             first_payload = json.loads(first["content"][0]["text"])
             responses.append(first_payload)
             second = await tools["cap__fixture__work_item__detail"](
@@ -236,45 +287,33 @@ class RealClaudeCodeAgentClientTests(unittest.TestCase):
 
         client, request = self._client_and_request(query)
         client.governed_api_runtime_executor = FakeGovernedExecutor()
-        client.agent_repository = (
-            client.tool_registry.tool_service.repository
-        )
+        client.agent_repository = client.tool_registry.tool_service.repository
         request = replace(
             request,
             context=replace(
                 request.context,
                 publication_id="agent-publication-test",
-                application_publication_id=(
-                    "application-publication-test"
-                ),
+                application_publication_id=("application-publication-test"),
                 governed_capabilities=(
                     {
-                        "identifier": (
-                            "cap__fixture__work_item__search"
-                        ),
+                        "identifier": ("cap__fixture__work_item__search"),
                         "release_id": "release-search",
                         "description": "Search fixture work items",
                         "input_schema": {
                             "type": "object",
-                            "properties": {
-                                "keyword": {"type": "string"}
-                            },
+                            "properties": {"keyword": {"type": "string"}},
                             "required": ["keyword"],
                             "additionalProperties": False,
                         },
                         "data_classification": "INTERNAL",
                     },
                     {
-                        "identifier": (
-                            "cap__fixture__work_item__detail"
-                        ),
+                        "identifier": ("cap__fixture__work_item__detail"),
                         "release_id": "release-detail",
                         "description": "Read fixture work item detail",
                         "input_schema": {
                             "type": "object",
-                            "properties": {
-                                "number": {"type": "string"}
-                            },
+                            "properties": {"number": {"type": "string"}},
                             "required": ["number"],
                             "additionalProperties": False,
                         },
@@ -304,12 +343,7 @@ class RealClaudeCodeAgentClientTests(unittest.TestCase):
             ["SUCCEEDED", "SUCCEEDED"],
             [event["status"] for event in result.tool_events],
         )
-        self.assertTrue(
-            all(
-                event.get("persisted_tool_call_id")
-                for event in result.tool_events
-            )
-        )
+        self.assertTrue(all(event.get("persisted_tool_call_id") for event in result.tool_events))
 
     def test_policy_rejection_is_returned_to_model_as_tool_event(self) -> None:
         tool_response: dict[str, Any] = {}
@@ -475,9 +509,9 @@ class RealClaudeCodeAgentClientTests(unittest.TestCase):
             raised.exception.error_code,
         )
         self.assertEqual(1, platform.database_calls)
-        self.assertEqual(["SUCCEEDED", "REJECTED"], [
-            item["status"] for item in raised.exception.tool_events
-        ])
+        self.assertEqual(
+            ["SUCCEEDED", "REJECTED"], [item["status"] for item in raised.exception.tool_events]
+        )
 
     def test_zero_tool_budget_rejects_first_call(self) -> None:
         async def query(prompt: str, options: FakeOptions) -> Any:

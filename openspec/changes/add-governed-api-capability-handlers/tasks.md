@@ -96,6 +96,8 @@
 - [x] 9.7 增加测试专用双Capability fixture，验证模型用Tool A规范化输出组织Tool B输入且两次调用独立治理
 - [x] 9.8 扩展成功/失败Tool事件，保存Release、分类和attempt安全摘要而不保存私有推理、认证材料或原始HTTP正文
 - [x] 9.9 为应用未选、用户未绑定、未知cap Tool、提示注入文本、顺序组合和现有内部Tool回归编写Claude Runtime测试
+- [x] 9.10 将不可用 Capability 投影为独立的固定安全提示事实，保持 MCP 注册、`allowed_tools` 和执行入口失败关闭
+- [x] 9.11 增加缺少主体快照、应用未选择不泄露、提示不含敏感标识及提示不扩大 Tool 权限的回归测试
 
 ## 10. ONES 工作项搜索 Capability
 
