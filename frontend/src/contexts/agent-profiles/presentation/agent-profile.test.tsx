@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { describe, expect, it, vi } from "vitest"
 
@@ -7,6 +7,7 @@ import {
   AgentProfilePage,
   AgentProfilesPage,
 } from "@/contexts/agent-profiles/presentation/agent-profile-page"
+import type { AgentConfig } from "@/contexts/agent-profiles/domain/agent-profile"
 
 function response(body: unknown) {
   return Promise.resolve(
@@ -97,7 +98,15 @@ function agentPayload(
     can_publish: boolean
     can_manage_credential: boolean
     can_test_connection: boolean
-  }> = {}
+  }> = {},
+  connectors: Array<{
+    id: string
+    connector_type: string
+    name: string
+    enabled: boolean | number
+    allow_ingress: boolean | number
+    allow_delivery: boolean | number
+  }> = [],
 ) {
   return {
     agent: {
@@ -133,7 +142,7 @@ function agentPayload(
         models: [modelConfig.model],
         tools: [],
         skills: [],
-        connectors: [],
+        connectors,
         api_capabilities: [
           {
             id: "capability-release-1",
@@ -931,5 +940,98 @@ describe("Agent Profile management", () => {
         api_capability_release_ids: ["capability-release-1"],
       }),
     )
+  })
+
+  it("shows unavailable selected Connectors and blocks validation until changes are saved", async () => {
+    const replacementConnector = {
+      id: "connector_97d62ac3cdc343ebbd0559dfeef3c031",
+      connector_type: "dingtalk_stream",
+      name: "测试ai机器人",
+      enabled: 1,
+      allow_ingress: 1,
+      allow_delivery: 0,
+    }
+    let savedConfig: AgentConfig | undefined
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((input, init) => {
+        const url = String(input)
+        if (url.includes("/model-connections/")) {
+          return response({ connection: modelConnection })
+        }
+        if (url.endsWith("/draft") && init?.method === "PUT") {
+          const body = JSON.parse(String(init.body)) as { config: AgentConfig }
+          savedConfig = body.config
+          return response({
+            revision: {
+              ...agentPayload().agent.draft,
+              revision: 3,
+              config: body.config,
+            },
+          })
+        }
+        const payload = agentPayload({}, [replacementConnector])
+        if (savedConfig && payload.agent.draft) {
+          payload.agent.draft.revision = 3
+          payload.agent.draft.config = savedConfig as typeof config
+        }
+        return response(payload)
+      })
+
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: {
+              queries: { retry: false },
+              mutations: { retry: false },
+            },
+          })
+        }
+      >
+        <MemoryRouter>
+          <AgentProfilePage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    expect(await screen.findByText("测试ai机器人")).toBeInTheDocument()
+    const ingress = screen.getByRole("group", { name: "入口 Connector" })
+    const unavailable = within(ingress).getByRole("checkbox", {
+      name: /connector-dingtalk-stream-default/,
+    })
+    const replacement = within(ingress).getByRole("checkbox", {
+      name: /测试ai机器人/,
+    })
+    expect(unavailable).toBeChecked()
+    expect(replacement).not.toBeChecked()
+    expect(
+      within(ingress).getByText(
+        "Connector 已停用或删除，请取消选择后保存草稿。",
+      ),
+    ).toBeInTheDocument()
+
+    fireEvent.click(unavailable)
+    fireEvent.click(replacement)
+
+    expect(
+      screen.getByText("当前修改尚未保存，请先保存草稿，再校验和发布。"),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: "校验当前草稿" }),
+    ).toBeDisabled()
+    expect(screen.getByRole("button", { name: "发布 Agent" })).toBeDisabled()
+
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }))
+    await waitFor(() =>
+      expect(savedConfig?.channels.ingress).toEqual([
+        replacementConnector.id,
+      ]),
+    )
+    expect(
+      fetchSpy.mock.calls.some(([input]) =>
+        String(input).endsWith("/validate"),
+      ),
+    ).toBe(false)
   })
 })

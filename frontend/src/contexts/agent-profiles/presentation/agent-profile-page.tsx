@@ -33,6 +33,7 @@ import {
 } from "@/contexts/agent-profiles/application/agent-profile-queries"
 import type {
   AgentConfig,
+  AgentDetail,
   CredentialSource,
   ModelConnectionConfig,
 } from "@/contexts/agent-profiles/domain/agent-profile"
@@ -799,7 +800,7 @@ function ProfileForm({
 }) {
   const currentConnection = connection.current_revision
   const base = agent.draft?.config
-  const [form, setForm] = useState<AgentConfig>(() => ({
+  const persistedForm: AgentConfig = {
     business_role: base?.business_role ?? "",
     business_instructions: base?.business_instructions ?? "",
     model_policy: {
@@ -813,10 +814,12 @@ function ProfileForm({
     routing: base?.routing ?? { project_code: agent.definition.project_code },
     channels: base?.channels ?? { ingress: [], delivery: [] },
     api_capability_release_ids: base?.api_capability_release_ids ?? [],
-  }))
+  }
+  const [form, setForm] = useState<AgentConfig>(() => persistedForm)
   const save = useSaveAgentDraft()
   const validate = useValidateAgentDraft()
   const publish = usePublishAgentDraft()
+  const draftDirty = JSON.stringify(form) !== JSON.stringify(persistedForm)
 
   function toggleList(field: "tools" | "skills", value: string) {
     setForm((current) => ({
@@ -857,7 +860,9 @@ function ProfileForm({
     }
   }
 
-  const validationErrors = agent.draft?.validation.errors ?? []
+  const validationErrors = draftDirty
+    ? []
+    : (agent.draft?.validation.errors ?? [])
   const draftPublished = agent.draft?.status === "published"
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_24rem]">
@@ -959,19 +964,17 @@ function ProfileForm({
             onToggle={(value) => toggleList("skills", value)}
           />
           <div className="grid gap-4 lg:grid-cols-2">
-            <Checklist
+            <ConnectorChecklist
               title="入口 Connector"
-              items={agent.catalog.connectors
-                .filter((item) => Boolean(item.allow_ingress))
-                .map((item) => item.id)}
+              direction="ingress"
+              connectors={agent.catalog.connectors}
               selected={form.channels.ingress}
               onToggle={(value) => toggleConnector("ingress", value)}
             />
-            <Checklist
+            <ConnectorChecklist
               title="投递 Connector"
-              items={agent.catalog.connectors
-                .filter((item) => Boolean(item.allow_delivery))
-                .map((item) => item.id)}
+              direction="delivery"
+              connectors={agent.catalog.connectors}
               selected={form.channels.delivery}
               onToggle={(value) => toggleConnector("delivery", value)}
             />
@@ -987,6 +990,11 @@ function ProfileForm({
                 </li>
               ))}
             </ul>
+          ) : null}
+          {draftDirty ? (
+            <p className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+              当前修改尚未保存，请先保存草稿，再校验和发布。
+            </p>
           ) : null}
           <div className="flex flex-wrap gap-2">
             <Button
@@ -1004,7 +1012,12 @@ function ProfileForm({
             <Button
               type="button"
               variant="outline"
-              disabled={!agent.draft || draftPublished || validate.isPending}
+              disabled={
+                !agent.draft ||
+                draftPublished ||
+                draftDirty ||
+                validate.isPending
+              }
               onClick={() => agent.draft && validate.mutate(agent.draft.id)}
             >
               <CheckCircle2Icon />
@@ -1017,6 +1030,7 @@ function ProfileForm({
                 !agent.draft ||
                 draftPublished ||
                 !agent.draft.validation.valid ||
+                draftDirty ||
                 publish.isPending ||
                 !agent.permissions.can_publish
               }
@@ -1332,6 +1346,82 @@ function Checklist({
                 onChange={() => onToggle(item)}
               />
               <span className="truncate font-mono text-xs">{item}</span>
+            </label>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">目录为空。</p>
+      )}
+    </fieldset>
+  )
+}
+
+function ConnectorChecklist({
+  title,
+  direction,
+  connectors,
+  selected,
+  onToggle,
+}: {
+  title: string
+  direction: "ingress" | "delivery"
+  connectors: AgentDetail["catalog"]["connectors"]
+  selected: string[]
+  onToggle: (value: string) => void
+}) {
+  const available = connectors.filter((connector) =>
+    Boolean(
+      direction === "ingress"
+        ? connector.allow_ingress
+        : connector.allow_delivery,
+    ),
+  )
+  const availableIds = new Set(available.map((connector) => connector.id))
+  const unavailableSelected = selected.filter((id) => !availableIds.has(id))
+
+  return (
+    <fieldset className="rounded-lg border p-4">
+      <legend className="px-1 text-sm font-medium">{title}</legend>
+      {available.length || unavailableSelected.length ? (
+        <div className="grid gap-3">
+          {available.map((connector) => (
+            <label
+              key={connector.id}
+              className="flex min-w-0 items-start gap-2 text-sm"
+            >
+              <input
+                className="mt-0.5"
+                type="checkbox"
+                checked={selected.includes(connector.id)}
+                onChange={() => onToggle(connector.id)}
+              />
+              <span className="min-w-0">
+                <span className="block font-medium">{connector.name}</span>
+                <span className="block truncate font-mono text-xs text-muted-foreground">
+                  {connector.id}
+                </span>
+              </span>
+            </label>
+          ))}
+          {unavailableSelected.map((connectorId) => (
+            <label
+              key={connectorId}
+              className="flex min-w-0 items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm"
+            >
+              <input
+                className="mt-0.5"
+                type="checkbox"
+                checked
+                onChange={() => onToggle(connectorId)}
+              />
+              <span className="min-w-0">
+                <span className="block break-all font-mono text-xs">
+                  {connectorId}
+                </span>
+                <span className="mt-1 block text-xs text-destructive">
+                  Connector 已停用或删除，请取消选择后保存草稿。
+                </span>
+              </span>
             </label>
           ))}
         </div>
