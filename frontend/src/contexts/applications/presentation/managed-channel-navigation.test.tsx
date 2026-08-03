@@ -7,7 +7,17 @@ import { resolveActiveNavigationHref } from "@/app/navigation/navigation-match"
 import { PlatformNavigation } from "@/app/navigation/platform-navigation"
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { ManagedChannelsPage } from "@/contexts/applications/presentation/managed-channels-page"
+import { AuthenticatedUserProvider } from "@/contexts/auth/presentation/authenticated-user-context"
 import { navigationGroups } from "@/mocks/dashboard"
+
+const currentUser = {
+  id: "user-local-admin",
+  username: "local-admin",
+  display_name: "本地管理员",
+  roles: ["platform-admin"],
+  auth_source: "local",
+  capabilities: {},
+}
 
 function response(body: unknown, status = 200) {
   return Promise.resolve(
@@ -63,17 +73,17 @@ describe("Managed channel navigation", () => {
         : response({ count: 0 })
     )
     renderWithQuery(
-      <SidebarProvider>
-        <PlatformNavigation />
-      </SidebarProvider>,
+      <AuthenticatedUserProvider user={currentUser}>
+        <SidebarProvider>
+          <PlatformNavigation />
+        </SidebarProvider>
+      </AuthenticatedUserProvider>,
       ["/applications/channels"]
     )
 
     expect(
-      await screen.findByRole("link", { name: "渠道与触发器" }),
-    ).toHaveAttribute(
-      "data-active"
-    )
+      await screen.findByRole("link", { name: "渠道与触发器" })
+    ).toHaveAttribute("data-active")
     expect(screen.getByRole("link", { name: "应用列表" })).not.toHaveAttribute(
       "data-active",
       "true"

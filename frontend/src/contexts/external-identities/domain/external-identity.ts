@@ -87,6 +87,17 @@ export const onesBindingStatusSchema = z.object({
   credential: externalCredentialSchema.nullable(),
 })
 
+export const selfExternalIdentityOverviewSchema = z.object({
+  user: z.object({
+    id: z.string(),
+    display_name: z.string(),
+  }),
+  identities: z.array(externalIdentitySchema),
+  credentials: z.object({
+    ones: externalCredentialSchema.nullable(),
+  }),
+})
+
 export const onesBindingChallengeSchema = z.object({
   id: z.string(),
   provider: z.literal("ones"),
@@ -102,4 +113,7 @@ export const onesBindingChallengeSchema = z.object({
 
 export type ExternalCredential = z.infer<typeof externalCredentialSchema>
 export type OnesBindingStatus = z.infer<typeof onesBindingStatusSchema>
+export type SelfExternalIdentityOverview = z.infer<
+  typeof selfExternalIdentityOverviewSchema
+>
 export type OnesBindingChallenge = z.infer<typeof onesBindingChallengeSchema>

@@ -117,3 +117,54 @@ Date: 2026-08-02
   `http://host.docker.internal:19121` only with `allow_plain_http=true`, OpenAPI
   exposed the new field, and ONES Mock health returned HTTP 200. No persistent
   Connection was created solely for the smoke test.
+
+## External identity self/governance split
+
+Date: 2026-08-02
+
+- `.venv/bin/pytest -q`
+  - `769 passed, 22 skipped, 1 warning, 4 subtests passed`.
+- `.venv/bin/python -m unittest discover -s backend/tests -t .`
+  - `237 tests passed, 7 skipped`.
+- `cd frontend && npm run lint && npm run typecheck && npm test -- --run &&
+  npm run build`
+  - ESLint and TypeScript passed.
+  - Vitest: `12` files and `67` tests passed.
+  - Production build passed with only the existing large-chunk advisory.
+- Focused Ruff format and mypy checks passed for all changed Python modules;
+  repository-wide Ruff rules, Python compilation, `git diff --check`, and
+  `openspec validate add-governed-api-capability-handlers --strict` passed.
+- Rebuilt `api-server` and `admin-web`; Compose reported the API healthy and
+  the web service running, and API readiness returned HTTP 200 in container
+  logs.
+- Browser acceptance task 13.9 remains open because the isolated in-app
+  browser has no authenticated ordinary-user or administrator session.
+- Quality task 14.6 remains open because the repository-wide `make check`
+  baseline still reports 22 mypy errors in 11 unrelated files and 196 files
+  requiring Ruff format. These unrelated files were not mass-edited or
+  silently baselined.
+
+## Route-defined external identity modes
+
+Date: 2026-08-03
+
+- Changed the mode boundary from subject equality to route semantics:
+  `/me/external-identities` always uses self-service mode, while authorized
+  `/users/:userId` pages always use governance mode, including an
+  administrator's own personnel record.
+- Governance mode exposes the existing DingTalk trusted bind, enable/disable,
+  soft-unbind, and candidate-restore actions. Existing tenant, external
+  subject, and connector source facts remain non-editable; ONES password and
+  re-verification controls remain unavailable to administrators.
+- `npm test -- --run src/contexts/users/presentation/users.test.tsx`
+  - `1` file and `13` tests passed.
+- `cd frontend && npm run lint && npm run typecheck && npm test -- --run &&
+  npm run build`
+  - ESLint and TypeScript passed.
+  - Sequential Vitest rerun: `13` files and `71` tests passed.
+  - Production build passed with only the existing large-chunk advisory.
+- `openspec validate add-governed-api-capability-handlers --strict` and
+  `git diff --check` passed.
+- Rebuilt the Compose `admin-web` dependency chain. `admin-web` returned HTTP
+  200, `api-server` was healthy, and `/api/ready` reported `status=ready` with
+  `schema_head=026`.

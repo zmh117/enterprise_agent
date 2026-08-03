@@ -214,6 +214,95 @@ def test_two_phase_binding_returns_candidates_and_persists_only_ciphertext(
     assert encrypted.ciphertext != "ones-token-a"
 
 
+def test_self_overview_filters_history_and_links_current_ones_credential(
+    database: Database,
+) -> None:
+    service, _, _, _ = _service(database)
+    identities = IdentityRepository(database)
+    legacy_ones = identities.bind_external_identity(
+        user_id=USER_ID,
+        provider="ones",
+        tenant_code="default",
+        external_subject_id="ones-user-a",
+        connector_id="",
+        display_name="Legacy ONES User",
+        metadata={"team_uuids": ["legacy-team"]},
+    )
+    identities.unbind_external_identity(
+        str(legacy_ones["id"]),
+        expected_revision=int(legacy_ones["revision"]),
+    )
+    current_dingtalk = identities.bind_external_identity(
+        user_id=USER_ID,
+        provider="dingtalk",
+        tenant_code="default",
+        external_subject_id="dingtalk-current-user",
+        connector_id="connector-dingtalk-stream-default",
+        display_name="Current DingTalk User",
+    )
+    historical_dingtalk = identities.bind_external_identity(
+        user_id=USER_ID,
+        provider="dingtalk",
+        tenant_code="legacy",
+        external_subject_id="dingtalk-history-user",
+        connector_id="connector-dingtalk-stream-default",
+        display_name="Historical DingTalk User",
+    )
+    identities.unbind_external_identity(
+        str(historical_dingtalk["id"]),
+        expected_revision=int(historical_dingtalk["revision"]),
+    )
+    challenge = service.begin_self_binding(
+        actor_id=USER_ID,
+        email="user@example.test",
+        password="password",
+    )
+    confirmed = service.confirm_self_binding(
+        actor_id=USER_ID,
+        challenge_id=str(challenge["id"]),
+        connection_revision_id=str(challenge["connection_revision_id"]),
+        default_team_id="team-a",
+    )
+
+    overview = service.self_overview(actor_id=USER_ID)
+
+    assert {item["id"] for item in overview["identities"]} == {
+        current_dingtalk["id"],
+        confirmed["identity"]["id"],
+    }
+    assert all(item["status"] != "unbound" for item in overview["identities"])
+    assert overview["credentials"]["ones"]["external_identity_id"] == confirmed["identity"]["id"]
+    self_status = service.self_status(actor_id=USER_ID)
+    assert self_status["identity"]["id"] == confirmed["identity"]["id"]
+    assert self_status["credential"]["external_identity_id"] == confirmed["identity"]["id"]
+
+
+def test_self_overview_fails_closed_for_active_credential_on_unbound_identity(
+    database: Database,
+) -> None:
+    service, _, _, _ = _service(database)
+    challenge = service.begin_self_binding(
+        actor_id=USER_ID,
+        email="user@example.test",
+        password="password",
+    )
+    confirmed = service.confirm_self_binding(
+        actor_id=USER_ID,
+        challenge_id=str(challenge["id"]),
+        connection_revision_id=str(challenge["connection_revision_id"]),
+        default_team_id="team-a",
+    )
+    database.execute(
+        "update user_external_identity set status = 'unbound' where id = ?",
+        (confirmed["identity"]["id"],),
+    )
+
+    with pytest.raises(NonRetryableExecutionError) as failure:
+        service.self_overview(actor_id=USER_ID)
+
+    assert failure.value.error_code == "external_identity_state_inconsistent"
+
+
 def test_self_unbind_soft_disables_identity_and_credential(
     database: Database,
 ) -> None:
@@ -235,6 +324,9 @@ def test_self_unbind_soft_disables_identity_and_credential(
     assert credentials.get_latest_public(user_id=USER_ID)["status"] == "DISABLED"
     identities = IdentityRepository(database).list_external_identities(USER_ID)
     assert identities[0]["status"] == "unbound"
+    status = service.self_status(actor_id=USER_ID)
+    assert status["identity"] is None
+    assert status["credential"] is None
     assert audit.events[-1]["event_type"] == "external_credential.self_unbound"
 
 

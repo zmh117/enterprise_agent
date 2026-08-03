@@ -102,7 +102,10 @@ export function UserDetailPage() {
       </header>
 
       <UserProfileCard key={query.data.revision} user={query.data} />
-      <UserRolesCard key={`roles-${query.data.roles.map((role) => `${role.id}:${role.membership_revision}`).join(",")}`} user={query.data} />
+      <UserRolesCard
+        key={`roles-${query.data.roles.map((role) => `${role.id}:${role.membership_revision}`).join(",")}`}
+        user={query.data}
+      />
       <ExternalIdentityPanel
         user={query.data}
         discoveryCandidateId={candidateId}
@@ -121,13 +124,17 @@ function UserRolesCard({ user }: { user: UserDetail }) {
         enabled: role.membership_status === "enabled",
         expires_at: role.expires_at ?? "",
       },
-    ]),
+    ])
   )
   const [selection, setSelection] = useState(current)
   const changedRoles = (roles.data?.items ?? []).filter(
     (role) =>
-      JSON.stringify(current.get(role.id) ?? { enabled: false, expires_at: "" }) !==
-      JSON.stringify(selection.get(role.id) ?? { enabled: false, expires_at: "" }),
+      JSON.stringify(
+        current.get(role.id) ?? { enabled: false, expires_at: "" }
+      ) !==
+      JSON.stringify(
+        selection.get(role.id) ?? { enabled: false, expires_at: "" }
+      )
   )
 
   const save = () =>
@@ -208,17 +215,24 @@ function UserRolesCard({ user }: { user: UserDetail }) {
         </Button>
 
         <div className="rounded-lg border bg-muted/30 p-4">
-          <p className="font-medium">{user.authorization_summary.access_status}</p>
+          <p className="font-medium">
+            {user.authorization_summary.access_status}
+          </p>
           <p className="mt-2 text-xs text-muted-foreground">
-            管理后台能力 {user.authorization_summary.management_capabilities.length} 项
-            · 业务应用 {user.authorization_summary.business_applications.length} 个
+            管理后台能力{" "}
+            {user.authorization_summary.management_capabilities.length} 项 ·
+            业务应用 {user.authorization_summary.business_applications.length}{" "}
+            个
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
-            {user.authorization_summary.business_applications.map((application) => (
-              <Badge key={application.id} variant="outline">
-                {application.name} · 来源 {application.source_role_codes.join("、")}
-              </Badge>
-            ))}
+            {user.authorization_summary.business_applications.map(
+              (application) => (
+                <Badge key={application.id} variant="outline">
+                  {application.name} · 来源{" "}
+                  {application.source_role_codes.join("、")}
+                </Badge>
+              )
+            )}
           </div>
         </div>
       </CardContent>

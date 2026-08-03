@@ -11,3 +11,9 @@ export function login(username: string, password: string) {
     body: { username, password },
   })
 }
+
+export function logout() {
+  return apiRequest<{ status: "logged_out" }>("/api/auth/logout", {
+    method: "POST",
+  })
+}

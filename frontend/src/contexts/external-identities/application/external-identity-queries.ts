@@ -11,6 +11,7 @@ import {
   confirmSelfOnesBinding,
   disableAdminOnesCredential,
   getAdminOnesCredential,
+  getSelfExternalIdentities,
   getSelfOnesBinding,
   listDingTalkTenants,
   listExternalIdentities,
@@ -27,6 +28,7 @@ export const externalIdentityKeys = {
   tenants: () => [...externalIdentityKeys.all, "dingtalk-tenants"] as const,
   user: (userId: string) =>
     [...externalIdentityKeys.all, "user", userId] as const,
+  self: () => [...externalIdentityKeys.all, "self"] as const,
   selfOnes: () => [...externalIdentityKeys.all, "self", "ones"] as const,
   adminOnes: (userId: string) =>
     [...externalIdentityKeys.all, "admin", userId, "ones"] as const,
@@ -59,13 +61,13 @@ export function useDingTalkTenants() {
 
 export function useBindDingTalkIdentity(userId: string) {
   return useIdentityMutation(userId, (input: BindDingTalkInput) =>
-    bindDingTalkIdentity(userId, input),
+    bindDingTalkIdentity(userId, input)
   )
 }
 
 export async function verifyAndBindOnesIdentity(
   userId: string,
-  input: BindOnesInput,
+  input: BindOnesInput
 ) {
   return bindOnesIdentity(userId, input)
 }
@@ -81,7 +83,7 @@ export function useUpdateIdentityStatus(userId: string) {
       updateIdentityStatus(input.identityId, {
         expected_revision: input.expectedRevision,
         status: input.status,
-      }),
+      })
   )
 }
 
@@ -89,7 +91,7 @@ export function useUnbindIdentity(userId: string) {
   return useIdentityMutation(
     userId,
     (input: { identityId: string; expectedRevision: number }) =>
-      unbindIdentity(input.identityId, input.expectedRevision),
+      unbindIdentity(input.identityId, input.expectedRevision)
   )
 }
 
@@ -97,6 +99,14 @@ export function useSelfOnesBinding() {
   return useQuery({
     queryKey: externalIdentityKeys.selfOnes(),
     queryFn: getSelfOnesBinding,
+    retry: false,
+  })
+}
+
+export function useSelfExternalIdentities() {
+  return useQuery({
+    queryKey: externalIdentityKeys.self(),
+    queryFn: getSelfExternalIdentities,
     retry: false,
   })
 }
@@ -110,7 +120,10 @@ export function useConfirmSelfOnesBinding() {
   return useMutation({
     mutationFn: confirmSelfOnesBinding,
     onSuccess: () =>
-      client.invalidateQueries({ queryKey: externalIdentityKeys.selfOnes() }),
+      Promise.all([
+        client.invalidateQueries({ queryKey: externalIdentityKeys.self() }),
+        client.invalidateQueries({ queryKey: externalIdentityKeys.selfOnes() }),
+      ]),
   })
 }
 
@@ -119,7 +132,10 @@ export function useUnbindSelfOnesBinding() {
   return useMutation({
     mutationFn: unbindSelfOnesBinding,
     onSuccess: () =>
-      client.invalidateQueries({ queryKey: externalIdentityKeys.selfOnes() }),
+      Promise.all([
+        client.invalidateQueries({ queryKey: externalIdentityKeys.self() }),
+        client.invalidateQueries({ queryKey: externalIdentityKeys.selfOnes() }),
+      ]),
   })
 }
 
@@ -166,7 +182,7 @@ export function useUnbindAdminOnesCredential(userId: string) {
 
 function useIdentityMutation<TInput, TResult>(
   userId: string,
-  mutationFn: (input: TInput) => Promise<TResult>,
+  mutationFn: (input: TInput) => Promise<TResult>
 ) {
   const queryClient = useQueryClient()
   return useMutation({

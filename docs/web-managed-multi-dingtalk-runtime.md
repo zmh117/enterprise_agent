@@ -48,7 +48,8 @@ Web 保存 Connector 和 Platform Secret
 ## 状态解释
 
 - `READY`：SDK 已注册，可以接收回调。
-- `CONNECTED`：WebSocket 已连接，但尚未确认注册，不等于可用。
+- `CONNECTED`：WebSocket 已连接，但当前连接周期尚未通过真实消息回调验证，不等于可用。
+- `REGISTERED`：SDK 已确认注册，或当前连接周期内已有消息成功提交至平台 Inbox。
 - `STARTING` / `RECONNECTING`：正在连接或自动重连。
 - `AUTH_FAILED`：该 Connector 凭据失败，不影响其他 Client。
 - `MISCONFIGURED`：必需凭据缺失、被停用或无法解析。控制面保留 Connector

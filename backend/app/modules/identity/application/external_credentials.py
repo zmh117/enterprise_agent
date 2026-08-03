@@ -45,19 +45,27 @@ class ExternalCredentialBindingService:
         self.challenge_ttl_seconds = max(60, min(challenge_ttl_seconds, 1800))
 
     def self_status(self, *, actor_id: str) -> dict[str, Any]:
+        overview = self.self_overview(actor_id=actor_id)
+        identity = next(
+            (item for item in overview["identities"] if item["provider"] == "ones"),
+            None,
+        )
+        return {
+            "user": overview["user"],
+            "identity": identity,
+            "credential": overview["credentials"]["ones"],
+        }
+
+    def self_overview(self, *, actor_id: str) -> dict[str, Any]:
         user = self._require_self_user(actor_id)
-        identities = [
-            item
-            for item in self.identity_repository.list_external_identities(actor_id)
-            if item["provider"] == "ones"
-        ]
+        identities, credential = self._current_binding_snapshot(actor_id)
         return {
             "user": {
                 "id": user["id"],
                 "display_name": user["display_name"],
             },
-            "identity": identities[0] if identities else None,
-            "credential": self.credential_repository.get_latest_public(user_id=actor_id),
+            "identities": identities,
+            "credentials": {"ones": credential},
         }
 
     def begin_self_binding(
@@ -184,9 +192,10 @@ class ExternalCredentialBindingService:
     ) -> dict[str, Any]:
         self._require_admin(actor_id, "read", user_id)
         self.identity_repository.get_user(user_id)
+        _, credential = self._current_binding_snapshot(user_id)
         return {
             "user_id": user_id,
-            "credential": self.credential_repository.get_latest_public(user_id=user_id),
+            "credential": credential,
         }
 
     def self_unbind(self, *, actor_id: str) -> None:
@@ -267,6 +276,36 @@ class ExternalCredentialBindingService:
                 error_code="external_credential_self_manage_forbidden",
             )
         return user
+
+    def _current_binding_snapshot(
+        self,
+        user_id: str,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        identities = [
+            item
+            for item in self.identity_repository.list_external_identities(user_id)
+            if item["status"] in {"enabled", "disabled"}
+        ]
+        ones_identities = [item for item in identities if item["provider"] == "ones"]
+        if len(ones_identities) > 1:
+            raise self._identity_state_inconsistent()
+        credential = self.credential_repository.get_latest_public(user_id=user_id)
+        current_ones = ones_identities[0] if ones_identities else None
+        if current_ones is None:
+            if credential and credential["status"] in {"ACTIVE", "INVALID"}:
+                raise self._identity_state_inconsistent()
+            credential = None
+        elif credential and str(credential["external_identity_id"]) != str(current_ones["id"]):
+            raise self._identity_state_inconsistent()
+        return identities, credential
+
+    @staticmethod
+    def _identity_state_inconsistent() -> NonRetryableExecutionError:
+        return NonRetryableExecutionError(
+            "External identity and credential state are inconsistent",
+            safe_message="ONES 身份与个人凭据状态不一致，请重新绑定或联系管理员",
+            error_code="external_identity_state_inconsistent",
+        )
 
     def _require_admin(
         self,

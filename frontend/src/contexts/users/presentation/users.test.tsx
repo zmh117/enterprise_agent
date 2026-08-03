@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { UserDetailPage } from "@/contexts/users/presentation/user-detail-page"
 import { UsersPage } from "@/contexts/users/presentation/users-page"
 import { MyExternalIdentitiesPage } from "@/contexts/external-identities"
+import { AuthenticatedUserProvider } from "@/contexts/auth/presentation/authenticated-user-context"
+import type { AuthenticatedUser } from "@/contexts/auth/domain/authenticated-user"
 
 function response(body: unknown, status = 200) {
   return Promise.resolve(
@@ -31,6 +33,20 @@ function user(overrides: Record<string, unknown> = {}) {
   }
 }
 
+function authenticatedUser(
+  overrides: Partial<AuthenticatedUser> = {}
+): AuthenticatedUser {
+  return {
+    id: "user-admin",
+    username: "admin",
+    display_name: "平台管理员",
+    roles: ["platform-admin"],
+    auth_source: "local",
+    capabilities: {},
+    ...overrides,
+  }
+}
+
 function identity(overrides: Record<string, unknown> = {}) {
   return {
     id: "identity-1",
@@ -50,6 +66,17 @@ function identity(overrides: Record<string, unknown> = {}) {
     created_at: "2026-07-22T00:00:00+08:00",
     updated_at: "2026-07-23T00:00:00+08:00",
     ...overrides,
+  }
+}
+
+function selfOverview(
+  identities: Array<ReturnType<typeof identity>> = [],
+  onesCredential: Record<string, unknown> | null = null
+) {
+  return {
+    user: { id: "user-1", display_name: "庄慕焕" },
+    identities,
+    credentials: { ones: onesCredential },
   }
 }
 
@@ -137,7 +164,7 @@ function renderMyExternalIdentities() {
       <MemoryRouter>
         <MyExternalIdentitiesPage />
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   )
 }
 
@@ -179,17 +206,22 @@ function discoveryCandidate(overrides: Record<string, unknown> = {}) {
   }
 }
 
-function renderDetail(initialEntry = "/users/user-1") {
+function renderDetail(
+  initialEntry = "/users/user-1",
+  currentUser = authenticatedUser()
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[initialEntry]}>
-        <Routes>
-          <Route path="/users/:userId" element={<UserDetailPage />} />
-        </Routes>
-      </MemoryRouter>
+      <AuthenticatedUserProvider user={currentUser}>
+        <MemoryRouter initialEntries={[initialEntry]}>
+          <Routes>
+            <Route path="/users/:userId" element={<UserDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      </AuthenticatedUserProvider>
     </QueryClientProvider>
   )
 }
@@ -310,6 +342,103 @@ describe("User and external identity management", () => {
     )
   })
 
+  it("separates current identities from collapsed read-only history", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input)
+      if (url.endsWith("/external-identity-providers"))
+        return response(providers())
+      if (url.endsWith("/dingtalk-tenants")) return response(tenants())
+      if (url.includes("/api/admin/authorization/roles?"))
+        return response(emptyRoles())
+      if (url.endsWith("/users/user-1")) {
+        return response({
+          user: user(),
+          identities: [
+            identity({
+              id: "identity-current",
+              display_name: "Current DingTalk User",
+            }),
+            identity({
+              id: "identity-history",
+              provider: "ones",
+              tenant_code: "default",
+              external_subject_id: "ones-history-user",
+              connector_id: "",
+              display_name: "Historical ONES User",
+              status: "unbound",
+              metadata: { team_uuids: ["legacy-team"] },
+              revision: 2,
+            }),
+          ],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    renderDetail()
+
+    expect(await screen.findByText("Current DingTalk User")).toBeInTheDocument()
+    const history = await screen.findByTestId("external-identity-history")
+    expect(history).not.toHaveAttribute("open")
+    expect(screen.queryByRole("button", { name: "恢复身份" })).toBeNull()
+
+    fireEvent.click(screen.getByText("历史记录（1）"))
+    await waitFor(() => expect(history).toHaveAttribute("open"))
+    expect(screen.getByText("Historical ONES User")).toBeVisible()
+    expect(screen.getByText("历史 ONES 身份")).toBeVisible()
+    expect(screen.queryByRole("button", { name: "软解绑 ONES" })).toBeNull()
+  })
+
+  it("opens history and offers restore only for a matching trusted candidate", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input)
+      if (url.endsWith("/external-identity-providers"))
+        return response(providers())
+      if (url.endsWith("/dingtalk-tenants")) return response(tenants())
+      if (url.includes("/api/admin/authorization/roles?"))
+        return response(emptyRoles())
+      if (url.endsWith("/dingtalk-identity-candidates/candidate-1")) {
+        return response({
+          candidate: discoveryCandidate({
+            identity_state: "restore_required",
+            historical_identity: {
+              id: "identity-history",
+              status: "unbound",
+              revision: 2,
+              user_id: "user-1",
+              username: "zmh",
+              user_display_name: "庄慕焕",
+              user_status: "enabled",
+            },
+          }),
+        })
+      }
+      if (url.endsWith("/users/user-1")) {
+        return response({
+          user: user(),
+          identities: [
+            identity({
+              id: "identity-history",
+              external_subject_id: "staff-001",
+              display_name: "Historical DingTalk User",
+              status: "unbound",
+              revision: 2,
+            }),
+          ],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    renderDetail("/users/user-1?candidate=candidate-1")
+
+    const history = await screen.findByTestId("external-identity-history")
+    await waitFor(() => expect(history).toHaveAttribute("open"))
+    expect(
+      await screen.findByRole("button", { name: "恢复身份" })
+    ).toBeVisible()
+  })
+
   it("uses only server-loaded candidate fields for trusted binding and keeps failures open", async () => {
     let bindingBody: Record<string, unknown> | undefined
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
@@ -353,15 +482,9 @@ describe("User and external identity management", () => {
     expect(screen.getByText("待绑定张三")).toBeInTheDocument()
     expect(screen.queryByLabelText("senderStaffId")).toBeNull()
 
-    fireEvent.click(
-      screen.getByRole("checkbox", { name: /诊断角色 1/ }),
-    )
-    fireEvent.click(
-      screen.getByRole("checkbox", { name: /诊断角色 2/ }),
-    )
-    fireEvent.click(
-      screen.getByRole("button", { name: "确认绑定并保存授权" }),
-    )
+    fireEvent.click(screen.getByRole("checkbox", { name: /诊断角色 1/ }))
+    fireEvent.click(screen.getByRole("checkbox", { name: /诊断角色 2/ }))
+    fireEvent.click(screen.getByRole("button", { name: "确认绑定并保存授权" }))
     expect(
       await screen.findByText("候选信息已发生变化，请刷新后重试")
     ).toBeInTheDocument()
@@ -433,12 +556,14 @@ describe("User and external identity management", () => {
     })
     render(
       <QueryClientProvider client={client}>
-        <MemoryRouter initialEntries={["/users?candidate=candidate-1"]}>
-          <Routes>
-            <Route path="/users" element={<UsersPage />} />
-            <Route path="/users/:userId" element={<UserDetailPage />} />
-          </Routes>
-        </MemoryRouter>
+        <AuthenticatedUserProvider user={authenticatedUser()}>
+          <MemoryRouter initialEntries={["/users?candidate=candidate-1"]}>
+            <Routes>
+              <Route path="/users" element={<UsersPage />} />
+              <Route path="/users/:userId" element={<UserDetailPage />} />
+            </Routes>
+          </MemoryRouter>
+        </AuthenticatedUserProvider>
       </QueryClientProvider>
     )
 
@@ -494,19 +619,69 @@ describe("User and external identity management", () => {
     ).toBeInTheDocument()
   })
 
+  it("uses governance mode when an administrator opens their own user detail", async () => {
+    const requestedUrls: string[] = []
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input)
+      requestedUrls.push(url)
+      if (url.endsWith("/external-identity-providers"))
+        return response(providers())
+      if (url.endsWith("/dingtalk-tenants")) return response(tenants())
+      if (url.includes("/api/admin/authorization/roles?"))
+        return response(emptyRoles())
+      if (url.endsWith("/users/user-1"))
+        return response({ user: user(), identities: [identity()] })
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    renderDetail(
+      "/users/user-1",
+      authenticatedUser({ id: "user-1", username: "zmh" })
+    )
+
+    expect(await screen.findByText("钉钉身份")).toBeInTheDocument()
+    expect(
+      await screen.findByRole("button", { name: "停用身份" })
+    ).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "解绑" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "绑定钉钉" })).toBeInTheDocument()
+    expect(screen.queryByRole("textbox", { name: "租户 / 实例" })).toBeNull()
+    expect(screen.queryByRole("textbox", { name: "外部主体" })).toBeNull()
+    expect(
+      requestedUrls.some((url) => url.endsWith("/external-identity-providers"))
+    ).toBe(true)
+    expect(
+      requestedUrls.some((url) => url.endsWith("/api/me/external-identities"))
+    ).toBe(false)
+  })
+
+  it("keeps DingTalk read-only on the dedicated self-service route", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input)
+      if (url.endsWith("/api/me/external-identities")) {
+        return response(selfOverview([identity()]))
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    renderMyExternalIdentities()
+
+    expect(await screen.findByText("ONES 本人身份")).toBeInTheDocument()
+    expect(await screen.findByText("钉钉身份")).toBeInTheDocument()
+    expect(await screen.findByText("已启用 · 只读")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "停用身份" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "解绑" })).toBeNull()
+  })
+
   it("submits only ONES email/password in self mode and clears password after a failed request", async () => {
     let bindingBody: Record<string, unknown> | undefined
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = String(input)
       if (
-        url.endsWith("/api/me/external-identities/ones") &&
+        url.endsWith("/api/me/external-identities") &&
         (!init?.method || init.method === "GET")
       ) {
-        return response({
-          user: { id: "user-1", display_name: "庄慕焕" },
-          identity: null,
-          credential: null,
-        })
+        return response(selfOverview())
       }
       if (url.endsWith("/ones/challenges") && init?.method === "POST") {
         bindingBody = JSON.parse(String(init.body))
@@ -550,14 +725,10 @@ describe("User and external identity management", () => {
       .mockImplementation((input, init) => {
         const url = String(input)
         if (
-          url.endsWith("/api/me/external-identities/ones") &&
+          url.endsWith("/api/me/external-identities") &&
           (!init?.method || init.method === "GET")
         ) {
-          return response({
-            user: { id: "user-1", display_name: "庄慕焕" },
-            identity: null,
-            credential: null,
-          })
+          return response(selfOverview())
         }
         if (url.endsWith("/ones/challenges") && init?.method === "POST") {
           return response({
@@ -622,9 +793,7 @@ describe("User and external identity management", () => {
     fireEvent.click(screen.getByRole("button", { name: "验证并读取 Team" }))
     const team = await screen.findByLabelText("默认 Team")
     fireEvent.change(team, { target: { value: "team-b" } })
-    fireEvent.click(
-      screen.getByRole("button", { name: "保存身份与默认 Team" }),
-    )
+    fireEvent.click(screen.getByRole("button", { name: "保存身份与默认 Team" }))
 
     await waitFor(() =>
       expect(confirmBody).toEqual({
@@ -632,12 +801,12 @@ describe("User and external identity management", () => {
         connection_revision_id: "connection-revision-1",
         default_team_id: "team-b",
         replace_existing: false,
-      }),
+      })
     )
     expect(
       fetch.mock.calls.some((call) =>
-        String(call[0]).includes("/api/admin/users"),
-      ),
+        String(call[0]).includes("/api/admin/users")
+      )
     ).toBe(false)
   })
 

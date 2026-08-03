@@ -1,4 +1,5 @@
 import { type FormEvent, type ReactNode, useEffect, useState } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import {
   BotIcon,
   LoaderCircleIcon,
@@ -17,7 +18,12 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import type { AuthenticatedUser } from "@/contexts/auth/domain/authenticated-user"
-import { getCurrentUser, login } from "@/contexts/auth/infrastructure/auth-api"
+import {
+  getCurrentUser,
+  login,
+  logout,
+} from "@/contexts/auth/infrastructure/auth-api"
+import { AuthenticatedUserProvider } from "@/contexts/auth/presentation/authenticated-user-context"
 import { ApiError } from "@/shared/api/api-client"
 
 type AuthenticationState =
@@ -27,6 +33,7 @@ type AuthenticationState =
   | { status: "unavailable"; message: string }
 
 export function AuthenticationGate({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient()
   const [state, setState] = useState<AuthenticationState>({
     status: "checking",
   })
@@ -82,7 +89,23 @@ export function AuthenticationGate({ children }: { children: ReactNode }) {
     )
   }
 
-  return children
+  const logoutCurrentUser = async () => {
+    try {
+      await logout()
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 401) {
+        throw error
+      }
+    }
+    queryClient.clear()
+    setState({ status: "anonymous" })
+  }
+
+  return (
+    <AuthenticatedUserProvider user={state.user} logout={logoutCurrentUser}>
+      {children}
+    </AuthenticatedUserProvider>
+  )
 }
 
 function LoginCard({
@@ -106,7 +129,7 @@ function LoginCard({
       setErrorMessage(
         error instanceof ApiError
           ? error.message
-          : "登录失败，请检查账号和密码。",
+          : "登录失败，请检查账号和密码。"
       )
     } finally {
       setSubmitting(false)

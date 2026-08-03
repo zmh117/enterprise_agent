@@ -5,7 +5,17 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { PlatformNavigation } from "@/app/navigation/platform-navigation"
 import { SidebarProvider } from "@/components/ui/sidebar"
+import { AuthenticatedUserProvider } from "@/contexts/auth/presentation/authenticated-user-context"
 import { DingTalkIdentityDiscoveryPage } from "@/contexts/dingtalk-identity-discovery/presentation/dingtalk-identity-discovery-page"
+
+const currentUser = {
+  id: "user-local-admin",
+  username: "local-admin",
+  display_name: "本地管理员",
+  roles: ["platform-admin"],
+  auth_source: "local",
+  capabilities: {},
+}
 
 function response(body: unknown, status = 200) {
   return Promise.resolve(
@@ -176,20 +186,20 @@ describe("未绑定钉钉用户发现", () => {
       configurable: true,
       value: "hidden",
     })
-    const fetch = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation((input) =>
-        String(input).endsWith("/api/admin/capabilities")
-          ? response({
-              capabilities: ["identity.discovery.read"],
-              modules: {},
-            })
-          : response({ count: 120 }),
-      )
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      String(input).endsWith("/api/admin/capabilities")
+        ? response({
+            capabilities: ["identity.discovery.read"],
+            modules: {},
+          })
+        : response({ count: 120 })
+    )
     renderWithQuery(
-      <SidebarProvider>
-        <PlatformNavigation />
-      </SidebarProvider>,
+      <AuthenticatedUserProvider user={currentUser}>
+        <SidebarProvider>
+          <PlatformNavigation />
+        </SidebarProvider>
+      </AuthenticatedUserProvider>,
       "/users/dingtalk-discovery"
     )
 

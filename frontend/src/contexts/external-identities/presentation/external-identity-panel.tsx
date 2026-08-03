@@ -38,7 +38,7 @@ import {
   useDingTalkTenants,
   useExternalIdentities,
   useIdentityProviders,
-  useSelfOnesBinding,
+  useSelfExternalIdentities,
   useUnbindAdminOnesCredential,
   useUnbindIdentity,
   useUnbindSelfOnesBinding,
@@ -103,6 +103,19 @@ function AdminExternalIdentityPanel({
     providers.data?.find((item) => item.code === "dingtalk")?.available &&
     Boolean(tenants.data?.length)
   const onesProvider = providers.data?.find((item) => item.code === "ones")
+  const currentIdentities =
+    identities.data?.filter((item) => item.status !== "unbound") ?? []
+  const historicalIdentities =
+    identities.data?.filter((item) => item.status === "unbound") ?? []
+  const restorableHistoryIdentity = historicalIdentities.find(
+    (item) =>
+      candidate.data?.identity_state === "restore_required" &&
+      item.provider === "dingtalk" &&
+      item.tenant_code === candidate.data.tenant_code &&
+      item.external_subject_id === candidate.data.external_subject_id
+  )
+  const [historyExpanded, setHistoryExpanded] = useState(false)
+  const historyOpen = Boolean(restorableHistoryIdentity) || historyExpanded
 
   return (
     <Card className="shadow-none">
@@ -169,17 +182,50 @@ function AdminExternalIdentityPanel({
             该用户尚未绑定钉钉或 ONES 身份。
           </div>
         ) : null}
-        {identities.data && identities.data.length > 0 ? (
+        {identities.data &&
+        identities.data.length > 0 &&
+        currentIdentities.length === 0 ? (
+          <div className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
+            该用户当前没有已绑定的钉钉或 ONES 身份。
+          </div>
+        ) : null}
+        {currentIdentities.length > 0 ? (
           <div className="grid gap-3 lg:grid-cols-2">
-            {identities.data.map((identity) => (
+            {currentIdentities.map((identity) => (
               <IdentityCard
                 key={identity.id}
                 identity={identity}
                 userId={user.id}
-                discoveryCandidate={candidate.data ?? null}
               />
             ))}
           </div>
+        ) : null}
+        {historicalIdentities.length > 0 ? (
+          <details
+            data-testid="external-identity-history"
+            className="mt-4 rounded-xl border bg-muted/10"
+            open={historyOpen}
+            onToggle={(event) => setHistoryExpanded(event.currentTarget.open)}
+          >
+            <summary className="cursor-pointer px-4 py-3 font-medium">
+              历史记录（{historicalIdentities.length}）
+            </summary>
+            <div className="space-y-3 border-t p-4">
+              <p className="text-xs text-muted-foreground">
+                已解绑身份仅供审计查看；只有匹配的钉钉待恢复候选可以恢复原身份。
+              </p>
+              <div className="grid gap-3 lg:grid-cols-2">
+                {historicalIdentities.map((identity) => (
+                  <HistoricalIdentityCard
+                    key={identity.id}
+                    identity={identity}
+                    userId={user.id}
+                    discoveryCandidate={candidate.data ?? null}
+                  />
+                ))}
+              </div>
+            </div>
+          </details>
         ) : null}
       </CardContent>
 
@@ -210,18 +256,14 @@ function AdminExternalIdentityPanel({
 function IdentityCard({
   identity,
   userId,
-  discoveryCandidate,
 }: {
   identity: ExternalIdentity
   userId: string
-  discoveryCandidate: DingTalkIdentityCandidate | null
 }) {
-  const navigate = useNavigate()
-  const queryClient = useQueryClient()
   const updateStatus = useUpdateIdentityStatus(userId)
   const unbind = useUnbindIdentity(userId)
   const credential = useAdminOnesCredential(
-    identity.provider === "ones" ? userId : "",
+    identity.provider === "ones" ? userId : ""
   )
   const disableCredential = useDisableAdminOnesCredential(userId)
   const unbindCredential = useUnbindAdminOnesCredential(userId)
@@ -233,33 +275,12 @@ function IdentityCard({
   }[identity.status]
   const nextStatus = identity.status === "enabled" ? "disabled" : "enabled"
 
-  const changeStatus = () => {
-    updateStatus.mutate(
-      {
-        identityId: identity.id,
-        expectedRevision: identity.revision,
-        status: nextStatus,
-      },
-      {
-        onSuccess: async () => {
-          const matchesCandidate =
-            nextStatus === "enabled" &&
-            discoveryCandidate?.identity_state === "restore_required" &&
-            identity.provider === "dingtalk" &&
-            identity.tenant_code === discoveryCandidate.tenant_code &&
-            identity.external_subject_id ===
-              discoveryCandidate.external_subject_id
-          if (matchesCandidate) {
-            await queryClient.invalidateQueries({
-              queryKey: ["dingtalk-identity-candidates"],
-            })
-            toast.success("钉钉身份已恢复")
-            navigate("/users/dingtalk-discovery")
-          }
-        },
-      }
-    )
-  }
+  const changeStatus = () =>
+    updateStatus.mutate({
+      identityId: identity.id,
+      expectedRevision: identity.revision,
+      status: nextStatus,
+    })
 
   const remove = () => {
     unbind.mutate(
@@ -362,24 +383,18 @@ function IdentityCard({
               disabled={updateStatus.isPending || unbind.isPending}
               onClick={changeStatus}
             >
-              {identity.status === "enabled"
-                ? "停用身份"
-                : identity.status === "unbound"
-                  ? "恢复身份"
-                  : "启用身份"}
+              {identity.status === "enabled" ? "停用身份" : "启用身份"}
             </Button>
-            {identity.status !== "unbound" ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="destructive"
-                disabled={updateStatus.isPending || unbind.isPending}
-                onClick={() => setConfirmUnbind(true)}
-              >
-                <UnlinkIcon aria-hidden="true" />
-                解绑
-              </Button>
-            ) : null}
+            <Button
+              type="button"
+              size="sm"
+              variant="destructive"
+              disabled={updateStatus.isPending || unbind.isPending}
+              onClick={() => setConfirmUnbind(true)}
+            >
+              <UnlinkIcon aria-hidden="true" />
+              解绑
+            </Button>
           </>
         ) : null}
         {identity.provider === "ones" &&
@@ -394,7 +409,7 @@ function IdentityCard({
             停用个人凭据
           </Button>
         ) : null}
-        {identity.provider === "ones" && identity.status !== "unbound" ? (
+        {identity.provider === "ones" ? (
           <Button
             type="button"
             size="sm"
@@ -424,6 +439,103 @@ function IdentityCard({
             : remove
         }
       />
+    </article>
+  )
+}
+
+function HistoricalIdentityCard({
+  identity,
+  userId,
+  discoveryCandidate,
+}: {
+  identity: ExternalIdentity
+  userId: string
+  discoveryCandidate: DingTalkIdentityCandidate | null
+}) {
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const restore = useUpdateIdentityStatus(userId)
+  const canRestore =
+    identity.provider === "dingtalk" &&
+    discoveryCandidate?.identity_state === "restore_required" &&
+    identity.tenant_code === discoveryCandidate.tenant_code &&
+    identity.external_subject_id === discoveryCandidate.external_subject_id
+
+  const restoreIdentity = () =>
+    restore.mutate(
+      {
+        identityId: identity.id,
+        expectedRevision: identity.revision,
+        status: "enabled",
+      },
+      {
+        onSuccess: async () => {
+          await queryClient.invalidateQueries({
+            queryKey: ["dingtalk-identity-candidates"],
+          })
+          toast.success("钉钉身份已恢复")
+          navigate("/users/dingtalk-discovery")
+        },
+      }
+    )
+
+  return (
+    <article
+      data-testid={`historical-identity-${identity.id}`}
+      className="rounded-xl border bg-background p-4"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="font-semibold">
+            {identity.provider === "dingtalk"
+              ? "历史钉钉身份"
+              : "历史 ONES 身份"}
+          </h3>
+          <p className="mt-1 text-sm">
+            {identity.display_name || "未设置展示名称"}
+          </p>
+        </div>
+        <Badge variant="outline">已解绑</Badge>
+      </div>
+      <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-2">
+        <IdentityField label="租户 / 实例" value={identity.tenant_code} />
+        <IdentityField
+          label="外部主体"
+          value={identity.external_subject_id}
+          mono
+        />
+        <IdentityField
+          label="验证时间"
+          value={formatDate(identity.verified_at)}
+        />
+        <IdentityField label="修订" value={`r${identity.revision}`} />
+      </dl>
+      {identity.provider === "ones" && identity.metadata.team_uuids?.length ? (
+        <div className="mt-3 flex flex-wrap gap-1">
+          {identity.metadata.team_uuids.map((team) => (
+            <Badge
+              key={team}
+              variant="outline"
+              className="font-mono font-normal"
+            >
+              {team}
+            </Badge>
+          ))}
+        </div>
+      ) : null}
+      <RequestError error={restore.error} />
+      {canRestore ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="mt-4"
+          disabled={restore.isPending}
+          onClick={restoreIdentity}
+        >
+          恢复身份
+        </Button>
+      ) : null}
     </article>
   )
 }
@@ -712,12 +824,16 @@ function DingTalkBindingSheet({
 }
 
 function SelfExternalIdentityPanel() {
-  const status = useSelfOnesBinding()
+  const status = useSelfExternalIdentities()
   const unbind = useUnbindSelfOnesBinding()
   const [binding, setBinding] = useState(false)
   const [confirmUnbind, setConfirmUnbind] = useState(false)
-  const identity = status.data?.identity
-  const credential = status.data?.credential
+  const dingtalkIdentities =
+    status.data?.identities.filter((item) => item.provider === "dingtalk") ?? []
+  const identity = status.data?.identities.find(
+    (item) => item.provider === "ones"
+  )
+  const credential = status.data?.credentials.ones
   const credentialLabel = credential
     ? {
         ACTIVE: "凭据有效",
@@ -734,10 +850,10 @@ function SelfExternalIdentityPanel() {
       <CardHeader className="border-b">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <CardTitle>ONES 本人身份</CardTitle>
+            <CardTitle>我的外部身份</CardTitle>
             <CardDescription className="mt-1">
-              登录验证后保存 ONES User ID、Team 候选、默认 Team
-              与加密 Token；密码不会保存。
+              钉钉身份只读展示；ONES 登录验证后保存 User ID、Team 候选、默认
+              Team 与加密 Token，密码不会保存。
             </CardDescription>
           </div>
           <Button
@@ -759,12 +875,27 @@ function SelfExternalIdentityPanel() {
           </div>
         ) : null}
         <RequestError error={status.error || unbind.error} />
+        {dingtalkIdentities.map((dingtalkIdentity) => (
+          <SelfDingTalkIdentityCard
+            key={dingtalkIdentity.id}
+            identity={dingtalkIdentity}
+          />
+        ))}
         <article className="rounded-xl border bg-muted/20 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="font-semibold">
-              {identity?.display_name || status.data?.user?.display_name || "ONES"}
-            </h3>
-            <Badge variant={credential?.status === "ACTIVE" ? "secondary" : "outline"}>
+            <div>
+              <h3 className="font-semibold">ONES 本人身份</h3>
+              <p className="mt-1 text-sm">
+                {identity?.display_name ||
+                  status.data?.user.display_name ||
+                  "ONES"}
+              </p>
+            </div>
+            <Badge
+              variant={
+                credential?.status === "ACTIVE" ? "secondary" : "outline"
+              }
+            >
               {credentialLabel}
             </Badge>
           </div>
@@ -820,7 +951,8 @@ function SelfExternalIdentityPanel() {
             </>
           ) : (
             <p className="mt-3 text-sm text-muted-foreground">
-              尚未绑定 ONES。钉钉身份由消息入口或管理员人员详情治理，本页面不会请求其他用户资料。
+              尚未绑定
+              ONES。钉钉身份由消息入口或管理员人员详情治理，本页面不会请求其他用户资料。
             </p>
           )}
         </article>
@@ -845,6 +977,38 @@ function SelfExternalIdentityPanel() {
         }
       />
     </Card>
+  )
+}
+
+function SelfDingTalkIdentityCard({
+  identity,
+}: {
+  identity: ExternalIdentity
+}) {
+  const statusLabel = identity.status === "enabled" ? "已启用" : "已停用"
+  return (
+    <article className="rounded-xl border bg-muted/20 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="font-semibold">钉钉身份</h3>
+          <p className="mt-1 text-sm">
+            {identity.display_name || "未设置展示名称"}
+          </p>
+        </div>
+        <Badge
+          variant={identity.status === "enabled" ? "secondary" : "outline"}
+        >
+          {statusLabel} · 只读
+        </Badge>
+      </div>
+      <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-2">
+        <IdentityField label="租户 / 实例" value={identity.tenant_code} />
+        <IdentityField
+          label="最近使用"
+          value={formatDate(identity.last_seen_at)}
+        />
+      </dl>
+    </article>
   )
 }
 
@@ -916,54 +1080,58 @@ function SelfOnesBindingSheet({
         <SheetHeader>
           <SheetTitle>本人验证 ONES 身份</SheetTitle>
           <SheetDescription>
-            第一步验证邮箱密码并读取最新 Team；第二步选择默认 Team 后原子保存身份与加密凭据。
+            第一步验证邮箱密码并读取最新 Team；第二步选择默认 Team
+            后原子保存身份与加密凭据。
           </SheetDescription>
         </SheetHeader>
         {!challenge ? (
-        <form className="space-y-4 px-4" onSubmit={verify}>
-          <Field label="ONES 邮箱" htmlFor="ones-email">
-            <Input
-              id="ones-email"
-              type="email"
-              required
-              maxLength={320}
-              autoComplete="username"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-            />
-          </Field>
-          <Field
-            label="一次性验证密码"
-            htmlFor="ones-password"
-            hint="请求结束后立即从页面状态清除。"
-          >
-            <Input
-              id="ones-password"
-              type="password"
-              required
-              maxLength={512}
-              autoComplete="current-password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-            />
-          </Field>
-          <RequestError error={begin.error} />
-          <SheetFooter className="px-0">
-            <Button type="submit" disabled={begin.isPending}>
-              {begin.isPending ? (
-                <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
-              ) : null}
-              验证并读取 Team
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => changeOpen(false)}
+          <form className="space-y-4 px-4" onSubmit={verify}>
+            <Field label="ONES 邮箱" htmlFor="ones-email">
+              <Input
+                id="ones-email"
+                type="email"
+                required
+                maxLength={320}
+                autoComplete="username"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+              />
+            </Field>
+            <Field
+              label="一次性验证密码"
+              htmlFor="ones-password"
+              hint="请求结束后立即从页面状态清除。"
             >
-              取消
-            </Button>
-          </SheetFooter>
-        </form>
+              <Input
+                id="ones-password"
+                type="password"
+                required
+                maxLength={512}
+                autoComplete="current-password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+            </Field>
+            <RequestError error={begin.error} />
+            <SheetFooter className="px-0">
+              <Button type="submit" disabled={begin.isPending}>
+                {begin.isPending ? (
+                  <LoaderCircleIcon
+                    className="animate-spin"
+                    aria-hidden="true"
+                  />
+                ) : null}
+                验证并读取 Team
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => changeOpen(false)}
+              >
+                取消
+              </Button>
+            </SheetFooter>
+          </form>
         ) : (
           <form className="space-y-4 px-4" onSubmit={save}>
             <div className="rounded-lg border bg-muted/20 p-4 text-sm">
@@ -999,13 +1167,12 @@ function SelfOnesBindingSheet({
                     setReplaceExisting(Boolean(checked))
                   }
                 />
-                <span>
-                  如果验证结果是另一个 ONES User ID，确认换绑当前账号
-                </span>
+                <span>如果验证结果是另一个 ONES User ID，确认换绑当前账号</span>
               </label>
             ) : null}
             <p className="text-xs text-muted-foreground">
-              Challenge 将于 {formatDate(challenge.expires_at)} 失效，且只能消费一次。
+              Challenge 将于 {formatDate(challenge.expires_at)}{" "}
+              失效，且只能消费一次。
             </p>
             <RequestError error={confirm.error} />
             <SheetFooter className="px-0">

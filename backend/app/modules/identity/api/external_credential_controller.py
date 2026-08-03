@@ -34,6 +34,19 @@ class ConfirmOnesBindingRequest(StrictRequest):
 def build_external_credential_router() -> APIRouter:
     router = APIRouter(tags=["external-credentials"])
 
+    @router.get("/api/me/external-identities")
+    def self_overview(request: Request) -> dict[str, Any]:
+        principal = current_principal(request)
+        try:
+            return cast(
+                dict[str, Any],
+                container(request).external_credential_binding_service.self_overview(
+                    actor_id=principal.user_id
+                ),
+            )
+        except Exception as exc:
+            raise handle_exception(exc) from exc
+
     @router.get("/api/me/external-identities/ones")
     def self_status(request: Request) -> dict[str, Any]:
         principal = current_principal(request)

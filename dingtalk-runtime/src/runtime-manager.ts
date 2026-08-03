@@ -11,6 +11,7 @@ interface ManagedClient {
   config: DesiredConnector;
   client: StreamClient;
   status: ConnectorState["status"];
+  registrationConfirmed: boolean;
   errorCode: string;
   errorSummary: string;
   operation: Promise<void>;
@@ -51,16 +52,21 @@ export class RuntimeManager {
 
   states(): ConnectorState[] {
     return [...this.clients.values()].map((managed) => {
+      if (!managed.client.connected || managed.client.reconnecting) {
+        managed.registrationConfirmed = false;
+      }
+      const registered =
+        managed.client.registered || managed.registrationConfirmed;
       let status = managed.status;
-      if (managed.client.registered) status = "REGISTERED";
-      else if (managed.client.reconnecting) status = "RECONNECTING";
+      if (managed.client.reconnecting) status = "RECONNECTING";
+      else if (registered) status = "REGISTERED";
       else if (managed.client.connected) status = "CONNECTED";
       return {
         connector_id: managed.config.connector_id,
         revision: managed.config.revision,
         status,
         connected: managed.client.connected,
-        registered: managed.client.registered,
+        registered,
         error_code: managed.errorCode,
         error_summary: managed.errorSummary,
       };
@@ -86,6 +92,7 @@ export class RuntimeManager {
       config,
       client,
       status: "STARTING",
+      registrationConfirmed: false,
       errorCode: "",
       errorSummary: "",
       operation: Promise.resolve(),
@@ -100,6 +107,7 @@ export class RuntimeManager {
           message
         );
         if (result.acknowledged) {
+          managed.registrationConfirmed = true;
           managed.errorCode = "";
           managed.errorSummary = "";
           client.acknowledge(message.headers.messageId, {

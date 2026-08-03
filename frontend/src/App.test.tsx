@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { App } from "@/App"
+import { AuthenticatedUserProvider } from "@/contexts/auth/presentation/authenticated-user-context"
 
 const platformCapabilities = {
   capabilities: [
@@ -18,6 +19,15 @@ const platformCapabilities = {
   modules: {},
 }
 
+const currentUser = {
+  id: "user-local-admin",
+  username: "local-admin",
+  display_name: "本地管理员",
+  roles: ["platform-admin"],
+  auth_source: "local",
+  capabilities: {},
+}
+
 function platformResponse(input: RequestInfo | URL) {
   const url = String(input)
   const body = url.endsWith("/api/admin/capabilities")
@@ -26,7 +36,7 @@ function platformResponse(input: RequestInfo | URL) {
   return Promise.resolve(
     new Response(JSON.stringify(body), {
       headers: { "Content-Type": "application/json" },
-    }),
+    })
   )
 }
 
@@ -39,7 +49,9 @@ function renderApp() {
         })
       }
     >
-      <App />
+      <AuthenticatedUserProvider user={currentUser}>
+        <App />
+      </AuthenticatedUserProvider>
     </QueryClientProvider>
   )
 }
@@ -54,9 +66,7 @@ describe("Agent 应用平台 MVP 首页", () => {
     renderApp()
 
     expect(screen.getAllByText("Agent 应用平台").length).toBeGreaterThan(0)
-    expect(
-      (await screen.findAllByText("业务应用")).length,
-    ).toBeGreaterThan(0)
+    expect((await screen.findAllByText("业务应用")).length).toBeGreaterThan(0)
     expect(screen.getAllByText("用户与外部身份").length).toBeGreaterThan(0)
     expect(screen.getByText("统一身份边界")).toBeInTheDocument()
     expect(screen.getByText("钉钉身份")).toBeInTheDocument()
@@ -94,13 +104,13 @@ describe("Agent 应用平台 MVP 首页", () => {
 
     expect(fetchSpy).toHaveBeenCalledWith(
       "/api/admin/capabilities",
-      expect.any(Object),
+      expect.any(Object)
     )
     await waitFor(() =>
       expect(fetchSpy).toHaveBeenCalledWith(
         "/api/admin/dingtalk-identity-candidates/count",
-        expect.any(Object),
-      ),
+        expect.any(Object)
+      )
     )
     expect(xhrOpenSpy).not.toHaveBeenCalled()
     expect(websocketSpy).not.toHaveBeenCalled()

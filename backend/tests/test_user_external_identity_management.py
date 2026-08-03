@@ -120,9 +120,7 @@ def identity_container(verifier: FakeOnesVerifier | None = None) -> Container:
         code="identity-test-application",
         robot_code="test-robot-code",
     )
-    application = container.business_application_repository.get_by_code(
-        "identity-test-application"
-    )
+    application = container.business_application_repository.get_by_code("identity-test-application")
     grant_test_application_access(
         container,
         application_id=str(application["id"]),
@@ -291,9 +289,7 @@ def test_provider_catalog_and_admin_ones_binding_requires_user_self_service() ->
             },
         )
         assert bound.status_code == 409, bound.text
-        assert bound.json()["detail"]["code"] == (
-            "external_credential_self_service_required"
-        )
+        assert bound.json()["detail"]["code"] == ("external_credential_self_service_required")
         assert verifier.calls == []
 
         raw = json.dumps(
@@ -353,9 +349,7 @@ def test_admin_ones_binding_fails_closed_before_using_untrusted_fields() -> None
             },
         )
         assert extra.status_code == 409
-        assert extra.json()["detail"]["code"] == (
-            "external_credential_self_service_required"
-        )
+        assert extra.json()["detail"]["code"] == ("external_credential_self_service_required")
         assert verifier.calls == []
 
         invalid = client.post(
@@ -368,9 +362,7 @@ def test_admin_ones_binding_fails_closed_before_using_untrusted_fields() -> None
             },
         )
         assert invalid.status_code == 409
-        assert invalid.json()["detail"]["code"] == (
-            "external_credential_self_service_required"
-        )
+        assert invalid.json()["detail"]["code"] == ("external_credential_self_service_required")
         assert (
             container.database.execute_one(
                 "select count(*) as count from user_external_identity where provider = 'ones'"
@@ -398,9 +390,7 @@ def test_admin_ones_binding_fails_closed_before_using_untrusted_fields() -> None
             },
         )
         assert conflict.status_code == 409
-        assert conflict.json()["detail"]["code"] == (
-            "external_credential_self_service_required"
-        )
+        assert conflict.json()["detail"]["code"] == ("external_credential_self_service_required")
         assert verifier.calls == []
 
 
@@ -497,9 +487,7 @@ def test_service_accounts_and_unsupported_providers_fail_closed() -> None:
             },
         )
         assert rejected.status_code == 409
-        assert rejected.json()["detail"]["code"] == (
-            "external_credential_self_service_required"
-        )
+        assert rejected.json()["detail"]["code"] == ("external_credential_self_service_required")
         assert (
             container.database.execute_one(
                 "select count(*) as count from user_external_identity where user_id = ?",
@@ -590,9 +578,7 @@ def test_dingtalk_binding_state_controls_ingress_and_replies_with_safe_rejection
     )
     assert denied_unbound.accepted is False
     assert len(notifier.calls) == 3
-    assert notifier.calls[-1]["reason"] == (
-        "你的钉钉账号尚未绑定平台用户，请联系管理员完成绑定"
-    )
+    assert notifier.calls[-1]["reason"] == ("你的钉钉账号尚未绑定平台用户，请联系管理员完成绑定")
 
     jobs = container.database.execute(
         "select id from agent_job where external_event_id like 'message-%'"

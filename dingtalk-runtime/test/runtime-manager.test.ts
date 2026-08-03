@@ -122,6 +122,54 @@ test("connected is not ready and reconnecting remains explicit", async () => {
   assert.equal(manager.counts().registered, 0);
 });
 
+test("successful inbox submission confirms registration when SDK flag stays false", async () => {
+  const clients: FakeClient[] = [];
+  const api = {
+    submit: async () => ({ acknowledged: true, created: true, event_id: "e" }),
+  };
+  const manager = new RuntimeManager(
+    "runtime",
+    api as never,
+    (config) => {
+      const client = new FakeClient(config);
+      clients.push(client);
+      return client;
+    },
+    "lease"
+  );
+  await manager.reconcile({
+    revision: 1,
+    connectors: [connector("socket-only", 1, "connected-only")],
+  });
+  assert.equal(manager.states()[0]?.status, "CONNECTED");
+  assert.equal(manager.states()[0]?.registered, false);
+
+  const message = {
+    headers: { messageId: "message-1", topic: "robot" },
+    data: JSON.stringify({ text: { content: "registration proof" } }),
+  };
+  await clients[0]?.handler?.(message);
+
+  assert.equal(manager.states()[0]?.status, "REGISTERED");
+  assert.equal(manager.states()[0]?.registered, true);
+  assert.equal(manager.counts().registered, 1);
+
+  const client = clients[0];
+  assert.ok(client);
+  client.connected = false;
+  client.reconnecting = true;
+  assert.equal(manager.states()[0]?.status, "RECONNECTING");
+  assert.equal(manager.states()[0]?.registered, false);
+
+  client.connected = true;
+  client.reconnecting = false;
+  assert.equal(manager.states()[0]?.status, "CONNECTED");
+  assert.equal(manager.states()[0]?.registered, false);
+  await client.handler?.(message);
+  assert.equal(manager.states()[0]?.status, "REGISTERED");
+  assert.equal(manager.states()[0]?.registered, true);
+});
+
 test("inbox rejection is reported without logging message content", async () => {
   const clients: FakeClient[] = [];
   const warnings: string[] = [];
@@ -145,7 +193,7 @@ test("inbox rejection is reported without logging message content", async () => 
     );
     await manager.reconcile({
       revision: 1,
-      connectors: [connector("connector-a")],
+      connectors: [connector("connector-a", 1, "connected-only")],
     });
     await clients[0]?.handler?.({
       headers: { messageId: "message-1", topic: "robot" },
@@ -158,6 +206,8 @@ test("inbox rejection is reported without logging message content", async () => 
       state?.error_summary,
       "Control API rejected DingTalk inbox status=400"
     );
+    assert.equal(state?.status, "CONNECTED");
+    assert.equal(state?.registered, false);
     assert.equal(warnings.length, 1);
     assert.match(warnings[0] ?? "", /dingtalk_inbox_rejected/);
     assert.doesNotMatch(warnings[0] ?? "", /不得写入日志的正文/);

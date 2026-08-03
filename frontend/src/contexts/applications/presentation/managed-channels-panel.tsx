@@ -764,7 +764,7 @@ function runtimeLabel(status: string) {
   const labels: Record<string, string> = {
     READY: "已就绪",
     REGISTERED: "已注册",
-    CONNECTED: "已连接，待注册",
+    CONNECTED: "已连接，待消息验证",
     STARTING: "连接中",
     RECONNECTING: "重连中",
     AUTH_FAILED: "认证失败",

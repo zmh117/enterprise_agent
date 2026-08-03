@@ -6,6 +6,7 @@ import {
   identityProviderSchema,
   onesBindingChallengeSchema,
   onesBindingStatusSchema,
+  selfExternalIdentityOverviewSchema,
   type BindDingTalkInput,
   type BindOnesInput,
 } from "@/contexts/external-identities/domain/external-identity"
@@ -18,9 +19,8 @@ const identityResponseSchema = z.object({
 export async function listExternalIdentities(userId: string) {
   return z
     .object({ identities: z.array(externalIdentitySchema) })
-    .parse(
-      await apiRequest(`/api/admin/users/${encodeURIComponent(userId)}`),
-    ).identities
+    .parse(await apiRequest(`/api/admin/users/${encodeURIComponent(userId)}`))
+    .identities
 }
 
 export async function listIdentityProviders() {
@@ -37,13 +37,13 @@ export async function listDingTalkTenants() {
 
 export async function bindDingTalkIdentity(
   userId: string,
-  input: BindDingTalkInput,
+  input: BindDingTalkInput
 ) {
   return identityResponseSchema.parse(
     await apiRequest(
       `/api/admin/users/${encodeURIComponent(userId)}/dingtalk-identities`,
-      { method: "POST", body: input },
-    ),
+      { method: "POST", body: input }
+    )
   ).identity
 }
 
@@ -51,26 +51,26 @@ export async function bindOnesIdentity(userId: string, input: BindOnesInput) {
   return identityResponseSchema.parse(
     await apiRequest(
       `/api/admin/users/${encodeURIComponent(userId)}/ones-identities`,
-      { method: "POST", body: input },
-    ),
+      { method: "POST", body: input }
+    )
   ).identity
 }
 
 export async function updateIdentityStatus(
   identityId: string,
-  input: { expected_revision: number; status: "enabled" | "disabled" },
+  input: { expected_revision: number; status: "enabled" | "disabled" }
 ) {
   return identityResponseSchema.parse(
     await apiRequest(
       `/api/admin/identities/${encodeURIComponent(identityId)}/status`,
-      { method: "PUT", body: input },
-    ),
+      { method: "PUT", body: input }
+    )
   ).identity
 }
 
 export async function unbindIdentity(
   identityId: string,
-  expectedRevision: number,
+  expectedRevision: number
 ) {
   const query = new URLSearchParams({
     expected_revision: String(expectedRevision),
@@ -78,14 +78,20 @@ export async function unbindIdentity(
   return identityResponseSchema.parse(
     await apiRequest(
       `/api/admin/identities/${encodeURIComponent(identityId)}?${query.toString()}`,
-      { method: "DELETE" },
-    ),
+      { method: "DELETE" }
+    )
   ).identity
 }
 
 export async function getSelfOnesBinding() {
   return onesBindingStatusSchema.parse(
-    await apiRequest("/api/me/external-identities/ones"),
+    await apiRequest("/api/me/external-identities/ones")
+  )
+}
+
+export async function getSelfExternalIdentities() {
+  return selfExternalIdentityOverviewSchema.parse(
+    await apiRequest("/api/me/external-identities")
   )
 }
 
@@ -98,7 +104,7 @@ export async function beginSelfOnesBinding(input: {
     await apiRequest("/api/me/external-identities/ones/challenges", {
       method: "POST",
       body: input,
-    }),
+    })
   ).challenge
 }
 
@@ -108,49 +114,55 @@ export async function confirmSelfOnesBinding(input: {
   default_team_id: string
   replace_existing: boolean
 }) {
-  return z.object({
-    identity: externalIdentitySchema,
-    credential: onesBindingStatusSchema.shape.credential.unwrap(),
-  }).parse(
-    await apiRequest("/api/me/external-identities/ones/confirm", {
-      method: "POST",
-      body: input,
-    }),
-  )
+  return z
+    .object({
+      identity: externalIdentitySchema,
+      credential: onesBindingStatusSchema.shape.credential.unwrap(),
+    })
+    .parse(
+      await apiRequest("/api/me/external-identities/ones/confirm", {
+        method: "POST",
+        body: input,
+      })
+    )
 }
 
 export async function unbindSelfOnesBinding() {
   return z.object({ status: z.literal("unbound") }).parse(
     await apiRequest("/api/me/external-identities/ones", {
       method: "DELETE",
-    }),
+    })
   )
 }
 
 export async function getAdminOnesCredential(userId: string) {
   return onesBindingStatusSchema.parse(
     await apiRequest(
-      `/api/admin/users/${encodeURIComponent(userId)}/external-credentials/ones`,
-    ),
+      `/api/admin/users/${encodeURIComponent(userId)}/external-credentials/ones`
+    )
   )
 }
 
 export async function disableAdminOnesCredential(userId: string) {
-  return z.object({
-    credential: onesBindingStatusSchema.shape.credential.unwrap(),
-  }).parse(
-    await apiRequest(
-      `/api/admin/users/${encodeURIComponent(userId)}/external-credentials/ones/disable`,
-      { method: "PUT" },
-    ),
-  ).credential
+  return z
+    .object({
+      credential: onesBindingStatusSchema.shape.credential.unwrap(),
+    })
+    .parse(
+      await apiRequest(
+        `/api/admin/users/${encodeURIComponent(userId)}/external-credentials/ones/disable`,
+        { method: "PUT" }
+      )
+    ).credential
 }
 
 export async function unbindAdminOnesCredential(userId: string) {
-  return z.object({ status: z.literal("unbound") }).parse(
-    await apiRequest(
-      `/api/admin/users/${encodeURIComponent(userId)}/external-credentials/ones`,
-      { method: "DELETE" },
-    ),
-  )
+  return z
+    .object({ status: z.literal("unbound") })
+    .parse(
+      await apiRequest(
+        `/api/admin/users/${encodeURIComponent(userId)}/external-credentials/ones`,
+        { method: "DELETE" }
+      )
+    )
 }
