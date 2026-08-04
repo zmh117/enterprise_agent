@@ -52,20 +52,23 @@ export class RuntimeManager {
 
   states(): ConnectorState[] {
     return [...this.clients.values()].map((managed) => {
-      if (!managed.client.connected || managed.client.reconnecting) {
+      const connected = managed.client.connected;
+      const reconnecting = !connected && managed.client.reconnecting;
+      if (!connected) {
         managed.registrationConfirmed = false;
       }
       const registered =
-        managed.client.registered || managed.registrationConfirmed;
+        connected &&
+        (managed.client.registered || managed.registrationConfirmed);
       let status = managed.status;
-      if (managed.client.reconnecting) status = "RECONNECTING";
+      if (reconnecting) status = "RECONNECTING";
       else if (registered) status = "REGISTERED";
-      else if (managed.client.connected) status = "CONNECTED";
+      else if (connected) status = "CONNECTED";
       return {
         connector_id: managed.config.connector_id,
         revision: managed.config.revision,
         status,
-        connected: managed.client.connected,
+        connected,
         registered,
         error_code: managed.errorCode,
         error_summary: managed.errorSummary,
