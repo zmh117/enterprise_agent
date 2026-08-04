@@ -122,7 +122,7 @@ test("connected is not ready and reconnecting remains explicit", async () => {
   assert.equal(manager.counts().registered, 0);
 });
 
-test("successful inbox submission confirms registration when SDK flag stays false", async () => {
+test("successful inbox submission confirms registration when SDK flags stay stale", async () => {
   const clients: FakeClient[] = [];
   const api = {
     submit: async () => ({ acknowledged: true, created: true, event_id: "e" }),
@@ -162,7 +162,9 @@ test("successful inbox submission confirms registration when SDK flag stays fals
   assert.equal(manager.states()[0]?.registered, false);
 
   client.connected = true;
-  client.reconnecting = false;
+  // The SDK can leave reconnecting=true after the socket is already usable.
+  // Until registration is proven, report the open socket as CONNECTED rather
+  // than claiming that it is still reconnecting.
   assert.equal(manager.states()[0]?.status, "CONNECTED");
   assert.equal(manager.states()[0]?.registered, false);
   await client.handler?.(message);
