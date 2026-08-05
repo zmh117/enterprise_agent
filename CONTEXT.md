@@ -36,6 +36,34 @@ _Avoid_: API 能力、动态 HTTP 工具、MCP 配置、SQL 模板、脚本
 将一个精确的内置只读工具 Handler 版本纳入运行治理的不可变事实，其内容不变但运维状态可以在 `ACTIVE`、`DEPRECATED`、`DISABLED` 和 `ARCHIVED` 之间按规则推进。
 _Avoid_: 可编辑工具定义、浮动最新版本、全局工具开关
 
+**内置工具安装状态（Built-in Tool Installation Status）**:
+部署对账代码 Manifest 与安装目录后得到的 `INSTALLED`、`MISSING` 或 `DRIFTED` 事实，只表示代码可用性，不表示该版本已经发布给 Agent 使用。
+_Avoid_: 内置工具发布状态、Agent 分配、运行时授权
+
+**内置工具验证证据（Built-in Tool Verification Evidence）**:
+由固定验证器生成并绑定精确 Handler Version、Implementation Digest 与 Verifier Version 的机器验证结果，证明 Manifest、Schema、资源槽、只读边界、风险权限和契约兼容性满足发布要求。
+_Avoid_: 管理员勾选确认、工具资源连通性结果、未绑定 Digest 的测试报告
+
+**内置工具目录（Built-in Tool Catalog）**:
+汇总代码安装状态、内置工具发布、Schema、风险、资源槽、引用影响和运行健康的全局治理目录，不承担 Agent、应用或角色配置。
+_Avoid_: Agent 工具上限、应用工具子集、工具资源目录
+
+**工具资源（Tool Resource）**:
+供内置只读工具访问数据库、Redis 或 Loki 等目标的受治理资源身份，其连接内容通过验证后形成不可变发布版本。
+_Avoid_: 内置只读工具、Agent 配置、明文连接凭据
+
+**应用工具资源绑定（Application Tool Resource Binding）**:
+Application Publication 将一个内置工具发布声明的逻辑资源槽绑定到精确工具资源发布版本及有界执行约束的不可变关系。
+_Avoid_: Agent 资源绑定、工具全局默认实例、浮动最新资源
+
+**内置工具使用权限（Built-in Tool Use Grant）**:
+允许内部用户通过角色或直接策略调用一个稳定内置工具标识的运行时授权事实，独立于业务应用访问、工具治理管理权限和数据范围授权。
+_Avoid_: 应用访问权、工具资源管理权限、Agent 工具分配
+
+**内置工具治理管理权限（Built-in Tool Governance Permission）**:
+控制管理员查看、对账、发布或变更内置工具发布生命周期的操作级 RBAC 权限，与工具资源管理和运行时工具使用授权分开。
+_Avoid_: 工具资源管理权限、内置工具使用权限、平台配置全能开关
+
 **Capability 标识（Capability Identifier）**:
 同时作为业务标识、模型 Tool 名、Agent/Application 引用和审计键的稳定名称，使用保留的 `cap__` 命名空间，例如 `cap__ones__work_item__search`。
 _Avoid_: 点号 Code、运行时名称转换、内部 Tool 名、版本后缀
@@ -81,12 +109,16 @@ _Avoid_: 外部身份、登录密码、平台 Session
 _Avoid_: 独立共享测试 Token、其他用户凭据、运行时回退账号
 
 **Agent Publication**:
-Agent 经过校验后形成的不可变运行版本，冻结模型、提示词、运行策略和 Agent 能力上限，供业务应用精确引用。
+Agent 经过校验后形成的不可变运行版本，冻结模型、提示词、运行策略、精确内置工具发布和 API 能力上限，供业务应用精确引用。
 _Avoid_: Agent Draft、最新 Agent、应用运行时重新解析
 
 **应用发布（Application Publication）**:
-业务应用经过校验后形成的不可变运行版本，冻结其 Agent Publication、应用能力子集及全部解析后的执行依赖版本。
+业务应用经过校验后形成的不可变运行版本，冻结其 Agent Publication、应用内置工具子集、API 能力子集及全部解析后的执行依赖版本。
 _Avoid_: 应用草稿、当前最新配置、动态别名
+
+**应用内置工具子集（Application Built-in Tool Allowlist）**:
+Application Publication 从所选 Agent Publication 的精确内置工具上限中显式选择并冻结的子集，是该应用能够暴露内置工具的最大范围。
+_Avoid_: 自动继承 Agent 全部工具、应用另选工具版本、运行时动态添加
 
 **钉钉应用访问（DingTalk Application Access）**:
 钉钉消息命中绑定活动 Application Publication 的连接器，且实际发送人解析为已启用内部用户后获得的当前应用访问资格。
@@ -190,6 +222,27 @@ _Avoid_: 跨 Team 搜索、工作项详情、创建或修改工作项
 - Web 管理端不得创建或修改**内置只读工具**的 HTTP、MCP、SQL、脚本或其他可执行实现，只能治理代码已安装版本的发布状态、资源绑定、Agent 分配和访问权限
 - `ACTIVE` **内置工具发布**允许新 Agent 选择和运行；`DEPRECATED` 允许既有 Agent Publication 继续运行但禁止新选择，并应说明废弃原因和替代版本
 - `DISABLED` **内置工具发布**用于紧急阻断，状态变更后的新 Tool 调用必须立即失败关闭；`ARCHIVED` 只保留历史，且只能在没有活动依赖后进入
+- 部署过程必须根据代码 Manifest 自动、幂等地对账**内置工具安装状态**并记录审计，但不得因此自动创建或激活**内置工具发布**
+- 只有安装状态为 `INSTALLED`、Implementation Digest 一致且最新**内置工具验证证据**为 `VERIFIED` 的精确版本才能由管理员人工发布；`MISSING`、`DRIFTED` 或未验证版本必须禁止发布和执行
+- **内置工具验证证据**必须覆盖 Manifest、输入输出 Schema、资源槽、只读与副作用边界、结果大小、风险权限、契约测试及版本兼容性；Digest 变化必须立即使旧证据失效
+- 工具资源连通性和具体实例预检分别属于工具资源发布与 Application Publication，不得以全局工具验证偷偷绑定或调用生产资源
+- 发现新的已安装版本不得改变既有工具发布、Agent Publication 或 Application Publication，也不得自动进入 Agent 选择目录
+- **内置工具目录**负责全局安装与发布生命周期；工具资源治理、Agent 工具上限、应用工具子集与资源绑定、角色工具使用权限分别由各自上下文管理，不得合并为同一份可编辑工具配置
+- **内置工具治理管理权限**拆分为 `builtin_tools.read`、`builtin_tools.reconcile`、`builtin_tools.verify`、`builtin_tools.publish` 和 `builtin_tools.lifecycle`；自动部署对账使用受审计的系统身份，不获得其他管理权限
+- `builtin_tools.verify` 只允许触发或重试代码注册的固定验证计划，管理员不得提交命令、URL、SQL、脚本或手工把结果标记为通过
+- **内置工具验证证据**必须保存证据 Hash、构建标识、Verifier Version、触发主体、时间和脱敏失败原因；验证结果由机器判定且不可人工覆盖，`builtin_tools.publish` 不能绕过失败或失效证据
+- `builtin_tools.*` 不得授予工具资源连接管理或运行时调用资格；工具资源使用独立的 `tool_resources.*` 权限，运行时继续使用稳定工具标识上的**内置工具使用权限**
+- 一个 **Agent Publication**对同一内置工具标识最多冻结一个精确的**内置工具发布**，并保存 Tool Release ID、Handler Version 和 Implementation Digest；发布后不得自动解析或升级到其他版本
+- Job 重试继续引用原 **Agent Publication**冻结的精确内置工具版本，但每次 Tool 调用仍须检查该**内置工具发布**的实时运维状态，不能以发布快照绕过 `DISABLED` 或 `ARCHIVED`
+- **应用发布**必须显式冻结**应用内置工具子集**，不得自动继承所选 Agent 的全部工具，也不得选择 Agent Publication 未包含的工具或其他版本
+- 新 Agent Publication 不改变既有**应用发布**；应用显式升级 Agent 时必须重新校验原内置工具子集，缺失、`DEPRECATED` 或不兼容版本必须要求管理员明确替换或移除
+- **内置工具发布**只声明逻辑资源槽及允许的资源类型，不绑定具体数据库、Redis 或 Loki 实例；**工具资源**在平台治理中独立创建、验证和发布
+- **应用发布**通过**应用工具资源绑定**为已选内置工具的每个必需资源槽冻结精确工具资源版本和约束；Agent Publication 不保存具体资源实例
+- 新工具资源版本不自动替换既有**应用工具资源绑定**；应用必须显式创建新发布版本，运行时再与当前用户角色和环境、基地、车间数据范围取交集
+- 内部用户调用内置工具必须同时具备目标业务应用访问和对应**内置工具使用权限**；任一条件缺失时 Tool 不得暴露或执行
+- **内置工具使用权限**不能扩大 Agent Publication、应用内置工具子集、工具发布运维状态、工具资源状态或环境、基地、车间数据范围，任何一层拒绝都必须失败关闭
+- **内置工具使用权限**绑定稳定工具标识而不是精确发布版本；精确版本只能由 Agent Publication 和 Application Publication 的发布链确定
+- 同一稳定工具标识下的新版本不得扩大副作用、资源类型或授权边界；需要扩大安全能力时必须创建新的工具标识，使既有角色不会自动获得该能力
 - 一个 **内部用户**可以绑定多个不同 Provider 或系统实例的**外部身份绑定**
 - 一个**内部用户**可以在不同钉钉企业中绑定多个钉钉外部身份；同一企业中的同一外部主体只形成一个身份，不因存在多个**钉钉应用连接**而重复
 - 每个“内部用户 + 钉钉企业”最多一个当前有效钉钉身份；同企业出现不同外部主体时必须显式换绑并将旧身份保留为历史，不得静默形成两个有效账号
