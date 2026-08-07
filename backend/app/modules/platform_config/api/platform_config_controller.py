@@ -48,8 +48,127 @@ def _require_management_read(request: Request, *, resource_type: str) -> None:
         )
 
 
+def _require_builtin_tool_read(request: Request) -> None:
+    c = _container(request)
+    if (
+        c.settings.feature_configuration.unified_identity_enabled
+        or c.settings.feature_configuration.web_admin_enabled
+    ):
+        require_action(
+            request,
+            resource_type="builtin_tool",
+            resource_code="*",
+            action="read",
+        )
+
+
 def _correlation_id(request: Request) -> str:
-    return request.headers.get("x-correlation-id", "").strip()
+    return str(
+        getattr(request.state, "correlation_id", "") or request.headers.get("x-correlation-id", "")
+    ).strip()
+
+
+def _builtin_tool_error_code(exc: Exception) -> str:
+    if isinstance(exc, AppError) and exc.error_code:
+        return exc.error_code
+    if isinstance(exc, HTTPException):
+        return {
+            401: "authentication_required",
+            403: "builtin_tool_management_denied",
+            404: "builtin_tool_not_found",
+        }.get(exc.status_code, "builtin_tool_management_failed")
+    if isinstance(exc, NotFound):
+        return "builtin_tool_not_found"
+    if isinstance(exc, PermissionDenied):
+        return "builtin_tool_management_denied"
+    if isinstance(exc, ValueError):
+        return "builtin_tool_manifest_invalid"
+    return "builtin_tool_management_failed"
+
+
+def _builtin_tool_error_status(exc: Exception, error_code: str) -> int:
+    if isinstance(exc, HTTPException):
+        return exc.status_code
+    if isinstance(exc, PermissionDenied):
+        return 403
+    if isinstance(exc, NotFound):
+        return 404
+    if error_code in {
+        "builtin_tool_release_lifecycle_invalid",
+        "builtin_tool_release_dependency_in_use",
+        "builtin_tool_publish_idempotency_conflict",
+    }:
+        return 409
+    if error_code in {
+        "builtin_tool_verification_missing",
+        "builtin_tool_verification_stale",
+        "builtin_tool_verification_failed",
+    }:
+        return 422
+    if error_code in {
+        "builtin_tool_installation_missing",
+        "builtin_tool_installation_drifted",
+    }:
+        return 503
+    if isinstance(exc, (AppError, ValueError)):
+        return 400
+    return 500
+
+
+def _builtin_tool_error_message(exc: Exception, status_code: int) -> str:
+    if isinstance(exc, AppError):
+        return exc.safe_message
+    if status_code == 401:
+        return "请先登录"
+    if status_code == 403:
+        return "你无权执行此操作"
+    if status_code == 404:
+        return "未找到请求的内置工具对象"
+    if isinstance(exc, ValueError):
+        return "内置工具治理请求参数无效"
+    return "内置工具治理操作失败"
+
+
+def _handle_builtin_tool_rejection(
+    request: Request,
+    exc: Exception,
+    *,
+    operation: str,
+    entity_type: str,
+    entity_id: str,
+    actor_id: str | None,
+) -> HTTPException:
+    correlation_id = _correlation_id(request)
+    error_code = _builtin_tool_error_code(exc)
+    status_code = _builtin_tool_error_status(exc, error_code)
+    details = {
+        "operation": operation,
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+    }
+    _container(request).audit_service.record(
+        "admin.builtin_tool.governance.denied",
+        status="DENIED",
+        summary="Built-in Tool governance action denied",
+        actor_id=actor_id,
+        payload={
+            **details,
+            "error_code": error_code,
+            "correlation_id": correlation_id,
+        },
+    )
+    return HTTPException(
+        status_code=status_code,
+        detail={
+            "error": {
+                "code": error_code,
+                "message": _builtin_tool_error_message(exc, status_code),
+                "correlation_id": correlation_id,
+                "retryable": status_code in {500, 503},
+                "details": details,
+            }
+        },
+    )
 
 
 def _handle(exc: Exception) -> HTTPException:
@@ -231,11 +350,7 @@ def build_platform_config_router() -> APIRouter:
     ) -> dict[str, Any]:
         _require_management_read(request, resource_type="secret")
         try:
-            usage = (
-                _container(request)
-                .platform_config_service
-                .get_platform_secret_usage(code)
-            )
+            usage = _container(request).platform_config_service.get_platform_secret_usage(code)
         except Exception as exc:
             raise _handle(exc) from exc
         return {"usage": usage}
@@ -244,11 +359,7 @@ def build_platform_config_router() -> APIRouter:
     def legacy_env_secret_report(request: Request) -> dict[str, Any]:
         _require_management_read(request, resource_type="secret")
         try:
-            report = (
-                _container(request)
-                .platform_config_service
-                .legacy_env_secret_report()
-            )
+            report = _container(request).platform_config_service.legacy_env_secret_report()
         except Exception as exc:
             raise _handle(exc) from exc
         return {"report": report}
@@ -259,14 +370,10 @@ def build_platform_config_router() -> APIRouter:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         try:
-            result = (
-                _container(request)
-                .platform_config_service
-                .import_legacy_env_secret(
-                    payload,
-                    actor_id=_actor(request),
-                    correlation_id=_correlation_id(request),
-                )
+            result = _container(request).platform_config_service.import_legacy_env_secret(
+                payload,
+                actor_id=_actor(request),
+                correlation_id=_correlation_id(request),
             )
         except Exception as exc:
             raise _handle(exc) from exc
@@ -382,15 +489,11 @@ def build_platform_config_router() -> APIRouter:
     @router.get("/runtime-config/env-migration")
     def runtime_config_env_migration(request: Request) -> dict[str, Any]:
         _require_management_read(request, resource_type="platform_config")
-        return {
-            "items": _container(request).platform_config_service.runtime_config_env_migration()
-        }
+        return {"items": _container(request).platform_config_service.runtime_config_env_migration()}
 
     @router.get("/runtime-config/features")
     def effective_feature_configuration(request: Request) -> dict[str, Any]:
-        if not _container(
-            request
-        ).settings.feature_configuration.web_admin_enabled:
+        if not _container(request).settings.feature_configuration.web_admin_enabled:
             raise HTTPException(status_code=404, detail="Web 管理功能已停用")
         _require_management_read(request, resource_type="platform_config")
         c = _container(request)
@@ -420,12 +523,133 @@ def build_platform_config_router() -> APIRouter:
             resource_type="platform_config",
         )
         return {
-            "contracts": (
-                _container(request)
-                .platform_config_service
-                .list_provider_contracts()
-            )
+            "contracts": (_container(request).platform_config_service.list_provider_contracts())
         }
+
+    @router.get("/builtin-tools")
+    def list_builtin_tools(request: Request) -> dict[str, Any]:
+        _require_builtin_tool_read(request)
+        return {"tools": (_container(request).platform_config_service.handlers.catalog())}
+
+    @router.post("/builtin-tools/reconcile")
+    def reconcile_builtin_tools(request: Request) -> dict[str, Any]:
+        actor_id: str | None = None
+        try:
+            actor_id = _actor(request)
+            summary = _container(request).platform_config_service.handlers.reconcile(
+                actor_id=actor_id,
+                correlation_id=_correlation_id(request),
+            )
+        except Exception as exc:
+            raise _handle_builtin_tool_rejection(
+                request,
+                exc,
+                operation="reconcile",
+                entity_type="builtin_tool_registry",
+                entity_id="code",
+                actor_id=actor_id,
+            ) from exc
+        return {"summary": summary}
+
+    @router.get("/builtin-tools/{tool_identifier}")
+    def get_builtin_tool(
+        request: Request,
+        tool_identifier: str,
+    ) -> dict[str, Any]:
+        _require_builtin_tool_read(request)
+        try:
+            tool = _container(request).platform_config_service.handlers.detail(tool_identifier)
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"tool": tool}
+
+    @router.post("/builtin-tools/{tool_identifier}/verify")
+    async def verify_builtin_tool(
+        request: Request,
+        tool_identifier: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        actor_id: str | None = None
+        try:
+            actor_id = _actor(request)
+            verification = _container(request).platform_config_service.handlers.verify_payload(
+                {
+                    **payload,
+                    "tool_identifier": tool_identifier,
+                },
+                actor_id=actor_id,
+                correlation_id=_correlation_id(request),
+            )
+        except Exception as exc:
+            raise _handle_builtin_tool_rejection(
+                request,
+                exc,
+                operation="verify",
+                entity_type="builtin_tool",
+                entity_id=tool_identifier,
+                actor_id=actor_id,
+            ) from exc
+        return {"verification": verification}
+
+    @router.post("/builtin-tools/{tool_identifier}/publish")
+    async def publish_builtin_tool(
+        request: Request,
+        tool_identifier: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        actor_id: str | None = None
+        try:
+            actor_id = _actor(request)
+            release = _container(
+                request
+            ).platform_config_service.handlers.publish_builtin_tool_payload(
+                {
+                    **payload,
+                    "tool_identifier": tool_identifier,
+                },
+                actor_id=actor_id,
+                correlation_id=_correlation_id(request),
+            )
+        except Exception as exc:
+            raise _handle_builtin_tool_rejection(
+                request,
+                exc,
+                operation="publish",
+                entity_type="builtin_tool",
+                entity_id=tool_identifier,
+                actor_id=actor_id,
+            ) from exc
+        return {"release": release}
+
+    @router.post("/builtin-tool-releases/{release_id}/lifecycle")
+    async def set_builtin_tool_release_lifecycle(
+        request: Request,
+        release_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        actor_id: str | None = None
+        try:
+            actor_id = _actor(request)
+            release = _container(
+                request
+            ).platform_config_service.handlers.set_builtin_tool_release_status(
+                release_id,
+                str(payload.get("status") or ""),
+                reason_code=str(payload.get("reason_code") or ""),
+                verification_id=str(payload.get("verification_id") or ""),
+                actor_id=actor_id,
+                correlation_id=_correlation_id(request),
+            )
+        except Exception as exc:
+            raise _handle_builtin_tool_rejection(
+                request,
+                exc,
+                operation="lifecycle",
+                entity_type="builtin_tool_release",
+                entity_id=release_id,
+                actor_id=actor_id,
+            ) from exc
+        return {"release": release}
 
     @router.get("/resources")
     def list_governed_resources(
@@ -439,12 +663,7 @@ def build_platform_config_router() -> APIRouter:
             request,
             resource_type="platform_config",
         )
-        resources = (
-            _container(request)
-            .platform_config_service
-            .governed_resources
-            .list_resources()
-        )
+        resources = _container(request).platform_config_service.governed_resources.list_resources()
         filters = {
             "resource_kind": resource_kind.lower(),
             "scope_type": scope_type.lower(),
@@ -456,8 +675,7 @@ def build_platform_config_router() -> APIRouter:
                 resources = [
                     item
                     for item in resources
-                    if str(item.get(key) or "").lower()
-                    == expected.lower()
+                    if str(item.get(key) or "").lower() == expected.lower()
                 ]
         return {"resources": resources}
 
@@ -467,15 +685,10 @@ def build_platform_config_router() -> APIRouter:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         try:
-            return (
-                _container(request)
-                .platform_config_service
-                .governed_resources
-                .create_resource(
-                    payload,
-                    actor_id=_actor(request),
-                    correlation_id=_correlation_id(request),
-                )
+            return _container(request).platform_config_service.governed_resources.create_resource(
+                payload,
+                actor_id=_actor(request),
+                correlation_id=_correlation_id(request),
             )
         except Exception as exc:
             raise _handle(exc) from exc
@@ -488,17 +701,12 @@ def build_platform_config_router() -> APIRouter:
     ) -> dict[str, Any]:
         try:
             expected_revision = int(payload.pop("expected_revision", 0))
-            draft = (
-                _container(request)
-                .platform_config_service
-                .governed_resources
-                .save_draft(
-                    code,
-                    payload,
-                    expected_revision=expected_revision,
-                    actor_id=_actor(request),
-                    correlation_id=_correlation_id(request),
-                )
+            draft = _container(request).platform_config_service.governed_resources.save_draft(
+                code,
+                payload,
+                expected_revision=expected_revision,
+                actor_id=_actor(request),
+                correlation_id=_correlation_id(request),
             )
         except Exception as exc:
             raise _handle(exc) from exc
@@ -512,10 +720,7 @@ def build_platform_config_router() -> APIRouter:
     ) -> dict[str, Any]:
         try:
             (
-                _container(request)
-                .platform_config_service
-                .governed_resources
-                .delete_draft(
+                _container(request).platform_config_service.governed_resources.delete_draft(
                     code,
                     expected_revision=expected_revision,
                     actor_id=_actor(request),
@@ -532,19 +737,51 @@ def build_platform_config_router() -> APIRouter:
         code: str,
     ) -> dict[str, Any]:
         try:
-            verification = (
-                _container(request)
-                .platform_config_service
-                .governed_resources
-                .verify_draft(
-                    code,
-                    actor_id=_actor(request),
-                    correlation_id=_correlation_id(request),
-                )
+            verification = _container(
+                request
+            ).platform_config_service.governed_resources.verify_draft(
+                code,
+                actor_id=_actor(request),
+                correlation_id=_correlation_id(request),
             )
         except Exception as exc:
             raise _handle(exc) from exc
         return {"verification": verification}
+
+    @router.post("/resources/{code}/loki/test")
+    async def test_loki_resource_draft(
+        request: Request,
+        code: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            return _container(request).platform_config_service.loki_draft_discovery.test_draft(
+                code,
+                actor_id=_actor(request),
+                minutes=int(payload.get("minutes") or 15),
+                limit=int(payload.get("limit") or 64),
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+
+    @router.post("/resources/{code}/loki/label-values")
+    async def discover_loki_resource_draft_label_values(
+        request: Request,
+        code: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            return _container(request).platform_config_service.loki_draft_discovery.label_values(
+                code,
+                test_session_id=str(payload.get("test_session_id") or ""),
+                label=str(payload.get("label") or ""),
+                selected_conditions=payload.get("selected_conditions"),
+                actor_id=_actor(request),
+                minutes=int(payload.get("minutes") or 15),
+                limit=int(payload.get("limit") or 100),
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
 
     @router.post("/resources/{code}/publish")
     def publish_governed_resource_draft(
@@ -552,15 +789,10 @@ def build_platform_config_router() -> APIRouter:
         code: str,
     ) -> dict[str, Any]:
         try:
-            revision = (
-                _container(request)
-                .platform_config_service
-                .governed_resources
-                .publish_draft(
-                    code,
-                    actor_id=_actor(request),
-                    correlation_id=_correlation_id(request),
-                )
+            revision = _container(request).platform_config_service.governed_resources.publish_draft(
+                code,
+                actor_id=_actor(request),
+                correlation_id=_correlation_id(request),
             )
         except Exception as exc:
             raise _handle(exc) from exc
@@ -573,16 +805,13 @@ def build_platform_config_router() -> APIRouter:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         try:
-            draft = (
-                _container(request)
-                .platform_config_service
-                .governed_resources
-                .create_draft_from_revision(
-                    code,
-                    str(payload.get("revision_id") or ""),
-                    actor_id=_actor(request),
-                    correlation_id=_correlation_id(request),
-                )
+            draft = _container(
+                request
+            ).platform_config_service.governed_resources.create_draft_from_revision(
+                code,
+                str(payload.get("revision_id") or ""),
+                actor_id=_actor(request),
+                correlation_id=_correlation_id(request),
             )
         except Exception as exc:
             raise _handle(exc) from exc
@@ -601,21 +830,303 @@ def build_platform_config_router() -> APIRouter:
                 detail="不支持此资源版本操作",
             )
         try:
-            revision = (
-                _container(request)
-                .platform_config_service
-                .governed_resources
-                .set_revision_status(
-                    code,
-                    revision_id,
-                    action,
-                    actor_id=_actor(request),
-                    correlation_id=_correlation_id(request),
-                )
+            revision = _container(
+                request
+            ).platform_config_service.governed_resources.set_revision_status(
+                code,
+                revision_id,
+                action,
+                actor_id=_actor(request),
+                correlation_id=_correlation_id(request),
             )
         except Exception as exc:
             raise _handle(exc) from exc
         return {"revision": revision}
+
+    @router.get("/workshop-partition-policies")
+    def list_workshop_partition_policies(request: Request) -> dict[str, Any]:
+        _require_management_read(request, resource_type="platform_config")
+        return {
+            "policies": _container(
+                request
+            ).platform_config_service.workshop_partition_policies.list()
+        }
+
+    @router.post("/workshop-partition-policies")
+    async def create_workshop_partition_policy(
+        request: Request,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            policy = _container(
+                request
+            ).platform_config_service.workshop_partition_policies.create(
+                payload,
+                actor_id=_actor(request),
+                correlation_id=_correlation_id(request),
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"policy": policy}
+
+    @router.get("/workshop-partition-policies/{code}")
+    def get_workshop_partition_policy(
+        request: Request,
+        code: str,
+    ) -> dict[str, Any]:
+        _require_management_read(request, resource_type="platform_config")
+        try:
+            policy = _container(
+                request
+            ).platform_config_service.workshop_partition_policies.detail(code)
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"policy": policy}
+
+    @router.put("/workshop-partition-policies/{code}/draft")
+    async def save_workshop_partition_policy_draft(
+        request: Request,
+        code: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            draft = _container(
+                request
+            ).platform_config_service.workshop_partition_policies.save_draft(
+                code,
+                expected_draft_revision=int(
+                    payload.get("expected_draft_revision") or 0
+                ),
+                payload={
+                    key: payload.get(key)
+                    for key in (
+                        "database_rule_enabled",
+                        "database_table_prefix",
+                        "redis_rule_enabled",
+                        "redis_prefixes",
+                    )
+                },
+                actor_id=_actor(request),
+                correlation_id=_correlation_id(request),
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"draft": draft}
+
+    @router.post("/workshop-partition-policies/{code}/verify")
+    async def verify_workshop_partition_policy(
+        request: Request,
+        code: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            verification = _container(
+                request
+            ).platform_config_service.workshop_partition_policies.verify(
+                code,
+                expected_draft_revision=int(
+                    payload.get("expected_draft_revision") or 0
+                ),
+                redis_resource_revision_id=str(
+                    payload.get("redis_resource_revision_id") or ""
+                )
+                or None,
+                actor_id=_actor(request),
+                correlation_id=_correlation_id(request),
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"verification": verification}
+
+    @router.post("/workshop-partition-policies/{code}/publish")
+    async def publish_workshop_partition_policy(
+        request: Request,
+        code: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            revision = _container(
+                request
+            ).platform_config_service.workshop_partition_policies.publish(
+                code,
+                verification_id=str(payload.get("verification_id") or ""),
+                expected_policy_revision=int(
+                    payload.get("expected_policy_revision") or 0
+                ),
+                actor_id=_actor(request),
+                correlation_id=_correlation_id(request),
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"revision": revision}
+
+    @router.post("/workshop-partition-policies/{code}/draft/from-revision")
+    async def copy_workshop_partition_policy_revision(
+        request: Request,
+        code: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            draft = _container(
+                request
+            ).platform_config_service.workshop_partition_policies.copy_revision_to_draft(
+                code,
+                source_revision_id=str(payload.get("source_revision_id") or ""),
+                expected_policy_revision=int(
+                    payload.get("expected_policy_revision") or 0
+                ),
+                actor_id=_actor(request),
+                correlation_id=_correlation_id(request),
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"draft": draft}
+
+    @router.get("/loki-scope-policies")
+    def list_loki_scope_policies(request: Request) -> dict[str, Any]:
+        _require_management_read(request, resource_type="platform_config")
+        return {
+            "policies": _container(
+                request
+            ).platform_config_service.loki_scope_policies.list()
+        }
+
+    @router.post("/loki-scope-policies")
+    async def create_loki_scope_policy(
+        request: Request,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            policy = _container(
+                request
+            ).platform_config_service.loki_scope_policies.create(
+                payload,
+                actor_id=_actor(request),
+                correlation_id=_correlation_id(request),
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"policy": policy}
+
+    @router.get("/loki-scope-policies/{code}")
+    def get_loki_scope_policy(request: Request, code: str) -> dict[str, Any]:
+        _require_management_read(request, resource_type="platform_config")
+        try:
+            policy = _container(
+                request
+            ).platform_config_service.loki_scope_policies.detail(code)
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"policy": policy}
+
+    @router.put("/loki-scope-policies/{code}/draft")
+    async def save_loki_scope_policy_draft(
+        request: Request,
+        code: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            draft = _container(
+                request
+            ).platform_config_service.loki_scope_policies.save_draft(
+                code,
+                expected_draft_revision=int(
+                    payload.get("expected_draft_revision") or 0
+                ),
+                payload={
+                    "resource_revision_id": payload.get("resource_revision_id"),
+                    "conditions": payload.get("conditions"),
+                },
+                actor_id=_actor(request),
+                correlation_id=_correlation_id(request),
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"draft": draft}
+
+    @router.post("/loki-scope-policies/{code}/verify")
+    async def verify_loki_scope_policy(
+        request: Request,
+        code: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            verification = _container(
+                request
+            ).platform_config_service.loki_scope_policies.verify(
+                code,
+                expected_draft_revision=int(
+                    payload.get("expected_draft_revision") or 0
+                ),
+                actor_id=_actor(request),
+                correlation_id=_correlation_id(request),
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"verification": verification}
+
+    @router.post("/loki-scope-policies/{code}/publish")
+    async def publish_loki_scope_policy(
+        request: Request,
+        code: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            revision = _container(
+                request
+            ).platform_config_service.loki_scope_policies.publish(
+                code,
+                verification_id=str(payload.get("verification_id") or ""),
+                expected_policy_revision=int(
+                    payload.get("expected_policy_revision") or 0
+                ),
+                actor_id=_actor(request),
+                correlation_id=_correlation_id(request),
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"revision": revision}
+
+    @router.post("/loki-scope-policies/{code}/draft/from-revision")
+    async def copy_loki_scope_policy_revision(
+        request: Request,
+        code: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            draft = _container(
+                request
+            ).platform_config_service.loki_scope_policies.copy_revision_to_draft(
+                code,
+                source_revision_id=str(payload.get("source_revision_id") or ""),
+                expected_policy_revision=int(
+                    payload.get("expected_policy_revision") or 0
+                ),
+                actor_id=_actor(request),
+                correlation_id=_correlation_id(request),
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"draft": draft}
+
+    @router.post("/loki-scope-policies/{code}/revisions/{revision_id}/health")
+    async def refresh_loki_scope_policy_health(
+        request: Request,
+        code: str,
+        revision_id: str,
+    ) -> dict[str, Any]:
+        try:
+            observation = _container(
+                request
+            ).platform_config_service.loki_scope_policies.refresh_health(
+                code,
+                policy_revision_id=revision_id,
+                actor_id=_actor(request),
+                correlation_id=_correlation_id(request),
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"observation": observation}
 
     @router.get("/runtime-generation/status")
     def runtime_generation_status(request: Request) -> dict[str, Any]:
@@ -628,9 +1139,7 @@ def build_platform_config_router() -> APIRouter:
         )
 
         return {
-            "runtime": RuntimeGenerationRepository(
-                _container(request).database
-            ).public_status()
+            "runtime": RuntimeGenerationRepository(_container(request).database).public_status()
         }
 
     @router.post("/resource-bindings")

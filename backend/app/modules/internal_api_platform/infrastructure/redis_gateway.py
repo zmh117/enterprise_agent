@@ -28,7 +28,8 @@ class FakeRedisGateway:
 
     def scan(self, binding: ResourceBinding, pattern: str, limit: int) -> ToolResponse:
         self.calls.append(("scan", pattern))
-        matched = [k for k in self._keys if k.startswith(pattern.rstrip("*"))][:limit]
+        literal_prefix = pattern.rstrip("*").replace("\\[", "[").replace("\\]", "]")
+        matched = [k for k in self._keys if k.startswith(literal_prefix)][:limit]
         return ToolResponse(summary={"pattern": pattern, "keys": matched})
 
 
@@ -63,11 +64,7 @@ class RealRedisGateway:
                     socket_timeout=5,
                     socket_connect_timeout=5,
                     ssl=conn.tls_enabled,
-                    ssl_cert_reqs=(
-                        "required"
-                        if conn.tls_verify_certificate
-                        else None
-                    ),
+                    ssl_cert_reqs=("required" if conn.tls_verify_certificate else None),
                     ssl_check_hostname=conn.tls_verify_certificate,
                     decode_responses=True,
                 )
@@ -80,14 +77,8 @@ class RealRedisGateway:
                 socket_timeout=5,
                 socket_connect_timeout=5,
                 ssl=conn.tls_enabled,
-                ssl_cert_reqs=(
-                    "required"
-                    if conn.tls_verify_certificate
-                    else None
-                ),
-                ssl_check_hostname=(
-                    conn.tls_enabled and conn.tls_verify_certificate
-                ),
+                ssl_cert_reqs=("required" if conn.tls_verify_certificate else None),
+                ssl_check_hostname=(conn.tls_enabled and conn.tls_verify_certificate),
                 decode_responses=True,
             )
         except ResolutionError:
@@ -115,4 +106,7 @@ class RealRedisGateway:
             cursor, keys = client.scan(cursor=0, match=pattern, count=limit)
         except Exception as exc:
             raise UpstreamUnavailable(f"Redis SCAN failed: {type(exc).__name__}") from exc
-        return ToolResponse(summary={"pattern": pattern, "keys": list(keys)[:limit]})
+        return ToolResponse(
+            summary={"pattern": pattern, "keys": list(keys)[:limit]},
+            truncated=str(cursor) not in {"0", "b'0'"},
+        )

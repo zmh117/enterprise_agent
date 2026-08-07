@@ -20,7 +20,7 @@ class GovernedResourceRepository:
         name: str,
         resource_kind: str,
         scope_type: str,
-        environment_id: str,
+        environment_id: str | None,
         base_id: str | None,
         workshop_id: str | None,
         actor_id: str,
@@ -57,7 +57,7 @@ class GovernedResourceRepository:
             select r.*, e.code as environment_code, b.code as base_code,
                    w.code as workshop_code
             from platform_resource r
-            join platform_environment e on e.id = r.environment_id
+            left join platform_environment e on e.id = r.environment_id
             left join platform_base b on b.id = r.base_id
             left join platform_workshop w on w.id = r.workshop_id
             where r.id = ?
@@ -74,7 +74,7 @@ class GovernedResourceRepository:
             select r.*, e.code as environment_code, b.code as base_code,
                    w.code as workshop_code
             from platform_resource r
-            join platform_environment e on e.id = r.environment_id
+            left join platform_environment e on e.id = r.environment_id
             left join platform_base b on b.id = r.base_id
             left join platform_workshop w on w.id = r.workshop_id
             where r.code = ?
@@ -89,7 +89,7 @@ class GovernedResourceRepository:
             select r.*, e.code as environment_code, b.code as base_code,
                    w.code as workshop_code
             from platform_resource r
-            join platform_environment e on e.id = r.environment_id
+            left join platform_environment e on e.id = r.environment_id
             left join platform_base b on b.id = r.base_id
             left join platform_workshop w on w.id = r.workshop_id
             order by r.code
@@ -302,9 +302,7 @@ class GovernedResourceRepository:
             (verification_id,),
         )
         if not row:
-            raise NotFound(
-                f"Platform resource verification not found: {verification_id}"
-            )
+            raise NotFound(f"Platform resource verification not found: {verification_id}")
         return self._verification(row)
 
     def matching_verification(
@@ -381,9 +379,7 @@ class GovernedResourceRepository:
             (revision_id,),
         )
         if not row:
-            raise NotFound(
-                f"Platform resource revision not found: {revision_id}"
-            )
+            raise NotFound(f"Platform resource revision not found: {revision_id}")
         return self._revision(row)
 
     def list_revisions(self, resource_id: str) -> list[dict[str, Any]]:

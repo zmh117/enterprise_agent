@@ -32,6 +32,14 @@ def _application_id(request: FastAPIRequest) -> str:
     return request.headers.get("x-agent-application-id", "").strip()
 
 
+def _tool_call_id(request: FastAPIRequest) -> str:
+    return request.headers.get("x-agent-tool-call-id", "").strip()
+
+
+def _correlation_id(request: FastAPIRequest) -> str:
+    return request.headers.get("x-correlation-id", "").strip()
+
+
 def _require(payload: dict[str, Any], key: str) -> str:
     value = payload.get(key)
     if not isinstance(value, str) or not value.strip():
@@ -52,6 +60,7 @@ def _target(
     request: FastAPIRequest,
     payload: dict[str, Any],
 ) -> tuple[str, str, str | None]:
+    _assert_no_authoritative_fact_overrides(payload)
     environment = _require(payload, "environment")
     base = _require(payload, "base")
     workshop = _optional(payload, "workshop")
@@ -65,6 +74,48 @@ def _target(
         if supplied and supplied != expected_value:
             raise AuthorizationError("Agent Job authorization context is invalid")
     return environment, base, workshop
+
+
+_AUTHORITATIVE_FACT_FIELDS = frozenset(
+    {
+        "tool_release_id",
+        "handler_version",
+        "implementation_digest",
+        "public_schema_hash",
+        "resource_revision_id",
+        "workshop_partition_policy_revision_id",
+        "loki_scope_policy_revision_id",
+        "database_table_prefix",
+        "table_prefix",
+        "redis_prefix",
+        "redis_prefixes",
+        "tenant",
+        "tenant_id",
+        "mandatory_selector",
+        "effective_selector",
+    }
+)
+
+
+def _assert_no_authoritative_fact_overrides(
+    payload: dict[str, Any],
+) -> None:
+    if _AUTHORITATIVE_FACT_FIELDS.intersection(payload):
+        raise AuthorizationError(
+            "Agent request cannot override frozen Job facts"
+        )
+
+
+def _placement(payload: dict[str, Any]) -> str:
+    value = payload.get("placement")
+    if value is None:
+        return ""
+    if not isinstance(value, str) or value.strip().lower() not in {
+        "cloud",
+        "edge",
+    }:
+        raise PolicyViolation("Placement must be cloud or edge")
+    return value.strip().lower()
 
 
 def _envelope(request: FastAPIRequest, started: float, result: ToolResponse) -> dict[str, Any]:
@@ -92,12 +143,15 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
     async def er_context(request: FastAPIRequest, payload: dict[str, Any]) -> dict[str, Any]:
         started = time.monotonic()
         try:
+            _assert_no_authoritative_fact_overrides(payload)
             result = service.er_context(
                 user_id=_user_id(request),
                 job_id=_job_id(request),
                 project_code=_project_code(request),
                 application_id=_application_id(request),
                 query=str(payload.get("query", "")),
+                tool_call_id=_tool_call_id(request),
+                correlation_id=_correlation_id(request),
             )
         except PlatformError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.body) from exc
@@ -109,12 +163,15 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
     ) -> dict[str, Any]:
         started = time.monotonic()
         try:
+            _assert_no_authoritative_fact_overrides(payload)
             result = service.business_flow_context(
                 user_id=_user_id(request),
                 job_id=_job_id(request),
                 project_code=_project_code(request),
                 application_id=_application_id(request),
                 query=str(payload.get("query", "")),
+                tool_call_id=_tool_call_id(request),
+                correlation_id=_correlation_id(request),
             )
         except PlatformError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.body) from exc
@@ -134,6 +191,9 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
                 base=base,
                 workshop=workshop,
                 kind=_resource_kind(payload.get("kind", "database")),
+                placement=_placement(payload),
+                tool_call_id=_tool_call_id(request),
+                correlation_id=_correlation_id(request),
             )
         except PlatformError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.body) from exc
@@ -154,6 +214,9 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
                 workshop=workshop,
                 sql=_require(payload, "sql"),
                 limit=_int_or_none(payload.get("limit")),
+                placement=_placement(payload),
+                tool_call_id=_tool_call_id(request),
+                correlation_id=_correlation_id(request),
             )
         except PlatformError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.body) from exc
@@ -174,6 +237,9 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
                 workshop=workshop,
                 query=str(payload.get("query", "")),
                 limit=_int_or_none(payload.get("limit")),
+                placement=_placement(payload),
+                tool_call_id=_tool_call_id(request),
+                correlation_id=_correlation_id(request),
             )
         except PlatformError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.body) from exc
@@ -193,6 +259,9 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
                 base=base,
                 workshop=workshop,
                 key=_require(payload, "key"),
+                placement=_placement(payload),
+                tool_call_id=_tool_call_id(request),
+                correlation_id=_correlation_id(request),
             )
         except PlatformError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.body) from exc
@@ -213,6 +282,9 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
                 workshop=workshop,
                 pattern=_require(payload, "pattern"),
                 limit=_int_or_none(payload.get("limit")),
+                placement=_placement(payload),
+                tool_call_id=_tool_call_id(request),
+                correlation_id=_correlation_id(request),
             )
         except PlatformError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.body) from exc
@@ -235,6 +307,8 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
                 query=str(payload.get("query", "")),
                 minutes=_int_or_none(payload.get("minutes")) or 15,
                 limit=_int_or_none(payload.get("limit")) or 100,
+                tool_call_id=_tool_call_id(request),
+                correlation_id=_correlation_id(request),
             )
         except PlatformError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.body) from exc
@@ -255,6 +329,8 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
                 workshop=workshop,
                 minutes=_int_or_none(payload.get("minutes")) or 15,
                 limit=_int_or_none(payload.get("limit")) or 100,
+                tool_call_id=_tool_call_id(request),
+                correlation_id=_correlation_id(request),
             )
         except PlatformError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.body) from exc
@@ -276,6 +352,8 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
                 label=_require(payload, "label"),
                 minutes=_int_or_none(payload.get("minutes")) or 15,
                 limit=_int_or_none(payload.get("limit")) or 100,
+                tool_call_id=_tool_call_id(request),
+                correlation_id=_correlation_id(request),
             )
         except PlatformError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.body) from exc
@@ -298,6 +376,8 @@ def register_routes(app: FastAPI, *, service: PlatformService) -> None:
                 query=str(payload.get("query", "")),
                 minutes=_int_or_none(payload.get("minutes")) or 15,
                 limit=_int_or_none(payload.get("limit")) or 100,
+                tool_call_id=_tool_call_id(request),
+                correlation_id=_correlation_id(request),
             )
         except PlatformError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.body) from exc

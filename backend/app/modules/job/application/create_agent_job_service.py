@@ -18,12 +18,18 @@ from app.modules.attachments.credentials import AttachmentCredentialCipher
 from app.modules.channel.domain.channel_event import ChannelAttachment, ReplyRoute, RoutingContext
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.job.domain.agent_job import AgentJob, AgentSession
+from app.modules.job.application.builtin_tool_snapshot import (
+    JobBuiltinToolSnapshotService,
+)
 from app.modules.job.domain.execution_policy import EffectiveExecutionPolicyResolver
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.modules.identity.infrastructure import (
     ExternalApiCredentialRepository,
     IdentityRepository,
+)
+from app.modules.internal_tools.application.legacy_migration import (
+    BuiltinToolLegacyWriteGuard,
 )
 from app.modules.message_bus.application.message_publisher import MessagePublisher
 from app.modules.permission.application.permission_service import PermissionService
@@ -138,16 +144,11 @@ class CreateAgentJobService:
         published_agent_runtime_enabled: bool = False,
         default_agent_code: str = "default-diagnostic-agent",
         business_authorization_service: BusinessAuthorizationService | None = None,
-        capability_publication_repository: (
-            CapabilityPublicationRepository | None
-        ) = None,
-        governed_api_execution_repository: (
-            GovernedApiExecutionRepository | None
-        ) = None,
-        external_api_credential_repository: (
-            ExternalApiCredentialRepository | None
-        ) = None,
+        capability_publication_repository: (CapabilityPublicationRepository | None) = None,
+        governed_api_execution_repository: (GovernedApiExecutionRepository | None) = None,
+        external_api_credential_repository: (ExternalApiCredentialRepository | None) = None,
         identity_repository: IdentityRepository | None = None,
+        builtin_tool_snapshot_service: JobBuiltinToolSnapshotService | None = None,
     ) -> None:
         self.repository = repository
         self.permission_service = permission_service
@@ -163,20 +164,17 @@ class CreateAgentJobService:
         self.published_agent_runtime_enabled = published_agent_runtime_enabled
         self.default_agent_code = default_agent_code
         self.business_authorization_service = business_authorization_service
-        self.capability_publication_repository = (
-            capability_publication_repository
-        )
-        self.governed_api_execution_repository = (
-            governed_api_execution_repository
-        )
-        self.external_api_credential_repository = (
-            external_api_credential_repository
-        )
+        self.capability_publication_repository = capability_publication_repository
+        self.governed_api_execution_repository = governed_api_execution_repository
+        self.external_api_credential_repository = external_api_credential_repository
         self.identity_repository = identity_repository
+        self.builtin_tool_snapshot_service = builtin_tool_snapshot_service
 
     def execute(self, command: CreateAgentJobCommand) -> AgentJob:
         existing = self.repository.get_job_by_idempotency_key(command.idempotency_key)
         if existing is not None:
+            if self.builtin_tool_snapshot_service is not None:
+                self.builtin_tool_snapshot_service.verify(existing.id)
             return existing
         self._assert_application_runtime_available(command)
         if command.conversation_mode in {"application", "actor"}:
@@ -210,12 +208,8 @@ class CreateAgentJobService:
                     "stage": "job_create",
                     "reason": "dingtalk_active_application_route",
                     "application_id": command.business_application_id,
-                    "application_publication_id": (
-                        command.business_application_publication_id
-                    ),
-                    "source_connector_id": (
-                        command.source_connector_id
-                    ),
+                    "application_publication_id": (command.business_application_publication_id),
+                    "source_connector_id": (command.source_connector_id),
                 }
             elif self.business_authorization_service is None:
                 raise NonRetryableExecutionError(
@@ -224,33 +218,16 @@ class CreateAgentJobService:
                     error_code="business_authorization_unavailable",
                 )
             else:
-                business_decision = (
-                    self.business_authorization_service.require(
-                        user_id=requester_id,
-                        application_id=command.business_application_id,
-                        environment=str(
-                            command.effective_routing_context.get(
-                                "environment"
-                            )
-                            or ""
-                        ),
-                        base=str(
-                            command.effective_routing_context.get("base")
-                            or ""
-                        ),
-                        workshop=str(
-                            command.effective_routing_context.get(
-                                "workshop"
-                            )
-                            or ""
-                        ),
-                        stage="job_create",
-                    )
+                business_decision = self.business_authorization_service.require(
+                    user_id=requester_id,
+                    application_id=command.business_application_id,
+                    environment=str(command.effective_routing_context.get("environment") or ""),
+                    base=str(command.effective_routing_context.get("base") or ""),
+                    workshop=str(command.effective_routing_context.get("workshop") or ""),
+                    stage="job_create",
                 )
                 business_application_authorized = True
-                business_authorization_snapshot = dict(
-                    business_decision
-                )
+                business_authorization_snapshot = dict(business_decision)
             self.audit_service.record(
                 "authorization.business.job_create",
                 status="SUCCEEDED",
@@ -379,6 +356,20 @@ class CreateAgentJobService:
                     "Delivery connector is not assigned to the Agent publication",
                     safe_message="此渠道尚未配置 Agent 结果投递",
                 )
+        correlation_id = command.correlation_id or new_correlation_id()
+        BuiltinToolLegacyWriteGuard(
+            self.repository.database
+        ).reject_legacy_job_snapshot(
+            agent_publication_id=agent_publication_id,
+            application_publication_id=(
+                command.business_application_publication_id
+            ),
+            source_id=(
+                "job-intent:"
+                + hashlib.sha256(command.idempotency_key.encode()).hexdigest()[:24]
+            ),
+            correlation_id=correlation_id,
+        )
         execution_policy = self.execution_policy_resolver.resolve(
             application_policy=command.application_execution_policy or None,
             agent_snapshot=agent_snapshot,
@@ -430,16 +421,13 @@ class CreateAgentJobService:
                 requester_id=requester_id,
                 bot_identity=command.bot_identity,
                 business_application_id=command.business_application_id,
-                business_application_publication_id=(
-                    command.business_application_publication_id
-                ),
+                business_application_publication_id=(command.business_application_publication_id),
                 execution_scope_hash=execution_scope_hash,
                 conversation_mode=command.conversation_mode,
             )
             if continuous_enabled
             else ""
         )
-        correlation_id = command.correlation_id or new_correlation_id()
         attachment_ids: list[str] = []
         with self.repository.database.unit_of_work():
             runtime_authorization_snapshot: dict[str, Any] = {}
@@ -451,13 +439,9 @@ class CreateAgentJobService:
                         application_id=command.business_application_id,
                         publication_id=command.business_application_publication_id,
                         publication_config_hash=command.business_application_config_hash,
-                        environment=str(
-                            command.effective_routing_context.get("environment") or ""
-                        ),
+                        environment=str(command.effective_routing_context.get("environment") or ""),
                         base=str(command.effective_routing_context.get("base") or ""),
-                        workshop=str(
-                            command.effective_routing_context.get("workshop") or ""
-                        ),
+                        workshop=str(command.effective_routing_context.get("workshop") or ""),
                     )
                 )
             session = (
@@ -485,9 +469,7 @@ class CreateAgentJobService:
                     external_identity_id=command.external_identity_id,
                     business_application_id=command.business_application_id,
                     business_application_code=command.business_application_code,
-                    application_publication_id=(
-                        command.business_application_publication_id
-                    ),
+                    application_publication_id=(command.business_application_publication_id),
                     execution_scope_hash=execution_scope_hash,
                     isolation_key_version=2,
                     conversation_mode=command.conversation_mode,
@@ -536,32 +518,38 @@ class CreateAgentJobService:
                 execution_policy=execution_policy.to_dict(),
                 model_runtime_provenance=model_runtime_provenance,
             )
-            external_subject_snapshot = (
-                self._freeze_available_external_subject(
-                    job_id=job.id,
-                    requester_id=requester_id,
-                    application_publication_id=(
-                        command.business_application_publication_id
-                    ),
-                )
+            external_subject_snapshot = self._freeze_available_external_subject(
+                job_id=job.id,
+                requester_id=requester_id,
+                application_publication_id=(command.business_application_publication_id),
             )
             execution_scope_snapshot: dict[str, Any] = {}
-            if (
-                int(
-                    runtime_authorization_snapshot.get(
-                        "schema_version"
-                    )
-                    or 0
+            if int(runtime_authorization_snapshot.get("schema_version") or 0) == 2:
+                execution_scope_snapshot = self.repository.create_execution_scope(
+                    job_id=job.id,
+                    runtime_authorization=(runtime_authorization_snapshot),
                 )
-                == 2
-            ):
-                execution_scope_snapshot = (
-                    self.repository.create_execution_scope(
-                        job_id=job.id,
-                        runtime_authorization=(
-                            runtime_authorization_snapshot
-                        ),
-                    )
+            builtin_tool_snapshot: dict[str, Any] = {}
+            if command.business_application_id and self.builtin_tool_snapshot_service is not None:
+                builtin_tool_snapshot = self.builtin_tool_snapshot_service.freeze(
+                    job_id=job.id,
+                    requester_id=requester_id,
+                    application_id=command.business_application_id,
+                    application_publication_id=(command.business_application_publication_id),
+                    application_config_hash=(command.business_application_config_hash),
+                    agent_publication_id=agent_publication_id,
+                    routing_context=command.effective_routing_context,
+                    business_authorization=business_authorization_snapshot,
+                    runtime_authorization=runtime_authorization_snapshot,
+                )
+            elif agent_publication_id and self.builtin_tool_snapshot_service is not None:
+                builtin_tool_snapshot = self.builtin_tool_snapshot_service.freeze_agent_only(
+                    job_id=job.id,
+                    requester_id=requester_id,
+                    agent_publication_id=agent_publication_id,
+                    routing_context=command.effective_routing_context,
+                    business_authorization=business_authorization_snapshot,
+                    runtime_authorization=runtime_authorization_snapshot,
                 )
             message_id = self.repository.add_message(
                 session_id=session.id,
@@ -633,17 +621,12 @@ class CreateAgentJobService:
                     "business_application_runtime_status": (
                         command.business_application_runtime_status
                     ),
-                    "execution_scope_id": str(
-                        execution_scope_snapshot.get("id") or ""
-                    ),
-                    "execution_scope_hash": str(
-                        execution_scope_snapshot.get(
-                            "scope_hash"
-                        )
-                        or ""
-                    ),
-                    "external_subject_snapshot_id": str(
-                        external_subject_snapshot.get("id") or ""
+                    "execution_scope_id": str(execution_scope_snapshot.get("id") or ""),
+                    "execution_scope_hash": str(execution_scope_snapshot.get("scope_hash") or ""),
+                    "external_subject_snapshot_id": str(external_subject_snapshot.get("id") or ""),
+                    "builtin_tool_snapshot_id": str(builtin_tool_snapshot.get("id") or ""),
+                    "builtin_tool_snapshot_hash": str(
+                        builtin_tool_snapshot.get("snapshot_hash") or ""
                     ),
                 },
             )
@@ -678,21 +661,14 @@ class CreateAgentJobService:
             or self.identity_repository is None
         ):
             return {}
-        allowlist = (
-            self.capability_publication_repository.get_application_allowlist(
-                application_publication_id
-            )
+        allowlist = self.capability_publication_repository.get_application_allowlist(
+            application_publication_id
         )
-        if not any(
-            str(item.identifier).startswith("cap__ones__")
-            for item in allowlist
-        ):
+        if not any(str(item.identifier).startswith("cap__ones__") for item in allowlist):
             return {}
         try:
-            credential = (
-                self.external_api_credential_repository.get_current_public(
-                    user_id=requester_id
-                )
+            credential = self.external_api_credential_repository.get_current_public(
+                user_id=requester_id
             )
             identity = self.identity_repository.get_external_identity(
                 str(credential["external_identity_id"])
@@ -700,14 +676,8 @@ class CreateAgentJobService:
         except NotFound:
             return {}
         metadata = identity.get("metadata") or {}
-        default_team_id = str(
-            metadata.get("default_team_id") or ""
-        )
-        team_ids = {
-            str(value)
-            for value in metadata.get("team_uuids") or []
-            if str(value)
-        }
+        default_team_id = str(metadata.get("default_team_id") or "")
+        team_ids = {str(value) for value in metadata.get("team_uuids") or [] if str(value)}
         if (
             str(credential.get("status") or "") != "ACTIVE"
             or str(identity.get("status") or "") != "enabled"
@@ -746,27 +716,16 @@ class CreateAgentJobService:
         if reset is not None:
             resource_binding = self.repository.database.execute_one(
                 """
-                select r.id
-                  from business_application_publication_handler h
-                  join business_application_publication_resource r
-                    on r.application_handler_id = h.id
-                 where h.application_publication_id = ?
+                select mapping.id
+                  from business_application_publication_builtin_tool tool
+                  join business_application_publication_builtin_tool_resource
+                       mapping
+                    on mapping.application_tool_id = tool.id
+                 where tool.application_publication_id = ?
                  limit 1
                 """,
                 (publication_id,),
             )
-            if resource_binding is None:
-                resource_binding = (
-                    self.repository.database.execute_one(
-                        """
-                        select id
-                          from business_application_resource_binding
-                         where publication_id = ?
-                         limit 1
-                        """,
-                        (publication_id,),
-                    )
-                )
             if resource_binding is not None:
                 raise NonRetryableExecutionError(
                     "Resource reset maintenance blocks new Jobs",
@@ -880,8 +839,7 @@ class CreateAgentJobService:
             or session.requester_id != requester_id
             or session.source_connector_id != command.source_connector_id
             or session.business_application_id != command.business_application_id
-            or session.application_publication_id
-            != command.business_application_publication_id
+            or session.application_publication_id != command.business_application_publication_id
             or session.execution_scope_hash != execution_scope_hash
             or session.isolation_key_version != 2
             or session.history_read_only
@@ -972,10 +930,7 @@ def _execution_scope_hash(routing_context: dict[str, Any]) -> str:
         "service",
         "execution_scope_id",
     )
-    canonical = {
-        field: str(routing_context.get(field) or "").strip()
-        for field in fields
-    }
+    canonical = {field: str(routing_context.get(field) or "").strip() for field in fields}
     return hashlib.sha256(
         json.dumps(
             canonical,

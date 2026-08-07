@@ -8,12 +8,41 @@ from app.modules.internal_tools.infrastructure.internal_api_client import (
 )
 from app.shared.exceptions import RetryableExecutionError
 from app.shared.exceptions import ToolPolicyError
+from app.bootstrap import build_test_container
 from backend.tests.helpers import container
+from backend.tests.test_business_application_control_plane import (
+    control_plane_settings,
+)
+from backend.tests.test_job_builtin_tool_snapshot import (
+    _command as exact_job_command,
+    _published_application,
+)
+
+
+def _exact_database_job(runtime: object, idempotency_key: str) -> object:
+    application, publication, facts = _published_application(
+        runtime,
+        placements=("cloud",),
+    )
+    return runtime.create_agent_job_service.execute(
+        exact_job_command(
+            runtime,
+            application,
+            publication,
+            facts,
+            idempotency_key=idempotency_key,
+        )
+    )
 
 
 class MetadataInternalApiClient:
     def query_database(
-        self, datasource: str, sql: str, limit: int, context: ToolRequestContext
+        self,
+        datasource: str,
+        sql: str,
+        limit: int,
+        context: ToolRequestContext,
+        **_: object,
     ) -> ToolResult:
         return ToolResult(
             summary={"row_count": 1},
@@ -100,7 +129,12 @@ class MetadataInternalApiClient:
 
 class FailingInternalApiClient(MetadataInternalApiClient):
     def query_database(
-        self, datasource: str, sql: str, limit: int, context: ToolRequestContext
+        self,
+        datasource: str,
+        sql: str,
+        limit: int,
+        context: ToolRequestContext,
+        **_: object,
     ) -> ToolResult:
         raise RetryableExecutionError(
             "timeout",
@@ -110,25 +144,23 @@ class FailingInternalApiClient(MetadataInternalApiClient):
 
 class PermissionAuditToolTests(unittest.TestCase):
     def test_allowed_tool_records_audit_and_uses_internal_api_client(self) -> None:
-        c = container()
-        from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
-
-        job = c.create_agent_job_service.execute(
-            CreateAgentJobCommand(
-                idempotency_key="tool-job",
-                dingding_conversation_id="conversation-1",
-                dingding_user_id="local-user",
-                user_message="check order",
-                project_code="default",
-            )
+        c = build_test_container(
+            control_plane_settings(),
+            migrate=True,
+            seed=True,
         )
+        job = _exact_database_job(c, "tool-job")
 
         result = c.tool_service.call_tool(
             job_id=job.id,
-            user_id="local-user",
+            user_id="user_local_admin",
             project_code="default",
             tool_name="query_database",
-            arguments={"datasource": "default", "sql": "select * from ws_a_order", "limit": 10},
+            arguments={
+                "datasource": "default",
+                "sql": "select * from GL001_EBR_order",
+                "limit": 10,
+            },
         )
 
         self.assertEqual(1, result.summary["row_count"])
@@ -161,26 +193,24 @@ class PermissionAuditToolTests(unittest.TestCase):
         self.assertEqual(0, len(c.internal_api_client.calls))
 
     def test_tool_call_persists_platform_metadata_summary(self) -> None:
-        c = container()
-        from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
-
-        job = c.create_agent_job_service.execute(
-            CreateAgentJobCommand(
-                idempotency_key="metadata-tool-job",
-                dingding_conversation_id="conversation-1",
-                dingding_user_id="local-user",
-                user_message="check order",
-                project_code="default",
-            )
+        c = build_test_container(
+            control_plane_settings(),
+            migrate=True,
+            seed=True,
         )
+        job = _exact_database_job(c, "metadata-tool-job")
         c.tool_service.internal_api_client = MetadataInternalApiClient()
 
         c.tool_service.call_tool(
             job_id=job.id,
-            user_id="local-user",
+            user_id="user_local_admin",
             project_code="default",
             tool_name="query_database",
-            arguments={"datasource": "default", "sql": "select * from ws_a_order", "limit": 10},
+            arguments={
+                "datasource": "default",
+                "sql": "select * from GL001_EBR_order",
+                "limit": 10,
+            },
         )
         tool_call = c.agent_repository.list_tool_calls(job.id)[0]
         payload = tool_call["response_summary"]["payload"]
@@ -190,29 +220,23 @@ class PermissionAuditToolTests(unittest.TestCase):
         self.assertNotIn("hidden", payload)
 
     def test_failed_internal_platform_call_is_recorded(self) -> None:
-        c = container()
-        from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
-
-        job = c.create_agent_job_service.execute(
-            CreateAgentJobCommand(
-                idempotency_key="failed-platform-tool-job",
-                dingding_conversation_id="conversation-1",
-                dingding_user_id="local-user",
-                user_message="check order",
-                project_code="default",
-            )
+        c = build_test_container(
+            control_plane_settings(),
+            migrate=True,
+            seed=True,
         )
+        job = _exact_database_job(c, "failed-platform-tool-job")
         c.tool_service.internal_api_client = FailingInternalApiClient()
 
         with self.assertRaises(RetryableExecutionError):
             c.tool_service.call_tool(
                 job_id=job.id,
-                user_id="local-user",
+                user_id="user_local_admin",
                 project_code="default",
                 tool_name="query_database",
                 arguments={
                     "datasource": "default",
-                    "sql": "select * from ws_a_order",
+                    "sql": "select * from GL001_EBR_order",
                     "limit": 10,
                 },
             )

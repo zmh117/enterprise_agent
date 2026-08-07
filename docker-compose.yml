@@ -217,6 +217,18 @@ services:
       retries: 12
       start_period: 15s
 
+  builtin-tool-compose-acceptance:
+    profiles: ["builtin-tool-acceptance"]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: builtin-tool-compose-acceptance
+    command: ["python", "-m", "app.acceptance.builtin_tool_composition"]
+    environment:
+      DATABASE_DSN: "sqlite:///:memory:"
+      APP_ENV: compose-acceptance
+    restart: "no"
+
   admin-web:
     # profiles: ["admin"]
     build:

@@ -44,7 +44,7 @@ def config(*, instructions: str, tools: list[str] | None = None) -> dict[str, ob
         "business_instructions": instructions,
         "model_policy": {"model": "claude-sonnet-4-20250514"},
         "execution": {"max_turns": 10, "timeout_seconds": 240},
-        "tools": tools or ["get_er_context"],
+        "tools": tools if tools is not None else [],
         "skills": [],
         "routing": {"project_code": "default"},
         "channels": {
@@ -64,6 +64,229 @@ def create_job(c: Container, key: str):
             user_message="check the current order flow",
         )
     )
+
+
+def publish_builtin_tool(c: Container, tool_identifier: str) -> dict[str, object]:
+    handlers = c.platform_config_service.handlers
+    handlers.reconcile(actor_id=ADMIN_ID)
+    evidence = handlers.verify_payload(
+        {
+            "tool_identifier": tool_identifier,
+            "handler_version": "1.0.0",
+        },
+        actor_id=ADMIN_ID,
+    )
+    return handlers.publish_builtin_tool_payload(
+        {
+            "tool_identifier": tool_identifier,
+            "handler_version": "1.0.0",
+            "verification_id": evidence["id"],
+            "idempotency_key": f"agent-envelope-{tool_identifier}-v1",
+        },
+        actor_id=ADMIN_ID,
+    )
+
+
+def publishable_config(
+    c: Container,
+    *,
+    builtin_tool_release_ids: list[str],
+) -> dict[str, object]:
+    connection = c.model_connection_service.get("default-deepseek-anthropic")
+    c.model_connection_service.dns_resolver = lambda *args, **kwargs: [
+        (2, 1, 6, "", ("1.1.1.1", 443))
+    ]
+    connection_revision = c.model_connection_service.save_revision(
+        actor_id=ADMIN_ID,
+        code="default-deepseek-anthropic",
+        expected_revision=connection["revision"],
+        config={
+            "protocol": "anthropic_compatible",
+            "base_url": "https://api.deepseek.com/anthropic",
+            "model": "claude-sonnet-4-20250514",
+            "default_opus_model": "claude-sonnet-4-20250514",
+            "default_sonnet_model": "claude-sonnet-4-20250514",
+            "default_haiku_model": "claude-sonnet-4-20250514",
+            "subagent_model": "claude-sonnet-4-20250514",
+            "effort_level": "max",
+        },
+        api_key=hashlib.sha256(b"agent-envelope-test-value").hexdigest(),
+    )
+    payload = config(instructions="Use only evidence from explicitly published tools.")
+    payload["model_policy"] = {
+        "runtime": "claude_agent_sdk",
+        "model": "claude-sonnet-4-20250514",
+        "model_connection_revision_id": connection_revision["id"],
+    }
+    payload["builtin_tool_release_ids"] = builtin_tool_release_ids
+    return payload
+
+
+def test_agent_publication_freezes_exact_builtin_tool_envelope() -> None:
+    c = container()
+    release = publish_builtin_tool(c, "query_database")
+    revision = c.agent_config_service.save_draft(
+        actor_id=ADMIN_ID,
+        agent_code=AGENT_CODE,
+        expected_revision=1,
+        config=publishable_config(
+            c,
+            builtin_tool_release_ids=[str(release["id"])],
+        ),
+    )
+
+    publication = c.agent_config_service.publish(
+        actor_id=ADMIN_ID,
+        agent_code=AGENT_CODE,
+        revision_id=str(revision["id"]),
+    )
+    envelope = publication["snapshot"]["builtin_tool_envelope"]
+    assert len(envelope) == 1
+    assert envelope[0] == {
+        "tool_identifier": "query_database",
+        "tool_release_id": release["id"],
+        "handler_version": release["handler_version"],
+        "implementation_digest": release["implementation_digest"],
+        "public_schema_hash": release["public_schema_hash"],
+        "model_description": envelope[0]["model_description"],
+        "envelope_hash": envelope[0]["envelope_hash"],
+    }
+    assert envelope[0]["model_description"]
+    assert len(envelope[0]["envelope_hash"]) == 64
+    assert (
+        c.agent_config_service.publish(
+            actor_id=ADMIN_ID,
+            agent_code=AGENT_CODE,
+            revision_id=str(revision["id"]),
+        )["id"]
+        == publication["id"]
+    )
+
+    c.database.execute(
+        """
+        update agent_publication_builtin_tool
+           set model_description = 'tampered'
+         where agent_publication_id = ?
+        """,
+        (publication["id"],),
+    )
+    with pytest.raises(NonRetryableExecutionError) as tampered:
+        c.agent_config_service.publication(str(publication["id"]))
+    assert tampered.value.error_code == "agent_builtin_tool_envelope_hash_mismatch"
+
+
+def test_agent_publication_envelope_integrity_is_independent_of_fact_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    c = container()
+    releases = [
+        publish_builtin_tool(c, "diagnose_loki_label_values"),
+        publish_builtin_tool(c, "diagnose_loki_labels"),
+    ]
+    envelope_service = c.agent_config_service.builtin_tool_envelopes
+    assert envelope_service is not None
+    database_ordered_facts = envelope_service.facts
+    monkeypatch.setattr(
+        envelope_service,
+        "facts",
+        lambda publication_id: list(reversed(database_ordered_facts(publication_id))),
+    )
+    revision = c.agent_config_service.save_draft(
+        actor_id=ADMIN_ID,
+        agent_code=AGENT_CODE,
+        expected_revision=1,
+        config=publishable_config(
+            c,
+            builtin_tool_release_ids=[str(release["id"]) for release in releases],
+        ),
+    )
+
+    publication = c.agent_config_service.publish(
+        actor_id=ADMIN_ID,
+        agent_code=AGENT_CODE,
+        revision_id=str(revision["id"]),
+    )
+
+    assert [
+        envelope["tool_identifier"]
+        for envelope in publication["snapshot"]["builtin_tool_envelope"]
+    ] == ["diagnose_loki_label_values", "diagnose_loki_labels"]
+
+
+def test_agent_publication_revalidates_builtin_release_lifecycle() -> None:
+    c = container()
+    release = publish_builtin_tool(c, "query_database")
+    revision = c.agent_config_service.save_draft(
+        actor_id=ADMIN_ID,
+        agent_code=AGENT_CODE,
+        expected_revision=1,
+        config=publishable_config(
+            c,
+            builtin_tool_release_ids=[str(release["id"])],
+        ),
+    )
+    validated = c.agent_config_service.validate_revision(
+        actor_id=ADMIN_ID,
+        agent_code=AGENT_CODE,
+        revision_id=str(revision["id"]),
+    )
+    assert validated["validation"] == {"valid": True, "errors": []}
+
+    c.platform_config_service.handlers.set_builtin_tool_release_status(
+        str(release["id"]),
+        "DEPRECATED",
+        reason_code="TEST_DRAFT_REVALIDATION",
+        actor_id=ADMIN_ID,
+    )
+    with pytest.raises(NonRetryableExecutionError) as rejected:
+        c.agent_config_service.publish(
+            actor_id=ADMIN_ID,
+            agent_code=AGENT_CODE,
+            revision_id=str(revision["id"]),
+        )
+    assert rejected.value.error_code == "validation_failed"
+    assert rejected.value.field_errors == [
+        {
+            "field": "builtin_tool_release_ids",
+            "message": "Agent 内置工具必须选择唯一且当前可调用的 ACTIVE Release",
+        }
+    ]
+
+
+def test_agent_builtin_tool_catalog_keeps_unhealthy_exact_releases_visible_but_unselectable() -> None:
+    c = container()
+    deprecated_release = publish_builtin_tool(c, "query_database")
+    drifted_release = publish_builtin_tool(c, "query_redis_get")
+
+    healthy = {
+        item["id"]: item
+        for item in c.agent_config_service.catalog()["builtin_tool_releases"]
+    }
+    assert healthy[deprecated_release["id"]]["health_status"] == "HEALTHY"
+    assert healthy[deprecated_release["id"]]["selectable"] is True
+    assert len(healthy[deprecated_release["id"]]["implementation_digest"]) == 64
+
+    c.platform_config_service.handlers.set_builtin_tool_release_status(
+        str(deprecated_release["id"]),
+        "DEPRECATED",
+        reason_code="TEST_AGENT_CATALOG_WARNING",
+        actor_id=ADMIN_ID,
+    )
+    c.database.execute(
+        """
+        update builtin_tool_installation
+           set installation_status = 'DRIFTED'
+         where tool_identifier = 'query_redis_get'
+        """
+    )
+    unhealthy = {
+        item["id"]: item
+        for item in c.agent_config_service.catalog()["builtin_tool_releases"]
+    }
+    assert unhealthy[deprecated_release["id"]]["health_status"] == "DEPRECATED"
+    assert unhealthy[deprecated_release["id"]]["selectable"] is False
+    assert unhealthy[drifted_release["id"]]["health_status"] == "DRIFTED"
+    assert unhealthy[drifted_release["id"]]["selectable"] is False
 
 
 def test_agent_validation_rejects_unsafe_or_unregistered_configuration() -> None:
@@ -90,6 +313,18 @@ def test_agent_validation_rejects_unsafe_or_unregistered_configuration() -> None
         )
     assert rejected.value.error_code == "validation_failed"
 
+    with pytest.raises(NonRetryableExecutionError) as legacy_tool:
+        service.save_draft(
+            actor_id=ADMIN_ID,
+            agent_code=AGENT_CODE,
+            expected_revision=2,
+            config=config(
+                instructions="Use approved evidence only.",
+                tools=["delete_database"],
+            ),
+        )
+    assert legacy_tool.value.error_code == "builtin_tool_legacy_write_forbidden"
+
     invalid = service.save_draft(
         actor_id=ADMIN_ID,
         agent_code=AGENT_CODE,
@@ -97,7 +332,6 @@ def test_agent_validation_rejects_unsafe_or_unregistered_configuration() -> None
         config={
             **config(instructions="Use approved evidence only."),
             "model_policy": {"model": "unregistered-model"},
-            "tools": ["delete_database"],
             "skills": ["unregistered-skill"],
             "channels": {
                 "ingress": ["connector-dingtalk-enterprise-default"],
@@ -113,7 +347,6 @@ def test_agent_validation_rejects_unsafe_or_unregistered_configuration() -> None
     fields = {item["field"] for item in validation["validation"]["errors"]}
     assert {
         "model_policy.model",
-        "tools",
         "skills",
         "channels.ingress",
         "channels.delivery",
@@ -146,50 +379,35 @@ def test_agent_catalog_model_identifier_is_also_accepted_by_validation() -> None
 def test_publication_is_immutable_jobs_are_pinned_and_retry_keeps_original_version() -> None:
     c = container()
     service = c.agent_config_service
-    original = service.current_publication(AGENT_CODE)
-    old_job = create_job(c, "old-publication")
-    assert old_job.agent_publication_id == original["id"]
-
-    connection = c.model_connection_service.get("default-deepseek-anthropic")
-    c.model_connection_service.dns_resolver = lambda *args, **kwargs: [
-        (2, 1, 6, "", ("1.1.1.1", 443))
-    ]
-    connection_revision = c.model_connection_service.save_revision(
-        actor_id=ADMIN_ID,
-        code="default-deepseek-anthropic",
-        expected_revision=connection["revision"],
-        config={
-            "protocol": "anthropic_compatible",
-            "base_url": "https://api.deepseek.com/anthropic",
-            "model": "claude-sonnet-4-20250514",
-            "default_opus_model": "claude-sonnet-4-20250514",
-            "default_sonnet_model": "claude-sonnet-4-20250514",
-            "default_haiku_model": "claude-sonnet-4-20250514",
-            "subagent_model": "claude-sonnet-4-20250514",
-            "effort_level": "max",
-        },
-        api_key=hashlib.sha256(b"runtime-generated-publication-test-value").hexdigest(),
-    )
-    publishable_config = config(
-        instructions="Investigate using assigned evidence and report uncertainty.",
-        tools=["get_er_context"],
-    )
-    publishable_config["model_policy"] = {
-        "runtime": "claude_agent_sdk",
-        "model": "claude-sonnet-4-20250514",
-        "model_connection_revision_id": connection_revision["id"],
-    }
-    revision = service.save_draft(
+    first_revision = service.save_draft(
         actor_id=ADMIN_ID,
         agent_code=AGENT_CODE,
         expected_revision=1,
-        config=publishable_config,
+        config=publishable_config(c, builtin_tool_release_ids=[]),
+    )
+    original = service.publish(
+        actor_id=ADMIN_ID,
+        agent_code=AGENT_CODE,
+        revision_id=str(first_revision["id"]),
+    )
+    old_job = create_job(c, "old-publication")
+    assert old_job.agent_publication_id == original["id"]
+
+    next_config = dict(first_revision["config"])
+    next_config["business_instructions"] = (
+        "Investigate using assigned evidence and report uncertainty."
+    )
+    revision = service.save_draft(
+        actor_id=ADMIN_ID,
+        agent_code=AGENT_CODE,
+        expected_revision=2,
+        config=next_config,
     )
     with pytest.raises(NonRetryableExecutionError) as stale:
         service.save_draft(
             actor_id=ADMIN_ID,
             agent_code=AGENT_CODE,
-            expected_revision=1,
+            expected_revision=2,
             config=config(instructions="stale update"),
         )
     assert stale.value.error_code == "revision_conflict"
@@ -208,13 +426,13 @@ def test_publication_is_immutable_jobs_are_pinned_and_retry_keeps_original_versi
     new_context = c.agent_executor.context_builder.build(new_job)
     assert old_context.business_instructions == original["snapshot"]["business_instructions"]
     assert new_context.business_instructions == publication["snapshot"]["business_instructions"]
-    assert new_context.allowed_tools == ["get_er_context"]
+    assert new_context.allowed_tools == []
     assert (
         "Use only registered internal read-only tools and registered governed QUERY capabilities."
         in new_context.safety_rules
     )
 
-    with pytest.raises(ToolPolicyError, match="not assigned"):
+    with pytest.raises(ToolPolicyError) as missing_snapshot:
         c.tool_service.call_tool(
             job_id=new_job.id,
             user_id=ADMIN_ID,
@@ -226,6 +444,7 @@ def test_publication_is_immutable_jobs_are_pinned_and_retry_keeps_original_versi
                 "sql": "select 1",
             },
         )
+    assert missing_snapshot.value.error_code == "builtin_tool_not_in_job_snapshot"
 
     service.rollback(
         actor_id=ADMIN_ID,

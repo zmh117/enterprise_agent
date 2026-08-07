@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.modules.identity.application.authorization import AuthorizationEvaluator
+from app.modules.internal_tools.domain import build_builtin_handler_registry
 from app.modules.job.infrastructure.repositories import ConfigurationRepository
 from app.shared.exceptions import NotFound, PermissionDenied, ToolPolicyError
 
@@ -26,6 +27,10 @@ class PermissionService:
     ) -> None:
         self.config_repository = config_repository
         self.authorization_evaluator = authorization_evaluator
+        self._builtin_tool_identifiers = frozenset(
+            definition.tool_identifier
+            for definition in build_builtin_handler_registry().definitions()
+        )
 
     def assert_user_can_create_job(self, *, user_id: str, project_code: str) -> None:
         if not self._is_allowed(
@@ -47,32 +52,66 @@ class PermissionService:
         project_code: str,
         scope: dict[str, str] | None = None,
     ) -> None:
-        self.assert_registered_readonly_tool(tool_name)
-        if not self._is_allowed(
+        self.assert_builtin_tool_allowed(
             user_id=user_id,
-            resource_type="tool",
-            resource_code=tool_name,
-            action="use",
-        ):
-            raise ToolPolicyError(
-                f"User {user_id} is not allowed to call {tool_name}",
-                safe_message="当前用户无权调用此工具",
-            )
-        self.assert_user_can_create_job(user_id=user_id, project_code=project_code)
-        if tool_name in DATA_SCOPED_TOOLS:
+            tool_identifier=tool_name,
+            project_code=project_code,
+            scope=scope,
+        )
+
+    def assert_builtin_tool_allowed(
+        self,
+        *,
+        user_id: str,
+        tool_identifier: str,
+        project_code: str,
+        scope: dict[str, str] | None = None,
+    ) -> None:
+        self.assert_builtin_tool_use_grant(
+            user_id=user_id,
+            tool_identifier=tool_identifier,
+            project_code=project_code,
+        )
+        if tool_identifier in DATA_SCOPED_TOOLS:
             scope = scope or {}
             decision = self.authorization_evaluator.decide_platform_scope(
                 user_id=user_id,
                 environment=scope.get("environment", ""),
                 base=scope.get("base", ""),
                 workshop=scope.get("workshop", ""),
-                tool_name=tool_name,
+                tool_name=tool_identifier,
             )
             if not decision.allowed:
                 raise ToolPolicyError(
                     f"Platform scope denied: {decision.reason}",
                     safe_message="当前用户无权访问此数据范围",
                 )
+
+    def assert_builtin_tool_use_grant(
+        self,
+        *,
+        user_id: str,
+        tool_identifier: str,
+        project_code: str,
+    ) -> None:
+        if tool_identifier not in self._builtin_tool_identifiers:
+            raise ToolPolicyError(
+                "Tool use Grant target is not a stable Identifier",
+                safe_message="工具使用授权目标不是稳定的内置工具 Identifier",
+                error_code="builtin_tool_use_denied",
+            )
+        self.assert_registered_readonly_tool(tool_identifier)
+        if not self._is_allowed(
+            user_id=user_id,
+            resource_type="tool",
+            resource_code=tool_identifier,
+            action="use",
+        ):
+            raise ToolPolicyError(
+                f"User {user_id} is not allowed to call {tool_identifier}",
+                safe_message="当前用户无权调用此工具",
+            )
+        self.assert_user_can_create_job(user_id=user_id, project_code=project_code)
 
     def assert_registered_readonly_tool(self, tool_name: str) -> None:
         tool = self.config_repository.get_tool(tool_name)

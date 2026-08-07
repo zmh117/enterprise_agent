@@ -1,12 +1,23 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import logging
 from typing import Any
 
 from ..domain.access import AccessPolicy
-from ..domain.addressing import ResourceBinding, TargetRef
-from ..domain.errors import AuthorizationError, PlatformError, PolicyViolation
+from ..domain.addressing import (
+    LokiScopePolicyFact,
+    ResourceBinding,
+    TargetRef,
+    WorkshopPartitionPolicyFact,
+)
+from ..domain.errors import (
+    AuthorizationError,
+    PlatformError,
+    PolicyViolation,
+    ResolutionError,
+)
 from ..domain.loki_policy import assert_loki_label_allowed, build_effective_selector
 from ..domain.redis_policy import (
     assert_read_command,
@@ -59,9 +70,7 @@ class PlatformService:
         config_resource_count: int = 0,
         job_access_authorizer: JobAccessAuthorizer | None = None,
         secret_change_reloader: SecretChangeReloader | None = None,
-        runtime_generation_reloader: (
-            PublishedRuntimeGenerationReloader | None
-        ) = None,
+        runtime_generation_reloader: (PublishedRuntimeGenerationReloader | None) = None,
     ) -> None:
         self._registry = registry
         self._access = access_policy
@@ -83,9 +92,7 @@ class PlatformService:
         self._config_resource_count = config_resource_count
         self._job_access_authorizer = job_access_authorizer
         self._secret_change_reloader = secret_change_reloader
-        self._runtime_generation_reloader = (
-            runtime_generation_reloader
-        )
+        self._runtime_generation_reloader = runtime_generation_reloader
         self._last_known_good = {
             "source": config_source,
             "revision": config_revision,
@@ -119,12 +126,9 @@ class PlatformService:
                 "published_digest": self._active_snapshot.published_digest,
                 "effective_digest": self._active_snapshot.effective_digest,
             },
-            "resource_states": [
-                dict(value) for value in self._active_snapshot.resource_states
-            ],
+            "resource_states": [dict(value) for value in self._active_snapshot.resource_states],
             "application_states": [
-                dict(value)
-                for value in self._active_snapshot.application_states
+                dict(value) for value in self._active_snapshot.application_states
             ],
         }
 
@@ -220,6 +224,9 @@ class PlatformService:
         project_code: str = "",
         application_id: str = "",
         capability_code: str = "",
+        placement: str = "",
+        tool_call_id: str = "",
+        correlation_id: str = "",
     ) -> ResourceBinding:
         target = TargetRef(environment=environment, base=base, kind=kind, workshop=workshop)
         registry_generation, access_policy = self._effective_runtime
@@ -232,6 +239,9 @@ class PlatformService:
                 capability_code=capability_code,
                 target=target,
                 access_policy=access_policy,
+                placement=placement,
+                tool_call_id=tool_call_id,
+                correlation_id=correlation_id,
             )
         except PlatformError as exc:
             self._audit(user_id, target, "deny", exc.code)
@@ -239,8 +249,20 @@ class PlatformService:
         try:
             if (
                 isinstance(authorized, AuthorizedJobContext)
-                and authorized.schema_version == 2
+                and authorized.schema_version >= 2
             ):
+                if authorized.schema_version >= 3:
+                    revision = registry_generation.revision_resources.get(
+                        authorized.resource_revision_id
+                    )
+                    if (
+                        revision is None
+                        or revision.resource_revision_id
+                        != authorized.resource_revision_id
+                    ):
+                        raise ResolutionError(
+                            "Frozen Resource Revision is not loaded exactly"
+                        )
                 binding = self._registry.resolve_revision(
                     target,
                     resource_revision_id=authorized.resource_revision_id,
@@ -250,6 +272,40 @@ class PlatformService:
                 binding = self._registry.resolve(
                     target,
                     generation=registry_generation,
+                )
+            if (
+                kind is ResourceKind.LOKI
+                and isinstance(authorized, AuthorizedJobContext)
+                and authorized.loki_scope_policy_revision_id
+            ):
+                binding = replace(
+                    binding,
+                    loki_scope_policy=LokiScopePolicyFact(
+                        policy_revision_id=authorized.loki_scope_policy_revision_id,
+                        content_hash=authorized.loki_scope_policy_content_hash,
+                        conditions=authorized.loki_scope_conditions,
+                    ),
+                )
+            if (
+                isinstance(authorized, AuthorizedJobContext)
+                and authorized.workshop_partition_policy_revision_id
+            ):
+                binding = replace(
+                    binding,
+                    workshop_partition_policy=(
+                        WorkshopPartitionPolicyFact(
+                            policy_revision_id=(
+                                authorized.workshop_partition_policy_revision_id
+                            ),
+                            content_hash=(
+                                authorized.workshop_partition_policy_content_hash
+                            ),
+                            database_table_prefix=(
+                                authorized.database_table_prefix or None
+                            ),
+                            redis_prefixes=authorized.redis_prefixes,
+                        )
+                    ),
                 )
         except PlatformError as exc:
             self._audit(user_id, target, "deny", exc.code)
@@ -267,6 +323,9 @@ class PlatformService:
         capability_code: str,
         target: TargetRef,
         access_policy: AccessPolicy | None = None,
+        placement: str = "",
+        tool_call_id: str = "",
+        correlation_id: str = "",
     ) -> AuthorizedJobContext | None:
         if self._job_access_authorizer is not None and capability_code:
             if not job_id:
@@ -278,6 +337,9 @@ class PlatformService:
                 application_id=application_id,
                 capability_code=capability_code,
                 target=target,
+                placement=placement,
+                tool_call_id=tool_call_id,
+                correlation_id=correlation_id,
             )
         (access_policy or self._access).authorize(
             user_id=user_id,
@@ -293,6 +355,8 @@ class PlatformService:
         project_code: str = "",
         application_id: str = "",
         capability_code: str = "",
+        tool_call_id: str = "",
+        correlation_id: str = "",
     ) -> dict[str, Any]:
         """Non-secret addressing directory filtered to what the caller may access.
 
@@ -317,6 +381,8 @@ class PlatformService:
                             project_code=project_code,
                             application_id=application_id,
                             capability_code=capability_code,
+                            tool_call_id=tool_call_id,
+                            correlation_id=correlation_id,
                         )
                     ]
                     if not workshops:
@@ -332,6 +398,8 @@ class PlatformService:
                         project_code=project_code,
                         application_id=application_id,
                         capability_code=capability_code,
+                        tool_call_id=tool_call_id,
+                        correlation_id=correlation_id,
                     ):
                         continue
                     bases.append(self._base_entry(base, []))
@@ -344,11 +412,7 @@ class PlatformService:
                         "bases": bases,
                     }
                 )
-        if (
-            self._job_access_authorizer is not None
-            and capability_code
-            and not environments
-        ):
+        if self._job_access_authorizer is not None and capability_code and not environments:
             raise AuthorizationError("Agent Job authorization context is invalid")
         return {"environments": environments}
 
@@ -360,6 +424,8 @@ class PlatformService:
         job_id: str = "",
         project_code: str = "",
         application_id: str = "",
+        tool_call_id: str = "",
+        correlation_id: str = "",
     ) -> ToolResponse:
         return ToolResponse(
             summary={
@@ -371,6 +437,8 @@ class PlatformService:
                     project_code=project_code,
                     application_id=application_id,
                     capability_code="get_er_context",
+                    tool_call_id=tool_call_id,
+                    correlation_id=correlation_id,
                 ),
                 "tables": [],
                 "fields": [],
@@ -391,6 +459,8 @@ class PlatformService:
         job_id: str = "",
         project_code: str = "",
         application_id: str = "",
+        tool_call_id: str = "",
+        correlation_id: str = "",
     ) -> ToolResponse:
         return ToolResponse(
             summary={
@@ -402,6 +472,8 @@ class PlatformService:
                     project_code=project_code,
                     application_id=application_id,
                     capability_code="get_business_flow_context",
+                    tool_call_id=tool_call_id,
+                    correlation_id=correlation_id,
                 ),
                 "nodes": [],
                 "edges": [],
@@ -424,6 +496,8 @@ class PlatformService:
         project_code: str = "",
         application_id: str = "",
         capability_code: str = "",
+        tool_call_id: str = "",
+        correlation_id: str = "",
     ) -> bool:
         target = TargetRef(
             environment=environment,
@@ -439,6 +513,8 @@ class PlatformService:
                 application_id=application_id,
                 capability_code=capability_code,
                 target=target,
+                tool_call_id=tool_call_id,
+                correlation_id=correlation_id,
             )
         except PlatformError:
             return False
@@ -474,6 +550,9 @@ class PlatformService:
         base: str,
         workshop: str | None,
         kind: ResourceKind,
+        placement: str = "",
+        tool_call_id: str = "",
+        correlation_id: str = "",
     ) -> ToolResponse:
         binding = self._authorize_and_resolve(
             user_id=user_id,
@@ -485,6 +564,9 @@ class PlatformService:
             project_code=project_code,
             application_id=application_id,
             capability_code="get_schema_directory",
+            placement=placement,
+            tool_call_id=tool_call_id,
+            correlation_id=correlation_id,
         )
         return ToolResponse(
             summary={
@@ -510,6 +592,9 @@ class PlatformService:
         workshop: str | None,
         sql: str,
         limit: int | None = None,
+        placement: str = "",
+        tool_call_id: str = "",
+        correlation_id: str = "",
     ) -> ToolResponse:
         binding = self._authorize_and_resolve(
             user_id=user_id,
@@ -521,17 +606,23 @@ class PlatformService:
             project_code=project_code,
             application_id=application_id,
             capability_code="query_database",
+            placement=placement,
+            tool_call_id=tool_call_id,
+            correlation_id=correlation_id,
         )
         max_rows = self._effective_rows(limit)
-        table_prefix = binding.workshop.table_prefix if binding.workshop else None
+        table_prefix = self._database_table_prefix(binding)
         oracle_compat = OracleCompat.MODERN
         if binding.database is not None:
             oracle_compat = getattr(binding.database, "oracle_compat", OracleCompat.MODERN)
+        allowed_database, allowed_schema = self._database_namespace(binding)
         analyzed = analyze_readonly_query(
             sql,
             engine=binding.engine,
             max_rows=max_rows,
             table_prefix=table_prefix,
+            allowed_database=allowed_database,
+            allowed_schema=allowed_schema,
             oracle_compat=oracle_compat,
         )
         schema = self._schema_directory_for_binding(binding, query="")
@@ -594,6 +685,9 @@ class PlatformService:
         workshop: str | None,
         query: str = "",
         limit: int | None = None,
+        placement: str = "",
+        tool_call_id: str = "",
+        correlation_id: str = "",
     ) -> ToolResponse:
         binding = self._authorize_and_resolve(
             user_id=user_id,
@@ -605,6 +699,9 @@ class PlatformService:
             project_code=project_code,
             application_id=application_id,
             capability_code="get_schema_directory",
+            placement=placement,
+            tool_call_id=tool_call_id,
+            correlation_id=correlation_id,
         )
         table_limit = self._effective_schema_limit(limit)
         schema = self._schema_directory_for_binding(binding, query=query, table_limit=table_limit)
@@ -643,6 +740,9 @@ class PlatformService:
         base: str,
         workshop: str | None,
         key: str,
+        placement: str = "",
+        tool_call_id: str = "",
+        correlation_id: str = "",
     ) -> ToolResponse:
         binding = self._authorize_and_resolve(
             user_id=user_id,
@@ -654,9 +754,12 @@ class PlatformService:
             project_code=project_code,
             application_id=application_id,
             capability_code="query_redis_get",
+            placement=placement,
+            tool_call_id=tool_call_id,
+            correlation_id=correlation_id,
         )
         assert_read_command("get")
-        enforce_key_namespace(key, key_prefix=self._redis_prefix(binding))
+        enforce_key_namespace(key, key_prefixes=self._redis_prefixes(binding))
         response = self._redis.get(binding, key)
         response.metadata.setdefault("source", "internal-api-platform-redis")
         return response
@@ -673,6 +776,9 @@ class PlatformService:
         workshop: str | None,
         pattern: str,
         limit: int | None = None,
+        placement: str = "",
+        tool_call_id: str = "",
+        correlation_id: str = "",
     ) -> ToolResponse:
         binding = self._authorize_and_resolve(
             user_id=user_id,
@@ -684,16 +790,19 @@ class PlatformService:
             project_code=project_code,
             application_id=application_id,
             capability_code="query_redis_scan",
+            placement=placement,
+            tool_call_id=tool_call_id,
+            correlation_id=correlation_id,
         )
         assert_read_command("scan")
         effective_limit = limit or self._redis_scan_limit
-        enforce_scan_pattern(
+        normalized_pattern = enforce_scan_pattern(
             pattern,
-            key_prefix=self._redis_prefix(binding),
+            key_prefixes=self._redis_prefixes(binding),
             scan_limit=self._redis_scan_limit,
             limit=effective_limit,
         )
-        response = self._redis.scan(binding, pattern, effective_limit)
+        response = self._redis.scan(binding, normalized_pattern, effective_limit)
         response.metadata.setdefault("source", "internal-api-platform-redis")
         return response
 
@@ -711,6 +820,8 @@ class PlatformService:
         query: str,
         minutes: int,
         limit: int,
+        tool_call_id: str = "",
+        correlation_id: str = "",
     ) -> ToolResponse:
         binding = self._authorize_and_resolve(
             user_id=user_id,
@@ -722,8 +833,14 @@ class PlatformService:
             project_code=project_code,
             application_id=application_id,
             capability_code="query_loki",
+            tool_call_id=tool_call_id,
+            correlation_id=correlation_id,
         )
-        effective_selector = build_effective_selector(selector, workshop=binding.workshop)
+        effective_selector = self._loki_selector(
+            binding,
+            selector,
+            require_mandatory=bool(job_id),
+        )
         response = self._loki.query(
             binding,
             selector=effective_selector,
@@ -746,6 +863,8 @@ class PlatformService:
         workshop: str | None,
         minutes: int,
         limit: int,
+        tool_call_id: str = "",
+        correlation_id: str = "",
     ) -> ToolResponse:
         binding = self._authorize_and_resolve(
             user_id=user_id,
@@ -757,10 +876,15 @@ class PlatformService:
             project_code=project_code,
             application_id=application_id,
             capability_code="diagnose_loki_labels",
+            tool_call_id=tool_call_id,
+            correlation_id=correlation_id,
         )
         response = self._loki.labels(
             binding,
-            selector=self._diagnostic_selector(binding),
+            selector=self._mandatory_loki_selector(
+                binding,
+                require_mandatory=bool(job_id),
+            ),
             minutes=minutes,
             limit=limit,
         )
@@ -780,6 +904,8 @@ class PlatformService:
         label: str,
         minutes: int,
         limit: int,
+        tool_call_id: str = "",
+        correlation_id: str = "",
     ) -> ToolResponse:
         assert_loki_label_allowed(label)
         binding = self._authorize_and_resolve(
@@ -792,11 +918,16 @@ class PlatformService:
             project_code=project_code,
             application_id=application_id,
             capability_code="diagnose_loki_label_values",
+            tool_call_id=tool_call_id,
+            correlation_id=correlation_id,
         )
         response = self._loki.label_values(
             binding,
             label=label,
-            selector=self._diagnostic_selector(binding),
+            selector=self._mandatory_loki_selector(
+                binding,
+                require_mandatory=bool(job_id),
+            ),
             minutes=minutes,
             limit=limit,
         )
@@ -817,6 +948,8 @@ class PlatformService:
         query: str,
         minutes: int,
         limit: int,
+        tool_call_id: str = "",
+        correlation_id: str = "",
     ) -> ToolResponse:
         binding = self._authorize_and_resolve(
             user_id=user_id,
@@ -828,8 +961,14 @@ class PlatformService:
             project_code=project_code,
             application_id=application_id,
             capability_code="diagnose_loki_probe",
+            tool_call_id=tool_call_id,
+            correlation_id=correlation_id,
         )
-        effective_selector = build_effective_selector(selector, workshop=binding.workshop)
+        effective_selector = self._loki_selector(
+            binding,
+            selector,
+            require_mandatory=bool(job_id),
+        )
         response = self._loki.probe(
             binding,
             selector=effective_selector,
@@ -840,12 +979,55 @@ class PlatformService:
         response.metadata.setdefault("source", "internal-api-platform-loki-diagnostics")
         return response
 
-    def _redis_prefix(self, binding: ResourceBinding) -> str | None:
-        return binding.workshop.redis_key_prefix if binding.workshop else None
+    @staticmethod
+    def _database_table_prefix(
+        binding: ResourceBinding,
+    ) -> str | None:
+        if binding.workshop_partition_policy is not None:
+            return (
+                binding.workshop_partition_policy.database_table_prefix
+            )
+        if binding.workshop and binding.workshop.table_prefix:
+            return binding.workshop.table_prefix
+        return None
 
     @staticmethod
-    def _diagnostic_selector(binding: ResourceBinding) -> dict[str, str]:
-        return dict(binding.workshop.loki_label) if binding.workshop else {}
+    def _redis_prefixes(binding: ResourceBinding) -> tuple[str, ...]:
+        if binding.workshop_partition_policy is not None:
+            return binding.workshop_partition_policy.redis_prefixes
+        if binding.workshop and binding.workshop.redis_key_prefix:
+            return (binding.workshop.redis_key_prefix,)
+        return ()
+
+    @staticmethod
+    def _mandatory_loki_selector(
+        binding: ResourceBinding,
+        *,
+        require_mandatory: bool,
+    ) -> dict[str, str]:
+        conditions = (
+            binding.loki_scope_policy.conditions if binding.loki_scope_policy is not None else ()
+        )
+        if require_mandatory and not conditions:
+            raise PolicyViolation("Published Loki Scope Policy is required")
+        return dict(conditions)
+
+    @staticmethod
+    def _loki_selector(
+        binding: ResourceBinding,
+        selector: dict[str, str],
+        *,
+        require_mandatory: bool,
+    ) -> dict[str, str]:
+        return build_effective_selector(
+            selector,
+            mandatory_conditions=(
+                binding.loki_scope_policy.conditions
+                if binding.loki_scope_policy is not None
+                else ()
+            ),
+            require_mandatory=require_mandatory,
+        )
 
     def _effective_rows(self, limit: int | None) -> int:
         if limit is None or limit < 1:
@@ -873,6 +1055,22 @@ class PlatformService:
             table_limit=table_limit or self._schema_table_limit,
             column_limit=self._schema_column_limit,
         )
+
+    @staticmethod
+    def _database_namespace(
+        binding: ResourceBinding,
+    ) -> tuple[str | None, str | None]:
+        database = binding.database
+        if database is None:
+            return None, None
+        if binding.engine is DatabaseEngine.MYSQL:
+            return str(database.database or "") or None, None
+        if binding.engine is DatabaseEngine.SQLSERVER:
+            return (
+                str(database.database or "") or None,
+                str(database.schema or "").strip() or "dbo",
+            )
+        return None, str(database.schema or database.user or "") or None
 
     def _assert_tables_in_schema(self, tables: list[str], schema: SchemaDirectory) -> None:
         if not schema.tables:

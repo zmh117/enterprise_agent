@@ -36,6 +36,7 @@ class ToolRequestContext:
     user_id: str
     project_code: str
     correlation_id: str = "-"
+    tool_call_id: str = ""
 
 
 class InternalApiClient(Protocol):
@@ -50,6 +51,7 @@ class InternalApiClient(Protocol):
         environment: str,
         base: str,
         workshop: str | None = None,
+        placement: str | None = None,
         query: str = "",
         limit: int = 50,
     ) -> ToolResult: ...
@@ -113,6 +115,7 @@ class InternalApiClient(Protocol):
         environment: str | None = None,
         base: str | None = None,
         workshop: str | None = None,
+        placement: str | None = None,
     ) -> ToolResult: ...
 
     def query_redis_get(
@@ -124,6 +127,7 @@ class InternalApiClient(Protocol):
         environment: str | None = None,
         base: str | None = None,
         workshop: str | None = None,
+        placement: str | None = None,
     ) -> ToolResult: ...
 
     def query_redis_scan(
@@ -136,6 +140,7 @@ class InternalApiClient(Protocol):
         environment: str | None = None,
         base: str | None = None,
         workshop: str | None = None,
+        placement: str | None = None,
     ) -> ToolResult: ...
 
 
@@ -154,6 +159,18 @@ def _addressing_payload(
         payload["base"] = base
     if workshop:
         payload["workshop"] = workshop
+    return payload
+
+
+def _resource_routing_payload(
+    environment: str | None,
+    base: str | None,
+    workshop: str | None,
+    placement: str | None,
+) -> dict[str, str]:
+    payload = _addressing_payload(environment, base, workshop)
+    if placement:
+        payload["placement"] = placement
     return payload
 
 
@@ -211,11 +228,19 @@ class FakeInternalApiClient:
         environment: str,
         base: str,
         workshop: str | None = None,
+        placement: str | None = None,
         query: str = "",
         limit: int = 50,
     ) -> ToolResult:
         call = {"query": query, "limit": limit}
-        call.update(_addressing_payload(environment, base, workshop))
+        call.update(
+            _resource_routing_payload(
+                environment,
+                base,
+                workshop,
+                placement,
+            )
+        )
         self.calls.append(("get_schema_directory", call))
         prefix = f"{workshop}_EBR_" if workshop else ""
         summary = {
@@ -361,9 +386,17 @@ class FakeInternalApiClient:
         environment: str | None = None,
         base: str | None = None,
         workshop: str | None = None,
+        placement: str | None = None,
     ) -> ToolResult:
         call = {"datasource": datasource, "sql": sql, "limit": limit}
-        call.update(_addressing_payload(environment, base, workshop))
+        call.update(
+            _resource_routing_payload(
+                environment,
+                base,
+                workshop,
+                placement,
+            )
+        )
         self.calls.append(("query_database", call))
         summary = {
             "datasource": datasource,
@@ -381,9 +414,17 @@ class FakeInternalApiClient:
         environment: str | None = None,
         base: str | None = None,
         workshop: str | None = None,
+        placement: str | None = None,
     ) -> ToolResult:
         call = {"datasource": datasource, "key": key}
-        call.update(_addressing_payload(environment, base, workshop))
+        call.update(
+            _resource_routing_payload(
+                environment,
+                base,
+                workshop,
+                placement,
+            )
+        )
         self.calls.append(("query_redis_get", call))
         summary = {"datasource": datasource, "key": key, "value_summary": "WAITING_MATERIAL"}
         return ToolResult(summary=summary, raw=summary)
@@ -398,9 +439,17 @@ class FakeInternalApiClient:
         environment: str | None = None,
         base: str | None = None,
         workshop: str | None = None,
+        placement: str | None = None,
     ) -> ToolResult:
         call = {"datasource": datasource, "pattern": pattern}
-        call.update(_addressing_payload(environment, base, workshop))
+        call.update(
+            _resource_routing_payload(
+                environment,
+                base,
+                workshop,
+                placement,
+            )
+        )
         self.calls.append(("query_redis_scan", call))
         summary = {"datasource": datasource, "pattern": pattern, "keys": ["order:MO20260627001"]}
         return ToolResult(summary=summary, raw=summary)
@@ -443,11 +492,19 @@ class HttpInternalApiClient:
         environment: str,
         base: str,
         workshop: str | None = None,
+        placement: str | None = None,
         query: str = "",
         limit: int = 50,
     ) -> ToolResult:
         payload: dict[str, Any] = {"query": query, "limit": limit}
-        payload.update(_addressing_payload(environment, base, workshop))
+        payload.update(
+            _resource_routing_payload(
+                environment,
+                base,
+                workshop,
+                placement,
+            )
+        )
         return self._post("/tools/schema/directory", payload, context)
 
     def query_loki(
@@ -531,9 +588,17 @@ class HttpInternalApiClient:
         environment: str | None = None,
         base: str | None = None,
         workshop: str | None = None,
+        placement: str | None = None,
     ) -> ToolResult:
         payload: dict[str, Any] = {"datasource": datasource, "sql": sql, "limit": limit}
-        payload.update(_addressing_payload(environment, base, workshop))
+        payload.update(
+            _resource_routing_payload(
+                environment,
+                base,
+                workshop,
+                placement,
+            )
+        )
         return self._post("/tools/database/query", payload, context)
 
     def query_redis_get(
@@ -545,9 +610,17 @@ class HttpInternalApiClient:
         environment: str | None = None,
         base: str | None = None,
         workshop: str | None = None,
+        placement: str | None = None,
     ) -> ToolResult:
         payload: dict[str, Any] = {"datasource": datasource, "key": key}
-        payload.update(_addressing_payload(environment, base, workshop))
+        payload.update(
+            _resource_routing_payload(
+                environment,
+                base,
+                workshop,
+                placement,
+            )
+        )
         return self._post("/tools/redis/get", payload, context)
 
     def query_redis_scan(
@@ -560,9 +633,17 @@ class HttpInternalApiClient:
         environment: str | None = None,
         base: str | None = None,
         workshop: str | None = None,
+        placement: str | None = None,
     ) -> ToolResult:
         payload: dict[str, Any] = {"datasource": datasource, "pattern": pattern, "limit": limit}
-        payload.update(_addressing_payload(environment, base, workshop))
+        payload.update(
+            _resource_routing_payload(
+                environment,
+                base,
+                workshop,
+                placement,
+            )
+        )
         return self._post("/tools/redis/scan", payload, context)
 
     def _post(self, path: str, payload: dict[str, Any], context: ToolRequestContext) -> ToolResult:
@@ -607,6 +688,8 @@ class HttpInternalApiClient:
             "X-Agent-Project-Code": context.project_code,
             "X-Correlation-Id": context.correlation_id,
         }
+        if context.tool_call_id:
+            headers["X-Agent-Tool-Call-Id"] = context.tool_call_id
         if self.auth_token:
             headers["Authorization"] = f"Bearer {self.auth_token}"
         return headers

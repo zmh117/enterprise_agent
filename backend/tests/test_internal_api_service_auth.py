@@ -51,7 +51,10 @@ class StubPlatformService:
         project_code: str,
         application_id: str,
         query: str,
+        tool_call_id: str = "",
+        correlation_id: str = "",
     ) -> ToolResponse:
+        del tool_call_id, correlation_id
         self.calls += 1
         return ToolResponse(
             summary={
@@ -65,6 +68,9 @@ class StubPlatformService:
 
     def close(self) -> None:
         self.closed = True
+
+    def poll_secret_changes(self) -> bool:
+        return False
 
 
 class FakeResponse:

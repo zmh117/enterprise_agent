@@ -44,11 +44,14 @@ class AgentDraftConfigRequest(StrictRequest):
     business_instructions: str = Field(default="", max_length=20000)
     model_policy: ModelPolicyRequest
     execution: ExecutionRequest
-    tools: list[str] = Field(default_factory=list)
     skills: list[str] = Field(default_factory=list)
     routing: RoutingRequest
     channels: ChannelsRequest
     api_capability_release_ids: list[str] = Field(
+        default_factory=list,
+        max_length=100,
+    )
+    builtin_tool_release_ids: list[str] = Field(
         default_factory=list,
         max_length=100,
     )
@@ -123,6 +126,9 @@ def build_agent_config_router() -> APIRouter:
                 agent_code=agent_code,
                 expected_revision=payload.expected_revision,
                 config=payload.config.model_dump(),
+                correlation_id=str(
+                    getattr(request.state, "correlation_id", "") or ""
+                ),
             )
         except Exception as exc:
             raise handle_exception(exc) from exc
@@ -161,6 +167,9 @@ def build_agent_config_router() -> APIRouter:
                 actor_id=principal.user_id,
                 agent_code=agent_code,
                 revision_id=payload.revision_id,
+                correlation_id=str(
+                    getattr(request.state, "correlation_id", "") or ""
+                ),
             )
         except Exception as exc:
             raise handle_exception(exc) from exc

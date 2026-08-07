@@ -469,16 +469,28 @@ class AuthorizationCenterRepository:
             application["capabilities"] = (
                 self.database.execute(
                     """
-                    select c.capability_code, c.version_constraint
-                      from business_application_revision_capability c
-                      join tool_definition t
-                        on t.name = c.capability_code
-                       and t.enabled = 1 and t.read_only = 1
-                      join agent_tool_binding atb
-                        on atb.publication_id = ?
-                       and atb.tool_name = c.capability_code
-                     where c.revision_id = ? and c.enabled = 1
-                     order by c.capability_code
+                    select exact.tool_identifier as capability_code,
+                           '' as version_constraint
+                      from business_application_revision_builtin_tool exact
+                      join agent_publication_builtin_tool envelope
+                        on envelope.id = exact.agent_publication_tool_id
+                       and envelope.agent_publication_id = ?
+                       and envelope.tool_release_id = exact.tool_release_id
+                      join builtin_tool_release release
+                        on release.id = exact.tool_release_id
+                       and release.tool_identifier = exact.tool_identifier
+                       and release.handler_version = exact.handler_version
+                       and release.implementation_digest =
+                           exact.implementation_digest
+                      join builtin_tool_installation installation
+                        on installation.tool_identifier = exact.tool_identifier
+                       and installation.handler_version = exact.handler_version
+                       and installation.implementation_digest =
+                           exact.implementation_digest
+                     where exact.application_revision_id = ?
+                       and release.status in ('ACTIVE', 'DEPRECATED')
+                       and installation.installation_status = 'INSTALLED'
+                     order by exact.tool_identifier
                     """,
                     (revision["agent_publication_id"], revision["id"]),
                 )
@@ -508,30 +520,42 @@ class AuthorizationCenterRepository:
         )
         if deployment is None:
             return False
-        try:
-            snapshot = json.loads(str(deployment.get("snapshot_json") or "{}"))
-        except json.JSONDecodeError:
-            return False
-        capabilities = {
-            str(item.get("capability_code") or "")
-            for item in snapshot.get("capabilities") or []
-            if isinstance(item, dict) and bool(item.get("enabled", True))
-        }
-        agent = snapshot.get("agent") if isinstance(snapshot, dict) else None
-        publication_id = str(agent.get("id") or "") if isinstance(agent, dict) else ""
-        if capability_code not in capabilities or not publication_id:
-            return False
-        row = self.database.execute_one(
+        exact = self.database.execute_one(
             """
-            select t.id
-              from tool_definition t
-              join agent_tool_binding atb
-                on atb.tool_name = t.name and atb.publication_id = ?
-             where t.name = ? and t.enabled = 1 and t.read_only = 1
+            select allowlist.id
+              from business_application_deployment deployment
+              join business_application_publication_builtin_tool allowlist
+                on allowlist.application_publication_id = deployment.publication_id
+              join agent_publication_builtin_tool envelope
+                on envelope.id = allowlist.agent_publication_tool_id
+               and envelope.agent_publication_id = allowlist.agent_publication_id
+               and envelope.tool_release_id = allowlist.tool_release_id
+              join builtin_tool_release release
+                on release.id = allowlist.tool_release_id
+               and release.tool_identifier = allowlist.tool_identifier
+               and release.handler_version = allowlist.handler_version
+               and release.implementation_digest = allowlist.implementation_digest
+              join builtin_tool_installation installation
+                on installation.tool_identifier = allowlist.tool_identifier
+               and installation.handler_version = allowlist.handler_version
+               and installation.implementation_digest =
+                   allowlist.implementation_digest
+              join tool_definition definition
+                on definition.name = allowlist.tool_identifier
+               and definition.enabled = 1 and definition.read_only = 1
+             where deployment.application_id = ?
+               and deployment.environment = 'local'
+               and deployment.active = 1
+               and allowlist.tool_identifier = ?
+               and release.status in ('ACTIVE', 'DEPRECATED')
+               and installation.installation_status = 'INSTALLED'
+             limit 1
             """,
-            (publication_id, capability_code),
+            (application_id, capability_code),
         )
-        return row is not None
+        if exact is not None:
+            return True
+        return False
 
     def active_application_agent_code(self, application_id: str) -> str:
         row = self.database.execute_one(

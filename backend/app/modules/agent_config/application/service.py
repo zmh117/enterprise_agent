@@ -7,12 +7,18 @@ from typing import Any
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
 from app.modules.agent.infrastructure.skill_loader import SkillLoader
 from app.modules.agent_config.infrastructure import AgentConfigRepository
+from app.modules.agent_config.application.builtin_tool_envelope import (
+    AgentBuiltinToolEnvelopeService,
+)
 from app.modules.api_capability.infrastructure import (
     ApiCapabilityRepository,
     CapabilityPublicationRepository,
 )
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.identity.application.authorization import AuthorizationEvaluator
+from app.modules.internal_tools.application.legacy_migration import (
+    BuiltinToolLegacyWriteGuard,
+)
 from app.modules.model_connection.application import ModelConnectionService
 from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import NotFound, NonRetryableExecutionError
@@ -39,11 +45,14 @@ ALLOWED_CONFIG_KEYS = {
     "business_instructions",
     "model_policy",
     "execution",
+    # Service-level compatibility accepts only an empty historical field; the
+    # HTTP write schema no longer exposes it and the write guard rejects names.
     "tools",
     "skills",
     "routing",
     "channels",
     "api_capability_release_ids",
+    "builtin_tool_release_ids",
 }
 FORBIDDEN_INSTRUCTION_PATTERNS = (
     "ignore safety",
@@ -70,9 +79,8 @@ class AgentConfigService:
         model_connection_service: ModelConnectionService | None = None,
         allowed_models: set[str] | None = None,
         api_capability_repository: ApiCapabilityRepository | None = None,
-        capability_publication_repository: (
-            CapabilityPublicationRepository | None
-        ) = None,
+        capability_publication_repository: (CapabilityPublicationRepository | None) = None,
+        builtin_tool_envelopes: AgentBuiltinToolEnvelopeService | None = None,
     ) -> None:
         self.repository = repository
         self.authorization = authorization
@@ -81,9 +89,8 @@ class AgentConfigService:
         self.model_connection_service = model_connection_service
         self.allowed_models = allowed_models or {"claude-sonnet-4-20250514"}
         self.api_capability_repository = api_capability_repository
-        self.capability_publication_repository = (
-            capability_publication_repository
-        )
+        self.capability_publication_repository = capability_publication_repository
+        self.builtin_tool_envelopes = builtin_tool_envelopes
 
     def get(self, agent_code: str = DEFAULT_AGENT_CODE) -> dict[str, Any]:
         definition = self.repository.get_definition(agent_code)
@@ -168,16 +175,42 @@ class AgentConfigService:
             "skills": sorted(self.skill_loader.load()),
             "connectors": self.repository.connector_catalog(),
             "api_capabilities": (
-                self.api_capability_repository.list_catalog(
-                    selectable_only=True
-                )
+                self.api_capability_repository.list_catalog(selectable_only=True)
                 if self.api_capability_repository is not None
+                else []
+            ),
+            "builtin_tool_releases": (
+                self.builtin_tool_envelopes.catalog()
+                if self.builtin_tool_envelopes is not None
                 else []
             ),
         }
 
-    @operation_unit_of_work(lambda service: service.repository.database)
     def save_draft(
+        self,
+        *,
+        actor_id: str,
+        agent_code: str,
+        expected_revision: int,
+        config: dict[str, Any],
+        correlation_id: str = "",
+    ) -> dict[str, Any]:
+        BuiltinToolLegacyWriteGuard(
+            self.repository.database
+        ).reject_agent_name_bindings(
+            config.get("tools"),
+            source_id=agent_code,
+            correlation_id=correlation_id,
+        )
+        return self._save_draft(
+            actor_id=actor_id,
+            agent_code=agent_code,
+            expected_revision=expected_revision,
+            config=config,
+        )
+
+    @operation_unit_of_work(lambda service: service.repository.database)
+    def _save_draft(
         self,
         *,
         actor_id: str,
@@ -244,8 +277,36 @@ class AgentConfigService:
         errors = self._validate_config(revision["config"])
         return self.repository.set_validation(revision_id, valid=not errors, errors=errors)
 
+    def publish(
+        self,
+        *,
+        actor_id: str,
+        agent_code: str,
+        revision_id: str,
+        correlation_id: str = "",
+    ) -> dict[str, Any]:
+        revision = self.repository.get_revision(revision_id)
+        BuiltinToolLegacyWriteGuard(
+            self.repository.database
+        ).reject_agent_name_bindings(
+            (revision.get("config") or {}).get("tools"),
+            source_id=revision_id,
+            correlation_id=correlation_id,
+        )
+        return self._publish(
+            actor_id=actor_id,
+            agent_code=agent_code,
+            revision_id=revision_id,
+        )
+
     @operation_unit_of_work(lambda service: service.repository.database)
-    def publish(self, *, actor_id: str, agent_code: str, revision_id: str) -> dict[str, Any]:
+    def _publish(
+        self,
+        *,
+        actor_id: str,
+        agent_code: str,
+        revision_id: str,
+    ) -> dict[str, Any]:
         self._require_mvp_write_agent(agent_code)
         self.authorization.require(
             user_id=actor_id,
@@ -286,14 +347,17 @@ class AgentConfigService:
             )
         with self.repository.database.unit_of_work():
             snapshot = dict(revision["config"])
-            release_ids = list(
-                snapshot.pop("api_capability_release_ids", []) or []
+            release_ids = list(snapshot.pop("api_capability_release_ids", []) or [])
+            builtin_tool_release_ids = list(snapshot.pop("builtin_tool_release_ids", []) or [])
+            builtin_tool_envelope = (
+                self.builtin_tool_envelopes.prepare(builtin_tool_release_ids)
+                if self.builtin_tool_envelopes is not None
+                else []
             )
+            snapshot["builtin_tool_envelope"] = builtin_tool_envelope
             if self.capability_publication_repository is not None:
                 snapshot["capability_envelope"] = (
-                    self.capability_publication_repository.prepare_agent_envelope(
-                        release_ids
-                    )
+                    self.capability_publication_repository.prepare_agent_envelope(release_ids)
                 )
             model_policy = snapshot.get("model_policy") or {}
             connection_revision_id = str(model_policy.get("model_connection_revision_id") or "")
@@ -340,9 +404,13 @@ class AgentConfigService:
                     str(publication["id"]),
                     release_ids=release_ids,
                 )
-                publication = self.repository.get_publication(
-                    str(publication["id"])
+                publication = self.repository.get_publication(str(publication["id"]))
+            if self.builtin_tool_envelopes is not None:
+                self.builtin_tool_envelopes.freeze(
+                    agent_publication_id=str(publication["id"]),
+                    envelopes=builtin_tool_envelope,
                 )
+                publication = self.repository.get_publication(str(publication["id"]))
         self.audit_service.record(
             "agent.config.published",
             status="SUCCEEDED",
@@ -370,8 +438,23 @@ class AgentConfigService:
         )
         return publication
 
-    @operation_unit_of_work(lambda service: service.repository.database)
     def rollback(self, *, actor_id: str, agent_code: str, publication_id: str) -> dict[str, Any]:
+        selected = self.publication(publication_id)
+        model_connection = (selected.get("snapshot") or {}).get("model_connection") or {}
+        if model_connection and self.model_connection_service is not None:
+            self.model_connection_service.runtime_binding(
+                str(model_connection.get("revision_id") or "")
+            )
+        return self._rollback(
+            actor_id=actor_id,
+            agent_code=agent_code,
+            publication_id=publication_id,
+        )
+
+    @operation_unit_of_work(lambda service: service.repository.database)
+    def _rollback(
+        self, *, actor_id: str, agent_code: str, publication_id: str
+    ) -> dict[str, Any]:
         self._require_mvp_write_agent(agent_code)
         self.authorization.require(
             user_id=actor_id,
@@ -380,12 +463,6 @@ class AgentConfigService:
             action="publish",
         )
         definition = self.repository.get_definition(agent_code)
-        selected = self.publication(publication_id)
-        model_connection = (selected.get("snapshot") or {}).get("model_connection") or {}
-        if model_connection and self.model_connection_service is not None:
-            self.model_connection_service.runtime_binding(
-                str(model_connection.get("revision_id") or "")
-            )
         publication = self.repository.set_current_publication(
             agent_id=str(definition["id"]), publication_id=publication_id
         )
@@ -420,6 +497,19 @@ class AgentConfigService:
             raise NonRetryableExecutionError(
                 "Agent publication hash mismatch",
                 safe_message="Agent 配置完整性校验失败",
+            )
+        snapshot = publication["snapshot"]
+        if self.builtin_tool_envelopes is not None and "builtin_tool_envelope" in snapshot:
+            envelope = snapshot.get("builtin_tool_envelope")
+            if not isinstance(envelope, list):
+                raise NonRetryableExecutionError(
+                    "Agent publication Built-in Tool Envelope is invalid",
+                    safe_message="Agent 内置工具发布事实完整性校验失败",
+                    error_code="agent_builtin_tool_envelope_hash_mismatch",
+                )
+            self.builtin_tool_envelopes.verify_frozen(
+                agent_publication_id=str(publication["id"]),
+                envelopes=envelope,
             )
         return publication
 
@@ -465,18 +555,22 @@ class AgentConfigService:
             "business_instructions": str(config.get("business_instructions") or "").strip(),
             "model_policy": dict(config.get("model_policy") or {}),
             "execution": dict(config.get("execution") or {}),
-            "tools": sorted({str(item) for item in (config.get("tools") or [])}),
             "skills": sorted({str(item) for item in (config.get("skills") or [])}),
             "routing": dict(config.get("routing") or {}),
             "channels": dict(config.get("channels") or {}),
             "api_capability_release_ids": sorted(
                 {
                     str(item).strip()
-                    for item in (
-                        config.get("api_capability_release_ids") or []
-                    )
+                    for item in (config.get("api_capability_release_ids") or [])
                     if str(item).strip()
                 }
+            ),
+            "builtin_tool_release_ids": sorted(
+                [
+                    str(item).strip()
+                    for item in (config.get("builtin_tool_release_ids") or [])
+                    if str(item).strip()
+                ]
             ),
         }
         return normalized
@@ -487,13 +581,29 @@ class AgentConfigService:
             errors.append({"field": key, "message": "此字段不可配置"})
         release_ids = config.get("api_capability_release_ids") or []
         if not isinstance(release_ids, list) or any(
-            not isinstance(item, str) or not item.strip()
-            for item in release_ids
+            not isinstance(item, str) or not item.strip() for item in release_ids
         ):
             errors.append(
                 {
                     "field": "api_capability_release_ids",
                     "message": "必须是非空 Release ID 数组",
+                }
+            )
+        builtin_release_ids = config.get("builtin_tool_release_ids") or []
+        if not isinstance(builtin_release_ids, list) or any(
+            not isinstance(item, str) or not item.strip() for item in builtin_release_ids
+        ):
+            errors.append(
+                {
+                    "field": "builtin_tool_release_ids",
+                    "message": "必须是非空 Release ID 数组",
+                }
+            )
+        elif len(builtin_release_ids) != len(set(builtin_release_ids)):
+            errors.append(
+                {
+                    "field": "builtin_tool_release_ids",
+                    "message": "Release ID 不得重复",
                 }
             )
         nested = {
@@ -587,18 +697,6 @@ class AgentConfigService:
                         )
         elif model not in self.allowed_models:
             errors.append({"field": "model_policy.model", "message": "模型尚未注册"})
-        enabled_tools = self.repository.enabled_tools()
-        for tool_name in config.get("tools") or []:
-            if (
-                str(tool_name) not in ToolRegistry.READONLY_TOOLS
-                or str(tool_name) not in enabled_tools
-            ):
-                errors.append(
-                    {
-                        "field": "tools",
-                        "message": f"工具 {tool_name} 尚未注册为只读工具",
-                    }
-                )
         available_skills = set(self.skill_loader.load())
         for skill_code in config.get("skills") or []:
             if str(skill_code) not in available_skills:
@@ -631,20 +729,28 @@ class AgentConfigService:
                         "message": exc.safe_message,
                     }
                 )
+        if self.builtin_tool_envelopes is not None:
+            try:
+                self.builtin_tool_envelopes.prepare(
+                    list(config.get("builtin_tool_release_ids") or [])
+                )
+            except NonRetryableExecutionError as exc:
+                errors.append(
+                    {
+                        "field": "builtin_tool_release_ids",
+                        "message": exc.safe_message,
+                    }
+                )
         execution = config.get("execution") or {}
         if isinstance(execution, dict):
             try:
                 max_turns = int(execution.get("max_turns") or 12)
                 timeout = int(execution.get("timeout_seconds") or 300)
             except (TypeError, ValueError):
-                errors.append(
-                    {"field": "execution", "message": "执行限制必须是整数"}
-                )
+                errors.append({"field": "execution", "message": "执行限制必须是整数"})
                 return errors
             if not 1 <= max_turns <= 100:
-                errors.append(
-                    {"field": "execution.max_turns", "message": "必须在 1 到 100 之间"}
-                )
+                errors.append({"field": "execution.max_turns", "message": "必须在 1 到 100 之间"})
             if not 10 <= timeout <= 3600:
                 errors.append(
                     {

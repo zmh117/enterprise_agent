@@ -12,6 +12,7 @@ import {
   UserSearchIcon,
   UsersIcon,
   ShieldCheckIcon,
+  WrenchIcon,
 } from "lucide-react"
 
 export const prototypeMeta = {
@@ -140,6 +141,13 @@ export const navigationGroups: NavigationGroup[] = [
         active: true,
         href: "/platform/api-capabilities",
         requiredCapability: "api_capabilities.read",
+      },
+      {
+        label: "只读工具",
+        icon: WrenchIcon,
+        active: true,
+        href: "/platform/builtin-tools",
+        requiredCapability: "builtin_tools.read",
       },
       {
         label: "工具资源",

@@ -36,6 +36,27 @@ class ResourceBinding:
     database: DatabaseConnection | None = None
     redis: RedisConnection | None = None
     loki: LokiConnection | None = None
+    workshop_partition_policy: WorkshopPartitionPolicyFact | None = None
+    loki_scope_policy: LokiScopePolicyFact | None = None
+
+
+@dataclass(frozen=True)
+class WorkshopPartitionPolicyFact:
+    """Exact immutable Workshop Policy Revision copied from a Job Snapshot."""
+
+    policy_revision_id: str
+    content_hash: str
+    database_table_prefix: str | None = None
+    redis_prefixes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class LokiScopePolicyFact:
+    """Exact mandatory Loki selector copied from a Job Snapshot."""
+
+    policy_revision_id: str
+    content_hash: str
+    conditions: tuple[tuple[str, str], ...]
 
 
 @dataclass(frozen=True)

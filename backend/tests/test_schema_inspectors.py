@@ -39,6 +39,7 @@ from app.modules.internal_api_platform.infrastructure.db.schema_directory import
     SchemaInspectorFactory,
     SqlServerSchemaInspector,
     UnsupportedSchemaInspector,
+    table_name_has_prefix,
 )
 from app.modules.internal_api_platform.infrastructure.loki_gateway import FakeLokiClient
 from app.modules.internal_api_platform.infrastructure.redis_gateway import FakeRedisGateway
@@ -422,9 +423,7 @@ class SqlServerSchemaInspectorTests(unittest.TestCase):
 
 class MySqlSchemaInspectorContractTests(unittest.TestCase):
     def test_reads_only_information_schema(self) -> None:
-        cursor = _ScriptedCursor(
-            [[("GL001_EBR_order", "order_no", "varchar", "NO")]]
-        )
+        cursor = _ScriptedCursor([[("GL001_EBR_order", "order_no", "varchar", "NO")]])
         connection = _FakeConnection(cursor)
         module = types.ModuleType("pymysql")
         cursors = types.ModuleType("pymysql.cursors")
@@ -448,6 +447,64 @@ class MySqlSchemaInspectorContractTests(unittest.TestCase):
         self.assertNotIn("gl001_ebr_order", sql)
         self.assertTrue(connection.closed)
 
+    def test_escapes_exact_prefix_and_post_filters_like_wildcard_matches(self) -> None:
+        cursor = _ScriptedCursor(
+            [
+                [
+                    ("GL001_EBR_order", "order_no", "varchar", "NO"),
+                    ("GL001XEBR_order", "order_no", "varchar", "NO"),
+                    ("GL002_EBR_order", "order_no", "varchar", "NO"),
+                ]
+            ]
+        )
+        connection = _FakeConnection(cursor)
+        module = types.ModuleType("pymysql")
+        cursors = types.ModuleType("pymysql.cursors")
+        cursors.Cursor = object  # type: ignore[attr-defined]
+        module.cursors = cursors  # type: ignore[attr-defined]
+        module.connect = MagicMock(return_value=connection)  # type: ignore[attr-defined]
+
+        with patch.dict(sys.modules, {"pymysql": module, "pymysql.cursors": cursors}):
+            result = MySqlSchemaInspector().read(
+                _binding(DatabaseEngine.MYSQL),
+                table_prefix="GL001_",
+                query="",
+                table_limit=10,
+                column_limit=10,
+            )
+
+        self.assertEqual(["GL001_EBR_order"], [table.name for table in result.tables])
+        self.assertEqual("GL001\\_%", cursor.calls[0][1][1])
+
+
+class DialectAwarePrefixTests(unittest.TestCase):
+    def test_oracle_unquoted_identifiers_fold_uppercase(self) -> None:
+        self.assertTrue(
+            table_name_has_prefix(
+                "GL001_EBR_ORDER",
+                "gl001_",
+                engine=DatabaseEngine.ORACLE,
+            )
+        )
+
+    def test_mysql_and_sqlserver_prefix_boundary_is_literal(self) -> None:
+        for engine in (DatabaseEngine.MYSQL, DatabaseEngine.SQLSERVER):
+            with self.subTest(engine=engine.value):
+                self.assertTrue(
+                    table_name_has_prefix(
+                        "GL001_EBR_order",
+                        "GL001_",
+                        engine=engine,
+                    )
+                )
+                self.assertFalse(
+                    table_name_has_prefix(
+                        "GL001XEBR_order",
+                        "GL001_",
+                        engine=engine,
+                    )
+                )
+
 
 class MultiDialectSchemaDirectoryServiceTests(unittest.TestCase):
     def _service(
@@ -469,9 +526,7 @@ class MultiDialectSchemaDirectoryServiceTests(unittest.TestCase):
         environment = Environment(code="prod", bases={"main": base})
         return PlatformService(
             registry=TopologyRegistry(Topology(environments={"prod": environment})),
-            access_policy=AccessPolicy(
-                scopes={"operator": AccessScope(rules=[ScopeRule()])}
-            ),
+            access_policy=AccessPolicy(scopes={"operator": AccessScope(rules=[ScopeRule()])}),
             executors={engine: FakeQueryExecutor(rows=[{"status": "ok"}])},
             schema_inspector_factory=SchemaInspectorFactory(
                 {engine: FakeSchemaInspector(tables=tables)}
@@ -508,9 +563,7 @@ class MultiDialectSchemaDirectoryServiceTests(unittest.TestCase):
                 self.assertEqual(engine.value, body["summary"]["engine"])
                 self.assertEqual(1, body["summary"]["table_count"])
                 self.assertTrue(body["truncated"])
-                self.assertEqual(
-                    "internal-api-platform-schema", body["metadata"]["source"]
-                )
+                self.assertEqual("internal-api-platform-schema", body["metadata"]["source"])
                 self.assertNotIn("private-db.internal", str(body))
                 self.assertNotIn("top-secret-password", str(body))
 
@@ -519,9 +572,7 @@ class MultiDialectSchemaDirectoryServiceTests(unittest.TestCase):
             DatabaseEngine.SQLSERVER,
             tables=[SchemaTable("orders", [SchemaColumn("id", "int", False)])],
         )
-        response = TestClient(
-            create_app(Settings(environment="test"), service=service)
-        ).post(
+        response = TestClient(create_app(Settings(environment="test"), service=service)).post(
             "/tools/schema/directory",
             json={"environment": "prod", "base": "main"},
             headers={"x-agent-user-id": "unauthorized"},

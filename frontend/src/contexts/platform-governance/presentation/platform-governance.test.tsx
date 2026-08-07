@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { fireEvent, render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { describe, expect, it, vi } from "vitest"
 
@@ -88,16 +88,76 @@ function governedOracleResource() {
   }
 }
 
+function governedLokiResource({
+  draft,
+  published,
+}: {
+  draft: boolean
+  published: boolean
+}) {
+  return {
+    id: "resource-loki-test",
+    code: "loki_test",
+    name: "Loki 测试环境",
+    resource_kind: "loki",
+    scope_type: "environment",
+    environment_code: "agent_test",
+    base_code: "",
+    workshop_code: "",
+    status: "enabled",
+    draft: draft
+      ? {
+          id: "resource-draft-loki-test",
+          resource_id: "resource-loki-test",
+          draft_revision: published ? 2 : 1,
+          provider_type: "loki",
+          config: {
+            base_url: "http://localhost:3100",
+            tenant_id: "tenant1",
+            timeout_seconds: 5,
+            max_minutes: 60,
+            max_lines: 200,
+            max_response_bytes: 65536,
+          },
+          secret_refs: {},
+          status: "VERIFIED",
+          updated_at: "2026-08-07T02:00:00Z",
+        }
+      : null,
+    draft_verification: null,
+    published_revision: published
+      ? {
+          id: "resource-revision-loki-test-1",
+          resource_id: "resource-loki-test",
+          revision: 1,
+          provider_type: "loki",
+          provider_contract_version: "loki_v1",
+          config: {},
+          secret_refs: {},
+          status: "PUBLISHED",
+          published_at: "2026-08-07T01:50:00Z",
+        }
+      : null,
+    effective_revision_id: published ? "resource-revision-loki-test-1" : "",
+    activation_status: published ? "READY" : "EMPTY",
+    last_known_good_generation_id: published ? "generation-loki-test" : "",
+    safe_error_summary: "",
+    affected_applications: [],
+  }
+}
+
 describe("Phase 5 platform governance UI", () => {
   it("exposes governance navigation with separate resources and credential center", () => {
     const group = navigationGroups.find((item) => item.label === "平台治理")
     expect(group?.items.map((item) => item.href)).toEqual([
       "/platform/api-capabilities",
+      "/platform/builtin-tools",
       "/platform/resources",
       "/platform/secrets",
     ])
     expect(group?.items.map((item) => item.requiredCapability)).toEqual([
       "api_capabilities.read",
+      "builtin_tools.read",
       "platform.read",
       "secrets.read",
     ])
@@ -280,6 +340,119 @@ describe("Phase 5 platform governance UI", () => {
         "技术测试 BLOCKED：数据库客户端未安装，无法执行技术验证"
       )
     ).toBeInTheDocument()
+  })
+
+  it("copies a Published Loki Resource Draft inside the policy workflow", async () => {
+    let copied = false
+    let copyBody: Record<string, unknown> | undefined
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.endsWith("/resources/loki_test/draft/from-revision")) {
+        copied = true
+        copyBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+        return response({
+          draft: governedLokiResource({ draft: true, published: true }).draft,
+        })
+      }
+      if (url === "/api/platform/resources") {
+        return response({
+          resources: [governedLokiResource({ draft: copied, published: true })],
+        })
+      }
+      if (url === "/api/platform/loki-scope-policies") {
+        return response({ policies: [] })
+      }
+      if (url === "/api/platform/secrets") return response({ secrets: [] })
+      if (url.startsWith("/api/platform/environments")) {
+        return response({
+          environments: [
+            {
+              id: "environment-agent-test",
+              code: "agent_test",
+              display_name: "Agent 测试环境",
+              status: "enabled",
+            },
+          ],
+        })
+      }
+      if (url.startsWith("/api/platform/bases")) return response({ bases: [] })
+      if (url.startsWith("/api/platform/workshops")) {
+        return response({ workshops: [] })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    renderWithQuery(<ToolResourcesPage />)
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "配置 Loki 查询范围" })
+    )
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "从 Resource r1 复制 Draft",
+      })
+    )
+
+    await waitFor(() =>
+      expect(copyBody).toEqual({
+        revision_id: "resource-revision-loki-test-1",
+      })
+    )
+    expect(
+      await screen.findByRole("button", { name: "测试并发现标签" })
+    ).toBeInTheDocument()
+  })
+
+  it("publishes a new verified Loki Resource inside the policy workflow", async () => {
+    let published = false
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input)
+      if (url.endsWith("/resources/loki_test/publish")) {
+        published = true
+        return response({
+          revision: governedLokiResource({ draft: false, published: true })
+            .published_revision,
+        })
+      }
+      if (url === "/api/platform/resources") {
+        return response({
+          resources: [governedLokiResource({ draft: !published, published })],
+        })
+      }
+      if (url === "/api/platform/loki-scope-policies") {
+        return response({ policies: [] })
+      }
+      if (url === "/api/platform/secrets") return response({ secrets: [] })
+      if (url.startsWith("/api/platform/environments")) {
+        return response({
+          environments: [
+            {
+              id: "environment-agent-test",
+              code: "agent_test",
+              display_name: "Agent 测试环境",
+              status: "enabled",
+            },
+          ],
+        })
+      }
+      if (url.startsWith("/api/platform/bases")) return response({ bases: [] })
+      if (url.startsWith("/api/platform/workshops")) {
+        return response({ workshops: [] })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    renderWithQuery(<ToolResourcesPage />)
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "配置 Loki 查询范围" })
+    )
+    fireEvent.click(
+      await screen.findByRole("button", { name: "发布 Loki Resource" })
+    )
+
+    await waitFor(() => expect(published).toBe(true))
+    expect(
+      (await screen.findAllByText("resource-revision-loki-test-1")).length
+    ).toBeGreaterThan(0)
   })
 
   it("serializes a resource Draft with only the selected Secret reference", async () => {

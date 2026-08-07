@@ -11,6 +11,9 @@ from app.modules.audit.application.audit_service import AuditService
 from app.modules.authorization_center.application import BusinessAuthorizationService
 from app.modules.delivery.application.result_delivery_service import ResultDeliveryService
 from app.modules.job.application.job_status_service import JobStatusService
+from app.modules.job.application.builtin_tool_snapshot import (
+    JobBuiltinToolSnapshotService,
+)
 from app.modules.job.domain.agent_job import AgentJob
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.repositories import AgentRepository
@@ -31,6 +34,7 @@ class AgentExecutor:
         result_service: AgentResultService,
         delivery_service: ResultDeliveryService,
         business_authorization_service: BusinessAuthorizationService | None = None,
+        builtin_tool_snapshot_service: JobBuiltinToolSnapshotService | None = None,
     ) -> None:
         self.repository = repository
         self.audit_service = audit_service
@@ -41,6 +45,7 @@ class AgentExecutor:
         self.result_service = result_service
         self.delivery_service = delivery_service
         self.business_authorization_service = business_authorization_service
+        self.builtin_tool_snapshot_service = builtin_tool_snapshot_service
 
     def execute(
         self,
@@ -57,6 +62,16 @@ class AgentExecutor:
                 return persisted.result
             return ""
         job = claimed
+        if self.builtin_tool_snapshot_service is not None:
+            try:
+                self.builtin_tool_snapshot_service.verify(job.id)
+            except Exception as exc:
+                if fail_on_error:
+                    self.status_service.fail(
+                        job.id,
+                        getattr(exc, "safe_message", str(exc)),
+                    )
+                raise
         if job.business_application_id:
             if self.business_authorization_service is None:
                 self.status_service.fail(job_id, "业务应用授权服务暂时不可用")

@@ -32,6 +32,7 @@ from app.shared.secret_redaction import (
 )
 
 from .validation import (
+    assert_no_resource_placement,
     assert_no_secret_payload,
     normalize_json_object,
     validate_code,
@@ -45,7 +46,7 @@ RESOURCE_PROVIDERS = {
     "redis": frozenset({"redis"}),
     "loki": frozenset({"loki"}),
 }
-SCOPE_TYPES = frozenset({"environment", "base", "workshop"})
+SCOPE_TYPES = frozenset({"global", "environment", "base", "workshop"})
 
 
 @dataclass(frozen=True)
@@ -94,9 +95,7 @@ class GovernedResourceService:
         self.config_repository = config_repository
         self.permission_service = permission_service
         self.verifier = verifier or UnavailableResourceTechnicalVerifier()
-        self.provider_contracts = (
-            provider_contracts or ProviderContractRegistry()
-        )
+        self.provider_contracts = provider_contracts or ProviderContractRegistry()
 
     def require_admin(self, actor_id: str) -> None:
         if not actor_id:
@@ -118,12 +117,9 @@ class GovernedResourceService:
             )
 
     def list_resources(self) -> list[dict[str, Any]]:
-        runtime_status = RuntimeGenerationRepository(
-            self.repository.database
-        ).public_status()
+        runtime_status = RuntimeGenerationRepository(self.repository.database).public_status()
         runtime_by_revision = {
-            str(item["resource_revision_id"]): item
-            for item in runtime_status["resources"]
+            str(item["resource_revision_id"]): item for item in runtime_status["resources"]
         }
         result: list[dict[str, Any]] = []
         for resource in self.repository.list_resources():
@@ -139,11 +135,7 @@ class GovernedResourceService:
             )
             revisions = self.repository.list_revisions(str(resource["id"]))
             published = revisions[-1] if revisions else None
-            activation = (
-                runtime_by_revision.get(str(published["id"]))
-                if published
-                else None
-            )
+            activation = runtime_by_revision.get(str(published["id"])) if published else None
             result.append(
                 {
                     **resource,
@@ -151,9 +143,7 @@ class GovernedResourceService:
                     "draft_verification": draft_verification,
                     "published_revision": published,
                     "effective_revision_id": (
-                        str(activation["effective_revision_id"])
-                        if activation
-                        else ""
+                        str(activation["effective_revision_id"]) if activation else ""
                     ),
                     "activation_status": (
                         str(activation["status"])
@@ -161,15 +151,9 @@ class GovernedResourceService:
                         else ("PENDING" if published else "EMPTY")
                     ),
                     "last_known_good_generation_id": (
-                        str(activation["last_known_good_generation_id"])
-                        if activation
-                        else ""
+                        str(activation["last_known_good_generation_id"]) if activation else ""
                     ),
-                    "safe_error_summary": (
-                        str(activation["error_summary"])
-                        if activation
-                        else ""
-                    ),
+                    "safe_error_summary": (str(activation["error_summary"]) if activation else ""),
                     "affected_applications": self._affected_applications(
                         str(resource["id"]),
                         runtime_status=runtime_status,
@@ -198,18 +182,12 @@ class GovernedResourceService:
                            a.code as application_code,
                            a.name as application_name,
                            p.revision as publication_revision
-                      from business_application_publication p
+                      from business_application_publication_builtin_tool_resource binding
+                      join business_application_publication_builtin_tool tool
+                        on tool.id = binding.application_tool_id
+                      join business_application_publication p
+                        on p.id = tool.application_publication_id
                       join business_application a on a.id = p.application_id
-                      join (
-                            select publication_id, resource_revision_id
-                              from business_application_resource_binding
-                            union
-                            select h.application_publication_id as publication_id,
-                                   r.resource_revision_id
-                              from business_application_publication_resource r
-                              join business_application_publication_handler h
-                                on h.id = r.application_handler_id
-                           ) binding on binding.publication_id = p.id
                       join platform_resource_revision revision
                         on revision.id = binding.resource_revision_id
                      where revision.resource_id = ?
@@ -239,6 +217,10 @@ class GovernedResourceService:
         correlation_id: str = "",
     ) -> dict[str, Any]:
         self.require_admin(actor_id)
+        assert_no_resource_placement(
+            payload,
+            context="Resource Identity 或连接草稿",
+        )
         code = validate_code(str(payload.get("code") or ""))
         if self.repository.get_resource_by_code(code):
             raise NonRetryableExecutionError(
@@ -258,15 +240,38 @@ class GovernedResourceService:
                 safe_message="工具资源作用域无效",
                 error_code="resource_scope_invalid",
             )
-        environment_id, base_id, workshop_id = (
-            self.config_repository.resolve_scope_ids(
+        if resource_kind == "loki":
+            if scope_type not in {"global", "environment"}:
+                raise NonRetryableExecutionError(
+                    "Loki Resource scope must be global or environment",
+                    safe_message="Loki 连接资源只能配置为全局或精确环境范围",
+                    error_code="resource_scope_invalid",
+                )
+        elif scope_type == "global":
+            raise NonRetryableExecutionError(
+                "Only Loki Resource can use global scope",
+                safe_message="只有 Loki 连接资源可以使用全局范围",
+                error_code="resource_scope_invalid",
+            )
+        if scope_type == "global":
+            if any(
+                str(payload.get(field) or "")
+                for field in ("environment_code", "base_code", "workshop_code")
+            ):
+                raise NonRetryableExecutionError(
+                    "Global Resource cannot retain topology address fields",
+                    safe_message="全局 Loki 不能配置环境、基地或车间地址",
+                    error_code="resource_scope_invalid",
+                )
+            environment_id = base_id = workshop_id = None
+        else:
+            environment_id, base_id, workshop_id = self.config_repository.resolve_scope_ids(
                 environment_code=str(payload.get("environment_code") or ""),
                 base_code=str(payload.get("base_code") or ""),
                 workshop_code=str(payload.get("workshop_code") or ""),
             )
-        )
         if (
-            environment_id is None
+            (scope_type != "global" and environment_id is None)
             or (scope_type == "base" and base_id is None)
             or (scope_type == "workshop" and workshop_id is None)
             or (scope_type == "environment" and (base_id or workshop_id))
@@ -282,7 +287,7 @@ class GovernedResourceService:
             name=str(payload.get("name") or code),
             resource_kind=resource_kind,
             scope_type=scope_type,
-            environment_id=str(environment_id),
+            environment_id=str(environment_id) if environment_id else None,
             base_id=str(base_id) if base_id else None,
             workshop_id=str(workshop_id) if workshop_id else None,
             actor_id=actor_id,
@@ -316,6 +321,10 @@ class GovernedResourceService:
         correlation_id: str = "",
     ) -> dict[str, Any]:
         self.require_admin(actor_id)
+        assert_no_resource_placement(
+            payload,
+            context="Resource Identity 或连接草稿",
+        )
         resource = self._resource(code)
         before = self.repository.get_draft(str(resource["id"]))
         provider_type, config, secret_refs, content_hash = self._draft_payload(
@@ -387,14 +396,8 @@ class GovernedResourceService:
                 safe_message="资源技术验证结果无效",
                 error_code="resource_verifier_invalid",
             )
-        contract = self.provider_contracts.require(
-            str(draft["provider_type"])
-        )
-        if (
-            status == "PASSED"
-            and outcome.provider_contract_version
-            != contract.contract_version
-        ):
+        contract = self.provider_contracts.require(str(draft["provider_type"]))
+        if status == "PASSED" and outcome.provider_contract_version != contract.contract_version:
             raise NonRetryableExecutionError(
                 "Resource verification used a stale Provider contract",
                 safe_message="Provider 契约已变化，请重新验证资源草稿",
@@ -402,13 +405,10 @@ class GovernedResourceService:
             )
         safe_checks = sanitize_for_persistence(outcome.checks)
         with self.repository.database.unit_of_work():
-            current_draft = self.repository.get_draft(
-                str(resource["id"])
-            )
+            current_draft = self.repository.get_draft(str(resource["id"]))
             if (
                 current_draft["id"] != draft["id"]
-                or int(current_draft["draft_revision"])
-                != int(draft["draft_revision"])
+                or int(current_draft["draft_revision"]) != int(draft["draft_revision"])
                 or current_draft["content_hash"] != draft["content_hash"]
             ):
                 raise NonRetryableExecutionError(
@@ -475,13 +475,9 @@ class GovernedResourceService:
             )
         revision = self.repository.insert_revision(
             resource_id=str(resource["id"]),
-            revision=self.repository.next_resource_revision(
-                str(resource["id"])
-            ),
+            revision=self.repository.next_resource_revision(str(resource["id"])),
             provider_type=str(draft["provider_type"]),
-            provider_contract_version=str(
-                verification["provider_contract_version"]
-            ),
+            provider_contract_version=str(verification["provider_contract_version"]),
             config=dict(draft["config"]),
             secret_refs=dict(draft["secret_refs"]),
             content_hash=str(draft["content_hash"]),
@@ -521,14 +517,10 @@ class GovernedResourceService:
             )
         revision = self.repository.get_revision(revision_id)
         if revision["resource_id"] != resource["id"]:
-            raise NotFound(
-                f"Resource Revision not found for Resource: {revision_id}"
-            )
+            raise NotFound(f"Resource Revision not found for Resource: {revision_id}")
         draft = self.repository.insert_draft(
             resource_id=str(resource["id"]),
-            draft_revision=self.repository.next_draft_revision(
-                str(resource["id"])
-            ),
+            draft_revision=self.repository.next_draft_revision(str(resource["id"])),
             provider_type=str(revision["provider_type"]),
             config=dict(revision["config"]),
             secret_refs=dict(revision["secret_refs"]),
@@ -568,9 +560,7 @@ class GovernedResourceService:
         resource = self._resource(code)
         before = self.repository.get_revision(revision_id)
         if before["resource_id"] != resource["id"]:
-            raise NotFound(
-                f"Resource Revision not found for Resource: {revision_id}"
-            )
+            raise NotFound(f"Resource Revision not found for Resource: {revision_id}")
         if before["status"] == "ARCHIVED" or (
             before["status"] == "DISABLED" and normalized == "DISABLED"
         ):

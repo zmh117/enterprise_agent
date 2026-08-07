@@ -33,7 +33,11 @@ from app.shared.exceptions import (
     PermissionDenied,
     ToolPolicyError,
 )
-from backend.tests.helpers import enqueue_job_result_for_delivery
+from backend.tests.helpers import (
+    _ensure_exact_builtin_tool_releases,
+    _published_test_resource,
+    enqueue_job_result_for_delivery,
+)
 from backend.tests.test_business_application_control_plane import draft_payload
 
 
@@ -110,6 +114,66 @@ def _active_application(
     capabilities: tuple[str, ...] = (),
 ) -> dict[str, object]:
     service = c.business_application_service
+    releases = _ensure_exact_builtin_tool_releases(c, capabilities)
+    bases = c.database.execute(
+        """
+        select environment.code as environment_code,
+               base.code as base_code, environment.id as environment_id,
+               base.id as base_id
+          from platform_base base
+          join platform_environment environment
+            on environment.id = base.environment_id
+         where environment.status = 'enabled' and base.status = 'enabled'
+         order by environment.code, base.code
+        """
+    )
+    target_paths = [
+        {
+            "target_scope_type": "base",
+            "environment_code": str(base["environment_code"]),
+            "base_code": str(base["base_code"]),
+            "workshop_code": "",
+        }
+        for base in bases
+    ]
+    builtin_tools: list[dict[str, object]] = []
+    for tool_identifier, release in releases.items():
+        resource_kind = (
+            "database"
+            if tool_identifier in {"get_schema_directory", "query_database"}
+            else "redis"
+            if tool_identifier in {"query_redis_get", "query_redis_scan"}
+            else ""
+        )
+        resources: list[dict[str, object]] = []
+        if resource_kind:
+            for base in bases:
+                revision_id = _published_test_resource(
+                    c,
+                    code=(
+                        f"{code}-{tool_identifier}-{base['base_code']}"
+                    ),
+                    resource_kind=resource_kind,
+                    scope_type="base",
+                    environment_id=str(base["environment_id"]),
+                    base_id=str(base["base_id"]),
+                )
+                resources.append(
+                    {
+                        "resource_slot": resource_kind,
+                        "target_scope_type": "base",
+                        "environment_code": str(base["environment_code"]),
+                        "base_code": str(base["base_code"]),
+                        "workshop_code": "",
+                        "placement": "",
+                        "resource_revision_id": revision_id,
+                        "workshop_partition_policy_revision_id": "",
+                        "loki_scope_policy_revision_id": "",
+                    }
+                )
+        builtin_tools.append(
+            {"tool_release_id": release["id"], "resources": resources}
+        )
     application = service.create(
         actor_id=ADMIN_ID,
         code=code,
@@ -118,21 +182,14 @@ def _active_application(
         project_code="default",
         owner_user_id=ADMIN_ID,
     )
+    payload = draft_payload(route=f"bot:{code}", capabilities=[])
+    payload["target_paths"] = target_paths
+    payload["builtin_tools"] = builtin_tools
     revision = service.save_draft(
         actor_id=ADMIN_ID,
         code=code,
         expected_revision=int(application["revision"]),
-        payload=draft_payload(
-            route=f"bot:{code}",
-            capabilities=[
-                {
-                    "capability_code": capability,
-                    "version_constraint": "*",
-                    "enabled": True,
-                }
-                for capability in capabilities
-            ],
-        ),
+        payload=payload,
     )
     publication = service.publish(
         actor_id=ADMIN_ID,
@@ -231,6 +288,39 @@ def _business_role(
         assigned_by=ADMIN_ID,
     )
     return role
+
+
+def _grant_stable_tool_use(
+    c: object,
+    *,
+    user_id: str,
+    tool_identifier: str,
+) -> None:
+    c.database.execute(
+        """
+        insert into permission_policy
+          (id, subject_type, subject_code, resource_type, resource_code,
+           action, effect, priority, status, revision, created_at, updated_at)
+        values (?, 'user', ?, 'tool', ?, 'use', 'allow', 100, 'enabled', 1,
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        """,
+        (
+            f"test-tool-use-{user_id}-{tool_identifier}",
+            user_id,
+            tool_identifier,
+        ),
+    )
+    c.database.execute(
+        """
+        insert into permission_policy
+          (id, subject_type, subject_code, resource_type, resource_code,
+           action, effect, priority, status, revision, created_at, updated_at)
+        values (?, 'user', ?, 'project', 'default', 'use', 'allow', 100,
+                'enabled', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        on conflict(id) do nothing
+        """,
+        (f"test-project-use-{user_id}", user_id),
+    )
 
 
 def test_migration_is_additive_preserves_legacy_rows_and_is_idempotent() -> None:
@@ -521,6 +611,7 @@ def test_legacy_permission_policy_never_grants_business_application_access() -> 
 
 def test_multi_role_union_deny_precedence_and_application_scope_isolation() -> None:
     c = _container()
+    base_one, base_two = _topology(c)
     application = _active_application(
         c,
         "role-union-app",
@@ -531,7 +622,6 @@ def test_multi_role_union_deny_precedence_and_application_scope_isolation() -> N
         "role-isolated-app",
         capabilities=("query_database",),
     )
-    base_one, base_two = _topology(c)
     user = c.identity_repository.create_user(
         username="role-union-user",
         display_name="多角色用户",
@@ -626,11 +716,6 @@ def test_multi_role_union_deny_precedence_and_application_scope_isolation() -> N
 
 def test_current_all_saves_explicit_set_and_excludes_future_base() -> None:
     c = _container()
-    application = _active_application(
-        c,
-        "current-all-app",
-        capabilities=("query_database",),
-    )
     timestamp = datetime.now(UTC).isoformat()
     c.database.execute(
         """
@@ -649,6 +734,11 @@ def test_current_all_saves_explicit_set_and_excludes_future_base() -> None:
                 '基地一', 'postgresql', 'enabled', ?, ?)
         """,
         (timestamp, timestamp),
+    )
+    application = _active_application(
+        c,
+        "current-all-app",
+        capabilities=("query_database",),
     )
     user = c.identity_repository.create_user(
         username="current-all-user",
@@ -1056,12 +1146,12 @@ class _RecordingDeliveryAdapter:
 
 def test_four_stage_reauthorization_blocks_revoked_access_without_data_leak() -> None:
     c = _container()
+    base_one, _ = _topology(c)
     application = _active_application(
         c,
         "four-stage-app",
         capabilities=("query_database",),
     )
-    base_one, _ = _topology(c)
     user = c.identity_repository.create_user(
         username="four-stage-user",
         display_name="四阶段用户",
@@ -1077,6 +1167,11 @@ def test_four_stage_reauthorization_blocks_revoked_access_without_data_leak() ->
                 "scopes": [base_one],
             }
         ],
+    )
+    _grant_stable_tool_use(
+        c,
+        user_id=str(user["id"]),
+        tool_identifier="query_database",
     )
     command = CreateAgentJobCommand(
         idempotency_key="four-stage-job",
@@ -1173,12 +1268,12 @@ def test_four_stage_reauthorization_blocks_revoked_access_without_data_leak() ->
 
 def test_internal_api_platform_rechecks_immutable_job_runtime_facts() -> None:
     c = _container()
+    base_one, _ = _topology(c)
     application = _active_application(
         c,
         "internal-platform-job-app",
         capabilities=("query_database",),
     )
-    base_one, _ = _topology(c)
     user = c.identity_repository.create_user(
         username="internal-platform-job-user",
         display_name="内部平台任务用户",
@@ -1194,6 +1289,11 @@ def test_internal_api_platform_rechecks_immutable_job_runtime_facts() -> None:
                 "scopes": [base_one],
             }
         ],
+    )
+    _grant_stable_tool_use(
+        c,
+        user_id=str(user["id"]),
+        tool_identifier="query_database",
     )
     job = c.create_agent_job_service.execute(
         CreateAgentJobCommand(
@@ -1234,6 +1334,23 @@ def test_internal_api_platform_rechecks_immutable_job_runtime_facts() -> None:
         workshop=None,
         kind=ResourceKind.DATABASE,
     )
+    frozen = c.builtin_tool_snapshot_service.verify(job.id)
+    exact_resource_revision_id = str(
+        frozen["snapshot"]["bindings"][0]["candidates"][0][
+            "resource_revision_id"
+        ]
+    )
+
+    def started_tool_call() -> str:
+        return c.agent_repository.add_tool_call(
+            job_id=job.id,
+            tool_name="query_database",
+            request_payload={"environment": "local", "base": "base-one"},
+            response_summary={"status": "STARTED"},
+            status="STARTED",
+            duration_ms=0,
+            risk_level="medium",
+        )
 
     authorized = authorizer.authorize(
         job_id=job.id,
@@ -1242,12 +1359,13 @@ def test_internal_api_platform_rechecks_immutable_job_runtime_facts() -> None:
         application_id=str(application["id"]),
         capability_code="query_database",
         target=target,
+        tool_call_id=started_tool_call(),
     )
     assert authorized.application_publication_id == str(
         application["publication_id"]
     )
-    assert authorized.resource_revision_id == "resource-auth-one"
-    assert authorized.handler_version == "legacy-v1"
+    assert authorized.resource_revision_id == exact_resource_revision_id
+    assert authorized.handler_version == "1.0.0"
 
     with pytest.raises(AuthorizationError):
         authorizer.authorize(
@@ -1290,11 +1408,12 @@ def test_internal_api_platform_rechecks_immutable_job_runtime_facts() -> None:
         application_id=str(application["id"]),
         capability_code="query_database",
         target=target,
+        tool_call_id=started_tool_call(),
     )
 
     c.database.execute(
-        "update tool_definition set enabled = 0 where id = ?",
-        (authorized.handler_id,),
+        "update builtin_tool_release set status = 'DISABLED' where id = ?",
+        (authorized.tool_release_id,),
     )
     with pytest.raises(AuthorizationError):
         authorizer.authorize(
@@ -1304,14 +1423,15 @@ def test_internal_api_platform_rechecks_immutable_job_runtime_facts() -> None:
             application_id=str(application["id"]),
             capability_code="query_database",
             target=target,
-        )
-    c.database.execute(
-        "update tool_definition set enabled = 1 where id = ?",
-        (authorized.handler_id,),
+            tool_call_id=started_tool_call(),
     )
     c.database.execute(
-        "update platform_resource_binding set revision = 2 where id = ?",
-        ("resource-auth-one",),
+        "update builtin_tool_release set status = 'ACTIVE' where id = ?",
+        (authorized.tool_release_id,),
+    )
+    c.database.execute(
+        "update platform_resource_revision set status = 'DISABLED' where id = ?",
+        (exact_resource_revision_id,),
     )
     with pytest.raises(AuthorizationError):
         authorizer.authorize(
@@ -1321,6 +1441,7 @@ def test_internal_api_platform_rechecks_immutable_job_runtime_facts() -> None:
             application_id=str(application["id"]),
             capability_code="query_database",
             target=target,
+            tool_call_id=started_tool_call(),
         )
     c.database.close()
 

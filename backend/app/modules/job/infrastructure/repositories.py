@@ -2073,26 +2073,6 @@ class AgentRepository:
             raise NotFound(f"Agent job not found: {job_id}")
         return self._job_from_row(row)
 
-    def job_allows_tool(self, job_id: str, tool_name: str) -> bool:
-        row = self.database.execute_one(
-            """
-            select j.agent_publication_id,
-                   exists(
-                     select 1 from agent_tool_binding b
-                     where b.publication_id = j.agent_publication_id
-                       and b.tool_name = ?
-                   ) as assigned
-            from agent_job j
-            where j.id = ?
-            """,
-            (tool_name, job_id),
-        )
-        if not row:
-            raise NotFound(f"Agent job not found: {job_id}")
-        if not row.get("agent_publication_id"):
-            return True
-        return bool(row.get("assigned"))
-
     def get_session(self, session_id: str) -> AgentSession:
         row = self.database.execute_one("select * from agent_session where id = ?", (session_id,))
         if not row:

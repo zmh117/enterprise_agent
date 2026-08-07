@@ -284,14 +284,23 @@ VALUES
 ON CONFLICT(id) DO NOTHING;
 
 INSERT INTO permission_policy
-  (id, subject_type, subject_code, resource_type, resource_code, effect, created_at, updated_at)
+  (id, subject_type, subject_code, resource_type, resource_code, action,
+   effect, created_at, updated_at)
 VALUES
-  ('policy-user-local', 'user', 'local-user', 'project', 'default', 'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-tool-local', 'user', 'local-user', 'tool', '*', 'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-platform-config-local', 'user', 'local-user', 'platform_config', '*', 'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-secret-local', 'user', 'local-user', 'secret', '*', 'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-user-grafana', 'user', 'grafana', 'project', 'default', 'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-tool-grafana', 'user', 'grafana', 'tool', '*', 'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  ('policy-user-local', 'user', 'local-user', 'project', 'default', 'use',
+   'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-tool-local', 'user', 'local-user', 'tool', '*', 'use',
+   'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-platform-config-local', 'user', 'local-user', 'platform_config', '*',
+   '*', 'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-builtin-tools-local', 'user', 'local-user', 'builtin_tool', '*', '*',
+   'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-secret-local', 'user', 'local-user', 'secret', '*', '*',
+   'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-user-grafana', 'user', 'grafana', 'project', 'default', 'use',
+   'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-tool-grafana', 'user', 'grafana', 'tool', '*', 'use',
+   'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 
 INSERT INTO platform_secret_reference

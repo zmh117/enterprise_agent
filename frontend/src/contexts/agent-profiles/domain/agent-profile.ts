@@ -88,7 +88,7 @@ export const agentConfigSchema = z.object({
     max_turns: z.number(),
     timeout_seconds: z.number(),
   }),
-  tools: z.array(z.string()),
+  tools: z.array(z.string()).default([]),
   skills: z.array(z.string()),
   routing: z.object({ project_code: z.string() }),
   channels: z.object({
@@ -96,6 +96,7 @@ export const agentConfigSchema = z.object({
     delivery: z.array(z.string()),
   }),
   api_capability_release_ids: z.array(z.string()).default([]),
+  builtin_tool_release_ids: z.array(z.string()).default([]),
 })
 
 export const agentRevisionSchema = z.object({
@@ -175,19 +176,49 @@ export const agentDetailSchema = z.object({
         allow_delivery: z.union([z.boolean(), z.number()]),
       })
     ),
-    api_capabilities: z.array(
-      z
-        .object({
-          id: z.string(),
-          identifier: z.string(),
-          release_revision: z.number(),
-          name: z.string(),
-          description: z.string(),
-          status: z.string(),
-          release_note: z.string().default(""),
-        })
-        .passthrough(),
-    ).default([]),
+    api_capabilities: z
+      .array(
+        z
+          .object({
+            id: z.string(),
+            identifier: z.string(),
+            release_revision: z.number(),
+            name: z.string(),
+            description: z.string(),
+            status: z.string(),
+            release_note: z.string().default(""),
+          })
+          .passthrough()
+      )
+      .default([]),
+    builtin_tool_releases: z
+      .array(
+        z
+          .object({
+            id: z.string(),
+            tool_identifier: z.string(),
+            release_revision: z.number().int().positive(),
+            tool_semantic_version: z.string(),
+            handler_version: z.string(),
+            implementation_digest: z.string(),
+            public_schema_hash: z.string(),
+            status: z.enum(["ACTIVE", "DEPRECATED", "DISABLED", "ARCHIVED"]),
+            display_name: z.string(),
+            model_description: z.string(),
+            installation_status: z.enum(["INSTALLED", "MISSING", "DRIFTED"]),
+            health_status: z.enum([
+              "HEALTHY",
+              "DEPRECATED",
+              "DISABLED",
+              "ARCHIVED",
+              "MISSING",
+              "DRIFTED",
+            ]),
+            selectable: z.boolean(),
+          })
+          .passthrough()
+      )
+      .default([]),
   }),
 })
 

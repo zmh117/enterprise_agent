@@ -54,12 +54,10 @@ def test_governed_resource_schema_has_stable_version_and_activation_records() ->
         migrator_build="resource-schema-test",
     ).run()
 
-    assert result.head == "027"
+    assert result.head == "033"
     tables = {
         row["name"]
-        for row in database.execute(
-            "select name from sqlite_master where type = 'table'"
-        )
+        for row in database.execute("select name from sqlite_master where type = 'table'")
     }
     assert {
         "platform_resource",
@@ -80,16 +78,8 @@ def test_governed_resource_schema_has_stable_version_and_activation_records() ->
         "resource_reset_operation",
         "resource_reset_target",
     }.issubset(tables)
-    agent_columns = {
-        row["name"]
-        for row in database.execute(
-            "pragma table_info(agent_definition)"
-        )
-    }
-    job_columns = {
-        row["name"]
-        for row in database.execute("pragma table_info(agent_job)")
-    }
+    agent_columns = {row["name"] for row in database.execute("pragma table_info(agent_definition)")}
+    job_columns = {row["name"] for row in database.execute("pragma table_info(agent_job)")}
     assert "classification" in agent_columns
     assert {
         "execution_scope_id",
@@ -212,7 +202,44 @@ def test_resource_scope_draft_revision_and_activation_constraints_fail_closed() 
         """
     )
     with pytest.raises(Exception):
+        database.execute("delete from platform_resource where id = 'resource-one'")
+    database.close()
+
+
+def test_global_resource_scope_migration_preserves_foreign_keys() -> None:
+    database = Database("sqlite:///:memory:")
+    Migrator(
+        database,
+        default_migrations_dir(),
+        migrator_build="global-resource-scope-test",
+    ).run()
+    database.execute(
+        """
+        insert into platform_resource
+          (id, code, name, resource_kind, scope_type, environment_id,
+           base_id, workshop_id, status, revision, created_by,
+           created_at, updated_at)
+        values ('global-loki', 'global_loki', 'Global Loki', 'loki',
+                'global', null, null, null, 'enabled', 1, 'test',
+                '2026-08-06T00:00:00Z', '2026-08-06T00:00:00Z')
+        """
+    )
+    assert database.execute_one(
+        "select environment_id from platform_resource where id = 'global-loki'"
+    ) == {"environment_id": None}
+    assert database.execute("pragma foreign_key_check") == []
+    with pytest.raises(Exception):
         database.execute(
-            "delete from platform_resource where id = 'resource-one'"
+            """
+            insert into platform_resource_revision
+              (id, resource_id, revision, provider_type,
+               provider_contract_version, config_json, secret_refs_json,
+               content_hash, verification_id, status, published_by,
+               published_at)
+            values ('bad-revision', 'missing-resource', 1, 'loki', 'loki_v1',
+                    '{}', '{}', ?, 'missing-verification', 'PUBLISHED',
+                    'test', '2026-08-06T00:00:00Z')
+            """,
+            (hashlib.sha256(b"bad").hexdigest(),),
         )
     database.close()

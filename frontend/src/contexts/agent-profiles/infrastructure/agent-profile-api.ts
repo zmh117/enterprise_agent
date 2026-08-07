@@ -96,10 +96,12 @@ export async function saveAgentDraft(
   expectedRevision: number,
   config: AgentConfig
 ) {
+  const { tools: legacyTools, ...exactConfig } = config
+  void legacyTools
   return z.object({ revision: agentRevisionSchema }).parse(
     await apiRequest(`/api/admin/agents/${encodeURIComponent(code)}/draft`, {
       method: "PUT",
-      body: { expected_revision: expectedRevision, config },
+      body: { expected_revision: expectedRevision, config: exactConfig },
     })
   ).revision
 }

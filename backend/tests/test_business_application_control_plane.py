@@ -772,7 +772,15 @@ def test_capability_catalog_lists_readonly_tools_and_enforces_agent_binding() ->
         code="capability-catalog-test",
         revision_id=str(valid_revision["id"]),
     )
-    assert validated["validation"] == {"valid": True, "errors": []}
+    assert validated["validation"]["valid"] is False
+    assert validated["validation"]["errors"] == [
+        {
+            "field": "capabilities.0.capability_code",
+            "message": (
+                "所选 Agent 发布版本未绑定业务能力：get_schema_directory"
+            ),
+        }
+    ]
 
     container.database.execute(
         """

@@ -64,7 +64,7 @@ def test_027_fresh_schema_enforces_enterprise_and_identity_invariants() -> None:
             default_migrations_dir(),
             migrator_build="dingtalk-enterprise-test",
         ).run()
-        assert result.head == "027"
+        assert result.head == "033"
         timestamp = "2026-08-03T00:00:00+00:00"
         database.execute(
             """
@@ -150,7 +150,8 @@ def test_027_upgrade_preserves_ones_identity_credential_and_team_ids(
 ) -> None:
     migrations_dir = default_migrations_dir()
     for path in migrations_dir.glob("*.sql"):
-        if not path.name.startswith("027_"):
+        migration_version = int(path.name[:3])
+        if migration_version < 27:
             shutil.copy2(path, tmp_path / path.name)
     database = Database("sqlite:///:memory:")
     try:

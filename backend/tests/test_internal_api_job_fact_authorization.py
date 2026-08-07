@@ -9,11 +9,13 @@ from fastapi.testclient import TestClient
 from app.modules.internal_api_platform.app import create_app
 from app.modules.internal_api_platform.application.platform_service import PlatformService
 from app.modules.internal_api_platform.domain.access import AccessPolicy
+from app.modules.internal_api_platform.domain.addressing import RevisionResource
 from app.modules.internal_api_platform.domain.topology import (
     Base,
     DatabaseConnection,
     DatabaseEngine,
     Environment,
+    ResourceKind,
     Topology,
 )
 from app.modules.internal_api_platform.infrastructure.db.executor import FakeQueryExecutor
@@ -59,6 +61,7 @@ def _headers(
     user_id: str = "user_local_admin",
     project_code: str = "default",
     application_id: str = "",
+    tool_call_id: str = "",
 ) -> dict[str, str]:
     headers = {
         "authorization": f"Bearer {SERVICE_TOKEN}",
@@ -68,6 +71,8 @@ def _headers(
     }
     if application_id:
         headers["x-agent-application-id"] = application_id
+    if tool_call_id:
+        headers["x-agent-tool-call-id"] = tool_call_id
     return headers
 
 
@@ -125,6 +130,12 @@ def test_internal_api_requires_token_and_authoritative_job_facts(
         correlation_id="correlation-job-fact-integration",
     )
     assert job.status is JobStatus.PENDING
+    frozen = runtime.builtin_tool_snapshot_service.verify(job.id)
+    database_revision_id = str(
+        frozen["snapshot"]["bindings"][0]["candidates"][0][
+            "resource_revision_id"
+        ]
+    )
 
     token_path = tmp_path / "internal-api-token.json"
     token_path.write_text(
@@ -144,7 +155,21 @@ def test_internal_api_requires_token_and_authoritative_job_facts(
         }
     )
     service = PlatformService(
-        registry=TopologyRegistry(topology),
+        registry=TopologyRegistry(
+            topology,
+            revision_resources={
+                database_revision_id: RevisionResource(
+                    resource_revision_id=database_revision_id,
+                    resource_id="resource-job-fact-database-exact",
+                    environment_code="local",
+                    base_code="debug-base",
+                    workshop_code="",
+                    kind=ResourceKind.DATABASE,
+                    engine=DatabaseEngine.MYSQL,
+                    database=_database_base("debug-base").database,
+                )
+            },
+        ),
         access_policy=AccessPolicy(),
         executors={DatabaseEngine.MYSQL: executor},
         schema_inspector_factory=SchemaInspectorFactory(
@@ -224,13 +249,33 @@ def test_internal_api_requires_token_and_authoritative_job_facts(
             headers=_headers(job_id=job.id),
             base="other-base",
         )
+        forged_resource_revision = client.post(
+            "/tools/database/query",
+            headers=_headers(job_id=job.id),
+            json={
+                "environment": "local",
+                "base": "debug-base",
+                "sql": "select result from diagnostic_result",
+                "resource_revision_id": "resource-forged",
+            },
+        )
 
         assert executor.calls == []
+        tool_call_id = runtime.agent_repository.add_tool_call(
+            job_id=job.id,
+            tool_name="query_database",
+            request_payload={"environment": "local", "base": "debug-base"},
+            response_summary={"status": "STARTED"},
+            status="STARTED",
+            duration_ms=0,
+            risk_level="medium",
+        )
         valid = _query(
             client,
             headers=_headers(
                 job_id=job.id,
                 application_id=selection["application_id"],
+                tool_call_id=tool_call_id,
             ),
         )
 
@@ -243,6 +288,7 @@ def test_internal_api_requires_token_and_authoritative_job_facts(
         forged_application,
         forged_scope,
         unauthorized_resource,
+        forged_resource_revision,
     ):
         assert denied.status_code == 403
         assert denied.json()["detail"]["error"]["code"] == "access_denied"

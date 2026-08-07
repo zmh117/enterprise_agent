@@ -32,8 +32,7 @@ class ExternalIOInUnitOfWorkError(RuntimeError):
 def assert_external_io_allowed(operation: str) -> None:
     if _ACTIVE_UNIT_OF_WORK_DEPTH.get() > 0:
         raise ExternalIOInUnitOfWorkError(
-            f"External I/O is not allowed inside a database Unit of Work: "
-            f"{operation}"
+            f"External I/O is not allowed inside a database Unit of Work: {operation}"
         )
 
 
@@ -89,9 +88,7 @@ class _SQLiteConnectionPool:
         )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute(
-            f"PRAGMA busy_timeout = {max(1, int(self._timeout_seconds * 1000))}"
-        )
+        connection.execute(f"PRAGMA busy_timeout = {max(1, int(self._timeout_seconds * 1000))}")
         return connection
 
     def _acquire(self) -> sqlite3.Connection:
@@ -116,9 +113,7 @@ class _SQLiteConnectionPool:
                 try:
                     connection = self._idle.get(timeout=self._timeout_seconds)
                 except Empty as exc:
-                    raise TimeoutError(
-                        "Timed out waiting for a database connection"
-                    ) from exc
+                    raise TimeoutError("Timed out waiting for a database connection") from exc
         with self._lock:
             if self._closed:
                 connection.close()
@@ -279,15 +274,11 @@ class UnitOfWork:
         try:
             if self._parent is None:
                 self.connection.execute(
-                    "BEGIN IMMEDIATE"
-                    if self.database.engine == "sqlite"
-                    else "BEGIN"
+                    "BEGIN IMMEDIATE" if self.database.engine == "sqlite" else "BEGIN"
                 )
             else:
                 if self.connection is not self._parent.connection:
-                    raise RuntimeError(
-                        "Nested Unit of Work must reuse the parent connection"
-                    )
+                    raise RuntimeError("Nested Unit of Work must reuse the parent connection")
                 self._savepoint = f"uow_{uuid.uuid4().hex}"
                 self.connection.execute(f"SAVEPOINT {self._savepoint}")
             self._token = self.database._active_uow.set(self)
@@ -307,11 +298,7 @@ class UnitOfWork:
         exc_value: BaseException | None,
         traceback: Any,
     ) -> bool:
-        if (
-            self.connection is None
-            or self._token is None
-            or self._external_io_token is None
-        ):
+        if self.connection is None or self._token is None or self._external_io_token is None:
             raise RuntimeError("Unit of Work was not entered")
         try:
             if self._parent is None:
@@ -322,9 +309,7 @@ class UnitOfWork:
             elif exc_type is None:
                 self.connection.execute(f"RELEASE SAVEPOINT {self._savepoint}")
             else:
-                self.connection.execute(
-                    f"ROLLBACK TO SAVEPOINT {self._savepoint}"
-                )
+                self.connection.execute(f"ROLLBACK TO SAVEPOINT {self._savepoint}")
                 self.connection.execute(f"RELEASE SAVEPOINT {self._savepoint}")
         finally:
             _ACTIVE_UNIT_OF_WORK_DEPTH.reset(self._external_io_token)
@@ -376,9 +361,7 @@ class Database:
         with self._pool_lock:
             if self._pool is None:
                 pool_type = (
-                    _SQLiteConnectionPool
-                    if self.engine == "sqlite"
-                    else _PostgresConnectionPool
+                    _SQLiteConnectionPool if self.engine == "sqlite" else _PostgresConnectionPool
                 )
                 self._pool = pool_type(
                     self.dsn,
@@ -473,10 +456,10 @@ class Database:
         with self.session() as connection:
             implicit = self.current_unit_of_work is None
             for statement in self._split_statements(script):
-                if (
-                    self.engine == "sqlite"
-                    and self._is_postgres_comment_statement(statement)
-                ):
+                statement = self._statement_for_engine(statement)
+                if statement is None:
+                    continue
+                if self.engine == "sqlite" and self._is_postgres_comment_statement(statement):
                     continue
                 try:
                     cursor = connection.execute(statement)
@@ -484,12 +467,9 @@ class Database:
                     if implicit and self.engine == "sqlite":
                         connection.commit()
                 except Exception as exc:
-                    if (
-                        not ignore_existing_errors
-                        or not self._is_ignorable_migration_error(
-                            exc,
-                            statement=statement,
-                        )
+                    if not ignore_existing_errors or not self._is_ignorable_migration_error(
+                        exc,
+                        statement=statement,
                     ):
                         if implicit:
                             connection.rollback()
@@ -507,11 +487,7 @@ class Database:
         return sql
 
     def _split_statements(self, script: str) -> list[str]:
-        return [
-            statement.strip()
-            for statement in script.split(";")
-            if statement.strip()
-        ]
+        return [statement.strip() for statement in script.split(";") if statement.strip()]
 
     def _is_ignorable_migration_error(
         self,
@@ -525,10 +501,7 @@ class Database:
             normalized_statement.startswith("alter table ")
             and " rename column " in normalized_statement
             and " to " in normalized_statement
-            and (
-                "no such column" in message
-                or "does not exist" in message
-            )
+            and ("no such column" in message or "does not exist" in message)
         )
         return (
             "duplicate column" in message
@@ -540,6 +513,13 @@ class Database:
 
     def _is_postgres_comment_statement(self, statement: str) -> bool:
         return statement.lstrip().upper().startswith("COMMENT ON ")
+
+    def _statement_for_engine(self, statement: str) -> str | None:
+        if "-- sqlite-only" in statement:
+            return statement if self.engine == "sqlite" else None
+        if "-- postgres-only" in statement:
+            return statement if self.engine == "postgres" else None
+        return statement
 
 
 def operation_unit_of_work(

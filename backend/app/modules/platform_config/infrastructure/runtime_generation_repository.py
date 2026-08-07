@@ -72,10 +72,10 @@ class RuntimeGenerationRepository:
               join business_application_publication p
                 on p.id = d.publication_id
               join business_application a on a.id = p.application_id
-              join business_application_publication_handler h
-                on h.application_publication_id = p.id
-              join business_application_publication_resource r
-                on r.application_handler_id = h.id
+              join business_application_publication_builtin_tool tool
+                on tool.application_publication_id = p.id
+              join business_application_publication_builtin_tool_resource r
+                on r.application_tool_id = tool.id
              where d.active = 1
                and a.status = 'enabled'
              order by p.id, r.resource_revision_id

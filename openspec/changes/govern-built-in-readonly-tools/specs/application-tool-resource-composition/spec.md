@@ -45,8 +45,27 @@ Application Publication SHALL 为每个被选工具的必需逻辑资源槽冻�
 - **WHEN** 目标资源没有云边区分
 - **THEN** Mapping 的 placement 必须缺省，提交 `none`、`default` 或其它占位值时发布失败
 
+### Requirement: Application Draft 必须显式声明有限叶子目标
+Application Draft SHALL 显式保存允许执行的真实叶子 `target_paths`，每条路径 MUST 是当前启用的 Environment leaf、Base leaf 或 Workshop leaf；系统 MUST NOT 从 Resource Mapping、角色 Grant 或当前 topology 全量反向推导应用目标。
+
+#### Scenario: 显式选择 GL001 和 GL002
+- **WHEN** 管理员把 `sanjiu/guanlan/GL001` 与 `sanjiu/guanlan/GL002` 保存为应用目标
+- **THEN** Draft 冻结两个精确 topology 目标，发布器只为这两个目标展开资源矩阵
+
+#### Scenario: 选择仍有 Workshop 的 Base
+- **WHEN** 管理员把仍包含启用 Workshop 的 Base 作为叶子目标提交
+- **THEN** 系统拒绝保存并要求选择实际 Workshop 叶子
+
+#### Scenario: Mapping 指向清单外目标
+- **WHEN** Resource Mapping 不覆盖任何显式 `target_paths` 或试图隐式增加目标
+- **THEN** Application Publish 拒绝且不扩大应用目标范围
+
+#### Scenario: Topology 后续新增叶子
+- **WHEN** Application Publication 发布后同一 Base 新增 Workshop
+- **THEN** 新 Workshop 不自动进入既有 Publication，必须显式更新 Draft 目标并重新发布
+
 ### Requirement: Application Publish 必须证明每个有效组合唯一可解析
-发布器 MUST 展开所有已选工具、必需资源槽、应用叶子目标和已配置 placement，并验证每个有效组合恰好命中一个 Mapping；零命中、多个命中、范围重叠、策略不匹配或非 Published 依赖均 MUST 阻止发布。
+发布器 MUST 展开所有已选工具、必需资源槽、Application Draft 显式声明的有限叶子目标和已配置 placement，并验证每个有效组合恰好命中一个 Mapping；零命中、多个命中、范围重叠、策略不匹配或非 Published 依赖均 MUST 阻止发布。
 
 #### Scenario: 必需资源缺失
 - **WHEN** 某 Workshop 的数据库 slot 没有可继承的 Published Resource Revision

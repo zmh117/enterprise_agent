@@ -34,7 +34,7 @@ const csrfCookieName =
 
 export async function apiRequest<T>(
   path: string,
-  options: RequestOptions = {},
+  options: RequestOptions = {}
 ): Promise<T> {
   const method = (options.method ?? "GET").toUpperCase()
   const headers = new Headers(options.headers)
@@ -55,7 +55,8 @@ export async function apiRequest<T>(
       method,
       headers,
       credentials: "include",
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      body:
+        options.body === undefined ? undefined : JSON.stringify(options.body),
     })
   } catch {
     throw new ApiError({
@@ -97,9 +98,16 @@ async function readJson(response: Response): Promise<unknown> {
 function toApiError(status: number, payload: unknown): ApiError {
   const body = isRecord(payload) ? payload : {}
   const rawDetail = body.detail
-  const detail = isRecord(rawDetail)
-    ? rawDetail
-    : { message: typeof rawDetail === "string" ? rawDetail : "" }
+  const detailRecord = isRecord(rawDetail) ? rawDetail : null
+  const nestedError =
+    detailRecord && isRecord(detailRecord.error) ? detailRecord.error : null
+  const detail =
+    nestedError ??
+    detailRecord ??
+    ({ message: typeof rawDetail === "string" ? rawDetail : "" } as Record<
+      string,
+      unknown
+    >)
   const code =
     typeof detail.code === "string"
       ? detail.code

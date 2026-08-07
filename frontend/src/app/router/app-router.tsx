@@ -18,6 +18,7 @@ import {
 import { DebugJobPage } from "@/contexts/operations/presentation/debug-job-page"
 import { CredentialCenterPage } from "@/contexts/platform-governance/presentation/credential-center-page"
 import { ToolResourcesPage } from "@/contexts/platform-governance/presentation/tool-resources-page"
+import { BuiltinToolsPage } from "@/contexts/platform-governance/presentation/builtin-tools-page"
 import { UserDetailPage, UsersPage } from "@/contexts/users"
 import { DingTalkIdentityDiscoveryPage } from "@/contexts/dingtalk-identity-discovery"
 import { RoleAuthorizationPage, RoleDetailPage } from "@/contexts/authorization"
@@ -107,8 +108,12 @@ export const appRouter = createBrowserRouter([
         path: "/platform/api-capabilities",
         element: protectedPage(
           "api_capabilities.read",
-          <ApiCapabilityConfigurationPage />,
+          <ApiCapabilityConfigurationPage />
         ),
+      },
+      {
+        path: "/platform/builtin-tools",
+        element: protectedPage("builtin_tools.read", <BuiltinToolsPage />),
       },
       {
         path: "/platform/secrets",

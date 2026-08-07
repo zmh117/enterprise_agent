@@ -97,6 +97,8 @@ class RevisionResponse(BaseModel):
     deliveries: list[DeliveryResponse] = Field(default_factory=list)
     capabilities: list[CapabilityResponse] = Field(default_factory=list)
     api_capability_release_ids: list[str] = Field(default_factory=list)
+    builtin_tools: list[dict[str, Any]] = Field(default_factory=list)
+    target_paths: list[dict[str, Any]] = Field(default_factory=list)
     created_by: str = ""
     created_at: str = ""
     updated_at: str = ""
@@ -192,6 +194,15 @@ class CatalogResponse(BaseModel):
     api_capabilities_by_agent_publication: dict[
         str, list[dict[str, Any]]
     ] = Field(default_factory=dict)
+    builtin_tools_by_agent_publication: dict[
+        str, list[dict[str, Any]]
+    ] = Field(default_factory=dict)
+    resource_revisions: list[dict[str, Any]] = Field(default_factory=list)
+    workshop_policy_revisions: list[dict[str, Any]] = Field(
+        default_factory=list
+    )
+    loki_policy_revisions: list[dict[str, Any]] = Field(default_factory=list)
+    target_paths: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class EffectiveApplicationResponse(BaseModel):
@@ -273,21 +284,37 @@ class CapabilityRequest(StrictRequest):
     enabled: bool = True
 
 
-class HandlerResourceBindingRequest(StrictRequest):
+class BuiltinToolResourceMappingRequest(StrictRequest):
     resource_slot: str = Field(min_length=1, max_length=120)
+    target_scope_type: Literal["global", "environment", "base", "workshop"]
+    environment_code: str = Field(default="", max_length=128)
+    base_code: str = Field(default="", max_length=128)
+    workshop_code: str = Field(default="", max_length=128)
+    placement: Literal["cloud", "edge"] | None = None
     resource_revision_id: str = Field(min_length=1, max_length=200)
-    constraints: dict[str, str | int] = Field(default_factory=dict)
-
-
-class HandlerBindingRequest(StrictRequest):
-    capability_code: str = Field(min_length=2, max_length=120)
-    handler_id: str = Field(min_length=2, max_length=128)
-    handler_version: str = Field(min_length=5, max_length=80)
-    constraints: dict[str, str | int] = Field(default_factory=dict)
-    resources: list[HandlerResourceBindingRequest] = Field(
-        default_factory=list,
-        max_length=20,
+    workshop_partition_policy_revision_id: str = Field(
+        default="",
+        max_length=200,
     )
+    loki_scope_policy_revision_id: str = Field(
+        default="",
+        max_length=200,
+    )
+
+
+class BuiltinToolSelectionRequest(StrictRequest):
+    tool_release_id: str = Field(min_length=1, max_length=200)
+    resources: list[BuiltinToolResourceMappingRequest] = Field(
+        default_factory=list,
+        max_length=100,
+    )
+
+
+class BusinessTargetPathRequest(StrictRequest):
+    target_scope_type: Literal["environment", "base", "workshop"]
+    environment_code: str = Field(min_length=1, max_length=128)
+    base_code: str = Field(default="", max_length=128)
+    workshop_code: str = Field(default="", max_length=128)
 
 
 class SaveDraftRequest(StrictRequest):
@@ -303,6 +330,14 @@ class SaveDraftRequest(StrictRequest):
         default_factory=list,
         max_length=100,
     )
+    builtin_tools: list[BuiltinToolSelectionRequest] = Field(
+        default_factory=list,
+        max_length=100,
+    )
+    target_paths: list[BusinessTargetPathRequest] = Field(
+        default_factory=list,
+        max_length=500,
+    )
 
 
 class ValidateRequest(StrictRequest):
@@ -311,10 +346,6 @@ class ValidateRequest(StrictRequest):
 
 class PublishRequest(StrictRequest):
     revision_id: str = Field(min_length=1, max_length=200)
-    handler_bindings: list[HandlerBindingRequest] = Field(
-        default_factory=list,
-        max_length=100,
-    )
 
 
 class ActivateRequest(StrictRequest):
@@ -461,10 +492,9 @@ def build_business_application_router() -> APIRouter:
                 actor_id=principal.user_id,
                 code=code,
                 revision_id=payload.revision_id,
-                handler_bindings=[
-                    item.model_dump()
-                    for item in payload.handler_bindings
-                ],
+                correlation_id=str(
+                    getattr(request.state, "correlation_id", "") or ""
+                ),
             )
         except Exception as exc:
             raise _http_error(exc) from exc

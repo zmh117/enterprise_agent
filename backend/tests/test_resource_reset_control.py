@@ -33,7 +33,9 @@ def test_resource_reset_report_is_exact_read_only_and_secret_safe() -> None:
         assert report["targets"]
         assert report["counts"]["resource"] == 1
         assert report["counts"]["revision"] == 1
-        assert report["counts"]["handler_resource_binding"] == 1
+        assert report["counts"]["builtin_tool_resource_mapping"] == 1
+        assert report["counts"]["builtin_tool_draft_resource_mapping"] == 1
+        assert report["counts"]["builtin_tool_resolution"] == 1
         assert report["counts"]["resource_runtime_state"] == 1
         assert report["counts"]["application_runtime_state"] == 1
         assert report["affected_applications"] == [

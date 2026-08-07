@@ -56,7 +56,13 @@ class UnsupportedSchemaInspector:
 
 
 class FakeSchemaInspector:
-    def __init__(self, tables: list[SchemaTable] | None = None) -> None:
+    def __init__(
+        self,
+        tables: list[SchemaTable] | None = None,
+        *,
+        engine: DatabaseEngine = DatabaseEngine.MYSQL,
+    ) -> None:
+        self.engine = engine
         self.tables = (
             tables
             if tables is not None
@@ -96,7 +102,12 @@ class FakeSchemaInspector:
                 "query": query,
             }
         )
-        tables = _filter_tables(self.tables, table_prefix=table_prefix, query=query)
+        tables = _filter_tables(
+            self.tables,
+            table_prefix=table_prefix,
+            query=query,
+            engine=self.engine,
+        )
         truncated = len(tables) > table_limit
         bounded = [
             SchemaTable(table.name, table.columns[:column_limit]) for table in tables[:table_limit]
@@ -135,14 +146,14 @@ class MySqlSchemaInspector:
             raise UpstreamUnavailable("MySQL schema inspection connection failed") from exc
         cur: Any | None = None
         try:
-            like_prefix = f"{table_prefix}%" if table_prefix else "%"
+            like_prefix = _like_prefix(table_prefix)
             cur = conn.cursor()
             cur.execute(
                 """
                 select table_name, column_name, data_type, is_nullable
                 from information_schema.columns
                 where table_schema = %s
-                  and table_name like %s
+                  and table_name like %s escape '\\'
                 order by table_name, ordinal_position
                 """,
                 (db.database, like_prefix),
@@ -151,12 +162,20 @@ class MySqlSchemaInspector:
             columns_truncated = False
             for table_name, column_name, data_type, is_nullable in cur.fetchall():
                 table = str(table_name)
+                if not table_name_has_prefix(
+                    table,
+                    table_prefix,
+                    engine=DatabaseEngine.MYSQL,
+                ):
+                    continue
                 if query and query.lower() not in table.lower():
                     continue
                 columns = tables.setdefault(table, [])
                 if len(columns) < column_limit:
                     columns.append(
-                        SchemaColumn(str(column_name), str(data_type), str(is_nullable).upper() == "YES")
+                        SchemaColumn(
+                            str(column_name), str(data_type), str(is_nullable).upper() == "YES"
+                        )
                     )
                 else:
                     columns_truncated = True
@@ -195,9 +214,7 @@ class OracleSchemaInspector:
 
         owner = self._owner(db.schema or db.user)
         if str(getattr(db, "connect_descriptor", "") or "").strip():
-            raise ResolutionError(
-                "Arbitrary Oracle connect descriptors are not allowed"
-            )
+            raise ResolutionError("Arbitrary Oracle connect descriptors are not allowed")
         dsn = (
             build_oracle_dsn(
                 host=db.host,
@@ -245,7 +262,12 @@ class OracleSchemaInspector:
                 },
             )
             raw_names = [str(row[0]) for row in cursor.fetchall()]
-            names = _filter_table_names(raw_names, table_prefix=table_prefix, query=query)
+            names = _filter_table_names(
+                raw_names,
+                table_prefix=table_prefix,
+                query=query,
+                engine=DatabaseEngine.ORACLE,
+            )
             truncated = len(names) > table_limit
             selected = names[:table_limit]
             if not selected:
@@ -338,7 +360,12 @@ class SqlServerSchemaInspector:
                 ),
             )
             raw_names = [str(row[0]) for row in cursor.fetchall()]
-            names = _filter_table_names(raw_names, table_prefix=table_prefix, query=query)
+            names = _filter_table_names(
+                raw_names,
+                table_prefix=table_prefix,
+                query=query,
+                engine=DatabaseEngine.SQLSERVER,
+            )
             truncated = len(names) > table_limit
             selected = names[:table_limit]
             if not selected:
@@ -376,12 +403,20 @@ class SqlServerSchemaInspector:
 
 
 def _filter_tables(
-    tables: list[SchemaTable], *, table_prefix: str | None, query: str
+    tables: list[SchemaTable],
+    *,
+    table_prefix: str | None,
+    query: str,
+    engine: DatabaseEngine,
 ) -> list[SchemaTable]:
     lowered_query = query.lower().strip()
     result = []
     for table in tables:
-        if table_prefix and not table.name.lower().startswith(table_prefix.lower()):
+        if not table_name_has_prefix(
+            table.name,
+            table_prefix,
+            engine=engine,
+        ):
             continue
         if lowered_query and lowered_query not in table.name.lower():
             continue
@@ -414,16 +449,34 @@ def _like_contains(value: str, *, uppercase: bool = False) -> str:
 
 
 def _filter_table_names(
-    names: list[str], *, table_prefix: str | None, query: str
+    names: list[str],
+    *,
+    table_prefix: str | None,
+    query: str,
+    engine: DatabaseEngine,
 ) -> list[str]:
-    lowered_prefix = str(table_prefix or "").lower()
     lowered_query = str(query or "").strip().lower()
     return [
         name
         for name in names
-        if (not lowered_prefix or name.lower().startswith(lowered_prefix))
+        if table_name_has_prefix(name, table_prefix, engine=engine)
         and (not lowered_query or lowered_query in name.lower())
     ]
+
+
+def table_name_has_prefix(
+    table_name: str,
+    table_prefix: str | None,
+    *,
+    engine: DatabaseEngine,
+) -> bool:
+    """Apply a literal prefix using the engine's unquoted identifier folding."""
+
+    if not table_prefix:
+        return True
+    if engine is DatabaseEngine.ORACLE:
+        return str(table_name).upper().startswith(str(table_prefix).upper())
+    return str(table_name).casefold().startswith(str(table_prefix).casefold())
 
 
 def _tables_from_column_rows(

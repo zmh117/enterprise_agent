@@ -11,9 +11,7 @@ from typing import Any
 from app.shared.database import Database
 
 
-MIGRATION_FILENAME = re.compile(
-    r"^(?P<version>[0-9]{3}[a-z]?)_(?P<name>[a-z0-9][a-z0-9_]*)\.sql$"
-)
+MIGRATION_FILENAME = re.compile(r"^(?P<version>[0-9]{3}[a-z]?)_(?P<name>[a-z0-9][a-z0-9_]*)\.sql$")
 LEGACY_BASELINE_HEAD = "018"
 
 
@@ -103,14 +101,11 @@ def load_migration_catalog(migrations_dir: Path) -> tuple[MigrationArtifact, ...
     for path in migrations_dir.glob("*.sql"):
         match = MIGRATION_FILENAME.fullmatch(path.name)
         if match is None:
-            raise MigrationDefinitionError(
-                f"Invalid migration filename: {path.name}"
-            )
+            raise MigrationDefinitionError(f"Invalid migration filename: {path.name}")
         version = match.group("version")
         if version in versions:
             raise MigrationDefinitionError(
-                "Duplicate migration version "
-                f"{version}: {versions[version]}, {path.name}"
+                f"Duplicate migration version {version}: {versions[version]}, {path.name}"
             )
         if path.name in names:
             raise MigrationDefinitionError(f"Duplicate migration name: {path.name}")
@@ -126,9 +121,7 @@ def load_migration_catalog(migrations_dir: Path) -> tuple[MigrationArtifact, ...
         versions[version] = path.name
         names.add(path.name)
     if not artifacts:
-        raise MigrationDefinitionError(
-            f"No migration files found in {migrations_dir}"
-        )
+        raise MigrationDefinitionError(f"No migration files found in {migrations_dir}")
     artifacts.sort(key=lambda item: migration_version_key(item.version))
     return tuple(artifacts)
 
@@ -140,14 +133,10 @@ def legacy_baseline_artifacts(
 ) -> tuple[MigrationArtifact, ...]:
     expected_key = migration_version_key(head)
     baseline = tuple(
-        artifact
-        for artifact in catalog
-        if migration_version_key(artifact.version) <= expected_key
+        artifact for artifact in catalog if migration_version_key(artifact.version) <= expected_key
     )
     if not baseline or baseline[-1].version != head:
-        raise MigrationDefinitionError(
-            f"Legacy baseline head is missing: {head}"
-        )
+        raise MigrationDefinitionError(f"Legacy baseline head is missing: {head}")
     return baseline
 
 
@@ -156,10 +145,7 @@ def schema_expectations(
 ) -> MigrationSchemaExpectations:
     sql = "\n".join(artifact.sql for artifact in artifacts)
     return MigrationSchemaExpectations(
-        tables=frozenset(
-            match.group("table").lower()
-            for match in CREATE_TABLE.finditer(sql)
-        ),
+        tables=frozenset(match.group("table").lower() for match in CREATE_TABLE.finditer(sql)),
         columns=frozenset(
             (
                 match.group("table").lower(),
@@ -167,10 +153,7 @@ def schema_expectations(
             )
             for match in ADD_COLUMN.finditer(sql)
         ),
-        indexes=frozenset(
-            match.group("index").lower()
-            for match in CREATE_INDEX.finditer(sql)
-        ),
+        indexes=frozenset(match.group("index").lower() for match in CREATE_INDEX.finditer(sql)),
     )
 
 
@@ -210,9 +193,7 @@ class SchemaMigrationLedger:
         self._validate_legacy_schema(schema_expectations(baseline))
         applied_at = datetime.now(UTC).isoformat()
         with self.database.unit_of_work():
-            if self.database.execute_one(
-                "select version from schema_migration limit 1"
-            ):
+            if self.database.execute_one("select version from schema_migration limit 1"):
                 raise MigrationDefinitionError(
                     "Migration ledger changed during compatibility baseline"
                 )
@@ -239,10 +220,7 @@ class SchemaMigrationLedger:
         records: list[dict[str, Any]],
         baseline: tuple[MigrationArtifact, ...],
     ) -> None:
-        expected = {
-            artifact.version: (artifact.name, artifact.checksum)
-            for artifact in baseline
-        }
+        expected = {artifact.version: (artifact.name, artifact.checksum) for artifact in baseline}
         actual = {
             str(row["version"]): (
                 str(row["name"]),
@@ -254,8 +232,7 @@ class SchemaMigrationLedger:
         }
         if actual != expected:
             raise MigrationDefinitionError(
-                "Existing migration compatibility baseline does not match "
-                "the repository catalog"
+                "Existing migration compatibility baseline does not match the repository catalog"
             )
 
     def _validate_legacy_schema(
@@ -273,8 +250,7 @@ class SchemaMigrationLedger:
                 *(f"index:{name}" for name in missing_indexes),
             ]
             raise MigrationDefinitionError(
-                "Legacy schema cannot be baselined; missing "
-                + ", ".join(details[:20])
+                "Legacy schema cannot be baselined; missing " + ", ".join(details[:20])
             )
         nonlocal_deployments = self.database.execute_one(
             """
@@ -307,21 +283,15 @@ class SchemaMigrationLedger:
                 """
             )
             tables = frozenset(
-                str(row["name"]).lower()
-                for row in objects
-                if row["type"] == "table"
+                str(row["name"]).lower() for row in objects if row["type"] == "table"
             )
             indexes = frozenset(
-                str(row["name"]).lower()
-                for row in objects
-                if row["type"] == "index"
+                str(row["name"]).lower() for row in objects if row["type"] == "index"
             )
             columns = frozenset(
                 (table, str(row["name"]).lower())
                 for table in tables
-                for row in self.database.execute(
-                    f'pragma table_info("{table}")'
-                )
+                for row in self.database.execute(f'pragma table_info("{table}")')
             )
             return tables, columns, indexes
 
@@ -347,9 +317,7 @@ class SchemaMigrationLedger:
             for row in column_rows
         )
         tables = frozenset(table for table, _ in columns)
-        indexes = frozenset(
-            str(row["indexname"]).lower() for row in index_rows
-        )
+        indexes = frozenset(str(row["indexname"]).lower() for row in index_rows)
         return tables, columns, indexes
 
 
@@ -391,7 +359,7 @@ class Migrator:
                     records = ledger.list_records()
                 self._validate_applied_prefix(records, catalog)
                 applied: list[str] = []
-                for artifact in catalog[len(records):]:
+                for artifact in catalog[len(records) :]:
                     self._apply_one(artifact)
                     applied.append(artifact.version)
                 return MigrationRunResult(
@@ -425,7 +393,13 @@ class Migrator:
 
     def _apply_one(self, artifact: MigrationArtifact) -> None:
         started = time.monotonic()
+        sqlite_foreign_keys_off = (
+            self.database.engine == "sqlite"
+            and "-- migration: sqlite-foreign-keys-off" in artifact.sql
+        )
         try:
+            if sqlite_foreign_keys_off:
+                self.database.execute("PRAGMA foreign_keys = OFF")
             with self.database.unit_of_work():
                 self.database.execute_script(
                     artifact.sql,
@@ -456,6 +430,9 @@ class Migrator:
             raise MigrationExecutionError(
                 f"Migration {artifact.version} failed and was rolled back"
             ) from exc
+        finally:
+            if sqlite_foreign_keys_off:
+                self.database.execute("PRAGMA foreign_keys = ON")
 
     def _application_schema_exists(self) -> bool:
         if self.database.engine == "sqlite":
@@ -510,8 +487,7 @@ class SchemaHeadValidator:
         try:
             if not self._ledger_exists():
                 raise SchemaHeadError(
-                    "Database schema ledger is missing; "
-                    f"expected head {expected_head}"
+                    f"Database schema ledger is missing; expected head {expected_head}"
                 )
             records = SchemaMigrationLedger(self.database).read_records()
             Migrator(
@@ -519,13 +495,10 @@ class SchemaHeadValidator:
                 self.migrations_dir,
                 migrator_build="schema-head-validator",
             )._validate_applied_prefix(records, catalog)
-            current_head = (
-                str(records[-1]["version"]) if records else "none"
-            )
+            current_head = str(records[-1]["version"]) if records else "none"
             if len(records) != len(catalog):
                 raise SchemaHeadError(
-                    f"Database schema head is {current_head}; "
-                    f"expected {expected_head}"
+                    f"Database schema head is {current_head}; expected {expected_head}"
                 )
             return expected_head
         except SchemaHeadError:
@@ -534,8 +507,7 @@ class SchemaHeadValidator:
             raise SchemaHeadError(str(exc)) from exc
         except Exception as exc:
             raise SchemaHeadError(
-                "Database schema head could not be read; "
-                f"expected {expected_head}"
+                f"Database schema head could not be read; expected {expected_head}"
             ) from exc
 
     def _ledger_exists(self) -> bool:

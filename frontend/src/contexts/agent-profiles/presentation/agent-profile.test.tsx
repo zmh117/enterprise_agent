@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { describe, expect, it, vi } from "vitest"
 
@@ -44,6 +50,7 @@ const config = {
     delivery: ["connector-dingtalk-stream-default"],
   },
   api_capability_release_ids: [],
+  builtin_tool_release_ids: [],
 }
 
 const modelConfig = {
@@ -106,7 +113,7 @@ function agentPayload(
     enabled: boolean | number
     allow_ingress: boolean | number
     allow_delivery: boolean | number
-  }> = [],
+  }> = []
 ) {
   return {
     agent: {
@@ -152,6 +159,38 @@ function agentPayload(
             description: "搜索当前用户默认 Team 的 ONES 工作项",
             status: "ACTIVE",
             release_note: "首版",
+          },
+        ],
+        builtin_tool_releases: [
+          {
+            id: "builtin-tool-release-query-database-1",
+            tool_identifier: "query_database",
+            release_revision: 1,
+            tool_semantic_version: "1.0.0",
+            handler_version: "1.0.0",
+            implementation_digest: "a".repeat(64),
+            public_schema_hash: "b".repeat(64),
+            status: "ACTIVE",
+            display_name: "查询数据库",
+            model_description: "受治理的只读数据库查询",
+            installation_status: "INSTALLED",
+            health_status: "HEALTHY",
+            selectable: true,
+          },
+          {
+            id: "builtin-tool-release-query-redis-legacy",
+            tool_identifier: "query_redis_get",
+            release_revision: 1,
+            tool_semantic_version: "1.0.0",
+            handler_version: "1.0.0",
+            implementation_digest: "c".repeat(64),
+            public_schema_hash: "d".repeat(64),
+            status: "DEPRECATED",
+            display_name: "读取 Redis Key",
+            model_description: "受治理的 Redis GET",
+            installation_status: "INSTALLED",
+            health_status: "DEPRECATED",
+            selectable: false,
           },
         ],
       },
@@ -922,24 +961,83 @@ describe("Agent Profile management", () => {
         <MemoryRouter>
           <AgentProfilePage />
         </MemoryRouter>
-      </QueryClientProvider>,
+      </QueryClientProvider>
     )
 
     expect(
-      await screen.findByText("搜索当前用户默认 Team 的 ONES 工作项"),
+      await screen.findByText("搜索当前用户默认 Team 的 ONES 工作项")
     ).toBeInTheDocument()
     fireEvent.click(
       screen.getByRole("checkbox", {
         name: /搜索 ONES 工作项/,
-      }),
+      })
     )
     fireEvent.click(screen.getByRole("button", { name: "保存草稿" }))
 
     await waitFor(() =>
       expect(savedConfig).toMatchObject({
         api_capability_release_ids: ["capability-release-1"],
-      }),
+      })
     )
+  })
+
+  it("selects an exact healthy Built-in Tool Release and warns on deprecated health", async () => {
+    let savedConfig: Record<string, unknown> | undefined
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.includes("/model-connections/")) {
+        return response({ connection: modelConnection })
+      }
+      if (url.endsWith("/draft") && init?.method === "PUT") {
+        const body = JSON.parse(String(init.body)) as {
+          config: Record<string, unknown>
+        }
+        savedConfig = body.config
+        return response({
+          revision: {
+            ...agentPayload().agent.draft,
+            revision: 3,
+            config: body.config,
+          },
+        })
+      }
+      return response(agentPayload())
+    })
+
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: {
+              queries: { retry: false },
+              mutations: { retry: false },
+            },
+          })
+        }
+      >
+        <MemoryRouter>
+          <AgentProfilePage />
+        </MemoryRouter>
+      </QueryClientProvider>
+    )
+
+    expect(await screen.findByText("digest aaaaaaaaaaaa…")).toBeInTheDocument()
+    expect(screen.getByText(/DEPRECATED \/ 安装状态/)).toBeInTheDocument()
+    expect(
+      screen.getByRole("checkbox", { name: /读取 Redis Key/ })
+    ).toBeDisabled()
+    expect(screen.getByText(/历史草稿包含 legacy-v1 名称绑定/)).toHaveTextContent(
+      "get_er_context"
+    )
+    fireEvent.click(screen.getByRole("checkbox", { name: /查询数据库/ }))
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }))
+
+    await waitFor(() => {
+      expect(savedConfig).toMatchObject({
+        builtin_tool_release_ids: ["builtin-tool-release-query-database-1"],
+      })
+      expect(savedConfig).not.toHaveProperty("tools")
+    })
   })
 
   it("shows unavailable selected Connectors and blocks validation until changes are saved", async () => {
@@ -992,7 +1090,7 @@ describe("Agent Profile management", () => {
         <MemoryRouter>
           <AgentProfilePage />
         </MemoryRouter>
-      </QueryClientProvider>,
+      </QueryClientProvider>
     )
 
     expect(await screen.findByText("测试ai机器人")).toBeInTheDocument()
@@ -1007,31 +1105,25 @@ describe("Agent Profile management", () => {
     expect(replacement).not.toBeChecked()
     expect(
       within(ingress).getByText(
-        "Connector 已停用或删除，请取消选择后保存草稿。",
-      ),
+        "Connector 已停用或删除，请取消选择后保存草稿。"
+      )
     ).toBeInTheDocument()
 
     fireEvent.click(unavailable)
     fireEvent.click(replacement)
 
     expect(
-      screen.getByText("当前修改尚未保存，请先保存草稿，再校验和发布。"),
+      screen.getByText("当前修改尚未保存，请先保存草稿，再校验和发布。")
     ).toBeInTheDocument()
-    expect(
-      screen.getByRole("button", { name: "校验当前草稿" }),
-    ).toBeDisabled()
+    expect(screen.getByRole("button", { name: "校验当前草稿" })).toBeDisabled()
     expect(screen.getByRole("button", { name: "发布 Agent" })).toBeDisabled()
 
     fireEvent.click(screen.getByRole("button", { name: "保存草稿" }))
     await waitFor(() =>
-      expect(savedConfig?.channels.ingress).toEqual([
-        replacementConnector.id,
-      ]),
+      expect(savedConfig?.channels.ingress).toEqual([replacementConnector.id])
     )
     expect(
-      fetchSpy.mock.calls.some(([input]) =>
-        String(input).endsWith("/validate"),
-      ),
+      fetchSpy.mock.calls.some(([input]) => String(input).endsWith("/validate"))
     ).toBe(false)
   })
 })

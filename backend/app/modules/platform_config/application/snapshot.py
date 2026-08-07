@@ -204,6 +204,13 @@ class PlatformTopologySnapshotBuilder:
                         "loki_labels": workshop.get("loki_labels") or {},
                         "aliases": workshop.get("aliases") or [],
                         "resources": resources_by_scope.get(str(workshop["id"]), []),
+                        "target_level": "workshop",
+                        "is_leaf": True,
+                        "target_path": {
+                            "environment": workshop["environment_code"],
+                            "base": workshop["base_code"],
+                            "workshop": workshop["code"],
+                        },
                     }
                 )
             bases_by_environment.setdefault(str(base["environment_id"]), []).append(
@@ -214,18 +221,33 @@ class PlatformTopologySnapshotBuilder:
                     "aliases": base.get("aliases") or [],
                     "resources": base_resources,
                     "workshops": base_workshops,
+                    "target_level": "base",
+                    "is_leaf": not base_workshops,
+                    "target_path": {
+                        "environment": base["environment_code"],
+                        "base": base["code"],
+                    },
                 }
             )
 
         result = []
         for environment in self.repository.list_environments(include_disabled=False):
+            environment_bases = bases_by_environment.get(
+                str(environment["id"]),
+                [],
+            )
             result.append(
                 {
                     "code": environment["code"],
                     "display_name": environment.get("display_name") or "",
                     "aliases": environment.get("aliases") or [],
                     "resources": resources_by_scope.get(str(environment["id"]), []),
-                    "bases": bases_by_environment.get(str(environment["id"]), []),
+                    "bases": environment_bases,
+                    "target_level": "environment",
+                    "is_leaf": not environment_bases,
+                    "target_path": {
+                        "environment": environment["code"],
+                    },
                 }
             )
         return result

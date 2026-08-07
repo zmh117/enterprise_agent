@@ -227,6 +227,17 @@ class RedisClusterConfigTests(unittest.TestCase):
         self.assertTrue(kwargs["ssl_check_hostname"])
         self.assertEqual("reader", kwargs["username"])
 
+    def test_gateway_scan_is_one_iteration_result_bounded_and_reports_cursor(self) -> None:
+        binding = self._redis_binding(RedisConnection(host="redis.local", port=6379))
+        client = MagicMock()
+        client.scan.return_value = (17, ["GL001:1", "GL001:2", "GL001:3"])
+        gateway = RealRedisGateway()
+        with patch.object(gateway, "_connect", return_value=client):
+            response = gateway.scan(binding, "GL001:*", 2)
+        client.scan.assert_called_once_with(cursor=0, match="GL001:*", count=2)
+        self.assertEqual(["GL001:1", "GL001:2"], response.summary["keys"])
+        self.assertTrue(response.truncated)
+
     def test_cluster_still_enforces_workshop_prefix(self) -> None:
         enforce_key_namespace("GL001:order:1", key_prefix="GL001:")
         with self.assertRaises(PolicyViolation):
@@ -381,9 +392,7 @@ class OracleCompatAndClientTests(unittest.TestCase):
 
 class DatabaseConnectionDefaultsTests(unittest.TestCase):
     def test_defaults_enforce_oracle_11g_contract(self) -> None:
-        db = DatabaseConnection(
-            host="h", port=1521, database="ORCL", user="u", password="p"
-        )
+        db = DatabaseConnection(host="h", port=1521, database="ORCL", user="u", password="p")
         self.assertEqual(OracleClientMode.THICK, db.oracle_client_mode)
         self.assertEqual(OracleCompat.LEGACY, db.oracle_compat)
         self.assertFalse(db.use_sid)

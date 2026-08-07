@@ -9,6 +9,9 @@ from app.modules.delivery.application.result_delivery_service import (
 from app.modules.job.domain.agent_job import AgentJob
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.repositories import AgentRepository
+from app.modules.job.application.builtin_tool_snapshot import (
+    JobBuiltinToolSnapshotService,
+)
 from app.shared.config import QueueSettings
 from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import (
@@ -29,11 +32,13 @@ class JobRetryService:
         queue_settings: QueueSettings,
         audit_service: AuditService,
         delivery_service: ResultDeliveryService,
+        builtin_tool_snapshot_service: JobBuiltinToolSnapshotService | None = None,
     ) -> None:
         self.repository = repository
         self.queue_settings = queue_settings
         self.audit_service = audit_service
         self.delivery_service = delivery_service
+        self.builtin_tool_snapshot_service = builtin_tool_snapshot_service
 
     def is_retryable(self, exc: Exception) -> bool:
         if isinstance(
@@ -52,6 +57,11 @@ class JobRetryService:
 
     @operation_unit_of_work(lambda service: service.repository.database)
     def handle_failure(self, job: AgentJob, exc: Exception, correlation_id: str) -> str:
+        if self.builtin_tool_snapshot_service is not None:
+            try:
+                self.builtin_tool_snapshot_service.verify(job.id)
+            except NonRetryableExecutionError as snapshot_error:
+                exc = snapshot_error
         safe_message = getattr(exc, "safe_message", str(exc))
         error_code = getattr(exc, "error_code", "") or "agent_runtime_error"
         diagnostics = getattr(exc, "diagnostics", {})

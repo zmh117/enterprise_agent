@@ -15,7 +15,7 @@ def _migrated_database() -> Database:
         default_migrations_dir(),
         migrator_build="governed-api-schema-test",
     ).run()
-    assert result.head == "027"
+    assert result.head == "033"
     return database
 
 

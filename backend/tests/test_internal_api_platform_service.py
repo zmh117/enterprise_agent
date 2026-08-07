@@ -123,18 +123,19 @@ def _service(
 
 
 class FakeJobAccessAuthorizer:
-    def __init__(self, *, allowed: bool = True) -> None:
+    def __init__(self, *, allowed: bool = True, context: Any | None = None) -> None:
         self.allowed = allowed
+        self.context = context
         self.calls: list[dict[str, Any]] = []
         self.closed = False
 
-    def authorize(self, **kwargs: Any) -> bool:
+    def authorize(self, **kwargs: Any) -> Any:
         from app.modules.internal_api_platform.domain.errors import AuthorizationError
 
         self.calls.append(kwargs)
         if not self.allowed:
             raise AuthorizationError("Business application scope denied")
-        return True
+        return self.context or True
 
     def close(self) -> None:
         self.closed = True
@@ -153,7 +154,15 @@ class JobAccessAdapterTests(unittest.TestCase):
             def __init__(self) -> None:
                 self.closed = False
 
-            def execute_one(self, _sql: str, params: tuple[str]) -> dict[str, Any]:
+            def execute_one(
+                self,
+                sql: str,
+                params: tuple[str],
+            ) -> dict[str, Any] | None:
+                if "agent_job_builtin_tool_snapshot" in sql:
+                    return None
+                if "count(*) as count" in sql:
+                    return {"count": 0}
                 self.last_job_id = params[0]
                 return {
                     "id": params[0],
@@ -387,10 +396,7 @@ class LokiClientTests(unittest.TestCase):
 
             @staticmethod
             def read(_size: int = -1) -> bytes:
-                return (
-                    b'{"status":"success","data":'
-                    b'{"resultType":"streams","result":[]}}'
-                )
+                return b'{"status":"success","data":{"resultType":"streams","result":[]}}'
 
         def fetch(request: object, timeout: int) -> Response:
             captured["request"] = request
@@ -599,7 +605,7 @@ class ServiceTests(unittest.TestCase):
                 key="GL002:order:1",
             )
 
-    def test_loki_injects_workshop_label(self) -> None:
+    def test_loki_does_not_inject_workshop_label(self) -> None:
         loki = FakeLokiClient()
         service = _service(loki=loki)
         service.query_loki(
@@ -612,11 +618,9 @@ class ServiceTests(unittest.TestCase):
             minutes=5,
             limit=10,
         )
-        self.assertEqual(
-            {"service": "order-service", "workshop": "GL001"}, loki.calls[0]["selector"]
-        )
+        self.assertEqual({"service": "order-service"}, loki.calls[0]["selector"])
 
-    def test_loki_diagnostics_inject_workshop_label(self) -> None:
+    def test_loki_diagnostics_do_not_inject_workshop_label(self) -> None:
         loki = FakeLokiClient()
         service = _service(loki=loki)
 
@@ -648,11 +652,11 @@ class ServiceTests(unittest.TestCase):
             limit=10,
         )
 
-        self.assertEqual({"workshop": "GL001"}, loki.calls[0]["selector"])
+        self.assertEqual({}, loki.calls[0]["selector"])
         self.assertEqual("internal-api-platform-loki-diagnostics", labels.metadata["source"])
-        self.assertEqual(["GL001"], values.summary["values"])
+        self.assertEqual(["workshop-value"], values.summary["values"])
         self.assertEqual(
-            {"service": "order-service", "workshop": "GL001"},
+            {"service": "order-service"},
             loki.calls[2]["selector"],
         )
         self.assertIn("line_count", probe.summary)
@@ -683,6 +687,109 @@ class ServiceTests(unittest.TestCase):
                 minutes=5,
                 limit=10,
             )
+
+    def test_job_loki_injects_mandatory_scope_and_rejects_override(self) -> None:
+        from app.modules.internal_api_platform.application.job_authorization import (
+            AuthorizedJobContext,
+        )
+        from app.modules.internal_api_platform.domain.errors import PolicyViolation
+
+        context = AuthorizedJobContext(
+            job_id="job-loki-1",
+            user_id="bound-user",
+            project_code="default",
+            application_id="business-app-1",
+            application_publication_id="publication-1",
+            handler_id="query_loki",
+            handler_version="1.0.0",
+            resource_revision_id="",
+            execution_scope_key="scope-1",
+            loki_scope_policy_revision_id="loki-policy-revision-1",
+            loki_scope_policy_content_hash="f" * 64,
+            loki_scope_conditions=(
+                ("customer", "sanjiu-test1"),
+                ("workshop", "guanlan"),
+            ),
+        )
+        loki = FakeLokiClient()
+        service = _service(
+            loki=loki,
+            job_access_authorizer=FakeJobAccessAuthorizer(context=context),
+        )
+        service.query_loki(
+            user_id="bound-user",
+            job_id="job-loki-1",
+            project_code="default",
+            application_id="business-app-1",
+            environment="sanjiu",
+            base="guanlan",
+            workshop="GL001",
+            selector={"role": "edge", "logtype": "error"},
+            query="Material",
+            minutes=5,
+            limit=10,
+        )
+        self.assertEqual(
+            {
+                "customer": "sanjiu-test1",
+                "workshop": "guanlan",
+                "role": "edge",
+                "logtype": "error",
+            },
+            loki.calls[0]["selector"],
+        )
+        with self.assertRaises(PolicyViolation):
+            service.query_loki(
+                user_id="bound-user",
+                job_id="job-loki-1",
+                project_code="default",
+                application_id="business-app-1",
+                environment="sanjiu",
+                base="guanlan",
+                workshop="GL001",
+                selector={"customer": "other"},
+                query="Material",
+                minutes=5,
+                limit=10,
+            )
+
+    def test_job_loki_without_published_scope_policy_fails_before_gateway(self) -> None:
+        from app.modules.internal_api_platform.application.job_authorization import (
+            AuthorizedJobContext,
+        )
+        from app.modules.internal_api_platform.domain.errors import PolicyViolation
+
+        context = AuthorizedJobContext(
+            job_id="job-loki-missing-policy",
+            user_id="bound-user",
+            project_code="default",
+            application_id="business-app-1",
+            application_publication_id="publication-1",
+            handler_id="query_loki",
+            handler_version="1.0.0",
+            resource_revision_id="",
+            execution_scope_key="scope-1",
+        )
+        loki = FakeLokiClient()
+        service = _service(
+            loki=loki,
+            job_access_authorizer=FakeJobAccessAuthorizer(context=context),
+        )
+        with self.assertRaises(PolicyViolation):
+            service.query_loki(
+                user_id="bound-user",
+                job_id="job-loki-missing-policy",
+                project_code="default",
+                application_id="business-app-1",
+                environment="sanjiu",
+                base="guanlan",
+                workshop="GL001",
+                selector={"logtype": "error"},
+                query="Material",
+                minutes=5,
+                limit=10,
+            )
+        self.assertEqual([], loki.calls)
 
 
 class SchemaDirectoryTests(unittest.TestCase):

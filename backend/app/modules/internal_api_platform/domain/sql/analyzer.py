@@ -47,6 +47,8 @@ def analyze_readonly_query(
     engine: DatabaseEngine,
     max_rows: int,
     table_prefix: str | None,
+    allowed_database: str | None = None,
+    allowed_schema: str | None = None,
     oracle_compat: OracleCompat = OracleCompat.MODERN,
 ) -> AnalyzedQuery:
     """Validate and bound a read-only query, failing closed on any ambiguity.
@@ -72,9 +74,20 @@ def analyze_readonly_query(
     assert_readonly_expression(expression)
 
     if table_prefix:
-        tables = assert_workshop_prefix(expression, table_prefix=table_prefix, engine=engine)
+        tables = assert_workshop_prefix(
+            expression,
+            table_prefix=table_prefix,
+            engine=engine,
+            allowed_database=allowed_database,
+            allowed_schema=allowed_schema,
+        )
     else:
-        tables = extract_real_tables(expression)
+        tables = extract_real_tables(
+            expression,
+            engine=engine,
+            allowed_database=allowed_database,
+            allowed_schema=allowed_schema,
+        )
 
     existing = _existing_limit(expression)
     effective = min(existing, max_rows) if existing is not None else max_rows

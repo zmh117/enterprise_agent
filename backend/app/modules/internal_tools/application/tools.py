@@ -18,6 +18,9 @@ from app.modules.internal_tools.infrastructure.internal_api_client import (
     ToolResult,
 )
 from app.modules.job.infrastructure.repositories import AgentRepository
+from app.modules.job.application.builtin_tool_snapshot import (
+    JobBuiltinToolSnapshotService,
+)
 from app.modules.permission.application.permission_service import PermissionService
 from app.shared.config import ExecutionSettings
 from app.shared.exceptions import PermissionDenied, ToolPolicyError
@@ -34,6 +37,7 @@ class ReadOnlyToolService:
         repository: AgentRepository,
         limits: ExecutionSettings,
         business_authorization_service: BusinessAuthorizationService | None = None,
+        builtin_tool_snapshot_service: JobBuiltinToolSnapshotService | None = None,
     ) -> None:
         self.internal_api_client = internal_api_client
         self.permission_service = permission_service
@@ -41,13 +45,24 @@ class ReadOnlyToolService:
         self.repository = repository
         self.limits = limits
         self.business_authorization_service = business_authorization_service
+        self.builtin_tool_snapshot_service = builtin_tool_snapshot_service
 
     def is_tool_visible_for_job(self, *, job_id: str, tool_name: str) -> bool:
         job = self.repository.get_job(job_id)
-        if not self.repository.job_allows_tool(job_id, tool_name):
+        exact = self._exact_tool_context(job_id=job_id, tool_name=tool_name)
+        if exact is None:
+            return False
+        target, bindings = exact
+        if not bindings or any(
+            binding["resource_slot"] and not binding["candidates"] for binding in bindings
+        ):
             return False
         try:
-            self.permission_service.assert_registered_readonly_tool(tool_name)
+            self.permission_service.assert_builtin_tool_use_grant(
+                user_id=job.internal_user_id or job.user_id,
+                tool_identifier=tool_name,
+                project_code=job.project_code,
+            )
         except ToolPolicyError:
             return False
         if not job.business_application_id:
@@ -59,6 +74,7 @@ class ReadOnlyToolService:
                 user_id=job.internal_user_id or job.user_id,
                 application_id=job.business_application_id,
                 capability_code=tool_name,
+                **_target_scope(target),
                 stage="tool_exposure",
             )["allowed"]
         )
@@ -75,6 +91,7 @@ class ReadOnlyToolService:
     ) -> ToolResult:
         started = time.monotonic()
         audit_id: str | None = None
+        persisted_tool_call_id = ""
         try:
             job = self.repository.get_job(job_id)
             expected_user_id = job.internal_user_id or job.user_id
@@ -83,12 +100,36 @@ class ReadOnlyToolService:
                     "Tool request identity does not match persisted job",
                     safe_message="工具请求与 Agent 任务不匹配",
                 )
-            if not self.repository.job_allows_tool(job_id, tool_name):
+            exact = self._exact_tool_context(
+                job_id=job_id,
+                tool_name=tool_name,
+            )
+            if exact is None:
                 raise ToolPolicyError(
-                    f"Tool {tool_name} is not assigned to the Agent publication",
-                    safe_message="此 Agent 版本未分配该工具",
+                    "Job has no exact Built-in Tool Snapshot",
+                    safe_message="此 Job 缺少精确内置工具快照",
+                    error_code="builtin_tool_snapshot_missing",
+                )
+            if not exact[1]:
+                raise ToolPolicyError(
+                    f"Tool {tool_name} is not in the Job exact Snapshot",
+                    safe_message="此 Job 快照未授权该工具",
+                    error_code="builtin_tool_not_in_job_snapshot",
                 )
             scope = _addressing_from_arguments(arguments)
+            frozen_scope = _target_scope(exact[0])
+            if any(
+                field in scope
+                and str(scope.get(field) or "")
+                != str(frozen_scope.get(field) or "")
+                for field in ("environment", "base", "workshop")
+            ):
+                raise ToolPolicyError(
+                    "Tool request target differs from the Job exact Snapshot",
+                    safe_message="工具请求目标与 Job 冻结范围不一致",
+                    error_code="builtin_tool_target_override_rejected",
+                )
+            scope = frozen_scope
             if job.business_application_id:
                 if self.business_authorization_service is None:
                     raise ToolPolicyError(
@@ -120,15 +161,11 @@ class ReadOnlyToolService:
                     actor_id=user_id,
                     payload=decision,
                 )
-            if job.business_application_id:
-                self.permission_service.assert_registered_readonly_tool(tool_name)
-            else:
-                self.permission_service.assert_tool_allowed(
-                    user_id=user_id,
-                    tool_name=tool_name,
-                    project_code=project_code,
-                    scope=scope,
-                )
+            self.permission_service.assert_builtin_tool_use_grant(
+                user_id=user_id,
+                tool_identifier=tool_name,
+                project_code=project_code,
+            )
             self._assert_tool_policy(tool_name, arguments)
             audit_id = self.audit_service.record(
                 "tool.call.allowed",
@@ -138,26 +175,42 @@ class ReadOnlyToolService:
                 actor_id=user_id,
                 payload={"tool": tool_name, "arguments": arguments},
             )
+            persisted_tool_call_id = self.repository.add_tool_call(
+                job_id=job_id,
+                tool_name=tool_name,
+                request_payload=bounded_summary(
+                    arguments,
+                    self.limits.max_tool_response_chars,
+                ),
+                response_summary={"status": "STARTED"},
+                status="STARTED",
+                duration_ms=0,
+                risk_level=_risk_level(tool_name),
+                audit_id=audit_id,
+            )
             result = self._execute(
                 tool_name,
-                arguments,
+                {**arguments, **scope},
                 job_id=job_id,
                 user_id=user_id,
                 project_code=project_code,
+                tool_call_id=persisted_tool_call_id,
             )
-            if record_tool_call:
-                self.repository.add_tool_call(
-                    job_id=job_id,
-                    tool_name=tool_name,
-                    request_payload=bounded_summary(arguments, self.limits.max_tool_response_chars),
-                    response_summary=bounded_summary(
-                        _storage_summary(result), self.limits.max_tool_response_chars
-                    ),
-                    status="SUCCEEDED",
-                    duration_ms=int((time.monotonic() - started) * 1000),
-                    risk_level=_risk_level(tool_name),
-                    audit_id=audit_id,
-                )
+            self.repository.complete_tool_call(
+                persisted_tool_call_id,
+                response_summary=bounded_summary(
+                    _storage_summary(result),
+                    self.limits.max_tool_response_chars,
+                ),
+                status="SUCCEEDED",
+                duration_ms=int(
+                    (time.monotonic() - started) * 1000
+                ),
+            )
+            result.metadata.setdefault(
+                "_persisted_tool_call_id",
+                persisted_tool_call_id,
+            )
             return result
         except Exception as exc:
             audit_id = self.audit_service.record(
@@ -168,7 +221,27 @@ class ReadOnlyToolService:
                 actor_id=user_id,
                 payload={"tool": tool_name, "arguments": arguments},
             )
-            if record_tool_call:
+            if persisted_tool_call_id:
+                self.repository.complete_tool_call(
+                    persisted_tool_call_id,
+                    response_summary={
+                        "error": getattr(
+                            exc,
+                            "safe_message",
+                            str(exc),
+                        )
+                    },
+                    status="FAILED",
+                    duration_ms=int(
+                        (time.monotonic() - started) * 1000
+                    ),
+                )
+                setattr(
+                    exc,
+                    "persisted_tool_call_id",
+                    persisted_tool_call_id,
+                )
+            elif record_tool_call:
                 self.repository.add_tool_call(
                     job_id=job_id,
                     tool_name=tool_name,
@@ -180,6 +253,19 @@ class ReadOnlyToolService:
                     audit_id=audit_id,
                 )
             raise
+
+    def _exact_tool_context(
+        self,
+        *,
+        job_id: str,
+        tool_name: str,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
+        if self.builtin_tool_snapshot_service is None:
+            return None
+        return self.builtin_tool_snapshot_service.tool_binding(
+            job_id=job_id,
+            tool_identifier=tool_name,
+        )
 
     def _assert_tool_policy(self, tool_name: str, arguments: dict[str, Any]) -> None:
         if tool_name == "query_database":
@@ -228,12 +314,14 @@ class ReadOnlyToolService:
         job_id: str,
         user_id: str,
         project_code: str,
+        tool_call_id: str,
     ) -> ToolResult:
         context = ToolRequestContext(
             job_id=job_id,
             user_id=user_id,
             project_code=project_code,
             correlation_id=correlation_id_var.get(),
+            tool_call_id=tool_call_id,
         )
         if tool_name == "get_er_context":
             return self.internal_api_client.get_er_context(
@@ -252,13 +340,16 @@ class ReadOnlyToolService:
                     "Schema directory requires environment and base",
                     safe_message="查询 Schema 目录必须指定环境和基地",
                 )
+            resource_routing = _resource_routing_from_arguments(
+                arguments
+            )
             return self.internal_api_client.get_schema_directory(
                 context=context,
-                environment=addressing["environment"],
-                base=addressing["base"],
-                workshop=addressing.get("workshop"),
+                environment=resource_routing.pop("environment"),
+                base=resource_routing.pop("base"),
                 query=str(arguments.get("query", "")),
                 limit=int(arguments.get("limit", 50)),
+                **resource_routing,
             )
         addressing = _addressing_from_arguments(arguments)
         if tool_name == "query_loki":
@@ -316,27 +407,36 @@ class ReadOnlyToolService:
                 workshop=addressing.get("workshop"),
             )
         if tool_name == "query_database":
+            resource_routing = _resource_routing_from_arguments(
+                arguments
+            )
             return self.internal_api_client.query_database(
                 datasource=str(arguments.get("datasource", "default")),
                 sql=str(arguments["sql"]),
                 limit=int(arguments.get("limit", 100)),
                 context=context,
-                **addressing,
+                **resource_routing,
             )
         if tool_name == "query_redis_get":
+            resource_routing = _resource_routing_from_arguments(
+                arguments
+            )
             return self.internal_api_client.query_redis_get(
                 datasource=str(arguments.get("datasource", "default")),
                 key=str(arguments["key"]),
                 context=context,
-                **addressing,
+                **resource_routing,
             )
         if tool_name == "query_redis_scan":
+            resource_routing = _resource_routing_from_arguments(
+                arguments
+            )
             return self.internal_api_client.query_redis_scan(
                 datasource=str(arguments.get("datasource", "default")),
                 pattern=str(arguments["pattern"]),
                 limit=int(arguments.get("limit", self.limits.redis_scan_limit)),
                 context=context,
-                **addressing,
+                **resource_routing,
             )
         raise ToolPolicyError(f"Tool {tool_name} is not registered")
 
@@ -360,6 +460,40 @@ def _addressing_from_arguments(arguments: dict[str, Any]) -> dict[str, str]:
         if value is not None and str(value).strip():
             addressing[field] = str(value).strip()
     return addressing
+
+
+def _target_scope(target: dict[str, Any]) -> dict[str, str]:
+    return {
+        "environment": str(target.get("environment_code") or ""),
+        "base": str(target.get("base_code") or ""),
+        "workshop": str(target.get("workshop_code") or ""),
+    }
+
+
+def _placement_from_arguments(
+    arguments: dict[str, Any],
+) -> str | None:
+    value = arguments.get("placement")
+    if value is None:
+        return None
+    placement = str(value).strip().lower()
+    if placement not in {"cloud", "edge"}:
+        raise ToolPolicyError(
+            "Resource placement must be cloud or edge",
+            safe_message="资源位置只能选择 cloud 或 edge",
+            error_code="builtin_tool_placement_invalid",
+        )
+    return placement
+
+
+def _resource_routing_from_arguments(
+    arguments: dict[str, Any],
+) -> dict[str, str]:
+    routing = _addressing_from_arguments(arguments)
+    placement = _placement_from_arguments(arguments)
+    if placement:
+        routing["placement"] = placement
+    return routing
 
 
 def assert_loki_diagnostic_bounds(arguments: dict[str, Any], limits: ExecutionSettings) -> None:

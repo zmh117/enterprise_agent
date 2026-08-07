@@ -14,8 +14,8 @@ from app.modules.business_application.application.ports import (
     IdentitySubjectReader,
     WorkflowPublicationReader,
 )
-from app.modules.business_application.application.publication_bindings import (
-    ApplicationPublicationBindingService,
+from app.modules.business_application.application.builtin_tool_composition import (
+    ApplicationBuiltinToolCompositionService,
 )
 from app.modules.business_application.domain.policies import (
     canonical_json,
@@ -59,12 +59,8 @@ class BusinessApplicationService:
         identity_reader: IdentitySubjectReader,
         capability_reader: CapabilityCatalogReader,
         runtime_evaluator: RuntimeReadinessEvaluator | None = None,
-        publication_binding_service: (
-            ApplicationPublicationBindingService | None
-        ) = None,
-        capability_publication_repository: (
-            CapabilityPublicationRepository | None
-        ) = None,
+        capability_publication_repository: (CapabilityPublicationRepository | None) = None,
+        builtin_tool_composition_service: (ApplicationBuiltinToolCompositionService | None) = None,
     ) -> None:
         self.repository = repository
         self.authorization = authorization
@@ -78,14 +74,10 @@ class BusinessApplicationService:
             data_plane_enabled=False,
             runtime_environment="local",
         )
-        self.publication_binding_service = (
-            publication_binding_service
-            or ApplicationPublicationBindingService(
-                repository.database
-            )
-        )
-        self.capability_publication_repository = (
-            capability_publication_repository
+        self.capability_publication_repository = capability_publication_repository
+        self.builtin_tool_composition_service = (
+            builtin_tool_composition_service
+            or ApplicationBuiltinToolCompositionService(repository.database)
         )
 
     def list_applications(
@@ -210,10 +202,15 @@ class BusinessApplicationService:
             payload.get("api_capability_release_ids") or []
         )
         self._require_application_capability_subset(
-            agent_publication_id=str(
-                payload.get("agent_publication_id") or ""
-            ).strip(),
+            agent_publication_id=str(payload.get("agent_publication_id") or "").strip(),
             release_ids=api_capability_release_ids,
+        )
+        target_paths = self.builtin_tool_composition_service.prepare_targets(
+            payload.get("target_paths") or []
+        )
+        builtin_tools = self.builtin_tool_composition_service.prepare_draft(
+            agent_publication_id=str(payload.get("agent_publication_id") or "").strip(),
+            raw_tools=payload.get("builtin_tools") or [],
         )
         normalized = {
             "agent_publication_id": str(payload.get("agent_publication_id") or "").strip(),
@@ -225,6 +222,14 @@ class BusinessApplicationService:
             "capabilities": capabilities,
             "api_capability_release_ids": api_capability_release_ids,
         }
+        if builtin_tools:
+            normalized["builtin_tools"] = self.builtin_tool_composition_service.snapshot(
+                builtin_tools
+            )
+        if target_paths:
+            normalized["target_paths"] = self.builtin_tool_composition_service.snapshot_targets(
+                target_paths
+            )
         revision = self.repository.save_revision(
             code=normalized_code,
             expected_revision=expected_revision,
@@ -239,6 +244,16 @@ class BusinessApplicationService:
             capabilities=capabilities,
             api_capability_release_ids=api_capability_release_ids,
         )
+        self.builtin_tool_composition_service.persist_draft(
+            application_revision_id=str(revision["id"]),
+            tools=builtin_tools,
+        )
+        self.builtin_tool_composition_service.persist_draft_targets(
+            application_revision_id=str(revision["id"]),
+            targets=target_paths,
+        )
+        if builtin_tools or target_paths:
+            revision = self.repository.get_revision(str(revision["id"]))
         self._audit("draft_saved", actor_id, application, revision=revision)
         return revision
 
@@ -270,14 +285,37 @@ class BusinessApplicationService:
         self._audit("validated", actor_id, application, revision=result)
         return result
 
-    @operation_unit_of_work(lambda service: service.repository.database)
     def publish(
         self,
         *,
         actor_id: str,
         code: str,
         revision_id: str,
-        handler_bindings: list[dict[str, Any]] | None = None,
+        correlation_id: str = "",
+    ) -> dict[str, Any]:
+        del correlation_id
+        normalized_code = validate_code(code)
+        self._require(actor_id, normalized_code, "publish")
+        application = self.repository.get_by_code(normalized_code)
+        revision = self.repository.get_revision(revision_id)
+        if str(revision["application_id"]) != str(application["id"]):
+            raise NotFound(
+                "Business Application revision not found",
+                safe_message="未找到业务应用修订版本",
+            )
+        return self._publish(
+            actor_id=actor_id,
+            code=normalized_code,
+            revision_id=revision_id,
+        )
+
+    @operation_unit_of_work(lambda service: service.repository.database)
+    def _publish(
+        self,
+        *,
+        actor_id: str,
+        code: str,
+        revision_id: str,
     ) -> dict[str, Any]:
         normalized_code = validate_code(code)
         self._require(actor_id, normalized_code, "publish")
@@ -303,18 +341,22 @@ class BusinessApplicationService:
                 error_code="validation_failed",
                 field_errors=errors,
             )
-        prepared_bindings = self.publication_binding_service.prepare(
-            application_id=str(application["id"]),
-            agent_publication_id=str(
-                revision["agent_publication_id"]
-            ),
-            capabilities=revision["capabilities"],
-            raw_bindings=handler_bindings or [],
+        prepared_builtin_tools = self.builtin_tool_composition_service.prepare_publication(
+            agent_publication_id=str(revision["agent_publication_id"]),
+            tools=revision.get("builtin_tools") or [],
+        )
+        prepared_targets = self.builtin_tool_composition_service.prepare_publication_targets(
+            revision.get("target_paths") or []
+        )
+        target_resolutions = self.builtin_tool_composition_service.validate_target_matrix(
+            targets=prepared_targets,
+            tools=prepared_builtin_tools,
+        )
+        resolution_set = self.builtin_tool_composition_service.prepare_resolution_set(
+            target_resolutions
         )
         snapshot = self._snapshot(application, revision, components)
-        release_ids = list(
-            revision.get("api_capability_release_ids") or []
-        )
+        release_ids = list(revision.get("api_capability_release_ids") or [])
         if self.capability_publication_repository is not None:
             snapshot["capability_allowlist"] = (
                 self.capability_publication_repository.prepare_application_allowlist(
@@ -323,15 +365,15 @@ class BusinessApplicationService:
                     require_active=True,
                 )
             )
-            snapshot["capability_agent_publication_id"] = str(
-                revision["agent_publication_id"]
+            snapshot["capability_agent_publication_id"] = str(revision["agent_publication_id"])
+        if prepared_builtin_tools:
+            snapshot["builtin_tools"] = self.builtin_tool_composition_service.snapshot(
+                prepared_builtin_tools
             )
-        if prepared_bindings:
-            snapshot["handler_bindings"] = (
-                self.publication_binding_service.snapshot(
-                    prepared_bindings
-                )
-            )
+        snapshot["target_paths"] = self.builtin_tool_composition_service.snapshot_targets(
+            prepared_targets
+        )
+        snapshot["builtin_tool_resolution_set"] = resolution_set
         publication_hash = snapshot_hash(snapshot)
         publication = self.repository.create_publication(
             application_id=str(application["id"]),
@@ -347,9 +389,17 @@ class BusinessApplicationService:
                 safe_message="该修订版本已使用不同的 Handler 绑定发布",
                 error_code="publication_binding_conflict",
             )
-        self.publication_binding_service.persist(
+        self.builtin_tool_composition_service.persist_publication(
             application_publication_id=str(publication["id"]),
-            bindings=prepared_bindings,
+            tools=prepared_builtin_tools,
+        )
+        self.builtin_tool_composition_service.persist_publication_targets(
+            application_publication_id=str(publication["id"]),
+            targets=prepared_targets,
+        )
+        self.builtin_tool_composition_service.persist_publication_resolutions(
+            application_publication_id=str(publication["id"]),
+            resolution_set=resolution_set,
         )
         if self.capability_publication_repository is not None:
             persisted = self.repository.database.execute_one(
@@ -364,14 +414,10 @@ class BusinessApplicationService:
             if persisted is None and release_ids:
                 self.capability_publication_repository.freeze_application_allowlist(
                     str(publication["id"]),
-                    agent_publication_id=str(
-                        revision["agent_publication_id"]
-                    ),
+                    agent_publication_id=str(revision["agent_publication_id"]),
                     release_ids=release_ids,
                 )
-            publication = self.repository.get_publication(
-                str(publication["id"])
-            )
+            publication = self.repository.get_publication(str(publication["id"]))
         self._audit("published", actor_id, application, publication=publication)
         return publication
 
@@ -499,9 +545,10 @@ class BusinessApplicationService:
         application = self.repository.get_by_code(validate_code(code))
         self._require(actor_id, code, "read")
         project_code = str(application["project_code"])
-        agents = [
-            vars(item) for item in self.agent_reader.catalog(project_code)
-        ]
+        agents = [vars(item) for item in self.agent_reader.catalog(project_code)]
+        builtin_tool_catalog = self.builtin_tool_composition_service.management_catalog(
+            agent_publication_ids=[str(item["id"]) for item in agents],
+        )
         return {
             "agents": agents,
             "workflows": [vars(item) for item in self.workflow_reader.catalog(project_code)],
@@ -520,6 +567,7 @@ class BusinessApplicationService:
                 if self.capability_publication_repository is not None
                 else {}
             ),
+            **builtin_tool_catalog,
         }
 
     def _validate_revision(
@@ -541,9 +589,7 @@ class BusinessApplicationService:
             try:
                 self.capability_publication_repository.prepare_application_allowlist(
                     str(revision.get("agent_publication_id") or ""),
-                    list(
-                        revision.get("api_capability_release_ids") or []
-                    ),
+                    list(revision.get("api_capability_release_ids") or []),
                     require_active=True,
                 )
             except (NotFound, NonRetryableExecutionError) as exc:
@@ -623,12 +669,10 @@ class BusinessApplicationService:
                 (
                     definition
                     for definition in (
-                        self.publication_binding_service.registry.definitions()
+                        self.builtin_tool_composition_service.registry.definitions()
                     )
-                    if capability_code
-                    in definition.required_permissions
-                    and definition.visibility
-                    == "internal_diagnostic"
+                    if capability_code in definition.required_permissions
+                    and definition.visibility == "internal_diagnostic"
                 ),
                 None,
             )
@@ -644,18 +688,12 @@ class BusinessApplicationService:
                 )
                 if (
                     classification is None
-                    or classification["classification"]
-                    != "internal_diagnostic"
+                    or classification["classification"] != "internal_diagnostic"
                 ):
                     errors.append(
                         {
-                            "field": (
-                                f"capabilities.{index}."
-                                "capability_code"
-                            ),
-                            "message": (
-                                "内部诊断能力只能绑定到内部诊断 Agent"
-                            ),
+                            "field": (f"capabilities.{index}.capability_code"),
+                            "message": ("内部诊断能力只能绑定到内部诊断 Agent"),
                         }
                     )
             if (
@@ -760,9 +798,7 @@ class BusinessApplicationService:
                 }
                 for item in revision["capabilities"]
             ],
-            "api_capability_release_ids": list(
-                revision.get("api_capability_release_ids") or []
-            ),
+            "api_capability_release_ids": list(revision.get("api_capability_release_ids") or []),
         }
         reject_dangerous_content(snapshot)
         canonical_json(snapshot)
@@ -867,9 +903,7 @@ class BusinessApplicationService:
                     error_code="validation_failed",
                     field_errors=[
                         {
-                            "field": (
-                                f"api_capability_release_ids.{index}"
-                            ),
+                            "field": (f"api_capability_release_ids.{index}"),
                             "message": "必须是非空 Release ID",
                         }
                     ],
@@ -882,9 +916,7 @@ class BusinessApplicationService:
                     error_code="validation_failed",
                     field_errors=[
                         {
-                            "field": (
-                                f"api_capability_release_ids.{index}"
-                            ),
+                            "field": (f"api_capability_release_ids.{index}"),
                             "message": "Release ID 重复",
                         }
                     ],

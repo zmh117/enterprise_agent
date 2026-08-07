@@ -3,10 +3,14 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 from datetime import UTC, datetime
 
 from app.bootstrap import Container, build_test_container
 from app.modules.message_bus.application.message_publisher import AgentJobMessage
+from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
+from app.modules.business_application.domain.policies import snapshot_hash
+from app.modules.platform_config.infrastructure.repository import now_iso
 from app.shared.config import DingTalkSettings, Settings
 
 
@@ -136,6 +140,272 @@ def persisted_agent_job_message(
     )
 
 
+def _ensure_exact_builtin_tool_releases(
+    container: Container,
+    tool_identifiers: tuple[str, ...],
+    *,
+    agent_publication_id: str = "agent_publication_default_v1",
+) -> dict[str, dict[str, object]]:
+    requested = tuple(
+        sorted(set(tool_identifiers).intersection(ToolRegistry.READONLY_TOOLS))
+    )
+    if not requested:
+        return {}
+    container.database.execute(
+        """
+        insert into permission_policy
+          (id, subject_type, subject_code, resource_type, resource_code,
+           effect, action, status, priority, revision, created_at, updated_at)
+        values ('test-user-local-admin-builtin-tools', 'user',
+                'user_local_admin', 'builtin_tool', '*', 'allow', '*',
+                'enabled', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        on conflict(id) do nothing
+        """
+    )
+    handlers = container.platform_config_service.handlers
+    handlers.reconcile(actor_id="user_local_admin")
+    releases: dict[str, dict[str, object]] = {}
+    for tool_identifier in requested:
+        existing = container.database.execute_one(
+            """
+            select release.*
+              from agent_publication_builtin_tool envelope
+              join builtin_tool_release release
+                on release.id = envelope.tool_release_id
+             where envelope.agent_publication_id = ?
+               and envelope.tool_identifier = ?
+            """,
+            (agent_publication_id, tool_identifier),
+        )
+        if existing is not None:
+            releases[tool_identifier] = dict(existing)
+            continue
+        if agent_publication_id != "agent_publication_default_v1":
+            raise AssertionError(
+                "Exact test Agent publication does not contain requested Built-in Tool "
+                f"{tool_identifier}"
+            )
+        evidence = handlers.verify_payload(
+            {
+                "tool_identifier": tool_identifier,
+                "handler_version": "1.0.0",
+            },
+            actor_id="user_local_admin",
+        )
+        release = handlers.publish_builtin_tool_payload(
+            {
+                "tool_identifier": tool_identifier,
+                "handler_version": "1.0.0",
+                "verification_id": evidence["id"],
+                "idempotency_key": f"test-fixture-{tool_identifier}-v1",
+            },
+            actor_id="user_local_admin",
+        )
+        envelope = {
+            "agent_publication_id": agent_publication_id,
+            "tool_identifier": release["tool_identifier"],
+            "tool_release_id": release["id"],
+            "handler_version": release["handler_version"],
+            "implementation_digest": release["implementation_digest"],
+            "public_schema_hash": release["public_schema_hash"],
+        }
+        container.database.execute(
+            """
+            insert into agent_publication_builtin_tool
+              (id, agent_publication_id, tool_identifier, tool_release_id,
+               handler_version, implementation_digest, public_schema_hash,
+               envelope_hash, created_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                f"agent_envelope_test_{tool_identifier}",
+                envelope["agent_publication_id"],
+                envelope["tool_identifier"],
+                envelope["tool_release_id"],
+                envelope["handler_version"],
+                envelope["implementation_digest"],
+                envelope["public_schema_hash"],
+                snapshot_hash(envelope),
+                now_iso(),
+            ),
+        )
+        releases[tool_identifier] = dict(release)
+    return releases
+
+
+def _published_test_resource(
+    container: Container,
+    *,
+    code: str,
+    resource_kind: str,
+    scope_type: str,
+    environment_id: str,
+    base_id: str | None = None,
+) -> str:
+    timestamp = now_iso()
+    resource_id = f"resource_{code}"
+    revision_id = f"resource_revision_{code}_v1"
+    verification_id = f"resource_verification_{code}_v1"
+    provider_type = {
+        "database": "mysql",
+        "redis": "redis",
+        "loki": "loki",
+    }[resource_kind]
+    provider_contract_version = {
+        "database": "mysql_v1",
+        "redis": "redis_v1",
+        "loki": "loki_v1",
+    }[resource_kind]
+    config = (
+        {
+            "base_url": "http://loki.test:3100",
+            "tenant_id": "",
+            "timeout_seconds": 5,
+            "max_minutes": 60,
+            "max_lines": 200,
+            "max_response_bytes": 65_536,
+        }
+        if resource_kind == "loki"
+        else {}
+    )
+    content_hash = snapshot_hash(
+        {"resource": code, "revision": 1, "config": config}
+    )
+    container.database.execute(
+        """
+        insert into platform_resource
+          (id, code, name, resource_kind, scope_type, environment_id,
+           base_id, workshop_id, status, revision, created_by,
+           created_at, updated_at)
+        values (?, ?, ?, ?, ?, ?, ?, null, 'enabled', 1,
+                'user_local_admin', ?, ?)
+        """,
+        (
+            resource_id,
+            code,
+            code,
+            resource_kind,
+            scope_type,
+            environment_id,
+            base_id,
+            timestamp,
+            timestamp,
+        ),
+    )
+    container.database.execute(
+        """
+        insert into platform_resource_verification
+          (id, resource_id, draft_id, draft_revision, content_hash, status,
+           provider_contract_version, checks_json, verified_by, verified_at)
+        values (?, ?, null, 1, ?, 'PASSED', ?, '{}',
+                'user_local_admin', ?)
+        """,
+        (
+            verification_id,
+            resource_id,
+            content_hash,
+            provider_contract_version,
+            timestamp,
+        ),
+    )
+    container.database.execute(
+        """
+        insert into platform_resource_revision
+          (id, resource_id, revision, provider_type,
+           provider_contract_version, config_json, secret_refs_json,
+           content_hash, verification_id, status, published_by,
+           published_at)
+        values (?, ?, 1, ?, ?, ?, '{}', ?, ?, 'PUBLISHED',
+                'user_local_admin', ?)
+        """,
+        (
+            revision_id,
+            resource_id,
+            provider_type,
+            provider_contract_version,
+            json.dumps(config, ensure_ascii=False, sort_keys=True),
+            content_hash,
+            verification_id,
+            timestamp,
+        ),
+    )
+    return revision_id
+
+
+def _published_test_loki_policy(
+    container: Container,
+    *,
+    code: str,
+    environment_id: str,
+    base_id: str,
+    resource_revision_id: str,
+) -> str:
+    timestamp = now_iso()
+    policy_id = f"loki_policy_{code}"
+    verification_id = f"loki_policy_verification_{code}_v1"
+    revision_id = f"loki_policy_revision_{code}_v1"
+    conditions = [{"key": "customer", "value": "local"}]
+    content_hash = snapshot_hash(
+        {
+            "resource_revision_id": resource_revision_id,
+            "conditions": conditions,
+        }
+    )
+    container.database.execute(
+        """
+        insert into loki_scope_policy
+          (id, code, environment_id, base_id, status, revision, created_by,
+           created_at, updated_at)
+        values (?, ?, ?, ?, 'enabled', 1, 'user_local_admin', ?, ?)
+        """,
+        (policy_id, code, environment_id, base_id, timestamp, timestamp),
+    )
+    container.database.execute(
+        """
+        insert into loki_scope_policy_verification
+          (id, policy_id, draft_revision, resource_revision_id, content_hash,
+           verifier_version, status, match_count, truncated,
+           zero_match_warning, result_summary_json, verified_by, verified_at)
+        values (?, ?, 1, ?, ?, 'test-fixture.v1', 'PASSED', 1, 0, 0, '{}',
+                'user_local_admin', ?)
+        """,
+        (
+            verification_id,
+            policy_id,
+            resource_revision_id,
+            content_hash,
+            timestamp,
+        ),
+    )
+    container.database.execute(
+        """
+        insert into loki_scope_policy_revision
+          (id, policy_id, revision, resource_revision_id, content_hash,
+           verification_id, status, health_status, published_by,
+           published_at)
+        values (?, ?, 1, ?, ?, ?, 'PUBLISHED', 'HEALTHY',
+                'user_local_admin', ?)
+        """,
+        (
+            revision_id,
+            policy_id,
+            resource_revision_id,
+            content_hash,
+            verification_id,
+            timestamp,
+        ),
+    )
+    container.database.execute(
+        """
+        insert into loki_scope_policy_revision_condition
+          (policy_revision_id, label_key, label_value, position)
+        values (?, 'customer', 'local', 0)
+        """,
+        (revision_id,),
+    )
+    return revision_id
+
+
 def activate_dingtalk_test_application(
     container: Container,
     *,
@@ -145,8 +415,24 @@ def activate_dingtalk_test_application(
     attachments_enabled: bool = False,
     capabilities: tuple[str, ...] = (),
     additional_deliveries: tuple[dict[str, object], ...] = (),
+    target_paths: tuple[dict[str, object], ...] = (),
+    builtin_tool_resources: dict[
+        str, tuple[dict[str, object], ...]
+    ] | None = None,
+    agent_publication_id: str = "agent_publication_default_v1",
 ) -> dict[str, object]:
     ensure_active_dingtalk_test_enterprise(container)
+    releases = _ensure_exact_builtin_tool_releases(
+        container,
+        capabilities,
+        agent_publication_id=agent_publication_id,
+    )
+    governed_capabilities = tuple(
+        capability
+        for capability in capabilities
+        if capability not in ToolRegistry.READONLY_TOOLS
+    )
+    resources_by_tool = builtin_tool_resources or {}
     triggers: list[dict[str, object]] = [
         {
             "trigger_type": "dingtalk_private",
@@ -191,7 +477,7 @@ def activate_dingtalk_test_application(
         code=code,
         expected_revision=int(application["revision"]),
         payload={
-            "agent_publication_id": "agent_publication_default_v1",
+            "agent_publication_id": agent_publication_id,
             "workflow_publication_id": "",
             "session_policy": {
                 "conversation_mode": "channel",
@@ -221,7 +507,15 @@ def activate_dingtalk_test_application(
                     "version_constraint": "*",
                     "enabled": True,
                 }
-                for capability in capabilities
+                for capability in governed_capabilities
+            ],
+            "target_paths": list(target_paths),
+            "builtin_tools": [
+                {
+                    "tool_release_id": releases[tool_identifier]["id"],
+                    "resources": list(resources_by_tool.get(tool_identifier, ())),
+                }
+                for tool_identifier in sorted(releases)
             ],
         },
     )
@@ -451,16 +745,6 @@ def prepare_debug_application_access(
     capabilities: tuple[str, ...] = (),
     additional_deliveries: tuple[dict[str, object], ...] = (),
 ) -> dict[str, str]:
-    publication = activate_dingtalk_test_application(
-        container,
-        code=application_code,
-        robot_code=f"robot-{application_code}",
-        capabilities=capabilities,
-        additional_deliveries=additional_deliveries,
-    )
-    application = container.business_application_repository.get_by_code(
-        application_code
-    )
     timestamp = datetime.now(UTC).isoformat()
     environment_id = f"environment-{application_code}"
     base_id = f"base-{application_code}"
@@ -480,6 +764,114 @@ def prepare_debug_application_access(
         values (?, ?, 'debug-base', '调试基地', 'postgresql', 'enabled', ?, ?)
         """,
         (base_id, environment_id, timestamp, timestamp),
+    )
+    builtin_tool_resources: dict[
+        str, tuple[dict[str, object], ...]
+    ] = {}
+    database_tools = {
+        "get_schema_directory",
+        "query_database",
+    }.intersection(capabilities)
+    if database_tools:
+        database_revision_id = _published_test_resource(
+            container,
+            code=f"{application_code}-database",
+            resource_kind="database",
+            scope_type="base",
+            environment_id=environment_id,
+            base_id=base_id,
+        )
+        mapping = {
+            "resource_slot": "database",
+            "target_scope_type": "base",
+            "environment_code": "local",
+            "base_code": "debug-base",
+            "workshop_code": "",
+            "placement": "",
+            "resource_revision_id": database_revision_id,
+            "workshop_partition_policy_revision_id": "",
+            "loki_scope_policy_revision_id": "",
+        }
+        for tool_identifier in database_tools:
+            builtin_tool_resources[tool_identifier] = (dict(mapping),)
+    redis_tools = {
+        "query_redis_get",
+        "query_redis_scan",
+    }.intersection(capabilities)
+    if redis_tools:
+        redis_revision_id = _published_test_resource(
+            container,
+            code=f"{application_code}-redis",
+            resource_kind="redis",
+            scope_type="base",
+            environment_id=environment_id,
+            base_id=base_id,
+        )
+        mapping = {
+            "resource_slot": "redis",
+            "target_scope_type": "base",
+            "environment_code": "local",
+            "base_code": "debug-base",
+            "workshop_code": "",
+            "placement": "",
+            "resource_revision_id": redis_revision_id,
+            "workshop_partition_policy_revision_id": "",
+            "loki_scope_policy_revision_id": "",
+        }
+        for tool_identifier in redis_tools:
+            builtin_tool_resources[tool_identifier] = (dict(mapping),)
+    loki_tools = {
+        "diagnose_loki_labels",
+        "diagnose_loki_label_values",
+        "diagnose_loki_probe",
+        "query_loki",
+    }.intersection(capabilities)
+    if loki_tools:
+        loki_revision_id = _published_test_resource(
+            container,
+            code=f"{application_code}-loki",
+            resource_kind="loki",
+            scope_type="environment",
+            environment_id=environment_id,
+        )
+        loki_policy_revision_id = _published_test_loki_policy(
+            container,
+            code=f"{application_code}-loki",
+            environment_id=environment_id,
+            base_id=base_id,
+            resource_revision_id=loki_revision_id,
+        )
+        mapping = {
+            "resource_slot": "loki",
+            "target_scope_type": "base",
+            "environment_code": "local",
+            "base_code": "debug-base",
+            "workshop_code": "",
+            "placement": "",
+            "resource_revision_id": loki_revision_id,
+            "workshop_partition_policy_revision_id": "",
+            "loki_scope_policy_revision_id": loki_policy_revision_id,
+        }
+        for tool_identifier in loki_tools:
+            builtin_tool_resources[tool_identifier] = (dict(mapping),)
+    publication = activate_dingtalk_test_application(
+        container,
+        code=application_code,
+        robot_code=f"robot-{application_code}",
+        capabilities=capabilities,
+        additional_deliveries=additional_deliveries,
+        target_paths=(
+            {
+                "target_scope_type": "base",
+                "environment_code": "local",
+                "base_code": "debug-base",
+                "workshop_code": "",
+            },
+        ),
+        builtin_tool_resources=builtin_tool_resources,
+    )
+    application = container.business_application_repository.get_by_code(
+        application_code
     )
     role = container.authorization_center_service.create_role(
         actor_id="user_local_admin",

@@ -15,6 +15,22 @@ from app.modules.platform_config.application.governed_resources import (
 from app.modules.platform_config.application.handler_governance import (
     HandlerGovernanceService,
 )
+from app.modules.platform_config.application.loki_draft_discovery import (
+    HttpLokiDraftDiscoveryGateway,
+    LokiDraftDiscoveryService,
+)
+from app.modules.platform_config.application.loki_scope_policies import (
+    LokiScopePolicyService,
+)
+from app.modules.platform_config.application.loki_scope_policy_verifier import (
+    LokiScopePolicyTechnicalVerifier,
+)
+from app.modules.platform_config.application.workshop_partition_policies import (
+    WorkshopPartitionPolicyService,
+)
+from app.modules.platform_config.application.workshop_partition_verifier import (
+    RedisWorkshopPartitionTechnicalVerifier,
+)
 from app.modules.platform_config.application.database_resource_verifier import (
     GovernedResourceTechnicalVerifier,
 )
@@ -26,6 +42,12 @@ from app.modules.platform_config.infrastructure.runtime_generation_repository im
 )
 from app.modules.platform_config.infrastructure.handler_governance_repository import (
     HandlerGovernanceRepository,
+)
+from app.modules.platform_config.infrastructure.loki_scope_policy_repository import (
+    LokiScopePolicyRepository,
+)
+from app.modules.platform_config.infrastructure.workshop_partition_policy_repository import (
+    WorkshopPartitionPolicyRepository,
 )
 from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import (
@@ -42,6 +64,7 @@ from .snapshot import PlatformTopologySnapshotBuilder, RuntimeTopologySnapshot
 from .resource_reset import resource_reset_in_progress
 from .validation import (
     assert_no_secret_payload,
+    assert_no_resource_placement,
     coerce_runtime_value,
     normalize_aliases,
     normalize_json_object,
@@ -56,6 +79,7 @@ from .validation import (
     validate_secret_provider,
     validate_secret_ref,
     validate_status,
+    validate_topology_code,
 )
 
 
@@ -93,6 +117,29 @@ class PlatformConfigService:
             HandlerGovernanceRepository(repository.database),
             repository,
             permission_service,
+        )
+        self.workshop_partition_policies = WorkshopPartitionPolicyService(
+            WorkshopPartitionPolicyRepository(repository.database),
+            repository,
+            permission_service,
+            redis_verifier=RedisWorkshopPartitionTechnicalVerifier(
+                resolve_secret=secret_provider.resolve,
+            ),
+        )
+        self.loki_draft_discovery = LokiDraftDiscoveryService(
+            GovernedResourceRepository(repository.database),
+            permission_service,
+            HttpLokiDraftDiscoveryGateway(
+                resolve_secret=secret_provider.resolve,
+            ),
+        )
+        self.loki_scope_policies = LokiScopePolicyService(
+            LokiScopePolicyRepository(repository.database),
+            repository,
+            permission_service,
+            verifier=LokiScopePolicyTechnicalVerifier(
+                resolve_secret=secret_provider.resolve,
+            ),
         )
 
     def require_admin(self, actor_id: str) -> None:
@@ -133,7 +180,12 @@ class PlatformConfigService:
         correlation_id: str = "",
     ) -> dict[str, Any]:
         self.require_admin(actor_id)
-        code = validate_code(str(payload.get("code") or ""))
+        assert_no_resource_placement(payload, context="业务 topology")
+        code = validate_topology_code(
+            str(payload.get("code") or ""),
+            field="environment_code",
+            level="Environment",
+        )
         before = self.repository.get_environment_by_code(code)
         entity = self.repository.upsert_environment(
             code=code,
@@ -170,10 +222,17 @@ class PlatformConfigService:
         self, payload: dict[str, Any], *, actor_id: str, correlation_id: str = ""
     ) -> dict[str, Any]:
         self.require_admin(actor_id)
-        environment_code = validate_code(
-            str(payload.get("environment_code") or ""), field="environment_code"
+        assert_no_resource_placement(payload, context="业务 topology")
+        environment_code = validate_topology_code(
+            str(payload.get("environment_code") or ""),
+            field="environment_code",
+            level="Environment",
         )
-        code = validate_code(str(payload.get("code") or ""))
+        code = validate_topology_code(
+            str(payload.get("code") or ""),
+            field="base_code",
+            level="Base",
+        )
         before = self.repository.get_base_by_code(environment_code=environment_code, code=code)
         entity = self.repository.upsert_base(
             environment_code=environment_code,
@@ -225,11 +284,22 @@ class PlatformConfigService:
         self, payload: dict[str, Any], *, actor_id: str, correlation_id: str = ""
     ) -> dict[str, Any]:
         self.require_admin(actor_id)
-        environment_code = validate_code(
-            str(payload.get("environment_code") or ""), field="environment_code"
+        assert_no_resource_placement(payload, context="业务 topology")
+        environment_code = validate_topology_code(
+            str(payload.get("environment_code") or ""),
+            field="environment_code",
+            level="Environment",
         )
-        base_code = validate_code(str(payload.get("base_code") or ""), field="base_code")
-        code = validate_code(str(payload.get("code") or ""))
+        base_code = validate_topology_code(
+            str(payload.get("base_code") or ""),
+            field="base_code",
+            level="Base",
+        )
+        code = validate_topology_code(
+            str(payload.get("code") or ""),
+            field="workshop_code",
+            level="Workshop",
+        )
         before = self.repository.get_workshop_by_code(
             environment_code=environment_code,
             base_code=base_code,
@@ -319,9 +389,7 @@ class PlatformConfigService:
         return self.legacy_env_secret_importer.report()
 
     def get_platform_secret_usage(self, code: str) -> dict[str, Any]:
-        secret = self.repository.get_platform_secret_by_code(
-            validate_code(code)
-        )
+        secret = self.repository.get_platform_secret_by_code(validate_code(code))
         if not secret:
             from app.shared.exceptions import NotFound
 
@@ -333,9 +401,7 @@ class PlatformConfigService:
         return {
             "secret": self._public_secret(secret),
             "usage_count": len(dependencies),
-            "active_usage_count": sum(
-                1 for item in dependencies if item["active"]
-            ),
+            "active_usage_count": sum(1 for item in dependencies if item["active"]),
             "dependencies": dependencies,
         }
 
@@ -426,6 +492,10 @@ class PlatformConfigService:
     ) -> dict[str, Any]:
         self.require_admin(actor_id)
         self._assert_resource_writes_available()
+        assert_no_resource_placement(
+            payload,
+            context="旧 Resource Binding",
+        )
         code = validate_code(str(payload.get("code") or ""))
         config = normalize_json_object(payload.get("config"), field="config")
         assert_no_secret_payload(config)

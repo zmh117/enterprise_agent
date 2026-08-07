@@ -83,6 +83,17 @@ _LOKI_SELECTOR_PROPERTIES: dict[str, Any] = {
     "workshop": {"type": "string"},
 }
 
+_PLACEMENT_PROPERTY: dict[str, Any] = {
+    "placement": {
+        "type": "string",
+        "enum": ["cloud", "edge"],
+        "description": (
+            "Required when the Job exposes both cloud and edge resources; "
+            "omit it when the Job has only one or no placement."
+        ),
+    }
+}
+
 
 TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
     "get_er_context": {
@@ -117,6 +128,7 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 },
                 "limit": {"type": "integer", "minimum": 1},
                 **_ADDRESSING_PROPERTIES,
+                **_PLACEMENT_PROPERTY,
             },
             "required": ["environment", "base"],
             "additionalProperties": False,
@@ -229,6 +241,7 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "sql": {"type": "string"},
                 "limit": {"type": "integer", "minimum": 1},
                 **_ADDRESSING_PROPERTIES,
+                **_PLACEMENT_PROPERTY,
             },
             "required": ["sql"],
             "additionalProperties": False,
@@ -242,6 +255,7 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "datasource": {"type": "string"},
                 "key": {"type": "string"},
                 **_ADDRESSING_PROPERTIES,
+                **_PLACEMENT_PROPERTY,
             },
             "required": ["key"],
             "additionalProperties": False,
@@ -256,6 +270,7 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "pattern": {"type": "string"},
                 "limit": {"type": "integer", "minimum": 1},
                 **_ADDRESSING_PROPERTIES,
+                **_PLACEMENT_PROPERTY,
             },
             "required": ["pattern"],
             "additionalProperties": False,
@@ -764,8 +779,7 @@ class RealClaudeCodeAgentClient:
                 raise
             except Exception as exc:
                 safe_message = getattr(exc, "safe_message", str(exc))
-                tool_events.append(
-                    {
+                failed_event = {
                         "tool_name": tool_name,
                         "request_payload": arguments,
                         "response_summary": {"error": safe_message},
@@ -773,7 +787,14 @@ class RealClaudeCodeAgentClient:
                         "duration_ms": int((time.monotonic() - started) * 1000),
                         "risk_level": _risk_level(tool_name),
                     }
+                persisted_tool_call_id = str(
+                    getattr(exc, "persisted_tool_call_id", "") or ""
                 )
+                if persisted_tool_call_id:
+                    failed_event["persisted_tool_call_id"] = (
+                        persisted_tool_call_id
+                    )
+                tool_events.append(failed_event)
                 return _sdk_tool_response({"error": safe_message, "policy": "tool_rejected"})
 
         decorator = _tool_decorator(
@@ -1045,7 +1066,7 @@ def _tool_event_from_result(
     duration_ms: int,
     limits: ExecutionSettings,
 ) -> dict[str, Any]:
-    return {
+    event = {
         "tool_name": tool_name,
         "request_payload": _bounded_payload(arguments, limits.max_tool_response_chars),
         "response_summary": _bounded_payload(result.summary, limits.max_tool_response_chars),
@@ -1053,6 +1074,12 @@ def _tool_event_from_result(
         "duration_ms": duration_ms,
         "risk_level": _risk_level(tool_name),
     }
+    persisted_tool_call_id = str(
+        result.metadata.get("_persisted_tool_call_id") or ""
+    )
+    if persisted_tool_call_id:
+        event["persisted_tool_call_id"] = persisted_tool_call_id
+    return event
 
 
 def _extract_text_blocks(message: Any) -> list[str]:

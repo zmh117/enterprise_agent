@@ -469,6 +469,39 @@ class BusinessApplicationRepository:
         actor_id: str,
         routes: list[dict[str, str]],
     ) -> dict[str, Any]:
+        legacy = self.database.execute_one(
+            """
+            select source from (
+              select 'legacy-handler' as source
+                from business_application_publication_handler handler
+               where handler.application_publication_id = ?
+              union all
+              select 'legacy-agent-tool' as source
+                from business_application_publication publication
+                join business_application_revision revision
+                  on revision.id = publication.revision_id
+                join agent_tool_binding binding
+                  on binding.publication_id = revision.agent_publication_id
+               where publication.id = ?
+                 and publication.application_id = ?
+                 and not exists (
+                   select 1
+                     from business_application_publication_builtin_tool_resolution_set exact
+                    where exact.application_publication_id = publication.id
+                 )
+            ) legacy_source
+            limit 1
+            """,
+            (publication_id, publication_id, application_id),
+        )
+        if legacy is not None:
+            raise NonRetryableExecutionError(
+                "Legacy Business Application publication cannot be activated",
+                safe_message=(
+                    "legacy-v1 业务应用发布版本只保留历史审计，不能重新激活"
+                ),
+                error_code="builtin_tool_legacy_reactivation_forbidden",
+            )
         existing = self.get_deployment(application_id, environment)
         if (
             existing
@@ -690,6 +723,85 @@ class BusinessApplicationRepository:
             """,
             (revision_id,),
         )
+        builtin_tools = self.database.execute(
+            """
+            select *
+              from business_application_revision_builtin_tool
+             where application_revision_id = ?
+             order by selection_order
+            """,
+            (revision_id,),
+        )
+        target_paths = self.database.execute(
+            """
+            select target.*, environment.code as environment_code,
+                   environment.revision as environment_revision,
+                   base.code as base_code, base.revision as base_revision,
+                   workshop.code as workshop_code,
+                   workshop.revision as workshop_revision
+              from business_application_revision_target target
+              join platform_environment environment
+                on environment.id = target.environment_id
+              left join platform_base base on base.id = target.base_id
+              left join platform_workshop workshop
+                on workshop.id = target.workshop_id
+             where target.application_revision_id = ?
+             order by target.target_order
+            """,
+            (revision_id,),
+        )
+        builtin_tool_values: list[dict[str, Any]] = []
+        for tool in builtin_tools:
+            resources = self.database.execute(
+                """
+                select mapping.*, environment.code as environment_code,
+                       base.code as base_code, workshop.code as workshop_code
+                  from business_application_revision_builtin_tool_resource mapping
+                  left join platform_environment environment
+                    on environment.id = mapping.environment_id
+                  left join platform_base base on base.id = mapping.base_id
+                  left join platform_workshop workshop
+                    on workshop.id = mapping.workshop_id
+                 where mapping.application_revision_tool_id = ?
+                 order by mapping.mapping_order
+                """,
+                (str(tool["id"]),),
+            )
+            builtin_tool_values.append(
+                {
+                    **tool,
+                    "selection_order": int(tool["selection_order"]),
+                    "resources": [
+                        {
+                            **resource,
+                            "mapping_order": int(resource["mapping_order"]),
+                            "environment_id": str(resource.get("environment_id") or "")
+                            or None,
+                            "base_id": str(resource.get("base_id") or "") or None,
+                            "workshop_id": str(resource.get("workshop_id") or "")
+                            or None,
+                            "environment_code": str(
+                                resource.get("environment_code") or ""
+                            ),
+                            "base_code": str(resource.get("base_code") or ""),
+                            "workshop_code": str(
+                                resource.get("workshop_code") or ""
+                            ),
+                            "placement": str(resource.get("placement") or "") or None,
+                            "workshop_partition_policy_revision_id": str(
+                                resource.get(
+                                    "workshop_partition_policy_revision_id"
+                                )
+                                or ""
+                            ),
+                            "loki_scope_policy_revision_id": str(
+                                resource.get("loki_scope_policy_revision_id") or ""
+                            ),
+                        }
+                        for resource in resources
+                    ],
+                }
+            )
         return {
             **row,
             "revision": int(row["revision"]),
@@ -731,6 +843,27 @@ class BusinessApplicationRepository:
                 row.get("api_capability_release_ids_json"),
                 [],
             ),
+            "builtin_tools": builtin_tool_values,
+            "target_paths": [
+                {
+                    **target,
+                    "target_order": int(target["target_order"]),
+                    "base_id": str(target.get("base_id") or "") or None,
+                    "workshop_id": str(target.get("workshop_id") or "")
+                    or None,
+                    "environment_code": str(target["environment_code"]),
+                    "base_code": str(target.get("base_code") or ""),
+                    "workshop_code": str(target.get("workshop_code") or ""),
+                    "environment_revision": int(
+                        target["environment_revision"]
+                    ),
+                    "base_revision": int(target.get("base_revision") or 0),
+                    "workshop_revision": int(
+                        target.get("workshop_revision") or 0
+                    ),
+                }
+                for target in target_paths
+            ],
         }
 
     @staticmethod

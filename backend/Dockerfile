@@ -81,6 +81,7 @@ CMD ["python", "-m", "app.cli.migrate"]
 
 FROM database-deps AS api-server
 COPY backend/app/__init__.py backend/app/bootstrap.py backend/app/main.py /app/backend/app/
+COPY backend/app/acceptance /app/backend/app/acceptance
 COPY backend/app/cli /app/backend/app/cli
 COPY backend/app/shared /app/backend/app/shared
 COPY backend/app/modules /app/backend/app/modules
@@ -90,6 +91,11 @@ COPY backend/seeds /app/backend/seeds
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-deps --no-build-isolation .
 CMD ["python", "-m", "uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+
+FROM api-server AS builtin-tool-compose-acceptance
+COPY backend/app/testing /app/backend/app/testing
+RUN python -c "import app.acceptance.builtin_tool_composition; import app.testing.permission_service"
+CMD ["python", "-m", "app.acceptance.builtin_tool_composition"]
 
 FROM python-deps AS dingtalk-stream-ingress
 COPY backend/app/__init__.py backend/app/bootstrap.py /app/backend/app/

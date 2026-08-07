@@ -139,14 +139,39 @@ class ResourceResetService:
             select r.id, r.resource_revision_id, r.resource_slot,
                    h.application_publication_id,
                    p.application_id, a.code as application_code
-              from business_application_publication_resource r
-              join business_application_publication_handler h
-                on h.id = r.application_handler_id
+              from business_application_publication_builtin_tool_resource r
+              join business_application_publication_builtin_tool h
+                on h.id = r.application_tool_id
               join business_application_publication p
                 on p.id = h.application_publication_id
               join business_application a on a.id = p.application_id
              order by h.application_publication_id,
                       r.resource_slot, r.id
+            """,
+            revision_ids,
+        )
+        revision_tool_resource_bindings = self._for_revisions(
+            """
+            select mapping.id, mapping.resource_revision_id,
+                   mapping.resource_slot,
+                   tool.application_revision_id
+              from business_application_revision_builtin_tool_resource mapping
+              join business_application_revision_builtin_tool tool
+                on tool.id = mapping.application_revision_tool_id
+             order by tool.application_revision_id,
+                      mapping.resource_slot, mapping.id
+            """,
+            revision_ids,
+        )
+        publication_tool_resolutions = self._for_revisions(
+            """
+            select resolution.id, resolution.resource_revision_id,
+                   resolution.resource_slot,
+                   resolution.application_publication_id
+              from business_application_publication_builtin_tool_resolution
+                   resolution
+             order by resolution.application_publication_id,
+                      resolution.resource_slot, resolution.id
             """,
             revision_ids,
         )
@@ -194,6 +219,8 @@ class ResourceResetService:
             legacy_bindings=legacy_bindings,
             application_bindings=application_bindings,
             handler_resource_bindings=handler_resource_bindings,
+            revision_tool_resource_bindings=revision_tool_resource_bindings,
+            publication_tool_resolutions=publication_tool_resolutions,
             activations=activations,
             runtime_states=runtime_states,
             affected_applications=affected,
@@ -225,6 +252,12 @@ class ResourceResetService:
             "application_bindings": application_bindings,
             "handler_resource_bindings": (
                 handler_resource_bindings
+            ),
+            "revision_builtin_tool_resource_mappings": (
+                revision_tool_resource_bindings
+            ),
+            "publication_builtin_tool_resolutions": (
+                publication_tool_resolutions
             ),
             "activations": activations,
             "runtime_states": runtime_states,
@@ -645,6 +678,8 @@ class ResourceResetService:
         legacy_bindings: list[dict[str, Any]],
         application_bindings: list[dict[str, Any]],
         handler_resource_bindings: list[dict[str, Any]],
+        revision_tool_resource_bindings: list[dict[str, Any]],
+        publication_tool_resolutions: list[dict[str, Any]],
         activations: list[dict[str, Any]],
         runtime_states: list[dict[str, Any]],
         affected_applications: list[dict[str, Any]],
@@ -719,11 +754,33 @@ class ResourceResetService:
         for row in handler_resource_bindings:
             targets.append(
                 self._target(
-                    "handler_resource_binding",
+                    "builtin_tool_resource_mapping",
                     str(row["id"]),
                     1,
                     "DELETE",
                     str(row["application_code"]),
+                    row,
+                )
+            )
+        for row in revision_tool_resource_bindings:
+            targets.append(
+                self._target(
+                    "builtin_tool_draft_resource_mapping",
+                    str(row["id"]),
+                    1,
+                    "DELETE",
+                    "",
+                    row,
+                )
+            )
+        for row in publication_tool_resolutions:
+            targets.append(
+                self._target(
+                    "builtin_tool_resolution",
+                    str(row["id"]),
+                    1,
+                    "DELETE",
+                    "",
                     row,
                 )
             )
@@ -783,8 +840,14 @@ class ResourceResetService:
                 [],
             ).append(str(target["target_id"]))
         table_by_type = {
-            "handler_resource_binding": (
-                "business_application_publication_resource"
+            "builtin_tool_resource_mapping": (
+                "business_application_publication_builtin_tool_resource"
+            ),
+            "builtin_tool_draft_resource_mapping": (
+                "business_application_revision_builtin_tool_resource"
+            ),
+            "builtin_tool_resolution": (
+                "business_application_publication_builtin_tool_resolution"
             ),
             "application_binding": (
                 "business_application_resource_binding"
@@ -797,7 +860,9 @@ class ResourceResetService:
             "resource": "platform_resource",
         }
         for target_type in (
-            "handler_resource_binding",
+            "builtin_tool_resolution",
+            "builtin_tool_resource_mapping",
+            "builtin_tool_draft_resource_mapping",
             "application_binding",
             "legacy_binding",
             "activation",
@@ -944,9 +1009,21 @@ class ResourceResetService:
                 )
                 == 0
             ),
-            "handler_resource_binding_empty": (
+            "builtin_tool_resource_mapping_empty": (
                 self._count(
-                    "business_application_publication_resource"
+                    "business_application_publication_builtin_tool_resource"
+                )
+                == 0
+            ),
+            "builtin_tool_draft_resource_mapping_empty": (
+                self._count(
+                    "business_application_revision_builtin_tool_resource"
+                )
+                == 0
+            ),
+            "builtin_tool_resolution_empty": (
+                self._count(
+                    "business_application_publication_builtin_tool_resolution"
                 )
                 == 0
             ),
@@ -1140,7 +1217,9 @@ class ResourceResetService:
         target_ids: Iterable[str],
     ) -> None:
         allowed = {
-            "business_application_publication_resource",
+            "business_application_publication_builtin_tool_resource",
+            "business_application_revision_builtin_tool_resource",
+            "business_application_publication_builtin_tool_resolution",
             "business_application_resource_binding",
             "platform_resource_binding",
             "platform_resource_activation",
@@ -1166,7 +1245,9 @@ class ResourceResetService:
             "platform_resource_revision",
             "platform_resource_binding",
             "business_application_resource_binding",
-            "business_application_publication_resource",
+            "business_application_publication_builtin_tool_resource",
+            "business_application_revision_builtin_tool_resource",
+            "business_application_publication_builtin_tool_resolution",
             "platform_resource_activation",
             "tool_resource_runtime_state",
         }

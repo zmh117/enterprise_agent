@@ -11,6 +11,7 @@ from ..domain import (
     ConfigValueType,
     ConfigStatus,
     ResourceKind,
+    ResourcePlacement,
     ResourceScopeType,
     RuntimeConfigScope,
     SecretProvider,
@@ -18,6 +19,21 @@ from ..domain import (
 )
 
 _CODE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+_TOPOLOGY_PLACEHOLDER_CODES = {
+    "cloud",
+    "default",
+    "edge",
+    "n_a",
+    "na",
+    "none",
+    "not_applicable",
+    "not_configured",
+    "null",
+    "standalone",
+    "undefined",
+    "unknown",
+    "unset",
+}
 _SECRET_KEY_FRAGMENTS = ("password", "passwd", "token", "secret", "api_key", "apikey", "credential")
 _MUTATION_TERMS = (
     "delete",
@@ -45,6 +61,64 @@ def validate_code(value: str, *, field: str = "code") -> str:
             f"Invalid {field}: {value}", safe_message=f"{field} 无效"
         )
     return value
+
+
+def validate_topology_code(
+    value: str,
+    *,
+    field: str = "code",
+    level: str = "topology",
+) -> str:
+    code = validate_code(value, field=field)
+    normalized = re.sub(r"[.:-]+", "_", code.lower())
+    if normalized in _TOPOLOGY_PLACEHOLDER_CODES:
+        raise PlatformConfigValidationError(
+            f"Placeholder {level} code is forbidden: {code}",
+            safe_message=(
+                f"{level} 必须使用真实业务编码，不能使用占位值"
+            ),
+            error_code="builtin_tool_topology_placeholder_forbidden",
+        )
+    return code
+
+
+def validate_resource_placement(
+    value: object | None,
+) -> ResourcePlacement | None:
+    if value is None or value == "":
+        return None
+    text = str(value).strip()
+    try:
+        return ResourcePlacement(text)
+    except ValueError as exc:
+        raise PlatformConfigValidationError(
+            f"Invalid Resource placement: {text}",
+            safe_message="资源位置只能为 cloud、edge 或缺省",
+            error_code="builtin_tool_placement_invalid",
+        ) from exc
+
+
+def assert_no_resource_placement(
+    value: Any,
+    *,
+    context: str,
+) -> None:
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            normalized = re.sub(r"[^a-z0-9]", "", str(key).lower())
+            if normalized in {"placement", "placementkey", "resourceplacement"}:
+                raise PlatformConfigValidationError(
+                    f"Resource placement is forbidden in {context}",
+                    safe_message=(
+                        "placement 只能在应用资源映射中配置，"
+                        f"不能写入{context}"
+                    ),
+                    error_code="builtin_tool_placement_invalid",
+                )
+            assert_no_resource_placement(item, context=context)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            assert_no_resource_placement(item, context=context)
 
 
 def validate_status(value: str) -> ConfigStatus:

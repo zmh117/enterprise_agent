@@ -966,304 +966,116 @@ class BusinessAuthorizationService:
             user_id=user_id,
             application_id=application_id,
         )
-        governed_handlers = self.repository.database.execute(
-            """
-            select ah.id as application_handler_id,
-                   ah.capability_code,
-                   hp.id as handler_publication_id,
-                   hp.handler_id,
-                   hp.handler_version
-              from business_application_publication_handler ah
-              join handler_publication hp
-                on hp.id = ah.handler_publication_id
-             where ah.application_publication_id = ?
-             order by ah.capability_code
-            """,
-            (publication_id,),
+        return self._capture_exact_builtin_runtime_facts(
+            application_id=application_id,
+            publication=publication,
+            snapshot=snapshot,
+            accesses=accesses,
+            environment=environment,
+            base=base,
+            workshop=workshop,
         )
-        if governed_handlers:
-            return self._capture_governed_runtime_facts(
-                user_id=user_id,
-                application_id=application_id,
-                publication=publication,
-                snapshot=snapshot,
-                agent_publication_id=str(
-                    (
-                        snapshot.get("agent")
-                        if isinstance(snapshot.get("agent"), dict)
-                        else {}
-                    ).get("id")
-                    or ""
-                ),
-                governed_handlers=governed_handlers,
-                environment=environment,
-                base=base,
-                workshop=workshop,
-            )
 
-        application_capabilities = {
-            str(item.get("capability_code") or "")
-            for item in snapshot.get("capabilities") or []
-            if isinstance(item, dict) and bool(item.get("enabled", True))
-        }
+    def _capture_exact_builtin_runtime_facts(
+        self,
+        *,
+        application_id: str,
+        publication: dict[str, Any],
+        snapshot: dict[str, Any],
+        accesses: list[dict[str, Any]],
+        environment: str,
+        base: str,
+        workshop: str,
+    ) -> dict[str, Any]:
+        """Capture audit facts without interpreting legacy name bindings."""
+
+        publication_id = str(publication["id"])
         agent = snapshot.get("agent")
         agent_publication_id = (
             str(agent.get("id") or "") if isinstance(agent, dict) else ""
         )
-        handler_rows = self.repository.database.execute(
+        if not agent_publication_id:
+            raise self._runtime_facts_invalid(
+                "Application publication does not pin an Agent publication"
+            )
+        tools = self.repository.database.execute(
             """
-            select t.id, t.name
-              from tool_definition t
-              join agent_tool_binding b
-                on b.tool_name = t.name and b.publication_id = ?
-             where t.enabled = 1 and t.read_only = 1
-             order by t.name
+            select allowlist.tool_identifier, allowlist.tool_release_id,
+                   allowlist.handler_version,
+                   allowlist.implementation_digest,
+                   allowlist.public_schema_hash
+              from business_application_publication_builtin_tool allowlist
+              join agent_publication_builtin_tool envelope
+                on envelope.id = allowlist.agent_publication_tool_id
+               and envelope.agent_publication_id = allowlist.agent_publication_id
+               and envelope.tool_release_id = allowlist.tool_release_id
+              join builtin_tool_release release
+                on release.id = allowlist.tool_release_id
+               and release.tool_identifier = allowlist.tool_identifier
+               and release.handler_version = allowlist.handler_version
+               and release.implementation_digest = allowlist.implementation_digest
+              join builtin_tool_installation installation
+                on installation.tool_identifier = allowlist.tool_identifier
+               and installation.handler_version = allowlist.handler_version
+               and installation.implementation_digest =
+                   allowlist.implementation_digest
+             where allowlist.application_publication_id = ?
+               and allowlist.agent_publication_id = ?
+               and release.status in ('ACTIVE', 'DEPRECATED')
+               and installation.installation_status = 'INSTALLED'
+             order by allowlist.tool_identifier
             """,
-            (agent_publication_id,),
-        )
-        handlers = {
-            str(row["name"]): {
-                "handler_id": str(row["id"]),
-                "handler_version": "legacy-v1",
-                "capability_code": str(row["name"]),
-            }
-            for row in handler_rows
-            if str(row["name"]) in application_capabilities
-        }
-
-        resources = self.repository.database.execute(
-            """
-            select r.id, r.code, r.revision, r.resource_kind, r.scope_type,
-                   r.environment_id, r.base_id, r.workshop_id,
-                   e.code as environment_code, b.code as base_code,
-                   w.code as workshop_code
-              from platform_resource_binding r
-              left join platform_environment e on e.id = r.environment_id
-              left join platform_base b on b.id = r.base_id
-              left join platform_workshop w on w.id = r.workshop_id
-             where r.status = 'enabled'
-             order by r.code
-            """
+            (publication_id, agent_publication_id),
         )
         requested_scope = {
             "environment_code": environment,
             "base_code": base,
             "workshop_code": workshop,
         }
-        bindings: dict[tuple[str, str, str, str, str, str], dict[str, Any]] = {}
+        roles_by_tool: dict[str, set[str]] = {
+            str(tool["tool_identifier"]): set() for tool in tools
+        }
         for access in accesses:
-            role_code = str(access["role_code"])
-            allowed_handlers = sorted(
-                set(str(value) for value in access["capability_codes"]) & handlers.keys()
-            )
-            for scope in access["scopes"]:
-                if not self._scope_matches(
+            if not any(
+                self._scope_matches(
                     scope,
                     environment=environment,
                     base=base,
                     workshop=workshop,
-                ):
-                    continue
-                normalized_scope = {
-                    "scope_key": str(scope.get("scope_key") or ""),
-                    "environment_id": str(scope.get("environment_id") or ""),
-                    "environment_code": str(scope.get("environment_code") or ""),
-                    "base_id": str(scope.get("base_id") or ""),
-                    "base_code": str(scope.get("base_code") or ""),
-                    "workshop_id": str(scope.get("workshop_id") or ""),
-                    "workshop_code": str(scope.get("workshop_code") or ""),
-                }
-                pinned_resources = [
-                    self._runtime_resource_fact(resource)
-                    for resource in resources
-                    if self._resource_within_scope(
-                        resource,
-                        normalized_scope,
-                        requested_scope,
-                    )
-                ]
-                for capability_code in allowed_handlers:
-                    handler = handlers[capability_code]
-                    key = (
-                        str(handler["handler_id"]),
-                        str(handler["handler_version"]),
-                        normalized_scope["environment_id"],
-                        normalized_scope["base_id"],
-                        normalized_scope["workshop_id"],
-                        role_code,
-                    )
-                    bindings[key] = {
-                        **handler,
-                        "source_role_code": role_code,
-                        "execution_scope": normalized_scope,
-                        "resource_revisions": pinned_resources,
-                    }
-
+                )
+                for scope in access["scopes"]
+            ):
+                continue
+            for tool_identifier in set(
+                str(value) for value in access["capability_codes"]
+            ) & roles_by_tool.keys():
+                roles_by_tool[tool_identifier].add(str(access["role_code"]))
         return {
-            "schema_version": 1,
+            "schema_version": 3,
             "application_publication": {
                 "id": publication_id,
-                "application_id": application_id,
-                "revision": int(publication.get("revision") or 0),
-                "config_hash": publication_config_hash,
-            },
-            "agent_publication_id": agent_publication_id,
-            "requested_scope": requested_scope,
-            "bindings": sorted(
-                bindings.values(),
-                key=lambda item: (
-                    str(item["capability_code"]),
-                    str(item["source_role_code"]),
-                    str(item["execution_scope"]["scope_key"]),
-                ),
-            ),
-        }
-
-    def _capture_governed_runtime_facts(
-        self,
-        *,
-        user_id: str,
-        application_id: str,
-        publication: dict[str, Any],
-        snapshot: dict[str, Any],
-        agent_publication_id: str,
-        governed_handlers: list[dict[str, Any]],
-        environment: str,
-        base: str,
-        workshop: str,
-    ) -> dict[str, Any]:
-        from app.modules.internal_tools.application.handler_resolution import (
-            BusinessRoleAuthorizerAdapter,
-            HandlerExecutionResolver,
-            HandlerResolutionRequest,
-        )
-        from app.modules.internal_tools.domain import (
-            build_builtin_handler_registry,
-        )
-
-        if not agent_publication_id:
-            raise self._runtime_facts_invalid(
-                "Application publication does not pin an Agent publication"
-            )
-        agent = self.repository.database.execute_one(
-            """
-            select d.classification
-              from agent_publication p
-              join agent_definition d on d.id = p.agent_id
-             where p.id = ?
-            """,
-            (agent_publication_id,),
-        )
-        if agent is None:
-            raise self._runtime_facts_invalid(
-                "Application Agent publication is unavailable"
-            )
-        requested_scope = self._resolve_execution_scope_nodes(
-            environment=environment,
-            base=base,
-            workshop=workshop,
-        )
-        resolver = HandlerExecutionResolver(
-            self.repository.database,
-            build_builtin_handler_registry(),
-            BusinessRoleAuthorizerAdapter(self),
-        )
-        bindings: list[dict[str, Any]] = []
-        for row in governed_handlers:
-            capability_code = str(row["capability_code"])
-            decision = self.decide(
-                user_id=user_id,
-                application_id=application_id,
-                capability_code=capability_code,
-                environment=environment,
-                base=base,
-                workshop=workshop,
-                stage="job_execution_scope",
-            )
-            if not decision["allowed"]:
-                continue
-            resolved = resolver.resolve(
-                HandlerResolutionRequest(
-                    user_id=user_id,
-                    application_id=application_id,
-                    application_publication_id=str(publication["id"]),
-                    agent_publication_id=agent_publication_id,
-                    agent_classification=str(agent["classification"]),
-                    capability_code=capability_code,
-                    handler_id=str(row["handler_id"]),
-                    handler_version=str(row["handler_version"]),
-                    environment_code=environment,
-                    base_code=base,
-                    workshop_code=workshop,
-                )
-            )
-            bindings.append(
-                {
-                    "capability_code": capability_code,
-                    "handler_publication_id": (
-                        resolved.handler_publication_id
-                    ),
-                    "application_handler_id": (
-                        resolved.application_handler_id
-                    ),
-                    "handler_id": resolved.definition.handler_id,
-                    "handler_version": (
-                        resolved.definition.handler_version
-                    ),
-                    "source_role_codes": sorted(
-                        str(value)
-                        for value in decision.get(
-                            "source_role_codes"
-                        )
-                        or []
-                    ),
-                    "execution_scope": requested_scope,
-                    "resource_revisions": [
-                        {
-                            "resource_slot": resource.slot_code,
-                            "resource_revision_id": (
-                                resource.resource_revision_id
-                            ),
-                            "resource_id": resource.resource_id,
-                            "resource_code": resource.resource_code,
-                            "revision": resource.revision,
-                            "resource_kind": (
-                                resource.resource_kind
-                            ),
-                            "scope_type": resource.scope_type,
-                            "environment_id": (
-                                resource.environment_id
-                            ),
-                            "environment_code": (
-                                resource.environment_code
-                            ),
-                            "base_id": resource.base_id,
-                            "base_code": resource.base_code,
-                            "workshop_id": resource.workshop_id,
-                            "workshop_code": (
-                                resource.workshop_code
-                            ),
-                            "constraints": resource.constraints,
-                            "binding_hash": (
-                                resource.binding_hash
-                            ),
-                        }
-                        for resource in resolved.resources
-                    ],
-                }
-            )
-        return {
-            "schema_version": 2,
-            "application_publication": {
-                "id": str(publication["id"]),
                 "application_id": application_id,
                 "revision": int(publication.get("revision") or 0),
                 "config_hash": str(publication["config_hash"]),
             },
             "agent_publication_id": agent_publication_id,
-            "agent_classification": str(agent["classification"]),
             "requested_scope": requested_scope,
-            "bindings": bindings,
+            "tool_grants": [
+                {
+                    "tool_identifier": str(tool["tool_identifier"]),
+                    "tool_release_id": str(tool["tool_release_id"]),
+                    "handler_version": str(tool["handler_version"]),
+                    "implementation_digest": str(
+                        tool["implementation_digest"]
+                    ),
+                    "public_schema_hash": str(tool["public_schema_hash"]),
+                    "source_role_codes": sorted(
+                        roles_by_tool[str(tool["tool_identifier"])]
+                    ),
+                }
+                for tool in tools
+            ],
+            "bindings": [],
         }
 
     def _resolve_execution_scope_nodes(

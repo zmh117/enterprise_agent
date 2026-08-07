@@ -3,6 +3,8 @@ from .handler_registry import (
     HandlerRegistry,
     HandlerRegistryError,
     ResourceSlotDefinition,
+    SafetyBoundaryDefinition,
+    VerifierPlanDefinition,
     build_builtin_handler_registry,
 )
 
@@ -11,5 +13,7 @@ __all__ = [
     "HandlerRegistry",
     "HandlerRegistryError",
     "ResourceSlotDefinition",
+    "SafetyBoundaryDefinition",
+    "VerifierPlanDefinition",
     "build_builtin_handler_registry",
 ]

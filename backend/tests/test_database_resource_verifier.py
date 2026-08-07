@@ -215,9 +215,9 @@ def test_sqlserver_probe_accepts_readonly_permissions_and_sets_timeout() -> None
     connection = FakeConnection(cursor)
     config = {**_runtime_config(), "port": 1433}
 
-    checks = SqlServerReadonlyAccountProbe(
-        lambda **_kwargs: connection
-    ).verify(config, timeout_seconds=4)
+    checks = SqlServerReadonlyAccountProbe(lambda **_kwargs: connection).verify(
+        config, timeout_seconds=4
+    )
 
     assert checks["readonly_account"] is True
     assert checks["privileged_account_allowed"] is False
@@ -242,19 +242,13 @@ def test_sqlserver_probe_rejects_roles_and_write_permissions(
 
     def execute(sql: str) -> None:
         cursor.executed.append(sql)
-        cursor.current = (
-            [membership]
-            if sql.startswith("SELECT IS_SRVROLEMEMBER")
-            else permissions
-        )
+        cursor.current = [membership] if sql.startswith("SELECT IS_SRVROLEMEMBER") else permissions
 
     cursor.execute = execute  # type: ignore[method-assign]
     connection = FakeConnection(cursor)
 
     with pytest.raises(ReadonlyAccountViolation):
-        SqlServerReadonlyAccountProbe(
-            lambda **_kwargs: connection
-        ).verify(
+        SqlServerReadonlyAccountProbe(lambda **_kwargs: connection).verify(
             {**_runtime_config(), "port": 1433},
             timeout_seconds=5,
         )
@@ -314,11 +308,7 @@ def test_database_verifier_resolves_secret_in_memory_without_persisting_it() -> 
             return {"connection": True, "readonly_account": True}
 
     verifier = DatabaseResourceTechnicalVerifier(
-        resolve_secret=lambda ref: (
-            password
-            if ref == "secret://platform/mysql_password"
-            else ""
-        ),
+        resolve_secret=lambda ref: password if ref == "secret://platform/mysql_password" else "",
         probes={"mysql": CapturingProbe()},
         timeout_seconds=9,
     )
@@ -332,9 +322,7 @@ def test_database_verifier_resolves_secret_in_memory_without_persisting_it() -> 
                 "database": "orders",
                 "username": "reader",
             },
-            "secret_refs": {
-                "password_ref": "secret://platform/mysql_password"
-            },
+            "secret_refs": {"password_ref": "secret://platform/mysql_password"},
         },
     )
 
@@ -354,9 +342,7 @@ def test_database_verifier_returns_safe_failure_without_driver_error_details() -
             timeout_seconds: int,
         ) -> dict[str, Any]:
             del config, timeout_seconds
-            raise RuntimeError(
-                f"server=db.internal password={password}"
-            )
+            raise RuntimeError(f"server=db.internal password={password}")
 
     verifier = DatabaseResourceTechnicalVerifier(
         resolve_secret=lambda _ref: password,
@@ -372,9 +358,7 @@ def test_database_verifier_returns_safe_failure_without_driver_error_details() -
                 "database": "orders",
                 "username": "reader",
             },
-            "secret_refs": {
-                "password_ref": "secret://platform/mysql_password"
-            },
+            "secret_refs": {"password_ref": "secret://platform/mysql_password"},
         },
     )
 
@@ -572,9 +556,7 @@ def test_oracle_publication_verification_remains_blocked_without_real_gate() -> 
                 "service_name": "ORCL",
                 "username": "reader",
             },
-            "secret_refs": {
-                "password_ref": "secret://platform/oracle_password"
-            },
+            "secret_refs": {"password_ref": "secret://platform/oracle_password"},
         },
     )
 
@@ -595,6 +577,9 @@ def test_redis_probe_uses_canonical_database_auth_and_tls() -> None:
 
         def close(self) -> None:
             self.closed = True
+
+        def scan(self, **_kwargs: object) -> None:
+            raise AssertionError("Redis Resource connection test must not enumerate keys")
 
     client = Client()
 
@@ -697,9 +682,7 @@ def test_non_database_provider_can_pass_governed_verification(
                 "verify_certificate": True,
             },
         }
-        refs = {
-            "password_ref": "secret://platform/redis_password"
-        }
+        refs = {"password_ref": "secret://platform/redis_password"}
     else:
         resource_kind = "loki"
         config = {

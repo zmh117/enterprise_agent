@@ -8,6 +8,8 @@ from typing import Any
 from app.shared.database import Database
 from app.shared.exceptions import NonRetryableExecutionError, NotFound
 
+from ..application.validation import validate_topology_code
+
 
 def now_iso() -> str:
     return datetime.now(UTC).isoformat()
@@ -34,6 +36,11 @@ class PlatformConfigRepository:
         aliases: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        code = validate_topology_code(
+            code,
+            field="environment_code",
+            level="Environment",
+        )
         existing = self.get_environment_by_code(code)
         timestamp = now_iso()
         if existing:
@@ -120,6 +127,16 @@ class PlatformConfigRepository:
         aliases: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        environment_code = validate_topology_code(
+            environment_code,
+            field="environment_code",
+            level="Environment",
+        )
+        code = validate_topology_code(
+            code,
+            field="base_code",
+            level="Base",
+        )
         environment = self._require_environment(environment_code)
         existing = self.get_base_by_code(environment_code=environment_code, code=code)
         timestamp = now_iso()
@@ -239,6 +256,21 @@ class PlatformConfigRepository:
         aliases: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        environment_code = validate_topology_code(
+            environment_code,
+            field="environment_code",
+            level="Environment",
+        )
+        base_code = validate_topology_code(
+            base_code,
+            field="base_code",
+            level="Base",
+        )
+        code = validate_topology_code(
+            code,
+            field="workshop_code",
+            level="Workshop",
+        )
         base = self._require_base(environment_code=environment_code, code=base_code)
         existing = self.get_workshop_by_code(
             environment_code=environment_code, base_code=base_code, code=code

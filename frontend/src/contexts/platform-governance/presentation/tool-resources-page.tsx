@@ -78,6 +78,7 @@ import type {
   TopologyItem,
 } from "@/contexts/platform-governance/domain/platform-governance"
 import { ApiError } from "@/shared/api/api-client"
+import { ResourcePolicySheet } from "@/contexts/platform-governance/presentation/resource-policy-sheet"
 
 type Provider = ResourceFormInput["provider_type"]
 type ResourceKind = ResourceFormInput["resource_kind"]
@@ -185,6 +186,11 @@ export function ToolResourcesPage() {
     undefined
   )
   const [confirm, setConfirm] = useState<ConfirmAction | null>(null)
+  const [policyResourceId, setPolicyResourceId] = useState<string | null>(null)
+  const policyResource =
+    (resources.data ?? []).find(
+      (resource) => resource.id === policyResourceId
+    ) ?? null
   const filtered = useMemo(
     () =>
       (resources.data ?? []).filter(
@@ -311,6 +317,7 @@ export function ToolResourcesPage() {
                   revisionId: resource.published_revision.id,
                 })
               }}
+              onManagePolicy={() => setPolicyResourceId(resource.id)}
               onConfirm={(type) => setConfirm({ type, resource })}
             />
           ))}
@@ -354,6 +361,16 @@ export function ToolResourcesPage() {
                 onSuccess: () => setEditing(undefined),
               })
             }
+          }}
+        />
+      ) : null}
+
+      {policyResource ? (
+        <ResourcePolicySheet
+          resource={policyResource}
+          resources={resources.data ?? []}
+          onOpenChange={(open) => {
+            if (!open) setPolicyResourceId(null)
           }}
         />
       ) : null}
@@ -420,6 +437,7 @@ function ResourceFilters({
       key: "scope",
       items: [
         ["all", "全部"],
+        ["global", "全局"],
         ["environment", "环境"],
         ["base", "基地"],
         ["workshop", "车间"],
@@ -486,6 +504,7 @@ function ResourceCard({
   onVerify,
   onPublish,
   onCreateDraft,
+  onManagePolicy,
   onConfirm,
 }: {
   resource: GovernedResource
@@ -495,6 +514,7 @@ function ResourceCard({
   onVerify: () => void
   onPublish: () => void
   onCreateDraft: () => void
+  onManagePolicy: () => void
   onConfirm: (type: ConfirmAction["type"]) => void
 }) {
   const published = resource.published_revision
@@ -584,6 +604,14 @@ function ResourceCard({
           </div>
         ) : null}
         <div className="flex flex-wrap gap-2">
+          {resource.resource_kind === "loki" ||
+          resource.scope_type === "workshop" ? (
+            <Button size="sm" variant="secondary" onClick={onManagePolicy}>
+              {resource.resource_kind === "loki"
+                ? "配置 Loki 查询范围"
+                : "配置车间隔离策略"}
+            </Button>
+          ) : null}
           {draft ? (
             <>
               <Button size="sm" variant="outline" onClick={onEdit}>
@@ -688,6 +716,15 @@ function ResourceFormSheet({
       ...form,
       provider_type: provider,
       resource_kind: kind,
+      scope_type:
+        provider === "loki"
+          ? "global"
+          : form.scope_type === "global"
+            ? "base"
+            : form.scope_type,
+      environment_code: provider === "loki" ? "" : form.environment_code,
+      base_code: provider === "loki" ? "" : form.base_code,
+      workshop_code: provider === "loki" ? "" : form.workshop_code,
       config: structuredClone(defaultConfigs[provider]),
       secret_refs: {},
     })
@@ -785,7 +822,12 @@ function ResourceFormSheet({
                   setForm({
                     ...form,
                     scope_type: value as ResourceFormInput["scope_type"],
-                    base_code: value === "environment" ? "" : form.base_code,
+                    environment_code:
+                      value === "global" ? "" : form.environment_code,
+                    base_code:
+                      value === "environment" || value === "global"
+                        ? ""
+                        : form.base_code,
                     workshop_code:
                       value === "workshop" ? form.workshop_code : "",
                   })
@@ -795,27 +837,38 @@ function ResourceFormSheet({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="environment">环境</SelectItem>
-                  <SelectItem value="base">基地</SelectItem>
-                  <SelectItem value="workshop">车间</SelectItem>
+                  {form.provider_type === "loki" ? (
+                    <>
+                      <SelectItem value="global">全局</SelectItem>
+                      <SelectItem value="environment">环境</SelectItem>
+                    </>
+                  ) : (
+                    <>
+                      <SelectItem value="environment">环境</SelectItem>
+                      <SelectItem value="base">基地</SelectItem>
+                      <SelectItem value="workshop">车间</SelectItem>
+                    </>
+                  )}
                 </SelectContent>
               </Select>
             </Field>
-            <TopologyCombobox
-              label="环境"
-              value={form.environment_code}
-              disabled={Boolean(resource)}
-              options={options.environments.data ?? []}
-              onChange={(environmentCode) =>
-                setForm({
-                  ...form,
-                  environment_code: environmentCode,
-                  base_code: "",
-                  workshop_code: "",
-                })
-              }
-            />
-            {form.scope_type !== "environment" ? (
+            {form.scope_type !== "global" ? (
+              <TopologyCombobox
+                label="环境"
+                value={form.environment_code}
+                disabled={Boolean(resource)}
+                options={options.environments.data ?? []}
+                onChange={(environmentCode) =>
+                  setForm({
+                    ...form,
+                    environment_code: environmentCode,
+                    base_code: "",
+                    workshop_code: "",
+                  })
+                }
+              />
+            ) : null}
+            {form.scope_type === "base" || form.scope_type === "workshop" ? (
               <TopologyCombobox
                 label="基地"
                 value={form.base_code}
@@ -1181,6 +1234,7 @@ function kindLabel(kind: GovernedResource["resource_kind"]) {
 }
 
 function scopeLabel(resource: GovernedResource) {
+  if (resource.scope_type === "global") return "global"
   return [resource.environment_code, resource.base_code, resource.workshop_code]
     .filter(Boolean)
     .join(" / ")

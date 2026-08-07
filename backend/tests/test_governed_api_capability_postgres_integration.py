@@ -64,7 +64,7 @@ def test_postgres_concurrent_publish_is_idempotent_and_draft_save_is_unique(
             default_migrations_dir(),
             migrator_build="governed-api-postgres-test",
         ).run()
-        assert result.head == "027"
+        assert result.head == "033"
         database.execute(
             """
             insert into app_user

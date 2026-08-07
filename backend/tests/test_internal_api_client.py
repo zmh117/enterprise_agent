@@ -60,6 +60,7 @@ class HttpInternalApiClientTests(unittest.TestCase):
             "select * from ws_a_order",
             10,
             self._context(),
+            placement="edge",
         )
 
         self.assertEqual("http://internal.test/tools/database/query", captured["url"])
@@ -69,7 +70,12 @@ class HttpInternalApiClientTests(unittest.TestCase):
         self.assertEqual("local-user", captured["headers"]["X-agent-user-id"])
         self.assertEqual("default", captured["headers"]["X-agent-project-code"])
         self.assertEqual("corr-1", captured["headers"]["X-correlation-id"])
+        self.assertEqual(
+            "tool-call-1",
+            captured["headers"]["X-agent-tool-call-id"],
+        )
         self.assertEqual("select * from ws_a_order", captured["payload"]["sql"])
+        self.assertEqual("edge", captured["payload"]["placement"])
         self.assertEqual({"row_count": 1}, result.summary)
         self.assertTrue(result.truncated)
         self.assertEqual("mock-db", result.metadata["source"])
@@ -193,6 +199,7 @@ class HttpInternalApiClientTests(unittest.TestCase):
             user_id="local-user",
             project_code="default",
             correlation_id="corr-1",
+            tool_call_id="tool-call-1",
         )
 
     def _http_error(self, status: int, body: dict[str, Any]) -> urllib.error.HTTPError:

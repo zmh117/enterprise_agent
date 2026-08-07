@@ -9,6 +9,9 @@ from app.modules.audit.application.audit_service import AuditService
 from app.modules.job.application.job_dispatch_operations import (
     JobDispatchOperationsService,
 )
+from app.modules.job.application.builtin_tool_snapshot import (
+    JobBuiltinToolSnapshotService,
+)
 from app.modules.job.infrastructure.repositories import AgentRepository, AuditRepository
 from app.shared.config import load_settings
 from app.shared.database import Database, default_migrations_dir
@@ -46,6 +49,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         service = JobDispatchOperationsService(
             repository=AgentRepository(database),
             audit_service=AuditService(AuditRepository(database)),
+            builtin_tool_snapshot_service=(
+                JobBuiltinToolSnapshotService(database)
+            ),
         )
         if args.command == "metrics":
             result = service.metrics()

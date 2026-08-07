@@ -1,16 +1,19 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from typing import Any
 
-from app.modules.business_application.domain.policies import verify_snapshot
+from app.modules.business_application.domain.policies import (
+    snapshot_hash,
+)
 from app.modules.internal_tools.domain import (
     HandlerRegistry,
-    HandlerRegistryError,
     build_builtin_handler_registry,
 )
+from app.modules.job.application.builtin_tool_snapshot import (
+    JobBuiltinToolSnapshotService,
+)
 from app.shared.database import Database
+from app.shared.exceptions import NonRetryableExecutionError
 
 from ..application.job_authorization import AuthorizedJobContext
 from ..domain.addressing import TargetRef
@@ -27,6 +30,10 @@ class BusinessApplicationJobAccessAuthorizer:
     ) -> None:
         self.database = database
         self.registry = registry or build_builtin_handler_registry()
+        self.builtin_tool_snapshot_service = JobBuiltinToolSnapshotService(
+            database,
+            registry=self.registry,
+        )
 
     def authorize(
         self,
@@ -37,6 +44,9 @@ class BusinessApplicationJobAccessAuthorizer:
         application_id: str,
         capability_code: str,
         target: TargetRef,
+        placement: str = "",
+        tool_call_id: str = "",
+        correlation_id: str = "",
     ) -> AuthorizedJobContext:
         if not job_id or not capability_code:
             raise self._denied()
@@ -71,545 +81,467 @@ class BusinessApplicationJobAccessAuthorizer:
         )
         if application_id and application_id != authoritative_application_id:
             raise self._denied()
-        publication_id = str(
-            job.get("business_application_publication_id") or ""
-        )
-        publication_hash = str(
-            job.get("business_application_config_hash") or ""
-        )
-        runtime = self._runtime_facts(job)
-        expected_publication = runtime.get("application_publication")
-        if (
-            not authoritative_application_id
-            or not publication_id
-            or not publication_hash
-            or not isinstance(expected_publication, dict)
-            or str(expected_publication.get("id") or "") != publication_id
-            or str(expected_publication.get("application_id") or "")
-            != authoritative_application_id
-            or str(expected_publication.get("config_hash") or "")
-            != publication_hash
-        ):
-            raise self._denied()
-
-        publication_snapshot = self._publication_snapshot(
-            publication_id=publication_id,
-            application_id=authoritative_application_id,
-            config_hash=publication_hash,
-        )
-        publication_capabilities = {
-            str(item.get("capability_code") or "")
-            for item in publication_snapshot.get("capabilities") or []
-            if isinstance(item, dict) and bool(item.get("enabled", True))
-        }
-        if capability_code not in publication_capabilities:
-            raise self._denied()
-        agent = publication_snapshot.get("agent")
-        agent_publication_id = (
-            str(agent.get("id") or "") if isinstance(agent, dict) else ""
-        )
-        if (
-            not agent_publication_id
-            or str(runtime.get("agent_publication_id") or "")
-            != agent_publication_id
-        ):
-            raise self._denied()
-
-        requested_scope = runtime.get("requested_scope")
-        if not isinstance(requested_scope, dict) or not self._target_matches_codes(
-            target,
-            requested_scope,
-            allow_broader=True,
-        ):
-            raise self._denied()
-        if int(runtime.get("schema_version") or 0) == 2:
-            return self._authorize_governed(
+        exact_snapshot = self._exact_snapshot(job_id)
+        if exact_snapshot:
+            return self._authorize_builtin_snapshot(
                 job=job,
-                runtime=runtime,
+                frozen=exact_snapshot,
                 target=target,
                 capability_code=capability_code,
                 authoritative_user_id=authoritative_user_id,
                 authoritative_project_code=authoritative_project_code,
-                authoritative_application_id=(
-                    authoritative_application_id
-                ),
-                publication_id=publication_id,
-                agent_publication_id=agent_publication_id,
+                authoritative_application_id=authoritative_application_id,
+                placement=placement,
+                tool_call_id=tool_call_id,
+                correlation_id=correlation_id,
             )
-
-        for binding in runtime.get("bindings") or []:
-            if (
-                not isinstance(binding, dict)
-                or str(binding.get("capability_code") or "") != capability_code
-            ):
-                continue
-            execution_scope = binding.get("execution_scope")
-            if not isinstance(execution_scope, dict) or not self._target_matches_codes(
-                target,
-                execution_scope,
-                allow_broader=True,
-            ):
-                continue
-            handler_id = str(binding.get("handler_id") or "")
-            handler_version = str(binding.get("handler_version") or "")
-            if not self._handler_is_current(
-                handler_id=handler_id,
-                handler_version=handler_version,
-                capability_code=capability_code,
-                agent_publication_id=agent_publication_id,
-            ):
-                continue
-            resource = self._matching_resource_revision(
-                binding.get("resource_revisions"),
-                target=target,
-            )
-            if resource is None:
-                continue
-            return AuthorizedJobContext(
-                job_id=job_id,
-                user_id=authoritative_user_id,
-                project_code=authoritative_project_code,
-                application_id=authoritative_application_id,
-                application_publication_id=publication_id,
-                handler_id=handler_id,
-                handler_version=handler_version,
-                resource_revision_id=str(resource["resource_revision_id"]),
-                execution_scope_key=str(execution_scope.get("scope_key") or ""),
-            )
+        # Removal stage: a runtime Job is callable only from its immutable exact
+        # Built-in Tool Snapshot. Historical route-decision and legacy-v1 facts
+        # remain stored for audit/migration evidence, but are never interpreted.
         raise self._denied()
 
-    def _runtime_facts(self, job: dict[str, Any]) -> dict[str, Any]:
+    def _exact_snapshot(self, job_id: str) -> dict[str, Any]:
         try:
-            route_decision = json.loads(
-                str(job.get("business_application_route_decision_json") or "{}")
-            )
-        except json.JSONDecodeError as exc:
+            return self.builtin_tool_snapshot_service.verify(job_id)
+        except NonRetryableExecutionError as exc:
             raise self._denied() from exc
-        runtime = (
-            route_decision.get("runtime_authorization")
-            if isinstance(route_decision, dict)
-            else None
-        )
-        if (
-            not isinstance(runtime, dict)
-            or int(runtime.get("schema_version") or 0)
-            not in {1, 2}
-        ):
-            raise self._denied()
-        return runtime
 
-    def _authorize_governed(
+    def _authorize_builtin_snapshot(
         self,
         *,
         job: dict[str, Any],
-        runtime: dict[str, Any],
+        frozen: dict[str, Any],
         target: TargetRef,
         capability_code: str,
         authoritative_user_id: str,
         authoritative_project_code: str,
         authoritative_application_id: str,
-        publication_id: str,
-        agent_publication_id: str,
+        placement: str,
+        tool_call_id: str,
+        correlation_id: str,
     ) -> AuthorizedJobContext:
-        execution_scope_id = str(
-            job.get("execution_scope_id") or ""
-        )
-        execution_scope_hash = str(
-            job.get("execution_scope_hash") or ""
-        )
-        scope = self.database.execute_one(
-            """
-            select * from agent_job_execution_scope
-             where id = ? and job_id = ?
-            """,
-            (execution_scope_id, str(job["id"])),
-        )
+        snapshot = frozen.get("snapshot")
+        if not isinstance(snapshot, dict):
+            raise self._denied()
+        frozen_target = snapshot.get("target")
+        publication = snapshot.get("application_publication")
         if (
-            scope is None
-            or str(scope["scope_hash"]) != execution_scope_hash
-            or int(scope["schema_version"]) != 2
-            or str(scope["business_application_id"])
-            != authoritative_application_id
-            or str(scope["application_publication_id"])
-            != publication_id
-            or str(scope["agent_publication_id"])
-            != agent_publication_id
+            not isinstance(frozen_target, dict)
+            or not isinstance(publication, dict)
+            or str(publication.get("id") or "")
+            != str(job.get("business_application_publication_id") or "")
+            or not self._target_matches_exact(target, frozen_target)
         ):
             raise self._denied()
-        try:
-            persisted_snapshot = json.loads(
-                str(scope["snapshot_json"])
-            )
-        except json.JSONDecodeError as exc:
-            raise self._denied() from exc
-        expected_snapshot = {
-            "job_id": str(job["id"]),
-            **runtime,
-        }
-        canonical = json.dumps(
-            expected_snapshot,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        )
-        if (
-            persisted_snapshot != expected_snapshot
-            or hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-            != execution_scope_hash
-        ):
-            raise self._denied()
-
-        runtime_bindings = [
+        bindings = [
             value
-            for value in runtime.get("bindings") or []
+            for value in snapshot.get("bindings") or []
             if isinstance(value, dict)
-            and str(value.get("capability_code") or "")
+            and str(value.get("tool_identifier") or "")
             == capability_code
         ]
-        for runtime_binding in runtime_bindings:
-            handler_id = str(
-                runtime_binding.get("handler_id") or ""
-            )
-            handler_version = str(
-                runtime_binding.get("handler_version") or ""
-            )
-            if not self._handler_is_current(
-                handler_id=handler_id,
-                handler_version=handler_version,
-                capability_code=capability_code,
-                agent_publication_id=agent_publication_id,
-            ):
-                continue
-            resources = runtime_binding.get("resource_revisions")
-            if not isinstance(resources, list):
-                continue
-            for resource in resources:
-                if (
-                    not isinstance(resource, dict)
-                    or str(resource.get("resource_kind") or "")
-                    != target.kind.value
-                    or not self._target_matches_codes(
-                        target,
-                        resource,
-                        allow_broader=False,
-                    )
-                ):
-                    continue
-                persisted = self.database.execute_one(
-                    """
-                    select eb.capability_code, eb.handler_id,
-                           eb.handler_version, eb.resource_slot,
-                           eb.resource_revision_id,
-                           eb.constraints_json, eb.binding_hash,
-                           rr.id as id, rr.revision, rr.status,
-                           r.id as resource_id, r.code as code,
-                           r.code as resource_code,
-                           r.resource_kind, r.scope_type,
-                           r.status as resource_status,
-                           r.environment_id,
-                           coalesce(r.base_id, '') as base_id,
-                           coalesce(r.workshop_id, '') as workshop_id,
-                           e.code as environment_code,
-                           coalesce(b.code, '') as base_code,
-                           coalesce(w.code, '') as workshop_code
-                      from agent_job_execution_binding eb
-                      join platform_resource_revision rr
-                        on rr.id = eb.resource_revision_id
-                      join platform_resource r on r.id = rr.resource_id
-                      join platform_environment e
-                        on e.id = r.environment_id
-                      left join platform_base b on b.id = r.base_id
-                      left join platform_workshop w
-                        on w.id = r.workshop_id
-                      join handler_publication hp
-                        on hp.handler_id = eb.handler_id
-                       and hp.handler_version = eb.handler_version
-                       and hp.status = 'PUBLISHED'
-                      join business_application_publication_handler ah
-                        on ah.application_publication_id = ?
-                       and ah.handler_publication_id = hp.id
-                       and ah.capability_code = eb.capability_code
-                      join business_application_publication_resource ar
-                        on ar.application_handler_id = ah.id
-                       and ar.resource_slot = eb.resource_slot
-                       and ar.resource_revision_id =
-                           eb.resource_revision_id
-                       and ar.binding_hash = eb.binding_hash
-                     where eb.execution_scope_id = ?
-                       and eb.capability_code = ?
-                       and eb.handler_id = ?
-                       and eb.handler_version = ?
-                       and eb.resource_slot = ?
-                       and eb.resource_revision_id = ?
-                    """,
-                    (
-                        publication_id,
-                        execution_scope_id,
-                        capability_code,
-                        handler_id,
-                        handler_version,
-                        str(resource.get("resource_slot") or ""),
-                        str(
-                            resource.get(
-                                "resource_revision_id"
-                            )
-                            or ""
-                        ),
-                    ),
+        if not bindings:
+            raise self._denied()
+        self._require_tool_call(
+            tool_call_id=tool_call_id,
+            job_id=str(job["id"]),
+            tool_identifier=capability_code,
+        )
+        resource_bindings = [
+            value
+            for value in bindings
+            if str(value.get("resource_slot") or "")
+        ]
+        if not resource_bindings:
+            if len(bindings) != 1:
+                raise self._denied()
+            binding = bindings[0]
+            candidate: dict[str, Any] = {}
+        else:
+            matching = [
+                value
+                for value in resource_bindings
+                if any(
+                    isinstance(candidate, dict)
+                    and str(candidate.get("resource_kind") or "")
+                    == target.kind.value
+                    for candidate in value.get("candidates") or []
                 )
-                if (
-                    persisted is None
-                    or persisted["status"] != "PUBLISHED"
-                    or persisted["resource_status"] != "enabled"
-                    or str(persisted["binding_hash"])
-                    != str(resource.get("binding_hash") or "")
-                    or not self._resource_matches_snapshot(
-                        persisted,
-                        resource,
-                    )
-                    or not self._target_matches_codes(
-                        target,
-                        persisted,
-                        allow_broader=False,
-                    )
-                ):
-                    continue
-                try:
-                    persisted_constraints = json.loads(
-                        str(persisted["constraints_json"])
-                    )
-                except json.JSONDecodeError:
-                    continue
-                if persisted_constraints != (
-                    resource.get("constraints") or {}
-                ):
-                    continue
-                execution_scope = runtime_binding.get(
-                    "execution_scope"
-                )
-                return AuthorizedJobContext(
-                    job_id=str(job["id"]),
-                    user_id=authoritative_user_id,
-                    project_code=authoritative_project_code,
-                    application_id=(
-                        authoritative_application_id
-                    ),
-                    application_publication_id=publication_id,
-                    handler_id=handler_id,
-                    handler_version=handler_version,
-                    resource_revision_id=str(
-                        resource["resource_revision_id"]
-                    ),
-                    execution_scope_key=str(
-                        (
-                            execution_scope
-                            if isinstance(execution_scope, dict)
-                            else {}
-                        ).get("scope_key")
-                        or ""
-                    ),
-                    schema_version=2,
-                )
-        raise self._denied()
-
-    def _publication_snapshot(
-        self,
-        *,
-        publication_id: str,
-        application_id: str,
-        config_hash: str,
-    ) -> dict[str, Any]:
-        publication = self.database.execute_one(
+            ]
+            if len(matching) != 1:
+                raise self._denied()
+            binding = matching[0]
+            candidates = [
+                dict(value)
+                for value in binding.get("candidates") or []
+                if isinstance(value, dict)
+                and str(value.get("resource_kind") or "")
+                == target.kind.value
+            ]
+        persisted_binding = self.database.execute_one(
             """
-            select application_id, schema_version, snapshot_json, config_hash
-              from business_application_publication
-             where id = ?
+            select id from agent_job_builtin_tool_binding
+             where snapshot_id = ? and tool_identifier = ?
+               and resource_slot = ? and target_key = ?
             """,
-            (publication_id,),
+            (
+                frozen["id"],
+                capability_code,
+                str(binding.get("resource_slot") or ""),
+                str(frozen_target.get("target_key") or ""),
+            ),
         )
-        if (
-            publication is None
-            or str(publication.get("application_id") or "") != application_id
-            or str(publication.get("config_hash") or "") != config_hash
-            or int(publication.get("schema_version") or 0) != 1
-        ):
+        if persisted_binding is None:
             raise self._denied()
-        try:
-            snapshot = json.loads(str(publication.get("snapshot_json") or "{}"))
-        except json.JSONDecodeError as exc:
-            raise self._denied() from exc
-        if not isinstance(snapshot, dict) or not verify_snapshot(snapshot, config_hash):
+        if resource_bindings:
+            candidate, denied_reason = self._select_candidate(
+                candidates=candidates,
+                placement=placement,
+            )
+            if denied_reason:
+                self._record_builtin_fact(
+                    tool_call_id=tool_call_id,
+                    frozen=frozen,
+                    binding=binding,
+                    persisted_binding_id=str(persisted_binding["id"]),
+                    target=frozen_target,
+                    candidate={},
+                    decision="DENIED",
+                    reason_code=denied_reason,
+                    correlation_id=correlation_id,
+                )
+                raise self._denied()
+        elif placement:
+            self._record_builtin_fact(
+                tool_call_id=tool_call_id,
+                frozen=frozen,
+                binding=binding,
+                persisted_binding_id=str(persisted_binding["id"]),
+                target=frozen_target,
+                candidate={},
+                decision="DENIED",
+                reason_code="placement_not_supported",
+                correlation_id=correlation_id,
+            )
             raise self._denied()
-        return snapshot
-
-    def _handler_is_current(
-        self,
-        *,
-        handler_id: str,
-        handler_version: str,
-        capability_code: str,
-        agent_publication_id: str,
-    ) -> bool:
-        if not handler_id:
-            return False
-        if handler_version != "legacy-v1":
-            try:
-                definition = self.registry.require(
-                    handler_id,
-                    handler_version,
-                )
-            except HandlerRegistryError:
-                return False
-            row = self.database.execute_one(
-                """
-                select i.implementation_digest,
-                       i.installation_status
-                  from handler_installation i
-                  join handler_publication p
-                    on p.handler_id = i.handler_id
-                   and p.handler_version = i.handler_version
-                 where i.handler_id = ?
-                   and i.handler_version = ?
-                   and p.status = 'PUBLISHED'
-                """,
-                (handler_id, handler_version),
-            )
-            if (
-                row is None
-                or row["installation_status"] != "INSTALLED"
-                or row["implementation_digest"]
-                != definition.implementation_digest
-                or capability_code
-                not in definition.required_permissions
-            ):
-                return False
-            return (
-                self.database.execute_one(
-                    """
-                    select t.id
-                      from tool_definition t
-                      join agent_tool_binding b
-                        on b.tool_name = t.name
-                       and b.publication_id = ?
-                     where t.name = ?
-                       and t.enabled = 1 and t.read_only = 1
-                    """,
-                    (agent_publication_id, handler_id),
-                )
-                is not None
-            )
-        return (
-            self.database.execute_one(
-                """
-                select t.id
-                  from tool_definition t
-                  join agent_tool_binding b
-                    on b.tool_name = t.name and b.publication_id = ?
-                 where t.id = ? and t.name = ?
-                   and t.enabled = 1 and t.read_only = 1
-                """,
-                (
-                    agent_publication_id,
-                    handler_id,
-                    capability_code,
-                ),
-            )
-            is not None
+        workshop_policy = self._workshop_policy_facts(
+            candidate=candidate,
+            target=target,
+        )
+        loki_policy = self._loki_policy_facts(
+            candidate=candidate,
+            target=target,
+        )
+        self._record_builtin_fact(
+            tool_call_id=tool_call_id,
+            frozen=frozen,
+            binding=binding,
+            persisted_binding_id=str(persisted_binding["id"]),
+            target=frozen_target,
+            candidate=candidate,
+            decision="ALLOWED",
+            reason_code="exact_job_snapshot_allowed",
+            correlation_id=correlation_id,
+        )
+        return AuthorizedJobContext(
+            job_id=str(job["id"]),
+            user_id=authoritative_user_id,
+            project_code=authoritative_project_code,
+            application_id=authoritative_application_id,
+            application_publication_id=str(publication["id"]),
+            handler_id=capability_code,
+            handler_version=str(binding["handler_version"]),
+            resource_revision_id=str(
+                candidate.get("resource_revision_id") or ""
+            ),
+            execution_scope_key=str(
+                frozen_target.get("target_key") or ""
+            ),
+            schema_version=3,
+            snapshot_id=str(frozen["id"]),
+            tool_execution_binding_id=str(persisted_binding["id"]),
+            tool_release_id=str(binding["tool_release_id"]),
+            implementation_digest=str(binding["implementation_digest"]),
+            public_schema_hash=str(binding["public_schema_hash"]),
+            actual_placement=str(candidate.get("placement") or ""),
+            workshop_partition_policy_revision_id=workshop_policy["id"],
+            workshop_partition_policy_content_hash=workshop_policy["hash"],
+            database_table_prefix=workshop_policy["database_table_prefix"],
+            redis_prefixes=workshop_policy["redis_prefixes"],
+            loki_scope_policy_revision_id=loki_policy["id"],
+            loki_scope_policy_content_hash=loki_policy["hash"],
+            loki_scope_conditions=loki_policy["conditions"],
         )
 
-    def _matching_resource_revision(
+    def _require_tool_call(
         self,
-        values: Any,
         *,
-        target: TargetRef,
-    ) -> dict[str, Any] | None:
-        if not isinstance(values, list):
-            return None
-        for resource in values:
-            if (
-                not isinstance(resource, dict)
-                or str(resource.get("resource_kind") or "") != target.kind.value
-                or not self._target_matches_codes(
-                    target,
-                    resource,
-                    allow_broader=False,
-                )
-            ):
-                continue
-            persisted = self.database.execute_one(
-                """
-                select r.id, r.code, r.revision, r.resource_kind, r.scope_type,
-                       r.status, r.environment_id, r.base_id, r.workshop_id,
-                       e.code as environment_code, b.code as base_code,
-                       w.code as workshop_code
-                  from platform_resource_binding r
-                  left join platform_environment e on e.id = r.environment_id
-                  left join platform_base b on b.id = r.base_id
-                  left join platform_workshop w on w.id = r.workshop_id
-                 where r.id = ?
-                """,
-                (str(resource.get("resource_revision_id") or ""),),
-            )
-            if persisted is not None and self._resource_matches_snapshot(
-                persisted,
-                resource,
-            ):
-                return resource
-        return None
+        tool_call_id: str,
+        job_id: str,
+        tool_identifier: str,
+    ) -> None:
+        if not tool_call_id:
+            raise self._denied()
+        row = self.database.execute_one(
+            """
+            select id from agent_tool_call
+             where id = ? and job_id = ? and tool_name = ?
+               and status = 'STARTED'
+            """,
+            (tool_call_id, job_id, tool_identifier),
+        )
+        if row is None:
+            raise self._denied()
 
     @staticmethod
-    def _resource_matches_snapshot(
-        persisted: dict[str, Any],
-        snapshot: dict[str, Any],
-    ) -> bool:
-        resource_status = str(
-            persisted.get("resource_status")
-            or persisted.get("status")
+    def _select_candidate(
+        *,
+        candidates: list[dict[str, Any]],
+        placement: str,
+    ) -> tuple[dict[str, Any], str]:
+        requested = placement.strip().lower()
+        if requested and requested not in {"cloud", "edge"}:
+            return {}, "placement_invalid"
+        if len(candidates) == 1:
+            candidate = candidates[0]
+            frozen_placement = str(candidate.get("placement") or "")
+            if requested and requested != frozen_placement:
+                return {}, "placement_not_in_job_snapshot"
+            return candidate, ""
+        if not requested:
+            return {}, "placement_required"
+        matching = [
+            candidate
+            for candidate in candidates
+            if str(candidate.get("placement") or "") == requested
+        ]
+        if len(matching) != 1:
+            return {}, "placement_not_in_job_snapshot"
+        return matching[0], ""
+
+    def _record_builtin_fact(
+        self,
+        *,
+        tool_call_id: str,
+        frozen: dict[str, Any],
+        binding: dict[str, Any],
+        persisted_binding_id: str,
+        target: dict[str, Any],
+        candidate: dict[str, Any],
+        decision: str,
+        reason_code: str,
+        correlation_id: str,
+    ) -> None:
+        selector_hash = snapshot_hash(
+            {
+                "target_hash": str(target.get("target_hash") or ""),
+                "placement": str(candidate.get("placement") or ""),
+                "resource_revision_id": str(
+                    candidate.get("resource_revision_id") or ""
+                ),
+                "workshop_partition_policy_hash": str(
+                    candidate.get("workshop_partition_policy_hash") or ""
+                ),
+                "loki_scope_policy_hash": str(
+                    candidate.get("loki_scope_policy_hash") or ""
+                ),
+            }
+        )
+        self.database.execute(
+            """
+            insert into agent_tool_call_builtin_tool_fact
+              (tool_call_id, snapshot_id, tool_execution_binding_id,
+               tool_release_id, handler_version, implementation_digest,
+               actual_placement, resource_revision_id,
+               workshop_partition_policy_revision_id,
+               loki_scope_policy_revision_id, effective_scope_hash,
+               effective_selector_hash, authorization_decision,
+               decision_reason_code, correlation_id, created_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    CURRENT_TIMESTAMP)
+            on conflict(tool_call_id) do nothing
+            """,
+            (
+                tool_call_id,
+                frozen["id"],
+                persisted_binding_id,
+                binding["tool_release_id"],
+                binding["handler_version"],
+                binding["implementation_digest"],
+                str(candidate.get("placement") or "") or None,
+                str(candidate.get("resource_revision_id") or "")
+                or None,
+                str(
+                    candidate.get(
+                        "workshop_partition_policy_revision_id"
+                    )
+                    or ""
+                )
+                or None,
+                str(
+                    candidate.get("loki_scope_policy_revision_id")
+                    or ""
+                )
+                or None,
+                str(target["target_hash"]),
+                selector_hash,
+                decision,
+                reason_code,
+                correlation_id or "-",
+            ),
+        )
+
+    def _workshop_policy_facts(
+        self,
+        *,
+        candidate: dict[str, Any],
+        target: TargetRef,
+    ) -> dict[str, Any]:
+        revision_id = str(
+            candidate.get("workshop_partition_policy_revision_id")
             or ""
         )
-        if resource_status != "enabled":
-            return False
-        string_fields = (
-            ("id", "resource_revision_id"),
-            ("code", "resource_code"),
-            ("resource_kind", "resource_kind"),
-            ("scope_type", "scope_type"),
-            ("environment_id", "environment_id"),
-            ("environment_code", "environment_code"),
-            ("base_id", "base_id"),
-            ("base_code", "base_code"),
-            ("workshop_id", "workshop_id"),
-            ("workshop_code", "workshop_code"),
+        expected_hash = str(
+            candidate.get("workshop_partition_policy_hash") or ""
         )
-        return int(persisted.get("revision") or 0) == int(
-            snapshot.get("revision") or 0
-        ) and all(
-            str(persisted.get(persisted_key) or "")
-            == str(snapshot.get(snapshot_key) or "")
-            for persisted_key, snapshot_key in string_fields
+        empty: dict[str, Any] = {
+            "id": "",
+            "hash": "",
+            "database_table_prefix": "",
+            "redis_prefixes": (),
+        }
+        if not revision_id and not expected_hash:
+            return empty
+        row = self.database.execute_one(
+            """
+            select revision.content_hash, revision.status,
+                   revision.database_rule_enabled,
+                   revision.database_table_prefix,
+                   revision.redis_rule_enabled,
+                   environment.code as environment_code,
+                   base.code as base_code, workshop.code as workshop_code
+              from workshop_partition_policy_revision revision
+              join workshop_partition_policy policy
+                on policy.id = revision.policy_id
+              join platform_workshop workshop
+                on workshop.id = policy.workshop_id
+              join platform_base base on base.id = workshop.base_id
+              join platform_environment environment
+                on environment.id = base.environment_id
+             where revision.id = ?
+            """,
+            (revision_id,),
         )
+        if (
+            row is None
+            or str(row["status"]) != "PUBLISHED"
+            or str(row["content_hash"]) != expected_hash
+            or str(row["environment_code"]) != target.environment
+            or str(row["base_code"]) != target.base
+            or str(row["workshop_code"]) != (target.workshop or "")
+        ):
+            raise self._denied()
+        prefixes = self.database.execute(
+            """
+            select prefix
+              from workshop_partition_policy_revision_redis_prefix
+             where policy_revision_id = ?
+             order by position
+            """,
+            (revision_id,),
+        )
+        return {
+            "id": revision_id,
+            "hash": expected_hash,
+            "database_table_prefix": (
+                str(row.get("database_table_prefix") or "")
+                if bool(row.get("database_rule_enabled"))
+                else ""
+            ),
+            "redis_prefixes": (
+                tuple(str(value["prefix"]) for value in prefixes)
+                if bool(row.get("redis_rule_enabled"))
+                else ()
+            ),
+        }
+
+    def _loki_policy_facts(
+        self,
+        *,
+        candidate: dict[str, Any],
+        target: TargetRef,
+    ) -> dict[str, Any]:
+        revision_id = str(
+            candidate.get("loki_scope_policy_revision_id") or ""
+        )
+        expected_hash = str(
+            candidate.get("loki_scope_policy_hash") or ""
+        )
+        empty: dict[str, Any] = {
+            "id": "",
+            "hash": "",
+            "conditions": (),
+        }
+        if not revision_id and not expected_hash:
+            return empty
+        row = self.database.execute_one(
+            """
+            select revision.content_hash, revision.status,
+                   revision.resource_revision_id,
+                   environment.code as environment_code,
+                   coalesce(base.code, '') as base_code
+              from loki_scope_policy_revision revision
+              join loki_scope_policy policy on policy.id = revision.policy_id
+              join platform_environment environment
+                on environment.id = policy.environment_id
+              left join platform_base base on base.id = policy.base_id
+             where revision.id = ?
+            """,
+            (revision_id,),
+        )
+        if (
+            row is None
+            or str(row["status"]) != "PUBLISHED"
+            or str(row["content_hash"]) != expected_hash
+            or str(row["resource_revision_id"])
+            != str(candidate.get("resource_revision_id") or "")
+            or str(row["environment_code"]) != target.environment
+            or (
+                str(row.get("base_code") or "")
+                and str(row["base_code"]) != target.base
+            )
+        ):
+            raise self._denied()
+        conditions = self.database.execute(
+            """
+            select label_key, label_value
+              from loki_scope_policy_revision_condition
+             where policy_revision_id = ?
+             order by position
+            """,
+            (revision_id,),
+        )
+        return {
+            "id": revision_id,
+            "hash": expected_hash,
+            "conditions": tuple(
+                (str(value["label_key"]), str(value["label_value"]))
+                for value in conditions
+            ),
+        }
 
     @staticmethod
-    def _target_matches_codes(
+    def _target_matches_exact(
         target: TargetRef,
         values: dict[str, Any],
-        *,
-        allow_broader: bool,
     ) -> bool:
-        environment = str(values.get("environment_code") or "")
-        base = str(values.get("base_code") or "")
-        workshop = str(values.get("workshop_code") or "")
-        if environment and environment != target.environment:
-            return False
-        if base and base != target.base:
-            return False
-        if workshop and workshop != (target.workshop or ""):
-            return False
-        if allow_broader:
-            return True
-        if not environment or not base:
-            return False
-        return not workshop or workshop == (target.workshop or "")
+        return (
+            target.environment
+            == str(values.get("environment_code") or "")
+            and target.base == str(values.get("base_code") or "")
+            and (target.workshop or "")
+            == str(values.get("workshop_code") or "")
+        )
 
     @staticmethod
     def _denied() -> AuthorizationError:

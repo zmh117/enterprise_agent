@@ -6,6 +6,9 @@ from typing import Any
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.job.domain.agent_job import AgentJob
 from app.modules.job.infrastructure.repositories import AgentRepository
+from app.modules.job.application.builtin_tool_snapshot import (
+    JobBuiltinToolSnapshotService,
+)
 from app.shared.config import QueueSettings
 from app.shared.database import operation_unit_of_work
 
@@ -17,10 +20,12 @@ class RetryRecoveryService:
         repository: AgentRepository,
         audit_service: AuditService,
         queue_settings: QueueSettings,
+        builtin_tool_snapshot_service: JobBuiltinToolSnapshotService | None = None,
     ) -> None:
         self.repository = repository
         self.audit_service = audit_service
         self.queue_settings = queue_settings
+        self.builtin_tool_snapshot_service = builtin_tool_snapshot_service
 
     def reconcile(
         self,
@@ -70,6 +75,8 @@ class RetryRecoveryService:
         actor_id: str,
         now: datetime,
     ) -> dict[str, Any]:
+        if self.builtin_tool_snapshot_service is not None:
+            self.builtin_tool_snapshot_service.verify(job.id)
         delay = max(self.queue_settings.retry_delay_seconds, 1)
         next_retry_at = (now + timedelta(seconds=delay)).isoformat()
         recovered = job

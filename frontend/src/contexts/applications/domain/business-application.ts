@@ -79,6 +79,39 @@ const capabilitySchema = z
   })
   .passthrough()
 
+const builtinToolResourceMappingSchema = z
+  .object({
+    resource_slot: z.string(),
+    target_scope_type: z.enum(["global", "environment", "base", "workshop"]),
+    environment_code: z.string().default(""),
+    base_code: z.string().default(""),
+    workshop_code: z.string().default(""),
+    placement: z.enum(["cloud", "edge"]).nullable().optional(),
+    resource_revision_id: z.string(),
+    workshop_partition_policy_revision_id: z.string().default(""),
+    loki_scope_policy_revision_id: z.string().default(""),
+  })
+  .passthrough()
+
+const builtinToolSelectionSchema = z
+  .object({
+    tool_identifier: z.string().default(""),
+    tool_release_id: z.string(),
+    handler_version: z.string().default(""),
+    implementation_digest: z.string().default(""),
+    resources: z.array(builtinToolResourceMappingSchema).default([]),
+  })
+  .passthrough()
+
+const targetPathSchema = z
+  .object({
+    target_scope_type: z.enum(["environment", "base", "workshop"]),
+    environment_code: z.string(),
+    base_code: z.string().default(""),
+    workshop_code: z.string().default(""),
+  })
+  .passthrough()
+
 export const revisionSchema = z
   .object({
     id: z.string(),
@@ -95,6 +128,8 @@ export const revisionSchema = z
     deliveries: z.array(deliverySchema).default([]),
     capabilities: z.array(capabilitySchema).default([]),
     api_capability_release_ids: z.array(z.string()).default([]),
+    builtin_tools: z.array(builtinToolSelectionSchema).default([]),
+    target_paths: z.array(targetPathSchema).default([]),
     created_at: z.string().default(""),
     updated_at: z.string().default(""),
   })
@@ -211,4 +246,24 @@ export type SaveDraftInput = {
     enabled: boolean
   }>
   api_capability_release_ids: string[]
+  builtin_tools: Array<{
+    tool_release_id: string
+    resources: Array<{
+      resource_slot: string
+      target_scope_type: "global" | "environment" | "base" | "workshop"
+      environment_code: string
+      base_code: string
+      workshop_code: string
+      placement: "cloud" | "edge" | null
+      resource_revision_id: string
+      workshop_partition_policy_revision_id: string
+      loki_scope_policy_revision_id: string
+    }>
+  }>
+  target_paths: Array<{
+    target_scope_type: "environment" | "base" | "workshop"
+    environment_code: string
+    base_code: string
+    workshop_code: string
+  }>
 }

@@ -66,6 +66,8 @@ Application Draft 引用精确 Agent Publication，只能显式勾选 Envelope �
 
 父节点不存在时不能创建子节点，未部署的层级不使用 `default`、`none` 或虚拟节点补齐。`ResourcePlacement` 是资源映射的可选字段，第一阶段枚举为 `cloud`、`edge`；没有云边差异的资源该字段必须缺省，提交占位值会被拒绝。同一逻辑基地和车间在 cloud/edge 下仍是同一个业务目标。
 
+Application Draft 必须显式保存它允许执行的真实叶子 `target_paths`，不能从 Resource Mapping 反向推导应用范围。Environment 只有在没有启用 Base 时、Base 只有在没有启用 Workshop 时才可作为叶子目标；Workshop 本身是叶子。发布时重新校验这些目标仍存在、启用且仍为叶子，并把精确 topology ID 与目标 Hash 冻结进 Application Publication。资源映射只能覆盖显式目标，不能扩大或隐式补充目标；新增 topology 节点不会自动进入既有 Draft 或 Publication。
+
 用户/角色授权只对 `BusinessTargetPath` 计算。Job 默认取得 Application Publication 为目标配置的全部 placement；每次 Tool Call 必须解析到其中一个明确 placement。若调用语义或系统路由未能在多个候选中确定一个，则失败关闭，不以数组顺序或“优先云端”猜测。选中的 placement 进入 Tool Call 审计，但不扩大用户范围。
 
 ### 5. 一个资源槽保存 1..N 条确定性映射
@@ -74,7 +76,7 @@ Application Publication 中的逻辑资源槽由多条不可变 Mapping 组成�
 
 `slot + target_scope + optional placement -> resource_revision + optional partition_policy_revision + optional loki_scope_policy_revision`
 
-发布校验先把应用允许的叶子目标展开，再为每个工具、槽、叶子目标和 placement 计算有效候选。环境级或基地级 DB/Redis 资源可由后代目标继承；Loki 只允许 global 或 environment scope。任一必需组合为零候选或多候选都拒绝发布。相同 slot、placement 下环境/基地映射若会覆盖同一叶子目标，也视为歧义；不定义优先级、最长路径或最近父级胜出规则。
+发布校验从 Application Draft 显式冻结的有限叶子 `target_paths` 展开目标矩阵，再为每个工具、槽、叶子目标和 placement 计算有效候选。环境级或基地级 DB/Redis 资源可由后代目标继承；Loki 只允许 global 或 environment scope。任一必需组合为零候选或多候选都拒绝发布。相同 slot、placement 下环境/基地映射若会覆盖同一叶子目标，也视为歧义；不定义优先级、最长路径或最近父级胜出规则。任何 Mapping 未覆盖显式目标或试图覆盖清单外目标也拒绝发布。
 
 运行时只读取 Application Publication 的已验证解析表，不重新搜索“当前资源”。因此 Resource Identity 发布新 revision 不会改变既有应用或 Job。
 

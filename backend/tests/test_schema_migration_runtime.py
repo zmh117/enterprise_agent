@@ -36,13 +36,11 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
     assert len({item.version for item in catalog}) == len(catalog)
     assert len({item.name for item in catalog}) == len(catalog)
     assert [item.version for item in catalog][8:11] == ["009", "009a", "010"]
-    assert catalog[-1].version == "027"
+    assert catalog[-1].version == "033"
     assert all(len(item.checksum) == 64 for item in catalog)
 
     baseline = legacy_baseline_artifacts(catalog)
-    assert baseline == tuple(
-        artifact for artifact in catalog if artifact.version <= "018"
-    )
+    assert baseline == tuple(artifact for artifact in catalog if artifact.version <= "018")
     assert baseline[-1].version == LEGACY_BASELINE_HEAD
 
 
@@ -75,12 +73,8 @@ def test_existing_schema_gets_atomic_compatible_checksum_baseline() -> None:
     records = ledger.list_records()
 
     assert inserted == len(baseline)
-    assert [row["version"] for row in records] == [
-        artifact.version for artifact in baseline
-    ]
-    assert [row["checksum"] for row in records] == [
-        artifact.checksum for artifact in baseline
-    ]
+    assert [row["version"] for row in records] == [artifact.version for artifact in baseline]
+    assert [row["checksum"] for row in records] == [artifact.checksum for artifact in baseline]
     assert ledger.baseline_legacy(catalog, migrator_build="other-build") == 0
 
     drifted = (
@@ -93,9 +87,7 @@ def test_existing_schema_gets_atomic_compatible_checksum_baseline() -> None:
 
 def test_compatibility_baseline_refuses_incomplete_schema_without_ledger_rows() -> None:
     database = Database("sqlite:///:memory:")
-    database.execute_script(
-        (default_migrations_dir() / "001_initial_agent.sql").read_text()
-    )
+    database.execute_script((default_migrations_dir() / "001_initial_agent.sql").read_text())
     catalog = load_migration_catalog(default_migrations_dir())
     ledger = SchemaMigrationLedger(database)
 
@@ -116,23 +108,109 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
     first = migrator.run()
     second = migrator.run()
 
-    assert first.head == "027"
+    assert first.head == "033"
     assert first.baselined == 0
-    assert first.applied[-7:] == (
-        "021",
-        "022",
+    assert first.applied[-11:] == (
         "023",
         "024",
         "025",
         "026",
         "027",
+        "028",
+        "029",
+        "030",
+        "031",
+        "032",
+        "033",
     )
-    assert second.head == "027"
+    assert second.head == "033"
     assert second.baselined == 0
     assert second.applied == ()
     assert len(SchemaMigrationLedger(database).list_records()) == len(
         load_migration_catalog(default_migrations_dir())
     )
+
+
+def test_pre_028_backup_can_be_restored_and_reupgraded_without_data_loss(
+    tmp_path: Path,
+) -> None:
+    migrations_dir = default_migrations_dir()
+    pre_change_dir = tmp_path / "pre-change-migrations"
+    pre_change_dir.mkdir()
+    for path in migrations_dir.glob("*.sql"):
+        if int(path.name[:3]) < 28:
+            shutil.copy2(path, pre_change_dir / path.name)
+
+    database_path = tmp_path / "runtime.db"
+    backup_path = tmp_path / "runtime-pre-028.backup.db"
+    database_dsn = f"sqlite:///{database_path}"
+    database = Database(database_dsn)
+    try:
+        before = Migrator(
+            database,
+            pre_change_dir,
+            migrator_build="pre-028-backup-rehearsal",
+        ).run()
+        assert before.head == "027"
+        database.execute(
+            """
+            insert into app_user
+              (id, username, display_name, status, created_at, updated_at)
+            values ('backup-user', 'backup-user', 'Backup User', 'enabled',
+                    '2026-08-06T00:00:00Z', '2026-08-06T00:00:00Z')
+            """
+        )
+    finally:
+        database.close()
+    shutil.copy2(database_path, backup_path)
+
+    upgraded = Database(database_dsn)
+    try:
+        result = Migrator(
+            upgraded,
+            migrations_dir,
+            migrator_build="028-033-upgrade-rehearsal",
+        ).run()
+        assert result.applied == ("028", "029", "030", "031", "032", "033")
+        assert upgraded.execute_one(
+            "select username from app_user where id = 'backup-user'"
+        ) == {"username": "backup-user"}
+        assert upgraded.execute_one(
+            """
+            select name from sqlite_master
+             where type = 'table' and name = 'builtin_tool_release'
+            """
+        ) == {"name": "builtin_tool_release"}
+    finally:
+        upgraded.close()
+
+    shutil.copy2(backup_path, database_path)
+    restored = Database(database_dsn)
+    try:
+        records = SchemaMigrationLedger(restored).list_records()
+        assert records[-1]["version"] == "027"
+        assert restored.execute_one(
+            "select username from app_user where id = 'backup-user'"
+        ) == {"username": "backup-user"}
+        assert restored.execute_one(
+            """
+            select name from sqlite_master
+             where type = 'table' and name = 'builtin_tool_release'
+            """
+        ) is None
+
+        reapplied = Migrator(
+            restored,
+            migrations_dir,
+            migrator_build="restored-028-033-reupgrade-rehearsal",
+        ).run()
+        assert reapplied.applied == ("028", "029", "030", "031", "032", "033")
+        assert reapplied.head == "033"
+        assert restored.execute_one(
+            "select username from app_user where id = 'backup-user'"
+        ) == {"username": "backup-user"}
+    finally:
+        restored.close()
 
 
 def test_025_upgrade_preserves_existing_ones_identity_without_fabricating_credential(
@@ -144,6 +222,12 @@ def test_025_upgrade_preserves_existing_ones_identity_without_fabricating_creden
             "025_governed_api_capabilities.sql",
             "026_allow_plain_http_api_connections.sql",
             "027_dingtalk_enterprise_identity_observations.sql",
+            "028_govern_builtin_readonly_tools.sql",
+            "029_loki_global_resource_scope.sql",
+            "030_builtin_tool_legacy_removal_gate.sql",
+            "031_direct_agent_tool_snapshot.sql",
+            "032_exact_builtin_tool_resource_reset.sql",
+            "033_loki_scope_verification_per_draft.sql",
         }:
             shutil.copy2(path, tmp_path / path.name)
 
@@ -190,22 +274,17 @@ def test_025_upgrade_preserves_existing_ones_identity_without_fabricating_creden
 
         assert upgraded.head == "025"
         assert upgraded.applied == ("025",)
-        identity = IdentityRepository(database).get_external_identity(
-            "legacy-ones-identity"
-        )
+        identity = IdentityRepository(database).get_external_identity("legacy-ones-identity")
         assert identity["external_subject_id"] == "legacy-ones-subject"
         assert identity["status"] == "enabled"
         assert identity["credential_status"] == "missing"
-        assert (
-            database.execute_one(
-                """
+        assert database.execute_one(
+            """
                 select count(*) as count
                   from external_api_credential
                  where user_id = 'legacy-ones-user'
                 """
-            )
-            == {"count": 0}
-        )
+        ) == {"count": 0}
     finally:
         database.close()
 
@@ -218,6 +297,12 @@ def test_026_upgrade_renames_plain_http_authorization_without_data_loss(
         if path.name not in {
             "026_allow_plain_http_api_connections.sql",
             "027_dingtalk_enterprise_identity_observations.sql",
+            "028_govern_builtin_readonly_tools.sql",
+            "029_loki_global_resource_scope.sql",
+            "030_builtin_tool_legacy_removal_gate.sql",
+            "031_direct_agent_tool_snapshot.sql",
+            "032_exact_builtin_tool_resource_reset.sql",
+            "033_loki_scope_verification_per_draft.sql",
         }:
             shutil.copy2(path, tmp_path / path.name)
 
@@ -269,8 +354,7 @@ def test_026_upgrade_renames_plain_http_authorization_without_data_loss(
             """
         ) == {"allow_plain_http": 1}
         columns = {
-            str(row["name"])
-            for row in database.execute("pragma table_info(api_connection_draft)")
+            str(row["name"]) for row in database.execute("pragma table_info(api_connection_draft)")
         }
         assert "allow_plain_http" in columns
         assert "allow_insecure_local_http" not in columns
@@ -306,9 +390,7 @@ def test_migrator_rolls_back_entire_failed_version_and_ledger_record(
         )
         is None
     )
-    assert [
-        row["version"] for row in SchemaMigrationLedger(database).list_records()
-    ] == ["001"]
+    assert [row["version"] for row in SchemaMigrationLedger(database).list_records()] == ["001"]
 
 
 def test_migrator_rejects_applied_checksum_drift_before_later_versions(
@@ -346,17 +428,13 @@ def test_migrator_cli_redacts_unexpected_database_failure(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     def fail_without_exposing_connection(self: Migrator) -> None:
-        raise RuntimeError(
-            "postgresql://user:must-not-leak@private-db.internal/database"
-        )
+        raise RuntimeError("postgresql://user:must-not-leak@private-db.internal/database")
 
     monkeypatch.setattr(Migrator, "run", fail_without_exposing_connection)
 
     assert migrate_cli.main(["--build", "test-build"]) == 1
     output = capsys.readouterr().out
-    assert output == (
-        "MIGRATION_FAILED: database unavailable or migration lock failed\n"
-    )
+    assert output == ("MIGRATION_FAILED: database unavailable or migration lock failed\n")
     assert "must-not-leak" not in output
     assert "private-db.internal" not in output
 
@@ -366,27 +444,33 @@ def test_schema_head_validator_is_read_only_and_rejects_missing_ledger() -> None
 
     with pytest.raises(
         SchemaHeadError,
-        match="ledger is missing; expected head 027",
+        match="ledger is missing; expected head 033",
     ):
         SchemaHeadValidator(
             database,
             default_migrations_dir(),
         ).require_current()
 
-    assert database.execute_one(
-        """
+    assert (
+        database.execute_one(
+            """
         select name
           from sqlite_master
          where type = 'table' and name = 'schema_migration'
         """
-    ) is None
-    assert database.execute_one(
-        """
+        )
+        is None
+    )
+    assert (
+        database.execute_one(
+            """
         select name
           from sqlite_master
          where type = 'table' and name = 'agent_job'
         """
-    ) is None
+        )
+        is None
+    )
 
 
 def test_schema_head_validator_accepts_exact_head_and_rejects_drift(
@@ -471,20 +555,26 @@ def test_business_runtime_startup_rejects_missing_head_without_migrating(
 
     database = Database(settings.database_dsn)
     try:
-        assert database.execute_one(
-            """
+        assert (
+            database.execute_one(
+                """
             select name
               from sqlite_master
              where type = 'table' and name = 'schema_migration'
             """
-        ) is None
-        assert database.execute_one(
-            """
+            )
+            is None
+        )
+        assert (
+            database.execute_one(
+                """
             select name
               from sqlite_master
              where type = 'table' and name = 'agent_job'
             """
-        ) is None
+            )
+            is None
+        )
     finally:
         database.close()
 

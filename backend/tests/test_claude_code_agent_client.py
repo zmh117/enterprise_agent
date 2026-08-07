@@ -26,7 +26,14 @@ from app.shared.exceptions import (
     NonRetryableExecutionError,
     RetryableExecutionError,
 )
-from backend.tests.helpers import container
+from backend.tests.test_job_builtin_tool_snapshot import (
+    _command as exact_job_command,
+    _published_application,
+)
+from backend.tests.test_business_application_control_plane import (
+    control_plane_settings,
+)
+from app.bootstrap import build_test_container
 
 
 class FakeOptions:
@@ -57,8 +64,18 @@ class ProcessError(Exception):
 
 class MockPlatformInternalApiClient:
     def query_database(
-        self, datasource: str, sql: str, limit: int, context: ToolRequestContext
+        self,
+        datasource: str,
+        sql: str,
+        limit: int,
+        context: ToolRequestContext,
+        *,
+        environment: str | None = None,
+        base: str | None = None,
+        workshop: str | None = None,
+        placement: str | None = None,
     ) -> ToolResult:
+        del datasource, sql, limit, environment, base, workshop, placement
         return ToolResult(
             summary={"row_count": 1, "mock_platform": True, "job_id": context.job_id},
             raw={"rows": [{"order_no": "MO20260627001"}]},
@@ -227,7 +244,7 @@ class RealClaudeCodeAgentClientTests(unittest.TestCase):
     def test_tool_loop_routes_through_tool_registry_and_returns_tool_events(self) -> None:
         async def query(prompt: str, options: FakeOptions) -> Any:
             tool = options.mcp_servers["internal"]["tools"]["query_database"]
-            await tool({"datasource": "default", "sql": "select * from ws_a_order", "limit": 5})
+            await tool({"datasource": "default", "sql": "select * from GL001_EBR_order", "limit": 5})
             yield {"result": "database evidence found"}
 
         client, request = self._client_and_request(query)
@@ -241,7 +258,7 @@ class RealClaudeCodeAgentClientTests(unittest.TestCase):
     def test_tool_loop_can_use_mock_internal_platform_client(self) -> None:
         async def query(prompt: str, options: FakeOptions) -> Any:
             tool = options.mcp_servers["internal"]["tools"]["query_database"]
-            await tool({"datasource": "default", "sql": "select * from ws_a_order", "limit": 5})
+            await tool({"datasource": "default", "sql": "select * from GL001_EBR_order", "limit": 5})
             yield {"result": "database evidence found"}
 
         client, request = self._client_and_request(
@@ -445,7 +462,7 @@ class RealClaudeCodeAgentClientTests(unittest.TestCase):
     def test_process_error_after_tool_call_carries_tool_events(self) -> None:
         async def query(prompt: str, options: FakeOptions) -> Any:
             tool = options.mcp_servers["internal"]["tools"]["query_database"]
-            await tool({"datasource": "default", "sql": "select * from ws_a_order", "limit": 5})
+            await tool({"datasource": "default", "sql": "select * from GL001_EBR_order", "limit": 5})
             raise ProcessError("transport disconnected")
             yield {"result": "unreachable"}
 
@@ -461,7 +478,7 @@ class RealClaudeCodeAgentClientTests(unittest.TestCase):
     def test_max_turns_exhausted_is_non_retryable_and_carries_tool_events(self) -> None:
         async def query(prompt: str, options: FakeOptions) -> Any:
             tool = options.mcp_servers["internal"]["tools"]["query_database"]
-            await tool({"datasource": "default", "sql": "select * from ws_a_order", "limit": 5})
+            await tool({"datasource": "default", "sql": "select * from GL001_EBR_order", "limit": 5})
             raise ProcessError("Reached maximum number of turns (12)")
             yield {"result": "unreachable"}
 
@@ -489,7 +506,7 @@ class RealClaudeCodeAgentClientTests(unittest.TestCase):
             tool = options.mcp_servers["internal"]["tools"]["query_database"]
             arguments = {
                 "datasource": "default",
-                "sql": "select * from ws_a_order",
+                "sql": "select * from GL001_EBR_order",
                 "limit": 5,
             }
             await tool(arguments)
@@ -555,18 +572,24 @@ class RealClaudeCodeAgentClientTests(unittest.TestCase):
         limits: ExecutionSettings | None = None,
         internal_api_client: Any | None = None,
     ) -> tuple[RealClaudeCodeAgentClient, AgentRunRequest]:
-        c = container()
+        c = build_test_container(
+            control_plane_settings(),
+            migrate=True,
+            seed=True,
+        )
         if internal_api_client is not None:
             c.tool_service.internal_api_client = internal_api_client
-        from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
-
+        application, publication, facts = _published_application(
+            c,
+            placements=("cloud",),
+        )
         job = c.create_agent_job_service.execute(
-            CreateAgentJobCommand(
+            exact_job_command(
+                c,
+                application,
+                publication,
+                facts,
                 idempotency_key="real-client-test",
-                dingding_conversation_id="conversation-1",
-                dingding_user_id="local-user",
-                user_message="check order",
-                project_code="default",
             )
         )
         runtime_limits = limits or replace(c.settings.execution, timeout_seconds=5)

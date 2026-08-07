@@ -16,6 +16,11 @@ class ResourceScopeType(str, Enum):
     WORKSHOP = "workshop"
 
 
+class ResourcePlacement(str, Enum):
+    CLOUD = "cloud"
+    EDGE = "edge"
+
+
 class ResourceKind(str, Enum):
     DATABASE = "database"
     REDIS = "redis"
