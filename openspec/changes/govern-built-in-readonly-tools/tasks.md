@@ -79,6 +79,8 @@
 - [x] 9.4 更新 Agent 配置页为精确 ACTIVE Tool Release 选择，并显示版本、digest 摘要和 deprecated/drift 健康警告
 - [x] 9.5 更新 Application 配置页为 Agent Envelope 显式子集与 1..N Resource/Policy Mapping，提供目标矩阵缺失/重叠校验提示
 - [x] 9.6 添加前端权限、并发冲突、不可变历史、zero-match warning、无 placement 和多 placement 交互测试
+- [x] 9.7 修复 Loki Resource 关联策略界面：按 Resource Identity 精确筛选、显示历史/当前 Revision 差异与 Application Publication 使用情况，并支持原子复制升级 Draft
+- [x] 9.8 修复 PostgreSQL 下 Loki Scope Policy 应用使用投影的 DISTINCT 排序错误，恢复新策略创建与历史策略详情加载
 
 ## 10. legacy-v1 Cutover 与移除
 
@@ -98,3 +100,12 @@
 - [x] 11.5 验证 `Runtime → Job → Worker → Internal API Platform → DB/Redis/Loki Tool Call → Delivery` 完整链，并保存 Publication、Snapshot、审计和回执证据
 - [x] 11.6 执行 MISSING、DRIFTED、DISABLED、资源加载失败、策略歧义和重试故障注入，证明全部失败关闭且无跨范围访问
 - [x] 11.7 在移除前后各执行一次备份与回滚演练，证明不会恢复 legacy 新写入或让精确 Job 浮动到新版本
+- [x] 11.8 回归验证 Loki 关联策略筛选、历史 Revision 提示、精确应用绑定展示和显式升级流程
+- [x] 11.9 回归验证 PostgreSQL 下新建/历史 Loki Scope Policy 均可加载，且零应用绑定返回空列表而非 500
+
+## 12. Resource Identity 与 Revision 生命周期分层修复
+
+- [x] 12.1 先添加后端与前端回归测试，覆盖版本归档不改写身份、身份状态机、expected revision 冲突、归档依赖保护和双状态筛选
+- [x] 12.2 实现 Resource Identity disable/restore/archive 管理 API、审计与 Draft 管理 Gate，保留既有 Revision/Application/Job 不变
+- [x] 12.3 更新工具资源界面，分开展示和筛选身份状态、最新发布版本状态和生效状态，并允许 enabled Identity 从归档 Revision 复制新 Draft
+- [x] 12.4 运行 OpenSpec 严格校验、后端生命周期/API 测试、前端交互测试与生产构建，并验证现有归档 Loki 不再被误表示为身份已归档

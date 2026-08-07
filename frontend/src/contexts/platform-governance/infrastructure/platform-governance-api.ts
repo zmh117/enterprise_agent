@@ -15,6 +15,7 @@ import {
   lokiScopeVerificationResponseSchema,
   resourceCreateResponseSchema,
   resourceDraftResponseSchema,
+  resourceIdentityResponseSchema,
   resourceListResponseSchema,
   resourceRevisionResponseSchema,
   runtimeResponseSchema,
@@ -155,6 +156,19 @@ export async function setResourceRevisionStatus(
       { method: "POST" }
     )
   ).revision
+}
+
+export async function setResourceIdentityStatus(
+  code: string,
+  action: "disable" | "restore" | "archive",
+  expectedRevision: number
+) {
+  return resourceIdentityResponseSchema.parse(
+    await apiRequest(
+      `/api/platform/resources/${encodeURIComponent(code)}/lifecycle/${action}`,
+      { method: "POST", body: { expected_revision: expectedRevision } }
+    )
+  ).resource
 }
 
 export async function listEnvironments() {
@@ -495,6 +509,7 @@ export async function copyLokiScopePolicyRevision(input: {
   code: string
   sourceRevisionId: string
   expectedPolicyRevision: number
+  targetResourceRevisionId?: string
 }) {
   return lokiScopeDraftResponseSchema.parse(
     await apiRequest(
@@ -503,6 +518,11 @@ export async function copyLokiScopePolicyRevision(input: {
         method: "POST",
         body: {
           source_revision_id: input.sourceRevisionId,
+          ...(input.targetResourceRevisionId
+            ? {
+                target_resource_revision_id: input.targetResourceRevisionId,
+              }
+            : {}),
           expected_policy_revision: input.expectedPolicyRevision,
         },
       }

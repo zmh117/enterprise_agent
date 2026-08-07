@@ -48,6 +48,14 @@ Tool Release 使用 `ACTIVE`、`DEPRECATED`、`DISABLED`、`ARCHIVED`：
 
 Installation 的 `MISSING/DRIFTED`、Resource 的 degraded、Loki 的 EMPTY 等属于健康状态，不自动改变 Release 生命周期。运行时仍按生命周期与当前安装/digest 一起校验；不存在匹配实现时失败关闭。
 
+### 2A. Resource Identity 与 Resource Revision 生命周期分离
+
+稳定 Resource Identity 使用 `enabled`、`disabled`、`archived` 管理其后续配置能力；不可变 Resource Revision 独立使用 `PUBLISHED`、`DISABLED`、`ARCHIVED` 管理精确版本。停用或归档某个 Revision 不得自动停用或归档 Identity，否则管理员将无法在同一稳定编码下显式创建和发布后续 Revision。
+
+Identity `disabled` 只阻止创建、保存、验证和发布新的 Resource Draft，不改写既有 Revision、Application Publication 或 Job Snapshot；管理员可以显式恢复为 `enabled`。Identity 只能从 `disabled` 进入不可恢复的 `archived`，且必须没有活动 Draft、没有 `PUBLISHED` Revision、没有活动 Application Publication 引用。所有身份生命周期更新使用 expected revision 并审计。
+
+管理界面必须把“资源身份状态”“最新发布版本状态”和 Runtime Effective 状态分别展示和筛选。已归档的最新 Revision 在 Identity 仍为 `enabled` 时仍可作为复制新 Draft 的历史来源，但不会自动重新生效。
+
 ### 3. 发布链使用两个不可变工具 Envelope
 
 Agent Draft 对同一稳定 Tool Identifier 至多选择一个 `ACTIVE` Release。Agent Publish 冻结 `tool_release_id + handler_version + implementation_digest + public_schema_hash`，形成 Agent Tool Envelope。

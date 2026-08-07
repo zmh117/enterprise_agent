@@ -94,6 +94,25 @@ Application Publication MUST 为每个 Loki slot 和有效 Environment 冻结精
 - **WHEN** 同一 Loki slot 的 global 与 environment Mapping 或两个 Policy 同时覆盖一个 Environment
 - **THEN** Application Publish 拒绝歧义配置
 
+### Requirement: Resource 管理界面必须区分策略关联与应用运行绑定
+Loki Resource 管理界面 SHALL 只把 Draft 或 Published Revision 引用该 Resource Identity 的 Scope Policy 作为关联策略，并 MUST 明确展示 Policy 冻结的 Resource Revision 与该 Resource 当前 Published Revision 是否一致；策略选择或编辑 MUST NOT 被表述为 Application Publication 运行绑定。
+
+#### Scenario: 同一环境存在多个 Loki Resource
+- **WHEN** 同一 Environment 下的两个 Scope Policy 分别引用不同 Loki Resource Identity
+- **THEN** 每个 Resource 的关联策略选择器只显示引用该 Resource Identity 的 Policy，不按相同 Environment 混入另一个 Resource 的 Policy
+
+#### Scenario: Policy 仍引用历史 Resource Revision
+- **WHEN** Loki Resource 已发布新 Revision，但 Scope Policy 最新 Published Revision 仍冻结该 Resource 的旧 Revision
+- **THEN** 页面标记“历史 Resource Revision”，同时显示 Policy Revision、冻结 Resource Revision 和当前 Resource Revision，并提供显式复制新 Draft 到当前 Resource Revision 的操作
+
+#### Scenario: 查看运行绑定状态
+- **WHEN** 管理员查看一个 Scope Policy
+- **THEN** 页面显示引用其精确 Published Policy Revision 的 Application Publication；没有引用时明确显示未绑定任何已发布应用，且不因下拉选中 Policy 而宣称已运行绑定
+
+#### Scenario: PostgreSQL 中策略尚未被应用使用
+- **WHEN** 管理员创建新 Scope Policy 或查看尚无 Application Publication 引用的历史 Policy
+- **THEN** 后端在 PostgreSQL 中稳定返回空的应用使用列表，页面仍完整显示策略创建或管理区域，不返回服务器内部错误
+
 ### Requirement: Published Scope Policy 必须作为不可覆盖的运行时 selector
 运行时 MUST 从 Job Snapshot 注入 Published Scope Policy 的全部精确条件；Agent 只能添加 Tool Manifest 明确允许的诊断过滤条件，最终 selector 必须为强制条件与附加条件的 AND，且附加条件不得覆盖或冲突同名强制 key。
 

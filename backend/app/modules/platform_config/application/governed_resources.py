@@ -326,6 +326,7 @@ class GovernedResourceService:
             context="Resource Identity 或连接草稿",
         )
         resource = self._resource(code)
+        self._require_identity_enabled(resource)
         before = self.repository.get_draft(str(resource["id"]))
         provider_type, config, secret_refs, content_hash = self._draft_payload(
             resource_kind=str(resource["resource_kind"]),
@@ -384,6 +385,7 @@ class GovernedResourceService:
     ) -> dict[str, Any]:
         self.require_admin(actor_id)
         resource = self._resource(code)
+        self._require_identity_enabled(resource)
         draft = self.repository.get_draft(str(resource["id"]))
         outcome = (verifier or self.verifier).verify(
             resource=resource,
@@ -455,6 +457,7 @@ class GovernedResourceService:
     ) -> dict[str, Any]:
         self.require_admin(actor_id)
         resource = self._resource(code)
+        self._require_identity_enabled(resource)
         draft = self.repository.get_draft(str(resource["id"]))
         verification = self.repository.matching_verification(
             resource_id=str(resource["id"]),
@@ -509,6 +512,7 @@ class GovernedResourceService:
     ) -> dict[str, Any]:
         self.require_admin(actor_id)
         resource = self._resource(code)
+        self._require_identity_enabled(resource)
         if self.repository.find_draft(str(resource["id"])):
             raise NonRetryableExecutionError(
                 "Resource Draft already exists",
@@ -584,11 +588,97 @@ class GovernedResourceService:
         )
         return revision
 
+    @operation_unit_of_work(lambda service: service.repository.database)
+    def set_resource_status(
+        self,
+        code: str,
+        status: str,
+        *,
+        expected_revision: int,
+        actor_id: str,
+        correlation_id: str = "",
+    ) -> dict[str, Any]:
+        self.require_admin(actor_id)
+        normalized = str(status or "").lower()
+        if normalized not in {"enabled", "disabled", "archived"}:
+            raise NonRetryableExecutionError(
+                "Resource Identity status is invalid",
+                safe_message="资源身份生命周期状态无效",
+                error_code="resource_identity_status_invalid",
+            )
+        resource = self._resource(code)
+        if int(resource["revision"]) != int(expected_revision):
+            raise NonRetryableExecutionError(
+                "Resource Identity revision conflict",
+                safe_message="资源身份状态已变化，请刷新后重试",
+                error_code="resource_identity_revision_conflict",
+            )
+        transitions = {
+            "enabled": {"disabled"},
+            "disabled": {"enabled", "archived"},
+            "archived": set(),
+        }
+        current_status = str(resource["status"])
+        if normalized not in transitions.get(current_status, set()):
+            raise NonRetryableExecutionError(
+                "Resource Identity status transition is invalid",
+                safe_message="资源身份状态不能回退、跳过停用或重复变更",
+                error_code="resource_identity_transition_invalid",
+            )
+        if normalized == "archived":
+            if self.repository.find_draft(str(resource["id"])):
+                raise NonRetryableExecutionError(
+                    "Resource Identity still has an active Draft",
+                    safe_message="资源身份仍有活动草稿，请先删除草稿",
+                    error_code="resource_identity_has_draft",
+                )
+            if any(
+                str(revision["status"]) == "PUBLISHED"
+                for revision in self.repository.list_revisions(str(resource["id"]))
+            ):
+                raise NonRetryableExecutionError(
+                    "Resource Identity still has a published Revision",
+                    safe_message="资源身份仍有已发布版本，请先停用该版本",
+                    error_code="resource_identity_has_published_revision",
+                )
+            active_references = self.repository.list_active_application_references(
+                str(resource["id"])
+            )
+            if active_references:
+                raise NonRetryableExecutionError(
+                    "Resource Identity is referenced by an active Application Publication",
+                    safe_message=("资源身份仍被活动应用引用，请先切换或停用相关应用发布版本"),
+                    error_code="resource_identity_has_active_application",
+                )
+        updated = self.repository.set_resource_status(
+            resource_id=str(resource["id"]),
+            status=normalized,
+            expected_revision=int(expected_revision),
+        )
+        self._audit(
+            resource_id=str(resource["id"]),
+            action=f"resource_identity_{normalized}",
+            actor_id=actor_id,
+            before=resource,
+            after=updated,
+            correlation_id=correlation_id,
+        )
+        return updated
+
     def _resource(self, code: str) -> dict[str, Any]:
         resource = self.repository.get_resource_by_code(validate_code(code))
         if not resource:
             raise NotFound(f"Platform resource not found: {code}")
         return resource
+
+    @staticmethod
+    def _require_identity_enabled(resource: dict[str, Any]) -> None:
+        if str(resource.get("status") or "") != "enabled":
+            raise NonRetryableExecutionError(
+                "Resource Identity is not enabled",
+                safe_message="资源身份已停用或归档，不能管理新的资源草稿",
+                error_code="resource_identity_not_enabled",
+            )
 
     def _draft_payload(
         self,

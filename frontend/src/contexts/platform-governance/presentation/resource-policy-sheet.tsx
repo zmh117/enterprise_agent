@@ -462,13 +462,14 @@ function WorkshopPolicyEditor({
 
 function LokiPolicyManager({ resource }: { resource: GovernedResource }) {
   const policies = useLokiScopePolicies()
-  const eligible = (policies.data ?? []).filter(
-    (item) =>
-      resource.scope_type === "global" ||
-      item.environment_code === resource.environment_code
+  const associated = (policies.data ?? []).filter((item) =>
+    item.resource_ids.includes(resource.id)
   )
   const [selection, setSelection] = useState("")
-  const selectedCode = selection || eligible[0]?.code || "__new__"
+  const selectedCode =
+    (selection && associated.some((item) => item.code === selection)
+      ? selection
+      : associated[0]?.code) || "__new__"
   const detail = useLokiScopePolicy(
     selectedCode === "__new__" ? "" : selectedCode
   )
@@ -476,10 +477,34 @@ function LokiPolicyManager({ resource }: { resource: GovernedResource }) {
   if (policies.isLoading || (selectedCode !== "__new__" && detail.isLoading)) {
     return <Skeleton className="h-96 w-full" />
   }
+  if (policies.isError) {
+    return (
+      <section className="space-y-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+        <div>
+          <h3 className="font-medium">Scope Policy 列表加载失败</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            未加载到策略关联事实前不会进入新建或编辑流程。
+          </p>
+        </div>
+        <MutationError error={policies.error} />
+        <Button
+          variant="outline"
+          onClick={() => void policies.refetch()}
+          aria-label="重新加载策略列表"
+        >
+          <RefreshCwIcon />重新加载
+        </Button>
+      </section>
+    )
+  }
   return (
     <div className="space-y-4">
       <Field>
-        <FieldLabel>范围策略</FieldLabel>
+        <FieldLabel>选择要管理的 Scope Policy</FieldLabel>
+        <p className="text-xs text-muted-foreground">
+          这里只列出 Draft 或 Published Revision 曾引用当前 Resource Identity
+          的策略。选择策略不等于业务应用运行绑定。
+        </p>
         <Select
           value={selectedCode}
           onValueChange={(value) => setSelection(value ?? "__new__")}
@@ -488,7 +513,7 @@ function LokiPolicyManager({ resource }: { resource: GovernedResource }) {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {eligible.map((item) => (
+            {associated.map((item) => (
               <SelectItem key={item.code} value={item.code}>
                 {item.code} · {item.environment_code}
                 {item.base_code ? ` / ${item.base_code}` : ""}
@@ -498,12 +523,31 @@ function LokiPolicyManager({ resource }: { resource: GovernedResource }) {
           </SelectContent>
         </Select>
       </Field>
-      <LokiPolicyEditor
-        key={`${selectedCode}:${detail.data?.draft?.draft_revision ?? "published"}`}
-        resource={resource}
-        identity={eligible.find((item) => item.code === selectedCode)}
-        policy={detail.data ?? null}
-      />
+      {selectedCode !== "__new__" && detail.isError ? (
+        <section className="space-y-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+          <div>
+            <h3 className="font-medium">Scope Policy 详情加载失败</h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              已保留当前关联策略选择；详情恢复前不会误入新建或编辑流程。
+            </p>
+          </div>
+          <MutationError error={detail.error} />
+          <Button
+            variant="outline"
+            onClick={() => void detail.refetch()}
+            aria-label="重新加载策略详情"
+          >
+            <RefreshCwIcon />重新加载
+          </Button>
+        </section>
+      ) : (
+        <LokiPolicyEditor
+          key={`${selectedCode}:${detail.data?.draft?.draft_revision ?? "published"}`}
+          resource={resource}
+          identity={associated.find((item) => item.code === selectedCode)}
+          policy={detail.data ?? null}
+        />
+      )}
     </div>
   )
 }
@@ -606,8 +650,15 @@ function LokiPolicyEditor({
 
   if (policy && !policy.draft) {
     const revision = policy.revisions[0]
+    const currentResourceRevision = resource.published_revision
+    const upgradesResource = Boolean(
+      revision &&
+        currentResourceRevision &&
+        revision.resource_revision_id !== currentResourceRevision.id
+    )
     return (
       <div className="space-y-4">
+        <LokiPolicyBindingSummary resource={resource} policy={policy} />
         <LokiRevisionSummary policy={policy} />
         <Button
           variant="outline"
@@ -618,16 +669,26 @@ function LokiPolicyEditor({
               {
                 code: policy.code,
                 sourceRevisionId: revision.id,
+                targetResourceRevisionId: upgradesResource
+                  ? currentResourceRevision?.id
+                  : undefined,
                 expectedPolicyRevision: policy.revision,
               },
               {
                 onSuccess: () =>
-                  toast.success("已从 Published Revision 复制新 Draft"),
+                  toast.success(
+                    upgradesResource
+                      ? "已复制 Policy 并升级到当前 Resource Revision"
+                      : "已从 Published Revision 复制新 Draft"
+                  ),
               }
             )
           }
         >
-          <RefreshCwIcon />从 r{revision?.revision ?? "—"} 复制新 Draft
+          <RefreshCwIcon />
+          {upgradesResource
+            ? `从 Policy r${revision?.revision ?? "—"} 复制并升级到 Resource r${currentResourceRevision?.revision ?? "—"}`
+            : `从 r${revision?.revision ?? "—"} 复制新 Draft`}
         </Button>
         <MutationError error={error} />
       </div>
@@ -636,6 +697,9 @@ function LokiPolicyEditor({
 
   return (
     <div className="space-y-5">
+      {policy ? (
+        <LokiPolicyBindingSummary resource={resource} policy={policy} />
+      ) : null}
       {!resource.published_revision ? (
         <section className="space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4">
           <div>
@@ -1108,6 +1172,75 @@ function LokiRevisionSummary({ policy }: { policy: LokiScopePolicy }) {
           </code>
         </div>
       ))}
+    </section>
+  )
+}
+
+function LokiPolicyBindingSummary({
+  resource,
+  policy,
+}: {
+  resource: GovernedResource
+  policy: LokiScopePolicy
+}) {
+  const frozen = policy.draft ?? policy.revisions[0]
+  const current = resource.published_revision
+  const isHistorical = Boolean(
+    frozen && current && frozen.resource_revision_id !== current.id
+  )
+  const policyLabel = policy.draft
+    ? `Policy Draft d${policy.draft.draft_revision}`
+    : policy.revisions[0]
+      ? `Policy r${policy.revisions[0].revision}`
+      : "Policy"
+  const frozenResourceRevision = frozen?.resource_revision || "—"
+
+  return (
+    <section className="space-y-3 rounded-lg border p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="font-medium">策略关联与应用运行绑定</h3>
+        <Badge variant={isHistorical ? "secondary" : "outline"}>
+          {isHistorical ? "历史 Resource Revision" : "当前 Resource Revision"}
+        </Badge>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        {frozen && current
+          ? `${policyLabel} 冻结 Resource r${frozenResourceRevision}；当前已发布 Resource 为 r${current.revision}`
+          : "该策略或当前 Resource 尚无可比较的 Published Revision"}
+      </p>
+      <p className="break-all text-xs text-muted-foreground">
+        冻结 {frozen?.resource_revision_id || "无"} · 当前 {current?.id || "无"}
+      </p>
+      {policy.application_usages.length ? (
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-muted-foreground">
+            已发布应用引用
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {policy.application_usages.map((usage) => (
+              <Badge
+                key={`${usage.application_publication_id}:${usage.policy_revision_id}:${usage.resource_slot}:${usage.target_key}:${usage.deployment_environment}`}
+                variant={usage.active ? "default" : "outline"}
+              >
+                {usage.application_name} · App r
+                {usage.application_publication_revision} · Policy r
+                {usage.policy_revision}
+                {usage.deployment_environment
+                  ? ` · ${usage.deployment_environment}`
+                  : ""}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          没有已发布应用使用此策略
+        </p>
+      )}
+      <p className="text-xs text-muted-foreground">
+        真正的运行绑定只能在业务应用发布时同时冻结 Resource Revision 与
+        Scope Policy Revision。
+      </p>
     </section>
   )
 }

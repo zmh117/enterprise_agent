@@ -34,6 +34,7 @@ import {
   saveLokiScopePolicyDraft,
   saveWorkshopPartitionPolicyDraft,
   setResourceRevisionStatus,
+  setResourceIdentityStatus,
   setBuiltinToolReleaseLifecycle,
   testLokiResourceDraft,
   verifyGovernedResource,
@@ -162,6 +163,17 @@ export const useSetResourceRevisionStatus = resourceMutation(
     revisionId: string
     action: "disable" | "archive"
   }) => setResourceRevisionStatus(code, revisionId, action)
+)
+export const useSetResourceIdentityStatus = resourceMutation(
+  ({
+    code,
+    action,
+    expectedRevision,
+  }: {
+    code: string
+    action: "disable" | "restore" | "archive"
+    expectedRevision: number
+  }) => setResourceIdentityStatus(code, action, expectedRevision)
 )
 
 export function useRuntimeGenerationStatus() {

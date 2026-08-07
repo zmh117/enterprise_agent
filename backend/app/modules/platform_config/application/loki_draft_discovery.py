@@ -287,6 +287,12 @@ class LokiDraftDiscoveryService:
         resource = self.repository.get_resource_by_code(code)
         if resource is None or str(resource["resource_kind"]) != "loki":
             raise _discovery_error("未找到 Loki Resource")
+        if str(resource.get("status") or "") != "enabled":
+            raise NonRetryableExecutionError(
+                "Resource Identity is not enabled",
+                safe_message="资源身份已停用或归档，不能测试或发现新的 Loki 草稿",
+                error_code="resource_identity_not_enabled",
+            )
         draft = self.repository.get_draft(str(resource["id"]))
         if str(draft["provider_type"]) != "loki":
             raise _discovery_error("Loki Resource Draft Provider 无效")

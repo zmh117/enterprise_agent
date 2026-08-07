@@ -657,6 +657,7 @@ def build_platform_config_router() -> APIRouter:
         resource_kind: str = "",
         scope_type: str = "",
         lifecycle_status: str = "",
+        revision_status: str = "",
         activation_status: str = "",
     ) -> dict[str, Any]:
         _require_management_read(
@@ -677,6 +678,16 @@ def build_platform_config_router() -> APIRouter:
                     for item in resources
                     if str(item.get(key) or "").lower() == expected.lower()
                 ]
+        if revision_status:
+            expected_revision_status = revision_status.upper()
+            resources = [
+                item
+                for item in resources
+                if (
+                    str((item.get("published_revision") or {}).get("status") or "NONE")
+                    == expected_revision_status
+                )
+            ]
         return {"resources": resources}
 
     @router.post("/resources")
@@ -829,19 +840,54 @@ def build_platform_config_router() -> APIRouter:
                 status_code=404,
                 detail="不支持此资源版本操作",
             )
+        target_status = {
+            "disable": "DISABLED",
+            "archive": "ARCHIVED",
+        }[action]
         try:
             revision = _container(
                 request
             ).platform_config_service.governed_resources.set_revision_status(
                 code,
                 revision_id,
-                action,
+                target_status,
                 actor_id=_actor(request),
                 correlation_id=_correlation_id(request),
             )
         except Exception as exc:
             raise _handle(exc) from exc
         return {"revision": revision}
+
+    @router.post("/resources/{code}/lifecycle/{action}")
+    async def set_governed_resource_identity_status(
+        request: Request,
+        code: str,
+        action: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        if action not in {"disable", "restore", "archive"}:
+            raise HTTPException(
+                status_code=404,
+                detail="不支持此资源身份操作",
+            )
+        target_status = {
+            "disable": "disabled",
+            "restore": "enabled",
+            "archive": "archived",
+        }[action]
+        try:
+            resource = _container(
+                request
+            ).platform_config_service.governed_resources.set_resource_status(
+                code,
+                target_status,
+                expected_revision=int(payload.get("expected_revision") or 0),
+                actor_id=_actor(request),
+                correlation_id=_correlation_id(request),
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"resource": resource}
 
     @router.get("/workshop-partition-policies")
     def list_workshop_partition_policies(request: Request) -> dict[str, Any]:
@@ -858,9 +904,7 @@ def build_platform_config_router() -> APIRouter:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         try:
-            policy = _container(
-                request
-            ).platform_config_service.workshop_partition_policies.create(
+            policy = _container(request).platform_config_service.workshop_partition_policies.create(
                 payload,
                 actor_id=_actor(request),
                 correlation_id=_correlation_id(request),
@@ -876,9 +920,9 @@ def build_platform_config_router() -> APIRouter:
     ) -> dict[str, Any]:
         _require_management_read(request, resource_type="platform_config")
         try:
-            policy = _container(
-                request
-            ).platform_config_service.workshop_partition_policies.detail(code)
+            policy = _container(request).platform_config_service.workshop_partition_policies.detail(
+                code
+            )
         except Exception as exc:
             raise _handle(exc) from exc
         return {"policy": policy}
@@ -894,9 +938,7 @@ def build_platform_config_router() -> APIRouter:
                 request
             ).platform_config_service.workshop_partition_policies.save_draft(
                 code,
-                expected_draft_revision=int(
-                    payload.get("expected_draft_revision") or 0
-                ),
+                expected_draft_revision=int(payload.get("expected_draft_revision") or 0),
                 payload={
                     key: payload.get(key)
                     for key in (
@@ -924,12 +966,8 @@ def build_platform_config_router() -> APIRouter:
                 request
             ).platform_config_service.workshop_partition_policies.verify(
                 code,
-                expected_draft_revision=int(
-                    payload.get("expected_draft_revision") or 0
-                ),
-                redis_resource_revision_id=str(
-                    payload.get("redis_resource_revision_id") or ""
-                )
+                expected_draft_revision=int(payload.get("expected_draft_revision") or 0),
+                redis_resource_revision_id=str(payload.get("redis_resource_revision_id") or "")
                 or None,
                 actor_id=_actor(request),
                 correlation_id=_correlation_id(request),
@@ -950,9 +988,7 @@ def build_platform_config_router() -> APIRouter:
             ).platform_config_service.workshop_partition_policies.publish(
                 code,
                 verification_id=str(payload.get("verification_id") or ""),
-                expected_policy_revision=int(
-                    payload.get("expected_policy_revision") or 0
-                ),
+                expected_policy_revision=int(payload.get("expected_policy_revision") or 0),
                 actor_id=_actor(request),
                 correlation_id=_correlation_id(request),
             )
@@ -972,9 +1008,7 @@ def build_platform_config_router() -> APIRouter:
             ).platform_config_service.workshop_partition_policies.copy_revision_to_draft(
                 code,
                 source_revision_id=str(payload.get("source_revision_id") or ""),
-                expected_policy_revision=int(
-                    payload.get("expected_policy_revision") or 0
-                ),
+                expected_policy_revision=int(payload.get("expected_policy_revision") or 0),
                 actor_id=_actor(request),
                 correlation_id=_correlation_id(request),
             )
@@ -985,11 +1019,7 @@ def build_platform_config_router() -> APIRouter:
     @router.get("/loki-scope-policies")
     def list_loki_scope_policies(request: Request) -> dict[str, Any]:
         _require_management_read(request, resource_type="platform_config")
-        return {
-            "policies": _container(
-                request
-            ).platform_config_service.loki_scope_policies.list()
-        }
+        return {"policies": _container(request).platform_config_service.loki_scope_policies.list()}
 
     @router.post("/loki-scope-policies")
     async def create_loki_scope_policy(
@@ -997,9 +1027,7 @@ def build_platform_config_router() -> APIRouter:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         try:
-            policy = _container(
-                request
-            ).platform_config_service.loki_scope_policies.create(
+            policy = _container(request).platform_config_service.loki_scope_policies.create(
                 payload,
                 actor_id=_actor(request),
                 correlation_id=_correlation_id(request),
@@ -1012,9 +1040,7 @@ def build_platform_config_router() -> APIRouter:
     def get_loki_scope_policy(request: Request, code: str) -> dict[str, Any]:
         _require_management_read(request, resource_type="platform_config")
         try:
-            policy = _container(
-                request
-            ).platform_config_service.loki_scope_policies.detail(code)
+            policy = _container(request).platform_config_service.loki_scope_policies.detail(code)
         except Exception as exc:
             raise _handle(exc) from exc
         return {"policy": policy}
@@ -1026,13 +1052,9 @@ def build_platform_config_router() -> APIRouter:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         try:
-            draft = _container(
-                request
-            ).platform_config_service.loki_scope_policies.save_draft(
+            draft = _container(request).platform_config_service.loki_scope_policies.save_draft(
                 code,
-                expected_draft_revision=int(
-                    payload.get("expected_draft_revision") or 0
-                ),
+                expected_draft_revision=int(payload.get("expected_draft_revision") or 0),
                 payload={
                     "resource_revision_id": payload.get("resource_revision_id"),
                     "conditions": payload.get("conditions"),
@@ -1051,13 +1073,9 @@ def build_platform_config_router() -> APIRouter:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         try:
-            verification = _container(
-                request
-            ).platform_config_service.loki_scope_policies.verify(
+            verification = _container(request).platform_config_service.loki_scope_policies.verify(
                 code,
-                expected_draft_revision=int(
-                    payload.get("expected_draft_revision") or 0
-                ),
+                expected_draft_revision=int(payload.get("expected_draft_revision") or 0),
                 actor_id=_actor(request),
                 correlation_id=_correlation_id(request),
             )
@@ -1072,14 +1090,10 @@ def build_platform_config_router() -> APIRouter:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         try:
-            revision = _container(
-                request
-            ).platform_config_service.loki_scope_policies.publish(
+            revision = _container(request).platform_config_service.loki_scope_policies.publish(
                 code,
                 verification_id=str(payload.get("verification_id") or ""),
-                expected_policy_revision=int(
-                    payload.get("expected_policy_revision") or 0
-                ),
+                expected_policy_revision=int(payload.get("expected_policy_revision") or 0),
                 actor_id=_actor(request),
                 correlation_id=_correlation_id(request),
             )
@@ -1099,10 +1113,11 @@ def build_platform_config_router() -> APIRouter:
             ).platform_config_service.loki_scope_policies.copy_revision_to_draft(
                 code,
                 source_revision_id=str(payload.get("source_revision_id") or ""),
-                expected_policy_revision=int(
-                    payload.get("expected_policy_revision") or 0
-                ),
+                expected_policy_revision=int(payload.get("expected_policy_revision") or 0),
                 actor_id=_actor(request),
+                target_resource_revision_id=(
+                    str(payload.get("target_resource_revision_id") or "") or None
+                ),
                 correlation_id=_correlation_id(request),
             )
         except Exception as exc:

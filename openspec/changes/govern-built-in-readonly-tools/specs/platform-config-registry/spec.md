@@ -66,6 +66,33 @@ Registry MUST 分别持久化 Resource/Policy Draft、Verification Evidence、�
 - **WHEN** Workshop 或 Loki Policy Draft 的规范化内容变化
 - **THEN** 旧 Verification Evidence 失效，但上一 Published Revision 和依赖 Job 保持不变
 
+### Requirement: Resource Identity 与 Resource Revision 生命周期必须独立管理
+系统 SHALL 分别管理稳定 Resource Identity 的 `enabled`、`disabled`、`archived` 状态和不可变 Resource Revision 的 `PUBLISHED`、`DISABLED`、`ARCHIVED` 状态；Revision 生命周期动作 MUST NOT 隐式改写 Identity，管理 API 和界面 MUST 分开展示并筛选两层状态。
+
+#### Scenario: 归档最新 Resource Revision
+- **WHEN** 管理员把一个 Loki Resource 的最新 Revision 从 DISABLED 归档
+- **THEN** 该 Revision 变为 ARCHIVED，Resource Identity 保持 enabled，并仍可显式从该历史 Revision 复制新 Draft
+
+#### Scenario: 停用 Resource Identity
+- **WHEN** 管理员使用当前 Identity revision 显式停用一个 enabled Resource Identity
+- **THEN** Identity 变为 disabled，后续创建、保存、验证和发布 Draft 均被阻止，但既有 Resource Revision、Application Publication 和 Job Snapshot 不被改写
+
+#### Scenario: 恢复 Resource Identity
+- **WHEN** 管理员使用当前 Identity revision 显式恢复一个 disabled Resource Identity
+- **THEN** Identity 变为 enabled 并允许后续 Draft 管理，历史 Revision 状态保持不变
+
+#### Scenario: 安全归档 Resource Identity
+- **WHEN** disabled Identity 没有活动 Draft、没有 PUBLISHED Revision 且没有活动 Application Publication 引用
+- **THEN** 管理员可以用当前 Identity revision 把它归档为不可恢复终态并记录审计
+
+#### Scenario: Identity 仍有治理依赖
+- **WHEN** 管理员尝试归档仍有活动 Draft、PUBLISHED Revision 或活动 Application Publication 引用的 Identity
+- **THEN** 系统失败关闭并返回不含 Secret 的依赖摘要，不改变 Identity 或任何 Revision
+
+#### Scenario: Identity 并发状态已变化
+- **WHEN** 生命周期请求携带的 expected Identity revision 已过期
+- **THEN** 系统以并发冲突拒绝请求，要求刷新后重试
+
 ### Requirement: Registry must enforce optional placement representation
 Registry SHALL 只在资源实际存在物理位置差异时保存 `cloud` 或 `edge` placement；无 placement 的 Mapping MUST 保存为缺省值而非字符串占位，并且同一 Mapping 不得同时包含多个 placement。
 

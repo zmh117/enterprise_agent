@@ -10,6 +10,7 @@
 - 将业务目标改为实际存在的可变深度 `Environment[/Base[/Workshop]]`；placement 只描述物理资源位置，不进入用户数据权限，也不得通过伪造基地或占位值表达。
 - 为车间引入不可变 Workshop Resource Partition Policy Revision：数据库第一阶段使用一个精确表名前缀；Redis 使用一个或多个精确完整 key namespace 前缀，并对 GET、SCAN 和 schema 目录强制执行。
 - 为 Loki 引入 Resource Draft 测试后的有界标签 Key/Value 发现，以及不可变 Loki Scope Selector Policy Revision；每条策略使用 AND 连接的精确 `key=value`，表达一个环境和可选基地，作为运行时不可覆盖的强制 selector。
+- 明确区分稳定 Resource Identity 生命周期与不可变 Resource Revision 生命周期：版本停用/归档不得隐式改写资源身份；管理界面分别展示和筛选两层状态，并通过受保护的显式动作停用、恢复或归档资源身份。
 - **BREAKING** Loki 不再按 Workshop 或 placement 授权和路由；第一阶段支持一个全局 Loki 或每环境一个 Loki，`role`、`replica`、`app`、`logtype` 仅可作为受控诊断过滤条件。
 - **BREAKING** 资源解析不再使用“第一个、默认、最新、模糊匹配”回退；同一有效目标命中零个或多个绑定时均失败关闭。
 - **BREAKING** 分两阶段淘汰 `legacy-v1` 名称级工具绑定：先禁止新增旧写入并物化非终态/可重试 Job 的精确快照，达到零活动引用且通过真实运行链验收后再删除兼容读取和恢复入口；历史记录保留审计。

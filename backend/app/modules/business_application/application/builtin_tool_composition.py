@@ -1620,6 +1620,8 @@ class ApplicationBuiltinToolCompositionService:
         resource_scope = str(resource["scope_type"])
         if target_scope_type == "global":
             return resource_scope == "global"
+        if resource_scope == "global":
+            return True
         if str(resource.get("environment_id") or "") != str(environment_id or ""):
             return False
         if resource_scope == "environment":

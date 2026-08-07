@@ -163,6 +163,10 @@ def test_policy_management_api_publishes_immutable_workshop_and_loki_revisions()
             "/api/platform/loki-scope-policies/loki-policy-api-guanlan",
             headers=headers,
         )
+        loki_list = client.get(
+            "/api/platform/loki-scope-policies",
+            headers=headers,
+        )
 
     assert workshop_published.status_code == 200
     assert workshop_published.json()["revision"]["database_table_prefix"] == "GL001_"
@@ -177,6 +181,19 @@ def test_policy_management_api_publishes_immutable_workshop_and_loki_revisions()
         {"key": "base", "value": "guanlan"},
         {"key": "customer", "value": "policy-api-env"},
     ]
+    listed_loki = next(
+        item
+        for item in loki_list.json()["policies"]
+        if item["code"] == "loki-policy-api-guanlan"
+    )
+    assert listed_loki["resource_ids"] == [resource_revision["resource_id"]]
+    assert listed_loki["published_resource_revision_id"] == resource_revision["id"]
+    assert listed_loki["published_policy_revision"] == 1
+    assert loki_detail.json()["policy"]["application_usages"] == []
+    assert loki_detail.json()["policy"]["revisions"][0]["resource_code"] == (
+        "loki-policy-api"
+    )
+    assert loki_detail.json()["policy"]["revisions"][0]["resource_revision"] == 1
     combined = workshop_detail.text + loki_detail.text
     assert "secret_refs" not in combined
     assert "base_url" not in combined

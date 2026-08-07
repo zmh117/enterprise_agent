@@ -8,6 +8,12 @@ from fastapi.testclient import TestClient
 
 from app.bootstrap import build_test_container
 from app.main import create_app
+from app.modules.platform_config.application.governed_resources import (
+    ResourceVerificationOutcome,
+)
+from app.modules.platform_config.application.loki_scope_policy_verifier import (
+    LokiScopePolicyVerificationOutcome,
+)
 from app.shared.config import IdentitySettings, Settings
 
 ADMIN_ID = "user_local_admin"
@@ -41,8 +47,7 @@ def _runtime():
 def postgres_runtime():
     if not POSTGRES_ADMIN_DSN:
         pytest.skip(
-            "set GOVERNED_RESOURCE_POSTGRES_DSN to run the PostgreSQL "
-            "resource-list regression"
+            "set GOVERNED_RESOURCE_POSTGRES_DSN to run the PostgreSQL resource-list regression"
         )
 
     import psycopg
@@ -51,11 +56,7 @@ def postgres_runtime():
 
     database_name = f"governed_resource_test_{uuid.uuid4().hex}"
     with psycopg.connect(POSTGRES_ADMIN_DSN, autocommit=True) as admin:
-        admin.execute(
-            sql.SQL("create database {}").format(
-                sql.Identifier(database_name)
-            )
-        )
+        admin.execute(sql.SQL("create database {}").format(sql.Identifier(database_name)))
     parameters = conninfo_to_dict(POSTGRES_ADMIN_DSN)
     parameters["dbname"] = database_name
     runtime = None
@@ -89,11 +90,7 @@ def postgres_runtime():
                 """,
                 (database_name,),
             )
-            admin.execute(
-                sql.SQL("drop database {}").format(
-                    sql.Identifier(database_name)
-                )
-            )
+            admin.execute(sql.SQL("drop database {}").format(sql.Identifier(database_name)))
 
 
 def _create_topology_and_secret(runtime: object) -> None:
@@ -199,6 +196,82 @@ def test_governed_resource_api_lifecycle_and_public_status_are_secret_safe() -> 
     runtime.database.close()
 
 
+def test_governed_resource_revision_action_routes_disable_and_archive() -> None:
+    runtime = _runtime()
+    _create_topology_and_secret(runtime)
+    resources = runtime.platform_config_service.governed_resources
+    resources.create_resource(_payload(), actor_id=ADMIN_ID)
+
+    class PassingVerifier:
+        def verify(self, **_kwargs: object) -> ResourceVerificationOutcome:
+            return ResourceVerificationOutcome(
+                status="PASSED",
+                provider_contract_version="mysql_v1",
+                checks={"connection": True, "read_only": True},
+            )
+
+    resources.verify_draft(
+        "api_resource_mysql",
+        actor_id=ADMIN_ID,
+        verifier=PassingVerifier(),
+    )
+    published = resources.publish_draft(
+        "api_resource_mysql",
+        actor_id=ADMIN_ID,
+    )
+    app = create_app(_settings(), container_factory=lambda _: runtime)
+    headers = {"x-admin-user-id": "local-user"}
+    revision_path = f"/api/platform/resources/api_resource_mysql/revisions/{published['id']}"
+
+    with TestClient(app) as client:
+        disabled = client.post(f"{revision_path}/disable", headers=headers)
+        archived = client.post(f"{revision_path}/archive", headers=headers)
+        separated = client.get(
+            "/api/platform/resources?lifecycle_status=enabled&revision_status=ARCHIVED",
+            headers=headers,
+        )
+
+    assert disabled.status_code == 200, disabled.text
+    assert disabled.json()["revision"]["status"] == "DISABLED"
+    assert archived.status_code == 200, archived.text
+    assert archived.json()["revision"]["status"] == "ARCHIVED"
+    assert separated.status_code == 200, separated.text
+    separated_resource = separated.json()["resources"][0]
+    assert separated_resource["status"] == "enabled"
+    assert separated_resource["published_revision"]["status"] == "ARCHIVED"
+    runtime.database.close()
+
+
+def test_governed_resource_identity_lifecycle_routes_are_separate() -> None:
+    runtime = _runtime()
+    _create_topology_and_secret(runtime)
+    resources = runtime.platform_config_service.governed_resources
+    created = resources.create_resource(_payload(), actor_id=ADMIN_ID)
+    app = create_app(_settings(), container_factory=lambda _: runtime)
+    headers = {"x-admin-user-id": "local-user"}
+    lifecycle_path = "/api/platform/resources/api_resource_mysql/lifecycle"
+
+    with TestClient(app) as client:
+        disabled = client.post(
+            f"{lifecycle_path}/disable",
+            json={"expected_revision": created["resource"]["revision"]},
+            headers=headers,
+        )
+        restored = client.post(
+            f"{lifecycle_path}/restore",
+            json={"expected_revision": 2},
+            headers=headers,
+        )
+
+    assert disabled.status_code == 200, disabled.text
+    assert disabled.json()["resource"]["status"] == "disabled"
+    assert disabled.json()["resource"]["revision"] == 2
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["resource"]["status"] == "enabled"
+    assert restored.json()["resource"]["revision"] == 3
+    runtime.database.close()
+
+
 def test_postgres_lists_first_resource_after_creation(postgres_runtime) -> None:
     _create_topology_and_secret(postgres_runtime)
     app = create_app(
@@ -220,9 +293,109 @@ def test_postgres_lists_first_resource_after_creation(postgres_runtime) -> None:
 
     assert created.status_code == 200, created.text
     assert listed.status_code == 200, listed.text
-    assert [item["code"] for item in listed.json()["resources"]] == [
-        "api_resource_mysql"
-    ]
+    assert [item["code"] for item in listed.json()["resources"]] == ["api_resource_mysql"]
+
+
+def test_postgres_creates_and_loads_loki_scope_policy_without_application_usage(
+    postgres_runtime,
+) -> None:
+    service = postgres_runtime.platform_config_service
+    service.upsert_environment(
+        {"code": "postgres_loki_env"},
+        actor_id=ADMIN_ID,
+    )
+    resources = service.governed_resources
+    resources.create_resource(
+        {
+            "code": "postgres_loki",
+            "name": "PostgreSQL Loki",
+            "resource_kind": "loki",
+            "scope_type": "environment",
+            "environment_code": "postgres_loki_env",
+            "provider_type": "loki",
+            "config": {
+                "base_url": "http://loki.invalid:3100",
+                "timeout_seconds": 5,
+                "max_minutes": 60,
+                "max_lines": 200,
+                "max_response_bytes": 65536,
+            },
+            "secret_refs": {},
+        },
+        actor_id=ADMIN_ID,
+    )
+
+    class PassingLokiResourceVerifier:
+        def verify(self, **_kwargs: object) -> ResourceVerificationOutcome:
+            return ResourceVerificationOutcome(
+                status="PASSED",
+                provider_contract_version="loki_v1",
+                checks={"connection": True, "build_info": True},
+            )
+
+    resources.verify_draft(
+        "postgres_loki",
+        actor_id=ADMIN_ID,
+        verifier=PassingLokiResourceVerifier(),
+    )
+    resource_revision = resources.publish_draft(
+        "postgres_loki",
+        actor_id=ADMIN_ID,
+    )
+
+    class ZeroMatchVerifier:
+        def verify(self, **_kwargs: object) -> LokiScopePolicyVerificationOutcome:
+            return LokiScopePolicyVerificationOutcome(
+                status="PASSED",
+                verifier_version="postgres-loki-scope.v1",
+                match_count=0,
+                zero_match_warning=True,
+                result_summary={"match_hash": "0" * 64},
+            )
+
+    service.loki_scope_policies.verifier = ZeroMatchVerifier()  # type: ignore[assignment]
+    app = create_app(
+        postgres_runtime.settings,
+        container_factory=lambda _: postgres_runtime,
+    )
+    headers = {"x-admin-user-id": "local-user"}
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/platform/loki-scope-policies",
+            headers=headers,
+            json={
+                "code": "postgres-loki-scope",
+                "environment_code": "postgres_loki_env",
+                "base_code": "",
+                "resource_revision_id": resource_revision["id"],
+                "conditions": [{"key": "cluster", "value": "mes-cluster"}],
+            },
+        )
+        verified = client.post(
+            "/api/platform/loki-scope-policies/postgres-loki-scope/verify",
+            headers=headers,
+            json={"expected_draft_revision": 1},
+        )
+        published = client.post(
+            "/api/platform/loki-scope-policies/postgres-loki-scope/publish",
+            headers=headers,
+            json={
+                "verification_id": verified.json()["verification"]["id"],
+                "expected_policy_revision": 1,
+            },
+        )
+        detail = client.get(
+            "/api/platform/loki-scope-policies/postgres-loki-scope",
+            headers=headers,
+        )
+
+    assert created.status_code == 200, created.text
+    assert verified.status_code == 200, verified.text
+    assert published.status_code == 200, published.text
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["policy"]["draft"] is None
+    assert detail.json()["policy"]["application_usages"] == []
+    assert detail.json()["policy"]["revisions"][0]["revision"] == 1
 
 
 def test_governed_resource_api_rejects_arbitrary_or_legacy_secret_fields() -> None:
@@ -248,9 +421,7 @@ def test_governed_resource_api_rejects_arbitrary_or_legacy_secret_fields() -> No
             json=payload,
             headers=headers,
         )
-        resources = (
-            runtime.platform_config_service.governed_resources.list_resources()
-        )
+        resources = runtime.platform_config_service.governed_resources.list_resources()
 
     assert legacy.status_code == 400
     assert "env 凭据引用必须先导入凭据中心" in legacy.text

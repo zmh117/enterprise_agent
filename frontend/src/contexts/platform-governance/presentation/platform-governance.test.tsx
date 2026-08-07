@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { describe, expect, it, vi } from "vitest"
 
@@ -61,6 +67,7 @@ function governedOracleResource() {
     base_code: "base-one",
     workshop_code: null,
     status: "enabled",
+    revision: 1,
     draft: {
       id: "draft-oracle",
       resource_id: "resource-oracle",
@@ -91,20 +98,29 @@ function governedOracleResource() {
 function governedLokiResource({
   draft,
   published,
+  code = "loki_test",
+  name = "Loki 测试环境",
+  identityStatus = "enabled",
+  revisionStatus = "PUBLISHED",
 }: {
   draft: boolean
   published: boolean
+  code?: string
+  name?: string
+  identityStatus?: "enabled" | "disabled" | "archived"
+  revisionStatus?: "PUBLISHED" | "DISABLED" | "ARCHIVED"
 }) {
   return {
-    id: "resource-loki-test",
-    code: "loki_test",
-    name: "Loki 测试环境",
+    id: `resource-${code}`,
+    code,
+    name,
     resource_kind: "loki",
     scope_type: "environment",
     environment_code: "agent_test",
     base_code: "",
     workshop_code: "",
-    status: "enabled",
+    status: identityStatus,
+    revision: 1,
     draft: draft
       ? {
           id: "resource-draft-loki-test",
@@ -134,7 +150,7 @@ function governedLokiResource({
           provider_contract_version: "loki_v1",
           config: {},
           secret_refs: {},
-          status: "PUBLISHED",
+          status: revisionStatus,
           published_at: "2026-08-07T01:50:00Z",
         }
       : null,
@@ -453,6 +469,137 @@ describe("Phase 5 platform governance UI", () => {
     expect(
       (await screen.findAllByText("resource-revision-loki-test-1")).length
     ).toBeGreaterThan(0)
+  })
+
+  it("shows revision transition failures inside the confirmation dialog", async () => {
+    let disableRequest = ""
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input)
+      if (url.endsWith("/disable")) {
+        disableRequest = url
+        return response(
+          {
+            detail: {
+              code: "resource_revision_immutable",
+              message: "已发布资源只能禁用或归档，不能原地修改",
+            },
+          },
+          400
+        )
+      }
+      if (url === "/api/platform/resources") {
+        return response({
+          resources: [governedLokiResource({ draft: false, published: true })],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    renderWithQuery(<ToolResourcesPage />)
+
+    fireEvent.click(await screen.findByRole("button", { name: "停用发布版本" }))
+    fireEvent.click(screen.getByRole("button", { name: "确认" }))
+
+    await waitFor(() =>
+      expect(disableRequest).toBe(
+        "/api/platform/resources/loki_test/revisions/resource-revision-loki-test-1/disable"
+      )
+    )
+    const dialog = screen.getByRole("alertdialog")
+    expect(
+      await within(dialog).findByText("已发布资源只能禁用或归档，不能原地修改")
+    ).toBeInTheDocument()
+    expect(
+      within(dialog).getByRole("heading", { name: "停用已发布版本？" })
+    ).toBeInTheDocument()
+  })
+
+  it("separates Resource Identity and latest Revision lifecycle filters", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input)
+      if (url === "/api/platform/resources") {
+        return response({
+          resources: [
+            governedLokiResource({
+              draft: false,
+              published: true,
+              code: "loki_archived_revision",
+              name: "归档版本 Loki",
+              identityStatus: "enabled",
+              revisionStatus: "ARCHIVED",
+            }),
+            governedLokiResource({
+              draft: false,
+              published: true,
+              code: "loki_current_revision",
+              name: "当前版本 Loki",
+            }),
+          ],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    renderWithQuery(<ToolResourcesPage />)
+
+    expect(await screen.findByText("归档版本 Loki")).toBeInTheDocument()
+    expect(screen.getByText("当前版本 Loki")).toBeInTheDocument()
+    expect(screen.getAllByText("资源身份：启用").length).toBe(2)
+
+    fireEvent.click(screen.getByRole("combobox", { name: "最新发布版本状态" }))
+    const archivedOption = await screen.findByRole("option", {
+      name: "已归档",
+    })
+    fireEvent.pointerDown(archivedOption, { pointerType: "mouse", button: 0 })
+    fireEvent.click(archivedOption)
+    expect(screen.getByText("归档版本 Loki")).toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.queryByText("当前版本 Loki")).not.toBeInTheDocument()
+    )
+    expect(
+      screen.getByRole("button", { name: "从 r1 新建草稿" })
+    ).toBeInTheDocument()
+  })
+
+  it("changes Resource Identity lifecycle with its expected revision", async () => {
+    let lifecycleRequest = ""
+    let lifecycleBody: Record<string, unknown> | undefined
+    const resource = governedLokiResource({
+      draft: false,
+      published: true,
+      revisionStatus: "ARCHIVED",
+    })
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.endsWith("/resources/loki_test/lifecycle/disable")) {
+        lifecycleRequest = url
+        lifecycleBody = JSON.parse(String(init?.body)) as Record<
+          string,
+          unknown
+        >
+        return response({
+          resource: {
+            id: resource.id,
+            code: resource.code,
+            status: "disabled",
+            revision: 2,
+          },
+        })
+      }
+      if (url === "/api/platform/resources") {
+        return response({ resources: [resource] })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    renderWithQuery(<ToolResourcesPage />)
+
+    fireEvent.click(await screen.findByRole("button", { name: "停用资源身份" }))
+    fireEvent.click(screen.getByRole("button", { name: "确认" }))
+
+    await waitFor(() =>
+      expect(lifecycleRequest).toBe(
+        "/api/platform/resources/loki_test/lifecycle/disable"
+      )
+    )
+    expect(lifecycleBody).toEqual({ expected_revision: 1 })
   })
 
   it("serializes a resource Draft with only the selected Secret reference", async () => {

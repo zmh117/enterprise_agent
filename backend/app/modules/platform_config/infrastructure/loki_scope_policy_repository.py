@@ -91,11 +91,82 @@ class LokiScopePolicyRepository:
              order by environment.code, base.code, policy.code
             """
         )
-        return [{**row, "revision": int(row["revision"])} for row in rows]
+        relations = self.database.execute(
+            """
+            select draft.policy_id, revision.resource_id,
+                   draft.resource_revision_id, 0 as policy_revision,
+                   'draft' as relation_kind
+              from loki_scope_policy_draft draft
+              join platform_resource_revision revision
+                on revision.id = draft.resource_revision_id
+            union all
+            select published.policy_id, revision.resource_id,
+                   published.resource_revision_id,
+                   published.revision as policy_revision,
+                   'published' as relation_kind
+              from loki_scope_policy_revision published
+              join platform_resource_revision revision
+                on revision.id = published.resource_revision_id
+            """
+        )
+        by_policy: dict[str, dict[str, Any]] = {}
+        for relation in relations:
+            policy_id = str(relation["policy_id"])
+            summary = by_policy.setdefault(
+                policy_id,
+                {
+                    "resource_ids": set(),
+                    "draft_resource_revision_id": "",
+                    "published_resource_revision_id": "",
+                    "published_policy_revision": 0,
+                },
+            )
+            summary["resource_ids"].add(str(relation["resource_id"]))
+            if str(relation["relation_kind"]) == "draft":
+                summary["draft_resource_revision_id"] = str(
+                    relation["resource_revision_id"]
+                )
+                continue
+            policy_revision = int(relation["policy_revision"])
+            if policy_revision > int(summary["published_policy_revision"]):
+                summary["published_policy_revision"] = policy_revision
+                summary["published_resource_revision_id"] = str(
+                    relation["resource_revision_id"]
+                )
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            summary = by_policy.get(
+                str(row["id"]),
+                {
+                    "resource_ids": set(),
+                    "draft_resource_revision_id": "",
+                    "published_resource_revision_id": "",
+                    "published_policy_revision": 0,
+                },
+            )
+            result.append(
+                {
+                    **row,
+                    "revision": int(row["revision"]),
+                    **summary,
+                    "resource_ids": sorted(summary["resource_ids"]),
+                }
+            )
+        return result
 
     def get_draft(self, policy_id: str) -> dict[str, Any] | None:
         row = self.database.execute_one(
-            "select * from loki_scope_policy_draft where policy_id = ?",
+            """
+            select draft.*, revision.resource_id,
+                   resource.code as resource_code,
+                   revision.revision as resource_revision
+              from loki_scope_policy_draft draft
+              join platform_resource_revision revision
+                on revision.id = draft.resource_revision_id
+              join platform_resource resource
+                on resource.id = revision.resource_id
+             where draft.policy_id = ?
+            """,
             (policy_id,),
         )
         return self._draft(row) if row else None
@@ -340,7 +411,17 @@ class LokiScopePolicyRepository:
 
     def get_revision(self, revision_id: str) -> dict[str, Any]:
         row = self.database.execute_one(
-            "select * from loki_scope_policy_revision where id = ?",
+            """
+            select published.*, resource_revision.resource_id,
+                   resource.code as resource_code,
+                   resource_revision.revision as resource_revision
+              from loki_scope_policy_revision published
+              join platform_resource_revision resource_revision
+                on resource_revision.id = published.resource_revision_id
+              join platform_resource resource
+                on resource.id = resource_revision.resource_id
+             where published.id = ?
+            """,
             (revision_id,),
         )
         if row is None:
@@ -352,10 +433,64 @@ class LokiScopePolicyRepository:
 
     def list_revisions(self, policy_id: str) -> list[dict[str, Any]]:
         rows = self.database.execute(
-            "select * from loki_scope_policy_revision where policy_id = ? order by revision desc",
+            """
+            select published.*, resource_revision.resource_id,
+                   resource.code as resource_code,
+                   resource_revision.revision as resource_revision
+              from loki_scope_policy_revision published
+              join platform_resource_revision resource_revision
+                on resource_revision.id = published.resource_revision_id
+              join platform_resource resource
+                on resource.id = resource_revision.resource_id
+             where published.policy_id = ?
+             order by published.revision desc
+            """,
             (policy_id,),
         )
         return [self._revision(row) for row in rows]
+
+    def list_application_usages(self, policy_id: str) -> list[dict[str, Any]]:
+        rows = self.database.execute(
+            """
+            select distinct policy_revision.id as policy_revision_id,
+                   policy_revision.revision as policy_revision,
+                   application.id as application_id,
+                   application.code as application_code,
+                   application.name as application_name,
+                   publication.id as application_publication_id,
+                   publication.revision as application_publication_revision,
+                   binding.resource_slot, binding.target_key,
+                   coalesce(deployment.environment, '') as deployment_environment,
+                   coalesce(deployment.active, 0) as active
+              from loki_scope_policy_revision policy_revision
+              join business_application_publication_builtin_tool_resource binding
+                on binding.loki_scope_policy_revision_id = policy_revision.id
+              join business_application_publication_builtin_tool tool
+                on tool.id = binding.application_tool_id
+              join business_application_publication publication
+                on publication.id = tool.application_publication_id
+              join business_application application
+                on application.id = publication.application_id
+             left join business_application_deployment deployment
+                on deployment.publication_id = publication.id
+             where policy_revision.policy_id = ?
+             order by application_code, application_publication_revision,
+                      policy_revision, resource_slot, target_key,
+                      deployment_environment
+            """,
+            (policy_id,),
+        )
+        return [
+            {
+                **row,
+                "policy_revision": int(row["policy_revision"]),
+                "application_publication_revision": int(
+                    row["application_publication_revision"]
+                ),
+                "active": bool(row["active"]),
+            }
+            for row in rows
+        ]
 
     def record_health_observation(
         self,
@@ -428,7 +563,8 @@ class LokiScopePolicyRepository:
         self,
         *,
         policy: dict[str, Any],
-        revision: dict[str, Any],
+        draft: dict[str, Any],
+        content_hash: str,
         expected_policy_revision: int,
         actor_id: str,
     ) -> dict[str, Any]:
@@ -448,8 +584,8 @@ class LokiScopePolicyRepository:
         self._insert_draft(
             policy_id=str(policy["id"]),
             draft_revision=draft_revision,
-            draft=revision,
-            content_hash=str(revision["content_hash"]),
+            draft=draft,
+            content_hash=content_hash,
             actor_id=actor_id,
             timestamp=now_iso(),
         )

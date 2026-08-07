@@ -97,6 +97,79 @@ class GovernedResourceRepository:
         )
         return [self._resource(row) for row in rows]
 
+    def set_resource_status(
+        self,
+        *,
+        resource_id: str,
+        status: str,
+        expected_revision: int,
+    ) -> dict[str, Any]:
+        rows = self.database.execute(
+            """
+            update platform_resource
+               set status = ?, revision = revision + 1, updated_at = ?
+             where id = ? and revision = ?
+            returning id
+            """,
+            (status, now_iso(), resource_id, expected_revision),
+        )
+        if not rows:
+            raise NonRetryableExecutionError(
+                "Resource Identity revision conflict",
+                safe_message="资源身份状态已变化，请刷新后重试",
+                error_code="resource_identity_revision_conflict",
+            )
+        return self.get_resource(resource_id)
+
+    def list_active_application_references(
+        self,
+        resource_id: str,
+    ) -> list[dict[str, Any]]:
+        return self.database.execute(
+            """
+            select distinct referenced.publication_id,
+                   referenced.application_code,
+                   referenced.application_name
+              from (
+                    select publication.id as publication_id,
+                           application.code as application_code,
+                           application.name as application_name
+                      from business_application_publication_builtin_tool_resource mapping
+                      join business_application_publication_builtin_tool tool
+                        on tool.id = mapping.application_tool_id
+                      join business_application_publication publication
+                        on publication.id = tool.application_publication_id
+                      join business_application application
+                        on application.id = publication.application_id
+                      join business_application_deployment deployment
+                        on deployment.publication_id = publication.id
+                       and deployment.active = 1
+                      join platform_resource_revision revision
+                        on revision.id = mapping.resource_revision_id
+                     where revision.resource_id = ?
+                    union
+                    select publication.id as publication_id,
+                           application.code as application_code,
+                           application.name as application_name
+                      from business_application_publication_resource mapping
+                      join business_application_publication_handler handler
+                        on handler.id = mapping.application_handler_id
+                      join business_application_publication publication
+                        on publication.id = handler.application_publication_id
+                      join business_application application
+                        on application.id = publication.application_id
+                      join business_application_deployment deployment
+                        on deployment.publication_id = publication.id
+                       and deployment.active = 1
+                      join platform_resource_revision revision
+                        on revision.id = mapping.resource_revision_id
+                     where revision.resource_id = ?
+                   ) referenced
+             order by referenced.application_code, referenced.publication_id
+            """,
+            (resource_id, resource_id),
+        )
+
     def insert_draft(
         self,
         *,

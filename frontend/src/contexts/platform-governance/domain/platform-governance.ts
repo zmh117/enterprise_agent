@@ -79,6 +79,7 @@ const governedResourceSchema = z
       .nullish()
       .transform((value) => value ?? ""),
     status: z.enum(["enabled", "disabled", "archived"]),
+    revision: z.number().int().positive(),
     draft: resourceDraftSchema.nullable(),
     draft_verification: resourceVerificationSchema.nullable().default(null),
     published_revision: resourceRevisionSchema.nullable(),
@@ -347,7 +348,10 @@ const lokiScopeDraftSchema = z
   .object({
     policy_id: z.string(),
     draft_revision: z.number().int().positive(),
+    resource_id: z.string().default(""),
+    resource_code: z.string().default(""),
     resource_revision_id: z.string(),
+    resource_revision: z.number().int().nonnegative().default(0),
     conditions: z.array(lokiConditionSchema),
     content_hash: z.string(),
     status: z.enum(["DRAFT", "VERIFIED"]),
@@ -360,7 +364,10 @@ const lokiScopeRevisionSchema = z
     id: z.string(),
     policy_id: z.string(),
     revision: z.number().int().positive(),
+    resource_id: z.string().default(""),
+    resource_code: z.string().default(""),
     resource_revision_id: z.string(),
+    resource_revision: z.number().int().nonnegative().default(0),
     conditions: z.array(lokiConditionSchema),
     content_hash: z.string(),
     verification_id: z.string(),
@@ -381,6 +388,26 @@ const lokiScopePolicyIdentitySchema = z
       .transform((value) => value ?? ""),
     status: z.string(),
     revision: z.number().int().positive(),
+    resource_ids: z.array(z.string()).default([]),
+    draft_resource_revision_id: z.string().default(""),
+    published_resource_revision_id: z.string().default(""),
+    published_policy_revision: z.number().int().nonnegative().default(0),
+  })
+  .passthrough()
+
+const lokiScopeApplicationUsageSchema = z
+  .object({
+    policy_revision_id: z.string(),
+    policy_revision: z.number().int().positive(),
+    application_id: z.string(),
+    application_code: z.string(),
+    application_name: z.string(),
+    application_publication_id: z.string(),
+    application_publication_revision: z.number().int().positive(),
+    resource_slot: z.string(),
+    target_key: z.string(),
+    deployment_environment: z.string().default(""),
+    active: z.boolean().default(false),
   })
   .passthrough()
 
@@ -388,6 +415,7 @@ const lokiScopePolicySchema = lokiScopePolicyIdentitySchema
   .extend({
     draft: lokiScopeDraftSchema.nullable(),
     revisions: z.array(lokiScopeRevisionSchema),
+    application_usages: z.array(lokiScopeApplicationUsageSchema).default([]),
   })
   .passthrough()
 
@@ -427,6 +455,16 @@ export const resourceListResponseSchema = z.object({
 export const resourceCreateResponseSchema = z.object({
   resource: z.record(z.string(), z.unknown()),
   draft: resourceDraftSchema,
+})
+export const resourceIdentityResponseSchema = z.object({
+  resource: z
+    .object({
+      id: z.string(),
+      code: z.string(),
+      status: z.enum(["enabled", "disabled", "archived"]),
+      revision: z.number().int().positive(),
+    })
+    .passthrough(),
 })
 export const resourceDraftResponseSchema = z.object({
   draft: resourceDraftSchema,

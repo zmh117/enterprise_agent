@@ -107,6 +107,9 @@ class LokiScopePolicyService:
             **policy,
             "draft": self.repository.get_draft(str(policy["id"])),
             "revisions": self.repository.list_revisions(str(policy["id"])),
+            "application_usages": self.repository.list_application_usages(
+                str(policy["id"])
+            ),
         }
 
     @operation_unit_of_work(lambda service: service.repository.database)
@@ -337,6 +340,7 @@ class LokiScopePolicyService:
         source_revision_id: str,
         expected_policy_revision: int,
         actor_id: str,
+        target_resource_revision_id: str | None = None,
         correlation_id: str = "",
     ) -> dict[str, Any]:
         self._require_admin(actor_id)
@@ -347,9 +351,23 @@ class LokiScopePolicyService:
                 "Loki Scope Policy Revision belongs to another Policy",
                 safe_message="未找到当前策略的指定发布版本",
             )
+        target_revision_id = str(
+            target_resource_revision_id or revision["resource_revision_id"]
+        )
+        self._resource_revision(
+            policy_target=policy,
+            revision_id=target_revision_id,
+        )
+        draft_value = normalize_loki_scope_policy_draft(
+            {
+                "resource_revision_id": target_revision_id,
+                "conditions": revision["conditions"],
+            }
+        )
         draft = self.repository.copy_revision_to_draft(
             policy=policy,
-            revision=revision,
+            draft=draft_value,
+            content_hash=_content_hash(draft_value),
             expected_policy_revision=expected_policy_revision,
             actor_id=actor_id,
         )

@@ -102,11 +102,7 @@ def _governed_application() -> tuple[
                 "database": "diagnostic",
                 "username": "reader",
             },
-            "secret_refs": {
-                "password_ref": (
-                    "secret://platform/governed_scope_mysql_password"
-                )
-            },
+            "secret_refs": {"password_ref": ("secret://platform/governed_scope_mysql_password")},
         },
         actor_id="local-user",
     )
@@ -212,9 +208,7 @@ def test_governed_resource_dependency_summary_uses_exact_publication_mapping() -
     try:
         resource = next(
             item
-            for item in (
-                runtime.platform_config_service.governed_resources.list_resources()
-            )
+            for item in (runtime.platform_config_service.governed_resources.list_resources())
             if item["code"] == "governed_scope_mysql"
         )
         assert resource["affected_applications"] == [
@@ -226,6 +220,43 @@ def test_governed_resource_dependency_summary_uses_exact_publication_mapping() -
                 "runtime_status": "NOT_ACTIVE",
             }
         ]
+    finally:
+        runtime.database.close()
+
+
+def test_resource_identity_archive_rejects_active_application_reference() -> None:
+    runtime, _publication, resource_revision = _governed_application()
+    resources = runtime.platform_config_service.governed_resources
+    try:
+        disabled_identity = resources.set_resource_status(
+            "governed_scope_mysql",
+            "disabled",
+            expected_revision=1,
+            actor_id="local-user",
+        )
+        resources.set_revision_status(
+            "governed_scope_mysql",
+            str(resource_revision["id"]),
+            "disabled",
+            actor_id="local-user",
+        )
+        resources.set_revision_status(
+            "governed_scope_mysql",
+            str(resource_revision["id"]),
+            "archived",
+            actor_id="local-user",
+        )
+
+        with pytest.raises(
+            NonRetryableExecutionError,
+            match="referenced by an active Application Publication",
+        ):
+            resources.set_resource_status(
+                "governed_scope_mysql",
+                "archived",
+                expected_revision=int(disabled_identity["revision"]),
+                actor_id="local-user",
+            )
     finally:
         runtime.database.close()
 
@@ -256,9 +287,7 @@ def test_job_pins_exact_builtin_tool_resource_and_scope() -> None:
     assert binding["tool_identifier"] == "query_database"
     assert binding["handler_version"] == "1.0.0"
     assert binding["tool_release_id"] == facts["release"]["id"]
-    assert binding["candidates"][0]["resource_revision_id"] in facts[
-        "resource_revision_ids"
-    ]
+    assert binding["candidates"][0]["resource_revision_id"] in facts["resource_revision_ids"]
 
     runtime.database.execute(
         "update agent_job set status = 'RUNNING' where id = ?",
@@ -337,9 +366,7 @@ def test_publication_rejects_missing_required_exact_resource_slot() -> None:
             "workshop_code": "",
         }
     ]
-    payload["builtin_tools"] = [
-        {"tool_release_id": release["id"], "resources": []}
-    ]
+    payload["builtin_tools"] = [{"tool_release_id": release["id"], "resources": []}]
     revision = runtime.business_application_service.save_draft(
         actor_id="user_local_admin",
         code="missing-exact-resource",
@@ -374,17 +401,11 @@ def test_business_agent_can_publish_exact_database_tool() -> None:
         runtime,
         placements=("cloud",),
     )
-    assert publication["snapshot"]["builtin_tools"][0]["tool_identifier"] == (
-        "query_database"
-    )
+    assert publication["snapshot"]["builtin_tools"][0]["tool_identifier"] == ("query_database")
     catalog = runtime.business_application_service.catalog(
         actor_id="user_local_admin",
         code=str(application["code"]),
     )
-    envelopes = catalog["builtin_tools_by_agent_publication"][
-        "agent_publication_default_v1"
-    ]
-    assert "query_database" in {
-        item["tool_identifier"] for item in envelopes if item["selectable"]
-    }
+    envelopes = catalog["builtin_tools_by_agent_publication"]["agent_publication_default_v1"]
+    assert "query_database" in {item["tool_identifier"] for item in envelopes if item["selectable"]}
     runtime.database.close()

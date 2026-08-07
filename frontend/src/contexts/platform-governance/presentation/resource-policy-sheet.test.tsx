@@ -49,6 +49,7 @@ function globalLokiResource(): GovernedResource {
     base_code: "",
     workshop_code: "",
     status: "enabled",
+    revision: 1,
     draft: {
       id: "resource-draft-loki-global",
       resource_id: "resource-loki-global",
@@ -91,6 +92,10 @@ const policyIdentity = {
   base_code: "guanlan",
   status: "enabled",
   revision: 1,
+  resource_ids: ["resource-loki-global"],
+  draft_resource_revision_id: "resource-revision-loki-global-1",
+  published_resource_revision_id: "",
+  published_policy_revision: 0,
 }
 
 const policyDetail = {
@@ -108,11 +113,38 @@ const policyDetail = {
     updated_at: "2026-08-06T04:00:00Z",
   },
   revisions: [],
+  application_usages: [],
 }
 
 afterEach(() => vi.restoreAllMocks())
 
 describe("Resource policy management", () => {
+  it("keeps the associated policy selector visible when policy detail loading fails", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input)
+      if (url === "/api/platform/loki-scope-policies") {
+        return response({ policies: [policyIdentity] })
+      }
+      if (url.endsWith("/loki-scope-policies/loki-guanlan-scope")) {
+        return response({ detail: "internal error" }, 500)
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    renderSheet(globalLokiResource())
+
+    expect(
+      await screen.findByText("Scope Policy 详情加载失败")
+    ).toBeInTheDocument()
+    expect(screen.getByText(/loki-guanlan-scope/)).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: "重新加载策略详情" })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: "保存策略 Draft" })
+    ).not.toBeInTheDocument()
+  })
+
   it("discovers bounded Loki labels without rendering connection or Secret values", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input)
@@ -272,5 +304,117 @@ describe("Resource policy management", () => {
       })
     )
     expect(screen.getByText("不可变 Published Revisions")).toBeInTheDocument()
+  })
+
+  it("separates associated policy management from exact application binding", async () => {
+    let copyBody: Record<string, unknown> | undefined
+    const currentResource = globalLokiResource()
+    currentResource.published_revision = {
+      ...currentResource.published_revision!,
+      id: "resource-revision-loki-global-2",
+      revision: 2,
+    }
+    const relatedIdentity = {
+      ...policyIdentity,
+      draft_resource_revision_id: "",
+      published_resource_revision_id: "resource-revision-loki-global-1",
+      published_policy_revision: 1,
+    }
+    const unrelatedIdentity = {
+      ...policyIdentity,
+      id: "loki-scope-policy-other",
+      code: "loki-other-scope",
+      resource_ids: ["resource-loki-other"],
+      draft_resource_revision_id: "",
+      published_resource_revision_id: "resource-revision-loki-other-1",
+      published_policy_revision: 1,
+    }
+    const immutablePolicy = {
+      ...relatedIdentity,
+      draft: null,
+      application_usages: [],
+      revisions: [
+        {
+          id: "loki-scope-policy-revision-1",
+          policy_id: relatedIdentity.id,
+          revision: 1,
+          resource_id: "resource-loki-global",
+          resource_code: "loki-global",
+          resource_revision_id: "resource-revision-loki-global-1",
+          resource_revision: 1,
+          conditions: [{ key: "customer", value: "prod-a" }],
+          content_hash: "c".repeat(64),
+          verification_id: "loki-verification-1",
+          status: "PUBLISHED",
+          health_status: "HEALTHY",
+          published_at: "2026-08-06T04:00:00Z",
+        },
+      ],
+    }
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = String(input)
+      if (url === "/api/platform/loki-scope-policies") {
+        return response({ policies: [relatedIdentity, unrelatedIdentity] })
+      }
+      if (url.endsWith("/loki-scope-policies/loki-guanlan-scope")) {
+        return response({ policy: immutablePolicy })
+      }
+      if (
+        url.endsWith(
+          "/loki-scope-policies/loki-guanlan-scope/draft/from-revision"
+        )
+      ) {
+        copyBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+        return response({
+          draft: {
+            policy_id: relatedIdentity.id,
+            draft_revision: 2,
+            resource_id: "resource-loki-global",
+            resource_code: "loki-global",
+            resource_revision_id: "resource-revision-loki-global-2",
+            resource_revision: 2,
+            conditions: immutablePolicy.revisions[0].conditions,
+            content_hash: "d".repeat(64),
+            status: "DRAFT",
+            updated_at: "2026-08-06T04:05:00Z",
+          },
+        })
+      }
+      if (url === "/api/platform/secrets") return response({ secrets: [] })
+      if (url.startsWith("/api/platform/environments")) {
+        return response({ environments: [] })
+      }
+      if (url.startsWith("/api/platform/bases")) return response({ bases: [] })
+      if (url.startsWith("/api/platform/workshops")) {
+        return response({ workshops: [] })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    renderSheet(currentResource)
+
+    expect(
+      await screen.findByText("选择要管理的 Scope Policy")
+    ).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("combobox"))
+    expect(screen.queryByText(/loki-other-scope/)).not.toBeInTheDocument()
+    expect(screen.getByText("历史 Resource Revision")).toBeInTheDocument()
+    expect(
+      screen.getByText(/Policy r1 冻结 Resource r1；当前已发布 Resource 为 r2/)
+    ).toBeInTheDocument()
+    expect(screen.getByText("没有已发布应用使用此策略")).toBeInTheDocument()
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "从 Policy r1 复制并升级到 Resource r2",
+      })
+    )
+    await waitFor(() =>
+      expect(copyBody).toEqual({
+        source_revision_id: "loki-scope-policy-revision-1",
+        target_resource_revision_id: "resource-revision-loki-global-2",
+        expected_policy_revision: 1,
+      })
+    )
   })
 })

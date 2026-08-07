@@ -14,9 +14,16 @@ from app.modules.platform_config.application.loki_scope_policies import (
 from app.modules.platform_config.application.loki_scope_policy_verifier import (
     LokiScopePolicyVerificationOutcome,
 )
+from app.modules.platform_config.infrastructure.loki_scope_policy_repository import (
+    LokiScopePolicyRepository,
+)
 from app.shared.exceptions import NonRetryableExecutionError
+from backend.tests.test_application_builtin_tool_resource_mapping import (
+    _publish_builtin_tool,
+)
 from backend.tests.test_business_application_control_plane import (
     control_plane_settings,
+    draft_payload,
 )
 from backend.tests.test_unified_identity_rbac import csrf_headers, login
 
@@ -39,6 +46,31 @@ def _loki_payload(*, code: str, scope_type: str, environment_code: str = "") -> 
         },
         "secret_refs": {},
     }
+
+
+class _PostgresStrictApplicationUsageDatabase:
+    def execute(
+        self,
+        statement: str,
+        parameters: tuple[object, ...] = (),
+    ) -> list[dict[str, object]]:
+        del parameters
+        normalized = " ".join(statement.split())
+        assert "select distinct" in normalized
+        assert (
+            "order by application_code, application_publication_revision, "
+            "policy_revision, resource_slot, target_key, deployment_environment"
+            in normalized
+        )
+        return []
+
+
+def test_loki_application_usage_projection_orders_by_selected_aliases_for_postgres() -> None:
+    repository = LokiScopePolicyRepository(  # type: ignore[arg-type]
+        _PostgresStrictApplicationUsageDatabase()
+    )
+
+    assert repository.list_application_usages("loki-policy-1") == []
 
 
 def test_loki_resource_accepts_only_global_or_exact_environment_scope() -> None:
@@ -387,6 +419,60 @@ def test_loki_scope_policy_zero_match_publishes_immutable_revision() -> None:
     assert published["conditions"] == created["draft"]["conditions"]
     assert policies.detail("loki-policy-guanlan")["draft"] is None
 
+    release = _publish_builtin_tool(runtime, "query_loki")
+    application = runtime.business_application_service.create(
+        actor_id="user_local_admin",
+        code="loki-policy-usage",
+        name="Loki Policy Usage",
+        description="",
+        project_code="default",
+        owner_user_id="user_local_admin",
+    )
+    application_payload = draft_payload()
+    application_payload["target_paths"] = [
+        {
+            "target_scope_type": "base",
+            "environment_code": "loki-policy-env",
+            "base_code": "guanlan",
+            "workshop_code": "",
+        }
+    ]
+    application_payload["builtin_tools"] = [
+        {
+            "tool_release_id": release["id"],
+            "resources": [
+                {
+                    "resource_slot": "loki",
+                    "target_scope_type": "base",
+                    "environment_code": "loki-policy-env",
+                    "base_code": "guanlan",
+                    "workshop_code": "",
+                    "placement": "",
+                    "resource_revision_id": resource_revision["id"],
+                    "workshop_partition_policy_revision_id": "",
+                    "loki_scope_policy_revision_id": published["id"],
+                }
+            ],
+        }
+    ]
+    application_revision = runtime.business_application_service.save_draft(
+        actor_id="user_local_admin",
+        code="loki-policy-usage",
+        expected_revision=int(application["revision"]),
+        payload=application_payload,
+    )
+    application_publication = runtime.business_application_service.publish(
+        actor_id="user_local_admin",
+        code="loki-policy-usage",
+        revision_id=str(application_revision["id"]),
+    )
+    usages = policies.detail("loki-policy-guanlan")["application_usages"]
+    assert len(usages) == 1
+    assert usages[0]["application_code"] == "loki-policy-usage"
+    assert usages[0]["application_publication_id"] == application_publication["id"]
+    assert usages[0]["policy_revision_id"] == published["id"]
+    assert usages[0]["active"] is False
+
     class UnavailableVerifier:
         def verify(self, **_kwargs: object) -> LokiScopePolicyVerificationOutcome:
             return LokiScopePolicyVerificationOutcome(
@@ -408,12 +494,61 @@ def test_loki_scope_policy_zero_match_publishes_immutable_revision() -> None:
     assert after_health["health_status"] == "DEGRADED"
     assert observation["safe_error_summary"] == "Loki 上游当前不可用"
 
+    resource_draft = resources.create_draft_from_revision(
+        "loki-policy-global",
+        str(resource_revision["id"]),
+        actor_id="user_local_admin",
+    )
+    resources.save_draft(
+        "loki-policy-global",
+        {
+            "provider_type": "loki",
+            "config": {
+                **resource_draft["config"],
+                "timeout_seconds": 6,
+            },
+            "secret_refs": resource_draft["secret_refs"],
+        },
+        expected_revision=int(resource_draft["draft_revision"]),
+        actor_id="user_local_admin",
+    )
+    resources.verify_draft(
+        "loki-policy-global",
+        actor_id="user_local_admin",
+        verifier=PassingLokiResourceVerifier(),
+    )
+    current_resource_revision = resources.publish_draft(
+        "loki-policy-global",
+        actor_id="user_local_admin",
+    )
+
+    listed = next(
+        item
+        for item in policies.list()
+        if item["code"] == "loki-policy-guanlan"
+    )
+    assert listed["resource_ids"] == [resource_revision["resource_id"]]
+    assert listed["draft_resource_revision_id"] == ""
+    assert listed["published_resource_revision_id"] == resource_revision["id"]
+    assert listed["published_policy_revision"] == 1
+    detail = policies.detail("loki-policy-guanlan")
+    assert len(detail["application_usages"]) == 1
+    assert detail["application_usages"][0]["policy_revision_id"] == published["id"]
+    assert detail["revisions"][0]["resource_id"] == resource_revision["resource_id"]
+    assert detail["revisions"][0]["resource_code"] == "loki-policy-global"
+    assert detail["revisions"][0]["resource_revision"] == 1
+
     copied = policies.copy_revision_to_draft(
         "loki-policy-guanlan",
         source_revision_id=str(published["id"]),
+        target_resource_revision_id=str(current_resource_revision["id"]),
         expected_policy_revision=1,
         actor_id="user_local_admin",
     )
+    assert copied["resource_revision_id"] == current_resource_revision["id"]
+    assert copied["resource_id"] == current_resource_revision["resource_id"]
+    assert copied["resource_code"] == "loki-policy-global"
+    assert copied["resource_revision"] == 2
     policies.verifier = ZeroMatchVerifier()  # type: ignore[assignment]
     repeated_evidence = policies.verify(
         "loki-policy-guanlan",
@@ -428,7 +563,7 @@ def test_loki_scope_policy_zero_match_publishes_immutable_revision() -> None:
         "loki-policy-guanlan",
         expected_draft_revision=int(copied["draft_revision"]),
         payload={
-            "resource_revision_id": resource_revision["id"],
+            "resource_revision_id": current_resource_revision["id"],
             "conditions": [
                 {"key": "customer", "value": "loki-policy-env"},
                 {"key": "workshop", "value": "guanlan-next"},

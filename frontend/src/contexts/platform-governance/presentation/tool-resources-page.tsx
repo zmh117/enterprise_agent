@@ -68,6 +68,7 @@ import {
   usePublishGovernedResource,
   useResourceFormOptions,
   useSaveGovernedResourceDraft,
+  useSetResourceIdentityStatus,
   useSetResourceRevisionStatus,
   useVerifyGovernedResource,
 } from "@/contexts/platform-governance/application/platform-governance-queries"
@@ -83,7 +84,13 @@ import { ResourcePolicySheet } from "@/contexts/platform-governance/presentation
 type Provider = ResourceFormInput["provider_type"]
 type ResourceKind = ResourceFormInput["resource_kind"]
 type ConfirmAction = {
-  type: "delete-draft" | "disable" | "archive"
+  type:
+    | "delete-draft"
+    | "disable-revision"
+    | "archive-revision"
+    | "disable-identity"
+    | "restore-identity"
+    | "archive-identity"
   resource: GovernedResource
 }
 
@@ -176,10 +183,12 @@ export function ToolResourcesPage() {
   const createDraft = useCreateDraftFromRevision()
   const removeDraft = useDeleteGovernedResourceDraft()
   const setRevisionStatus = useSetResourceRevisionStatus()
+  const setIdentityStatus = useSetResourceIdentityStatus()
   const [filters, setFilters] = useState({
     kind: "all",
     scope: "all",
-    lifecycle: "all",
+    identity: "all",
+    revision: "all",
     activation: "all",
   })
   const [editing, setEditing] = useState<GovernedResource | null | undefined>(
@@ -187,6 +196,16 @@ export function ToolResourcesPage() {
   )
   const [confirm, setConfirm] = useState<ConfirmAction | null>(null)
   const [policyResourceId, setPolicyResourceId] = useState<string | null>(null)
+  const confirmPending =
+    removeDraft.isPending ||
+    setRevisionStatus.isPending ||
+    setIdentityStatus.isPending
+  const confirmError =
+    confirm?.type === "delete-draft"
+      ? removeDraft.error
+      : confirm?.type.endsWith("-identity")
+        ? setIdentityStatus.error
+        : setRevisionStatus.error
   const policyResource =
     (resources.data ?? []).find(
       (resource) => resource.id === policyResourceId
@@ -197,8 +216,11 @@ export function ToolResourcesPage() {
         (resource) =>
           (filters.kind === "all" || resource.resource_kind === filters.kind) &&
           (filters.scope === "all" || resource.scope_type === filters.scope) &&
-          (filters.lifecycle === "all" ||
-            resource.status === filters.lifecycle) &&
+          (filters.identity === "all" ||
+            resource.status === filters.identity) &&
+          (filters.revision === "all" ||
+            (resource.published_revision?.status ?? "NONE") ===
+              filters.revision) &&
           (filters.activation === "all" ||
             resource.activation_status === filters.activation)
       ),
@@ -220,12 +242,25 @@ export function ToolResourcesPage() {
       }
       return
     }
+    if (confirm.type.endsWith("-identity")) {
+      const action = confirm.type.replace("-identity", "") as
+        "disable" | "restore" | "archive"
+      setIdentityStatus.mutate(
+        {
+          code: resource.code,
+          action,
+          expectedRevision: resource.revision,
+        },
+        { onSuccess: () => setConfirm(null) }
+      )
+      return
+    }
     if (!resource.published_revision) return
     setRevisionStatus.mutate(
       {
         code: resource.code,
         revisionId: resource.published_revision.id,
-        action: confirm.type,
+        action: confirm.type === "disable-revision" ? "disable" : "archive",
       },
       { onSuccess: () => setConfirm(null) }
     )
@@ -305,7 +340,8 @@ export function ToolResourcesPage() {
                 publish.isPending ||
                 createDraft.isPending ||
                 removeDraft.isPending ||
-                setRevisionStatus.isPending
+                setRevisionStatus.isPending ||
+                setIdentityStatus.isPending
               }
               onEdit={() => setEditing(resource)}
               onVerify={() => verify.mutate(resource.code)}
@@ -318,20 +354,19 @@ export function ToolResourcesPage() {
                 })
               }}
               onManagePolicy={() => setPolicyResourceId(resource.id)}
-              onConfirm={(type) => setConfirm({ type, resource })}
+              onConfirm={(type) => {
+                removeDraft.reset()
+                setRevisionStatus.reset()
+                setIdentityStatus.reset()
+                setConfirm({ type, resource })
+              }}
             />
           ))}
         </div>
       )}
 
       <MutationError
-        error={
-          verify.error ??
-          publish.error ??
-          createDraft.error ??
-          removeDraft.error ??
-          setRevisionStatus.error
-        }
+        error={verify.error ?? publish.error ?? createDraft.error}
       />
 
       {editing !== undefined ? (
@@ -378,7 +413,12 @@ export function ToolResourcesPage() {
       <AlertDialog
         open={Boolean(confirm)}
         onOpenChange={(open) => {
-          if (!open) setConfirm(null)
+          if (!open) {
+            setConfirm(null)
+            removeDraft.reset()
+            setRevisionStatus.reset()
+            setIdentityStatus.reset()
+          }
         }}
       >
         <AlertDialogContent>
@@ -388,14 +428,20 @@ export function ToolResourcesPage() {
               {confirmDescription(confirm?.type)}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <MutationError error={confirmError} />
           <AlertDialogFooter>
             <AlertDialogCancel>取消</AlertDialogCancel>
             <AlertDialogAction
-              variant="destructive"
+              variant={
+                confirm?.type === "restore-identity" ? "default" : "destructive"
+              }
               onClick={confirmAction}
-              disabled={removeDraft.isPending || setRevisionStatus.isPending}
+              disabled={confirmPending}
             >
-              确认
+              {confirmPending ? (
+                <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
+              ) : null}
+              {confirmPending ? "处理中" : "确认"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -411,13 +457,15 @@ function ResourceFilters({
   value: {
     kind: string
     scope: string
-    lifecycle: string
+    identity: string
+    revision: string
     activation: string
   }
   onChange: (value: {
     kind: string
     scope: string
-    lifecycle: string
+    identity: string
+    revision: string
     activation: string
   }) => void
 }) {
@@ -444,13 +492,24 @@ function ResourceFilters({
       ],
     },
     {
-      label: "生命周期",
-      key: "lifecycle",
+      label: "资源身份状态",
+      key: "identity",
       items: [
         ["all", "全部"],
         ["enabled", "启用"],
         ["disabled", "停用"],
         ["archived", "归档"],
+      ],
+    },
+    {
+      label: "最新发布版本状态",
+      key: "revision",
+      items: [
+        ["all", "全部"],
+        ["PUBLISHED", "已发布"],
+        ["DISABLED", "已停用"],
+        ["ARCHIVED", "已归档"],
+        ["NONE", "无发布版本"],
       ],
     },
     {
@@ -468,7 +527,7 @@ function ResourceFilters({
   ] as const
   return (
     <Card className="shadow-none">
-      <CardContent className="grid gap-3 py-4 sm:grid-cols-2 xl:grid-cols-4">
+      <CardContent className="grid gap-3 py-4 sm:grid-cols-2 xl:grid-cols-5">
         {definitions.map((definition) => (
           <Field key={definition.key}>
             <FieldLabel>{definition.label}</FieldLabel>
@@ -478,7 +537,7 @@ function ResourceFilters({
                 onChange({ ...value, [definition.key]: next ?? "all" })
               }
             >
-              <SelectTrigger className="w-full">
+              <SelectTrigger className="w-full" aria-label={definition.label}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -519,6 +578,13 @@ function ResourceCard({
 }) {
   const published = resource.published_revision
   const draft = resource.draft
+  const identityEnabled = resource.status === "enabled"
+  const identityArchiveBlocked =
+    Boolean(draft) ||
+    published?.status === "PUBLISHED" ||
+    resource.affected_applications.some(
+      (application) => application.runtime_status !== "NOT_ACTIVE"
+    )
   return (
     <Card className="shadow-none">
       <CardHeader>
@@ -532,9 +598,14 @@ function ResourceCard({
               {resource.code}
             </p>
           </div>
-          <Badge variant={activationVariant(resource.activation_status)}>
-            {activationLabel(resource.activation_status)}
-          </Badge>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Badge variant="outline">
+              资源身份：{resourceIdentityLabel(resource.status)}
+            </Badge>
+            <Badge variant={activationVariant(resource.activation_status)}>
+              {activationLabel(resource.activation_status)}
+            </Badge>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -548,13 +619,17 @@ function ResourceCard({
           </dd>
           <dt className="text-muted-foreground">范围</dt>
           <dd>{scopeLabel(resource)}</dd>
+          <dt className="text-muted-foreground">资源身份状态</dt>
+          <dd>
+            {resourceIdentityLabel(resource.status)} · r{resource.revision}
+          </dd>
           <dt className="text-muted-foreground">Draft</dt>
           <dd>
             {draft
               ? `${draft.status} · d${draft.draft_revision}`
               : "无活动草稿"}
           </dd>
-          <dt className="text-muted-foreground">Published</dt>
+          <dt className="text-muted-foreground">最新发布版本</dt>
           <dd>
             {published
               ? `r${published.revision} · ${published.status}`
@@ -614,16 +689,27 @@ function ResourceCard({
           ) : null}
           {draft ? (
             <>
-              <Button size="sm" variant="outline" onClick={onEdit}>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onEdit}
+                disabled={pending || !identityEnabled}
+              >
                 编辑草稿
               </Button>
-              <Button size="sm" onClick={onVerify} disabled={pending}>
+              <Button
+                size="sm"
+                onClick={onVerify}
+                disabled={pending || !identityEnabled}
+              >
                 技术测试
               </Button>
               <Button
                 size="sm"
                 onClick={onPublish}
-                disabled={pending || draft.status !== "VERIFIED"}
+                disabled={
+                  pending || !identityEnabled || draft.status !== "VERIFIED"
+                }
               >
                 发布
               </Button>
@@ -636,34 +722,68 @@ function ResourceCard({
                 删除草稿
               </Button>
             </>
-          ) : published?.status === "PUBLISHED" ? (
-            <>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={onCreateDraft}
-                disabled={pending}
-              >
-                从发布版本新建草稿
-              </Button>
-              <Button
-                size="sm"
-                variant="destructive"
-                onClick={() => onConfirm("disable")}
-                disabled={pending}
-              >
-                停用发布版本
-              </Button>
-            </>
+          ) : published && identityEnabled ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onCreateDraft}
+              disabled={pending}
+            >
+              从 r{published.revision} 新建草稿
+            </Button>
+          ) : null}
+          {published?.status === "PUBLISHED" ? (
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => onConfirm("disable-revision")}
+              disabled={pending}
+            >
+              停用发布版本
+            </Button>
           ) : published?.status === "DISABLED" ? (
             <Button
               size="sm"
               variant="destructive"
-              onClick={() => onConfirm("archive")}
+              onClick={() => onConfirm("archive-revision")}
               disabled={pending}
             >
               归档发布版本
             </Button>
+          ) : null}
+          {resource.status === "enabled" ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => onConfirm("disable-identity")}
+              disabled={pending}
+            >
+              停用资源身份
+            </Button>
+          ) : resource.status === "disabled" ? (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => onConfirm("restore-identity")}
+                disabled={pending}
+              >
+                恢复资源身份
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={() => onConfirm("archive-identity")}
+                disabled={pending || identityArchiveBlocked}
+                title={
+                  identityArchiveBlocked
+                    ? "请先删除草稿、停用发布版本并解除活动应用引用"
+                    : undefined
+                }
+              >
+                归档资源身份
+              </Button>
+            </>
           ) : null}
         </div>
       </CardContent>
@@ -1240,6 +1360,10 @@ function scopeLabel(resource: GovernedResource) {
     .join(" / ")
 }
 
+function resourceIdentityLabel(status: GovernedResource["status"]) {
+  return { enabled: "启用", disabled: "停用", archived: "归档" }[status]
+}
+
 function activationLabel(status: string) {
   return (
     {
@@ -1263,18 +1387,30 @@ function activationVariant(
 
 function confirmTitle(type: ConfirmAction["type"] | undefined) {
   if (type === "delete-draft") return "删除当前 Draft？"
-  if (type === "disable") return "停用已发布版本？"
-  return "归档已停用版本？"
+  if (type === "disable-revision") return "停用已发布版本？"
+  if (type === "archive-revision") return "归档已停用版本？"
+  if (type === "disable-identity") return "停用资源身份？"
+  if (type === "restore-identity") return "恢复资源身份？"
+  return "归档资源身份？"
 }
 
 function confirmDescription(type: ConfirmAction["type"] | undefined) {
   if (type === "delete-draft") {
     return "只删除可编辑草稿，不影响已有 Published 与 Effective 版本。"
   }
-  if (type === "disable") {
+  if (type === "disable-revision") {
     return "发布版本不会被物理删除；依赖此版本的应用可能被标记为降级或阻断。"
   }
-  return "归档后该发布版本不可恢复为可用状态，历史与审计仍会保留。"
+  if (type === "archive-revision") {
+    return "归档后该发布版本不可恢复为可用状态，历史与审计仍会保留。"
+  }
+  if (type === "disable-identity") {
+    return "停用后不能创建、编辑、测试或发布新的资源草稿；既有发布版本、应用和 Job 不会被改写。"
+  }
+  if (type === "restore-identity") {
+    return "恢复后可以继续管理新的资源草稿；历史发布版本状态不会改变。"
+  }
+  return "资源身份归档后不可恢复。系统只允许归档无草稿、无已发布版本且无活动应用引用的已停用身份。"
 }
 
 function MutationError({ error }: { error: unknown }) {
