@@ -4,26 +4,30 @@
 TBD - created by archiving change wire-rabbitmq-agent-job-flow. Update Purpose after archive.
 ## Requirements
 ### Requirement: 调试 API 必须能创建 Agent Job
-系统 SHALL 提供 `POST /api/agent/jobs`，用于在不依赖钉钉的情况下创建只读诊断 Agent job，并复用现有权限、审计、持久化和消息投递链路。
+系统 SHALL 提供受登录态保护的调试 Job 创建 API，用于在不依赖外部 Channel 的情况下创建只读诊断 Job，并复用业务应用发布、严格 RBAC、审计、持久化和 Outbox 链路。API MUST 使用当前登录用户，且只接受该用户有权使用的已发布业务应用、Execution Scope、消息和幂等键。
 
-#### Scenario: 提交调试问题
-- **WHEN** 调用 `POST /api/agent/jobs` 并提供 `message`、`user_id`、`conversation_id` 和 `project_code`
-- **THEN** 系统创建 Agent session、Agent job、用户消息和审计记录，并返回 `job_id`、初始状态和接收提示
+#### Scenario: 当前用户提交调试问题
+- **WHEN** 已登录用户具备 `agent.debug.execute`，并选择有权访问的业务应用发布和 Execution Scope
+- **THEN** 系统以当前用户身份创建隔离 Session、Agent Job、用户消息、授权快照、审计和 Job Dispatch Outbox，并返回 `job_id`
+
+#### Scenario: 请求试图覆盖运行身份或资源
+- **WHEN** 调试请求提交任意 `user_id`、Agent ID、Resource Revision、Connector 或自定义 reply route
+- **THEN** 系统必须拒绝这些越权字段，且不得创建 Job 或 Outbox event
 
 #### Scenario: 调试 API 使用幂等键
-- **WHEN** 两次调用 `POST /api/agent/jobs` 使用相同 `idempotency_key`
-- **THEN** 系统返回同一个 `job_id`，且不重复创建 job 或重复发布正常队列消息
+- **WHEN** 同一用户在同一发布版本和 Execution Scope 下两次提交相同 `idempotency_key`
+- **THEN** 系统返回同一个 `job_id`，且不重复创建 Job 或 Outbox event
 
 ### Requirement: 调试 API 必须执行权限校验
-系统 SHALL 对调试 API 创建的 job 执行用户和项目权限校验，不得绕过 `PermissionService`。
+系统 SHALL 在创建调试 Job 前校验登录态、`agent.debug.execute`、业务应用角色、应用发布可用性和 Execution Scope；任一授权缺失都必须 fail closed。
 
 #### Scenario: 授权用户创建任务
-- **WHEN** 调试 API 请求中的用户被允许访问目标 `project_code`
-- **THEN** 系统创建并投递 Agent job
+- **WHEN** 当前用户拥有调试权限、目标应用角色和目标 Execution Scope
+- **THEN** 系统创建并通过 Outbox 调度 Agent Job
 
 #### Scenario: 未授权用户被拒绝
-- **WHEN** 调试 API 请求中的用户未被允许访问目标 `project_code`
-- **THEN** 系统拒绝请求，返回安全错误信息，且不创建 job、不发布队列消息
+- **WHEN** 当前用户缺少任一所需权限或范围
+- **THEN** 系统返回安全拒绝，且不创建 Session、Job、消息或 Outbox event
 
 ### Requirement: Job 查询 API 必须返回任务详情
 系统 SHALL 提供 `GET /api/agent/jobs/{job_id}`，返回 Agent job 的可审计详情。
@@ -90,4 +94,40 @@ TBD - created by archiving change wire-rabbitmq-agent-job-flow. Update Purpose a
 - **WHEN** 开发者启用 `FEATURE_REAL_CLAUDE=true` 并提交 debug job
 - **THEN** 文档化流程 SHALL 使用合成或已脱敏测试问题
 - **AND** job steps/tool-calls 可用于确认模型调用了 real-tools 工具链
+
+### Requirement: Debug API shall prove smoke job execution
+系统 SHALL 在 compose smoke 流程中使用 Debug API 创建 Agent job，并通过 job detail、steps 和 tool-calls 查询证明 worker 已消费并完成任务。
+
+#### Scenario: Smoke creates and polls job
+- **WHEN** 开发者调用 `POST /api/agent/jobs` 提交合成诊断问题
+- **THEN** API SHALL 返回 `job_id`，并且文档 SHALL 指引开发者轮询 `GET /api/agent/jobs/{job_id}` 直到 `SUCCEEDED` 或明确失败状态
+
+#### Scenario: Smoke inspects steps and tool calls
+- **WHEN** job 进入终态
+- **THEN** 开发者 SHALL 能调用 `GET /api/agent/jobs/{job_id}/steps` 和 `GET /api/agent/jobs/{job_id}/tool-calls` 查看可审计摘要
+
+### Requirement: Debug smoke documentation shall include failure triage
+系统 SHALL 在 smoke 文档中记录失败排查顺序，覆盖 job detail、worker logs、RabbitMQ 消费、runtime config degraded、secret 状态和 Internal API Platform 健康状态。
+
+#### Scenario: Smoke job fails
+- **WHEN** smoke job 返回 `FAILED`、`TIMEOUT` 或长时间停留在 `PENDING`
+- **THEN** 文档 SHALL 提供 curl/docker compose 命令定位失败发生在 API 接收、RabbitMQ、worker、Claude runtime、secret resolver 或 internal tools 哪一段
+
+### Requirement: 调试查询必须受当前用户授权
+Job、Step 和 Tool Call 查询 MUST 要求登录，并仅允许 Job 创建人、具备该业务应用运维权限的用户或平台管理员访问；响应必须继续脱敏。
+
+#### Scenario: 用户查询其他应用的调试 Job
+- **WHEN** 当前用户不是创建人且没有目标应用运维权限
+- **THEN** 系统必须拒绝查询，并且不得泄露 Job 是否存在的敏感细节
+
+### Requirement: 运行中心必须提供受限调试入口
+前端 SHALL 提供“运行中心 → 发起调试”，只列出当前用户可用的已发布业务应用与 Execution Scope；默认 Delivery 为 none，可选 Delivery 必须来自现有已授权 binding。
+
+#### Scenario: 用户成功发起调试
+- **WHEN** 用户选择允许的应用、范围并提交消息
+- **THEN** 页面创建 Job 后导航到受保护的 Job 详情页
+
+#### Scenario: 用户选择可选投递
+- **WHEN** 用户选择当前应用发布已有的授权 Delivery binding
+- **THEN** 系统固化该 binding；页面不得允许填写任意 Connector 或目标地址
 

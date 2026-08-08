@@ -4,15 +4,19 @@
 TBD - created by archiving change wire-rabbitmq-agent-job-flow. Update Purpose after archive.
 ## Requirements
 ### Requirement: API 服务必须使用 RabbitMQ 投递 Agent Job
-在 Docker Compose / runtime 装配中，系统 SHALL 使用 `RabbitMQPublisher` 将新建 Agent job 投递到 `agent.job.queue`，不得使用 `InMemoryMessageBus` 作为跨进程任务通道。
+在 Docker Compose/runtime 装配中，API MUST 在创建 Job 的事务内写入 Job Dispatch Outbox；独立 Dispatcher SHALL 使用 RabbitMQPublisher 发布到当前 Agent Job exchange/queue。API 请求线程不得在数据库提交后直接发布。
 
-#### Scenario: API 创建任务后发布 RabbitMQ 消息
-- **WHEN** `api-server` 通过调试 API 或钉钉 webhook 创建 Agent job
-- **THEN** 系统将 job 持久化到 PostgreSQL，并通过 `RabbitMQPublisher` 发布包含 `job_id` 和 `correlation_id` 的消息到 `agent.job.queue`
+#### Scenario: API 创建任务后提交 Outbox
+- **WHEN** API 通过受支持入口创建 Agent Job
+- **THEN** PostgreSQL 同一事务保存 Job 与唯一 PENDING Outbox event
 
-#### Scenario: 测试仍可使用内存消息总线
-- **WHEN** 单元测试或进程内测试显式选择测试装配
-- **THEN** 系统可以使用 `InMemoryMessageBus`，但该装配 MUST 不作为 Docker Compose runtime 默认路径
+#### Scenario: Dispatcher 发布 RabbitMQ 消息
+- **WHEN** Dispatcher 领取到期 event
+- **THEN** 它发布 event/job/correlation 标识并在 publisher confirm 后记录状态
+
+#### Scenario: 测试使用内存适配器
+- **WHEN** 单元测试显式选择测试装配
+- **THEN** 可以使用内存 Publisher/Consumer，但仍必须验证 Outbox 领域行为
 
 ### Requirement: Worker 必须消费真实 RabbitMQ 队列
 在 Docker Compose / runtime 装配中，`agent-worker` SHALL 使用 `RabbitMQConsumer` 持续消费 `agent.job.queue` 并调用 Agent job handler。
@@ -37,31 +41,80 @@ TBD - created by archiving change wire-rabbitmq-agent-job-flow. Update Purpose a
 - **THEN** API 查询该 job 时返回 `SUCCEEDED` 状态和最终报告内容
 
 ### Requirement: 应用启动必须初始化数据库一次
-系统 SHALL 在应用启动生命周期中执行 migration 和可配置 seed 初始化，并 MUST 不在每次 webhook 或调试 API 请求中重新构建 container 或重复执行初始化逻辑。
+系统 MUST 由独立 one-shot Migrator 初始化或升级数据库；业务应用启动只构建一次 Container 并只读验证 schema head，不得执行 migration 或在请求中重复初始化。
 
-#### Scenario: API 启动初始化
-- **WHEN** `api-server` 启动
-- **THEN** 系统执行幂等 migration 和必要 seed，并将 container 存放在应用生命周期状态中供请求复用
+#### Scenario: Migrator 成功后 API 启动
+- **WHEN** schema 已达到所需 head
+- **THEN** API 复用生命周期 Container 并开始服务
+
+#### Scenario: API 启动时 schema 落后
+- **WHEN** Migrator 未运行或失败
+- **THEN** API 必须拒绝就绪，不得自行迁移
 
 #### Scenario: 请求复用启动时 container
-- **WHEN** 调试 API 或 DingTalk webhook 收到请求
-- **THEN** handler 从应用状态读取已初始化 container，而不是在请求中重新 `build_container`
+- **WHEN** Debug 或 Channel 请求到达
+- **THEN** handler 从应用状态读取已初始化 Container
 
 ### Requirement: 失败处理必须路由到 retry 或 dead-letter
-系统 SHALL 在 worker 执行失败时根据错误类型和重试次数执行 retry 或 dead-letter 决策，并记录可查询的失败状态和审计事件。
+Job 和 Outbox 失败 MUST 分别按照错误分类、到期时间和最大次数进入 RETRY_WAIT 或 DEAD；所有状态变更必须先持久化，再由 Outbox/Dispatcher 发布，不得依赖一次直接 publish。
 
-#### Scenario: 可重试失败进入 retry 路径
-- **WHEN** job 执行出现可重试错误且未超过最大重试次数
-- **THEN** 系统增加 retry metadata，发布 retry 消息，并记录 retry 审计事件
+#### Scenario: 可重试执行失败
+- **WHEN** Job 执行出现可重试错误且未超过上限
+- **THEN** 系统原子保存 retry metadata 和重试 dispatch event
 
-#### Scenario: 不可重试失败进入 dead-letter 路径
-- **WHEN** job 执行出现不可重试错误或超过最大重试次数
-- **THEN** 系统将 job 标记为 `FAILED`，发布 dead-letter 消息，并记录失败原因
+#### Scenario: 不可重试执行失败
+- **WHEN** Job 出现非重试错误或耗尽次数
+- **THEN** 系统保存终态与 DEAD event/记录并审计安全原因
+
+#### Scenario: RabbitMQ 暂时不可用
+- **WHEN** Dispatcher publish 失败
+- **THEN** Outbox 保持可恢复状态并有限退避，不丢失已提交 Job
 
 ### Requirement: Docker Compose 必须可验证完整闭环
-系统 SHALL 提供 Docker Compose 级验证方式，证明 `api-server`、`postgres`、`rabbitmq` 和 `agent-worker` 能协同完成一次 Agent job。
+系统 SHALL 提供 Docker Compose 级验证方式，证明 `api-server`、PostgreSQL 18、RabbitMQ 4 Management 和 `agent-worker` 能协同完成成功 Job、真实延迟重试、dead-letter 和终态失败投递闭环。
 
 #### Scenario: curl 验证成功闭环
 - **WHEN** 使用 Docker Compose 启动服务并通过 curl 提交调试问题
-- **THEN** 系统返回 `job_id`，worker 消费后 job 变为 `SUCCEEDED`，查询 job 能看到最终诊断报告
+- **THEN** 系统返回 `job_id`，Worker 经 RabbitMQ 4 消费后将 Job 更新为 `SUCCEEDED`，查询 Job 能看到最终诊断报告
+
+#### Scenario: 验证 RabbitMQ 4 延迟重试回流
+- **WHEN** 集成 smoke 首次触发可重试错误并配置短延迟
+- **THEN** 测试观察 retry queue 入队、到期、dead-letter 回主队列、同一 Job 再次被 Worker claim，并最终成功或耗尽重试进入终态
+
+#### Scenario: 验证 RabbitMQ 4 最终失败路径
+- **WHEN** 集成 smoke 持续触发可重试错误直到次数耗尽或直接触发不可重试错误
+- **THEN** Job 状态、retry count、dead-letter 消息、审计和一次安全失败 delivery attempt 保持一致
+
+### Requirement: Agent Job retry queue 拓扑必须可延迟回流且可兼容升级
+系统 SHALL 使用版本化 durable retry delay queue，并为其配置 dead-letter 到 Agent Job 主队列；系统 MUST NOT 使用不等价参数重新声明已经存在的无 DLX retry queue。
+
+#### Scenario: 新部署声明 retry delay queue
+- **WHEN** Publisher、Worker 或拓扑检查初始化 RabbitMQ 4 队列
+- **THEN** 版本化 retry queue 带有指向主队列的 DLX/routing key，Publisher 按消息设置 expiration，且该延迟队列不需要消费者
+
+#### Scenario: 旧无参数 retry queue 已存在
+- **WHEN** 部署环境中已存在 durable `agent.job.retry.queue` 且没有 DLX 参数
+- **THEN** 系统使用新版本队列名，不触发 `PRECONDITION_FAILED`，并在运维检查中报告旧队列消息数供对账
+
+### Requirement: 滞留 retry Job 恢复必须显式、幂等且可审计
+系统 SHALL 提供默认 dry-run 的恢复工具，识别旧实现遗留的等待任务；只有管理员显式应用后才能重新调度候选 Job，恢复过程 MUST 不默认 purge 旧队列。
+
+#### Scenario: 管理员执行 dry-run
+- **WHEN** 管理员运行滞留 Job 对账而未指定 apply
+- **THEN** 系统只输出安全候选摘要和原因，不修改 Job、不发布消息、不删除队列消息
+
+#### Scenario: 管理员显式恢复 Job
+- **WHEN** 管理员确认候选并显式指定 Job 执行恢复
+- **THEN** 系统幂等写入等待重试状态、发布到新拓扑并记录操作者、Job、前后状态和 publish 结果
+
+#### Scenario: 同一 Job 被重复恢复
+- **WHEN** 管理员或自动化重复提交已经恢复、运行或终态的 Job
+- **THEN** 系统不重复调度可执行副本，并返回当前持久化状态和审计结果
+
+### Requirement: 旧 RabbitMQ 拓扑不得长期兼容
+Outbox 切换成功后，系统 MUST 确认旧消息已排空或隔离、无消费者，再按精确名称删除旧 queue、exchange、binding、配置和代码；不得长期双写。
+
+#### Scenario: 旧队列仍有消息
+- **WHEN** 切换核验发现旧队列仍有未转换消息
+- **THEN** 删除必须停止，消息进入转换或隔离流程
 
