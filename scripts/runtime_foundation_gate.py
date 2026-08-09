@@ -20,12 +20,7 @@ from typing import Any, Callable
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-CHANGE_ROOT = (
-    REPOSITORY_ROOT
-    / "openspec"
-    / "changes"
-    / "stabilize-platform-runtime-foundation"
-)
+CHANGE_ROOT = REPOSITORY_ROOT / "openspec" / "changes" / "stabilize-platform-runtime-foundation"
 TASKS_PATH = CHANGE_ROOT / "tasks.md"
 
 TASK_PATTERN = re.compile(
@@ -70,9 +65,7 @@ def _prefix(*prefixes: str) -> Callable[[str], bool]:
 
 
 def _phase_three(number: str) -> bool:
-    return number.startswith("6.") or (
-        number.startswith("7.") and number not in {"7.5", "7.6"}
-    )
+    return number.startswith("6.") or (number.startswith("7.") and number not in {"7.5", "7.6"})
 
 
 GATES = (
@@ -105,10 +98,7 @@ GATES = (
 )
 
 PHASE_ONE_TEST_TARGETS = (
-    (
-        "backend/tests/test_webhook_api.py"
-        "::test_public_webhook_returns_202_and_stable_safe_errors"
-    ),
+    ("backend/tests/test_webhook_api.py::test_public_webhook_returns_202_and_stable_safe_errors"),
     (
         "backend/tests/test_agent_job_debug_authorization.py"
         "::test_debug_create_requires_login_and_does_not_create_job"
@@ -274,10 +264,7 @@ def gate_report(tasks: list[Task], gate: Gate) -> dict[str, Any]:
 
 def _canonicalize(value: Any) -> Any:
     if isinstance(value, dict):
-        return {
-            key: _canonicalize(value[key])
-            for key in sorted(value)
-        }
+        return {key: _canonicalize(value[key]) for key in sorted(value)}
     if isinstance(value, list):
         normalized = [_canonicalize(item) for item in value]
         return sorted(
@@ -324,9 +311,7 @@ def validate_destructive_manifest(manifest: Any) -> dict[str, Any]:
 
     forbidden = _find_forbidden_keys(manifest)
     if forbidden:
-        raise ValueError(
-            "manifest 包含禁止的敏感字段: " + ", ".join(forbidden)
-        )
+        raise ValueError("manifest 包含禁止的敏感字段: " + ", ".join(forbidden))
 
     targets = manifest["targets"]
     if not isinstance(targets, list) or not targets:
@@ -344,20 +329,13 @@ def validate_destructive_manifest(manifest: Any) -> dict[str, Any]:
             "action",
         }.difference(target)
         if target_missing:
-            raise ValueError(
-                f"targets[{index}] 缺少字段: "
-                + ", ".join(sorted(target_missing))
-            )
+            raise ValueError(f"targets[{index}] 缺少字段: " + ", ".join(sorted(target_missing)))
         identity = (str(target["type"]), str(target["id"]))
         if identity in seen:
-            raise ValueError(
-                f"manifest 包含重复 target: {identity[0]}/{identity[1]}"
-            )
+            raise ValueError(f"manifest 包含重复 target: {identity[0]}/{identity[1]}")
         seen.add(identity)
         if target["action"] not in allowed_actions:
-            raise ValueError(
-                f"targets[{index}].action 不允许: {target['action']}"
-            )
+            raise ValueError(f"targets[{index}].action 不允许: {target['action']}")
 
     if not isinstance(manifest["impact"], dict):
         raise ValueError("manifest.impact 必须是 object")
@@ -443,15 +421,9 @@ def _status_command(as_json: bool) -> int:
                 f"({report['complete_count']}/{report['task_count']})"
             )
             if report["baseline_incomplete"]:
-                print(
-                    "  baseline incomplete: "
-                    + ", ".join(report["baseline_incomplete"])
-                )
+                print("  baseline incomplete: " + ", ".join(report["baseline_incomplete"]))
             if report["incomplete_tasks"]:
-                print(
-                    "  tasks incomplete: "
-                    + ", ".join(report["incomplete_tasks"])
-                )
+                print("  tasks incomplete: " + ", ".join(report["incomplete_tasks"]))
             if not report["evidence_exists"]:
                 print(f"  evidence missing: {report['evidence_file']}")
     return 0
@@ -463,24 +435,16 @@ def _check_command(gate_number: int, as_json: bool) -> int:
         print(json.dumps(report, ensure_ascii=False, indent=2))
     else:
         print(
-            f"Gate {report['gate']} "
-            f"{'PASS' if report['passed'] else 'BLOCKED'}: "
-            f"{report['name']}"
+            f"Gate {report['gate']} {'PASS' if report['passed'] else 'BLOCKED'}: {report['name']}"
         )
         print(
             f"tasks: {report['complete_count']}/{report['task_count']}; "
             f"evidence: {'present' if report['evidence_exists'] else 'missing'}"
         )
         if report["baseline_incomplete"]:
-            print(
-                "baseline incomplete: "
-                + ", ".join(report["baseline_incomplete"])
-            )
+            print("baseline incomplete: " + ", ".join(report["baseline_incomplete"]))
         if report["incomplete_tasks"]:
-            print(
-                "tasks incomplete: "
-                + ", ".join(report["incomplete_tasks"])
-            )
+            print("tasks incomplete: " + ", ".join(report["incomplete_tasks"]))
     return 0 if report["passed"] else 1
 
 
@@ -520,8 +484,7 @@ def phase_two_a_test_command() -> list[str]:
         raise ValueError("Phase 2A Gate 需要仓库 .venv/bin/python")
     if not os.getenv("MIGRATION_POSTGRES_DSN", "").strip():
         raise ValueError(
-            "Phase 2A Gate 需要 MIGRATION_POSTGRES_DSN；"
-            "真实 PostgreSQL 测试不得以 skip 代替"
+            "Phase 2A Gate 需要 MIGRATION_POSTGRES_DSN；真实 PostgreSQL 测试不得以 skip 代替"
         )
     return [
         str(python),

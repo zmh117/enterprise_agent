@@ -145,10 +145,10 @@ function LoginCard({
           </div>
           <div>
             <CardTitle className="text-xl">
-              <h1>登录 Agent 用户门户</h1>
+              <h1>登录 Agent 控制台</h1>
             </CardTitle>
             <CardDescription className="mt-1.5">
-              使用统一系统账号查看本人历史、调试证据和外部身份。
+              使用统一系统账号查看本人历史、外部身份和获授权发布管理。
             </CardDescription>
           </div>
         </CardHeader>

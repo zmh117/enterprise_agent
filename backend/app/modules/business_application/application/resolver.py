@@ -15,6 +15,7 @@ from app.modules.business_application.domain.runtime import (
     RuntimeRouteResolution,
 )
 from app.modules.business_application.infrastructure import BusinessApplicationRepository
+from app.modules.mcp_tool_publications import McpToolPublicationService
 from app.shared.exceptions import NonRetryableExecutionError
 
 SCHEMA_VERSION = 1
@@ -27,12 +28,14 @@ class BusinessApplicationResolver:
         self,
         repository: BusinessApplicationRepository,
         runtime_evaluator: RuntimeReadinessEvaluator | None = None,
+        mcp_tools: McpToolPublicationService | None = None,
     ) -> None:
         self.repository = repository
         self.runtime_evaluator = runtime_evaluator or RuntimeReadinessEvaluator(
             data_plane_enabled=False,
             runtime_environment="local",
         )
+        self.mcp_tools = mcp_tools
 
     def resolve_active(self, application_code: str, environment: str) -> dict[str, Any]:
         application = self.repository.get_by_code(validate_code(application_code))
@@ -167,6 +170,37 @@ class BusinessApplicationResolver:
             raise self.configuration_error(
                 "Business Application publication integrity check failed"
             )
+        snapshot = dict(publication["snapshot"])
+        agent = dict(snapshot.get("agent") or {})
+        application = dict(snapshot.get("application") or {})
+        agent_row = self.repository.database.execute_one(
+            """
+            select p.id, p.config_hash, d.status, d.project_code
+              from agent_publication p
+              join agent_definition d on d.id = p.agent_id
+             where p.id = ?
+            """,
+            (str(agent.get("id") or ""),),
+        )
+        if (
+            agent_row is None
+            or str(agent_row["status"]) != "enabled"
+            or str(agent_row["project_code"]) != str(application.get("project_code") or "")
+            or str(agent_row["config_hash"]) != str(agent.get("config_hash") or "")
+        ):
+            raise self.configuration_error("Business Application Agent dependency is unavailable")
+        if self.mcp_tools is not None:
+            frozen_tools = list(snapshot.get("mcp_tools") or [])
+            tool_ids = [str(item.get("id") or "") for item in frozen_tools]
+            current = self.mcp_tools.prepare_application_selection(
+                str(agent.get("id") or ""), tool_ids
+            )
+            current_hashes = {str(item["id"]): str(item["config_hash"]) for item in current}
+            if any(
+                current_hashes.get(str(item.get("id") or "")) != str(item.get("config_hash") or "")
+                for item in frozen_tools
+            ):
+                raise self.configuration_error("Business Application MCP Tool dependency changed")
         return publication
 
     @staticmethod

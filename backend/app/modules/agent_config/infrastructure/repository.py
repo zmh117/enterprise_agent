@@ -28,6 +28,85 @@ class AgentConfigRepository:
             raise NotFound("Agent not found", safe_message="未找到 Agent")
         return row
 
+    def create_definition(
+        self,
+        *,
+        code: str,
+        name: str,
+        description: str,
+        project_code: str,
+        actor_id: str,
+    ) -> dict[str, Any]:
+        agent_id = new_id("agent")
+        timestamp = now_iso()
+        try:
+            self.database.execute(
+                """
+                insert into agent_definition
+                  (id, code, name, description, project_code, status,
+                   current_publication_id, revision, created_by, created_at, updated_at)
+                values (?, ?, ?, ?, ?, 'enabled', null, 1, ?, ?, ?)
+                """,
+                (
+                    agent_id,
+                    code,
+                    name,
+                    description,
+                    project_code,
+                    actor_id,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+        except Exception as exc:
+            if self.get_optional_definition(code) is not None:
+                raise NonRetryableExecutionError(
+                    "Agent code already exists",
+                    safe_message="Agent 编码已存在",
+                    error_code="agent_code_conflict",
+                ) from exc
+            raise
+        return self.get_definition(code)
+
+    def get_optional_definition(self, code: str) -> dict[str, Any] | None:
+        return self.database.execute_one("select * from agent_definition where code = ?", (code,))
+
+    def update_definition(
+        self,
+        *,
+        code: str,
+        expected_revision: int,
+        name: str,
+        description: str,
+        project_code: str,
+        status: str,
+    ) -> dict[str, Any]:
+        rows = self.database.execute(
+            """
+            update agent_definition
+               set name = ?, description = ?, project_code = ?, status = ?,
+                   revision = revision + 1, updated_at = ?
+             where code = ? and revision = ?
+            returning id
+            """,
+            (
+                name,
+                description,
+                project_code,
+                status,
+                now_iso(),
+                code,
+                expected_revision,
+            ),
+        )
+        if not rows:
+            raise NonRetryableExecutionError(
+                "Agent revision conflict",
+                safe_message="Agent 已发生变化，请刷新后重试",
+                error_code="revision_conflict",
+            )
+        return self.get_definition(code)
+
     def latest_revision(self, agent_id: str) -> dict[str, Any] | None:
         row = self.database.execute_one(
             """
@@ -59,6 +138,7 @@ class AgentConfigRepository:
                 "Agent revision conflict",
                 safe_message="Agent 草稿已发生变化，请刷新后重试",
                 error_code="revision_conflict",
+                diagnostics={"current_revision": int(latest["revision"])},
             )
         next_revision = expected_revision + 1
         revision_id = new_id("agent_revision")
@@ -140,6 +220,8 @@ class AgentConfigRepository:
         snapshot: dict[str, Any],
         config_hash: str,
         actor_id: str,
+        mcp_tool_publication_ids: list[str] | None = None,
+        expected_definition_revision: int,
     ) -> dict[str, Any]:
         publication_id = new_id("agent_publication")
         timestamp = now_iso()
@@ -185,14 +267,21 @@ class AgentConfigRepository:
             """,
             (timestamp, revision_id),
         )
-        self.database.execute(
+        updated = self.database.execute(
             """
             update agent_definition
             set current_publication_id = ?, revision = revision + 1, updated_at = ?
-            where id = ?
+            where id = ? and revision = ?
+            returning id
             """,
-            (publication_id, timestamp, agent_id),
+            (publication_id, timestamp, agent_id, expected_definition_revision),
         )
+        if not updated:
+            raise NonRetryableExecutionError(
+                "Agent revision conflict",
+                safe_message="Agent 已发生变化，请刷新后重试",
+                error_code="revision_conflict",
+            )
         self.database.execute(
             """
             update agent_publication
@@ -228,6 +317,15 @@ class AgentConfigRepository:
                             timestamp,
                         ),
                     )
+        for tool_publication_id in dict.fromkeys(mcp_tool_publication_ids or []):
+            self.database.execute(
+                """
+                insert into agent_publication_mcp_tool
+                  (agent_publication_id, tool_publication_id)
+                values (?, ?)
+                """,
+                (publication_id, tool_publication_id),
+            )
         return self.get_publication(publication_id)
 
     def get_publication(self, publication_id: str) -> dict[str, Any]:
@@ -265,7 +363,56 @@ class AgentConfigRepository:
         )
         return [self._publication(row) for row in rows]
 
-    def set_current_publication(self, *, agent_id: str, publication_id: str) -> dict[str, Any]:
+    def active_application_usage(self, agent_publication_id: str) -> list[dict[str, Any]]:
+        rows = self.database.execute(
+            """
+            select a.code, a.name, d.environment,
+                   p.id application_publication_id, p.snapshot_json
+              from business_application_deployment d
+              join business_application a on a.id = d.application_id
+              join business_application_publication p on p.id = d.publication_id
+             where d.active = 1
+             order by a.code, d.environment
+            """,
+        )
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            snapshot = _json(str(row.get("snapshot_json") or "{}"))
+            agent = snapshot.get("agent") if isinstance(snapshot, dict) else {}
+            if not isinstance(agent, dict) or str(agent.get("id") or "") != agent_publication_id:
+                continue
+            result.append(
+                {
+                    "code": row["code"],
+                    "name": row["name"],
+                    "environment": row["environment"],
+                    "application_publication_id": row["application_publication_id"],
+                    "href": f"/applications/{row['code']}",
+                }
+            )
+        return result
+
+    def active_usage_for_agent(self, agent_id: str) -> list[dict[str, Any]]:
+        publications = self.database.execute(
+            "select id from agent_publication where agent_id = ?",
+            (agent_id,),
+        )
+        result: list[dict[str, Any]] = []
+        for publication in publications:
+            result.extend(self.active_application_usage(str(publication["id"])))
+        unique = {
+            (str(item["application_publication_id"]), str(item["environment"])): item
+            for item in result
+        }
+        return list(unique.values())
+
+    def set_current_publication(
+        self,
+        *,
+        agent_id: str,
+        publication_id: str,
+        expected_revision: int,
+    ) -> dict[str, Any]:
         publication = self.get_publication(publication_id)
         if str(publication["agent_id"]) != agent_id:
             raise NonRetryableExecutionError(
@@ -274,6 +421,21 @@ class AgentConfigRepository:
             )
         timestamp = now_iso()
         with self.database.unit_of_work():
+            updated = self.database.execute(
+                """
+                update agent_definition
+                   set current_publication_id = ?, revision = revision + 1, updated_at = ?
+                 where id = ? and revision = ?
+                returning id
+                """,
+                (publication_id, timestamp, agent_id, expected_revision),
+            )
+            if not updated:
+                raise NonRetryableExecutionError(
+                    "Agent revision conflict",
+                    safe_message="Agent 已发生变化，请刷新后重试",
+                    error_code="revision_conflict",
+                )
             self.database.execute(
                 """
                 update agent_publication
@@ -282,34 +444,56 @@ class AgentConfigRepository:
                 """,
                 (publication_id, agent_id),
             )
-            self.database.execute(
-                """
-                update agent_definition
-                set current_publication_id = ?, revision = revision + 1, updated_at = ?
-                where id = ?
-                """,
-                (publication_id, timestamp, agent_id),
-            )
         return self.get_publication(publication_id)
 
     def mcp_tool_catalog(self) -> list[dict[str, object]]:
         return self.database.execute(
             """
-            select distinct server_code, tool_name, required_scope,
-                            tool_schema_hash, resource_code
-              from mcp_tool_publication
-             where status = 'ACTIVE'
-             order by server_code, tool_name, resource_code
+            select p.id, t.code, t.name, p.server_code, p.server_version,
+                   p.tool_name, p.required_scope, p.tool_schema_hash,
+                   p.resource_kind, p.resource_code, p.resource_deployment_id,
+                   p.resource_revision_id, p.config_hash, p.revision, p.status
+              from mcp_tool_publication p
+              join mcp_tool t on t.id = p.tool_id
+             where p.status = 'PUBLISHED' and t.lifecycle_status = 'ENABLED'
+             order by p.server_code, p.tool_name, p.resource_code
             """
         )
+
+    def validate_mcp_tool_publications(self, publication_ids: list[str]) -> list[dict[str, Any]]:
+        ordered = list(dict.fromkeys(publication_ids))
+        if not ordered:
+            return []
+        rows = self.database.execute(
+            f"""
+            select p.*, t.code, t.lifecycle_status
+              from mcp_tool_publication p
+              join mcp_tool t on t.id = p.tool_id
+             where p.id in ({",".join("?" for _ in ordered)})
+               and p.status = 'PUBLISHED'
+               and t.lifecycle_status = 'ENABLED'
+            """,
+            tuple(ordered),
+        )
+        by_id = {str(row["id"]): row for row in rows}
+        if len(by_id) != len(ordered):
+            raise NonRetryableExecutionError(
+                "Agent selected unavailable MCP Tool Publications",
+                safe_message="Agent 选择了不可用的 MCP Tool 发布版本",
+                error_code="mcp_tool_publication_unavailable",
+            )
+        return [by_id[value] for value in ordered]
 
     def publication_mcp_tools(self, publication_id: str) -> list[dict[str, object]]:
         return self.database.execute(
             """
-            select server_code, tool_name, required_scope, tool_schema_hash,
-                   resource_code, status
-              from mcp_tool_publication
-             where agent_publication_id = ?
+            select p.id, p.server_code, p.tool_name, p.required_scope,
+                   p.tool_schema_hash, p.resource_code, p.resource_deployment_id,
+                   p.resource_revision_id, p.revision, p.status
+              from mcp_tool_publication p
+              join agent_publication_mcp_tool binding
+                on binding.tool_publication_id = p.id
+             where binding.agent_publication_id = ?
              order by server_code, tool_name, resource_code
             """,
             (publication_id,),

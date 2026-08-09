@@ -63,7 +63,9 @@ class ResolvedDataCall:
 class DataProvider(Protocol):
     async def health_check(self) -> None: ...
 
-    async def schema_directory(self, query: str, limit: int) -> tuple[list[dict[str, Any]], bool]: ...
+    async def schema_directory(
+        self, query: str, limit: int
+    ) -> tuple[list[dict[str, Any]], bool]: ...
 
     async def describe_table(self, table: str) -> list[dict[str, Any]]: ...
 
@@ -162,8 +164,7 @@ class DataResourceResolver:
                 str(row["revision_status"]) != "PUBLISHED",
                 str(row["deployment_status"]) != "ACTIVE",
                 str(row["generation_status"]) != "VERIFYING",
-                str(row["deployment_revision_id"])
-                != str(row["generation_revision_id"]),
+                str(row["deployment_revision_id"]) != str(row["generation_revision_id"]),
             )
         ):
             raise ToolError("Data MCP generation is not buildable")
@@ -248,7 +249,9 @@ class DataToolService:
                 context, {"query_length": len(query), "limit": limit}, result, started
             )
         except Exception as exc:
-            self._record_failure(context, {"query_length": len(query), "limit": limit}, exc, started)
+            self._record_failure(
+                context, {"query_length": len(query), "limit": limit}, exc, started
+            )
             raise
 
     async def describe_table(
@@ -396,9 +399,7 @@ class DataToolService:
             raise
 
     def _record(self, context, request_summary, result, started):
-        sanitized = type(result).model_validate(
-            sanitize_sensitive_data(result.model_dump())
-        )
+        sanitized = type(result).model_validate(sanitize_sensitive_data(result.model_dump()))
         self.recorder.record(
             context=context.authorized,
             request_summary=request_summary,
@@ -483,10 +484,15 @@ class DatabaseProvider:
             import pymysql
 
             return pymysql.connect(
-                host=self.spec["host"], port=int(self.spec["port"]),
-                user=self.spec["username"], password=password,
-                database=self.spec["database"], connect_timeout=timeout,
-                read_timeout=timeout, write_timeout=timeout, autocommit=True,
+                host=self.spec["host"],
+                port=int(self.spec["port"]),
+                user=self.spec["username"],
+                password=password,
+                database=self.spec["database"],
+                connect_timeout=timeout,
+                read_timeout=timeout,
+                write_timeout=timeout,
+                autocommit=True,
                 cursorclass=pymysql.cursors.DictCursor,
             )
         if provider == "postgresql":
@@ -494,29 +500,40 @@ class DatabaseProvider:
             from psycopg.rows import dict_row
 
             return psycopg.connect(
-                host=self.spec["host"], port=int(self.spec["port"]),
-                user=self.spec["username"], password=password,
-                dbname=self.spec["database"], connect_timeout=timeout,
-                autocommit=True, row_factory=dict_row,
+                host=self.spec["host"],
+                port=int(self.spec["port"]),
+                user=self.spec["username"],
+                password=password,
+                dbname=self.spec["database"],
+                connect_timeout=timeout,
+                autocommit=True,
+                row_factory=dict_row,
             )
         if provider == "sqlserver":
             import pymssql
 
             return pymssql.connect(
-                server=self.spec["host"], port=str(self.spec["port"]),
-                user=self.spec["username"], password=password,
-                database=self.spec["database"], login_timeout=timeout, timeout=timeout,
+                server=self.spec["host"],
+                port=str(self.spec["port"]),
+                user=self.spec["username"],
+                password=password,
+                database=self.spec["database"],
+                login_timeout=timeout,
+                timeout=timeout,
                 as_dict=True,
             )
         if provider == "oracle":
             import oracledb
 
             dsn = oracledb.makedsn(
-                self.spec["host"], int(self.spec["port"]),
+                self.spec["host"],
+                int(self.spec["port"]),
                 service_name=self.spec.get("database"),
             )
             return oracledb.connect(
-                user=self.spec["username"], password=password, dsn=dsn,
+                user=self.spec["username"],
+                password=password,
+                dsn=dsn,
                 tcp_connect_timeout=timeout,
             )
         raise ToolError("Database provider is unsupported")
@@ -570,12 +587,18 @@ class DatabaseProvider:
         description = self._describe_table(table)
         available = {item["name"] for item in description}
         selected = columns or [item["name"] for item in description[:20]]
-        if not selected or any(item not in available or not _IDENTIFIER.fullmatch(item) for item in selected):
+        if not selected or any(
+            item not in available or not _IDENTIFIER.fullmatch(item) for item in selected
+        ):
             raise ToolError("Database columns are outside the described table")
         if any(key not in available or not _IDENTIFIER.fullmatch(key) for key in filters):
             raise ToolError("Database filter columns are outside the described table")
         provider = self.spec["provider"]
-        quote = (lambda value: f'"{value}"') if provider in {"postgresql", "oracle"} else (lambda value: f"`{value}`" if provider == "mysql" else f"[{value}]")
+        quote = (
+            (lambda value: f'"{value}"')
+            if provider in {"postgresql", "oracle"}
+            else (lambda value: f"`{value}`" if provider == "mysql" else f"[{value}]")
+        )
         params = list(filters.values())
         if provider == "oracle":
             where = " and ".join(f"{quote(key)} = :{index}" for index, key in enumerate(filters, 1))
@@ -586,8 +609,7 @@ class DatabaseProvider:
         elif provider == "sqlserver":
             where = " and ".join(f"{quote(key)} = %s" for key in filters)
             sql = (
-                f"select top {int(limit) + 1} {', '.join(map(quote, selected))} "
-                f"from {quote(table)}"
+                f"select top {int(limit) + 1} {', '.join(map(quote, selected))} from {quote(table)}"
             )
             if where:
                 sql += " where " + where
@@ -621,11 +643,15 @@ class RedisProvider:
 
         password_ref = self.spec.get("password_ref")
         return redis.Redis(
-            host=self.spec["host"], port=int(self.spec["port"]),
-            db=int(self.spec["database"]), username=self.spec.get("username") or None,
+            host=self.spec["host"],
+            port=int(self.spec["port"]),
+            db=int(self.spec["database"]),
+            username=self.spec.get("username") or None,
             password=self.resource.secrets.get(password_ref) if password_ref else None,
-            ssl=bool(self.spec.get("tls")), socket_timeout=int(self.spec["timeout_seconds"]),
-            socket_connect_timeout=int(self.spec["timeout_seconds"]), decode_responses=True,
+            ssl=bool(self.spec.get("tls")),
+            socket_timeout=int(self.spec["timeout_seconds"]),
+            socket_connect_timeout=int(self.spec["timeout_seconds"]),
+            decode_responses=True,
         )
 
     async def health_check(self) -> None:
@@ -644,6 +670,7 @@ class RedisProvider:
             client = self._client()
             value = client.get(key)
             return value is not None, str(value or "")
+
         return await asyncio.to_thread(call)
 
     async def redis_scan_prefix(self, prefix, limit):
@@ -652,17 +679,27 @@ class RedisProvider:
             keys: list[str] = []
             cursor = 0
             while True:
-                cursor, batch = client.scan(cursor=cursor, match=prefix + "*", count=min(limit + 1, 200))
+                cursor, batch = client.scan(
+                    cursor=cursor, match=prefix + "*", count=min(limit + 1, 200)
+                )
                 keys.extend(str(value) for value in batch)
                 if len(keys) > limit or cursor == 0:
                     break
             return keys[:limit], len(keys) > limit or cursor != 0
+
         return await asyncio.to_thread(call)
 
-    async def schema_directory(self, query, limit): raise ToolError("Redis Resource cannot inspect SQL schema")
-    async def describe_table(self, table): raise ToolError("Redis Resource cannot inspect SQL schema")
-    async def sample_rows(self, table, columns, filters, limit): raise ToolError("Redis Resource cannot query SQL rows")
-    async def loki_search(self, service, keyword, minutes, limit): raise ToolError("Redis Resource cannot query Loki")
+    async def schema_directory(self, query, limit):
+        raise ToolError("Redis Resource cannot inspect SQL schema")
+
+    async def describe_table(self, table):
+        raise ToolError("Redis Resource cannot inspect SQL schema")
+
+    async def sample_rows(self, table, columns, filters, limit):
+        raise ToolError("Redis Resource cannot query SQL rows")
+
+    async def loki_search(self, service, keyword, minutes, limit):
+        raise ToolError("Redis Resource cannot query Loki")
 
 
 class LokiProvider:
@@ -676,9 +713,7 @@ class LokiProvider:
         if self.spec.get("tenant_id"):
             headers["X-Scope-OrgID"] = str(self.spec["tenant_id"])
         if self.spec.get("auth_ref"):
-            headers["Authorization"] = "Bearer " + self.resource.secrets[
-                self.spec["auth_ref"]
-            ]
+            headers["Authorization"] = "Bearer " + self.resource.secrets[self.spec["auth_ref"]]
 
         def call() -> None:
             opener = build_opener(ProxyHandler({}), _NoRedirectHandler())
@@ -698,7 +733,9 @@ class LokiProvider:
     async def loki_search(self, service, keyword, minutes, limit):
         labels = dict(self.spec["label_scope"])
         labels["service"] = service
-        selector = ",".join(f'{key}={json.dumps(str(value))}' for key, value in sorted(labels.items()))
+        selector = ",".join(
+            f"{key}={json.dumps(str(value))}" for key, value in sorted(labels.items())
+        )
         escaped = keyword.replace("\\", "\\\\").replace('"', '\\"')
         query = "{" + selector + "}" + (f' |= "{escaped}"' if escaped else "")
         end = datetime.now(UTC)
@@ -708,8 +745,18 @@ class LokiProvider:
             headers["X-Scope-OrgID"] = str(self.spec["tenant_id"])
         if self.spec.get("auth_ref"):
             headers["Authorization"] = "Bearer " + self.resource.secrets[self.spec["auth_ref"]]
-        url = str(self.spec["base_url"]).rstrip("/") + "/loki/api/v1/query_range?" + urlencode(
-            {"query": query, "start": int(start.timestamp() * 1e9), "end": int(end.timestamp() * 1e9), "limit": limit + 1, "direction": "backward"}
+        url = (
+            str(self.spec["base_url"]).rstrip("/")
+            + "/loki/api/v1/query_range?"
+            + urlencode(
+                {
+                    "query": query,
+                    "start": int(start.timestamp() * 1e9),
+                    "end": int(end.timestamp() * 1e9),
+                    "limit": limit + 1,
+                    "direction": "backward",
+                }
+            )
         )
 
         def call() -> tuple[int, bytes]:
@@ -734,16 +781,31 @@ class LokiProvider:
             for stream in streams:
                 stream_labels = {str(k): str(v) for k, v in stream.get("stream", {}).items()}
                 for timestamp, line in stream.get("values", []):
-                    lines.append({"timestamp": str(timestamp), "labels": stream_labels, "line": str(line)[:4000]})
+                    lines.append(
+                        {
+                            "timestamp": str(timestamp),
+                            "labels": stream_labels,
+                            "line": str(line)[:4000],
+                        }
+                    )
             return lines[:limit], len(lines) > limit
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise ToolError("Loki returned an invalid bounded response") from exc
 
-    async def schema_directory(self, query, limit): raise ToolError("Loki Resource cannot inspect SQL schema")
-    async def describe_table(self, table): raise ToolError("Loki Resource cannot inspect SQL schema")
-    async def sample_rows(self, table, columns, filters, limit): raise ToolError("Loki Resource cannot query SQL rows")
-    async def redis_get(self, key): raise ToolError("Loki Resource cannot query Redis")
-    async def redis_scan_prefix(self, prefix, limit): raise ToolError("Loki Resource cannot query Redis")
+    async def schema_directory(self, query, limit):
+        raise ToolError("Loki Resource cannot inspect SQL schema")
+
+    async def describe_table(self, table):
+        raise ToolError("Loki Resource cannot inspect SQL schema")
+
+    async def sample_rows(self, table, columns, filters, limit):
+        raise ToolError("Loki Resource cannot query SQL rows")
+
+    async def redis_get(self, key):
+        raise ToolError("Loki Resource cannot query Redis")
+
+    async def redis_scan_prefix(self, prefix, limit):
+        raise ToolError("Loki Resource cannot query Redis")
 
 
 def build_provider(resource: ResourceRuntime) -> DataProvider:

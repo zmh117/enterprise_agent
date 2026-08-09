@@ -55,12 +55,13 @@ def test_agent_worker_image_includes_mcp_runtime_dependencies() -> None:
     assert "services/ones_mcp_server/contracts.py" in api_server
     assert "COPY config /app/config" in api_server
 
-    agent_worker = dockerfile.split("FROM claude-runtime AS agent-worker", 1)[1].split(
+    agent_worker = dockerfile.split("FROM python-deps AS agent-worker", 1)[1].split(
         "FROM claude-runtime AS backend-runtime", 1
     )[0]
+    assert "COPY --from=node-runtime" not in agent_worker
+    assert "npm install" not in agent_worker
     assert (
-        "COPY backend/app/modules/mcp_runtime /app/backend/app/modules/mcp_runtime"
-        in agent_worker
+        "COPY backend/app/modules/mcp_runtime /app/backend/app/modules/mcp_runtime" in agent_worker
     )
     assert (
         "COPY backend/app/modules/mcp_resources /app/backend/app/modules/mcp_resources"

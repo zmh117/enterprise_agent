@@ -35,10 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     prepare = commands.add_parser(
         "prepare",
-        help=(
-            "Enter maintenance, drain resource Jobs and persist an "
-            "exact reset manifest"
-        ),
+        help=("Enter maintenance, drain resource Jobs and persist an exact reset manifest"),
     )
     prepare.add_argument("--actor-id", required=True)
     prepare.add_argument("--backup-reference", required=True)
@@ -52,10 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     apply_command = commands.add_parser(
         "apply",
-        help=(
-            "Apply one PREPARED operation after external user "
-            "confirmation of the exact digest"
-        ),
+        help=("Apply one PREPARED operation after external user confirmation of the exact digest"),
     )
     apply_command.add_argument("--operation-id", required=True)
     apply_command.add_argument("--expected-digest", required=True)
@@ -114,20 +108,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
     except (AppError, ValueError) as exc:
-        message = (
-            exc.safe_message if isinstance(exc, AppError) else str(exc)
-        )
-        error_code = (
-            exc.error_code
-            if isinstance(exc, AppError)
-            else "resource_reset_invalid"
-        )
+        message = exc.safe_message if isinstance(exc, AppError) else str(exc)
+        error_code = exc.error_code if isinstance(exc, AppError) else "resource_reset_invalid"
         print(
             json.dumps(
                 {
-                    "error_code": (
-                        error_code or "resource_reset_failed"
-                    ),
+                    "error_code": (error_code or "resource_reset_failed"),
                     "message": message,
                 },
                 ensure_ascii=False,

@@ -88,21 +88,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
     except (AppError, ValueError) as exc:
-        message = (
-            exc.safe_message if isinstance(exc, AppError) else str(exc)
-        )
+        message = exc.safe_message if isinstance(exc, AppError) else str(exc)
         error_code = (
-            exc.error_code
-            if isinstance(exc, AppError)
-            else "legacy_authorization_cleanup_invalid"
+            exc.error_code if isinstance(exc, AppError) else "legacy_authorization_cleanup_invalid"
         )
         print(
             json.dumps(
                 {
-                    "error_code": (
-                        error_code
-                        or "legacy_authorization_cleanup_failed"
-                    ),
+                    "error_code": (error_code or "legacy_authorization_cleanup_failed"),
                     "message": message,
                 },
                 ensure_ascii=False,

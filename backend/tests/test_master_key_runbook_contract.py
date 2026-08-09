@@ -4,11 +4,7 @@ from pathlib import Path
 
 
 def test_emergency_master_key_runbook_is_offline_atomic_and_single_key() -> None:
-    path = (
-        Path(__file__).resolve().parents[2]
-        / "docs"
-        / "emergency-master-key-reencryption.md"
-    )
+    path = Path(__file__).resolve().parents[2] / "docs" / "emergency-master-key-reencryption.md"
     text = path.read_text(encoding="utf-8")
 
     for required in (

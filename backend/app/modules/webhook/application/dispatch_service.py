@@ -122,9 +122,7 @@ class WebhookDispatcher:
                     "Webhook Trigger is disabled before dispatch",
                     safe_message="Webhook 触发器已停用",
                 )
-            service_account = self.identity_repository.get_user(
-                str(event["service_account_id"])
-            )
+            service_account = self.identity_repository.get_user(str(event["service_account_id"]))
             if (
                 str(service_account["status"]) != "enabled"
                 or str(service_account["account_type"]) != "service"

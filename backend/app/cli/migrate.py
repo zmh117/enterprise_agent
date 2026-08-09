@@ -13,9 +13,7 @@ from app.shared.migrations import (
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Apply platform schema migrations exactly once"
-    )
+    parser = argparse.ArgumentParser(description="Apply platform schema migrations exactly once")
     parser.add_argument(
         "--build",
         default=os.getenv("MIGRATOR_BUILD", "local-uncommitted"),
@@ -38,9 +36,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"MIGRATION_FAILED: {exc}")
         return 1
     except Exception:
-        print(
-            "MIGRATION_FAILED: database unavailable or migration lock failed"
-        )
+        print("MIGRATION_FAILED: database unavailable or migration lock failed")
         return 1
     finally:
         database.close()

@@ -82,6 +82,8 @@ class AgentJob:
     execution_policy_tool_call_count: int = 0
     execution_policy_exhausted: bool = False
     model_runtime_provenance: dict[str, Any] | None = None
+    agent_runtime_kind: str = "python-v1"
+    agent_runtime_protocol_version: str = "1.0"
 
 
 @dataclass(frozen=True)

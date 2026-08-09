@@ -28,6 +28,17 @@ def test_ready_checks_schema_database_rabbit_token_and_master_key(
             "_check_rabbitmq",
             lambda _url: True,
         )
+        monkeypatch.setattr(
+            main,
+            "_check_agent_runtime",
+            lambda _settings: {
+                "configured": False,
+                "ready": False,
+                "identity": "not_configured",
+                "model_invoked": False,
+                "mcp_invoked": False,
+            },
+        )
         ready = main._build_readiness(
             runtime.settings,
             database=runtime.database,
@@ -36,10 +47,17 @@ def test_ready_checks_schema_database_rabbit_token_and_master_key(
         assert ready["core"] == {
             "database": True,
             "schema": True,
-            "schema_head": "036",
+            "schema_head": "040",
             "rabbitmq": True,
             "master_key": True,
             "runtime_assembly": True,
+            "agent_runtime": {
+                "configured": False,
+                "ready": False,
+                "identity": "not_configured",
+                "model_invoked": False,
+                "mcp_invoked": False,
+            },
         }
         assert ready["resources"]["status"] == "UNCONFIGURED"
         assert ready["claude_invoked"] is False
@@ -61,6 +79,11 @@ def test_schema_drift_makes_ready_fail_closed(monkeypatch) -> None:
             main,
             "_check_rabbitmq",
             lambda _url: True,
+        )
+        monkeypatch.setattr(
+            main,
+            "_check_agent_runtime",
+            lambda _settings: {"configured": False, "ready": False},
         )
         runtime.database.execute("delete from schema_migration where version = '023'")
         status = main._build_readiness(

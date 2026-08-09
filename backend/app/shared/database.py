@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
 from queue import Empty, LifoQueue
-from typing import Any, Callable, Iterator, Literal, ParamSpec, Protocol, TypeVar
+from typing import Any, Callable, Iterator, Literal, ParamSpec, Protocol, TypeVar, cast
 
 
 DEFAULT_POOL_MIN_SIZE = 1
@@ -529,8 +529,18 @@ class Database:
         return statement
 
 
+class _DatabaseRepositoryOwner(Protocol):
+    @property
+    def database(self) -> Database: ...
+
+
+class _UnitOfWorkOwner(Protocol):
+    @property
+    def repository(self) -> _DatabaseRepositoryOwner: ...
+
+
 def operation_unit_of_work(
-    database_getter: Callable[[Any], Database],
+    database_getter: Callable[[_UnitOfWorkOwner], Database],
 ) -> Callable[[Callable[P, R]], Callable[P, R]]:
     """Declare a synchronous service/repository method as one local UoW."""
 
@@ -539,7 +549,8 @@ def operation_unit_of_work(
         def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
             if not args:
                 raise RuntimeError("Unit of Work method requires an owner")
-            database = database_getter(args[0])
+            owner = cast(_UnitOfWorkOwner, args[0])
+            database = database_getter(owner)
             with database.unit_of_work():
                 return function(*args, **kwargs)
 

@@ -22,6 +22,15 @@ _MAX_KEY_BYTES = 4096
 class McpAuthenticationError(RuntimeError):
     """Stable authentication failure that never includes token material."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason_code: str = "mcp_authentication_failed",
+    ) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
+
 
 def load_signing_key(path: str) -> bytes:
     configured = path.strip()
@@ -118,6 +127,11 @@ class McpTokenVerifier:
                 },
             )
             claims = McpTokenClaims.model_validate(payload)
+        except jwt.ExpiredSignatureError as exc:
+            raise McpAuthenticationError(
+                "MCP access token is expired",
+                reason_code="mcp_token_expired",
+            ) from exc
         except (jwt.PyJWTError, ValidationError, ValueError, TypeError) as exc:
             raise McpAuthenticationError("MCP access token is invalid") from exc
         if claims.aud != self._audience or claims.azp != _AUTHORIZED_PARTY:
@@ -125,7 +139,47 @@ class McpTokenVerifier:
         if claims.exp - claims.iat > _MAX_TOKEN_SECONDS:
             raise McpAuthenticationError("MCP access token lifetime exceeds policy")
         if required_scope and required_scope not in claims.scopes:
-            raise McpAuthenticationError("MCP access token scope is insufficient")
+            raise McpAuthenticationError(
+                "MCP access token scope is insufficient",
+                reason_code="mcp_scope_denied",
+            )
+        return claims
+
+    def inspect_signed(self, token: str) -> McpTokenClaims:
+        """Read expired claims only after verifying signature and every non-time binding."""
+
+        if not token or len(token) > 8192:
+            raise McpAuthenticationError("MCP access token is missing or invalid")
+        try:
+            payload = jwt.decode(
+                token,
+                self._key,
+                algorithms=["HS256"],
+                audience=self._audience,
+                issuer=_ISSUER,
+                options={
+                    "verify_exp": False,
+                    "require": [
+                        "iss",
+                        "aud",
+                        "sub",
+                        "azp",
+                        "job_id",
+                        "application_publication_id",
+                        "scopes",
+                        "iat",
+                        "exp",
+                        "jti",
+                    ],
+                },
+            )
+            claims = McpTokenClaims.model_validate(payload)
+        except (jwt.PyJWTError, ValidationError, ValueError, TypeError) as exc:
+            raise McpAuthenticationError("MCP access token is invalid") from exc
+        if claims.aud != self._audience or claims.azp != _AUTHORIZED_PARTY:
+            raise McpAuthenticationError("MCP access token is not valid for this service")
+        if claims.exp - claims.iat > _MAX_TOKEN_SECONDS:
+            raise McpAuthenticationError("MCP access token lifetime exceeds policy")
         return claims
 
 

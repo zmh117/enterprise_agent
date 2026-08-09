@@ -31,9 +31,7 @@ class LegacyAuthorizationCleanupService:
 
     def report(self) -> dict[str, Any]:
         rows_by_table = {
-            table: self.database.execute(
-                f"select * from {table} order by id"
-            )
+            table: self.database.execute(f"select * from {table} order by id")
             for table in LEGACY_AUTHORIZATION_TABLES
         }
         targets: list[dict[str, Any]] = []
@@ -60,10 +58,7 @@ class LegacyAuthorizationCleanupService:
                     )
                 ] += 1
         targets.sort(key=lambda item: (item["table"], item["id"]))
-        counts = {
-            table: len(rows_by_table[table])
-            for table in LEGACY_AUTHORIZATION_TABLES
-        }
+        counts = {table: len(rows_by_table[table]) for table in LEGACY_AUTHORIZATION_TABLES}
         admins = self._verified_human_admins()
         payload = {
             "counts": counts,
@@ -166,9 +161,7 @@ class LegacyAuthorizationCleanupService:
             "status": "PREPARED",
             "digest": digest,
             "manifest": manifest,
-            "verified_human_platform_admins": report[
-                "verified_human_platform_admins"
-            ],
+            "verified_human_platform_admins": report["verified_human_platform_admins"],
         }
 
     def apply(
@@ -188,10 +181,7 @@ class LegacyAuthorizationCleanupService:
                 safe_message="旧授权清理操作不处于待确认状态",
                 error_code="legacy_authorization_cleanup_not_prepared",
             )
-        if (
-            not expected_digest
-            or expected_digest != str(operation["inventory_digest"])
-        ):
+        if not expected_digest or expected_digest != str(operation["inventory_digest"]):
             raise NonRetryableExecutionError(
                 "Legacy authorization cleanup digest mismatch",
                 safe_message="旧授权清理摘要不匹配，请重新生成清单",
@@ -249,9 +239,7 @@ class LegacyAuthorizationCleanupService:
                 "legacy_authorization_cleanup_applied",
                 operation_id=operation_id,
                 actor_id=confirmed_by,
-                correlation_id=str(
-                    operation.get("correlation_id") or ""
-                ),
+                correlation_id=str(operation.get("correlation_id") or ""),
                 payload={
                     "digest": expected_digest,
                     "deleted_counts": counts,
@@ -280,12 +268,8 @@ class LegacyAuthorizationCleanupService:
         report = self.report()
         self._require_two_admins(report)
         checks = {
-            "permission_policy_empty": (
-                int(report["counts"]["permission_policy"]) == 0
-            ),
-            "platform_access_grant_empty": (
-                int(report["counts"]["platform_access_grant"]) == 0
-            ),
+            "permission_policy_empty": (int(report["counts"]["permission_policy"]) == 0),
+            "platform_access_grant_empty": (int(report["counts"]["platform_access_grant"]) == 0),
             "two_human_platform_admins_verified": (
                 report["verified_human_platform_admin_count"] >= 2
             ),
@@ -317,18 +301,14 @@ class LegacyAuthorizationCleanupService:
                     "legacy_authorization_cleanup_verified",
                     operation_id=operation_id,
                     actor_id=actor_id,
-                    correlation_id=str(
-                        operation.get("correlation_id") or ""
-                    ),
+                    correlation_id=str(operation.get("correlation_id") or ""),
                     payload={"checks": checks},
                 )
         return {
             "operation_id": operation_id,
             "status": "VERIFIED",
             "checks": checks,
-            "verified_human_platform_admins": report[
-                "verified_human_platform_admins"
-            ],
+            "verified_human_platform_admins": report["verified_human_platform_admins"],
         }
 
     def _verified_human_admins(self) -> list[dict[str, Any]]:
@@ -362,12 +342,8 @@ class LegacyAuthorizationCleanupService:
             {
                 "id": str(row["id"]),
                 "username": str(row["username"]),
-                "active_session_count": int(
-                    row["active_session_count"]
-                ),
-                "successful_login_count": int(
-                    row["successful_login_count"]
-                ),
+                "active_session_count": int(row["active_session_count"]),
+                "successful_login_count": int(row["successful_login_count"]),
             }
             for row in rows
         ]
@@ -391,10 +367,7 @@ class LegacyAuthorizationCleanupService:
             (operation_id,),
         )
         if row is None:
-            raise NotFound(
-                "Legacy authorization cleanup operation not found: "
-                f"{operation_id}"
-            )
+            raise NotFound(f"Legacy authorization cleanup operation not found: {operation_id}")
         return row
 
     def _audit(
@@ -435,10 +408,7 @@ class LegacyAuthorizationCleanupService:
         value: Any,
     ) -> Any:
         if isinstance(value, dict):
-            return {
-                str(key): cls._normalized_row(child)
-                for key, child in sorted(value.items())
-            }
+            return {str(key): cls._normalized_row(child) for key, child in sorted(value.items())}
         if isinstance(value, (list, tuple)):
             return [cls._normalized_row(child) for child in value]
         if isinstance(value, bytes):

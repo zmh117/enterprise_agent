@@ -14,6 +14,7 @@ _ROLE_PASSWORD_ENV = {
     "enterprise_agent_worker": "WORKER_DATABASE_PASSWORD",
     "ones_mcp_reader": "ONES_MCP_DATABASE_PASSWORD",
     "data_mcp_runtime": "DATA_MCP_DATABASE_PASSWORD",
+    "agent_runtime_reader": "AGENT_RUNTIME_DATABASE_PASSWORD",
 }
 
 

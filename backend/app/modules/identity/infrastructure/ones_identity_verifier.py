@@ -130,7 +130,9 @@ class UrllibOnesIdentityVerifier(OnesIdentityVerifier):
                 safe_message="ONES 身份提供方配置无效",
                 error_code="ones_configuration_invalid",
             )
-        allowed_hosts = {host.strip().lower() for host in self.settings.allowed_hosts if host.strip()}
+        allowed_hosts = {
+            host.strip().lower() for host in self.settings.allowed_hosts if host.strip()
+        }
         if not allowed_hosts or hostname not in allowed_hosts:
             raise NonRetryableExecutionError(
                 f"ONES identity host is not allowed: {hostname}",
@@ -138,8 +140,7 @@ class UrllibOnesIdentityVerifier(OnesIdentityVerifier):
                 error_code="ones_configuration_invalid",
             )
         if scheme != "https" and (
-            self.environment in PRODUCTION_ENVIRONMENTS
-            or not self.settings.allow_insecure_local
+            self.environment in PRODUCTION_ENVIRONMENTS or not self.settings.allow_insecure_local
         ):
             raise NonRetryableExecutionError(
                 "ONES identity provider requires HTTPS",

@@ -121,9 +121,9 @@ def test_delivery_outbox_accepts_only_defined_states(status: str) -> None:
     runtime, job, artifact_id = _job_and_artifact()
     try:
         _insert_event(runtime, job.id, artifact_id, status=status)
-        assert runtime.database.execute_one(
-            "select status from delivery_outbox"
-        ) == {"status": status}
+        assert runtime.database.execute_one("select status from delivery_outbox") == {
+            "status": status
+        }
     finally:
         runtime.database.close()
 

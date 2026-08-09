@@ -54,12 +54,9 @@ class ManagedWebhookProviderAdapter:
             self.connector_registry.require_ingress(str(item["connector_id"]))
             publication = self.repository.current_publication(str(item["id"]))
             authentication = publication["snapshot"].get("authentication") or {}
-            secret = self.connector_registry.resolve_reference(
-                authentication.get("secret_ref")
-            )
-            if (
-                str(authentication.get("type") or "") != "bearer_v1"
-                or not is_strong_bearer_token(secret)
+            secret = self.connector_registry.resolve_reference(authentication.get("secret_ref"))
+            if str(authentication.get("type") or "") != "bearer_v1" or not is_strong_bearer_token(
+                secret
             ):
                 raise ValueError("Webhook Bearer credential is unavailable")
         except Exception:

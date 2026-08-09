@@ -7,7 +7,14 @@ import sys
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Protocol, cast
 
-from .manifest import BASE_CODES, EXPECTED_ANOMALIES, EXPECTED_ROW_COUNTS, ROWS, TABLES, redis_fixtures
+from .manifest import (
+    BASE_CODES,
+    EXPECTED_ANOMALIES,
+    EXPECTED_ROW_COUNTS,
+    ROWS,
+    TABLES,
+    redis_fixtures,
+)
 
 SENSITIVE_TOKENS = ("PASSWORD", "SECRET", "TOKEN", "KEY")
 
@@ -75,27 +82,33 @@ class MySqlSeeder:
     def connect_admin(self) -> Connection:
         import pymysql
 
-        return cast(Connection, pymysql.connect(
-            host=_env("AGENT_TEST_MYSQL_HOST", "agent-test-mysql"),
-            port=_env_int("AGENT_TEST_MYSQL_PORT", 3306),
-            user=_env("AGENT_TEST_MYSQL_ADMIN_USER", "root"),
-            password=_env("AGENT_TEST_MYSQL_ROOT_PASSWORD"),
-            autocommit=False,
-            charset="utf8mb4",
-        ))
+        return cast(
+            Connection,
+            pymysql.connect(
+                host=_env("AGENT_TEST_MYSQL_HOST", "agent-test-mysql"),
+                port=_env_int("AGENT_TEST_MYSQL_PORT", 3306),
+                user=_env("AGENT_TEST_MYSQL_ADMIN_USER", "root"),
+                password=_env("AGENT_TEST_MYSQL_ROOT_PASSWORD"),
+                autocommit=False,
+                charset="utf8mb4",
+            ),
+        )
 
     def connect_reader(self) -> Connection:
         import pymysql
 
-        return cast(Connection, pymysql.connect(
-            host=_env("SECRET_AGENT_TEST_MYSQL_DB_HOST", "agent-test-mysql"),
-            port=_env_int("AGENT_TEST_MYSQL_PORT", 3306),
-            user=_env("SECRET_AGENT_TEST_MYSQL_DB_USER", "agent_test_reader"),
-            password=_env("SECRET_AGENT_TEST_MYSQL_DB_PASSWORD"),
-            database=_env("AGENT_TEST_MYSQL_DATABASE", "agent_test"),
-            autocommit=False,
-            charset="utf8mb4",
-        ))
+        return cast(
+            Connection,
+            pymysql.connect(
+                host=_env("SECRET_AGENT_TEST_MYSQL_DB_HOST", "agent-test-mysql"),
+                port=_env_int("AGENT_TEST_MYSQL_PORT", 3306),
+                user=_env("SECRET_AGENT_TEST_MYSQL_DB_USER", "agent_test_reader"),
+                password=_env("SECRET_AGENT_TEST_MYSQL_DB_PASSWORD"),
+                database=_env("AGENT_TEST_MYSQL_DATABASE", "agent_test"),
+                autocommit=False,
+                charset="utf8mb4",
+            ),
+        )
 
     def seed(self) -> None:
         conn = self.connect_admin()
@@ -105,7 +118,9 @@ class MySqlSeeder:
             reader = _env("SECRET_AGENT_TEST_MYSQL_DB_USER", "agent_test_reader")
             reader_password = _env("SECRET_AGENT_TEST_MYSQL_DB_PASSWORD")
             cur.execute(f"CREATE DATABASE IF NOT EXISTS `{database}` CHARACTER SET utf8mb4")
-            cur.execute("CREATE USER IF NOT EXISTS %s@'%%' IDENTIFIED BY %s", (reader, reader_password))
+            cur.execute(
+                "CREATE USER IF NOT EXISTS %s@'%%' IDENTIFIED BY %s", (reader, reader_password)
+            )
             cur.execute(f"GRANT SELECT ON `{database}`.* TO %s@'%%'", (reader,))
             cur.execute(f"USE `{database}`")
             _execute_many(cur, mysql_schema_statements())
@@ -131,29 +146,35 @@ class SqlServerSeeder:
         import pymssql
 
         # CREATE DATABASE / CREATE LOGIN 不能放在多语句事务里；建库建登录要用 autocommit。
-        return cast(Connection, pymssql.connect(
-            server=_env("AGENT_TEST_SQLSERVER_HOST", "agent-test-sqlserver"),
-            port=str(_env_int("AGENT_TEST_SQLSERVER_PORT", 1433)),
-            user=_env("AGENT_TEST_SQLSERVER_ADMIN_USER", "sa"),
-            password=_env("AGENT_TEST_SQLSERVER_SA_PASSWORD"),
-            database=database,
-            login_timeout=10,
-            timeout=30,
-            autocommit=autocommit,
-        ))
+        return cast(
+            Connection,
+            pymssql.connect(
+                server=_env("AGENT_TEST_SQLSERVER_HOST", "agent-test-sqlserver"),
+                port=str(_env_int("AGENT_TEST_SQLSERVER_PORT", 1433)),
+                user=_env("AGENT_TEST_SQLSERVER_ADMIN_USER", "sa"),
+                password=_env("AGENT_TEST_SQLSERVER_SA_PASSWORD"),
+                database=database,
+                login_timeout=10,
+                timeout=30,
+                autocommit=autocommit,
+            ),
+        )
 
     def connect_reader(self) -> Connection:
         import pymssql
 
-        return cast(Connection, pymssql.connect(
-            server=_env("SECRET_AGENT_TEST_SQLSERVER_DB_HOST", "agent-test-sqlserver"),
-            port=str(_env_int("AGENT_TEST_SQLSERVER_PORT", 1433)),
-            user=_env("SECRET_AGENT_TEST_SQLSERVER_DB_USER", "agent_test_reader"),
-            password=_env("SECRET_AGENT_TEST_SQLSERVER_DB_PASSWORD"),
-            database=_env("AGENT_TEST_SQLSERVER_DATABASE", "agent_test"),
-            login_timeout=10,
-            timeout=30,
-        ))
+        return cast(
+            Connection,
+            pymssql.connect(
+                server=_env("SECRET_AGENT_TEST_SQLSERVER_DB_HOST", "agent-test-sqlserver"),
+                port=str(_env_int("AGENT_TEST_SQLSERVER_PORT", 1433)),
+                user=_env("SECRET_AGENT_TEST_SQLSERVER_DB_USER", "agent_test_reader"),
+                password=_env("SECRET_AGENT_TEST_SQLSERVER_DB_PASSWORD"),
+                database=_env("AGENT_TEST_SQLSERVER_DATABASE", "agent_test"),
+                login_timeout=10,
+                timeout=30,
+            ),
+        )
 
     def seed(self) -> None:
         database = _env("AGENT_TEST_SQLSERVER_DATABASE", "agent_test")
@@ -423,13 +444,17 @@ def _delete_fixture_rows(cursor: Cursor, placeholder: str) -> None:
     for table in reversed(TABLES):
         ids = [row[table.primary_key] for row in ROWS[table.name]]
         marks = ", ".join(_placeholder(placeholder, index) for index, _ in enumerate(ids, start=1))
-        cursor.execute(f"DELETE FROM {table.name} WHERE {table.primary_key} IN ({marks})", tuple(ids))
+        cursor.execute(
+            f"DELETE FROM {table.name} WHERE {table.primary_key} IN ({marks})", tuple(ids)
+        )
 
 
 def _insert_fixture_rows(cursor: Cursor, placeholder: str) -> None:
     for table in TABLES:
         columns = ", ".join(table.columns)
-        marks = ", ".join(_placeholder(placeholder, index) for index, _ in enumerate(table.columns, start=1))
+        marks = ", ".join(
+            _placeholder(placeholder, index) for index, _ in enumerate(table.columns, start=1)
+        )
         for row in ROWS[table.name]:
             values = tuple(row[column] for column in table.columns)
             cursor.execute(f"INSERT INTO {table.name} ({columns}) VALUES ({marks})", values)

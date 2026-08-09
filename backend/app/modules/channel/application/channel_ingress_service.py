@@ -2,6 +2,11 @@ from __future__ import annotations
 
 import hashlib
 
+from app.modules.agent.application.runtime_migration_gate import (
+    PYTHON_RUNTIME,
+    RUNTIME_PROTOCOL_V1,
+    RuntimeMigrationGate,
+)
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.business_application.application import BusinessApplicationResolver
 from app.modules.business_application.domain import (
@@ -9,6 +14,7 @@ from app.modules.business_application.domain import (
     RuntimeReason,
     RuntimeRouteResolution,
 )
+from app.modules.business_application.domain.runtime import normalize_deployment_environment
 from app.modules.channel.domain.channel_event import ChannelEvent
 from app.modules.identity.application import IdentityService
 from app.modules.job.application.create_agent_job_service import (
@@ -28,6 +34,7 @@ class ChannelIngressService:
         identity_service: IdentityService | None = None,
         unified_identity_enabled: bool = False,
         business_application_resolver: BusinessApplicationResolver | None = None,
+        runtime_migration_gate: RuntimeMigrationGate | None = None,
         runtime_environment: str = "local",
     ) -> None:
         self.create_job_service = create_job_service
@@ -35,6 +42,7 @@ class ChannelIngressService:
         self.identity_service = identity_service
         self.unified_identity_enabled = unified_identity_enabled
         self.business_application_resolver = business_application_resolver
+        self.runtime_migration_gate = runtime_migration_gate
         self.runtime_environment = runtime_environment
 
     def accept(self, event: ChannelEvent) -> AgentJob:
@@ -104,6 +112,14 @@ class ChannelIngressService:
         publication = runtime.get("publication") or {}
         deployment = runtime.get("deployment") or {}
         route = runtime.get("route") or {}
+        runtime_selection = (
+            self.runtime_migration_gate.select(
+                environment=str(deployment.get("environment") or self.runtime_environment),
+                application_publication_id=str(publication.get("id") or ""),
+            )
+            if self.runtime_migration_gate is not None
+            else None
+        )
         command = CreateAgentJobCommand(
             idempotency_key=event.effective_idempotency_key,
             requester_id=requester_id,
@@ -173,6 +189,12 @@ class ChannelIngressService:
             ),
             session_policy=dict(session_policy),
             application_execution_policy=dict(execution_policy),
+            agent_runtime_kind=(
+                runtime_selection.runtime_kind if runtime_selection else PYTHON_RUNTIME
+            ),
+            agent_runtime_protocol_version=(
+                runtime_selection.protocol_version if runtime_selection else RUNTIME_PROTOCOL_V1
+            ),
         )
         job = self.create_job_service.execute(command)
         if resolution is not None and resolution.outcome == RouteResolutionOutcome.MATCHED:
@@ -238,7 +260,7 @@ class ChannelIngressService:
                 safe_message="当前机器人未配置可用的业务应用，请联系管理员",
                 error_code=RuntimeReason.ROUTE_NOT_MATCHED.value,
             )
-        environment = "local"
+        environment = normalize_deployment_environment(self.runtime_environment)
         resolution = self.business_application_resolver.resolve_route(
             environment,
             trigger_type,
@@ -321,8 +343,7 @@ class ChannelIngressService:
                 for value in deliveries
                 if isinstance(value, dict)
                 and bool(value.get("enabled", True))
-                and str(value.get("delivery_type") or "")
-                in {"dingtalk_group", "webhook_callback"}
+                and str(value.get("delivery_type") or "") in {"dingtalk_group", "webhook_callback"}
             ]
             if len(supported) != 1:
                 raise NonRetryableExecutionError(
@@ -335,9 +356,7 @@ class ChannelIngressService:
             if not isinstance(config, dict):
                 config = {}
             delivery_type = str(binding.get("delivery_type") or "")
-            target_reference = str(
-                config.get("target_reference") or ""
-            )
+            target_reference = str(config.get("target_reference") or "")
             if not target_reference:
                 raise NonRetryableExecutionError(
                     "Business Application Webhook delivery target is missing",
@@ -354,9 +373,7 @@ class ChannelIngressService:
                 target = {"target_reference": target_reference}
             return {
                 "type": route_type,
-                "connector_id": str(
-                    binding.get("connector_id") or ""
-                ),
+                "connector_id": str(binding.get("connector_id") or ""),
                 "target": target,
                 "options": {
                     "business_application_delivery_type": delivery_type,

@@ -62,20 +62,7 @@ class BusinessAuthorizationService:
             user_id=user_id,
             application_id=str(application["id"]),
         )
-        matching_roles = [
-            str(access["role_code"])
-            for access in accesses
-            if not (environment or base or workshop)
-            or any(
-                self._scope_matches(
-                    scope,
-                    environment=environment,
-                    base=base,
-                    workshop=workshop,
-                )
-                for scope in access["scopes"]
-            )
-        ]
+        matching_roles = [str(access["role_code"]) for access in accesses]
         return self._decision(
             bool(matching_roles),
             stage,

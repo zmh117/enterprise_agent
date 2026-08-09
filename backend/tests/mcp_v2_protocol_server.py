@@ -14,8 +14,15 @@ from services.mcp_common import (
 from services.ones_mcp_server.app import create_app
 
 
+class _HealthQuery:
+    def execute_one(self, _sql):
+        return {"ready": 1}
+
+
 class ProtocolOnlyPlatformStore:
     """Protocol fixture; production create_app never selects this authorizer."""
+
+    query = _HealthQuery()
 
     def authorize_request(self, claims):
         return JobContext(

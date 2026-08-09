@@ -84,17 +84,13 @@ def test_outbox_failure_retries_then_becomes_dead_without_leaking_error() -> Non
 def test_stale_claim_is_recovered_and_only_one_minimal_message_is_published() -> None:
     c = container()
     event = _accepted_event(c, "recover")
-    claimed = c.webhook_event_repository.claim_outbox(
-        worker_id="crashed-worker", now=now_iso()
-    )
+    claimed = c.webhook_event_repository.claim_outbox(worker_id="crashed-worker", now=now_iso())
     assert claimed
     c.database.execute(
         "update webhook_outbox set claimed_at = '2000-01-01T00:00:00+00:00' where id = ?",
         (claimed["id"],),
     )
-    assert c.webhook_event_repository.claim_outbox(
-        worker_id="other-worker", now=now_iso()
-    ) is None
+    assert c.webhook_event_repository.claim_outbox(worker_id="other-worker", now=now_iso()) is None
 
     result = c.webhook_outbox_publisher.publish_pending()
     assert result.published == 1

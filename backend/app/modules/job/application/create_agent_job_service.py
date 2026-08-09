@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from app.modules.agent_config.application import AgentConfigService
+from app.modules.agent.application.runtime_migration_gate import validate_frozen_runtime
 from app.modules.authorization_center.application import BusinessAuthorizationService
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.attachments.credentials import AttachmentCredentialCipher
@@ -79,6 +80,8 @@ class CreateAgentJobCommand:
     session_policy: dict[str, Any] = field(default_factory=dict)
     application_execution_policy: dict[str, Any] = field(default_factory=dict)
     continue_session_id: str = ""
+    agent_runtime_kind: str = "python-v1"
+    agent_runtime_protocol_version: str = "1.0"
 
     @property
     def effective_requester_id(self) -> str:
@@ -166,6 +169,10 @@ class CreateAgentJobService:
                 safe_message="系统处于维护窗口，暂不接收新的 Agent Job",
                 error_code="job_ingress_maintenance",
             )
+        validate_frozen_runtime(
+            command.agent_runtime_kind,
+            command.agent_runtime_protocol_version,
+        )
         if command.conversation_mode in {"application", "actor"}:
             raise NonRetryableExecutionError(
                 "Legacy shared session mode cannot create new Jobs",
@@ -480,6 +487,8 @@ class CreateAgentJobService:
                 },
                 execution_policy=execution_policy.to_dict(),
                 model_runtime_provenance=model_runtime_provenance,
+                agent_runtime_kind=command.agent_runtime_kind,
+                agent_runtime_protocol_version=command.agent_runtime_protocol_version,
             )
             if self.mcp_binding_service is not None:
                 self.mcp_binding_service.freeze(job)
@@ -540,6 +549,8 @@ class CreateAgentJobService:
                     "agent_revision": agent_revision,
                     "agent_config_hash": agent_config_hash,
                     "model_runtime_provenance": model_runtime_provenance,
+                    "agent_runtime_kind": command.agent_runtime_kind,
+                    "agent_runtime_protocol_version": (command.agent_runtime_protocol_version),
                     "webhook_event_id": command.webhook_event_id,
                     "webhook_trigger_id": command.webhook_trigger_id,
                     "webhook_trigger_publication_id": command.webhook_trigger_publication_id,

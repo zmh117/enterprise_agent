@@ -9,11 +9,10 @@ from app.modules.job.domain.agent_job import AgentJob
 from app.modules.job.infrastructure.repositories import new_id, now_iso
 from app.shared.database import Database
 from app.shared.exceptions import NonRetryableExecutionError
+from services.mcp_common import get_catalog_entry
 
 
-_ONES_REVERIFY_MESSAGE = (
-    "ONES 查询暂不可用，请在本人身份页面重新验证 ONES 并确认默认 Team。"
-)
+_ONES_REVERIFY_MESSAGE = "ONES 查询暂不可用，请在本人身份页面重新验证 ONES 并确认默认 Team。"
 _DATA_UNAVAILABLE_MESSAGE = "数据诊断工具暂不可用，请联系管理员检查资源发布状态。"
 
 
@@ -33,11 +32,15 @@ class McpJobBindingService:
         app_user_id = job.internal_user_id or job.user_id
         publications = self.database.execute(
             """
-            select * from mcp_tool_publication
-             where agent_publication_id = ?
-               and coalesce(application_publication_id, '') = ?
-               and status = 'ACTIVE'
-             order by server_code, tool_name, resource_code
+            select p.* from mcp_tool_publication p
+              join agent_publication_mcp_tool a
+                on a.tool_publication_id = p.id
+              join business_application_publication_mcp_tool b
+                on b.tool_publication_id = p.id
+             where a.agent_publication_id = ?
+               and b.application_publication_id = ?
+               and p.status = 'PUBLISHED'
+             order by p.server_code, p.tool_name, p.resource_code
             """,
             (job.agent_publication_id, job.business_application_publication_id or ""),
         )
@@ -224,6 +227,26 @@ class McpJobBindingService:
         binding: dict[str, Any],
         snapshot: dict[str, Any],
     ) -> str:
+        publication = self.database.execute_one(
+            "select * from mcp_tool_publication where id = ?",
+            (binding["tool_publication_id"],),
+        )
+        if publication is None or str(publication["status"]) != "PUBLISHED":
+            return "mcp_tool_publication_revoked"
+        try:
+            catalog = get_catalog_entry(str(publication["catalog_key"]))
+        except ValueError:
+            return "mcp_tool_catalog_mismatch"
+        if any(
+            (
+                catalog.server_code != str(binding["server_code"]),
+                catalog.tool_name != str(binding["tool_name"]),
+                catalog.required_scope != str(binding["required_scope"]),
+                catalog.tool_schema_hash != str(binding["tool_schema_hash"]),
+                catalog.server_version != str(publication["server_version"]),
+            )
+        ):
+            return "mcp_tool_catalog_mismatch"
         user = self.database.execute_one(
             "select status from app_user where id = ?",
             (snapshot["app_user_id"],),
@@ -244,10 +267,8 @@ class McpJobBindingService:
                     str(identity["external_subject_id"]) != str(snapshot["external_subject"]),
                     str(identity.get("provider_instance_id") or "")
                     != str(snapshot["provider_instance_id"]),
-                    str(metadata.get("default_team_id") or "")
-                    != str(snapshot["default_team_id"]),
-                    int(identity.get("binding_revision") or 0)
-                    != int(snapshot["binding_revision"]),
+                    str(metadata.get("default_team_id") or "") != str(snapshot["default_team_id"]),
+                    int(identity.get("binding_revision") or 0) != int(snapshot["binding_revision"]),
                 )
             ):
                 return "ones_subject_snapshot_mismatch"
@@ -285,8 +306,7 @@ class McpJobBindingService:
                 str(deployment["status"]) != "ACTIVE",
                 str(deployment["lifecycle_status"]) != "ENABLED",
                 str(deployment["revision_status"]) != "PUBLISHED",
-                str(deployment["resource_revision_id"])
-                != str(binding["resource_revision_id"]),
+                str(deployment["resource_revision_id"]) != str(binding["resource_revision_id"]),
                 str(deployment.get("generation_status") or "") != "ACTIVE",
                 str(deployment.get("generation_resource_revision_id") or "")
                 != str(binding["resource_revision_id"]),

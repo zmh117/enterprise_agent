@@ -122,9 +122,7 @@ class OnesRuntimeResolver:
         if snapshot.default_team_id not in team_ids:
             raise ToolError("ONES default Team is no longer verified")
         allowed_hosts = tuple(
-            str(value).lower()
-            for value in _list(row.get("allowed_hosts_json"))
-            if str(value)
+            str(value).lower() for value in _list(row.get("allowed_hosts_json")) if str(value)
         )
         base_url = self._validated_base_url(str(row.get("base_url") or ""), allowed_hosts)
         token = self.decryptor.decrypt(
@@ -303,9 +301,7 @@ class HttpOnesWorkItemSearchService:
 
 
 def build_default_ones_service(store: PlatformRuntimeStore) -> HttpOnesWorkItemSearchService:
-    decryptor = ProviderTokenDecryptor.from_file(
-        os.environ.get("APP_CONFIG_MASTER_KEY_FILE", "")
-    )
+    decryptor = ProviderTokenDecryptor.from_file(os.environ.get("APP_CONFIG_MASTER_KEY_FILE", ""))
     resolver = OnesRuntimeResolver(
         store,
         decryptor,

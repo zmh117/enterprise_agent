@@ -74,9 +74,7 @@ def test_chunk_retry_skips_recorded_success_and_duplicate_event_is_idempotent() 
         waiting = runtime.agent_repository.get_delivery_event(event.id)
         assert first.retrying == 1
         assert waiting.status.value == "RETRY_WAIT"
-        chunks_after_first = runtime.agent_repository.list_delivery_chunks(
-            job.id
-        )
+        chunks_after_first = runtime.agent_repository.list_delivery_chunks(job.id)
         assert [row["status"] for row in chunks_after_first] == [
             "SUCCEEDED",
             "FAILED",
@@ -109,9 +107,7 @@ def test_chunk_retry_skips_recorded_success_and_duplicate_event_is_idempotent() 
             (event.id,),
         ) == {"count": 3}
 
-        artifact = runtime.agent_repository.get_artifact(
-            event.result_artifact_id
-        )
+        artifact = runtime.agent_repository.get_artifact(event.result_artifact_id)
         duplicate_id = runtime.result_delivery_service.enqueue_job_result(
             job_id=job.id,
             artifact_id=str(artifact["id"]),

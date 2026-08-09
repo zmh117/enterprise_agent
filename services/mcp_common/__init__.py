@@ -16,6 +16,12 @@ from services.mcp_common.contracts import (
     ToolBindingContext,
     schema_hash,
 )
+from services.mcp_common.tool_catalog import (
+    MCP_TOOL_CATALOG,
+    McpToolCatalogEntry,
+    catalog_entries,
+    get_catalog_entry,
+)
 
 __all__ = [
     "JobContext",
@@ -32,4 +38,8 @@ __all__ = [
     "ToolBindingContext",
     "load_signing_key",
     "schema_hash",
+    "MCP_TOOL_CATALOG",
+    "McpToolCatalogEntry",
+    "catalog_entries",
+    "get_catalog_entry",
 ]

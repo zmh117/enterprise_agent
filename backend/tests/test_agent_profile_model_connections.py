@@ -9,7 +9,11 @@ from dataclasses import replace
 from typing import Any
 
 import pytest
-from app.bootstrap import build_test_container
+from app.bootstrap import (
+    _ensure_default_model_connection_for_service,
+    _runtime_model_probe_for_service,
+    build_test_container,
+)
 from app.modules.agent.domain.runtime import AgentExecutionContext, AgentRunRequest
 from app.modules.agent.infrastructure.claude_code_agent_client import (
     ClaudeSdk,
@@ -19,7 +23,7 @@ from app.modules.model_connection.domain import (
     DEFAULT_MODEL_CONNECTION_CODE,
     ModelRuntimeBinding,
 )
-from app.shared.config import ExecutionSettings, IdentitySettings
+from app.shared.config import AgentRuntimeSettings, ExecutionSettings, IdentitySettings
 from app.shared.exceptions import NonRetryableExecutionError
 from backend.tests.helpers import test_settings as build_settings
 
@@ -69,6 +73,51 @@ def deepseek_config(model: str = "deepseek-v4-flash") -> dict[str, str]:
 
 def fake_secret(label: str) -> str:
     return hashlib.sha256(f"runtime-generated-test-value:{label}".encode()).hexdigest()
+
+
+def test_model_probe_token_is_required_only_by_api_control_plane() -> None:
+    settings = replace(
+        build_settings(),
+        agent_runtime=AgentRuntimeSettings(
+            base_url="http://agent-runtime:8090",
+            allowed_hosts=("agent-runtime",),
+            model_probe_auth_token_file="/run/secrets/missing-model-probe-token",
+            allow_insecure_internal_http=True,
+        ),
+    )
+
+    assert _runtime_model_probe_for_service(settings, "agent-worker") is None
+    with pytest.raises(ValueError, match="Model probe auth token is unreadable"):
+        _runtime_model_probe_for_service(settings, "api-server")
+
+
+def test_default_model_connection_bootstrap_is_not_run_by_workers() -> None:
+    class Recorder:
+        def __init__(self) -> None:
+            self.configs: list[dict[str, Any]] = []
+
+        def ensure_default_connection(self, *, config: dict[str, Any]) -> None:
+            self.configs.append(config)
+
+    recorder = Recorder()
+    settings = build_settings()
+
+    _ensure_default_model_connection_for_service(recorder, settings, "agent-worker")
+    assert recorder.configs == []
+
+    _ensure_default_model_connection_for_service(recorder, settings, "api-server")
+    assert recorder.configs == [
+        {
+            "protocol": "anthropic_compatible",
+            "base_url": "https://api.deepseek.com/anthropic",
+            "model": settings.claude_model,
+            "default_opus_model": settings.claude_model,
+            "default_sonnet_model": settings.claude_model,
+            "default_haiku_model": settings.claude_model,
+            "subagent_model": settings.claude_model,
+            "effort_level": "max",
+        }
+    ]
 
 
 def ready_connection(c):
@@ -211,6 +260,31 @@ def test_connection_revision_is_immutable_while_credential_rotation_is_active() 
     assert c.model_connection_service.resolve_api_key(binding) == fake_secret("connection-v2")
 
 
+def test_credential_rotation_idempotency_does_not_create_a_second_revision() -> None:
+    c = container()
+    current = ready_connection(c)
+    rotated = c.model_connection_service.rotate_credential(
+        actor_id=ADMIN_ID,
+        code=DEFAULT_MODEL_CONNECTION_CODE,
+        expected_revision=int(current["revision"]),
+        api_key=fake_secret("idempotent-rotation"),
+        idempotency_key="model-credential-idempotency",
+    )
+    replayed = c.model_connection_service.rotate_credential(
+        actor_id=ADMIN_ID,
+        code=DEFAULT_MODEL_CONNECTION_CODE,
+        expected_revision=int(current["revision"]),
+        api_key=fake_secret("idempotent-rotation"),
+        idempotency_key="model-credential-idempotency",
+    )
+
+    assert replayed == rotated
+    assert (
+        c.model_connection_service.get(DEFAULT_MODEL_CONNECTION_CODE)["revision"]
+        == int(current["revision"]) + 1
+    )
+
+
 def test_provider_url_rejects_private_dns_and_unapproved_hosts() -> None:
     c = container()
     connection = c.model_connection_service.get(DEFAULT_MODEL_CONNECTION_CODE)
@@ -320,9 +394,58 @@ def test_saved_connection_probe_rejects_redirect_before_invoking_sdk() -> None:
         c.model_connection_service.test_saved_revision(
             actor_id=ADMIN_ID,
             revision_id=str(revision["id"]),
+            expected_revision=int(revision["revision"]),
         )
     assert rejected.value.error_code == "model_connection_redirect_rejected"
     assert invoked is False
+
+
+def test_saved_connection_probe_delegates_revision_hash_to_typescript_runtime() -> None:
+    c = container()
+    revision = ready_connection(c)
+    observed: dict[str, Any] = {}
+
+    class Probe:
+        def probe(self, **kwargs: Any) -> dict[str, Any]:
+            observed.update(kwargs)
+            return {
+                "protocol_version": "1.0",
+                "probe_id": "probe-safe-result",
+                "success": True,
+                "connection_revision_id": revision["id"],
+                "provider_host": "api.deepseek.com",
+                "model": "deepseek-v4-flash",
+                "runtime_version": "0.1.0",
+                "sdk_version": "0.3.226",
+                "duration_ms": 12,
+            }
+
+    c.model_connection_service.runtime_probe = Probe()
+    c.model_connection_service.redirect_checker = lambda *_args, **_kwargs: None
+    result = c.model_connection_service.test_saved_revision(
+        actor_id=ADMIN_ID,
+        revision_id=str(revision["id"]),
+        expected_revision=int(revision["revision"]),
+        idempotency_key="saved-revision-probe",
+    )
+    replayed = c.model_connection_service.test_saved_revision(
+        actor_id=ADMIN_ID,
+        revision_id=str(revision["id"]),
+        expected_revision=int(revision["revision"]),
+        idempotency_key="saved-revision-probe",
+    )
+
+    assert observed == {
+        "revision_id": revision["id"],
+        "config_hash": revision["config_hash"],
+        "timeout_seconds": 15,
+    }
+    assert result["runtime"] == "typescript-v1"
+    assert result["sdk_version"] == "0.3.226"
+    assert replayed == result
+    serialized = json.dumps(result)
+    assert "secret" not in serialized.lower()
+    assert "key" not in serialized.lower()
 
 
 def test_concurrent_jobs_do_not_leak_process_environment_between_connections() -> None:

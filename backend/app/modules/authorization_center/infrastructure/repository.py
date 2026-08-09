@@ -408,30 +408,11 @@ class AuthorizationCenterRepository:
             (user_id, application_id, now_iso()),
         )
         for row in rows:
-            row["capability_codes"] = [
-                str(item["capability_code"])
-                for item in self.database.execute(
-                    """
-                    select capability_code from rbac_role_application_capability
-                     where application_access_id = ? order by capability_code
-                    """,
-                    (row["id"],),
-                )
-            ]
-            row["scopes"] = self.database.execute(
-                """
-                select s.id, s.scope_key, s.environment_id, s.base_id,
-                       s.workshop_id, e.code as environment_code,
-                       b.code as base_code, w.code as workshop_code
-                  from rbac_role_application_scope s
-                  join platform_environment e on e.id = s.environment_id
-                  left join platform_base b on b.id = s.base_id
-                  left join platform_workshop w on w.id = s.workshop_id
-                 where s.application_access_id = ?
-                 order by s.scope_key
-                """,
-                (row["id"],),
-            )
+            # Capability and platform environment/base/workshop scopes were
+            # irreversibly retired. Runtime authorization is now the stable
+            # Application role plus the immutable Publication/Trigger facts.
+            row["capability_codes"] = []
+            row["scopes"] = []
         return rows
 
     def application_catalog(self) -> list[dict[str, Any]]:

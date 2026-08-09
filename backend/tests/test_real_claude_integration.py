@@ -46,9 +46,7 @@ def test_real_claude_sdk_baseline_compatibility_smoke() -> None:
     )
 
 
-def _run_real_smoke(
-    *, model: str, api_key: str, base_url: str, idempotency_key: str
-) -> None:
+def _run_real_smoke(*, model: str, api_key: str, base_url: str, idempotency_key: str) -> None:
     from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
 
     c = container()

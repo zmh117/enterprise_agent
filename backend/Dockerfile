@@ -67,7 +67,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-deps --no-build-isolation .
 CMD ["python", "-m", "app.workers.dingtalk_stream_ingress_worker"]
 
-FROM claude-runtime AS agent-worker
+FROM python-deps AS agent-worker
 COPY backend/app/__init__.py backend/app/bootstrap.py /app/backend/app/
 COPY backend/app/cli /app/backend/app/cli
 COPY backend/app/shared /app/backend/app/shared
@@ -93,6 +93,7 @@ COPY backend/app/modules/job/infrastructure /app/backend/app/modules/job/infrast
 COPY backend/app/modules/managed_channel /app/backend/app/modules/managed_channel
 COPY backend/app/modules/mcp_resources /app/backend/app/modules/mcp_resources
 COPY backend/app/modules/mcp_runtime /app/backend/app/modules/mcp_runtime
+COPY backend/app/modules/mcp_tool_publications /app/backend/app/modules/mcp_tool_publications
 COPY backend/app/modules/message_bus /app/backend/app/modules/message_bus
 COPY backend/app/modules/model_connection /app/backend/app/modules/model_connection
 COPY backend/app/modules/permission /app/backend/app/modules/permission
@@ -105,7 +106,6 @@ COPY services/mcp_common /app/services/mcp_common
 COPY backend/app/workers /app/backend/app/workers
 COPY backend/migrations /app/backend/migrations
 COPY backend/seeds /app/backend/seeds
-COPY .claude /app/.claude
 RUN python -c "import app.bootstrap; import app.workers.agent_job_worker; import app.workers.job_dispatch_worker; import app.workers.delivery_dispatch_worker; import app.workers.webhook_dispatch_worker; import app.workers.channel_dispatch_worker"
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-deps --no-build-isolation .

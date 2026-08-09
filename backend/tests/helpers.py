@@ -371,7 +371,7 @@ def _install_immutable_application(
         insert into business_application_deployment
           (id, application_id, environment, publication_id, active, revision,
            activated_by, activated_at, updated_at)
-        values (?, ?, 'local', ?, 1, 1, 'test-bootstrap', ?, ?)
+        values (?, ?, 'test', ?, 1, 1, 'test-bootstrap', ?, ?)
         """,
         (deployment_id, application_id, publication_id, timestamp, timestamp),
     )
@@ -381,7 +381,7 @@ def _install_immutable_application(
             insert into business_application_active_route
               (id, deployment_id, application_id, publication_id, environment,
                trigger_type, connector_id, normalized_routing_key, created_at)
-            values (?, ?, ?, ?, 'local', ?, ?, ?, ?)
+            values (?, ?, ?, ?, 'test', ?, ?, ?, ?)
             """,
             (
                 f"test-application-route-{key}-{index}",
@@ -415,38 +415,11 @@ def _grant_application_scope(
     base_code: str,
     workshop_code: str,
 ) -> None:
+    del environment_code, base_code, workshop_code
     timestamp = datetime.now(UTC).isoformat()
     role_id = f"test-role-{code}"
     membership_id = f"test-membership-{code}"
     access_id = f"test-application-access-{code}"
-    environment_id = f"test-environment-{code}"
-    base_id = f"test-base-{code}"
-    workshop_id = f"test-workshop-{code}"
-    runtime.database.execute(
-        """
-        insert into platform_environment
-          (id, code, display_name, status, created_at, updated_at)
-        values (?, ?, ?, 'enabled', ?, ?)
-        """,
-        (environment_id, environment_code, environment_code, timestamp, timestamp),
-    )
-    runtime.database.execute(
-        """
-        insert into platform_base
-          (id, environment_id, code, display_name, engine, status,
-           created_at, updated_at)
-        values (?, ?, ?, ?, 'postgresql', 'enabled', ?, ?)
-        """,
-        (base_id, environment_id, base_code, base_code, timestamp, timestamp),
-    )
-    runtime.database.execute(
-        """
-        insert into platform_workshop
-          (id, base_id, code, display_name, status, created_at, updated_at)
-        values (?, ?, ?, ?, 'enabled', ?, ?)
-        """,
-        (workshop_id, base_id, workshop_code, workshop_code, timestamp, timestamp),
-    )
     runtime.database.execute(
         """
         insert into rbac_role
@@ -474,23 +447,6 @@ def _grant_application_scope(
         values (?, ?, ?, 'enabled', 1, ?, ?)
         """,
         (access_id, role_id, application_id, timestamp, timestamp),
-    )
-    runtime.database.execute(
-        """
-        insert into rbac_role_application_scope
-          (id, application_access_id, environment_id, base_id, workshop_id,
-           scope_key, created_at)
-        values (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            f"test-application-scope-{code}",
-            access_id,
-            environment_id,
-            base_id,
-            workshop_id,
-            f"{environment_code}/{base_code}/{workshop_code}",
-            timestamp,
-        ),
     )
 
 

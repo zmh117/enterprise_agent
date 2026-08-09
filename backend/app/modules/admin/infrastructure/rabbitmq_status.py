@@ -48,9 +48,7 @@ class RabbitMQQueueStatusAdapter:
         host = parsed.hostname or "localhost"
         broker_port = parsed.port
         management_port = (
-            15672
-            if broker_port is None or broker_port == 5672
-            else broker_port + 10000
+            15672 if broker_port is None or broker_port == 5672 else broker_port + 10000
         )
         vhost = unquote(parsed.path.removeprefix("/")) or "/"
         url = f"http://{host}:{management_port}/api/queues/{quote(vhost, safe='')}/{quote(item['name'], safe='')}"

@@ -47,10 +47,88 @@ def _capability(
     )
 
 
-# The heavy web administration catalog was retired.  The remaining assignable
-# operations are the audited CLI control surfaces for MCP resources, encrypted
-# secrets and the one-way cutover.
+# Code-owned management capabilities cover the narrow Agent/Application/MCP
+# control plane. They do not restore the retired API Capability or Internal
+# Platform executors.
 ADMIN_CAPABILITIES: tuple[CapabilityDefinition, ...] = (
+    _capability("agents.read", "agent_management", "agent", "read", "查看 Agent"),
+    _capability(
+        "agents.edit",
+        "agent_management",
+        "agent",
+        "edit",
+        "编辑 Agent",
+        risk_level="medium",
+        dependencies=("agents.read",),
+    ),
+    _capability(
+        "agents.publish",
+        "agent_management",
+        "agent",
+        "publish",
+        "发布或回退 Agent",
+        risk_level="high",
+        dependencies=("agents.edit",),
+    ),
+    _capability(
+        "applications.read",
+        "application_management",
+        "business_application",
+        "read",
+        "查看业务应用",
+    ),
+    _capability(
+        "applications.create",
+        "application_management",
+        "business_application",
+        "create",
+        "创建业务应用",
+        risk_level="medium",
+        dependencies=("applications.read",),
+    ),
+    _capability(
+        "applications.edit",
+        "application_management",
+        "business_application",
+        "edit",
+        "编辑业务应用",
+        risk_level="medium",
+        dependencies=("applications.read",),
+    ),
+    _capability(
+        "applications.publish",
+        "application_management",
+        "business_application",
+        "publish",
+        "发布业务应用",
+        risk_level="high",
+        dependencies=("applications.edit",),
+    ),
+    _capability(
+        "applications.activate",
+        "application_management",
+        "business_application",
+        "activate",
+        "激活或停用应用环境",
+        risk_level="high",
+        dependencies=("applications.publish",),
+    ),
+    _capability(
+        "mcp_tools.read",
+        "mcp_operations",
+        "mcp_tool",
+        "read",
+        "查看 MCP Tool Publication",
+    ),
+    _capability(
+        "mcp_tools.manage",
+        "mcp_operations",
+        "mcp_tool",
+        "manage",
+        "管理 MCP Tool Publication",
+        risk_level="high",
+        dependencies=("mcp_tools.read",),
+    ),
     _capability(
         "mcp_resources.read",
         "mcp_operations",

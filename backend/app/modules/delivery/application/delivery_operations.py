@@ -52,9 +52,7 @@ class DeliveryOperationsService:
                 error_code="delivery_replay_reason_required",
             )
         current = self._resolve(delivery_id)
-        reason_digest = hashlib.sha256(
-            normalized_reason.encode("utf-8")
-        ).hexdigest()
+        reason_digest = hashlib.sha256(normalized_reason.encode("utf-8")).hexdigest()
         overrides = {
             "connector": bool(connector_id.strip()),
             "target": bool(target.strip()),
@@ -66,8 +64,7 @@ class DeliveryOperationsService:
                     "delivery.replay.rejected",
                     status="DENIED",
                     summary=(
-                        "Delivery replay rejected because persisted intent "
-                        "override was requested"
+                        "Delivery replay rejected because persisted intent override was requested"
                     ),
                     job_id=current.job_id,
                     actor_id=normalized_actor,
@@ -92,8 +89,7 @@ class DeliveryOperationsService:
                 "delivery.replayed",
                 status="SUCCEEDED",
                 summary=(
-                    "DEAD Delivery was rearmed using its frozen binding "
-                    "and persisted artifact"
+                    "DEAD Delivery was rearmed using its frozen binding and persisted artifact"
                 ),
                 job_id=replayed.job_id,
                 actor_id=normalized_actor,

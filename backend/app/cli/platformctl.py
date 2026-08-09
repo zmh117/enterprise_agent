@@ -80,7 +80,12 @@ class PlatformClient:
         return {"status": "logged_in", "user": payload.get("user", {})}
 
     def request(
-        self, path: str, *, method: str = "GET", body: dict[str, Any] | None = None
+        self,
+        path: str,
+        *,
+        method: str = "GET",
+        body: dict[str, Any] | None = None,
+        idempotency_key: str = "",
     ) -> dict[str, Any]:
         if not self.base_url:
             raise PlatformCtlError("请先执行 platformctl login")
@@ -91,6 +96,8 @@ class PlatformClient:
         }
         if method != "GET":
             headers["X-CSRF-Token"] = str(self.session["csrf"])
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
         status, _, payload = self._raw_request(
             self.base_url + path,
             method=method,
@@ -219,6 +226,34 @@ def build_parser() -> argparse.ArgumentParser:
     mcp_commands = mcp.add_subparsers(dest="mcp_command", required=True)
     mcp_commands.add_parser("tools")
     mcp_commands.add_parser("status")
+    publication = mcp_commands.add_parser("publication")
+    publication_commands = publication.add_subparsers(dest="publication_command", required=True)
+    publication_commands.add_parser("list")
+    publication_commands.add_parser("catalog")
+    show_publication = publication_commands.add_parser("show")
+    show_publication.add_argument("code")
+    create_publication = publication_commands.add_parser("create")
+    create_publication.add_argument("code")
+    create_publication.add_argument("--name", required=True)
+    create_publication.add_argument("--catalog-key", required=True)
+    create_publication.add_argument("--resource-deployment-id", default="")
+    create_publication.add_argument("--idempotency-key", required=True)
+    update_publication = publication_commands.add_parser("update")
+    update_publication.add_argument("code")
+    update_publication.add_argument("--catalog-key", required=True)
+    update_publication.add_argument("--resource-deployment-id", default="")
+    update_publication.add_argument("--expected-revision", type=int, required=True)
+    update_publication.add_argument("--idempotency-key", required=True)
+    for name in ("verify", "publish", "disable", "archive"):
+        item = publication_commands.add_parser(name)
+        item.add_argument("code")
+        item.add_argument("--expected-revision", type=int, required=True)
+        item.add_argument("--idempotency-key", required=True)
+    rollback_publication = publication_commands.add_parser("rollback")
+    rollback_publication.add_argument("code")
+    rollback_publication.add_argument("--publication-id", required=True)
+    rollback_publication.add_argument("--expected-revision", type=int, required=True)
+    rollback_publication.add_argument("--idempotency-key", required=True)
 
     cutover = commands.add_parser("cutover")
     cutover_commands = cutover.add_subparsers(dest="cutover_command", required=True)
@@ -320,6 +355,47 @@ def execute(args: argparse.Namespace, client: PlatformClient) -> dict[str, Any]:
     if args.command == "mcp":
         if args.mcp_command == "tools":
             return client.request("/api/admin/mcp/tools")
+        if args.mcp_command == "publication":
+            operation = args.publication_command
+            if operation == "catalog":
+                return client.request("/api/admin/mcp/tools")
+            if operation == "list":
+                return client.request("/api/admin/mcp/tool-publications")
+            if operation == "show":
+                return client.request(f"/api/admin/mcp/tool-publications/{args.code}")
+            if operation == "create":
+                return client.request(
+                    "/api/admin/mcp/tool-publications",
+                    method="POST",
+                    body={
+                        "expected_revision": 0,
+                        "code": args.code,
+                        "name": args.name,
+                        "catalog_key": args.catalog_key,
+                        "resource_deployment_id": args.resource_deployment_id,
+                    },
+                    idempotency_key=args.idempotency_key,
+                )
+            if operation == "update":
+                return client.request(
+                    f"/api/admin/mcp/tool-publications/{args.code}/draft",
+                    method="PUT",
+                    body={
+                        "catalog_key": args.catalog_key,
+                        "resource_deployment_id": args.resource_deployment_id,
+                        "expected_revision": args.expected_revision,
+                    },
+                    idempotency_key=args.idempotency_key,
+                )
+            body = {"expected_revision": args.expected_revision}
+            if operation == "rollback":
+                body["publication_id"] = args.publication_id
+            return client.request(
+                f"/api/admin/mcp/tool-publications/{args.code}/{operation}",
+                method="POST",
+                body=body,
+                idempotency_key=args.idempotency_key,
+            )
         return client.request("/api/admin/mcp/status")
     if args.command == "cutover":
         if args.cutover_command == "check":

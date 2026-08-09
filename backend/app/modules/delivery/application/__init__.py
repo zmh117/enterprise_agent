@@ -1,4 +1,5 @@
 """Delivery application services."""
+
 from app.modules.delivery.application.delivery_dispatch_service import (
     DeliveryDispatchResult,
     DeliveryOutboxDispatcher,

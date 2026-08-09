@@ -9,8 +9,18 @@ class JobStatusService:
     def __init__(self, repository: AgentRepository) -> None:
         self.repository = repository
 
-    def claim(self, job_id: str, worker_id: str) -> AgentJob | None:
-        return self.repository.claim_job(job_id, worker_id)
+    def claim(
+        self,
+        job_id: str,
+        worker_id: str,
+        *,
+        recover_typescript_running: bool = False,
+    ) -> AgentJob | None:
+        return self.repository.claim_job(
+            job_id,
+            worker_id,
+            recover_typescript_running=recover_typescript_running,
+        )
 
     def succeed(self, job_id: str, result: str) -> AgentJob:
         return self.repository.transition_job(
@@ -31,4 +41,12 @@ class JobStatusService:
             job_id=job_id,
             target=JobStatus.TIMEOUT,
             error_message=error_message,
+        )
+
+    def cancel(self, job_id: str, error_message: str = "任务已取消") -> AgentJob:
+        return self.repository.transition_job(
+            job_id=job_id,
+            target=JobStatus.CANCELLED,
+            error_message=error_message,
+            error_code="job_cancelled",
         )

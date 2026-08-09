@@ -14,7 +14,7 @@ from app.modules.business_application.domain.models import (
 from app.shared.exceptions import NonRetryableExecutionError
 
 CODE_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$")
-ENVIRONMENTS = {"local"}
+ENVIRONMENTS = {"test", "production"}
 SESSION_POLICY_FIELDS = {
     "conversation_mode",
     "recent_message_limit",
@@ -73,7 +73,7 @@ def validate_environment(value: str) -> str:
     if normalized not in ENVIRONMENTS:
         raise validation_error(
             "environment",
-            "仅支持业务应用的 local 环境",
+            "仅支持业务应用的 test 或 production 环境",
         )
     return normalized
 
@@ -129,9 +129,7 @@ def validate_execution_policy(value: dict[str, Any]) -> dict[str, Any]:
     }
     for key, (minimum, maximum) in ranges.items():
         if not minimum <= normalized[key] <= maximum:
-            raise validation_error(
-                f"execution_policy.{key}", f"必须在 {minimum} 到 {maximum} 之间"
-            )
+            raise validation_error(f"execution_policy.{key}", f"必须在 {minimum} 到 {maximum} 之间")
     return normalized
 
 
@@ -163,9 +161,7 @@ def validate_trigger(value: dict[str, Any], index: int) -> dict[str, Any]:
             "钉钉必须使用 CURRENT_SENDER",
         )
     if actor_policy == ActorPolicy.SERVICE_ACCOUNT and not service_account:
-        raise validation_error(
-            f"triggers.{index}.service_account_user_id", "必须选择服务账号"
-        )
+        raise validation_error(f"triggers.{index}.service_account_user_id", "必须选择服务账号")
     if actor_policy == ActorPolicy.CURRENT_SENDER and service_account:
         raise validation_error(
             f"triggers.{index}.service_account_user_id",
@@ -195,9 +191,7 @@ def validate_delivery(value: dict[str, Any], index: int) -> dict[str, Any]:
     try:
         delivery_type = DeliveryType(str(value.get("delivery_type") or "")).value
     except ValueError as exc:
-        raise validation_error(
-            f"deliveries.{index}.delivery_type", "投递类型无效"
-        ) from exc
+        raise validation_error(f"deliveries.{index}.delivery_type", "投递类型无效") from exc
     connector_id = str(value.get("connector_id") or "").strip()
     if not connector_id or len(connector_id) > 200:
         raise validation_error(f"deliveries.{index}.connector_id", "必须选择连接器")
@@ -275,7 +269,5 @@ def _reject_unknown(value: dict[str, Any], allowed: set[str], field: str) -> Non
             f"Unknown fields in {field}",
             safe_message="业务应用配置无效",
             error_code="validation_failed",
-            field_errors=[
-                {"field": f"{field}.{key}", "message": "未知字段"} for key in unknown
-            ],
+            field_errors=[{"field": f"{field}.{key}", "message": "未知字段"} for key in unknown],
         )

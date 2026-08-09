@@ -28,8 +28,7 @@ class LegacyPlatformCutoverService:
         existing_columns = self._existing_columns(existing)
         drop_tables = tuple(str(value) for value in manifest["drop_tables"])
         drop_columns = tuple(
-            (str(value["table"]), str(value["column"]))
-            for value in manifest["drop_columns"]
+            (str(value["table"]), str(value["column"])) for value in manifest["drop_columns"]
         )
         preserve_tables = tuple(str(value) for value in manifest["preserve_tables"])
         active_jobs = self._active_job_count(existing)
@@ -53,9 +52,7 @@ class LegacyPlatformCutoverService:
             "drop_table_count": len(drop_tables),
             "detected_drop_table_count": sum(name in existing for name in drop_tables),
             "drop_column_count": len(drop_columns),
-            "detected_drop_column_count": sum(
-                value in existing_columns for value in drop_columns
-            ),
+            "detected_drop_column_count": sum(value in existing_columns for value in drop_columns),
             "confirmation_phrase": manifest["confirmation_phrase"],
             "irreversible": True,
         }
@@ -102,23 +99,17 @@ class LegacyPlatformCutoverService:
         manifest, manifest_hash, script_hash = self._artifacts()
         existing = self._existing_tables()
         existing_columns = self._existing_columns(existing)
-        remaining = [
-            str(name) for name in manifest["drop_tables"] if str(name) in existing
-        ]
+        remaining = [str(name) for name in manifest["drop_tables"] if str(name) in existing]
         remaining_columns = [
             f"{value['table']}.{value['column']}"
             for value in manifest["drop_columns"]
             if (str(value["table"]), str(value["column"])) in existing_columns
         ]
         missing_preserved = [
-            str(name)
-            for name in manifest["preserve_tables"]
-            if str(name) not in existing
+            str(name) for name in manifest["preserve_tables"] if str(name) not in existing
         ]
         old_credentials = self._count_if_present(existing, "external_api_credential")
-        old_challenges = self._count_if_present(
-            existing, "external_api_verification_challenge"
-        )
+        old_challenges = self._count_if_present(existing, "external_api_verification_challenge")
         identity_violation = 0
         if "user_external_identity" in existing:
             row = self.database.execute_one(
@@ -202,9 +193,7 @@ class LegacyPlatformCutoverService:
                  where table_schema = current_schema()
                 """
             )
-            return {
-                (str(row["table_name"]), str(row["column_name"])) for row in rows
-            }
+            return {(str(row["table_name"]), str(row["column_name"])) for row in rows}
         columns: set[tuple[str, str]] = set()
         for table in existing_tables:
             if not table.replace("_", "").isalnum():

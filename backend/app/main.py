@@ -4,6 +4,10 @@ from typing import Any
 
 from app.bootstrap import Container, ContainerFactory, build_api_container
 from app.modules.agent.infrastructure.claude_code_agent_client import is_claude_cli_available
+from app.modules.agent.infrastructure.typescript_runtime_client import (
+    RuntimeClientSettings,
+    probe_runtime_readiness,
+)
 from app.shared.config import Settings, load_settings, synchronize_feature_configuration
 from app.shared.database import Database
 from app.shared.database import default_migrations_dir
@@ -45,12 +49,17 @@ def _build_readiness(
             schema_ready = False
     rabbitmq_ready = _check_rabbitmq(settings.rabbitmq_url)
     master_key_ready = bool(settings.app_config_master_key)
+    agent_runtime = _check_agent_runtime(settings)
+    agent_runtime_required = settings.environment.lower() in {
+        item.lower() for item in settings.agent_runtime.typescript_environments
+    } or bool(settings.agent_runtime.typescript_application_publication_ids)
     core_ready = all(
         (
             database_ready,
             schema_ready,
             rabbitmq_ready,
             master_key_ready,
+            (not agent_runtime_required or agent_runtime["ready"]),
         )
     )
     try:
@@ -84,6 +93,7 @@ def _build_readiness(
             "rabbitmq": rabbitmq_ready,
             "master_key": master_key_ready,
             "runtime_assembly": True,
+            "agent_runtime": agent_runtime,
         },
         "resources": governed_runtime,
         "claude_invoked": False,
@@ -105,6 +115,27 @@ def _check_rabbitmq(rabbitmq_url: str) -> bool:
         return True
     except Exception:
         return False
+
+
+def _check_agent_runtime(settings: Settings) -> dict[str, Any]:
+    if not settings.agent_runtime.base_url:
+        return {
+            "configured": False,
+            "ready": False,
+            "identity": "not_configured",
+            "model_invoked": False,
+            "mcp_invoked": False,
+        }
+    return probe_runtime_readiness(
+        RuntimeClientSettings(
+            base_url=settings.agent_runtime.base_url,
+            ones_mcp_url=settings.mcp.ones_server_url,
+            data_mcp_url=settings.mcp.data_server_url,
+            allowed_runtime_hosts=settings.agent_runtime.allowed_hosts,
+            allowed_mcp_server_codes=settings.mcp.allowed_server_codes,
+            allow_insecure_internal_http=(settings.agent_runtime.allow_insecure_internal_http),
+        )
+    )
 
 
 def _claude_runtime_status(settings: Settings) -> dict[str, Any]:
@@ -239,6 +270,8 @@ def create_app(
         return status
 
     from app.modules.dingding.api.dingding_webhook_controller import build_dingding_router
+    from app.modules.agent_config.api import build_agent_config_router
+    from app.modules.business_application.api import build_business_application_router
     from app.modules.identity.api import (
         build_auth_router,
         build_external_credential_router,
@@ -251,8 +284,11 @@ def create_app(
     from app.modules.cutover import build_cutover_router
     from app.modules.webhook.api import build_public_webhook_router
     from app.modules.managed_channel.api import build_runtime_control_router
+    from app.modules.model_connection.api import build_model_connection_router
 
     app.include_router(build_dingding_router())
+    app.include_router(build_agent_config_router())
+    app.include_router(build_business_application_router())
     app.include_router(build_auth_router())
     app.include_router(build_external_credential_router())
     app.include_router(build_self_job_history_router())
@@ -261,6 +297,7 @@ def create_app(
     app.include_router(build_cutover_router())
     app.include_router(build_public_webhook_router())
     app.include_router(build_runtime_control_router())
+    app.include_router(build_model_connection_router())
 
     return app
 

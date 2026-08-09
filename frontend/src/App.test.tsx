@@ -16,14 +16,24 @@ const currentUser = {
 }
 
 function response(body: unknown) {
-  return Promise.resolve(new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } }))
+  return Promise.resolve(
+    new Response(JSON.stringify(body), {
+      headers: { "Content-Type": "application/json" },
+    })
+  )
 }
 
 function renderApp(path = "/") {
   const router = createMemoryRouter(appRoutes, { initialEntries: [path] })
   return render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <AuthenticatedUserProvider user={currentUser}><RouterProvider router={router} /></AuthenticatedUserProvider>
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <AuthenticatedUserProvider user={currentUser}>
+        <RouterProvider router={router} />
+      </AuthenticatedUserProvider>
     </QueryClientProvider>
   )
 }
@@ -34,21 +44,53 @@ afterEach(() => {
 })
 
 describe("轻量用户门户", () => {
-  it("首页只保留本人历史、身份和账户安全入口", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(() => response({ items: [], page: { limit: 50, has_more: false, next_cursor: null } }))
+  it("无管理权限时首页只显示本人入口", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      response({
+        items: [],
+        page: { limit: 50, has_more: false, next_cursor: null },
+      })
+    )
     window.history.pushState({}, "", "/")
     renderApp("/")
-    expect(await screen.findByRole("heading", { name: "Agent Job" })).toBeInTheDocument()
+    expect(
+      await screen.findByRole("heading", { name: "Agent Job" })
+    ).toBeInTheDocument()
     expect(screen.getAllByText("Job 与会话历史").length).toBeGreaterThan(0)
     expect(screen.getAllByText("我的外部身份").length).toBeGreaterThan(0)
     expect(screen.getAllByText("密码与会话").length).toBeGreaterThan(0)
-    for (const removed of ["业务应用", "API Capability", "平台资源", "角色授权", "Agent 配置"]) {
+    for (const removed of [
+      "业务应用",
+      "API Capability",
+      "平台资源",
+      "角色授权",
+      "Agent 配置",
+    ]) {
       expect(document.body.textContent).not.toContain(removed)
     }
   })
 
+  it("恢复 Business Application 路由但不恢复旧平台页面", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      if (String(input) === "/api/admin/business-applications") {
+        return response({ items: [], permissions: { can_create: false } })
+      }
+      return response({})
+    })
+    renderApp("/applications")
+    expect(
+      await screen.findByRole("heading", { name: "Business Applications" })
+    ).toBeInTheDocument()
+    expect(screen.queryByText("管理工作台已退役")).not.toBeInTheDocument()
+  })
+
   it("历史首页只查询当前用户接口，不查询管理员控制面", async () => {
-    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(() => response({ items: [], page: { limit: 50, has_more: false, next_cursor: null } }))
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      response({
+        items: [],
+        page: { limit: 50, has_more: false, next_cursor: null },
+      })
+    )
     window.history.pushState({}, "", "/operations/jobs")
     renderApp("/operations/jobs")
     await waitFor(() => expect(fetch).toHaveBeenCalled())
@@ -60,7 +102,9 @@ describe("轻量用户门户", () => {
   it("旧管理 URL 明确返回已退役页面", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(() => response({}))
     renderApp("/platform/api-capabilities")
-    expect(await screen.findByRole("heading", { name: "管理工作台已退役" })).toBeInTheDocument()
+    expect(
+      await screen.findByRole("heading", { name: "管理工作台已退役" })
+    ).toBeInTheDocument()
     expect(screen.getByText(/platformctl/)).toBeInTheDocument()
   })
 
@@ -87,10 +131,9 @@ describe("轻量用户门户", () => {
     fireEvent.click(verify)
     expect(await screen.findByLabelText("ONES 邮箱")).toBeVisible()
     expect(screen.getByLabelText("一次性验证密码")).toBeVisible()
-    expect(screen.getByRole("button", { name: "验证并读取 Team" })).toHaveAttribute(
-      "type",
-      "submit"
-    )
+    expect(
+      screen.getByRole("button", { name: "验证并读取 Team" })
+    ).toHaveAttribute("type", "submit")
     expect(screen.getByRole("dialog")).toHaveClass("w-full")
   })
 })

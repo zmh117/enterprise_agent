@@ -166,10 +166,7 @@ class DingTalkIdentityDiscoveryRepository:
             conversation_scope=conversation_scope,
         )
         if after_last_seen_at and after_id:
-            where += (
-                " and (c.last_seen_at < ? "
-                "or (c.last_seen_at = ? and c.id < ?))"
-            )
+            where += " and (c.last_seen_at < ? or (c.last_seen_at = ? and c.id < ?))"
             params.extend((after_last_seen_at, after_last_seen_at, after_id))
         rows = self.database.execute(
             f"""
@@ -201,9 +198,7 @@ class DingTalkIdentityDiscoveryRepository:
             has_more,
         )
 
-    def get_visible_candidate(
-        self, candidate_id: str, *, cutoff: str
-    ) -> dict[str, object]:
+    def get_visible_candidate(self, candidate_id: str, *, cutoff: str) -> dict[str, object]:
         row = self.database.execute_one(
             """
             select c.*, e.name as dingtalk_enterprise_name,
@@ -314,11 +309,7 @@ class DingTalkIdentityDiscoveryRepository:
         scope = (
             ConversationScope.BOTH.value
             if direct and group
-            else (
-                ConversationScope.GROUP.value
-                if group
-                else ConversationScope.DIRECT.value
-            )
+            else (ConversationScope.GROUP.value if group else ConversationScope.DIRECT.value)
         )
         historical_identity_id = str(row.get("historical_identity_id") or "")
         identity_state = (
@@ -343,22 +334,15 @@ class DingTalkIdentityDiscoveryRepository:
                 dict.fromkeys(
                     str(item["conversation_id"])
                     for item in messages
-                    if item["conversation_type"] == "group"
-                    and item["conversation_id"]
+                    if item["conversation_type"] == "group" and item["conversation_id"]
                 )
             ),
             "robot_codes": list(
-                dict.fromkeys(
-                    str(item["robot_code"])
-                    for item in messages
-                    if item["robot_code"]
-                )
+                dict.fromkeys(str(item["robot_code"]) for item in messages if item["robot_code"])
             ),
             "connector_names": list(
                 dict.fromkeys(
-                    str(item["connector_name"])
-                    for item in messages
-                    if item["connector_name"]
+                    str(item["connector_name"]) for item in messages if item["connector_name"]
                 )
             ),
             "latest_message": messages[0] if messages else None,
@@ -370,9 +354,7 @@ class DingTalkIdentityDiscoveryRepository:
                     "revision": int(row.get("historical_identity_revision") or 1),
                     "user_id": str(row.get("historical_user_id") or ""),
                     "username": str(row.get("historical_username") or ""),
-                    "user_display_name": str(
-                        row.get("historical_user_display_name") or ""
-                    ),
+                    "user_display_name": str(row.get("historical_user_display_name") or ""),
                     "user_status": str(row.get("historical_user_status") or ""),
                 }
                 if historical_identity_id
@@ -412,9 +394,7 @@ class DingTalkIdentityDiscoveryRepository:
                 "attachment_type": str(row.get("attachment_type") or ""),
                 "attachment_name": str(row.get("attachment_name") or ""),
                 "attachment_size": (
-                    int(row["attachment_size"])
-                    if row.get("attachment_size") is not None
-                    else None
+                    int(row["attachment_size"]) if row.get("attachment_size") is not None else None
                 ),
                 "occurred_at": str(row["occurred_at"]),
                 "received_at": str(row["received_at"]),
@@ -437,11 +417,7 @@ class DingTalkIdentityDiscoveryRepository:
         params: list[object] = [cutoff]
         term = search.strip().lower()
         if term:
-            escaped = (
-                term.replace("\\", "\\\\")
-                .replace("%", "\\%")
-                .replace("_", "\\_")
-            )
+            escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             pattern = f"%{escaped}%"
             clauses.append(
                 """

@@ -262,9 +262,7 @@ def test_two_dispatchers_do_not_own_or_send_the_same_delivery() -> None:
             """
         ) == {"count": 20}
         assert all(
-            runtime.agent_repository.get_job(job.id).status
-            == JobStatus.SUCCEEDED
-            for job in jobs
+            runtime.agent_repository.get_job(job.id).status == JobStatus.SUCCEEDED for job in jobs
         )
     finally:
         runtime.database.close()

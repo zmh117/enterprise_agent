@@ -95,7 +95,7 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
 
         self.assertIn("Evidence:", report)
         self.assertEqual(JobStatus.SUCCEEDED, stored.status)
-        self.assertEqual(0, c.agent_repository.count_rows("agent_tool_call"))
+        self.assertEqual([], c.agent_repository.list_runtime_events(job.id))
         self.assertEqual(1, c.agent_repository.count_rows("agent_artifact"))
         steps = c.database.execute(
             "select step_type, content from agent_step where job_id = ?", (job.id,)

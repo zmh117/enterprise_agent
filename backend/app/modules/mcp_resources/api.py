@@ -5,7 +5,8 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request as UrlRequest, build_opener
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.bootstrap import Container
 from app.modules.identity.api.dependencies import (
@@ -14,8 +15,6 @@ from app.modules.identity.api.dependencies import (
     require_csrf,
 )
 from app.shared.exceptions import AppError, NotFound, PermissionDenied
-from services.data_mcp_server.contracts import SCOPES as DATA_SCOPES
-from services.ones_mcp_server.contracts import SEARCH_SCOPE
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -101,6 +100,71 @@ def _write(request: Request) -> str:
     return principal.user_id
 
 
+def _tool_allowed(request: Request, code: str, *actions: str) -> bool:
+    principal = current_principal(request)
+    authorization = _container(request).authorization_evaluator
+    return any(
+        authorization.decide(
+            user_id=principal.user_id,
+            resource_type="mcp_tool",
+            resource_code=code,
+            action=action,
+        ).allowed
+        for action in actions
+    )
+
+
+def _tool_read(request: Request, code: str = "*") -> str:
+    principal = current_principal(request)
+    if not _tool_allowed(request, code, "read", "manage"):
+        if code != "*":
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "not_found", "message": "MCP Tool 发布版本不存在"},
+            )
+        raise HTTPException(status_code=403, detail="你无权执行此操作")
+    return principal.user_id
+
+
+def _tool_write(request: Request, code: str = "*") -> str:
+    principal = current_principal(request)
+    require_csrf(request, principal)
+    if not _tool_allowed(request, code, "manage"):
+        if code != "*":
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "not_found", "message": "MCP Tool 发布版本不存在"},
+            )
+        raise HTTPException(status_code=403, detail="你无权执行此操作")
+    return principal.user_id
+
+
+class _StrictRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class _CreateToolRequest(_StrictRequest):
+    expected_revision: int = Field(ge=0, le=0)
+    code: str = Field(min_length=2, max_length=64, pattern=r"^[a-z][a-z0-9_-]+$")
+    name: str = Field(min_length=1, max_length=128)
+    catalog_key: str = Field(min_length=1, max_length=200)
+    resource_deployment_id: str = Field(default="", max_length=200)
+
+
+class _UpdateToolRequest(_StrictRequest):
+    expected_revision: int = Field(ge=1)
+    catalog_key: str = Field(min_length=1, max_length=200)
+    resource_deployment_id: str = Field(default="", max_length=200)
+
+
+class _ToolRevisionRequest(_StrictRequest):
+    expected_revision: int = Field(ge=1)
+
+
+class _ToolRollbackRequest(_ToolRevisionRequest):
+    publication_id: str = Field(min_length=1, max_length=200)
+
+
 def _handle(exc: Exception) -> HTTPException:
     if isinstance(exc, PermissionDenied):
         return HTTPException(
@@ -113,11 +177,26 @@ def _handle(exc: Exception) -> HTTPException:
             detail={"code": exc.error_code or "not_found", "message": exc.safe_message},
         )
     if isinstance(exc, AppError):
-        status = 409 if exc.error_code in {"revision_conflict", "mcp_idempotency_conflict"} else 422
-        return HTTPException(
-            status_code=status,
-            detail={"code": exc.error_code or "mcp_resource_rejected", "message": exc.safe_message},
+        status = (
+            409
+            if exc.error_code
+            in {
+                "revision_conflict",
+                "mcp_idempotency_conflict",
+                "dependency_in_use",
+                "mcp_tool_duplicate_publication",
+            }
+            else 422
         )
+        detail: dict[str, Any] = {
+            "code": exc.error_code or "mcp_resource_rejected",
+            "message": exc.safe_message,
+            "field_errors": exc.field_errors,
+        }
+        current_revision = exc.diagnostics.get("current_revision")
+        if isinstance(current_revision, int):
+            detail["current_revision"] = current_revision
+        return HTTPException(status_code=status, detail=detail)
     if isinstance(exc, (TypeError, ValueError)):
         return HTTPException(
             status_code=422, detail={"code": "manifest_invalid", "message": "资源声明文件无效"}
@@ -222,34 +301,191 @@ def build_mcp_resource_router() -> APIRouter:
 
     @router.get("/tools")
     def tools(request: Request) -> dict[str, Any]:
-        _read(request)
-        database = _container(request).database
-        counts = database.execute(
+        _tool_read(request)
+        service = _container(request).mcp_tool_publication_service
+        catalog = service.catalog()
+        publications = _container(request).database.execute(
             """
-            select server_code, tool_name, tool_schema_hash, status, count(*) as publication_count
+            select server_code, tool_name, tool_schema_hash, status,
+                   count(*) as publication_count
               from mcp_tool_publication
              group by server_code, tool_name, tool_schema_hash, status
              order by server_code, tool_name
             """
         )
         return {
-            "servers": [
-                {
-                    "server_code": "ones-mcp",
-                    "version": "0.1.0",
-                    "tools": [{"name": "ones_work_item_search", "scope": SEARCH_SCOPE}],
-                },
-                {
-                    "server_code": "data-mcp",
-                    "version": "0.1.0",
-                    "tools": [
-                        {"name": name, "scope": scope}
-                        for name, scope in sorted(DATA_SCOPES.items())
-                    ],
-                },
-            ],
-            "publications": counts,
+            "catalog": catalog,
+            "publications": publications,
         }
+
+    @router.get("/tool-publications")
+    def tool_publications(request: Request) -> dict[str, Any]:
+        current_principal(request)
+        values = _container(request).mcp_tool_publication_service.list_tools()
+        return {
+            "tools": [
+                value
+                for value in values
+                if _tool_allowed(request, str(value["code"]), "read", "manage")
+            ],
+            "permissions": {"can_create": _tool_allowed(request, "*", "manage")},
+        }
+
+    @router.get("/tool-publications/{code}")
+    def tool_publication(request: Request, code: str) -> dict[str, Any]:
+        _tool_read(request, code)
+        try:
+            return {"tool": _container(request).mcp_tool_publication_service.get(code)}
+        except Exception as exc:
+            raise _handle(exc) from exc
+
+    @router.post("/tool-publications")
+    def create_tool_publication(
+        request: Request,
+        payload: _CreateToolRequest,
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
+    ) -> dict[str, Any]:
+        actor = _tool_write(request)
+        try:
+            result = _container(request).mcp_tool_publication_service.create(
+                code=payload.code,
+                name=payload.name,
+                catalog_key=payload.catalog_key,
+                resource_deployment_id=payload.resource_deployment_id,
+                expected_revision=payload.expected_revision,
+                actor_id=actor,
+                idempotency_key=idempotency_key,
+            )
+            return {"tool": result}
+        except Exception as exc:
+            raise _handle(exc) from exc
+
+    @router.put("/tool-publications/{code}/draft")
+    def update_tool_draft(
+        request: Request,
+        code: str,
+        payload: _UpdateToolRequest,
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
+    ) -> dict[str, Any]:
+        actor = _tool_write(request, code)
+        try:
+            result = _container(request).mcp_tool_publication_service.update_draft(
+                code,
+                expected_revision=payload.expected_revision,
+                catalog_key=payload.catalog_key,
+                resource_deployment_id=payload.resource_deployment_id,
+                actor_id=actor,
+                idempotency_key=idempotency_key,
+            )
+            return {"tool": result}
+        except Exception as exc:
+            raise _handle(exc) from exc
+
+    @router.post("/tool-publications/{code}/verify")
+    def verify_tool_publication(
+        request: Request,
+        code: str,
+        payload: _ToolRevisionRequest,
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
+    ) -> dict[str, Any]:
+        actor = _tool_write(request, code)
+        try:
+            result = _container(request).mcp_tool_publication_service.verify(
+                code,
+                expected_revision=payload.expected_revision,
+                actor_id=actor,
+                idempotency_key=idempotency_key,
+            )
+            return {"verification": result}
+        except Exception as exc:
+            raise _handle(exc) from exc
+
+    @router.post("/tool-publications/{code}/publish")
+    def publish_tool_publication(
+        request: Request,
+        code: str,
+        payload: _ToolRevisionRequest,
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
+    ) -> dict[str, Any]:
+        actor = _tool_write(request, code)
+        try:
+            result = _container(request).mcp_tool_publication_service.publish(
+                code,
+                expected_revision=payload.expected_revision,
+                actor_id=actor,
+                idempotency_key=idempotency_key,
+            )
+            return {"publication": result}
+        except Exception as exc:
+            raise _handle(exc) from exc
+
+    @router.post("/tool-publications/{code}/disable")
+    def disable_tool_publication(
+        request: Request,
+        code: str,
+        payload: _ToolRevisionRequest,
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
+    ) -> dict[str, Any]:
+        actor = _tool_write(request, code)
+        try:
+            result = _container(request).mcp_tool_publication_service.disable(
+                code,
+                expected_revision=payload.expected_revision,
+                actor_id=actor,
+                idempotency_key=idempotency_key,
+            )
+            return {"tool": result}
+        except Exception as exc:
+            raise _handle(exc) from exc
+
+    @router.post("/tool-publications/{code}/rollback")
+    def rollback_tool_publication(
+        request: Request,
+        code: str,
+        payload: _ToolRollbackRequest,
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
+    ) -> dict[str, Any]:
+        actor = _tool_write(request, code)
+        try:
+            result = _container(request).mcp_tool_publication_service.rollback(
+                code,
+                publication_id=payload.publication_id,
+                expected_revision=payload.expected_revision,
+                actor_id=actor,
+                idempotency_key=idempotency_key,
+            )
+            return {"publication": result}
+        except Exception as exc:
+            raise _handle(exc) from exc
+
+    @router.post("/tool-publications/{code}/archive")
+    def archive_tool_publication(
+        request: Request,
+        code: str,
+        payload: _ToolRevisionRequest,
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
+    ) -> dict[str, Any]:
+        actor = _tool_write(request, code)
+        try:
+            result = _container(request).mcp_tool_publication_service.archive(
+                code,
+                expected_revision=payload.expected_revision,
+                actor_id=actor,
+                idempotency_key=idempotency_key,
+            )
+            return {"tool": result}
+        except Exception as exc:
+            raise _handle(exc) from exc
+
+    @router.get("/tool-publications/{publication_id}/usage")
+    def tool_publication_usage(request: Request, publication_id: str) -> dict[str, Any]:
+        service = _container(request).mcp_tool_publication_service
+        try:
+            code = service.tool_code_for_publication(publication_id)
+        except Exception as exc:
+            raise _handle(exc) from exc
+        _tool_read(request, code)
+        return {"usage": service.usage(publication_id)}
 
     @router.get("/status")
     def status(request: Request) -> dict[str, Any]:
@@ -258,7 +494,7 @@ def build_mcp_resource_router() -> APIRouter:
         tools_payload = tools(request)
         publication_counts: dict[str, int] = {}
         for item in tools_payload["publications"]:
-            if str(item["status"]) != "ACTIVE":
+            if str(item["status"]) != "PUBLISHED":
                 continue
             server_code = str(item["server_code"])
             publication_counts[server_code] = publication_counts.get(server_code, 0) + int(

@@ -1,0 +1,36 @@
+{
+  "name": "@enterprise-agent/agent-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0 <23"
+  },
+  "packageManager": "npm@11.5.2",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src test scripts --max-warnings=0",
+    "test": "tsc -p tsconfig.json && node --test dist/test/*.test.js",
+    "generate:contracts": "node scripts/generate-contracts.mjs",
+    "check:contracts": "node scripts/generate-contracts.mjs --check",
+    "preflight": "node scripts/preflight.mjs",
+    "preflight:static": "node scripts/preflight.mjs --static",
+    "start": "node dist/src/main.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.226",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "jose": "6.1.0",
+    "pg": "8.16.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.32.0",
+    "@types/node": "24.1.0",
+    "@types/pg": "8.15.5",
+    "eslint": "9.32.0",
+    "typescript": "5.8.3",
+    "typescript-eslint": "8.38.0"
+  }
+}

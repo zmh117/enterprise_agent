@@ -337,9 +337,7 @@ class AgentRetryAndFailureDeliveryTests(unittest.TestCase):
         self.assertEqual(JobStatus.FAILED, failed.status)
         self.assertEqual(job.max_retry_count + 1, client.calls)
         self.assertEqual(1, len(adapter.sent))
-        event_types = {
-            row["event_type"] for row in c.audit_repository.list_for_job(job.id)
-        }
+        event_types = {row["event_type"] for row in c.audit_repository.list_for_job(job.id)}
         self.assertIn("job.dead.persisted", event_types)
         event_types = [
             row["event_type"]

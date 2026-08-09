@@ -46,9 +46,7 @@ WEBHOOK_ERROR_CODES = frozenset(
 )
 
 
-TRIGGER_ACTIONS = frozenset(
-    {"read", "edit", "publish", "rotate", "manage_service_account"}
-)
+TRIGGER_ACTIONS = frozenset({"read", "edit", "publish", "rotate", "manage_service_account"})
 CONDITION_OPERATORS = frozenset({"exists", "equals", "in", "not_equals"})
 ROUTING_FIELDS = ("project_code", "environment", "base", "workshop", "service")
 PUBLIC_ID_RE = re.compile(r"^wh_[A-Za-z0-9_-]{32,96}$")
@@ -172,10 +170,7 @@ def ensure_no_secret_values(config: dict[str, Any]) -> None:
             "Trigger config contains unsupported top-level fields",
             safe_message="触发器配置包含不支持的字段",
             error_code="validation_failed",
-            field_errors=[
-                {"field": str(field), "message": "此字段不可配置"}
-                for field in unknown
-            ],
+            field_errors=[{"field": str(field), "message": "此字段不可配置"} for field in unknown],
         )
     prohibited_keys: list[str] = []
 
@@ -184,7 +179,10 @@ def ensure_no_secret_values(config: dict[str, Any]) -> None:
             for key, item in value.items():
                 field = f"{path}.{key}".strip(".")
                 lowered = str(key).lower()
-                if any(token in lowered for token in ("script", "javascript", "python", "shell", "function")):
+                if any(
+                    token in lowered
+                    for token in ("script", "javascript", "python", "shell", "function")
+                ):
                     prohibited_keys.append(field)
                 walk(item, field)
         elif isinstance(value, list):
@@ -198,8 +196,7 @@ def ensure_no_secret_values(config: dict[str, Any]) -> None:
             safe_message="不支持可执行映射字段",
             error_code="validation_failed",
             field_errors=[
-                {"field": field, "message": "禁止使用脚本和函数"}
-                for field in prohibited_keys
+                {"field": field, "message": "禁止使用脚本和函数"} for field in prohibited_keys
             ],
         )
 

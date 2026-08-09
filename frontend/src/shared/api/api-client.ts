@@ -29,6 +29,14 @@ type RequestOptions = Omit<RequestInit, "body"> & {
   body?: unknown
 }
 
+export function createIdempotencyKey(scope: string): string {
+  const random =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  return `${scope}:${random}`.slice(0, 128)
+}
+
 const csrfCookieName =
   import.meta.env.VITE_CSRF_COOKIE_NAME || "enterprise_agent_csrf"
 
@@ -98,6 +106,27 @@ async function readJson(response: Response): Promise<unknown> {
 function toApiError(status: number, payload: unknown): ApiError {
   const body = isRecord(payload) ? payload : {}
   const rawDetail = body.detail
+  if (Array.isArray(rawDetail)) {
+    const fieldErrors = rawDetail.flatMap((value) => {
+      if (!isRecord(value)) return []
+      const location = Array.isArray(value.loc) ? value.loc : []
+      return [
+        {
+          field: location.slice(1).map(String).join(".") || "request",
+          message:
+            typeof value.msg === "string" && value.msg.trim()
+              ? value.msg
+              : "输入无效",
+        },
+      ]
+    })
+    return new ApiError({
+      status,
+      code: "validation_failed",
+      message: "请检查表单中的输入。",
+      fieldErrors,
+    })
+  }
   const detailRecord = isRecord(rawDetail) ? rawDetail : null
   const nestedError =
     detailRecord && isRecord(detailRecord.error) ? detailRecord.error : null
@@ -141,6 +170,15 @@ function toApiError(status: number, payload: unknown): ApiError {
         ? detail.current_revision
         : undefined,
   })
+}
+
+export function validationMessage(error: unknown, field: string): string {
+  if (!(error instanceof ApiError)) return ""
+  return (
+    error.fieldErrors.find(
+      (item) => item.field === field || item.field.endsWith(`.${field}`)
+    )?.message ?? ""
+  )
 }
 
 function userVisibleMessage(message: string, status: number): string {

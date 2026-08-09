@@ -17,11 +17,11 @@
 
 ## 1. 维护窗口前检查
 
-1. 部署包含 `claude-agent-sdk==0.2.134`、独立 `mcp==2.0.0` Server 包、迁移 034–036、最小权限服务角色和本 Runbook 的同一构建。
+1. 部署包含 TypeScript Runtime `0.1.0`、`@anthropic-ai/claude-agent-sdk==0.3.226`、Claude CLI `2.1.226`、独立 `mcp==2.0.0` Server 包、迁移 head `040`、最小权限服务角色和本 Runbook 的同一构建。
 2. 确认仓库中的对象清单和脚本未被现场修改：
    - `config/legacy-platform-retirement.json`
    - `backend/maintenance/legacy_platform_cutover.sql`
-3. 准备仓库外 Master Key、MCP Token 签名 Key 和四个数据库服务身份密码。Master Key 只能挂载给 API、两个 MCP Server 及确实解密投递/附件凭据的 Runtime；Agent Worker 和前端不得获得它。
+3. 准备仓库外 Master Key、Runtime Grant keypair、模型探针 Token、MCP Token 签名 Key 和最小数据库服务身份密码。Master Key 只能挂载给 API、TypeScript Agent Runtime、两个 MCP Server 及确实解密投递/附件凭据的 worker；Agent Worker 和前端不得获得它。
 4. 准备不含明文密码/Token 的 DB、Redis、Loki Manifest，以及通过 `0600` 文件或受保护文件描述符提供的新 Secret 明文。
 5. 明确通知：旧历史和旧配置会永久删除，系统不会生成任何备份或迁移副本。
 
@@ -93,9 +93,9 @@ platformctl cutover verify
 
 1. PostgreSQL、RabbitMQ、迁移器/服务角色授权；
 2. API；
-3. ONES MCP、Data MCP；
+3. ONES MCP、Data MCP 和 TypeScript Agent Runtime；
 4. Agent Worker 和各 Outbox/Delivery Worker；
-5. 钉钉 Runtime 与轻量前端；
+5. 钉钉 Runtime 与管理前端；
 6. 最后才恢复外部入口。
 
 恢复入口前必须全部满足：
@@ -105,7 +105,7 @@ platformctl cutover verify
 - 登录、Session、修改密码、本人钉钉 Challenge、ONES 重新验证和默认 Team 正常；
 - Agent Worker 的 allowlist 只包含本 Job 精确发布的 MCP Tool；取消发布后立即失败关闭；
 - ONES、DB、Redis、Loki 真实只读调用均成功，Provider 401/403、Token 过期、generation 失败和服务重启行为符合预期；
-- 完成 `Runtime → Inbox → Outbox → RabbitMQ → Job → Worker → MCP → Delivery` 真实链路；
+- 完成 `DingTalk Runtime → Inbox → Outbox → RabbitMQ → Python Worker → TypeScript Agent Runtime → MCP → Result → Delivery` 真实链路；
 - 日志、审计、API、CLI、前端产物和 Tool 结果扫描不含 Secret、Token、认证 Header、Master Key 或连接凭据。
 
 验收人签字后，将 API 恢复为 `DESTRUCTIVE_CUTOVER_ENABLED=false` 并逐步开放入口。任何一项失败都保持入口关闭，在新系统内修复；数据删除本身不可回滚。

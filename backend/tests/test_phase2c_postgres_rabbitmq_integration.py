@@ -38,8 +38,7 @@ RABBITMQ_URL = os.getenv("RABBITMQ_TEST_URL", "")
 pytestmark = pytest.mark.skipif(
     not POSTGRES_ADMIN_DSN or not RABBITMQ_URL,
     reason=(
-        "set MIGRATION_POSTGRES_DSN and RABBITMQ_TEST_URL "
-        "to run the Phase 2C real integration"
+        "set MIGRATION_POSTGRES_DSN and RABBITMQ_TEST_URL to run the Phase 2C real integration"
     ),
 )
 
@@ -112,11 +111,7 @@ def migrated_postgres_dsn() -> str:
 
     database_name = f"phase2c_gate_{uuid.uuid4().hex}"
     with psycopg.connect(POSTGRES_ADMIN_DSN, autocommit=True) as admin:
-        admin.execute(
-            sql.SQL("create database {}").format(
-                sql.Identifier(database_name)
-            )
-        )
+        admin.execute(sql.SQL("create database {}").format(sql.Identifier(database_name)))
     parameters = conninfo_to_dict(POSTGRES_ADMIN_DSN)
     parameters["dbname"] = database_name
     test_dsn = make_conninfo(**parameters)
@@ -141,11 +136,7 @@ def migrated_postgres_dsn() -> str:
                 """,
                 (database_name,),
             )
-            admin.execute(
-                sql.SQL("drop database {}").format(
-                    sql.Identifier(database_name)
-                )
-            )
+            admin.execute(sql.SQL("drop database {}").format(sql.Identifier(database_name)))
 
 
 def test_rabbitmq_recovery_then_dead_delivery_replay_does_not_rerun_agent(
@@ -190,9 +181,7 @@ def test_rabbitmq_recovery_then_dead_delivery_replay_does_not_rerun_agent(
         version = connection._impl.server_properties["version"]
         if isinstance(version, bytes):
             version = version.decode("ascii")
-        assert str(version).startswith("4."), (
-            f"RabbitMQ 4 required, got {version}"
-        )
+        assert str(version).startswith("4."), f"RabbitMQ 4 required, got {version}"
 
         job = runtime.create_agent_job_service.execute(
             CreateAgentJobCommand(
@@ -207,9 +196,7 @@ def test_rabbitmq_recovery_then_dead_delivery_replay_does_not_rerun_agent(
                 reply_route={"type": "phase2c_delivery", "target": {}},
             )
         )
-        dispatch_event = runtime.agent_repository.get_dispatch_event_for_job(
-            job.id
-        )
+        dispatch_event = runtime.agent_repository.get_dispatch_event_for_job(job.id)
         assert dispatch_event is not None
 
         unavailable = JobDispatchOutboxDispatcher(
@@ -252,9 +239,7 @@ def test_rabbitmq_recovery_then_dead_delivery_replay_does_not_rerun_agent(
 
         event = runtime.agent_repository.get_delivery_event_for_job(job.id)
         assert event is not None
-        artifact_before = runtime.agent_repository.get_artifact(
-            event.result_artifact_id
-        )
+        artifact_before = runtime.agent_repository.get_artifact(event.result_artifact_id)
         duplicate_id = runtime.result_delivery_service.enqueue_job_result(
             job_id=job.id,
             artifact_id=event.result_artifact_id,
@@ -282,17 +267,13 @@ def test_rabbitmq_recovery_then_dead_delivery_replay_does_not_rerun_agent(
         )
         assert replayed["status"] == "PENDING"
         adapter.available = True
-        completed_delivery = runtime.delivery_dispatcher.dispatch_pending(
-            limit=1
-        )
+        completed_delivery = runtime.delivery_dispatcher.dispatch_pending(limit=1)
 
         assert completed_delivery.succeeded == 1
         assert runtime.agent_repository.get_delivery_event(event.id).status.value == "SUCCEEDED"
         assert runtime.agent_repository.get_job(job.id).status == JobStatus.SUCCEEDED
         assert client.calls == 1
-        assert runtime.agent_repository.get_artifact(
-            event.result_artifact_id
-        ) == artifact_before
+        assert runtime.agent_repository.get_artifact(event.result_artifact_id) == artifact_before
         assert adapter.calls.count("Agent 诊断报告 part 1/3") == 1
         assert adapter.calls.count("Agent 诊断报告 part 2/3") == 2
         assert adapter.calls.count("Agent 诊断报告 part 3/3") == 1

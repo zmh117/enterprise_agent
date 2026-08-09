@@ -144,6 +144,17 @@ class McpSettings:
 
 
 @dataclass(frozen=True)
+class AgentRuntimeSettings:
+    base_url: str = ""
+    allowed_hosts: tuple[str, ...] = ()
+    grant_private_key_file: str = ""
+    model_probe_auth_token_file: str = ""
+    allow_insecure_internal_http: bool = False
+    typescript_environments: tuple[str, ...] = ()
+    typescript_application_publication_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class WebhookSettings:
     enabled: bool = True
     max_body_bytes: int = 1024 * 1024
@@ -242,6 +253,7 @@ class Settings:
     identity: IdentitySettings = field(default_factory=IdentitySettings)
     ones_identity: OnesIdentitySettings = field(default_factory=OnesIdentitySettings)
     mcp: McpSettings = field(default_factory=McpSettings)
+    agent_runtime: AgentRuntimeSettings = field(default_factory=AgentRuntimeSettings)
     destructive_cutover_enabled: bool = False
     webhooks: WebhookSettings = field(default_factory=WebhookSettings)
     managed_channels: ManagedChannelSettings = field(default_factory=ManagedChannelSettings)
@@ -299,6 +311,19 @@ def load_settings() -> Settings:
             data_server_url=os.getenv("DATA_MCP_SERVER_URL", "http://data-mcp-server:9102/mcp"),
             allowed_server_codes=_csv_tuple(
                 os.getenv("MCP_ALLOWED_SERVER_CODES", "ones-mcp,data-mcp")
+            ),
+        ),
+        agent_runtime=AgentRuntimeSettings(
+            base_url=os.getenv("AGENT_RUNTIME_URL", ""),
+            allowed_hosts=_csv_tuple(os.getenv("AGENT_RUNTIME_ALLOWED_HOSTS", "")),
+            grant_private_key_file=os.getenv("RUNTIME_GRANT_PRIVATE_KEY_FILE", ""),
+            model_probe_auth_token_file=os.getenv("MODEL_PROBE_AUTH_TOKEN_FILE", ""),
+            allow_insecure_internal_http=_env_bool("AGENT_RUNTIME_ALLOW_INSECURE_INTERNAL_HTTP"),
+            typescript_environments=_csv_tuple(
+                os.getenv("AGENT_RUNTIME_TYPESCRIPT_ENVIRONMENTS", "")
+            ),
+            typescript_application_publication_ids=_csv_tuple(
+                os.getenv("AGENT_RUNTIME_TYPESCRIPT_APPLICATION_PUBLICATIONS", "")
             ),
         ),
         destructive_cutover_enabled=_env_bool("DESTRUCTIVE_CUTOVER_ENABLED"),

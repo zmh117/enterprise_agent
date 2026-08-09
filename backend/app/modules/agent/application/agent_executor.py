@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from app.modules.agent.application.agent_context_builder import AgentContextBuilder
 from app.modules.agent.application.agent_result_service import AgentResultService
 from app.modules.agent.domain.runtime import AgentRunRequest
@@ -13,6 +15,7 @@ from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import PermissionDenied
+from app.shared.exceptions import NonRetryableExecutionError
 
 
 class AgentExecutor:
@@ -37,6 +40,73 @@ class AgentExecutor:
         self.delivery_service = delivery_service
         self.business_authorization_service = business_authorization_service
 
+    def cancel(
+        self,
+        job_id: str,
+        *,
+        actor_id: str,
+        reason: str = "JOB_CANCELLED",
+    ) -> AgentJob:
+        if reason not in {"JOB_CANCELLED", "WORKER_TIMEOUT", "CLIENT_DISCONNECTED"}:
+            raise NonRetryableExecutionError(
+                "Agent Runtime cancel reason is invalid",
+                safe_message="取消原因无效",
+                error_code="runtime_cancel_reason_invalid",
+            )
+        job = self.repository.get_job(job_id)
+        if job.status in {
+            JobStatus.SUCCEEDED,
+            JobStatus.FAILED,
+            JobStatus.TIMEOUT,
+            JobStatus.CANCELLED,
+        }:
+            return job
+        runtime_ack = "not_started"
+        if job.status == JobStatus.RUNNING:
+            context = self.context_builder.build(job)
+            request = AgentRunRequest(
+                job_id=job.id,
+                user_id=job.internal_user_id or job.user_id,
+                project_code=job.project_code,
+                context=context,
+                invocation_id=f"{job.id}.attempt-{job.retry_count}",
+            )
+            cancel = getattr(self.claude_client, "cancel", None)
+            if not callable(cancel):
+                raise NonRetryableExecutionError(
+                    "Selected Agent Runtime client cannot cancel a running Job",
+                    safe_message="当前 Agent Runtime 不支持运行中取消",
+                    error_code="runtime_cancel_unavailable",
+                )
+            result = cancel(request, reason)
+            runtime_ack = str((result or {}).get("status") or "")
+            if runtime_ack not in {"cancelled", "already_terminal"}:
+                raise NonRetryableExecutionError(
+                    "Agent Runtime did not acknowledge cancellation",
+                    safe_message="Agent Runtime 未确认取消请求",
+                    error_code="runtime_cancel_not_acknowledged",
+                )
+        cancelled = self.status_service.cancel(job.id)
+        self.repository.add_step(
+            job_id=job.id,
+            step_type="cancelled",
+            title="Agent execution cancelled",
+            content="Execution stopped by an authorized cancellation request.",
+        )
+        self.audit_service.record(
+            "job.cancelled",
+            status="SUCCEEDED",
+            summary="Agent job cancellation persisted after Runtime acknowledgement",
+            job_id=job.id,
+            actor_id=actor_id,
+            payload={
+                "reason": reason,
+                "runtime_ack": runtime_ack,
+                "runtime_kind": job.agent_runtime_kind,
+            },
+        )
+        return cancelled
+
     def execute(
         self,
         job_id: str,
@@ -44,8 +114,13 @@ class AgentExecutor:
         worker_id: str = "agent-worker",
         correlation_id: str = "",
         fail_on_error: bool = True,
+        recover_typescript_running: bool = False,
     ) -> str:
-        claimed = self.status_service.claim(job_id, worker_id)
+        claimed = self.status_service.claim(
+            job_id,
+            worker_id,
+            recover_typescript_running=recover_typescript_running,
+        )
         if claimed is None:
             persisted = self.repository.get_job(job_id)
             if persisted.status == JobStatus.SUCCEEDED and persisted.result:
@@ -133,11 +208,17 @@ class AgentExecutor:
                     user_id=job.internal_user_id or job.user_id,
                     project_code=job.project_code,
                     context=context,
+                    invocation_id=f"{job.id}.attempt-{job.retry_count}",
                 )
             )
+            if result.runtime_provenance:
+                self.repository.record_runtime_provenance(
+                    job.id,
+                    result.runtime_provenance,
+                )
             self.repository.record_execution_policy_usage(
                 job.id,
-                tool_call_count=len(result.tool_events),
+                tool_call_count=_tool_call_count(result.tool_events),
                 exhausted=False,
             )
             self.repository.add_step(
@@ -154,11 +235,20 @@ class AgentExecutor:
             )
             return result.final_answer
         except Exception as exc:
+            persisted = self.repository.get_job(job.id)
+            if persisted.status == JobStatus.SUCCEEDED and persisted.result:
+                return persisted.result
+            if persisted.status in {
+                JobStatus.FAILED,
+                JobStatus.TIMEOUT,
+                JobStatus.CANCELLED,
+            }:
+                return ""
             safe_message = getattr(exc, "safe_message", str(exc))
             tool_events = getattr(exc, "tool_events", [])
             self.repository.record_execution_policy_usage(
                 job.id,
-                tool_call_count=len(tool_events),
+                tool_call_count=_tool_call_count(tool_events),
                 exhausted=(
                     getattr(exc, "error_code", "") == "execution_policy_max_tool_calls_exhausted"
                 ),
@@ -169,6 +259,12 @@ class AgentExecutor:
                 title="Agent execution failed",
                 content=safe_message,
             )
+            diagnostics = getattr(exc, "diagnostics", {})
+            runtime_provenance = (
+                diagnostics.get("runtime_provenance") if isinstance(diagnostics, dict) else None
+            )
+            if isinstance(runtime_provenance, dict):
+                self.repository.record_runtime_provenance(job.id, runtime_provenance)
             if fail_on_error:
                 self.status_service.fail(job.id, safe_message)
             raise
@@ -216,3 +312,20 @@ def _business_application_context(job: object) -> dict[str, str]:
             getattr(job, "business_application_route_id", "") or ""
         ),
     }
+
+
+def _tool_call_count(events: list[dict[str, Any]]) -> int:
+    relevant = [
+        (index, event)
+        for index, event in enumerate(events)
+        if str(event.get("status") or "").upper()
+        in {"STARTED", "SUCCEEDED", "FAILED", "REJECTED", "DENIED"}
+    ]
+    started = {
+        str(event.get("tool_call_id") or index)
+        for index, event in relevant
+        if str(event.get("status") or "").upper() in {"STARTED", "DENIED"}
+    }
+    if started:
+        return len(started)
+    return len({str(event.get("tool_call_id") or index) for index, event in relevant})

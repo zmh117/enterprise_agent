@@ -25,7 +25,7 @@ function response(body: unknown) {
   )
 }
 
-function renderNavigation(logout: () => Promise<void>) {
+function renderNavigation(logout: () => Promise<void>, user = currentUser) {
   vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
     String(input).endsWith("/api/admin/capabilities")
       ? response({ capabilities: [], modules: {} })
@@ -34,7 +34,7 @@ function renderNavigation(logout: () => Promise<void>) {
   return render(
     <QueryClientProvider client={new QueryClient()}>
       <MemoryRouter>
-        <AuthenticatedUserProvider user={currentUser} logout={logout}>
+        <AuthenticatedUserProvider user={user} logout={logout}>
           <SidebarProvider>
             <PlatformNavigation />
           </SidebarProvider>
@@ -59,6 +59,22 @@ afterEach(() => {
 })
 
 describe("PlatformNavigation account menu", () => {
+  it("shows Agent and Application navigation only with management read capability", () => {
+    const logout = vi.fn().mockResolvedValue(undefined)
+
+    const view = renderNavigation(logout)
+    expect(screen.queryByText("Agent Publication")).not.toBeInTheDocument()
+    expect(screen.queryByText("业务应用")).not.toBeInTheDocument()
+
+    view.unmount()
+    renderNavigation(logout, {
+      ...currentUser,
+      capabilities: { agents_read: true, applications_read: true },
+    })
+    expect(screen.getByText("Agent Publication")).toBeInTheDocument()
+    expect(screen.getByText("业务应用")).toBeInTheDocument()
+  })
+
   it("replaces the MVP status card and asks for confirmation before logout", async () => {
     const logout = vi.fn().mockResolvedValue(undefined)
 

@@ -67,11 +67,12 @@ CONFIG_FIELDS = frozenset(
 )
 
 
-class ModelConnectionTester(Protocol):
-    def __call__(
+class RuntimeModelProbe(Protocol):
+    def probe(
         self,
-        binding: ModelRuntimeBinding,
-        api_key: str,
+        *,
+        revision_id: str,
+        config_hash: str,
         timeout_seconds: int,
     ) -> dict[str, Any]: ...
 
@@ -143,7 +144,7 @@ class ModelConnectionService:
         *,
         allowed_hosts: set[str] | frozenset[str] | None = None,
         dns_resolver: Callable[..., list[tuple[Any, ...]]] | None = None,
-        tester: ModelConnectionTester | None = None,
+        runtime_probe: RuntimeModelProbe | None = None,
         model_discoverer: ModelDiscoverer | None = None,
         redirect_checker: Callable[[str, int], None] | None = None,
     ) -> None:
@@ -158,7 +159,7 @@ class ModelConnectionService:
             if str(item).strip()
         )
         self.dns_resolver = dns_resolver or socket.getaddrinfo
-        self.tester = tester
+        self.runtime_probe = runtime_probe
         self.model_discoverer = model_discoverer or _fetch_deepseek_models
         self.redirect_checker = redirect_checker or _assert_provider_does_not_redirect
 
@@ -231,161 +232,6 @@ class ModelConnectionService:
         )
         return result
 
-    def test_draft(
-        self,
-        *,
-        actor_id: str,
-        code: str,
-        credential_source: str,
-        config: dict[str, Any],
-        api_key: str = "",
-        timeout_seconds: int = 15,
-    ) -> dict[str, Any]:
-        self._require_agent_editor(actor_id)
-        self._require_secret_admin(actor_id)
-        connection = self.repository.get_connection(code)
-        normalized = self.normalize_config(config, validate_dns=True)
-        credential = self._resolve_probe_credential(
-            code=code,
-            credential_source=credential_source,
-            api_key=api_key,
-        )
-        started = time.monotonic()
-        binding = self._temporary_binding(connection, normalized)
-        try:
-            models = self._discover_model_options(
-                str(normalized["base_url"]),
-                credential,
-                timeout_seconds,
-            )
-            self._require_discovered_models(normalized, models)
-            self._test_temporary_binding(binding, credential, timeout_seconds)
-        except Exception as exc:
-            self._record_probe_audit(
-                actor_id=actor_id,
-                code=code,
-                action="test-draft",
-                status="FAILED",
-                provider_host=binding.provider_host,
-                model=binding.model,
-                duration_ms=int((time.monotonic() - started) * 1000),
-                error_code=_stable_probe_error_code(exc),
-            )
-            raise _safe_probe_error(exc) from exc
-        result: dict[str, Any] = {
-            "success": True,
-            "provider_host": binding.provider_host,
-            "model": binding.model,
-            "duration_ms": int((time.monotonic() - started) * 1000),
-            "runtime": "claude_agent_sdk",
-            "detail": "连接成功",
-        }
-        self._record_probe_audit(
-            actor_id=actor_id,
-            code=code,
-            action="test-draft",
-            status="SUCCEEDED",
-            provider_host=binding.provider_host,
-            model=binding.model,
-            duration_ms=int(result["duration_ms"]),
-        )
-        return result
-
-    def configure(
-        self,
-        *,
-        actor_id: str,
-        code: str,
-        expected_revision: int,
-        credential_source: str,
-        config: dict[str, Any],
-        api_key: str = "",
-        timeout_seconds: int = 15,
-    ) -> dict[str, Any]:
-        self._require_agent_editor(actor_id)
-        self._require_secret_admin(actor_id)
-        connection = self._require_expected_revision(code, expected_revision)
-        normalized = self.normalize_config(config, validate_dns=True)
-        credential = self._resolve_probe_credential(
-            code=code,
-            credential_source=credential_source,
-            api_key=api_key,
-        )
-        started = time.monotonic()
-        binding = self._temporary_binding(connection, normalized)
-        try:
-            models = self._discover_model_options(
-                str(normalized["base_url"]),
-                credential,
-                timeout_seconds,
-            )
-            self._require_discovered_models(normalized, models)
-            self._test_temporary_binding(binding, credential, timeout_seconds)
-        except Exception as exc:
-            self._record_probe_audit(
-                actor_id=actor_id,
-                code=code,
-                action="configure",
-                status="FAILED",
-                provider_host=binding.provider_host,
-                model=binding.model,
-                duration_ms=int((time.monotonic() - started) * 1000),
-                error_code=_stable_probe_error_code(exc),
-            )
-            raise _safe_probe_error(exc) from exc
-
-        audit_attempted = False
-        try:
-            self._require_expected_revision(code, expected_revision)
-            with self.repository.database.unit_of_work():
-                connection = self._require_expected_revision(code, expected_revision)
-                secret_id = self._configured_secret_id(
-                    actor_id=actor_id,
-                    connection=connection,
-                    credential_source=credential_source,
-                    api_key=api_key,
-                )
-                revision = self.repository.append_revision(
-                    connection_id=str(connection["id"]),
-                    expected_revision=expected_revision,
-                    config=normalized,
-                    config_hash=_hash(normalized),
-                    api_key_secret_id=secret_id,
-                    status="ready",
-                    actor_id=actor_id,
-                )
-                audit_attempted = True
-                self.audit_service.record(
-                    "model.connection.configure_succeeded",
-                    status="SUCCEEDED",
-                    summary="Model connection configured",
-                    actor_id=actor_id,
-                    payload={
-                        "connection_code": code,
-                        "provider_host": binding.provider_host,
-                        "model": binding.model,
-                        "duration_ms": int((time.monotonic() - started) * 1000),
-                        "result": "ready",
-                        "credential_source": credential_source,
-                        "revision": int(revision["revision"]),
-                    },
-                )
-                public = self._public_revision(revision)
-        except Exception as exc:
-            if not audit_attempted:
-                self._record_probe_audit(
-                    actor_id=actor_id,
-                    code=code,
-                    action="configure",
-                    status="FAILED",
-                    provider_host=binding.provider_host,
-                    model=binding.model,
-                    duration_ms=int((time.monotonic() - started) * 1000),
-                    error_code=_stable_probe_error_code(exc),
-                )
-            raise
-        return public
-
     def save_revision(
         self,
         *,
@@ -394,16 +240,39 @@ class ModelConnectionService:
         expected_revision: int,
         config: dict[str, Any],
         api_key: str = "",
+        idempotency_key: str = "",
     ) -> dict[str, Any]:
         self._require_agent_editor(actor_id)
+        request = {
+            "code": code,
+            "expected_revision": expected_revision,
+            "config": config,
+            "credential_submitted": bool(api_key),
+        }
+        replay = self._idempotent(
+            idempotency_key,
+            "model_connection.save_revision",
+            actor_id,
+            request,
+        )
+        if replay is not None:
+            return replay
         normalized = self.normalize_config(config, validate_dns=True)
-        return self._save_normalized_revision(
+        result = self._save_normalized_revision(
             actor_id=actor_id,
             code=code,
             expected_revision=expected_revision,
             normalized=normalized,
             api_key=api_key,
         )
+        self._remember(
+            idempotency_key,
+            "model_connection.save_revision",
+            actor_id,
+            request,
+            result,
+        )
+        return result
 
     @operation_unit_of_work(lambda service: service.repository.database)
     def _save_normalized_revision(
@@ -483,9 +352,23 @@ class ModelConnectionService:
         code: str,
         expected_revision: int,
         api_key: str,
+        idempotency_key: str = "",
     ) -> dict[str, Any]:
         self._require_agent_editor(actor_id)
         self._require_secret_admin(actor_id)
+        request = {
+            "code": code,
+            "expected_revision": expected_revision,
+            "credential_submitted": bool(api_key),
+        }
+        replay = self._idempotent(
+            idempotency_key,
+            "model_connection.rotate_credential",
+            actor_id,
+            request,
+        )
+        if replay is not None:
+            return replay
         if not str(api_key or ""):
             raise _validation_error("api_key", "必须填写 API Key")
         connection = self.repository.get_connection(code)
@@ -547,6 +430,13 @@ class ModelConnectionService:
                 "credential_version": public["credential"]["version"],
             },
         )
+        self._remember(
+            idempotency_key,
+            "model_connection.rotate_credential",
+            actor_id,
+            request,
+            public,
+        )
         return public
 
     @operation_unit_of_work(lambda service: service.repository.database)
@@ -557,8 +447,22 @@ class ModelConnectionService:
         code: str,
         expected_revision: int,
         enabled: bool,
+        idempotency_key: str = "",
     ) -> dict[str, Any]:
         self._require_agent_editor(actor_id)
+        request = {
+            "code": code,
+            "expected_revision": expected_revision,
+            "enabled": enabled,
+        }
+        replay = self._idempotent(
+            idempotency_key,
+            "model_connection.set_enabled",
+            actor_id,
+            request,
+        )
+        if replay is not None:
+            return replay
         connection = self.repository.get_connection(code)
         if enabled:
             revision_id = str(connection.get("current_revision_id") or "")
@@ -574,32 +478,84 @@ class ModelConnectionService:
             expected_revision=expected_revision,
             status="ready" if enabled else "disabled",
         )
-        return self._public_connection(updated)
+        public = self._public_connection(updated)
+        self.audit_service.record(
+            "model.connection.status_changed",
+            status="SUCCEEDED",
+            summary="Model connection status changed",
+            actor_id=actor_id,
+            payload={
+                "connection_code": code,
+                "enabled": enabled,
+                "revision": public["revision"],
+            },
+        )
+        self._remember(
+            idempotency_key,
+            "model_connection.set_enabled",
+            actor_id,
+            request,
+            public,
+        )
+        return public
 
     def test_saved_revision(
         self,
         *,
         actor_id: str,
         revision_id: str,
+        expected_revision: int,
         timeout_seconds: int = 15,
+        idempotency_key: str = "",
     ) -> dict[str, Any]:
         self._require_agent_editor(actor_id)
         self._require_secret_admin(actor_id)
         revision = self.repository.get_revision(revision_id)
-        started = time.monotonic()
+        connection = self.repository.get_connection_by_id(str(revision["connection_id"]))
+        request = {
+            "revision_id": revision_id,
+            "expected_revision": expected_revision,
+            "timeout_seconds": max(3, min(timeout_seconds, 20)),
+        }
+        replay = self._idempotent(
+            idempotency_key,
+            "model_connection.test_saved_revision",
+            actor_id,
+            request,
+        )
+        if replay is not None:
+            return replay
+        if int(connection["revision"]) != expected_revision:
+            raise NonRetryableExecutionError(
+                "Model connection revision conflict",
+                safe_message="模型连接已发生变化，请刷新后重试",
+                error_code="revision_conflict",
+                diagnostics={"current_revision": int(connection["revision"])},
+            )
         binding: ModelRuntimeBinding | None = None
         try:
             binding = self.runtime_binding(revision_id)
-            if self.tester is None:
+            self.validate_base_url(binding.base_url, validate_dns=True)
+            self.redirect_checker(binding.base_url, max(3, min(timeout_seconds, 10)))
+            if self.runtime_probe is None:
                 raise NonRetryableExecutionError(
-                    "Model connection tester is unavailable",
+                    "TypeScript Runtime model probe is unavailable",
                     safe_message="模型连接测试运行时不可用",
                     error_code="model_connection_test_unavailable",
                 )
-            self.validate_base_url(binding.base_url, validate_dns=True)
-            self.redirect_checker(binding.base_url, max(3, min(timeout_seconds, 10)))
-            api_key = self.resolve_api_key(binding)
-            outcome = self.tester(binding, api_key, max(3, min(timeout_seconds, 30)))
+            outcome = self.runtime_probe.probe(
+                revision_id=revision_id,
+                config_hash=binding.config_hash,
+                timeout_seconds=max(3, min(timeout_seconds, 20)),
+            )
+            if not bool(outcome.get("success")):
+                failure = outcome.get("failure")
+                safe_failure = failure if isinstance(failure, dict) else {}
+                raise NonRetryableExecutionError(
+                    "TypeScript Runtime model probe failed",
+                    safe_message=str(safe_failure.get("safe_message") or "模型连接测试失败"),
+                    error_code=str(safe_failure.get("code") or "model_connection_test_failed"),
+                )
         except Exception as exc:
             safe_message = getattr(exc, "safe_message", "模型连接测试失败")
             error_code = getattr(exc, "error_code", "model_connection_test_failed")
@@ -632,11 +588,12 @@ class ModelConnectionService:
         result = {
             "success": True,
             "connection_revision_id": revision_id,
-            "provider_host": binding.provider_host,
-            "model": binding.model,
-            "duration_ms": int((time.monotonic() - started) * 1000),
-            "runtime": "claude_agent_sdk",
-            "detail": str(outcome.get("detail") or "连接成功")[:200],
+            "provider_host": str(outcome.get("provider_host") or binding.provider_host),
+            "model": str(outcome.get("model") or binding.model),
+            "duration_ms": int(outcome.get("duration_ms") or 0),
+            "runtime": "typescript-v1",
+            "runtime_version": str(outcome.get("runtime_version") or ""),
+            "sdk_version": str(outcome.get("sdk_version") or ""),
         }
         self.audit_service.record(
             "model.connection.test_succeeded",
@@ -644,6 +601,13 @@ class ModelConnectionService:
             summary="Model connection test succeeded",
             actor_id=actor_id,
             payload=result,
+        )
+        self._remember(
+            idempotency_key,
+            "model_connection.test_saved_revision",
+            actor_id,
+            request,
+            result,
         )
         return result
 
@@ -949,75 +913,6 @@ class ModelConnectionService:
         except Exception as exc:
             raise _credential_unavailable() from exc
 
-    def _temporary_binding(
-        self,
-        connection: dict[str, Any],
-        config: dict[str, str | int],
-    ) -> ModelRuntimeBinding:
-        return ModelRuntimeBinding(
-            protocol=str(config["protocol"]),
-            base_url=str(config["base_url"]),
-            model=str(config["model"]),
-            default_opus_model=str(config["default_opus_model"]),
-            default_sonnet_model=str(config["default_sonnet_model"]),
-            default_haiku_model=str(config["default_haiku_model"]),
-            subagent_model=str(config["subagent_model"]),
-            effort_level=str(config["effort_level"]),
-            connection_id=str(connection["id"]),
-            connection_code=str(connection["code"]),
-            connection_revision=int(connection["revision"]),
-            config_hash=_hash(config),
-        )
-
-    def _test_temporary_binding(
-        self,
-        binding: ModelRuntimeBinding,
-        api_key: str,
-        timeout_seconds: int,
-    ) -> None:
-        if self.tester is None:
-            raise NonRetryableExecutionError(
-                "Model connection tester is unavailable",
-                safe_message="模型连接测试运行时不可用",
-                error_code="model_connection_test_unavailable",
-            )
-        try:
-            self.tester(binding, api_key, max(3, min(int(timeout_seconds), 30)))
-        except Exception as exc:
-            code = _stable_probe_error_code(exc)
-            if code == "model_connection_test_timeout":
-                raise NonRetryableExecutionError(
-                    "Model connection test timed out",
-                    safe_message="模型连接测试超时",
-                    error_code=code,
-                ) from exc
-            raise NonRetryableExecutionError(
-                "Model connection test failed",
-                safe_message="模型连接测试失败，请检查模型和 Credential",
-                error_code="model_connection_test_failed",
-            ) from exc
-
-    @staticmethod
-    def _require_discovered_models(
-        config: dict[str, str | int],
-        models: list[dict[str, str]],
-    ) -> None:
-        available = {item["id"] for item in models}
-        for field in (
-            "model",
-            "default_opus_model",
-            "default_sonnet_model",
-            "default_haiku_model",
-            "subagent_model",
-        ):
-            if str(config[field]) not in available:
-                raise NonRetryableExecutionError(
-                    f"Configured model is unavailable: {field}",
-                    safe_message="选择的模型不在 DeepSeek 当前可用列表中",
-                    error_code="deepseek_model_unavailable",
-                    field_errors=[{"field": field, "message": "请重新选择当前可用模型"}],
-                )
-
     def _require_expected_revision(
         self,
         code: str,
@@ -1032,72 +927,6 @@ class ModelConnectionService:
                 diagnostics={"current_revision": int(connection["revision"])},
             )
         return connection
-
-    def _configured_secret_id(
-        self,
-        *,
-        actor_id: str,
-        connection: dict[str, Any],
-        credential_source: str,
-        api_key: str,
-    ) -> str:
-        revision_id = str(connection.get("current_revision_id") or "")
-        current = self.repository.get_revision(revision_id) if revision_id else None
-        bound_secret_id = str(current.get("api_key_secret_id") or "") if current else ""
-        if credential_source == "existing":
-            if (
-                current is None
-                or str(current.get("status") or "") != "ready"
-                or not self._secret_ready(bound_secret_id)
-            ):
-                raise _credential_unavailable()
-            return bound_secret_id
-
-        value = str(api_key or "").strip()
-        if not value:
-            raise _validation_error("api_key", "必须填写新的 API Key")
-        if bound_secret_id:
-            try:
-                bound = self.platform_repository.get_platform_secret(bound_secret_id)
-            except NotFound:
-                bound = None
-            if bound is not None:
-                self.secret_provider.rotate_secret(
-                    code=str(bound["code"]),
-                    value=value,
-                    actor_id=actor_id,
-                )
-                return str(bound["id"])
-
-        secret_code = f"model-{connection['code']}-api-key"
-        orphan = self.platform_repository.get_platform_secret_by_code(secret_code)
-        ownership: dict[str, object] = {
-            "kind": "model_connection",
-            "connection_code": str(connection["code"]),
-            "connection_id": str(connection["id"]),
-        }
-        if orphan is not None:
-            metadata = dict(orphan.get("metadata") or {})
-            if any(metadata.get(key) != expected for key, expected in ownership.items()):
-                raise NonRetryableExecutionError(
-                    "Deterministic model credential is owned by another resource",
-                    safe_message="模型 Credential 所有权冲突，请检查凭据中心",
-                    error_code="credential_ownership_conflict",
-                )
-            self.secret_provider.rotate_secret(
-                code=secret_code,
-                value=value,
-                actor_id=actor_id,
-            )
-            return str(orphan["id"])
-        created = self.secret_provider.create_secret(
-            code=secret_code,
-            value=value,
-            purpose=f"DeepSeek credential for {connection['code']}",
-            actor_id=actor_id,
-            metadata=ownership,
-        )
-        return str(created["id"])
 
     def _record_probe_audit(
         self,
@@ -1218,6 +1047,76 @@ class ModelConnectionService:
             if secret and secret.get("status") == "enabled":
                 return str(secret["id"])
         return ""
+
+    def _idempotent(
+        self,
+        key: str,
+        operation: str,
+        actor_id: str,
+        request: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if not key:
+            return None
+        if len(key) > 128:
+            raise _validation_error("idempotency_key", "幂等键长度超出限制")
+        row = self.repository.database.execute_one(
+            "select * from management_operation_idempotency where idempotency_key = ?",
+            (key,),
+        )
+        if row is None:
+            return None
+        request_hash = _hash(request)
+        if (
+            str(row["operation"]) != operation
+            or str(row["actor_id"]) != actor_id
+            or str(row["request_hash"]) != request_hash
+        ):
+            raise NonRetryableExecutionError(
+                "Model connection idempotency conflict",
+                safe_message="重复请求与原请求不一致",
+                error_code="idempotency_conflict",
+            )
+        try:
+            response = json.loads(str(row["response_json"]))
+        except json.JSONDecodeError as exc:
+            raise NonRetryableExecutionError(
+                "Model connection idempotency response is invalid",
+                safe_message="幂等记录完整性校验失败",
+                error_code="idempotency_integrity_failed",
+            ) from exc
+        if not isinstance(response, dict):
+            raise NonRetryableExecutionError(
+                "Model connection idempotency response is invalid",
+                safe_message="幂等记录完整性校验失败",
+                error_code="idempotency_integrity_failed",
+            )
+        return response
+
+    def _remember(
+        self,
+        key: str,
+        operation: str,
+        actor_id: str,
+        request: dict[str, Any],
+        response: dict[str, Any],
+    ) -> None:
+        if not key:
+            return
+        self.repository.database.execute(
+            """
+            insert into management_operation_idempotency
+              (idempotency_key, operation, actor_id, request_hash,
+               response_json, created_at)
+            values (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (
+                key,
+                operation,
+                actor_id,
+                _hash(request),
+                json.dumps(response, ensure_ascii=False, sort_keys=True),
+            ),
+        )
 
     def _require_agent_editor(self, actor_id: str) -> None:
         self.authorization.require(

@@ -65,8 +65,6 @@ def test_static_safe_message_literals_include_chinese() -> None:
                     if isinstance(child, ast.Constant) and isinstance(child.value, str)
                 )
                 if static_text and not _CJK_PATTERN.search(static_text):
-                    violations.append(
-                        f"{path.relative_to(app_root)}:{node.lineno}: {static_text}"
-                    )
+                    violations.append(f"{path.relative_to(app_root)}:{node.lineno}: {static_text}")
 
     assert violations == []

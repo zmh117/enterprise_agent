@@ -23,9 +23,7 @@ class AgentJobWorker:
 
     def handle(self, message: AgentJobMessage) -> None:
         try:
-            dispatch_event = self.container.agent_repository.get_dispatch_event(
-                message.event_id
-            )
+            dispatch_event = self.container.agent_repository.get_dispatch_event(message.event_id)
         except NotFound:
             self.container.audit_service.record(
                 "job.dispatch.message_rejected",
@@ -67,6 +65,7 @@ class AgentJobWorker:
                     worker_id=self.worker_id,
                     correlation_id=dispatch_event.correlation_id,
                     fail_on_error=False,
+                    recover_typescript_running=message.redelivered,
                 )
             except Exception as exc:
                 job = self.container.agent_repository.get_job(message.job_id)

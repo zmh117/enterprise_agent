@@ -75,14 +75,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
     except (AppError, ValueError) as exc:
-        message = (
-            exc.safe_message if isinstance(exc, AppError) else str(exc)
-        )
-        error_code = (
-            exc.error_code
-            if isinstance(exc, AppError)
-            else "dingtalk_rebuild_invalid"
-        )
+        message = exc.safe_message if isinstance(exc, AppError) else str(exc)
+        error_code = exc.error_code if isinstance(exc, AppError) else "dingtalk_rebuild_invalid"
         print(
             json.dumps(
                 {

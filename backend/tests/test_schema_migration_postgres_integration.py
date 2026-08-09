@@ -44,11 +44,7 @@ def postgres_database_dsn() -> str:
 
     database_name = f"migration_test_{uuid.uuid4().hex}"
     with psycopg.connect(POSTGRES_DSN, autocommit=True) as admin:
-        admin.execute(
-            sql.SQL("create database {}").format(
-                sql.Identifier(database_name)
-            )
-        )
+        admin.execute(sql.SQL("create database {}").format(sql.Identifier(database_name)))
     parameters = conninfo_to_dict(POSTGRES_DSN)
     parameters["dbname"] = database_name
     test_dsn = make_conninfo(**parameters)
@@ -64,11 +60,7 @@ def postgres_database_dsn() -> str:
                 """,
                 (database_name,),
             )
-            admin.execute(
-                sql.SQL("drop database {}").format(
-                    sql.Identifier(database_name)
-                )
-            )
+            admin.execute(sql.SQL("drop database {}").format(sql.Identifier(database_name)))
 
 
 def _write(
@@ -109,9 +101,7 @@ def test_postgres_concurrent_migrators_serialize_on_advisory_lock(
     assert sorted(result.applied for result in results) == [(), ("001",)]
     database = Database(postgres_database_dsn)
     try:
-        assert database.execute_one(
-            "select count(*) as count from lock_probe"
-        ) == {"count": 0}
+        assert database.execute_one("select count(*) as count from lock_probe") == {"count": 0}
         assert len(SchemaMigrationLedger(database).list_records()) == 1
     finally:
         database.close()
@@ -140,9 +130,9 @@ def test_postgres_checksum_drift_stops_before_later_migration(
         with pytest.raises(MigrationDefinitionError, match="checksum"):
             Migrator(database, tmp_path, migrator_build="build-b").run()
 
-        assert database.execute_one(
-            "select to_regclass('public.must_not_apply') as relation"
-        ) == {"relation": None}
+        assert database.execute_one("select to_regclass('public.must_not_apply') as relation") == {
+            "relation": None
+        }
     finally:
         database.close()
 
@@ -187,13 +177,10 @@ def test_postgres_failed_version_rolls_back_schema_and_ledger_and_reruns(
         with pytest.raises(MigrationExecutionError, match="002 failed"):
             Migrator(database, tmp_path, migrator_build="build-a").run()
 
-        assert database.execute_one(
-            "select to_regclass('public.must_rollback') as relation"
-        ) == {"relation": None}
-        assert [
-            row["version"]
-            for row in SchemaMigrationLedger(database).list_records()
-        ] == ["001"]
+        assert database.execute_one("select to_regclass('public.must_rollback') as relation") == {
+            "relation": None
+        }
+        assert [row["version"] for row in SchemaMigrationLedger(database).list_records()] == ["001"]
 
         _write(
             tmp_path,
@@ -213,9 +200,9 @@ def test_postgres_failed_version_rolls_back_schema_and_ledger_and_reruns(
 
         assert recovered.applied == ("002",)
         assert repeated.applied == ()
-        assert database.execute_one(
-            "select to_regclass('public.recovered_table') as relation"
-        ) == {"relation": "recovered_table"}
+        assert database.execute_one("select to_regclass('public.recovered_table') as relation") == {
+            "relation": "recovered_table"
+        }
     finally:
         database.close()
 
@@ -230,9 +217,7 @@ def test_postgres_operation_uows_isolate_concurrent_commit_and_rollback(
     )
     barrier = threading.Barrier(2)
     try:
-        database.execute(
-            "create table operation_probe (id integer primary key, value text)"
-        )
+        database.execute("create table operation_probe (id integer primary key, value text)")
 
         def run(identifier: int, *, fail: bool) -> tuple[int, str]:
             try:
@@ -242,9 +227,7 @@ def test_postgres_operation_uows_isolate_concurrent_commit_and_rollback(
                         (identifier, f"value-{identifier}"),
                     )
                     barrier.wait(timeout=5)
-                    visible = database.execute_one(
-                        "select count(*) as count from operation_probe"
-                    )
+                    visible = database.execute_one("select count(*) as count from operation_probe")
                     barrier.wait(timeout=5)
                     if fail:
                         raise RuntimeError("rollback this operation")
@@ -258,9 +241,9 @@ def test_postgres_operation_uows_isolate_concurrent_commit_and_rollback(
             results = sorted((committed.result(), rolled_back.result()))
 
         assert results == [(1, "committed"), (1, "rolled-back")]
-        assert database.execute(
-            "select id, value from operation_probe order by id"
-        ) == [{"id": 1, "value": "value-1"}]
+        assert database.execute("select id, value from operation_probe order by id") == [
+            {"id": 1, "value": "value-1"}
+        ]
         assert database.pool_snapshot().checked_out == 0
     finally:
         database.close()
@@ -396,9 +379,7 @@ def test_postgres_delivery_dispatchers_use_skip_locked_without_duplicate_sends(
                 sent.append(text)
 
     try:
-        runtime.result_delivery_service.adapters["postgres_capture"] = (
-            CaptureAdapter()
-        )
+        runtime.result_delivery_service.adapters["postgres_capture"] = CaptureAdapter()
         session = runtime.agent_repository.create_session(
             dingding_conversation_id="delivery-concurrency",
             dingding_user_id="delivery-user",
@@ -465,10 +446,7 @@ def test_postgres_delivery_dispatchers_use_skip_locked_without_duplicate_sends(
                 )
             )
 
-        assert all(
-            result.failed == result.dead == result.retrying == 0
-            for result in results
-        )
+        assert all(result.failed == result.dead == result.retrying == 0 for result in results)
         assert len(sent) == 40
         assert len(set(sent)) == 40
         assert runtime.database.execute_one(
@@ -486,9 +464,7 @@ def test_postgres_delivery_dispatchers_use_skip_locked_without_duplicate_sends(
             """
         ) == {"count": 40}
         assert all(
-            runtime.agent_repository.get_job(job.id).status
-            == JobStatus.SUCCEEDED
-            for job in jobs
+            runtime.agent_repository.get_job(job.id).status == JobStatus.SUCCEEDED for job in jobs
         )
     finally:
         runtime.database.close()

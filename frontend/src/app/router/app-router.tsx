@@ -1,4 +1,8 @@
-import { Navigate, createBrowserRouter, type RouteObject } from "react-router-dom"
+import {
+  Navigate,
+  createBrowserRouter,
+  type RouteObject,
+} from "react-router-dom"
 
 import { PlatformShell } from "@/app/shell/platform-shell"
 import { AccountSecurityPage } from "@/contexts/auth/presentation/account-security-page"
@@ -21,10 +25,51 @@ export const appRoutes: RouteObject[] = [
         path: "/operations/conversations/:sessionId",
         element: <ConversationDetailPage />,
       },
-      { path: "/me/external-identities", element: <MyExternalIdentitiesPage /> },
+      {
+        path: "/me/external-identities",
+        element: <MyExternalIdentitiesPage />,
+      },
       { path: "/account/security", element: <AccountSecurityPage /> },
-      { path: "/applications/*", element: <RetiredManagementPage /> },
-      { path: "/agent-profiles/*", element: <RetiredManagementPage /> },
+      {
+        path: "/applications",
+        lazy: async () => ({
+          Component: (
+            await import("@/contexts/applications/presentation/business-application-pages")
+          ).BusinessApplicationListPage,
+        }),
+      },
+      {
+        path: "/applications/:applicationCode",
+        lazy: async () => ({
+          Component: (
+            await import("@/contexts/applications/presentation/business-application-pages")
+          ).BusinessApplicationDetailPage,
+        }),
+      },
+      {
+        path: "/agent-profiles",
+        lazy: async () => ({
+          Component: (
+            await import("@/contexts/agents/presentation/agent-management-pages")
+          ).AgentListPage,
+        }),
+      },
+      {
+        path: "/agent-profiles/:agentCode",
+        lazy: async () => ({
+          Component: (
+            await import("@/contexts/agents/presentation/agent-management-pages")
+          ).AgentDetailPage,
+        }),
+      },
+      {
+        path: "/agent-profiles/:agentCode/model-connections/:connectionCode",
+        lazy: async () => ({
+          Component: (
+            await import("@/contexts/agents/presentation/agent-management-pages")
+          ).ModelConnectionPage,
+        }),
+      },
       { path: "/operations/debug", element: <RetiredManagementPage /> },
       { path: "/users/*", element: <RetiredManagementPage /> },
       { path: "/platform/*", element: <RetiredManagementPage /> },

@@ -31,9 +31,7 @@ class IdentityService:
         return bool(self.ones_verifier and self.ones_verifier.available)
 
     @operation_unit_of_work(lambda service: service.repository.database)
-    def resolve_external(
-        self, descriptor: ExternalIdentityDescriptor
-    ) -> AuthenticatedPrincipal:
+    def resolve_external(self, descriptor: ExternalIdentityDescriptor) -> AuthenticatedPrincipal:
         if descriptor.provider == "dingtalk":
             if not descriptor.dingtalk_enterprise_id:
                 raise PermissionDenied(

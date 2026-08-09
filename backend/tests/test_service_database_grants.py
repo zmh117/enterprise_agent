@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import pytest
 import yaml
@@ -52,6 +53,20 @@ def test_grants_are_explicit_and_exclude_retired_platform_tables() -> None:
     ) in data_grants
 
 
+def test_service_grants_do_not_reference_tables_retired_by_head_migration() -> None:
+    grants_sql = (ROOT / "backend/maintenance/mcp_service_grants.sql").read_text()
+    retirement_sql = (
+        ROOT / "backend/migrations/040_remove_retired_platform_schema.sql"
+    ).read_text()
+    retired_tables = set(re.findall(r"(?m)^  ([a-z][a-z0-9_]*)[,;]$", retirement_sql))
+
+    stale_grants = sorted(
+        table for table in retired_tables if re.search(rf"\b{re.escape(table)}\b", grants_sql)
+    )
+
+    assert stale_grants == []
+
+
 def test_compose_separates_database_roles_and_master_key_mounts() -> None:
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
     services = compose["services"]
@@ -65,6 +80,22 @@ def test_compose_separates_database_roles_and_master_key_mounts() -> None:
     agent = services["agent-worker"]
     assert "APP_CONFIG_MASTER_KEY_FILE" not in agent["environment"]
     assert "app_config_master_key" not in agent.get("secrets", [])
+    for worker_name in (
+        "agent-worker",
+        "job-dispatch-worker",
+        "delivery-dispatch-worker",
+        "webhook-worker",
+        "channel-dispatch-worker",
+        "attachment-worker",
+    ):
+        worker = services[worker_name]
+        assert "MODEL_PROBE_AUTH_TOKEN_FILE" not in worker["environment"]
+        assert "model_probe_auth_token" not in worker.get("secrets", [])
+    assert (
+        services["api-server"]["environment"]["MODEL_PROBE_AUTH_TOKEN_FILE"]
+        == "/run/secrets/model_probe_auth_token"
+    )
+    assert "model_probe_auth_token" in services["api-server"]["secrets"]
     for decrypting_service in (
         "api-server",
         "ones-mcp-server",
@@ -100,7 +131,6 @@ def test_role_password_ddl_is_safely_composed_without_bind_placeholders() -> Non
     ).as_string(None)
 
     assert statement == (
-        'CREATE ROLE "enterprise_agent_api" LOGIN PASSWORD '
-        "'long-enough-''quoted''-password'"
+        "CREATE ROLE \"enterprise_agent_api\" LOGIN PASSWORD 'long-enough-''quoted''-password'"
     )
     assert "$1" not in statement

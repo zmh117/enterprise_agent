@@ -31,10 +31,7 @@ def test_job_message_authorization_snapshot_and_dispatch_event_commit_together()
         detail = runtime.agent_repository.get_job_detail(job.id)
         messages = runtime.agent_repository.list_messages(job.session_id)
         event = runtime.agent_repository.get_dispatch_event_for_job(job.id)
-        audit_types = {
-            row["event_type"]
-            for row in runtime.audit_repository.list_for_job(job.id)
-        }
+        audit_types = {row["event_type"] for row in runtime.audit_repository.list_for_job(job.id)}
 
         assert detail["id"] == job.id
         assert detail["business_application_route_decision"] == {
@@ -75,10 +72,7 @@ def test_dispatch_event_failure_rolls_back_job_message_and_event(
         with pytest.raises(RuntimeError, match="fail after dispatch insert"):
             runtime.create_agent_job_service.execute(_command("atomic-rollback"))
 
-        assert (
-            runtime.agent_repository.get_job_by_idempotency_key("atomic-rollback")
-            is None
-        )
+        assert runtime.agent_repository.get_job_by_idempotency_key("atomic-rollback") is None
         assert runtime.agent_repository.count_rows("agent_message") == before_messages
         assert runtime.agent_repository.count_rows("job_dispatch_outbox") == before_outbox
         assert runtime.message_bus is not None

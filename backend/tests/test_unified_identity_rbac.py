@@ -76,8 +76,14 @@ def test_web_auth_uses_hashed_sessions_csrf_and_rejects_forged_headers() -> None
         csrf = login(client)
         me = client.get("/api/auth/me")
         assert me.status_code == 200
-        # The lightweight portal intentionally exposes no retired admin powers.
-        assert not any(me.json()["user"]["capabilities"].values())
+        capabilities = me.json()["user"]["capabilities"]
+        assert capabilities["agents_manage"] is True
+        assert capabilities["applications_manage"] is True
+        assert capabilities["mcp_tools_manage"] is True
+        assert capabilities["secrets_manage"] is True
+        assert capabilities["users_manage"] is False
+        assert capabilities["roles_manage"] is False
+        assert capabilities["identities_manage"] is False
         session_token = client.cookies.get("enterprise_agent_session")
         assert session_token
         stored = container.database.execute_one(
@@ -141,3 +147,197 @@ def test_session_expiry_password_change_and_owned_revocation_fail_closed() -> No
         )
         assert revoked.status_code == 200
         assert client.get("/api/auth/me").status_code == 401
+
+
+def test_control_plane_writes_require_csrf_revision_idempotency_and_safe_conflicts() -> None:
+    settings = unified_settings()
+    container = unified_container()
+    container.model_connection_service.dns_resolver = lambda *args, **kwargs: [
+        (2, 1, 6, "", ("1.1.1.1", 443))
+    ]
+    app = create_app(settings, container_factory=lambda _: container)
+    agent_body = {
+        "expected_revision": 0,
+        "code": "governed-agent",
+        "name": "Governed Agent",
+        "description": "",
+        "project_code": "default",
+    }
+    application_body = {
+        "expected_revision": 0,
+        "code": "governed-application",
+        "name": "Governed Application",
+        "description": "",
+        "project_code": "default",
+        "owner_user_id": ADMIN_ID,
+    }
+    tool_body = {
+        "expected_revision": 0,
+        "code": "governed-tool",
+        "name": "Governed Tool",
+        "catalog_key": "ones-mcp/ones_work_item_search",
+        "resource_deployment_id": "",
+    }
+
+    try:
+        with TestClient(app) as client:
+            csrf = login(client)
+            assert (
+                client.post(
+                    "/api/admin/agents",
+                    json=agent_body,
+                    headers={"Idempotency-Key": "agent-create"},
+                ).status_code
+                == 403
+            )
+
+            protected_headers = {
+                **csrf_headers(csrf),
+                "Idempotency-Key": "agent-create",
+            }
+            assert (
+                client.post(
+                    "/api/admin/agents",
+                    json={
+                        key: value
+                        for key, value in agent_body.items()
+                        if key != "expected_revision"
+                    },
+                    headers=protected_headers,
+                ).status_code
+                == 422
+            )
+            assert (
+                client.post(
+                    "/api/admin/agents",
+                    json=agent_body,
+                    headers=csrf_headers(csrf),
+                ).status_code
+                == 422
+            )
+
+            created_agent = client.post(
+                "/api/admin/agents",
+                json=agent_body,
+                headers=protected_headers,
+            )
+            assert created_agent.status_code == 200, created_agent.text
+            replayed_agent = client.post(
+                "/api/admin/agents",
+                json=agent_body,
+                headers=protected_headers,
+            )
+            assert replayed_agent.json() == created_agent.json()
+
+            stale = client.put(
+                "/api/admin/agents/governed-agent",
+                json={
+                    "expected_revision": 999,
+                    "name": "Governed Agent",
+                    "description": "",
+                    "project_code": "default",
+                    "status": "enabled",
+                },
+                headers={
+                    **csrf_headers(csrf),
+                    "Idempotency-Key": "agent-stale-update",
+                },
+            )
+            assert stale.status_code == 409
+            assert stale.json()["detail"]["code"] == "revision_conflict"
+            assert stale.json()["detail"]["current_revision"] == 1
+
+            created_application = client.post(
+                "/api/admin/business-applications",
+                json=application_body,
+                headers={
+                    **csrf_headers(csrf),
+                    "Idempotency-Key": "application-create",
+                },
+            )
+            assert created_application.status_code == 200, created_application.text
+            created_tool = client.post(
+                "/api/admin/mcp/tool-publications",
+                json=tool_body,
+                headers={
+                    **csrf_headers(csrf),
+                    "Idempotency-Key": "tool-create",
+                },
+            )
+            assert created_tool.status_code == 200, created_tool.text
+
+            model_connection = client.get("/api/admin/model-connections/default-deepseek-anthropic")
+            assert model_connection.status_code == 200
+            model_payload = json.dumps(model_connection.json(), ensure_ascii=False).lower()
+            for forbidden in (
+                "api_key_secret_id",
+                "secret://",
+                "ciphertext",
+                "nonce",
+                "base_url",
+                "https://api.deepseek.com/anthropic",
+            ):
+                assert forbidden not in model_payload
+            saved_model_revision = client.put(
+                "/api/admin/model-connections/default-deepseek-anthropic/revision",
+                json={
+                    "expected_revision": 1,
+                    "config": {
+                        "schema_version": 1,
+                        "protocol": "anthropic_compatible",
+                        "base_url": "https://api.deepseek.com/anthropic",
+                        "model": "deepseek-v4-flash",
+                        "default_opus_model": "deepseek-v4-flash",
+                        "default_sonnet_model": "deepseek-v4-flash",
+                        "default_haiku_model": "deepseek-v4-flash",
+                        "subagent_model": "deepseek-v4-flash",
+                        "effort_level": "max",
+                    },
+                },
+                headers={
+                    **csrf_headers(csrf),
+                    "Idempotency-Key": "model-revision-save",
+                },
+            )
+            assert saved_model_revision.status_code == 200, saved_model_revision.text
+            saved_payload = json.dumps(saved_model_revision.json(), ensure_ascii=False).lower()
+            assert "base_url" not in saved_payload
+            assert "https://api.deepseek.com/anthropic" not in saved_payload
+            assert (
+                client.put(
+                    "/api/admin/model-connections/default-deepseek-anthropic/revision",
+                    json={
+                        "expected_revision": 1,
+                        "config": model_connection.json()["connection"]["current_revision"][
+                            "config"
+                        ],
+                    },
+                    headers=csrf_headers(csrf),
+                ).status_code
+                == 422
+            )
+            assert (
+                client.post(
+                    "/api/admin/model-connections/default-deepseek-anthropic/credential",
+                    json={"expected_revision": 1, "api_key": "not-submitted"},
+                    headers={"Idempotency-Key": "model-credential-no-csrf"},
+                ).status_code
+                == 403
+            )
+
+            audits = container.database.execute(
+                """
+                select event_type, payload_summary from audit_event
+                 where event_type in (
+                   'agent.definition.created',
+                   'business_application.created',
+                   'mcp.tool.created'
+                 )
+                """
+            )
+            assert len(audits) == 3
+            serialized = json.dumps(audits, ensure_ascii=False).lower()
+            for forbidden in ("password", "authorization", "secret://", "api_key"):
+                assert forbidden not in serialized
+    finally:
+        container.database.close()

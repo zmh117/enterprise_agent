@@ -9,6 +9,7 @@ class AgentJobMessage:
     event_id: str
     job_id: str
     correlation_id: str
+    redelivered: bool = False
 
 
 @dataclass(frozen=True)
@@ -47,17 +48,13 @@ class MessagePublisher(Protocol):
         self, attachment_id: str, correlation_id: str, reason: str
     ) -> None: ...
 
-    def publish_webhook_event(
-        self, webhook_event_id: str, correlation_id: str
-    ) -> None: ...
+    def publish_webhook_event(self, webhook_event_id: str, correlation_id: str) -> None: ...
 
     def publish_webhook_dead_letter(
         self, webhook_event_id: str, correlation_id: str, reason: str
     ) -> None: ...
 
-    def publish_channel_event(
-        self, channel_event_id: str, correlation_id: str
-    ) -> None: ...
+    def publish_channel_event(self, channel_event_id: str, correlation_id: str) -> None: ...
 
     def publish_channel_dead_letter(
         self, channel_event_id: str, correlation_id: str, reason: str

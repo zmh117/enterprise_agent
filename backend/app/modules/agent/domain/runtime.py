@@ -74,6 +74,8 @@ class AgentExecutionContext:
     application_publication_id: str = ""
     mcp_bindings: tuple[McpRuntimeBinding, ...] = ()
     mcp_unavailable_notices: tuple[McpUnavailableNotice, ...] = ()
+    runtime_kind: str = "python-v1"
+    runtime_protocol_version: str = "1.0"
 
 
 @dataclass(frozen=True)
@@ -82,12 +84,14 @@ class AgentRunRequest:
     user_id: str
     project_code: str
     context: AgentExecutionContext
+    invocation_id: str = ""
 
 
 @dataclass(frozen=True)
 class AgentRunResult:
     final_answer: str
     tool_events: list[dict[str, Any]] = field(default_factory=list)
+    runtime_provenance: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

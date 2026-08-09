@@ -139,9 +139,7 @@ class RabbitMQPublisher:
         finally:
             connection.close()
 
-    def _publish_attachment_retry(
-        self, payload: dict[str, object], delay_seconds: int
-    ) -> None:
+    def _publish_attachment_retry(self, payload: dict[str, object], delay_seconds: int) -> None:
         assert_external_io_allowed("rabbitmq.publish_attachment_retry")
         try:
             import pika

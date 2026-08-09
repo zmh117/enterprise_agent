@@ -209,6 +209,8 @@ class AgentRepository:
         business_application_route_decision: dict[str, Any] | None = None,
         execution_policy: dict[str, Any] | None = None,
         model_runtime_provenance: dict[str, Any] | None = None,
+        agent_runtime_kind: str = "python-v1",
+        agent_runtime_protocol_version: str = "1.0",
     ) -> AgentJob:
         existing = self.get_job_by_idempotency_key(idempotency_key)
         if existing:
@@ -260,9 +262,10 @@ class AgentRepository:
                business_application_route_id, business_application_config_hash,
                business_application_runtime_status,
                business_application_route_decision_json, execution_policy_json,
-               model_runtime_provenance_json)
+               model_runtime_provenance_json, agent_runtime_kind,
+               agent_runtime_protocol_version)
             values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job_id,
@@ -304,6 +307,8 @@ class AgentRepository:
                 ),
                 json.dumps(normalized_execution_policy, ensure_ascii=False),
                 json.dumps(model_runtime_provenance or {}, ensure_ascii=False),
+                agent_runtime_kind,
+                agent_runtime_protocol_version,
             ),
         )
         return self.get_job(job_id)
@@ -324,6 +329,157 @@ class AgentRepository:
             """,
             (max(int(tool_call_count), 0), int(exhausted), job_id),
         )
+
+    def record_runtime_event(self, job_id: str, event: dict[str, Any]) -> None:
+        invocation_id = str(event.get("invocation_id") or "")
+        request_digest = str(event.get("request_digest") or "")
+        sequence = int(event.get("sequence") or 0)
+        event_type = str(event.get("event_type") or "")
+        if (
+            not invocation_id
+            or len(request_digest) != 64
+            or sequence < 1
+            or event_type not in {"execution_started", "tool_event", "assistant_text", "terminal"}
+        ):
+            raise NonRetryableExecutionError(
+                "Runtime event identity is invalid",
+                safe_message="Runtime 事件身份无效",
+                error_code="runtime_event_invalid",
+            )
+        payload = sanitize_for_persistence(event.get("payload") or {})
+        payload_json = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        existing = self.database.execute_one(
+            """
+            select request_digest, event_type, payload_json
+              from agent_runtime_event
+             where job_id = ? and invocation_id = ? and sequence = ?
+            """,
+            (job_id, invocation_id, sequence),
+        )
+        if existing:
+            if (
+                str(existing["request_digest"]) != request_digest
+                or str(existing["event_type"]) != event_type
+                or str(existing["payload_json"]) != payload_json
+            ):
+                raise NonRetryableExecutionError(
+                    "Runtime event sequence conflicts with persisted data",
+                    safe_message="Runtime 事件与已保存记录冲突",
+                    error_code="runtime_event_digest_conflict",
+                )
+            return
+        previous = self.database.execute_one(
+            """
+            select max(sequence) last_sequence
+              from agent_runtime_event
+             where job_id = ? and invocation_id = ?
+            """,
+            (job_id, invocation_id),
+        )
+        last_sequence = int((previous or {}).get("last_sequence") or 0)
+        if sequence != last_sequence + 1:
+            raise NonRetryableExecutionError(
+                "Runtime event sequence contains a gap",
+                safe_message="Runtime 事件顺序不完整",
+                error_code="runtime_event_sequence_gap",
+            )
+        self.database.execute(
+            """
+            insert into agent_runtime_event
+              (id, job_id, invocation_id, request_digest, sequence,
+               event_type, payload_json, created_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?)
+            on conflict(job_id, invocation_id, sequence) do nothing
+            """,
+            (
+                new_id("runtime_event"),
+                job_id,
+                invocation_id,
+                request_digest,
+                sequence,
+                event_type,
+                payload_json,
+                now_iso(),
+            ),
+        )
+        persisted = self.database.execute_one(
+            """
+            select request_digest, event_type, payload_json
+              from agent_runtime_event
+             where job_id = ? and invocation_id = ? and sequence = ?
+            """,
+            (job_id, invocation_id, sequence),
+        )
+        if persisted is None or (
+            str(persisted["request_digest"]) != request_digest
+            or str(persisted["event_type"]) != event_type
+            or str(persisted["payload_json"]) != payload_json
+        ):
+            raise NonRetryableExecutionError(
+                "Runtime event sequence conflicts with concurrently persisted data",
+                safe_message="Runtime 事件与已保存记录冲突",
+                error_code="runtime_event_digest_conflict",
+            )
+
+    def record_runtime_provenance(self, job_id: str, provenance: dict[str, Any]) -> None:
+        allowed = {
+            "runtime_kind",
+            "runtime_version",
+            "protocol_version",
+            "sdk_version",
+            "cli_version",
+            "model_connection_revision_id",
+            "model_connection_config_hash",
+        }
+        if set(provenance) != allowed:
+            raise NonRetryableExecutionError(
+                "Runtime provenance fields are invalid",
+                safe_message="Runtime 来源信息无效",
+                error_code="runtime_provenance_invalid",
+            )
+        sanitized = sanitize_for_persistence(provenance)
+        self.database.execute(
+            """
+            update agent_job set model_runtime_provenance_json = ? where id = ?
+            """,
+            (
+                json.dumps(
+                    sanitized,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                job_id,
+            ),
+        )
+
+    def list_runtime_events(self, job_id: str, *, invocation_id: str = "") -> list[dict[str, Any]]:
+        where = "job_id = ?"
+        params: tuple[Any, ...] = (job_id,)
+        if invocation_id:
+            where += " and invocation_id = ?"
+            params += (invocation_id,)
+        rows = self.database.execute(
+            f"""
+            select * from agent_runtime_event
+             where {where}
+             order by invocation_id, sequence
+            """,
+            params,
+        )
+        return [
+            {
+                **row,
+                "sequence": int(row["sequence"]),
+                "payload": self._json_from_text(str(row["payload_json"])),
+            }
+            for row in rows
+        ]
 
     def create_dispatch_event(
         self,
@@ -1962,6 +2118,8 @@ class AgentRepository:
             "model_runtime_provenance": self._json_from_text(
                 row.get("model_runtime_provenance_json") or "{}"
             ),
+            "agent_runtime_kind": row.get("agent_runtime_kind") or "python-v1",
+            "agent_runtime_protocol_version": (row.get("agent_runtime_protocol_version") or "1.0"),
             "tool_call_count": int(row.get("execution_policy_tool_call_count") or 0),
             "execution_policy_exhausted": bool(row.get("execution_policy_exhausted") or False),
             "routing_context": self._json_from_text(row.get("routing_context_json") or "{}"),
@@ -2123,7 +2281,13 @@ class AgentRepository:
             for row in rows
         ]
 
-    def claim_job(self, job_id: str, worker_id: str) -> AgentJob | None:
+    def claim_job(
+        self,
+        job_id: str,
+        worker_id: str,
+        *,
+        recover_typescript_running: bool = False,
+    ) -> AgentJob | None:
         timestamp = now_iso()
         row = self.database.execute_one(
             """
@@ -2134,6 +2298,7 @@ class AgentRepository:
               and (
                 status = ?
                 or (status = ? and next_retry_at is not null and next_retry_at <= ?)
+                or (? = 1 and status = ? and agent_runtime_kind = 'typescript-v1')
               )
             returning *
             """,
@@ -2146,6 +2311,8 @@ class AgentRepository:
                 JobStatus.PENDING.value,
                 JobStatus.RETRY_WAIT.value,
                 timestamp,
+                int(recover_typescript_running),
+                JobStatus.RUNNING.value,
             ),
         )
         return self._job_from_row(row) if row else None
@@ -2167,7 +2334,13 @@ class AgentRepository:
             )
         finished_at = (
             now_iso()
-            if target in {JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.TIMEOUT}
+            if target
+            in {
+                JobStatus.SUCCEEDED,
+                JobStatus.FAILED,
+                JobStatus.TIMEOUT,
+                JobStatus.CANCELLED,
+            }
             else None
         )
         row = self.database.execute_one(
@@ -2459,6 +2632,8 @@ class AgentRepository:
             model_runtime_provenance=self._json_from_text(
                 row.get("model_runtime_provenance_json") or "{}"
             ),
+            agent_runtime_kind=row.get("agent_runtime_kind") or "python-v1",
+            agent_runtime_protocol_version=(row.get("agent_runtime_protocol_version") or "1.0"),
         )
 
     def _json_from_text(self, value: str) -> Any:

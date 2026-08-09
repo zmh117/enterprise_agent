@@ -78,9 +78,7 @@ class AuthorizationEvaluator:
                     "capability_codes": sorted(
                         {str(row["capability_code"]) for row in role_bindings}
                     ),
-                    "source_role_codes": sorted(
-                        {str(row["role_code"]) for row in role_bindings}
-                    ),
+                    "source_role_codes": sorted({str(row["role_code"]) for row in role_bindings}),
                 },
             )
         return self._decision(
@@ -134,9 +132,7 @@ class AuthorizationEvaluator:
     ) -> AuthorizationDecision:
         user = self.repository.get_user(user_id)
         roles = self.repository.role_codes_for_user(user_id)
-        resource_code = "/".join(
-            value for value in (environment, base, workshop) if value
-        )
+        resource_code = "/".join(value for value in (environment, base, workshop) if value)
         if str(user["status"]) != "enabled":
             return self._decision(
                 False,

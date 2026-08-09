@@ -166,10 +166,7 @@ _CONTRACTS = {
 
 class ProviderContractRegistry:
     def public_contracts(self) -> list[dict[str, Any]]:
-        return [
-            _CONTRACTS[key].public()
-            for key in sorted(_CONTRACTS)
-        ]
+        return [_CONTRACTS[key].public() for key in sorted(_CONTRACTS)]
 
     def require(self, provider_type: str) -> ProviderContract:
         normalized = str(provider_type or "").strip().lower()
@@ -222,15 +219,11 @@ class ProviderContractRegistry:
                 import_legacy=import_legacy,
             )
         allowed_refs = {
-            str(field["name"])
-            for field in contract.fields
-            if field["type"] == "secret_ref"
+            str(field["name"]) for field in contract.fields if field["type"] == "secret_ref"
         }
         unknown_refs = sorted(set(normalized_refs).difference(allowed_refs))
         if unknown_refs:
-            raise self._field_error(
-                f"Unknown Secret reference fields: {unknown_refs}"
-            )
+            raise self._field_error(f"Unknown Secret reference fields: {unknown_refs}")
         canonical_refs = {
             key: validate_secret_ref(str(value))
             for key, value in normalized_refs.items()
@@ -242,9 +235,7 @@ class ProviderContractRegistry:
                 and field["required"]
                 and field["name"] not in canonical_refs
             ):
-                raise self._field_error(
-                    f"Missing required field: {field['name']}"
-                )
+                raise self._field_error(f"Missing required field: {field['name']}")
         return CanonicalProviderDocument(
             provider_type=contract.provider_type,
             contract_version=contract.contract_version,
@@ -292,31 +283,19 @@ class ProviderContractRegistry:
                 config.pop("oracle_compat", None)
         aliases = {"user", "connect_descriptor", "use_sid", "oracle_client_mode", "oracle_compat"}
         if any(key in config for key in aliases):
-            raise self._field_error(
-                "Legacy or unsafe database fields require explicit import"
-            )
-        allowed = {
-            str(field["name"])
-            for field in contract.fields
-            if field["type"] != "secret_ref"
-        }
+            raise self._field_error("Legacy or unsafe database fields require explicit import")
+        allowed = {str(field["name"]) for field in contract.fields if field["type"] != "secret_ref"}
         self._reject_unknown(config, allowed)
         required = {"host", "port", "username"}
         if contract.provider_type == "oracle":
             service_name = self._text(config.get("service_name"))
             sid = self._text(config.get("sid"))
             if bool(service_name) == bool(sid):
-                raise self._field_error(
-                    "Oracle requires exactly one of service_name or sid"
-                )
+                raise self._field_error("Oracle requires exactly one of service_name or sid")
         else:
             required.add("database")
         self._require_fields(config, required)
-        canonical = {
-            key: value
-            for key, value in config.items()
-            if value not in {None, ""}
-        }
+        canonical = {key: value for key, value in config.items() if value not in {None, ""}}
         canonical["host"] = self._text(config["host"])
         canonical["port"] = self._port(config["port"])
         canonical["username"] = self._text(config["username"])
@@ -336,13 +315,9 @@ class ProviderContractRegistry:
             self._rename(config, "user", "username")
             mode = str(config.pop("mode", "standalone") or "standalone")
             if mode != "standalone" or config.pop("nodes", None):
-                raise self._field_error(
-                    "Redis cluster import requires manual canonical conversion"
-                )
+                raise self._field_error("Redis cluster import requires manual canonical conversion")
         if any(key in config for key in ("db", "user", "mode", "nodes")):
-            raise self._field_error(
-                "Redis db/user/mode/nodes are not canonical fields"
-            )
+            raise self._field_error("Redis db/user/mode/nodes are not canonical fields")
         allowed = {"host", "port", "database", "username", "tls"}
         self._reject_unknown(config, allowed)
         self._require_fields(config, {"host", "port", "database"})
@@ -383,9 +358,7 @@ class ProviderContractRegistry:
         if import_legacy:
             self._rename(config, "tenant", "tenant_id")
         if "tenant" in config:
-            raise self._field_error(
-                "Loki tenant is not canonical; use tenant_id"
-            )
+            raise self._field_error("Loki tenant is not canonical; use tenant_id")
         allowed = {
             "base_url",
             "tenant_id",
@@ -462,9 +435,7 @@ class ProviderContractRegistry:
             name = str(field["name"])
             if name in config:
                 if name in secret_refs:
-                    raise self._field_error(
-                        f"Duplicate Secret reference field: {name}"
-                    )
+                    raise self._field_error(f"Duplicate Secret reference field: {name}")
                 secret_refs[name] = str(config.pop(name))
 
     @staticmethod
@@ -484,16 +455,12 @@ class ProviderContractRegistry:
     ) -> None:
         unknown = sorted(set(value).difference(allowed))
         if unknown:
-            raise ProviderContractRegistry._field_error(
-                f"Unknown Provider fields: {unknown}"
-            )
+            raise ProviderContractRegistry._field_error(f"Unknown Provider fields: {unknown}")
 
     @staticmethod
     def _require_fields(value: dict[str, Any], required: set[str]) -> None:
         missing = sorted(
-            key
-            for key in required
-            if value.get(key) is None or str(value.get(key)).strip() == ""
+            key for key in required if value.get(key) is None or str(value.get(key)).strip() == ""
         )
         if missing:
             raise ProviderContractRegistry._field_error(
@@ -522,27 +489,19 @@ class ProviderContractRegistry:
         maximum: int,
     ) -> int:
         if isinstance(value, bool):
-            raise ProviderContractRegistry._field_error(
-                f"{field} must be an integer"
-            )
+            raise ProviderContractRegistry._field_error(f"{field} must be an integer")
         try:
             result = int(value)
         except (TypeError, ValueError) as exc:
-            raise ProviderContractRegistry._field_error(
-                f"{field} must be an integer"
-            ) from exc
+            raise ProviderContractRegistry._field_error(f"{field} must be an integer") from exc
         if result < minimum or result > maximum:
-            raise ProviderContractRegistry._field_error(
-                f"{field} is outside allowed bounds"
-            )
+            raise ProviderContractRegistry._field_error(f"{field} is outside allowed bounds")
         return result
 
     @staticmethod
     def _boolean(value: Any, *, field: str) -> bool:
         if not isinstance(value, bool):
-            raise ProviderContractRegistry._field_error(
-                f"{field} must be a boolean"
-            )
+            raise ProviderContractRegistry._field_error(f"{field} must be a boolean")
         return value
 
     @staticmethod

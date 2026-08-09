@@ -21,6 +21,8 @@ frontend/dist/
 frontend/.vite/
 dingtalk-runtime/node_modules/
 dingtalk-runtime/dist/
+agent-runtime/node_modules/
+agent-runtime/dist/
 enterprise-agent-master-key.tar
 .agents/
 skills-lock.json

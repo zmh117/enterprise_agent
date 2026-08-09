@@ -77,9 +77,7 @@ class WebhookTriggerRepository:
         )
         return self._definition(row) if row else None
 
-    def get_enabled_grafana_by_connector(
-        self, connector_id: str
-    ) -> dict[str, Any] | None:
+    def get_enabled_grafana_by_connector(self, connector_id: str) -> dict[str, Any] | None:
         row = self.database.execute_one(
             """
             select d.*, u.username as service_account_username,
@@ -117,11 +115,7 @@ class WebhookTriggerRepository:
                 snapshot = json.loads(str(row.get("snapshot_json") or "{}"))
             except json.JSONDecodeError:
                 continue
-            authentication = (
-                snapshot.get("authentication")
-                if isinstance(snapshot, dict)
-                else None
-            )
+            authentication = snapshot.get("authentication") if isinstance(snapshot, dict) else None
             if not isinstance(authentication, dict):
                 continue
             result.append(

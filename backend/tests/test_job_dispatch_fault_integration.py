@@ -67,10 +67,7 @@ def test_database_commit_failure_rolls_back_job_message_and_outbox(
         with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
             _create_job(runtime, "commit-failure")
 
-        assert (
-            runtime.agent_repository.get_job_by_idempotency_key("commit-failure")
-            is None
-        )
+        assert runtime.agent_repository.get_job_by_idempotency_key("commit-failure") is None
         assert runtime.agent_repository.count_rows("job_dispatch_outbox") == 0
         assert runtime.agent_repository.count_rows("agent_message") == 0
         assert runtime.message_bus is not None
@@ -185,18 +182,14 @@ def test_sqlite_lock_after_broker_confirm_retries_state_only(
     runtime = container()
     try:
         job = _create_job(runtime, "confirm-state-lock")
-        original_mark = (
-            runtime.agent_repository.mark_dispatch_published
-        )
+        original_mark = runtime.agent_repository.mark_dispatch_published
         attempts = 0
 
         def transient_lock(**kwargs: object) -> bool:
             nonlocal attempts
             attempts += 1
             if attempts == 1:
-                raise sqlite3.OperationalError(
-                    "database table is locked"
-                )
+                raise sqlite3.OperationalError("database table is locked")
             return original_mark(**kwargs)  # type: ignore[arg-type]
 
         monkeypatch.setattr(
@@ -206,9 +199,7 @@ def test_sqlite_lock_after_broker_confirm_retries_state_only(
         )
         result = runtime.job_dispatcher.publish_pending(limit=1)
 
-        event = runtime.agent_repository.get_dispatch_event_for_job(
-            job.id
-        )
+        event = runtime.agent_repository.get_dispatch_event_for_job(job.id)
         assert result.published == 1
         assert attempts == 2
         assert event is not None
@@ -293,9 +284,7 @@ def test_multiple_dispatchers_claim_each_event_once() -> None:
 
         assert runtime.message_bus is not None
         assert len(runtime.message_bus.jobs) == len(jobs)
-        assert len({message.event_id for message in runtime.message_bus.jobs}) == len(
-            jobs
-        )
+        assert len({message.event_id for message in runtime.message_bus.jobs}) == len(jobs)
         assert all(
             runtime.agent_repository.get_dispatch_event_for_job(job.id).status
             == JobDispatchStatus.PUBLISHED

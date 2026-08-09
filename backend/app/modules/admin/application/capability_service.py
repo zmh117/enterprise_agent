@@ -41,12 +41,16 @@ class AdminCapabilityService:
             )
         }
         for item in ADMIN_CAPABILITIES:
-            if not platform_admin and item.code not in role_binding_codes and not self.authorization.decide(
-                user_id=user_id,
-                resource_type=item.resource_type,
-                resource_code=item.resource_code,
-                action=item.action,
-            ).allowed:
+            if (
+                not platform_admin
+                and item.code not in role_binding_codes
+                and not self.authorization.decide(
+                    user_id=user_id,
+                    resource_type=item.resource_type,
+                    resource_code=item.resource_code,
+                    action=item.action,
+                ).allowed
+            ):
                 continue
             capabilities.append(item.code)
             modules.setdefault(item.module, []).append(item.action)

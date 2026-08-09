@@ -241,8 +241,7 @@ def load_config(path: str | Path | None = None) -> MockOnesConfig:
             for key, value in priorities.items()
         },
         statuses={
-            str(key): _require_mapping(value, f"statuses.{key}")
-            for key, value in statuses.items()
+            str(key): _require_mapping(value, f"statuses.{key}") for key, value in statuses.items()
         },
         tasks=tuple(tasks),
         additional_teams=additional_teams,
@@ -553,9 +552,7 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
                 content='{"padding":"' + ("x" * 2_000_000) + '"}',
                 media_type="application/json",
             )
-        if team_id not in {
-            str(item["uuid"]) for item in config.teams
-        }:
+        if team_id not in {str(item["uuid"]) for item in config.teams}:
             raise HTTPException(
                 status_code=404,
                 detail={"code": "team_not_found"},
@@ -573,8 +570,7 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
         matches = [
             task
             for task in config.tasks
-            if str(task["issue_type"]) == issue_type
-            and _matches_keyword(task, keyword)
+            if str(task["issue_type"]) == issue_type and _matches_keyword(task, keyword)
         ]
         items = [
             {
@@ -618,9 +614,7 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
                 status_code=401,
                 detail={"code": "unauthorized", "message": "invalid ONES auth headers"},
             )
-        if team_uuid not in {
-            str(item["uuid"]) for item in config.teams
-        }:
+        if team_uuid not in {str(item["uuid"]) for item in config.teams}:
             raise HTTPException(
                 status_code=404,
                 detail={"code": "team_not_found", "message": "mock team does not exist"},

@@ -123,4 +123,3 @@ class Deployment:
     deactivated_by: str = ""
     deactivated_at: str = ""
     updated_at: str = ""
-

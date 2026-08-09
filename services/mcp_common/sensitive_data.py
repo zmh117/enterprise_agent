@@ -8,9 +8,7 @@ _SENSITIVE_KEY = re.compile(
     r"(?:^|_)(?:password|passwd|secret|token|authorization|cookie|credential|dsn|connection_string|api_key)(?:$|_)",
     re.IGNORECASE,
 )
-_AUTH_VALUE = re.compile(
-    r"(?i)\b(?:bearer|basic)\s+[a-z0-9._~+/=-]{6,}"
-)
+_AUTH_VALUE = re.compile(r"(?i)\b(?:bearer|basic)\s+[a-z0-9._~+/=-]{6,}")
 _CONNECTION_URI = re.compile(
     r"(?i)\b(?:postgres(?:ql)?|mysql|mariadb|redis|rediss|mongodb(?:\+srv)?|oracle|sqlserver|jdbc:[a-z0-9]+)://[^\s\"']+"
 )

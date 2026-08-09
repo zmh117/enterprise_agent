@@ -8,11 +8,18 @@ from app.modules.agent.application.agent_context_builder import AgentContextBuil
 from app.modules.agent.application.conversation_context import ConversationContextService
 from app.modules.agent.application.agent_executor import AgentExecutor
 from app.modules.agent.application.agent_result_service import AgentResultService
+from app.modules.agent.application.runtime_migration_gate import RuntimeMigrationGate
 from app.modules.agent.infrastructure.claude_code_agent_client import (
     RealClaudeCodeAgentClient,
     StubClaudeCodeAgentClient,
 )
 from app.modules.agent.infrastructure.skill_loader import SkillLoader
+from app.modules.agent.infrastructure.routed_runtime_client import RoutedAgentRuntimeClient
+from app.modules.agent.infrastructure.typescript_runtime_client import (
+    RuntimeClientSettings,
+    RuntimeGrantIssuer,
+    TypeScriptAgentRuntimeClient,
+)
 from app.modules.agent_config.application import AgentConfigService
 from app.modules.agent_config.infrastructure import AgentConfigRepository
 from app.modules.audit.application.audit_service import AuditService
@@ -28,6 +35,7 @@ from app.modules.attachments.service import AttachmentProcessingService
 from app.modules.attachments.storage import InMemoryObjectStorage, S3ObjectStorage
 from app.modules.business_application.application import (
     BusinessApplicationResolver,
+    BusinessApplicationService,
 )
 from app.modules.business_application.domain import RuntimeReadinessEvaluator
 from app.modules.business_application.infrastructure import BusinessApplicationRepository
@@ -88,6 +96,7 @@ from app.modules.job.infrastructure.repositories import (
 from app.modules.message_bus.application.message_publisher import MessageConsumer, MessagePublisher
 from app.modules.mcp_runtime.bindings import McpJobBindingService
 from app.modules.mcp_resources import McpResourceService
+from app.modules.mcp_tool_publications import McpToolPublicationService
 from app.modules.cutover import LegacyPlatformCutoverService
 from services.mcp_common import McpTokenIssuer
 from app.modules.message_bus.infrastructure.in_memory_bus import InMemoryMessageBus
@@ -105,6 +114,8 @@ from app.modules.managed_channel.application.service import (
 from app.modules.model_connection import (
     ModelConnectionRepository,
     ModelConnectionService,
+    RuntimeModelProbeClient,
+    RuntimeModelProbeSettings,
     UnavailableModelSecretProvider,
 )
 from app.modules.permission.application.permission_service import PermissionService
@@ -156,10 +167,12 @@ class Container:
     platform_config_service: PlatformConfigService
     business_application_repository: BusinessApplicationRepository
     business_application_resolver: BusinessApplicationResolver
+    business_application_service: BusinessApplicationService
     channel_ingress_service: ChannelIngressService
     create_agent_job_service: CreateAgentJobService
     job_dispatcher: JobDispatchOutboxDispatcher
     mcp_resource_service: McpResourceService
+    mcp_tool_publication_service: McpToolPublicationService
     cutover_service: LegacyPlatformCutoverService
     dingtalk_message_service: DingTalkMessageService
     dingtalk_stream_message_service: DingTalkStreamMessageService
@@ -340,6 +353,54 @@ def _ensure_trusted_ones_for_service(
     )
 
 
+def _runtime_model_probe_for_service(
+    settings: Settings,
+    service_name: str,
+) -> RuntimeModelProbeClient | None:
+    # The model probe is a control-plane operation. Workers need model revision
+    # metadata for execution, but must not receive the probe bearer token.
+    if service_name != "api-server":
+        return None
+    if not (settings.agent_runtime.base_url and settings.agent_runtime.model_probe_auth_token_file):
+        return None
+    return RuntimeModelProbeClient(
+        RuntimeModelProbeSettings(
+            base_url=settings.agent_runtime.base_url,
+            allowed_hosts=settings.agent_runtime.allowed_hosts,
+            auth_token_file=settings.agent_runtime.model_probe_auth_token_file,
+            allow_insecure_internal_http=(settings.agent_runtime.allow_insecure_internal_http),
+        )
+    )
+
+
+def _ensure_default_model_connection_for_service(
+    service: ModelConnectionService,
+    settings: Settings,
+    service_name: str,
+) -> None:
+    # Default configuration is control-plane bootstrap state. Runtime workers
+    # consume immutable revisions and intentionally lack bootstrap/secret-table
+    # privileges.
+    if service_name not in {"api-server", "test-runtime"}:
+        return
+    service.ensure_default_connection(
+        config={
+            "protocol": "anthropic_compatible",
+            "base_url": settings.anthropic_base_url or "https://api.deepseek.com/anthropic",
+            "model": settings.claude_model,
+            "default_opus_model": os.getenv("ANTHROPIC_DEFAULT_OPUS_MODEL", settings.claude_model),
+            "default_sonnet_model": os.getenv(
+                "ANTHROPIC_DEFAULT_SONNET_MODEL", settings.claude_model
+            ),
+            "default_haiku_model": os.getenv(
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL", settings.claude_model
+            ),
+            "subagent_model": os.getenv("CLAUDE_CODE_SUBAGENT_MODEL", settings.claude_model),
+            "effort_level": os.getenv("CLAUDE_CODE_EFFORT_LEVEL", "max"),
+        }
+    )
+
+
 def _build_container(
     *,
     settings: Settings,
@@ -443,6 +504,7 @@ def _build_container(
         model_secret_provider,
         environment=settings.environment,
     )
+    runtime_model_probe = _runtime_model_probe_for_service(settings, service_name)
     model_connection_service = ModelConnectionService(
         model_connection_repository,
         platform_config_repository,
@@ -450,6 +512,7 @@ def _build_container(
         authorization_evaluator,
         audit_service,
         allowed_hosts=set(settings.model_provider_host_allowlist),
+        runtime_probe=runtime_model_probe,
     )
     external_credential_binding_service = ExternalCredentialBindingService(
         identity_repository=identity_repository,
@@ -471,22 +534,12 @@ def _build_container(
         provider_instance_code=settings.ones_identity.instance_code,
         dingtalk_challenges=dingtalk_binding_challenge_repository,
     )
-    model_connection_service.ensure_default_connection(
-        config={
-            "protocol": "anthropic_compatible",
-            "base_url": settings.anthropic_base_url or "https://api.deepseek.com/anthropic",
-            "model": settings.claude_model,
-            "default_opus_model": os.getenv("ANTHROPIC_DEFAULT_OPUS_MODEL", settings.claude_model),
-            "default_sonnet_model": os.getenv(
-                "ANTHROPIC_DEFAULT_SONNET_MODEL", settings.claude_model
-            ),
-            "default_haiku_model": os.getenv(
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL", settings.claude_model
-            ),
-            "subagent_model": os.getenv("CLAUDE_CODE_SUBAGENT_MODEL", settings.claude_model),
-            "effort_level": os.getenv("CLAUDE_CODE_EFFORT_LEVEL", "max"),
-        }
+    _ensure_default_model_connection_for_service(
+        model_connection_service,
+        settings,
+        service_name,
     )
+    mcp_tool_publication_service = McpToolPublicationService(database, audit_service=audit_service)
     agent_config_service = AgentConfigService(
         agent_config_repository,
         authorization_evaluator,
@@ -494,15 +547,13 @@ def _build_container(
         SkillLoader(),
         model_connection_service=model_connection_service,
         allowed_models={settings.claude_model},
+        mcp_tool_publication_service=mcp_tool_publication_service,
     )
     business_application_runtime_evaluator = RuntimeReadinessEvaluator(
         data_plane_enabled=(settings.feature_configuration.published_agent_runtime_enabled),
-        runtime_environment="local",
+        runtime_environment=settings.environment,
     )
-    business_application_resolver = BusinessApplicationResolver(
-        business_application_repository,
-        business_application_runtime_evaluator,
-    )
+    runtime_migration_gate = RuntimeMigrationGate(settings.agent_runtime)
     credential_cipher = (
         AttachmentCredentialCipher(settings.app_config_master_key)
         if settings.app_config_master_key
@@ -510,6 +561,18 @@ def _build_container(
     )
     mcp_binding_service = McpJobBindingService(database)
     mcp_resource_service = McpResourceService(database, audit_service=audit_service)
+    business_application_resolver = BusinessApplicationResolver(
+        business_application_repository,
+        business_application_runtime_evaluator,
+        mcp_tool_publication_service,
+    )
+    business_application_service = BusinessApplicationService(
+        business_application_repository,
+        authorization_evaluator,
+        audit_service,
+        mcp_tool_publication_service,
+        business_application_runtime_evaluator,
+    )
     cutover_service = LegacyPlatformCutoverService(
         database,
         destructive_enabled=settings.destructive_cutover_enabled,
@@ -554,7 +617,8 @@ def _build_container(
             if settings.feature_configuration.published_agent_runtime_enabled
             else None
         ),
-        runtime_environment="local",
+        runtime_migration_gate=runtime_migration_gate,
+        runtime_environment=settings.environment,
     )
     webhook_mapper = WebhookMapper(
         max_message_chars=settings.webhooks.max_message_chars,
@@ -674,7 +738,7 @@ def _build_container(
         if service_name == "agent-worker" and settings.mcp.token_signing_key_file
         else None
     )
-    claude_client = (
+    python_claude_client = (
         RealClaudeCodeAgentClient(
             model=settings.claude_model,
             limits=settings.execution,
@@ -689,8 +753,31 @@ def _build_container(
         if use_real_claude
         else StubClaudeCodeAgentClient()
     )
-    if isinstance(claude_client, RealClaudeCodeAgentClient):
-        model_connection_service.tester = claude_client.test_connection
+    typescript_runtime_client = None
+    if service_name == "agent-worker" and settings.agent_runtime.base_url:
+        if mcp_token_issuer is None:
+            raise ValueError(
+                "MCP_TOKEN_SIGNING_KEY_FILE is required when Agent Runtime is configured"
+            )
+        typescript_runtime_client = TypeScriptAgentRuntimeClient(
+            settings=RuntimeClientSettings(
+                base_url=settings.agent_runtime.base_url,
+                ones_mcp_url=settings.mcp.ones_server_url,
+                data_mcp_url=settings.mcp.data_server_url,
+                allowed_runtime_hosts=settings.agent_runtime.allowed_hosts,
+                allowed_mcp_server_codes=settings.mcp.allowed_server_codes,
+                allow_insecure_internal_http=(settings.agent_runtime.allow_insecure_internal_http),
+            ),
+            grant_issuer=RuntimeGrantIssuer.from_file(
+                settings.agent_runtime.grant_private_key_file
+            ),
+            mcp_token_issuer=mcp_token_issuer,
+            event_sink=agent_repository.record_runtime_event,
+        )
+    claude_client = RoutedAgentRuntimeClient(
+        python_client=python_claude_client,
+        typescript_client=typescript_runtime_client,
+    )
     dingtalk_conversation_adapter = DingTalkConversationDeliveryAdapter(
         fallback_callback_url=settings.dingtalk.callback_url,
         host_allowlist=settings.dingtalk.callback_host_allowlist,
@@ -805,9 +892,11 @@ def _build_container(
         platform_config_service=platform_config_service,
         business_application_repository=business_application_repository,
         business_application_resolver=business_application_resolver,
+        business_application_service=business_application_service,
         channel_ingress_service=channel_ingress_service,
         create_agent_job_service=create_job_service,
         mcp_resource_service=mcp_resource_service,
+        mcp_tool_publication_service=mcp_tool_publication_service,
         cutover_service=cutover_service,
         job_dispatcher=job_dispatcher,
         dingtalk_message_service=dingtalk_service,

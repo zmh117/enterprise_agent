@@ -101,6 +101,8 @@ class AgentContextBuilder:
             application_publication_id=job.business_application_publication_id,
             mcp_bindings=mcp_bindings,
             mcp_unavailable_notices=mcp_notices,
+            runtime_kind=job.agent_runtime_kind,
+            runtime_protocol_version=job.agent_runtime_protocol_version,
         )
 
     def _publication(self, job: AgentJob) -> dict[str, Any]:

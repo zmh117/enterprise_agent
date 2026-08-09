@@ -54,8 +54,7 @@ def test_dingtalk_corp_id_is_trimmed_but_kept_opaque_and_immutable() -> None:
     assert normalize_dingtalk_corp_id("  dingCorpABC123  ") == "dingCorpABC123"
     assert require_immutable_dingtalk_corp_id("", "dingCorpABC123") == "dingCorpABC123"
     assert (
-        require_immutable_dingtalk_corp_id("dingCorpABC123", " dingCorpABC123 ")
-        == "dingCorpABC123"
+        require_immutable_dingtalk_corp_id("dingCorpABC123", " dingCorpABC123 ") == "dingCorpABC123"
     )
 
     with pytest.raises(NonRetryableExecutionError) as mismatch:
