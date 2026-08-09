@@ -110,7 +110,7 @@ class ObjectStorageSettings:
 
 @dataclass(frozen=True)
 class IdentitySettings:
-    enabled: bool = False
+    enabled: bool = True
     web_admin_enabled: bool = False
     published_agent_runtime_enabled: bool = False
     test_identity_headers_enabled: bool = False
@@ -133,6 +133,14 @@ class OnesIdentitySettings:
     timeout_seconds: int = 5
     max_response_bytes: int = 64 * 1024
     allow_insecure_local: bool = False
+
+
+@dataclass(frozen=True)
+class McpSettings:
+    token_signing_key_file: str = ""
+    ones_server_url: str = "http://ones-mcp-server:8081/mcp"
+    data_server_url: str = "http://data-mcp-server:8082/mcp"
+    allowed_server_codes: tuple[str, ...] = ("ones-mcp", "data-mcp")
 
 
 @dataclass(frozen=True)
@@ -206,19 +214,12 @@ class Settings:
     app_config_master_key: str = field(default="", repr=False)
     app_config_master_key_file: str = ""
     master_key_file_required: bool = False
-    internal_api_base_url: str = "http://internal-api-platform.local"
-    internal_api_auth_token_file: str = ""
-    internal_api_timeout_seconds: int = 10
-    internal_api_max_response_chars: int = 4000
-    internal_platform_max_rows: int = 100
-    internal_platform_max_response_bytes: int = 1024 * 1024
     claude_model: str = "claude-sonnet-4-20250514"
     anthropic_api_key: str = ""
     anthropic_base_url: str = ""
     model_provider_host_allowlist: tuple[str, ...] = ("api.deepseek.com",)
     environment: str = "local"
     feature_real_claude: bool = False
-    feature_real_internal_tools: bool = False
     feature_business_application_control_plane: bool = False
     feature_configuration: EffectiveFeatureConfiguration = field(
         default_factory=default_feature_configuration
@@ -240,6 +241,8 @@ class Settings:
     object_storage: ObjectStorageSettings = field(default_factory=ObjectStorageSettings)
     identity: IdentitySettings = field(default_factory=IdentitySettings)
     ones_identity: OnesIdentitySettings = field(default_factory=OnesIdentitySettings)
+    mcp: McpSettings = field(default_factory=McpSettings)
+    destructive_cutover_enabled: bool = False
     webhooks: WebhookSettings = field(default_factory=WebhookSettings)
     managed_channels: ManagedChannelSettings = field(default_factory=ManagedChannelSettings)
 
@@ -273,19 +276,6 @@ def load_settings() -> Settings:
             "",
         ),
         master_key_file_required=environment not in {"test", "testing"},
-        internal_api_base_url=os.getenv(
-            "INTERNAL_API_BASE_URL", "http://internal-api-platform.local"
-        ),
-        internal_api_auth_token_file=os.getenv("INTERNAL_API_AUTH_TOKEN_FILE", ""),
-        internal_api_timeout_seconds=int(os.getenv("INTERNAL_API_TIMEOUT_SECONDS", "10")),
-        internal_api_max_response_chars=int(os.getenv("INTERNAL_API_MAX_RESPONSE_CHARS", "4000")),
-        internal_platform_max_rows=int(os.getenv("INTERNAL_PLATFORM_MAX_ROWS", "100")),
-        internal_platform_max_response_bytes=int(
-            os.getenv(
-                "INTERNAL_PLATFORM_MAX_RESPONSE_BYTES",
-                str(1024 * 1024),
-            )
-        ),
         claude_model=os.getenv(
             "CLAUDE_MODEL",
             os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
@@ -297,13 +287,21 @@ def load_settings() -> Settings:
         ),
         environment=environment,
         feature_real_claude=features.real_claude_enabled,
-        feature_real_internal_tools=features.real_internal_tools_enabled,
         feature_business_application_control_plane=(
             features.business_application_control_plane_enabled
         ),
         feature_configuration=features,
         seed_local_config=_env_bool("SEED_LOCAL_CONFIG"),
         debug_agent_user_id=os.getenv("DEBUG_AGENT_USER_ID", "local-user"),
+        mcp=McpSettings(
+            token_signing_key_file=os.getenv("MCP_TOKEN_SIGNING_KEY_FILE", ""),
+            ones_server_url=os.getenv("ONES_MCP_SERVER_URL", "http://ones-mcp-server:9101/mcp"),
+            data_server_url=os.getenv("DATA_MCP_SERVER_URL", "http://data-mcp-server:9102/mcp"),
+            allowed_server_codes=_csv_tuple(
+                os.getenv("MCP_ALLOWED_SERVER_CODES", "ones-mcp,data-mcp")
+            ),
+        ),
+        destructive_cutover_enabled=_env_bool("DESTRUCTIVE_CUTOVER_ENABLED"),
         dingtalk=DingTalkSettings(
             secret=os.getenv("DINGTALK_SECRET", ""),
             callback_url=os.getenv("DINGTALK_CALLBACK_URL", ""),
@@ -379,21 +377,15 @@ def load_settings() -> Settings:
             ),
             max_retry_count=int(os.getenv("AGENT_MAX_RETRY_COUNT", "3")),
             retry_delay_seconds=int(os.getenv("AGENT_RETRY_DELAY_SECONDS", "30")),
-            dispatch_outbox_max_attempts=int(
-                os.getenv("JOB_DISPATCH_OUTBOX_MAX_ATTEMPTS", "8")
-            ),
-            dispatch_outbox_max_replays=int(
-                os.getenv("JOB_DISPATCH_OUTBOX_MAX_REPLAYS", "3")
-            ),
+            dispatch_outbox_max_attempts=int(os.getenv("JOB_DISPATCH_OUTBOX_MAX_ATTEMPTS", "8")),
+            dispatch_outbox_max_replays=int(os.getenv("JOB_DISPATCH_OUTBOX_MAX_REPLAYS", "3")),
             dispatch_outbox_retry_base_seconds=int(
                 os.getenv("JOB_DISPATCH_OUTBOX_RETRY_BASE_SECONDS", "5")
             ),
             dispatch_outbox_claim_timeout_seconds=int(
                 os.getenv("JOB_DISPATCH_OUTBOX_CLAIM_TIMEOUT_SECONDS", "300")
             ),
-            dispatch_outbox_scan_seconds=int(
-                os.getenv("JOB_DISPATCH_OUTBOX_SCAN_SECONDS", "1")
-            ),
+            dispatch_outbox_scan_seconds=int(os.getenv("JOB_DISPATCH_OUTBOX_SCAN_SECONDS", "1")),
             consumer_heartbeat_seconds=int(os.getenv("RABBITMQ_CONSUMER_HEARTBEAT_SECONDS", "900")),
             consumer_reconnect_seconds=int(os.getenv("RABBITMQ_CONSUMER_RECONNECT_SECONDS", "5")),
         ),
@@ -409,21 +401,13 @@ def load_settings() -> Settings:
         delivery=DeliverySettings(
             chunk_max_chars=int(os.getenv("DELIVERY_CHUNK_MAX_CHARS", "3500")),
             timeout_seconds=int(os.getenv("DELIVERY_TIMEOUT_SECONDS", "5")),
-            outbox_max_attempts=int(
-                os.getenv("DELIVERY_OUTBOX_MAX_ATTEMPTS", "8")
-            ),
-            outbox_max_replays=int(
-                os.getenv("DELIVERY_OUTBOX_MAX_REPLAYS", "3")
-            ),
-            outbox_retry_base_seconds=int(
-                os.getenv("DELIVERY_OUTBOX_RETRY_BASE_SECONDS", "5")
-            ),
+            outbox_max_attempts=int(os.getenv("DELIVERY_OUTBOX_MAX_ATTEMPTS", "8")),
+            outbox_max_replays=int(os.getenv("DELIVERY_OUTBOX_MAX_REPLAYS", "3")),
+            outbox_retry_base_seconds=int(os.getenv("DELIVERY_OUTBOX_RETRY_BASE_SECONDS", "5")),
             outbox_claim_timeout_seconds=int(
                 os.getenv("DELIVERY_OUTBOX_CLAIM_TIMEOUT_SECONDS", "300")
             ),
-            outbox_scan_seconds=int(
-                os.getenv("DELIVERY_OUTBOX_SCAN_SECONDS", "1")
-            ),
+            outbox_scan_seconds=int(os.getenv("DELIVERY_OUTBOX_SCAN_SECONDS", "1")),
         ),
         conversation=ConversationSettings(
             enabled=features.continuous_conversation_compatibility_enabled,
@@ -508,13 +492,9 @@ def load_settings() -> Settings:
             runtime_auth_token_file=os.getenv("DINGTALK_RUNTIME_AUTH_TOKEN_FILE", ""),
             lease_ttl_seconds=int(os.getenv("DINGTALK_RUNTIME_LEASE_TTL_SECONDS", "15")),
             stale_seconds=int(os.getenv("DINGTALK_RUNTIME_STALE_SECONDS", "30")),
-            max_event_bytes=int(
-                os.getenv("DINGTALK_RUNTIME_MAX_EVENT_BYTES", str(256 * 1024))
-            ),
+            max_event_bytes=int(os.getenv("DINGTALK_RUNTIME_MAX_EVENT_BYTES", str(256 * 1024))),
             outbox_max_attempts=int(os.getenv("CHANNEL_OUTBOX_MAX_ATTEMPTS", "8")),
-            outbox_retry_base_seconds=int(
-                os.getenv("CHANNEL_OUTBOX_RETRY_BASE_SECONDS", "5")
-            ),
+            outbox_retry_base_seconds=int(os.getenv("CHANNEL_OUTBOX_RETRY_BASE_SECONDS", "5")),
             internal_requests_per_minute=int(
                 os.getenv("DINGTALK_RUNTIME_REQUESTS_PER_MINUTE", "600")
             ),
@@ -529,7 +509,6 @@ def synchronize_feature_configuration(settings: Settings) -> Settings:
         settings.identity.web_admin_enabled,
         settings.identity.published_agent_runtime_enabled,
         settings.feature_real_claude,
-        settings.feature_real_internal_tools,
         settings.identity.enabled,
         settings.feature_business_application_control_plane,
         settings.identity.test_identity_headers_enabled,
@@ -541,7 +520,6 @@ def synchronize_feature_configuration(settings: Settings) -> Settings:
         features.web_admin_enabled,
         features.published_agent_runtime_enabled,
         features.real_claude_enabled,
-        features.real_internal_tools_enabled,
         features.unified_identity_enabled,
         features.business_application_control_plane_enabled,
         features.test_identity_headers_enabled,
@@ -555,7 +533,6 @@ def synchronize_feature_configuration(settings: Settings) -> Settings:
         web_admin=settings.identity.web_admin_enabled,
         published_agent_runtime=settings.identity.published_agent_runtime_enabled,
         real_claude=settings.feature_real_claude,
-        real_internal_tools=settings.feature_real_internal_tools,
         unified_identity=settings.identity.enabled,
         business_application_control_plane=(settings.feature_business_application_control_plane),
         test_identity_headers=settings.identity.test_identity_headers_enabled,

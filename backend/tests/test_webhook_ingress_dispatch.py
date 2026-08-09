@@ -46,26 +46,15 @@ def _container():
         ("webhook_trigger_publication_grafana_v1",),
     )
     assert trigger is not None
-    capabilities = tuple(
-        sorted(
-            runtime.agent_config_service.repository.publication_tools(
-                "agent_publication_default_v1"
-            )
-        )
-    )
     activate_webhook_test_application(
         runtime,
         code="grafana-strict-runtime",
         webhook_definition_id=str(trigger["id"]),
-        service_account_user_id=str(
-            trigger["service_account_id"]
-        ),
+        service_account_user_id=str(trigger["service_account_id"]),
         ingress_connector_id="connector-grafana-default",
-        delivery_connector_id=(
-            "connector-dingtalk-enterprise-default"
-        ),
+        delivery_connector_id=("connector-dingtalk-enterprise-default"),
         delivery_target_reference="test-alert-group",
-        capabilities=capabilities,
+        capabilities=(),
     )
     return runtime
 
@@ -139,12 +128,8 @@ def test_firing_is_persisted_then_dispatches_one_pinned_agent_job() -> None:
     assert job.agent_revision == 1
     assert job.webhook_event_id == acknowledgement.event_id
     assert job.webhook_trigger_publication_id == "webhook_trigger_publication_grafana_v1"
-    assert job.reply_route["target"] == {
-        "open_conversation_id": "test-alert-group"
-    }
-    assert job.business_application_code == (
-        "grafana-strict-runtime"
-    )
+    assert job.reply_route["target"] == {"open_conversation_id": "test-alert-group"}
+    assert job.business_application_code == ("grafana-strict-runtime")
     publish_pending_agent_jobs(c)
     assert len(c.message_bus.jobs) == 1
 
@@ -161,9 +146,7 @@ def test_distinct_webhook_events_use_isolated_sessions_even_when_continuity_is_e
     c = _container()
     first = _receive(c, _firing("webhook-session-one"))
     second_payload = _firing("webhook-session-two")
-    second_payload["alerts"] = [
-        {"status": "firing", "fingerprint": "webhook-session-two"}
-    ]
+    second_payload["alerts"] = [{"status": "firing", "fingerprint": "webhook-session-two"}]
     second = _receive(c, second_payload)
     assert first.event_id != second.event_id
 
@@ -193,9 +176,7 @@ def test_auth_failure_records_only_hash_size_and_safe_remote_hash() -> None:
     with pytest.raises(PermissionDenied) as denied:
         _receive(c, payload, token="wrong-token")
     assert denied.value.error_code == "webhook_auth_failed"
-    event = c.database.execute_one(
-        "select * from webhook_event where status = 'REJECTED_AUTH'"
-    )
+    event = c.database.execute_one("select * from webhook_event where status = 'REJECTED_AUTH'")
     assert event
     stored = json.dumps(event, ensure_ascii=False)
     assert event["payload_hash"] == hashlib.sha256(raw).hexdigest()
@@ -250,11 +231,7 @@ def test_non_bearer_authentication_is_rejected_without_nonce_state() -> None:
             public_id=PUBLIC_ID,
             raw_body=raw,
             content_type="application/json",
-            headers={
-                "authorization": (
-                    "Bearer test-grafana-token-0123456789abcdefABCDEF"
-                )
-            },
+            headers={"authorization": ("Bearer test-grafana-token-0123456789abcdefABCDEF")},
         )
     assert denied.value.error_code == "webhook_auth_failed"
     assert c.agent_repository.count_rows("webhook_replay_nonce") == 0

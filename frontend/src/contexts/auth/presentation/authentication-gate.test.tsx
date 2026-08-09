@@ -63,7 +63,7 @@ describe("AuthenticationGate", () => {
     renderGate(<div>管理控制面</div>)
 
     expect(
-      await screen.findByRole("heading", { name: "登录 Agent 应用平台" })
+      await screen.findByRole("heading", { name: "登录 Agent 用户门户" })
     ).toBeInTheDocument()
 
     fireEvent.change(screen.getByLabelText("用户名"), {
@@ -92,7 +92,7 @@ describe("AuthenticationGate", () => {
 
     expect(await screen.findByText("管理控制面")).toBeInTheDocument()
     expect(
-      screen.queryByRole("heading", { name: "登录 Agent 应用平台" })
+      screen.queryByRole("heading", { name: "登录 Agent 用户门户" })
     ).not.toBeInTheDocument()
     expect(screen.getByText("管理控制面")).toBeInTheDocument()
   })
@@ -118,7 +118,7 @@ describe("AuthenticationGate", () => {
     fireEvent.click(await screen.findByRole("button", { name: "退出测试账户" }))
 
     expect(
-      await screen.findByRole("heading", { name: "登录 Agent 应用平台" })
+      await screen.findByRole("heading", { name: "登录 Agent 用户门户" })
     ).toBeInTheDocument()
     expect(queryClient.getQueryData(["private-data"])).toBeUndefined()
     expect(fetch).toHaveBeenNthCalledWith(

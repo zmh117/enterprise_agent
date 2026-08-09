@@ -1,223 +1,197 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import json
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field
-
 from app.bootstrap import Container
-from app.modules.identity.api.dependencies import (
-    current_principal,
-    handle_exception,
-    require_action,
-)
-from app.shared.exceptions import AppError, NotFound
-from app.shared.logging import new_correlation_id
+from app.modules.identity.api.dependencies import current_principal
+from app.shared.exceptions import NotFound
 
 
-class DebugJobCreateRequest(BaseModel):
-    """Only caller-controlled values that cannot expand runtime authority."""
+def build_self_job_history_router() -> Any:
+    """Read-only portal endpoints scoped to the current authenticated user.
 
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    These endpoints deliberately do not reuse the administrator read scope.  A
+    platform administrator sees only their own records through the lightweight
+    portal, exactly like every other user.
+    """
 
-    message: str = Field(min_length=1, max_length=20_000)
-    application_id: str = Field(min_length=1, max_length=200)
-    execution_scope_id: str = Field(min_length=1, max_length=200)
-    delivery_binding_id: str = Field(default="", max_length=200)
-    idempotency_key: str = Field(default="", max_length=240)
-    continue_session_id: str = Field(default="", max_length=200)
+    router = APIRouter(tags=["self-job-history"])
 
-
-def build_agent_job_debug_router() -> Any:
-    router = APIRouter(prefix="/api/agent/jobs", tags=["agent-jobs"])
-
-    @router.post("")
-    async def create_job(
-        request: Request,
-        payload: DebugJobCreateRequest,
-    ) -> dict[str, Any]:
-        container = _container(request)
-        principal = require_action(
-            request,
-            resource_type="agent_job",
-            resource_code="*",
-            action="debug_execute",
-            csrf=True,
+    @router.get("/api/me/jobs")
+    def list_owned_jobs(request: Request, limit: int = 50) -> dict[str, Any]:
+        principal = current_principal(request)
+        bounded_limit = min(max(limit, 1), 100)
+        c = _container(request)
+        rows = c.database.execute(
+            """
+            select id
+              from agent_job
+             where internal_user_id = ? or requester_id = ? or user_id = ?
+             order by created_at desc, id desc
+             limit ?
+            """,
+            (
+                principal.user_id,
+                principal.user_id,
+                principal.user_id,
+                bounded_limit,
+            ),
         )
-        try:
-            job, scoped_idempotency_key = container.debug_job_access_service.create_job(
-                user_id=principal.user_id,
-                display_name=principal.display_name,
-                message=payload.message,
-                application_id=payload.application_id,
-                execution_scope_id=payload.execution_scope_id,
-                delivery_binding_id=payload.delivery_binding_id,
-                idempotency_key=payload.idempotency_key,
-                continue_session_id=payload.continue_session_id,
-                correlation_id=(
-                    getattr(request.state, "correlation_id", "")
-                    or new_correlation_id()
-                ),
-                environment="local",
-            )
-        except AppError as exc:
-            raise handle_exception(exc) from exc
         return {
-            "accepted": True,
-            "status": job.status.value,
-            "job_id": job.id,
-            "idempotency_key": scoped_idempotency_key,
+            "items": [_job_projection(c, str(row["id"])) for row in rows],
+            "page": {"limit": bounded_limit, "has_more": False, "next_cursor": None},
         }
 
-    @router.get("/_debug-options")
-    def debug_options(request: Request) -> dict[str, Any]:
-        principal = require_action(
-            request,
-            resource_type="agent_job",
-            resource_code="*",
-            action="debug_execute",
+    @router.get("/api/me/jobs/{job_id}/evidence")
+    def owned_job_evidence(request: Request, job_id: str) -> dict[str, Any]:
+        principal = current_principal(request)
+        c = _container(request)
+        job = _require_owned_job(c, user_id=principal.user_id, job_id=job_id)
+        dispatch = c.agent_repository.get_dispatch_event_for_job(job_id)
+        return {
+            "job": _job_projection(c, job_id, detail=job),
+            "session_ref": {"id": str(job["session_id"])},
+            "dispatch": asdict(dispatch) if dispatch else None,
+            "steps": c.agent_repository.list_steps(job_id),
+            "mcp_tool_calls": _mcp_provenance(c, job_id),
+            "deliveries": {
+                "events": c.agent_repository.list_delivery_events(job_id),
+                "attempts": c.agent_repository.list_delivery_attempts(job_id),
+                "chunks": c.agent_repository.list_delivery_chunks(job_id),
+            },
+        }
+
+    @router.get("/api/me/conversations/{session_id}")
+    def owned_conversation(request: Request, session_id: str) -> dict[str, Any]:
+        principal = current_principal(request)
+        c = _container(request)
+        row = c.database.execute_one(
+            """
+            select * from agent_session
+             where id = ? and (requester_id = ? or dingding_user_id = ?)
+            """,
+            (session_id, principal.user_id, principal.user_id),
         )
-        return _container(request).debug_job_access_service.available_options(
-            user_id=principal.user_id,
-            environment="local",
+        if row is None:
+            raise HTTPException(status_code=404, detail="未找到会话")
+        job_rows = c.database.execute(
+            """
+            select id from agent_job
+             where session_id = ?
+               and (internal_user_id = ? or requester_id = ? or user_id = ?)
+             order by created_at, id
+            """,
+            (
+                session_id,
+                principal.user_id,
+                principal.user_id,
+                principal.user_id,
+            ),
         )
-
-    @router.get("/{job_id}")
-    def get_job(request: Request, job_id: str) -> dict[str, Any]:
-        try:
-            container = _container(request)
-            principal = current_principal(request)
-            return container.debug_job_access_service.require_job_read(
-                user_id=principal.user_id,
-                job_id=job_id,
-            )
-        except NotFound as exc:
-            raise HTTPException(status_code=404, detail=exc.safe_message) from exc
-
-    @router.get("/{job_id}/steps")
-    def list_steps(request: Request, job_id: str) -> dict[str, Any]:
-        try:
-            container = _container(request)
-            principal = current_principal(request)
-            container.debug_job_access_service.require_job_read(
-                user_id=principal.user_id,
-                job_id=job_id,
-            )
-            return {
-                "job_id": job_id,
-                "steps": container.agent_repository.list_steps(job_id),
-            }
-        except NotFound as exc:
-            raise HTTPException(status_code=404, detail=exc.safe_message) from exc
-
-    @router.get("/{job_id}/tool-calls")
-    def list_tool_calls(request: Request, job_id: str) -> dict[str, Any]:
-        try:
-            container = _container(request)
-            principal = current_principal(request)
-            container.debug_job_access_service.require_job_read(
-                user_id=principal.user_id,
-                job_id=job_id,
-            )
-            return {
-                "job_id": job_id,
-                "tool_calls": container.agent_repository.list_tool_calls(job_id),
-            }
-        except NotFound as exc:
-            raise HTTPException(status_code=404, detail=exc.safe_message) from exc
-
-    @router.get("/{job_id}/deliveries")
-    def list_deliveries(request: Request, job_id: str) -> dict[str, Any]:
-        try:
-            container = _container(request)
-            principal = current_principal(request)
-            container.debug_job_access_service.require_job_read(
-                user_id=principal.user_id,
-                job_id=job_id,
-            )
-            return {
-                "job_id": job_id,
-                "deliveries": {
-                    "events": container.agent_repository.list_delivery_events(
-                        job_id
-                    ),
-                    "attempts": container.agent_repository.list_delivery_attempts(
-                        job_id
-                    ),
-                    "chunks": container.agent_repository.list_delivery_chunks(
-                        job_id
-                    ),
-                },
-            }
-        except NotFound as exc:
-            raise HTTPException(status_code=404, detail=exc.safe_message) from exc
-
-    @router.get("/{job_id}/evidence")
-    def job_evidence(request: Request, job_id: str) -> dict[str, Any]:
-        try:
-            container = _container(request)
-            principal = current_principal(request)
-            job = container.debug_job_access_service.require_job_read(
-                user_id=principal.user_id,
-                job_id=job_id,
-            )
-            agent = container.database.execute_one(
-                """
-                select d.code
-                  from agent_job j
-                  left join agent_definition d
-                    on d.id = j.agent_definition_id
-                 where j.id = ?
-                """,
-                (job_id,),
-            )
-            dispatch = container.agent_repository.get_dispatch_event_for_job(
-                job_id
-            )
-            return {
-                "job": {
-                    **job,
-                    "agent_code": str(
-                        (agent or {}).get("code")
-                        or "default-diagnostic-agent"
-                    ),
-                    "correlation_id": str(
-                        job.get("business_application_route_decision", {}).get(
-                            "correlation_id"
-                        )
-                        or ""
-                    ),
-                    "error_summary": str(
-                        job.get("error_message") or ""
-                    )[:500],
-                },
-                "session_ref": {"id": str(job["session_id"])},
-                "dispatch": asdict(dispatch) if dispatch else None,
-                "steps": container.agent_repository.list_steps(job_id),
-                "tool_calls": container.agent_repository.list_tool_calls(
-                    job_id
-                ),
-                "deliveries": {
-                    "events": container.agent_repository.list_delivery_events(
-                        job_id
-                    ),
-                    "attempts": container.agent_repository.list_delivery_attempts(
-                        job_id
-                    ),
-                    "chunks": container.agent_repository.list_delivery_chunks(
-                        job_id
-                    ),
-                },
-                "webhook_events": [],
-            }
-        except NotFound as exc:
-            raise HTTPException(
-                status_code=404,
-                detail=exc.safe_message,
-            ) from exc
+        return {
+            "session": {
+                "id": str(row["id"]),
+                "requester_id": principal.user_id,
+                "source_channel": str(row.get("source_channel") or row.get("source") or ""),
+                "source_connector_id": str(row.get("source_connector_id") or ""),
+                "external_conversation_id": str(row.get("external_conversation_id") or ""),
+                "created_at": str(row.get("created_at") or ""),
+                "updated_at": str(row.get("updated_at") or row.get("created_at") or ""),
+            },
+            "jobs": [_job_projection(c, str(item["id"])) for item in job_rows],
+            "messages": c.agent_repository.list_messages(session_id, limit=100),
+        }
 
     return router
+
+
+def _require_owned_job(
+    container: Container,
+    *,
+    user_id: str,
+    job_id: str,
+) -> dict[str, Any]:
+    try:
+        detail = container.agent_repository.get_job_detail(job_id)
+    except NotFound as exc:
+        raise HTTPException(status_code=404, detail="未找到 Agent Job") from exc
+    owners = {
+        str(detail.get("internal_user_id") or ""),
+        str(detail.get("requester_id") or ""),
+        str(detail.get("user_id") or ""),
+    }
+    if user_id not in owners:
+        # Use the same response for an unknown and a foreign object to prevent
+        # identifier enumeration.
+        raise HTTPException(status_code=404, detail="未找到 Agent Job")
+    return detail
+
+
+def _job_projection(
+    container: Container,
+    job_id: str,
+    *,
+    detail: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    job = detail or container.agent_repository.get_job_detail(job_id)
+    agent = container.database.execute_one(
+        """
+        select d.code
+          from agent_job j
+          left join agent_definition d on d.id = j.agent_definition_id
+         where j.id = ?
+        """,
+        (job_id,),
+    )
+    route = job.get("business_application_route_decision", {})
+    return {
+        **job,
+        "agent_code": str((agent or {}).get("code") or "agent"),
+        "correlation_id": str(route.get("correlation_id") or ""),
+        "error_summary": str(job.get("error_message") or "")[:500],
+    }
+
+
+def _mcp_provenance(container: Container, job_id: str) -> list[dict[str, Any]]:
+    rows = container.database.execute(
+        """
+        select id, job_id, mcp_server_code, server_version, tool_name,
+               tool_schema_hash, subject_snapshot_id, resource_deployment_id,
+               resource_revision_id, credential_revision, request_summary_json,
+               result_hash, result_size, status, duration_ms, correlation_id,
+               occurred_at
+          from mcp_tool_call_provenance
+         where job_id = ?
+         order by occurred_at, id
+        """,
+        (job_id,),
+    )
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        attempts = container.database.execute(
+            """
+            select attempt, status, error_code, duration_ms, created_at
+              from mcp_tool_call_attempt
+             where provenance_id = ?
+             order by attempt
+            """,
+            (row["id"],),
+        )
+        try:
+            summary = json.loads(str(row.get("request_summary_json") or "{}"))
+        except (TypeError, json.JSONDecodeError):
+            summary = {}
+        result.append(
+            {
+                **{key: value for key, value in row.items() if key != "request_summary_json"},
+                "request_summary": summary if isinstance(summary, dict) else {},
+                "attempts": attempts,
+            }
+        )
+    return result
 
 
 def _container(request: Any) -> Container:

@@ -21,7 +21,7 @@ def test_job_dispatch_outbox_migration_has_stable_contract_and_indexes() -> None
             migrator_build="job-dispatch-schema-test",
         ).run()
 
-        assert result.head == "033"
+        assert result.head == "036"
         columns = {
             str(row["name"]): row
             for row in database.execute("pragma table_info(job_dispatch_outbox)")
@@ -56,8 +56,7 @@ def test_job_dispatch_outbox_migration_has_stable_contract_and_indexes() -> None
         assert columns["max_replay_count"]["dflt_value"] == "3"
 
         indexes = {
-            str(row["name"])
-            for row in database.execute("pragma index_list(job_dispatch_outbox)")
+            str(row["name"]) for row in database.execute("pragma index_list(job_dispatch_outbox)")
         }
         assert {
             "idx_job_dispatch_outbox_due",
@@ -67,9 +66,7 @@ def test_job_dispatch_outbox_migration_has_stable_contract_and_indexes() -> None
         }.issubset(indexes)
         quarantine_columns = {
             str(row["name"])
-            for row in database.execute(
-                "pragma table_info(job_dispatch_cutover_quarantine)"
-            )
+            for row in database.execute("pragma table_info(job_dispatch_cutover_quarantine)")
         }
         assert quarantine_columns == {
             "id",
@@ -171,9 +168,7 @@ def test_job_dispatch_status_is_finite_and_terminal_states_do_not_transition() -
 
 def test_job_dispatch_migration_extends_but_does_not_change_legacy_baseline() -> None:
     catalog = load_migration_catalog(default_migrations_dir())
-    job_dispatch = next(
-        artifact for artifact in catalog if artifact.version == "019"
-    )
+    job_dispatch = next(artifact for artifact in catalog if artifact.version == "019")
 
-    assert catalog[-1].version == "033"
+    assert catalog[-1].version == "036"
     assert job_dispatch.name == "019_job_dispatch_outbox.sql"

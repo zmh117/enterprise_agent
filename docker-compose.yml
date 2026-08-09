@@ -1,9 +1,4 @@
-x-database-env: &database-env
-  DATABASE_DSN: postgresql://enterprise_agent:enterprise_agent@postgres:5432/enterprise_agent
-  APP_CONFIG_MASTER_KEY_FILE: /run/secrets/app_config_master_key
-
 x-runtime-env: &runtime-env
-  <<: *database-env
   APP_ENV: ${APP_ENV:-local}
   # Local seed is an explicit bootstrap action. Runtime service restarts must
   # not replay seed data over control-plane managed configuration.
@@ -11,17 +6,16 @@ x-runtime-env: &runtime-env
   FEATURE_WEB_ADMIN: ${FEATURE_WEB_ADMIN:-false}
   FEATURE_PUBLISHED_AGENT_RUNTIME: ${FEATURE_PUBLISHED_AGENT_RUNTIME:-false}
   FEATURE_REAL_CLAUDE: ${FEATURE_REAL_CLAUDE:-false}
-  FEATURE_REAL_INTERNAL_TOOLS: ${FEATURE_REAL_INTERNAL_TOOLS:-false}
   WEB_COOKIE_SECURE: ${WEB_COOKIE_SECURE:-true}
   WEB_ALLOWED_ORIGINS: ${WEB_ALLOWED_ORIGINS:-}
   ONES_IDENTITY_BASE_URL: ${ONES_IDENTITY_BASE_URL:-}
   ONES_IDENTITY_ALLOWED_HOSTS: ${ONES_IDENTITY_ALLOWED_HOSTS:-}
   ONES_IDENTITY_ALLOW_INSECURE_LOCAL: ${ONES_IDENTITY_ALLOW_INSECURE_LOCAL:-false}
-  # 容器网络地址作为数据库运行配置不可用时的安全回退。
-  INTERNAL_API_BASE_URL: http://internal-api-platform:9000
-  INTERNAL_API_AUTH_TOKEN_FILE: /run/secrets/internal_api_auth_token
   DINGTALK_RUNTIME_AUTH_TOKEN_FILE: /run/secrets/dingtalk_runtime_auth_token
-  # 模型连接由管理端配置，部署环境只负责限制允许访问的主机。
+  ONES_MCP_SERVER_URL: http://ones-mcp-server:9101/mcp
+  DATA_MCP_SERVER_URL: http://data-mcp-server:9102/mcp
+  MCP_ALLOWED_SERVER_CODES: ones-mcp,data-mcp
+  # 模型连接仍属于部署引导配置；轻量用户门户不提供管理入口。
   MODEL_PROVIDER_HOST_ALLOWLIST: ${MODEL_PROVIDER_HOST_ALLOWLIST:-api.deepseek.com}
   # 附件存储仍属于部署基础设施，不由业务配置数据库托管。
   S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-http://minio:9000}
@@ -33,7 +27,18 @@ x-runtime-env: &runtime-env
 
 x-worker-env: &worker-env
   <<: *runtime-env
+  DATABASE_DSN: ${WORKER_DATABASE_DSN:-postgresql://enterprise_agent_worker:enterprise_agent_worker_local@postgres:5432/enterprise_agent}
   RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+
+x-decrypting-worker-env: &decrypting-worker-env
+  <<: *worker-env
+  APP_CONFIG_MASTER_KEY_FILE: /run/secrets/app_config_master_key
+
+x-api-env: &api-env
+  <<: *runtime-env
+  DATABASE_DSN: ${API_DATABASE_DSN:-postgresql://enterprise_agent_api:enterprise_agent_api_local@postgres:5432/enterprise_agent}
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+  APP_CONFIG_MASTER_KEY_FILE: /run/secrets/app_config_master_key
 
 services:
   postgres:
@@ -51,6 +56,9 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    networks:
+      - default
+      - mcp-control
 
   migrator:
     build:
@@ -61,6 +69,14 @@ services:
       DATABASE_DSN: postgresql://enterprise_agent:enterprise_agent@postgres:5432/enterprise_agent
       APP_ENV: ${APP_ENV:-local}
       MIGRATOR_BUILD: ${MIGRATOR_BUILD:-local-compose}
+      API_DATABASE_PASSWORD: ${API_DATABASE_PASSWORD:-enterprise_agent_api_local}
+      WORKER_DATABASE_PASSWORD: ${WORKER_DATABASE_PASSWORD:-enterprise_agent_worker_local}
+      ONES_MCP_DATABASE_PASSWORD: ${ONES_MCP_DATABASE_PASSWORD:-ones_mcp_reader_local}
+      DATA_MCP_DATABASE_PASSWORD: ${DATA_MCP_DATABASE_PASSWORD:-data_mcp_runtime_local}
+    command:
+      - /bin/sh
+      - -ec
+      - python -m app.cli.migrate && python -m app.cli.apply_service_grants
     restart: "no"
     depends_on:
       postgres:
@@ -78,6 +94,9 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    networks:
+      - default
+      - mcp-control
 
   minio:
     # profiles: ["attachments"]
@@ -115,58 +134,27 @@ services:
       minio:
         condition: service_healthy
 
-  mock-internal-api-platform:
-    profiles: ["mock-tools"]
+  ones-mcp-server:
     build:
       context: .
-      dockerfile: backend/Dockerfile
-      target: mock-internal-api-platform
-    command:
-      ["python", "-m", "uvicorn", "app.mock_internal_api_platform:create_app", "--factory", "--host", "0.0.0.0", "--port", "9000"]
-    expose:
-      - "9000"
-
-  local-internal-api-platform:
-    profiles: ["local-tools"]
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    command:
-      ["python", "-m", "uvicorn", "app.local_internal_api_platform:create_app", "--factory", "--host", "0.0.0.0", "--port", "9000"]
+      dockerfile: services/ones-mcp-server/Dockerfile
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
     environment:
-      <<: *runtime-env
-    expose:
-      - "9000"
-    depends_on:
-      migrator:
-        condition: service_completed_successfully
-
-  # real-tools: 拓扑感知、多数据源、只读 Internal API Platform。
-  internal-api-platform:
-    # profiles: ["real-tools"]
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-      target: internal-api-platform
-      args:
-        DEBIAN_MIRROR: ${DEBIAN_MIRROR:-https://mirrors.aliyun.com/debian}
-        DEBIAN_SECURITY_MIRROR: ${DEBIAN_SECURITY_MIRROR:-https://mirrors.aliyun.com/debian-security}
-        http_proxy: ${http_proxy:-}
-        https_proxy: ${https_proxy:-}
-        HTTP_PROXY: ${HTTP_PROXY:-${http_proxy:-}}
-        HTTPS_PROXY: ${HTTPS_PROXY:-${https_proxy:-}}
-        no_proxy: ${no_proxy:-}
-        NO_PROXY: ${NO_PROXY:-${no_proxy:-}}
-    command:
-      ["python", "-m", "uvicorn", "app.internal_api_platform:create_app", "--factory", "--host", "0.0.0.0", "--port", "9000"]
-    environment:
-      <<: *runtime-env
+      DATABASE_DSN: ${ONES_MCP_DATABASE_DSN:-postgresql://ones_mcp_reader:ones_mcp_reader_local@postgres:5432/enterprise_agent}
+      APP_CONFIG_MASTER_KEY_FILE: /run/secrets/app_config_master_key
+      MCP_TOKEN_SIGNING_KEY_FILE: /run/secrets/mcp_token_signing_key
+      ONES_MCP_PORT: "9101"
+      ONES_MCP_LOG_LEVEL: ${ONES_MCP_LOG_LEVEL:-info}
     secrets:
-      - source: internal_api_server_auth_tokens
-        target: internal_api_auth_token
       - app_config_master_key
+      - mcp_token_signing_key
     expose:
-      - "9000"
+      - "9101"
     depends_on:
       postgres:
         condition: service_healthy
@@ -177,11 +165,65 @@ services:
         - CMD
         - python
         - -c
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/ready', timeout=3)"
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9101/health', timeout=3)"
       interval: 10s
       timeout: 5s
       retries: 12
       start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+    networks:
+      - mcp-control
+      - provider-egress
+
+  data-mcp-server:
+    build:
+      context: .
+      dockerfile: services/data-mcp-server/Dockerfile
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      DATABASE_DSN: ${DATA_MCP_DATABASE_DSN:-postgresql://data_mcp_runtime:data_mcp_runtime_local@postgres:5432/enterprise_agent}
+      APP_CONFIG_MASTER_KEY_FILE: /run/secrets/app_config_master_key
+      MCP_TOKEN_SIGNING_KEY_FILE: /run/secrets/mcp_token_signing_key
+      DATA_MCP_PORT: "9102"
+      DATA_MCP_LOG_LEVEL: ${DATA_MCP_LOG_LEVEL:-info}
+      DATA_MCP_RECONCILE_SECONDS: ${DATA_MCP_RECONCILE_SECONDS:-2}
+    secrets:
+      - app_config_master_key
+      - mcp_token_signing_key
+    expose:
+      - "9102"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9102/health', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768M
+    networks:
+      - mcp-control
+      - provider-egress
 
   api-server:
     build:
@@ -191,11 +233,9 @@ services:
     command:
       ["python", "-m", "uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
     environment:
-      <<: *worker-env
+      <<: *api-env
     secrets:
       - dingtalk_runtime_auth_token
-      - source: internal_api_client_auth_token
-        target: internal_api_auth_token
       - app_config_master_key
     ports:
       - "8000:8000"
@@ -216,18 +256,9 @@ services:
       timeout: 5s
       retries: 12
       start_period: 15s
-
-  builtin-tool-compose-acceptance:
-    profiles: ["builtin-tool-acceptance"]
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-      target: builtin-tool-compose-acceptance
-    command: ["python", "-m", "app.acceptance.builtin_tool_composition"]
-    environment:
-      DATABASE_DSN: "sqlite:///:memory:"
-      APP_ENV: compose-acceptance
-    restart: "no"
+    networks:
+      - default
+      - mcp-control
 
   admin-web:
     # profiles: ["admin"]
@@ -277,10 +308,9 @@ services:
     command: ["python", "-m", "app.workers.agent_job_worker"]
     environment:
       <<: *worker-env
+      MCP_TOKEN_SIGNING_KEY_FILE: /run/secrets/mcp_token_signing_key
     secrets:
-      - source: internal_api_client_auth_token
-        target: internal_api_auth_token
-      - app_config_master_key
+      - mcp_token_signing_key
     depends_on:
       postgres:
         condition: service_healthy
@@ -288,6 +318,13 @@ services:
         condition: service_healthy
       migrator:
         condition: service_completed_successfully
+      ones-mcp-server:
+        condition: service_healthy
+      data-mcp-server:
+        condition: service_healthy
+    networks:
+      - mcp-control
+      - provider-egress
 
   job-dispatch-worker:
     build:
@@ -297,10 +334,6 @@ services:
     command: ["python", "-m", "app.workers.job_dispatch_worker"]
     environment:
       <<: *worker-env
-    secrets:
-      - source: internal_api_client_auth_token
-        target: internal_api_auth_token
-      - app_config_master_key
     depends_on:
       postgres:
         condition: service_healthy
@@ -326,10 +359,8 @@ services:
       target: agent-worker
     command: ["python", "-m", "app.workers.delivery_dispatch_worker"]
     environment:
-      <<: *worker-env
+      <<: *decrypting-worker-env
     secrets:
-      - source: internal_api_client_auth_token
-        target: internal_api_auth_token
       - app_config_master_key
     depends_on:
       postgres:
@@ -355,10 +386,6 @@ services:
     command: ["python", "-m", "app.workers.webhook_dispatch_worker"]
     environment:
       <<: *worker-env
-    secrets:
-      - source: internal_api_client_auth_token
-        target: internal_api_auth_token
-      - app_config_master_key
     depends_on:
       postgres:
         condition: service_healthy
@@ -385,10 +412,6 @@ services:
     command: ["python", "-m", "app.workers.channel_dispatch_worker"]
     environment:
       <<: *worker-env
-    secrets:
-      - source: internal_api_client_auth_token
-        target: internal_api_auth_token
-      - app_config_master_key
     depends_on:
       postgres:
         condition: service_healthy
@@ -415,10 +438,8 @@ services:
       target: agent-worker
     command: ["python", "-m", "app.workers.attachment_worker"]
     environment:
-      <<: *worker-env
+      <<: *decrypting-worker-env
     secrets:
-      - source: internal_api_client_auth_token
-        target: internal_api_auth_token
       - app_config_master_key
     depends_on:
       postgres:
@@ -437,10 +458,8 @@ secrets:
     file: ${APP_CONFIG_MASTER_KEY_FILE:-${HOME}/.config/enterprise-agent/app-config-master-key}
   dingtalk_runtime_auth_token:
     environment: DINGTALK_RUNTIME_AUTH_TOKEN
-  internal_api_server_auth_tokens:
-    file: ${INTERNAL_API_SERVER_AUTH_TOKENS_FILE:-${HOME}/.config/enterprise-agent/internal-api-server-auth-tokens}
-  internal_api_client_auth_token:
-    file: ${INTERNAL_API_CLIENT_AUTH_TOKEN_FILE:-${HOME}/.config/enterprise-agent/internal-api-client-auth-token}
+  mcp_token_signing_key:
+    file: ${MCP_TOKEN_SIGNING_KEY_FILE:-${HOME}/.config/enterprise-agent/mcp-token-signing-key}
 
 volumes:
   postgres18-data:
@@ -449,3 +468,8 @@ volumes:
     name: enterprise_agent_rabbitmq4_data
   minio-data:
     name: enterprise_agent_minio_data
+
+networks:
+  mcp-control:
+    internal: true
+  provider-egress: {}

@@ -2,27 +2,6 @@
 -- Existing rows are managed by the control plane and must never be rewritten
 -- when a runtime service restarts with seeding enabled.
 
-INSERT INTO tool_definition
-  (id, name, risk_level, read_only, enabled, description, created_at, updated_at)
-VALUES
-  ('tool-get-er-context', 'get_er_context', 'low', 1, 1, 'Search compact ER graph context', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('tool-get-business-flow-context', 'get_business_flow_context', 'low', 1, 1, 'Search compact business flow context', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('tool-get-schema-directory', 'get_schema_directory', 'low', 1, 1, 'Read allowed schema directory', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('tool-diagnose-loki-labels', 'diagnose_loki_labels', 'low', 1, 1, 'List bounded Loki labels', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('tool-diagnose-loki-label-values', 'diagnose_loki_label_values', 'low', 1, 1, 'List bounded Loki label values', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('tool-diagnose-loki-probe', 'diagnose_loki_probe', 'low', 1, 1, 'Probe bounded Loki selector results', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('tool-query-loki', 'query_loki', 'low', 1, 1, 'Query bounded Loki logs', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('tool-query-database', 'query_database', 'medium', 1, 1, 'Run policy-approved read-only SQL', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('tool-query-redis-get', 'query_redis_get', 'medium', 1, 1, 'Read approved Redis keys', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('tool-query-redis-scan', 'query_redis_scan', 'medium', 1, 1, 'Scan approved Redis key prefixes', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-ON CONFLICT(id) DO NOTHING;
-
-INSERT INTO integration_connector
-  (id, connector_type, name, base_url, enabled, metadata, created_at, updated_at)
-VALUES
-  ('connector-internal-api', 'internal_api', 'internal-api-platform', 'http://internal-api-platform:9000', 1, '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-ON CONFLICT(id) DO NOTHING;
-
 INSERT INTO integration_connector
   (id, connector_type, name, base_url, enabled, metadata, allow_ingress, allow_delivery,
    secret_ref, endpoint_ref, host_allowlist, created_at, updated_at)
@@ -40,12 +19,6 @@ VALUES
   ('connector-email-default', 'email', 'email-default', '', 1, '{}', 0, 1, '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('connector-webhook-default', 'webhook', 'webhook-default', '', 1, '{}', 0, 1, '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('connector-none', 'none', 'none', '', 1, '{}', 0, 1, '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-ON CONFLICT(id) DO NOTHING;
-
-INSERT INTO datasource_registry
-  (id, source_type, source_code, connector_id, enabled, metadata, created_at, updated_at)
-VALUES
-  ('datasource-default', 'service', 'default', 'connector-internal-api', 1, '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 
 INSERT INTO app_user
@@ -176,11 +149,11 @@ ON CONFLICT(id) DO NOTHING;
 
 INSERT INTO agent_definition
   (id, code, name, description, project_code, status, current_publication_id,
-   classification, revision, created_by, created_at, updated_at)
+   revision, created_by, created_at, updated_at)
 VALUES
   ('agent_default_diagnostic', 'default-diagnostic-agent', '默认诊断 Agent',
    'Enterprise internal read-only diagnostic Agent', 'default', 'enabled',
-   'agent_publication_default_v1', 'internal_diagnostic', 1,
+   'agent_publication_default_v1', 1,
    'user_local_admin', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 
@@ -189,8 +162,8 @@ INSERT INTO agent_revision
    created_by, created_at, updated_at)
 VALUES
   ('agent_revision_default_v1', 'agent_default_diagnostic', 1, 'published',
-   '{"business_role":"Enterprise internal read-only diagnostic Agent","business_instructions":"Use evidence from approved internal tools and state uncertainty when evidence is incomplete.","model_policy":{"model":"claude-sonnet-4-20250514"},"execution":{"max_turns":12,"timeout_seconds":300},"tools":["get_er_context","get_business_flow_context","get_schema_directory","diagnose_loki_labels","diagnose_loki_label_values","diagnose_loki_probe","query_loki","query_database","query_redis_get","query_redis_scan"],"skills":[],"routing":{"project_code":"default"},"channels":{"ingress":["connector-dingtalk-stream-default"],"delivery":["connector-dingtalk-enterprise-default"]}}',
-   'acee515709597912f04ba4e181575c14314121f084dbe561e9e04599179df1b9',
+   '{"business_instructions":"Use only MCP tools explicitly allowed by the current Job and state uncertainty when evidence is incomplete.","business_role":"Enterprise internal read-only diagnostic Agent","channels":{"delivery":["connector-dingtalk-enterprise-default"],"ingress":["connector-dingtalk-stream-default"]},"execution":{"max_turns":12,"timeout_seconds":300},"model_policy":{"model":"claude-sonnet-4-20250514"},"routing":{"project_code":"default"},"skills":[],"tools":[]}',
+   'e6f363e97127f90933f3f1f2444bdbd4eb17970a7c568c9a4656fa931dd2e3a2',
    '{"valid":true,"errors":[]}', 'user_local_admin', CURRENT_TIMESTAMP,
    CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
@@ -201,15 +174,9 @@ INSERT INTO agent_publication
 VALUES
   ('agent_publication_default_v1', 'agent_default_diagnostic',
    'agent_revision_default_v1', 1, 1,
-   '{"business_role":"Enterprise internal read-only diagnostic Agent","business_instructions":"Use evidence from approved internal tools and state uncertainty when evidence is incomplete.","model_policy":{"model":"claude-sonnet-4-20250514"},"execution":{"max_turns":12,"timeout_seconds":300},"tools":["get_er_context","get_business_flow_context","get_schema_directory","diagnose_loki_labels","diagnose_loki_label_values","diagnose_loki_probe","query_loki","query_database","query_redis_get","query_redis_scan"],"skills":[],"routing":{"project_code":"default"},"channels":{"ingress":["connector-dingtalk-stream-default"],"delivery":["connector-dingtalk-enterprise-default"]}}',
-   'acee515709597912f04ba4e181575c14314121f084dbe561e9e04599179df1b9',
+   '{"business_instructions":"Use only MCP tools explicitly allowed by the current Job and state uncertainty when evidence is incomplete.","business_role":"Enterprise internal read-only diagnostic Agent","channels":{"delivery":["connector-dingtalk-enterprise-default"],"ingress":["connector-dingtalk-stream-default"]},"execution":{"max_turns":12,"timeout_seconds":300},"model_policy":{"model":"claude-sonnet-4-20250514"},"routing":{"project_code":"default"},"skills":[],"tools":[]}',
+   'e6f363e97127f90933f3f1f2444bdbd4eb17970a7c568c9a4656fa931dd2e3a2',
    'active', 'user_local_admin', CURRENT_TIMESTAMP)
-ON CONFLICT(id) DO NOTHING;
-
-INSERT INTO agent_tool_binding (id, publication_id, tool_name, created_at)
-SELECT 'binding_default_' || name, 'agent_publication_default_v1', name, CURRENT_TIMESTAMP
-FROM tool_definition
-WHERE enabled = 1 AND read_only = 1
 ON CONFLICT(id) DO NOTHING;
 
 INSERT INTO agent_channel_binding
@@ -276,10 +243,10 @@ INSERT INTO webhook_trigger_publication
 VALUES
   ('webhook_trigger_publication_grafana_v1', 'webhook_trigger_grafana_default',
    'webhook_trigger_revision_grafana_v1', 1, 1,
-   '{"adapter":"grafana_alertmanager_v1","agent":{"code":"default-diagnostic-agent","publication_id":"agent_publication_default_v1","revision":1,"config_hash":"acee515709597912f04ba4e181575c14314121f084dbe561e9e04599179df1b9","read_only_tools":["diagnose_loki_label_values","diagnose_loki_labels","diagnose_loki_probe","get_business_flow_context","get_er_context","get_schema_directory","query_database","query_loki","query_redis_get","query_redis_scan"]},"authentication":{"nonce_header":"x-webhook-nonce","secret_ref":"secret://platform/grafana_webhook_token","signature_header":"x-webhook-signature","timestamp_header":"x-webhook-timestamp","type":"bearer_v1","window_seconds":300},"delivery":{"connector_id":"connector-dingtalk-webhook-default","options":{},"target":{"webhook_id":"grafana-alert"},"type":"dingtalk_webhook_robot"},"idempotency":{"cooldown_seconds":300},"limits":{"max_alerts":20,"max_in_flight":10,"requests_per_minute":60},"mapping":{"event_id_pointer":"","filters":[],"message_template":"Diagnose this firing alert: {summary}","status_pointer":"","variables":{"summary":"/commonAnnotations/summary"}},"routing":{"base":{"allowed_values":["guanlan","longhua","songshan"],"mode":"extract","pointer":"/commonLabels/ea_base","value":""},"environment":{"allowed_values":["prod","test"],"mode":"extract","pointer":"/commonLabels/ea_environment","value":""},"project_code":{"allowed_values":["default"],"mode":"extract","pointer":"/commonLabels/ea_project_code","value":""},"service":{"allowed_values":["mes-service","order-service"],"mode":"extract","pointer":"/commonLabels/ea_service","value":""},"workshop":{"allowed_values":["GL001","assembly","packing","smt"],"mode":"extract","pointer":"/commonLabels/ea_workshop","value":""}},"schema_version":1,"service_account_id":"user_webhook_grafana_default","source_connector_id":"connector-grafana-default"}',
+   '{"adapter":"grafana_alertmanager_v1","agent":{"code":"default-diagnostic-agent","publication_id":"agent_publication_default_v1","revision":1,"config_hash":"e6f363e97127f90933f3f1f2444bdbd4eb17970a7c568c9a4656fa931dd2e3a2","read_only_tools":[]},"authentication":{"nonce_header":"x-webhook-nonce","secret_ref":"secret://platform/grafana_webhook_token","signature_header":"x-webhook-signature","timestamp_header":"x-webhook-timestamp","type":"bearer_v1","window_seconds":300},"delivery":{"connector_id":"connector-dingtalk-webhook-default","options":{},"target":{"webhook_id":"grafana-alert"},"type":"dingtalk_webhook_robot"},"idempotency":{"cooldown_seconds":300},"limits":{"max_alerts":20,"max_in_flight":10,"requests_per_minute":60},"mapping":{"event_id_pointer":"","filters":[],"message_template":"Diagnose this firing alert: {summary}","status_pointer":"","variables":{"summary":"/commonAnnotations/summary"}},"routing":{"base":{"allowed_values":["guanlan","longhua","songshan"],"mode":"extract","pointer":"/commonLabels/ea_base","value":""},"environment":{"allowed_values":["prod","test"],"mode":"extract","pointer":"/commonLabels/ea_environment","value":""},"project_code":{"allowed_values":["default"],"mode":"extract","pointer":"/commonLabels/ea_project_code","value":""},"service":{"allowed_values":["mes-service","order-service"],"mode":"extract","pointer":"/commonLabels/ea_service","value":""},"workshop":{"allowed_values":["GL001","assembly","packing","smt"],"mode":"extract","pointer":"/commonLabels/ea_workshop","value":""}},"schema_version":1,"service_account_id":"user_webhook_grafana_default","source_connector_id":"connector-grafana-default"}',
    'fc5f064e955301b104fe7577f1a1c52c9656890e622de40514fa5fdc3d6313de',
    'agent_publication_default_v1', 1,
-   'acee515709597912f04ba4e181575c14314121f084dbe561e9e04599179df1b9',
+   'e6f363e97127f90933f3f1f2444bdbd4eb17970a7c568c9a4656fa931dd2e3a2',
    'active', 'user_local_admin', CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 
@@ -301,10 +268,4 @@ VALUES
    'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('policy-tool-grafana', 'user', 'grafana', 'tool', '*', 'use',
    'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-ON CONFLICT(id) DO NOTHING;
-
-INSERT INTO platform_secret_reference
-  (id, code, provider, ref, purpose, status, metadata_json, revision, created_at, updated_at)
-VALUES
-  ('secret-example-order-db-password', 'secret_example_order_db_password', 'secret', 'secret://platform/example_order_db_password', 'example database password reference', 'disabled', '{}', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;

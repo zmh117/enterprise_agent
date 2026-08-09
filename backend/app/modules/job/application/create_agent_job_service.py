@@ -8,30 +8,18 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from app.modules.agent_config.application import AgentConfigService
-from app.modules.api_capability.infrastructure import (
-    CapabilityPublicationRepository,
-    GovernedApiExecutionRepository,
-)
 from app.modules.authorization_center.application import BusinessAuthorizationService
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.attachments.credentials import AttachmentCredentialCipher
 from app.modules.channel.domain.channel_event import ChannelAttachment, ReplyRoute, RoutingContext
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.job.domain.agent_job import AgentJob, AgentSession
-from app.modules.job.application.builtin_tool_snapshot import (
-    JobBuiltinToolSnapshotService,
-)
 from app.modules.job.domain.execution_policy import EffectiveExecutionPolicyResolver
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.repositories import AgentRepository
-from app.modules.identity.infrastructure import (
-    ExternalApiCredentialRepository,
-    IdentityRepository,
-)
-from app.modules.internal_tools.application.legacy_migration import (
-    BuiltinToolLegacyWriteGuard,
-)
+from app.modules.identity.infrastructure.repository import IdentityRepository
 from app.modules.message_bus.application.message_publisher import MessagePublisher
+from app.modules.mcp_runtime.bindings import McpJobBindingService
 from app.modules.permission.application.permission_service import PermissionService
 from app.shared.config import AttachmentSettings, ExecutionSettings, QueueSettings
 from app.shared.exceptions import NonRetryableExecutionError, NotFound, PermissionDenied
@@ -144,11 +132,9 @@ class CreateAgentJobService:
         published_agent_runtime_enabled: bool = False,
         default_agent_code: str = "default-diagnostic-agent",
         business_authorization_service: BusinessAuthorizationService | None = None,
-        capability_publication_repository: (CapabilityPublicationRepository | None) = None,
-        governed_api_execution_repository: (GovernedApiExecutionRepository | None) = None,
-        external_api_credential_repository: (ExternalApiCredentialRepository | None) = None,
+        mcp_binding_service: McpJobBindingService | None = None,
         identity_repository: IdentityRepository | None = None,
-        builtin_tool_snapshot_service: JobBuiltinToolSnapshotService | None = None,
+        accept_new_jobs: bool = True,
     ) -> None:
         self.repository = repository
         self.permission_service = permission_service
@@ -164,19 +150,22 @@ class CreateAgentJobService:
         self.published_agent_runtime_enabled = published_agent_runtime_enabled
         self.default_agent_code = default_agent_code
         self.business_authorization_service = business_authorization_service
-        self.capability_publication_repository = capability_publication_repository
-        self.governed_api_execution_repository = governed_api_execution_repository
-        self.external_api_credential_repository = external_api_credential_repository
+        self.mcp_binding_service = mcp_binding_service
         self.identity_repository = identity_repository
-        self.builtin_tool_snapshot_service = builtin_tool_snapshot_service
+        self.accept_new_jobs = accept_new_jobs
 
     def execute(self, command: CreateAgentJobCommand) -> AgentJob:
         existing = self.repository.get_job_by_idempotency_key(command.idempotency_key)
         if existing is not None:
-            if self.builtin_tool_snapshot_service is not None:
-                self.builtin_tool_snapshot_service.verify(existing.id)
+            if self.mcp_binding_service is not None:
+                self.mcp_binding_service.freeze(existing)
             return existing
-        self._assert_application_runtime_available(command)
+        if not self.accept_new_jobs:
+            raise NonRetryableExecutionError(
+                "New Agent Jobs are disabled during destructive maintenance",
+                safe_message="系统处于维护窗口，暂不接收新的 Agent Job",
+                error_code="job_ingress_maintenance",
+            )
         if command.conversation_mode in {"application", "actor"}:
             raise NonRetryableExecutionError(
                 "Legacy shared session mode cannot create new Jobs",
@@ -192,7 +181,7 @@ class CreateAgentJobService:
             command.attachments,
             enabled=attachments_enabled,
         )
-        requester_id = command.effective_requester_id
+        requester_id = self._resolve_app_user_id(command.effective_requester_id)
         source_channel = command.effective_source_channel
         project_code = command.effective_routing_context.get("project_code", command.project_code)
         project_code = str(project_code or command.project_code)
@@ -357,19 +346,6 @@ class CreateAgentJobService:
                     safe_message="此渠道尚未配置 Agent 结果投递",
                 )
         correlation_id = command.correlation_id or new_correlation_id()
-        BuiltinToolLegacyWriteGuard(
-            self.repository.database
-        ).reject_legacy_job_snapshot(
-            agent_publication_id=agent_publication_id,
-            application_publication_id=(
-                command.business_application_publication_id
-            ),
-            source_id=(
-                "job-intent:"
-                + hashlib.sha256(command.idempotency_key.encode()).hexdigest()[:24]
-            ),
-            correlation_id=correlation_id,
-        )
         execution_policy = self.execution_policy_resolver.resolve(
             application_policy=command.application_execution_policy or None,
             agent_snapshot=agent_snapshot,
@@ -431,19 +407,6 @@ class CreateAgentJobService:
         attachment_ids: list[str] = []
         with self.repository.database.unit_of_work():
             runtime_authorization_snapshot: dict[str, Any] = {}
-            if command.business_application_id:
-                assert self.business_authorization_service is not None
-                runtime_authorization_snapshot = (
-                    self.business_authorization_service.capture_runtime_facts(
-                        user_id=requester_id,
-                        application_id=command.business_application_id,
-                        publication_id=command.business_application_publication_id,
-                        publication_config_hash=command.business_application_config_hash,
-                        environment=str(command.effective_routing_context.get("environment") or ""),
-                        base=str(command.effective_routing_context.get("base") or ""),
-                        workshop=str(command.effective_routing_context.get("workshop") or ""),
-                    )
-                )
             session = (
                 self._require_continuable_session(
                     command=command,
@@ -518,39 +481,9 @@ class CreateAgentJobService:
                 execution_policy=execution_policy.to_dict(),
                 model_runtime_provenance=model_runtime_provenance,
             )
-            external_subject_snapshot = self._freeze_available_external_subject(
-                job_id=job.id,
-                requester_id=requester_id,
-                application_publication_id=(command.business_application_publication_id),
-            )
+            if self.mcp_binding_service is not None:
+                self.mcp_binding_service.freeze(job)
             execution_scope_snapshot: dict[str, Any] = {}
-            if int(runtime_authorization_snapshot.get("schema_version") or 0) == 2:
-                execution_scope_snapshot = self.repository.create_execution_scope(
-                    job_id=job.id,
-                    runtime_authorization=(runtime_authorization_snapshot),
-                )
-            builtin_tool_snapshot: dict[str, Any] = {}
-            if command.business_application_id and self.builtin_tool_snapshot_service is not None:
-                builtin_tool_snapshot = self.builtin_tool_snapshot_service.freeze(
-                    job_id=job.id,
-                    requester_id=requester_id,
-                    application_id=command.business_application_id,
-                    application_publication_id=(command.business_application_publication_id),
-                    application_config_hash=(command.business_application_config_hash),
-                    agent_publication_id=agent_publication_id,
-                    routing_context=command.effective_routing_context,
-                    business_authorization=business_authorization_snapshot,
-                    runtime_authorization=runtime_authorization_snapshot,
-                )
-            elif agent_publication_id and self.builtin_tool_snapshot_service is not None:
-                builtin_tool_snapshot = self.builtin_tool_snapshot_service.freeze_agent_only(
-                    job_id=job.id,
-                    requester_id=requester_id,
-                    agent_publication_id=agent_publication_id,
-                    routing_context=command.effective_routing_context,
-                    business_authorization=business_authorization_snapshot,
-                    runtime_authorization=runtime_authorization_snapshot,
-                )
             message_id = self.repository.add_message(
                 session_id=session.id,
                 job_id=job.id,
@@ -623,11 +556,7 @@ class CreateAgentJobService:
                     ),
                     "execution_scope_id": str(execution_scope_snapshot.get("id") or ""),
                     "execution_scope_hash": str(execution_scope_snapshot.get("scope_hash") or ""),
-                    "external_subject_snapshot_id": str(external_subject_snapshot.get("id") or ""),
-                    "builtin_tool_snapshot_id": str(builtin_tool_snapshot.get("id") or ""),
-                    "builtin_tool_snapshot_hash": str(
-                        builtin_tool_snapshot.get("snapshot_hash") or ""
-                    ),
+                    "mcp_subject_snapshot": "frozen",
                 },
             )
             self.audit_service.record(
@@ -646,113 +575,19 @@ class CreateAgentJobService:
             self.publisher.publish_attachment(attachment_id, correlation_id)
         return job
 
-    def _freeze_available_external_subject(
-        self,
-        *,
-        job_id: str,
-        requester_id: str,
-        application_publication_id: str,
-    ) -> dict[str, Any]:
-        if (
-            not application_publication_id
-            or self.capability_publication_repository is None
-            or self.governed_api_execution_repository is None
-            or self.external_api_credential_repository is None
-            or self.identity_repository is None
-        ):
-            return {}
-        allowlist = self.capability_publication_repository.get_application_allowlist(
-            application_publication_id
-        )
-        if not any(str(item.identifier).startswith("cap__ones__") for item in allowlist):
-            return {}
+    def _resolve_app_user_id(self, claimed_subject: str) -> str:
+        if self.identity_repository is None:
+            return claimed_subject
         try:
-            credential = self.external_api_credential_repository.get_current_public(
-                user_id=requester_id
-            )
-            identity = self.identity_repository.get_external_identity(
-                str(credential["external_identity_id"])
-            )
+            return str(self.identity_repository.get_user(claimed_subject)["id"])
         except NotFound:
-            return {}
-        metadata = identity.get("metadata") or {}
-        default_team_id = str(metadata.get("default_team_id") or "")
-        team_ids = {str(value) for value in metadata.get("team_uuids") or [] if str(value)}
-        if (
-            str(credential.get("status") or "") != "ACTIVE"
-            or str(identity.get("status") or "") != "enabled"
-            or str(identity.get("provider") or "") != "ones"
-            or str(identity.get("user_id") or "") != requester_id
-            or not default_team_id
-            or default_team_id not in team_ids
-        ):
-            return {}
-        return self.governed_api_execution_repository.freeze_external_subject(
-            job_id=job_id,
-            external_identity_id=str(identity["id"]),
-            external_user_id=str(identity["external_subject_id"]),
-            default_team_id=default_team_id,
-            binding_revision=int(identity["revision"]),
-        )
-
-    def _assert_application_runtime_available(
-        self,
-        command: CreateAgentJobCommand,
-    ) -> None:
-        publication_id = command.business_application_publication_id
-        if not publication_id:
-            return
-        reset = self.repository.database.execute_one(
-            """
-            select id
-              from resource_reset_operation
-             where status in (
-               'PREPARING', 'PREPARED', 'CONFIRMED', 'APPLYING'
-             )
-             order by created_at desc
-             limit 1
-            """
-        )
-        if reset is not None:
-            resource_binding = self.repository.database.execute_one(
-                """
-                select mapping.id
-                  from business_application_publication_builtin_tool tool
-                  join business_application_publication_builtin_tool_resource
-                       mapping
-                    on mapping.application_tool_id = tool.id
-                 where tool.application_publication_id = ?
-                 limit 1
-                """,
-                (publication_id,),
-            )
-            if resource_binding is not None:
-                raise NonRetryableExecutionError(
-                    "Resource reset maintenance blocks new Jobs",
-                    safe_message="工具资源正在维护，暂不接受新的资源依赖任务",
-                    error_code="resource_reset_maintenance",
+            user = self.identity_repository.get_user_by_username(claimed_subject)
+            if user is None:
+                raise PermissionDenied(
+                    "Job requester is not a known app_user",
+                    safe_message="当前用户身份无效",
                 )
-        state = self.repository.database.execute_one(
-            """
-            select a.status, a.reason_codes_json,
-                   g.id as generation_id, g.generation_no
-              from runtime_snapshot_generation g
-              join business_application_runtime_state a
-                on a.generation_id = g.id
-             where g.status = 'ACTIVE'
-               and a.application_publication_id = ?
-             order by g.generation_no desc
-             limit 1
-            """,
-            (publication_id,),
-        )
-        if state is None or str(state["status"]) != "BLOCKED":
-            return
-        raise NonRetryableExecutionError(
-            "Business application runtime is blocked",
-            safe_message="业务应用所需工具资源尚未成功装载",
-            error_code="application_runtime_blocked",
-        )
+            return str(user["id"])
 
     def _validate_attachments(
         self,

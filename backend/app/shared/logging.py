@@ -13,6 +13,13 @@ correlation_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
     "correlation_id", default="-"
 )
 _CORRELATION_ID_PATTERN = re.compile(r"[A-Za-z0-9._:-]{8,128}")
+_AUTH_VALUE = re.compile(r"(?i)\b(?:bearer|basic)\s+[a-z0-9._~+/=-]{6,}")
+_CONNECTION_URI = re.compile(
+    r"(?i)\b(?:postgres(?:ql)?|mysql|mariadb|redis|rediss|mongodb(?:\+srv)?|oracle|sqlserver|jdbc:[a-z0-9]+)://[^\s\"']+"
+)
+_KEY_VALUE_SECRET = re.compile(
+    r"(?i)\b(?:authorization|cookie|set-cookie|password|passwd|token|secret|api[_-]?key|ones-auth-token)[\"']?\s*[:=]\s*[\"']?[^\s,;}]+"
+)
 
 
 def new_correlation_id() -> str:
@@ -37,11 +44,11 @@ class JsonFormatter(logging.Formatter):
         payload: dict[str, Any] = {
             "level": record.levelname,
             "logger": record.name,
-            "message": record.getMessage(),
+            "message": _redact_text(record.getMessage()),
             "correlation_id": correlation_id_var.get(),
         }
         if record.exc_info:
-            payload["exception"] = self.formatException(record.exc_info)
+            payload["exception"] = _redact_text(self.formatException(record.exc_info))
         return json.dumps(payload, ensure_ascii=False)
 
 
@@ -60,3 +67,9 @@ def with_correlation(correlation_id: str | None, func: Callable[[], Any]) -> Any
         return func()
     finally:
         correlation_id_var.reset(token)
+
+
+def _redact_text(value: str) -> str:
+    redacted = _AUTH_VALUE.sub("[REDACTED]", value)
+    redacted = _CONNECTION_URI.sub("[REDACTED]", redacted)
+    return _KEY_VALUE_SECRET.sub("[REDACTED]", redacted)

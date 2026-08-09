@@ -102,12 +102,25 @@ class UnavailableModelSecretProvider:
         del code, value, purpose, actor_id, metadata
         self._raise()
 
-    def rotate_secret(self, *, code: str, value: str, actor_id: str = "") -> dict[str, object]:
-        del code, value, actor_id
+    def rotate_secret(
+        self,
+        *,
+        code: str,
+        value: str,
+        actor_id: str = "",
+        expected_revision: int | None = None,
+    ) -> dict[str, object]:
+        del code, value, actor_id, expected_revision
         self._raise()
 
-    def disable_secret(self, *, code: str, actor_id: str = "") -> dict[str, object]:
-        del code, actor_id
+    def disable_secret(
+        self,
+        *,
+        code: str,
+        actor_id: str = "",
+        expected_revision: int | None = None,
+    ) -> dict[str, object]:
+        del code, actor_id, expected_revision
         self._raise()
 
     @staticmethod

@@ -36,13 +36,12 @@ def test_ready_checks_schema_database_rabbit_token_and_master_key(
         assert ready["core"] == {
             "database": True,
             "schema": True,
-            "schema_head": "033",
+            "schema_head": "036",
             "rabbitmq": True,
-            "internal_api_token": True,
             "master_key": True,
             "runtime_assembly": True,
         }
-        assert ready["resources"]["status"] == "EMPTY"
+        assert ready["resources"]["status"] == "UNCONFIGURED"
         assert ready["claude_invoked"] is False
 
         missing_key = main._build_readiness(
@@ -63,9 +62,7 @@ def test_schema_drift_makes_ready_fail_closed(monkeypatch) -> None:
             "_check_rabbitmq",
             lambda _url: True,
         )
-        runtime.database.execute(
-            "delete from schema_migration where version = '023'"
-        )
+        runtime.database.execute("delete from schema_migration where version = '023'")
         status = main._build_readiness(
             runtime.settings,
             database=runtime.database,

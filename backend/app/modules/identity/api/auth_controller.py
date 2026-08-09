@@ -55,8 +55,6 @@ def build_auth_router() -> APIRouter:
     @router.post("/login")
     def login(request: Request, response: Response, payload: LoginRequest) -> dict[str, Any]:
         c = container(request)
-        if not c.settings.feature_configuration.web_admin_enabled:
-            raise HTTPException(status_code=404, detail="Web 管理功能已停用")
         client_host = request.client.host if request.client else ""
         rate_key = f"{payload.username.lower()}:{client_host}"
         _login_limiter.require(rate_key)
@@ -98,11 +96,7 @@ def build_auth_router() -> APIRouter:
     @router.get("/me")
     def me(request: Request) -> dict[str, Any]:
         c = container(request)
-        return {
-            "user": _principal_payload(
-                current_principal(request), c.authorization_evaluator
-            )
-        }
+        return {"user": _principal_payload(current_principal(request), c.authorization_evaluator)}
 
     @router.post("/logout")
     def logout(request: Request, response: Response) -> dict[str, str]:
@@ -131,11 +125,7 @@ def build_auth_router() -> APIRouter:
     @router.get("/sessions")
     def sessions(request: Request) -> dict[str, Any]:
         principal = current_principal(request)
-        return {
-            "sessions": container(request).identity_repository.list_sessions(
-                principal.user_id
-            )
-        }
+        return {"sessions": container(request).identity_repository.list_sessions(principal.user_id)}
 
     @router.delete("/sessions/{session_id}")
     def revoke_session(request: Request, session_id: str) -> dict[str, str]:

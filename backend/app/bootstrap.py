@@ -12,17 +12,12 @@ from app.modules.agent.infrastructure.claude_code_agent_client import (
     RealClaudeCodeAgentClient,
     StubClaudeCodeAgentClient,
 )
-from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
 from app.modules.agent.infrastructure.skill_loader import SkillLoader
 from app.modules.agent_config.application import AgentConfigService
-from app.modules.agent_config.application.builtin_tool_envelope import (
-    AgentBuiltinToolEnvelopeService,
-)
 from app.modules.agent_config.infrastructure import AgentConfigRepository
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.authorization_center import (
     AuthorizationCenterRepository,
-    AuthorizationCenterService,
     BusinessAuthorizationService,
 )
 from app.modules.attachments.credentials import AttachmentCredentialCipher
@@ -33,29 +28,9 @@ from app.modules.attachments.service import AttachmentProcessingService
 from app.modules.attachments.storage import InMemoryObjectStorage, S3ObjectStorage
 from app.modules.business_application.application import (
     BusinessApplicationResolver,
-    BusinessApplicationService,
 )
 from app.modules.business_application.domain import RuntimeReadinessEvaluator
 from app.modules.business_application.infrastructure import BusinessApplicationRepository
-from app.modules.business_application.infrastructure.adapters import (
-    AgentPublicationAdapter,
-    ChannelConnectorAdapter,
-    ToolCapabilityCatalogAdapter,
-    IdentitySubjectAdapter,
-    WorkflowPublicationAdapter,
-)
-from app.modules.api_capability.application import (
-    ApiCapabilityService,
-    ApiConnectionService,
-    GovernedApiRuntimeExecutor,
-    GovernedCapabilityReleaseResolver,
-)
-from app.modules.api_capability.infrastructure import (
-    ApiCapabilityRepository,
-    ApiConnectionRepository,
-    CapabilityPublicationRepository,
-    GovernedApiExecutionRepository,
-)
 from app.modules.channel.application.channel_ingress_service import ChannelIngressService
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.delivery.application.report_chunker import ReportChunker
@@ -78,25 +53,21 @@ from app.modules.dingding.application.dingtalk_stream_service import (
 )
 from app.modules.dingding.infrastructure.dingding_callback_client import DingTalkCallbackClient
 from app.modules.dingding.infrastructure.dingtalk_delivery_clients import DingTalkAccessTokenClient
-from app.modules.internal_tools.application.tools import ReadOnlyToolService
-from app.modules.internal_tools.infrastructure.internal_api_client import (
-    FakeInternalApiClient,
-    HttpInternalApiClient,
-    InternalApiClient,
-)
 from app.modules.identity.application import (
     AuthService,
     AuthorizationEvaluator,
-    IdentityAdminService,
     IdentityService,
 )
 from app.modules.identity.application.external_credentials import (
     ExternalCredentialBindingService,
 )
 from app.modules.identity.infrastructure import (
-    ExternalApiCredentialCipher,
-    ExternalApiCredentialRepository,
+    DingTalkBindingChallengeRepository,
     IdentityRepository,
+    OnesProviderAuthenticator,
+    ProviderCredentialCipher,
+    ProviderCredentialRepository,
+    ProviderInstanceRepository,
 )
 from app.modules.identity_discovery import (
     DingTalkIdentityDiscoveryRepository,
@@ -106,11 +77,7 @@ from app.modules.identity.infrastructure.ones_identity_verifier import (
     UrllibOnesIdentityVerifier,
 )
 from app.modules.job.application.create_agent_job_service import CreateAgentJobService
-from app.modules.job.application.debug_job_access_service import DebugJobAccessService
 from app.modules.job.application.job_dispatch_service import JobDispatchOutboxDispatcher
-from app.modules.job.application.builtin_tool_snapshot import (
-    JobBuiltinToolSnapshotService,
-)
 from app.modules.job.application.job_retry_service import JobRetryService
 from app.modules.job.application.job_status_service import JobStatusService
 from app.modules.job.infrastructure.repositories import (
@@ -119,6 +86,10 @@ from app.modules.job.infrastructure.repositories import (
     ConfigurationRepository,
 )
 from app.modules.message_bus.application.message_publisher import MessageConsumer, MessagePublisher
+from app.modules.mcp_runtime.bindings import McpJobBindingService
+from app.modules.mcp_resources import McpResourceService
+from app.modules.cutover import LegacyPlatformCutoverService
+from services.mcp_common import McpTokenIssuer
 from app.modules.message_bus.infrastructure.in_memory_bus import InMemoryMessageBus
 from app.modules.message_bus.infrastructure.rabbitmq_consumer import RabbitMQConsumer
 from app.modules.message_bus.infrastructure.rabbitmq_publisher import RabbitMQPublisher
@@ -126,8 +97,6 @@ from app.modules.managed_channel import (
     ChannelDispatchService,
     ChannelOutboxPublisher,
     ManagedChannelRepository,
-    ManagedChannelService,
-    ManagedWebhookProviderAdapter,
     RuntimeControlService,
 )
 from app.modules.managed_channel.application.service import (
@@ -142,16 +111,10 @@ from app.modules.permission.application.permission_service import PermissionServ
 from app.modules.platform_config.application import PlatformConfigService
 from app.modules.platform_config.application.secrets import EncryptedDbSecretProvider
 from app.modules.platform_config.infrastructure import PlatformConfigRepository
-from app.modules.platform_config.infrastructure.handler_governance_repository import (
-    HandlerGovernanceRepository,
-)
 from app.shared.config import Settings
 from app.shared.database import Database, default_migrations_dir
 from app.shared.migrations import Migrator
 from app.shared.runtime_config_loader import load_settings_with_db_overlay
-from app.shared.service_token import ServiceTokenSet
-from app.modules.workflow.application import WorkflowService
-from app.modules.workflow.infrastructure import WorkflowRepository
 from app.modules.webhook.application import (
     TriggerValidator,
     WebhookAuthenticator,
@@ -176,17 +139,12 @@ class Container:
     identity_service: IdentityService
     identity_discovery_repository: DingTalkIdentityDiscoveryRepository
     identity_discovery_service: DingTalkIdentityDiscoveryService
-    identity_admin_service: IdentityAdminService
     auth_service: AuthService
     authorization_evaluator: AuthorizationEvaluator
     authorization_center_repository: AuthorizationCenterRepository
-    authorization_center_service: AuthorizationCenterService
     business_authorization_service: BusinessAuthorizationService
     agent_config_service: AgentConfigService
     model_connection_service: ModelConnectionService
-    api_connection_service: ApiConnectionService
-    api_capability_service: ApiCapabilityService
-    governed_api_runtime_executor: GovernedApiRuntimeExecutor
     external_credential_binding_service: ExternalCredentialBindingService
     audit_service: AuditService
     audit_repository: AuditRepository
@@ -194,19 +152,15 @@ class Container:
     publisher: MessagePublisher
     consumer: MessageConsumer | None
     message_bus: InMemoryMessageBus | None
-    internal_api_client: InternalApiClient
-    tool_service: ReadOnlyToolService
     connector_registry: ConnectorRegistry
     platform_config_service: PlatformConfigService
-    workflow_service: WorkflowService
     business_application_repository: BusinessApplicationRepository
-    business_application_service: BusinessApplicationService
     business_application_resolver: BusinessApplicationResolver
-    debug_job_access_service: DebugJobAccessService
     channel_ingress_service: ChannelIngressService
     create_agent_job_service: CreateAgentJobService
     job_dispatcher: JobDispatchOutboxDispatcher
-    builtin_tool_snapshot_service: JobBuiltinToolSnapshotService
+    mcp_resource_service: McpResourceService
+    cutover_service: LegacyPlatformCutoverService
     dingtalk_message_service: DingTalkMessageService
     dingtalk_stream_message_service: DingTalkStreamMessageService
     result_delivery_service: ResultDeliveryService
@@ -222,7 +176,6 @@ class Container:
     webhook_outbox_publisher: WebhookOutboxPublisher
     webhook_dispatcher: WebhookDispatcher
     managed_channel_repository: ManagedChannelRepository
-    managed_channel_service: ManagedChannelService
     runtime_control_service: RuntimeControlService
     channel_outbox_publisher: ChannelOutboxPublisher
     channel_dispatch_service: ChannelDispatchService
@@ -371,6 +324,22 @@ def _configure_test_seed_secrets(runtime: Container) -> None:
     runtime.database.execute("delete from platform_secret_change_event")
 
 
+def _ensure_trusted_ones_for_service(
+    repository: ProviderInstanceRepository,
+    *,
+    settings: Settings,
+    service_name: str,
+) -> None:
+    if service_name not in {"api-server", "test-runtime"}:
+        return
+    repository.ensure_trusted_ones(
+        code=settings.ones_identity.instance_code,
+        display_name=settings.ones_identity.display_name,
+        base_url=settings.ones_identity.base_url,
+        allowed_hosts=settings.ones_identity.allowed_hosts,
+    )
+
+
 def _build_container(
     *,
     settings: Settings,
@@ -395,12 +364,9 @@ def _build_container(
     platform_config_repository = PlatformConfigRepository(database)
     agent_config_repository = AgentConfigRepository(database)
     model_connection_repository = ModelConnectionRepository(database)
-    api_connection_repository = ApiConnectionRepository(database)
-    api_capability_repository = ApiCapabilityRepository(database)
-    capability_publication_repository = CapabilityPublicationRepository(database)
-    governed_api_execution_repository = GovernedApiExecutionRepository(database)
-    external_credential_repository = ExternalApiCredentialRepository(database)
-    workflow_repository = WorkflowRepository(database)
+    provider_instance_repository = ProviderInstanceRepository(database)
+    provider_credential_repository = ProviderCredentialRepository(database)
+    dingtalk_binding_challenge_repository = DingTalkBindingChallengeRepository(database)
     business_application_repository = BusinessApplicationRepository(database)
     webhook_trigger_repository = WebhookTriggerRepository(database)
     webhook_event_repository = WebhookEventRepository(database)
@@ -426,6 +392,11 @@ def _build_container(
         settings.ones_identity,
         environment=settings.environment,
     )
+    _ensure_trusted_ones_for_service(
+        provider_instance_repository,
+        settings=settings,
+        service_name=service_name,
+    )
     identity_service = IdentityService(
         identity_repository,
         audit_service,
@@ -436,12 +407,6 @@ def _build_container(
     )
     authorization_evaluator = AuthorizationEvaluator(identity_repository, audit_service)
     authorization_center_repository = AuthorizationCenterRepository(database)
-    authorization_center_service = AuthorizationCenterService(
-        authorization_center_repository,
-        identity_repository,
-        authorization_evaluator,
-        audit_service,
-    )
     business_authorization_service = BusinessAuthorizationService(
         authorization_center_repository,
         identity_repository,
@@ -472,12 +437,6 @@ def _build_container(
         audit_service,
         settings.identity,
     )
-    identity_admin_service = IdentityAdminService(
-        identity_repository,
-        identity_service,
-        authorization_evaluator,
-        audit_service,
-    )
     platform_config_service = PlatformConfigService(
         platform_config_repository,
         permission_service,
@@ -492,44 +451,25 @@ def _build_container(
         audit_service,
         allowed_hosts=set(settings.model_provider_host_allowlist),
     )
-    api_connection_service = ApiConnectionService(
-        api_connection_repository,
-        authorization_evaluator,
-        audit_service,
-        environment=settings.environment,
-    )
-    external_credential_cipher = (
-        ExternalApiCredentialCipher(settings.app_config_master_key)
-        if settings.app_config_master_key
-        else None
-    )
     external_credential_binding_service = ExternalCredentialBindingService(
         identity_repository=identity_repository,
-        credential_repository=external_credential_repository,
-        connection_repository=api_connection_repository,
-        credential_cipher=external_credential_cipher,
-        audit_service=audit_service,
-        authorization=authorization_evaluator,
-    )
-    api_capability_service = ApiCapabilityService(
-        repository=api_capability_repository,
-        connection_repository=api_connection_repository,
-        identity_repository=identity_repository,
-        credential_repository=external_credential_repository,
-        credential_cipher=external_credential_cipher,
-        authorization=authorization_evaluator,
-        audit_service=audit_service,
-    )
-    governed_api_runtime_executor = GovernedApiRuntimeExecutor(
-        resolver=GovernedCapabilityReleaseResolver(
-            api_capability_repository,
-            api_connection_repository,
+        credential_repository=provider_credential_repository,
+        provider_instances=provider_instance_repository,
+        credential_cipher=(
+            ProviderCredentialCipher(settings.app_config_master_key)
+            if settings.app_config_master_key
+            else None
         ),
-        execution_repository=governed_api_execution_repository,
-        identity_repository=identity_repository,
-        credential_repository=external_credential_repository,
-        credential_cipher=external_credential_cipher,
+        authenticator=OnesProviderAuthenticator(
+            environment=settings.environment,
+            timeout_seconds=settings.ones_identity.timeout_seconds,
+            max_response_bytes=settings.ones_identity.max_response_bytes,
+            allow_insecure_local=settings.ones_identity.allow_insecure_local,
+        ),
         audit_service=audit_service,
+        authorization=authorization_evaluator,
+        provider_instance_code=settings.ones_identity.instance_code,
+        dingtalk_challenges=dingtalk_binding_challenge_repository,
     )
     model_connection_service.ensure_default_connection(
         config={
@@ -554,31 +494,10 @@ def _build_container(
         SkillLoader(),
         model_connection_service=model_connection_service,
         allowed_models={settings.claude_model},
-        api_capability_repository=api_capability_repository,
-        capability_publication_repository=(capability_publication_repository),
-        builtin_tool_envelopes=AgentBuiltinToolEnvelopeService(
-            HandlerGovernanceRepository(database)
-        ),
-    )
-    workflow_service = WorkflowService(
-        workflow_repository,
-        permission_service,
     )
     business_application_runtime_evaluator = RuntimeReadinessEvaluator(
         data_plane_enabled=(settings.feature_configuration.published_agent_runtime_enabled),
         runtime_environment="local",
-    )
-    business_application_service = BusinessApplicationService(
-        business_application_repository,
-        authorization_evaluator,
-        audit_service,
-        AgentPublicationAdapter(agent_config_repository),
-        WorkflowPublicationAdapter(workflow_repository),
-        ChannelConnectorAdapter(connector_registry),
-        IdentitySubjectAdapter(identity_repository),
-        ToolCapabilityCatalogAdapter(config_repository),
-        business_application_runtime_evaluator,
-        capability_publication_repository=(capability_publication_repository),
     )
     business_application_resolver = BusinessApplicationResolver(
         business_application_repository,
@@ -589,9 +508,11 @@ def _build_container(
         if settings.app_config_master_key
         else None
     )
-    builtin_tool_snapshot_service = JobBuiltinToolSnapshotService(
+    mcp_binding_service = McpJobBindingService(database)
+    mcp_resource_service = McpResourceService(database, audit_service=audit_service)
+    cutover_service = LegacyPlatformCutoverService(
         database,
-        composition=(business_application_service.builtin_tool_composition_service),
+        destructive_enabled=settings.destructive_cutover_enabled,
     )
     create_job_service = CreateAgentJobService(
         repository=agent_repository,
@@ -610,11 +531,9 @@ def _build_container(
         ),
         default_agent_code=settings.identity.default_agent_code,
         business_authorization_service=business_authorization_service,
-        capability_publication_repository=(capability_publication_repository),
-        governed_api_execution_repository=(governed_api_execution_repository),
-        external_api_credential_repository=(external_credential_repository),
+        mcp_binding_service=mcp_binding_service,
         identity_repository=identity_repository,
-        builtin_tool_snapshot_service=builtin_tool_snapshot_service,
+        accept_new_jobs=not settings.destructive_cutover_enabled,
     )
     job_dispatcher = JobDispatchOutboxDispatcher(
         repository=agent_repository,
@@ -622,15 +541,6 @@ def _build_container(
         audit_service=audit_service,
         settings=settings.queue,
         worker_id=f"{service_name}-job-dispatch-outbox",
-        builtin_tool_snapshot_service=builtin_tool_snapshot_service,
-    )
-    debug_job_access_service = DebugJobAccessService(
-        database=database,
-        agent_repository=agent_repository,
-        identity_repository=identity_repository,
-        authorization_center_repository=authorization_center_repository,
-        authorization_evaluator=authorization_evaluator,
-        create_job_service=create_job_service,
     )
     channel_ingress_service = ChannelIngressService(
         create_job_service=create_job_service,
@@ -732,23 +642,12 @@ def _build_container(
         ),
         identity_discovery_service=identity_discovery_service,
         enterprise_connector_resolver=managed_channel_repository.get_connector,
+        identity_binder=external_credential_binding_service,
     )
     channel_credential_cipher = (
         AttachmentCredentialCipher(settings.app_config_master_key)
         if settings.app_config_master_key
         else UnavailableChannelCredentialCipher()
-    )
-    managed_channel_service = ManagedChannelService(
-        repository=managed_channel_repository,
-        webhook_provider=ManagedWebhookProviderAdapter(
-            repository=webhook_trigger_repository,
-            service=webhook_trigger_service,
-            connector_registry=connector_registry,
-        ),
-        secret_provider=model_secret_provider,
-        connector_registry=connector_registry,
-        audit_service=audit_service,
-        stale_seconds=settings.managed_channels.stale_seconds,
     )
     runtime_control_service = RuntimeControlService(
         repository=managed_channel_repository,
@@ -770,40 +669,22 @@ def _build_container(
         credential_cipher=channel_credential_cipher,
         identity_discovery_service=identity_discovery_service,
     )
-    internal_api_client: InternalApiClient = FakeInternalApiClient()
-    if settings.feature_configuration.real_internal_tools_enabled and message_bus is None:
-        internal_api_tokens = ServiceTokenSet.from_file(
-            settings.internal_api_auth_token_file,
-            required=settings.environment not in {"test", "testing"},
-        )
-        internal_api_client = HttpInternalApiClient(
-            settings.internal_api_base_url,
-            auth_token=(
-                internal_api_tokens.outbound_token if internal_api_tokens is not None else ""
-            ),
-            timeout_seconds=settings.internal_api_timeout_seconds,
-            max_response_chars=settings.internal_api_max_response_chars,
-        )
-    tool_service = ReadOnlyToolService(
-        internal_api_client=internal_api_client,
-        permission_service=permission_service,
-        audit_service=audit_service,
-        repository=agent_repository,
-        limits=settings.execution,
-        business_authorization_service=business_authorization_service,
-        builtin_tool_snapshot_service=builtin_tool_snapshot_service,
+    mcp_token_issuer = (
+        McpTokenIssuer.from_file(settings.mcp.token_signing_key_file)
+        if service_name == "agent-worker" and settings.mcp.token_signing_key_file
+        else None
     )
-    tool_registry = ToolRegistry(tool_service)
     claude_client = (
         RealClaudeCodeAgentClient(
             model=settings.claude_model,
-            tool_registry=tool_registry,
             limits=settings.execution,
             api_key=settings.anthropic_api_key,
             base_url=settings.anthropic_base_url,
             secret_resolver=model_secret_provider.resolve,
-            governed_api_runtime_executor=governed_api_runtime_executor,
-            agent_repository=agent_repository,
+            mcp_token_issuer=mcp_token_issuer,
+            ones_mcp_url=settings.mcp.ones_server_url,
+            data_mcp_url=settings.mcp.data_server_url,
+            allowed_mcp_server_codes=settings.mcp.allowed_server_codes,
         )
         if use_real_claude
         else StubClaudeCodeAgentClient()
@@ -881,27 +762,23 @@ def _build_container(
         audit_service=audit_service,
         status_service=JobStatusService(agent_repository),
         context_builder=AgentContextBuilder(
-            tool_registry=tool_registry,
             skill_loader=SkillLoader(),
             conversation_service=ConversationContextService(
                 agent_repository, settings.conversation
             ),
             agent_config_service=agent_config_service,
-            governed_api_runtime_executor=(governed_api_runtime_executor),
+            mcp_binding_service=mcp_binding_service,
         ),
         claude_client=claude_client,
-        tool_registry=tool_registry,
         result_service=AgentResultService(agent_repository),
         delivery_service=result_delivery_service,
         business_authorization_service=business_authorization_service,
-        builtin_tool_snapshot_service=builtin_tool_snapshot_service,
     )
     retry_service = JobRetryService(
         repository=agent_repository,
         queue_settings=settings.queue,
         audit_service=audit_service,
         delivery_service=result_delivery_service,
-        builtin_tool_snapshot_service=builtin_tool_snapshot_service,
     )
     return Container(
         settings=settings,
@@ -911,17 +788,12 @@ def _build_container(
         identity_service=identity_service,
         identity_discovery_repository=identity_discovery_repository,
         identity_discovery_service=identity_discovery_service,
-        identity_admin_service=identity_admin_service,
         auth_service=auth_service,
         authorization_evaluator=authorization_evaluator,
         authorization_center_repository=authorization_center_repository,
-        authorization_center_service=authorization_center_service,
         business_authorization_service=business_authorization_service,
         agent_config_service=agent_config_service,
         model_connection_service=model_connection_service,
-        api_connection_service=api_connection_service,
-        api_capability_service=api_capability_service,
-        governed_api_runtime_executor=governed_api_runtime_executor,
         external_credential_binding_service=external_credential_binding_service,
         audit_service=audit_service,
         audit_repository=audit_repository,
@@ -929,19 +801,15 @@ def _build_container(
         publisher=publisher,
         consumer=consumer,
         message_bus=message_bus,
-        internal_api_client=internal_api_client,
-        tool_service=tool_service,
         connector_registry=connector_registry,
         platform_config_service=platform_config_service,
-        workflow_service=workflow_service,
         business_application_repository=business_application_repository,
-        business_application_service=business_application_service,
         business_application_resolver=business_application_resolver,
-        debug_job_access_service=debug_job_access_service,
         channel_ingress_service=channel_ingress_service,
         create_agent_job_service=create_job_service,
+        mcp_resource_service=mcp_resource_service,
+        cutover_service=cutover_service,
         job_dispatcher=job_dispatcher,
-        builtin_tool_snapshot_service=builtin_tool_snapshot_service,
         dingtalk_message_service=dingtalk_service,
         dingtalk_stream_message_service=dingtalk_stream_service,
         result_delivery_service=result_delivery_service,
@@ -957,7 +825,6 @@ def _build_container(
         webhook_outbox_publisher=webhook_outbox_publisher,
         webhook_dispatcher=webhook_dispatcher,
         managed_channel_repository=managed_channel_repository,
-        managed_channel_service=managed_channel_service,
         runtime_control_service=runtime_control_service,
         channel_outbox_publisher=channel_outbox_publisher,
         channel_dispatch_service=channel_dispatch_service,

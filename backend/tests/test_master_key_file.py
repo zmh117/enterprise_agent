@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from app.shared import master_key
 from app.shared.config import Settings, load_settings
 from app.shared.master_key import (
     MASTER_KEY_PREFIX,
@@ -36,6 +37,18 @@ def test_master_key_file_requires_versioned_canonical_owner_only_format(
         match="owner-only",
     ):
         load_master_key_file(str(path), required=True)
+
+
+def test_read_only_container_mount_may_preserve_owner_write_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "compose-secret"
+    encoded = _write_key(path, mode=0o600)
+    monkeypatch.setattr(master_key, "_is_container_secret", lambda candidate: True)
+    monkeypatch.setattr(master_key, "_is_read_only_filesystem", lambda candidate: True)
+
+    assert load_master_key_file(str(path), required=True) == encoded
 
 
 @pytest.mark.parametrize(
@@ -78,9 +91,7 @@ def test_non_test_loaded_settings_require_file_and_ignore_inline_fallback(
 
     path = tmp_path / "valid-key"
     encoded = _write_key(path)
-    loaded = load_master_key_settings(
-        replace(settings, app_config_master_key_file=str(path))
-    )
+    loaded = load_master_key_settings(replace(settings, app_config_master_key_file=str(path)))
     assert loaded.app_config_master_key == encoded
     assert encoded not in repr(loaded)
     assert "legacy-inline-must-not-be-used" not in repr(loaded)

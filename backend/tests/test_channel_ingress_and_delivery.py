@@ -84,28 +84,15 @@ class ChannelIngressAndDeliveryTests(unittest.TestCase):
 
         def factory(_: Any):
             c = build_test_container(settings, migrate=True, seed=True)
-            capabilities = tuple(
-                sorted(
-                    c.agent_config_service.repository.publication_tools(
-                        "agent_publication_default_v1"
-                    )
-                )
-            )
             activate_webhook_test_application(
                 c,
                 code="grafana-channel-ingress",
-                webhook_definition_id=(
-                    "webhook_trigger_grafana_default"
-                ),
-                service_account_user_id=(
-                    "user_webhook_grafana_default"
-                ),
+                webhook_definition_id=("webhook_trigger_grafana_default"),
+                service_account_user_id=("user_webhook_grafana_default"),
                 ingress_connector_id="connector-grafana-default",
-                delivery_connector_id=(
-                    "connector-dingtalk-enterprise-default"
-                ),
+                delivery_connector_id=("connector-dingtalk-enterprise-default"),
                 delivery_target_reference="test-alert-group",
-                capabilities=capabilities,
+                capabilities=(),
             )
             built.append(c)
             return c

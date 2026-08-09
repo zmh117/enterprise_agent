@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -325,147 +324,6 @@ class AgentRepository:
             """,
             (max(int(tool_call_count), 0), int(exhausted), job_id),
         )
-
-    def create_execution_scope(
-        self,
-        *,
-        job_id: str,
-        runtime_authorization: dict[str, Any],
-    ) -> dict[str, Any]:
-        if int(runtime_authorization.get("schema_version") or 0) != 2:
-            raise NonRetryableExecutionError(
-                "Governed Job Execution Scope requires schema version 2",
-                safe_message="Job 执行范围版本无效",
-                error_code="job_execution_scope_invalid",
-            )
-        publication = runtime_authorization.get("application_publication")
-        requested_scope = runtime_authorization.get("requested_scope")
-        bindings = runtime_authorization.get("bindings")
-        if (
-            not isinstance(publication, dict)
-            or not isinstance(requested_scope, dict)
-            or not isinstance(bindings, list)
-        ):
-            raise NonRetryableExecutionError(
-                "Governed Job Execution Scope facts are incomplete",
-                safe_message="Job 执行范围事实不完整",
-                error_code="job_execution_scope_invalid",
-            )
-        existing = self.database.execute_one(
-            "select * from agent_job_execution_scope where job_id = ?",
-            (job_id,),
-        )
-        if existing is not None:
-            return {
-                **existing,
-                "snapshot": json.loads(str(existing["snapshot_json"])),
-            }
-        execution_scope_id = new_id("job_execution_scope")
-        snapshot = {
-            "job_id": job_id,
-            **runtime_authorization,
-        }
-        canonical = json.dumps(
-            snapshot,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        )
-        scope_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-        timestamp = now_iso()
-        self.database.execute(
-            """
-            insert into agent_job_execution_scope
-              (id, job_id, business_application_id,
-               application_publication_id, agent_publication_id,
-               environment_id, base_id, workshop_id, scope_hash,
-               schema_version, snapshot_json, created_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, 2, ?, ?)
-            """,
-            (
-                execution_scope_id,
-                job_id,
-                str(publication.get("application_id") or ""),
-                str(publication.get("id") or ""),
-                str(runtime_authorization.get("agent_publication_id") or ""),
-                str(requested_scope.get("environment_id") or ""),
-                str(requested_scope.get("base_id") or "") or None,
-                str(requested_scope.get("workshop_id") or "") or None,
-                scope_hash,
-                canonical,
-                timestamp,
-            ),
-        )
-        for binding in bindings:
-            if not isinstance(binding, dict):
-                raise NonRetryableExecutionError(
-                    "Job Execution Handler binding is invalid",
-                    safe_message="Job Handler 绑定无效",
-                    error_code="job_execution_scope_invalid",
-                )
-            resources = binding.get("resource_revisions")
-            if not isinstance(resources, list):
-                raise NonRetryableExecutionError(
-                    "Job Execution resource bindings are invalid",
-                    safe_message="Job 资源绑定无效",
-                    error_code="job_execution_scope_invalid",
-                )
-            for resource in resources:
-                if not isinstance(resource, dict):
-                    raise NonRetryableExecutionError(
-                        "Job Execution resource binding is invalid",
-                        safe_message="Job 资源绑定无效",
-                        error_code="job_execution_scope_invalid",
-                    )
-                self.database.execute(
-                    """
-                    insert into agent_job_execution_binding
-                      (id, execution_scope_id, capability_code,
-                       handler_id, handler_version, resource_slot,
-                       resource_revision_id, constraints_json,
-                       binding_hash, created_at)
-                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        new_id("job_execution_binding"),
-                        execution_scope_id,
-                        str(binding.get("capability_code") or ""),
-                        str(binding.get("handler_id") or ""),
-                        str(binding.get("handler_version") or ""),
-                        str(resource.get("resource_slot") or ""),
-                        str(resource.get("resource_revision_id") or ""),
-                        json.dumps(
-                            resource.get("constraints") or {},
-                            ensure_ascii=False,
-                            separators=(",", ":"),
-                            sort_keys=True,
-                        ),
-                        str(resource.get("binding_hash") or ""),
-                        timestamp,
-                    ),
-                )
-        changed = self.database.execute(
-            """
-            update agent_job
-               set execution_scope_id = ?, execution_scope_hash = ?
-             where id = ? and execution_scope_id is null
-            returning id
-            """,
-            (execution_scope_id, scope_hash, job_id),
-        )
-        if not changed:
-            raise NonRetryableExecutionError(
-                "Agent Job Execution Scope is already fixed",
-                safe_message="Job 执行范围已固化，不能替换",
-                error_code="job_execution_scope_immutable",
-            )
-        return {
-            "id": execution_scope_id,
-            "job_id": job_id,
-            "scope_hash": scope_hash,
-            "schema_version": 2,
-            "snapshot": snapshot,
-        }
 
     def create_dispatch_event(
         self,
@@ -1994,79 +1852,6 @@ class AgentRepository:
             sum(row["status"] == DeliveryStatus.DEAD.value for row in rows),
         )
 
-    def add_tool_call(
-        self,
-        *,
-        job_id: str,
-        tool_name: str,
-        request_payload: dict[str, Any],
-        response_summary: dict[str, Any] | str,
-        status: str,
-        duration_ms: int,
-        risk_level: str,
-        audit_id: str | None = None,
-    ) -> str:
-        tool_call_id = new_id("tool")
-        safe_request = sanitize_for_persistence(request_payload)
-        safe_response = sanitize_for_persistence(response_summary)
-        response = (
-            safe_response
-            if isinstance(safe_response, str)
-            else json.dumps(safe_response, ensure_ascii=False)
-        )
-        self.database.execute(
-            """
-            insert into agent_tool_call
-              (id, job_id, tool_name, request_payload, response_summary, status,
-               duration_ms, risk_level, audit_id, created_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                tool_call_id,
-                job_id,
-                tool_name,
-                json.dumps(safe_request, ensure_ascii=False),
-                response,
-                status,
-                duration_ms,
-                risk_level,
-                audit_id,
-                now_iso(),
-            ),
-        )
-        return tool_call_id
-
-    def complete_tool_call(
-        self,
-        tool_call_id: str,
-        *,
-        response_summary: dict[str, Any] | str,
-        status: str,
-        duration_ms: int,
-    ) -> None:
-        safe_response = sanitize_for_persistence(response_summary)
-        response = (
-            safe_response
-            if isinstance(safe_response, str)
-            else json.dumps(safe_response, ensure_ascii=False)
-        )
-        changed = self.database.execute(
-            """
-            update agent_tool_call
-               set response_summary = ?, status = ?, duration_ms = ?
-             where id = ?
-            returning id
-            """,
-            (
-                response,
-                status,
-                max(0, duration_ms),
-                tool_call_id,
-            ),
-        )
-        if not changed:
-            raise NotFound(f"Agent tool call not found: {tool_call_id}")
-
     def get_job(self, job_id: str) -> AgentJob:
         row = self.database.execute_one("select * from agent_job where id = ?", (job_id,))
         if not row:
@@ -2207,20 +1992,6 @@ class AgentRepository:
             """,
             (job_id,),
         )
-
-    def list_tool_calls(self, job_id: str) -> list[dict[str, Any]]:
-        self.get_job(job_id)
-        rows = self.database.execute(
-            """
-            select id, job_id, tool_name, request_payload, response_summary,
-                   status, duration_ms, risk_level, audit_id, created_at
-            from agent_tool_call
-            where job_id = ?
-            order by created_at, id
-            """,
-            (job_id,),
-        )
-        return [self._tool_call_from_row(row) for row in rows]
 
     def add_delivery_attempt(
         self,
@@ -2689,24 +2460,6 @@ class AgentRepository:
                 row.get("model_runtime_provenance_json") or "{}"
             ),
         )
-
-    def _tool_call_from_row(self, row: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "id": row["id"],
-            "job_id": row["job_id"],
-            "tool_name": row["tool_name"],
-            "request_payload": sanitize_for_persistence(
-                self._json_from_text(row["request_payload"])
-            ),
-            "response_summary": sanitize_for_persistence(
-                self._json_from_text(row["response_summary"])
-            ),
-            "status": row["status"],
-            "duration_ms": int(row["duration_ms"]),
-            "risk_level": row["risk_level"],
-            "audit_id": row.get("audit_id"),
-            "created_at": row["created_at"],
-        }
 
     def _json_from_text(self, value: str) -> Any:
         try:

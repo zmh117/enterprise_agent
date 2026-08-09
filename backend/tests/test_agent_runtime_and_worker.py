@@ -131,7 +131,7 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
         self.assertEqual("RETRY_WAIT", dispatch.status.value)
         self.assertEqual(JobStatus.RETRY_WAIT, c.agent_repository.get_job(job.id).status)
 
-    def test_retry_pending_job_keeps_failure_tool_events(self) -> None:
+    def test_retry_pending_job_keeps_bounded_attempt_count(self) -> None:
         c = container()
         job = c.create_agent_job_service.execute(
             CreateAgentJobCommand(
@@ -156,10 +156,10 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
 
         self.assertEqual("retry", action)
         self.assertEqual(JobStatus.RETRY_WAIT, c.agent_repository.get_job(job.id).status)
-        tool_calls = c.agent_repository.list_tool_calls(job.id)
-        self.assertIn("query_database", [call["tool_name"] for call in tool_calls])
+        detail = c.agent_repository.get_job_detail(job.id)
+        self.assertEqual(1, detail["tool_call_count"])
 
-    def test_max_turns_failure_is_not_retried_and_keeps_tool_events(self) -> None:
+    def test_max_turns_failure_is_not_retried_and_keeps_attempt_count(self) -> None:
         c = container()
         job = c.create_agent_job_service.execute(
             CreateAgentJobCommand(
@@ -184,12 +184,9 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
 
         self.assertEqual("dead", action)
         self.assertEqual(JobStatus.FAILED, c.agent_repository.get_job(job.id).status)
-        self.assertIn(
-            "query_database",
-            [call["tool_name"] for call in c.agent_repository.list_tool_calls(job.id)],
-        )
+        self.assertEqual(1, c.agent_repository.get_job_detail(job.id)["tool_call_count"])
 
-    def test_agent_executor_persists_real_runtime_tool_events(self) -> None:
+    def test_agent_executor_persists_only_bounded_attempt_count(self) -> None:
         c = container()
         job = c.create_agent_job_service.execute(
             CreateAgentJobCommand(
@@ -203,10 +200,7 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
         c.agent_executor.claude_client = ToolEventClaudeClient()  # type: ignore[assignment]
 
         c.agent_executor.execute(job.id)
-        tool_calls = c.agent_repository.list_tool_calls(job.id)
-        tool_names = [call["tool_name"] for call in tool_calls]
-
-        self.assertIn("query_loki", tool_names)
+        self.assertEqual(1, c.agent_repository.get_job_detail(job.id)["tool_call_count"])
         self.assertEqual(JobStatus.SUCCEEDED, c.agent_repository.get_job(job.id).status)
 
     def test_worker_consumes_message_and_ignores_duplicate_delivery(self) -> None:

@@ -1,19 +1,13 @@
 from __future__ import annotations
 
-import json
-
 from app.modules.agent.application.agent_context_builder import AgentContextBuilder
 from app.modules.agent.application.agent_result_service import AgentResultService
 from app.modules.agent.domain.runtime import AgentRunRequest
 from app.modules.agent.infrastructure.claude_code_agent_client import ClaudeCodeAgentClient
-from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.authorization_center.application import BusinessAuthorizationService
 from app.modules.delivery.application.result_delivery_service import ResultDeliveryService
 from app.modules.job.application.job_status_service import JobStatusService
-from app.modules.job.application.builtin_tool_snapshot import (
-    JobBuiltinToolSnapshotService,
-)
 from app.modules.job.domain.agent_job import AgentJob
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.repositories import AgentRepository
@@ -30,22 +24,18 @@ class AgentExecutor:
         status_service: JobStatusService,
         context_builder: AgentContextBuilder,
         claude_client: ClaudeCodeAgentClient,
-        tool_registry: ToolRegistry,
         result_service: AgentResultService,
         delivery_service: ResultDeliveryService,
         business_authorization_service: BusinessAuthorizationService | None = None,
-        builtin_tool_snapshot_service: JobBuiltinToolSnapshotService | None = None,
     ) -> None:
         self.repository = repository
         self.audit_service = audit_service
         self.status_service = status_service
         self.context_builder = context_builder
         self.claude_client = claude_client
-        self.tool_registry = tool_registry
         self.result_service = result_service
         self.delivery_service = delivery_service
         self.business_authorization_service = business_authorization_service
-        self.builtin_tool_snapshot_service = builtin_tool_snapshot_service
 
     def execute(
         self,
@@ -62,16 +52,6 @@ class AgentExecutor:
                 return persisted.result
             return ""
         job = claimed
-        if self.builtin_tool_snapshot_service is not None:
-            try:
-                self.builtin_tool_snapshot_service.verify(job.id)
-            except Exception as exc:
-                if fail_on_error:
-                    self.status_service.fail(
-                        job.id,
-                        getattr(exc, "safe_message", str(exc)),
-                    )
-                raise
         if job.business_application_id:
             if self.business_authorization_service is None:
                 self.status_service.fail(job_id, "业务应用授权服务暂时不可用")
@@ -150,12 +130,11 @@ class AgentExecutor:
             result = self.claude_client.run(
                 AgentRunRequest(
                     job_id=job.id,
-                    user_id=job.user_id,
+                    user_id=job.internal_user_id or job.user_id,
                     project_code=job.project_code,
                     context=context,
                 )
             )
-            self._persist_tool_events(job.id, result.tool_events)
             self.repository.record_execution_policy_usage(
                 job.id,
                 tool_call_count=len(result.tool_events),
@@ -177,7 +156,6 @@ class AgentExecutor:
         except Exception as exc:
             safe_message = getattr(exc, "safe_message", str(exc))
             tool_events = getattr(exc, "tool_events", [])
-            self._persist_tool_events(job.id, tool_events)
             self.repository.record_execution_policy_usage(
                 job.id,
                 tool_call_count=len(tool_events),
@@ -223,66 +201,6 @@ class AgentExecutor:
                 **_business_application_context(job),
             },
         )
-
-    def _persist_tool_events(self, job_id: str, tool_events: list[dict[str, object]]) -> None:
-        existing = {
-            _event_key(
-                {
-                    "tool_name": row["tool_name"],
-                    "request_payload": row["request_payload"],
-                    "response_summary": row["response_summary"],
-                    "status": row["status"],
-                }
-            )
-            for row in self.repository.list_tool_calls(job_id)
-        }
-        for event in tool_events:
-            if event.get("persisted_tool_call_id"):
-                continue
-            key = _event_key(event)
-            if key in existing:
-                continue
-            existing.add(key)
-            tool_name = str(event.get("tool_name", "unknown"))
-            duration = _int_value(event.get("duration_ms"))
-            audit_id_value = event.get("audit_id")
-            audit_id = audit_id_value if isinstance(audit_id_value, str) else None
-            self.repository.add_tool_call(
-                job_id=job_id,
-                tool_name=tool_name,
-                request_payload=_dict_value(event.get("request_payload")),
-                response_summary=_dict_value(event.get("response_summary")),
-                status=str(event.get("status", "SUCCEEDED")),
-                duration_ms=duration,
-                risk_level=str(event.get("risk_level", "medium")),
-                audit_id=audit_id,
-            )
-
-
-def _dict_value(value: object) -> dict[str, object]:
-    return value if isinstance(value, dict) else {"payload": str(value)}
-
-
-def _int_value(value: object) -> int:
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str) and value.isdigit():
-        return int(value)
-    return 0
-
-
-def _event_key(event: dict[str, object]) -> str:
-    return json.dumps(
-        {
-            "tool_name": event.get("tool_name"),
-            "request_payload": event.get("request_payload"),
-            "response_summary": event.get("response_summary"),
-            "status": event.get("status"),
-        },
-        sort_keys=True,
-        ensure_ascii=False,
-        default=str,
-    )
 
 
 def _business_application_context(job: object) -> dict[str, str]:

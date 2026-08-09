@@ -9,17 +9,11 @@ from dataclasses import replace
 from typing import Any
 
 import pytest
-from fastapi.testclient import TestClient
-
 from app.bootstrap import build_test_container
-from app.main import create_app
 from app.modules.agent.domain.runtime import AgentExecutionContext, AgentRunRequest
 from app.modules.agent.infrastructure.claude_code_agent_client import (
     ClaudeSdk,
     RealClaudeCodeAgentClient,
-)
-from app.modules.job.application.create_agent_job_service import (
-    CreateAgentJobCommand,
 )
 from app.modules.model_connection.domain import (
     DEFAULT_MODEL_CONNECTION_CODE,
@@ -44,29 +38,20 @@ def container():
         ),
     )
     value = build_test_container(settings, migrate=True, seed=True)
+    # Model connection writes no longer have a web/admin route after the MCP
+    # cutover.  These tests exercise the retained internal runtime service, so
+    # isolate them from the retired management capability catalog.
+    value.model_connection_service.authorization = _InternalServiceAuthorization()
     value.model_connection_service.dns_resolver = lambda *args, **kwargs: [
         (2, 1, 6, "", ("1.1.1.1", 443))
     ]
     return value
 
 
-def web_container():
-    settings = replace(
-        build_settings(),
-        environment="test",
-        identity=IdentitySettings(
-            enabled=True,
-            web_admin_enabled=True,
-            published_agent_runtime_enabled=True,
-            cookie_secure=False,
-            allowed_origins=("http://admin.test",),
-        ),
-    )
-    value = build_test_container(settings, migrate=True, seed=True)
-    value.model_connection_service.dns_resolver = lambda *args, **kwargs: [
-        (2, 1, 6, "", ("1.1.1.1", 443))
-    ]
-    return settings, value
+class _InternalServiceAuthorization:
+    @staticmethod
+    def require(**_: object) -> None:
+        return None
 
 
 def deepseek_config(model: str = "deepseek-v4-flash") -> dict[str, str]:
@@ -79,26 +64,6 @@ def deepseek_config(model: str = "deepseek-v4-flash") -> dict[str, str]:
         "default_haiku_model": model,
         "subagent_model": model,
         "effort_level": "max",
-    }
-
-
-def agent_config(connection_revision_id: str) -> dict[str, object]:
-    return {
-        "business_role": "Enterprise diagnostic specialist",
-        "business_instructions": "Use approved read-only evidence.",
-        "model_policy": {
-            "runtime": "claude_agent_sdk",
-            "model": "deepseek-v4-flash",
-            "model_connection_revision_id": connection_revision_id,
-        },
-        "execution": {"max_turns": 10, "timeout_seconds": 240},
-        "tools": [],
-        "skills": [],
-        "routing": {"project_code": "default"},
-        "channels": {
-            "ingress": ["connector-dingtalk-stream-default"],
-            "delivery": ["connector-dingtalk-enterprise-default"],
-        },
     }
 
 
@@ -160,95 +125,6 @@ def test_model_connection_secret_is_encrypted_and_public_projection_is_sanitized
     assert rows
     assert fake_secret("connection-v1") not in rows[0]["ciphertext"]
     assert fake_secret("connection-v1") not in rows[0]["nonce"]
-
-
-def test_admin_api_configures_connection_atomically_and_removes_legacy_routes() -> None:
-    settings, c = web_container()
-    c.model_connection_service.model_discoverer = lambda models_url, api_key, timeout_seconds: [
-        {"id": "deepseek-v4-flash"}
-    ]
-    c.model_connection_service.tester = lambda binding, api_key, timeout_seconds: {
-        "detail": "连接成功"
-    }
-    app = create_app(settings, container_factory=lambda _: c)
-    with TestClient(app) as client:
-        login = client.post(
-            "/api/auth/login",
-            json={"username": "local-user", "password": "local-admin-change-me"},
-        )
-        assert login.status_code == 200
-        csrf = client.cookies.get("enterprise_agent_csrf")
-        assert csrf
-        response = client.get(f"/api/admin/model-connections/{DEFAULT_MODEL_CONNECTION_CODE}")
-        assert response.status_code == 200
-        connection = response.json()["connection"]
-
-        discovered = client.post(
-            f"/api/admin/model-connections/{DEFAULT_MODEL_CONNECTION_CODE}/discover",
-            headers={
-                "origin": "http://admin.test",
-                "x-csrf-token": csrf,
-            },
-            json={
-                "base_url": "https://api.deepseek.com/anthropic",
-                "credential_source": "submitted",
-                "api_key": fake_secret("api-only"),
-                "timeout_seconds": 15,
-            },
-        )
-        assert discovered.status_code == 200, discovered.text
-        tested = client.post(
-            f"/api/admin/model-connections/{DEFAULT_MODEL_CONNECTION_CODE}/test-draft",
-            headers={
-                "origin": "http://admin.test",
-                "x-csrf-token": csrf,
-            },
-            json={
-                "credential_source": "submitted",
-                "api_key": fake_secret("api-only"),
-                "config": deepseek_config(),
-                "timeout_seconds": 15,
-            },
-        )
-        assert tested.status_code == 200, tested.text
-        configured = client.put(
-            f"/api/admin/model-connections/{DEFAULT_MODEL_CONNECTION_CODE}/configure",
-            headers={
-                "origin": "http://admin.test",
-                "x-csrf-token": csrf,
-            },
-            json={
-                "expected_revision": connection["revision"],
-                "credential_source": "submitted",
-                "api_key": fake_secret("api-only"),
-                "config": deepseek_config(),
-                "timeout_seconds": 15,
-            },
-        )
-        legacy = [
-            client.put(
-                f"/api/admin/model-connections/{DEFAULT_MODEL_CONNECTION_CODE}/revision",
-                headers={"origin": "http://admin.test", "x-csrf-token": csrf},
-                json={"expected_revision": 0, "config": deepseek_config()},
-            ),
-            client.put(
-                f"/api/admin/model-connections/{DEFAULT_MODEL_CONNECTION_CODE}/credential",
-                headers={"origin": "http://admin.test", "x-csrf-token": csrf},
-                json={"expected_revision": 0, "api_key": fake_secret("legacy")},
-            ),
-            client.post(
-                f"/api/admin/model-connections/{DEFAULT_MODEL_CONNECTION_CODE}/test",
-                headers={"origin": "http://admin.test", "x-csrf-token": csrf},
-                json={"revision_id": "legacy", "timeout_seconds": 15},
-            ),
-        ]
-    assert configured.status_code == 200, configured.text
-    assert all(item.status_code in {404, 405} for item in legacy)
-    body = configured.text
-    assert fake_secret("api-only") not in body
-    assert "api_key_secret_id" not in body
-    assert "secret://platform/" not in body
-    assert configured.json()["revision"]["credential"]["configured"] is True
 
 
 def test_bootstrap_connection_stays_rotation_required_until_credential_is_rotated() -> None:
@@ -316,143 +192,6 @@ def test_model_connection_can_be_reinitialized_after_all_revisions_are_reset() -
     assert rotated["revision"] == 2
     assert rotated["status"] == "ready"
     assert rotated["credential"]["configured"] is True
-
-
-def test_agent_publication_pins_connection_and_job_records_safe_provenance() -> None:
-    c = container()
-    connection_revision = ready_connection(c)
-    agent = c.agent_config_service.get(AGENT_CODE)
-    draft = c.agent_config_service.save_draft(
-        actor_id=ADMIN_ID,
-        agent_code=AGENT_CODE,
-        expected_revision=int(agent["draft"]["revision"]),
-        config=agent_config(str(connection_revision["id"])),
-    )
-    validated = c.agent_config_service.validate_revision(
-        actor_id=ADMIN_ID,
-        agent_code=AGENT_CODE,
-        revision_id=str(draft["id"]),
-    )
-    assert validated["validation"]["valid"] is True
-    publication = c.agent_config_service.publish(
-        actor_id=ADMIN_ID,
-        agent_code=AGENT_CODE,
-        revision_id=str(draft["id"]),
-    )
-    assert publication["snapshot"]["model_connection"]["revision_id"] == connection_revision["id"]
-    assert "credential" not in publication["snapshot"]["model_connection"]
-
-    job = c.create_agent_job_service.execute(
-        CreateAgentJobCommand(
-            idempotency_key="model-provenance-job",
-            requester_id=ADMIN_ID,
-            external_conversation_id="model-provenance-conversation",
-            external_event_id="model-provenance-event",
-            user_message="check current order state",
-        )
-    )
-    assert job.model_runtime_provenance["legacy"] is False
-    assert job.model_runtime_provenance["connection_revision_id"] == connection_revision["id"]
-    detail = c.agent_repository.get_job_detail(job.id)
-    detail_text = json.dumps(detail, ensure_ascii=False)
-    assert detail["model_runtime_provenance"]["provider_host"] == "api.deepseek.com"
-    assert fake_secret("connection-v1") not in detail_text
-    assert "secret://platform/" not in detail_text
-
-    context = c.agent_executor.context_builder.build(job)
-    assert context.model_runtime_binding is not None
-    assert context.model_runtime_binding.model == "deepseek-v4-flash"
-    assert c.model_connection_service.resolve_api_key(context.model_runtime_binding) == fake_secret(
-        "connection-v1"
-    )
-
-
-def test_agent_list_degrades_missing_published_model_revision_instead_of_500() -> None:
-    settings, c = web_container()
-    connection_revision = ready_connection(c)
-    agent = c.agent_config_service.get(AGENT_CODE)
-    draft = c.agent_config_service.save_draft(
-        actor_id=ADMIN_ID,
-        agent_code=AGENT_CODE,
-        expected_revision=int(agent["draft"]["revision"]),
-        config=agent_config(str(connection_revision["id"])),
-    )
-    c.agent_config_service.publish(
-        actor_id=ADMIN_ID,
-        agent_code=AGENT_CODE,
-        revision_id=str(draft["id"]),
-    )
-    with c.database.unit_of_work():
-        c.database.execute(
-            """
-            update model_connection
-               set current_revision_id = null,
-                   status = 'rotation_required',
-                   revision = 0
-             where id = ?
-            """,
-            (connection_revision["connection_id"],),
-        )
-        c.database.execute(
-            "delete from model_connection_revision where id = ?",
-            (connection_revision["id"],),
-        )
-
-    app = create_app(settings, container_factory=lambda _: c)
-    with TestClient(app) as client:
-        login = client.post(
-            "/api/auth/login",
-            json={"username": "local-user", "password": "local-admin-change-me"},
-        )
-        assert login.status_code == 200
-        response = client.get("/api/admin/agents")
-
-    assert response.status_code == 200, response.text
-    summary = next(item for item in response.json()["agents"] if item["code"] == AGENT_CODE)
-    assert summary["model_connection_status"] == "missing_revision"
-
-
-def test_agent_publication_is_idempotent_and_published_revision_stays_published() -> None:
-    c = container()
-    connection_revision = ready_connection(c)
-    agent = c.agent_config_service.get(AGENT_CODE)
-    draft = c.agent_config_service.save_draft(
-        actor_id=ADMIN_ID,
-        agent_code=AGENT_CODE,
-        expected_revision=int(agent["draft"]["revision"]),
-        config=agent_config(str(connection_revision["id"])),
-    )
-
-    first = c.agent_config_service.publish(
-        actor_id=ADMIN_ID,
-        agent_code=AGENT_CODE,
-        revision_id=str(draft["id"]),
-    )
-    revalidated = c.agent_config_service.validate_revision(
-        actor_id=ADMIN_ID,
-        agent_code=AGENT_CODE,
-        revision_id=str(draft["id"]),
-    )
-    c.database.execute(
-        "update agent_revision set status = 'validated' where id = ?",
-        (draft["id"],),
-    )
-    second = c.agent_config_service.publish(
-        actor_id=ADMIN_ID,
-        agent_code=AGENT_CODE,
-        revision_id=str(draft["id"]),
-    )
-
-    assert revalidated["status"] == "published"
-    assert second["id"] == first["id"]
-    assert c.agent_config_service.get(AGENT_CODE)["draft"]["status"] == "published"
-    assert c.database.execute_one(
-        """
-        select count(*) as count from agent_publication
-        where agent_id = ? and revision_id = ?
-        """,
-        (agent["definition"]["id"], draft["id"]),
-    ) == {"count": 1}
 
 
 def test_connection_revision_is_immutable_while_credential_rotation_is_active() -> None:
@@ -617,13 +356,9 @@ def test_concurrent_jobs_do_not_leak_process_environment_between_connections() -
     sdk = ClaudeSdk(
         query=query,
         options=Options,
-        tool=lambda *args, **kwargs: None,
-        create_sdk_mcp_server=lambda name, tools: {"name": name, "tools": tools},
-        tool_annotations=None,
     )
     client = RealClaudeCodeAgentClient(
         model="legacy",
-        tool_registry=object(),  # no tools are assigned in this isolation test
         limits=ExecutionSettings(timeout_seconds=5),
         api_key="",
         sdk_loader=lambda: sdk,

@@ -1,160 +1,96 @@
-import { render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { RouterProvider, createMemoryRouter } from "react-router-dom"
 
-import { App } from "@/App"
+import { appRoutes } from "@/app/router/app-router"
 import { AuthenticatedUserProvider } from "@/contexts/auth/presentation/authenticated-user-context"
-
-const platformCapabilities = {
-  capabilities: [
-    "dashboard.read",
-    "applications.read",
-    "channels.read",
-    "agents.read",
-    "users.read",
-    "authorization.read",
-    "identity.discovery.read",
-    "jobs.read",
-  ],
-  modules: {},
-}
 
 const currentUser = {
   id: "user-local-admin",
   username: "local-admin",
-  display_name: "本地管理员",
+  display_name: "本地用户",
   roles: ["platform-admin"],
   auth_source: "local",
   capabilities: {},
 }
 
-function platformResponse(input: RequestInfo | URL) {
-  const url = String(input)
-  const body = url.endsWith("/api/admin/capabilities")
-    ? platformCapabilities
-    : { count: 0 }
-  return Promise.resolve(
-    new Response(JSON.stringify(body), {
-      headers: { "Content-Type": "application/json" },
-    })
-  )
+function response(body: unknown) {
+  return Promise.resolve(new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } }))
 }
 
-function renderApp() {
+function renderApp(path = "/") {
+  const router = createMemoryRouter(appRoutes, { initialEntries: [path] })
   return render(
-    <QueryClientProvider
-      client={
-        new QueryClient({
-          defaultOptions: { queries: { retry: false } },
-        })
-      }
-    >
-      <AuthenticatedUserProvider user={currentUser}>
-        <App />
-      </AuthenticatedUserProvider>
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <AuthenticatedUserProvider user={currentUser}><RouterProvider router={router} /></AuthenticatedUserProvider>
     </QueryClientProvider>
   )
 }
 
 afterEach(() => {
   vi.restoreAllMocks()
+  window.history.pushState({}, "", "/")
 })
 
-describe("Agent 应用平台 MVP 首页", () => {
-  it("只展示已接线的业务应用和用户身份入口", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(platformResponse)
-    renderApp()
-
-    expect(screen.getAllByText("Agent 应用平台").length).toBeGreaterThan(0)
-    expect((await screen.findAllByText("业务应用")).length).toBeGreaterThan(0)
-    expect(screen.getAllByText("用户与外部身份").length).toBeGreaterThan(0)
-    expect(screen.getByText("统一身份边界")).toBeInTheDocument()
-    expect(screen.getByText("钉钉身份")).toBeInTheDocument()
-    expect(screen.getByText("ONES 身份")).toBeInTheDocument()
-  })
-
-  it("不保留旧模板业务文案", () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(platformResponse)
-    const { container } = renderApp()
-    const page = container.textContent ?? ""
-
-    for (const legacyText of [
-      "Acme",
-      "Revenue",
-      "Visitors",
-      "Documents",
-      "Projects",
-      "Lifecycle",
-    ]) {
-      expect(page).not.toContain(legacyText)
+describe("轻量用户门户", () => {
+  it("首页只保留本人历史、身份和账户安全入口", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => response({ items: [], page: { limit: 50, has_more: false, next_cursor: null } }))
+    window.history.pushState({}, "", "/")
+    renderApp("/")
+    expect(await screen.findByRole("heading", { name: "Agent Job" })).toBeInTheDocument()
+    expect(screen.getAllByText("Job 与会话历史").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("我的外部身份").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("密码与会话").length).toBeGreaterThan(0)
+    for (const removed of ["业务应用", "API Capability", "平台资源", "角色授权", "Agent 配置"]) {
+      expect(document.body.textContent).not.toContain(removed)
     }
   })
 
-  it("加载时只轮询候选计数且不建立流式连接", async () => {
-    const fetchSpy = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation(platformResponse)
-    const xhrOpenSpy = vi.spyOn(XMLHttpRequest.prototype, "open")
-    const websocketSpy = vi.fn()
-    const eventSourceSpy = vi.fn()
-    vi.stubGlobal("WebSocket", websocketSpy)
-    vi.stubGlobal("EventSource", eventSourceSpy)
+  it("历史首页只查询当前用户接口，不查询管理员控制面", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(() => response({ items: [], page: { limit: 50, has_more: false, next_cursor: null } }))
+    window.history.pushState({}, "", "/operations/jobs")
+    renderApp("/operations/jobs")
+    await waitFor(() => expect(fetch).toHaveBeenCalled())
+    const urls = fetch.mock.calls.map(([input]) => String(input))
+    expect(urls).toContain("/api/me/jobs?limit=50")
+    expect(urls.some((url) => url.startsWith("/api/admin/"))).toBe(false)
+  })
 
-    renderApp()
+  it("旧管理 URL 明确返回已退役页面", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => response({}))
+    renderApp("/platform/api-capabilities")
+    expect(await screen.findByRole("heading", { name: "管理工作台已退役" })).toBeInTheDocument()
+    expect(screen.getByText(/platformctl/)).toBeInTheDocument()
+  })
 
-    expect(fetchSpy).toHaveBeenCalledWith(
-      "/api/admin/capabilities",
-      expect.any(Object)
+  it("窄屏下本人身份操作保持可聚焦且表单具有键盘可访问标签", async () => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 375,
+    })
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      response({
+        user: { id: "user-local-admin", display_name: "本地用户" },
+        dingtalk: [],
+        ones: null,
+      })
     )
-    await waitFor(() =>
-      expect(fetchSpy).toHaveBeenCalledWith(
-        "/api/admin/dingtalk-identity-candidates/count",
-        expect.any(Object)
-      )
+
+    renderApp("/me/external-identities")
+    const verify = await screen.findByRole("button", { name: "验证 ONES" })
+    await waitFor(() => expect(verify).toBeEnabled())
+    verify.focus()
+    expect(verify).toHaveFocus()
+    expect(verify).toHaveAttribute("type", "button")
+
+    fireEvent.click(verify)
+    expect(await screen.findByLabelText("ONES 邮箱")).toBeVisible()
+    expect(screen.getByLabelText("一次性验证密码")).toBeVisible()
+    expect(screen.getByRole("button", { name: "验证并读取 Team" })).toHaveAttribute(
+      "type",
+      "submit"
     )
-    expect(xhrOpenSpy).not.toHaveBeenCalled()
-    expect(websocketSpy).not.toHaveBeenCalled()
-    expect(eventSourceSpy).not.toHaveBeenCalled()
-  })
-
-  it("不展示本次变更之外的规划入口", () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(platformResponse)
-    const { container } = renderApp()
-    const page = container.textContent ?? ""
-
-    for (const outOfScopeEntry of [
-      "审计日志",
-      "环境管理",
-      "API Capability",
-      "平台连接",
-      "Agent 任务",
-      "会话记录",
-      "冲突中心",
-      "需求主体",
-      "任务与缺陷主体",
-    ]) {
-      expect(page).not.toContain(outOfScopeEntry)
-    }
-  })
-
-  it("不暴露底层连接配置、凭据或可执行入口", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(platformResponse)
-    const { container } = renderApp()
-    const page = container.textContent ?? ""
-
-    for (const forbiddenEntry of [
-      "数据库连接",
-      "缓存地址",
-      "日志平台地址",
-      "连接字符串",
-      "凭据 URI",
-      "AppSecret",
-      "Webhook Secret",
-      "执行 Shell",
-      "执行任意请求",
-    ]) {
-      expect(page).not.toContain(forbiddenEntry)
-    }
-    expect(await screen.findByText("统一身份边界")).toBeInTheDocument()
+    expect(screen.getByRole("dialog")).toHaveClass("w-full")
   })
 })

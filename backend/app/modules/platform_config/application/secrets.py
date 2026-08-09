@@ -27,9 +27,18 @@ class SecretProviderPort(Protocol):
         metadata: dict[str, object] | None = None,
     ) -> dict[str, object]: ...
 
-    def rotate_secret(self, *, code: str, value: str, actor_id: str = "") -> dict[str, object]: ...
+    def rotate_secret(
+        self,
+        *,
+        code: str,
+        value: str,
+        actor_id: str = "",
+        expected_revision: int | None = None,
+    ) -> dict[str, object]: ...
 
-    def disable_secret(self, *, code: str, actor_id: str = "") -> dict[str, object]: ...
+    def disable_secret(
+        self, *, code: str, actor_id: str = "", expected_revision: int | None = None
+    ) -> dict[str, object]: ...
 
 
 class EncryptedDbSecretProvider:
@@ -44,9 +53,7 @@ class EncryptedDbSecretProvider:
         master_key: str | None = None,
     ) -> None:
         self.repository = repository
-        self.master_key = _normalize_master_key(
-            master_key if master_key is not None else ""
-        )
+        self.master_key = _normalize_master_key(master_key if master_key is not None else "")
         self.key_id = hashlib.sha256(self.master_key).hexdigest()[:16]
 
     def resolve(self, ref: str) -> str:
@@ -129,7 +136,14 @@ class EncryptedDbSecretProvider:
         self._notify_change(activated, action="create")
         return activated
 
-    def rotate_secret(self, *, code: str, value: str, actor_id: str = "") -> dict[str, object]:
+    def rotate_secret(
+        self,
+        *,
+        code: str,
+        value: str,
+        actor_id: str = "",
+        expected_revision: int | None = None,
+    ) -> dict[str, object]:
         code = validate_code(code)
         self._require_value(value)
         secret = self.repository.get_platform_secret_by_code(code)
@@ -151,15 +165,19 @@ class EncryptedDbSecretProvider:
             secret_id=str(secret["id"]),
             active_version=next_version,
             masked_summary=mask_secret(value),
+            expected_revision=expected_revision,
         )
         self._notify_change(activated, action="rotate")
         return activated
 
-    def disable_secret(self, *, code: str, actor_id: str = "") -> dict[str, object]:
+    def disable_secret(
+        self, *, code: str, actor_id: str = "", expected_revision: int | None = None
+    ) -> dict[str, object]:
         del actor_id
         disabled = self.repository.set_platform_secret_status(
             validate_code(code),
             "disabled",
+            expected_revision=expected_revision,
         )
         self._notify_change(disabled, action="disable")
         return disabled
@@ -172,7 +190,7 @@ class EncryptedDbSecretProvider:
     ) -> None:
         self.repository.insert_secret_change_event(
             secret_id=str(secret["id"]),
-            secret_revision=int(secret["revision"]),
+            secret_revision=int(str(secret["revision"])),
             action=action,
         )
 
@@ -233,11 +251,7 @@ class EncryptedDbSecretProvider:
         version: int,
     ) -> str:
         plaintext: bytearray | None = None
-        aad = (
-            _aad(secret_id=secret_id, version=version)
-            if algorithm == self.algorithm
-            else None
-        )
+        aad = _aad(secret_id=secret_id, version=version) if algorithm == self.algorithm else None
         if algorithm not in {self.algorithm, self.legacy_algorithm}:
             raise NonRetryableExecutionError(
                 "Unsupported platform secret encryption algorithm",

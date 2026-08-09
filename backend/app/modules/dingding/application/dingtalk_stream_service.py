@@ -93,6 +93,20 @@ class DingTalkStreamRejectionNotifier(Protocol):
     ) -> bool: ...
 
 
+class TrustedDingTalkIdentityBinder(Protocol):
+    def consume_dingtalk_message(
+        self,
+        *,
+        content: str,
+        dingtalk_enterprise_id: str,
+        external_subject_id: str,
+        display_name: str,
+        connector_id: str,
+        trusted_event_id: str,
+        occurred_at: str,
+    ) -> dict[str, Any] | None: ...
+
+
 class DingTalkStreamMessageService:
     def __init__(
         self,
@@ -116,6 +130,7 @@ class DingTalkStreamMessageService:
         rejection_notifier: DingTalkStreamRejectionNotifier | None = None,
         identity_discovery_service: DingTalkIdentityDiscoveryService | None = None,
         enterprise_connector_resolver: Callable[[str], dict[str, Any]] | None = None,
+        identity_binder: TrustedDingTalkIdentityBinder | None = None,
     ) -> None:
         self.channel_ingress_service = channel_ingress_service
         self.audit_service = audit_service
@@ -136,6 +151,7 @@ class DingTalkStreamMessageService:
         self.rejection_notifier = rejection_notifier
         self.identity_discovery_service = identity_discovery_service
         self.enterprise_connector_resolver = enterprise_connector_resolver
+        self.identity_binder = identity_binder
 
     def handle_callback(
         self,
@@ -207,9 +223,7 @@ class DingTalkStreamMessageService:
                 ack_message="REJECTED",
                 reason=exc.reason,
                 error_code=exc.error_code or "dingtalk_stream_message_rejected",
-                rejection_message=(
-                    exc.message if defer_rejection_notification else None
-                ),
+                rejection_message=(exc.message if defer_rejection_notification else None),
                 rejection_connector_id=(
                     source_connector_id
                     if defer_rejection_notification and exc.message is not None
@@ -225,6 +239,29 @@ class DingTalkStreamMessageService:
                 source_connector_id=source_connector_id,
                 correlation_id=correlation_id,
             )
+            descriptor = event.source.external_identity
+            binding = (
+                self.identity_binder.consume_dingtalk_message(
+                    content=message.content,
+                    dingtalk_enterprise_id=(
+                        descriptor.dingtalk_enterprise_id if descriptor else ""
+                    ),
+                    external_subject_id=(descriptor.external_subject_id if descriptor else ""),
+                    display_name=message.sender_display_name,
+                    connector_id=source_connector_id,
+                    trusted_event_id=message.event_id,
+                    occurred_at=message.occurred_at,
+                )
+                if self.identity_binder is not None
+                else None
+            )
+            if binding is not None:
+                return DingTalkStreamHandleResult(
+                    accepted=True,
+                    status="identity_bound",
+                    ack_status="OK",
+                    ack_message="钉钉身份绑定成功",
+                )
             job = self.channel_ingress_service.accept(event)
         except PermissionDenied as exc:
             logger.info(
@@ -249,16 +286,12 @@ class DingTalkStreamMessageService:
             observation = (
                 self.identity_discovery_service.build_pending_observation(
                     event=event,
-                    message_kind=payload.get("msgtype")
-                    or payload.get("messageType"),
-                    occurred_at=payload.get("createAt")
-                    or payload.get("create_at"),
+                    message_kind=payload.get("msgtype") or payload.get("messageType"),
+                    occurred_at=payload.get("createAt") or payload.get("create_at"),
                 )
                 if event is not None
                 and self.identity_discovery_service is not None
-                and self.identity_discovery_service.is_discoverable_rejection(
-                    exc.error_code
-                )
+                and self.identity_discovery_service.is_discoverable_rejection(exc.error_code)
                 else None
             )
             return DingTalkStreamHandleResult(
@@ -507,9 +540,7 @@ class DingTalkStreamMessageService:
             )
         if self.enterprise_connector_resolver is not None:
             governed = self.enterprise_connector_resolver(source_connector_id)
-            dingtalk_enterprise_id = str(
-                governed.get("dingtalk_enterprise_id") or ""
-            )
+            dingtalk_enterprise_id = str(governed.get("dingtalk_enterprise_id") or "")
             if (
                 not dingtalk_enterprise_id
                 or str(governed.get("dingtalk_enterprise_status") or "") != "ACTIVE"
@@ -519,9 +550,7 @@ class DingTalkStreamMessageService:
                     safe_message="钉钉企业尚未完成验证或已停用",
                     error_code="dingtalk_enterprise_unavailable",
                 )
-            expected_corp_id = str(
-                governed.get("dingtalk_enterprise_corp_id") or ""
-            )
+            expected_corp_id = str(governed.get("dingtalk_enterprise_corp_id") or "")
             if (
                 not message.sender_corp_id
                 or not message.chatbot_corp_id
@@ -557,9 +586,7 @@ class DingTalkStreamMessageService:
                     "session_webhook_expires": message.session_webhook_expired_time,
                     "conversation_type": message.conversation_type,
                     "bot_identity": bot_identity,
-                    "source_ingress_event_id": str(
-                        payload.get("_source_ingress_event_id") or ""
-                    ),
+                    "source_ingress_event_id": str(payload.get("_source_ingress_event_id") or ""),
                     "received_at": str(payload.get("_received_at") or ""),
                     "occurred_at": message.occurred_at,
                 },
@@ -572,9 +599,7 @@ class DingTalkStreamMessageService:
                     open_id=message.open_id,
                     display_name=message.sender_display_name,
                     dingtalk_enterprise_id=dingtalk_enterprise_id,
-                    source_ingress_event_id=str(
-                        payload.get("_source_ingress_event_id") or ""
-                    ),
+                    source_ingress_event_id=str(payload.get("_source_ingress_event_id") or ""),
                     occurred_at=message.occurred_at,
                     received_at=str(payload.get("_received_at") or ""),
                 ),

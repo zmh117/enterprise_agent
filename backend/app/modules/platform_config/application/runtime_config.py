@@ -23,7 +23,6 @@ BOOTSTRAP_ONLY_KEYS = {
     "FEATURE_WEB_ADMIN",
     "FEATURE_PUBLISHED_AGENT_RUNTIME",
     "FEATURE_REAL_CLAUDE",
-    "FEATURE_REAL_INTERNAL_TOOLS",
 }
 
 
@@ -45,9 +44,7 @@ class RuntimeConfigDefinitionSpec:
 RUNTIME_CONFIG_DEFINITIONS: tuple[RuntimeConfigDefinitionSpec, ...] = (
     RuntimeConfigDefinitionSpec("DATABASE_DSN", "string", "", bootstrap_only=True),
     RuntimeConfigDefinitionSpec("RABBITMQ_URL", "string", "", bootstrap_only=True),
-    RuntimeConfigDefinitionSpec(
-        "APP_CONFIG_MASTER_KEY_FILE", "string", "", bootstrap_only=True
-    ),
+    RuntimeConfigDefinitionSpec("APP_CONFIG_MASTER_KEY_FILE", "string", "", bootstrap_only=True),
     RuntimeConfigDefinitionSpec("APP_ENV", "string", "local", bootstrap_only=True),
     RuntimeConfigDefinitionSpec("SEED_LOCAL_CONFIG", "bool", False, bootstrap_only=True),
     RuntimeConfigDefinitionSpec(
@@ -68,15 +65,6 @@ RUNTIME_CONFIG_DEFINITIONS: tuple[RuntimeConfigDefinitionSpec, ...] = (
     ),
     RuntimeConfigDefinitionSpec(
         "FEATURE_REAL_CLAUDE",
-        "bool",
-        False,
-        bootstrap_only=True,
-        service_names=("api-server", "agent-worker"),
-        classification="deployment-safety-gate",
-        restart_required=True,
-    ),
-    RuntimeConfigDefinitionSpec(
-        "FEATURE_REAL_INTERNAL_TOOLS",
         "bool",
         False,
         bootstrap_only=True,
@@ -131,34 +119,6 @@ RUNTIME_CONFIG_DEFINITIONS: tuple[RuntimeConfigDefinitionSpec, ...] = (
         target="test-only application configuration",
         deprecated_version="0.3.0",
         restart_required=True,
-    ),
-    RuntimeConfigDefinitionSpec(
-        "INTERNAL_API_BASE_URL",
-        "url",
-        "http://internal-api-platform.local",
-        service_names=("api-server", "agent-worker"),
-    ),
-    RuntimeConfigDefinitionSpec(
-        "INTERNAL_API_AUTH_TOKEN",
-        "secret_ref",
-        "",
-        sensitive=True,
-        bootstrap_only=True,
-        classification="deprecated",
-        target="INTERNAL_API_AUTH_TOKEN_FILE deployment secret",
-        deprecated_version="0.4.0",
-    ),
-    RuntimeConfigDefinitionSpec(
-        "INTERNAL_API_TIMEOUT_SECONDS",
-        "int",
-        10,
-        service_names=("api-server", "agent-worker", "internal-api-platform"),
-    ),
-    RuntimeConfigDefinitionSpec(
-        "INTERNAL_API_MAX_RESPONSE_CHARS", "int", 4000, service_names=("api-server", "agent-worker")
-    ),
-    RuntimeConfigDefinitionSpec(
-        "INTERNAL_PLATFORM_MAX_ROWS", "int", 100, service_names=("internal-api-platform",)
     ),
     RuntimeConfigDefinitionSpec(
         "ANTHROPIC_BASE_URL", "url", "", service_names=("api-server", "agent-worker")
@@ -222,33 +182,6 @@ RUNTIME_CONFIG_DEFINITIONS: tuple[RuntimeConfigDefinitionSpec, ...] = (
     ),
     RuntimeConfigDefinitionSpec(
         "MAX_TOOL_RESPONSE_CHARS", "int", 4000, service_names=("agent-worker",)
-    ),
-    RuntimeConfigDefinitionSpec(
-        "MAX_LOKI_MINUTES", "int", 60, service_names=("agent-worker", "internal-api-platform")
-    ),
-    RuntimeConfigDefinitionSpec(
-        "MAX_LOKI_LINES", "int", 500, service_names=("agent-worker", "internal-api-platform")
-    ),
-    RuntimeConfigDefinitionSpec(
-        "REDIS_SCAN_LIMIT", "int", 200, service_names=("agent-worker", "internal-api-platform")
-    ),
-    RuntimeConfigDefinitionSpec(
-        "LOKI_BASE_URL",
-        "url",
-        "http://host.docker.internal:3100",
-        service_names=("local-internal-api-platform", "internal-api-platform"),
-    ),
-    RuntimeConfigDefinitionSpec(
-        "LOKI_MAX_MINUTES", "int", 60, service_names=("internal-api-platform",)
-    ),
-    RuntimeConfigDefinitionSpec(
-        "LOKI_MAX_LINES", "int", 500, service_names=("internal-api-platform",)
-    ),
-    RuntimeConfigDefinitionSpec(
-        "LOKI_MAX_RESPONSE_CHARS", "int", 4000, service_names=("internal-api-platform",)
-    ),
-    RuntimeConfigDefinitionSpec(
-        "LOKI_TENANT_ID", "string", "", service_names=("internal-api-platform",)
     ),
     RuntimeConfigDefinitionSpec(
         "DINGTALK_CLIENT_ID", "string", "", service_names=("api-server", "dingtalk-stream-ingress")

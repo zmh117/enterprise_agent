@@ -1,18 +1,15 @@
-import type { NavigationItem } from "@/mocks/dashboard"
+export type NavigationTarget = { href: string }
 
 export function resolveActiveNavigationHref(
   pathname: string,
-  items: NavigationItem[]
+  items: NavigationTarget[]
 ) {
   return (
     items
-      .filter((item) => {
-        if (!item.href) return false
-        if (item.href === "/") return pathname === "/"
-        return pathname === item.href || pathname.startsWith(`${item.href}/`)
-      })
-      .sort(
-        (left, right) => (right.href?.length ?? 0) - (left.href?.length ?? 0)
-      )[0]?.href ?? ""
+      .filter(
+        (item) =>
+          pathname === item.href || pathname.startsWith(`${item.href}/`)
+      )
+      .sort((left, right) => right.href.length - left.href.length)[0]?.href ?? ""
   )
 }

@@ -8,20 +8,6 @@ from app.shared.database import Database
 from app.shared.exceptions import NonRetryableExecutionError, NotFound
 
 
-_BUSINESS_CAPABILITY_NAMES_ZH = {
-    "get_er_context": "查看 ER 模型上下文",
-    "get_business_flow_context": "查看业务流程上下文",
-    "get_schema_directory": "查看数据库结构目录",
-    "diagnose_loki_labels": "诊断日志标签",
-    "diagnose_loki_label_values": "诊断日志标签值",
-    "diagnose_loki_probe": "探测日志数据",
-    "query_loki": "只读查询日志",
-    "query_database": "只读查询数据库",
-    "query_redis_get": "只读获取 Redis 键值",
-    "query_redis_scan": "只读扫描 Redis 键",
-}
-
-
 class AuthorizationCenterRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
@@ -498,10 +484,7 @@ class AuthorizationCenterRepository:
                 else []
             )
             for capability in application["capabilities"]:
-                capability["display_name_zh"] = _BUSINESS_CAPABILITY_NAMES_ZH.get(
-                    str(capability["capability_code"]),
-                    "只读业务能力",
-                )
+                capability["display_name_zh"] = "历史业务能力"
         return applications
 
     def application_capability_is_effective(

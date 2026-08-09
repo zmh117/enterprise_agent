@@ -5,7 +5,6 @@ import re
 from typing import Any
 
 from app.modules.agent_config.application.service import AgentConfigService
-from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.identity.application.authorization import AuthorizationEvaluator
@@ -133,9 +132,7 @@ class TriggerValidator:
                 ):
                     existing_ref = str(binding["secret_ref"])
                     try:
-                        existing = self.connector_registry.resolve_reference(
-                            existing_ref
-                        )
+                        existing = self.connector_registry.resolve_reference(existing_ref)
                     except Exception:
                         existing = ""
                     if existing_ref == secret_ref or (
@@ -162,19 +159,30 @@ class TriggerValidator:
             if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", str(name)):
                 errors.append({"field": "mapping.variables", "message": "变量名无效"})
             if not validate_pointer(str(pointer)):
-                errors.append({"field": f"mapping.variables.{name}", "message": "JSON Pointer 无效"})
+                errors.append(
+                    {"field": f"mapping.variables.{name}", "message": "JSON Pointer 无效"}
+                )
         template = str(mapping.get("message_template") or "")
         unknown_variables = sorted(set(_TEMPLATE_VARIABLE_RE.findall(template)) - set(variables))
         if unknown_variables:
-            errors.append({"field": "mapping.message_template", "message": f"存在未知变量：{', '.join(unknown_variables)}"})
+            errors.append(
+                {
+                    "field": "mapping.message_template",
+                    "message": f"存在未知变量：{', '.join(unknown_variables)}",
+                }
+            )
         for index, condition in enumerate(mapping.get("filters") or []):
             if not isinstance(condition, dict):
                 errors.append({"field": f"mapping.filters.{index}", "message": "条件必须是对象"})
                 continue
             if str(condition.get("operator") or "") not in CONDITION_OPERATORS:
-                errors.append({"field": f"mapping.filters.{index}.operator", "message": "不允许使用此操作符"})
+                errors.append(
+                    {"field": f"mapping.filters.{index}.operator", "message": "不允许使用此操作符"}
+                )
             if not validate_pointer(str(condition.get("pointer") or "")):
-                errors.append({"field": f"mapping.filters.{index}.pointer", "message": "JSON Pointer 无效"})
+                errors.append(
+                    {"field": f"mapping.filters.{index}.pointer", "message": "JSON Pointer 无效"}
+                )
         if config.get("adapter") == TriggerSchema.GENERIC_JSON_V1 and not validate_pointer(
             str(mapping.get("event_id_pointer") or "")
         ):
@@ -184,17 +192,29 @@ class TriggerValidator:
             rule = (config.get("routing") or {}).get(field) or {}
             mode = str(rule.get("mode") or "")
             if mode not in {"fixed", "extract"}:
-                errors.append({"field": f"routing.{field}.mode", "message": "模式必须为 fixed 或 extract"})
+                errors.append(
+                    {"field": f"routing.{field}.mode", "message": "模式必须为 fixed 或 extract"}
+                )
                 continue
             if mode == "fixed" and field == "project_code" and not str(rule.get("value") or ""):
                 errors.append({"field": f"routing.{field}.value", "message": "必须填写项目编码"})
             if mode == "extract":
                 if not validate_pointer(str(rule.get("pointer") or "")):
-                    errors.append({"field": f"routing.{field}.pointer", "message": "JSON Pointer 无效"})
+                    errors.append(
+                        {"field": f"routing.{field}.pointer", "message": "JSON Pointer 无效"}
+                    )
                 if not rule.get("allowed_values"):
-                    errors.append({"field": f"routing.{field}.allowed_values", "message": "提取路由必须配置允许列表"})
+                    errors.append(
+                        {
+                            "field": f"routing.{field}.allowed_values",
+                            "message": "提取路由必须配置允许列表",
+                        }
+                    )
             if field == "service":
-                for value in [str(rule.get("value") or ""), *[str(item) for item in rule.get("allowed_values") or []]]:
+                for value in [
+                    str(rule.get("value") or ""),
+                    *[str(item) for item in rule.get("allowed_values") or []],
+                ]:
                     if value and not SERVICE_CODE_RE.fullmatch(value):
                         errors.append({"field": "routing.service", "message": "服务编码无效"})
 
@@ -206,7 +226,12 @@ class TriggerValidator:
         ):
             limit_value = int(limits.get(limit_name) or 0)
             if not minimum <= limit_value <= maximum:
-                errors.append({"field": f"limits.{limit_name}", "message": f"必须在 {minimum} 到 {maximum} 之间"})
+                errors.append(
+                    {
+                        "field": f"limits.{limit_name}",
+                        "message": f"必须在 {minimum} 到 {maximum} 之间",
+                    }
+                )
 
         delivery = config.get("delivery") or {}
         delivery_id = str(delivery.get("connector_id") or "")
@@ -239,13 +264,20 @@ class TriggerValidator:
                 direction="ingress",
                 connector_id=source.id,
             ):
-                errors.append({"field": "connector_id", "message": "Agent 发布版本未分配此接入连接器"})
+                errors.append(
+                    {"field": "connector_id", "message": "Agent 发布版本未分配此接入连接器"}
+                )
             if delivery_id and not self.agent_config_service.connector_allowed(
                 publication_id=agent_publication_id,
                 direction="delivery",
                 connector_id=delivery_id,
             ):
-                errors.append({"field": "delivery.connector_id", "message": "Agent 发布版本未分配此投递连接器"})
+                errors.append(
+                    {
+                        "field": "delivery.connector_id",
+                        "message": "Agent 发布版本未分配此投递连接器",
+                    }
+                )
         except Exception as exc:
             errors.append(
                 {
@@ -254,31 +286,24 @@ class TriggerValidator:
                 }
             )
 
-        assigned_tools = sorted(
-            self.agent_config_service.repository.publication_tools(agent_publication_id)
-        ) if agent_publication else []
-        enabled_read_only_tools = (
-            self.agent_config_service.repository.enabled_tools() & ToolRegistry.READONLY_TOOLS
+        mcp_tools = (
+            self.agent_config_service.repository.publication_mcp_tools(agent_publication_id)
+            if agent_publication
+            else []
         )
-        invalid_tools = sorted(set(assigned_tools) - enabled_read_only_tools)
-        if invalid_tools:
+        inactive = [str(item["tool_name"]) for item in mcp_tools if str(item["status"]) != "ACTIVE"]
+        if inactive:
             errors.append(
                 {
                     "field": "agent.publication_id",
-                    "message": f"Agent 发布版本包含无效工具：{', '.join(invalid_tools)}",
+                    "message": f"Agent 发布版本包含已停用 MCP Tool：{', '.join(inactive)}",
                 }
             )
-        allowed_tools = [
-            tool_name
-            for tool_name in assigned_tools
-            if tool_name in enabled_read_only_tools
-        ]
         summary = {
             "agent_publication_id": agent_publication_id,
             "agent_revision": int(agent_publication["revision"]) if agent_publication else 0,
             "agent_config_hash": str(agent_publication["config_hash"]) if agent_publication else "",
-            "assigned_read_only_tools": assigned_tools,
-            "effective_read_only_tools": allowed_tools,
+            "assigned_mcp_tools": mcp_tools,
         }
         return errors, summary
 
@@ -401,9 +426,7 @@ class WebhookTriggerService:
         return revision
 
     @operation_unit_of_work(lambda service: service.repository.database)
-    def validate_revision(
-        self, *, actor_id: str, code: str, revision_id: str
-    ) -> dict[str, Any]:
+    def validate_revision(self, *, actor_id: str, code: str, revision_id: str) -> dict[str, Any]:
         self._require(actor_id, "edit", code)
         definition = self.repository.get_definition(code)
         revision = self.repository.get_revision(revision_id)
@@ -447,9 +470,7 @@ class WebhookTriggerService:
         }
 
     @operation_unit_of_work(lambda service: service.repository.database)
-    def publish(
-        self, *, actor_id: str, code: str, revision_id: str
-    ) -> dict[str, Any]:
+    def publish(self, *, actor_id: str, code: str, revision_id: str) -> dict[str, Any]:
         self._require(actor_id, "publish", code)
         definition = self.repository.get_definition(code)
         revision = self.repository.get_revision(revision_id)
@@ -522,8 +543,20 @@ class WebhookTriggerService:
             "webhook.trigger.updated",
             actor_id=actor_id,
             code=code,
-            before_hash=config_hash({"name": before["name"], "connector_id": before["connector_id"], "status": before["status"]}),
-            after_hash=config_hash({"name": updated["name"], "connector_id": updated["connector_id"], "status": updated["status"]}),
+            before_hash=config_hash(
+                {
+                    "name": before["name"],
+                    "connector_id": before["connector_id"],
+                    "status": before["status"],
+                }
+            ),
+            after_hash=config_hash(
+                {
+                    "name": updated["name"],
+                    "connector_id": updated["connector_id"],
+                    "status": updated["status"],
+                }
+            ),
         )
         return updated
 
@@ -599,9 +632,7 @@ class WebhookTriggerService:
     def _normalize(self, config: dict[str, Any]) -> dict[str, Any]:
         ensure_no_secret_values(config)
         normalized = normalize_config(config)
-        secret_ref = str(
-            (normalized.get("authentication") or {}).get("secret_ref") or ""
-        )
+        secret_ref = str((normalized.get("authentication") or {}).get("secret_ref") or "")
         try:
             validate_secret_ref(secret_ref)
         except NonRetryableExecutionError as exc:
@@ -618,9 +649,7 @@ class WebhookTriggerService:
             ) from None
         return normalized
 
-    def _assert_revision_owner(
-        self, definition: dict[str, Any], revision: dict[str, Any]
-    ) -> None:
+    def _assert_revision_owner(self, definition: dict[str, Any], revision: dict[str, Any]) -> None:
         if str(revision["trigger_id"]) != str(definition["id"]):
             raise NonRetryableExecutionError(
                 "Revision belongs to another Trigger",

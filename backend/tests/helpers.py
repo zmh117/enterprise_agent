@@ -5,12 +5,11 @@ import hashlib
 import hmac
 import json
 from datetime import UTC, datetime
+from typing import Any
 
 from app.bootstrap import Container, build_test_container
-from app.modules.message_bus.application.message_publisher import AgentJobMessage
-from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
 from app.modules.business_application.domain.policies import snapshot_hash
-from app.modules.platform_config.infrastructure.repository import now_iso
+from app.modules.message_bus.application.message_publisher import AgentJobMessage
 from app.shared.config import DingTalkSettings, Settings
 
 
@@ -21,28 +20,28 @@ def ensure_active_dingtalk_test_enterprise(
     corp_id: str = "corp-test-enterprise",
     name: str = "测试钉钉企业",
 ) -> dict[str, object]:
+    """Install an immutable trusted-enterprise fixture without a retired admin API."""
+
     timestamp = "2026-08-03T00:00:00+00:00"
     existing = runtime.database.execute_one(
         "select * from dingtalk_enterprise where corp_id = ?",
         (corp_id,),
     )
     if existing is None:
-        created = runtime.managed_channel_service.create_dingtalk_enterprise(
-            name=name,
-            actor_id="user_local_admin",
-        )
+        enterprise_id = f"dingtalk-enterprise-{hashlib.sha256(corp_id.encode()).hexdigest()[:20]}"
         runtime.database.execute(
             """
-            update dingtalk_enterprise
-               set corp_id = ?, status = 'ACTIVE', verified_at = ?,
-                   verification_event_id = 'test-fixture-verification'
-             where id = ?
+            insert into dingtalk_enterprise
+              (id, name, corp_id, status, verification_event_id, verified_at,
+               revision, created_by, created_at, updated_at)
+            values (?, ?, ?, 'ACTIVE', 'test-fixture-verification', ?, 1,
+                    'user_local_admin', ?, ?)
             """,
-            (corp_id, timestamp, created["id"]),
+            (enterprise_id, name, corp_id, timestamp, timestamp, timestamp),
         )
         existing = runtime.database.execute_one(
             "select * from dingtalk_enterprise where id = ?",
-            (created["id"],),
+            (enterprise_id,),
         )
     assert existing is not None
     runtime.database.execute(
@@ -75,12 +74,14 @@ def test_settings(secret: str = "test-secret") -> Settings:
 
 
 def container(*, configure_seed_secrets: bool = True) -> Container:
-    return build_test_container(
+    runtime = build_test_container(
         test_settings(),
         migrate=True,
         seed=True,
         configure_seed_secrets=configure_seed_secrets,
     )
+    ensure_active_dingtalk_test_enterprise(runtime)
+    return runtime
 
 
 def publish_pending_agent_jobs(runtime: Container) -> None:
@@ -140,274 +141,8 @@ def persisted_agent_job_message(
     )
 
 
-def _ensure_exact_builtin_tool_releases(
-    container: Container,
-    tool_identifiers: tuple[str, ...],
-    *,
-    agent_publication_id: str = "agent_publication_default_v1",
-) -> dict[str, dict[str, object]]:
-    requested = tuple(
-        sorted(set(tool_identifiers).intersection(ToolRegistry.READONLY_TOOLS))
-    )
-    if not requested:
-        return {}
-    container.database.execute(
-        """
-        insert into permission_policy
-          (id, subject_type, subject_code, resource_type, resource_code,
-           effect, action, status, priority, revision, created_at, updated_at)
-        values ('test-user-local-admin-builtin-tools', 'user',
-                'user_local_admin', 'builtin_tool', '*', 'allow', '*',
-                'enabled', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        on conflict(id) do nothing
-        """
-    )
-    handlers = container.platform_config_service.handlers
-    handlers.reconcile(actor_id="user_local_admin")
-    releases: dict[str, dict[str, object]] = {}
-    for tool_identifier in requested:
-        existing = container.database.execute_one(
-            """
-            select release.*
-              from agent_publication_builtin_tool envelope
-              join builtin_tool_release release
-                on release.id = envelope.tool_release_id
-             where envelope.agent_publication_id = ?
-               and envelope.tool_identifier = ?
-            """,
-            (agent_publication_id, tool_identifier),
-        )
-        if existing is not None:
-            releases[tool_identifier] = dict(existing)
-            continue
-        if agent_publication_id != "agent_publication_default_v1":
-            raise AssertionError(
-                "Exact test Agent publication does not contain requested Built-in Tool "
-                f"{tool_identifier}"
-            )
-        evidence = handlers.verify_payload(
-            {
-                "tool_identifier": tool_identifier,
-                "handler_version": "1.0.0",
-            },
-            actor_id="user_local_admin",
-        )
-        release = handlers.publish_builtin_tool_payload(
-            {
-                "tool_identifier": tool_identifier,
-                "handler_version": "1.0.0",
-                "verification_id": evidence["id"],
-                "idempotency_key": f"test-fixture-{tool_identifier}-v1",
-            },
-            actor_id="user_local_admin",
-        )
-        envelope = {
-            "agent_publication_id": agent_publication_id,
-            "tool_identifier": release["tool_identifier"],
-            "tool_release_id": release["id"],
-            "handler_version": release["handler_version"],
-            "implementation_digest": release["implementation_digest"],
-            "public_schema_hash": release["public_schema_hash"],
-        }
-        container.database.execute(
-            """
-            insert into agent_publication_builtin_tool
-              (id, agent_publication_id, tool_identifier, tool_release_id,
-               handler_version, implementation_digest, public_schema_hash,
-               envelope_hash, created_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                f"agent_envelope_test_{tool_identifier}",
-                envelope["agent_publication_id"],
-                envelope["tool_identifier"],
-                envelope["tool_release_id"],
-                envelope["handler_version"],
-                envelope["implementation_digest"],
-                envelope["public_schema_hash"],
-                snapshot_hash(envelope),
-                now_iso(),
-            ),
-        )
-        releases[tool_identifier] = dict(release)
-    return releases
-
-
-def _published_test_resource(
-    container: Container,
-    *,
-    code: str,
-    resource_kind: str,
-    scope_type: str,
-    environment_id: str,
-    base_id: str | None = None,
-) -> str:
-    timestamp = now_iso()
-    resource_id = f"resource_{code}"
-    revision_id = f"resource_revision_{code}_v1"
-    verification_id = f"resource_verification_{code}_v1"
-    provider_type = {
-        "database": "mysql",
-        "redis": "redis",
-        "loki": "loki",
-    }[resource_kind]
-    provider_contract_version = {
-        "database": "mysql_v1",
-        "redis": "redis_v1",
-        "loki": "loki_v1",
-    }[resource_kind]
-    config = (
-        {
-            "base_url": "http://loki.test:3100",
-            "tenant_id": "",
-            "timeout_seconds": 5,
-            "max_minutes": 60,
-            "max_lines": 200,
-            "max_response_bytes": 65_536,
-        }
-        if resource_kind == "loki"
-        else {}
-    )
-    content_hash = snapshot_hash(
-        {"resource": code, "revision": 1, "config": config}
-    )
-    container.database.execute(
-        """
-        insert into platform_resource
-          (id, code, name, resource_kind, scope_type, environment_id,
-           base_id, workshop_id, status, revision, created_by,
-           created_at, updated_at)
-        values (?, ?, ?, ?, ?, ?, ?, null, 'enabled', 1,
-                'user_local_admin', ?, ?)
-        """,
-        (
-            resource_id,
-            code,
-            code,
-            resource_kind,
-            scope_type,
-            environment_id,
-            base_id,
-            timestamp,
-            timestamp,
-        ),
-    )
-    container.database.execute(
-        """
-        insert into platform_resource_verification
-          (id, resource_id, draft_id, draft_revision, content_hash, status,
-           provider_contract_version, checks_json, verified_by, verified_at)
-        values (?, ?, null, 1, ?, 'PASSED', ?, '{}',
-                'user_local_admin', ?)
-        """,
-        (
-            verification_id,
-            resource_id,
-            content_hash,
-            provider_contract_version,
-            timestamp,
-        ),
-    )
-    container.database.execute(
-        """
-        insert into platform_resource_revision
-          (id, resource_id, revision, provider_type,
-           provider_contract_version, config_json, secret_refs_json,
-           content_hash, verification_id, status, published_by,
-           published_at)
-        values (?, ?, 1, ?, ?, ?, '{}', ?, ?, 'PUBLISHED',
-                'user_local_admin', ?)
-        """,
-        (
-            revision_id,
-            resource_id,
-            provider_type,
-            provider_contract_version,
-            json.dumps(config, ensure_ascii=False, sort_keys=True),
-            content_hash,
-            verification_id,
-            timestamp,
-        ),
-    )
-    return revision_id
-
-
-def _published_test_loki_policy(
-    container: Container,
-    *,
-    code: str,
-    environment_id: str,
-    base_id: str,
-    resource_revision_id: str,
-) -> str:
-    timestamp = now_iso()
-    policy_id = f"loki_policy_{code}"
-    verification_id = f"loki_policy_verification_{code}_v1"
-    revision_id = f"loki_policy_revision_{code}_v1"
-    conditions = [{"key": "customer", "value": "local"}]
-    content_hash = snapshot_hash(
-        {
-            "resource_revision_id": resource_revision_id,
-            "conditions": conditions,
-        }
-    )
-    container.database.execute(
-        """
-        insert into loki_scope_policy
-          (id, code, environment_id, base_id, status, revision, created_by,
-           created_at, updated_at)
-        values (?, ?, ?, ?, 'enabled', 1, 'user_local_admin', ?, ?)
-        """,
-        (policy_id, code, environment_id, base_id, timestamp, timestamp),
-    )
-    container.database.execute(
-        """
-        insert into loki_scope_policy_verification
-          (id, policy_id, draft_revision, resource_revision_id, content_hash,
-           verifier_version, status, match_count, truncated,
-           zero_match_warning, result_summary_json, verified_by, verified_at)
-        values (?, ?, 1, ?, ?, 'test-fixture.v1', 'PASSED', 1, 0, 0, '{}',
-                'user_local_admin', ?)
-        """,
-        (
-            verification_id,
-            policy_id,
-            resource_revision_id,
-            content_hash,
-            timestamp,
-        ),
-    )
-    container.database.execute(
-        """
-        insert into loki_scope_policy_revision
-          (id, policy_id, revision, resource_revision_id, content_hash,
-           verification_id, status, health_status, published_by,
-           published_at)
-        values (?, ?, 1, ?, ?, ?, 'PUBLISHED', 'HEALTHY',
-                'user_local_admin', ?)
-        """,
-        (
-            revision_id,
-            policy_id,
-            resource_revision_id,
-            content_hash,
-            verification_id,
-            timestamp,
-        ),
-    )
-    container.database.execute(
-        """
-        insert into loki_scope_policy_revision_condition
-          (policy_revision_id, label_key, label_value, position)
-        values (?, 'customer', 'local', 0)
-        """,
-        (revision_id,),
-    )
-    return revision_id
-
-
 def activate_dingtalk_test_application(
-    container: Container,
+    runtime: Container,
     *,
     code: str,
     robot_code: str,
@@ -416,23 +151,11 @@ def activate_dingtalk_test_application(
     capabilities: tuple[str, ...] = (),
     additional_deliveries: tuple[dict[str, object], ...] = (),
     target_paths: tuple[dict[str, object], ...] = (),
-    builtin_tool_resources: dict[
-        str, tuple[dict[str, object], ...]
-    ] | None = None,
+    builtin_tool_resources: dict[str, tuple[dict[str, object], ...]] | None = None,
     agent_publication_id: str = "agent_publication_default_v1",
 ) -> dict[str, object]:
-    ensure_active_dingtalk_test_enterprise(container)
-    releases = _ensure_exact_builtin_tool_releases(
-        container,
-        capabilities,
-        agent_publication_id=agent_publication_id,
-    )
-    governed_capabilities = tuple(
-        capability
-        for capability in capabilities
-        if capability not in ToolRegistry.READONLY_TOOLS
-    )
-    resources_by_tool = builtin_tool_resources or {}
+    del capabilities, target_paths, builtin_tool_resources
+    ensure_active_dingtalk_test_enterprise(runtime)
     triggers: list[dict[str, object]] = [
         {
             "trigger_type": "dingtalk_private",
@@ -441,11 +164,7 @@ def activate_dingtalk_test_application(
             "actor_policy": "CURRENT_SENDER",
             "service_account_user_id": "",
             "enabled": True,
-            "config": {
-                "conversation_type": "private",
-                "require_mention": False,
-                "webhook_definition_id": "",
-            },
+            "config": {"conversation_type": "private", "require_mention": False},
         }
     ]
     triggers.extend(
@@ -456,86 +175,31 @@ def activate_dingtalk_test_application(
             "actor_policy": "CURRENT_SENDER",
             "service_account_user_id": "",
             "enabled": True,
-            "config": {
-                "conversation_type": "group",
-                "require_mention": True,
-                "webhook_definition_id": "",
-            },
+            "config": {"conversation_type": "group", "require_mention": True},
         }
         for conversation_id in group_conversation_ids
     )
-    application = container.business_application_service.create(
-        actor_id="user_local_admin",
+    return _install_immutable_application(
+        runtime,
         code=code,
-        name=f"{code} test application",
-        description="Explicit local route for ingress tests",
-        project_code="default",
-        owner_user_id="user_local_admin",
-    )
-    revision = container.business_application_service.save_draft(
-        actor_id="user_local_admin",
-        code=code,
-        expected_revision=int(application["revision"]),
-        payload={
-            "agent_publication_id": agent_publication_id,
-            "workflow_publication_id": "",
-            "session_policy": {
-                "conversation_mode": "channel",
-                "recent_message_limit": 20,
-                "retention_days": 30,
-                "continuous_conversation_enabled": True,
-                "attachments_enabled": attachments_enabled,
+        triggers=tuple(triggers),
+        deliveries=(
+            {
+                "delivery_type": "reply_original",
+                "connector_id": "connector-dingtalk-stream-default",
+                "enabled": True,
+                "config": {"target_reference": "", "reply_mode": "original"},
             },
-            "execution_policy": {
-                "max_turns": 12,
-                "timeout_seconds": 300,
-                "max_tool_calls": 30,
-            },
-            "triggers": triggers,
-            "deliveries": [
-                {
-                    "delivery_type": "reply_original",
-                    "connector_id": "connector-dingtalk-stream-default",
-                    "enabled": True,
-                    "config": {"target_reference": "", "reply_mode": "original"},
-                },
-                *additional_deliveries,
-            ],
-            "capabilities": [
-                {
-                    "capability_code": capability,
-                    "version_constraint": "*",
-                    "enabled": True,
-                }
-                for capability in governed_capabilities
-            ],
-            "target_paths": list(target_paths),
-            "builtin_tools": [
-                {
-                    "tool_release_id": releases[tool_identifier]["id"],
-                    "resources": list(resources_by_tool.get(tool_identifier, ())),
-                }
-                for tool_identifier in sorted(releases)
-            ],
-        },
+            *additional_deliveries,
+        ),
+        attachments_enabled=attachments_enabled,
+        continuous_conversation_enabled=True,
+        agent_publication_id=agent_publication_id,
     )
-    publication = container.business_application_service.publish(
-        actor_id="user_local_admin",
-        code=code,
-        revision_id=str(revision["id"]),
-    )
-    container.business_application_service.activate(
-        actor_id="user_local_admin",
-        code=code,
-        environment="local",
-        publication_id=str(publication["id"]),
-        expected_revision=0,
-    )
-    return publication
 
 
 def activate_webhook_test_application(
-    container: Container,
+    runtime: Container,
     *,
     code: str,
     webhook_definition_id: str,
@@ -548,402 +212,291 @@ def activate_webhook_test_application(
     base_code: str = "guanlan",
     workshop_code: str = "GL001",
 ) -> dict[str, object]:
-    application = container.business_application_service.create(
-        actor_id="user_local_admin",
+    del capabilities
+    publication = _install_immutable_application(
+        runtime,
         code=code,
-        name=f"{code} test application",
-        description="Strict Webhook Business Application test route",
-        project_code="default",
-        owner_user_id="user_local_admin",
-    )
-    revision = container.business_application_service.save_draft(
-        actor_id="user_local_admin",
-        code=code,
-        expected_revision=int(application["revision"]),
-        payload={
-            "agent_publication_id": "agent_publication_default_v1",
-            "workflow_publication_id": "",
-            "session_policy": {
-                "conversation_mode": "channel",
-                "recent_message_limit": 20,
-                "retention_days": 30,
-                "continuous_conversation_enabled": False,
-                "attachments_enabled": False,
+        triggers=(
+            {
+                "trigger_type": "webhook",
+                "connector_id": ingress_connector_id,
+                "routing_key": f"webhook:{webhook_definition_id}",
+                "actor_policy": "SERVICE_ACCOUNT",
+                "service_account_user_id": service_account_user_id,
+                "enabled": True,
+                "config": {
+                    "conversation_type": "event",
+                    "require_mention": False,
+                    "webhook_definition_id": webhook_definition_id,
+                },
             },
-            "execution_policy": {
-                "max_turns": 12,
-                "timeout_seconds": 300,
-                "max_tool_calls": 30,
+        ),
+        deliveries=(
+            {
+                "delivery_type": "dingtalk_group",
+                "connector_id": delivery_connector_id,
+                "enabled": True,
+                "config": {
+                    "target_reference": delivery_target_reference,
+                    "reply_mode": "fixed",
+                },
             },
-            "triggers": [
-                {
-                    "trigger_type": "webhook",
-                    "connector_id": ingress_connector_id,
-                    "routing_key": (
-                        f"webhook:{webhook_definition_id}"
-                    ),
-                    "actor_policy": "SERVICE_ACCOUNT",
-                    "service_account_user_id": (
-                        service_account_user_id
-                    ),
-                    "enabled": True,
-                    "config": {
-                        "conversation_type": "event",
-                        "require_mention": False,
-                        "webhook_definition_id": (
-                            webhook_definition_id
-                        ),
-                    },
-                }
-            ],
-            "deliveries": [
-                {
-                    "delivery_type": "dingtalk_group",
-                    "connector_id": delivery_connector_id,
-                    "enabled": True,
-                    "config": {
-                        "target_reference": (
-                            delivery_target_reference
-                        ),
-                        "reply_mode": "fixed",
-                    },
-                }
-            ],
-            "capabilities": [
-                {
-                    "capability_code": capability,
-                    "version_constraint": "*",
-                    "enabled": True,
-                }
-                for capability in capabilities
-            ],
-        },
+        ),
+        attachments_enabled=False,
+        continuous_conversation_enabled=False,
     )
-    publication = container.business_application_service.publish(
-        actor_id="user_local_admin",
+    _grant_application_scope(
+        runtime,
+        application_id=str(publication["application_id"]),
         code=code,
-        revision_id=str(revision["id"]),
+        user_id=service_account_user_id,
+        environment_code=environment_code,
+        base_code=base_code,
+        workshop_code=workshop_code,
     )
-    container.business_application_service.activate(
-        actor_id="user_local_admin",
-        code=code,
-        environment="local",
-        publication_id=str(publication["id"]),
-        expected_revision=0,
-    )
+    return publication
+
+
+def _install_immutable_application(
+    runtime: Container,
+    *,
+    code: str,
+    triggers: tuple[dict[str, object], ...],
+    deliveries: tuple[dict[str, object], ...],
+    attachments_enabled: bool,
+    continuous_conversation_enabled: bool,
+    agent_publication_id: str = "agent_publication_default_v1",
+) -> dict[str, object]:
+    """Write test-only immutable routing facts, mirroring code-owned bootstrap data."""
+
     timestamp = datetime.now(UTC).isoformat()
-    environment_id = f"environment-{code}"
-    base_id = f"base-{code}"
-    workshop_id = f"workshop-{code}"
-    container.database.execute(
+    key = hashlib.sha256(code.encode()).hexdigest()[:20]
+    application_id = f"test-application-{key}"
+    revision_id = f"test-application-revision-{key}"
+    publication_id = f"test-application-publication-{key}"
+    deployment_id = f"test-application-deployment-{key}"
+    agent_publication = runtime.agent_config_service.repository.get_publication(
+        agent_publication_id
+    )
+    agent_definition = runtime.database.execute_one(
+        "select code from agent_definition where id = ?",
+        (agent_publication["agent_id"],),
+    )
+    assert agent_definition is not None
+    normalized_triggers = [
+        {
+            **dict(trigger),
+            "routing_key": str(trigger["routing_key"]),
+            "normalized_routing_key": str(trigger["routing_key"]).strip().lower(),
+        }
+        for trigger in triggers
+    ]
+    snapshot: dict[str, Any] = {
+        "application": {
+            "id": application_id,
+            "code": code,
+            "project_code": "default",
+        },
+        "agent": {
+            "id": agent_publication_id,
+            "code": str(agent_definition["code"]),
+            "revision": int(agent_publication["revision"]),
+            "config_hash": str(agent_publication["config_hash"]),
+        },
+        "session_policy": {
+            "conversation_mode": "channel",
+            "recent_message_limit": 20,
+            "retention_days": 30,
+            "continuous_conversation_enabled": continuous_conversation_enabled,
+            "attachments_enabled": attachments_enabled,
+        },
+        "execution_policy": {
+            "max_turns": 12,
+            "timeout_seconds": 300,
+            "max_tool_calls": 30,
+        },
+        "triggers": normalized_triggers,
+        "deliveries": [dict(delivery) for delivery in deliveries],
+        "capabilities": [],
+    }
+    config_hash = snapshot_hash(snapshot)
+    runtime.database.execute(
+        """
+        insert into business_application
+          (id, code, name, description, project_code, owner_user_id, status,
+           revision, created_by, created_at, updated_at)
+        values (?, ?, ?, 'Immutable runtime fixture', 'default',
+                'user_local_admin', 'enabled', 1, 'test-bootstrap', ?, ?)
+        """,
+        (application_id, code, f"{code} test application", timestamp, timestamp),
+    )
+    runtime.database.execute(
+        """
+        insert into business_application_revision
+          (id, application_id, revision, status, agent_publication_id,
+           workflow_publication_id, session_policy_json, execution_policy_json,
+           validation_json, config_hash, created_by, created_at, updated_at)
+        values (?, ?, 1, 'published', ?, null, ?, ?,
+                '{"valid":true,"errors":[]}', ?, 'test-bootstrap', ?, ?)
+        """,
+        (
+            revision_id,
+            application_id,
+            agent_publication_id,
+            json.dumps(snapshot["session_policy"], sort_keys=True),
+            json.dumps(snapshot["execution_policy"], sort_keys=True),
+            config_hash,
+            timestamp,
+            timestamp,
+        ),
+    )
+    runtime.database.execute(
+        """
+        insert into business_application_publication
+          (id, application_id, revision_id, revision, schema_version,
+           snapshot_json, config_hash, published_by, published_at)
+        values (?, ?, ?, 1, 1, ?, ?, 'test-bootstrap', ?)
+        """,
+        (
+            publication_id,
+            application_id,
+            revision_id,
+            json.dumps(snapshot, ensure_ascii=False, sort_keys=True),
+            config_hash,
+            timestamp,
+        ),
+    )
+    runtime.database.execute(
+        """
+        insert into business_application_deployment
+          (id, application_id, environment, publication_id, active, revision,
+           activated_by, activated_at, updated_at)
+        values (?, ?, 'local', ?, 1, 1, 'test-bootstrap', ?, ?)
+        """,
+        (deployment_id, application_id, publication_id, timestamp, timestamp),
+    )
+    for index, trigger in enumerate(normalized_triggers):
+        runtime.database.execute(
+            """
+            insert into business_application_active_route
+              (id, deployment_id, application_id, publication_id, environment,
+               trigger_type, connector_id, normalized_routing_key, created_at)
+            values (?, ?, ?, ?, 'local', ?, ?, ?, ?)
+            """,
+            (
+                f"test-application-route-{key}-{index}",
+                deployment_id,
+                application_id,
+                publication_id,
+                trigger["trigger_type"],
+                trigger["connector_id"],
+                trigger["normalized_routing_key"],
+                timestamp,
+            ),
+        )
+    return {
+        "id": publication_id,
+        "application_id": application_id,
+        "revision_id": revision_id,
+        "revision": 1,
+        "schema_version": 1,
+        "snapshot": snapshot,
+        "config_hash": config_hash,
+    }
+
+
+def _grant_application_scope(
+    runtime: Container,
+    *,
+    application_id: str,
+    code: str,
+    user_id: str,
+    environment_code: str,
+    base_code: str,
+    workshop_code: str,
+) -> None:
+    timestamp = datetime.now(UTC).isoformat()
+    role_id = f"test-role-{code}"
+    membership_id = f"test-membership-{code}"
+    access_id = f"test-application-access-{code}"
+    environment_id = f"test-environment-{code}"
+    base_id = f"test-base-{code}"
+    workshop_id = f"test-workshop-{code}"
+    runtime.database.execute(
         """
         insert into platform_environment
           (id, code, display_name, status, created_at, updated_at)
         values (?, ?, ?, 'enabled', ?, ?)
         """,
-        (
-            environment_id,
-            environment_code,
-            environment_code,
-            timestamp,
-            timestamp,
-        ),
+        (environment_id, environment_code, environment_code, timestamp, timestamp),
     )
-    container.database.execute(
+    runtime.database.execute(
         """
         insert into platform_base
           (id, environment_id, code, display_name, engine, status,
            created_at, updated_at)
         values (?, ?, ?, ?, 'postgresql', 'enabled', ?, ?)
         """,
-        (
-            base_id,
-            environment_id,
-            base_code,
-            base_code,
-            timestamp,
-            timestamp,
-        ),
+        (base_id, environment_id, base_code, base_code, timestamp, timestamp),
     )
-    container.database.execute(
+    runtime.database.execute(
         """
         insert into platform_workshop
-          (id, base_id, code, display_name, status,
-           created_at, updated_at)
+          (id, base_id, code, display_name, status, created_at, updated_at)
         values (?, ?, ?, ?, 'enabled', ?, ?)
         """,
+        (workshop_id, base_id, workshop_code, workshop_code, timestamp, timestamp),
+    )
+    runtime.database.execute(
+        """
+        insert into rbac_role
+          (id, code, name, description, status, revision, origin, protected,
+           purpose_tags_json, metadata_revision, admin_revision,
+           business_revision, membership_revision, created_at, updated_at)
+        values (?, ?, ?, 'Immutable runtime fixture role', 'enabled', 1,
+                'custom', 0, '["runtime"]', 1, 1, 1, 1, ?, ?)
+        """,
+        (role_id, f"{code}-runtime", f"{code} runtime", timestamp, timestamp),
+    )
+    runtime.database.execute(
+        """
+        insert into rbac_user_role
+          (id, user_id, role_id, status, revision, assigned_by,
+           assignment_source, created_at, updated_at)
+        values (?, ?, ?, 'enabled', 1, 'test-bootstrap', 'bootstrap', ?, ?)
+        """,
+        (membership_id, user_id, role_id, timestamp, timestamp),
+    )
+    runtime.database.execute(
+        """
+        insert into rbac_role_application_access
+          (id, role_id, application_id, status, revision, created_at, updated_at)
+        values (?, ?, ?, 'enabled', 1, ?, ?)
+        """,
+        (access_id, role_id, application_id, timestamp, timestamp),
+    )
+    runtime.database.execute(
+        """
+        insert into rbac_role_application_scope
+          (id, application_access_id, environment_id, base_id, workshop_id,
+           scope_key, created_at)
+        values (?, ?, ?, ?, ?, ?, ?)
+        """,
         (
-            workshop_id,
+            f"test-application-scope-{code}",
+            access_id,
+            environment_id,
             base_id,
-            workshop_code,
-            workshop_code,
+            workshop_id,
+            f"{environment_code}/{base_code}/{workshop_code}",
             timestamp,
-            timestamp,
         ),
     )
-    grant_test_application_access(
-        container,
-        application_id=str(application["id"]),
-        role_code=f"{code}-runtime",
-        user_id=service_account_user_id,
-        capabilities=capabilities,
-        scopes=(
-            {
-                "environment_id": environment_id,
-                "base_id": base_id,
-                "workshop_id": workshop_id,
-            },
-        ),
-    )
-    return publication
-
-
-def grant_test_application_access(
-    container: Container,
-    *,
-    application_id: str,
-    role_code: str,
-    user_id: str = "user_local_admin",
-    capabilities: tuple[str, ...] = (),
-    scopes: tuple[dict[str, str], ...] = (),
-) -> dict[str, object]:
-    role = container.authorization_center_service.create_role(
-        actor_id="user_local_admin",
-        code=role_code,
-        name=role_code,
-        description="Explicit strict application-role authorization for tests",
-        purpose_tags=["业务运行"],
-    )["role"]
-    container.authorization_center_service.replace_business_access(
-        actor_id="user_local_admin",
-        role_id=str(role["id"]),
-        expected_revision=1,
-        applications=[
-            {
-                "application_id": application_id,
-                "capability_codes": list(capabilities),
-                "scopes": list(scopes),
-            }
-        ],
-        confirmed=True,
-        reason="自动化严格授权测试",
-    )
-    container.identity_repository.assign_role(
-        user_id=user_id,
-        role_id=str(role["id"]),
-        assigned_by="user_local_admin",
-    )
-    return role
-
-
-def prepare_debug_application_access(
-    container: Container,
-    *,
-    application_code: str,
-    role_code: str,
-    user_id: str = "user_local_admin",
-    capabilities: tuple[str, ...] = (),
-    additional_deliveries: tuple[dict[str, object], ...] = (),
-) -> dict[str, str]:
-    timestamp = datetime.now(UTC).isoformat()
-    environment_id = f"environment-{application_code}"
-    base_id = f"base-{application_code}"
-    container.database.execute(
-        """
-        insert into platform_environment
-          (id, code, display_name, status, created_at, updated_at)
-        values (?, 'local', '本地环境', 'enabled', ?, ?)
-        """,
-        (environment_id, timestamp, timestamp),
-    )
-    container.database.execute(
-        """
-        insert into platform_base
-          (id, environment_id, code, display_name, engine, status,
-           created_at, updated_at)
-        values (?, ?, 'debug-base', '调试基地', 'postgresql', 'enabled', ?, ?)
-        """,
-        (base_id, environment_id, timestamp, timestamp),
-    )
-    builtin_tool_resources: dict[
-        str, tuple[dict[str, object], ...]
-    ] = {}
-    database_tools = {
-        "get_schema_directory",
-        "query_database",
-    }.intersection(capabilities)
-    if database_tools:
-        database_revision_id = _published_test_resource(
-            container,
-            code=f"{application_code}-database",
-            resource_kind="database",
-            scope_type="base",
-            environment_id=environment_id,
-            base_id=base_id,
-        )
-        mapping = {
-            "resource_slot": "database",
-            "target_scope_type": "base",
-            "environment_code": "local",
-            "base_code": "debug-base",
-            "workshop_code": "",
-            "placement": "",
-            "resource_revision_id": database_revision_id,
-            "workshop_partition_policy_revision_id": "",
-            "loki_scope_policy_revision_id": "",
-        }
-        for tool_identifier in database_tools:
-            builtin_tool_resources[tool_identifier] = (dict(mapping),)
-    redis_tools = {
-        "query_redis_get",
-        "query_redis_scan",
-    }.intersection(capabilities)
-    if redis_tools:
-        redis_revision_id = _published_test_resource(
-            container,
-            code=f"{application_code}-redis",
-            resource_kind="redis",
-            scope_type="base",
-            environment_id=environment_id,
-            base_id=base_id,
-        )
-        mapping = {
-            "resource_slot": "redis",
-            "target_scope_type": "base",
-            "environment_code": "local",
-            "base_code": "debug-base",
-            "workshop_code": "",
-            "placement": "",
-            "resource_revision_id": redis_revision_id,
-            "workshop_partition_policy_revision_id": "",
-            "loki_scope_policy_revision_id": "",
-        }
-        for tool_identifier in redis_tools:
-            builtin_tool_resources[tool_identifier] = (dict(mapping),)
-    loki_tools = {
-        "diagnose_loki_labels",
-        "diagnose_loki_label_values",
-        "diagnose_loki_probe",
-        "query_loki",
-    }.intersection(capabilities)
-    if loki_tools:
-        loki_revision_id = _published_test_resource(
-            container,
-            code=f"{application_code}-loki",
-            resource_kind="loki",
-            scope_type="environment",
-            environment_id=environment_id,
-        )
-        loki_policy_revision_id = _published_test_loki_policy(
-            container,
-            code=f"{application_code}-loki",
-            environment_id=environment_id,
-            base_id=base_id,
-            resource_revision_id=loki_revision_id,
-        )
-        mapping = {
-            "resource_slot": "loki",
-            "target_scope_type": "base",
-            "environment_code": "local",
-            "base_code": "debug-base",
-            "workshop_code": "",
-            "placement": "",
-            "resource_revision_id": loki_revision_id,
-            "workshop_partition_policy_revision_id": "",
-            "loki_scope_policy_revision_id": loki_policy_revision_id,
-        }
-        for tool_identifier in loki_tools:
-            builtin_tool_resources[tool_identifier] = (dict(mapping),)
-    publication = activate_dingtalk_test_application(
-        container,
-        code=application_code,
-        robot_code=f"robot-{application_code}",
-        capabilities=capabilities,
-        additional_deliveries=additional_deliveries,
-        target_paths=(
-            {
-                "target_scope_type": "base",
-                "environment_code": "local",
-                "base_code": "debug-base",
-                "workshop_code": "",
-            },
-        ),
-        builtin_tool_resources=builtin_tool_resources,
-    )
-    application = container.business_application_repository.get_by_code(
-        application_code
-    )
-    role = container.authorization_center_service.create_role(
-        actor_id="user_local_admin",
-        code=role_code,
-        name=role_code,
-        description="Debug API integration test role",
-        purpose_tags=["业务诊断"],
-    )["role"]
-    container.authorization_center_service.replace_admin_capabilities(
-        actor_id="user_local_admin",
-        role_id=str(role["id"]),
-        expected_revision=1,
-        bindings=[
-            {
-                "capability_code": "agent.debug.execute",
-                "resource_code": "*",
-            }
-        ],
-        confirmed=True,
-        reason="Debug API integration test",
-    )
-    container.authorization_center_service.replace_business_access(
-        actor_id="user_local_admin",
-        role_id=str(role["id"]),
-        expected_revision=1,
-        applications=[
-            {
-                "application_id": str(application["id"]),
-                "capability_codes": list(capabilities),
-                "scopes": [
-                    {
-                        "environment_id": environment_id,
-                        "base_id": base_id,
-                    }
-                ],
-            }
-        ],
-        confirmed=True,
-        reason="Debug API integration test",
-    )
-    container.identity_repository.assign_role(
-        user_id=user_id,
-        role_id=str(role["id"]),
-        assigned_by="user_local_admin",
-    )
-    options = container.debug_job_access_service.available_options(
-        user_id=user_id,
-        environment="local",
-    )
-    option = next(
-        item
-        for item in options["applications"]
-        if str(item["id"]) == str(application["id"])
-    )
-    return {
-        "application_id": str(application["id"]),
-        "publication_id": str(publication["id"]),
-        "execution_scope_id": str(option["execution_scopes"][0]["id"]),
-        "environment_id": environment_id,
-        "base_id": base_id,
-        "delivery_binding_id": str(
-            option["delivery_bindings"][0]["binding_id"]
-            if option["delivery_bindings"]
-            else ""
-        ),
-    }
 
 
 def dingtalk_sign(secret: str, timestamp: str) -> str:
-    string_to_sign = f"{timestamp}\n{secret}".encode("utf-8")
-    digest = hmac.new(secret.encode("utf-8"), string_to_sign, hashlib.sha256).digest()
-    return base64.b64encode(digest).decode("utf-8")
+    digest = hmac.new(secret.encode(), timestamp.encode(), hashlib.sha256).digest()
+    return base64.b64encode(digest).decode()
 
 
 def dingtalk_payload(

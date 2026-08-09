@@ -3,6 +3,8 @@ import {
   ArrowLeftIcon,
   MessagesSquareIcon,
   RefreshCwIcon,
+  ServerIcon,
+  TruckIcon,
 } from "lucide-react"
 import { Link, useParams } from "react-router-dom"
 
@@ -19,98 +21,60 @@ import type {
   DeliveryAttempt,
   DeliveryChunk,
   DeliveryEvent,
+  McpToolCall,
   RuntimeJob,
 } from "@/contexts/operations/domain/runtime-record"
-import { ApplicationState } from "@/contexts/applications/presentation/application-state"
+import { ApiError } from "@/shared/api/api-client"
 
 export function RuntimeRecordsPage() {
   const query = useRuntimeJobs()
   return (
-    <div className="mx-auto w-full max-w-[1500px] space-y-5 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
+    <PageFrame>
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 text-xs font-medium text-indigo-700">
             <ActivityIcon className="size-4" aria-hidden="true" />
-            运行中心
+            本人历史
           </div>
-          <h1 className="mt-2 text-2xl font-semibold">Agent 运行记录</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            展示任务固定的业务应用、发布版本、部署与路由
-            归因；历史记录不会按当前配置猜测回填。
+          <h1 className="mt-2 text-2xl font-semibold">Agent Job</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            只展示当前系统用户自己的任务、MCP 调用与结果投递状态。
           </p>
         </div>
-        <Button
-          variant="outline"
-          onClick={() => void query.refetch()}
-          disabled={query.isFetching}
-        >
-          <RefreshCwIcon
-            className={query.isFetching ? "animate-spin" : ""}
-            aria-hidden="true"
-          />
+        <Button variant="outline" onClick={() => void query.refetch()} disabled={query.isFetching}>
+          <RefreshCwIcon className={query.isFetching ? "animate-spin" : ""} />
           刷新
         </Button>
       </header>
       {query.isLoading ? <Skeleton className="h-72 w-full" /> : null}
-      {query.isError ? (
-        <ApplicationState
-          error={query.error}
-          retry={() => void query.refetch()}
-        />
-      ) : null}
+      <ErrorState error={query.error} retry={() => void query.refetch()} />
       {query.data ? (
         <Card className="shadow-none">
-          <CardContent className="p-0">
-            <div className="divide-y">
-              {query.data.map((job) => (
-                <JobRow key={job.id} job={job} />
-              ))}
-              {!query.data.length ? (
-                <p className="p-8 text-center text-sm text-muted-foreground">
-                  当前时间窗口没有任务。
-                </p>
-              ) : null}
-            </div>
+          <CardContent className="divide-y p-0">
+            {query.data.map((job) => <JobRow key={job.id} job={job} />)}
+            {!query.data.length ? (
+              <p className="p-8 text-center text-sm text-muted-foreground">暂无本人任务。</p>
+            ) : null}
           </CardContent>
         </Card>
       ) : null}
-    </div>
+    </PageFrame>
   )
 }
 
 function JobRow({ job }: { job: RuntimeJob }) {
-  const attributed = Boolean(job.business_application_id)
   return (
-    <article className="grid gap-3 p-4 text-sm lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] lg:items-center">
+    <article className="grid gap-3 p-4 text-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
       <div className="min-w-0">
-        <Link
-          to={`/operations/jobs/${encodeURIComponent(job.id)}`}
-          className="font-mono text-xs font-medium hover:underline"
-        >
+        <Link to={`/operations/jobs/${encodeURIComponent(job.id)}`} className="font-mono text-xs font-medium hover:underline">
           {job.id}
         </Link>
         <p className="mt-1 text-xs text-muted-foreground">
-          {job.source_channel} · {job.agent_code} · {formatDate(job.created_at)}
+          {job.source_channel || "unknown"} · {job.agent_code} · {formatDate(job.created_at)}
         </p>
+        {job.correlation_id ? <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{job.correlation_id}</p> : null}
       </div>
-      <div className="min-w-0">
-        <p className="font-medium">
-          {attributed
-            ? job.business_application_code
-            : "历史兼容任务（无业务应用归因）"}
-        </p>
-        <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
-          {attributed
-            ? job.business_application_publication_id
-            : "legacy_unattributed"}
-        </p>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <Badge variant="secondary">{jobStatusLabel(job.status)}</Badge>
-        <Badge variant="outline">
-          {runtimeStatusLabel(job.business_application_runtime_status)}
-        </Badge>
-      </div>
+      <Badge variant="secondary">{jobStatusLabel(job.status)}</Badge>
     </article>
   )
 }
@@ -119,96 +83,42 @@ export function RuntimeJobDetailPage() {
   const jobId = useParams().jobId ?? ""
   const query = useRuntimeJob(jobId)
   if (query.isLoading) return <PageSkeleton />
-  if (query.isError || !query.data) {
-    return (
-      <PageFrame>
-        <ApplicationState
-          error={query.error}
-          retry={() => void query.refetch()}
-        />
-      </PageFrame>
-    )
-  }
-  const job = query.data.job
+  if (query.isError || !query.data) return <PageFrame><PageBack /><ErrorState error={query.error} retry={() => void query.refetch()} /></PageFrame>
+  const { job } = query.data
   return (
     <PageFrame>
       <PageBack />
-      <h1 className="text-2xl font-semibold">任务运行归因</h1>
-      <p className="mt-1 font-mono text-xs text-muted-foreground">{job.id}</p>
-      <div className="mt-5 grid gap-4 xl:grid-cols-2">
-        <FactCard
-          title="固定版本"
-          rows={[
-            [
-              "业务应用",
-              job.business_application_code || "legacy_unattributed",
-            ],
-            ["业务应用 ID", job.business_application_id || "未归因"],
-            ["发布版本", job.business_application_publication_id || "未归因"],
-            ["部署 ID", job.business_application_deployment_id || "未归因"],
-            ["路由 ID", job.business_application_route_id || "未归因"],
-            [
-              "运行状态",
-              runtimeStatusLabel(job.business_application_runtime_status),
-            ],
-          ]}
-        />
-        <FactCard
-          title="执行关联"
-          rows={[
-            ["状态", jobStatusLabel(job.status)],
-            ["Agent", job.agent_code],
-            ["关联 ID", job.correlation_id || "无"],
-            ["来源", job.source_channel],
-            ["连接器", sourceConnectorLabel(job)],
-            ["创建时间", formatDate(job.created_at)],
-          ]}
-        />
-        <FactCard
-          title="固定执行策略"
-          rows={[
-            ["结构版本", `v${job.execution_policy.schema_version}`],
-            ["请求限制", policyText(job.execution_policy.requested)],
-            ["实际限制", policyText(job.execution_policy.effective)],
-            [
-              "Agent 发布版本",
-              job.execution_policy.sources.agent_publication_id || "运行时默认",
-            ],
-            ["实际工具调用", String(job.tool_call_count)],
-            [
-              "策略耗尽",
-              job.execution_policy_exhausted
-                ? `是（${job.last_error_code}）`
-                : "否",
-            ],
-          ]}
-        />
+      <h1 className="text-2xl font-semibold">Job 运行证据</h1>
+      <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{job.id}</p>
+      <div className="mt-5 grid gap-4 lg:grid-cols-2">
+        <FactCard title="执行" rows={[
+          ["状态", jobStatusLabel(job.status)],
+          ["Agent", job.agent_code],
+          ["来源", job.source_channel || "—"],
+          ["关联 ID", job.correlation_id || "—"],
+          ["创建", formatDate(job.created_at)],
+          ["结束", formatDate(job.finished_at)],
+        ]} />
+        <FactCard title="边界" rows={[
+          ["MCP Tool 调用数", String(query.data.mcp_tool_calls.length)],
+          ["执行策略调用计数", String(job.tool_call_count)],
+          ["策略耗尽", job.execution_policy_exhausted ? "是" : "否"],
+          ["错误分类", job.last_error_code || "—"],
+          ["安全错误摘要", job.error_summary || "—"],
+        ]} />
       </div>
-      <ExecutionEvidenceTimeline
-        job={job}
-        dispatch={query.data.dispatch}
-        steps={query.data.steps}
-        toolCalls={query.data.tool_calls}
-      />
+      <McpTimeline calls={query.data.mcp_tool_calls} />
+      <StepTimeline steps={query.data.steps} dispatch={query.data.dispatch} />
       <DeliveryTimeline
-        jobStatus={job.status}
         events={query.data.deliveries.events}
         attempts={query.data.deliveries.attempts}
         chunks={query.data.deliveries.chunks}
       />
-      <Card className="mt-4 shadow-none">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <MessagesSquareIcon className="size-4" aria-hidden="true" />
-            会话
-          </CardTitle>
-        </CardHeader>
+      <Card className="shadow-none">
+        <CardHeader><CardTitle className="flex items-center gap-2"><MessagesSquareIcon className="size-4" />会话</CardTitle></CardHeader>
         <CardContent>
-          <Link
-            className={buttonVariants({ variant: "outline" })}
-            to={`/operations/conversations/${encodeURIComponent(job.session_id)}`}
-          >
-            查看会话与同会话任务
+          <Link className={buttonVariants({ variant: "outline" })} to={`/operations/conversations/${encodeURIComponent(job.session_id)}`}>
+            查看本人会话
           </Link>
         </CardContent>
       </Card>
@@ -216,267 +126,70 @@ export function RuntimeJobDetailPage() {
   )
 }
 
-function ExecutionEvidenceTimeline({
-  job,
-  dispatch,
-  steps,
-  toolCalls,
-}: {
-  job: RuntimeJob
-  dispatch: Record<string, unknown> | null | undefined
-  steps: Array<Record<string, unknown>>
-  toolCalls: Array<Record<string, unknown>>
-}) {
-  return (
-    <div className="mt-4 grid gap-4 xl:grid-cols-3">
-      <Card className="shadow-none">
-        <CardHeader>
-          <CardTitle>Agent 时间线</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ol className="space-y-3" aria-label="Agent 执行时间线">
-            <TimelineItem label="Job 创建" value={formatDate(job.created_at)} />
-            {job.started_at ? (
-              <TimelineItem
-                label="开始执行"
-                value={formatDate(job.started_at)}
-              />
-            ) : null}
-            {steps.map((step, index) => (
-              <TimelineItem
-                key={String(step.id ?? index)}
-                label={String(step.title ?? step.step_type ?? "执行步骤")}
-                value={String(step.content ?? "")}
-              />
-            ))}
-            {job.finished_at ? (
-              <TimelineItem
-                label="执行结束"
-                value={formatDate(job.finished_at)}
-              />
-            ) : null}
-          </ol>
-        </CardContent>
-      </Card>
-      <Card className="shadow-none">
-        <CardHeader>
-          <CardTitle>Dispatch 时间线</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {dispatch ? (
-            <dl className="grid gap-2 text-sm sm:grid-cols-[7rem_1fr]">
-              <dt className="text-muted-foreground">状态</dt>
-              <dd>{String(dispatch.status ?? "")}</dd>
-              <dt className="text-muted-foreground">尝试</dt>
-              <dd>
-                {String(dispatch.attempt_count ?? 0)} /{" "}
-                {String(dispatch.max_attempts ?? 0)}
-              </dd>
-              <dt className="text-muted-foreground">重放</dt>
-              <dd>{String(dispatch.replay_count ?? 0)}</dd>
-              <dt className="text-muted-foreground">下次处理</dt>
-              <dd>{formatDate(String(dispatch.next_attempt_at ?? ""))}</dd>
-              {dispatch.last_error_code || dispatch.last_error_summary ? (
-                <>
-                  <dt className="text-muted-foreground">安全错误</dt>
-                  <dd className="break-all text-destructive">
-                    {[dispatch.last_error_code, dispatch.last_error_summary]
-                      .filter(Boolean)
-                      .map(String)
-                      .join(" · ")}
-                  </dd>
-                </>
-              ) : null}
-            </dl>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              尚未找到 Job Dispatch Outbox 事件。
-            </p>
-          )}
-        </CardContent>
-      </Card>
-      <Card className="shadow-none">
-        <CardHeader>
-          <CardTitle>Tool Call 时间线</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {toolCalls.length ? (
-            <ol className="space-y-3" aria-label="工具调用时间线">
-              {toolCalls.map((toolCall, index) => (
-                <TimelineItem
-                  key={String(toolCall.id ?? index)}
-                  label={`${String(toolCall.tool_name ?? "tool")} · ${String(toolCall.status ?? "")}`}
-                  value={String(toolCall.response_summary ?? "")}
-                />
-              ))}
-            </ol>
-          ) : (
-            <p className="text-sm text-muted-foreground">尚无工具调用。</p>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  )
-}
-
-function TimelineItem({ label, value }: { label: string; value: string }) {
-  return (
-    <li className="border-l-2 pl-3">
-      <p className="text-sm font-medium">{label}</p>
-      <p className="mt-1 line-clamp-4 text-xs whitespace-pre-wrap text-muted-foreground">
-        {value || "无摘要"}
-      </p>
-    </li>
-  )
-}
-
-function DeliveryTimeline({
-  jobStatus,
-  events,
-  attempts,
-  chunks,
-}: {
-  jobStatus: string
-  events: DeliveryEvent[]
-  attempts: DeliveryAttempt[]
-  chunks: DeliveryChunk[]
-}) {
-  const jobFinished = ["SUCCEEDED", "FAILED", "TIMEOUT"].includes(jobStatus)
+function McpTimeline({ calls }: { calls: McpToolCall[] }) {
   return (
     <Card className="mt-4 shadow-none">
       <CardHeader>
-        <CardTitle>投递时间线</CardTitle>
-        <p className="text-sm text-muted-foreground">
-          Agent 执行与结果投递是两个独立状态；只有投递状态为 SUCCEEDED
-          才表示已送达。
-        </p>
+        <CardTitle className="flex items-center gap-2"><ServerIcon className="size-4" />MCP Tool Call</CardTitle>
+        <p className="text-sm text-muted-foreground">只展示脱敏摘要、固定版本和哈希，不展示 Token、连接信息或原始响应。</p>
       </CardHeader>
-      <CardContent>
-        {events.length ? (
-          <ol className="space-y-4" aria-label="投递事件时间线">
-            {events.map((event) => {
-              const eventAttempts = attempts.filter(
-                (attempt) => attempt.delivery_outbox_id === event.id
-              )
-              return (
-                <li key={event.id} className="rounded-lg border p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="font-mono text-xs break-all">{event.id}</p>
-                      <p className="mt-1 text-sm font-medium">
-                        {deliveryOutcomeText(jobStatus, event.status)}
-                      </p>
-                    </div>
-                    <Badge variant={deliveryBadgeVariant(event.status)}>
-                      {deliveryStatusLabel(event.status)}
-                    </Badge>
-                  </div>
-                  <dl className="mt-4 grid gap-2 text-xs sm:grid-cols-[minmax(7rem,9rem)_minmax(0,1fr)]">
-                    <dt className="text-muted-foreground">路由</dt>
-                    <dd className="break-all">
-                      {event.route_type}
-                      {event.connector_id ? ` · ${event.connector_id}` : ""}
-                    </dd>
-                    <dt className="text-muted-foreground">尝试次数</dt>
-                    <dd>
-                      {event.attempt_count} / {event.max_attempts}
-                    </dd>
-                    <dt className="text-muted-foreground">重放次数</dt>
-                    <dd>
-                      {event.replay_count} / {event.max_replay_count}
-                    </dd>
-                    {["PENDING", "RETRY_WAIT"].includes(event.status) ? (
-                      <>
-                        <dt className="text-muted-foreground">下次处理</dt>
-                        <dd>{formatDate(event.next_attempt_at)}</dd>
-                      </>
-                    ) : null}
-                    {event.last_error_code || event.last_error_summary ? (
-                      <>
-                        <dt className="text-muted-foreground">安全错误</dt>
-                        <dd className="break-all text-destructive">
-                          {[event.last_error_code, event.last_error_summary]
-                            .filter(Boolean)
-                            .join(" · ")}
-                        </dd>
-                      </>
-                    ) : null}
-                  </dl>
-                  <AttemptTimeline attempts={eventAttempts} chunks={chunks} />
-                </li>
-              )
-            })}
-          </ol>
-        ) : (
-          <p className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">
-            {jobFinished
-              ? "任务已结束，但缺少对应的投递事件；请检查事务与 Dispatcher。"
-              : "Agent 尚未结束，暂未生成投递事件。"}
-          </p>
-        )}
+      <CardContent className="space-y-3">
+        {calls.map((call) => (
+          <article key={call.id} className="rounded-lg border p-4 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline">{call.mcp_server_code}@{call.server_version}</Badge>
+              <span className="font-mono text-xs font-medium">{call.tool_name}</span>
+              <Badge variant={call.status === "SUCCEEDED" ? "secondary" : "destructive"}>{call.status}</Badge>
+            </div>
+            <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2 xl:grid-cols-3">
+              <Fact label="Tool Schema Hash" value={call.tool_schema_hash} mono />
+              <Fact label="Resource Revision" value={call.resource_revision_id || "不适用"} mono />
+              <Fact label="Credential Revision" value={call.credential_revision ? `r${call.credential_revision}` : "不适用"} />
+              <Fact label="Subject Snapshot" value={call.subject_snapshot_id || "不适用"} mono />
+              <Fact label="Result Hash / Size" value={`${call.result_hash || "—"} / ${call.result_size} B`} mono />
+              <Fact label="耗时 / Correlation" value={`${call.duration_ms} ms / ${call.correlation_id}`} mono />
+            </dl>
+            <details className="mt-3 rounded border bg-muted/20 px-3 py-2">
+              <summary className="cursor-pointer text-xs font-medium">脱敏请求摘要与 attempts</summary>
+              <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs text-muted-foreground">{JSON.stringify({ request_summary: call.request_summary, attempts: call.attempts }, null, 2)}</pre>
+            </details>
+          </article>
+        ))}
+        {!calls.length ? <p className="text-sm text-muted-foreground">此 Job 没有 MCP Tool Call。</p> : null}
       </CardContent>
     </Card>
   )
 }
 
-function AttemptTimeline({
-  attempts,
-  chunks,
-}: {
-  attempts: DeliveryAttempt[]
-  chunks: DeliveryChunk[]
-}) {
-  if (!attempts.length) {
-    return (
-      <p className="mt-4 border-t pt-3 text-xs text-muted-foreground">
-        尚无投递尝试。
-      </p>
-    )
-  }
+function StepTimeline({ steps, dispatch }: { steps: Array<Record<string, unknown>>; dispatch: Record<string, unknown> | null }) {
   return (
-    <ol className="mt-4 space-y-3 border-t pt-3" aria-label="投递尝试时间线">
-      {attempts.map((attempt) => {
-        const attemptChunks = chunks.filter(
-          (chunk) => chunk.attempt_id === attempt.id
-        )
-        return (
-          <li key={attempt.id} className="text-xs">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-medium">
-                {attempt.replay_no
-                  ? `重放 ${attempt.replay_no} · 尝试 ${attempt.attempt_no}`
-                  : `尝试 ${attempt.attempt_no}`}
-              </span>
-              <Badge variant={deliveryBadgeVariant(attempt.status)}>
-                {deliveryAttemptStatusLabel(attempt.status)}
-              </Badge>
-              <span className="text-muted-foreground">
-                {formatDate(attempt.created_at)}
-              </span>
-            </div>
-            {attempt.error_code || attempt.error_message ? (
-              <p className="mt-1 break-all text-destructive">
-                {[attempt.error_code, attempt.error_message]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </p>
-            ) : null}
-            {attemptChunks.length ? (
-              <ul className="mt-2 flex flex-wrap gap-2" aria-label="投递分片">
-                {attemptChunks.map((chunk) => (
-                  <li key={chunk.id}>
-                    <Badge variant={deliveryBadgeVariant(chunk.status)}>
-                      分片 {chunk.chunk_index + 1}/{chunk.chunk_count} ·{" "}
-                      {deliveryChunkStatusLabel(chunk.status)}
-                    </Badge>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </li>
-        )
-      })}
-    </ol>
+    <div className="my-4 grid gap-4 lg:grid-cols-2">
+      <Card className="shadow-none"><CardHeader><CardTitle>执行步骤</CardTitle></CardHeader><CardContent>
+        {steps.length ? <ol className="space-y-3">{steps.map((step, index) => <TimelineItem key={String(step.id ?? index)} label={String(step.title ?? step.step_type ?? "步骤")} value={String(step.content ?? "")} />)}</ol> : <p className="text-sm text-muted-foreground">暂无步骤。</p>}
+      </CardContent></Card>
+      <Card className="shadow-none"><CardHeader><CardTitle>Dispatch</CardTitle></CardHeader><CardContent>
+        {dispatch ? <pre className="overflow-x-auto whitespace-pre-wrap text-xs text-muted-foreground">{JSON.stringify(dispatch, null, 2)}</pre> : <p className="text-sm text-muted-foreground">暂无 Dispatch 记录。</p>}
+      </CardContent></Card>
+    </div>
+  )
+}
+
+function DeliveryTimeline({ events, attempts, chunks }: { events: DeliveryEvent[]; attempts: DeliveryAttempt[]; chunks: DeliveryChunk[] }) {
+  return (
+    <Card className="mb-4 shadow-none">
+      <CardHeader><CardTitle className="flex items-center gap-2"><TruckIcon className="size-4" />投递</CardTitle></CardHeader>
+      <CardContent className="space-y-3">
+        {events.map((event) => (
+          <article key={event.id} className="rounded-lg border p-4 text-sm">
+            <div className="flex flex-wrap gap-2"><Badge variant="outline">{event.route_type}</Badge><Badge variant="secondary">{event.status}</Badge></div>
+            <p className="mt-2 text-xs text-muted-foreground">尝试 {event.attempt_count} · 创建 {formatDate(event.created_at)}</p>
+            {event.last_error_code ? <p className="mt-2 text-xs text-destructive">{event.last_error_code} · {event.last_error_summary}</p> : null}
+            <p className="mt-2 text-xs text-muted-foreground">attempts {attempts.filter((item) => item.delivery_outbox_id === event.id).length} · chunks {chunks.filter((item) => item.delivery_outbox_id === event.id).length}</p>
+          </article>
+        ))}
+        {!events.length ? <p className="text-sm text-muted-foreground">此 Job 没有投递事件。</p> : null}
+      </CardContent>
+    </Card>
   )
 }
 
@@ -484,279 +197,60 @@ export function ConversationDetailPage() {
   const sessionId = useParams().sessionId ?? ""
   const query = useConversation(sessionId)
   if (query.isLoading) return <PageSkeleton />
-  if (query.isError || !query.data) {
-    return (
-      <PageFrame>
-        <ApplicationState
-          error={query.error}
-          retry={() => void query.refetch()}
-        />
-      </PageFrame>
-    )
-  }
-  const session = query.data.session
+  if (query.isError || !query.data) return <PageFrame><PageBack /><ErrorState error={query.error} retry={() => void query.refetch()} /></PageFrame>
   return (
     <PageFrame>
       <PageBack />
-      <header className="min-w-0">
-        <h1 className="text-2xl font-semibold">会话归因</h1>
-        <p className="mt-1 font-mono text-xs break-all text-muted-foreground">
-          {session.id}
-        </p>
-      </header>
-      <div className="mt-5 grid gap-4 2xl:grid-cols-[minmax(18rem,0.72fr)_minmax(0,1.28fr)] 2xl:items-start">
-        <FactCard
-          title="会话策略"
-          rows={[
-            ["业务应用", session.business_application_code || "legacy"],
-            ["业务应用 ID", session.business_application_id || "未归因"],
-            ["会话模式", conversationModeLabel(session.conversation_mode)],
-            [
-              "最近消息上限",
-              String(session.recent_message_limit ?? "使用兼容默认值"),
-            ],
-            ["来源", session.source_channel],
-            ["请求人", session.requester_id],
-          ]}
-        />
-        <Card className="min-w-0 overflow-hidden shadow-none">
-          <CardHeader className="flex flex-row items-center justify-between gap-3">
-            <CardTitle>会话内任务</CardTitle>
-            <Badge variant="secondary">{query.data.jobs.length} 个</Badge>
-          </CardHeader>
-          <CardContent className="p-0">
-            {query.data.jobs.length ? (
-              <ul className="divide-y" aria-label="会话内任务列表">
-                {query.data.jobs.map((job) => (
-                  <li key={job.id}>
-                    <ConversationJobRow job={job} />
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="px-5 py-10 text-center text-sm text-muted-foreground">
-                当前会话还没有任务。
-              </p>
-            )}
-          </CardContent>
-        </Card>
+      <h1 className="text-2xl font-semibold">本人会话</h1>
+      <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{query.data.session.id}</p>
+      <div className="mt-5 grid gap-4 lg:grid-cols-2">
+        <Card className="shadow-none"><CardHeader><CardTitle>消息</CardTitle></CardHeader><CardContent className="space-y-3">
+          {query.data.messages.map((message, index) => <article key={String(message.id ?? index)} className="rounded-lg border p-3 text-sm"><p className="text-xs font-medium text-muted-foreground">{String(message.role ?? message.message_type ?? "message")}</p><p className="mt-1 whitespace-pre-wrap">{String(message.content ?? message.content_text ?? "")}</p></article>)}
+          {!query.data.messages.length ? <p className="text-sm text-muted-foreground">暂无消息。</p> : null}
+        </CardContent></Card>
+        <Card className="shadow-none"><CardHeader><CardTitle>同会话 Job</CardTitle></CardHeader><CardContent className="space-y-3">
+          {query.data.jobs.map((job) => <JobRow key={job.id} job={job} />)}
+        </CardContent></Card>
       </div>
     </PageFrame>
   )
 }
 
-function ConversationJobRow({ job }: { job: RuntimeJob }) {
-  const attributed = Boolean(job.business_application_id)
-  return (
-    <article className="min-w-0 px-5 py-4 text-sm">
-      <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <Link
-            to={`/operations/jobs/${encodeURIComponent(job.id)}`}
-            title={job.id}
-            className="block truncate font-mono text-xs font-medium hover:underline"
-          >
-            {job.id}
-          </Link>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {job.source_channel} · {job.agent_code} ·{" "}
-            {formatDate(job.created_at)}
-          </p>
-        </div>
-        <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
-          <Badge variant="secondary">{jobStatusLabel(job.status)}</Badge>
-          <Badge variant="outline">
-            {runtimeStatusLabel(job.business_application_runtime_status)}
-          </Badge>
-        </div>
-      </div>
-      <dl className="mt-3 grid min-w-0 gap-2 border-t pt-3 text-xs sm:grid-cols-[minmax(7rem,9rem)_minmax(0,1fr)]">
-        <dt className="text-muted-foreground">业务应用</dt>
-        <dd className="min-w-0 font-medium break-all">
-          {attributed
-            ? job.business_application_code
-            : "历史兼容任务（无业务应用归因）"}
-        </dd>
-        <dt className="text-muted-foreground">发布版本</dt>
-        <dd className="min-w-0 font-mono break-all text-muted-foreground">
-          {attributed
-            ? job.business_application_publication_id
-            : "legacy_unattributed"}
-        </dd>
-      </dl>
-    </article>
-  )
+function FactCard({ title, rows }: { title: string; rows: Array<[string, string]> }) {
+  return <Card className="shadow-none"><CardHeader><CardTitle>{title}</CardTitle></CardHeader><CardContent><dl className="grid gap-3 text-sm sm:grid-cols-[9rem_1fr]">{rows.map(([label, value]) => <div key={label} className="contents"><dt className="text-muted-foreground">{label}</dt><dd className="break-all">{value}</dd></div>)}</dl></CardContent></Card>
 }
 
-function FactCard({
-  title,
-  rows,
-}: {
-  title: string
-  rows: Array<[string, string]>
-}) {
-  return (
-    <Card className="shadow-none">
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <dl className="space-y-3 text-sm">
-          {rows.map(([label, value]) => (
-            <div
-              key={label}
-              className="grid min-w-0 gap-1 sm:grid-cols-[minmax(7rem,9rem)_minmax(0,1fr)]"
-            >
-              <dt className="text-muted-foreground">{label}</dt>
-              <dd className="min-w-0 font-medium break-all">{value}</dd>
-            </div>
-          ))}
-        </dl>
-      </CardContent>
-    </Card>
-  )
+function Fact({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  return <div><dt className="text-muted-foreground">{label}</dt><dd className={`mt-0.5 break-all ${mono ? "font-mono" : ""}`}>{value}</dd></div>
 }
 
-const jobStatusLabels: Record<string, string> = {
-  WAITING_INPUT: "等待输入",
-  PENDING: "等待执行",
-  RUNNING: "执行中",
-  RETRY_WAIT: "等待重试",
-  SUCCEEDED: "已成功",
-  FAILED: "已失败",
-  TIMEOUT: "已超时",
+function TimelineItem({ label, value }: { label: string; value: string }) {
+  return <li className="border-l-2 pl-3"><p className="text-sm font-medium">{label}</p><p className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground">{value || "无摘要"}</p></li>
 }
 
-const runtimeStatusLabels: Record<string, string> = {
-  not_wired: "未接管",
-  partially_wired: "部分接管",
-  wired: "已接管",
-  blocked: "已阻塞",
-  legacy_unattributed: "旧版记录（未归因）",
-}
-
-const conversationModeLabels: Record<string, string> = {
-  channel: "按渠道会话",
-  actor: "按当前主体",
-  application: "按业务应用",
-  legacy: "旧版兼容模式",
-}
-
-const deliveryStatusLabels: Record<string, string> = {
-  PENDING: "投递待处理",
-  RUNNING: "投递中",
-  RETRY_WAIT: "投递等待重试",
-  SUCCEEDED: "已送达",
-  FAILED: "投递失败",
-  DEAD: "投递已耗尽",
-  SKIPPED: "无需投递",
-}
-
-const deliveryAttemptStatusLabels: Record<string, string> = {
-  RUNNING: "处理中",
-  SUCCEEDED: "尝试成功",
-  FAILED: "尝试失败",
-  SKIPPED: "已跳过",
-}
-
-const deliveryChunkStatusLabels: Record<string, string> = {
-  RUNNING: "处理中",
-  SUCCEEDED: "已送达",
-  FAILED: "发送失败",
-  SKIPPED: "已跳过",
-}
-
-function jobStatusLabel(status: string): string {
-  return jobStatusLabels[status] ?? status
-}
-
-function runtimeStatusLabel(status: string): string {
-  return runtimeStatusLabels[status] ?? status
-}
-
-function sourceConnectorLabel(job: RuntimeJob): string {
-  if (!job.source_connector_id) return "未记录"
-  const identity = job.source_connector_name
-    ? `${job.source_connector_name}（${job.source_connector_id}）`
-    : job.source_connector_id
-  return job.source_connector_availability === "UNAVAILABLE_HISTORICAL"
-    ? `${identity} · 不可用历史来源`
-    : identity
-}
-
-function conversationModeLabel(mode: string): string {
-  return conversationModeLabels[mode] ?? mode
-}
-
-function deliveryStatusLabel(status: string): string {
-  return deliveryStatusLabels[status] ?? status
-}
-
-function deliveryAttemptStatusLabel(status: string): string {
-  return deliveryAttemptStatusLabels[status] ?? status
-}
-
-function deliveryChunkStatusLabel(status: string): string {
-  return deliveryChunkStatusLabels[status] ?? status
-}
-
-function deliveryOutcomeText(
-  jobStatus: string,
-  deliveryStatus: string
-): string {
-  const job =
-    jobStatus === "SUCCEEDED" ? "Agent 已完成" : jobStatusLabel(jobStatus)
-  return `${job} · ${deliveryStatusLabel(deliveryStatus)}`
-}
-
-function deliveryBadgeVariant(
-  status: string
-): "default" | "secondary" | "destructive" | "outline" {
-  if (status === "SUCCEEDED") return "default"
-  if (status === "FAILED" || status === "DEAD") return "destructive"
-  if (status === "RUNNING" || status === "RETRY_WAIT") return "secondary"
-  return "outline"
-}
-
-function PageFrame({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="mx-auto w-full max-w-[1300px] px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
-      {children}
-    </div>
-  )
+function ErrorState({ error, retry }: { error: unknown; retry: () => void }) {
+  if (!error) return null
+  return <Card className="border-destructive/30 shadow-none"><CardContent className="flex flex-wrap items-center justify-between gap-3 p-4"><p role="alert" className="text-sm text-destructive">{error instanceof ApiError ? error.message : "请求失败，请稍后重试。"}</p><Button size="sm" variant="outline" onClick={retry}>重试</Button></CardContent></Card>
 }
 
 function PageBack() {
-  return (
-    <Link
-      to="/operations/jobs"
-      className={buttonVariants({ variant: "ghost", size: "sm" })}
-    >
-      <ArrowLeftIcon aria-hidden="true" />
-      返回运行记录
-    </Link>
-  )
+  return <Link to="/operations/jobs" className={`${buttonVariants({ variant: "ghost", size: "sm" })} mb-4`}><ArrowLeftIcon />返回 Job 历史</Link>
+}
+
+function PageFrame({ children }: { children: React.ReactNode }) {
+  return <main className="mx-auto w-full max-w-[1400px] space-y-5 px-4 py-6 sm:px-6 lg:px-8">{children}</main>
 }
 
 function PageSkeleton() {
-  return (
-    <PageFrame>
-      <Skeleton className="h-8 w-72" />
-      <Skeleton className="mt-5 h-72 w-full" />
-    </PageFrame>
-  )
+  return <PageFrame><Skeleton className="h-8 w-72" /><Skeleton className="h-80 w-full" /></PageFrame>
 }
 
-function formatDate(value: string | null | undefined) {
-  if (!value) return "-"
+function jobStatusLabel(status: string) {
+  return ({ PENDING: "等待中", RUNNING: "运行中", SUCCEEDED: "成功", FAILED: "失败", TIMEOUT: "超时", CANCELLED: "已取消" } as Record<string, string>)[status] ?? status
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return "—"
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
-}
-
-function policyText(value: {
-  max_turns: number
-  timeout_seconds: number
-  max_tool_calls: number
-}) {
-  return `${value.max_turns} 轮 · ${value.timeout_seconds} 秒 · ${value.max_tool_calls} 次工具调用`
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN")
 }

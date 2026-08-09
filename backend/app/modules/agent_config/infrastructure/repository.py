@@ -111,9 +111,7 @@ class AgentConfigRepository:
         )
         return self.get_revision(revision_id)
 
-    def publication_for_revision(
-        self, *, agent_id: str, revision_id: str
-    ) -> dict[str, Any] | None:
+    def publication_for_revision(self, *, agent_id: str, revision_id: str) -> dict[str, Any] | None:
         row = self.database.execute_one(
             """
             select * from agent_publication
@@ -143,14 +141,6 @@ class AgentConfigRepository:
         config_hash: str,
         actor_id: str,
     ) -> dict[str, Any]:
-        if snapshot.get("tools"):
-            raise NonRetryableExecutionError(
-                "New Agent publication cannot persist legacy Tool names",
-                safe_message=(
-                    "旧名称级工具绑定已停止新增；请选择精确 Tool Release 并重新发布"
-                ),
-                error_code="builtin_tool_legacy_write_forbidden",
-            )
         publication_id = new_id("agent_publication")
         timestamp = now_iso()
         inserted = self.database.execute(
@@ -245,9 +235,7 @@ class AgentConfigRepository:
             "select * from agent_publication where id = ?", (publication_id,)
         )
         if not row:
-            raise NotFound(
-                "Agent publication not found", safe_message="未找到 Agent 发布版本"
-            )
+            raise NotFound("Agent publication not found", safe_message="未找到 Agent 发布版本")
         return self._publication(row)
 
     def current_publication(self, agent_code: str) -> dict[str, Any]:
@@ -284,16 +272,6 @@ class AgentConfigRepository:
                 "Publication belongs to another Agent",
                 safe_message="发布版本不属于此 Agent",
             )
-        legacy = self.database.execute_one(
-            "select 1 as found from agent_tool_binding where publication_id = ? limit 1",
-            (publication_id,),
-        )
-        if legacy is not None:
-            raise NonRetryableExecutionError(
-                "Legacy Agent publication cannot be reactivated",
-                safe_message="legacy-v1 Agent 发布版本只保留历史审计，不能重新激活",
-                error_code="builtin_tool_legacy_reactivation_forbidden",
-            )
         timestamp = now_iso()
         with self.database.unit_of_work():
             self.database.execute(
@@ -314,33 +292,28 @@ class AgentConfigRepository:
             )
         return self.get_publication(publication_id)
 
-    def enabled_tools(self) -> set[str]:
-        rows = self.database.execute(
-            "select name from tool_definition where enabled = 1 and read_only = 1"
-        )
-        return {str(row["name"]) for row in rows}
-
-    def publication_tools(self, publication_id: str) -> set[str]:
-        rows = self.database.execute(
+    def mcp_tool_catalog(self) -> list[dict[str, object]]:
+        return self.database.execute(
             """
-            select envelope.tool_identifier as tool_name
-              from agent_publication_builtin_tool envelope
-              join builtin_tool_release release
-                on release.id = envelope.tool_release_id
-               and release.tool_identifier = envelope.tool_identifier
-               and release.handler_version = envelope.handler_version
-               and release.implementation_digest = envelope.implementation_digest
-              join builtin_tool_installation installation
-                on installation.tool_identifier = envelope.tool_identifier
-               and installation.handler_version = envelope.handler_version
-               and installation.implementation_digest = envelope.implementation_digest
-             where envelope.agent_publication_id = ?
-               and release.status in ('ACTIVE', 'DEPRECATED')
-               and installation.installation_status = 'INSTALLED'
+            select distinct server_code, tool_name, required_scope,
+                            tool_schema_hash, resource_code
+              from mcp_tool_publication
+             where status = 'ACTIVE'
+             order by server_code, tool_name, resource_code
+            """
+        )
+
+    def publication_mcp_tools(self, publication_id: str) -> list[dict[str, object]]:
+        return self.database.execute(
+            """
+            select server_code, tool_name, required_scope, tool_schema_hash,
+                   resource_code, status
+              from mcp_tool_publication
+             where agent_publication_id = ?
+             order by server_code, tool_name, resource_code
             """,
             (publication_id,),
         )
-        return {str(row["tool_name"]) for row in rows}
 
     def publication_connectors(self, publication_id: str, direction: str) -> set[str]:
         rows = self.database.execute(

@@ -9,7 +9,6 @@ import re
 import shutil
 import subprocess
 import threading
-import time
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -21,14 +20,7 @@ from app.modules.agent.domain.runtime import (
     AgentExecutionContext,
     AgentRunRequest,
     AgentRunResult,
-    ToolCallBudget,
 )
-from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
-from app.modules.api_capability.application import (
-    GovernedApiRuntimeExecutor,
-)
-from app.modules.job.infrastructure.repositories import AgentRepository
-from app.modules.internal_tools.infrastructure.internal_api_client import ToolResult
 from app.modules.model_connection.domain import (
     ANTHROPIC_COMPATIBLE_PROTOCOL,
     ModelRuntimeBinding,
@@ -37,11 +29,12 @@ from app.shared.config import ExecutionSettings
 from app.shared.database import assert_external_io_allowed
 from app.shared.exceptions import (
     DiagnosticLoopExhausted,
-    ExecutionPolicyExceeded,
     NonRetryableExecutionError,
     RetryableExecutionError,
     ToolPolicyError,
 )
+from services.mcp_common import McpTokenIssuer
+from services.mcp_common.contracts import McpAudience
 
 
 class ClaudeCodeAgentClient(Protocol):
@@ -52,231 +45,8 @@ class ClaudeCodeAgentClient(Protocol):
 class ClaudeSdk:
     query: Callable[..., AsyncIterator[Any]]
     options: Any
-    tool: Callable[..., Any]
-    create_sdk_mcp_server: Callable[..., Any]
-    tool_annotations: Any | None
-
-
-# Structured addressing shared by database/redis/loki tools. Optional for backward
-# compatibility with the flat datasource contract; required by the topology-aware platform.
-_ADDRESSING_PROPERTIES: dict[str, Any] = {
-    "environment": {
-        "type": "string",
-        "description": "Environment code, e.g. 'sanjiu' or 'mmk'.",
-    },
-    "base": {
-        "type": "string",
-        "description": "Base business code, e.g. 'guanlan' (观澜基地).",
-    },
-    "workshop": {
-        "type": "string",
-        "description": "Workshop code within a partitioned base, e.g. 'GL001'.",
-    },
-}
-
-_LOKI_SELECTOR_PROPERTIES: dict[str, Any] = {
-    "cluster": {"type": "string"},
-    "container": {"type": "string"},
-    "region": {"type": "string"},
-    "service": {"type": "string"},
-    "service_name": {"type": "string"},
-    "workshop": {"type": "string"},
-}
-
-_PLACEMENT_PROPERTY: dict[str, Any] = {
-    "placement": {
-        "type": "string",
-        "enum": ["cloud", "edge"],
-        "description": (
-            "Required when the Job exposes both cloud and edge resources; "
-            "omit it when the Job has only one or no placement."
-        ),
-    }
-}
-
-
-TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
-    "get_er_context": {
-        "description": "Search compact ER graph context for relevant tables, fields, enums, and relationships.",
-        "schema": {
-            "type": "object",
-            "properties": {"query": {"type": "string"}},
-            "required": ["query"],
-            "additionalProperties": False,
-        },
-    },
-    "get_business_flow_context": {
-        "description": "Search compact business-flow context for relevant process nodes and flow evidence.",
-        "schema": {
-            "type": "object",
-            "properties": {"query": {"type": "string"}},
-            "required": ["query"],
-            "additionalProperties": False,
-        },
-    },
-    "get_schema_directory": {
-        "description": (
-            "Return the allowed read-only schema directory for a target environment/base/workshop. "
-            "Use this before writing SQL. Only query tables and columns listed by this tool."
-        ),
-        "schema": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Optional table-name filter; leave empty for the bounded directory.",
-                },
-                "limit": {"type": "integer", "minimum": 1},
-                **_ADDRESSING_PROPERTIES,
-                **_PLACEMENT_PROPERTY,
-            },
-            "required": ["environment", "base"],
-            "additionalProperties": False,
-        },
-    },
-    "query_loki": {
-        "description": (
-            "Query bounded Loki logs with exact-match label selectors and a small result limit. "
-            "Use selector for labels such as cluster, service_name, container, region, or service; "
-            "for example {'cluster': 'mes-cluster'}."
-        ),
-        "schema": {
-            "type": "object",
-            "properties": {
-                "selector": {
-                    "type": "object",
-                    "properties": _LOKI_SELECTOR_PROPERTIES,
-                    "additionalProperties": False,
-                    "minProperties": 1,
-                },
-                "service": {
-                    "type": "string",
-                    "description": "Backward-compatible shortcut for selector.service.",
-                },
-                "query": {"type": "string"},
-                "minutes": {"type": "integer", "minimum": 1},
-                "limit": {"type": "integer", "minimum": 1},
-                **_ADDRESSING_PROPERTIES,
-            },
-            "required": ["selector"],
-            "additionalProperties": False,
-        },
-    },
-    "diagnose_loki_labels": {
-        "description": (
-            "List bounded Loki label names visible for the resolved environment/base/workshop. "
-            "Use this when a Loki query returns no logs or the correct service label is unclear."
-        ),
-        "schema": {
-            "type": "object",
-            "properties": {
-                "minutes": {"type": "integer", "minimum": 1},
-                "limit": {"type": "integer", "minimum": 1},
-                **_ADDRESSING_PROPERTIES,
-            },
-            "required": ["environment", "base"],
-            "additionalProperties": False,
-        },
-    },
-    "diagnose_loki_label_values": {
-        "description": (
-            "List bounded values for an allowed Loki label such as service, service_name, "
-            "container, cluster, region, or workshop."
-        ),
-        "schema": {
-            "type": "object",
-            "properties": {
-                "label": {
-                    "type": "string",
-                    "enum": [
-                        "cluster",
-                        "container",
-                        "region",
-                        "service",
-                        "service_name",
-                        "workshop",
-                    ],
-                },
-                "minutes": {"type": "integer", "minimum": 1},
-                "limit": {"type": "integer", "minimum": 1},
-                **_ADDRESSING_PROPERTIES,
-            },
-            "required": ["environment", "base", "label"],
-            "additionalProperties": False,
-        },
-    },
-    "diagnose_loki_probe": {
-        "description": (
-            "Probe a bounded Loki selector and keyword to explain empty results. "
-            "Returns stream_count, line_count, and safe empty-result hints."
-        ),
-        "schema": {
-            "type": "object",
-            "properties": {
-                "selector": {
-                    "type": "object",
-                    "properties": _LOKI_SELECTOR_PROPERTIES,
-                    "additionalProperties": False,
-                    "minProperties": 1,
-                },
-                "query": {"type": "string"},
-                "minutes": {"type": "integer", "minimum": 1},
-                "limit": {"type": "integer", "minimum": 1},
-                **_ADDRESSING_PROPERTIES,
-            },
-            "required": ["environment", "base", "selector"],
-            "additionalProperties": False,
-        },
-    },
-    "query_database": {
-        "description": (
-            "Run policy-approved read-only SQL through the internal database gateway. "
-            "Provide structured addressing (environment/base/workshop) so the platform "
-            "routes to the correct base and enforces the workshop table prefix."
-        ),
-        "schema": {
-            "type": "object",
-            "properties": {
-                "datasource": {"type": "string"},
-                "sql": {"type": "string"},
-                "limit": {"type": "integer", "minimum": 1},
-                **_ADDRESSING_PROPERTIES,
-                **_PLACEMENT_PROPERTY,
-            },
-            "required": ["sql"],
-            "additionalProperties": False,
-        },
-    },
-    "query_redis_get": {
-        "description": "Read one approved Redis key through the internal Redis gateway.",
-        "schema": {
-            "type": "object",
-            "properties": {
-                "datasource": {"type": "string"},
-                "key": {"type": "string"},
-                **_ADDRESSING_PROPERTIES,
-                **_PLACEMENT_PROPERTY,
-            },
-            "required": ["key"],
-            "additionalProperties": False,
-        },
-    },
-    "query_redis_scan": {
-        "description": "Scan approved Redis key prefixes with a bounded limit.",
-        "schema": {
-            "type": "object",
-            "properties": {
-                "datasource": {"type": "string"},
-                "pattern": {"type": "string"},
-                "limit": {"type": "integer", "minimum": 1},
-                **_ADDRESSING_PROPERTIES,
-                **_PLACEMENT_PROPERTY,
-            },
-            "required": ["pattern"],
-            "additionalProperties": False,
-        },
-    },
-}
+    permission_allow: Callable[..., Any] | None = None
+    permission_deny: Callable[..., Any] | None = None
 
 
 class StubClaudeCodeAgentClient:
@@ -305,24 +75,28 @@ class RealClaudeCodeAgentClient:
         self,
         *,
         model: str,
-        tool_registry: ToolRegistry,
         limits: ExecutionSettings,
         api_key: str,
         base_url: str = "",
         sdk_loader: Callable[[], ClaudeSdk] | None = None,
         secret_resolver: Callable[[str], str] | None = None,
-        governed_api_runtime_executor: (GovernedApiRuntimeExecutor | None) = None,
-        agent_repository: AgentRepository | None = None,
+        mcp_token_issuer: McpTokenIssuer | None = None,
+        ones_mcp_url: str = "",
+        data_mcp_url: str = "",
+        allowed_mcp_server_codes: tuple[str, ...] = ("ones-mcp", "data-mcp"),
     ) -> None:
         self.model = model
-        self.tool_registry = tool_registry
         self.limits = limits
         self.api_key = api_key
         self.base_url = base_url
         self.sdk_loader = sdk_loader or load_claude_agent_sdk
         self.secret_resolver = secret_resolver
-        self.governed_api_runtime_executor = governed_api_runtime_executor
-        self.agent_repository = agent_repository
+        self.mcp_token_issuer = mcp_token_issuer
+        self.mcp_server_urls = {
+            "ones-mcp": ones_mcp_url.strip(),
+            "data-mcp": data_mcp_url.strip(),
+        }
+        self.allowed_mcp_server_codes = frozenset(allowed_mcp_server_codes)
 
     def run(self, request: AgentRunRequest) -> AgentRunResult:
         assert_external_io_allowed("model.run")
@@ -374,10 +148,8 @@ class RealClaudeCodeAgentClient:
     ) -> AgentRunResult:
         sdk = self._load_sdk()
         tool_events: list[dict[str, Any]] = []
-        tool_budget = ToolCallBudget(maximum=request.context.max_tool_calls)
-        internal_server = self._build_internal_server(sdk, request, tool_events, tool_budget)
         cli_stderr: list[str] = []
-        options = self._build_options(sdk, request.context, internal_server, cli_stderr, binding)
+        options = self._build_options(sdk, request, cli_stderr, binding)
         prompt = request.context.user_question
         assistant_texts: list[str] = []
         parsed_tool_events: list[dict[str, Any]] = []
@@ -527,13 +299,15 @@ class RealClaudeCodeAgentClient:
     def _resolve_api_key(self, binding: ModelRuntimeBinding) -> str:
         if binding.legacy:
             return self.api_key
-        if self.secret_resolver is None:
-            raise NonRetryableExecutionError(
-                "Model connection secret resolver is unavailable",
-                safe_message="模型运行凭据解析器不可用",
-                error_code="model_connection_credential_unavailable",
-            )
-        return self.secret_resolver(binding.secret_ref)
+        if self.api_key:
+            return self.api_key
+        if self.secret_resolver is not None:
+            return self.secret_resolver(binding.secret_ref)
+        raise NonRetryableExecutionError(
+            "Model connection secret resolver is unavailable",
+            safe_message="模型运行凭据解析器不可用",
+            error_code="model_connection_credential_unavailable",
+        )
 
     def _legacy_binding(self, context_model: str) -> ModelRuntimeBinding:
         model = context_model or self.model
@@ -559,267 +333,99 @@ class RealClaudeCodeAgentClient:
                 error_code="claude_sdk_unavailable",
             ) from exc
 
-    def _build_internal_server(
-        self,
-        sdk: ClaudeSdk,
-        request: AgentRunRequest,
-        tool_events: list[dict[str, Any]],
-        tool_budget: ToolCallBudget,
-    ) -> Any:
-        tools = [
-            self._build_tool(sdk, request, tool_name, tool_events, tool_budget)
-            for tool_name in request.context.allowed_tools
-            if tool_name in TOOL_DEFINITIONS
-        ]
-        tools.extend(
-            self._build_governed_tool(
-                sdk,
-                request,
-                capability,
-                tool_events,
-                tool_budget,
-            )
-            for capability in request.context.governed_capabilities
-        )
-        return sdk.create_sdk_mcp_server(name="internal", tools=tools)
-
-    def _build_governed_tool(
-        self,
-        sdk: ClaudeSdk,
-        request: AgentRunRequest,
-        capability: dict[str, Any],
-        tool_events: list[dict[str, Any]],
-        tool_budget: ToolCallBudget,
-    ) -> Any:
-        tool_name = str(capability["identifier"])
-
-        async def handler(
-            arguments: dict[str, Any],
-        ) -> dict[str, list[dict[str, str]]]:
-            started = time.monotonic()
-            if self.governed_api_runtime_executor is None or self.agent_repository is None:
-                raise NonRetryableExecutionError(
-                    "Governed API runtime is unavailable",
-                    safe_message="Capability 运行时不可用",
-                    error_code="governed_api_runtime_unavailable",
-                )
-            tool_budget.consume()
-            tool_call_id = self.agent_repository.add_tool_call(
-                job_id=request.job_id,
-                tool_name=tool_name,
-                request_payload=_bounded_payload(
-                    arguments,
-                    self.limits.max_tool_response_chars,
-                ),
-                response_summary={"status": "STARTED"},
-                status="STARTED",
-                duration_ms=0,
-                risk_level="low",
-            )
-            try:
-                result = await asyncio.to_thread(
-                    self.governed_api_runtime_executor.execute,
-                    job_id=request.job_id,
-                    tool_call_id=tool_call_id,
-                    user_id=request.user_id,
-                    application_publication_id=(request.context.application_publication_id),
-                    agent_publication_id=(request.context.publication_id),
-                    capability_release_id=str(capability["release_id"]),
-                    identifier=tool_name,
-                    agent_input=arguments,
-                    correlation_id=f"tool:{tool_call_id}",
-                    timeout_seconds=float(request.context.timeout_seconds),
-                )
-                duration_ms = int((time.monotonic() - started) * 1000)
-                encoded = json.dumps(
-                    result,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                    sort_keys=True,
-                ).encode()
-                attempt_count = self._attempt_count(tool_call_id)
-                summary = {
-                    "capability_release_id": capability["release_id"],
-                    "data_classification": "INTERNAL",
-                    "attempt_count": attempt_count,
-                    "normalized_result_size": len(encoded),
-                }
-                self.agent_repository.complete_tool_call(
-                    tool_call_id,
-                    response_summary=summary,
-                    status="SUCCEEDED",
-                    duration_ms=duration_ms,
-                )
-                tool_events.append(
-                    {
-                        "tool_name": tool_name,
-                        "request_payload": _bounded_payload(
-                            arguments,
-                            self.limits.max_tool_response_chars,
-                        ),
-                        "response_summary": summary,
-                        "status": "SUCCEEDED",
-                        "duration_ms": duration_ms,
-                        "risk_level": "low",
-                        "persisted_tool_call_id": tool_call_id,
-                    }
-                )
-                return _sdk_tool_response(
-                    {
-                        "data": result,
-                        "security": {
-                            "trust": "untrusted_external_business_data",
-                            "data_classification": "INTERNAL",
-                            "capability_release_id": (capability["release_id"]),
-                        },
-                    }
-                )
-            except Exception as exc:
-                duration_ms = int((time.monotonic() - started) * 1000)
-                summary = {
-                    "error": getattr(exc, "safe_message", str(exc)),
-                    "capability_release_id": capability["release_id"],
-                    "data_classification": "INTERNAL",
-                    "attempt_count": self._attempt_count(tool_call_id),
-                }
-                self.agent_repository.complete_tool_call(
-                    tool_call_id,
-                    response_summary=summary,
-                    status="FAILED",
-                    duration_ms=duration_ms,
-                )
-                tool_events.append(
-                    {
-                        "tool_name": tool_name,
-                        "request_payload": _bounded_payload(
-                            arguments,
-                            self.limits.max_tool_response_chars,
-                        ),
-                        "response_summary": summary,
-                        "status": "FAILED",
-                        "duration_ms": duration_ms,
-                        "risk_level": "low",
-                        "persisted_tool_call_id": tool_call_id,
-                    }
-                )
-                return _sdk_tool_response(
-                    {
-                        "error": summary["error"],
-                        "policy": "governed_capability_rejected",
-                    }
-                )
-
-        decorator = _tool_decorator(
-            sdk,
-            name=tool_name,
-            description=str(capability["description"]),
-            schema=dict(capability["input_schema"]),
-        )
-        return decorator(handler)
-
-    def _attempt_count(self, tool_call_id: str) -> int:
-        if self.agent_repository is None:
-            return 0
-        row = self.agent_repository.database.execute_one(
-            """
-            select count(*) as count
-              from agent_tool_call_http_attempt
-             where tool_call_id = ?
-            """,
-            (tool_call_id,),
-        )
-        return int(row["count"]) if row else 0
-
-    def _build_tool(
-        self,
-        sdk: ClaudeSdk,
-        request: AgentRunRequest,
-        tool_name: str,
-        tool_events: list[dict[str, Any]],
-        tool_budget: ToolCallBudget,
-    ) -> Any:
-        definition = TOOL_DEFINITIONS[tool_name]
-
-        async def handler(arguments: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
-            started = time.monotonic()
-            try:
-                tool_budget.consume()
-                result = await asyncio.to_thread(
-                    self.tool_registry.call,
-                    job_id=request.job_id,
-                    user_id=request.user_id,
-                    project_code=request.project_code,
-                    tool_name=tool_name,
-                    arguments=arguments,
-                    record_tool_call=False,
-                )
-                event = _tool_event_from_result(
-                    tool_name=tool_name,
-                    arguments=arguments,
-                    result=result,
-                    status="SUCCEEDED",
-                    duration_ms=int((time.monotonic() - started) * 1000),
-                    limits=self.limits,
-                )
-                tool_events.append(event)
-                return _sdk_tool_response(result.summary)
-            except ExecutionPolicyExceeded as exc:
-                tool_events.append(
-                    {
-                        "tool_name": tool_name,
-                        "request_payload": arguments,
-                        "response_summary": {"error": exc.safe_message},
-                        "status": "REJECTED",
-                        "duration_ms": int((time.monotonic() - started) * 1000),
-                        "risk_level": _risk_level(tool_name),
-                        "error_code": exc.error_code,
-                    }
-                )
-                exc.tool_events = list(tool_events)
-                raise
-            except Exception as exc:
-                safe_message = getattr(exc, "safe_message", str(exc))
-                failed_event = {
-                        "tool_name": tool_name,
-                        "request_payload": arguments,
-                        "response_summary": {"error": safe_message},
-                        "status": "FAILED",
-                        "duration_ms": int((time.monotonic() - started) * 1000),
-                        "risk_level": _risk_level(tool_name),
-                    }
-                persisted_tool_call_id = str(
-                    getattr(exc, "persisted_tool_call_id", "") or ""
-                )
-                if persisted_tool_call_id:
-                    failed_event["persisted_tool_call_id"] = (
-                        persisted_tool_call_id
-                    )
-                tool_events.append(failed_event)
-                return _sdk_tool_response({"error": safe_message, "policy": "tool_rejected"})
-
-        decorator = _tool_decorator(
-            sdk,
-            name=tool_name,
-            description=str(definition["description"]),
-            schema=dict(definition["schema"]),
-        )
-        return decorator(handler)
-
     def _build_options(
         self,
         sdk: ClaudeSdk,
-        context: AgentExecutionContext,
-        server: Any,
+        request: AgentRunRequest,
         cli_stderr: list[str],
         binding: ModelRuntimeBinding,
     ) -> Any:
-        exact_tools = [f"mcp__internal__{tool_name}" for tool_name in context.allowed_tools] + [
-            f"mcp__internal__{item['identifier']}" for item in context.governed_capabilities
-        ]
+        context = request.context
+        grouped: dict[str, list[Any]] = {}
+        seen: set[tuple[str, str]] = set()
+        for runtime_binding in context.mcp_bindings:
+            key = (runtime_binding.server_code, runtime_binding.tool_name)
+            if key in seen:
+                raise NonRetryableExecutionError(
+                    "Job contains ambiguous MCP tool bindings",
+                    safe_message="当前任务的 MCP 工具绑定不唯一",
+                    error_code="mcp_tool_binding_ambiguous",
+                )
+            seen.add(key)
+            if runtime_binding.server_code not in self.allowed_mcp_server_codes:
+                raise NonRetryableExecutionError(
+                    "Job references an unapproved MCP server",
+                    safe_message="当前任务引用了未允许的 MCP 服务",
+                    error_code="mcp_server_not_allowed",
+                )
+            grouped.setdefault(runtime_binding.server_code, []).append(runtime_binding)
+        if grouped and self.mcp_token_issuer is None:
+            raise NonRetryableExecutionError(
+                "MCP token issuer is unavailable",
+                safe_message="MCP 运行鉴权尚未配置",
+                error_code="mcp_token_issuer_unavailable",
+            )
+        aliases = {"ones-mcp": "ones", "data-mcp": "data"}
+        audiences: dict[str, McpAudience] = {
+            "ones-mcp": "ones-mcp",
+            "data-mcp": "data-mcp",
+        }
+        mcp_servers: dict[str, dict[str, Any]] = {}
+        exact_tools: list[str] = []
+        application_publication_id = context.application_publication_id or context.publication_id
+        for server_code, bindings in sorted(grouped.items()):
+            url = self.mcp_server_urls.get(server_code, "")
+            if not url:
+                raise NonRetryableExecutionError(
+                    "MCP server URL is missing",
+                    safe_message="MCP 服务地址尚未配置",
+                    error_code="mcp_server_unconfigured",
+                )
+            if not application_publication_id:
+                raise NonRetryableExecutionError(
+                    "MCP Job has no publication identity",
+                    safe_message="当前任务缺少 MCP 发布身份",
+                    error_code="mcp_publication_identity_missing",
+                )
+            alias = aliases[server_code]
+            assert self.mcp_token_issuer is not None
+            token = self.mcp_token_issuer.issue(
+                audience=audiences[server_code],
+                app_user_id=request.user_id,
+                job_id=request.job_id,
+                application_publication_id=application_publication_id,
+                scopes=[item.required_scope for item in bindings],
+                job_timeout_seconds=context.timeout_seconds,
+            )
+            mcp_servers[alias] = {
+                "type": "http",
+                "url": url,
+                "headers": {
+                    "Authorization": f"Bearer {token}",
+                    "X-Correlation-Id": f"job:{request.job_id}",
+                },
+            }
+            exact_tools.extend(f"mcp__{alias}__{item.tool_name}" for item in bindings)
+
+        async def can_use_tool(tool_name: str, tool_input: dict[str, Any], context: Any) -> Any:
+            del tool_input, context
+            if tool_name in exact_tools and sdk.permission_allow is not None:
+                return sdk.permission_allow()
+            if sdk.permission_deny is not None:
+                return sdk.permission_deny(
+                    message="Tool is not authorized for this Job",
+                    interrupt=False,
+                )
+            raise NonRetryableExecutionError(
+                "Claude SDK permission guard is unavailable",
+                safe_message="工具权限校验不可用",
+                error_code="mcp_permission_guard_unavailable",
+            )
+
         return sdk.options(
             model=binding.model,
             system_prompt=_build_system_prompt(context),
-            mcp_servers={"internal": server},
+            mcp_servers=mcp_servers,
             allowed_tools=exact_tools,
             disallowed_tools=[
                 "Bash",
@@ -828,8 +434,10 @@ class RealClaudeCodeAgentClient:
                 "WebFetch",
                 "WebSearch",
                 "NotebookEdit",
+                "Shell",
             ],
             permission_mode="dontAsk",
+            can_use_tool=can_use_tool if exact_tools else None,
             max_turns=context.max_turns,
             stderr=lambda line: _append_cli_stderr(
                 cli_stderr,
@@ -935,9 +543,8 @@ def load_claude_agent_sdk() -> ClaudeSdk:
     return ClaudeSdk(
         query=sdk_module.query,
         options=sdk_module.ClaudeAgentOptions,
-        tool=sdk_module.tool,
-        create_sdk_mcp_server=sdk_module.create_sdk_mcp_server,
-        tool_annotations=getattr(sdk_module, "ToolAnnotations", None),
+        permission_allow=getattr(sdk_module, "PermissionResultAllow", None),
+        permission_deny=getattr(sdk_module, "PermissionResultDeny", None),
     )
 
 
@@ -945,40 +552,14 @@ def is_claude_cli_available() -> bool:
     return shutil.which("claude") is not None or shutil.which("claude-code") is not None
 
 
-def _tool_decorator(
-    sdk: ClaudeSdk,
-    *,
-    name: str,
-    description: str,
-    schema: dict[str, Any],
-) -> Any:
-    annotations = _read_only_annotations(sdk)
-    if annotations is None:
-        return sdk.tool(name, description, schema)
-    try:
-        return sdk.tool(name, description, schema, annotations=annotations)
-    except TypeError:
-        return sdk.tool(name, description, schema)
-
-
-def _read_only_annotations(sdk: ClaudeSdk) -> Any | None:
-    if sdk.tool_annotations is None:
-        return {"readOnlyHint": True}
-    for kwargs in ({"readOnlyHint": True}, {"read_only_hint": True}):
-        try:
-            return sdk.tool_annotations(**kwargs)
-        except TypeError:
-            continue
-    return {"readOnlyHint": True}
-
-
 def _build_system_prompt(context: AgentExecutionContext) -> str:
     skill_sections = "\n\n".join(
         f"## Skill: {name}\n{body}" for name, body in sorted(context.skills.items())
     )
     retrieved_context = json.dumps(context.retrieved_context, ensure_ascii=False, default=str)
-    governed_capability_notices = json.dumps(
-        [notice.to_prompt_payload() for notice in context.governed_capability_notices],
+    mcp_tools = [f"{item.server_code}:{item.tool_name}" for item in context.mcp_bindings]
+    mcp_unavailable_notices = json.dumps(
+        [notice.to_prompt_payload() for notice in context.mcp_unavailable_notices],
         ensure_ascii=False,
     )
     return "\n\n".join(
@@ -996,34 +577,23 @@ def _build_system_prompt(context: AgentExecutionContext) -> str:
             ),
             "Safety rules:\n" + _numbered(context.safety_rules),
             "Tool restrictions:\n" + _numbered(context.tool_restrictions),
-            "Available internal tools:\n" + _numbered(context.allowed_tools),
+            "Available MCP tools for this Job:\n" + _numbered(mcp_tools),
             (
-                "Governed capability availability notices for the current Job "
-                "(platform facts, not callable tools):\n" + governed_capability_notices
-                if context.governed_capability_notices
+                "Unavailable MCP tool notices for this Job (platform facts, not tools):\n"
+                + mcp_unavailable_notices
+                if context.mcp_unavailable_notices
                 else ""
             ),
             (
-                "Governed capability notice rules:\n"
+                "Unavailable MCP notice rules:\n"
                 + _numbered(
                     [
-                        (
-                            "A listed unavailable capability is configured for the current "
-                            "Application but is not callable by the current sender in this Job."
-                        ),
-                        (
-                            "When asked about a listed capability, explain its current-sender "
-                            "unavailability and repeat only the provided safe message. Do not "
-                            "claim the platform globally lacks or has not registered it."
-                        ),
-                        (
-                            "Do not call, simulate, or claim connectivity verification for an "
-                            "unavailable capability. Do not infer identity, credential, Team, "
-                            "Connection, Release, or exception details beyond the notice."
-                        ),
+                        "Repeat only the supplied safe message when the unavailable tool is relevant.",
+                        "Do not infer identity, credential, Team, resource, connection, or revision facts.",
+                        "Do not simulate, call, or claim verification of an unavailable tool.",
                     ]
                 )
-                if context.governed_capability_notices
+                if context.mcp_unavailable_notices
                 else ""
             ),
             "Report structure:\n"
@@ -1044,42 +614,6 @@ def _build_system_prompt(context: AgentExecutionContext) -> str:
 
 def _numbered(items: list[str]) -> str:
     return "\n".join(f"{index}. {item}" for index, item in enumerate(items, start=1))
-
-
-def _sdk_tool_response(payload: Any) -> dict[str, list[dict[str, str]]]:
-    return {
-        "content": [
-            {
-                "type": "text",
-                "text": json.dumps(payload, ensure_ascii=False, default=str),
-            }
-        ]
-    }
-
-
-def _tool_event_from_result(
-    *,
-    tool_name: str,
-    arguments: dict[str, Any],
-    result: ToolResult,
-    status: str,
-    duration_ms: int,
-    limits: ExecutionSettings,
-) -> dict[str, Any]:
-    event = {
-        "tool_name": tool_name,
-        "request_payload": _bounded_payload(arguments, limits.max_tool_response_chars),
-        "response_summary": _bounded_payload(result.summary, limits.max_tool_response_chars),
-        "status": status,
-        "duration_ms": duration_ms,
-        "risk_level": _risk_level(tool_name),
-    }
-    persisted_tool_call_id = str(
-        result.metadata.get("_persisted_tool_call_id") or ""
-    )
-    if persisted_tool_call_id:
-        event["persisted_tool_call_id"] = persisted_tool_call_id
-    return event
 
 
 def _extract_text_blocks(message: Any) -> list[str]:
@@ -1149,9 +683,7 @@ def _bounded_payload(payload: Any, max_chars: int) -> dict[str, Any]:
 
 
 def _risk_level(tool_name: str) -> str:
-    if tool_name.startswith("get_") or tool_name.startswith("diagnose_loki"):
-        return "low"
-    return "low" if tool_name == "query_loki" else "medium"
+    return "low" if tool_name.startswith(("ones_", "data_", "redis_", "loki_")) else "medium"
 
 
 def _looks_transient(message: str) -> bool:

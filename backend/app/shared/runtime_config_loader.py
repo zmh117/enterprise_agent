@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any
 
-from app.modules.internal_api_platform.infrastructure.secrets import DbBackedSecretResolver
+from app.modules.platform_config.infrastructure.secret_resolver import DbBackedSecretResolver
 from app.modules.platform_config.application.runtime_config import RuntimeConfigRegistry
 from app.modules.platform_config.application.runtime_config import RuntimeConfigSnapshotBuilder
 from app.modules.platform_config.infrastructure import PlatformConfigRepository
@@ -14,13 +14,34 @@ from app.shared.migrations import SchemaHeadError, SchemaHeadValidator
 from app.shared.master_key import load_master_key_settings
 
 
+_NON_DECRYPTING_SERVICES = frozenset(
+    {
+        "agent-worker",
+        "job-dispatch-worker",
+        "webhook-worker",
+        "channel-dispatch-worker",
+    }
+)
+
+
 def load_settings_with_db_overlay(
     settings: Settings,
     *,
     service_name: str,
     database: Database | None = None,
 ) -> Settings:
-    settings = load_master_key_settings(settings)
+    if not _service_requires_master_key(service_name):
+        # Non-decrypting workers receive only their explicitly scoped runtime
+        # credentials. They must never receive the platform Master Key used to
+        # decrypt Provider or Resource credentials.
+        settings = replace(
+            settings,
+            app_config_master_key="",
+            app_config_master_key_file="",
+            master_key_file_required=False,
+        )
+    else:
+        settings = load_master_key_settings(settings)
     settings = synchronize_feature_configuration(settings)
     runtime_database = database or Database(settings.database_dsn)
     owns_database = database is None
@@ -51,6 +72,10 @@ def load_settings_with_db_overlay(
             runtime_config_degraded=True,
             runtime_config_errors=(getattr(exc, "safe_message", str(exc)),),
         )
+
+
+def _service_requires_master_key(service_name: str) -> bool:
+    return service_name not in _NON_DECRYPTING_SERVICES
 
 
 def apply_runtime_config_overlay(
@@ -87,7 +112,6 @@ def apply_runtime_config_overlay(
         for key in (
             "FEATURE_PUBLISHED_AGENT_RUNTIME",
             "FEATURE_REAL_CLAUDE",
-            "FEATURE_REAL_INTERNAL_TOOLS",
         )
         if runtime_value(key) is not None
     }
@@ -96,29 +120,13 @@ def apply_runtime_config_overlay(
         runtime_feature_values,
     )
     claude_model = runtime_value("CLAUDE_MODEL") or runtime_value("ANTHROPIC_MODEL")
-    anthropic_api_key = runtime_value("ANTHROPIC_API_KEY") or runtime_value(
-        "ANTHROPIC_AUTH_TOKEN"
-    )
+    anthropic_api_key = runtime_value("ANTHROPIC_API_KEY") or runtime_value("ANTHROPIC_AUTH_TOKEN")
     updated = replace(
         settings,
-        internal_api_base_url=_str(runtime_value("INTERNAL_API_BASE_URL"), settings.internal_api_base_url),
-        internal_api_timeout_seconds=_int(
-            runtime_value("INTERNAL_API_TIMEOUT_SECONDS"),
-            settings.internal_api_timeout_seconds,
-        ),
-        internal_api_max_response_chars=_int(
-            runtime_value("INTERNAL_API_MAX_RESPONSE_CHARS"),
-            settings.internal_api_max_response_chars,
-        ),
-        internal_platform_max_rows=_int(
-            runtime_value("INTERNAL_PLATFORM_MAX_ROWS"),
-            settings.internal_platform_max_rows,
-        ),
         claude_model=_str(claude_model, settings.claude_model),
         anthropic_api_key=_str(anthropic_api_key, settings.anthropic_api_key),
         anthropic_base_url=_str(runtime_value("ANTHROPIC_BASE_URL"), settings.anthropic_base_url),
         feature_real_claude=features.real_claude_enabled,
-        feature_real_internal_tools=features.real_internal_tools_enabled,
         feature_business_application_control_plane=(
             features.business_application_control_plane_enabled
         ),
@@ -249,9 +257,7 @@ def apply_runtime_config_overlay(
             settings.identity,
             enabled=features.unified_identity_enabled,
             web_admin_enabled=features.web_admin_enabled,
-            published_agent_runtime_enabled=(
-                features.published_agent_runtime_enabled
-            ),
+            published_agent_runtime_enabled=(features.published_agent_runtime_enabled),
             test_identity_headers_enabled=features.test_identity_headers_enabled,
         ),
         webhooks=replace(

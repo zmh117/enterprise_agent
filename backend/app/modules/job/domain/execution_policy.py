@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from app.shared.config import ExecutionSettings
 from app.shared.exceptions import NonRetryableExecutionError
@@ -28,9 +28,9 @@ class ExecutionPolicyValues:
         if any(type(item) is not int for item in raw_values.values()):
             raise _invalid(f"{field} is missing required strict integer fields")
         result = cls(
-            max_turns=raw_values["max_turns"],
-            timeout_seconds=raw_values["timeout_seconds"],
-            max_tool_calls=raw_values["max_tool_calls"],
+            max_turns=cast(int, raw_values["max_turns"]),
+            timeout_seconds=cast(int, raw_values["timeout_seconds"]),
+            max_tool_calls=cast(int, raw_values["max_tool_calls"]),
         )
         result.validate(field=field)
         return result

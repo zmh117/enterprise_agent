@@ -23,7 +23,12 @@ frontend/dist/
 !dingtalk-runtime/**
 dingtalk-runtime/node_modules/
 dingtalk-runtime/dist/
+!services/
+!services/**
+!config/
+!config/**
 !.claude/
 !.claude/skills/
 !.claude/skills/**
 antvX6/
+bak/

@@ -47,6 +47,7 @@ class SelfOnesIdentityResponse(StrictResponse):
     last_success_at: str | None = None
     user_id: str
     teams: list[TeamResponse]
+    identity_revision: int = Field(ge=1)
 
 
 class SelfIdentityOverviewResponse(StrictResponse):
@@ -66,8 +67,13 @@ class DingTalkApplicationObservationResponse(StrictResponse):
     last_observed_at: str | None = None
 
 
-class AdminDingTalkIdentityResponse(SelfDingTalkIdentityResponse):
+class AdminDingTalkIdentityResponse(StrictResponse):
+    provider: Literal["dingtalk"]
+    nickname: str
     status: Literal["enabled", "disabled", "unbound"]
+    enterprise: DingTalkEnterpriseResponse | None
+    last_used_at: str | None = None
+    staff_id: str
     identity_id: str
     revision: int = Field(ge=1)
     binding_confirmed_at: str | None = None
@@ -76,7 +82,7 @@ class AdminDingTalkIdentityResponse(SelfDingTalkIdentityResponse):
 
 class AdminOnesIdentityResponse(SelfOnesIdentityResponse):
     identity_id: str
-    identity_status: Literal["enabled", "disabled", "unbound"]
+    identity_status: Literal["enabled", "disabled", "unbound", "REVERIFICATION_REQUIRED"]
     identity_revision: int = Field(ge=1)
 
 
@@ -101,7 +107,8 @@ class CredentialTechnicalResponse(StrictResponse):
     last_error_at: str | None = None
 
 
-class ConnectionTechnicalResponse(StrictResponse):
+class ProviderInstanceTechnicalResponse(StrictResponse):
+    code: str
     name: str
     revision: int = Field(ge=1)
     status: str
@@ -109,7 +116,7 @@ class ConnectionTechnicalResponse(StrictResponse):
 
 class AdminOnesTechnicalResponse(AdminOnesIdentityResponse):
     credential: CredentialTechnicalResponse | None
-    connection: ConnectionTechnicalResponse | None
+    provider_instance: ProviderInstanceTechnicalResponse | None
 
 
 class AdminOnesStatusResponse(StrictResponse):

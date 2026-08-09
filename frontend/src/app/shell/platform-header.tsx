@@ -10,9 +10,9 @@ export function PlatformHeader() {
         <SidebarTrigger className="-ml-1" aria-label="展开或收起导航" />
         <Separator orientation="vertical" className="h-5" />
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium">管理控制面</p>
+          <p className="truncate text-sm font-medium">轻量用户门户</p>
           <p className="hidden truncate text-xs text-muted-foreground sm:block">
-            业务应用 · Agent 配置 · 用户与外部身份
+            本人历史 · MCP 调试 · 统一身份
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2">

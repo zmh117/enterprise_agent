@@ -19,9 +19,7 @@ class PlatformSecretUsageService:
         secret_ref: str,
     ) -> list[dict[str, Any]]:
         dependencies: list[dict[str, Any]] = []
-        dependencies.extend(self._resource_dependencies(secret_ref))
-        dependencies.extend(self._runtime_config_dependencies(secret_ref))
-        dependencies.extend(self._reference_dependencies(secret_ref))
+        dependencies.extend(self._mcp_resource_dependencies(secret_id))
         dependencies.extend(self._connector_dependencies(secret_ref))
         dependencies.extend(self._webhook_dependencies(secret_ref))
         dependencies.extend(self._model_connection_dependencies(secret_id))
@@ -34,76 +32,41 @@ class PlatformSecretUsageService:
             ),
         )
 
-    def _resource_dependencies(self, secret_ref: str) -> list[dict[str, Any]]:
+    def _mcp_resource_dependencies(self, secret_id: str) -> list[dict[str, Any]]:
         rows = self.repository.database.execute(
             """
-            select id, code, resource_kind, status, secret_refs_json
-            from platform_resource_binding
-            """
-        )
-        result: list[dict[str, Any]] = []
-        for row in rows:
-            paths = _json_reference_paths(row.get("secret_refs_json"), secret_ref)
-            if paths:
-                result.append(
-                    _dependency(
-                        dependency_type="resource_binding",
-                        row=row,
-                        code=str(row["code"]),
-                        status=str(row["status"]),
-                        field_paths=paths,
-                        metadata={"resource_kind": str(row["resource_kind"])},
-                    )
-                )
-        return result
-
-    def _runtime_config_dependencies(
-        self,
-        secret_ref: str,
-    ) -> list[dict[str, Any]]:
-        rows = self.repository.database.execute(
-            """
-            select id, key, scope_type, scope_code, service_name, status
-            from platform_runtime_config_value
-            where secret_ref = ?
+            select distinct
+                   d.id,
+                   r.code,
+                   r.kind,
+                   d.status,
+                   rr.revision as resource_revision,
+                   g.generation,
+                   g.status as generation_status,
+                   sv.secret_version
+              from mcp_resource_generation_secret_version sv
+              join mcp_resource_generation g on g.id = sv.generation_id
+              join mcp_resource_deployment d on d.id = g.deployment_id
+              join mcp_resource_revision rr on rr.id = g.resource_revision_id
+              join mcp_resource r on r.id = d.resource_id
+             where sv.secret_id = ?
             """,
-            (secret_ref,),
+            (secret_id,),
         )
         return [
             _dependency(
-                dependency_type="runtime_config",
-                row=row,
-                code=str(row["key"]),
-                status=str(row["status"]),
-                field_paths=["secret_ref"],
-                metadata={
-                    "scope_type": str(row["scope_type"]),
-                    "scope_code": str(row["scope_code"]),
-                    "service_name": str(row.get("service_name") or ""),
-                },
-            )
-            for row in rows
-        ]
-
-    def _reference_dependencies(
-        self,
-        secret_ref: str,
-    ) -> list[dict[str, Any]]:
-        rows = self.repository.database.execute(
-            """
-            select id, code, status
-            from platform_secret_reference
-            where ref = ?
-            """,
-            (secret_ref,),
-        )
-        return [
-            _dependency(
-                dependency_type="secret_reference",
+                dependency_type="mcp_resource_deployment",
                 row=row,
                 code=str(row["code"]),
-                status=str(row["status"]),
-                field_paths=["ref"],
+                status=str(row["status"]).lower(),
+                field_paths=["generation.secret_version"],
+                metadata={
+                    "resource_kind": str(row["kind"]),
+                    "resource_revision": int(row["resource_revision"]),
+                    "generation": int(row["generation"]),
+                    "generation_status": str(row["generation_status"]),
+                    "secret_version": int(row["secret_version"]),
+                },
             )
             for row in rows
         ]
@@ -135,15 +98,9 @@ class PlatformSecretUsageService:
                         dependency_type="connector",
                         row=row,
                         code=str(row["name"]),
-                        status=(
-                            "enabled"
-                            if bool(int(row.get("enabled") or 0))
-                            else "disabled"
-                        ),
+                        status=("enabled" if bool(int(row.get("enabled") or 0)) else "disabled"),
                         field_paths=paths,
-                        metadata={
-                            "connector_type": str(row["connector_type"])
-                        },
+                        metadata={"connector_type": str(row["connector_type"])},
                     )
                 )
         return result

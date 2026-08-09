@@ -57,7 +57,7 @@ export function AuthenticationGate({ children }: { children: ReactNode }) {
     return (
       <AuthenticationFrame>
         <LoaderCircleIcon className="size-6 animate-spin text-indigo-600" />
-        <p className="text-sm text-muted-foreground">正在确认管理会话…</p>
+        <p className="text-sm text-muted-foreground">正在确认登录会话…</p>
       </AuthenticationFrame>
     )
   }
@@ -145,10 +145,10 @@ function LoginCard({
           </div>
           <div>
             <CardTitle className="text-xl">
-              <h1>登录 Agent 应用平台</h1>
+              <h1>登录 Agent 用户门户</h1>
             </CardTitle>
             <CardDescription className="mt-1.5">
-              使用系统账号建立受 RBAC 保护的管理会话。
+              使用统一系统账号查看本人历史、调试证据和外部身份。
             </CardDescription>
           </div>
         </CardHeader>

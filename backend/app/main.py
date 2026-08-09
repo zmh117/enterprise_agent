@@ -9,9 +9,7 @@ from app.shared.database import Database
 from app.shared.database import default_migrations_dir
 from app.shared.logging import configure_logging, set_correlation_id
 from app.shared.migrations import SchemaHeadError, SchemaHeadValidator
-from app.modules.platform_config.infrastructure.runtime_generation_repository import (
-    RuntimeGenerationRepository,
-)
+from app.modules.mcp_resources import McpResourceService
 
 
 class FallbackApp:
@@ -47,24 +45,30 @@ def _build_readiness(
             schema_ready = False
     rabbitmq_ready = _check_rabbitmq(settings.rabbitmq_url)
     master_key_ready = bool(settings.app_config_master_key)
-    token_required = settings.feature_real_internal_tools
-    token_ready = (
-        not token_required
-        or bool(settings.internal_api_auth_token_file)
-    )
     core_ready = all(
         (
             database_ready,
             schema_ready,
             rabbitmq_ready,
             master_key_ready,
-            token_ready,
         )
     )
     try:
-        governed_runtime = RuntimeGenerationRepository(
-            database
-        ).public_status()
+        resources = McpResourceService(database).list_status()
+        governed_runtime = {
+            "status": (
+                "UNCONFIGURED"
+                if not resources
+                else "READY"
+                if all(
+                    (item.get("deployment") or {}).get("status") == "ACTIVE"
+                    and (item.get("deployment") or {}).get("generation_status") == "ACTIVE"
+                    for item in resources
+                )
+                else "DEGRADED"
+            ),
+            "resources": resources,
+        }
     except Exception:
         governed_runtime = {
             "status": "UNAVAILABLE",
@@ -78,7 +82,6 @@ def _build_readiness(
             "schema": schema_ready,
             "schema_head": schema_head,
             "rabbitmq": rabbitmq_ready,
-            "internal_api_token": token_ready,
             "master_key": master_key_ready,
             "runtime_assembly": True,
         },
@@ -109,16 +112,6 @@ def _claude_runtime_status(settings: Settings) -> dict[str, Any]:
         "feature_real_claude": settings.feature_real_claude,
         "anthropic_api_key_configured": bool(settings.anthropic_api_key),
         "claude_cli_available": is_claude_cli_available(),
-    }
-
-
-def _internal_tools_status(settings: Settings) -> dict[str, Any]:
-    return {
-        "feature_real_internal_tools": settings.feature_real_internal_tools,
-        "internal_api_base_url_configured": bool(settings.internal_api_base_url),
-        "internal_api_auth_token_file_configured": bool(
-            settings.internal_api_auth_token_file
-        ),
     }
 
 
@@ -245,62 +238,29 @@ def create_app(
             raise HTTPException(status_code=503, detail=status)
         return status
 
-    from app.modules.business_application.api import build_business_application_router
-    from app.modules.authorization_center.api import build_authorization_center_router
-    from app.modules.admin.api import build_admin_router
-    from app.modules.agent_config.api import build_agent_config_router
-    from app.modules.model_connection.api import build_model_connection_router
-    from app.modules.api_capability.api import (
-        build_api_capability_router,
-        build_api_connection_router,
-    )
     from app.modules.dingding.api.dingding_webhook_controller import build_dingding_router
     from app.modules.identity.api import (
         build_auth_router,
         build_external_credential_router,
-        build_identity_admin_router,
     )
-    from app.modules.identity_discovery.api import build_identity_discovery_router
-    from app.modules.job.api.agent_job_debug_controller import build_agent_job_debug_router
+    from app.modules.job.api.agent_job_debug_controller import (
+        build_self_job_history_router,
+    )
     from app.modules.platform_config.api import build_platform_config_router
-    from app.modules.workflow.api import build_workflow_router
-    from app.modules.webhook.api import (
-        build_public_webhook_router,
-        build_webhook_admin_router,
-    )
-    from app.modules.managed_channel.api import (
-        build_managed_channel_router,
-        build_runtime_control_router,
-    )
+    from app.modules.mcp_resources.api import build_mcp_resource_router
+    from app.modules.cutover import build_cutover_router
+    from app.modules.webhook.api import build_public_webhook_router
+    from app.modules.managed_channel.api import build_runtime_control_router
 
     app.include_router(build_dingding_router())
-    app.include_router(build_agent_job_debug_router())
+    app.include_router(build_auth_router())
+    app.include_router(build_external_credential_router())
+    app.include_router(build_self_job_history_router())
     app.include_router(build_platform_config_router())
-    app.include_router(build_workflow_router())
+    app.include_router(build_mcp_resource_router())
+    app.include_router(build_cutover_router())
     app.include_router(build_public_webhook_router())
     app.include_router(build_runtime_control_router())
-
-    management_surface_enabled = any(
-        (
-            settings.feature_configuration.web_admin_enabled,
-            settings.feature_configuration.unified_identity_enabled,
-            settings.feature_configuration.business_application_control_plane_enabled,
-        )
-    )
-    if management_surface_enabled:
-        app.include_router(build_business_application_router())
-        app.include_router(build_authorization_center_router())
-        app.include_router(build_admin_router())
-        app.include_router(build_agent_config_router())
-        app.include_router(build_model_connection_router())
-        app.include_router(build_api_connection_router())
-        app.include_router(build_api_capability_router())
-        app.include_router(build_auth_router())
-        app.include_router(build_external_credential_router())
-        app.include_router(build_identity_admin_router())
-        app.include_router(build_identity_discovery_router())
-        app.include_router(build_webhook_admin_router())
-        app.include_router(build_managed_channel_router())
 
     return app
 

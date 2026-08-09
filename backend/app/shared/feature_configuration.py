@@ -81,10 +81,6 @@ class EffectiveFeatureConfiguration:
         return self.value("FEATURE_REAL_CLAUDE")
 
     @property
-    def real_internal_tools_enabled(self) -> bool:
-        return self.value("FEATURE_REAL_INTERNAL_TOOLS")
-
-    @property
     def unified_identity_enabled(self) -> bool:
         return self.value("UNIFIED_IDENTITY")
 
@@ -134,7 +130,6 @@ TOP_LEVEL_FEATURE_KEYS = (
     "FEATURE_WEB_ADMIN",
     "FEATURE_PUBLISHED_AGENT_RUNTIME",
     "FEATURE_REAL_CLAUDE",
-    "FEATURE_REAL_INTERNAL_TOOLS",
 )
 
 LEGACY_FEATURE_TARGETS: dict[str, str] = {
@@ -156,7 +151,6 @@ def feature_configuration_from_values(
     web_admin: bool = False,
     published_agent_runtime: bool = False,
     real_claude: bool = False,
-    real_internal_tools: bool = False,
     unified_identity: bool | None = None,
     business_application_control_plane: bool | None = None,
     test_identity_headers: bool = False,
@@ -166,7 +160,9 @@ def feature_configuration_from_values(
     source: str = "safe-default",
     diagnostics: tuple[FeatureDiagnostic, ...] = (),
 ) -> EffectiveFeatureConfiguration:
-    unified = web_admin if unified_identity is None else unified_identity
+    # Unified identity is now a platform invariant; it is independent of the
+    # retired Web management console and defaults on for every runtime.
+    unified = True
     control_plane = (
         web_admin
         if business_application_control_plane is None
@@ -191,13 +187,6 @@ def feature_configuration_from_values(
             _value(
                 "FEATURE_REAL_CLAUDE",
                 real_claude,
-                source,
-                FeatureClassification.DEPLOYMENT_SAFETY_GATE,
-                restart=True,
-            ),
-            _value(
-                "FEATURE_REAL_INTERNAL_TOOLS",
-                real_internal_tools,
                 source,
                 FeatureClassification.DEPLOYMENT_SAFETY_GATE,
                 restart=True,
@@ -231,9 +220,7 @@ def feature_configuration_from_values(
                 webhook_ingress,
                 source,
                 FeatureClassification.GOVERNED_RUNTIME_POLICY,
-                deprecated=("FEATURE_WEBHOOK_TRIGGERS",)
-                if source.startswith("legacy:")
-                else (),
+                deprecated=("FEATURE_WEBHOOK_TRIGGERS",) if source.startswith("legacy:") else (),
             ),
             _value(
                 "CONTINUOUS_CONVERSATION_COMPATIBILITY",
@@ -249,9 +236,7 @@ def feature_configuration_from_values(
                 message_attachments,
                 source,
                 FeatureClassification.GOVERNED_RUNTIME_POLICY,
-                deprecated=("FEATURE_MESSAGE_ATTACHMENTS",)
-                if source.startswith("legacy:")
-                else (),
+                deprecated=("FEATURE_MESSAGE_ATTACHMENTS",) if source.startswith("legacy:") else (),
             ),
         ),
         diagnostics=diagnostics,
@@ -263,15 +248,10 @@ def resolve_feature_configuration(
     environ: Mapping[str, str],
 ) -> EffectiveFeatureConfiguration:
     diagnostics: list[FeatureDiagnostic] = []
-    canonical = {
-        key: _optional_bool(environ, key)
-        for key in TOP_LEVEL_FEATURE_KEYS
-    }
+    canonical = {key: _optional_bool(environ, key) for key in TOP_LEVEL_FEATURE_KEYS}
     web_admin = canonical["FEATURE_WEB_ADMIN"]
     legacy_identity = _optional_bool(environ, "FEATURE_UNIFIED_IDENTITY")
-    legacy_control_plane = _optional_bool(
-        environ, "FEATURE_BUSINESS_APPLICATION_CONTROL_PLANE"
-    )
+    legacy_control_plane = _optional_bool(environ, "FEATURE_BUSINESS_APPLICATION_CONTROL_PLANE")
     if web_admin is not None:
         conflicts = tuple(
             key
@@ -294,9 +274,7 @@ def resolve_feature_configuration(
     else:
         web_admin = False
         unified_identity = legacy_identity if legacy_identity is not None else False
-        business_control_plane = (
-            legacy_control_plane if legacy_control_plane is not None else False
-        )
+        business_control_plane = legacy_control_plane if legacy_control_plane is not None else False
 
     for legacy_key, target in LEGACY_FEATURE_TARGETS.items():
         if legacy_key in environ:
@@ -320,30 +298,19 @@ def resolve_feature_configuration(
         )
 
     webhook_enabled = _optional_bool(environ, "FEATURE_WEBHOOK_TRIGGERS")
-    conversation_enabled = _optional_bool(
-        environ, "FEATURE_CONTINUOUS_CONVERSATION"
-    )
+    conversation_enabled = _optional_bool(environ, "FEATURE_CONTINUOUS_CONVERSATION")
     attachments_enabled = _optional_bool(environ, "FEATURE_MESSAGE_ATTACHMENTS")
 
     configuration = feature_configuration_from_values(
         web_admin=bool(web_admin),
-        published_agent_runtime=bool(
-            canonical["FEATURE_PUBLISHED_AGENT_RUNTIME"] or False
-        ),
+        published_agent_runtime=bool(canonical["FEATURE_PUBLISHED_AGENT_RUNTIME"] or False),
         real_claude=bool(canonical["FEATURE_REAL_CLAUDE"] or False),
-        real_internal_tools=bool(
-            canonical["FEATURE_REAL_INTERNAL_TOOLS"] or False
-        ),
         unified_identity=unified_identity,
         business_application_control_plane=business_control_plane,
         test_identity_headers=test_headers,
         webhook_ingress=True if webhook_enabled is None else webhook_enabled,
-        continuous_conversation=False
-        if conversation_enabled is None
-        else conversation_enabled,
-        message_attachments=False
-        if attachments_enabled is None
-        else attachments_enabled,
+        continuous_conversation=False if conversation_enabled is None else conversation_enabled,
+        message_attachments=False if attachments_enabled is None else attachments_enabled,
         source="environment",
         diagnostics=tuple(diagnostics),
     )
@@ -360,7 +327,6 @@ def apply_runtime_feature_policies(
     for gate in (
         "FEATURE_PUBLISHED_AGENT_RUNTIME",
         "FEATURE_REAL_CLAUDE",
-        "FEATURE_REAL_INTERNAL_TOOLS",
     ):
         requested = _coerce_optional_bool(runtime_values.get(gate))
         if requested is None:
@@ -401,9 +367,7 @@ def apply_runtime_feature_policies(
     )
 
 
-def feature_migration_report(
-    environment: str, environ: Mapping[str, str]
-) -> dict[str, Any]:
+def feature_migration_report(environment: str, environ: Mapping[str, str]) -> dict[str, Any]:
     configuration = resolve_feature_configuration(environment, environ)
     legacy = []
     policy_draft: dict[str, Any] = {}
@@ -441,14 +405,10 @@ def _mark_configuration_sources(
 ) -> EffectiveFeatureConfiguration:
     targets = {
         "UNIFIED_IDENTITY": "FEATURE_UNIFIED_IDENTITY",
-        "BUSINESS_APPLICATION_CONTROL_PLANE": (
-            "FEATURE_BUSINESS_APPLICATION_CONTROL_PLANE"
-        ),
+        "BUSINESS_APPLICATION_CONTROL_PLANE": ("FEATURE_BUSINESS_APPLICATION_CONTROL_PLANE"),
         "TEST_IDENTITY_HEADERS": "FEATURE_TEST_IDENTITY_HEADERS",
         "WEBHOOK_INGRESS_COMPATIBILITY": "FEATURE_WEBHOOK_TRIGGERS",
-        "CONTINUOUS_CONVERSATION_COMPATIBILITY": (
-            "FEATURE_CONTINUOUS_CONVERSATION"
-        ),
+        "CONTINUOUS_CONVERSATION_COMPATIBILITY": ("FEATURE_CONTINUOUS_CONVERSATION"),
         "MESSAGE_ATTACHMENTS_COMPATIBILITY": "FEATURE_MESSAGE_ATTACHMENTS",
     }
     values: list[EffectiveFeatureValue] = []
@@ -466,11 +426,7 @@ def _mark_configuration_sources(
             values.append(
                 replace(
                     item,
-                    source=(
-                        "environment"
-                        if item.key in environ
-                        else "safe-default"
-                    ),
+                    source=("environment" if item.key in environ else "safe-default"),
                 )
             )
         elif item.key in {
@@ -504,9 +460,7 @@ def _parse_bool(value: Any, key: str) -> bool:
         return True
     if normalized in {"0", "false", "no", "off"}:
         return False
-    raise FeatureConfigurationError(
-        f"invalid_feature_boolean: {key} must be true or false"
-    )
+    raise FeatureConfigurationError(f"invalid_feature_boolean: {key} must be true or false")
 
 
 def _coerce_optional_bool(value: Any) -> bool | None:

@@ -9,7 +9,7 @@ export function MyExternalIdentitiesPage() {
           这里只请求当前会话用户自己的 ONES 状态，不读取人员列表、角色、会话或其他用户数据。
         </p>
       </header>
-      <ExternalIdentityPanel mode="self" />
+      <ExternalIdentityPanel />
     </main>
   )
 }

@@ -21,8 +21,8 @@ def test_compose_business_services_wait_for_one_shot_migrator() -> None:
     assert "APP_STARTUP_MIGRATE" not in COMPOSE_PATH.read_text(encoding="utf-8")
 
     for service_name in (
-        "local-internal-api-platform",
-        "internal-api-platform",
+        "ones-mcp-server",
+        "data-mcp-server",
         "api-server",
         "agent-worker",
         "job-dispatch-worker",
@@ -39,8 +39,6 @@ def test_runtime_services_do_not_force_local_seed_replay() -> None:
     compose = yaml.safe_load(COMPOSE_PATH.read_text(encoding="utf-8"))
     services = compose["services"]
     for service_name in (
-        "local-internal-api-platform",
-        "internal-api-platform",
         "api-server",
         "agent-worker",
         "job-dispatch-worker",
@@ -54,6 +52,6 @@ def test_runtime_services_do_not_force_local_seed_replay() -> None:
         )
 
 
-def test_local_seed_is_additive_for_control_plane_connectors() -> None:
+def test_local_seed_is_additive_for_runtime_connectors() -> None:
     seed_sql = LOCAL_SEED_PATH.read_text(encoding="utf-8").upper()
     assert "UPDATE INTEGRATION_CONNECTOR" not in seed_sql

@@ -1,4 +1,3 @@
-from .service import BusinessApplicationResolver, BusinessApplicationService
+from .resolver import BusinessApplicationResolver
 
-__all__ = ["BusinessApplicationResolver", "BusinessApplicationService"]
-
+__all__ = ["BusinessApplicationResolver"]
