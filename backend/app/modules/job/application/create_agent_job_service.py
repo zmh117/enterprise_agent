@@ -644,8 +644,12 @@ class CreateAgentJobService:
         if self.connector_registry is None:
             return
         source_connector_id = command.source_connector_id
+        is_dingtalk_stream = command.effective_source_channel == "dingding_stream"
         if source_connector_id:
-            self.connector_registry.require_ingress(source_connector_id)
+            if is_dingtalk_stream:
+                self.connector_registry.require_dingtalk_stream_ingress(source_connector_id)
+            else:
+                self.connector_registry.require_ingress(source_connector_id)
             self.audit_service.record(
                 "permission.connector_ingress",
                 status="SUCCEEDED",
@@ -655,7 +659,19 @@ class CreateAgentJobService:
             )
         route = ReplyRoute.from_dict(reply_route)
         if route.type != "none" and route.connector_id:
-            self.connector_registry.require_delivery(route.connector_id)
+            if route.type == "dingtalk_stream_session_webhook":
+                if not is_dingtalk_stream or route.connector_id != source_connector_id:
+                    raise NonRetryableExecutionError(
+                        "DingTalk Stream reply-original connector does not match ingress",
+                        safe_message="原钉钉会话投递连接器不一致",
+                        error_code="dingtalk_stream_reply_connector_mismatch",
+                    )
+                # The per-message session webhook is the delivery credential.
+                # Revalidate the governed Stream connector identity/lifecycle,
+                # but never resolve its static client Secret in this Worker.
+                self.connector_registry.require_dingtalk_stream_ingress(route.connector_id)
+            else:
+                self.connector_registry.require_delivery(route.connector_id)
             self.audit_service.record(
                 "permission.connector_delivery",
                 status="SUCCEEDED",

@@ -140,7 +140,11 @@ class AgentContextBuilder:
                 error_code="model_connection_runtime_unavailable",
             )
         binding = self.agent_config_service.model_connection_service.runtime_binding(
-            str(model_connection.get("revision_id") or "")
+            str(model_connection.get("revision_id") or ""),
+            # The Python worker is intentionally isolated from provider egress.
+            # The TypeScript Runtime independently validates provider DNS/IP
+            # before it resolves the credential or performs a model request.
+            validate_dns=False,
         )
         if binding.config_hash != str(
             model_connection.get("config_hash") or ""

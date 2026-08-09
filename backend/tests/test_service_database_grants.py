@@ -52,6 +52,39 @@ def test_grants_are_explicit_and_exclude_retired_platform_tables() -> None:
         "mcp_resource_generation, platform_secret_change_event to data_mcp_runtime"
     ) in data_grants
 
+    api_grants = normalized.split("-- the api owns", 1)[1].split(
+        "-- workers can read", 1
+    )[0]
+    assert "business_application_revision_mcp_tool" in api_grants
+    assert (
+        "grant select, insert on table management_operation_idempotency "
+        "to enterprise_agent_api"
+    ) in api_grants
+
+    worker_grants = normalized.split("-- workers can read", 1)[1].split(
+        "-- ones mcp can resolve", 1
+    )[0]
+    assert "dingtalk_enterprise" in worker_grants
+    assert "dingtalk_identity_candidate" in worker_grants
+    assert "dingtalk_identity_candidate_message" in worker_grants
+    assert (
+        "grant update ( last_seen_at, display_name, display_name_observed_at, "
+        "display_name_event_id, display_name_source_connector_id, revision, updated_at "
+        ") on table user_external_identity to enterprise_agent_worker"
+    ) in worker_grants
+    assert (
+        "grant select, insert, update on table "
+        "dingtalk_identity_application_observation to enterprise_agent_worker"
+    ) in worker_grants
+    assert (
+        "grant insert on table dingtalk_identity_nickname_audit "
+        "to enterprise_agent_worker"
+    ) in worker_grants
+    assert (
+        "grant select, insert, update, delete on table user_external_identity "
+        "to enterprise_agent_worker"
+    ) not in worker_grants
+
 
 def test_service_grants_do_not_reference_tables_retired_by_head_migration() -> None:
     grants_sql = (ROOT / "backend/maintenance/mcp_service_grants.sql").read_text()
@@ -100,6 +133,7 @@ def test_compose_separates_database_roles_and_master_key_mounts() -> None:
         "api-server",
         "ones-mcp-server",
         "data-mcp-server",
+        "channel-dispatch-worker",
         "delivery-dispatch-worker",
         "attachment-worker",
     ):

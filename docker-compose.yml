@@ -478,7 +478,9 @@ services:
       target: agent-worker
     command: ["python", "-m", "app.workers.channel_dispatch_worker"]
     environment:
-      <<: *worker-env
+      <<: *decrypting-worker-env
+    secrets:
+      - app_config_master_key
     depends_on:
       postgres:
         condition: service_healthy

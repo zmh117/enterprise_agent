@@ -7,6 +7,7 @@ import os
 import threading
 from dataclasses import replace
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 from app.bootstrap import (
@@ -144,6 +145,23 @@ def test_model_connection_dns_validation_runs_outside_database_uow() -> None:
     try:
         ready_connection(c)
         assert observed == [True]
+    finally:
+        c.database.close()
+
+
+def test_runtime_binding_can_skip_dns_only_for_egress_isolated_worker() -> None:
+    c = container()
+    revision = ready_connection(c)
+    c.model_connection_service.dns_resolver = Mock(
+        side_effect=AssertionError("egress-isolated worker must not resolve provider DNS")
+    )
+    try:
+        binding = c.model_connection_service.runtime_binding(
+            str(revision["id"]),
+            validate_dns=False,
+        )
+        assert binding.connection_revision_id == revision["id"]
+        c.model_connection_service.dns_resolver.assert_not_called()
     finally:
         c.database.close()
 

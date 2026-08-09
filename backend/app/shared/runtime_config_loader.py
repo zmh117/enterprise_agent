@@ -19,7 +19,6 @@ _NON_DECRYPTING_SERVICES = frozenset(
         "agent-worker",
         "job-dispatch-worker",
         "webhook-worker",
-        "channel-dispatch-worker",
     }
 )
 

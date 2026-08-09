@@ -68,17 +68,21 @@ class ConnectorRegistry:
 
     def require_ingress(self, connector_id: str) -> Connector:
         connector = self._require(connector_id)
+        self._require_ingress_enabled(connector)
+        self._require_configured(connector, for_ingress=True)
+        return connector
+
+    @staticmethod
+    def _require_ingress_enabled(connector: Connector) -> None:
         if (
             not connector.enabled
             or not connector.allow_ingress
             or connector.connector_type in DELIVERY_ONLY_CONNECTOR_TYPES
         ):
             raise PermissionDenied(
-                f"Connector {connector_id} is not allowed for ingress",
+                f"Connector {connector.id} is not allowed for ingress",
                 safe_message="该连接器不允许用于消息接入",
             )
-        self._require_configured(connector, for_ingress=True)
-        return connector
 
     def require_delivery(self, connector_id: str) -> Connector:
         connector = self._require(connector_id)
@@ -95,12 +99,16 @@ class ConnectorRegistry:
         return connector
 
     def require_dingtalk_stream_ingress(self, connector_id: str) -> Connector:
-        connector = self.require_ingress(connector_id)
+        connector = self._require(connector_id)
+        self._require_ingress_enabled(connector)
         if connector.connector_type != DINGTALK_STREAM_CONNECTOR_TYPE:
             raise PermissionDenied(
                 f"Connector {connector_id} is not a DingTalk Stream ingress connector",
                 safe_message="该连接器不是钉钉 Stream 接入连接器",
             )
+        # Runtime configuration already resolves the client credential before
+        # accepting Stream traffic. Dispatch revalidates lifecycle/type only;
+        # it must not broaden the Worker role to all platform Secrets.
         return connector
 
     def resolve_secret(self, connector: Connector) -> str:

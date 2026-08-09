@@ -29,7 +29,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
   agent_workflow_template, agent_workflow_node, agent_workflow_edge,
   agent_workflow_publication, business_application,
   business_application_revision, business_application_revision_delivery,
-  business_application_revision_trigger,
+  business_application_revision_trigger, business_application_revision_mcp_tool,
   business_application_publication,
   business_application_deployment, business_application_active_route,
   agent_channel_binding,
@@ -53,10 +53,13 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
   platform_cutover_record, agent_runtime_event
   TO enterprise_agent_api;
 GRANT SELECT ON TABLE schema_migration TO enterprise_agent_api;
+GRANT SELECT, INSERT ON TABLE management_operation_idempotency
+  TO enterprise_agent_api;
 
 -- Workers can read immutable control facts and mutate only runtime/outbox facts.
 GRANT SELECT ON TABLE
   schema_migration, app_user, user_external_identity, provider_instance,
+  dingtalk_enterprise,
   permission_policy, rbac_role, rbac_user_role,
   rbac_role_application_access,
   agent_definition, agent_revision, agent_publication, agent_skill_binding,
@@ -79,9 +82,23 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
   agent_artifact, attachment_content, message_attachment,
   job_dispatch_outbox, delivery_outbox, delivery_attempt, delivery_chunk,
   channel_ingress_event, channel_ingress_outbox, channel_runtime_lease,
+  dingtalk_identity_candidate, dingtalk_identity_candidate_message,
   webhook_event, webhook_outbox, webhook_replay_nonce,
   mcp_job_subject_snapshot, mcp_job_tool_binding, mcp_token_revocation,
   mcp_tool_call_provenance, mcp_tool_call_attempt, agent_runtime_event
+  TO enterprise_agent_worker;
+
+-- DingTalk channel dispatch records only bounded message-observation facts on
+-- an already-bound identity. It cannot create, bind, disable, or unbind an
+-- external identity.
+GRANT UPDATE (
+  last_seen_at, display_name, display_name_observed_at,
+  display_name_event_id, display_name_source_connector_id, revision, updated_at
+) ON TABLE user_external_identity TO enterprise_agent_worker;
+GRANT SELECT, INSERT, UPDATE ON TABLE
+  dingtalk_identity_application_observation
+  TO enterprise_agent_worker;
+GRANT INSERT ON TABLE dingtalk_identity_nickname_audit
   TO enterprise_agent_worker;
 
 -- ONES MCP can resolve one exact user credential and write only bounded call facts.

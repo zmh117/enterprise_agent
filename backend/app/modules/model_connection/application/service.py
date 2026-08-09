@@ -626,6 +626,7 @@ class ModelConnectionService:
         revision_id: str,
         *,
         require_connection_enabled: bool = True,
+        validate_dns: bool = True,
     ) -> ModelRuntimeBinding:
         revision = self.repository.get_revision(revision_id)
         if (
@@ -644,7 +645,7 @@ class ModelConnectionService:
                 safe_message="模型连接完整性校验失败",
                 error_code="model_connection_integrity_failed",
             )
-        normalized = self.normalize_config(config, validate_dns=True)
+        normalized = self.normalize_config(config, validate_dns=validate_dns)
         if normalized != config:
             raise NonRetryableExecutionError(
                 "Model connection revision is not canonical",
