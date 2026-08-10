@@ -74,7 +74,8 @@ class AgentExecutor:
                 raise
         if job.business_application_id:
             if self.business_authorization_service is None:
-                self.status_service.fail(job_id, "业务应用授权服务暂时不可用")
+                if fail_on_error:
+                    self.status_service.fail(job_id, "业务应用授权服务暂时不可用")
                 raise PermissionDenied(
                     "Business authorization service is unavailable",
                     safe_message="业务应用授权服务暂时不可用",
@@ -93,7 +94,8 @@ class AgentExecutor:
                     title="业务应用授权已失效",
                     content=exc.safe_message,
                 )
-                self.status_service.fail(job_id, exc.safe_message)
+                if fail_on_error:
+                    self.status_service.fail(job_id, exc.safe_message)
                 raise
             self.audit_service.record(
                 "authorization.business.worker_start",

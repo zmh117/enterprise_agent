@@ -896,7 +896,7 @@ def test_two_verified_human_platform_admins_and_confirmed_self_removal() -> None
     _complete_login_verification(
         c,
         user_id=ADMIN_ID,
-        username="local-user",
+        username="admin",
         password="local-admin-verified-password",
     )
     admin_membership = c.database.execute_one(
@@ -1005,7 +1005,7 @@ def test_user_disable_and_delete_preserve_two_verified_human_admins() -> None:
     _complete_login_verification(
         c,
         user_id=ADMIN_ID,
-        username="local-user",
+        username="admin",
         password="local-admin-disable-delete-password",
     )
     second = _create_verified_platform_admin(
@@ -1067,7 +1067,7 @@ def test_concurrent_platform_admin_removals_cannot_commit_below_two(
     _complete_login_verification(
         first,
         user_id=ADMIN_ID,
-        username="local-user",
+        username="admin",
         password="local-admin-concurrency-password",
     )
     second_admin = _create_verified_platform_admin(

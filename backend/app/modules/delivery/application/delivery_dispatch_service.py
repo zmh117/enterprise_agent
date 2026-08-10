@@ -154,7 +154,7 @@ class DeliveryOutboxDispatcher:
             )
             return DeliveryStatus.SKIPPED
 
-        self._require_delivery_authorization(job)
+        self._require_delivery_authorization(job, event, artifact)
         connector = None
         if route.connector_id:
             connector = self.delivery_service.connector_registry.require_delivery(
@@ -354,11 +354,37 @@ class DeliveryOutboxDispatcher:
                 error_code="delivery_binding_mismatch",
             )
 
-    def _require_delivery_authorization(self, job: object) -> None:
+    def _require_delivery_authorization(
+        self,
+        job: object,
+        event: DeliveryEvent,
+        artifact: dict[str, object],
+    ) -> None:
         application_id = str(
             getattr(job, "business_application_id", "") or ""
         )
         if not application_id:
+            return
+        if (
+            str(event.delivery_binding.get("delivery_kind") or "") == "failure"
+            and str(event.delivery_binding.get("failure_error_code") or "")
+            == "business_application_denied"
+            and str(artifact.get("artifact_type") or "") == "failure_notification"
+        ):
+            self.audit_service.record(
+                "authorization.business.denial_notice_delivery_allowed",
+                status="SUCCEEDED",
+                summary="Safe authorization denial notice allowed on original reply route",
+                job_id=str(getattr(job, "id")),
+                actor_id=str(
+                    getattr(job, "internal_user_id", "")
+                    or getattr(job, "user_id", "")
+                ),
+                payload={
+                    "delivery_id": event.id,
+                    "error_code": "business_application_denied",
+                },
+            )
             return
         authorization = (
             self.delivery_service.business_authorization_service

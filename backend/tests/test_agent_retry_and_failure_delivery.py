@@ -64,7 +64,7 @@ class AgentRetryAndFailureDeliveryTests(unittest.TestCase):
         return c.create_agent_job_service.execute(  # type: ignore[attr-defined]
             CreateAgentJobCommand(
                 idempotency_key=key,
-                requester_id="local-user",
+                requester_id="admin",
                 external_conversation_id=f"conversation-{key}",
                 user_message="synthetic retry test",
                 source_channel="debug_api",

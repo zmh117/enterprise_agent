@@ -17,6 +17,7 @@ from app.modules.job.application.job_status_service import JobStatusService
 from app.modules.job.domain.job_status import JobStatus
 from app.shared.config import DingTalkSettings, Settings
 from app.shared.exceptions import NonRetryableExecutionError
+from app.workers.agent_job_worker import AgentJobWorker
 from app.workers.dingtalk_stream_ingress_worker import DingTalkStreamIngressWorker
 from backend.tests.helpers import (
     dispatch_pending_deliveries,
@@ -236,6 +237,55 @@ class DingTalkStreamIngressTests(unittest.TestCase):
         self.assertEqual("", adapter.calls[0]["connector_id"])
         attempts = c.agent_repository.list_delivery_attempts(result.job_id)
         self.assertEqual("SUCCEEDED", attempts[0]["status"])
+
+    def test_revoked_application_access_returns_safe_prompt_to_stream_user(self) -> None:
+        c = routed_container()
+        runtime_role = c.authorization_center_repository.get_role_by_code(
+            "dingtalk-stream-runtime-user"
+        )
+        c.authorization_center_service.replace_business_access(
+            actor_id="user_local_admin",
+            role_id=str(runtime_role["id"]),
+            expected_revision=int(runtime_role["business_revision"]),
+            applications=[],
+            confirmed=True,
+            reason="测试撤销业务应用授权后的失败回发",
+        )
+        adapter = CaptureDeliveryAdapter()
+        c.result_delivery_service.adapters["dingtalk_stream_session_webhook"] = adapter
+
+        result = c.dingtalk_stream_message_service.handle_callback(
+            payload=stream_payload(
+                msg_id="unauthorized-msg-1",
+                event_id="unauthorized-event-1",
+            ),
+            correlation_id="corr-unauthorized-stream-1",
+        )
+        publish_pending_agent_jobs(c)
+
+        AgentJobWorker(c.settings, container=c).run_once()
+
+        failed = c.agent_repository.get_job(result.job_id)
+        self.assertEqual(JobStatus.FAILED, failed.status)
+        self.assertEqual("当前用户未获得该业务应用权限", failed.error_message)
+        self.assertEqual(1, c.agent_repository.count_rows("delivery_outbox"))
+        self.assertEqual([], adapter.calls)
+
+        dispatch_pending_deliveries(c)
+
+        self.assertEqual(1, len(adapter.calls))
+        self.assertEqual(
+            "dingtalk_stream_session_webhook",
+            adapter.calls[0]["route_type"],
+        )
+        self.assertIn("当前用户未获得该业务应用权限", adapter.calls[0]["text"])
+        attempts = c.agent_repository.list_delivery_attempts(result.job_id)
+        self.assertEqual(1, len(attempts))
+        self.assertEqual("SUCCEEDED", attempts[0]["status"])
+        event_types = {
+            row["event_type"] for row in c.audit_repository.list_for_job(result.job_id)
+        }
+        self.assertIn("job.dead.persisted", event_types)
 
     def test_expired_session_webhook_failure_is_recorded_without_fallback(self) -> None:
         c = routed_container()

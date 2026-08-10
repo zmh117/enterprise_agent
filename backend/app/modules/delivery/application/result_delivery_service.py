@@ -58,6 +58,7 @@ class ResultDeliveryService:
         error_code: str,
         correlation_id: str,
     ) -> str:
+        safe_error_code = _safe_error_code(error_code)
         artifact = self.repository.get_artifact_for_job(
             job_id=job_id,
             artifact_type="failure_notification",
@@ -67,7 +68,7 @@ class ResultDeliveryService:
             content = json.dumps(
                 {
                     "status": "failed",
-                    "error_code": _safe_error_code(error_code),
+                    "error_code": safe_error_code,
                     "message": _safe_failure_message(reason),
                     "job_id": job_id,
                 },
@@ -88,6 +89,7 @@ class ResultDeliveryService:
             correlation_id=correlation_id,
             delivery_kind="failure",
             title="Agent 诊断失败",
+            failure_error_code=safe_error_code,
         )
 
     def _enqueue(
@@ -98,6 +100,7 @@ class ResultDeliveryService:
         correlation_id: str,
         delivery_kind: str,
         title: str,
+        failure_error_code: str = "",
     ) -> str:
         job = self.repository.get_job(job_id)
         route = ReplyRoute.from_dict(job.reply_route)
@@ -123,6 +126,7 @@ class ResultDeliveryService:
                     canonical_route.encode("utf-8")
                 ).hexdigest(),
                 "route_source": "agent_job.reply_route_json",
+                "failure_error_code": failure_error_code,
             },
             target_summary=_target_summary(route, None),
             correlation_id=correlation_id,

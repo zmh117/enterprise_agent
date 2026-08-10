@@ -21,7 +21,7 @@ def _create_job(
     return runtime.create_agent_job_service.execute(
         CreateAgentJobCommand(
             idempotency_key=key,
-            requester_id="local-user",
+            requester_id="admin",
             external_conversation_id=f"conversation-{key}",
             user_message="diagnose",
             source_channel="debug_api",
