@@ -60,6 +60,6 @@ class AdminCapabilityService:
             "data_scope": strict_business_scope_summary(
                 self.repository.database,
                 user_id=user_id,
-                global_access=False,
+                global_access=platform_admin,
             ),
         }

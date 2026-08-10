@@ -3,12 +3,21 @@ import {
   AppWindowIcon,
   BotIcon,
   BoxesIcon,
+  BugIcon,
+  CableIcon,
   ChevronsUpDownIcon,
+  DatabaseIcon,
+  GaugeIcon,
   HistoryIcon,
   KeyRoundIcon,
   Link2Icon,
   LoaderCircleIcon,
   LogOutIcon,
+  ServerIcon,
+  ShieldIcon,
+  UsersIcon,
+  UserSearchIcon,
+  WrenchIcon,
 } from "lucide-react"
 import { Link, useLocation } from "react-router-dom"
 
@@ -58,36 +67,124 @@ const personalNavigation = [
   { label: "密码与会话", href: "/account/security", icon: KeyRoundIcon },
 ]
 
-const managementNavigation = [
+const managementGroups = [
   {
-    label: "Agent Publication",
-    href: "/agent-profiles",
-    icon: BotIcon,
-    capability: "agents_read",
+    label: "治理总览",
+    items: [
+      {
+        label: "Dashboard",
+        href: "/dashboard",
+        icon: GaugeIcon,
+        capability: "dashboard_read",
+      },
+    ],
   },
   {
-    label: "业务应用",
-    href: "/applications",
-    icon: AppWindowIcon,
-    capability: "applications_read",
+    label: "运行治理",
+    items: [
+      {
+        label: "运行历史",
+        href: "/operations/history",
+        icon: HistoryIcon,
+        capability: "jobs_read",
+      },
+      {
+        label: "发起调试",
+        href: "/operations/debug",
+        icon: BugIcon,
+        capability: "jobs_debug",
+      },
+    ],
+  },
+  {
+    label: "发布管理",
+    items: [
+      {
+        label: "Agent Publication",
+        href: "/agent-profiles",
+        icon: BotIcon,
+        capability: "agents_read",
+      },
+      {
+        label: "业务应用",
+        href: "/applications",
+        icon: AppWindowIcon,
+        capability: "applications_read",
+      },
+      {
+        label: "渠道与触发器",
+        href: "/applications/channels",
+        icon: CableIcon,
+        capability: "channels_read",
+      },
+    ],
+  },
+  {
+    label: "人员与权限",
+    items: [
+      {
+        label: "人员与账号",
+        href: "/users",
+        icon: UsersIcon,
+        capability: "users_read",
+      },
+      {
+        label: "角色与授权",
+        href: "/users/roles",
+        icon: ShieldIcon,
+        capability: "roles_read",
+      },
+      {
+        label: "待绑定钉钉用户",
+        href: "/users/dingtalk-candidates",
+        icon: UserSearchIcon,
+        capability: "identities_read",
+      },
+    ],
+  },
+  {
+    label: "MCP 配置",
+    items: [
+      {
+        label: "MCP Server",
+        href: "/mcp/servers",
+        icon: ServerIcon,
+        capability: "mcp_servers_read",
+      },
+      {
+        label: "Tool Publication",
+        href: "/mcp/tools",
+        icon: WrenchIcon,
+        capability: "mcp_tools_read",
+      },
+      {
+        label: "Resource",
+        href: "/mcp/resources",
+        icon: DatabaseIcon,
+        capability: "mcp_resources_read",
+      },
+      {
+        label: "Credential",
+        href: "/mcp/credentials",
+        icon: KeyRoundIcon,
+        capability: "secrets_read",
+      },
+    ],
   },
 ]
 
 export function PlatformNavigation() {
   const location = useLocation()
   const user = useAuthenticatedUser()
-  const allowedManagement = managementNavigation.filter(
-    (item) =>
-      user.capabilities[item.capability] ||
-      (item.capability === "agents_read" && user.capabilities.agents_manage) ||
-      (item.capability === "applications_read" &&
-        (user.capabilities.applications_manage ||
-          user.capabilities.applications_publish ||
-          user.capabilities.applications_activate))
-  )
+  const allowedGroups = managementGroups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => canAccess(user.capabilities, item.capability)),
+    }))
+    .filter((group) => group.items.length)
   const activeHref = resolveActiveNavigationHref(location.pathname, [
     ...personalNavigation,
-    ...allowedManagement,
+    ...allowedGroups.flatMap((group) => group.items),
   ])
   const logout = useLogout()
   return (
@@ -105,7 +202,7 @@ export function PlatformNavigation() {
               <span className="flex flex-col text-left leading-tight">
                 <span className="font-semibold">Agent 控制台</span>
                 <span className="text-[11px] text-muted-foreground">
-                  History & Publication
+                  Governance & History
                 </span>
               </span>
             </SidebarMenuButton>
@@ -134,12 +231,12 @@ export function PlatformNavigation() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-        {allowedManagement.length ? (
-          <SidebarGroup>
-            <SidebarGroupLabel>发布管理</SidebarGroupLabel>
+        {allowedGroups.map((group) => (
+          <SidebarGroup key={group.label}>
+            <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
-                {allowedManagement.map((item) => {
+                {group.items.map((item) => {
                   const Icon = item.icon
                   return (
                     <SidebarMenuItem key={item.href}>
@@ -156,7 +253,7 @@ export function PlatformNavigation() {
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
-        ) : null}
+        ))}
       </SidebarContent>
       <SidebarSeparator />
       <SidebarFooter className="p-3">
@@ -164,6 +261,22 @@ export function PlatformNavigation() {
       </SidebarFooter>
     </Sidebar>
   )
+}
+
+function canAccess(
+  capabilities: Record<string, boolean>,
+  capability: string
+) {
+  if (capabilities[capability]) return true
+  if (capability === "agents_read") return Boolean(capabilities.agents_manage)
+  if (capability === "applications_read") {
+    return Boolean(
+      capabilities.applications_manage ||
+        capabilities.applications_publish ||
+        capabilities.applications_activate
+    )
+  }
+  return false
 }
 
 function AccountMenu({

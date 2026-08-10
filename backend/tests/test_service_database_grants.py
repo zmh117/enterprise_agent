@@ -67,6 +67,17 @@ def test_grants_are_explicit_and_exclude_retired_platform_tables() -> None:
     assert "dingtalk_enterprise" in worker_grants
     assert "dingtalk_identity_candidate" in worker_grants
     assert "dingtalk_identity_candidate_message" in worker_grants
+    assert "mcp_resource_generation" in worker_grants
+    assert "provider_credential" in worker_grants
+    assert (
+        "grant select (id, ref, status, active_version) "
+        "on platform_secret to enterprise_agent_worker"
+    ) in worker_grants
+    assert (
+        "grant select (secret_id, version, status) "
+        "on platform_secret_version to enterprise_agent_worker"
+    ) in worker_grants
+    assert "ciphertext" not in worker_grants
     assert (
         "grant update ( last_seen_at, display_name, display_name_observed_at, "
         "display_name_event_id, display_name_source_connector_id, revision, updated_at "
@@ -109,6 +120,11 @@ def test_compose_separates_database_roles_and_master_key_mounts() -> None:
     assert "enterprise_agent_worker" in services["agent-worker"]["environment"]["DATABASE_DSN"]
     assert "ones_mcp_reader" in services["ones-mcp-server"]["environment"]["DATABASE_DSN"]
     assert "data_mcp_runtime" in services["data-mcp-server"]["environment"]["DATABASE_DSN"]
+    assert services["ones-mcp-server"]["environment"]["APP_ENV"] == "${APP_ENV:-local}"
+    assert (
+        services["ones-mcp-server"]["environment"]["ONES_ALLOW_INSECURE_LOCAL"]
+        == "${ONES_IDENTITY_ALLOW_INSECURE_LOCAL:-false}"
+    )
 
     agent = services["agent-worker"]
     assert "APP_CONFIG_MASTER_KEY_FILE" not in agent["environment"]
@@ -139,6 +155,18 @@ def test_compose_separates_database_roles_and_master_key_mounts() -> None:
     ):
         assert "APP_CONFIG_MASTER_KEY_FILE" in services[decrypting_service]["environment"]
         assert "app_config_master_key" in services[decrypting_service]["secrets"]
+
+    for long_lived_service in (
+        "api-server",
+        "admin-web",
+        "agent-worker",
+        "job-dispatch-worker",
+        "delivery-dispatch-worker",
+        "webhook-worker",
+        "channel-dispatch-worker",
+        "attachment-worker",
+    ):
+        assert services[long_lived_service]["restart"] == "unless-stopped"
 
 
 def test_short_service_passwords_fail_before_database_access(

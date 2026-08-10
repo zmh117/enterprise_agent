@@ -53,6 +53,29 @@ def _correlation_id(request: Request) -> str:
     return str(getattr(request.state, "correlation_id", "") or "").strip()
 
 
+def _browser_secret(secret: dict[str, Any]) -> dict[str, Any]:
+    """Return a browser-safe credential projection.
+
+    The service projection intentionally retains ``secret_ref`` for trusted
+    backend callers. Web clients receive only the opaque database identifier
+    and lifecycle metadata; a later backend resolver maps that identifier to
+    the internal reference when a governed Resource or Connector is saved.
+    """
+
+    forbidden = {
+        "secret_ref",
+        "ref",
+        "value",
+        "ciphertext",
+        "nonce",
+        "tag",
+        "authentication_tag",
+        "key_id",
+        "master_key",
+    }
+    return {key: value for key, value in secret.items() if key not in forbidden}
+
+
 def build_platform_config_router() -> APIRouter:
     """Expose only the secret lifecycle needed by ``platformctl``.
 
@@ -70,9 +93,12 @@ def build_platform_config_router() -> APIRouter:
     ) -> dict[str, Any]:
         _require_secret_read(request)
         return {
-            "secrets": _container(request).platform_config_service.list_platform_secrets(
-                include_disabled=include_disabled
-            )
+            "secrets": [
+                _browser_secret(item)
+                for item in _container(request).platform_config_service.list_platform_secrets(
+                    include_disabled=include_disabled
+                )
+            ]
         }
 
     @router.post("")
@@ -86,7 +112,7 @@ def build_platform_config_router() -> APIRouter:
             )
         except Exception as exc:
             raise _handle(exc) from exc
-        return {"secret": secret}
+        return {"secret": _browser_secret(secret)}
 
     @router.get("/{code}")
     def get_secret(request: Request, code: str) -> dict[str, Any]:
@@ -95,7 +121,7 @@ def build_platform_config_router() -> APIRouter:
             secret = _container(request).platform_config_service.get_platform_secret(code)
         except Exception as exc:
             raise _handle(exc) from exc
-        return {"secret": secret}
+        return {"secret": _browser_secret(secret)}
 
     @router.get("/{code}/usage")
     def get_secret_usage(request: Request, code: str) -> dict[str, Any]:
@@ -104,7 +130,12 @@ def build_platform_config_router() -> APIRouter:
             usage = _container(request).platform_config_service.get_platform_secret_usage(code)
         except Exception as exc:
             raise _handle(exc) from exc
-        return {"usage": usage}
+        return {
+            "usage": {
+                **usage,
+                "secret": _browser_secret(usage["secret"]),
+            }
+        }
 
     @router.post("/{code}/rotate")
     async def rotate_secret(
@@ -122,7 +153,7 @@ def build_platform_config_router() -> APIRouter:
             )
         except Exception as exc:
             raise _handle(exc) from exc
-        return {"secret": secret}
+        return {"secret": _browser_secret(secret)}
 
     @router.post("/{code}/disable")
     async def disable_secret(
@@ -140,6 +171,6 @@ def build_platform_config_router() -> APIRouter:
             )
         except Exception as exc:
             raise _handle(exc) from exc
-        return {"secret": secret}
+        return {"secret": _browser_secret(secret)}
 
     return router

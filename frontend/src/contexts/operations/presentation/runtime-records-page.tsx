@@ -23,6 +23,7 @@ import type {
   DeliveryEvent,
   McpToolCall,
   RuntimeJob,
+  RuntimeJobDetail,
 } from "@/contexts/operations/domain/runtime-record"
 import { ApiError } from "@/shared/api/api-client"
 
@@ -62,11 +63,17 @@ export function RuntimeRecordsPage() {
   )
 }
 
-function JobRow({ job }: { job: RuntimeJob }) {
+export function JobRow({
+  job,
+  detailBase = "/operations/jobs",
+}: {
+  job: RuntimeJob
+  detailBase?: string
+}) {
   return (
     <article className="grid gap-3 p-4 text-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
       <div className="min-w-0">
-        <Link to={`/operations/jobs/${encodeURIComponent(job.id)}`} className="font-mono text-xs font-medium hover:underline">
+        <Link to={`${detailBase}/${encodeURIComponent(job.id)}`} className="font-mono text-xs font-medium hover:underline">
           {job.id}
         </Link>
         <p className="mt-1 text-xs text-muted-foreground">
@@ -83,13 +90,41 @@ export function RuntimeJobDetailPage() {
   const jobId = useParams().jobId ?? ""
   const query = useRuntimeJob(jobId)
   if (query.isLoading) return <PageSkeleton />
-  if (query.isError || !query.data) return <PageFrame><PageBack /><ErrorState error={query.error} retry={() => void query.refetch()} /></PageFrame>
-  const { job } = query.data
+  if (query.isError || !query.data) return <PageFrame><PageBack href="/operations/jobs" label="返回本人 Job 历史" /><ErrorState error={query.error} retry={() => void query.refetch()} /></PageFrame>
+  return (
+    <RuntimeJobEvidenceView
+      evidence={query.data}
+      backHref="/operations/jobs"
+      backLabel="返回本人 Job 历史"
+      conversationHref={`/operations/conversations/${encodeURIComponent(query.data.job.session_id)}`}
+    />
+  )
+}
+
+export function RuntimeJobEvidenceView({
+  evidence,
+  backHref,
+  backLabel,
+  conversationHref,
+  action,
+}: {
+  evidence: RuntimeJobDetail
+  backHref: string
+  backLabel: string
+  conversationHref?: string
+  action?: React.ReactNode
+}) {
+  const { job } = evidence
   return (
     <PageFrame>
-      <PageBack />
-      <h1 className="text-2xl font-semibold">Job 运行证据</h1>
-      <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{job.id}</p>
+      <PageBack href={backHref} label={backLabel} />
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold">Job 运行证据</h1>
+          <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{job.id}</p>
+        </div>
+        {action}
+      </div>
       <div className="mt-5 grid gap-4 lg:grid-cols-2">
         <FactCard title="执行" rows={[
           ["状态", jobStatusLabel(job.status)],
@@ -100,28 +135,28 @@ export function RuntimeJobDetailPage() {
           ["结束", formatDate(job.finished_at)],
         ]} />
         <FactCard title="边界" rows={[
-          ["MCP Tool 调用数", String(query.data.mcp_tool_calls.length)],
+          ["MCP Tool 调用数", String(evidence.mcp_tool_calls.length)],
           ["执行策略调用计数", String(job.tool_call_count)],
           ["策略耗尽", job.execution_policy_exhausted ? "是" : "否"],
           ["错误分类", job.last_error_code || "—"],
           ["安全错误摘要", job.error_summary || "—"],
         ]} />
       </div>
-      <McpTimeline calls={query.data.mcp_tool_calls} />
-      <StepTimeline steps={query.data.steps} dispatch={query.data.dispatch} />
+      <McpTimeline calls={evidence.mcp_tool_calls} />
+      <StepTimeline steps={evidence.steps} dispatch={evidence.dispatch} />
       <DeliveryTimeline
-        events={query.data.deliveries.events}
-        attempts={query.data.deliveries.attempts}
-        chunks={query.data.deliveries.chunks}
+        events={evidence.deliveries.events}
+        attempts={evidence.deliveries.attempts}
+        chunks={evidence.deliveries.chunks}
       />
-      <Card className="shadow-none">
+      {conversationHref ? <Card className="shadow-none">
         <CardHeader><CardTitle className="flex items-center gap-2"><MessagesSquareIcon className="size-4" />会话</CardTitle></CardHeader>
         <CardContent>
-          <Link className={buttonVariants({ variant: "outline" })} to={`/operations/conversations/${encodeURIComponent(job.session_id)}`}>
+          <Link className={buttonVariants({ variant: "outline" })} to={conversationHref}>
             查看本人会话
           </Link>
         </CardContent>
-      </Card>
+      </Card> : null}
     </PageFrame>
   )
 }
@@ -197,10 +232,10 @@ export function ConversationDetailPage() {
   const sessionId = useParams().sessionId ?? ""
   const query = useConversation(sessionId)
   if (query.isLoading) return <PageSkeleton />
-  if (query.isError || !query.data) return <PageFrame><PageBack /><ErrorState error={query.error} retry={() => void query.refetch()} /></PageFrame>
+  if (query.isError || !query.data) return <PageFrame><PageBack href="/operations/jobs" label="返回本人 Job 历史" /><ErrorState error={query.error} retry={() => void query.refetch()} /></PageFrame>
   return (
     <PageFrame>
-      <PageBack />
+      <PageBack href="/operations/jobs" label="返回本人 Job 历史" />
       <h1 className="text-2xl font-semibold">本人会话</h1>
       <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{query.data.session.id}</p>
       <div className="mt-5 grid gap-4 lg:grid-cols-2">
@@ -228,17 +263,25 @@ function TimelineItem({ label, value }: { label: string; value: string }) {
   return <li className="border-l-2 pl-3"><p className="text-sm font-medium">{label}</p><p className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground">{value || "无摘要"}</p></li>
 }
 
-function ErrorState({ error, retry }: { error: unknown; retry: () => void }) {
+export function RuntimeErrorState({ error, retry }: { error: unknown; retry: () => void }) {
   if (!error) return null
   return <Card className="border-destructive/30 shadow-none"><CardContent className="flex flex-wrap items-center justify-between gap-3 p-4"><p role="alert" className="text-sm text-destructive">{error instanceof ApiError ? error.message : "请求失败，请稍后重试。"}</p><Button size="sm" variant="outline" onClick={retry}>重试</Button></CardContent></Card>
 }
 
-function PageBack() {
-  return <Link to="/operations/jobs" className={`${buttonVariants({ variant: "ghost", size: "sm" })} mb-4`}><ArrowLeftIcon />返回 Job 历史</Link>
+function ErrorState({ error, retry }: { error: unknown; retry: () => void }) {
+  return <RuntimeErrorState error={error} retry={retry} />
+}
+
+function PageBack({ href, label }: { href: string; label: string }) {
+  return <Link to={href} className={`${buttonVariants({ variant: "ghost", size: "sm" })} mb-4`}><ArrowLeftIcon />{label}</Link>
+}
+
+export function RuntimePageFrame({ children }: { children: React.ReactNode }) {
+  return <main className="mx-auto w-full max-w-[1400px] space-y-5 px-4 py-6 sm:px-6 lg:px-8">{children}</main>
 }
 
 function PageFrame({ children }: { children: React.ReactNode }) {
-  return <main className="mx-auto w-full max-w-[1400px] space-y-5 px-4 py-6 sm:px-6 lg:px-8">{children}</main>
+  return <RuntimePageFrame>{children}</RuntimePageFrame>
 }
 
 function PageSkeleton() {

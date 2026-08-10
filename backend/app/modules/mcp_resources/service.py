@@ -471,6 +471,28 @@ class McpResourceService:
 
     def status(self, code: str) -> dict[str, Any]:
         resource = self._resource(code)
+        draft = self.database.execute_one(
+            """
+            select id, draft_revision, status, content_hash, updated_at
+              from mcp_resource_draft
+             where resource_id = ? and status in ('DRAFT', 'VERIFIED')
+             order by draft_revision desc limit 1
+            """,
+            (resource["id"],),
+        )
+        verification = (
+            self.database.execute_one(
+                """
+                select status, verified_at
+                  from mcp_resource_verification
+                 where draft_id = ?
+                 order by verified_at desc limit 1
+                """,
+                (draft["id"],),
+            )
+            if draft is not None
+            else None
+        )
         deployment = self.database.execute_one(
             """
             select d.*,
@@ -517,6 +539,33 @@ class McpResourceService:
             "kind": resource["kind"],
             "lifecycle_status": resource["lifecycle_status"],
             "revision": resource["revision"],
+            "resource": {
+                "id": resource["id"],
+                "code": code,
+                "name": resource["name"],
+                "kind": resource["kind"],
+                "lifecycle_status": resource["lifecycle_status"],
+                "revision": resource["revision"],
+            },
+            "draft": (
+                {
+                    "id": draft["id"],
+                    "revision": draft["draft_revision"],
+                    "status": draft["status"],
+                    "content_hash": draft["content_hash"],
+                    "updated_at": draft["updated_at"],
+                }
+                if draft
+                else None
+            ),
+            "verification": (
+                {
+                    "status": verification["status"],
+                    "verified_at": verification["verified_at"],
+                }
+                if verification
+                else None
+            ),
             "deployment": (
                 {
                     "id": deployment["id"],

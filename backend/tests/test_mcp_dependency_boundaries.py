@@ -53,6 +53,7 @@ def test_agent_worker_image_includes_mcp_runtime_dependencies() -> None:
     assert "COPY services/mcp_common /app/services/mcp_common" in api_server
     assert "services/data_mcp_server/contracts.py" in api_server
     assert "services/ones_mcp_server/contracts.py" in api_server
+    assert "COPY agent-runtime/contracts /app/agent-runtime/contracts" in api_server
     assert "COPY config /app/config" in api_server
 
     agent_worker = dockerfile.split("FROM python-deps AS agent-worker", 1)[1].split(
@@ -70,6 +71,11 @@ def test_agent_worker_image_includes_mcp_runtime_dependencies() -> None:
     assert "COPY backend/app/modules/cutover /app/backend/app/modules/cutover" in agent_worker
     assert "COPY services/__init__.py /app/services/" in agent_worker
     assert "COPY services/mcp_common /app/services/mcp_common" in agent_worker
+    assert "COPY agent-runtime/contracts /app/agent-runtime/contracts" in agent_worker
+
+    dockerignore = (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+    assert "!agent-runtime/contracts/" in dockerignore
+    assert "!agent-runtime/contracts/**" in dockerignore
 
 
 def test_retirement_manifest_is_explicitly_non_migrating() -> None:
@@ -85,3 +91,29 @@ def test_retirement_manifest_is_explicitly_non_migrating() -> None:
     }
     serialized = json.dumps(manifest, sort_keys=True)
     assert not re.search(r"backup_(path|reference)|export_path|archive_path", serialized)
+
+
+def test_schema_head_drops_retired_platform_without_copy_or_restore_plan() -> None:
+    migrations = sorted((ROOT / "backend/migrations").glob("*.sql"))
+    assert migrations[-1].name == "040_remove_retired_platform_schema.sql"
+    schema_head = migrations[-1].read_text(encoding="utf-8").lower()
+    for table in (
+        "api_capability",
+        "api_handler",
+        "api_connection",
+    ):
+        assert f"drop table if exists {table}" in schema_head
+    assert not re.search(
+        r"\b(create table|insert into|create materialized view)\b[^;]*(legacy|backup|archive)",
+        schema_head,
+    )
+    assert "select into" not in schema_head
+
+    historical_schema = "\n".join(
+        migration.read_text(encoding="utf-8").lower() for migration in migrations
+    )
+    assert not re.search(
+        r"create table(?: if not exists)?\s+"
+        r"(?:builtin_tool_resource_mapping|builtin_tool_draft_resource_mapping|resource_mapping)",
+        historical_schema,
+    )

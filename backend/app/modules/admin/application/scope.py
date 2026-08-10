@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any, cast
 
 from app.shared.database import Database
@@ -12,43 +11,13 @@ def strict_business_scope_summary(
     user_id: str,
     global_access: bool = False,
 ) -> dict[str, Any]:
+    del database, user_id
     if global_access:
         return {"mode": "global", "grants": []}
-    rows = database.execute(
-        """
-        select distinct e.code as environment_code,
-               b.code as base_code, w.code as workshop_code
-          from rbac_role_application_scope s
-          join rbac_role_application_access aa
-            on aa.id = s.application_access_id
-          join rbac_role r on r.id = aa.role_id
-          join rbac_user_role ur on ur.role_id = r.id
-          join app_user u on u.id = ur.user_id
-          join platform_environment e on e.id = s.environment_id
-          left join platform_base b on b.id = s.base_id
-          left join platform_workshop w on w.id = s.workshop_id
-         where ur.user_id = ?
-           and aa.status = 'enabled'
-           and r.status = 'enabled'
-           and ur.status = 'enabled'
-           and u.status = 'enabled'
-           and (ur.expires_at is null or ur.expires_at > ?)
-         order by e.code, b.code, w.code
-        """,
-        (user_id, datetime.now(UTC).isoformat()),
-    )
-    return {
-        "mode": "restricted",
-        "grants": [
-            {
-                "effect": "allow",
-                "environment": str(row["environment_code"]),
-                "base": str(row.get("base_code") or "*"),
-                "workshop": str(row.get("workshop_code") or "*"),
-            }
-            for row in rows
-        ],
-    }
+    # The legacy environment/base/workshop scope tables were irreversibly
+    # retired. Until a new governed data-scope model is introduced, non-global
+    # administrators are restricted to owner-visible records by AdminScope.
+    return {"mode": "restricted", "grants": []}
 
 
 class AdminScope:

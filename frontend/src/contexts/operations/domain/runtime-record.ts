@@ -130,6 +130,7 @@ export const conversationDetailSchema = z.object({
 })
 
 export type RuntimeJob = z.infer<typeof runtimeJobSchema>
+export type RuntimeJobDetail = z.infer<typeof runtimeJobDetailSchema>
 export type McpToolCall = z.infer<typeof mcpToolCallSchema>
 export type DeliveryEvent = z.infer<typeof deliveryEventSchema>
 export type DeliveryAttempt = z.infer<typeof deliveryAttemptSchema>

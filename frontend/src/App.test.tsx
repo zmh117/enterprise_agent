@@ -4,9 +4,10 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { RouterProvider, createMemoryRouter } from "react-router-dom"
 
 import { appRoutes } from "@/app/router/app-router"
+import type { AuthenticatedUser } from "@/contexts/auth/domain/authenticated-user"
 import { AuthenticatedUserProvider } from "@/contexts/auth/presentation/authenticated-user-context"
 
-const currentUser = {
+const currentUser: AuthenticatedUser = {
   id: "user-local-admin",
   username: "local-admin",
   display_name: "本地用户",
@@ -23,7 +24,7 @@ function response(body: unknown) {
   )
 }
 
-function renderApp(path = "/") {
+function renderApp(path = "/", user: AuthenticatedUser = currentUser) {
   const router = createMemoryRouter(appRoutes, { initialEntries: [path] })
   return render(
     <QueryClientProvider
@@ -31,7 +32,7 @@ function renderApp(path = "/") {
         new QueryClient({ defaultOptions: { queries: { retry: false } } })
       }
     >
-      <AuthenticatedUserProvider user={currentUser}>
+      <AuthenticatedUserProvider user={user}>
         <RouterProvider router={router} />
       </AuthenticatedUserProvider>
     </QueryClientProvider>
@@ -77,7 +78,10 @@ describe("轻量用户门户", () => {
       }
       return response({})
     })
-    renderApp("/applications")
+    renderApp("/applications", {
+      ...currentUser,
+      capabilities: { applications_read: true },
+    })
     expect(
       await screen.findByRole("heading", { name: "Business Applications" })
     ).toBeInTheDocument()
@@ -99,13 +103,13 @@ describe("轻量用户门户", () => {
     expect(urls.some((url) => url.startsWith("/api/admin/"))).toBe(false)
   })
 
-  it("旧管理 URL 明确返回已退役页面", async () => {
+  it("旧平台 URL 不再注册治理路由", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(() => response({}))
     renderApp("/platform/api-capabilities")
     expect(
-      await screen.findByRole("heading", { name: "管理工作台已退役" })
+      await screen.findByRole("heading", { name: "页面不存在" })
     ).toBeInTheDocument()
-    expect(screen.getByText(/platformctl/)).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain("platformctl")
   })
 
   it("窄屏下本人身份操作保持可聚焦且表单具有键盘可访问标签", async () => {

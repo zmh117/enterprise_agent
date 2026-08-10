@@ -199,6 +199,7 @@ class DataResourceResolver:
         for secret in secret_rows:
             if str(secret["secret_status"]) != "enabled" or str(secret["status"]) not in {
                 "active",
+                "superseded",
                 "retired",
             }:
                 raise ToolError("Data MCP Resource Secret is unavailable")
@@ -857,7 +858,13 @@ def _bounded_value(value: Any) -> Any:
 
 def _value(row: Any, key: str, index: int) -> Any:
     if isinstance(row, dict):
-        return row.get(key)
+        if key in row:
+            return row[key]
+        normalized_key = key.casefold()
+        for candidate, value in row.items():
+            if str(candidate).casefold() == normalized_key:
+                return value
+        return None
     try:
         return row[index]
     except (IndexError, TypeError):

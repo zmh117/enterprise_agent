@@ -235,33 +235,6 @@ class AuthorizationCenterRepository:
             """,
             (role_id,),
         )
-        for access in accesses:
-            access["capability_codes"] = [
-                str(row["capability_code"])
-                for row in self.database.execute(
-                    """
-                    select capability_code
-                      from rbac_role_application_capability
-                     where application_access_id = ?
-                     order by capability_code
-                    """,
-                    (access["id"],),
-                )
-            ]
-            access["scopes"] = self.database.execute(
-                """
-                select s.id, s.scope_key, s.environment_id, e.code as environment_code,
-                       s.base_id, b.code as base_code, s.workshop_id,
-                       w.code as workshop_code
-                  from rbac_role_application_scope s
-                  join platform_environment e on e.id = s.environment_id
-                  left join platform_base b on b.id = s.base_id
-                  left join platform_workshop w on w.id = s.workshop_id
-                 where s.application_access_id = ?
-                 order by s.scope_key
-                """,
-                (access["id"],),
-            )
         return accesses
 
     def replace_business_access(
@@ -271,6 +244,12 @@ class AuthorizationCenterRepository:
         expected_revision: int,
         applications: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        if any(set(application) != {"application_id"} for application in applications):
+            raise NonRetryableExecutionError(
+                "Legacy Application Capability or scope payload is retired",
+                safe_message="业务应用授权只接受应用标识",
+                error_code="legacy_application_authorization_retired",
+            )
         timestamp = now_iso()
         with self.database.unit_of_work():
             rows = self.database.execute(
@@ -291,22 +270,6 @@ class AuthorizationCenterRepository:
                         error_code="protected_role",
                     )
                 self._require_revision(rows, "业务应用授权区")
-            current_ids = [
-                str(row["id"])
-                for row in self.database.execute(
-                    "select id from rbac_role_application_access where role_id = ?",
-                    (role_id,),
-                )
-            ]
-            for access_id in current_ids:
-                self.database.execute(
-                    "delete from rbac_role_application_scope where application_access_id = ?",
-                    (access_id,),
-                )
-                self.database.execute(
-                    "delete from rbac_role_application_capability where application_access_id = ?",
-                    (access_id,),
-                )
             self.database.execute(
                 "delete from rbac_role_application_access where role_id = ?",
                 (role_id,),
@@ -321,33 +284,6 @@ class AuthorizationCenterRepository:
                     """,
                     (access_id, role_id, application["application_id"], timestamp, timestamp),
                 )
-                for code in application["capability_codes"]:
-                    self.database.execute(
-                        """
-                        insert into rbac_role_application_capability
-                          (id, application_access_id, capability_code, created_at)
-                        values (?, ?, ?, ?)
-                        """,
-                        (new_id("role_app_capability"), access_id, code, timestamp),
-                    )
-                for scope in application["scopes"]:
-                    self.database.execute(
-                        """
-                        insert into rbac_role_application_scope
-                          (id, application_access_id, environment_id, base_id,
-                           workshop_id, scope_key, created_at)
-                        values (?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            new_id("role_app_scope"),
-                            access_id,
-                            scope["environment_id"],
-                            scope.get("base_id"),
-                            scope.get("workshop_id"),
-                            scope["scope_key"],
-                            timestamp,
-                        ),
-                    )
         return {
             "revision": self.get_role(role_id)["business_revision"],
             "applications": self.list_business_access(role_id),

@@ -264,8 +264,9 @@ class ManagedChannelService:
         *,
         actor_id: str,
         enabled: bool,
+        credential_ref: str = "",
     ) -> dict[str, Any]:
-        normalized = self._validate(payload)
+        normalized = self._validate(payload, secret_required=not credential_ref)
         enterprise = self.repository.get_dingtalk_enterprise(normalized.dingtalk_enterprise_id)
         if str(enterprise["status"]) in {
             DingTalkEnterpriseStatus.DISABLED.value,
@@ -282,18 +283,22 @@ class ManagedChannelService:
                 safe_message="该钉钉 Client ID 已存在",
                 error_code="channel_client_id_conflict",
             )
-        secret_code = self._secret_code(normalized.client_id)
         with self.repository.database.unit_of_work():
-            self.secret_provider.create_secret(
-                code=secret_code,
-                value=normalized.client_secret,
-                purpose="dingtalk_stream_client_secret",
-                actor_id=actor_id,
-                metadata={"managed_by": "managed_channel"},
-            )
+            if credential_ref:
+                secret_ref = self._platform_secret_ref(credential_ref)
+            else:
+                secret_code = self._secret_code(normalized.client_id)
+                self.secret_provider.create_secret(
+                    code=secret_code,
+                    value=normalized.client_secret,
+                    purpose="dingtalk_stream_client_secret",
+                    actor_id=actor_id,
+                    metadata={"managed_by": "managed_channel"},
+                )
+                secret_ref = f"secret://platform/{secret_code}"
             item = self.repository.create_dingtalk_connector(
                 name=normalized.name,
-                secret_ref=f"secret://platform/{secret_code}",
+                secret_ref=secret_ref,
                 metadata=self._metadata(normalized),
                 dingtalk_enterprise_id=normalized.dingtalk_enterprise_id,
                 enabled=enabled,
@@ -310,8 +315,11 @@ class ManagedChannelService:
         expected_revision: int,
         actor_id: str,
         rotate_secret: bool,
+        credential_ref: str = "",
     ) -> dict[str, Any]:
-        normalized = self._validate(payload, secret_required=rotate_secret)
+        normalized = self._validate(
+            payload, secret_required=rotate_secret and not credential_ref
+        )
         enterprise = self.repository.get_dingtalk_enterprise(normalized.dingtalk_enterprise_id)
         if str(enterprise["status"]) in {
             DingTalkEnterpriseStatus.DISABLED.value,
@@ -335,7 +343,9 @@ class ManagedChannelService:
             )
         secret_ref = str(current["secret_ref"])
         with self.repository.database.unit_of_work():
-            if rotate_secret:
+            if credential_ref:
+                secret_ref = self._platform_secret_ref(credential_ref)
+            elif rotate_secret:
                 if secret_ref.startswith("secret://platform/"):
                     secret_code = secret_ref.removeprefix("secret://platform/")
                     try:
@@ -376,7 +386,11 @@ class ManagedChannelService:
                 dingtalk_enterprise_id=normalized.dingtalk_enterprise_id,
                 secret_ref=secret_ref,
                 enabled=bool(current["enabled"]),
-                force_revision=rotate_secret or enterprise_changed,
+                force_revision=(
+                    rotate_secret
+                    or enterprise_changed
+                    or secret_ref != str(current["secret_ref"])
+                ),
             )
         self._audit("updated", actor_id, item)
         return self._dingtalk_public(item)
@@ -651,6 +665,17 @@ class ManagedChannelService:
             allow_group_chat=payload.allow_group_chat,
             require_group_at=payload.require_group_at,
         )
+
+    @staticmethod
+    def _platform_secret_ref(value: str) -> str:
+        normalized = value.strip()
+        if not re.fullmatch(r"secret://platform/[a-z][a-z0-9_-]{1,63}", normalized):
+            raise NonRetryableExecutionError(
+                "Managed channel credential reference is invalid",
+                safe_message="选择的 Credential 不可用，请刷新后重试",
+                error_code="credential_unavailable",
+            )
+        return normalized
 
     @staticmethod
     def _metadata(payload: DingTalkApplicationInput) -> dict[str, Any]:

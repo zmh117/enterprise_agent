@@ -153,8 +153,10 @@ services:
     security_opt: ["no-new-privileges:true"]
     environment:
       DATABASE_DSN: ${ONES_MCP_DATABASE_DSN:-postgresql://ones_mcp_reader:ones_mcp_reader_local@postgres:5432/enterprise_agent}
+      APP_ENV: ${APP_ENV:-local}
       APP_CONFIG_MASTER_KEY_FILE: /run/secrets/app_config_master_key
       MCP_TOKEN_SIGNING_KEY_FILE: /run/secrets/mcp_token_signing_key
+      ONES_ALLOW_INSECURE_LOCAL: ${ONES_IDENTITY_ALLOW_INSECURE_LOCAL:-false}
       ONES_MCP_PORT: "9101"
       ONES_MCP_LOG_LEVEL: ${ONES_MCP_LOG_LEVEL:-info}
     secrets:
@@ -293,6 +295,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       target: api-server
+    restart: unless-stopped
     command:
       ["python", "-m", "uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
     environment:
@@ -329,6 +332,7 @@ services:
     build:
       context: .
       dockerfile: frontend/Dockerfile
+    restart: unless-stopped
     ports:
       - "${ADMIN_WEB_PORT:-8080}:80"
     depends_on:
@@ -369,6 +373,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       target: agent-worker
+    restart: unless-stopped
     command: ["python", "-m", "app.workers.agent_job_worker"]
     environment:
       <<: *worker-env
@@ -398,6 +403,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       target: agent-worker
+    restart: unless-stopped
     command: ["python", "-m", "app.workers.job_dispatch_worker"]
     environment:
       <<: *worker-env
@@ -424,6 +430,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       target: agent-worker
+    restart: unless-stopped
     command: ["python", "-m", "app.workers.delivery_dispatch_worker"]
     environment:
       <<: *decrypting-worker-env
@@ -450,6 +457,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       target: agent-worker
+    restart: unless-stopped
     command: ["python", "-m", "app.workers.webhook_dispatch_worker"]
     environment:
       <<: *worker-env
@@ -476,6 +484,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       target: agent-worker
+    restart: unless-stopped
     command: ["python", "-m", "app.workers.channel_dispatch_worker"]
     environment:
       <<: *decrypting-worker-env
@@ -505,6 +514,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       target: agent-worker
+    restart: unless-stopped
     command: ["python", "-m", "app.workers.attachment_worker"]
     environment:
       <<: *decrypting-worker-env

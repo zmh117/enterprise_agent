@@ -81,9 +81,14 @@ def test_web_auth_uses_hashed_sessions_csrf_and_rejects_forged_headers() -> None
         assert capabilities["applications_manage"] is True
         assert capabilities["mcp_tools_manage"] is True
         assert capabilities["secrets_manage"] is True
-        assert capabilities["users_manage"] is False
-        assert capabilities["roles_manage"] is False
-        assert capabilities["identities_manage"] is False
+        assert capabilities["dashboard_read"] is True
+        assert capabilities["users_manage"] is True
+        assert capabilities["roles_manage"] is True
+        assert capabilities["identities_manage"] is True
+        assert capabilities["channels_manage"] is True
+        assert capabilities["jobs_debug"] is True
+        assert capabilities["mcp_servers_read"] is True
+        assert capabilities["mcp_resources_manage"] is True
         session_token = client.cookies.get("enterprise_agent_session")
         assert session_token
         stored = container.database.execute_one(

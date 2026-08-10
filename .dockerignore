@@ -25,6 +25,10 @@ dingtalk-runtime/node_modules/
 dingtalk-runtime/dist/
 !services/
 !services/**
+!agent-runtime/
+agent-runtime/*
+!agent-runtime/contracts/
+!agent-runtime/contracts/**
 !config/
 !config/**
 !.claude/

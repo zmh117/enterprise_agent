@@ -10,6 +10,7 @@ from services.mcp_common.auth import McpAuthenticationError
 
 
 _PROVIDER_AAD = b"enterprise-agent:provider-credential:v1"
+_MASTER_KEY_PREFIX = "EA_MASTER_KEY_V1:"
 
 
 class ProviderTokenDecryptor:
@@ -31,6 +32,8 @@ class ProviderTokenDecryptor:
             material = Path(configured).read_text(encoding="utf-8").rstrip("\r\n")
         except OSError as exc:
             raise McpAuthenticationError("Provider credential Master Key is unreadable") from exc
+        if material.startswith(_MASTER_KEY_PREFIX):
+            material = material.removeprefix(_MASTER_KEY_PREFIX)
         return cls(material)
 
     def decrypt(self, *, ciphertext: str, key_id: str) -> str:

@@ -665,7 +665,7 @@ class ModelConnectionService:
                 safe_message="模型连接凭据缺失或已停用",
                 error_code="model_connection_credential_unavailable",
             )
-        secret = self.platform_repository.get_platform_secret(secret_id)
+        secret = self.platform_repository.get_platform_secret_runtime_view(secret_id)
         return ModelRuntimeBinding(
             protocol=str(config["protocol"]),
             base_url=str(config["base_url"]),
@@ -909,7 +909,7 @@ class ModelConnectionService:
         if str(revision.get("status") or "") != "ready" or not self._secret_ready(secret_id):
             raise _credential_unavailable()
         try:
-            secret = self.platform_repository.get_platform_secret(secret_id)
+            secret = self.platform_repository.get_platform_secret_runtime_view(secret_id)
             return self.secret_provider.resolve(str(secret["ref"]))
         except Exception as exc:
             raise _credential_unavailable() from exc
@@ -1024,7 +1024,7 @@ class ModelConnectionService:
         if not secret_id:
             return False
         try:
-            secret = self.platform_repository.get_platform_secret(secret_id)
+            secret = self.platform_repository.get_platform_secret_runtime_view(secret_id)
         except Exception:
             return False
         return bool(secret.get("configured")) and secret.get("status") == "enabled"

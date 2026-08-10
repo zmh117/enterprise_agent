@@ -111,6 +111,30 @@ class PlatformConfigRepository:
             raise NotFound(f"Platform secret not found: {secret_id}")
         return self._parse_platform_secret(row)
 
+    def get_platform_secret_runtime_view(self, secret_id: str) -> dict[str, Any]:
+        row = self.database.execute_one(
+            """
+            select s.id, s.ref, s.status, s.active_version,
+              exists(
+                select 1 from platform_secret_version v
+                 where v.secret_id = s.id
+                   and v.version = s.active_version
+                   and v.status = 'active'
+              ) as active_version_present
+              from platform_secret s
+             where s.id = ?
+            """,
+            (secret_id,),
+        )
+        if not row:
+            raise NotFound(f"Platform secret not found: {secret_id}")
+        return {
+            **row,
+            "active_version": int(row.get("active_version") or 0),
+            "configured": row.get("status") == "enabled"
+            and bool(row.get("active_version_present")),
+        }
+
     def get_platform_secret_by_code(self, code: str) -> dict[str, Any] | None:
         row = self._get_platform_secret("s.code = ?", code)
         return self._parse_platform_secret(row) if row else None

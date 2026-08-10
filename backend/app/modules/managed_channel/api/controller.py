@@ -9,7 +9,7 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.modules.identity.api.dependencies import (
@@ -35,13 +35,12 @@ class DingTalkApplicationRequest(StrictRequest):
     expected_revision: int = Field(default=0, ge=0)
     name: str = Field(min_length=2, max_length=120)
     client_id: str = Field(min_length=1, max_length=128)
-    client_secret: str = Field(default="", max_length=512)
+    credential_id: str = Field(default="", max_length=200)
     dingtalk_enterprise_id: str = Field(min_length=1, max_length=200)
     allow_private_chat: bool = True
     allow_group_chat: bool = True
     require_group_at: bool = True
     enabled: bool = False
-    rotate_secret: bool = False
 
 
 class RevisionRequest(StrictRequest):
@@ -163,6 +162,26 @@ def build_managed_channel_router() -> APIRouter:
             return {"items": container(request).managed_channel_service.webhook_connector_options()}
         except Exception as exc:
             raise handle_exception(exc) from exc
+
+    @router.get("/credential-candidates")
+    def credential_candidates(request: Request) -> dict[str, Any]:
+        require_action(
+            request,
+            resource_type="channel_connector",
+            resource_code="*",
+            action="manage",
+        )
+        require_action(request, resource_type="secret", resource_code="*", action="read")
+        return {
+            "items": container(request).database.execute(
+                """
+                select id, code, purpose, status, active_version, masked_summary, revision
+                  from platform_secret
+                 where status = 'enabled' and active_version > 0
+                 order by lower(code), id
+                """
+            )
+        }
 
     @router.get(
         "/dingtalk-enterprises",
@@ -312,7 +331,12 @@ def build_managed_channel_router() -> APIRouter:
             raise handle_exception(exc) from exc
 
     @router.post("/dingtalk-app-robots")
-    def create(request: Request, payload: DingTalkApplicationRequest) -> dict[str, Any]:
+    def create(
+        request: Request,
+        payload: DingTalkApplicationRequest,
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
+    ) -> dict[str, Any]:
+        del idempotency_key
         principal = require_action(
             request,
             resource_type="channel_connector",
@@ -323,10 +347,14 @@ def build_managed_channel_router() -> APIRouter:
         if payload.expected_revision != 0:
             raise HTTPException(status_code=409, detail="新建渠道的 expected_revision 必须为 0")
         try:
+            credential_ref = _channel_credential_ref(
+                request, payload.credential_id, required=True
+            )
             item = container(request).managed_channel_service.create_dingtalk(
                 _application_input(payload),
                 actor_id=principal.user_id,
                 enabled=payload.enabled,
+                credential_ref=credential_ref,
             )
             return {"channel": item}
         except Exception as exc:
@@ -355,8 +383,12 @@ def build_managed_channel_router() -> APIRouter:
 
     @router.put("/dingtalk-app-robots/{connector_id}")
     def update(
-        request: Request, connector_id: str, payload: DingTalkApplicationRequest
+        request: Request,
+        connector_id: str,
+        payload: DingTalkApplicationRequest,
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
     ) -> dict[str, Any]:
+        del idempotency_key
         principal = require_action(
             request,
             resource_type="channel_connector",
@@ -365,12 +397,16 @@ def build_managed_channel_router() -> APIRouter:
             csrf=True,
         )
         try:
+            credential_ref = _channel_credential_ref(
+                request, payload.credential_id, required=False
+            )
             item = container(request).managed_channel_service.update_dingtalk(
                 connector_id,
                 _application_input(payload),
                 expected_revision=payload.expected_revision,
                 actor_id=principal.user_id,
-                rotate_secret=payload.rotate_secret,
+                rotate_secret=False,
+                credential_ref=credential_ref,
             )
             return {"channel": item}
         except Exception as exc:
@@ -404,7 +440,7 @@ def build_managed_channel_router() -> APIRouter:
             request,
             resource_type="channel_connector",
             resource_code="*",
-            action="restart",
+            action="manage",
             csrf=True,
         )
         try:
@@ -423,7 +459,7 @@ def build_managed_channel_router() -> APIRouter:
             request,
             resource_type="channel_connector",
             resource_code="*",
-            action="manage",
+            action="test",
             csrf=True,
         )
         try:
@@ -441,7 +477,7 @@ def build_managed_channel_router() -> APIRouter:
             request,
             resource_type="channel_connector",
             resource_code="*",
-            action="delete",
+            action="manage",
             csrf=True,
         )
         try:
@@ -570,12 +606,45 @@ def _application_input(payload: DingTalkApplicationRequest) -> DingTalkApplicati
     return DingTalkApplicationInput(
         name=payload.name,
         client_id=payload.client_id,
-        client_secret=payload.client_secret,
+        client_secret="",
         dingtalk_enterprise_id=payload.dingtalk_enterprise_id,
         allow_private_chat=payload.allow_private_chat,
         allow_group_chat=payload.allow_group_chat,
         require_group_at=payload.require_group_at,
     )
+
+
+def _channel_credential_ref(request: Request, credential_id: str, *, required: bool) -> str:
+    if not credential_id:
+        if required:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "credential_required", "message": "请选择 Credential"},
+            )
+        return ""
+    require_action(request, resource_type="secret", resource_code="*", action="read")
+    row = container(request).database.execute_one(
+        """
+        select ref, status, active_version
+          from platform_secret
+         where id = ?
+        """,
+        (credential_id,),
+    )
+    if (
+        row is None
+        or str(row["status"]) != "enabled"
+        or int(row.get("active_version") or 0) < 1
+        or not str(row.get("ref") or "").startswith("secret://platform/")
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "credential_unavailable",
+                "message": "选择的 Credential 不可用，请刷新后重试",
+            },
+        )
+    return str(row["ref"])
 
 
 def _require_runtime_auth(request: Request) -> None:

@@ -46,6 +46,18 @@ class AuthorizationEvaluator:
             and item.action == action
             and item.resource_code in {"*", resource_code}
         )
+        if capability_codes and str(user.get("account_type") or "human") != "human":
+            return self._decision(
+                False,
+                user_id,
+                roles,
+                resource_type,
+                resource_code,
+                action,
+                matched,
+                "service_account_web_management_forbidden",
+                extra_trace={"capability_codes": list(capability_codes)},
+            )
         if capability_codes and "platform-admin" in roles:
             return self._decision(
                 True,

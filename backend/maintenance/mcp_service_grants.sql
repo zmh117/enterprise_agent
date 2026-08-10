@@ -59,6 +59,7 @@ GRANT SELECT, INSERT ON TABLE management_operation_idempotency
 -- Workers can read immutable control facts and mutate only runtime/outbox facts.
 GRANT SELECT ON TABLE
   schema_migration, app_user, user_external_identity, provider_instance,
+  provider_credential,
   dingtalk_enterprise,
   permission_policy, rbac_role, rbac_user_role,
   rbac_role_application_access,
@@ -75,8 +76,12 @@ GRANT SELECT ON TABLE
   webhook_trigger_revision, webhook_trigger_publication,
   mcp_tool, mcp_tool_publication, agent_publication_mcp_tool,
   business_application_publication_mcp_tool, mcp_resource, mcp_resource_revision,
-  mcp_resource_deployment
+  mcp_resource_deployment, mcp_resource_generation
   TO enterprise_agent_worker;
+GRANT SELECT (id, ref, status, active_version)
+  ON platform_secret TO enterprise_agent_worker;
+GRANT SELECT (secret_id, version, status)
+  ON platform_secret_version TO enterprise_agent_worker;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
   audit_event, agent_job, agent_session, agent_message, agent_step,
   agent_artifact, attachment_content, message_attachment,

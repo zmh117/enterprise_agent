@@ -66,6 +66,7 @@ from app.modules.identity.application import (
     AuthorizationEvaluator,
     IdentityService,
 )
+from app.modules.identity.application.admin_service import IdentityAdminService
 from app.modules.identity.application.external_credentials import (
     ExternalCredentialBindingService,
 )
@@ -106,6 +107,8 @@ from app.modules.managed_channel import (
     ChannelDispatchService,
     ChannelOutboxPublisher,
     ManagedChannelRepository,
+    ManagedChannelService,
+    ManagedWebhookProviderAdapter,
     RuntimeControlService,
 )
 from app.modules.managed_channel.application.service import (
@@ -148,6 +151,7 @@ class Container:
     agent_repository: AgentRepository
     identity_repository: IdentityRepository
     identity_service: IdentityService
+    identity_admin_service: IdentityAdminService
     identity_discovery_repository: DingTalkIdentityDiscoveryRepository
     identity_discovery_service: DingTalkIdentityDiscoveryService
     auth_service: AuthService
@@ -185,6 +189,7 @@ class Container:
     webhook_trigger_repository: WebhookTriggerRepository
     webhook_event_repository: WebhookEventRepository
     webhook_trigger_service: WebhookTriggerService
+    managed_channel_service: ManagedChannelService
     webhook_ingress_service: WebhookIngressService
     webhook_outbox_publisher: WebhookOutboxPublisher
     webhook_dispatcher: WebhookDispatcher
@@ -467,6 +472,12 @@ def _build_container(
         ones_display_name=settings.ones_identity.display_name,
     )
     authorization_evaluator = AuthorizationEvaluator(identity_repository, audit_service)
+    identity_admin_service = IdentityAdminService(
+        identity_repository,
+        identity_service,
+        authorization_evaluator,
+        audit_service,
+    )
     authorization_center_repository = AuthorizationCenterRepository(database)
     business_authorization_service = BusinessAuthorizationService(
         authorization_center_repository,
@@ -637,6 +648,18 @@ def _build_container(
         audit_service=audit_service,
         validator=webhook_validator,
         mapper=webhook_mapper,
+    )
+    managed_channel_service = ManagedChannelService(
+        repository=managed_channel_repository,
+        webhook_provider=ManagedWebhookProviderAdapter(
+            repository=webhook_trigger_repository,
+            service=webhook_trigger_service,
+            connector_registry=connector_registry,
+        ),
+        secret_provider=model_secret_provider,
+        connector_registry=connector_registry,
+        audit_service=audit_service,
+        stale_seconds=settings.managed_channels.stale_seconds,
     )
     webhook_ingress_service = WebhookIngressService(
         trigger_repository=webhook_trigger_repository,
@@ -873,6 +896,7 @@ def _build_container(
         agent_repository=agent_repository,
         identity_repository=identity_repository,
         identity_service=identity_service,
+        identity_admin_service=identity_admin_service,
         identity_discovery_repository=identity_discovery_repository,
         identity_discovery_service=identity_discovery_service,
         auth_service=auth_service,
@@ -910,6 +934,7 @@ def _build_container(
         webhook_trigger_repository=webhook_trigger_repository,
         webhook_event_repository=webhook_event_repository,
         webhook_trigger_service=webhook_trigger_service,
+        managed_channel_service=managed_channel_service,
         webhook_ingress_service=webhook_ingress_service,
         webhook_outbox_publisher=webhook_outbox_publisher,
         webhook_dispatcher=webhook_dispatcher,

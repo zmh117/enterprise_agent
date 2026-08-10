@@ -1,8 +1,10 @@
 import { useQuery } from "@tanstack/react-query"
 
 import {
+  getAdminRuntimeJob,
   getConversation,
   getRuntimeJob,
+  listAdminRuntimeJobs,
   listRuntimeJobs,
 } from "@/contexts/operations/infrastructure/runtime-record-api"
 
@@ -26,5 +28,20 @@ export function useConversation(sessionId: string) {
     queryKey: ["operations", "conversations", sessionId],
     queryFn: () => getConversation(sessionId),
     enabled: Boolean(sessionId),
+  })
+}
+
+export function useAdminRuntimeJobs() {
+  return useQuery({
+    queryKey: ["admin", "operations", "jobs"],
+    queryFn: listAdminRuntimeJobs,
+  })
+}
+
+export function useAdminRuntimeJob(jobId: string) {
+  return useQuery({
+    queryKey: ["admin", "operations", "jobs", jobId],
+    queryFn: () => getAdminRuntimeJob(jobId),
+    enabled: Boolean(jobId),
   })
 }

@@ -270,32 +270,44 @@ def create_app(
         return status
 
     from app.modules.dingding.api.dingding_webhook_controller import build_dingding_router
+    from app.modules.admin.api import build_governance_dashboard_router
     from app.modules.agent_config.api import build_agent_config_router
     from app.modules.business_application.api import build_business_application_router
     from app.modules.identity.api import (
         build_auth_router,
         build_external_credential_router,
+        build_identity_admin_router,
     )
     from app.modules.job.api.agent_job_debug_controller import (
+        build_admin_job_history_router,
         build_self_job_history_router,
     )
+    from app.modules.identity_discovery.api import build_identity_discovery_router
     from app.modules.platform_config.api import build_platform_config_router
     from app.modules.mcp_resources.api import build_mcp_resource_router
     from app.modules.cutover import build_cutover_router
     from app.modules.webhook.api import build_public_webhook_router
-    from app.modules.managed_channel.api import build_runtime_control_router
+    from app.modules.managed_channel.api import (
+        build_managed_channel_router,
+        build_runtime_control_router,
+    )
     from app.modules.model_connection.api import build_model_connection_router
 
     app.include_router(build_dingding_router())
+    app.include_router(build_governance_dashboard_router())
     app.include_router(build_agent_config_router())
     app.include_router(build_business_application_router())
     app.include_router(build_auth_router())
     app.include_router(build_external_credential_router())
+    app.include_router(build_identity_admin_router())
     app.include_router(build_self_job_history_router())
+    app.include_router(build_admin_job_history_router())
+    app.include_router(build_identity_discovery_router())
     app.include_router(build_platform_config_router())
     app.include_router(build_mcp_resource_router())
     app.include_router(build_cutover_router())
     app.include_router(build_public_webhook_router())
+    app.include_router(build_managed_channel_router())
     app.include_router(build_runtime_control_router())
     app.include_router(build_model_connection_router())
 

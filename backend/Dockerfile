@@ -50,6 +50,7 @@ COPY services/__init__.py /app/services/
 COPY services/mcp_common /app/services/mcp_common
 COPY services/data_mcp_server/__init__.py services/data_mcp_server/contracts.py /app/services/data_mcp_server/
 COPY services/ones_mcp_server/__init__.py services/ones_mcp_server/contracts.py /app/services/ones_mcp_server/
+COPY agent-runtime/contracts /app/agent-runtime/contracts
 COPY config /app/config
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-deps --no-build-isolation .
@@ -103,6 +104,7 @@ COPY backend/app/modules/workflow /app/backend/app/modules/workflow
 COPY backend/app/modules/webhook /app/backend/app/modules/webhook
 COPY services/__init__.py /app/services/
 COPY services/mcp_common /app/services/mcp_common
+COPY agent-runtime/contracts /app/agent-runtime/contracts
 COPY backend/app/workers /app/backend/app/workers
 COPY backend/migrations /app/backend/migrations
 COPY backend/seeds /app/backend/seeds

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 from types import SimpleNamespace
 from typing import Any
@@ -115,6 +116,20 @@ def _service(query: FakeQuery, post_json):
         ),
         post_json=post_json,
     )
+
+
+def test_provider_token_decryptor_reads_versioned_master_key_file(tmp_path) -> None:
+    material = base64.urlsafe_b64encode(b"k" * 32).decode().rstrip("=")
+    encrypted = ProviderCredentialCipher(material).encrypt(TOKEN)
+    key_file = tmp_path / "app-config-master-key"
+    key_file.write_text(f"EA_MASTER_KEY_V1:{material}\n", encoding="ascii")
+
+    decrypted = ProviderTokenDecryptor.from_file(str(key_file)).decrypt(
+        ciphertext=encrypted.ciphertext,
+        key_id=encrypted.key_id,
+    )
+
+    assert decrypted == TOKEN
 
 
 def test_ones_mcp_injects_frozen_subject_and_current_rotated_token() -> None:

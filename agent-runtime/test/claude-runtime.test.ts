@@ -85,7 +85,7 @@ function workspace(): InvocationWorkspaceFactory & { cleaned: boolean } {
   };
 }
 
-test("query adapter uses isolated settings, exact MCP tools and per-invocation env", async () => {
+test("query adapter uses isolated settings and gates every MCP call through canUseTool", async () => {
   const value = request();
   const resolved = binding();
   const before = JSON.stringify(Object.entries(process.env).sort(([left], [right]) => left.localeCompare(right)));
@@ -137,7 +137,7 @@ test("query adapter uses isolated settings, exact MCP tools and per-invocation e
   assert.deepEqual(captured?.skills, []);
   assert.equal(captured?.persistSession, false);
   assert.equal(captured?.permissionMode, "dontAsk");
-  assert.deepEqual(captured?.allowedTools, ["mcp__ones__ones_work_item_search"]);
+  assert.deepEqual(captured?.allowedTools, []);
   assert.deepEqual(captured?.disallowedTools, [
     "Bash",
     "Write",

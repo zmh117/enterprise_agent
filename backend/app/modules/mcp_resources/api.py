@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Annotated, Any, Literal
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request as UrlRequest, build_opener
 
 from fastapi import APIRouter, Header, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.bootstrap import Container
 from app.modules.identity.api.dependencies import (
@@ -14,7 +14,7 @@ from app.modules.identity.api.dependencies import (
     require_action,
     require_csrf,
 )
-from app.shared.exceptions import AppError, NotFound, PermissionDenied
+from app.shared.exceptions import AppError, NonRetryableExecutionError, NotFound, PermissionDenied
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -139,6 +139,17 @@ def _tool_write(request: Request, code: str = "*") -> str:
     return principal.user_id
 
 
+def _server_read(request: Request) -> str:
+    principal = current_principal(request)
+    require_action(
+        request,
+        resource_type="mcp_server",
+        resource_code="*",
+        action="read",
+    )
+    return principal.user_id
+
+
 class _StrictRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -163,6 +174,86 @@ class _ToolRevisionRequest(_StrictRequest):
 
 class _ToolRollbackRequest(_ToolRevisionRequest):
     publication_id: str = Field(min_length=1, max_length=200)
+
+
+class _ResourceFormBase(_StrictRequest):
+    code: str = Field(min_length=2, max_length=64, pattern=r"^[a-z][a-z0-9_-]+$")
+    name: str = Field(min_length=1, max_length=128)
+    expected_revision: int = Field(ge=0)
+
+
+class _DatabaseResourceForm(_ResourceFormBase):
+    kind: Literal["DATABASE"]
+    provider: Literal["mysql", "postgresql", "sqlserver", "oracle"]
+    host: str = Field(min_length=1, max_length=253)
+    port: int = Field(ge=1, le=65535)
+    database_name: str = Field(min_length=1, max_length=128)
+    schema_name: str = Field(default="", max_length=128)
+    username: str = Field(min_length=1, max_length=128)
+    credential_id: str = Field(min_length=1, max_length=200)
+    allowed_tables: list[str] = Field(min_length=1, max_length=200)
+    max_rows: int = Field(default=200, ge=1, le=1000)
+    timeout_seconds: int = Field(default=10, ge=1, le=30)
+    tls: bool = True
+
+    @field_validator("allowed_tables")
+    @classmethod
+    def validate_tables(cls, value: list[str]) -> list[str]:
+        normalized = sorted({item.strip() for item in value if item.strip()})
+        if not normalized or any(len(item) > 200 for item in normalized):
+            raise ValueError("必须填写有效的允许表名")
+        return normalized
+
+
+class _RedisResourceForm(_ResourceFormBase):
+    kind: Literal["REDIS"]
+    host: str = Field(min_length=1, max_length=253)
+    port: int = Field(default=6379, ge=1, le=65535)
+    redis_database: int = Field(default=0, ge=0, le=15)
+    username: str = Field(default="", max_length=128)
+    credential_id: str = Field(default="", max_length=200)
+    key_prefixes: list[str] = Field(min_length=1, max_length=100)
+    scan_limit: int = Field(default=100, ge=1, le=500)
+    timeout_seconds: int = Field(default=10, ge=1, le=30)
+    tls: bool = True
+
+    @field_validator("key_prefixes")
+    @classmethod
+    def validate_prefixes(cls, value: list[str]) -> list[str]:
+        normalized = sorted({item.strip() for item in value if item.strip()})
+        if not normalized or any(len(item) > 200 for item in normalized):
+            raise ValueError("必须填写有效的 Key 前缀")
+        return normalized
+
+
+class _LokiResourceForm(_ResourceFormBase):
+    kind: Literal["LOKI"]
+    base_url: str = Field(min_length=1, max_length=500)
+    tenant_id: str = Field(default="", max_length=200)
+    credential_id: str = Field(default="", max_length=200)
+    label_scope: dict[str, str] = Field(min_length=1, max_length=20)
+    max_minutes: int = Field(default=60, ge=1, le=1440)
+    max_lines: int = Field(default=1000, ge=1, le=5000)
+    timeout_seconds: int = Field(default=10, ge=1, le=30)
+
+    @field_validator("label_scope")
+    @classmethod
+    def validate_labels(cls, value: dict[str, str]) -> dict[str, str]:
+        if any(
+            not key.strip()
+            or len(key) > 128
+            or not item.strip()
+            or len(item) > 256
+            for key, item in value.items()
+        ):
+            raise ValueError("必须填写有效的标签范围")
+        return {key.strip(): item.strip() for key, item in sorted(value.items())}
+
+
+_ResourceForm = Annotated[
+    _DatabaseResourceForm | _RedisResourceForm | _LokiResourceForm,
+    Field(discriminator="kind"),
+]
 
 
 def _handle(exc: Exception) -> HTTPException:
@@ -206,8 +297,239 @@ def _handle(exc: Exception) -> HTTPException:
     )
 
 
+def _credential_ref(container: Container, credential_id: str, *, required: bool) -> str:
+    if not credential_id:
+        if required:
+            raise ValueError("Credential is required")
+        return ""
+    row = container.database.execute_one(
+        """
+        select id, ref, status, active_version
+          from platform_secret
+         where id = ?
+        """,
+        (credential_id,),
+    )
+    if (
+        row is None
+        or str(row["status"]) != "enabled"
+        or int(row.get("active_version") or 0) < 1
+        or not str(row.get("ref") or "").startswith("secret://platform/")
+    ):
+        raise NonRetryableExecutionError(
+            "Credential selection is unavailable",
+            safe_message="选择的 Credential 不可用，请刷新后重试",
+            error_code="credential_unavailable",
+        )
+    return str(row["ref"])
+
+
+def _credential_id(container: Container, secret_ref: str) -> str:
+    if not secret_ref:
+        return ""
+    row = container.database.execute_one(
+        "select id from platform_secret where ref = ?",
+        (secret_ref,),
+    )
+    return str((row or {}).get("id") or "")
+
+
+def _manifest_from_form(container: Container, payload: _ResourceForm) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "api_version": "enterprise-agent/v1",
+        "kind": payload.kind,
+        "metadata": {"code": payload.code, "name": payload.name},
+    }
+    if isinstance(payload, _DatabaseResourceForm):
+        base["spec"] = {
+            "provider": payload.provider,
+            "host": payload.host.strip(),
+            "port": payload.port,
+            "database": payload.database_name.strip(),
+            "schema": payload.schema_name.strip(),
+            "username": payload.username.strip(),
+            "password_ref": _credential_ref(
+                container, payload.credential_id, required=True
+            ),
+            "allowed_tables": payload.allowed_tables,
+            "max_rows": payload.max_rows,
+            "timeout_seconds": payload.timeout_seconds,
+            "tls": payload.tls,
+        }
+    elif isinstance(payload, _RedisResourceForm):
+        base["spec"] = {
+            "host": payload.host.strip(),
+            "port": payload.port,
+            "database": payload.redis_database,
+            "username": payload.username.strip(),
+            "password_ref": _credential_ref(
+                container, payload.credential_id, required=False
+            ),
+            "key_prefixes": payload.key_prefixes,
+            "scan_limit": payload.scan_limit,
+            "timeout_seconds": payload.timeout_seconds,
+            "tls": payload.tls,
+        }
+    else:
+        base["spec"] = {
+            "base_url": payload.base_url.strip(),
+            "tenant_id": payload.tenant_id.strip(),
+            "auth_ref": _credential_ref(
+                container, payload.credential_id, required=False
+            ),
+            "label_scope": payload.label_scope,
+            "max_minutes": payload.max_minutes,
+            "max_lines": payload.max_lines,
+            "timeout_seconds": payload.timeout_seconds,
+        }
+    return base
+
+
+def _resource_form(container: Container, code: str) -> dict[str, Any]:
+    resource = container.database.execute_one(
+        "select * from mcp_resource where code = ?", (code,)
+    )
+    if resource is None:
+        raise NotFound("MCP Resource not found", safe_message="资源不存在")
+    stored = container.database.execute_one(
+        """
+        select manifest_json
+          from mcp_resource_draft
+         where resource_id = ? and status in ('DRAFT', 'VERIFIED')
+         order by draft_revision desc limit 1
+        """,
+        (resource["id"],),
+    ) or container.database.execute_one(
+        """
+        select manifest_json
+          from mcp_resource_revision
+         where resource_id = ?
+         order by revision desc limit 1
+        """,
+        (resource["id"],),
+    )
+    if stored is None:
+        raise NotFound("MCP Resource form not found", safe_message="资源配置不存在")
+    manifest = json.loads(str(stored["manifest_json"]))
+    spec = dict(manifest.get("spec") or {})
+    common = {
+        "kind": str(manifest["kind"]),
+        "code": str(manifest["metadata"]["code"]),
+        "name": str(manifest["metadata"]["name"]),
+        "expected_revision": int(resource["revision"]),
+    }
+    kind = common["kind"]
+    if kind == "DATABASE":
+        return {
+            **common,
+            "provider": str(spec.get("provider") or "postgresql"),
+            "host": str(spec.get("host") or ""),
+            "port": int(spec.get("port") or 5432),
+            "database_name": str(spec.get("database") or ""),
+            "schema_name": str(spec.get("schema") or ""),
+            "username": str(spec.get("username") or ""),
+            "credential_id": _credential_id(container, str(spec.get("password_ref") or "")),
+            "allowed_tables": list(spec.get("allowed_tables") or []),
+            "max_rows": int(spec.get("max_rows") or 200),
+            "timeout_seconds": int(spec.get("timeout_seconds") or 10),
+            "tls": bool(spec.get("tls", True)),
+        }
+    if kind == "REDIS":
+        return {
+            **common,
+            "host": str(spec.get("host") or ""),
+            "port": int(spec.get("port") or 6379),
+            "redis_database": int(spec.get("database") or 0),
+            "username": str(spec.get("username") or ""),
+            "credential_id": _credential_id(container, str(spec.get("password_ref") or "")),
+            "key_prefixes": list(spec.get("key_prefixes") or []),
+            "scan_limit": int(spec.get("scan_limit") or 100),
+            "timeout_seconds": int(spec.get("timeout_seconds") or 10),
+            "tls": bool(spec.get("tls", True)),
+        }
+    return {
+        **common,
+        "base_url": str(spec.get("base_url") or ""),
+        "tenant_id": str(spec.get("tenant_id") or ""),
+        "credential_id": _credential_id(container, str(spec.get("auth_ref") or "")),
+        "label_scope": dict(spec.get("label_scope") or {}),
+        "max_minutes": int(spec.get("max_minutes") or 60),
+        "max_lines": int(spec.get("max_lines") or 1000),
+        "timeout_seconds": int(spec.get("timeout_seconds") or 10),
+    }
+
+
 def build_mcp_resource_router() -> APIRouter:
     router = APIRouter(prefix="/api/admin/mcp", tags=["mcp-resource-operations"])
+
+    @router.get("/resource-form-schema")
+    def resource_form_schema(request: Request) -> dict[str, Any]:
+        _read(request)
+        return {
+            "schema_version": 1,
+            "kinds": [
+                {
+                    "kind": "DATABASE",
+                    "display_name": "Database",
+                    "providers": ["mysql", "postgresql", "sqlserver", "oracle"],
+                    "credential_required": True,
+                },
+                {
+                    "kind": "REDIS",
+                    "display_name": "Redis",
+                    "credential_required": False,
+                },
+                {
+                    "kind": "LOKI",
+                    "display_name": "Loki",
+                    "credential_required": False,
+                },
+            ],
+        }
+
+    @router.get("/resource-credential-candidates")
+    def resource_credential_candidates(request: Request) -> dict[str, Any]:
+        principal = require_action(
+            request, resource_type="mcp_resource", resource_code="*", action="manage"
+        )
+        require_action(request, resource_type="secret", resource_code="*", action="read")
+        del principal
+        rows = _container(request).database.execute(
+            """
+            select id, code, purpose, status, active_version, masked_summary, revision
+              from platform_secret
+             where status = 'enabled' and active_version > 0
+             order by lower(code), id
+            """
+        )
+        return {"items": rows}
+
+    @router.post("/resource-drafts")
+    def save_resource_form(
+        request: Request,
+        payload: _ResourceForm,
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
+    ) -> dict[str, Any]:
+        actor = _write(request)
+        try:
+            manifest = _manifest_from_form(_container(request), payload)
+            result = _container(request).mcp_resource_service.apply(
+                manifest,
+                actor_id=actor,
+                expected_revision=payload.expected_revision,
+                idempotency_key=idempotency_key,
+            )
+            return {"resource": result}
+        except Exception as exc:
+            raise _handle(exc) from exc
+
+    @router.get("/resource-forms/{code}")
+    def resource_form(request: Request, code: str) -> dict[str, Any]:
+        _read(request)
+        try:
+            return {"form": _resource_form(_container(request), code)}
+        except Exception as exc:
+            raise _handle(exc) from exc
 
     @router.post("/resources/plan")
     def plan(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
@@ -489,11 +811,18 @@ def build_mcp_resource_router() -> APIRouter:
 
     @router.get("/status")
     def status(request: Request) -> dict[str, Any]:
-        _read(request)
+        _server_read(request)
         container = _container(request)
-        tools_payload = tools(request)
         publication_counts: dict[str, int] = {}
-        for item in tools_payload["publications"]:
+        publications = container.database.execute(
+            """
+            select server_code, status, count(*) as publication_count
+              from mcp_tool_publication
+             group by server_code, status
+             order by server_code
+            """
+        )
+        for item in publications:
             if str(item["status"]) != "PUBLISHED":
                 continue
             server_code = str(item["server_code"])
@@ -504,11 +833,21 @@ def build_mcp_resource_router() -> APIRouter:
             "servers": [
                 {
                     "server_code": "ones-mcp",
+                    "source": "deployment_config",
+                    "transport": {
+                        "type": "streamable_http",
+                        "authentication": "runtime_bearer",
+                    },
                     "health": _health(container.settings.mcp.ones_server_url),
                     "active_publications": publication_counts.get("ones-mcp", 0),
                 },
                 {
                     "server_code": "data-mcp",
+                    "source": "deployment_config",
+                    "transport": {
+                        "type": "streamable_http",
+                        "authentication": "runtime_bearer",
+                    },
                     "health": _health(container.settings.mcp.data_server_url),
                     "active_publications": publication_counts.get("data-mcp", 0),
                 },

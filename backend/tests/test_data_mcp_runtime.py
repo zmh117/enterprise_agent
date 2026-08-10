@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from services.data_mcp_server.contracts import SERVER_CODE, SERVER_VERSION
 from services.data_mcp_server.runtime import (
+    DatabaseProvider,
     DataResourceResolver,
     DataToolService,
     ResolvedDataCall,
@@ -200,6 +201,19 @@ def test_resource_resolver_pins_generation_and_decrypts_secret_only_for_provider
     assert PASSWORD not in json.dumps(query.executed, default=str)
 
 
+def test_resource_resolver_accepts_superseded_secret_pinned_by_frozen_generation() -> None:
+    query = FakeQuery()
+    query.secret_rows[0]["status"] = "superseded"
+
+    resolved = DataResourceResolver(
+        SimpleNamespace(query=query),
+        PlatformSecretDecryptor(MASTER_KEY),
+        provider_factory=lambda resource: FakeProvider(),
+    ).resolve(_context())
+
+    assert resolved.resource.secrets["secret://platform/mes_password"] == PASSWORD
+
+
 @pytest.mark.parametrize(
     ("mutation", "expected"),
     [
@@ -278,6 +292,57 @@ def test_database_tools_are_bounded_and_never_accept_sql() -> None:
 
     with pytest.raises(Exception, match="outside"):
         asyncio.run(service.describe_table(resolved, table="secret_table"))
+
+
+def test_database_provider_accepts_uppercase_information_schema_mapping_keys() -> None:
+    class Cursor:
+        def __init__(self) -> None:
+            self.sql = ""
+
+        def execute(self, sql, params=()) -> None:
+            del params
+            self.sql = sql
+
+        def fetchall(self):
+            if "information_schema.columns" in self.sql:
+                return [
+                    {
+                        "COLUMN_NAME": "order_no",
+                        "DATA_TYPE": "varchar",
+                        "IS_NULLABLE": "NO",
+                    }
+                ]
+            return [{"order_no": "PO-001"}]
+
+    class Connection:
+        def __init__(self) -> None:
+            self.cursor_value = Cursor()
+
+        def cursor(self):
+            return self.cursor_value
+
+        def close(self) -> None:
+            return None
+
+    resource = ResourceRuntime(
+        code="mes_db",
+        kind="DATABASE",
+        revision_id="revision-1",
+        deployment_id="deployment-1",
+        generation_id="generation-1",
+        manifest=_manifest(),
+        secrets={},
+    )
+    provider = DatabaseProvider(resource)
+    provider._connect = Connection  # type: ignore[method-assign]
+
+    columns, rows, truncated = provider._sample_rows(
+        "work_order", [], {}, 5
+    )
+
+    assert columns == ["order_no"]
+    assert rows == [{"order_no": "PO-001"}]
+    assert truncated is False
 
 
 def test_redis_prefix_and_loki_limits_are_server_enforced() -> None:

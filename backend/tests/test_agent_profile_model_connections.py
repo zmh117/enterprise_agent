@@ -166,6 +166,29 @@ def test_runtime_binding_can_skip_dns_only_for_egress_isolated_worker() -> None:
         c.database.close()
 
 
+def test_runtime_binding_reads_only_the_bounded_secret_status_view() -> None:
+    c = container()
+    revision = ready_connection(c)
+    repository = c.model_connection_service.platform_repository
+    original = repository.get_platform_secret_runtime_view
+    repository.get_platform_secret = Mock(
+        side_effect=AssertionError("runtime binding must not load Secret metadata")
+    )
+    repository.get_platform_secret_runtime_view = Mock(
+        side_effect=original
+    )
+    try:
+        binding = c.model_connection_service.runtime_binding(
+            str(revision["id"]),
+            validate_dns=False,
+        )
+        assert binding.secret_ref.startswith("secret://platform/")
+        assert repository.get_platform_secret_runtime_view.call_count == 2
+        repository.get_platform_secret.assert_not_called()
+    finally:
+        c.database.close()
+
+
 def test_model_connection_secret_is_encrypted_and_public_projection_is_sanitized() -> None:
     c = container()
     revision = ready_connection(c)

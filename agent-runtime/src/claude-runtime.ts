@@ -343,7 +343,10 @@ export class ClaudeAgentRuntimeExecutor {
       mcpServers,
       tools: [],
       skills: [],
-      allowedTools: [...allowedTools].sort(),
+      // Keep the SDK auto-allow list empty. Bare MCP names here bypass
+      // canUseTool in current SDK releases, which would skip the per-Job input
+      // and call-budget checks below.
+      allowedTools: [],
       disallowedTools: [...DANGEROUS_BUILTINS],
       permissionMode: "dontAsk",
       persistSession: false,
