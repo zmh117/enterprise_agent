@@ -8,12 +8,20 @@ from app.modules.agent.application.agent_context_builder import AgentContextBuil
 from app.modules.agent.application.conversation_context import ConversationContextService
 from app.modules.agent.application.agent_executor import AgentExecutor
 from app.modules.agent.application.agent_result_service import AgentResultService
+from app.modules.agent.application.runtime_migration_gate import RuntimeMigrationGate
 from app.modules.agent.infrastructure.claude_code_agent_client import (
     RealClaudeCodeAgentClient,
     StubClaudeCodeAgentClient,
 )
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
+from app.modules.agent.infrastructure.routed_runtime_client import RoutedAgentRuntimeClient
+from app.modules.agent.infrastructure.runtime_tool_token import RuntimeToolTokenIssuer
 from app.modules.agent.infrastructure.skill_loader import SkillLoader
+from app.modules.agent.infrastructure.typescript_runtime_client import (
+    RuntimeClientSettings,
+    RuntimeGrantIssuer,
+    TypeScriptAgentRuntimeClient,
+)
 from app.modules.agent_config.application import AgentConfigService
 from app.modules.agent_config.application.builtin_tool_envelope import (
     AgentBuiltinToolEnvelopeService,
@@ -136,6 +144,8 @@ from app.modules.managed_channel.application.service import (
 from app.modules.model_connection import (
     ModelConnectionRepository,
     ModelConnectionService,
+    RuntimeModelProbeClient,
+    RuntimeModelProbeSettings,
     UnavailableModelSecretProvider,
 )
 from app.modules.permission.application.permission_service import PermissionService
@@ -371,6 +381,31 @@ def _configure_test_seed_secrets(runtime: Container) -> None:
     runtime.database.execute("delete from platform_secret_change_event")
 
 
+def _runtime_model_probe_for_service(
+    settings: Settings,
+    service_name: str,
+) -> RuntimeModelProbeClient | None:
+    # This bearer credential belongs to the control-plane probe only. The
+    # worker resolves execution grants independently and must never receive it.
+    if service_name != "api-server":
+        return None
+    if not (
+        settings.agent_runtime.base_url
+        and settings.agent_runtime.model_probe_auth_token_file
+    ):
+        return None
+    return RuntimeModelProbeClient(
+        RuntimeModelProbeSettings(
+            base_url=settings.agent_runtime.base_url,
+            allowed_hosts=settings.agent_runtime.allowed_hosts,
+            auth_token_file=settings.agent_runtime.model_probe_auth_token_file,
+            allow_insecure_internal_http=(
+                settings.agent_runtime.allow_insecure_internal_http
+            ),
+        )
+    )
+
+
 def _build_container(
     *,
     settings: Settings,
@@ -491,6 +526,7 @@ def _build_container(
         authorization_evaluator,
         audit_service,
         allowed_hosts=set(settings.model_provider_host_allowlist),
+        runtime_probe=_runtime_model_probe_for_service(settings, service_name),
     )
     api_connection_service = ApiConnectionService(
         api_connection_repository,
@@ -593,6 +629,7 @@ def _build_container(
         database,
         composition=(business_application_service.builtin_tool_composition_service),
     )
+    runtime_migration_gate = RuntimeMigrationGate(settings.agent_runtime)
     create_job_service = CreateAgentJobService(
         repository=agent_repository,
         permission_service=permission_service,
@@ -615,6 +652,8 @@ def _build_container(
         external_api_credential_repository=(external_credential_repository),
         identity_repository=identity_repository,
         builtin_tool_snapshot_service=builtin_tool_snapshot_service,
+        runtime_migration_gate=runtime_migration_gate,
+        runtime_environment=settings.environment,
     )
     job_dispatcher = JobDispatchOutboxDispatcher(
         repository=agent_repository,
@@ -794,7 +833,7 @@ def _build_container(
         builtin_tool_snapshot_service=builtin_tool_snapshot_service,
     )
     tool_registry = ToolRegistry(tool_service)
-    claude_client = (
+    python_claude_client = (
         RealClaudeCodeAgentClient(
             model=settings.claude_model,
             tool_registry=tool_registry,
@@ -808,8 +847,31 @@ def _build_container(
         if use_real_claude
         else StubClaudeCodeAgentClient()
     )
-    if isinstance(claude_client, RealClaudeCodeAgentClient):
-        model_connection_service.tester = claude_client.test_connection
+    if isinstance(python_claude_client, RealClaudeCodeAgentClient):
+        model_connection_service.tester = python_claude_client.test_connection
+    typescript_runtime_client = None
+    if service_name == "agent-worker" and settings.agent_runtime.base_url:
+        typescript_runtime_client = TypeScriptAgentRuntimeClient(
+            settings=RuntimeClientSettings(
+                base_url=settings.agent_runtime.base_url,
+                tool_mcp_url=settings.runtime_tool_mcp.server_url,
+                allowed_runtime_hosts=settings.agent_runtime.allowed_hosts,
+                allow_insecure_internal_http=(
+                    settings.agent_runtime.allow_insecure_internal_http
+                ),
+            ),
+            grant_issuer=RuntimeGrantIssuer.from_file(
+                settings.agent_runtime.grant_private_key_file
+            ),
+            mcp_token_issuer=RuntimeToolTokenIssuer.from_file(
+                settings.runtime_tool_mcp.token_signing_key_file
+            ),
+            event_sink=agent_repository.record_runtime_event,
+        )
+    claude_client = RoutedAgentRuntimeClient(
+        python_client=python_claude_client,
+        typescript_client=typescript_runtime_client,
+    )
     dingtalk_conversation_adapter = DingTalkConversationDeliveryAdapter(
         fallback_callback_url=settings.dingtalk.callback_url,
         host_allowlist=settings.dingtalk.callback_host_allowlist,

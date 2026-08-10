@@ -185,6 +185,8 @@ class AgentContextBuilder:
             governed_capabilities=governed_capabilities,
             governed_capability_notices=governed_capability_notices,
             application_publication_id=(job.business_application_publication_id),
+            runtime_kind=job.agent_runtime_kind,
+            runtime_protocol_version=job.agent_runtime_protocol_version,
         )
 
     def _publication(self, job: AgentJob) -> dict[str, Any]:

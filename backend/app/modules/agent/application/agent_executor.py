@@ -54,8 +54,13 @@ class AgentExecutor:
         worker_id: str = "agent-worker",
         correlation_id: str = "",
         fail_on_error: bool = True,
+        recover_typescript_running: bool = False,
     ) -> str:
-        claimed = self.status_service.claim(job_id, worker_id)
+        claimed = self.status_service.claim(
+            job_id,
+            worker_id,
+            recover_typescript_running=recover_typescript_running,
+        )
         if claimed is None:
             persisted = self.repository.get_job(job_id)
             if persisted.status == JobStatus.SUCCEEDED and persisted.result:
@@ -152,12 +157,19 @@ class AgentExecutor:
             result = self.claude_client.run(
                 AgentRunRequest(
                     job_id=job.id,
-                    user_id=job.user_id,
+                    user_id=job.internal_user_id or job.user_id,
                     project_code=job.project_code,
                     context=context,
+                    invocation_id=f"{job.id}.attempt-{job.retry_count}",
                 )
             )
-            self._persist_tool_events(job.id, result.tool_events)
+            if result.runtime_provenance:
+                self.repository.record_runtime_provenance(
+                    job.id,
+                    result.runtime_provenance,
+                )
+            if job.agent_runtime_kind != "typescript-v1":
+                self._persist_tool_events(job.id, result.tool_events)
             self.repository.record_execution_policy_usage(
                 job.id,
                 tool_call_count=len(result.tool_events),
@@ -179,7 +191,8 @@ class AgentExecutor:
         except Exception as exc:
             safe_message = getattr(exc, "safe_message", str(exc))
             tool_events = getattr(exc, "tool_events", [])
-            self._persist_tool_events(job.id, tool_events)
+            if job.agent_runtime_kind != "typescript-v1":
+                self._persist_tool_events(job.id, tool_events)
             self.repository.record_execution_policy_usage(
                 job.id,
                 tool_call_count=len(tool_events),
@@ -195,6 +208,14 @@ class AgentExecutor:
             )
             if fail_on_error:
                 self.status_service.fail(job.id, safe_message)
+            diagnostics = getattr(exc, "diagnostics", {})
+            runtime_provenance = (
+                diagnostics.get("runtime_provenance")
+                if isinstance(diagnostics, dict)
+                else None
+            )
+            if isinstance(runtime_provenance, dict):
+                self.repository.record_runtime_provenance(job.id, runtime_provenance)
             raise
 
     @operation_unit_of_work(lambda executor: executor.repository.database)

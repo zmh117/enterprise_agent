@@ -36,7 +36,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
     assert len({item.version for item in catalog}) == len(catalog)
     assert len({item.name for item in catalog}) == len(catalog)
     assert [item.version for item in catalog][8:11] == ["009", "009a", "010"]
-    assert catalog[-1].version == "033"
+    assert catalog[-1].version == "034"
     assert all(len(item.checksum) == 64 for item in catalog)
 
     baseline = legacy_baseline_artifacts(catalog)
@@ -108,9 +108,9 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
     first = migrator.run()
     second = migrator.run()
 
-    assert first.head == "033"
+    assert first.head == "034"
     assert first.baselined == 0
-    assert first.applied[-11:] == (
+    assert first.applied[-12:] == (
         "023",
         "024",
         "025",
@@ -122,8 +122,9 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
         "031",
         "032",
         "033",
+        "034",
     )
-    assert second.head == "033"
+    assert second.head == "034"
     assert second.baselined == 0
     assert second.applied == ()
     assert len(SchemaMigrationLedger(database).list_records()) == len(
@@ -169,9 +170,9 @@ def test_pre_028_backup_can_be_restored_and_reupgraded_without_data_loss(
         result = Migrator(
             upgraded,
             migrations_dir,
-            migrator_build="028-033-upgrade-rehearsal",
+            migrator_build="028-034-upgrade-rehearsal",
         ).run()
-        assert result.applied == ("028", "029", "030", "031", "032", "033")
+        assert result.applied == ("028", "029", "030", "031", "032", "033", "034")
         assert upgraded.execute_one(
             "select username from app_user where id = 'backup-user'"
         ) == {"username": "backup-user"}
@@ -202,10 +203,10 @@ def test_pre_028_backup_can_be_restored_and_reupgraded_without_data_loss(
         reapplied = Migrator(
             restored,
             migrations_dir,
-            migrator_build="restored-028-033-reupgrade-rehearsal",
+            migrator_build="restored-028-034-reupgrade-rehearsal",
         ).run()
-        assert reapplied.applied == ("028", "029", "030", "031", "032", "033")
-        assert reapplied.head == "033"
+        assert reapplied.applied == ("028", "029", "030", "031", "032", "033", "034")
+        assert reapplied.head == "034"
         assert restored.execute_one(
             "select username from app_user where id = 'backup-user'"
         ) == {"username": "backup-user"}
@@ -228,6 +229,7 @@ def test_025_upgrade_preserves_existing_ones_identity_without_fabricating_creden
             "031_direct_agent_tool_snapshot.sql",
             "032_exact_builtin_tool_resource_reset.sql",
             "033_loki_scope_verification_per_draft.sql",
+            "034_typescript_agent_runtime_events.sql",
         }:
             shutil.copy2(path, tmp_path / path.name)
 
@@ -303,6 +305,7 @@ def test_026_upgrade_renames_plain_http_authorization_without_data_loss(
             "031_direct_agent_tool_snapshot.sql",
             "032_exact_builtin_tool_resource_reset.sql",
             "033_loki_scope_verification_per_draft.sql",
+            "034_typescript_agent_runtime_events.sql",
         }:
             shutil.copy2(path, tmp_path / path.name)
 
@@ -444,7 +447,7 @@ def test_schema_head_validator_is_read_only_and_rejects_missing_ledger() -> None
 
     with pytest.raises(
         SchemaHeadError,
-        match="ledger is missing; expected head 033",
+        match="ledger is missing; expected head 034",
     ):
         SchemaHeadValidator(
             database,

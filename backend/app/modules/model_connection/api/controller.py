@@ -90,6 +90,25 @@ class ModelDraftTestResponse(StrictResponse):
     result: ModelDraftTestResultResponse
 
 
+class ModelSavedTestRequest(StrictRequest):
+    timeout_seconds: int = Field(default=15, ge=3, le=20)
+
+
+class ModelSavedTestResultResponse(StrictResponse):
+    success: bool
+    connection_revision_id: str
+    provider_host: str
+    model: str
+    duration_ms: int
+    runtime: Literal["typescript-v1"]
+    runtime_version: str
+    sdk_version: str
+
+
+class ModelSavedTestResponse(StrictResponse):
+    result: ModelSavedTestResultResponse
+
+
 class PublicCredentialResponse(StrictResponse):
     configured: bool
     masked: str
@@ -228,6 +247,39 @@ def build_model_connection_router() -> APIRouter:
         except Exception as exc:
             raise handle_exception(exc) from exc
         return {"revision": revision}
+
+    @router.post(
+        "/{code}/revisions/{revision_id}/test",
+        response_model=ModelSavedTestResponse,
+    )
+    def test_saved_revision(
+        request: Request,
+        code: str,
+        revision_id: str,
+        payload: ModelSavedTestRequest,
+    ) -> dict[str, Any]:
+        actor_id = _require_model_connection_admin(request)
+        _enforce_model_probe_rate_limit(
+            request,
+            actor_id=actor_id,
+            code=code,
+            action="test-saved",
+        )
+        try:
+            connection = container(request).model_connection_service.get(code)
+            revision_ids = {str(item["id"]) for item in connection["revisions"]}
+            if revision_id not in revision_ids:
+                raise HTTPException(status_code=404, detail="未找到模型连接版本")
+            result = container(request).model_connection_service.test_saved_revision(
+                actor_id=actor_id,
+                revision_id=revision_id,
+                timeout_seconds=payload.timeout_seconds,
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise handle_exception(exc) from exc
+        return {"result": result}
 
     return router
 

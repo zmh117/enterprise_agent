@@ -70,6 +70,7 @@ class RabbitMQConsumer:
                                 event_id=payload["event_id"],
                                 job_id=payload["job_id"],
                                 correlation_id=payload.get("correlation_id", ""),
+                                redelivered=bool(method.redelivered),
                             )
                         )
                     except Exception:

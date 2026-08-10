@@ -9,8 +9,18 @@ class JobStatusService:
     def __init__(self, repository: AgentRepository) -> None:
         self.repository = repository
 
-    def claim(self, job_id: str, worker_id: str) -> AgentJob | None:
-        return self.repository.claim_job(job_id, worker_id)
+    def claim(
+        self,
+        job_id: str,
+        worker_id: str,
+        *,
+        recover_typescript_running: bool = False,
+    ) -> AgentJob | None:
+        return self.repository.claim_job(
+            job_id,
+            worker_id,
+            recover_typescript_running=recover_typescript_running,
+        )
 
     def succeed(self, job_id: str, result: str) -> AgentJob:
         return self.repository.transition_job(

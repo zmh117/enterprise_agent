@@ -586,6 +586,97 @@ def test_saved_connection_probe_rejects_redirect_before_invoking_sdk() -> None:
     assert invoked is False
 
 
+def test_saved_connection_probe_delegates_fixed_revision_to_typescript_runtime() -> None:
+    c = container()
+    revision = ready_connection(c)
+    observed: dict[str, Any] = {}
+
+    class Probe:
+        def probe(self, **kwargs: Any) -> dict[str, Any]:
+            observed.update(kwargs)
+            return {
+                "protocol_version": "1.0",
+                "probe_id": "probe-safe-result",
+                "success": True,
+                "connection_revision_id": revision["id"],
+                "provider_host": "api.deepseek.com",
+                "model": "deepseek-v4-flash",
+                "runtime_version": "0.1.0",
+                "sdk_version": "0.3.226",
+                "duration_ms": 12,
+            }
+
+    c.model_connection_service.runtime_probe = Probe()
+    c.model_connection_service.redirect_checker = lambda *_args, **_kwargs: None
+    c.model_connection_service.secret_provider.resolve = lambda _ref: pytest.fail(
+        "Python must not resolve or forward the model API key for a saved Runtime probe"
+    )
+
+    result = c.model_connection_service.test_saved_revision(
+        actor_id=ADMIN_ID,
+        revision_id=str(revision["id"]),
+    )
+
+    assert observed == {
+        "revision_id": revision["id"],
+        "config_hash": revision["config_hash"],
+        "timeout_seconds": 15,
+    }
+    assert result == {
+        "success": True,
+        "connection_revision_id": revision["id"],
+        "provider_host": "api.deepseek.com",
+        "model": "deepseek-v4-flash",
+        "duration_ms": 12,
+        "runtime": "typescript-v1",
+        "runtime_version": "0.1.0",
+        "sdk_version": "0.3.226",
+    }
+    assert "secret" not in json.dumps(result).lower()
+
+
+def test_admin_api_exposes_saved_revision_typescript_probe() -> None:
+    settings, c = web_container()
+    revision = ready_connection(c)
+
+    class Probe:
+        def probe(self, **kwargs: Any) -> dict[str, Any]:
+            assert kwargs["revision_id"] == revision["id"]
+            assert kwargs["config_hash"] == revision["config_hash"]
+            return {
+                "protocol_version": "1.0",
+                "probe_id": "probe-api-result",
+                "success": True,
+                "connection_revision_id": revision["id"],
+                "provider_host": "api.deepseek.com",
+                "model": "deepseek-v4-flash",
+                "runtime_version": "0.1.0",
+                "sdk_version": "0.3.226",
+                "duration_ms": 9,
+            }
+
+    c.model_connection_service.runtime_probe = Probe()
+    c.model_connection_service.redirect_checker = lambda *_args, **_kwargs: None
+    app = create_app(settings, container_factory=lambda _: c)
+    with TestClient(app) as client:
+        login = client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "111111111111"},
+        )
+        assert login.status_code == 200
+        csrf = client.cookies.get("enterprise_agent_csrf")
+        response = client.post(
+            f"/api/admin/model-connections/{DEFAULT_MODEL_CONNECTION_CODE}"
+            f"/revisions/{revision['id']}/test",
+            headers={"origin": "http://admin.test", "x-csrf-token": csrf},
+            json={"timeout_seconds": 12},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["result"]["runtime"] == "typescript-v1"
+    assert response.json()["result"]["sdk_version"] == "0.3.226"
+
+
 def test_concurrent_jobs_do_not_leak_process_environment_between_connections() -> None:
     observations: dict[str, list[tuple[str, str, str]]] = {}
 

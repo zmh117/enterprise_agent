@@ -9,6 +9,7 @@ class AgentJobMessage:
     event_id: str
     job_id: str
     correlation_id: str
+    redelivered: bool = False
 
 
 @dataclass(frozen=True)

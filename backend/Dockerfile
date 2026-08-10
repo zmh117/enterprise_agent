@@ -74,6 +74,7 @@ FROM python-deps AS migrator
 COPY backend/app/__init__.py /app/backend/app/
 COPY backend/app/cli /app/backend/app/cli
 COPY backend/app/shared /app/backend/app/shared
+COPY backend/maintenance /app/backend/maintenance
 COPY backend/migrations /app/backend/migrations
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-deps --no-build-isolation .
@@ -88,6 +89,7 @@ COPY backend/app/modules /app/backend/app/modules
 COPY backend/config /app/backend/config
 COPY backend/migrations /app/backend/migrations
 COPY backend/seeds /app/backend/seeds
+COPY agent-runtime/contracts /app/agent-runtime/contracts
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-deps --no-build-isolation .
 CMD ["python", "-m", "uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
@@ -147,11 +149,19 @@ COPY backend/app/modules/webhook /app/backend/app/modules/webhook
 COPY backend/app/workers /app/backend/app/workers
 COPY backend/migrations /app/backend/migrations
 COPY backend/seeds /app/backend/seeds
+COPY agent-runtime/contracts /app/agent-runtime/contracts
 COPY .claude /app/.claude
 RUN python -c "import app.bootstrap; import app.workers.agent_job_worker; import app.workers.job_dispatch_worker; import app.workers.delivery_dispatch_worker; import app.workers.webhook_dispatch_worker; import app.workers.channel_dispatch_worker"
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-deps --no-build-isolation .
 CMD ["python", "-m", "app.workers.agent_job_worker"]
+
+FROM api-server AS runtime-tool-mcp
+RUN groupadd --system --gid 10001 runtime-tool \
+    && useradd --system --uid 10001 --gid 10001 --no-create-home runtime-tool
+COPY backend/app/services /app/backend/app/services
+USER 10001:10001
+CMD ["python", "-m", "uvicorn", "app.services.runtime_tool_mcp:create_default_app", "--factory", "--host", "0.0.0.0", "--port", "9103"]
 
 FROM claude-runtime AS backend-runtime
 COPY backend/app /app/backend/app

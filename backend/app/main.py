@@ -4,6 +4,10 @@ from typing import Any
 
 from app.bootstrap import Container, ContainerFactory, build_api_container
 from app.modules.agent.infrastructure.claude_code_agent_client import is_claude_cli_available
+from app.modules.agent.infrastructure.typescript_runtime_client import (
+    RuntimeClientSettings,
+    probe_runtime_readiness,
+)
 from app.shared.config import Settings, load_settings, synchronize_feature_configuration
 from app.shared.database import Database
 from app.shared.database import default_migrations_dir
@@ -52,6 +56,15 @@ def _build_readiness(
         not token_required
         or bool(settings.internal_api_auth_token_file)
     )
+    agent_runtime = _check_agent_runtime(settings)
+    typescript_environment = settings.environment.strip().lower() in {
+        item.strip().lower()
+        for item in settings.agent_runtime.typescript_environments
+        if item.strip()
+    }
+    typescript_required = typescript_environment or bool(
+        settings.agent_runtime.typescript_application_publication_ids
+    )
     core_ready = all(
         (
             database_ready,
@@ -59,6 +72,7 @@ def _build_readiness(
             rabbitmq_ready,
             master_key_ready,
             token_ready,
+            (not typescript_required or agent_runtime["ready"]),
         )
     )
     try:
@@ -81,9 +95,19 @@ def _build_readiness(
             "internal_api_token": token_ready,
             "master_key": master_key_ready,
             "runtime_assembly": True,
+            "agent_runtime": agent_runtime,
         },
         "resources": governed_runtime,
         "claude_invoked": False,
+        "mcp_invoked": False,
+        "runtime_selection": {
+            "default_runtime": "typescript-v1" if typescript_environment else "python-v1",
+            "typescript_required": typescript_required,
+            "typescript_canary_publication_count": len(
+                settings.agent_runtime.typescript_application_publication_ids
+            ),
+            "protocol_version": "1.0",
+        },
         **_runtime_config_status(settings),
     }
     if owned_database:
@@ -102,6 +126,33 @@ def _check_rabbitmq(rabbitmq_url: str) -> bool:
         return True
     except Exception:
         return False
+
+
+def _check_agent_runtime(settings: Settings) -> dict[str, Any]:
+    if not settings.agent_runtime.base_url:
+        return {
+            "configured": False,
+            "ready": False,
+            "identity": "not_configured",
+            "database": "unavailable",
+            "master_key": "unavailable",
+            "runtime_version": "",
+            "protocol_version": "",
+            "sdk_version": "",
+            "cli_version": "",
+            "model_invoked": False,
+            "mcp_invoked": False,
+        }
+    return probe_runtime_readiness(
+        RuntimeClientSettings(
+            base_url=settings.agent_runtime.base_url,
+            tool_mcp_url=settings.runtime_tool_mcp.server_url,
+            allowed_runtime_hosts=settings.agent_runtime.allowed_hosts,
+            allow_insecure_internal_http=(
+                settings.agent_runtime.allow_insecure_internal_http
+            ),
+        )
+    )
 
 
 def _claude_runtime_status(settings: Settings) -> dict[str, Any]:

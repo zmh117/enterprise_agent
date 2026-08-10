@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from app.modules.agent_config.application import AgentConfigService
+from app.modules.agent.application.runtime_migration_gate import RuntimeMigrationGate
 from app.modules.api_capability.infrastructure import (
     CapabilityPublicationRepository,
     GovernedApiExecutionRepository,
@@ -149,6 +150,8 @@ class CreateAgentJobService:
         external_api_credential_repository: (ExternalApiCredentialRepository | None) = None,
         identity_repository: IdentityRepository | None = None,
         builtin_tool_snapshot_service: JobBuiltinToolSnapshotService | None = None,
+        runtime_migration_gate: RuntimeMigrationGate | None = None,
+        runtime_environment: str = "local",
     ) -> None:
         self.repository = repository
         self.permission_service = permission_service
@@ -169,6 +172,8 @@ class CreateAgentJobService:
         self.external_api_credential_repository = external_api_credential_repository
         self.identity_repository = identity_repository
         self.builtin_tool_snapshot_service = builtin_tool_snapshot_service
+        self.runtime_migration_gate = runtime_migration_gate
+        self.runtime_environment = runtime_environment
 
     def execute(self, command: CreateAgentJobCommand) -> AgentJob:
         existing = self.repository.get_job_by_idempotency_key(command.idempotency_key)
@@ -177,6 +182,14 @@ class CreateAgentJobService:
                 self.builtin_tool_snapshot_service.verify(existing.id)
             return existing
         self._assert_application_runtime_available(command)
+        runtime_selection = (
+            self.runtime_migration_gate.select(
+                environment=self.runtime_environment,
+                application_publication_id=(command.business_application_publication_id),
+            )
+            if self.runtime_migration_gate is not None
+            else None
+        )
         if command.conversation_mode in {"application", "actor"}:
             raise NonRetryableExecutionError(
                 "Legacy shared session mode cannot create new Jobs",
@@ -517,6 +530,12 @@ class CreateAgentJobService:
                 },
                 execution_policy=execution_policy.to_dict(),
                 model_runtime_provenance=model_runtime_provenance,
+                agent_runtime_kind=(
+                    runtime_selection.runtime_kind if runtime_selection is not None else "python-v1"
+                ),
+                agent_runtime_protocol_version=(
+                    runtime_selection.protocol_version if runtime_selection is not None else "1.0"
+                ),
             )
             external_subject_snapshot = self._freeze_available_external_subject(
                 job_id=job.id,
@@ -607,6 +626,8 @@ class CreateAgentJobService:
                     "agent_revision": agent_revision,
                     "agent_config_hash": agent_config_hash,
                     "model_runtime_provenance": model_runtime_provenance,
+                    "agent_runtime_kind": job.agent_runtime_kind,
+                    "agent_runtime_protocol_version": (job.agent_runtime_protocol_version),
                     "webhook_event_id": command.webhook_event_id,
                     "webhook_trigger_id": command.webhook_trigger_id,
                     "webhook_trigger_publication_id": command.webhook_trigger_publication_id,

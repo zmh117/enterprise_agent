@@ -67,6 +67,7 @@ class AgentJobWorker:
                     worker_id=self.worker_id,
                     correlation_id=dispatch_event.correlation_id,
                     fail_on_error=False,
+                    recover_typescript_running=message.redelivered,
                 )
             except Exception as exc:
                 job = self.container.agent_repository.get_job(message.job_id)

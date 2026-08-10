@@ -23,6 +23,13 @@ x-runtime-env: &runtime-env
   DINGTALK_RUNTIME_AUTH_TOKEN_FILE: /run/secrets/dingtalk_runtime_auth_token
   # 模型连接由管理端配置，部署环境只负责限制允许访问的主机。
   MODEL_PROVIDER_HOST_ALLOWLIST: ${MODEL_PROVIDER_HOST_ALLOWLIST:-api.deepseek.com}
+  AGENT_RUNTIME_URL: http://agent-runtime:8090
+  AGENT_RUNTIME_ALLOWED_HOSTS: agent-runtime
+  AGENT_RUNTIME_ALLOW_INSECURE_INTERNAL_HTTP: "true"
+  AGENT_RUNTIME_TYPESCRIPT_ENVIRONMENTS: ${AGENT_RUNTIME_TYPESCRIPT_ENVIRONMENTS:-}
+  AGENT_RUNTIME_TYPESCRIPT_APPLICATION_PUBLICATIONS: ${AGENT_RUNTIME_TYPESCRIPT_APPLICATION_PUBLICATIONS:-}
+  RUNTIME_TOOL_MCP_SERVER_URL: http://runtime-tool-mcp:9103/mcp
+  RUNTIME_TOOL_MCP_ALLOWED_HOSTS: runtime-tool-mcp,runtime-tool-mcp:9103
   # 附件存储仍属于部署基础设施，不由业务配置数据库托管。
   S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-http://minio:9000}
   S3_ACCESS_KEY: ${S3_ACCESS_KEY:-enterprise_agent}
@@ -34,6 +41,10 @@ x-runtime-env: &runtime-env
 x-worker-env: &worker-env
   <<: *runtime-env
   RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+
+x-api-env: &api-env
+  <<: *worker-env
+  MODEL_PROBE_AUTH_TOKEN_FILE: /run/secrets/model_probe_auth_token
 
 services:
   postgres:
@@ -51,6 +62,9 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    networks:
+      - default
+      - agent-runtime-control
 
   migrator:
     build:
@@ -61,6 +75,11 @@ services:
       DATABASE_DSN: postgresql://enterprise_agent:enterprise_agent@postgres:5432/enterprise_agent
       APP_ENV: ${APP_ENV:-local}
       MIGRATOR_BUILD: ${MIGRATOR_BUILD:-local-compose}
+      AGENT_RUNTIME_DATABASE_PASSWORD: ${AGENT_RUNTIME_DATABASE_PASSWORD:-agent_runtime_reader_local}
+    command:
+      - /bin/sh
+      - -ec
+      - python -m app.cli.migrate && python -m app.cli.apply_agent_runtime_grants
     restart: "no"
     depends_on:
       postgres:
@@ -182,6 +201,110 @@ services:
       timeout: 5s
       retries: 12
       start_period: 15s
+    networks:
+      - default
+      - agent-runtime-control
+
+  runtime-tool-mcp:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: runtime-tool-mcp
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777,uid=10001,gid=10001
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      <<: *worker-env
+      RUNTIME_TOOL_MCP_SIGNING_KEY_FILE: /run/secrets/runtime_tool_mcp_signing_key
+    secrets:
+      - source: internal_api_client_auth_token
+        target: internal_api_auth_token
+      - app_config_master_key
+      - runtime_tool_mcp_signing_key
+    expose:
+      - "9103"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+      internal-api-platform:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9103/health', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768M
+    networks:
+      - agent-runtime-control
+      - provider-egress
+
+  agent-runtime:
+    build:
+      context: ./agent-runtime
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp/agent-runtime:size=32m,mode=0700,uid=1000,gid=1000
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      AGENT_RUNTIME_HOST: 0.0.0.0
+      AGENT_RUNTIME_PORT: "8090"
+      AGENT_RUNTIME_LOG_LEVEL: ${AGENT_RUNTIME_LOG_LEVEL:-info}
+      AGENT_RUNTIME_LEDGER_TTL_SECONDS: ${AGENT_RUNTIME_LEDGER_TTL_SECONDS:-3600}
+      AGENT_RUNTIME_CLI_VERSION: "2.1.226"
+      RUNTIME_GRANT_PUBLIC_KEY_FILE: /run/secrets/runtime_grant_public_key
+      MODEL_PROBE_AUTH_TOKEN_FILE: /run/secrets/model_probe_auth_token
+      DATABASE_URL: ${AGENT_RUNTIME_DATABASE_DSN:-postgresql://agent_runtime_reader:agent_runtime_reader_local@postgres:5432/enterprise_agent}
+      APP_CONFIG_MASTER_KEY_FILE: /run/secrets/app_config_master_key
+      MODEL_PROVIDER_ALLOWED_HOSTS: ${MODEL_PROVIDER_HOST_ALLOWLIST:-api.deepseek.com}
+      MCP_SERVER_ALLOWED_HOSTS: runtime-tool-mcp
+    secrets:
+      - app_config_master_key
+      - runtime_grant_public_key
+      - model_probe_auth_token
+    expose:
+      - "8090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+      runtime-tool-mcp:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8090/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+    networks:
+      - agent-runtime-control
+      - provider-egress
 
   api-server:
     build:
@@ -191,12 +314,13 @@ services:
     command:
       ["python", "-m", "uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
     environment:
-      <<: *worker-env
+      <<: *api-env
     secrets:
       - dingtalk_runtime_auth_token
       - source: internal_api_client_auth_token
         target: internal_api_auth_token
       - app_config_master_key
+      - model_probe_auth_token
     ports:
       - "8000:8000"
     depends_on:
@@ -206,6 +330,8 @@ services:
         condition: service_healthy
       migrator:
         condition: service_completed_successfully
+      agent-runtime:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD
@@ -216,6 +342,9 @@ services:
       timeout: 5s
       retries: 12
       start_period: 15s
+    networks:
+      - default
+      - agent-runtime-control
 
   builtin-tool-compose-acceptance:
     profiles: ["builtin-tool-acceptance"]
@@ -277,10 +406,14 @@ services:
     command: ["python", "-m", "app.workers.agent_job_worker"]
     environment:
       <<: *worker-env
+      RUNTIME_GRANT_PRIVATE_KEY_FILE: /run/secrets/runtime_grant_private_key
+      RUNTIME_TOOL_MCP_SIGNING_KEY_FILE: /run/secrets/runtime_tool_mcp_signing_key
     secrets:
       - source: internal_api_client_auth_token
         target: internal_api_auth_token
       - app_config_master_key
+      - runtime_grant_private_key
+      - runtime_tool_mcp_signing_key
     depends_on:
       postgres:
         condition: service_healthy
@@ -288,6 +421,13 @@ services:
         condition: service_healthy
       migrator:
         condition: service_completed_successfully
+      runtime-tool-mcp:
+        condition: service_healthy
+      agent-runtime:
+        condition: service_healthy
+    networks:
+      - default
+      - agent-runtime-control
 
   job-dispatch-worker:
     build:
@@ -441,6 +581,14 @@ secrets:
     file: ${INTERNAL_API_SERVER_AUTH_TOKENS_FILE:-${HOME}/.config/enterprise-agent/internal-api-server-auth-tokens}
   internal_api_client_auth_token:
     file: ${INTERNAL_API_CLIENT_AUTH_TOKEN_FILE:-${HOME}/.config/enterprise-agent/internal-api-client-auth-token}
+  runtime_tool_mcp_signing_key:
+    file: ${RUNTIME_TOOL_MCP_SIGNING_KEY_FILE:-${HOME}/.config/enterprise-agent/runtime-tool-mcp-signing-key}
+  runtime_grant_private_key:
+    file: ${RUNTIME_GRANT_PRIVATE_KEY_FILE:-${HOME}/.config/enterprise-agent/runtime-grant-private.pem}
+  runtime_grant_public_key:
+    file: ${RUNTIME_GRANT_PUBLIC_KEY_FILE:-${HOME}/.config/enterprise-agent/runtime-grant-public.pem}
+  model_probe_auth_token:
+    file: ${MODEL_PROBE_AUTH_TOKEN_FILE:-${HOME}/.config/enterprise-agent/model-probe-auth-token}
 
 volumes:
   postgres18-data:
@@ -449,3 +597,8 @@ volumes:
     name: enterprise_agent_rabbitmq4_data
   minio-data:
     name: enterprise_agent_minio_data
+
+networks:
+  agent-runtime-control:
+    internal: true
+  provider-egress: {}

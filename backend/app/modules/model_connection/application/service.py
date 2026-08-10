@@ -76,6 +76,16 @@ class ModelConnectionTester(Protocol):
     ) -> dict[str, Any]: ...
 
 
+class RuntimeModelProbe(Protocol):
+    def probe(
+        self,
+        *,
+        revision_id: str,
+        config_hash: str,
+        timeout_seconds: int,
+    ) -> dict[str, Any]: ...
+
+
 class ModelDiscoverer(Protocol):
     def __call__(
         self,
@@ -131,6 +141,7 @@ class ModelConnectionService:
         allowed_hosts: set[str] | frozenset[str] | None = None,
         dns_resolver: Callable[..., list[tuple[Any, ...]]] | None = None,
         tester: ModelConnectionTester | None = None,
+        runtime_probe: RuntimeModelProbe | None = None,
         model_discoverer: ModelDiscoverer | None = None,
         redirect_checker: Callable[[str, int], None] | None = None,
     ) -> None:
@@ -146,6 +157,7 @@ class ModelConnectionService:
         )
         self.dns_resolver = dns_resolver or socket.getaddrinfo
         self.tester = tester
+        self.runtime_probe = runtime_probe
         self.model_discoverer = model_discoverer or _fetch_deepseek_models
         self.redirect_checker = redirect_checker or _assert_provider_does_not_redirect
 
@@ -573,20 +585,38 @@ class ModelConnectionService:
         self._require_agent_editor(actor_id)
         self._require_secret_admin(actor_id)
         revision = self.repository.get_revision(revision_id)
-        started = time.monotonic()
         binding: ModelRuntimeBinding | None = None
         try:
             binding = self.runtime_binding(revision_id)
-            if self.tester is None:
+            self.validate_base_url(binding.base_url, validate_dns=True)
+            self.redirect_checker(binding.base_url, max(3, min(timeout_seconds, 10)))
+            if self.runtime_probe is None:
                 raise NonRetryableExecutionError(
-                    "Model connection tester is unavailable",
+                    "TypeScript Runtime model probe is unavailable",
                     safe_message="模型连接测试运行时不可用",
                     error_code="model_connection_test_unavailable",
                 )
-            self.validate_base_url(binding.base_url, validate_dns=True)
-            self.redirect_checker(binding.base_url, max(3, min(timeout_seconds, 10)))
-            api_key = self.resolve_api_key(binding)
-            outcome = self.tester(binding, api_key, max(3, min(timeout_seconds, 30)))
+            outcome = self.runtime_probe.probe(
+                revision_id=revision_id,
+                config_hash=binding.config_hash,
+                timeout_seconds=max(3, min(timeout_seconds, 20)),
+            )
+            if str(outcome.get("connection_revision_id") or "") != revision_id:
+                raise NonRetryableExecutionError(
+                    "TypeScript Runtime model probe revision mismatch",
+                    safe_message="模型连接测试响应无效",
+                    error_code="model_connection_test_invalid_response",
+                )
+            if not bool(outcome.get("success")):
+                failure = outcome.get("failure")
+                safe_failure = failure if isinstance(failure, dict) else {}
+                raise NonRetryableExecutionError(
+                    "TypeScript Runtime model probe failed",
+                    safe_message=str(safe_failure.get("safe_message") or "模型连接测试失败"),
+                    error_code=str(
+                        safe_failure.get("code") or "model_connection_test_failed"
+                    ),
+                )
         except Exception as exc:
             safe_message = getattr(exc, "safe_message", "模型连接测试失败")
             error_code = getattr(exc, "error_code", "model_connection_test_failed")
@@ -619,11 +649,12 @@ class ModelConnectionService:
         result = {
             "success": True,
             "connection_revision_id": revision_id,
-            "provider_host": binding.provider_host,
-            "model": binding.model,
-            "duration_ms": int((time.monotonic() - started) * 1000),
-            "runtime": "claude_agent_sdk",
-            "detail": str(outcome.get("detail") or "连接成功")[:200],
+            "provider_host": str(outcome.get("provider_host") or binding.provider_host),
+            "model": str(outcome.get("model") or binding.model),
+            "duration_ms": int(outcome.get("duration_ms") or 0),
+            "runtime": "typescript-v1",
+            "runtime_version": str(outcome.get("runtime_version") or ""),
+            "sdk_version": str(outcome.get("sdk_version") or ""),
         }
         self.audit_service.record(
             "model.connection.test_succeeded",
