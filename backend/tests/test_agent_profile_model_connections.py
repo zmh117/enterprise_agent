@@ -174,7 +174,7 @@ def test_admin_api_configures_connection_atomically_and_removes_legacy_routes() 
     with TestClient(app) as client:
         login = client.post(
             "/api/auth/login",
-            json={"username": "local-user", "password": "local-admin-change-me"},
+            json={"username": "admin", "password": "111111111111"},
         )
         assert login.status_code == 200
         csrf = client.cookies.get("enterprise_agent_csrf")
@@ -402,7 +402,7 @@ def test_agent_list_degrades_missing_published_model_revision_instead_of_500() -
     with TestClient(app) as client:
         login = client.post(
             "/api/auth/login",
-            json={"username": "local-user", "password": "local-admin-change-me"},
+            json={"username": "admin", "password": "111111111111"},
         )
         assert login.status_code == 200
         response = client.get("/api/admin/agents")

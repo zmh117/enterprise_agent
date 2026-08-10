@@ -26,7 +26,7 @@ from backend.tests.helpers import (
     test_settings as base_test_settings,
 )
 
-ADMIN_PASSWORD = "local-admin-change-me"
+ADMIN_PASSWORD = "111111111111"
 ORIGIN = "http://admin.test"
 
 
@@ -132,7 +132,7 @@ def identity_container(verifier: FakeOnesVerifier | None = None) -> Container:
 def login(client: TestClient) -> dict[str, str]:
     response = client.post(
         "/api/auth/login",
-        json={"username": "local-user", "password": ADMIN_PASSWORD},
+        json={"username": "admin", "password": ADMIN_PASSWORD},
     )
     assert response.status_code == 200, response.text
     csrf = client.cookies.get("enterprise_agent_csrf")

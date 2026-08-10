@@ -588,8 +588,8 @@ def test_management_api_schema_revision_conflict_rate_limit_and_secret_redaction
             login = client.post(
                 "/api/auth/login",
                 json={
-                    "username": "local-user",
-                    "password": "local-admin-change-me",
+                    "username": "admin",
+                    "password": "111111111111",
                 },
             )
             assert login.status_code == 200

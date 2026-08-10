@@ -51,7 +51,7 @@ ON CONFLICT(id) DO NOTHING;
 INSERT INTO app_user
   (id, username, display_name, email, status, revision, created_at, updated_at)
 VALUES
-  ('user_local_admin', 'local-user', 'Local Administrator', '', 'enabled', 1,
+  ('user_local_admin', 'admin', 'Administrator', '', 'enabled', 1,
    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 
@@ -59,7 +59,7 @@ INSERT INTO user_password_credential
   (user_id, password_hash, revision, password_changed_at, created_at, updated_at)
 VALUES
   ('user_local_admin',
-   '$argon2id$v=19$m=65536,t=3,p=4$1tYap6oiM9gZNM+L+eV7EQ$TRvntO4ZwHDzf/JtP+kJq7NL0io0CDiGpVUOeySk9ys',
+   '$argon2id$v=19$m=65536,t=3,p=4$/fmkNNFzNaJI1FbRRoayJA$HnOPXmib+4StGdpj0RzHkez6N1m0oeeeaMXhswCQCB0',
    1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(user_id) DO NOTHING;
 
@@ -287,15 +287,15 @@ INSERT INTO permission_policy
   (id, subject_type, subject_code, resource_type, resource_code, action,
    effect, created_at, updated_at)
 VALUES
-  ('policy-user-local', 'user', 'local-user', 'project', 'default', 'use',
+  ('policy-user-local', 'user', 'admin', 'project', 'default', 'use',
    'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-tool-local', 'user', 'local-user', 'tool', '*', 'use',
+  ('policy-tool-local', 'user', 'admin', 'tool', '*', 'use',
    'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-platform-config-local', 'user', 'local-user', 'platform_config', '*',
+  ('policy-platform-config-local', 'user', 'admin', 'platform_config', '*',
    '*', 'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-builtin-tools-local', 'user', 'local-user', 'builtin_tool', '*', '*',
+  ('policy-builtin-tools-local', 'user', 'admin', 'builtin_tool', '*', '*',
    'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-secret-local', 'user', 'local-user', 'secret', '*', '*',
+  ('policy-secret-local', 'user', 'admin', 'secret', '*', '*',
    'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('policy-user-grafana', 'user', 'grafana', 'project', 'default', 'use',
    'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),

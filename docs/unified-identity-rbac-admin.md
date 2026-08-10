@@ -35,7 +35,7 @@ FEATURE_WEB_ADMIN=true docker compose --profile admin up -d --build \
   postgres rabbitmq api-server admin-web
 ```
 
-访问 `http://localhost:8080`。`admin-web` 由 Nginx 提供静态资源，并把同源 `/api` 代理到 `api-server`。Compose 本地 seed 的账号仅用于开发：`local-user` / `local-admin-change-me`；首次登录后应立即修改密码。生产 migration 不创建默认密码。
+访问 `http://localhost:8080`。`admin-web` 由 Nginx 提供静态资源，并把同源 `/api` 代理到 `api-server`。Compose 本地 seed 的账号仅用于开发：`admin` / `111111111111`；首次登录后应立即修改密码。生产 migration 不创建默认密码。
 
 ## 首个管理员 bootstrap
 

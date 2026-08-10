@@ -15,8 +15,8 @@ from backend.tests.helpers import test_settings as make_test_settings
 
 
 ADMIN_ID = "user_local_admin"
-ADMIN_USERNAME = "local-user"
-ADMIN_PASSWORD = "local-admin-change-me"
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "111111111111"
 
 
 def _runtime_with_two_logged_in_admins() -> Container:

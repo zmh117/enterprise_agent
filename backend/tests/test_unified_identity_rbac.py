@@ -21,8 +21,8 @@ from backend.tests.helpers import (
 
 
 ADMIN_ID = "user_local_admin"
-ADMIN_USERNAME = "local-user"
-ADMIN_PASSWORD = "local-admin-change-me"
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "111111111111"
 ORIGIN = "http://admin.test"
 
 
