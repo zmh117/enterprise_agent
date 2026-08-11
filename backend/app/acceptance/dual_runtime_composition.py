@@ -512,7 +512,7 @@ def _assert_real_tool_evidence(runtime: Container, job_id: str) -> None:
         for event in runtime_events
     ):
         raise RuntimeError(f"Job {job_id} has no standard MCP Tool Runtime evidence")
-    runtime.builtin_tool_snapshot_service.verify(job_id)
+    runtime.mcp_tool_snapshot_service.verify(job_id)
 
 
 def _assert_retry_evidence(runtime: Container, job_id: str) -> None:

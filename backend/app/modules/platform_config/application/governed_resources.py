@@ -14,9 +14,6 @@ from app.modules.platform_config.infrastructure.governed_resource_repository imp
 from app.modules.platform_config.infrastructure.repository import (
     PlatformConfigRepository,
 )
-from app.modules.platform_config.infrastructure.runtime_generation_repository import (
-    RuntimeGenerationRepository,
-)
 from app.modules.platform_config.domain.provider_contracts import (
     ProviderContractRegistry,
 )
@@ -32,13 +29,13 @@ from app.shared.secret_redaction import (
 )
 
 from .validation import (
-    assert_no_resource_placement,
     assert_no_secret_payload,
     normalize_json_object,
     validate_code,
+    validate_resource_placement,
     validate_secret_ref,
 )
-from .resource_reset import resource_reset_in_progress
+from .resource_maintenance import resource_reset_in_progress
 
 
 RESOURCE_PROVIDERS = {
@@ -117,10 +114,6 @@ class GovernedResourceService:
             )
 
     def list_resources(self) -> list[dict[str, Any]]:
-        runtime_status = RuntimeGenerationRepository(self.repository.database).public_status()
-        runtime_by_revision = {
-            str(item["resource_revision_id"]): item for item in runtime_status["resources"]
-        }
         result: list[dict[str, Any]] = []
         for resource in self.repository.list_resources():
             draft = self.repository.find_draft(str(resource["id"]))
@@ -135,78 +128,16 @@ class GovernedResourceService:
             )
             revisions = self.repository.list_revisions(str(resource["id"]))
             published = revisions[-1] if revisions else None
-            activation = runtime_by_revision.get(str(published["id"])) if published else None
             result.append(
                 {
                     **resource,
                     "draft": draft,
                     "draft_verification": draft_verification,
                     "published_revision": published,
-                    "effective_revision_id": (
-                        str(activation["effective_revision_id"]) if activation else ""
-                    ),
-                    "activation_status": (
-                        str(activation["status"])
-                        if activation
-                        else ("PENDING" if published else "EMPTY")
-                    ),
-                    "last_known_good_generation_id": (
-                        str(activation["last_known_good_generation_id"]) if activation else ""
-                    ),
-                    "safe_error_summary": (str(activation["error_summary"]) if activation else ""),
-                    "affected_applications": self._affected_applications(
-                        str(resource["id"]),
-                        runtime_status=runtime_status,
-                    ),
+                    "activation_status": "PUBLISHED" if published else "EMPTY",
                 }
             )
         return result
-
-    def _affected_applications(
-        self,
-        resource_id: str,
-        *,
-        runtime_status: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        application_status = {
-            str(item["application_publication_id"]): str(item["status"])
-            for item in runtime_status["applications"]
-        }
-        rows = self.repository.database.execute(
-            """
-            select affected.publication_id, affected.application_id,
-                   affected.application_code, affected.application_name
-              from (
-                    select distinct p.id as publication_id,
-                           a.id as application_id,
-                           a.code as application_code,
-                           a.name as application_name,
-                           p.revision as publication_revision
-                      from business_application_publication_builtin_tool_resource binding
-                      join business_application_publication_builtin_tool tool
-                        on tool.id = binding.application_tool_id
-                      join business_application_publication p
-                        on p.id = tool.application_publication_id
-                      join business_application a on a.id = p.application_id
-                      join platform_resource_revision revision
-                        on revision.id = binding.resource_revision_id
-                     where revision.resource_id = ?
-                   ) affected
-             order by affected.application_code,
-                      affected.publication_revision
-            """,
-            (resource_id,),
-        )
-        return [
-            {
-                **row,
-                "runtime_status": application_status.get(
-                    str(row["publication_id"]),
-                    "NOT_ACTIVE",
-                ),
-            }
-            for row in rows
-        ]
 
     @operation_unit_of_work(lambda service: service.repository.database)
     def create_resource(
@@ -217,10 +148,6 @@ class GovernedResourceService:
         correlation_id: str = "",
     ) -> dict[str, Any]:
         self.require_admin(actor_id)
-        assert_no_resource_placement(
-            payload,
-            context="Resource Identity 或连接草稿",
-        )
         code = validate_code(str(payload.get("code") or ""))
         if self.repository.get_resource_by_code(code):
             raise NonRetryableExecutionError(
@@ -234,6 +161,8 @@ class GovernedResourceService:
             payload=payload,
         )
         scope_type = str(payload.get("scope_type") or "").lower()
+        placement_value = validate_resource_placement(payload.get("placement"))
+        placement = placement_value.value if placement_value is not None else None
         if scope_type not in SCOPE_TYPES:
             raise NonRetryableExecutionError(
                 f"Unsupported Resource scope: {scope_type}",
@@ -241,6 +170,12 @@ class GovernedResourceService:
                 error_code="resource_scope_invalid",
             )
         if resource_kind == "loki":
+            if placement is not None:
+                raise NonRetryableExecutionError(
+                    "Loki Resource cannot declare placement",
+                    safe_message="Loki 工具资源不能配置 placement",
+                    error_code="resource_placement_invalid",
+                )
             if scope_type not in {"global", "environment"}:
                 raise NonRetryableExecutionError(
                     "Loki Resource scope must be global or environment",
@@ -335,6 +270,7 @@ class GovernedResourceService:
             environment_id=str(environment_id) if environment_id else None,
             base_id=str(base_id) if base_id else None,
             workshop_id=str(workshop_id) if workshop_id else None,
+            placement=placement,
             actor_id=actor_id,
         )
         draft = self.repository.insert_draft(
@@ -366,10 +302,6 @@ class GovernedResourceService:
         correlation_id: str = "",
     ) -> dict[str, Any]:
         self.require_admin(actor_id)
-        assert_no_resource_placement(
-            payload,
-            context="Resource Identity 或连接草稿",
-        )
         resource = self._resource(code)
         self._require_identity_enabled(resource)
         before = self.repository.get_draft(str(resource["id"]))

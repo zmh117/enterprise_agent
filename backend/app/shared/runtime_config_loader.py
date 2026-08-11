@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any
 
-from app.modules.internal_api_platform.infrastructure.secrets import DbBackedSecretResolver
+from app.modules.mcp_tool_runtime.infrastructure.secrets import DbBackedSecretResolver
 from app.modules.platform_config.application.runtime_config import RuntimeConfigRegistry
 from app.modules.platform_config.application.runtime_config import RuntimeConfigSnapshotBuilder
 from app.modules.platform_config.infrastructure import PlatformConfigRepository
@@ -87,7 +87,6 @@ def apply_runtime_config_overlay(
         for key in (
             "FEATURE_PUBLISHED_AGENT_RUNTIME",
             "FEATURE_REAL_CLAUDE",
-            "FEATURE_REAL_INTERNAL_TOOLS",
         )
         if runtime_value(key) is not None
     }
@@ -101,24 +100,10 @@ def apply_runtime_config_overlay(
     )
     updated = replace(
         settings,
-        internal_api_base_url=_str(runtime_value("INTERNAL_API_BASE_URL"), settings.internal_api_base_url),
-        internal_api_timeout_seconds=_int(
-            runtime_value("INTERNAL_API_TIMEOUT_SECONDS"),
-            settings.internal_api_timeout_seconds,
-        ),
-        internal_api_max_response_chars=_int(
-            runtime_value("INTERNAL_API_MAX_RESPONSE_CHARS"),
-            settings.internal_api_max_response_chars,
-        ),
-        internal_platform_max_rows=_int(
-            runtime_value("INTERNAL_PLATFORM_MAX_ROWS"),
-            settings.internal_platform_max_rows,
-        ),
         claude_model=_str(claude_model, settings.claude_model),
         anthropic_api_key=_str(anthropic_api_key, settings.anthropic_api_key),
         anthropic_base_url=_str(runtime_value("ANTHROPIC_BASE_URL"), settings.anthropic_base_url),
         feature_real_claude=features.real_claude_enabled,
-        feature_real_internal_tools=features.real_internal_tools_enabled,
         feature_business_application_control_plane=(
             features.business_application_control_plane_enabled
         ),

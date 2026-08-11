@@ -66,7 +66,7 @@ class CurrentAllScopeRequest(StrictRequest):
 
 class ApplicationAccessRequest(StrictRequest):
     application_id: str = Field(min_length=1, max_length=200)
-    capability_codes: list[str] = Field(default_factory=list, max_length=200)
+    tool_identifiers: list[str] = Field(default_factory=list, max_length=200)
     scopes: list[ApplicationScopeRequest] = Field(default_factory=list, max_length=1000)
     current_all: list[CurrentAllScopeRequest] = Field(default_factory=list, max_length=100)
 
@@ -107,7 +107,7 @@ class ExplanationRequest(StrictRequest):
     user_id: str = Field(min_length=1, max_length=200)
     application_id: str = Field(default="", max_length=200)
     application_code: str = Field(default="", max_length=120)
-    capability_code: str = Field(default="", max_length=120)
+    tool_identifier: str = Field(default="", max_length=120)
     environment: str = Field(default="", max_length=120)
     base: str = Field(default="", max_length=120)
     workshop: str = Field(default="", max_length=120)

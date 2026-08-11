@@ -9,14 +9,7 @@ import yaml
 from app.shared.exceptions import NotFound
 
 from ..infrastructure.repository import PlatformConfigRepository
-from .validation import (
-    PlatformConfigValidationError,
-    assert_no_secret_payload,
-    normalize_oracle_database_config,
-    normalize_redis_resource_config,
-    validate_engine,
-    validate_secret_ref,
-)
+from .validation import PlatformConfigValidationError, validate_engine
 
 
 @dataclass
@@ -128,18 +121,6 @@ class PlatformTopologyYamlImporter:
         )
         stats.record(before_base)
         self._audit("base", base, "import", actor_id, before_base, correlation_id)
-        for kind in ("database", "redis", "loki"):
-            if base_data.get(kind):
-                self._import_resource_binding(
-                    stats,
-                    env_code=env_code,
-                    base_code=base_code,
-                    engine=engine,
-                    kind=kind,
-                    data=base_data[kind] or {},
-                    actor_id=actor_id,
-                    correlation_id=correlation_id,
-                )
         for workshop_code, workshop_data in (base_data.get("workshops") or {}).items():
             workshop_data = workshop_data or {}
             before_workshop = self.repository.get_workshop_by_code(
@@ -169,65 +150,6 @@ class PlatformTopologyYamlImporter:
                 correlation_id,
             )
 
-    def _import_resource_binding(
-        self,
-        stats: ImportStats,
-        *,
-        env_code: str,
-        base_code: str,
-        engine: str,
-        kind: str,
-        data: dict[str, Any],
-        actor_id: str,
-        correlation_id: str,
-    ) -> None:
-        config: dict[str, Any] = {}
-        secret_refs: dict[str, str] = {}
-        for key, value in data.items():
-            key_text = str(key)
-            if key_text.endswith("_ref"):
-                target_key = key_text.removesuffix("_ref")
-                ref = validate_secret_ref(str(value))
-                secret_code = self._secret_code(ref)
-                before_secret = self.repository.get_secret_reference_by_code(secret_code)
-                secret = self.repository.upsert_secret_reference(
-                    code=secret_code,
-                    provider=ref.split(":", 1)[0],
-                    ref=ref,
-                    purpose=f"{env_code}/{base_code}/{kind}/{target_key}",
-                )
-                stats.record(before_secret)
-                self._audit(
-                    "secret_reference",
-                    secret,
-                    "import",
-                    actor_id,
-                    before_secret,
-                    correlation_id,
-                )
-                secret_refs[target_key] = ref
-            else:
-                config[key_text] = value
-        assert_no_secret_payload(config)
-        if kind == "redis":
-            config = normalize_redis_resource_config(config)
-        if kind == "database" and engine == "oracle":
-            config = normalize_oracle_database_config(config)
-        code = f"{env_code}_{base_code}_{kind}"
-        before = self.repository.get_resource_binding_by_code(code)
-        binding = self.repository.upsert_resource_binding(
-            code=code,
-            scope_type="base",
-            environment_code=env_code,
-            base_code=base_code,
-            resource_kind=kind,
-            engine=engine if kind == "database" else None,
-            config=config,
-            secret_refs=secret_refs,
-        )
-        stats.record(before)
-        self._audit("resource_binding", binding, "import", actor_id, before, correlation_id)
-
     def _audit(
         self,
         entity_type: str,
@@ -246,8 +168,3 @@ class PlatformTopologyYamlImporter:
             after=after,
             correlation_id=correlation_id,
         )
-
-    @staticmethod
-    def _secret_code(ref: str) -> str:
-        cleaned = "".join(ch if ch.isalnum() else "_" for ch in ref).strip("_").lower()
-        return f"secret_{cleaned}"[:128]

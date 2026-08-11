@@ -9,8 +9,8 @@ from app.modules.audit.application.audit_service import AuditService
 from app.modules.job.application.job_dispatch_operations import (
     JobDispatchOperationsService,
 )
-from app.modules.job.application.builtin_tool_snapshot import (
-    JobBuiltinToolSnapshotService,
+from app.modules.mcp_tool_runtime.job_snapshot import (
+    JobMcpToolSnapshotService,
 )
 from app.modules.job.infrastructure.repositories import AgentRepository, AuditRepository
 from app.shared.config import load_settings
@@ -49,8 +49,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         service = JobDispatchOperationsService(
             repository=AgentRepository(database),
             audit_service=AuditService(AuditRepository(database)),
-            builtin_tool_snapshot_service=(
-                JobBuiltinToolSnapshotService(database)
+            mcp_tool_snapshot_service=(
+                JobMcpToolSnapshotService(database)
             ),
         )
         if args.command == "metrics":

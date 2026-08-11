@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from app.modules.identity.application.authorization import AuthorizationEvaluator
-from app.modules.internal_tools.domain import build_builtin_handler_registry
 from app.modules.job.infrastructure.repositories import ConfigurationRepository
+from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.exceptions import NotFound, PermissionDenied, ToolPolicyError
 
 
@@ -27,10 +27,7 @@ class PermissionService:
     ) -> None:
         self.config_repository = config_repository
         self.authorization_evaluator = authorization_evaluator
-        self._builtin_tool_identifiers = frozenset(
-            definition.tool_identifier
-            for definition in build_builtin_handler_registry().definitions()
-        )
+        self._builtin_tool_identifiers = frozenset(MCP_TOOL_MANIFEST)
 
     def assert_user_can_create_job(self, *, user_id: str, project_code: str) -> None:
         if not self._is_allowed(

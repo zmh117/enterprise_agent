@@ -4,19 +4,15 @@ from typing import Any
 
 from app.modules.agent.infrastructure.runtime_readiness import AgentRuntimeReadinessGuard
 from app.modules.audit.application.audit_service import AuditService
-from app.modules.api_capability.infrastructure import (
-    CapabilityPublicationRepository,
-)
 from app.modules.business_application.application.ports import (
     AgentPublicationReader,
-    CapabilityCatalogReader,
     ChannelConnectorReader,
     ComponentReference,
     IdentitySubjectReader,
     WorkflowPublicationReader,
 )
-from app.modules.business_application.application.builtin_tool_composition import (
-    ApplicationBuiltinToolCompositionService,
+from app.modules.business_application.application.mcp_tool_composition import (
+    ApplicationMcpToolCompositionService,
 )
 from app.modules.business_application.domain.policies import (
     canonical_json,
@@ -58,10 +54,8 @@ class BusinessApplicationService:
         workflow_reader: WorkflowPublicationReader,
         connector_reader: ChannelConnectorReader,
         identity_reader: IdentitySubjectReader,
-        capability_reader: CapabilityCatalogReader,
         runtime_evaluator: RuntimeReadinessEvaluator | None = None,
-        capability_publication_repository: (CapabilityPublicationRepository | None) = None,
-        builtin_tool_composition_service: (ApplicationBuiltinToolCompositionService | None) = None,
+        mcp_tool_composition_service: ApplicationMcpToolCompositionService | None = None,
         runtime_readiness_guard: AgentRuntimeReadinessGuard | None = None,
     ) -> None:
         self.repository = repository
@@ -71,16 +65,14 @@ class BusinessApplicationService:
         self.workflow_reader = workflow_reader
         self.connector_reader = connector_reader
         self.identity_reader = identity_reader
-        self.capability_reader = capability_reader
         self.runtime_evaluator = runtime_evaluator or RuntimeReadinessEvaluator(
             data_plane_enabled=False,
             runtime_environment="local",
         )
-        self.capability_publication_repository = capability_publication_repository
         self.runtime_readiness_guard = runtime_readiness_guard
-        self.builtin_tool_composition_service = (
-            builtin_tool_composition_service
-            or ApplicationBuiltinToolCompositionService(repository.database)
+        self.mcp_tool_composition_service = (
+            mcp_tool_composition_service
+            or ApplicationMcpToolCompositionService(repository.database)
         )
 
     def list_applications(
@@ -200,20 +192,9 @@ class BusinessApplicationService:
             validate_delivery(dict(value), index)
             for index, value in enumerate(payload.get("deliveries") or [])
         ]
-        capabilities = self._normalize_capabilities(payload.get("capabilities") or [])
-        api_capability_release_ids = self._normalize_release_ids(
-            payload.get("api_capability_release_ids") or []
-        )
-        self._require_application_capability_subset(
+        mcp_tools = self.mcp_tool_composition_service.prepare(
             agent_publication_id=str(payload.get("agent_publication_id") or "").strip(),
-            release_ids=api_capability_release_ids,
-        )
-        target_paths = self.builtin_tool_composition_service.prepare_targets(
-            payload.get("target_paths") or []
-        )
-        builtin_tools = self.builtin_tool_composition_service.prepare_draft(
-            agent_publication_id=str(payload.get("agent_publication_id") or "").strip(),
-            raw_tools=payload.get("builtin_tools") or [],
+            raw_tools=payload.get("mcp_tools") or [],
         )
         normalized = {
             "agent_publication_id": str(payload.get("agent_publication_id") or "").strip(),
@@ -222,17 +203,8 @@ class BusinessApplicationService:
             "execution_policy": execution_policy,
             "triggers": triggers,
             "deliveries": deliveries,
-            "capabilities": capabilities,
-            "api_capability_release_ids": api_capability_release_ids,
+            "mcp_tools": self.mcp_tool_composition_service.snapshot(mcp_tools),
         }
-        if builtin_tools:
-            normalized["builtin_tools"] = self.builtin_tool_composition_service.snapshot(
-                builtin_tools
-            )
-        if target_paths:
-            normalized["target_paths"] = self.builtin_tool_composition_service.snapshot_targets(
-                target_paths
-            )
         revision = self.repository.save_revision(
             code=normalized_code,
             expected_revision=expected_revision,
@@ -244,18 +216,13 @@ class BusinessApplicationService:
             execution_policy=execution_policy,
             triggers=triggers,
             deliveries=deliveries,
-            capabilities=capabilities,
-            api_capability_release_ids=api_capability_release_ids,
         )
-        self.builtin_tool_composition_service.persist_draft(
+        self.mcp_tool_composition_service.persist_draft(
             application_revision_id=str(revision["id"]),
-            tools=builtin_tools,
+            agent_publication_id=str(normalized["agent_publication_id"]),
+            tools=mcp_tools,
         )
-        self.builtin_tool_composition_service.persist_draft_targets(
-            application_revision_id=str(revision["id"]),
-            targets=target_paths,
-        )
-        if builtin_tools or target_paths:
+        if mcp_tools:
             revision = self.repository.get_revision(str(revision["id"]))
         self._audit("draft_saved", actor_id, application, revision=revision)
         return revision
@@ -344,39 +311,14 @@ class BusinessApplicationService:
                 error_code="validation_failed",
                 field_errors=errors,
             )
-        prepared_builtin_tools = self.builtin_tool_composition_service.prepare_publication(
+        prepared_mcp_tools = self.mcp_tool_composition_service.prepare(
             agent_publication_id=str(revision["agent_publication_id"]),
-            tools=revision.get("builtin_tools") or [],
-        )
-        prepared_targets = self.builtin_tool_composition_service.prepare_publication_targets(
-            revision.get("target_paths") or []
-        )
-        target_resolutions = self.builtin_tool_composition_service.validate_target_matrix(
-            targets=prepared_targets,
-            tools=prepared_builtin_tools,
-        )
-        resolution_set = self.builtin_tool_composition_service.prepare_resolution_set(
-            target_resolutions
+            raw_tools=revision.get("mcp_tools") or [],
         )
         snapshot = self._snapshot(application, revision, components)
-        release_ids = list(revision.get("api_capability_release_ids") or [])
-        if self.capability_publication_repository is not None:
-            snapshot["capability_allowlist"] = (
-                self.capability_publication_repository.prepare_application_allowlist(
-                    str(revision["agent_publication_id"]),
-                    release_ids,
-                    require_active=True,
-                )
-            )
-            snapshot["capability_agent_publication_id"] = str(revision["agent_publication_id"])
-        if prepared_builtin_tools:
-            snapshot["builtin_tools"] = self.builtin_tool_composition_service.snapshot(
-                prepared_builtin_tools
-            )
-        snapshot["target_paths"] = self.builtin_tool_composition_service.snapshot_targets(
-            prepared_targets
+        snapshot["mcp_tools"] = self.mcp_tool_composition_service.snapshot(
+            prepared_mcp_tools
         )
-        snapshot["builtin_tool_resolution_set"] = resolution_set
         publication_hash = snapshot_hash(snapshot)
         publication = self.repository.create_publication(
             application_id=str(application["id"]),
@@ -389,38 +331,15 @@ class BusinessApplicationService:
         if str(publication["config_hash"]) != publication_hash:
             raise NonRetryableExecutionError(
                 "Existing Business Application publication binding differs",
-                safe_message="该修订版本已使用不同的 Handler 绑定发布",
+                safe_message="该修订版本已使用不同的 MCP Tool 绑定发布",
                 error_code="publication_binding_conflict",
             )
-        self.builtin_tool_composition_service.persist_publication(
+        self.mcp_tool_composition_service.persist_publication(
             application_publication_id=str(publication["id"]),
-            tools=prepared_builtin_tools,
+            agent_publication_id=str(revision["agent_publication_id"]),
+            tools=prepared_mcp_tools,
         )
-        self.builtin_tool_composition_service.persist_publication_targets(
-            application_publication_id=str(publication["id"]),
-            targets=prepared_targets,
-        )
-        self.builtin_tool_composition_service.persist_publication_resolutions(
-            application_publication_id=str(publication["id"]),
-            resolution_set=resolution_set,
-        )
-        if self.capability_publication_repository is not None:
-            persisted = self.repository.database.execute_one(
-                """
-                select id
-                  from business_application_publication_api_capability
-                 where application_publication_id = ?
-                 limit 1
-                """,
-                (str(publication["id"]),),
-            )
-            if persisted is None and release_ids:
-                self.capability_publication_repository.freeze_application_allowlist(
-                    str(publication["id"]),
-                    agent_publication_id=str(revision["agent_publication_id"]),
-                    release_ids=release_ids,
-                )
-            publication = self.repository.get_publication(str(publication["id"]))
+        publication = self.repository.get_publication(str(publication["id"]))
         self._audit("published", actor_id, application, publication=publication)
         return publication
 
@@ -587,28 +506,14 @@ class BusinessApplicationService:
             return {key: value for key, value in vars(item).items() if value is not None}
 
         agents = [reference(item) for item in self.agent_reader.catalog(project_code)]
-        builtin_tool_catalog = self.builtin_tool_composition_service.management_catalog(
+        mcp_tool_catalog = self.mcp_tool_composition_service.management_catalog(
             agent_publication_ids=[str(item["id"]) for item in agents],
         )
         return {
             "agents": agents,
             "workflows": [reference(item) for item in self.workflow_reader.catalog(project_code)],
             "connectors": [reference(item) for item in self.connector_reader.catalog()],
-            "capabilities": [reference(item) for item in self.capability_reader.catalog()],
-            "capability_catalog_connected": self.capability_reader.connected,
-            "api_capabilities_by_agent_publication": (
-                {
-                    str(item["id"]): (
-                        self.capability_publication_repository.agent_envelope_catalog(
-                            str(item["id"])
-                        )
-                    )
-                    for item in agents
-                }
-                if self.capability_publication_repository is not None
-                else {}
-            ),
-            **builtin_tool_catalog,
+            **mcp_tool_catalog,
         }
 
     def _validate_revision(
@@ -626,20 +531,6 @@ class BusinessApplicationService:
         if agent:
             components["agent"] = agent
             self._validate_component_scope(errors, application, agent, "agent_publication_id")
-        if self.capability_publication_repository is not None:
-            try:
-                self.capability_publication_repository.prepare_application_allowlist(
-                    str(revision.get("agent_publication_id") or ""),
-                    list(revision.get("api_capability_release_ids") or []),
-                    require_active=True,
-                )
-            except (NotFound, NonRetryableExecutionError) as exc:
-                errors.append(
-                    {
-                        "field": "api_capability_release_ids",
-                        "message": exc.safe_message,
-                    }
-                )
         workflow_id = str(revision.get("workflow_publication_id") or "")
         if workflow_id:
             workflow = self._resolve_component(
@@ -693,59 +584,6 @@ class BusinessApplicationService:
             )
             if reference:
                 components["deliveries"].append(reference)
-        for index, capability in enumerate(revision["capabilities"]):
-            if not capability["enabled"]:
-                continue
-            capability_code = str(capability["capability_code"])
-            reference = self._resolve_component(
-                errors,
-                f"capabilities.{index}.capability_code",
-                lambda capability=capability: self.capability_reader.resolve(
-                    str(capability["capability_code"]),
-                    str(capability["version_constraint"]),
-                    "",
-                ),
-            )
-            internal_definition = next(
-                (
-                    definition
-                    for definition in (self.builtin_tool_composition_service.registry.definitions())
-                    if capability_code in definition.required_permissions
-                    and definition.visibility == "internal_diagnostic"
-                ),
-                None,
-            )
-            if internal_definition is not None and agent is not None:
-                classification = self.repository.database.execute_one(
-                    """
-                    select d.classification
-                      from agent_publication p
-                      join agent_definition d on d.id = p.agent_id
-                     where p.id = ?
-                    """,
-                    (agent.id,),
-                )
-                if (
-                    classification is None
-                    or classification["classification"] != "internal_diagnostic"
-                ):
-                    errors.append(
-                        {
-                            "field": (f"capabilities.{index}.capability_code"),
-                            "message": ("内部诊断能力只能绑定到内部诊断 Agent"),
-                        }
-                    )
-            if (
-                reference is not None
-                and agent is not None
-                and not self.agent_reader.allows_capability(agent.id, capability_code)
-            ):
-                errors.append(
-                    {
-                        "field": f"capabilities.{index}.capability_code",
-                        "message": f"所选 Agent 发布版本未绑定业务能力：{capability_code}",
-                    }
-                )
         if agent is None and not str(revision.get("agent_publication_id") or ""):
             errors.append({"field": "agent_publication_id", "message": "必须选择 Agent 发布版本"})
         return errors, components
@@ -830,15 +668,7 @@ class BusinessApplicationService:
                 }
                 for item in revision["deliveries"]
             ],
-            "capabilities": [
-                {
-                    "capability_code": item["capability_code"],
-                    "version_constraint": item["version_constraint"],
-                    "enabled": item["enabled"],
-                }
-                for item in revision["capabilities"]
-            ],
-            "api_capability_release_ids": list(revision.get("api_capability_release_ids") or []),
+            "mcp_tools": list(revision.get("mcp_tools") or []),
         }
         reject_dangerous_content(snapshot)
         canonical_json(snapshot)
@@ -859,145 +689,6 @@ class BusinessApplicationService:
                 error_code="integrity_error",
             )
         return publication
-
-    @staticmethod
-    def _normalize_capabilities(values: list[Any]) -> list[dict[str, Any]]:
-        result: list[dict[str, Any]] = []
-        seen: set[tuple[str, str]] = set()
-        for index, raw in enumerate(values):
-            if not isinstance(raw, dict):
-                raise NonRetryableExecutionError(
-                    "Capability reference must be an object",
-                    safe_message="业务应用配置无效",
-                    error_code="validation_failed",
-                    field_errors=[{"field": f"capabilities.{index}", "message": "必须是对象"}],
-                )
-            unknown = set(raw) - {
-                "capability_code",
-                "version_constraint",
-                "enabled",
-            }
-            if unknown:
-                raise NonRetryableExecutionError(
-                    "Unknown Capability reference fields",
-                    safe_message="业务应用配置无效",
-                    error_code="validation_failed",
-                    field_errors=[
-                        {
-                            "field": f"capabilities.{index}.{field}",
-                            "message": "未知字段",
-                        }
-                        for field in sorted(unknown)
-                    ],
-                )
-            code = validate_code(
-                str(raw.get("capability_code") or ""),
-                field=f"capabilities.{index}.capability_code",
-            )
-            version = str(raw.get("version_constraint") or "").strip()
-            if len(version) > 80:
-                raise NonRetryableExecutionError(
-                    "Capability version constraint is too long",
-                    safe_message="业务应用配置无效",
-                    error_code="validation_failed",
-                    field_errors=[
-                        {
-                            "field": f"capabilities.{index}.version_constraint",
-                            "message": "最多允许 80 个字符",
-                        }
-                    ],
-                )
-            key = (code, version)
-            if key in seen:
-                continue
-            seen.add(key)
-            result.append(
-                {
-                    "capability_code": code,
-                    "version_constraint": version,
-                    "enabled": bool(raw.get("enabled", True)),
-                }
-            )
-        return result
-
-    @staticmethod
-    def _normalize_release_ids(values: list[Any]) -> list[str]:
-        if not isinstance(values, list):
-            raise NonRetryableExecutionError(
-                "API Capability Release selection must be an array",
-                safe_message="Capability Release 选择必须是数组",
-                error_code="validation_failed",
-                field_errors=[
-                    {
-                        "field": "api_capability_release_ids",
-                        "message": "必须是 Release ID 数组",
-                    }
-                ],
-            )
-        result: list[str] = []
-        for index, value in enumerate(values):
-            if not isinstance(value, str) or not value.strip():
-                raise NonRetryableExecutionError(
-                    "API Capability Release ID is invalid",
-                    safe_message="Capability Release ID 无效",
-                    error_code="validation_failed",
-                    field_errors=[
-                        {
-                            "field": (f"api_capability_release_ids.{index}"),
-                            "message": "必须是非空 Release ID",
-                        }
-                    ],
-                )
-            release_id = value.strip()
-            if release_id in result:
-                raise NonRetryableExecutionError(
-                    "API Capability Release ID is duplicated",
-                    safe_message="不能重复选择同一个 Capability Release",
-                    error_code="validation_failed",
-                    field_errors=[
-                        {
-                            "field": (f"api_capability_release_ids.{index}"),
-                            "message": "Release ID 重复",
-                        }
-                    ],
-                )
-            result.append(release_id)
-        return result
-
-    def _require_application_capability_subset(
-        self,
-        *,
-        agent_publication_id: str,
-        release_ids: list[str],
-    ) -> None:
-        if self.capability_publication_repository is None:
-            if release_ids:
-                raise NonRetryableExecutionError(
-                    "API Capability publication service is unavailable",
-                    safe_message="Capability 发布服务不可用",
-                    error_code="capability_catalog_unavailable",
-                )
-            return
-        if not agent_publication_id and not release_ids:
-            return
-        try:
-            self.capability_publication_repository.prepare_application_allowlist(
-                agent_publication_id,
-                release_ids,
-                require_active=True,
-            )
-        except (NotFound, NonRetryableExecutionError) as exc:
-            raise NonRetryableExecutionError(
-                "Application Capability selection is invalid",
-                safe_message=exc.safe_message,
-                error_code=exc.error_code,
-                field_errors=[
-                    {
-                        "field": "api_capability_release_ids",
-                        "message": exc.safe_message,
-                    }
-                ],
-            ) from exc
 
     @staticmethod
     def _validate_metadata(name: str, description: str, owner_user_id: str) -> None:
@@ -1106,7 +797,6 @@ class BusinessApplicationService:
             "publications": publications,
             "deployments": deployments,
             **readiness.to_dict(),
-            "capability_catalog_connected": self.capability_reader.connected,
         }
 
     def _snapshot_summary(self, snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -1118,7 +808,7 @@ class BusinessApplicationService:
             "workflow": snapshot.get("workflow"),
             "trigger_count": len(snapshot.get("triggers") or []),
             "delivery_count": len(snapshot.get("deliveries") or []),
-            "capability_count": len(snapshot.get("capabilities") or []),
+            "mcp_tool_count": len(snapshot.get("mcp_tools") or []),
             "runtime_readiness": self.runtime_evaluator.evaluate(
                 snapshot=snapshot,
                 deployment=None,

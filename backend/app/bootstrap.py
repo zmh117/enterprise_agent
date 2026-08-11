@@ -22,9 +22,6 @@ from app.modules.agent.infrastructure.typescript_runtime_client import (
     RuntimeGrantIssuer,
 )
 from app.modules.agent_config.application import AgentConfigService
-from app.modules.agent_config.application.builtin_tool_envelope import (
-    AgentBuiltinToolEnvelopeService,
-)
 from app.modules.agent_config.infrastructure import AgentConfigRepository
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.authorization_center import (
@@ -47,21 +44,8 @@ from app.modules.business_application.infrastructure import BusinessApplicationR
 from app.modules.business_application.infrastructure.adapters import (
     AgentPublicationAdapter,
     ChannelConnectorAdapter,
-    ToolCapabilityCatalogAdapter,
     IdentitySubjectAdapter,
     WorkflowPublicationAdapter,
-)
-from app.modules.api_capability.application import (
-    ApiCapabilityService,
-    ApiConnectionService,
-    GovernedApiRuntimeExecutor,
-    GovernedCapabilityReleaseResolver,
-)
-from app.modules.api_capability.infrastructure import (
-    ApiCapabilityRepository,
-    ApiConnectionRepository,
-    CapabilityPublicationRepository,
-    GovernedApiExecutionRepository,
 )
 from app.modules.channel.application.channel_ingress_service import ChannelIngressService
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
@@ -85,38 +69,31 @@ from app.modules.dingding.application.dingtalk_stream_service import (
 )
 from app.modules.dingding.infrastructure.dingding_callback_client import DingTalkCallbackClient
 from app.modules.dingding.infrastructure.dingtalk_delivery_clients import DingTalkAccessTokenClient
-from app.modules.internal_tools.application.tools import ReadOnlyToolService
-from app.modules.internal_tools.infrastructure.internal_api_client import (
-    FakeInternalApiClient,
-    HttpInternalApiClient,
-    InternalApiClient,
+from app.modules.mcp_tool_runtime.service import ReadOnlyToolService
+from app.modules.mcp_tool_runtime.contracts import (
+    FakeReadOnlyToolExecutor,
+    ReadOnlyToolExecutor,
 )
+from app.modules.mcp_tool_runtime.direct_executor import DirectReadOnlyToolExecutor
+from app.modules.mcp_tool_runtime.resource_resolver import DirectResourceResolver
 from app.modules.identity.application import (
     AuthService,
     AuthorizationEvaluator,
     IdentityAdminService,
     IdentityService,
 )
-from app.modules.identity.application.external_credentials import (
-    ExternalCredentialBindingService,
-)
 from app.modules.identity.infrastructure import (
-    ExternalApiCredentialCipher,
-    ExternalApiCredentialRepository,
     IdentityRepository,
 )
 from app.modules.identity_discovery import (
     DingTalkIdentityDiscoveryRepository,
     DingTalkIdentityDiscoveryService,
 )
-from app.modules.identity.infrastructure.ones_identity_verifier import (
-    UrllibOnesIdentityVerifier,
-)
 from app.modules.job.application.create_agent_job_service import CreateAgentJobService
 from app.modules.job.application.debug_job_access_service import DebugJobAccessService
 from app.modules.job.application.job_dispatch_service import JobDispatchOutboxDispatcher
-from app.modules.job.application.builtin_tool_snapshot import (
-    JobBuiltinToolSnapshotService,
+from app.modules.mcp_tool_runtime.job_snapshot import (
+    JobMcpToolSnapshotService,
 )
 from app.modules.job.application.job_retry_service import JobRetryService
 from app.modules.job.application.job_status_service import JobStatusService
@@ -151,14 +128,10 @@ from app.modules.permission.application.permission_service import PermissionServ
 from app.modules.platform_config.application import PlatformConfigService
 from app.modules.platform_config.application.secrets import EncryptedDbSecretProvider
 from app.modules.platform_config.infrastructure import PlatformConfigRepository
-from app.modules.platform_config.infrastructure.handler_governance_repository import (
-    HandlerGovernanceRepository,
-)
 from app.shared.config import Settings
 from app.shared.database import Database, default_migrations_dir
 from app.shared.migrations import Migrator
 from app.shared.runtime_config_loader import load_settings_with_db_overlay
-from app.shared.service_token import ServiceTokenSet
 from app.modules.workflow.application import WorkflowService
 from app.modules.workflow.infrastructure import WorkflowRepository
 from app.modules.webhook.application import (
@@ -193,17 +166,13 @@ class Container:
     business_authorization_service: BusinessAuthorizationService
     agent_config_service: AgentConfigService
     model_connection_service: ModelConnectionService
-    api_connection_service: ApiConnectionService
-    api_capability_service: ApiCapabilityService
-    governed_api_runtime_executor: GovernedApiRuntimeExecutor
-    external_credential_binding_service: ExternalCredentialBindingService
     audit_service: AuditService
     audit_repository: AuditRepository
     permission_service: PermissionService
     publisher: MessagePublisher
     consumer: MessageConsumer | None
     message_bus: InMemoryMessageBus | None
-    internal_api_client: InternalApiClient
+    tool_executor: ReadOnlyToolExecutor
     tool_service: ReadOnlyToolService
     connector_registry: ConnectorRegistry
     platform_config_service: PlatformConfigService
@@ -215,7 +184,7 @@ class Container:
     channel_ingress_service: ChannelIngressService
     create_agent_job_service: CreateAgentJobService
     job_dispatcher: JobDispatchOutboxDispatcher
-    builtin_tool_snapshot_service: JobBuiltinToolSnapshotService
+    mcp_tool_snapshot_service: JobMcpToolSnapshotService
     dingtalk_message_service: DingTalkMessageService
     dingtalk_stream_message_service: DingTalkStreamMessageService
     result_delivery_service: ResultDeliveryService
@@ -469,11 +438,6 @@ def _build_container(
     platform_config_repository = PlatformConfigRepository(database)
     agent_config_repository = AgentConfigRepository(database)
     model_connection_repository = ModelConnectionRepository(database)
-    api_connection_repository = ApiConnectionRepository(database)
-    api_capability_repository = ApiCapabilityRepository(database)
-    capability_publication_repository = CapabilityPublicationRepository(database)
-    governed_api_execution_repository = GovernedApiExecutionRepository(database)
-    external_credential_repository = ExternalApiCredentialRepository(database)
     workflow_repository = WorkflowRepository(database)
     business_application_repository = BusinessApplicationRepository(database)
     webhook_trigger_repository = WebhookTriggerRepository(database)
@@ -496,17 +460,10 @@ def _build_container(
         config_repository,
         reference_resolver=model_secret_provider.resolve,
     )
-    ones_identity_verifier = UrllibOnesIdentityVerifier(
-        settings.ones_identity,
-        environment=settings.environment,
-    )
     identity_service = IdentityService(
         identity_repository,
         audit_service,
         connector_registry,
-        ones_verifier=ones_identity_verifier,
-        ones_instance_code=settings.ones_identity.instance_code,
-        ones_display_name=settings.ones_identity.display_name,
     )
     authorization_evaluator = AuthorizationEvaluator(identity_repository, audit_service)
     authorization_center_repository = AuthorizationCenterRepository(database)
@@ -567,45 +524,6 @@ def _build_container(
         allowed_hosts=set(settings.model_provider_host_allowlist),
         runtime_probes=_runtime_model_probes_for_service(settings, service_name),
     )
-    api_connection_service = ApiConnectionService(
-        api_connection_repository,
-        authorization_evaluator,
-        audit_service,
-        environment=settings.environment,
-    )
-    external_credential_cipher = (
-        ExternalApiCredentialCipher(settings.app_config_master_key)
-        if settings.app_config_master_key
-        else None
-    )
-    external_credential_binding_service = ExternalCredentialBindingService(
-        identity_repository=identity_repository,
-        credential_repository=external_credential_repository,
-        connection_repository=api_connection_repository,
-        credential_cipher=external_credential_cipher,
-        audit_service=audit_service,
-        authorization=authorization_evaluator,
-    )
-    api_capability_service = ApiCapabilityService(
-        repository=api_capability_repository,
-        connection_repository=api_connection_repository,
-        identity_repository=identity_repository,
-        credential_repository=external_credential_repository,
-        credential_cipher=external_credential_cipher,
-        authorization=authorization_evaluator,
-        audit_service=audit_service,
-    )
-    governed_api_runtime_executor = GovernedApiRuntimeExecutor(
-        resolver=GovernedCapabilityReleaseResolver(
-            api_capability_repository,
-            api_connection_repository,
-        ),
-        execution_repository=governed_api_execution_repository,
-        identity_repository=identity_repository,
-        credential_repository=external_credential_repository,
-        credential_cipher=external_credential_cipher,
-        audit_service=audit_service,
-    )
     model_connection_service.ensure_default_connection(
         config={
             "protocol": "anthropic_compatible",
@@ -629,11 +547,6 @@ def _build_container(
         SkillLoader(),
         model_connection_service=model_connection_service,
         allowed_models={settings.claude_model},
-        api_capability_repository=api_capability_repository,
-        capability_publication_repository=(capability_publication_repository),
-        builtin_tool_envelopes=AgentBuiltinToolEnvelopeService(
-            HandlerGovernanceRepository(database)
-        ),
     )
     workflow_service = WorkflowService(
         workflow_repository,
@@ -652,9 +565,7 @@ def _build_container(
         WorkflowPublicationAdapter(workflow_repository),
         ChannelConnectorAdapter(connector_registry),
         IdentitySubjectAdapter(identity_repository),
-        ToolCapabilityCatalogAdapter(config_repository),
         business_application_runtime_evaluator,
-        capability_publication_repository=(capability_publication_repository),
         runtime_readiness_guard=agent_runtime_readiness_guard,
     )
     business_application_resolver = BusinessApplicationResolver(
@@ -666,9 +577,8 @@ def _build_container(
         if settings.app_config_master_key
         else None
     )
-    builtin_tool_snapshot_service = JobBuiltinToolSnapshotService(
+    mcp_tool_snapshot_service = JobMcpToolSnapshotService(
         database,
-        composition=(business_application_service.builtin_tool_composition_service),
     )
     create_job_service = CreateAgentJobService(
         repository=agent_repository,
@@ -687,11 +597,8 @@ def _build_container(
         ),
         default_agent_code=settings.identity.default_agent_code,
         business_authorization_service=business_authorization_service,
-        capability_publication_repository=(capability_publication_repository),
-        governed_api_execution_repository=(governed_api_execution_repository),
-        external_api_credential_repository=(external_credential_repository),
         identity_repository=identity_repository,
-        builtin_tool_snapshot_service=builtin_tool_snapshot_service,
+        mcp_tool_snapshot_service=mcp_tool_snapshot_service,
         runtime_readiness_guard=agent_runtime_readiness_guard,
     )
     job_dispatcher = JobDispatchOutboxDispatcher(
@@ -700,7 +607,7 @@ def _build_container(
         audit_service=audit_service,
         settings=settings.queue,
         worker_id=f"{service_name}-job-dispatch-outbox",
-        builtin_tool_snapshot_service=builtin_tool_snapshot_service,
+        mcp_tool_snapshot_service=mcp_tool_snapshot_service,
     )
     debug_job_access_service = DebugJobAccessService(
         database=database,
@@ -848,28 +755,26 @@ def _build_container(
         credential_cipher=channel_credential_cipher,
         identity_discovery_service=identity_discovery_service,
     )
-    internal_api_client: InternalApiClient = FakeInternalApiClient()
-    if settings.feature_configuration.real_internal_tools_enabled and message_bus is None:
-        internal_api_tokens = ServiceTokenSet.from_file(
-            settings.internal_api_auth_token_file,
-            required=settings.environment not in {"test", "testing"},
-        )
-        internal_api_client = HttpInternalApiClient(
-            settings.internal_api_base_url,
-            auth_token=(
-                internal_api_tokens.outbound_token if internal_api_tokens is not None else ""
+    tool_executor: ReadOnlyToolExecutor = FakeReadOnlyToolExecutor()
+    if service_name == "tool-mcp":
+        tool_executor = DirectReadOnlyToolExecutor(
+            DirectResourceResolver(
+                database,
+                secret_provider=EncryptedDbSecretProvider(
+                    config_repository,
+                    master_key=settings.app_config_master_key,
+                ),
             ),
-            timeout_seconds=settings.internal_api_timeout_seconds,
-            max_response_chars=settings.internal_api_max_response_chars,
+            limits=settings.execution,
         )
     tool_service = ReadOnlyToolService(
-        internal_api_client=internal_api_client,
+        tool_executor=tool_executor,
         permission_service=permission_service,
         audit_service=audit_service,
         repository=agent_repository,
         limits=settings.execution,
         business_authorization_service=business_authorization_service,
-        builtin_tool_snapshot_service=builtin_tool_snapshot_service,
+        mcp_tool_snapshot_service=mcp_tool_snapshot_service,
     )
     tool_registry = ToolRegistry(tool_service)
     runtime_clients: dict[str, AgentRuntimeClient] = {}
@@ -990,14 +895,13 @@ def _build_container(
                 agent_repository, settings.conversation
             ),
             agent_config_service=agent_config_service,
-            governed_api_runtime_executor=(governed_api_runtime_executor),
         ),
         claude_client=claude_client,
         tool_registry=tool_registry,
         result_service=AgentResultService(agent_repository),
         delivery_service=result_delivery_service,
         business_authorization_service=business_authorization_service,
-        builtin_tool_snapshot_service=builtin_tool_snapshot_service,
+        mcp_tool_snapshot_service=mcp_tool_snapshot_service,
         after_runtime_result_hook=_acceptance_after_runtime_result_hook(settings.environment),
     )
     retry_service = JobRetryService(
@@ -1005,7 +909,7 @@ def _build_container(
         queue_settings=settings.queue,
         audit_service=audit_service,
         delivery_service=result_delivery_service,
-        builtin_tool_snapshot_service=builtin_tool_snapshot_service,
+        mcp_tool_snapshot_service=mcp_tool_snapshot_service,
     )
     return Container(
         settings=settings,
@@ -1023,17 +927,13 @@ def _build_container(
         business_authorization_service=business_authorization_service,
         agent_config_service=agent_config_service,
         model_connection_service=model_connection_service,
-        api_connection_service=api_connection_service,
-        api_capability_service=api_capability_service,
-        governed_api_runtime_executor=governed_api_runtime_executor,
-        external_credential_binding_service=external_credential_binding_service,
         audit_service=audit_service,
         audit_repository=audit_repository,
         permission_service=permission_service,
         publisher=publisher,
         consumer=consumer,
         message_bus=message_bus,
-        internal_api_client=internal_api_client,
+        tool_executor=tool_executor,
         tool_service=tool_service,
         connector_registry=connector_registry,
         platform_config_service=platform_config_service,
@@ -1045,7 +945,7 @@ def _build_container(
         channel_ingress_service=channel_ingress_service,
         create_agent_job_service=create_job_service,
         job_dispatcher=job_dispatcher,
-        builtin_tool_snapshot_service=builtin_tool_snapshot_service,
+        mcp_tool_snapshot_service=mcp_tool_snapshot_service,
         dingtalk_message_service=dingtalk_service,
         dingtalk_stream_message_service=dingtalk_stream_service,
         result_delivery_service=result_delivery_service,

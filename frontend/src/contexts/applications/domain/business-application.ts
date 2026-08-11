@@ -71,44 +71,12 @@ const deliverySchema = z
   })
   .passthrough()
 
-const capabilitySchema = z
+const mcpToolSelectionSchema = z
   .object({
-    capability_code: z.string(),
-    version_constraint: z.string().default(""),
-    enabled: z.boolean(),
-  })
-  .passthrough()
-
-const builtinToolResourceMappingSchema = z
-  .object({
-    resource_slot: z.string(),
-    target_scope_type: z.enum(["global", "environment", "base", "workshop"]),
-    environment_code: z.string().default(""),
-    base_code: z.string().default(""),
-    workshop_code: z.string().default(""),
-    placement: z.enum(["cloud", "edge"]).nullable().optional(),
-    resource_revision_id: z.string(),
-    workshop_partition_policy_revision_id: z.string().default(""),
-    loki_scope_policy_revision_id: z.string().default(""),
-  })
-  .passthrough()
-
-const builtinToolSelectionSchema = z
-  .object({
-    tool_identifier: z.string().default(""),
-    tool_release_id: z.string(),
-    handler_version: z.string().default(""),
-    implementation_digest: z.string().default(""),
-    resources: z.array(builtinToolResourceMappingSchema).default([]),
-  })
-  .passthrough()
-
-const targetPathSchema = z
-  .object({
-    target_scope_type: z.enum(["environment", "base", "workshop"]),
-    environment_code: z.string(),
-    base_code: z.string().default(""),
-    workshop_code: z.string().default(""),
+    server_code: z.literal("tool-mcp"),
+    tool_identifier: z.string(),
+    schema_hash: z.string(),
+    selection_order: z.number().optional(),
   })
   .passthrough()
 
@@ -126,10 +94,7 @@ export const revisionSchema = z
     config_hash: z.string().default(""),
     triggers: z.array(triggerSchema).default([]),
     deliveries: z.array(deliverySchema).default([]),
-    capabilities: z.array(capabilitySchema).default([]),
-    api_capability_release_ids: z.array(z.string()).default([]),
-    builtin_tools: z.array(builtinToolSelectionSchema).default([]),
-    target_paths: z.array(targetPathSchema).default([]),
+    mcp_tools: z.array(mcpToolSelectionSchema).default([]),
     created_at: z.string().default(""),
     updated_at: z.string().default(""),
   })
@@ -182,7 +147,6 @@ export const businessApplicationSchema = applicationSummarySchema.extend({
   draft: revisionSchema.nullable().optional(),
   publications: z.array(publicationSchema).default([]),
   deployments: z.array(deploymentSchema).default([]),
-  capability_catalog_connected: z.boolean().default(false),
 })
 
 export type ApplicationSummary = z.infer<typeof applicationSummarySchema>
@@ -240,30 +204,5 @@ export type SaveDraftInput = {
       reply_mode: string
     }
   }>
-  capabilities: Array<{
-    capability_code: string
-    version_constraint: string
-    enabled: boolean
-  }>
-  api_capability_release_ids: string[]
-  builtin_tools: Array<{
-    tool_release_id: string
-    resources: Array<{
-      resource_slot: string
-      target_scope_type: "global" | "environment" | "base" | "workshop"
-      environment_code: string
-      base_code: string
-      workshop_code: string
-      placement: "cloud" | "edge" | null
-      resource_revision_id: string
-      workshop_partition_policy_revision_id: string
-      loki_scope_policy_revision_id: string
-    }>
-  }>
-  target_paths: Array<{
-    target_scope_type: "environment" | "base" | "workshop"
-    environment_code: string
-    base_code: string
-    workshop_code: string
-  }>
+  mcp_tools: string[]
 }

@@ -35,26 +35,43 @@ class PlatformSecretUsageService:
         )
 
     def _resource_dependencies(self, secret_ref: str) -> list[dict[str, Any]]:
-        rows = self.repository.database.execute(
+        drafts = self.repository.database.execute(
             """
-            select id, code, resource_kind, status, secret_refs_json
-            from platform_resource_binding
+            select d.id, r.code, r.resource_kind, d.status, d.secret_refs_json,
+                   d.draft_revision as revision
+              from platform_resource_draft d
+              join platform_resource r on r.id = d.resource_id
+            """
+        )
+        revisions = self.repository.database.execute(
+            """
+            select v.id, r.code, r.resource_kind, v.status, v.secret_refs_json,
+                   v.revision
+              from platform_resource_revision v
+              join platform_resource r on r.id = v.resource_id
             """
         )
         result: list[dict[str, Any]] = []
-        for row in rows:
-            paths = _json_reference_paths(row.get("secret_refs_json"), secret_ref)
-            if paths:
-                result.append(
-                    _dependency(
-                        dependency_type="resource_binding",
-                        row=row,
-                        code=str(row["code"]),
-                        status=str(row["status"]),
-                        field_paths=paths,
-                        metadata={"resource_kind": str(row["resource_kind"])},
+        for dependency_type, rows in (
+            ("resource_draft", drafts),
+            ("resource_revision", revisions),
+        ):
+            for row in rows:
+                paths = _json_reference_paths(row.get("secret_refs_json"), secret_ref)
+                if paths:
+                    result.append(
+                        _dependency(
+                            dependency_type=dependency_type,
+                            row=row,
+                            code=str(row["code"]),
+                            status=str(row["status"]),
+                            field_paths=paths,
+                            metadata={
+                                "resource_kind": str(row["resource_kind"]),
+                                "revision": int(row["revision"]),
+                            },
+                        )
                     )
-                )
         return result
 
     def _runtime_config_dependencies(

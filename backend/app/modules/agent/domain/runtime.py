@@ -7,22 +7,6 @@ from app.shared.exceptions import ExecutionPolicyExceeded
 from app.modules.model_connection.domain import ModelRuntimeBinding
 
 
-@dataclass(frozen=True)
-class GovernedCapabilityNotice:
-    identifier: str
-    reason_code: str
-    message: str
-    status: str = field(default="unavailable", init=False)
-
-    def to_prompt_payload(self) -> dict[str, str]:
-        return {
-            "identifier": self.identifier,
-            "status": self.status,
-            "reason_code": self.reason_code,
-            "message": self.message,
-        }
-
-
 @dataclass(frozen=True, slots=True)
 class McpRuntimeBinding:
     server_code: str
@@ -69,8 +53,6 @@ class AgentExecutionContext:
     publication_id: str = ""
     config_hash: str = ""
     model_runtime_binding: ModelRuntimeBinding | None = None
-    governed_capabilities: tuple[dict[str, Any], ...] = ()
-    governed_capability_notices: tuple[GovernedCapabilityNotice, ...] = ()
     application_publication_id: str = ""
     mcp_bindings: tuple[McpRuntimeBinding, ...] = ()
     mcp_unavailable_notices: tuple[McpUnavailableNotice, ...] = ()

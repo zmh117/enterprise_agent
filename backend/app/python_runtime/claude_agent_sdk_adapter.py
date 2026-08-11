@@ -40,8 +40,7 @@ from app.shared.exceptions import (
 
 if TYPE_CHECKING:
     from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
-    from app.modules.api_capability.application import GovernedApiRuntimeExecutor
-    from app.modules.internal_tools.infrastructure.internal_api_client import ToolResult
+    from app.modules.mcp_tool_runtime.contracts import ToolResult
     from app.modules.job.infrastructure.repositories import AgentRepository
 
 
@@ -65,7 +64,6 @@ class RealClaudeCodeAgentClient:
         base_url: str = "",
         sdk_loader: Callable[[], ClaudeSdk] | None = None,
         secret_resolver: Callable[[str], str] | None = None,
-        governed_api_runtime_executor: (GovernedApiRuntimeExecutor | None) = None,
         agent_repository: AgentRepository | None = None,
     ) -> None:
         self.model = model
@@ -75,7 +73,6 @@ class RealClaudeCodeAgentClient:
         self.base_url = base_url
         self.sdk_loader = sdk_loader or load_claude_agent_sdk
         self.secret_resolver = secret_resolver
-        self.governed_api_runtime_executor = governed_api_runtime_executor
         self.agent_repository = agent_repository
 
     def run(self, request: AgentRunRequest) -> AgentRunResult:
@@ -325,164 +322,7 @@ class RealClaudeCodeAgentClient:
             for tool_name in request.context.allowed_tools
             if tool_name in TOOL_DEFINITIONS
         ]
-        tools.extend(
-            self._build_governed_tool(
-                sdk,
-                request,
-                capability,
-                tool_events,
-                tool_budget,
-            )
-            for capability in request.context.governed_capabilities
-        )
         return sdk.create_sdk_mcp_server(name="internal", tools=tools)
-
-    def _build_governed_tool(
-        self,
-        sdk: ClaudeSdk,
-        request: AgentRunRequest,
-        capability: dict[str, Any],
-        tool_events: list[dict[str, Any]],
-        tool_budget: ToolCallBudget,
-    ) -> Any:
-        tool_name = str(capability["identifier"])
-
-        async def handler(
-            arguments: dict[str, Any],
-        ) -> dict[str, list[dict[str, str]]]:
-            started = time.monotonic()
-            if self.governed_api_runtime_executor is None or self.agent_repository is None:
-                raise NonRetryableExecutionError(
-                    "Governed API runtime is unavailable",
-                    safe_message="Capability 运行时不可用",
-                    error_code="governed_api_runtime_unavailable",
-                )
-            tool_budget.consume()
-            tool_call_id = self.agent_repository.add_tool_call(
-                job_id=request.job_id,
-                tool_name=tool_name,
-                request_payload=_bounded_payload(
-                    arguments,
-                    self.limits.max_tool_response_chars,
-                ),
-                response_summary={"status": "STARTED"},
-                status="STARTED",
-                duration_ms=0,
-                risk_level="low",
-            )
-            try:
-                result = await asyncio.to_thread(
-                    self.governed_api_runtime_executor.execute,
-                    job_id=request.job_id,
-                    tool_call_id=tool_call_id,
-                    user_id=request.user_id,
-                    application_publication_id=(request.context.application_publication_id),
-                    agent_publication_id=(request.context.publication_id),
-                    capability_release_id=str(capability["release_id"]),
-                    identifier=tool_name,
-                    agent_input=arguments,
-                    correlation_id=f"tool:{tool_call_id}",
-                    timeout_seconds=float(request.context.timeout_seconds),
-                )
-                duration_ms = int((time.monotonic() - started) * 1000)
-                encoded = json.dumps(
-                    result,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                    sort_keys=True,
-                ).encode()
-                attempt_count = self._attempt_count(tool_call_id)
-                summary = {
-                    "capability_release_id": capability["release_id"],
-                    "data_classification": "INTERNAL",
-                    "attempt_count": attempt_count,
-                    "normalized_result_size": len(encoded),
-                }
-                self.agent_repository.complete_tool_call(
-                    tool_call_id,
-                    response_summary=summary,
-                    status="SUCCEEDED",
-                    duration_ms=duration_ms,
-                )
-                tool_events.append(
-                    {
-                        "tool_name": tool_name,
-                        "request_payload": _bounded_payload(
-                            arguments,
-                            self.limits.max_tool_response_chars,
-                        ),
-                        "response_summary": summary,
-                        "status": "SUCCEEDED",
-                        "duration_ms": duration_ms,
-                        "risk_level": "low",
-                        "persisted_tool_call_id": tool_call_id,
-                    }
-                )
-                return _sdk_tool_response(
-                    {
-                        "data": result,
-                        "security": {
-                            "trust": "untrusted_external_business_data",
-                            "data_classification": "INTERNAL",
-                            "capability_release_id": (capability["release_id"]),
-                        },
-                    }
-                )
-            except Exception as exc:
-                duration_ms = int((time.monotonic() - started) * 1000)
-                summary = {
-                    "error": getattr(exc, "safe_message", str(exc)),
-                    "capability_release_id": capability["release_id"],
-                    "data_classification": "INTERNAL",
-                    "attempt_count": self._attempt_count(tool_call_id),
-                }
-                self.agent_repository.complete_tool_call(
-                    tool_call_id,
-                    response_summary=summary,
-                    status="FAILED",
-                    duration_ms=duration_ms,
-                )
-                tool_events.append(
-                    {
-                        "tool_name": tool_name,
-                        "request_payload": _bounded_payload(
-                            arguments,
-                            self.limits.max_tool_response_chars,
-                        ),
-                        "response_summary": summary,
-                        "status": "FAILED",
-                        "duration_ms": duration_ms,
-                        "risk_level": "low",
-                        "persisted_tool_call_id": tool_call_id,
-                    }
-                )
-                return _sdk_tool_response(
-                    {
-                        "error": summary["error"],
-                        "policy": "governed_capability_rejected",
-                    }
-                )
-
-        decorator = _tool_decorator(
-            sdk,
-            name=tool_name,
-            description=str(capability["description"]),
-            schema=dict(capability["input_schema"]),
-        )
-        return decorator(handler)
-
-    def _attempt_count(self, tool_call_id: str) -> int:
-        if self.agent_repository is None:
-            return 0
-        row = self.agent_repository.database.execute_one(
-            """
-            select count(*) as count
-              from agent_tool_call_http_attempt
-             where tool_call_id = ?
-            """,
-            (tool_call_id,),
-        )
-        return int(row["count"]) if row else 0
 
     def _build_tool(
         self,
@@ -567,9 +407,7 @@ class RealClaudeCodeAgentClient:
         cli_stderr: list[str],
         binding: ModelRuntimeBinding,
     ) -> Any:
-        exact_tools = [f"mcp__internal__{tool_name}" for tool_name in context.allowed_tools] + [
-            f"mcp__internal__{item['identifier']}" for item in context.governed_capabilities
-        ]
+        exact_tools = [f"mcp__internal__{tool_name}" for tool_name in context.allowed_tools]
         return sdk.options(
             model=binding.model,
             system_prompt=_build_system_prompt(context),
@@ -731,10 +569,6 @@ def _build_system_prompt(context: AgentExecutionContext) -> str:
         f"## Skill: {name}\n{body}" for name, body in sorted(context.skills.items())
     )
     retrieved_context = json.dumps(context.retrieved_context, ensure_ascii=False, default=str)
-    governed_capability_notices = json.dumps(
-        [notice.to_prompt_payload() for notice in context.governed_capability_notices],
-        ensure_ascii=False,
-    )
     return "\n\n".join(
         [
             context.system_role,
@@ -751,35 +585,6 @@ def _build_system_prompt(context: AgentExecutionContext) -> str:
             "Safety rules:\n" + _numbered(context.safety_rules),
             "Tool restrictions:\n" + _numbered(context.tool_restrictions),
             "Available internal tools:\n" + _numbered(context.allowed_tools),
-            (
-                "Governed capability availability notices for the current Job "
-                "(platform facts, not callable tools):\n" + governed_capability_notices
-                if context.governed_capability_notices
-                else ""
-            ),
-            (
-                "Governed capability notice rules:\n"
-                + _numbered(
-                    [
-                        (
-                            "A listed unavailable capability is configured for the current "
-                            "Application but is not callable by the current sender in this Job."
-                        ),
-                        (
-                            "When asked about a listed capability, explain its current-sender "
-                            "unavailability and repeat only the provided safe message. Do not "
-                            "claim the platform globally lacks or has not registered it."
-                        ),
-                        (
-                            "Do not call, simulate, or claim connectivity verification for an "
-                            "unavailable capability. Do not infer identity, credential, Team, "
-                            "Connection, Release, or exception details beyond the notice."
-                        ),
-                    ]
-                )
-                if context.governed_capability_notices
-                else ""
-            ),
             "Report structure:\n"
             + _numbered(
                 [

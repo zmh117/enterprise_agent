@@ -3,11 +3,10 @@ from .models import (
     AuthorizationDecision,
     DingTalkApplicationObservationInput,
     DingTalkNicknameObservationInput,
-    ExternalCredentialUsageSource,
     ExternalIdentityDescriptor,
     ExternalIdentityProvider,
 )
-from .ports import DingTalkIdentityObservationPort, ExternalCredentialUsagePort
+from .ports import DingTalkIdentityObservationPort
 
 __all__ = [
     "AuthenticatedPrincipal",
@@ -15,8 +14,6 @@ __all__ = [
     "DingTalkApplicationObservationInput",
     "DingTalkIdentityObservationPort",
     "DingTalkNicknameObservationInput",
-    "ExternalCredentialUsagePort",
-    "ExternalCredentialUsageSource",
     "ExternalIdentityDescriptor",
     "ExternalIdentityProvider",
 ]

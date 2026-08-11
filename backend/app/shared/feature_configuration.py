@@ -81,10 +81,6 @@ class EffectiveFeatureConfiguration:
         return self.value("FEATURE_REAL_CLAUDE")
 
     @property
-    def real_internal_tools_enabled(self) -> bool:
-        return self.value("FEATURE_REAL_INTERNAL_TOOLS")
-
-    @property
     def unified_identity_enabled(self) -> bool:
         return self.value("UNIFIED_IDENTITY")
 
@@ -134,7 +130,6 @@ TOP_LEVEL_FEATURE_KEYS = (
     "FEATURE_WEB_ADMIN",
     "FEATURE_PUBLISHED_AGENT_RUNTIME",
     "FEATURE_REAL_CLAUDE",
-    "FEATURE_REAL_INTERNAL_TOOLS",
 )
 
 LEGACY_FEATURE_TARGETS: dict[str, str] = {
@@ -156,7 +151,6 @@ def feature_configuration_from_values(
     web_admin: bool = False,
     published_agent_runtime: bool = False,
     real_claude: bool = False,
-    real_internal_tools: bool = False,
     unified_identity: bool | None = None,
     business_application_control_plane: bool | None = None,
     test_identity_headers: bool = False,
@@ -191,13 +185,6 @@ def feature_configuration_from_values(
             _value(
                 "FEATURE_REAL_CLAUDE",
                 real_claude,
-                source,
-                FeatureClassification.DEPLOYMENT_SAFETY_GATE,
-                restart=True,
-            ),
-            _value(
-                "FEATURE_REAL_INTERNAL_TOOLS",
-                real_internal_tools,
                 source,
                 FeatureClassification.DEPLOYMENT_SAFETY_GATE,
                 restart=True,
@@ -331,9 +318,6 @@ def resolve_feature_configuration(
             canonical["FEATURE_PUBLISHED_AGENT_RUNTIME"] or False
         ),
         real_claude=bool(canonical["FEATURE_REAL_CLAUDE"] or False),
-        real_internal_tools=bool(
-            canonical["FEATURE_REAL_INTERNAL_TOOLS"] or False
-        ),
         unified_identity=unified_identity,
         business_application_control_plane=business_control_plane,
         test_identity_headers=test_headers,
@@ -360,7 +344,6 @@ def apply_runtime_feature_policies(
     for gate in (
         "FEATURE_PUBLISHED_AGENT_RUNTIME",
         "FEATURE_REAL_CLAUDE",
-        "FEATURE_REAL_INTERNAL_TOOLS",
     ):
         requested = _coerce_optional_bool(runtime_values.get(gate))
         if requested is None:

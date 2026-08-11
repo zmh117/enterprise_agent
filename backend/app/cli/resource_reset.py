@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from app.modules.platform_config.application.resource_reset import (
+from app.modules.platform_config.application.resource_maintenance import (
     ResourceResetService,
 )
 from app.shared.config import load_settings

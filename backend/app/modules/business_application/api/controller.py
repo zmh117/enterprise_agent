@@ -76,12 +76,6 @@ class DeliveryResponse(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict)
 
 
-class CapabilityResponse(BaseModel):
-    capability_code: str
-    version_constraint: str = ""
-    enabled: bool
-
-
 class RevisionResponse(BaseModel):
     id: str
     application_id: str
@@ -95,10 +89,7 @@ class RevisionResponse(BaseModel):
     config_hash: str = ""
     triggers: list[TriggerResponse] = Field(default_factory=list)
     deliveries: list[DeliveryResponse] = Field(default_factory=list)
-    capabilities: list[CapabilityResponse] = Field(default_factory=list)
-    api_capability_release_ids: list[str] = Field(default_factory=list)
-    builtin_tools: list[dict[str, Any]] = Field(default_factory=list)
-    target_paths: list[dict[str, Any]] = Field(default_factory=list)
+    mcp_tools: list[dict[str, Any]] = Field(default_factory=list)
     created_by: str = ""
     created_at: str = ""
     updated_at: str = ""
@@ -147,7 +138,6 @@ class ApplicationResponse(ApplicationSummaryResponse):
     draft: RevisionResponse | None = None
     publications: list[PublicationResponse] = Field(default_factory=list)
     deployments: list[DeploymentResponse] = Field(default_factory=list)
-    capability_catalog_connected: bool = False
 
 
 class ApplicationListResponse(RuntimeStateResponse):
@@ -190,18 +180,9 @@ class CatalogResponse(BaseModel):
     agents: list[ComponentReferenceResponse]
     workflows: list[ComponentReferenceResponse]
     connectors: list[ComponentReferenceResponse]
-    capabilities: list[dict[str, Any]]
-    capability_catalog_connected: bool = False
-    api_capabilities_by_agent_publication: dict[str, list[dict[str, Any]]] = Field(
+    mcp_tools_by_agent_publication: dict[str, list[dict[str, Any]]] = Field(
         default_factory=dict
     )
-    builtin_tools_by_agent_publication: dict[str, list[dict[str, Any]]] = Field(
-        default_factory=dict
-    )
-    resource_revisions: list[dict[str, Any]] = Field(default_factory=list)
-    workshop_policy_revisions: list[dict[str, Any]] = Field(default_factory=list)
-    loki_policy_revisions: list[dict[str, Any]] = Field(default_factory=list)
-    target_paths: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class EffectiveApplicationResponse(BaseModel):
@@ -277,45 +258,6 @@ class DeliveryRequest(StrictRequest):
     config: DeliveryConfigRequest = Field(default_factory=DeliveryConfigRequest)
 
 
-class CapabilityRequest(StrictRequest):
-    capability_code: str = Field(min_length=2, max_length=120)
-    version_constraint: str = Field(default="", max_length=80)
-    enabled: bool = True
-
-
-class BuiltinToolResourceMappingRequest(StrictRequest):
-    resource_slot: str = Field(min_length=1, max_length=120)
-    target_scope_type: Literal["global", "environment", "base", "workshop"]
-    environment_code: str = Field(default="", max_length=128)
-    base_code: str = Field(default="", max_length=128)
-    workshop_code: str = Field(default="", max_length=128)
-    placement: Literal["cloud", "edge"] | None = None
-    resource_revision_id: str = Field(min_length=1, max_length=200)
-    workshop_partition_policy_revision_id: str = Field(
-        default="",
-        max_length=200,
-    )
-    loki_scope_policy_revision_id: str = Field(
-        default="",
-        max_length=200,
-    )
-
-
-class BuiltinToolSelectionRequest(StrictRequest):
-    tool_release_id: str = Field(min_length=1, max_length=200)
-    resources: list[BuiltinToolResourceMappingRequest] = Field(
-        default_factory=list,
-        max_length=100,
-    )
-
-
-class BusinessTargetPathRequest(StrictRequest):
-    target_scope_type: Literal["environment", "base", "workshop"]
-    environment_code: str = Field(min_length=1, max_length=128)
-    base_code: str = Field(default="", max_length=128)
-    workshop_code: str = Field(default="", max_length=128)
-
-
 class SaveDraftRequest(StrictRequest):
     expected_revision: int = Field(ge=1)
     agent_publication_id: str = Field(default="", max_length=200)
@@ -324,19 +266,7 @@ class SaveDraftRequest(StrictRequest):
     execution_policy: ExecutionPolicyRequest = Field(default_factory=ExecutionPolicyRequest)
     triggers: list[TriggerRequest] = Field(default_factory=list, max_length=20)
     deliveries: list[DeliveryRequest] = Field(default_factory=list, max_length=20)
-    capabilities: list[CapabilityRequest] = Field(default_factory=list, max_length=100)
-    api_capability_release_ids: list[str] = Field(
-        default_factory=list,
-        max_length=100,
-    )
-    builtin_tools: list[BuiltinToolSelectionRequest] = Field(
-        default_factory=list,
-        max_length=100,
-    )
-    target_paths: list[BusinessTargetPathRequest] = Field(
-        default_factory=list,
-        max_length=500,
-    )
+    mcp_tools: list[str] = Field(default_factory=list, max_length=100)
 
 
 class ValidateRequest(StrictRequest):
@@ -643,7 +573,6 @@ def _http_error(exc: Exception) -> HTTPException:
             "application_active": 409,
             "integrity_error": 409,
             "validation_failed": 422,
-            "capability_catalog_unavailable": 422,
         }.get(exc.error_code, 400)
         detail: dict[str, Any] = {
             "code": exc.error_code or "invalid_request",

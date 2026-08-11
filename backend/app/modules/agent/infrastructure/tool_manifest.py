@@ -73,7 +73,7 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 **_ADDRESSING_PROPERTIES,
                 **_PLACEMENT_PROPERTY,
             },
-            "required": ["environment", "base"],
+            "required": ["environment"],
             "additionalProperties": False,
         },
     },
@@ -173,9 +173,8 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
     },
     "query_database": {
         "description": (
-            "Run policy-approved read-only SQL through the internal database gateway. "
-            "Provide structured addressing (environment/base/workshop) so the platform "
-            "routes to the correct base and enforces the workshop table prefix."
+            "Run policy-approved read-only SQL against the uniquely resolved MCP Resource. "
+            "Provide structured addressing when a Job target includes a base or workshop."
         ),
         "schema": {
             "type": "object",
@@ -191,7 +190,7 @@ TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
         },
     },
     "query_redis_get": {
-        "description": "Read one approved Redis key through the internal Redis gateway.",
+        "description": "Read one approved Redis key from the uniquely resolved MCP Resource.",
         "schema": {
             "type": "object",
             "properties": {

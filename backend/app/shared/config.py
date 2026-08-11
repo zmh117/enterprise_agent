@@ -125,17 +125,6 @@ class IdentitySettings:
 
 
 @dataclass(frozen=True)
-class OnesIdentitySettings:
-    instance_code: str = "default"
-    display_name: str = "ONES"
-    base_url: str = ""
-    allowed_hosts: tuple[str, ...] = ()
-    timeout_seconds: int = 5
-    max_response_bytes: int = 64 * 1024
-    allow_insecure_local: bool = False
-
-
-@dataclass(frozen=True)
 class AgentRuntimeSettings:
     python_base_url: str = ""
     python_allowed_hosts: tuple[str, ...] = ()
@@ -217,19 +206,12 @@ class Settings:
     app_config_master_key: str = field(default="", repr=False)
     app_config_master_key_file: str = ""
     master_key_file_required: bool = False
-    internal_api_base_url: str = "http://internal-api-platform.local"
-    internal_api_auth_token_file: str = ""
-    internal_api_timeout_seconds: int = 10
-    internal_api_max_response_chars: int = 4000
-    internal_platform_max_rows: int = 100
-    internal_platform_max_response_bytes: int = 1024 * 1024
     claude_model: str = "claude-sonnet-4-20250514"
     anthropic_api_key: str = ""
     anthropic_base_url: str = ""
     model_provider_host_allowlist: tuple[str, ...] = ("api.deepseek.com",)
     environment: str = "local"
     feature_real_claude: bool = False
-    feature_real_internal_tools: bool = False
     feature_business_application_control_plane: bool = False
     feature_configuration: EffectiveFeatureConfiguration = field(
         default_factory=default_feature_configuration
@@ -250,7 +232,6 @@ class Settings:
     attachments: AttachmentSettings = field(default_factory=AttachmentSettings)
     object_storage: ObjectStorageSettings = field(default_factory=ObjectStorageSettings)
     identity: IdentitySettings = field(default_factory=IdentitySettings)
-    ones_identity: OnesIdentitySettings = field(default_factory=OnesIdentitySettings)
     agent_runtime: AgentRuntimeSettings = field(default_factory=AgentRuntimeSettings)
     webhooks: WebhookSettings = field(default_factory=WebhookSettings)
     managed_channels: ManagedChannelSettings = field(default_factory=ManagedChannelSettings)
@@ -285,19 +266,6 @@ def load_settings() -> Settings:
             "",
         ),
         master_key_file_required=environment not in {"test", "testing"},
-        internal_api_base_url=os.getenv(
-            "INTERNAL_API_BASE_URL", "http://internal-api-platform.local"
-        ),
-        internal_api_auth_token_file=os.getenv("INTERNAL_API_AUTH_TOKEN_FILE", ""),
-        internal_api_timeout_seconds=int(os.getenv("INTERNAL_API_TIMEOUT_SECONDS", "10")),
-        internal_api_max_response_chars=int(os.getenv("INTERNAL_API_MAX_RESPONSE_CHARS", "4000")),
-        internal_platform_max_rows=int(os.getenv("INTERNAL_PLATFORM_MAX_ROWS", "100")),
-        internal_platform_max_response_bytes=int(
-            os.getenv(
-                "INTERNAL_PLATFORM_MAX_RESPONSE_BYTES",
-                str(1024 * 1024),
-            )
-        ),
         claude_model=os.getenv(
             "CLAUDE_MODEL",
             os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
@@ -309,7 +277,6 @@ def load_settings() -> Settings:
         ),
         environment=environment,
         feature_real_claude=features.real_claude_enabled,
-        feature_real_internal_tools=features.real_internal_tools_enabled,
         feature_business_application_control_plane=(
             features.business_application_control_plane_enabled
         ),
@@ -509,15 +476,6 @@ def load_settings() -> Settings:
             dingtalk_tenant_code=os.getenv("DINGTALK_TENANT_CODE", "default"),
             default_agent_code=os.getenv("DEFAULT_AGENT_CODE", "default-diagnostic-agent"),
         ),
-        ones_identity=OnesIdentitySettings(
-            instance_code=os.getenv("ONES_IDENTITY_INSTANCE_CODE", "default"),
-            display_name=os.getenv("ONES_IDENTITY_DISPLAY_NAME", "ONES"),
-            base_url=os.getenv("ONES_IDENTITY_BASE_URL", ""),
-            allowed_hosts=_csv_tuple(os.getenv("ONES_IDENTITY_ALLOWED_HOSTS", "")),
-            timeout_seconds=int(os.getenv("ONES_IDENTITY_TIMEOUT_SECONDS", "5")),
-            max_response_bytes=int(os.getenv("ONES_IDENTITY_MAX_RESPONSE_BYTES", str(64 * 1024))),
-            allow_insecure_local=_env_bool("ONES_IDENTITY_ALLOW_INSECURE_LOCAL", False),
-        ),
         webhooks=WebhookSettings(
             enabled=features.webhook_ingress_compatibility_enabled,
             max_body_bytes=int(os.getenv("WEBHOOK_MAX_BODY_BYTES", str(1024 * 1024))),
@@ -556,7 +514,6 @@ def synchronize_feature_configuration(settings: Settings) -> Settings:
         settings.identity.web_admin_enabled,
         settings.identity.published_agent_runtime_enabled,
         settings.feature_real_claude,
-        settings.feature_real_internal_tools,
         settings.identity.enabled,
         settings.feature_business_application_control_plane,
         settings.identity.test_identity_headers_enabled,
@@ -568,7 +525,6 @@ def synchronize_feature_configuration(settings: Settings) -> Settings:
         features.web_admin_enabled,
         features.published_agent_runtime_enabled,
         features.real_claude_enabled,
-        features.real_internal_tools_enabled,
         features.unified_identity_enabled,
         features.business_application_control_plane_enabled,
         features.test_identity_headers_enabled,
@@ -582,7 +538,6 @@ def synchronize_feature_configuration(settings: Settings) -> Settings:
         web_admin=settings.identity.web_admin_enabled,
         published_agent_runtime=settings.identity.published_agent_runtime_enabled,
         real_claude=settings.feature_real_claude,
-        real_internal_tools=settings.feature_real_internal_tools,
         unified_identity=settings.identity.enabled,
         business_application_control_plane=(settings.feature_business_application_control_plane),
         test_identity_headers=settings.identity.test_identity_headers_enabled,

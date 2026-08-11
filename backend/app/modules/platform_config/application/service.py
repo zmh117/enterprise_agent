@@ -12,42 +12,15 @@ from app.modules.permission.application.permission_service import PermissionServ
 from app.modules.platform_config.application.governed_resources import (
     GovernedResourceService,
 )
-from app.modules.platform_config.application.handler_governance import (
-    HandlerGovernanceService,
-)
 from app.modules.platform_config.application.loki_draft_discovery import (
     HttpLokiDraftDiscoveryGateway,
     LokiDraftDiscoveryService,
-)
-from app.modules.platform_config.application.loki_scope_policies import (
-    LokiScopePolicyService,
-)
-from app.modules.platform_config.application.loki_scope_policy_verifier import (
-    LokiScopePolicyTechnicalVerifier,
-)
-from app.modules.platform_config.application.workshop_partition_policies import (
-    WorkshopPartitionPolicyService,
-)
-from app.modules.platform_config.application.workshop_partition_verifier import (
-    RedisWorkshopPartitionTechnicalVerifier,
 )
 from app.modules.platform_config.application.database_resource_verifier import (
     GovernedResourceTechnicalVerifier,
 )
 from app.modules.platform_config.infrastructure.governed_resource_repository import (
     GovernedResourceRepository,
-)
-from app.modules.platform_config.infrastructure.runtime_generation_repository import (
-    RuntimeGenerationRepository,
-)
-from app.modules.platform_config.infrastructure.handler_governance_repository import (
-    HandlerGovernanceRepository,
-)
-from app.modules.platform_config.infrastructure.loki_scope_policy_repository import (
-    LokiScopePolicyRepository,
-)
-from app.modules.platform_config.infrastructure.workshop_partition_policy_repository import (
-    WorkshopPartitionPolicyRepository,
 )
 from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import (
@@ -60,22 +33,16 @@ from .importer import PlatformTopologyYamlImporter
 from .legacy_env_import import LegacyEnvSecretImportService
 from .secrets import SecretProviderPort
 from .secret_usage import PlatformSecretUsageService
-from .snapshot import PlatformTopologySnapshotBuilder, RuntimeTopologySnapshot
-from .resource_reset import resource_reset_in_progress
 from .validation import (
     assert_no_secret_payload,
     assert_no_resource_placement,
     coerce_runtime_value,
     normalize_aliases,
     normalize_json_object,
-    normalize_oracle_database_config,
-    normalize_redis_resource_config,
     validate_config_value_type,
     validate_code,
     validate_engine,
-    validate_resource_kind,
     validate_runtime_scope_type,
-    validate_scope_type,
     validate_secret_provider,
     validate_secret_ref,
     validate_status,
@@ -100,7 +67,6 @@ class PlatformConfigService:
             secret_provider,
         )
         self.secret_usage_service = PlatformSecretUsageService(repository)
-        self.snapshot_builder = PlatformTopologySnapshotBuilder(repository)
         self.yaml_importer = PlatformTopologyYamlImporter(repository)
         self.runtime_registry = RuntimeConfigRegistry(repository)
         self.runtime_snapshot_builder = RuntimeConfigSnapshotBuilder(repository)
@@ -113,31 +79,10 @@ class PlatformConfigService:
                 allow_privileged_database_accounts=environment == "local",
             ),
         )
-        self.handlers = HandlerGovernanceService(
-            HandlerGovernanceRepository(repository.database),
-            repository,
-            permission_service,
-        )
-        self.workshop_partition_policies = WorkshopPartitionPolicyService(
-            WorkshopPartitionPolicyRepository(repository.database),
-            repository,
-            permission_service,
-            redis_verifier=RedisWorkshopPartitionTechnicalVerifier(
-                resolve_secret=secret_provider.resolve,
-            ),
-        )
         self.loki_draft_discovery = LokiDraftDiscoveryService(
             GovernedResourceRepository(repository.database),
             permission_service,
             HttpLokiDraftDiscoveryGateway(
-                resolve_secret=secret_provider.resolve,
-            ),
-        )
-        self.loki_scope_policies = LokiScopePolicyService(
-            LokiScopePolicyRepository(repository.database),
-            repository,
-            permission_service,
-            verifier=LokiScopePolicyTechnicalVerifier(
                 resolve_secret=secret_provider.resolve,
             ),
         )
@@ -475,65 +420,8 @@ class PlatformConfigService:
         self._audit("platform_secret", public, "disable", actor_id, before, correlation_id)
         return public
 
-    def list_resource_bindings(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
-        return self.repository.list_resource_bindings(include_disabled=include_disabled)
-
     def list_provider_contracts(self) -> list[dict[str, Any]]:
         return self.governed_resources.provider_contracts.public_contracts()
-
-    @operation_unit_of_work(lambda service: service.repository.database)
-    def upsert_resource_binding(
-        self,
-        payload: dict[str, Any],
-        *,
-        actor_id: str,
-        correlation_id: str = "",
-        expected_revision: int | None = None,
-    ) -> dict[str, Any]:
-        self.require_admin(actor_id)
-        self._assert_resource_writes_available()
-        assert_no_resource_placement(
-            payload,
-            context="旧 Resource Binding",
-        )
-        code = validate_code(str(payload.get("code") or ""))
-        config = normalize_json_object(payload.get("config"), field="config")
-        assert_no_secret_payload(config)
-        secret_refs = {
-            str(key): validate_secret_ref(str(value))
-            for key, value in normalize_json_object(
-                payload.get("secret_refs"), field="secret_refs"
-            ).items()
-        }
-        for ref in secret_refs.values():
-            self._require_available_platform_secret(ref)
-        kind = validate_resource_kind(str(payload.get("resource_kind") or ""))
-        if kind.value == "redis":
-            config = normalize_redis_resource_config(config)
-        engine = (
-            validate_engine(str(payload.get("engine") or ""))
-            if kind.value == "database"
-            else payload.get("engine")
-        )
-        if kind.value == "database" and engine == "oracle":
-            config = normalize_oracle_database_config(config)
-        before = self.repository.get_resource_binding_by_code(code)
-        entity = self.repository.upsert_resource_binding(
-            code=code,
-            scope_type=validate_scope_type(str(payload.get("scope_type") or "")).value,
-            environment_code=payload.get("environment_code"),
-            base_code=payload.get("base_code"),
-            workshop_code=payload.get("workshop_code"),
-            resource_kind=kind.value,
-            connector_id=payload.get("connector_id"),
-            engine=engine if kind.value == "database" else None,
-            config=config,
-            secret_refs=secret_refs,
-            status=validate_status(str(payload.get("status") or "enabled")).value,
-            expected_revision=expected_revision,
-        )
-        self._audit("resource_binding", entity, "upsert", actor_id, before, correlation_id)
-        return entity
 
     @operation_unit_of_work(lambda service: service.repository.database)
     def ensure_runtime_config_definitions(
@@ -666,27 +554,6 @@ class PlatformConfigService:
         )
 
     @operation_unit_of_work(lambda service: service.repository.database)
-    def set_resource_binding_status(
-        self, code: str, status: str, *, actor_id: str, correlation_id: str = ""
-    ) -> dict[str, Any]:
-        self.require_admin(actor_id)
-        self._assert_resource_writes_available()
-        before = self.repository.get_resource_binding_by_code(code)
-        entity = self.repository.set_resource_binding_status(
-            validate_code(code), validate_status(status).value
-        )
-        self._audit("resource_binding", entity, status, actor_id, before, correlation_id)
-        return entity
-
-    def _assert_resource_writes_available(self) -> None:
-        if resource_reset_in_progress(self.repository.database):
-            raise NonRetryableExecutionError(
-                "Resource configuration is in maintenance mode",
-                safe_message="工具资源处于重置维护模式，暂不允许修改",
-                error_code="resource_reset_maintenance",
-            )
-
-    @operation_unit_of_work(lambda service: service.repository.database)
     def import_topology_yaml(
         self,
         *,
@@ -709,17 +576,6 @@ class PlatformConfigService:
             actor_id=actor_id,
             correlation_id=correlation_id,
         )
-
-    def public_snapshot(self) -> dict[str, Any]:
-        return {
-            **self.snapshot_builder.build_public_snapshot(),
-            "governed_runtime": RuntimeGenerationRepository(
-                self.repository.database
-            ).public_status(),
-        }
-
-    def runtime_snapshot(self) -> RuntimeTopologySnapshot:
-        return self.snapshot_builder.build_runtime_snapshot(resolve_secrets=True)
 
     def _audit(
         self,

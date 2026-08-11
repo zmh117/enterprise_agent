@@ -150,7 +150,7 @@ export async function explainAuthorization(input: ExplanationInput) {
         reason: z.string(),
         source_role_codes: z.array(z.string()),
         application: z.object({ id: z.string(), code: z.string() }),
-        capability_code: z.string(),
+        tool_identifier: z.string(),
         scope: z.record(z.string(), z.string()),
       }),
       notice: z.string(),

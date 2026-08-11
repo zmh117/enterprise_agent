@@ -5,10 +5,6 @@ from app.modules.business_application.application.ports import ComponentReferenc
 from app.modules.business_application.domain.policies import snapshot_hash
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.identity.infrastructure import IdentityRepository
-from app.modules.internal_tools.domain import (
-    build_builtin_handler_registry,
-)
-from app.modules.job.infrastructure.repositories import ConfigurationRepository
 from app.modules.workflow.infrastructure import WorkflowRepository
 from app.shared.exceptions import NonRetryableExecutionError, NotFound
 
@@ -71,10 +67,6 @@ class AgentPublicationAdapter:
                 if str(publication["status"]) == "active":
                     values.append(self.resolve(str(publication["id"])))
         return values
-
-    def allows_capability(self, publication_id: str, capability_code: str) -> bool:
-        return capability_code in self.repository.publication_tools(publication_id)
-
 
 class WorkflowPublicationAdapter:
     def __init__(self, repository: WorkflowRepository) -> None:
@@ -179,98 +171,4 @@ class IdentitySubjectAdapter:
             status=status,
             config_hash="",
             component_type="service_account",
-        )
-
-
-class EmptyCapabilityCatalogAdapter:
-    @property
-    def connected(self) -> bool:
-        return False
-
-    def catalog(self) -> list[ComponentReference]:
-        return []
-
-    def resolve(self, code: str, version_constraint: str, environment: str) -> ComponentReference:
-        del version_constraint, environment
-        raise NonRetryableExecutionError(
-            f"Capability Catalog is not connected: {code}",
-            safe_message="API 能力目录尚未连接",
-            error_code="capability_catalog_unavailable",
-            field_errors=[
-                {
-                    "field": "capabilities",
-                    "message": f"暂时无法解析能力 {code}",
-                }
-            ],
-        )
-
-
-class ToolCapabilityCatalogAdapter:
-    """Expose enabled read-only runtime tools as business capability codes."""
-
-    def __init__(self, repository: ConfigurationRepository) -> None:
-        self.repository = repository
-        self.application_handler_codes = {
-            definition.handler_id
-            for definition in (
-                build_builtin_handler_registry().application_catalog()
-            )
-        }
-
-    @property
-    def connected(self) -> bool:
-        return True
-
-    def catalog(self) -> list[ComponentReference]:
-        result: list[ComponentReference] = []
-        for tool in sorted(self.repository.enabled_tools(), key=lambda item: str(item["name"])):
-            if (
-                not bool(int(tool["read_only"]))
-                or str(tool["name"])
-                not in self.application_handler_codes
-            ):
-                continue
-            result.append(self._reference(tool))
-        return result
-
-    def resolve(self, code: str, version_constraint: str, environment: str) -> ComponentReference:
-        del version_constraint, environment
-        tool = self.repository.get_tool(code)
-        if tool is None:
-            raise NonRetryableExecutionError(
-                f"Capability is not registered: {code}",
-                safe_message="所选业务能力不存在",
-                error_code="capability_not_found",
-                field_errors=[
-                    {
-                        "field": "capabilities",
-                        "message": f"业务能力不存在：{code}",
-                    }
-                ],
-            )
-        enabled = bool(int(tool["enabled"])) and bool(int(tool["read_only"]))
-        if not enabled:
-            raise NonRetryableExecutionError(
-                f"Capability is not enabled and read-only: {code}",
-                safe_message="角色只能选择已启用的只读业务能力",
-                error_code="capability_not_readonly",
-                field_errors=[
-                    {
-                        "field": "capabilities",
-                        "message": f"业务能力不可授权：{code}",
-                    }
-                ],
-            )
-        return self._reference(tool)
-
-    @staticmethod
-    def _reference(tool: dict[str, object]) -> ComponentReference:
-        return ComponentReference(
-            id=str(tool["id"]),
-            code=str(tool["name"]),
-            revision=1,
-            project_code="",
-            status="enabled",
-            config_hash="",
-            component_type="readonly_tool_capability",
         )

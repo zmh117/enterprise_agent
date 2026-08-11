@@ -250,14 +250,14 @@ class AuthorizationCenterRepository:
             (role_id,),
         )
         for access in accesses:
-            access["capability_codes"] = [
-                str(row["capability_code"])
+            access["tool_identifiers"] = [
+                str(row["tool_identifier"])
                 for row in self.database.execute(
                     """
-                    select capability_code
-                      from rbac_role_application_capability
+                    select tool_identifier
+                      from rbac_role_application_mcp_tool
                      where application_access_id = ?
-                     order by capability_code
+                     order by tool_identifier
                     """,
                     (access["id"],),
                 )
@@ -318,7 +318,7 @@ class AuthorizationCenterRepository:
                     (access_id,),
                 )
                 self.database.execute(
-                    "delete from rbac_role_application_capability where application_access_id = ?",
+                    "delete from rbac_role_application_mcp_tool where application_access_id = ?",
                     (access_id,),
                 )
             self.database.execute(
@@ -335,14 +335,14 @@ class AuthorizationCenterRepository:
                     """,
                     (access_id, role_id, application["application_id"], timestamp, timestamp),
                 )
-                for code in application["capability_codes"]:
+                for identifier in application["tool_identifiers"]:
                     self.database.execute(
                         """
-                        insert into rbac_role_application_capability
-                          (id, application_access_id, capability_code, created_at)
+                        insert into rbac_role_application_mcp_tool
+                          (id, application_access_id, tool_identifier, created_at)
                         values (?, ?, ?, ?)
                         """,
-                        (new_id("role_app_capability"), access_id, code, timestamp),
+                        (new_id("role_app_mcp_tool"), access_id, identifier, timestamp),
                     )
                 for scope in application["scopes"]:
                     self.database.execute(
@@ -422,12 +422,12 @@ class AuthorizationCenterRepository:
             (user_id, application_id, now_iso()),
         )
         for row in rows:
-            row["capability_codes"] = [
-                str(item["capability_code"])
+            row["tool_identifiers"] = [
+                str(item["tool_identifier"])
                 for item in self.database.execute(
                     """
-                    select capability_code from rbac_role_application_capability
-                     where application_access_id = ? order by capability_code
+                    select tool_identifier from rbac_role_application_mcp_tool
+                     where application_access_id = ? order by tool_identifier
                     """,
                     (row["id"],),
                 )
@@ -466,46 +466,30 @@ class AuthorizationCenterRepository:
                 """,
                 (application["id"],),
             )
-            application["capabilities"] = (
+            application["mcp_tools"] = (
                 self.database.execute(
                     """
-                    select exact.tool_identifier as capability_code,
+                    select exact.tool_identifier,
                            '' as version_constraint
-                      from business_application_revision_builtin_tool exact
-                      join agent_publication_builtin_tool envelope
-                        on envelope.id = exact.agent_publication_tool_id
-                       and envelope.agent_publication_id = ?
-                       and envelope.tool_release_id = exact.tool_release_id
-                      join builtin_tool_release release
-                        on release.id = exact.tool_release_id
-                       and release.tool_identifier = exact.tool_identifier
-                       and release.handler_version = exact.handler_version
-                       and release.implementation_digest =
-                           exact.implementation_digest
-                      join builtin_tool_installation installation
-                        on installation.tool_identifier = exact.tool_identifier
-                       and installation.handler_version = exact.handler_version
-                       and installation.implementation_digest =
-                           exact.implementation_digest
-                     where exact.application_revision_id = ?
-                       and release.status in ('ACTIVE', 'DEPRECATED')
-                       and installation.installation_status = 'INSTALLED'
-                     order by exact.tool_identifier
+                      from business_application_revision_mcp_tool exact
+                     where exact.agent_publication_id = ?
+                       and exact.application_revision_id = ?
+                     order by exact.selection_order
                     """,
                     (revision["agent_publication_id"], revision["id"]),
                 )
                 if revision
                 else []
             )
-            for capability in application["capabilities"]:
-                capability["display_name_zh"] = _BUSINESS_CAPABILITY_NAMES_ZH.get(
-                    str(capability["capability_code"]),
-                    "只读业务能力",
+            for tool in application["mcp_tools"]:
+                tool["display_name_zh"] = _BUSINESS_CAPABILITY_NAMES_ZH.get(
+                    str(tool["tool_identifier"]),
+                    "MCP Tool",
                 )
         return applications
 
-    def application_capability_is_effective(
-        self, application_id: str, capability_code: str
+    def application_tool_is_effective(
+        self, application_id: str, tool_identifier: str
     ) -> bool:
         deployment = self.database.execute_one(
             """
@@ -522,36 +506,17 @@ class AuthorizationCenterRepository:
             return False
         exact = self.database.execute_one(
             """
-            select allowlist.id
+            select allowlist.tool_identifier
               from business_application_deployment deployment
-              join business_application_publication_builtin_tool allowlist
+              join business_application_publication_mcp_tool allowlist
                 on allowlist.application_publication_id = deployment.publication_id
-              join agent_publication_builtin_tool envelope
-                on envelope.id = allowlist.agent_publication_tool_id
-               and envelope.agent_publication_id = allowlist.agent_publication_id
-               and envelope.tool_release_id = allowlist.tool_release_id
-              join builtin_tool_release release
-                on release.id = allowlist.tool_release_id
-               and release.tool_identifier = allowlist.tool_identifier
-               and release.handler_version = allowlist.handler_version
-               and release.implementation_digest = allowlist.implementation_digest
-              join builtin_tool_installation installation
-                on installation.tool_identifier = allowlist.tool_identifier
-               and installation.handler_version = allowlist.handler_version
-               and installation.implementation_digest =
-                   allowlist.implementation_digest
-              join tool_definition definition
-                on definition.name = allowlist.tool_identifier
-               and definition.enabled = 1 and definition.read_only = 1
              where deployment.application_id = ?
                and deployment.environment = 'local'
                and deployment.active = 1
                and allowlist.tool_identifier = ?
-               and release.status in ('ACTIVE', 'DEPRECATED')
-               and installation.installation_status = 'INSTALLED'
              limit 1
             """,
-            (application_id, capability_code),
+            (application_id, tool_identifier),
         )
         if exact is not None:
             return True

@@ -40,7 +40,7 @@ export const userAuthorizationSummarySchema = z.object({
       code: z.string(),
       name: z.string(),
       source_role_codes: z.array(z.string()),
-      capability_codes: z.array(z.string()),
+      tool_identifiers: z.array(z.string()),
       scopes: z.array(z.record(z.string(), z.unknown())),
     }),
   ),

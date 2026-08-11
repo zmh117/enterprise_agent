@@ -13,8 +13,8 @@ from app.modules.audit.application.audit_service import AuditService
 from app.modules.authorization_center.application import BusinessAuthorizationService
 from app.modules.delivery.application.result_delivery_service import ResultDeliveryService
 from app.modules.job.application.job_status_service import JobStatusService
-from app.modules.job.application.builtin_tool_snapshot import (
-    JobBuiltinToolSnapshotService,
+from app.modules.mcp_tool_runtime.job_snapshot import (
+    JobMcpToolSnapshotService,
 )
 from app.modules.job.domain.agent_job import AgentJob
 from app.modules.job.domain.job_status import JobStatus
@@ -36,7 +36,7 @@ class AgentExecutor:
         result_service: AgentResultService,
         delivery_service: ResultDeliveryService,
         business_authorization_service: BusinessAuthorizationService | None = None,
-        builtin_tool_snapshot_service: JobBuiltinToolSnapshotService | None = None,
+        mcp_tool_snapshot_service: JobMcpToolSnapshotService | None = None,
         after_runtime_result_hook: Callable[[], None] | None = None,
     ) -> None:
         self.repository = repository
@@ -48,7 +48,7 @@ class AgentExecutor:
         self.result_service = result_service
         self.delivery_service = delivery_service
         self.business_authorization_service = business_authorization_service
-        self.builtin_tool_snapshot_service = builtin_tool_snapshot_service
+        self.mcp_tool_snapshot_service = mcp_tool_snapshot_service
         self.after_runtime_result_hook = after_runtime_result_hook
         self._active_lock = threading.Lock()
         self._active_requests: dict[str, AgentRunRequest] = {}
@@ -81,9 +81,9 @@ class AgentExecutor:
                 return persisted.result
             return ""
         job = claimed
-        if self.builtin_tool_snapshot_service is not None:
+        if self.mcp_tool_snapshot_service is not None:
             try:
-                self.builtin_tool_snapshot_service.verify(job.id)
+                self.mcp_tool_snapshot_service.verify(job.id)
             except Exception as exc:
                 if fail_on_error:
                     self.status_service.fail(

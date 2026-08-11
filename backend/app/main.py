@@ -12,9 +12,6 @@ from app.shared.database import Database
 from app.shared.database import default_migrations_dir
 from app.shared.logging import configure_logging, set_correlation_id
 from app.shared.migrations import SchemaHeadError, SchemaHeadValidator
-from app.modules.platform_config.infrastructure.runtime_generation_repository import (
-    RuntimeGenerationRepository,
-)
 
 
 class FallbackApp:
@@ -50,11 +47,6 @@ def _build_readiness(
             schema_ready = False
     rabbitmq_ready = _check_rabbitmq(settings.rabbitmq_url)
     master_key_ready = bool(settings.app_config_master_key)
-    token_required = settings.feature_real_internal_tools
-    token_ready = (
-        not token_required
-        or bool(settings.internal_api_auth_token_file)
-    )
     agent_runtimes = _check_agent_runtimes(settings)
     core_ready = all(
         (
@@ -62,19 +54,8 @@ def _build_readiness(
             schema_ready,
             rabbitmq_ready,
             master_key_ready,
-            token_ready,
         )
     )
-    try:
-        governed_runtime = RuntimeGenerationRepository(
-            database
-        ).public_status()
-    except Exception:
-        governed_runtime = {
-            "status": "UNAVAILABLE",
-            "resources": [],
-            "applications": [],
-        }
     result = {
         "status": "ready" if core_ready else "not_ready",
         "core": {
@@ -82,12 +63,15 @@ def _build_readiness(
             "schema": schema_ready,
             "schema_head": schema_head,
             "rabbitmq": rabbitmq_ready,
-            "internal_api_token": token_ready,
             "master_key": master_key_ready,
             "runtime_assembly": True,
             "agent_runtimes": agent_runtimes,
         },
-        "resources": governed_runtime,
+        "tool_mcp": {
+            "server_code": "tool-mcp",
+            "transport": "stdio",
+            "resource_resolution": "invocation_time",
+        },
         "claude_invoked": False,
         "mcp_invoked": False,
         "runtime_selection": {
@@ -170,16 +154,6 @@ def _check_agent_runtime(
             ),
         )
     )
-
-
-def _internal_tools_status(settings: Settings) -> dict[str, Any]:
-    return {
-        "feature_real_internal_tools": settings.feature_real_internal_tools,
-        "internal_api_base_url_configured": bool(settings.internal_api_base_url),
-        "internal_api_auth_token_file_configured": bool(
-            settings.internal_api_auth_token_file
-        ),
-    }
 
 
 def _runtime_config_status(settings: Settings) -> dict[str, Any]:
@@ -310,14 +284,10 @@ def create_app(
     from app.modules.admin.api import build_admin_router
     from app.modules.agent_config.api import build_agent_config_router
     from app.modules.model_connection.api import build_model_connection_router
-    from app.modules.api_capability.api import (
-        build_api_capability_router,
-        build_api_connection_router,
-    )
     from app.modules.dingding.api.dingding_webhook_controller import build_dingding_router
     from app.modules.identity.api import (
         build_auth_router,
-        build_external_credential_router,
+        build_external_identity_router,
         build_identity_admin_router,
     )
     from app.modules.identity_discovery.api import build_identity_discovery_router
@@ -353,10 +323,8 @@ def create_app(
         app.include_router(build_admin_router())
         app.include_router(build_agent_config_router())
         app.include_router(build_model_connection_router())
-        app.include_router(build_api_connection_router())
-        app.include_router(build_api_capability_router())
         app.include_router(build_auth_router())
-        app.include_router(build_external_credential_router())
+        app.include_router(build_external_identity_router())
         app.include_router(build_identity_admin_router())
         app.include_router(build_identity_discovery_router())
         app.include_router(build_webhook_admin_router())

@@ -19,17 +19,3 @@ class DingTalkIdentityObservationPort(Protocol):
         self,
         identity_id: str,
     ) -> list[dict[str, Any]]: ...
-
-
-class ExternalCredentialUsagePort(Protocol):
-    def record_usage_attempt(self, *, credential_id: str) -> dict[str, Any]: ...
-
-    def record_usage_success(self, *, credential_id: str) -> dict[str, Any]: ...
-
-    def record_usage_failure(
-        self,
-        *,
-        credential_id: str,
-        error_code: str,
-        invalidate: bool = False,
-    ) -> dict[str, Any]: ...

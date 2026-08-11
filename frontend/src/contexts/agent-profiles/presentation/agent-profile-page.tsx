@@ -861,12 +861,10 @@ function ProfileForm({
       model_connection_revision_id: currentConnection?.id ?? "",
     },
     execution: base?.execution ?? { max_turns: 12, timeout_seconds: 300 },
-    tools: base?.tools ?? [],
     skills: base?.skills ?? [],
     routing: base?.routing ?? { project_code: agent.definition.project_code },
     channels: base?.channels ?? { ingress: [], delivery: [] },
-    api_capability_release_ids: base?.api_capability_release_ids ?? [],
-    builtin_tool_release_ids: base?.builtin_tool_release_ids ?? [],
+    mcp_tool_ids: base?.mcp_tool_ids ?? [],
   }
   const [form, setForm] = useState<AgentConfig>(() => persistedForm)
   const save = useSaveAgentDraft(agent.definition.code)
@@ -874,7 +872,7 @@ function ProfileForm({
   const publish = usePublishAgentDraft(agent.definition.code)
   const draftDirty = JSON.stringify(form) !== JSON.stringify(persistedForm)
 
-  function toggleList(field: "tools" | "skills", value: string) {
+  function toggleList(field: "mcp_tool_ids" | "skills", value: string) {
     setForm((current) => ({
       ...current,
       [field]: current[field].includes(value)
@@ -1001,20 +999,11 @@ function ProfileForm({
             </Field>
           </div>
           <ReadOnlyModelSummary connection={connection} />
-          <AgentCapabilitySelector
-            releases={agent.catalog.api_capabilities}
-            selected={form.api_capability_release_ids}
-            onChange={(api_capability_release_ids) =>
-              setForm({ ...form, api_capability_release_ids })
-            }
-          />
-          <BuiltinToolReleaseSelector
-            releases={agent.catalog.builtin_tool_releases}
-            selected={form.builtin_tool_release_ids}
-            legacyTools={form.tools}
-            onChange={(builtin_tool_release_ids) =>
-              setForm({ ...form, builtin_tool_release_ids })
-            }
+          <Checklist
+            title="MCP 只读工具"
+            items={agent.catalog.mcp_tools.map((tool) => tool.identifier)}
+            selected={form.mcp_tool_ids}
+            onToggle={(value) => toggleList("mcp_tool_ids", value)}
           />
           <Checklist
             title="技能"
@@ -1167,261 +1156,6 @@ function ProfileForm({
         </Card>
       </div>
     </div>
-  )
-}
-
-function AgentCapabilitySelector({
-  releases,
-  selected,
-  onChange,
-}: {
-  releases: Array<{
-    id: string
-    identifier: string
-    release_revision: number
-    name: string
-    description: string
-    status: string
-    release_note: string
-  }>
-  selected: string[]
-  onChange: (value: string[]) => void
-}) {
-  const identifiers = new Set(releases.map((item) => item.identifier))
-  return (
-    <fieldset className="rounded-lg border p-4">
-      <legend className="px-1 text-sm font-medium">
-        API Capability Release
-      </legend>
-      <p className="mb-3 text-xs leading-5 text-muted-foreground">
-        每个 Identifier 最多选择一个精确 ACTIVE Release。description 会进入模型
-        Tool 定义；Release Note 仅供管理员判断版本。
-      </p>
-      <div className="space-y-2">
-        {releases.map((release) => {
-          const checked = selected.includes(release.id)
-          const sameIdentifierSelected = releases.some(
-            (candidate) =>
-              candidate.identifier === release.identifier &&
-              selected.includes(candidate.id) &&
-              candidate.id !== release.id
-          )
-          return (
-            <label
-              key={release.id}
-              className="flex items-start gap-3 rounded-lg border p-3 text-sm"
-            >
-              <input
-                type="checkbox"
-                checked={checked}
-                disabled={release.status !== "ACTIVE"}
-                onChange={() => {
-                  const withoutIdentifier = selected.filter(
-                    (id) =>
-                      !releases.some(
-                        (candidate) =>
-                          candidate.id === id &&
-                          candidate.identifier === release.identifier
-                      )
-                  )
-                  onChange(
-                    checked
-                      ? withoutIdentifier
-                      : [...withoutIdentifier, release.id]
-                  )
-                }}
-              />
-              <span className="min-w-0 flex-1">
-                <span className="flex flex-wrap items-center gap-2 font-medium">
-                  {release.name}
-                  <Badge variant="outline">
-                    r{release.release_revision} · {release.status}
-                  </Badge>
-                </span>
-                <span className="mt-1 block font-mono text-xs text-indigo-700">
-                  {release.identifier}
-                </span>
-                <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-                  {release.description}
-                </span>
-                {release.release_note ? (
-                  <span className="mt-1 block text-xs text-muted-foreground">
-                    发布备注：{release.release_note}
-                  </span>
-                ) : null}
-                {sameIdentifierSelected ? (
-                  <span className="mt-1 block text-xs text-amber-700">
-                    选择此版本会替换同 Identifier 的当前版本。
-                  </span>
-                ) : null}
-              </span>
-            </label>
-          )
-        })}
-        {releases.length === 0 ? (
-          <p className="text-xs text-muted-foreground">
-            当前没有可供新 Agent 发布选择的 ACTIVE Capability Release。
-          </p>
-        ) : null}
-        {selected
-          .filter((id) => !releases.some((item) => item.id === id))
-          .map((id) => (
-            <div
-              key={id}
-              className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900"
-            >
-              历史精确 Release {id} 不在 ACTIVE
-              目录中；请移除或显式替换后再发布。
-            </div>
-          ))}
-      </div>
-      <span className="sr-only">目录 Identifier 数量 {identifiers.size}</span>
-    </fieldset>
-  )
-}
-
-function BuiltinToolReleaseSelector({
-  releases,
-  selected,
-  legacyTools,
-  onChange,
-}: {
-  releases: Array<{
-    id: string
-    tool_identifier: string
-    release_revision: number
-    tool_semantic_version: string
-    handler_version: string
-    implementation_digest: string
-    status: "ACTIVE" | "DEPRECATED" | "DISABLED" | "ARCHIVED"
-    display_name: string
-    model_description: string
-    installation_status: "INSTALLED" | "MISSING" | "DRIFTED"
-    health_status:
-      "HEALTHY" | "DEPRECATED" | "DISABLED" | "ARCHIVED" | "MISSING" | "DRIFTED"
-    selectable: boolean
-  }>
-  selected: string[]
-  legacyTools: string[]
-  onChange: (value: string[]) => void
-}) {
-  const identifiers = new Set(releases.map((item) => item.tool_identifier))
-  return (
-    <fieldset className="rounded-lg border p-4">
-      <legend className="px-1 text-sm font-medium">
-        Built-in Readonly Tool Release
-      </legend>
-      <p className="mb-3 text-xs leading-5 text-muted-foreground">
-        Agent Envelope 对每个稳定 Identifier 最多选择一个精确且健康的 ACTIVE
-        Release，并冻结版本、Handler 与 Implementation Digest。
-      </p>
-      {legacyTools.length ? (
-        <div className="mb-3 space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
-          <p>
-            历史草稿包含 legacy-v1 名称绑定：{legacyTools.join("、")}。该字段仅供审计展示，
-            不会进入新的保存请求；需要继续使用时，请在下方选择精确 Tool Release。
-          </p>
-        </div>
-      ) : null}
-      <div className="space-y-2">
-        {releases.map((release) => {
-          const checked = selected.includes(release.id)
-          const sameIdentifierSelected = releases.some(
-            (candidate) =>
-              candidate.tool_identifier === release.tool_identifier &&
-              selected.includes(candidate.id) &&
-              candidate.id !== release.id
-          )
-          const unhealthy = release.health_status !== "HEALTHY"
-          return (
-            <label
-              key={release.id}
-              className={
-                unhealthy
-                  ? "flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50/60 p-3 text-sm"
-                  : "flex items-start gap-3 rounded-lg border p-3 text-sm"
-              }
-            >
-              <input
-                type="checkbox"
-                checked={checked}
-                disabled={!release.selectable && !checked}
-                onChange={() => {
-                  const withoutIdentifier = selected.filter(
-                    (id) =>
-                      !releases.some(
-                        (candidate) =>
-                          candidate.id === id &&
-                          candidate.tool_identifier === release.tool_identifier
-                      )
-                  )
-                  onChange(
-                    checked
-                      ? withoutIdentifier
-                      : [...withoutIdentifier, release.id]
-                  )
-                }}
-              />
-              <span className="min-w-0 flex-1">
-                <span className="flex flex-wrap items-center gap-2 font-medium">
-                  {release.display_name || release.tool_identifier}
-                  <Badge variant="outline">
-                    r{release.release_revision} · Tool v
-                    {release.tool_semantic_version}
-                  </Badge>
-                  <Badge variant={unhealthy ? "destructive" : "default"}>
-                    {release.health_status}
-                  </Badge>
-                </span>
-                <span className="mt-1 block font-mono text-xs text-indigo-700">
-                  {release.tool_identifier} · Handler {release.handler_version}
-                </span>
-                <span className="mt-1 block font-mono text-xs text-muted-foreground">
-                  digest {release.implementation_digest.slice(0, 12)}…
-                </span>
-                {release.model_description ? (
-                  <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-                    {release.model_description}
-                  </span>
-                ) : null}
-                {unhealthy ? (
-                  <span className="mt-1 block text-xs text-amber-800">
-                    该 Release 当前为 {release.status} / 安装状态{" "}
-                    {release.installation_status}
-                    ，只能从草稿移除，不能新增选择。
-                  </span>
-                ) : null}
-                {sameIdentifierSelected ? (
-                  <span className="mt-1 block text-xs text-amber-700">
-                    选择此版本会替换同 Identifier 的当前精确版本。
-                  </span>
-                ) : null}
-              </span>
-            </label>
-          )
-        })}
-        {releases.length === 0 ? (
-          <p className="text-xs text-muted-foreground">
-            当前没有已发布的 Built-in Tool Release。请先在“平台治理 →
-            只读工具”完成对账、验证与发布。
-          </p>
-        ) : null}
-        {selected
-          .filter((id) => !releases.some((item) => item.id === id))
-          .map((id) => (
-            <div
-              key={id}
-              className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive"
-            >
-              精确 Tool Release {id}
-              已不在目录中，可能已归档、实现缺失或发生漂移；请移除后再发布。
-            </div>
-          ))}
-      </div>
-      <span className="sr-only">
-        Built-in Tool Identifier 数量 {identifiers.size}
-      </span>
-    </fieldset>
   )
 }
 

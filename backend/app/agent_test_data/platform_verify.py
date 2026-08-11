@@ -6,22 +6,22 @@ from dataclasses import dataclass
 
 from app.agent_test_data.manifest import BASE_CODES, TABLES, redis_namespace
 from app.modules.internal_api_platform.application.platform_service import PlatformService
-from app.modules.internal_api_platform.domain.errors import PlatformError
-from app.modules.internal_api_platform.domain.topology import DatabaseEngine, ResourceKind
+from app.modules.mcp_tool_runtime.domain.errors import PlatformError
+from app.modules.mcp_tool_runtime.domain.topology import DatabaseEngine, ResourceKind
 from app.modules.internal_api_platform.infrastructure.config import load_platform_config
-from app.modules.internal_api_platform.infrastructure.db.drivers import (
+from app.modules.mcp_tool_runtime.infrastructure.db.drivers import (
     MysqlExecutor,
     OracleExecutor,
     SqlServerExecutor,
 )
-from app.modules.internal_api_platform.infrastructure.db.schema_directory import (
+from app.modules.mcp_tool_runtime.infrastructure.db.schema_directory import (
     MySqlSchemaInspector,
     OracleSchemaInspector,
     SchemaInspectorFactory,
     SqlServerSchemaInspector,
 )
-from app.modules.internal_api_platform.infrastructure.loki_gateway import FakeLokiClient
-from app.modules.internal_api_platform.infrastructure.redis_gateway import RealRedisGateway
+from app.modules.mcp_tool_runtime.infrastructure.loki_gateway import FakeLokiClient
+from app.modules.mcp_tool_runtime.infrastructure.redis_gateway import RealRedisGateway
 from app.modules.internal_api_platform.infrastructure.registry import TopologyRegistry
 
 

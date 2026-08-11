@@ -60,7 +60,7 @@ def build_secret_change_reloader(
     master_key: str,
     target: RuntimeSnapshotReloadTarget,
 ) -> SecretChangeReloader:
-    from app.modules.internal_api_platform.infrastructure.secrets import (
+    from app.modules.mcp_tool_runtime.infrastructure.secrets import (
         DbBackedSecretResolver,
     )
 

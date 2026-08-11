@@ -47,11 +47,7 @@ class AgentDraftConfigRequest(StrictRequest):
     skills: list[str] = Field(default_factory=list)
     routing: RoutingRequest
     channels: ChannelsRequest
-    api_capability_release_ids: list[str] = Field(
-        default_factory=list,
-        max_length=100,
-    )
-    builtin_tool_release_ids: list[str] = Field(
+    mcp_tool_ids: list[str] = Field(
         default_factory=list,
         max_length=100,
     )
@@ -223,7 +219,7 @@ def build_agent_config_router() -> APIRouter:
                 "snapshot": publication["snapshot"],
                 "platform_enforced": {
                     "read_only_tools": True,
-                    "built_in_mutation_tools_disabled": True,
+                    "read_only_mcp_tools": True,
                     "authorization_required": True,
                 },
             }

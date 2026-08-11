@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import time
 import urllib.error
@@ -19,12 +18,11 @@ from app.modules.agent.domain.runtime import (
     McpRuntimeBinding,
 )
 from app.modules.agent.infrastructure.generated_runtime_contracts import validate_contract
-from app.modules.agent.infrastructure.tool_manifest import TOOL_DEFINITIONS
 from app.modules.agent.infrastructure.runtime_protocol import (
     canonical_request_digest,
     validate_execution_request,
 )
-from app.modules.internal_tools.domain import build_builtin_handler_registry
+from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.database import assert_external_io_allowed
 from app.shared.exceptions import (
     NonRetryableExecutionError,
@@ -35,7 +33,6 @@ MAX_STREAM_BYTES = 2_097_152
 MAX_EVENTS = 2_048
 IN_PROGRESS_RECOVERY_ATTEMPTS = 12
 IN_PROGRESS_RECOVERY_DELAY_SECONDS = 0.5
-_BUILTIN_HANDLER_REGISTRY = build_builtin_handler_registry()
 STANDARD_TOOL_MCP_CODE = "tool-mcp"
 
 
@@ -593,14 +590,6 @@ class AgentRuntimeHttpClient:
                         "message": notice.message,
                     }
                     for notice in context.mcp_unavailable_notices
-                ]
-                + [
-                    {
-                        "tool_name": notice.identifier,
-                        "reason_code": notice.reason_code,
-                        "message": notice.message,
-                    }
-                    for notice in context.governed_capability_notices
                 ],
             },
             "limits": {
@@ -620,11 +609,11 @@ class AgentRuntimeHttpClient:
             return context.mcp_bindings
         bindings: list[McpRuntimeBinding] = []
         for tool_name in context.allowed_tools:
-            definition = TOOL_DEFINITIONS.get(tool_name)
+            definition = MCP_TOOL_MANIFEST.get(tool_name)
             if definition is None:
                 raise NonRetryableExecutionError(
-                    "Job references an internal Tool without a Runtime MCP mapping",
-                    safe_message="当前 Job 包含尚未迁移的工具",
+                    "Job references an unknown MCP Tool",
+                    safe_message="当前 Job 包含未知 MCP 工具",
                     error_code="runtime_tool_mapping_missing",
                 )
             bindings.append(
@@ -632,28 +621,7 @@ class AgentRuntimeHttpClient:
                     server_code=STANDARD_TOOL_MCP_CODE,
                     tool_name=tool_name,
                     required_scope=f"tool:{tool_name}",
-                    tool_schema_hash=_BUILTIN_HANDLER_REGISTRY.require(
-                        tool_name,
-                        "1.0.0",
-                    ).public_schema_hash,
-                )
-            )
-        for capability in context.governed_capabilities:
-            identifier = str(capability.get("identifier") or "")
-            release_id = str(capability.get("release_id") or "")
-            schema = capability.get("input_schema")
-            if not identifier or not release_id or not isinstance(schema, dict):
-                raise NonRetryableExecutionError(
-                    "Job contains an incomplete governed Capability Runtime binding",
-                    safe_message="当前 Job 的业务查询能力绑定不完整",
-                    error_code="runtime_tool_mapping_missing",
-                )
-            bindings.append(
-                McpRuntimeBinding(
-                    server_code=STANDARD_TOOL_MCP_CODE,
-                    tool_name=identifier,
-                    required_scope=f"capability:{release_id}",
-                    tool_schema_hash=_schema_hash(schema),
+                    tool_schema_hash=definition.schema_hash,
                 )
             )
         return tuple(bindings)
@@ -668,16 +636,6 @@ class AgentRuntimeHttpClient:
             tool_events=tool_events,
             error_code="runtime_protocol_error",
         )
-
-
-def _schema_hash(schema: dict[str, Any]) -> str:
-    encoded = json.dumps(
-        schema,
-        ensure_ascii=True,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
 
 
 # Compatibility for callers not yet renamed; implementation is runtime-neutral.

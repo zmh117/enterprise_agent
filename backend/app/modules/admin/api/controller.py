@@ -8,7 +8,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.modules.admin.application import AdminCapabilityService, PageWindow, TimeWindow
 from app.modules.admin.application.dashboard_service import DashboardQueryService
 from app.modules.admin.application.channel_provider_service import ChannelProviderService
-from app.modules.admin.application.resource_provider_service import ResourceProviderService
 from app.modules.admin.application.scope import (
     AdminScope,
     strict_business_scope_summary,
@@ -28,25 +27,6 @@ from app.modules.identity.api.dependencies import (
 
 class StrictRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
-
-class ToolResourceRequest(StrictRequest):
-    expected_revision: int = Field(ge=0)
-    code: str = Field(min_length=2, max_length=120)
-    scope_type: Literal["environment", "base", "workshop"]
-    environment_code: str = ""
-    base_code: str = ""
-    workshop_code: str = ""
-    resource_kind: Literal["database", "redis", "loki"]
-    engine: str = ""
-    config: dict[str, Any]
-    secret_refs: dict[str, str] = Field(default_factory=dict)
-    status: Literal["enabled", "disabled"] = "enabled"
-
-
-class RevisionStatusRequest(StrictRequest):
-    expected_revision: int = Field(ge=1)
-    status: Literal["enabled", "disabled"]
 
 
 class ChannelConnectorRequest(StrictRequest):
@@ -128,164 +108,6 @@ def build_admin_router() -> APIRouter:
 
             raise HTTPException(status_code=404, detail="未找到技能")
         return {"skill": item}
-
-    @router.get("/tool-providers")
-    def tool_providers(request: Request) -> dict[str, Any]:
-        require_action(request, resource_type="tool_resource", resource_code="*", action="read")
-        return {"providers": ResourceProviderService().catalog()}
-
-    @router.get("/tool-resources")
-    def tool_resources(
-        request: Request,
-        resource_kind: str = "",
-        limit: int = 25,
-        cursor: str = "",
-    ) -> dict[str, Any]:
-        principal = require_action(
-            request, resource_type="tool_resource", resource_code="*", action="read"
-        )
-        try:
-            page = PageWindow.parse(limit=limit, cursor=cursor)
-            c = container(request)
-            scope = _scope(c, principal)
-            items = [
-                item
-                for item in c.platform_config_service.list_resource_bindings()
-                if item["resource_kind"] in {"database", "redis", "loki"}
-                and (not resource_kind or item["resource_kind"] == resource_kind)
-                and scope.permits(_resource_scope_item(item))
-            ]
-            if page.cursor:
-                after = PageWindow.decode(page.cursor)
-                items = [item for item in items if str(item["code"]) > after]
-            selected = items[: page.limit + 1]
-            has_more = len(selected) > page.limit
-            selected = selected[: page.limit]
-            return {
-                "items": selected,
-                "page": {
-                    "limit": page.limit,
-                    "has_more": has_more,
-                    "next_cursor": PageWindow.encode(str(selected[-1]["code"]))
-                    if has_more and selected
-                    else None,
-                },
-            }
-        except Exception as exc:
-            raise handle_exception(exc) from exc
-
-    @router.get("/tool-resources/{code}")
-    def tool_resource(request: Request, code: str) -> dict[str, Any]:
-        principal = require_action(
-            request, resource_type="tool_resource", resource_code="*", action="read"
-        )
-        c = container(request)
-        item = c.platform_config_service.repository.get_resource_binding_by_code(code)
-        if item is None or not _scope(c, principal).permits(_resource_scope_item(item)):
-            from fastapi import HTTPException
-
-            raise HTTPException(status_code=404, detail="未找到工具资源")
-        return {"resource": item}
-
-    @router.post("/tool-resources")
-    @router.put("/tool-resources/{path_code}")
-    def save_tool_resource(
-        request: Request,
-        payload: ToolResourceRequest,
-        path_code: str = "",
-    ) -> dict[str, Any]:
-        principal = require_action(
-            request, resource_type="tool_resource", resource_code="*", action="manage", csrf=True
-        )
-        data = payload.model_dump()
-        if path_code and path_code != payload.code:
-            from fastapi import HTTPException
-
-            raise HTTPException(status_code=422, detail="路径与请求内容中的资源编码不一致")
-        try:
-            ResourceProviderService().validate(data)
-            c = container(request)
-            _require_write_scope(c, principal, data)
-            expected = int(data.pop("expected_revision"))
-            resource = c.platform_config_service.upsert_resource_binding(
-                data,
-                actor_id=principal.user_id,
-                correlation_id=_correlation_id(request),
-                expected_revision=expected,
-            )
-            return {"resource": resource}
-        except Exception as exc:
-            raise handle_exception(exc) from exc
-
-    @router.put("/tool-resources/{code}/status")
-    def set_tool_resource_status(
-        request: Request, code: str, payload: RevisionStatusRequest
-    ) -> dict[str, Any]:
-        principal = require_action(
-            request, resource_type="tool_resource", resource_code="*", action="manage", csrf=True
-        )
-        c = container(request)
-        existing = c.platform_config_service.repository.get_resource_binding_by_code(code)
-        if existing is None or not _scope(c, principal).permits(_resource_scope_item(existing)):
-            from fastapi import HTTPException
-
-            raise HTTPException(status_code=404, detail="未找到工具资源")
-        data = {
-            **existing,
-            "status": payload.status,
-            "expected_revision": payload.expected_revision,
-        }
-        try:
-            resource = c.platform_config_service.upsert_resource_binding(
-                data,
-                actor_id=principal.user_id,
-                correlation_id=_correlation_id(request),
-                expected_revision=payload.expected_revision,
-            )
-            return {"resource": resource}
-        except Exception as exc:
-            raise handle_exception(exc) from exc
-
-    @router.post("/tool-resources/{code}/test")
-    def test_tool_resource(request: Request, code: str) -> dict[str, Any]:
-        principal = require_action(
-            request, resource_type="tool_resource", resource_code="*", action="test", csrf=True
-        )
-        c = container(request)
-        resource = c.platform_config_service.repository.get_resource_binding_by_code(code)
-        if resource is None or not _scope(c, principal).permits(_resource_scope_item(resource)):
-            from fastapi import HTTPException
-
-            raise HTTPException(status_code=404, detail="未找到工具资源")
-        try:
-            result = ResourceProviderService().probe(
-                resource, c.platform_config_service.resolve_secret
-            )
-            c.audit_service.record(
-                "admin.tool_resource.connection_test",
-                status="SUCCEEDED",
-                summary="Read-only tool resource connection test succeeded",
-                actor_id=principal.user_id,
-                payload={
-                    "resource_code": code,
-                    "resource_kind": resource["resource_kind"],
-                    "correlation_id": _correlation_id(request),
-                },
-            )
-            return {"result": {**result, "correlation_id": _correlation_id(request)}}
-        except Exception as exc:
-            c.audit_service.record(
-                "admin.tool_resource.connection_test",
-                status="FAILED",
-                summary="Read-only tool resource connection test failed",
-                actor_id=principal.user_id,
-                payload={
-                    "resource_code": code,
-                    "resource_kind": resource["resource_kind"],
-                    "correlation_id": _correlation_id(request),
-                },
-            )
-            raise handle_exception(exc) from exc
 
     @router.get("/channel-providers")
     def channel_providers(request: Request) -> dict[str, Any]:
@@ -678,28 +500,6 @@ def _scope(c: Any, principal: Any) -> AdminScope:
             global_access="platform-admin" in principal.role_codes,
         ),
         principal.user_id,
-    )
-
-
-def _resource_scope_item(item: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "routing": {
-            "environment": item.get("environment_code") or "",
-            "base": item.get("base_code") or "",
-            "workshop": item.get("workshop_code") or "",
-        }
-    }
-
-
-def _require_write_scope(c: Any, principal: Any, data: dict[str, Any]) -> None:
-    if "platform-admin" in principal.role_codes:
-        return
-    c.authorization_evaluator.require_platform_scope(
-        user_id=principal.user_id,
-        environment=str(data.get("environment_code") or ""),
-        base=str(data.get("base_code") or ""),
-        workshop=str(data.get("workshop_code") or ""),
-        tool_name=str(data.get("resource_kind") or ""),
     )
 
 

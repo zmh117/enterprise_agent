@@ -56,7 +56,7 @@ export const roleApplicationAccessSchema = z.object({
   application_code: z.string(),
   application_name: z.string(),
   status: z.string(),
-  capability_codes: z.array(z.string()),
+  tool_identifiers: z.array(z.string()),
   scopes: z.array(roleScopeSchema),
 })
 
@@ -113,10 +113,10 @@ export const catalogApplicationSchema = z.object({
   description: z.string(),
   project_code: z.string(),
   status: z.string(),
-  capabilities: z.array(
+  mcp_tools: z.array(
     z.object({
-      capability_code: z.string(),
-      display_name_zh: z.string().default("只读业务能力"),
+      tool_identifier: z.string(),
+      display_name_zh: z.string().default("MCP Tool"),
       version_constraint: z.string(),
     }),
   ),
@@ -163,7 +163,7 @@ export type CreateRoleInput = {
 export type ExplanationInput = {
   user_id: string
   application_id: string
-  capability_code: string
+  tool_identifier: string
   environment: string
   base: string
   workshop: string

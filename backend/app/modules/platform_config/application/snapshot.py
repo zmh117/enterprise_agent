@@ -5,10 +5,10 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-from app.modules.internal_api_platform.domain.addressing import RevisionResource
+from app.modules.mcp_tool_runtime.domain.addressing import RevisionResource
 
-from app.modules.internal_api_platform.domain.access import AccessPolicy
-from app.modules.internal_api_platform.domain.topology import (
+from app.modules.mcp_tool_runtime.domain.access import AccessPolicy
+from app.modules.mcp_tool_runtime.domain.topology import (
     Base,
     DatabaseConnection,
     DatabaseEngine,
@@ -22,7 +22,7 @@ from app.modules.internal_api_platform.domain.topology import (
     Topology,
     Workshop,
 )
-from app.modules.internal_api_platform.infrastructure.secrets import (
+from app.modules.mcp_tool_runtime.infrastructure.secrets import (
     EnvSecretResolver,
     SecretResolver,
 )

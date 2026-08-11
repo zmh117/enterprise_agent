@@ -7,8 +7,8 @@ import time
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.job.domain.job_dispatch import JobDispatchStatus
 from app.modules.job.infrastructure.repositories import AgentRepository
-from app.modules.job.application.builtin_tool_snapshot import (
-    JobBuiltinToolSnapshotService,
+from app.modules.mcp_tool_runtime.job_snapshot import (
+    JobMcpToolSnapshotService,
 )
 from app.modules.message_bus.application.message_publisher import MessagePublisher
 from app.shared.config import QueueSettings
@@ -32,14 +32,14 @@ class JobDispatchOutboxDispatcher:
         audit_service: AuditService,
         settings: QueueSettings,
         worker_id: str = "job-dispatch-outbox",
-        builtin_tool_snapshot_service: JobBuiltinToolSnapshotService | None = None,
+        mcp_tool_snapshot_service: JobMcpToolSnapshotService | None = None,
     ) -> None:
         self.repository = repository
         self.publisher = publisher
         self.audit_service = audit_service
         self.settings = settings
         self.worker_id = worker_id
-        self.builtin_tool_snapshot_service = builtin_tool_snapshot_service
+        self.mcp_tool_snapshot_service = mcp_tool_snapshot_service
 
     def publish_pending(self, *, limit: int = 100) -> JobDispatchPublishResult:
         stale_before = (
@@ -61,8 +61,8 @@ class JobDispatchOutboxDispatcher:
             if event is None:
                 break
             try:
-                if self.builtin_tool_snapshot_service is not None:
-                    self.builtin_tool_snapshot_service.verify(event.job_id)
+                if self.mcp_tool_snapshot_service is not None:
+                    self.mcp_tool_snapshot_service.verify(event.job_id)
                 self.publisher.publish_agent_job(
                     event.id,
                     event.job_id,

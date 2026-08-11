@@ -170,7 +170,7 @@ class AuthorizationCenterService:
                     applications=[
                         {
                             "application_id": item["application_id"],
-                            "capability_codes": item["capability_codes"],
+                            "tool_identifiers": item["tool_identifiers"],
                             "scopes": item["scopes"],
                         }
                         for item in applications
@@ -465,12 +465,12 @@ class AuthorizationCenterService:
                         "code": access["application_code"],
                         "name": access["application_name"],
                         "source_role_codes": [],
-                        "capability_codes": [],
+                        "tool_identifiers": [],
                         "scopes": [],
                     },
                 )
                 item["source_role_codes"].append(str(role["code"]))
-                item["capability_codes"].extend(access["capability_codes"])
+                item["tool_identifiers"].extend(access["tool_identifiers"])
                 item["scopes"].extend(access["scopes"])
         management = AdminCapabilityService(
             self.identity_repository, self.authorization
@@ -482,7 +482,7 @@ class AuthorizationCenterService:
                 {
                     **item,
                     "source_role_codes": sorted(set(item["source_role_codes"])),
-                    "capability_codes": sorted(set(item["capability_codes"])),
+                    "tool_identifiers": sorted(set(item["tool_identifiers"])),
                     "scopes": list(
                         {
                             str(scope["scope_key"]): scope
@@ -516,14 +516,14 @@ class AuthorizationCenterService:
             applications = [
                 {
                     **application,
-                    "capabilities": [
-                        capability
-                        for capability in application["capabilities"]
-                        if str(capability["capability_code"])
+                    "mcp_tools": [
+                        tool
+                        for tool in application["mcp_tools"]
+                        if str(tool["tool_identifier"])
                         in {
-                            code
+                            identifier
                             for access in actor_access[str(application["id"])]
-                            for code in access["capability_codes"]
+                            for identifier in access["tool_identifiers"]
                         }
                     ],
                 }
@@ -641,25 +641,25 @@ class AuthorizationCenterService:
                         "你无权授予该业务应用",
                     )
             available_codes = {
-                str(value["capability_code"]) for value in application["capabilities"]
+                str(value["tool_identifier"]) for value in application["mcp_tools"]
             }
-            capability_codes = sorted(
+            tool_identifiers = sorted(
                 {
                     str(value).strip()
-                    for value in item.get("capability_codes") or []
+                    for value in item.get("tool_identifiers") or []
                     if str(value).strip()
                 }
             )
-            for code in capability_codes:
-                if code not in available_codes:
+            for identifier in tool_identifiers:
+                if identifier not in available_codes:
                     self._field_error(
-                        f"applications.{index}.capability_codes",
-                        f"能力未在业务应用中装配：{code}",
+                        f"applications.{index}.tool_identifiers",
+                        f"MCP Tool 未在业务应用中装配：{identifier}",
                     )
-                if _FORBIDDEN_BUSINESS_CAPABILITY.search(code):
+                if _FORBIDDEN_BUSINESS_CAPABILITY.search(identifier):
                     self._field_error(
-                        f"applications.{index}.capability_codes",
-                        "角色只允许授予已注册的只读业务能力",
+                        f"applications.{index}.tool_identifiers",
+                        "角色只允许授予已注册的只读 MCP Tool",
                     )
             scopes: list[dict[str, Any]] = []
             seen_scopes: set[str] = set()
@@ -689,20 +689,20 @@ class AuthorizationCenterService:
                 actor_access = self.repository.business_access_for_user(
                     user_id=actor_id, application_id=application_id
                 )
-                grantable_capabilities = {
-                    code
+                grantable_tools = {
+                    identifier
                     for access in actor_access
-                    for code in access["capability_codes"]
+                    for identifier in access["tool_identifiers"]
                 }
                 grantable_scopes = {
                     str(scope["scope_key"])
                     for access in actor_access
                     for scope in access["scopes"]
                 }
-                if not set(capability_codes) <= grantable_capabilities:
+                if not set(tool_identifiers) <= grantable_tools:
                     self._field_error(
-                        f"applications.{index}.capability_codes",
-                        "不能授予超出你可授权范围的业务能力",
+                        f"applications.{index}.tool_identifiers",
+                        "不能授予超出你可授权范围的 MCP Tool",
                     )
                 if not seen_scopes <= grantable_scopes:
                     self._field_error(
@@ -713,7 +713,7 @@ class AuthorizationCenterService:
             result.append(
                 {
                     "application_id": application_id,
-                    "capability_codes": capability_codes,
+                    "tool_identifiers": tool_identifiers,
                     "scopes": scopes,
                 }
             )
@@ -821,7 +821,7 @@ class BusinessAuthorizationService:
         user_id: str,
         application_id: str = "",
         application_code: str = "",
-        capability_code: str = "",
+        tool_identifier: str = "",
         environment: str = "",
         base: str = "",
         workshop: str = "",
@@ -844,29 +844,29 @@ class BusinessAuthorizationService:
         if str(application["status"]) != "enabled":
             return self._decision(False, stage, "application_disabled", [], application)
         role_codes = self.identity_repository.role_codes_for_user(user_id)
-        if capability_code:
-            if not self.repository.application_capability_is_effective(
-                str(application["id"]), capability_code
+        if tool_identifier:
+            if not self.repository.application_tool_is_effective(
+                str(application["id"]), tool_identifier
             ):
                 return self._decision(
                     False,
                     stage,
-                    "application_capability_safety_ceiling",
+                    "application_tool_safety_ceiling",
                     list(role_codes),
                     application,
-                    capability_code=capability_code,
+                    tool_identifier=tool_identifier,
                     scope=self._scope_summary(environment, base, workshop),
                 )
         accesses = self.repository.business_access_for_user(
             user_id=user_id, application_id=str(application["id"])
         )
         matching_roles: list[str] = []
-        capability_allowed = not capability_code
+        tool_allowed = not tool_identifier
         scope_allowed = not (environment or base or workshop)
         for access in accesses:
-            if capability_code and capability_code not in access["capability_codes"]:
+            if tool_identifier and tool_identifier not in access["tool_identifiers"]:
                 continue
-            capability_allowed = True
+            tool_allowed = True
             if environment or base or workshop:
                 if not any(
                     self._scope_matches(
@@ -880,25 +880,25 @@ class BusinessAuthorizationService:
                     continue
                 scope_allowed = True
             matching_roles.append(str(access["role_code"]))
-        if accesses and matching_roles and capability_allowed and scope_allowed:
+        if accesses and matching_roles and tool_allowed and scope_allowed:
             return self._decision(
                 True,
                 stage,
                 "application_role_allow",
                 matching_roles,
                 application,
-                capability_code=capability_code,
+                tool_identifier=tool_identifier,
                 scope=self._scope_summary(environment, base, workshop),
             )
         if accesses:
-            reason = "application_capability_denied" if not capability_allowed else "application_scope_denied"
+            reason = "application_tool_denied" if not tool_allowed else "application_scope_denied"
             return self._decision(
                 False,
                 stage,
                 reason,
                 [str(item["role_code"]) for item in accesses],
                 application,
-                capability_code=capability_code,
+                tool_identifier=tool_identifier,
                 scope=self._scope_summary(environment, base, workshop),
             )
         return self._decision(
@@ -907,7 +907,7 @@ class BusinessAuthorizationService:
             "no_application_role",
             list(role_codes),
             application,
-            capability_code=capability_code,
+            tool_identifier=tool_identifier,
             scope=self._scope_summary(environment, base, workshop),
         )
 
@@ -1000,30 +1000,11 @@ class BusinessAuthorizationService:
             )
         tools = self.repository.database.execute(
             """
-            select allowlist.tool_identifier, allowlist.tool_release_id,
-                   allowlist.handler_version,
-                   allowlist.implementation_digest,
-                   allowlist.public_schema_hash
-              from business_application_publication_builtin_tool allowlist
-              join agent_publication_builtin_tool envelope
-                on envelope.id = allowlist.agent_publication_tool_id
-               and envelope.agent_publication_id = allowlist.agent_publication_id
-               and envelope.tool_release_id = allowlist.tool_release_id
-              join builtin_tool_release release
-                on release.id = allowlist.tool_release_id
-               and release.tool_identifier = allowlist.tool_identifier
-               and release.handler_version = allowlist.handler_version
-               and release.implementation_digest = allowlist.implementation_digest
-              join builtin_tool_installation installation
-                on installation.tool_identifier = allowlist.tool_identifier
-               and installation.handler_version = allowlist.handler_version
-               and installation.implementation_digest =
-                   allowlist.implementation_digest
+            select allowlist.tool_identifier, allowlist.schema_hash
+              from business_application_publication_mcp_tool allowlist
              where allowlist.application_publication_id = ?
                and allowlist.agent_publication_id = ?
-               and release.status in ('ACTIVE', 'DEPRECATED')
-               and installation.installation_status = 'INSTALLED'
-             order by allowlist.tool_identifier
+             order by allowlist.selection_order
             """,
             (publication_id, agent_publication_id),
         )
@@ -1047,7 +1028,7 @@ class BusinessAuthorizationService:
             ):
                 continue
             for tool_identifier in set(
-                str(value) for value in access["capability_codes"]
+                str(value) for value in access["tool_identifiers"]
             ) & roles_by_tool.keys():
                 roles_by_tool[tool_identifier].add(str(access["role_code"]))
         return {
@@ -1063,12 +1044,8 @@ class BusinessAuthorizationService:
             "tool_grants": [
                 {
                     "tool_identifier": str(tool["tool_identifier"]),
-                    "tool_release_id": str(tool["tool_release_id"]),
-                    "handler_version": str(tool["handler_version"]),
-                    "implementation_digest": str(
-                        tool["implementation_digest"]
-                    ),
-                    "public_schema_hash": str(tool["public_schema_hash"]),
+                    "server_code": "tool-mcp",
+                    "schema_hash": str(tool["schema_hash"]),
                     "source_role_codes": sorted(
                         roles_by_tool[str(tool["tool_identifier"])]
                     ),
@@ -1216,7 +1193,7 @@ class BusinessAuthorizationService:
             message = (
                 "当前用户未获得该业务应用权限"
                 if decision["reason"] == "no_application_role"
-                else "当前用户无权使用该应用能力或数据范围"
+                else "当前用户无权使用该应用 MCP Tool 或数据范围"
             )
             raise PermissionDenied(
                 f"Business authorization denied: {decision['reason']}",
@@ -1252,7 +1229,7 @@ class BusinessAuthorizationService:
         role_codes: list[str],
         application: dict[str, Any],
         *,
-        capability_code: str = "",
+        tool_identifier: str = "",
         scope: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         return {
@@ -1264,7 +1241,7 @@ class BusinessAuthorizationService:
                 "id": str(application.get("id") or ""),
                 "code": str(application.get("code") or ""),
             },
-            "capability_code": capability_code,
+            "tool_identifier": tool_identifier,
             "scope": scope or {},
         }
 

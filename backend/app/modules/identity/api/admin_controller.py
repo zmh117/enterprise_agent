@@ -10,10 +10,8 @@ from app.modules.identity.api.dependencies import (
     handle_exception,
     require_action,
 )
-from app.modules.identity.api.external_identity_schemas import (
-    AdminIdentityOverviewResponse,
-    IdentityMutationResponse,
-)
+from app.modules.identity.api.external_identity_schemas import IdentityMutationResponse
+from app.modules.identity.api.external_identity_controller import admin_identity_overview
 
 
 Status = Literal["enabled", "disabled"]
@@ -128,27 +126,6 @@ def build_identity_admin_router() -> APIRouter:
             "sessions": c.identity_repository.list_sessions(user_id),
         }
 
-    @router.get(
-        "/users/{user_id}/external-identities",
-        response_model=AdminIdentityOverviewResponse,
-    )
-    def get_user_external_identities(
-        request: Request,
-        user_id: str,
-    ) -> dict[str, Any]:
-        require_action(
-            request,
-            resource_type="identity",
-            resource_code=user_id,
-            action="manage",
-        )
-        try:
-            return container(
-                request
-            ).external_credential_binding_service.admin_overview(user_id=user_id)
-        except Exception as exc:
-            raise handle_exception(exc) from exc
-
     @router.put("/users/{user_id}")
     def update_user(
         request: Request, user_id: str, payload: UpdateUserRequest
@@ -173,6 +150,19 @@ def build_identity_admin_router() -> APIRouter:
             raise handle_exception(exc) from exc
         return {"user": user}
 
+    @router.get("/users/{user_id}/external-identities")
+    def external_identities(request: Request, user_id: str) -> dict[str, Any]:
+        require_action(
+            request,
+            resource_type="identity",
+            resource_code="*",
+            action="manage",
+        )
+        try:
+            return admin_identity_overview(container(request), user_id)
+        except Exception as exc:
+            raise handle_exception(exc) from exc
+
     @router.post("/users/{user_id}/roles")
     def assign_role(
         request: Request, user_id: str, payload: MembershipRequest
@@ -195,28 +185,6 @@ def build_identity_admin_router() -> APIRouter:
         except Exception as exc:
             raise handle_exception(exc) from exc
         return {"membership": membership}
-
-    @router.post("/users/{user_id}/ones-identities")
-    def bind_ones(
-        request: Request,
-        user_id: str,
-    ) -> dict[str, Any]:
-        require_action(
-            request,
-            resource_type="identity",
-            resource_code=user_id,
-            action="manage",
-            csrf=True,
-        )
-        from fastapi import HTTPException
-
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "external_credential_self_service_required",
-                "message": "ONES 必须由用户本人在“我的外部身份”中绑定",
-            },
-        )
 
     @router.put(
         "/identities/{identity_id}/status",
@@ -401,12 +369,6 @@ def build_identity_admin_router() -> APIRouter:
                     "display_name": "钉钉",
                     "available": dingtalk_count > 0,
                 },
-                {
-                    "code": "ones",
-                    "display_name": c.identity_service.ones_display_name,
-                    "available": c.identity_service.ones_available,
-                    "instance_code": c.identity_service.ones_instance_code,
-                },
             ]
         }
 
@@ -415,7 +377,7 @@ def build_identity_admin_router() -> APIRouter:
         request: Request,
         tenant_code: str,
         external_subject_id: str,
-        provider: Literal["dingtalk", "ones"] = "dingtalk",
+        provider: Literal["dingtalk"] = "dingtalk",
     ) -> dict[str, Any]:
         require_action(
             request, resource_type="identity", resource_code="*", action="manage"

@@ -1220,7 +1220,7 @@ describe("Agent Profile management", () => {
         const payload = agentPayload({}, [replacementConnector])
         if (savedConfig && payload.agent.draft) {
           payload.agent.draft.revision = 3
-          payload.agent.draft.config = savedConfig as typeof config
+          payload.agent.draft.config = savedConfig as unknown as typeof config
         }
         return response(payload)
       })

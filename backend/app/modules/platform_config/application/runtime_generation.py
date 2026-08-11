@@ -6,8 +6,8 @@ import threading
 from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
-from app.modules.internal_api_platform.domain.addressing import RevisionResource
-from app.modules.internal_api_platform.domain.topology import (
+from app.modules.mcp_tool_runtime.domain.addressing import RevisionResource
+from app.modules.mcp_tool_runtime.domain.topology import (
     Base,
     DatabaseConnection,
     DatabaseEngine,
@@ -20,7 +20,7 @@ from app.modules.internal_api_platform.domain.topology import (
     Topology,
     Workshop,
 )
-from app.modules.internal_api_platform.infrastructure.secrets import SecretResolver
+from app.modules.mcp_tool_runtime.infrastructure.secrets import SecretResolver
 from app.modules.platform_config.domain.provider_contracts import (
     ProviderContractRegistry,
 )

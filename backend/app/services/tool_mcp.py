@@ -4,7 +4,6 @@ import asyncio
 import json
 import logging
 import os
-import time
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -22,13 +21,10 @@ from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
 
 from app.bootstrap import Container, build_worker_container
-from app.modules.agent.infrastructure.tool_manifest import TOOL_DEFINITIONS
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
-from app.modules.api_capability.application import GovernedApiRuntimeExecutor
-from app.modules.internal_tools.domain import HandlerRegistryError
-from app.modules.job.application.builtin_tool_snapshot import JobBuiltinToolSnapshotService
+from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
+from app.modules.mcp_tool_runtime.job_snapshot import JobMcpToolSnapshotService
 from app.modules.job.domain.agent_job import AgentJob
-from app.modules.job.domain.execution_policy import JobExecutionPolicySnapshot
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.shared.config import load_settings
@@ -54,8 +50,7 @@ class ToolDescriptor:
     name: str
     description: str
     input_schema: dict[str, Any]
-    kind: str
-    capability_release_id: str = ""
+    schema_hash: str
 
 
 class JobToolService:
@@ -66,13 +61,11 @@ class JobToolService:
         *,
         repository: AgentRepository,
         tool_registry: ToolRegistry,
-        snapshot_service: JobBuiltinToolSnapshotService,
-        governed_executor: GovernedApiRuntimeExecutor | None,
+        snapshot_service: JobMcpToolSnapshotService,
     ) -> None:
         self.repository = repository
         self.tool_registry = tool_registry
         self.snapshot_service = snapshot_service
-        self.governed_executor = governed_executor
 
     def require_job(self, job_id: str) -> AgentJob:
         try:
@@ -89,7 +82,7 @@ class JobToolService:
 
     def catalog(self, job_id: str) -> tuple[ToolDescriptor, ...]:
         job = self.require_job(job_id)
-        return (*self._builtin_descriptors(job), *self._capability_descriptors(job))
+        return self._mcp_descriptors(job)
 
     def descriptor(self, job_id: str, tool_name: str) -> tuple[AgentJob, ToolDescriptor]:
         job = self.require_job(job_id)
@@ -106,83 +99,25 @@ class JobToolService:
         arguments: dict[str, Any],
         correlation_id: str,
     ) -> dict[str, Any]:
-        if descriptor.kind == "builtin":
-            result = self.tool_registry.call(
-                job_id=job.id,
-                user_id=job.internal_user_id or job.user_id,
-                project_code=job.project_code,
-                tool_name=descriptor.name,
-                arguments=arguments,
-                record_tool_call=True,
-            )
-            return _bounded_result(
-                {
-                    "data": result.summary,
-                    "security": {"trust": "untrusted_internal_evidence"},
-                }
-            )
-        executor = self.governed_executor
-        if descriptor.kind != "capability" or executor is None:
-            raise ToolMcpError("tool_mcp_handler_unavailable", "只读工具执行器不可用")
-        started = time.monotonic()
-        tool_call_id = self.repository.add_tool_call(
+        del correlation_id
+        result = self.tool_registry.call(
             job_id=job.id,
+            user_id=job.internal_user_id or job.user_id,
+            project_code=job.project_code,
             tool_name=descriptor.name,
-            request_payload=_bounded_summary(arguments),
-            response_summary={"status": "STARTED"},
-            status="STARTED",
-            duration_ms=0,
-            risk_level="low",
+            arguments=arguments,
+            record_tool_call=True,
         )
-        try:
-            policy = JobExecutionPolicySnapshot.from_dict(job.execution_policy)
-            result = executor.execute(
-                job_id=job.id,
-                tool_call_id=tool_call_id,
-                user_id=job.internal_user_id or job.user_id,
-                application_publication_id=job.business_application_publication_id,
-                agent_publication_id=job.agent_publication_id,
-                capability_release_id=descriptor.capability_release_id,
-                identifier=descriptor.name,
-                agent_input=arguments,
-                correlation_id=correlation_id,
-                timeout_seconds=float(policy.effective.timeout_seconds),
-            )
-            duration_ms = int((time.monotonic() - started) * 1000)
-            summary = {
-                "capability_release_id": descriptor.capability_release_id,
-                "data_classification": "INTERNAL",
-                "normalized_result_size": len(_encoded(result)),
+        return _bounded_result(
+            {
+                "data": result.summary,
+                "metadata": result.metadata,
+                "truncated": result.truncated,
+                "security": {"trust": "untrusted_internal_evidence"},
             }
-            self.repository.complete_tool_call(
-                tool_call_id,
-                response_summary=summary,
-                status="SUCCEEDED",
-                duration_ms=duration_ms,
-            )
-            return _bounded_result(
-                {
-                    "data": result,
-                    "security": {
-                        "trust": "untrusted_external_business_data",
-                        "data_classification": "INTERNAL",
-                    },
-                }
-            )
-        except Exception as exc:
-            safe_message = str(getattr(exc, "safe_message", "只读工具执行失败"))
-            self.repository.complete_tool_call(
-                tool_call_id,
-                response_summary={"error": safe_message},
-                status="FAILED",
-                duration_ms=int((time.monotonic() - started) * 1000),
-            )
-            raise ToolMcpError(
-                str(getattr(exc, "error_code", "tool_mcp_execution_failed")),
-                safe_message,
-            ) from exc
+        )
 
-    def _builtin_descriptors(self, job: AgentJob) -> tuple[ToolDescriptor, ...]:
+    def _mcp_descriptors(self, job: AgentJob) -> tuple[ToolDescriptor, ...]:
         values: list[ToolDescriptor] = []
         for tool_name in self.tool_registry.available_tools():
             if not self.tool_registry.tool_service.is_tool_visible_for_job(
@@ -190,77 +125,24 @@ class JobToolService:
                 tool_name=tool_name,
             ):
                 continue
-            try:
-                definition = self.tool_registry.handler_registry.require(tool_name, "1.0.0")
-            except HandlerRegistryError as exc:
-                raise ToolMcpError(
-                    "tool_mcp_handler_unavailable",
-                    "只读工具 Handler 不可用",
-                ) from exc
+            definition = MCP_TOOL_MANIFEST[tool_name]
             exact = self.snapshot_service.tool_binding(
                 job_id=job.id,
                 tool_identifier=tool_name,
             )
             bindings = exact[1] if exact is not None else []
             if not bindings or any(
-                str(binding.get("public_schema_hash") or "")
-                != definition.public_schema_hash
+                str(binding.get("schema_hash") or binding.get("public_schema_hash") or "")
+                != definition.schema_hash
                 for binding in bindings
             ):
                 raise ToolMcpError("tool_mcp_schema_mismatch", "只读工具 Schema 不一致")
             values.append(
                 ToolDescriptor(
                     name=tool_name,
-                    description=str(TOOL_DEFINITIONS[tool_name]["description"]),
+                    description=definition.description,
                     input_schema=dict(definition.input_schema),
-                    kind="builtin",
-                )
-            )
-        return tuple(values)
-
-    def _capability_descriptors(self, job: AgentJob) -> tuple[ToolDescriptor, ...]:
-        executor = self.governed_executor
-        if (
-            executor is None
-            or not job.agent_publication_id
-            or not job.business_application_publication_id
-        ):
-            return ()
-        rows = executor.execution_repository.database.execute(
-            """
-            select a.identifier, a.capability_release_id
-              from agent_publication_api_capability a
-              join business_application_publication_api_capability p
-                on p.agent_publication_id = a.agent_publication_id
-               and p.capability_release_id = a.capability_release_id
-               and p.identifier = a.identifier
-              join api_capability_release r on r.id = a.capability_release_id
-             where a.agent_publication_id = ?
-               and p.application_publication_id = ?
-               and r.status in ('ACTIVE', 'DEPRECATED')
-             order by a.binding_order
-            """,
-            (job.agent_publication_id, job.business_application_publication_id),
-        )
-        values: list[ToolDescriptor] = []
-        for row in rows:
-            release = executor.resolver.capability_repository.get_release(
-                str(row["capability_release_id"])
-            )
-            schema = release.get("input_schema")
-            if (
-                str(release.get("operation_semantics") or "") != "QUERY"
-                or str(release.get("data_classification") or "") != "INTERNAL"
-                or not isinstance(schema, dict)
-            ):
-                continue
-            values.append(
-                ToolDescriptor(
-                    name=str(row["identifier"]),
-                    description=str(release["description"]),
-                    input_schema=dict(schema),
-                    kind="capability",
-                    capability_release_id=str(row["capability_release_id"]),
+                    schema_hash=definition.schema_hash,
                 )
             )
         return tuple(values)
@@ -411,8 +293,7 @@ def _service_from_container(runtime: Container) -> JobToolService:
     return JobToolService(
         repository=runtime.agent_repository,
         tool_registry=ToolRegistry(runtime.tool_service),
-        snapshot_service=runtime.builtin_tool_snapshot_service,
-        governed_executor=runtime.governed_api_runtime_executor,
+        snapshot_service=runtime.mcp_tool_snapshot_service,
     )
 
 
@@ -455,11 +336,6 @@ def _bounded_result(value: dict[str, Any]) -> dict[str, Any]:
     if len(_encoded(safe)) > MAX_RESPONSE_BYTES:
         raise ToolMcpError("tool_mcp_response_too_large", "只读工具响应超过大小限制")
     return safe
-
-
-def _bounded_summary(value: Any, *, max_chars: int = 4000) -> dict[str, Any]:
-    encoded = json.dumps(value, ensure_ascii=False, default=str)
-    return {"payload": encoded[:max_chars], "truncated": len(encoded) > max_chars}
 
 
 def main() -> None:

@@ -23,6 +23,7 @@ class GovernedResourceRepository:
         environment_id: str | None,
         base_id: str | None,
         workshop_id: str | None,
+        placement: str | None,
         actor_id: str,
     ) -> dict[str, Any]:
         resource_id = new_id("tool_resource")
@@ -31,9 +32,9 @@ class GovernedResourceRepository:
             """
             insert into platform_resource
               (id, code, name, resource_kind, scope_type, environment_id,
-               base_id, workshop_id, status, revision, created_by,
+               base_id, workshop_id, placement, status, revision, created_by,
                created_at, updated_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, 'enabled', 1, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, 'enabled', 1, ?, ?, ?)
             """,
             (
                 resource_id,
@@ -44,6 +45,7 @@ class GovernedResourceRepository:
                 environment_id,
                 base_id,
                 workshop_id,
+                placement,
                 actor_id,
                 timestamp,
                 timestamp,
@@ -125,50 +127,8 @@ class GovernedResourceRepository:
         self,
         resource_id: str,
     ) -> list[dict[str, Any]]:
-        return self.database.execute(
-            """
-            select distinct referenced.publication_id,
-                   referenced.application_code,
-                   referenced.application_name
-              from (
-                    select publication.id as publication_id,
-                           application.code as application_code,
-                           application.name as application_name
-                      from business_application_publication_builtin_tool_resource mapping
-                      join business_application_publication_builtin_tool tool
-                        on tool.id = mapping.application_tool_id
-                      join business_application_publication publication
-                        on publication.id = tool.application_publication_id
-                      join business_application application
-                        on application.id = publication.application_id
-                      join business_application_deployment deployment
-                        on deployment.publication_id = publication.id
-                       and deployment.active = 1
-                      join platform_resource_revision revision
-                        on revision.id = mapping.resource_revision_id
-                     where revision.resource_id = ?
-                    union
-                    select publication.id as publication_id,
-                           application.code as application_code,
-                           application.name as application_name
-                      from business_application_publication_resource mapping
-                      join business_application_publication_handler handler
-                        on handler.id = mapping.application_handler_id
-                      join business_application_publication publication
-                        on publication.id = handler.application_publication_id
-                      join business_application application
-                        on application.id = publication.application_id
-                      join business_application_deployment deployment
-                        on deployment.publication_id = publication.id
-                       and deployment.active = 1
-                      join platform_resource_revision revision
-                        on revision.id = mapping.resource_revision_id
-                     where revision.resource_id = ?
-                   ) referenced
-             order by referenced.application_code, referenced.publication_id
-            """,
-            (resource_id, resource_id),
-        )
+        del resource_id
+        return []
 
     def insert_draft(
         self,

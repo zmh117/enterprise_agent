@@ -4,21 +4,11 @@ import hashlib
 import json
 from typing import Any
 
-from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
 from app.modules.agent.infrastructure.skill_loader import SkillLoader
 from app.modules.agent_config.infrastructure import AgentConfigRepository
-from app.modules.agent_config.application.builtin_tool_envelope import (
-    AgentBuiltinToolEnvelopeService,
-)
-from app.modules.api_capability.infrastructure import (
-    ApiCapabilityRepository,
-    CapabilityPublicationRepository,
-)
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.identity.application.authorization import AuthorizationEvaluator
-from app.modules.internal_tools.application.legacy_migration import (
-    BuiltinToolLegacyWriteGuard,
-)
+from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.modules.model_connection.application import ModelConnectionService
 from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import NotFound, NonRetryableExecutionError
@@ -46,14 +36,10 @@ ALLOWED_CONFIG_KEYS = {
     "business_instructions",
     "model_policy",
     "execution",
-    # Service-level compatibility accepts only an empty historical field; the
-    # HTTP write schema no longer exposes it and the write guard rejects names.
-    "tools",
     "skills",
     "routing",
     "channels",
-    "api_capability_release_ids",
-    "builtin_tool_release_ids",
+    "mcp_tool_ids",
 }
 FORBIDDEN_INSTRUCTION_PATTERNS = (
     "ignore safety",
@@ -79,9 +65,6 @@ class AgentConfigService:
         skill_loader: SkillLoader,
         model_connection_service: ModelConnectionService | None = None,
         allowed_models: set[str] | None = None,
-        api_capability_repository: ApiCapabilityRepository | None = None,
-        capability_publication_repository: (CapabilityPublicationRepository | None) = None,
-        builtin_tool_envelopes: AgentBuiltinToolEnvelopeService | None = None,
     ) -> None:
         self.repository = repository
         self.authorization = authorization
@@ -89,9 +72,6 @@ class AgentConfigService:
         self.skill_loader = skill_loader
         self.model_connection_service = model_connection_service
         self.allowed_models = allowed_models or {"claude-sonnet-4-20250514"}
-        self.api_capability_repository = api_capability_repository
-        self.capability_publication_repository = capability_publication_repository
-        self.builtin_tool_envelopes = builtin_tool_envelopes
 
     def get(self, agent_code: str = DEFAULT_AGENT_CODE) -> dict[str, Any]:
         definition = self.repository.get_definition(agent_code)
@@ -168,19 +148,19 @@ class AgentConfigService:
     def catalog(self) -> dict[str, Any]:
         return {
             "models": sorted(self.allowed_models),
-            "tools": sorted(self.repository.enabled_tools() & ToolRegistry.READONLY_TOOLS),
             "skills": sorted(self.skill_loader.load()),
             "connectors": self.repository.connector_catalog(),
-            "api_capabilities": (
-                self.api_capability_repository.list_catalog(selectable_only=True)
-                if self.api_capability_repository is not None
-                else []
-            ),
-            "builtin_tool_releases": (
-                self.builtin_tool_envelopes.catalog()
-                if self.builtin_tool_envelopes is not None
-                else []
-            ),
+            "mcp_tools": [
+                {
+                    "server_code": "tool-mcp",
+                    "identifier": definition.identifier,
+                    "description": definition.description,
+                    "schema_hash": definition.schema_hash,
+                    "resource_kind": definition.resource_kind,
+                    "read_only": definition.read_only,
+                }
+                for definition in MCP_TOOL_MANIFEST.values()
+            ],
         }
 
     def save_draft(
@@ -192,13 +172,7 @@ class AgentConfigService:
         config: dict[str, Any],
         correlation_id: str = "",
     ) -> dict[str, Any]:
-        BuiltinToolLegacyWriteGuard(
-            self.repository.database
-        ).reject_agent_name_bindings(
-            config.get("tools"),
-            source_id=agent_code,
-            correlation_id=correlation_id,
-        )
+        del correlation_id
         return self._save_draft(
             actor_id=actor_id,
             agent_code=agent_code,
@@ -280,14 +254,7 @@ class AgentConfigService:
         revision_id: str,
         correlation_id: str = "",
     ) -> dict[str, Any]:
-        revision = self.repository.get_revision(revision_id)
-        BuiltinToolLegacyWriteGuard(
-            self.repository.database
-        ).reject_agent_name_bindings(
-            (revision.get("config") or {}).get("tools"),
-            source_id=revision_id,
-            correlation_id=correlation_id,
-        )
+        del correlation_id
         return self._publish(
             actor_id=actor_id,
             agent_code=agent_code,
@@ -349,18 +316,16 @@ class AgentConfigService:
                     error_code="agent_runtime_kind_unsupported",
                 )
             snapshot["runtime_kind"] = runtime_kind
-            release_ids = list(snapshot.pop("api_capability_release_ids", []) or [])
-            builtin_tool_release_ids = list(snapshot.pop("builtin_tool_release_ids", []) or [])
-            builtin_tool_envelope = (
-                self.builtin_tool_envelopes.prepare(builtin_tool_release_ids)
-                if self.builtin_tool_envelopes is not None
-                else []
-            )
-            snapshot["builtin_tool_envelope"] = builtin_tool_envelope
-            if self.capability_publication_repository is not None:
-                snapshot["capability_envelope"] = (
-                    self.capability_publication_repository.prepare_agent_envelope(release_ids)
-                )
+            tool_ids = list(snapshot.pop("mcp_tool_ids", []) or [])
+            mcp_tool_envelope = [
+                {
+                    "server_code": "tool-mcp",
+                    "tool_identifier": identifier,
+                    "schema_hash": MCP_TOOL_MANIFEST[identifier].schema_hash,
+                }
+                for identifier in tool_ids
+            ]
+            snapshot["mcp_tool_envelope"] = mcp_tool_envelope
             model_policy = snapshot.get("model_policy") or {}
             connection_revision_id = str(model_policy.get("model_connection_revision_id") or "")
             if self.model_connection_service is not None and not connection_revision_id:
@@ -402,18 +367,11 @@ class AgentConfigService:
                 config_hash=_hash(snapshot),
                 actor_id=actor_id,
             )
-            if self.capability_publication_repository is not None:
-                self.capability_publication_repository.freeze_agent_envelope(
-                    str(publication["id"]),
-                    release_ids=release_ids,
-                )
-                publication = self.repository.get_publication(str(publication["id"]))
-            if self.builtin_tool_envelopes is not None:
-                self.builtin_tool_envelopes.freeze(
-                    agent_publication_id=str(publication["id"]),
-                    envelopes=builtin_tool_envelope,
-                )
-                publication = self.repository.get_publication(str(publication["id"]))
+            self.repository.freeze_mcp_tools(
+                agent_publication_id=str(publication["id"]),
+                envelopes=mcp_tool_envelope,
+            )
+            publication = self.repository.get_publication(str(publication["id"]))
         self.audit_service.record(
             "agent.config.published",
             status="SUCCEEDED",
@@ -530,15 +488,15 @@ class AgentConfigService:
                 safe_message="Agent Runtime 发布快照完整性校验失败",
                 error_code="agent_publication_runtime_mismatch",
             )
-        if self.builtin_tool_envelopes is not None and "builtin_tool_envelope" in snapshot:
-            envelope = snapshot.get("builtin_tool_envelope")
+        if "mcp_tool_envelope" in snapshot:
+            envelope = snapshot.get("mcp_tool_envelope")
             if not isinstance(envelope, list):
                 raise NonRetryableExecutionError(
-                    "Agent publication Built-in Tool Envelope is invalid",
-                    safe_message="Agent 内置工具发布事实完整性校验失败",
-                    error_code="agent_builtin_tool_envelope_hash_mismatch",
+                    "Agent publication MCP Tool Envelope is invalid",
+                    safe_message="Agent MCP 工具发布事实完整性校验失败",
+                    error_code="agent_mcp_tool_envelope_invalid",
                 )
-            self.builtin_tool_envelopes.verify_frozen(
+            self.repository.verify_mcp_tools(
                 agent_publication_id=str(publication["id"]),
                 envelopes=envelope,
             )
@@ -571,8 +529,7 @@ class AgentConfigService:
     def allowed_tools(self, *, publication_id: str, user_id: str, project_code: str) -> list[str]:
         del user_id, project_code
         assigned = self.repository.publication_tools(publication_id)
-        enabled = self.repository.enabled_tools()
-        return sorted(ToolRegistry.READONLY_TOOLS & assigned & enabled)
+        return sorted(set(MCP_TOOL_MANIFEST) & assigned)
 
     def _normalize(self, config: dict[str, Any]) -> dict[str, Any]:
         normalized = {
@@ -583,19 +540,12 @@ class AgentConfigService:
             "skills": sorted({str(item) for item in (config.get("skills") or [])}),
             "routing": dict(config.get("routing") or {}),
             "channels": dict(config.get("channels") or {}),
-            "api_capability_release_ids": sorted(
+            "mcp_tool_ids": sorted(
                 {
                     str(item).strip()
-                    for item in (config.get("api_capability_release_ids") or [])
+                    for item in (config.get("mcp_tool_ids") or [])
                     if str(item).strip()
                 }
-            ),
-            "builtin_tool_release_ids": sorted(
-                [
-                    str(item).strip()
-                    for item in (config.get("builtin_tool_release_ids") or [])
-                    if str(item).strip()
-                ]
             ),
         }
         return normalized
@@ -604,31 +554,21 @@ class AgentConfigService:
         errors: list[dict[str, str]] = []
         for key in sorted(set(config) - ALLOWED_CONFIG_KEYS):
             errors.append({"field": key, "message": "此字段不可配置"})
-        release_ids = config.get("api_capability_release_ids") or []
-        if not isinstance(release_ids, list) or any(
-            not isinstance(item, str) or not item.strip() for item in release_ids
+        tool_ids = config.get("mcp_tool_ids") or []
+        if not isinstance(tool_ids, list) or any(
+            not isinstance(item, str) or not item.strip() for item in tool_ids
         ):
             errors.append(
                 {
-                    "field": "api_capability_release_ids",
-                    "message": "必须是非空 Release ID 数组",
+                    "field": "mcp_tool_ids",
+                    "message": "必须是非空 MCP Tool identifier 数组",
                 }
             )
-        builtin_release_ids = config.get("builtin_tool_release_ids") or []
-        if not isinstance(builtin_release_ids, list) or any(
-            not isinstance(item, str) or not item.strip() for item in builtin_release_ids
-        ):
+        elif len(tool_ids) != len(set(tool_ids)):
             errors.append(
                 {
-                    "field": "builtin_tool_release_ids",
-                    "message": "必须是非空 Release ID 数组",
-                }
-            )
-        elif len(builtin_release_ids) != len(set(builtin_release_ids)):
-            errors.append(
-                {
-                    "field": "builtin_tool_release_ids",
-                    "message": "Release ID 不得重复",
+                    "field": "mcp_tool_ids",
+                    "message": "MCP Tool identifier 不得重复",
                 }
             )
         nested = {
@@ -742,28 +682,12 @@ class AgentConfigService:
                                 "message": f"连接器 {connector_id} 不可用",
                             }
                         )
-        if self.capability_publication_repository is not None:
-            try:
-                self.capability_publication_repository.prepare_agent_envelope(
-                    list(config.get("api_capability_release_ids") or [])
-                )
-            except (NotFound, NonRetryableExecutionError) as exc:
+        for identifier in config.get("mcp_tool_ids") or []:
+            if str(identifier) not in MCP_TOOL_MANIFEST:
                 errors.append(
                     {
-                        "field": "api_capability_release_ids",
-                        "message": exc.safe_message,
-                    }
-                )
-        if self.builtin_tool_envelopes is not None:
-            try:
-                self.builtin_tool_envelopes.prepare(
-                    list(config.get("builtin_tool_release_ids") or [])
-                )
-            except NonRetryableExecutionError as exc:
-                errors.append(
-                    {
-                        "field": "builtin_tool_release_ids",
-                        "message": exc.safe_message,
+                        "field": "mcp_tool_ids",
+                        "message": f"MCP Tool {identifier} 未注册",
                     }
                 )
         execution = config.get("execution") or {}

@@ -11,15 +11,8 @@ x-runtime-env: &runtime-env
   FEATURE_WEB_ADMIN: ${FEATURE_WEB_ADMIN:-false}
   FEATURE_PUBLISHED_AGENT_RUNTIME: ${FEATURE_PUBLISHED_AGENT_RUNTIME:-false}
   FEATURE_REAL_CLAUDE: ${FEATURE_REAL_CLAUDE:-false}
-  FEATURE_REAL_INTERNAL_TOOLS: ${FEATURE_REAL_INTERNAL_TOOLS:-false}
   WEB_COOKIE_SECURE: ${WEB_COOKIE_SECURE:-true}
   WEB_ALLOWED_ORIGINS: ${WEB_ALLOWED_ORIGINS:-}
-  ONES_IDENTITY_BASE_URL: ${ONES_IDENTITY_BASE_URL:-}
-  ONES_IDENTITY_ALLOWED_HOSTS: ${ONES_IDENTITY_ALLOWED_HOSTS:-}
-  ONES_IDENTITY_ALLOW_INSECURE_LOCAL: ${ONES_IDENTITY_ALLOW_INSECURE_LOCAL:-false}
-  # 容器网络地址作为数据库运行配置不可用时的安全回退。
-  INTERNAL_API_BASE_URL: http://internal-api-platform:9000
-  INTERNAL_API_AUTH_TOKEN_FILE: /run/secrets/internal_api_auth_token
   DINGTALK_RUNTIME_AUTH_TOKEN_FILE: /run/secrets/dingtalk_runtime_auth_token
   # 模型连接由管理端配置，部署环境只负责限制允许访问的主机。
   MODEL_PROVIDER_HOST_ALLOWLIST: ${MODEL_PROVIDER_HOST_ALLOWLIST:-api.deepseek.com}
@@ -132,77 +125,6 @@ services:
       minio:
         condition: service_healthy
 
-  mock-internal-api-platform:
-    profiles: ["mock-tools"]
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-      target: mock-internal-api-platform
-    command:
-      ["python", "-m", "uvicorn", "app.mock_internal_api_platform:create_app", "--factory", "--host", "0.0.0.0", "--port", "9000"]
-    expose:
-      - "9000"
-
-  local-internal-api-platform:
-    profiles: ["local-tools"]
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    command:
-      ["python", "-m", "uvicorn", "app.local_internal_api_platform:create_app", "--factory", "--host", "0.0.0.0", "--port", "9000"]
-    environment:
-      <<: *runtime-env
-    expose:
-      - "9000"
-    depends_on:
-      migrator:
-        condition: service_completed_successfully
-
-  # real-tools: 拓扑感知、多数据源、只读 Internal API Platform。
-  internal-api-platform:
-    # profiles: ["real-tools"]
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-      target: internal-api-platform
-      args:
-        DEBIAN_MIRROR: ${DEBIAN_MIRROR:-https://mirrors.aliyun.com/debian}
-        DEBIAN_SECURITY_MIRROR: ${DEBIAN_SECURITY_MIRROR:-https://mirrors.aliyun.com/debian-security}
-        http_proxy: ${http_proxy:-}
-        https_proxy: ${https_proxy:-}
-        HTTP_PROXY: ${HTTP_PROXY:-${http_proxy:-}}
-        HTTPS_PROXY: ${HTTPS_PROXY:-${https_proxy:-}}
-        no_proxy: ${no_proxy:-}
-        NO_PROXY: ${NO_PROXY:-${no_proxy:-}}
-    command:
-      ["python", "-m", "uvicorn", "app.internal_api_platform:create_app", "--factory", "--host", "0.0.0.0", "--port", "9000"]
-    environment:
-      <<: *runtime-env
-    secrets:
-      - source: internal_api_server_auth_tokens
-        target: internal_api_auth_token
-      - app_config_master_key
-    expose:
-      - "9000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      migrator:
-        condition: service_completed_successfully
-    healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/ready', timeout=3)"
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 15s
-    networks:
-      - default
-      - agent-runtime-control
-
   tool-mcp:
     build:
       context: .
@@ -217,8 +139,6 @@ services:
     environment:
       <<: *runtime-env
     secrets:
-      - source: internal_api_client_auth_token
-        target: internal_api_auth_token
       - app_config_master_key
     expose:
       - "9103"
@@ -227,8 +147,6 @@ services:
         condition: service_healthy
       migrator:
         condition: service_completed_successfully
-      internal-api-platform:
-        condition: service_healthy
     healthcheck:
       test:
         - CMD
@@ -371,8 +289,6 @@ services:
       <<: *api-env
     secrets:
       - dingtalk_runtime_auth_token
-      - source: internal_api_client_auth_token
-        target: internal_api_auth_token
       - app_config_master_key
       - model_probe_auth_token
     ports:
@@ -401,18 +317,6 @@ services:
     networks:
       - default
       - agent-runtime-control
-
-  builtin-tool-compose-acceptance:
-    profiles: ["builtin-tool-acceptance"]
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-      target: builtin-tool-compose-acceptance
-    command: ["python", "-m", "app.acceptance.builtin_tool_composition"]
-    environment:
-      DATABASE_DSN: "sqlite:///:memory:"
-      APP_ENV: compose-acceptance
-    restart: "no"
 
   # Isolated test-only orchestration lives in
   # docker-compose.dual-runtime-acceptance.yml so normal Compose never enables
@@ -496,8 +400,6 @@ services:
     environment:
       <<: *worker-env
     secrets:
-      - source: internal_api_client_auth_token
-        target: internal_api_auth_token
       - app_config_master_key
     depends_on:
       postgres:
@@ -526,8 +428,6 @@ services:
     environment:
       <<: *worker-env
     secrets:
-      - source: internal_api_client_auth_token
-        target: internal_api_auth_token
       - app_config_master_key
     depends_on:
       postgres:
@@ -554,8 +454,6 @@ services:
     environment:
       <<: *worker-env
     secrets:
-      - source: internal_api_client_auth_token
-        target: internal_api_auth_token
       - app_config_master_key
     depends_on:
       postgres:
@@ -591,8 +489,6 @@ services:
     environment:
       <<: *worker-env
     secrets:
-      - source: internal_api_client_auth_token
-        target: internal_api_auth_token
       - app_config_master_key
     depends_on:
       postgres:
@@ -629,8 +525,6 @@ services:
     environment:
       <<: *worker-env
     secrets:
-      - source: internal_api_client_auth_token
-        target: internal_api_auth_token
       - app_config_master_key
     depends_on:
       postgres:
@@ -649,10 +543,6 @@ secrets:
     file: ${APP_CONFIG_MASTER_KEY_FILE:-${HOME}/.config/enterprise-agent/app-config-master-key}
   dingtalk_runtime_auth_token:
     environment: DINGTALK_RUNTIME_AUTH_TOKEN
-  internal_api_server_auth_tokens:
-    file: ${INTERNAL_API_SERVER_AUTH_TOKENS_FILE:-${HOME}/.config/enterprise-agent/internal-api-server-auth-tokens}
-  internal_api_client_auth_token:
-    file: ${INTERNAL_API_CLIENT_AUTH_TOKEN_FILE:-${HOME}/.config/enterprise-agent/internal-api-client-auth-token}
   runtime_grant_private_key:
     file: ${RUNTIME_GRANT_PRIVATE_KEY_FILE:-${HOME}/.config/enterprise-agent/runtime-grant-private.pem}
   runtime_grant_public_key:

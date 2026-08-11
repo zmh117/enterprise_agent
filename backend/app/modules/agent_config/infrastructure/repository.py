@@ -144,14 +144,6 @@ class AgentConfigRepository:
         config_hash: str,
         actor_id: str,
     ) -> dict[str, Any]:
-        if snapshot.get("tools"):
-            raise NonRetryableExecutionError(
-                "New Agent publication cannot persist legacy Tool names",
-                safe_message=(
-                    "旧名称级工具绑定已停止新增；请选择精确 Tool Release 并重新发布"
-                ),
-                error_code="builtin_tool_legacy_write_forbidden",
-            )
         publication_id = new_id("agent_publication")
         timestamp = now_iso()
         inserted = self.database.execute(
@@ -286,16 +278,6 @@ class AgentConfigRepository:
                 "Publication belongs to another Agent",
                 safe_message="发布版本不属于此 Agent",
             )
-        legacy = self.database.execute_one(
-            "select 1 as found from agent_tool_binding where publication_id = ? limit 1",
-            (publication_id,),
-        )
-        if legacy is not None:
-            raise NonRetryableExecutionError(
-                "Legacy Agent publication cannot be reactivated",
-                safe_message="legacy-v1 Agent 发布版本只保留历史审计，不能重新激活",
-                error_code="builtin_tool_legacy_reactivation_forbidden",
-            )
         timestamp = now_iso()
         with self.database.unit_of_work():
             self.database.execute(
@@ -325,24 +307,86 @@ class AgentConfigRepository:
     def publication_tools(self, publication_id: str) -> set[str]:
         rows = self.database.execute(
             """
-            select envelope.tool_identifier as tool_name
-              from agent_publication_builtin_tool envelope
-              join builtin_tool_release release
-                on release.id = envelope.tool_release_id
-               and release.tool_identifier = envelope.tool_identifier
-               and release.handler_version = envelope.handler_version
-               and release.implementation_digest = envelope.implementation_digest
-              join builtin_tool_installation installation
-                on installation.tool_identifier = envelope.tool_identifier
-               and installation.handler_version = envelope.handler_version
-               and installation.implementation_digest = envelope.implementation_digest
-             where envelope.agent_publication_id = ?
-               and release.status in ('ACTIVE', 'DEPRECATED')
-               and installation.installation_status = 'INSTALLED'
+            select tool_identifier as tool_name
+              from agent_publication_mcp_tool
+             where agent_publication_id = ? and server_code = 'tool-mcp'
             """,
             (publication_id,),
         )
         return {str(row["tool_name"]) for row in rows}
+
+    def freeze_mcp_tools(
+        self,
+        *,
+        agent_publication_id: str,
+        envelopes: list[dict[str, Any]],
+    ) -> None:
+        existing = self.database.execute_one(
+            "select 1 as present from agent_publication_mcp_tool where agent_publication_id = ? limit 1",
+            (agent_publication_id,),
+        )
+        if existing is not None:
+            self.verify_mcp_tools(
+                agent_publication_id=agent_publication_id,
+                envelopes=envelopes,
+            )
+            return
+        timestamp = now_iso()
+        for index, envelope in enumerate(envelopes):
+            self.database.execute(
+                """
+                insert into agent_publication_mcp_tool
+                  (agent_publication_id, server_code, tool_identifier,
+                   schema_hash, model_description, selection_order, created_at)
+                values (?, 'tool-mcp', ?, ?, ?, ?, ?)
+                """,
+                (
+                    agent_publication_id,
+                    str(envelope["tool_identifier"]),
+                    str(envelope["schema_hash"]),
+                    str(envelope.get("description") or ""),
+                    index,
+                    timestamp,
+                ),
+            )
+
+    def verify_mcp_tools(
+        self,
+        *,
+        agent_publication_id: str,
+        envelopes: list[dict[str, Any]],
+    ) -> None:
+        rows = self.database.execute(
+            """
+            select server_code, tool_identifier, schema_hash
+              from agent_publication_mcp_tool
+             where agent_publication_id = ?
+             order by selection_order
+            """,
+            (agent_publication_id,),
+        )
+        expected = [
+            {
+                "server_code": "tool-mcp",
+                "tool_identifier": str(item["tool_identifier"]),
+                "schema_hash": str(item["schema_hash"]),
+            }
+            for item in envelopes
+        ]
+        actual = [
+            {
+                "server_code": str(row["server_code"]),
+                "tool_identifier": str(row["tool_identifier"]),
+                "schema_hash": str(row["schema_hash"]),
+            }
+            for row in rows
+        ]
+        if actual != expected:
+            raise NonRetryableExecutionError(
+                "Agent MCP Tool publication facts differ from its snapshot",
+                safe_message="Agent MCP 工具发布事实完整性校验失败",
+                error_code="agent_mcp_tool_envelope_mismatch",
+            )
 
     def publication_connectors(self, publication_id: str, direction: str) -> set[str]:
         rows = self.database.execute(

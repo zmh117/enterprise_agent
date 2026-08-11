@@ -5,8 +5,8 @@ import hashlib
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.job.domain.job_dispatch import JobDispatchEvent
 from app.modules.job.infrastructure.repositories import AgentRepository
-from app.modules.job.application.builtin_tool_snapshot import (
-    JobBuiltinToolSnapshotService,
+from app.modules.mcp_tool_runtime.job_snapshot import (
+    JobMcpToolSnapshotService,
 )
 from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import NotFound, NonRetryableExecutionError
@@ -18,11 +18,11 @@ class JobDispatchOperationsService:
         *,
         repository: AgentRepository,
         audit_service: AuditService,
-        builtin_tool_snapshot_service: JobBuiltinToolSnapshotService | None = None,
+        mcp_tool_snapshot_service: JobMcpToolSnapshotService | None = None,
     ) -> None:
         self.repository = repository
         self.audit_service = audit_service
-        self.builtin_tool_snapshot_service = builtin_tool_snapshot_service
+        self.mcp_tool_snapshot_service = mcp_tool_snapshot_service
 
     def status(
         self,
@@ -59,8 +59,8 @@ class JobDispatchOperationsService:
                 error_code="job_dispatch_replay_reason_required",
             )
         current = self._resolve_exact(event_id=event_id, job_id=job_id)
-        if self.builtin_tool_snapshot_service is not None:
-            self.builtin_tool_snapshot_service.verify(current.job_id)
+        if self.mcp_tool_snapshot_service is not None:
+            self.mcp_tool_snapshot_service.verify(current.job_id)
         replayed = self.repository.replay_dead_dispatch(
             event_id=current.id,
             actor_id=normalized_actor,

@@ -2,13 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.modules.internal_tools.domain import (
-    HandlerRegistry,
-    HandlerRegistryError,
-    build_builtin_handler_registry,
-)
-from app.modules.internal_tools.application.tools import ReadOnlyToolService
-from app.modules.internal_tools.infrastructure.internal_api_client import ToolResult
+from app.modules.mcp_tool_runtime.service import ReadOnlyToolService
+from app.modules.mcp_tool_runtime.contracts import ToolResult
+from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.exceptions import ToolPolicyError
 
 
@@ -29,20 +25,11 @@ class ToolRegistry:
     def __init__(
         self,
         tool_service: ReadOnlyToolService,
-        *,
-        handler_registry: HandlerRegistry | None = None,
     ) -> None:
         self.tool_service = tool_service
-        self.handler_registry = (
-            handler_registry or build_builtin_handler_registry()
-        )
 
     def available_tools(self) -> list[str]:
-        installed = {
-            definition.handler_id
-            for definition in self.handler_registry.definitions()
-        }
-        return sorted(self.READONLY_TOOLS.intersection(installed))
+        return sorted(self.READONLY_TOOLS.intersection(MCP_TOOL_MANIFEST))
 
     def call(
         self,
@@ -56,13 +43,12 @@ class ToolRegistry:
     ) -> ToolResult:
         if tool_name not in self.READONLY_TOOLS:
             raise ToolPolicyError(f"Tool {tool_name} is not registered for MVP")
-        try:
-            self.handler_registry.require(tool_name, "1.0.0")
-        except HandlerRegistryError as exc:
+        if tool_name not in MCP_TOOL_MANIFEST:
             raise ToolPolicyError(
-                f"Tool Handler is not installed: {tool_name}",
-                safe_message="工具 Handler 未安装",
-            ) from exc
+                f"MCP Tool is not installed: {tool_name}",
+                safe_message="MCP 工具未安装",
+                error_code="mcp_tool_not_installed",
+            )
         return self.tool_service.call_tool(
             job_id=job_id,
             user_id=user_id,

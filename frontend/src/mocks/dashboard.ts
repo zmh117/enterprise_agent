@@ -5,14 +5,12 @@ import {
   CableIcon,
   DatabaseZapIcon,
   KeyRoundIcon,
-  BracesIcon,
   LayoutDashboardIcon,
   PackageCheckIcon,
   BotIcon,
   UserSearchIcon,
   UsersIcon,
   ShieldCheckIcon,
-  WrenchIcon,
 } from "lucide-react"
 
 export const prototypeMeta = {
@@ -136,20 +134,6 @@ export const navigationGroups: NavigationGroup[] = [
     label: "平台治理",
     items: [
       {
-        label: "API Capability 配置",
-        icon: BracesIcon,
-        active: true,
-        href: "/platform/api-capabilities",
-        requiredCapability: "api_capabilities.read",
-      },
-      {
-        label: "只读工具",
-        icon: WrenchIcon,
-        active: true,
-        href: "/platform/builtin-tools",
-        requiredCapability: "builtin_tools.read",
-      },
-      {
         label: "工具资源",
         icon: DatabaseZapIcon,
         active: true,
@@ -170,7 +154,7 @@ export const navigationGroups: NavigationGroup[] = [
 export const overviewMetrics = [
   { label: "业务应用", value: "3", note: "覆盖三种入口" },
   { label: "Agent 配置", value: "2", note: "共享一个运行时" },
-  { label: "API 能力", value: "18", note: "只读能力示例" },
+  { label: "MCP 工具", value: "10", note: "代码清单" },
   { label: "示例运行", value: "126", note: "静态记录，非实时" },
 ] as const
 
@@ -178,7 +162,7 @@ export const applicationWorkspaces = [
   { name: "应用概览", description: "装配关系、负责人和状态" },
   { name: "流程设计", description: "触发、确定性节点与 Agent 节点" },
   { name: "渠道与触发器", description: "入口、会话策略与投递目标" },
-  { name: "能力授权", description: "应用级能力白名单" },
+  { name: "工具授权", description: "应用级 MCP Tool 子集" },
   { name: "发布管理", description: "冻结引用版本与回滚记录" },
 ] as const
 
@@ -187,8 +171,8 @@ export const platformFlow = [
   { label: "业务应用", description: "业务入口装配" },
   { label: "工作流", description: "确定性流程" },
   { label: "Agent 运行时", description: "共享执行内核" },
-  { label: "能力网关", description: "授权与审计" },
-  { label: "API 平台", description: "受控业务 API" },
+  { label: "tool-mcp", description: "标准 MCP Tool Server" },
+  { label: "工具资源", description: "唯一资源与只读执行" },
   { label: "结果投递", description: "原会话 / 通知" },
 ] as const
 

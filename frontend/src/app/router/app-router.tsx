@@ -18,12 +18,10 @@ import {
 import { DebugJobPage } from "@/contexts/operations/presentation/debug-job-page"
 import { CredentialCenterPage } from "@/contexts/platform-governance/presentation/credential-center-page"
 import { ToolResourcesPage } from "@/contexts/platform-governance/presentation/tool-resources-page"
-import { BuiltinToolsPage } from "@/contexts/platform-governance/presentation/builtin-tools-page"
 import { UserDetailPage, UsersPage } from "@/contexts/users"
 import { DingTalkIdentityDiscoveryPage } from "@/contexts/dingtalk-identity-discovery"
 import { RoleAuthorizationPage, RoleDetailPage } from "@/contexts/authorization"
 import { CapabilityGate } from "@/contexts/auth/presentation/capability-gate"
-import { ApiCapabilityConfigurationPage } from "@/contexts/api-capabilities/presentation/api-capability-configuration-page"
 import { MyExternalIdentitiesPage } from "@/contexts/external-identities"
 
 function protectedPage(capability: string, page: ReactNode) {
@@ -103,17 +101,6 @@ export const appRouter = createBrowserRouter([
       {
         path: "/me/external-identities",
         element: <MyExternalIdentitiesPage />,
-      },
-      {
-        path: "/platform/api-capabilities",
-        element: protectedPage(
-          "api_capabilities.read",
-          <ApiCapabilityConfigurationPage />
-        ),
-      },
-      {
-        path: "/platform/builtin-tools",
-        element: protectedPage("builtin_tools.read", <BuiltinToolsPage />),
       },
       {
         path: "/platform/secrets",

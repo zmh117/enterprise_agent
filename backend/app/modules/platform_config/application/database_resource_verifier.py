@@ -282,10 +282,10 @@ class Oracle11gReadonlyAccountProbe:
     ) -> dict[str, Any]:
         assert_external_io_allowed("resource_verify.oracle")
         if self._client_ready is None:
-            from app.modules.internal_api_platform.domain.topology import (
+            from app.modules.mcp_tool_runtime.domain.topology import (
                 OracleClientMode,
             )
-            from app.modules.internal_api_platform.infrastructure.db.oracle_client import (
+            from app.modules.mcp_tool_runtime.infrastructure.db.oracle_client import (
                 assert_oracle_client_mode_ready,
             )
 
@@ -395,7 +395,7 @@ class Oracle11gReadonlyAccountProbe:
             client_version = "19c"
             client_architecture = "verified"
             if self._client_ready is None:
-                from app.modules.internal_api_platform.infrastructure.db.oracle_client import (
+                from app.modules.mcp_tool_runtime.infrastructure.db.oracle_client import (
                     thick_init_result,
                 )
 

@@ -23,11 +23,6 @@ class ExternalIdentityProvider(StrEnum):
             ) from exc
 
 
-class ExternalCredentialUsageSource(StrEnum):
-    ADMIN_TEST = "ADMIN_TEST"
-    RUNTIME = "RUNTIME"
-
-
 @dataclass(frozen=True)
 class DingTalkApplicationObservationInput:
     external_identity_id: str

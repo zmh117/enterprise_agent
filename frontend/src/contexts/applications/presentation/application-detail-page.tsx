@@ -7,11 +7,9 @@ import {
   GitBranchIcon,
   LoaderCircleIcon,
   PackageCheckIcon,
-  PlusIcon,
   PowerIcon,
   SaveIcon,
   ShieldAlertIcon,
-  Trash2Icon,
   WorkflowIcon,
 } from "lucide-react"
 import { Link, useParams } from "react-router-dom"
@@ -259,10 +257,7 @@ function OverviewTab({ application }: { application: BusinessApplication }) {
                 application.deployments.filter((item) => item.active).length
               ),
             ],
-            [
-              "能力目录",
-              application.capability_catalog_connected ? "已接入" : "未接入",
-            ],
+            ["MCP 工具", String(draft?.mcp_tools.length ?? 0)],
             [
               "数据面",
               application.runtime_status === "wired"
@@ -311,8 +306,7 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
                 setForm({
                   ...form,
                   agent_publication_id: event.target.value,
-                  api_capability_release_ids: [],
-                  builtin_tools: [],
+                  mcp_tools: [],
                 })
               }
             >
@@ -359,49 +353,7 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
       <PolicyEditor form={form} setForm={setForm} />
       <BindingsEditor form={form} setForm={setForm} catalog={catalog.data} />
 
-      <Card className="shadow-none">
-        <CardHeader>
-          <CardTitle>API Capability Allowlist</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {!form.agent_publication_id ? (
-            <div className="rounded-md border border-dashed p-4 text-sm leading-6 text-muted-foreground">
-              请先选择 Agent 发布版本。应用不能配置 Agent Envelope 之外的
-              Capability。
-            </div>
-          ) : !catalog.data?.capability_catalog_connected ? (
-            <div className="rounded-md border border-dashed p-4 text-sm leading-6 text-muted-foreground">
-              Capability 发布目录尚未接入，当前 Allowlist 必须为空。
-            </div>
-          ) : (
-            <ApplicationCapabilitySelector
-              releases={
-                catalog.data.api_capabilities_by_agent_publication[
-                  form.agent_publication_id
-                ] ?? []
-              }
-              selected={form.api_capability_release_ids}
-              onChange={(api_capability_release_ids) =>
-                setForm({ ...form, api_capability_release_ids })
-              }
-            />
-          )}
-          {form.agent_publication_id &&
-          catalog.data?.capability_catalog_connected &&
-          (
-            catalog.data.api_capabilities_by_agent_publication[
-              form.agent_publication_id
-            ] ?? []
-          ).length === 0 ? (
-            <div className="rounded-md border border-dashed p-4 text-sm leading-6 text-muted-foreground">
-              所选 Agent 发布版本没有冻结任何 Capability，因此应用不能配置
-              Capability。
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
-
-      <BuiltinToolCompositionEditor
+      <McpToolSelector
         form={form}
         setForm={setForm}
         catalog={catalog.data}
@@ -426,109 +378,6 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
         <p className="sr-only">当前草稿修订为 {draft.revision}</p>
       ) : null}
     </form>
-  )
-}
-
-function ApplicationCapabilitySelector({
-  releases,
-  selected,
-  onChange,
-}: {
-  releases: Array<{
-    identifier: string
-    release_id: string
-    description: string
-    release_revision: number
-    status: string
-    release_note: string
-    deprecation_reason: string
-    replacement_release_id?: string | null
-    selectable: boolean
-  }>
-  selected: string[]
-  onChange: (value: string[]) => void
-}) {
-  return (
-    <div className="space-y-3">
-      <p className="text-sm leading-6 text-muted-foreground">
-        这里只展示所选 Agent Publication 已冻结的精确 Release。 Application
-        Allowlist 是它的显式子集，不接受任意 Identifier 或版本输入。
-      </p>
-      <div className="grid gap-2 md:grid-cols-2">
-        {releases.map((release) => {
-          const checked = selected.includes(release.release_id)
-          return (
-            <label
-              key={release.release_id}
-              className={`flex items-start gap-3 rounded-md border p-3 text-sm ${
-                release.selectable ? "" : "bg-muted/40"
-              }`}
-            >
-              <Checkbox
-                aria-label={`选择 Capability ${release.identifier}`}
-                checked={checked}
-                disabled={!release.selectable}
-                onCheckedChange={(value) =>
-                  onChange(
-                    value
-                      ? [...selected, release.release_id]
-                      : selected.filter((item) => item !== release.release_id)
-                  )
-                }
-              />
-              <span className="min-w-0 flex-1">
-                <span className="flex flex-wrap items-center gap-2">
-                  <span className="font-mono font-medium break-all text-foreground">
-                    {release.identifier}
-                  </span>
-                  <Badge variant="outline">
-                    r{release.release_revision} · {release.status}
-                  </Badge>
-                </span>
-                <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-                  {release.description}
-                </span>
-                {release.release_note ? (
-                  <span className="mt-1 block text-xs text-muted-foreground">
-                    发布备注：{release.release_note}
-                  </span>
-                ) : null}
-                {!release.selectable ? (
-                  <span className="mt-1 block text-xs text-amber-700">
-                    不兼容原因：Release 已为 {release.status}
-                    {release.deprecation_reason
-                      ? `（${release.deprecation_reason}）`
-                      : ""}
-                    ，新应用发布不能选择。
-                  </span>
-                ) : null}
-              </span>
-            </label>
-          )
-        })}
-      </div>
-      {selected
-        .filter((id) => !releases.some((item) => item.release_id === id))
-        .map((id) => (
-          <div
-            key={id}
-            className="flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm"
-          >
-            <span>
-              不兼容原因：Release <span className="font-mono">{id}</span>{" "}
-              不属于当前 Agent Publication Envelope。
-            </span>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => onChange(selected.filter((item) => item !== id))}
-            >
-              移除
-            </Button>
-          </div>
-        ))}
-    </div>
   )
 }
 
@@ -645,11 +494,7 @@ function PolicyEditor({
 
 type Catalog = ReturnType<typeof useApplicationCatalog>["data"]
 
-type BuiltinToolMapping =
-  SaveDraftInput["builtin_tools"][number]["resources"][number]
-type TargetPath = SaveDraftInput["target_paths"][number]
-
-function BuiltinToolCompositionEditor({
+function McpToolSelector({
   form,
   setForm,
   catalog,
@@ -659,759 +504,64 @@ function BuiltinToolCompositionEditor({
   catalog: Catalog
 }) {
   const envelope =
-    catalog?.builtin_tools_by_agent_publication[form.agent_publication_id] ?? []
+    catalog?.mcp_tools_by_agent_publication[form.agent_publication_id] ?? []
 
-  function toggleTarget(target: TargetPath) {
-    const key = targetKey(target)
-    const checked = form.target_paths.some((item) => targetKey(item) === key)
-    const target_paths = checked
-      ? form.target_paths.filter((item) => targetKey(item) !== key)
-      : [...form.target_paths, target]
-    setForm({ ...form, target_paths })
-  }
-
-  function toggleTool(toolReleaseId: string) {
-    const checked = form.builtin_tools.some(
-      (item) => item.tool_release_id === toolReleaseId
-    )
+  function toggle(identifier: string) {
     setForm({
       ...form,
-      builtin_tools: checked
-        ? form.builtin_tools.filter(
-            (item) => item.tool_release_id !== toolReleaseId
-          )
-        : [
-            ...form.builtin_tools,
-            { tool_release_id: toolReleaseId, resources: [] },
-          ],
+      mcp_tools: form.mcp_tools.includes(identifier)
+        ? form.mcp_tools.filter((item) => item !== identifier)
+        : [...form.mcp_tools, identifier],
     })
   }
 
   return (
     <Card className="shadow-none">
       <CardHeader>
-        <CardTitle>Built-in Tool Allowlist 与 Resource Mapping</CardTitle>
+        <CardTitle>MCP Tool 显式子集</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-5">
+      <CardContent className="space-y-4">
         <p className="text-sm leading-6 text-muted-foreground">
-          Application 只能选择当前 Agent Publication Envelope
-          的显式子集；每个业务叶子目标必须为必需资源槽解析到唯一资源，cloud +
-          edge 双候选则要求运行时 Tool Call 明确 placement。
+          应用只能选择 Agent 发布版本已经冻结的 tool-mcp 工具。资源不在应用中做
+          Mapping；实际调用时根据 Job 目标唯一解析已发布 Tool Resource。
         </p>
         {!form.agent_publication_id ? (
-          <EmptyBinding text="请先选择 Agent Publication；应用不能自选 Identifier 或 Tool 版本。" />
+          <EmptyBinding text="请先选择 Agent 发布版本。" />
+        ) : !envelope.length ? (
+          <EmptyBinding text="所选 Agent 发布版本没有 MCP Tool。" />
         ) : (
-          <>
-            <section className="space-y-3 rounded-lg border p-4">
-              <h3 className="text-sm font-medium">1. 业务叶子目标</h3>
-              <p className="text-xs text-muted-foreground">
-                目录只提供真实叶子：无基地环境、无车间基地，或具体车间；不会生成
-                default/none 虚节点。
-              </p>
-              <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-                {(catalog?.target_paths ?? []).map((target) => {
-                  const value: TargetPath = {
-                    target_scope_type: target.target_scope_type,
-                    environment_code: target.environment_code,
-                    base_code: target.base_code,
-                    workshop_code: target.workshop_code,
-                  }
-                  const checked = form.target_paths.some(
-                    (item) => targetKey(item) === targetKey(value)
-                  )
-                  return (
-                    <label
-                      key={targetKey(value)}
-                      className="flex items-start gap-3 rounded-md border p-3 text-sm"
-                    >
-                      <Checkbox
-                        aria-label={`选择业务目标 ${targetPathLabel(value)}`}
-                        checked={checked}
-                        onCheckedChange={() => toggleTarget(value)}
-                      />
-                      <span>
-                        <span className="block font-medium">
-                          {target.display_name}
-                        </span>
-                        <span className="mt-1 block font-mono text-xs text-muted-foreground">
-                          {targetPathLabel(value)}
-                        </span>
-                      </span>
-                    </label>
-                  )
-                })}
-              </div>
-              {catalog?.target_paths.length === 0 ? (
-                <EmptyBinding text="当前没有可用的真实叶子目标，请先在平台拓扑中配置环境/基地/车间。" />
-              ) : null}
-            </section>
-
-            <section className="space-y-3 rounded-lg border p-4">
-              <h3 className="text-sm font-medium">
-                2. Agent Envelope 显式子集
-              </h3>
-              <div className="grid gap-2 md:grid-cols-2">
-                {envelope.map((release) => {
-                  const checked = form.builtin_tools.some(
-                    (item) => item.tool_release_id === release.tool_release_id
-                  )
-                  return (
-                    <label
-                      key={release.tool_release_id}
-                      className={cn(
-                        "flex items-start gap-3 rounded-md border p-3 text-sm",
-                        !release.selectable && "border-amber-300 bg-amber-50/60"
-                      )}
-                    >
-                      <Checkbox
-                        aria-label={`选择 Built-in Tool ${release.tool_identifier}`}
-                        checked={checked}
-                        disabled={!release.selectable && !checked}
-                        onCheckedChange={() =>
-                          toggleTool(release.tool_release_id)
-                        }
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="flex flex-wrap items-center gap-2 font-medium">
-                          {release.display_name}
-                          <Badge variant="outline">
-                            r{release.release_revision} · Tool v
-                            {release.tool_semantic_version}
-                          </Badge>
-                          <Badge
-                            variant={
-                              release.selectable ? "default" : "destructive"
-                            }
-                          >
-                            {release.release_status} /{" "}
-                            {release.installation_status}
-                          </Badge>
-                        </span>
-                        <span className="mt-1 block font-mono text-xs text-muted-foreground">
-                          {release.tool_identifier} · digest{" "}
-                          {release.implementation_digest.slice(0, 12)}…
-                        </span>
-                      </span>
-                    </label>
-                  )
-                })}
-              </div>
-              {!envelope.length ? (
-                <EmptyBinding text="所选 Agent Publication 没有冻结 Built-in Tool Envelope。" />
-              ) : null}
-              {form.builtin_tools
-                .filter(
-                  (selection) =>
-                    !envelope.some(
-                      (item) =>
-                        item.tool_release_id === selection.tool_release_id
-                    )
-                )
-                .map((selection) => (
-                  <div
-                    key={selection.tool_release_id}
-                    className="flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
-                  >
-                    <span>
-                      Release {selection.tool_release_id} 不属于当前 Agent
-                      Envelope。
-                    </span>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => toggleTool(selection.tool_release_id)}
-                    >
-                      移除
-                    </Button>
-                  </div>
-                ))}
-            </section>
-
-            {form.builtin_tools.map((selection, toolIndex) => {
-              const release = envelope.find(
-                (item) => item.tool_release_id === selection.tool_release_id
-              )
-              if (!release || !catalog) return null
-              return (
-                <ToolResourceMappings
-                  key={selection.tool_release_id}
-                  form={form}
-                  setForm={setForm}
-                  catalog={catalog}
-                  toolIndex={toolIndex}
-                  release={release}
+          <div className="grid gap-2 md:grid-cols-2">
+            {envelope.map((tool) => (
+              <label
+                key={tool.tool_identifier}
+                className="flex items-start gap-3 rounded-md border p-3 text-sm"
+              >
+                <Checkbox
+                  aria-label={`选择 MCP Tool ${tool.tool_identifier}`}
+                  checked={form.mcp_tools.includes(tool.tool_identifier)}
+                  onCheckedChange={() => toggle(tool.tool_identifier)}
                 />
-              )
-            })}
-
-            <TargetMatrix form={form} catalog={catalog} envelope={envelope} />
-          </>
+                <span className="min-w-0 flex-1">
+                  <span className="font-mono font-medium break-all">
+                    {tool.tool_identifier}
+                  </span>
+                  <span className="mt-1 block text-xs text-muted-foreground">
+                    {tool.resource_kind
+                      ? `调用时解析 ${tool.resource_kind} Resource`
+                      : "不需要外部 Resource"}
+                  </span>
+                  {tool.description ? (
+                    <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                      {tool.description}
+                    </span>
+                  ) : null}
+                </span>
+              </label>
+            ))}
+          </div>
         )}
       </CardContent>
     </Card>
-  )
-}
-
-function ToolResourceMappings({
-  form,
-  setForm,
-  catalog,
-  toolIndex,
-  release,
-}: {
-  form: SaveDraftInput
-  setForm: (value: SaveDraftInput) => void
-  catalog: NonNullable<Catalog>
-  toolIndex: number
-  release: NonNullable<Catalog>["builtin_tools_by_agent_publication"][string][number]
-}) {
-  const selection = form.builtin_tools[toolIndex]
-  if (!selection) return null
-
-  function updateMappings(resources: BuiltinToolMapping[]) {
-    setForm({
-      ...form,
-      builtin_tools: form.builtin_tools.map((item, index) =>
-        index === toolIndex ? { ...item, resources } : item
-      ),
-    })
-  }
-
-  function addMapping(slot: (typeof release.resource_slots)[number]) {
-    const target = form.target_paths[0]
-    if (!target) return
-    updateMappings([
-      ...selection.resources,
-      {
-        resource_slot: slot.code,
-        target_scope_type: target.target_scope_type,
-        environment_code: target.environment_code,
-        base_code: target.base_code,
-        workshop_code: target.workshop_code,
-        placement: null,
-        resource_revision_id: "",
-        workshop_partition_policy_revision_id: "",
-        loki_scope_policy_revision_id: "",
-      },
-    ])
-  }
-
-  return (
-    <section className="space-y-4 rounded-lg border p-4">
-      <div>
-        <h3 className="font-medium">
-          3. {release.display_name} Resource Mapping
-        </h3>
-        <p className="mt-1 font-mono text-xs text-muted-foreground">
-          {release.tool_identifier} · {release.tool_release_id}
-        </p>
-      </div>
-      {!release.resource_slots.length ? (
-        <EmptyBinding text="该 Tool Manifest 不声明 Resource Slot，无需映射资源。" />
-      ) : null}
-      {release.resource_slots.map((slot) => {
-        const indexes = selection.resources.flatMap((mapping, index) =>
-          mapping.resource_slot === slot.code ? [index] : []
-        )
-        return (
-          <div key={slot.code} className="space-y-3 rounded-md bg-muted/25 p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="text-sm font-medium">
-                Slot: {slot.code} · {slot.resource_kind}
-                {slot.required ? (
-                  <Badge className="ml-2" variant="secondary">
-                    必需
-                  </Badge>
-                ) : null}
-              </div>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={!form.target_paths.length}
-                onClick={() => addMapping(slot)}
-              >
-                <PlusIcon />
-                添加 Mapping
-              </Button>
-            </div>
-            {indexes.map((mappingIndex) => (
-              <MappingRow
-                key={mappingIndex}
-                mapping={selection.resources[mappingIndex]!}
-                slot={slot}
-                targets={form.target_paths}
-                catalog={catalog}
-                onChange={(next) =>
-                  updateMappings(
-                    selection.resources.map((item, index) =>
-                      index === mappingIndex ? next : item
-                    )
-                  )
-                }
-                onRemove={() =>
-                  updateMappings(
-                    selection.resources.filter(
-                      (_, index) => index !== mappingIndex
-                    )
-                  )
-                }
-              />
-            ))}
-            {!indexes.length ? (
-              <EmptyBinding text="该 Slot 尚无 Resource Mapping。" />
-            ) : null}
-          </div>
-        )
-      })}
-    </section>
-  )
-}
-
-function MappingRow({
-  mapping,
-  slot,
-  targets,
-  catalog,
-  onChange,
-  onRemove,
-}: {
-  mapping: BuiltinToolMapping
-  slot: {
-    code: string
-    resource_kind: "database" | "redis" | "loki"
-    required: boolean
-    allowed_scope_types: Array<"environment" | "base" | "workshop">
-  }
-  targets: TargetPath[]
-  catalog: NonNullable<Catalog>
-  onChange: (value: BuiltinToolMapping) => void
-  onRemove: () => void
-}) {
-  const scopes = mappingScopes(targets, slot.resource_kind).filter((target) =>
-    target.target_scope_type === "global"
-      ? slot.resource_kind === "loki"
-      : slot.allowed_scope_types.includes(target.target_scope_type)
-  )
-  const currentScopeKey = mappingScopeKey(mapping)
-  const resourceOptions = catalog.resource_revisions.filter(
-    (resource) =>
-      resource.resource_kind === slot.resource_kind &&
-      resourceCoversTarget(resource, mapping)
-  )
-  const workshopPolicies = catalog.workshop_policy_revisions.filter(
-    (policy) =>
-      mapping.target_scope_type === "workshop" &&
-      policy.environment_code === mapping.environment_code &&
-      policy.base_code === mapping.base_code &&
-      policy.workshop_code === mapping.workshop_code &&
-      (slot.resource_kind === "database"
-        ? policy.database_rule_enabled
-        : slot.resource_kind === "redis" && policy.redis_rule_enabled)
-  )
-  const lokiPolicies = catalog.loki_policy_revisions.filter(
-    (policy) =>
-      policy.resource_revision_id === mapping.resource_revision_id &&
-      policy.environment_code === mapping.environment_code &&
-      (!policy.base_code || policy.base_code === mapping.base_code)
-  )
-  return (
-    <div className="space-y-3 rounded-md border bg-background p-3">
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <Field
-          label="映射范围"
-          htmlFor={`mapping-target-${slot.code}-${currentScopeKey}`}
-        >
-          <select
-            id={`mapping-target-${slot.code}-${currentScopeKey}`}
-            aria-label={`Mapping ${slot.code} 目标范围`}
-            className={selectClass}
-            value={currentScopeKey}
-            onChange={(event) => {
-              const target = scopes.find(
-                (item) => mappingScopeKey(item) === event.target.value
-              )
-              if (!target) return
-              onChange({
-                ...mapping,
-                ...target,
-                resource_revision_id: "",
-                workshop_partition_policy_revision_id: "",
-                loki_scope_policy_revision_id: "",
-              })
-            }}
-          >
-            {scopes.map((target) => (
-              <option
-                key={mappingScopeKey(target)}
-                value={mappingScopeKey(target)}
-              >
-                {mappingTargetLabel(target)}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field
-          label="Placement"
-          htmlFor={`mapping-placement-${slot.code}-${currentScopeKey}`}
-        >
-          <select
-            id={`mapping-placement-${slot.code}-${currentScopeKey}`}
-            aria-label={`Mapping ${slot.code} Placement`}
-            className={selectClass}
-            value={mapping.placement ?? "none"}
-            disabled={slot.resource_kind === "loki"}
-            onChange={(event) =>
-              onChange({
-                ...mapping,
-                placement:
-                  event.target.value === "none"
-                    ? null
-                    : (event.target.value as "cloud" | "edge"),
-              })
-            }
-          >
-            <option value="none">无 placement</option>
-            <option value="cloud">cloud</option>
-            <option value="edge">edge</option>
-          </select>
-        </Field>
-        <Field
-          label="Published Resource Revision"
-          htmlFor={`mapping-resource-${slot.code}-${currentScopeKey}`}
-        >
-          <select
-            id={`mapping-resource-${slot.code}-${currentScopeKey}`}
-            aria-label={`Mapping ${slot.code} Resource Revision`}
-            className={selectClass}
-            value={mapping.resource_revision_id}
-            onChange={(event) =>
-              onChange({
-                ...mapping,
-                resource_revision_id: event.target.value,
-                loki_scope_policy_revision_id: "",
-              })
-            }
-          >
-            <option value="">请选择 Resource Revision</option>
-            {resourceOptions.map((resource) => (
-              <option
-                key={resource.resource_revision_id}
-                value={resource.resource_revision_id}
-              >
-                {resource.resource_name || resource.resource_code} · r
-                {resource.resource_revision} · {resource.scope_type}
-              </option>
-            ))}
-          </select>
-        </Field>
-        {slot.resource_kind === "loki" ? (
-          <Field
-            label="Loki Scope Policy"
-            htmlFor={`mapping-policy-${slot.code}-${currentScopeKey}`}
-          >
-            <select
-              id={`mapping-policy-${slot.code}-${currentScopeKey}`}
-              aria-label={`Mapping ${slot.code} Loki Policy`}
-              className={selectClass}
-              value={mapping.loki_scope_policy_revision_id}
-              onChange={(event) =>
-                onChange({
-                  ...mapping,
-                  loki_scope_policy_revision_id: event.target.value,
-                })
-              }
-            >
-              <option value="">请选择 Published Policy</option>
-              {lokiPolicies.map((policy) => (
-                <option
-                  key={policy.policy_revision_id}
-                  value={policy.policy_revision_id}
-                >
-                  {policy.policy_code} · r{policy.policy_revision} ·{" "}
-                  {policy.health_status}
-                </option>
-              ))}
-            </select>
-          </Field>
-        ) : mapping.target_scope_type === "workshop" ? (
-          <Field
-            label="Workshop Partition Policy"
-            htmlFor={`mapping-policy-${slot.code}-${currentScopeKey}`}
-          >
-            <select
-              id={`mapping-policy-${slot.code}-${currentScopeKey}`}
-              aria-label={`Mapping ${slot.code} Workshop Policy`}
-              className={selectClass}
-              value={mapping.workshop_partition_policy_revision_id}
-              onChange={(event) =>
-                onChange({
-                  ...mapping,
-                  workshop_partition_policy_revision_id: event.target.value,
-                })
-              }
-            >
-              <option value="">请选择 Published Policy</option>
-              {workshopPolicies.map((policy) => (
-                <option
-                  key={policy.policy_revision_id}
-                  value={policy.policy_revision_id}
-                >
-                  {policy.policy_code} · r{policy.policy_revision}
-                </option>
-              ))}
-            </select>
-          </Field>
-        ) : null}
-      </div>
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-xs text-muted-foreground">
-          候选资源 {resourceOptions.length} 个；策略选项{" "}
-          {slot.resource_kind === "loki"
-            ? lokiPolicies.length
-            : workshopPolicies.length}{" "}
-          个。
-        </p>
-        <Button
-          type="button"
-          size="sm"
-          variant="destructive"
-          onClick={onRemove}
-        >
-          <Trash2Icon />
-          删除 Mapping
-        </Button>
-      </div>
-    </div>
-  )
-}
-
-function TargetMatrix({
-  form,
-  catalog,
-  envelope,
-}: {
-  form: SaveDraftInput
-  catalog: Catalog
-  envelope: NonNullable<Catalog>["builtin_tools_by_agent_publication"][string]
-}) {
-  const rows = form.builtin_tools.flatMap((selection) => {
-    const release = envelope.find(
-      (item) => item.tool_release_id === selection.tool_release_id
-    )
-    if (!release) return []
-    return release.resource_slots.flatMap((slot) =>
-      form.target_paths.map((target) => {
-        const candidates = selection.resources.filter(
-          (mapping) =>
-            mapping.resource_slot === slot.code &&
-            mappingCoversTarget(mapping, target)
-        )
-        return {
-          release,
-          slot,
-          target,
-          candidates,
-          result: matrixResult(candidates, slot.resource_kind, catalog),
-        }
-      })
-    )
-  })
-  return (
-    <section className="space-y-3 rounded-lg border p-4">
-      <div>
-        <h3 className="text-sm font-medium">4. 有限目标矩阵预检</h3>
-        <p className="mt-1 text-xs text-muted-foreground">
-          这是保存前提示；后端发布仍会以精确 Revision、Scope、Policy 与 hash
-          重新展开并失败关闭。
-        </p>
-      </div>
-      {!rows.length ? (
-        <EmptyBinding text="选择带资源槽的 Tool 和至少一个业务目标后生成矩阵。" />
-      ) : (
-        <div className="space-y-2">
-          {rows.map((row) => (
-            <div
-              key={`${row.release.tool_release_id}:${row.slot.code}:${targetKey(row.target)}`}
-              className="grid gap-2 rounded-md border p-3 text-xs md:grid-cols-[1fr_1fr_8rem] md:items-center"
-            >
-              <div>
-                <span className="font-medium">
-                  {row.release.tool_identifier} · {row.slot.code}
-                </span>
-                <span className="mt-1 block font-mono text-muted-foreground">
-                  {targetPathLabel(row.target)}
-                </span>
-              </div>
-              <div className="text-muted-foreground">
-                候选 {row.candidates.length}：
-                {row.candidates
-                  .map((item) => item.placement ?? "none")
-                  .join(" / ") || "无"}
-              </div>
-              <Badge variant={row.result.variant}>{row.result.label}</Badge>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  )
-}
-
-function matrixResult(
-  candidates: BuiltinToolMapping[],
-  resourceKind: "database" | "redis" | "loki",
-  catalog: Catalog
-): { label: string; variant: "default" | "secondary" | "destructive" } {
-  if (!candidates.length) return { label: "缺失", variant: "destructive" }
-  const incomplete = candidates.some((mapping) => {
-    if (!mapping.resource_revision_id) return true
-    if (resourceKind === "loki") return !mapping.loki_scope_policy_revision_id
-    return (
-      mapping.target_scope_type === "workshop" &&
-      !mapping.workshop_partition_policy_revision_id
-    )
-  })
-  if (incomplete) return { label: "映射未完整", variant: "destructive" }
-  const groups = new Map<string, number>()
-  for (const candidate of candidates) {
-    const key = candidate.placement ?? "none"
-    groups.set(key, (groups.get(key) ?? 0) + 1)
-  }
-  if (
-    [...groups.values()].some((count) => count > 1) ||
-    (groups.has("none") && groups.size > 1)
-  ) {
-    return { label: "范围重叠", variant: "destructive" }
-  }
-  if (groups.has("cloud") && groups.has("edge")) {
-    const policyIds = new Set(
-      candidates.map((item) => item.workshop_partition_policy_revision_id)
-    )
-    if (resourceKind !== "loki" && policyIds.size > 1) {
-      return { label: "策略不一致", variant: "destructive" }
-    }
-    return { label: "运行时须选 placement", variant: "secondary" }
-  }
-  const selectedResourceExists = candidates.every((mapping) =>
-    catalog?.resource_revisions.some(
-      (resource) =>
-        resource.resource_revision_id === mapping.resource_revision_id
-    )
-  )
-  return selectedResourceExists
-    ? { label: "唯一解析", variant: "default" }
-    : { label: "资源已不可用", variant: "destructive" }
-}
-
-function mappingScopes(
-  targets: TargetPath[],
-  resourceKind: "database" | "redis" | "loki"
-): BuiltinToolMapping[] {
-  const emptyMapping: BuiltinToolMapping = {
-    resource_slot: "",
-    target_scope_type: "global",
-    environment_code: "",
-    base_code: "",
-    workshop_code: "",
-    placement: null,
-    resource_revision_id: "",
-    workshop_partition_policy_revision_id: "",
-    loki_scope_policy_revision_id: "",
-  }
-  const values: BuiltinToolMapping[] =
-    resourceKind === "loki" ? [emptyMapping] : []
-  for (const target of targets) {
-    if (resourceKind === "loki") {
-      values.push({
-        ...emptyMapping,
-        target_scope_type: "environment",
-        environment_code: target.environment_code,
-      })
-      if (target.base_code) {
-        values.push({
-          ...emptyMapping,
-          target_scope_type: "base",
-          environment_code: target.environment_code,
-          base_code: target.base_code,
-        })
-      }
-    } else {
-      values.push({
-        ...emptyMapping,
-        target_scope_type: target.target_scope_type,
-        environment_code: target.environment_code,
-        base_code: target.base_code,
-        workshop_code: target.workshop_code,
-      })
-    }
-  }
-  return [
-    ...new Map(values.map((item) => [mappingScopeKey(item), item])).values(),
-  ]
-}
-
-function targetKey(target: TargetPath) {
-  return `${target.target_scope_type}:${target.environment_code}:${target.base_code}:${target.workshop_code}`
-}
-
-function mappingScopeKey(
-  target: Pick<
-    BuiltinToolMapping,
-    "target_scope_type" | "environment_code" | "base_code" | "workshop_code"
-  >
-) {
-  return `${target.target_scope_type}:${target.environment_code}:${target.base_code}:${target.workshop_code}`
-}
-
-function targetPathLabel(target: TargetPath) {
-  return [target.environment_code, target.base_code, target.workshop_code]
-    .filter(Boolean)
-    .join(" / ")
-}
-
-function mappingTargetLabel(
-  target: Pick<
-    BuiltinToolMapping,
-    "target_scope_type" | "environment_code" | "base_code" | "workshop_code"
-  >
-) {
-  return target.target_scope_type === "global"
-    ? "global"
-    : `${target.target_scope_type} · ${[target.environment_code, target.base_code, target.workshop_code].filter(Boolean).join(" / ")}`
-}
-
-function mappingCoversTarget(mapping: BuiltinToolMapping, target: TargetPath) {
-  if (mapping.target_scope_type === "global") return true
-  if (mapping.environment_code !== target.environment_code) return false
-  if (mapping.target_scope_type === "environment") return true
-  if (mapping.base_code !== target.base_code) return false
-  if (mapping.target_scope_type === "base") return true
-  return mapping.workshop_code === target.workshop_code
-}
-
-function resourceCoversTarget(
-  resource: NonNullable<Catalog>["resource_revisions"][number],
-  target: Pick<
-    BuiltinToolMapping,
-    "target_scope_type" | "environment_code" | "base_code" | "workshop_code"
-  >
-) {
-  if (target.target_scope_type === "global")
-    return resource.scope_type === "global"
-  if (resource.scope_type === "global") return true
-  if (resource.environment_code !== target.environment_code) return false
-  if (resource.scope_type === "environment") return true
-  if (resource.base_code !== target.base_code) return false
-  if (resource.scope_type === "base")
-    return (
-      target.target_scope_type === "base" ||
-      target.target_scope_type === "workshop"
-    )
-  return (
-    target.target_scope_type === "workshop" &&
-    resource.workshop_code === target.workshop_code
   )
 }
 
@@ -1889,7 +1039,7 @@ function ValidationTab({ application }: { application: BusinessApplication }) {
           ["工作流发布版本", revision?.workflow_publication_id || "可选"],
           ["触发器", String(revision?.triggers.length ?? 0)],
           ["投递", String(revision?.deliveries.length ?? 0)],
-          ["能力", String(revision?.capabilities.length ?? 0)],
+          ["MCP 工具", String(revision?.mcp_tools.length ?? 0)],
         ]}
       />
     </div>
@@ -2236,36 +1386,7 @@ function draftToForm(application: BusinessApplication): SaveDraftInput {
           reply_mode: String(item.config.reply_mode ?? ""),
         },
       })) ?? [],
-    capabilities:
-      draft?.capabilities.map((item) => ({
-        capability_code: item.capability_code,
-        version_constraint: item.version_constraint,
-        enabled: item.enabled,
-      })) ?? [],
-    api_capability_release_ids: draft?.api_capability_release_ids ?? [],
-    builtin_tools:
-      draft?.builtin_tools.map((tool) => ({
-        tool_release_id: tool.tool_release_id,
-        resources: tool.resources.map((mapping) => ({
-          resource_slot: mapping.resource_slot,
-          target_scope_type: mapping.target_scope_type,
-          environment_code: mapping.environment_code,
-          base_code: mapping.base_code,
-          workshop_code: mapping.workshop_code,
-          placement: mapping.placement ?? null,
-          resource_revision_id: mapping.resource_revision_id,
-          workshop_partition_policy_revision_id:
-            mapping.workshop_partition_policy_revision_id,
-          loki_scope_policy_revision_id: mapping.loki_scope_policy_revision_id,
-        })),
-      })) ?? [],
-    target_paths:
-      draft?.target_paths.map((target) => ({
-        target_scope_type: target.target_scope_type,
-        environment_code: target.environment_code,
-        base_code: target.base_code,
-        workshop_code: target.workshop_code,
-      })) ?? [],
+    mcp_tools: draft?.mcp_tools.map((tool) => tool.tool_identifier) ?? [],
   }
 }
 

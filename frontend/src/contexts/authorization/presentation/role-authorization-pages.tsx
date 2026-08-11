@@ -836,7 +836,7 @@ function AdminCapabilitiesPanel({ detail }: { detail: RoleDetail }) {
 }
 
 type ApplicationSelection = {
-  capabilityCodes: Set<string>
+  toolIdentifiers: Set<string>
   scopeKeys: Set<string>
 }
 
@@ -848,7 +848,7 @@ function BusinessAccessPanel({ detail }: { detail: RoleDetail }) {
     detail.business.applications.map((application) => [
       application.application_id,
       {
-        capabilityCodes: new Set(application.capability_codes),
+        toolIdentifiers: new Set(application.tool_identifiers),
         scopeKeys: new Set(application.scopes.map((scope) => scope.scope_key)),
       },
     ])
@@ -883,7 +883,7 @@ function BusinessAccessPanel({ detail }: { detail: RoleDetail }) {
       reason,
       applications: [...selection.entries()].map(([application_id, value]) => ({
         application_id,
-        capability_codes: [...value.capabilityCodes],
+        tool_identifiers: [...value.toolIdentifiers],
         scopes: [...value.scopeKeys]
           .map((key) => topologyByScope.get(key))
           .filter(Boolean),
@@ -953,7 +953,7 @@ function BusinessApplicationCard({
             onCheckedChange={(checked) =>
               onChange(
                 checked
-                  ? { capabilityCodes: new Set(), scopeKeys: new Set() }
+                  ? { toolIdentifiers: new Set(), scopeKeys: new Set() }
                   : undefined
               )
             }
@@ -969,35 +969,35 @@ function BusinessApplicationCard({
       {enabled && selected ? (
         <CardContent className="space-y-5">
           <div>
-            <h3 className="text-sm font-medium">只读业务能力</h3>
+            <h3 className="text-sm font-medium">MCP Tool 使用权限</h3>
             <div className="mt-3 grid gap-2 md:grid-cols-2">
-              {application.capabilities.map((capability) => (
+              {application.mcp_tools.map((tool) => (
                 <label
-                  key={capability.capability_code}
+                  key={tool.tool_identifier}
                   className="flex items-center gap-2 rounded-md border p-3 text-sm"
                 >
                   <Checkbox
-                    checked={selected.capabilityCodes.has(
-                      capability.capability_code
+                    checked={selected.toolIdentifiers.has(
+                      tool.tool_identifier
                     )}
                     onCheckedChange={(checked) => {
-                      const codes = new Set(selected.capabilityCodes)
-                      if (checked) codes.add(capability.capability_code)
-                      else codes.delete(capability.capability_code)
-                      update({ ...selected, capabilityCodes: codes })
+                      const identifiers = new Set(selected.toolIdentifiers)
+                      if (checked) identifiers.add(tool.tool_identifier)
+                      else identifiers.delete(tool.tool_identifier)
+                      update({ ...selected, toolIdentifiers: identifiers })
                     }}
                   />
                   <span>
-                    <span>{capability.display_name_zh}</span>
+                    <span>{tool.display_name_zh}</span>
                     <span className="ml-2 font-mono text-xs text-muted-foreground">
-                      {capability.capability_code}
+                      {tool.tool_identifier}
                     </span>
                   </span>
                 </label>
               ))}
-              {application.capabilities.length === 0 ? (
+              {application.mcp_tools.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
-                  此应用未装配业务能力，仅可授予应用调用权限。
+                  此应用未装配 MCP Tool，仅可授予应用调用权限。
                 </p>
               ) : null}
             </div>
@@ -1187,16 +1187,16 @@ function AuthorizationPreviewPanel() {
               ))}
             </select>
           </Labeled>
-          <Labeled label="业务能力">
+          <Labeled label="MCP Tool">
             <select
               className={`${nativeSelectClass} w-full`}
               value={capability}
               onChange={(event) => setCapability(event.target.value)}
             >
               <option value="">仅模拟应用调用</option>
-              {application?.capabilities.map((item) => (
-                <option key={item.capability_code} value={item.capability_code}>
-                  {item.capability_code}
+              {application?.mcp_tools.map((item) => (
+                <option key={item.tool_identifier} value={item.tool_identifier}>
+                  {item.tool_identifier}
                 </option>
               ))}
             </select>
@@ -1208,7 +1208,7 @@ function AuthorizationPreviewPanel() {
             mutation.mutate({
               user_id: userId,
               application_id: applicationId,
-              capability_code: capability,
+              tool_identifier: capability,
               environment: "",
               base: "",
               workshop: "",
@@ -1396,7 +1396,7 @@ function serializeApplicationSelection(
     [...value.entries()]
       .map(([applicationId, selection]) => [
         applicationId,
-        [...selection.capabilityCodes].sort(),
+        [...selection.toolIdentifiers].sort(),
         [...selection.scopeKeys].sort(),
       ])
       .sort()
@@ -1415,9 +1415,9 @@ function decisionMessage(reason: string) {
   const messages: Record<string, string> = {
     application_role_allow: "用户通过有效角色获得该业务应用权限。",
     no_application_role: "用户未获得该业务应用的使用权限。",
-    application_capability_safety_ceiling:
-      "所选能力超出业务应用和只读工具安全上限，角色不能授予。",
-    application_capability_denied: "角色未授予所选业务能力。",
+    application_tool_safety_ceiling:
+      "所选 MCP Tool 超出业务应用安全上限，角色不能授予。",
+    application_tool_denied: "角色未授予所选 MCP Tool。",
     application_scope_denied: "角色未授予所选数据范围。",
     user_disabled: "用户已停用。",
     application_disabled: "业务应用已停用。",
