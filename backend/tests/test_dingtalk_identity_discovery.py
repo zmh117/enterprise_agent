@@ -213,10 +213,7 @@ def test_identity_rejection_creates_candidate_without_agent_job(
     )
     assert candidate is not None
     assert (
-        discovery_container.database.execute_one(
-            "select count(*) as count from agent_job"
-        )
-        or {}
+        discovery_container.database.execute_one("select count(*) as count from agent_job") or {}
     ).get("count") == 0
     assert discovery_container.message_bus is not None
     assert not discovery_container.message_bus.jobs
@@ -261,10 +258,7 @@ def test_disabled_user_creates_restore_candidate(discovery_container, dingtalk_c
     )
     assert candidate is not None
     assert (
-        discovery_container.database.execute_one(
-            "select count(*) as count from agent_job"
-        )
-        or {}
+        discovery_container.database.execute_one("select count(*) as count from agent_job") or {}
     ).get("count") == 0
 
 
@@ -453,10 +447,7 @@ def test_projection_failure_keeps_channel_event_retryable_without_job(
     assert stored["status"] == "DISPATCH_PENDING"
     assert stored["job_id"] is None
     assert (
-        discovery_container.database.execute_one(
-            "select count(*) as count from agent_job"
-        )
-        or {}
+        discovery_container.database.execute_one("select count(*) as count from agent_job") or {}
     ).get("count") == 0
 
 
@@ -529,8 +520,7 @@ def test_candidates_are_isolated_by_enterprise_and_keep_only_twenty_messages(
     primary = next(
         row
         for row in candidates
-        if row["dingtalk_enterprise_id"]
-        == discovery_container._test_dingtalk_enterprise_id
+        if row["dingtalk_enterprise_id"] == discovery_container._test_dingtalk_enterprise_id
     )
     assert int(primary["observation_count"]) == 21
     message_count = discovery_container.database.execute_one(

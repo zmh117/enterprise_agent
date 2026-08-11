@@ -41,9 +41,7 @@ def test_business_application_policy_only_tightens_agent_limits() -> None:
             "timeout_seconds": 120,
             "max_tool_calls": 0,
         },
-        agent_snapshot={
-            "execution": {"max_turns": 12, "timeout_seconds": 300}
-        },
+        agent_snapshot={"execution": {"max_turns": 12, "timeout_seconds": 300}},
         sources={
             "business_application_publication_id": "app-publication",
             "agent_publication_id": "agent-publication",
@@ -345,9 +343,9 @@ def test_legacy_runtime_purge_preserves_control_plane() -> None:
         (c.settings.object_storage.bucket, object_key, attachment.id),
     )
     before_control_audits = int(
-        c.database.execute_one(
-            "select count(*) as count from audit_event where job_id is null"
-        )["count"]
+        c.database.execute_one("select count(*) as count from audit_event where job_id is null")[
+            "count"
+        ]
     )
     service = LegacyRuntimePurgeService(
         database=c.database,

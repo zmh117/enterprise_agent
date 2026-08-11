@@ -152,15 +152,9 @@ class PlatformSecretUsageService:
                         dependency_type="connector",
                         row=row,
                         code=str(row["name"]),
-                        status=(
-                            "enabled"
-                            if bool(int(row.get("enabled") or 0))
-                            else "disabled"
-                        ),
+                        status=("enabled" if bool(int(row.get("enabled") or 0)) else "disabled"),
                         field_paths=paths,
-                        metadata={
-                            "connector_type": str(row["connector_type"])
-                        },
+                        metadata={"connector_type": str(row["connector_type"])},
                     )
                 )
         return result

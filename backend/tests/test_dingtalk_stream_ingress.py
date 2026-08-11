@@ -282,9 +282,7 @@ class DingTalkStreamIngressTests(unittest.TestCase):
         attempts = c.agent_repository.list_delivery_attempts(result.job_id)
         self.assertEqual(1, len(attempts))
         self.assertEqual("SUCCEEDED", attempts[0]["status"])
-        event_types = {
-            row["event_type"] for row in c.audit_repository.list_for_job(result.job_id)
-        }
+        event_types = {row["event_type"] for row in c.audit_repository.list_for_job(result.job_id)}
         self.assertIn("job.dead.persisted", event_types)
 
     def test_expired_session_webhook_failure_is_recorded_without_fallback(self) -> None:

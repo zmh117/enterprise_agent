@@ -220,9 +220,7 @@ class ManagedChannelRepository:
             )
         return self._enterprise(row)
 
-    def find_dingtalk_enterprise_by_corp_id(
-        self, corp_id: str
-    ) -> dict[str, Any] | None:
+    def find_dingtalk_enterprise_by_corp_id(self, corp_id: str) -> dict[str, Any] | None:
         row = self.database.execute_one(
             "select * from dingtalk_enterprise where corp_id = ?",
             (corp_id,),
@@ -454,9 +452,7 @@ class ManagedChannelRepository:
         lease_token: str,
         ttl_seconds: int,
     ) -> dict[str, Any] | None:
-        expires_at = (
-            datetime.now(UTC) + timedelta(seconds=max(ttl_seconds, 5))
-        ).isoformat()
+        expires_at = (datetime.now(UTC) + timedelta(seconds=max(ttl_seconds, 5))).isoformat()
         rows = self.database.execute(
             """
             update channel_runtime_lease
@@ -468,9 +464,7 @@ class ManagedChannelRepository:
         )
         return rows[0] if rows else None
 
-    def release_lease(
-        self, *, lease_name: str, runtime_id: str, lease_token: str
-    ) -> bool:
+    def release_lease(self, *, lease_name: str, runtime_id: str, lease_token: str) -> bool:
         rows = self.database.execute(
             """
             delete from channel_runtime_lease
@@ -715,9 +709,12 @@ class ManagedChannelRepository:
                 outbox_id,
             ),
         )
-        return self.database.execute_one(
-            "select * from channel_ingress_outbox where id = ?", (outbox_id,)
-        ) or {}
+        return (
+            self.database.execute_one(
+                "select * from channel_ingress_outbox where id = ?", (outbox_id,)
+            )
+            or {}
+        )
 
     def attach_job(self, event_id: str, job_id: str) -> None:
         self.database.execute(
@@ -729,9 +726,7 @@ class ManagedChannelRepository:
             (job_id, now_iso(), now_iso(), event_id),
         )
 
-    def mark_event_rejected(
-        self, event_id: str, *, error_code: str, error_summary: str
-    ) -> None:
+    def mark_event_rejected(self, event_id: str, *, error_code: str, error_summary: str) -> None:
         self.database.execute(
             """
             update channel_ingress_event
@@ -757,13 +752,9 @@ class ManagedChannelRepository:
     def _enterprise(row: dict[str, Any]) -> dict[str, Any]:
         value = dict(row)
         value["corp_id"] = str(value.get("corp_id") or "")
-        value["verification_event_id"] = str(
-            value.get("verification_event_id") or ""
-        )
+        value["verification_event_id"] = str(value.get("verification_event_id") or "")
         value["connector_count"] = int(value.get("connector_count") or 0)
-        value["enabled_connector_count"] = int(
-            value.get("enabled_connector_count") or 0
-        )
+        value["enabled_connector_count"] = int(value.get("enabled_connector_count") or 0)
         return value
 
 

@@ -45,7 +45,9 @@ def unified_container() -> Container:
     return build_test_container(unified_settings(), migrate=True, seed=True)
 
 
-def login(client: TestClient, username: str = ADMIN_USERNAME, password: str = ADMIN_PASSWORD) -> str:
+def login(
+    client: TestClient, username: str = ADMIN_USERNAME, password: str = ADMIN_PASSWORD
+) -> str:
     response = client.post(
         "/api/auth/login",
         json={"username": username, "password": password},
@@ -85,14 +87,14 @@ def test_web_auth_uses_hashed_sessions_csrf_and_rejects_forged_headers() -> None
             "roles_manage": True,
             "identities_manage": True,
             "agent_edit": True,
-                "agent_publish": True,
-                "audit_read": True,
-                "webhook_read": True,
-                "webhook_edit": True,
-                "webhook_publish": True,
-                "webhook_rotate": True,
-                "webhook_manage_service_account": True,
-            }
+            "agent_publish": True,
+            "audit_read": True,
+            "webhook_read": True,
+            "webhook_edit": True,
+            "webhook_publish": True,
+            "webhook_rotate": True,
+            "webhook_manage_service_account": True,
+        }
         session_token = client.cookies.get("enterprise_agent_session")
         assert session_token
         stored = container.database.execute_one(
@@ -138,9 +140,7 @@ def test_user_disable_revokes_web_sessions_but_identity_disable_only_blocks_ding
 
     with TestClient(app) as client:
         login(client)
-        platform_role = container.identity_repository.get_role_by_code(
-            "platform-admin"
-        )
+        platform_role = container.identity_repository.get_role_by_code("platform-admin")
         assert platform_role is not None
         for ordinal in (2, 3):
             username = f"verified-admin-{ordinal}"
@@ -159,9 +159,7 @@ def test_user_disable_revokes_web_sessions_but_identity_disable_only_blocks_ding
                 assigned_by=ADMIN_ID,
             )
             container.auth_service.login(username=username, password=password)
-        identity = container.identity_repository.get_external_identity(
-            "identity_local_dingtalk"
-        )
+        identity = container.identity_repository.get_external_identity("identity_local_dingtalk")
         container.identity_service.set_identity_status(
             actor_id=ADMIN_ID,
             identity_id=str(identity["id"]),
@@ -228,9 +226,7 @@ def test_session_expiry_password_change_and_owned_revocation_fail_closed() -> No
 
     settings = unified_settings()
     api_container = unified_container()
-    with TestClient(
-        create_app(settings, container_factory=lambda _: api_container)
-    ) as client:
+    with TestClient(create_app(settings, container_factory=lambda _: api_container)) as client:
         csrf = login(client)
         session_id = api_container.database.execute_one(
             "select id from user_session where status = 'active' order by created_at desc limit 1"
@@ -317,24 +313,30 @@ def test_dingtalk_enterprise_identity_isolation_conflict_and_unknown_fail_closed
         replace_current=False,
     )
     assert isolated["user_id"] == second["id"]
-    assert container.identity_service.resolve_external(
-        ExternalIdentityDescriptor(
-            provider="dingtalk",
-            tenant_code=str(default_enterprise["id"]),
-            dingtalk_enterprise_id=str(default_enterprise["id"]),
-            external_subject_id="staff-shared",
-            connector_id="connector-dingtalk-stream-default",
-        )
-    ).user_id == first["id"]
-    assert container.identity_service.resolve_external(
-        ExternalIdentityDescriptor(
-            provider="dingtalk",
-            tenant_code=str(other_enterprise["id"]),
-            dingtalk_enterprise_id=str(other_enterprise["id"]),
-            external_subject_id="staff-shared",
-            connector_id=str(other_connector["id"]),
-        )
-    ).user_id == second["id"]
+    assert (
+        container.identity_service.resolve_external(
+            ExternalIdentityDescriptor(
+                provider="dingtalk",
+                tenant_code=str(default_enterprise["id"]),
+                dingtalk_enterprise_id=str(default_enterprise["id"]),
+                external_subject_id="staff-shared",
+                connector_id="connector-dingtalk-stream-default",
+            )
+        ).user_id
+        == first["id"]
+    )
+    assert (
+        container.identity_service.resolve_external(
+            ExternalIdentityDescriptor(
+                provider="dingtalk",
+                tenant_code=str(other_enterprise["id"]),
+                dingtalk_enterprise_id=str(other_enterprise["id"]),
+                external_subject_id="staff-shared",
+                connector_id=str(other_connector["id"]),
+            )
+        ).user_id
+        == second["id"]
+    )
     with pytest.raises(PermissionDenied):
         container.identity_service.resolve_external(
             ExternalIdentityDescriptor(
@@ -395,9 +397,7 @@ def test_retired_legacy_authorization_tables_are_absent_and_strict_runtime_denie
     )
     tables = {
         str(row["name"])
-        for row in container.database.execute(
-            "select name from sqlite_master where type = 'table'"
-        )
+        for row in container.database.execute("select name from sqlite_master where type = 'table'")
     }
     assert {"permission_policy", "platform_access_grant"}.isdisjoint(tables)
     allowed = container.authorization_evaluator.decide(
@@ -436,9 +436,7 @@ def test_retired_legacy_authorization_tables_are_absent_and_strict_runtime_denie
     topology.upsert_environment(code="prod")
     topology.upsert_base(environment_code="prod", code="base-a", engine="postgresql")
     topology.upsert_base(environment_code="prod", code="base-b", engine="postgresql")
-    topology.upsert_workshop(
-        environment_code="prod", base_code="base-a", code="ws-denied"
-    )
+    topology.upsert_workshop(environment_code="prod", base_code="base-a", code="ws-denied")
     evaluator = container.authorization_evaluator
     allowed_scope = evaluator.decide_platform_scope(
         user_id=str(scope_user["id"]),

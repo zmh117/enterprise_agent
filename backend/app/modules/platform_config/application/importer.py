@@ -73,10 +73,7 @@ class PlatformTopologyYamlImporter:
         if raw.get("access"):
             raise PlatformConfigValidationError(
                 "Legacy topology access grants are not supported",
-                safe_message=(
-                    "拓扑 YAML 不再支持 access；"
-                    "请在业务应用角色中配置数据范围"
-                ),
+                safe_message=("拓扑 YAML 不再支持 access；请在业务应用角色中配置数据范围"),
             )
         stats = ImportStats()
         for env_code, env_data in (raw.get("environments") or {}).items():

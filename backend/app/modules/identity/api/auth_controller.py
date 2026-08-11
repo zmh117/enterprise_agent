@@ -98,11 +98,7 @@ def build_auth_router() -> APIRouter:
     @router.get("/me")
     def me(request: Request) -> dict[str, Any]:
         c = container(request)
-        return {
-            "user": _principal_payload(
-                current_principal(request), c.authorization_evaluator
-            )
-        }
+        return {"user": _principal_payload(current_principal(request), c.authorization_evaluator)}
 
     @router.post("/logout")
     def logout(request: Request, response: Response) -> dict[str, str]:
@@ -131,11 +127,7 @@ def build_auth_router() -> APIRouter:
     @router.get("/sessions")
     def sessions(request: Request) -> dict[str, Any]:
         principal = current_principal(request)
-        return {
-            "sessions": container(request).identity_repository.list_sessions(
-                principal.user_id
-            )
-        }
+        return {"sessions": container(request).identity_repository.list_sessions(principal.user_id)}
 
     @router.delete("/sessions/{session_id}")
     def revoke_session(request: Request, session_id: str) -> dict[str, str]:

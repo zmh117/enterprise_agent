@@ -117,7 +117,5 @@ class RuntimeGrantVerifier:
     def _prune(self) -> None:
         cutoff = self._now() - 5
         self._used_jti = {
-            jti: binding
-            for jti, binding in self._used_jti.items()
-            if binding[2] >= cutoff
+            jti: binding for jti, binding in self._used_jti.items() if binding[2] >= cutoff
         }

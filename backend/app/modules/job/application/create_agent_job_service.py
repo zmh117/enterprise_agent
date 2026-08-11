@@ -594,9 +594,7 @@ class CreateAgentJobService:
                         command.business_application_runtime_status
                     ),
                     "mcp_tool_snapshot_id": str(mcp_tool_snapshot.get("id") or ""),
-                    "mcp_tool_snapshot_hash": str(
-                        mcp_tool_snapshot.get("snapshot_hash") or ""
-                    ),
+                    "mcp_tool_snapshot_hash": str(mcp_tool_snapshot.get("snapshot_hash") or ""),
                 },
             )
             self.audit_service.record(

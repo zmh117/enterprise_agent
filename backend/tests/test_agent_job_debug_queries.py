@@ -184,9 +184,7 @@ def test_debug_options_require_login_and_explicit_application_scope() -> None:
         scope=scope,
     )
 
-    with TestClient(
-        create_app(_settings(), container_factory=lambda _: runtime)
-    ) as client:
+    with TestClient(create_app(_settings(), container_factory=lambda _: runtime)) as client:
         unauthenticated = client.get("/api/agent/jobs/_debug-options")
         admin_without_business_role = client.get(
             "/api/agent/jobs/_debug-options",
@@ -241,9 +239,7 @@ def test_debug_queries_hide_existing_job_from_unrelated_user(suffix: str) -> Non
         admin_capability="agent.debug.execute",
     )
 
-    with TestClient(
-        create_app(_settings(), container_factory=lambda _: runtime)
-    ) as client:
+    with TestClient(create_app(_settings(), container_factory=lambda _: runtime)) as client:
         job_id = _create_debug_job(
             runtime=runtime,
             creator_user_id=str(creator["id"]),
@@ -263,7 +259,7 @@ def test_debug_queries_hide_existing_job_from_unrelated_user(suffix: str) -> Non
         )
         administrator = client.get(
             f"/api/agent/jobs/{job_id}{suffix}",
-                headers=_headers("admin"),
+            headers=_headers("admin"),
         )
 
     assert creator_response.status_code == 200
@@ -294,9 +290,7 @@ def test_application_operator_can_read_attributed_job() -> None:
         admin_resource_code=str(application["code"]),
     )
 
-    with TestClient(
-        create_app(_settings(), container_factory=lambda _: runtime)
-    ) as client:
+    with TestClient(create_app(_settings(), container_factory=lambda _: runtime)) as client:
         job_id = _create_debug_job(
             runtime=runtime,
             creator_user_id=str(creator["id"]),

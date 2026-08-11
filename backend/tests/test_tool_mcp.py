@@ -113,8 +113,6 @@ def test_standard_mcp_http_has_no_auth_protocol_and_rejects_credentials() -> Non
     assert credential_rejected.json() == {"error": "tool_mcp_credentials_forbidden"}
     assert initialized.status_code == 200
     assert initialized.json()["result"]["serverInfo"]["name"] == "Enterprise Tool MCP"
-    assert [item["name"] for item in listed.json()["result"]["tools"]] == [
-        "get_er_context"
-    ]
+    assert [item["name"] for item in listed.json()["result"]["tools"]] == ["get_er_context"]
     assert called.status_code == 200
     assert called.json()["result"]["isError"] is False

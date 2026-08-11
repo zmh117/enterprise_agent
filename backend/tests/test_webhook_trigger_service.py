@@ -35,10 +35,7 @@ def _service(monkeypatch: pytest.MonkeyPatch) -> tuple[object, WebhookTriggerSer
     )
     c.platform_config_service.secret_provider.create_secret(
         code="dingtalk_webhook_robot_url",
-        value=(
-            "https://oapi.dingtalk.com/robot/send"
-            "?access_token=webhook-test-token"
-        ),
+        value=("https://oapi.dingtalk.com/robot/send?access_token=webhook-test-token"),
         actor_id=ADMIN_ID,
     )
     c.platform_config_service.secret_provider.create_secret(
@@ -127,12 +124,15 @@ def test_trigger_lifecycle_uses_dedicated_service_account_and_pinned_agent(
     assert c.agent_repository.count_rows("app_user") == before_users + 1
     assert service_account["account_type"] == "service"
     assert service_account["username"] == "svc-webhook-grafana-orders"
-    assert c.database.execute_one(
-        """
+    assert (
+        c.database.execute_one(
+            """
         select name from sqlite_master
          where type = 'table' and name = 'permission_policy'
         """
-    ) is None
+        )
+        is None
+    )
 
     validated = service.validate_revision(
         actor_id=ADMIN_ID,
@@ -140,9 +140,7 @@ def test_trigger_lifecycle_uses_dedicated_service_account_and_pinned_agent(
         revision_id=str(draft["id"]),
     )
     assert validated["validation"]["valid"] is True
-    assert validated["validation"]["effective_read_only_tools"] == sorted(
-        MCP_TOOL_MANIFEST
-    )
+    assert validated["validation"]["effective_read_only_tools"] == sorted(MCP_TOOL_MANIFEST)
 
     before_events = c.agent_repository.count_rows("webhook_event")
     preview = service.preview(
@@ -171,10 +169,7 @@ def test_trigger_lifecycle_uses_dedicated_service_account_and_pinned_agent(
     assert publication["agent_config_hash"]
     assert publication["snapshot"]["service_account_id"] == service_account["id"]
     assert "secret_ref" in json.dumps(publication["snapshot"])
-    assert (
-        "orders-webhook-token-0123456789abcdefABCDEF"
-        not in json.dumps(publication["snapshot"])
-    )
+    assert "orders-webhook-token-0123456789abcdefABCDEF" not in json.dumps(publication["snapshot"])
 
     with pytest.raises(NonRetryableExecutionError):
         service.repository.save_draft(
@@ -247,9 +242,7 @@ def test_trigger_requires_unique_strong_bearer_tokens(
         actor_id=ADMIN_ID,
     )
     weak_config = deepcopy(_config())
-    weak_config["authentication"][
-        "secret_ref"
-    ] = "secret://platform/weak_webhook_token"
+    weak_config["authentication"]["secret_ref"] = "secret://platform/weak_webhook_token"
     weak = service.create(
         actor_id=ADMIN_ID,
         code="grafana-weak-token",
@@ -265,8 +258,7 @@ def test_trigger_requires_unique_strong_bearer_tokens(
     )
     assert weak_validation["validation"]["valid"] is False
     assert any(
-        item["field"] == "authentication.secret_ref"
-        and "至少包含 32" in item["message"]
+        item["field"] == "authentication.secret_ref" and "至少包含 32" in item["message"]
         for item in weak_validation["validation"]["errors"]
     )
 

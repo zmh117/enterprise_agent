@@ -19,13 +19,16 @@ class DingTalkEnterpriseResponse(StrictResponse):
     corp_id: str
 
 
-class SelfDingTalkIdentityResponse(StrictResponse):
+class DingTalkIdentityResponseBase(StrictResponse):
     provider: Literal["dingtalk"]
     nickname: str
-    status: Literal["enabled", "disabled"]
     enterprise: DingTalkEnterpriseResponse | None
     last_used_at: str | None = None
     staff_id: str
+
+
+class SelfDingTalkIdentityResponse(DingTalkIdentityResponseBase):
+    status: Literal["enabled", "disabled"]
 
 
 class TeamResponse(StrictResponse):
@@ -33,14 +36,17 @@ class TeamResponse(StrictResponse):
     name: str
 
 
-class SelfOnesIdentityResponse(StrictResponse):
+class OnesIdentityResponseBase(StrictResponse):
     provider: Literal["ones"]
     user_name: str
-    status: Literal["enabled", "disabled"]
     default_team: TeamResponse | None
     verified_at: str | None = None
     user_id: str
     teams: list[TeamResponse]
+
+
+class SelfOnesIdentityResponse(OnesIdentityResponseBase):
+    status: Literal["enabled", "disabled"]
 
 
 class SelfIdentityOverviewResponse(StrictResponse):
@@ -60,7 +66,7 @@ class DingTalkApplicationObservationResponse(StrictResponse):
     last_observed_at: str | None = None
 
 
-class AdminDingTalkIdentityResponse(SelfDingTalkIdentityResponse):
+class AdminDingTalkIdentityResponse(DingTalkIdentityResponseBase):
     status: Literal["enabled", "disabled", "unbound"]
     identity_id: str
     revision: int = Field(ge=1)
@@ -68,7 +74,7 @@ class AdminDingTalkIdentityResponse(SelfDingTalkIdentityResponse):
     observations: list[DingTalkApplicationObservationResponse]
 
 
-class AdminOnesIdentityResponse(SelfOnesIdentityResponse):
+class AdminOnesIdentityResponse(OnesIdentityResponseBase):
     status: Literal["enabled", "disabled", "unbound"]
     identity_id: str
     revision: int = Field(ge=1)

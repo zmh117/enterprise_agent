@@ -151,9 +151,7 @@ class PythonTerminalLedger:
             ) from exc
         return PersistedClaim(
             status=(
-                "CLAIMED"
-                if persisted["owner_instance_id"] == owner_instance_id
-                else "ORPHANED"
+                "CLAIMED" if persisted["owner_instance_id"] == owner_instance_id else "ORPHANED"
             ),
             events=tuple(events),
         )
@@ -397,9 +395,7 @@ class PythonInvocationRegistry:
             "failure": {
                 "code": "runtime_orphaned_invocation",
                 "retry_class": "NEVER",
-                "safe_message": (
-                    "Agent Runtime 在执行中重启；为避免重复模型调用，本次执行已失败"
-                ),
+                "safe_message": ("Agent Runtime 在执行中重启；为避免重复模型调用，本次执行已失败"),
             },
             "usage": {"input_tokens": 0, "output_tokens": 0},
             "runtime_provenance": _fallback_provenance(request),

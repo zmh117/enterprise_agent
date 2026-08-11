@@ -78,9 +78,7 @@ def test_non_test_loaded_settings_require_file_and_ignore_inline_fallback(
 
     path = tmp_path / "valid-key"
     encoded = _write_key(path)
-    loaded = load_master_key_settings(
-        replace(settings, app_config_master_key_file=str(path))
-    )
+    loaded = load_master_key_settings(replace(settings, app_config_master_key_file=str(path)))
     assert loaded.app_config_master_key == encoded
     assert encoded not in repr(loaded)
     assert "legacy-inline-must-not-be-used" not in repr(loaded)

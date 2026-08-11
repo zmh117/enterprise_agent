@@ -35,9 +35,7 @@ class RejectTypeScriptRuntime:
 def test_seed_creates_two_runtime_fixed_agents_and_is_idempotent() -> None:
     runtime = container()
 
-    definitions = {
-        value["code"]: value for value in runtime.agent_config_service.list_agents()
-    }
+    definitions = {value["code"]: value for value in runtime.agent_config_service.list_agents()}
     assert definitions[PYTHON_AGENT]["runtime_kind"] == "python-v1"
     assert definitions[TYPESCRIPT_AGENT]["runtime_kind"] == "typescript-v1"
 
@@ -293,9 +291,10 @@ def test_selected_runtime_readiness_blocks_only_new_job_and_activation() -> None
             )
         )
     assert job_rejected.value.error_code == "agent_runtime_unavailable"
-    assert runtime.agent_repository.get_job_by_idempotency_key(
-        "runtime-readiness-typescript-job"
-    ) is None
+    assert (
+        runtime.agent_repository.get_job_by_idempotency_key("runtime-readiness-typescript-job")
+        is None
+    )
 
     with pytest.raises(NonRetryableExecutionError) as activation_rejected:
         runtime.business_application_service.activate(

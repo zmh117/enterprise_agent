@@ -195,9 +195,7 @@ class ReadOnlyToolService:
                     self.limits.max_tool_response_chars,
                 ),
                 status="SUCCEEDED",
-                duration_ms=int(
-                    (time.monotonic() - started) * 1000
-                ),
+                duration_ms=int((time.monotonic() - started) * 1000),
             )
             result.metadata.setdefault(
                 "_persisted_tool_call_id",
@@ -224,9 +222,7 @@ class ReadOnlyToolService:
                         )
                     },
                     status="FAILED",
-                    duration_ms=int(
-                        (time.monotonic() - started) * 1000
-                    ),
+                    duration_ms=int((time.monotonic() - started) * 1000),
                 )
                 setattr(
                     exc,
@@ -332,9 +328,7 @@ class ReadOnlyToolService:
                     "Schema directory requires environment",
                     safe_message="查询 Schema 目录必须指定环境",
                 )
-            resource_routing = _resource_routing_from_arguments(
-                arguments
-            )
+            resource_routing = _resource_routing_from_arguments(arguments)
             return self.tool_executor.get_schema_directory(
                 context=context,
                 environment=resource_routing.pop("environment"),
@@ -399,9 +393,7 @@ class ReadOnlyToolService:
                 workshop=addressing.get("workshop"),
             )
         if tool_name == "query_database":
-            resource_routing = _resource_routing_from_arguments(
-                arguments
-            )
+            resource_routing = _resource_routing_from_arguments(arguments)
             return self.tool_executor.query_database(
                 datasource=str(arguments.get("datasource", "default")),
                 sql=str(arguments["sql"]),
@@ -410,9 +402,7 @@ class ReadOnlyToolService:
                 **resource_routing,
             )
         if tool_name == "query_redis_get":
-            resource_routing = _resource_routing_from_arguments(
-                arguments
-            )
+            resource_routing = _resource_routing_from_arguments(arguments)
             return self.tool_executor.query_redis_get(
                 datasource=str(arguments.get("datasource", "default")),
                 key=str(arguments["key"]),
@@ -420,9 +410,7 @@ class ReadOnlyToolService:
                 **resource_routing,
             )
         if tool_name == "query_redis_scan":
-            resource_routing = _resource_routing_from_arguments(
-                arguments
-            )
+            resource_routing = _resource_routing_from_arguments(arguments)
             return self.tool_executor.query_redis_scan(
                 datasource=str(arguments.get("datasource", "default")),
                 pattern=str(arguments["pattern"]),

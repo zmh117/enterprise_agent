@@ -181,9 +181,7 @@ def build_admin_router() -> APIRouter:
             expected = int(data.pop("expected_revision"))
             c = container(request)
             with c.database.unit_of_work():
-                item = AdminConnectorRepository(c.database).save(
-                    data, expected_revision=expected
-                )
+                item = AdminConnectorRepository(c.database).save(data, expected_revision=expected)
                 c.audit_service.record(
                     "admin.channel_connector.saved",
                     status="SUCCEEDED",
@@ -335,9 +333,7 @@ def build_admin_router() -> APIRouter:
             resource_code="*",
             action="read",
         )
-        return {
-            "delivery": container(request).agent_repository.delivery_metrics()
-        }
+        return {"delivery": container(request).agent_repository.delivery_metrics()}
 
     @router.get("/jobs/{job_id}")
     def job_detail(request: Request, job_id: str) -> dict[str, Any]:

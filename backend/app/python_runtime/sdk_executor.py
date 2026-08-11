@@ -65,9 +65,7 @@ class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
                 "X-Project-Code": request.project_code,
                 "X-Invocation-Id": request.invocation_id,
                 "X-Agent-Publication-Id": request.context.publication_id,
-                "X-Application-Publication-Id": (
-                    request.context.application_publication_id
-                ),
+                "X-Application-Publication-Id": (request.context.application_publication_id),
             },
         }
 
@@ -86,9 +84,9 @@ class PythonRuntimeSdkExecutor:
         self._bindings = binding_resolver
         self._limits = limits
         self._mcp_server_url = _fixed_mcp_server_url(mcp_server_url)
-        self._sdk_version = sdk_version or importlib.metadata.version("claude-agent-sdk")
-        self._cli_version = cli_version or os.getenv(
-            "PYTHON_AGENT_RUNTIME_CLI_VERSION", "2.1.226"
+        self._sdk_version: str = sdk_version or importlib.metadata.version("claude-agent-sdk")
+        self._cli_version: str = (
+            cli_version or os.getenv("PYTHON_AGENT_RUNTIME_CLI_VERSION", "2.1.226") or "2.1.226"
         )
         self._fake_provider_mode = fake_provider_mode
 

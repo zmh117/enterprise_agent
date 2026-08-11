@@ -28,12 +28,24 @@ from app.shared.exceptions import (
     NonRetryableExecutionError,
     RetryableExecutionError,
 )
+
 MAX_EVENT_LINE_BYTES = 65_536
 MAX_STREAM_BYTES = 2_097_152
 MAX_EVENTS = 2_048
 IN_PROGRESS_RECOVERY_ATTEMPTS = 12
 IN_PROGRESS_RECOVERY_DELAY_SECONDS = 0.5
 STANDARD_TOOL_MCP_CODE = "tool-mcp"
+
+
+def _runtime_event_count(value: object) -> int:
+    if type(value) is int:
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return 0
+    return 0
 
 
 class RuntimeTransport(Protocol):
@@ -316,7 +328,7 @@ class AgentRuntimeHttpClient:
                 "runtime_terminal_missing",
             }:
                 raise
-            observed = int(exc.diagnostics.get("runtime_events_observed", 0) or 0)
+            observed = _runtime_event_count(exc.diagnostics.get("runtime_events_observed", 0))
             recovery_attempts = IN_PROGRESS_RECOVERY_ATTEMPTS if observed else 1
             recovery_error = exc
             for recovery_attempt in range(recovery_attempts):
@@ -331,7 +343,9 @@ class AgentRuntimeHttpClient:
                     recovery_error = candidate
                     observed = max(
                         observed,
-                        int(candidate.diagnostics.get("runtime_events_observed", 0) or 0),
+                        _runtime_event_count(
+                            candidate.diagnostics.get("runtime_events_observed", 0)
+                        ),
                     )
                     if getattr(candidate, "error_code", "") not in {
                         "runtime_transport_error",
@@ -366,9 +380,7 @@ class AgentRuntimeHttpClient:
                 if observed:
                     raise NonRetryableExecutionError(
                         "Runtime invocation outcome is unknown after an interrupted stream",
-                        safe_message=(
-                            "Agent Runtime 执行中断；为避免重复模型调用，本次执行已失败"
-                        ),
+                        safe_message=("Agent Runtime 执行中断；为避免重复模型调用，本次执行已失败"),
                         tool_events=recovery_error.tool_events,
                         error_code="runtime_invocation_outcome_unknown",
                         diagnostics={
@@ -377,6 +389,7 @@ class AgentRuntimeHttpClient:
                         },
                     ) from recovery_error
                 raise
+            raise recovery_error
 
     def _consume_stream(
         self,
@@ -396,12 +409,14 @@ class AgentRuntimeHttpClient:
         total_bytes = 0
         terminal: dict[str, Any] | None = None
         expected_sequence = 1
-        stream = iter(self.transport.stream(
-            url=self.execution_url,
-            body=body,
-            headers=headers,
-            timeout_seconds=run_request.context.timeout_seconds + 10,
-        ))
+        stream = iter(
+            self.transport.stream(
+                url=self.execution_url,
+                body=body,
+                headers=headers,
+                timeout_seconds=run_request.context.timeout_seconds + 10,
+            )
+        )
         while True:
             try:
                 raw_line = next(stream)

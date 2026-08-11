@@ -56,11 +56,14 @@ def test_each_top_level_feature_can_be_enabled_independently(
 ) -> None:
     features = resolve_feature_configuration(
         "production",
-        {key: str(key == enabled_key).lower() for key in (
-            "FEATURE_WEB_ADMIN",
-            "FEATURE_PUBLISHED_AGENT_RUNTIME",
-            "FEATURE_REAL_CLAUDE",
-        )},
+        {
+            key: str(key == enabled_key).lower()
+            for key in (
+                "FEATURE_WEB_ADMIN",
+                "FEATURE_PUBLISHED_AGENT_RUNTIME",
+                "FEATURE_REAL_CLAUDE",
+            )
+        },
     )
 
     assert getattr(features, enabled_property) is True
@@ -136,15 +139,16 @@ def test_management_routes_are_absent_when_web_admin_is_disabled() -> None:
     settings = make_test_settings()
     container = build_test_container(settings, migrate=True, seed=True)
 
-    with TestClient(
-        create_app(settings, container_factory=lambda _: container)
-    ) as client:
+    with TestClient(create_app(settings, container_factory=lambda _: container)) as client:
         assert client.get("/api/health").status_code == 200
         assert client.get("/api/admin/users").status_code == 404
-        assert client.post(
-            "/api/auth/login",
-            json={"username": "local-user", "password": "anything-long-enough"},
-        ).status_code == 404
+        assert (
+            client.post(
+                "/api/auth/login",
+                json={"username": "local-user", "password": "anything-long-enough"},
+            ).status_code
+            == 404
+        )
 
 
 def test_authorized_admin_can_read_masked_effective_feature_snapshot() -> None:
@@ -162,9 +166,7 @@ def test_authorized_admin_can_read_masked_effective_feature_snapshot() -> None:
     )
     container = build_test_container(settings, migrate=True, seed=True)
 
-    with TestClient(
-        create_app(settings, container_factory=lambda _: container)
-    ) as client:
+    with TestClient(create_app(settings, container_factory=lambda _: container)) as client:
         assert client.get("/api/platform/runtime-config/features").status_code == 401
         csrf = login(client)
         response = client.get(
@@ -193,11 +195,7 @@ def test_operator_templates_expose_only_three_top_level_feature_flags() -> None:
         if line.startswith("FEATURE_") and "=" in line
     }
     compose_text = Path("docker-compose.yml").read_text()
-    compose_keys = {
-        key
-        for key in expected
-        if f"{key}:" in compose_text
-    }
+    compose_keys = {key for key in expected if f"{key}:" in compose_text}
 
     assert env_keys == expected
     assert compose_keys == expected

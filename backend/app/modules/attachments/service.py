@@ -118,7 +118,10 @@ class AttachmentProcessingService:
                 status="SUCCEEDED",
                 summary="Attachment reached a safe terminal state",
                 job_id=attachment.job_id,
-                payload={"attachment_id": attachment_id, "status": self.repository.get_attachment(attachment_id).status},
+                payload={
+                    "attachment_id": attachment_id,
+                    "status": self.repository.get_attachment(attachment_id).status,
+                },
             )
         except RetryableExecutionError:
             retries = self.repository.increment_attachment_retry(attachment_id)
@@ -156,12 +159,16 @@ class AttachmentProcessingService:
     @operation_unit_of_work(lambda service: service.repository.database)
     def _release_if_ready(self, job_id: str, correlation_id: str) -> str:
         attachments = self.repository.list_attachments(job_id)
-        if not attachments or any(item.status not in TERMINAL_ATTACHMENT_STATUSES for item in attachments):
+        if not attachments or any(
+            item.status not in TERMINAL_ATTACHMENT_STATUSES for item in attachments
+        ):
             return "waiting"
         job = self.repository.get_job(job_id)
         if job.status != JobStatus.WAITING_INPUT:
             return job.status.value.lower()
-        usable = bool(job.user_message.strip()) or any(item.status == "READY" for item in attachments)
+        usable = bool(job.user_message.strip()) or any(
+            item.status == "READY" for item in attachments
+        )
         if usable:
             self.repository.transition_job(job_id=job_id, target=JobStatus.PENDING)
             return "released"
@@ -183,9 +190,7 @@ class AttachmentProcessingService:
     def report_orphan_objects(self) -> list[str]:
         referenced = {
             item.object_key
-            for row in self.repository.database.execute(
-                "select job_id from agent_job"
-            )
+            for row in self.repository.database.execute("select job_id from agent_job")
             for item in self.repository.list_attachments(str(row["job_id"]))
             if item.object_key
         }

@@ -142,12 +142,13 @@ def test_managed_channels_keep_secrets_out_of_admin_reads_and_runtime_states_are
             ),
         ],
     )
-    assert container.managed_channel_service.get_channel(first["id"])["runtime"][
-        "status"
-    ] == "AUTH_FAILED"
-    assert container.managed_channel_service.get_channel(second["id"])["runtime"][
-        "status"
-    ] == "READY"
+    assert (
+        container.managed_channel_service.get_channel(first["id"])["runtime"]["status"]
+        == "AUTH_FAILED"
+    )
+    assert (
+        container.managed_channel_service.get_channel(second["id"])["runtime"]["status"] == "READY"
+    )
 
 
 def test_channel_inbox_deduplicates_per_connector_and_encrypts_reply_credential():
@@ -330,9 +331,7 @@ def test_reapplying_local_seed_preserves_managed_dingtalk_configuration():
         migrate=True,
         seed=True,
     )
-    current = container.managed_channel_service.get_channel(
-        "connector-dingtalk-stream-default"
-    )
+    current = container.managed_channel_service.get_channel("connector-dingtalk-stream-default")
     enterprise = _active_enterprise(container, name="种子钉钉企业")
     container.database.execute(
         "update integration_connector set dingtalk_enterprise_id = ? where id = ?",
@@ -387,9 +386,7 @@ def test_disabled_platform_secret_marks_only_affected_connector_misconfigured_an
     lease = container.runtime_control_service.acquire("runtime-one")
     assert lease is not None
 
-    before = container.runtime_control_service.desired_snapshot(
-        "runtime-one", lease["lease_token"]
-    )
+    before = container.runtime_control_service.desired_snapshot("runtime-one", lease["lease_token"])
     assert {item["connector_id"] for item in before["connectors"]} == {
         affected["id"],
         healthy["id"],
@@ -408,17 +405,12 @@ def test_disabled_platform_secret_marks_only_affected_connector_misconfigured_an
     after_disable = container.runtime_control_service.desired_snapshot(
         "runtime-one", lease["lease_token"]
     )
-    assert [item["connector_id"] for item in after_disable["connectors"]] == [
-        healthy["id"]
-    ]
+    assert [item["connector_id"] for item in after_disable["connectors"]] == [healthy["id"]]
     public = container.managed_channel_service.get_channel(affected["id"])
     assert public["runtime"]["status"] == "MISCONFIGURED"
-    assert public["runtime"]["last_error"] == (
-        "连接器凭据缺失、已停用或无法解析，请重新绑定后测试"
-    )
+    assert public["runtime"]["last_error"] == ("连接器凭据缺失、已停用或无法解析，请重新绑定后测试")
     assert affected["id"] not in {
-        item["id"]
-        for item in container.managed_channel_service.eligible("dingtalk_private")
+        item["id"] for item in container.managed_channel_service.eligible("dingtalk_private")
     }
     with pytest.raises(NonRetryableExecutionError) as ingress_error:
         container.runtime_control_service.receive(
@@ -428,14 +420,12 @@ def test_disabled_platform_secret_marks_only_affected_connector_misconfigured_an
         )
     assert ingress_error.value.error_code == "channel_misconfigured"
     with pytest.raises(NonRetryableExecutionError) as test_error:
-        container.managed_channel_service.test_configuration(
-            affected["id"], actor_id="test-admin"
-        )
+        container.managed_channel_service.test_configuration(affected["id"], actor_id="test-admin")
     assert test_error.value.error_code == "connector_secret_unavailable"
     assert (
-        container.database.execute_one(
-            "select count(*) as count from channel_ingress_event"
-        )["count"]
+        container.database.execute_one("select count(*) as count from channel_ingress_event")[
+            "count"
+        ]
         == 0
     )
 
@@ -496,9 +486,7 @@ def test_disabled_delivery_secret_is_rejected_before_delivery_authorization():
     with pytest.raises(NonRetryableExecutionError) as error:
         container.connector_registry.require_delivery(connector_id)
     assert error.value.error_code == "connector_secret_unavailable"
-    assert error.value.safe_message == (
-        "连接器凭据缺失、已停用或无法解析，请重新绑定后测试"
-    )
+    assert error.value.safe_message == ("连接器凭据缺失、已停用或无法解析，请重新绑定后测试")
 
 
 def test_internal_runtime_api_requires_service_auth_and_rate_limits_safe_errors():
@@ -512,9 +500,7 @@ def test_internal_runtime_api_requires_service_auth_and_rate_limits_safe_errors(
     )
     container = build_test_container(settings, migrate=True)
     _RUNTIME_RATE_WINDOWS.clear()
-    with TestClient(
-        create_app(settings, container_factory=lambda _: container)
-    ) as client:
+    with TestClient(create_app(settings, container_factory=lambda _: container)) as client:
         unauthorized = client.post(
             "/api/internal/dingtalk-runtime/lease/acquire",
             json={"runtime_id": "runtime-one", "lease_token": ""},
@@ -571,9 +557,7 @@ def test_internal_runtime_inbox_accepts_compact_utf8_json_byte_count():
     ).encode()
     serializer_drift_bytes = len(compact) - 1
 
-    with TestClient(
-        create_app(settings, container_factory=lambda _: container)
-    ) as client:
+    with TestClient(create_app(settings, container_factory=lambda _: container)) as client:
         headers = {"Authorization": "Bearer runtime-test-token"}
         acquired = client.post(
             "/api/internal/dingtalk-runtime/lease/acquire",

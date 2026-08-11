@@ -44,17 +44,13 @@ def build_external_identity_router() -> APIRouter:
         principal = current_principal(request)
         c = container(request)
         try:
-            identities = c.identity_repository.list_external_identities(
-                principal.user_id
-            )
+            identities = c.identity_repository.list_external_identities(principal.user_id)
             dingtalk = [
                 _dingtalk_summary(c, identity, include_admin_fields=False)
                 for identity in identities
                 if identity["provider"] == "dingtalk" and identity["status"] != "unbound"
             ]
-            ones_status = c.ones_identity_binding_service.self_status(
-                actor_id=principal.user_id
-            )
+            ones_status = c.ones_identity_binding_service.self_status(actor_id=principal.user_id)
             return {
                 "user": {
                     "id": principal.user_id,
@@ -93,9 +89,7 @@ def build_external_identity_router() -> APIRouter:
         principal = current_principal(request)
         require_csrf(request, principal)
         try:
-            challenge = container(
-                request
-            ).ones_identity_binding_service.begin_self_binding(
+            challenge = container(request).ones_identity_binding_service.begin_self_binding(
                 actor_id=principal.user_id,
                 email=payload.email,
                 password=payload.password.get_secret_value(),
@@ -132,9 +126,7 @@ def build_external_identity_router() -> APIRouter:
         principal = current_principal(request)
         require_csrf(request, principal)
         try:
-            container(request).ones_identity_binding_service.self_unbind(
-                actor_id=principal.user_id
-            )
+            container(request).ones_identity_binding_service.self_unbind(actor_id=principal.user_id)
         except Exception as exc:
             raise handle_exception(exc) from exc
         return {"status": "unbound"}

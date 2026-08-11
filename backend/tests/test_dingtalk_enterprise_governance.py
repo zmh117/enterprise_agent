@@ -114,9 +114,7 @@ def _dispatch(container, *, connector_id: str, submission: ChannelIngressSubmiss
     )
     container.channel_outbox_publisher.publish_pending(limit=10)
     assert container.message_bus is not None
-    container.message_bus.consume_channel_events(
-        container.channel_dispatch_service.handle
-    )
+    container.message_bus.consume_channel_events(container.channel_dispatch_service.handle)
     return container.managed_channel_repository.get_event(str(event["id"]))
 
 
@@ -240,9 +238,7 @@ def test_pending_enterprise_message_verifies_once_without_business_records() -> 
         _submission(channel["id"], "verification-event"),
     )
 
-    current = container.managed_channel_service.get_dingtalk_enterprise(
-        enterprise["id"]
-    )
+    current = container.managed_channel_service.get_dingtalk_enterprise(enterprise["id"])
     assert event["status"] == "ENTERPRISE_VERIFIED"
     assert created is True
     assert repeated == event
@@ -299,9 +295,10 @@ def test_pending_enterprise_rejects_missing_or_mismatched_corp_ids(
         )
 
     assert error.value.error_code == error_code
-    assert container.managed_channel_service.get_dingtalk_enterprise(
-        enterprise["id"]
-    )["status"] == "PENDING_VERIFICATION"
+    assert (
+        container.managed_channel_service.get_dingtalk_enterprise(enterprise["id"])["status"]
+        == "PENDING_VERIFICATION"
+    )
     assert container.database.execute_one(
         "select count(*) as count from channel_ingress_event"
     ) == {"count": 0}
@@ -321,9 +318,7 @@ def test_enterprise_lifecycle_requires_disabled_apps_and_restore_reverification(
         lease["lease_token"],
         _submission(channel["id"], "lifecycle-verification"),
     )
-    active = container.managed_channel_service.get_dingtalk_enterprise(
-        enterprise["id"]
-    )
+    active = container.managed_channel_service.get_dingtalk_enterprise(enterprise["id"])
     renamed = container.managed_channel_service.rename_dingtalk_enterprise(
         enterprise["id"],
         name="生命周期企业（已改名）",
@@ -438,9 +433,10 @@ def test_enterprise_verification_binding_and_two_application_jobs_end_to_end() -
 
     assert created is True
     assert verification["status"] == "ENTERPRISE_VERIFIED"
-    assert container.managed_channel_service.get_dingtalk_enterprise(
-        str(enterprise["id"])
-    )["corp_id"] == "corp-enterprise-e2e"
+    assert (
+        container.managed_channel_service.get_dingtalk_enterprise(str(enterprise["id"]))["corp_id"]
+        == "corp-enterprise-e2e"
+    )
     assert container.agent_repository.count_rows("agent_job") == 0
 
     target = container.identity_repository.create_user(
@@ -570,9 +566,10 @@ def test_enterprise_verification_binding_and_two_application_jobs_end_to_end() -
         first["id"],
         second["id"],
     }
-    assert container.identity_repository.get_external_identity(str(identity["id"]))[
-        "display_name"
-    ] == "应用二昵称"
+    assert (
+        container.identity_repository.get_external_identity(str(identity["id"]))["display_name"]
+        == "应用二昵称"
+    )
 
 
 def test_verified_corp_id_conflict_is_rejected_for_second_enterprise() -> None:
@@ -602,6 +599,7 @@ def test_verified_corp_id_conflict_is_rejected_for_second_enterprise() -> None:
             _submission(second["id"], "verify-second"),
         )
     assert conflict.value.error_code == "dingtalk_corp_id_conflict"
-    assert container.managed_channel_service.get_dingtalk_enterprise(
-        second_enterprise["id"]
-    )["status"] == "PENDING_VERIFICATION"
+    assert (
+        container.managed_channel_service.get_dingtalk_enterprise(second_enterprise["id"])["status"]
+        == "PENDING_VERIFICATION"
+    )

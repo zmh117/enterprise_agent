@@ -52,7 +52,9 @@ def _capability(
 # 管理能力目录是后台页面和 API 授权的唯一来源。业务应用调用、工具和数据范围不属于本目录。
 ADMIN_CAPABILITIES: tuple[CapabilityDefinition, ...] = (
     _capability("dashboard.read", "dashboard", "admin_dashboard", "read", "查看工作台"),
-    _capability("applications.read", "applications", "business_application", "read", "查看业务应用"),
+    _capability(
+        "applications.read", "applications", "business_application", "read", "查看业务应用"
+    ),
     _capability(
         "applications.create",
         "applications",

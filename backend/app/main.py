@@ -149,9 +149,7 @@ def _check_agent_runtime(
             base_url=base_url,
             allowed_runtime_hosts=allowed_hosts,
             runtime_kind=runtime_kind,
-            allow_insecure_internal_http=(
-                settings.agent_runtime.allow_insecure_internal_http
-            ),
+            allow_insecure_internal_http=(settings.agent_runtime.allow_insecure_internal_http),
         )
     )
 

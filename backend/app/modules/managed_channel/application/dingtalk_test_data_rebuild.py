@@ -43,20 +43,13 @@ PROTECTED_COUNT_QUERIES = {
     "roles": "select count(*) as count from rbac_role",
     "role_memberships": "select count(*) as count from rbac_user_role",
     "ones_identities": (
-        "select count(*) as count from user_external_identity "
-        "where provider = 'ones'"
+        "select count(*) as count from user_external_identity where provider = 'ones'"
     ),
     "agents": "select count(*) as count from agent_definition",
     "agent_publications": "select count(*) as count from agent_publication",
-    "business_applications": (
-        "select count(*) as count from business_application"
-    ),
-    "application_revisions": (
-        "select count(*) as count from business_application_revision"
-    ),
-    "application_publications": (
-        "select count(*) as count from business_application_publication"
-    ),
+    "business_applications": ("select count(*) as count from business_application"),
+    "application_revisions": ("select count(*) as count from business_application_revision"),
+    "application_publications": ("select count(*) as count from business_application_publication"),
     "agent_jobs": "select count(*) as count from agent_job",
     "agent_tool_calls": "select count(*) as count from agent_tool_call",
     "delivery_attempts": "select count(*) as count from delivery_attempt",
@@ -75,17 +68,13 @@ class DingTalkTestDataRebuildService:
         self._require_non_production()
         targets = self._targets()
         protected_counts = self._protected_counts()
-        historical_references = self._historical_references(
-            self._target_ids(targets, "connectors")
-        )
+        historical_references = self._historical_references(self._target_ids(targets, "connectors"))
         protected_blockers = self._protected_blockers(
             identity_ids=self._target_ids(targets, "dingtalk_identities"),
             audit_ids=self._target_ids(targets, "governance_audits"),
         )
         write_stop = self._write_stop_evidence()
-        counts = {
-            name: len(targets.get(name, [])) for name in TARGET_ORDER
-        }
+        counts = {name: len(targets.get(name, [])) for name in TARGET_ORDER}
         stable_inventory = {
             "schema_head": self._schema_head(),
             "database_locator_hash": self._database_locator_hash(),
@@ -137,9 +126,7 @@ class DingTalkTestDataRebuildService:
         if confirmation != CONFIRMATION_TEXT:
             raise NonRetryableExecutionError(
                 "DingTalk rebuild confirmation mismatch",
-                safe_message=(
-                    f"执行钉钉测试数据重建必须输入固定确认文字：{CONFIRMATION_TEXT}"
-                ),
+                safe_message=(f"执行钉钉测试数据重建必须输入固定确认文字：{CONFIRMATION_TEXT}"),
                 error_code="dingtalk_rebuild_confirmation_required",
             )
         if not str(backup_reference or "").strip():
@@ -221,9 +208,7 @@ class DingTalkTestDataRebuildService:
                 "counts": current["counts"],
                 "remaining_counts": remaining["counts"],
                 "protected_counts": after_protected,
-                "historical_references_preserved": current[
-                    "historical_references"
-                ],
+                "historical_references_preserved": current["historical_references"],
             }
 
     def _targets(self) -> dict[str, list[dict[str, Any]]]:
@@ -247,9 +232,7 @@ class DingTalkTestDataRebuildService:
         connector_refs = {
             str(row.get("secret_ref") or "")
             for row in connectors
-            if str(row.get("secret_ref") or "").startswith(
-                "secret://platform/"
-            )
+            if str(row.get("secret_ref") or "").startswith("secret://platform/")
         }
         enterprises = self.database.execute(
             """
@@ -391,12 +374,8 @@ class DingTalkTestDataRebuildService:
                     "connector_id",
                 ),
             ),
-            "candidates": self._safe_rows(
-                candidates, ("id", "enterprise_id", "revision")
-            ),
-            "ingress_outbox": self._safe_rows(
-                ingress_outbox, ("id", "channel_event_id", "status")
-            ),
+            "candidates": self._safe_rows(candidates, ("id", "enterprise_id", "revision")),
+            "ingress_outbox": self._safe_rows(ingress_outbox, ("id", "channel_event_id", "status")),
             "ingress_events": self._safe_rows(
                 ingress_events,
                 ("id", "connector_id", "external_event_id", "status"),
@@ -411,9 +390,7 @@ class DingTalkTestDataRebuildService:
                     "registered",
                 ),
             ),
-            "runtime_leases": self._safe_rows(
-                runtime_leases, ("id", "runtime_id", "expires_at")
-            ),
+            "runtime_leases": self._safe_rows(runtime_leases, ("id", "runtime_id", "expires_at")),
             "dingtalk_identities": self._safe_rows(
                 identities,
                 ("id", "user_id", "enterprise_id", "status", "revision"),
@@ -449,9 +426,7 @@ class DingTalkTestDataRebuildService:
                             "secret_ref",
                         ),
                     ),
-                    "metadata_digest": self._digest(
-                        self._json_object(row.get("metadata") or "{}")
-                    ),
+                    "metadata_digest": self._digest(self._json_object(row.get("metadata") or "{}")),
                 }
                 for row in connectors
             ],
@@ -512,10 +487,7 @@ class DingTalkTestDataRebuildService:
         )
         self._before_step("active_routes")
         route_ids = self._target_ids(targets, "active_routes")
-        deployment_ids = {
-            str(row["deployment_id"])
-            for row in targets["active_routes"]
-        }
+        deployment_ids = {str(row["deployment_id"]) for row in targets["active_routes"]}
         self._delete_ids("business_application_active_route", route_ids)
         self._deactivate_deployments(deployment_ids)
         self._before_step("dedicated_secrets")
@@ -535,9 +507,7 @@ class DingTalkTestDataRebuildService:
                 "select metadata from integration_connector where id = ?",
                 (connector_id,),
             )
-            metadata = self._json_object(
-                (current or {}).get("metadata") or "{}"
-            )
+            metadata = self._json_object((current or {}).get("metadata") or "{}")
             metadata.update(
                 {
                     "historical_source_status": "UNAVAILABLE",
@@ -615,8 +585,7 @@ class DingTalkTestDataRebuildService:
         for row in rows:
             metadata = self._json_object(row.get("metadata_json") or "{}")
             if (
-                str(row.get("purpose") or "")
-                != "dingtalk_stream_client_secret"
+                str(row.get("purpose") or "") != "dingtalk_stream_client_secret"
                 or str(metadata.get("managed_by") or "") != "managed_channel"
             ):
                 continue
@@ -625,9 +594,7 @@ class DingTalkTestDataRebuildService:
                 select id from integration_connector
                  where secret_ref = ? and id not in ({placeholders})
                  limit 1
-                """.format(
-                    placeholders=self._placeholders(target_connector_ids)
-                ),
+                """.format(placeholders=self._placeholders(target_connector_ids)),
                 (str(row["ref"]), *sorted(target_connector_ids)),
             )
             if non_target is None:
@@ -655,15 +622,12 @@ class DingTalkTestDataRebuildService:
             payload = self._json_object(row.get("payload_summary") or "{}")
             if (
                 str(payload.get("connector_id") or "") in connector_ids
-                or str(payload.get("dingtalk_enterprise_id") or "")
-                in enterprise_ids
+                or str(payload.get("dingtalk_enterprise_id") or "") in enterprise_ids
             ):
                 selected.append(row)
         return selected
 
-    def _historical_references(
-        self, connector_ids: set[str]
-    ) -> dict[str, list[dict[str, Any]]]:
+    def _historical_references(self, connector_ids: set[str]) -> dict[str, list[dict[str, Any]]]:
         revision_triggers = self._by_values(
             """
             select t.id, t.connector_id, t.revision_id,
@@ -719,8 +683,7 @@ class DingTalkTestDataRebuildService:
             audit_ids,
         )
         blockers.extend(
-            {"type": "agent_tool_call_audit", "id": str(row["id"])}
-            for row in audit_refs
+            {"type": "agent_tool_call_audit", "id": str(row["id"])} for row in audit_refs
         )
         return blockers
 
@@ -761,15 +724,9 @@ class DingTalkTestDataRebuildService:
             "active_runtime_leases": self._safe_rows(
                 active_leases, ("id", "runtime_id", "expires_at")
             ),
-            "publishing_ingress_outbox": self._safe_rows(
-                active_outbox, ("id", "status")
-            ),
-            "dispatching_ingress_events": self._safe_rows(
-                dispatching_events, ("id", "status")
-            ),
-            "safe_to_apply": not (
-                active_leases or active_outbox or dispatching_events
-            ),
+            "publishing_ingress_outbox": self._safe_rows(active_outbox, ("id", "status")),
+            "dispatching_ingress_events": self._safe_rows(dispatching_events, ("id", "status")),
+            "safe_to_apply": not (active_leases or active_outbox or dispatching_events),
         }
 
     def _protected_counts(self) -> dict[str, int]:
@@ -801,9 +758,7 @@ class DingTalkTestDataRebuildService:
                 json.dumps(
                     {
                         "plan_hash": plan_hash,
-                        "backup_reference_digest": self._digest(
-                            backup_reference
-                        ),
+                        "backup_reference_digest": self._digest(backup_reference),
                         "counts": counts,
                     },
                     ensure_ascii=False,
@@ -814,9 +769,7 @@ class DingTalkTestDataRebuildService:
         )
 
     def _schema_head(self) -> str:
-        row = self.database.execute_one(
-            "select version from schema_migration limit 1"
-        )
+        row = self.database.execute_one("select version from schema_migration limit 1")
         return str((row or {}).get("version") or "")
 
     def _database_locator_hash(self) -> str:
@@ -871,9 +824,7 @@ class DingTalkTestDataRebuildService:
             tuple(sorted(ids)),
         )
 
-    def _by_values(
-        self, sql: str, values: Iterable[str]
-    ) -> list[dict[str, Any]]:
+    def _by_values(self, sql: str, values: Iterable[str]) -> list[dict[str, Any]]:
         normalized = sorted({str(value) for value in values if str(value)})
         if not normalized:
             return []
@@ -883,9 +834,7 @@ class DingTalkTestDataRebuildService:
         )
 
     @staticmethod
-    def _target_ids(
-        targets: dict[str, list[dict[str, Any]]], name: str
-    ) -> set[str]:
+    def _target_ids(targets: dict[str, list[dict[str, Any]]], name: str) -> set[str]:
         return {str(row["id"]) for row in targets.get(name, [])}
 
     @staticmethod
@@ -893,9 +842,7 @@ class DingTalkTestDataRebuildService:
         return ", ".join("?" for _ in values)
 
     @staticmethod
-    def _safe_row(
-        row: dict[str, Any], fields: tuple[str, ...]
-    ) -> dict[str, Any]:
+    def _safe_row(row: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
         return {field: row.get(field) for field in fields}
 
     def _safe_rows(

@@ -50,9 +50,7 @@ class IdentityRepository:
                     "Username already exists",
                     safe_message="用户名已被使用",
                     error_code="username_conflict",
-                    field_errors=[
-                        {"field": "username", "message": "用户名已被使用"}
-                    ],
+                    field_errors=[{"field": "username", "message": "用户名已被使用"}],
                 ) from exc
             raise
         return self.get_user(user_id)
@@ -160,13 +158,9 @@ class IdentityRepository:
             "update identity_migration_audit set internal_user_id = null where internal_user_id = ?",
             (user_id,),
         )
-        self.database.execute(
-            "delete from user_external_identity where user_id = ?", (user_id,)
-        )
+        self.database.execute("delete from user_external_identity where user_id = ?", (user_id,))
         self.database.execute("delete from user_session where user_id = ?", (user_id,))
-        self.database.execute(
-            "delete from user_password_credential where user_id = ?", (user_id,)
-        )
+        self.database.execute("delete from user_password_credential where user_id = ?", (user_id,))
         self.database.execute("delete from rbac_user_role where user_id = ?", (user_id,))
         rows = self.database.execute(
             "delete from app_user where id = ? and revision = ? returning id",
@@ -418,10 +412,7 @@ class IdentityRepository:
                     safe_message="该钉钉身份已有历史归属，只能由原人员恢复",
                     error_code="identity_restore_required",
                 )
-            if (
-                str(existing["status"]) in {"unbound", "disabled"}
-                and not restore_historical
-            ):
+            if str(existing["status"]) in {"unbound", "disabled"} and not restore_historical:
                 raise NonRetryableExecutionError(
                     "Historical DingTalk identity requires explicit restore",
                     safe_message="请通过匹配的受信候选恢复该钉钉身份",
@@ -440,11 +431,7 @@ class IdentityRepository:
         )
         timestamp = now_iso()
         replacing_other = bool(
-            current
-            and (
-                existing is None
-                or str(current["id"]) != str(existing["id"])
-            )
+            current and (existing is None or str(current["id"]) != str(existing["id"]))
         )
         if replacing_other and not replace_current:
             raise NonRetryableExecutionError(
@@ -593,13 +580,12 @@ class IdentityRepository:
                     timestamp,
                 ),
             )
-        elif (
-            str(observation["last_ingress_event_id"]) != source_ingress_event_id
-            and (observed_at, source_ingress_event_id)
-            > (
-                str(observation["last_observed_at"]),
-                str(observation["last_ingress_event_id"]),
-            )
+        elif str(observation["last_ingress_event_id"]) != source_ingress_event_id and (
+            observed_at,
+            source_ingress_event_id,
+        ) > (
+            str(observation["last_observed_at"]),
+            str(observation["last_ingress_event_id"]),
         ):
             self.database.execute(
                 """
@@ -680,9 +666,7 @@ class IdentityRepository:
             ),
         )
 
-    def list_dingtalk_application_observations(
-        self, identity_id: str
-    ) -> list[dict[str, Any]]:
+    def list_dingtalk_application_observations(self, identity_id: str) -> list[dict[str, Any]]:
         return self.database.execute(
             """
             select o.first_observed_at, o.last_observed_at,
@@ -1093,8 +1077,7 @@ class IdentityRepository:
               and ur.status = 'enabled' and u.status = 'enabled'
               and u.account_type = 'human'
               and (ur.expires_at is null or ur.expires_at > ?)
-            """
-            ,
+            """,
             (now_iso(),),
         )
         return int(row["count"]) if row else 0
@@ -1242,9 +1225,7 @@ class IdentityRepository:
             "user_id": row["user_id"],
             "provider": row["provider"],
             "tenant_code": row["tenant_code"],
-            "dingtalk_enterprise_id": str(
-                row.get("dingtalk_enterprise_id") or ""
-            ),
+            "dingtalk_enterprise_id": str(row.get("dingtalk_enterprise_id") or ""),
             "external_subject_id": row["external_subject_id"],
             "connector_id": row.get("connector_id") or "",
             "union_id": row.get("union_id") or "",
@@ -1277,11 +1258,7 @@ class IdentityRepository:
             normalized_team_ids: list[str] = []
             if isinstance(team_uuids, (list, tuple)):
                 normalized_team_ids = list(
-                    dict.fromkeys(
-                        str(value).strip()
-                        for value in team_uuids
-                        if str(value).strip()
-                    )
+                    dict.fromkeys(str(value).strip() for value in team_uuids if str(value).strip())
                 )
                 result["team_uuids"] = normalized_team_ids
             teams = metadata.get("teams")

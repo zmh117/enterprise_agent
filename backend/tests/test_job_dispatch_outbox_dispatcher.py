@@ -55,8 +55,7 @@ def test_dispatcher_publishes_only_before_recording_confirmed_state() -> None:
         }
         assert runtime.message_bus.jobs[0].event_id == event.id
         assert "queue.dispatched" in {
-            row["event_type"]
-            for row in runtime.audit_repository.list_for_job(job.id)
+            row["event_type"] for row in runtime.audit_repository.list_for_job(job.id)
         }
     finally:
         runtime.database.close()
@@ -154,9 +153,7 @@ class _SecretLeakingFailurePublisher:
         correlation_id: str,
     ) -> None:
         del event_id, job_id, correlation_id
-        raise RuntimeError(
-            "amqp://admin:plain-secret@broker/vhost?access_token=should-not-persist"
-        )
+        raise RuntimeError("amqp://admin:plain-secret@broker/vhost?access_token=should-not-persist")
 
 
 def test_dispatcher_uses_finite_backoff_and_safe_dead_state() -> None:

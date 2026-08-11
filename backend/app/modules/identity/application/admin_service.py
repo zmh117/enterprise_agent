@@ -54,18 +54,14 @@ class IdentityAdminService:
                 "Display name is required",
                 safe_message="请输入显示名称",
                 error_code="invalid_user",
-                field_errors=[
-                    {"field": "display_name", "message": "请输入显示名称"}
-                ],
+                field_errors=[{"field": "display_name", "message": "请输入显示名称"}],
             )
         if self.repository.get_user_by_username(normalized_username) is not None:
             raise NonRetryableExecutionError(
                 "Username already exists",
                 safe_message="用户名已被使用",
                 error_code="username_conflict",
-                field_errors=[
-                    {"field": "username", "message": "用户名已被使用"}
-                ],
+                field_errors=[{"field": "username", "message": "用户名已被使用"}],
             )
         with self.repository.database.unit_of_work():
             user = self.repository.create_user(
@@ -74,9 +70,7 @@ class IdentityAdminService:
                 email=email.strip(),
             )
             if password:
-                self.repository.set_password_hash(
-                    str(user["id"]), self.passwords.hash(password)
-                )
+                self.repository.set_password_hash(str(user["id"]), self.passwords.hash(password))
             self.audit_service.record(
                 "admin.user.created",
                 status="SUCCEEDED",
@@ -176,9 +170,7 @@ class IdentityAdminService:
         try:
             with self.repository.database.unit_of_work():
                 self.repository.lock_platform_admin_invariant()
-                reduces_verified_admins = (
-                    self.repository.is_verified_human_platform_admin(user_id)
-                )
+                reduces_verified_admins = self.repository.is_verified_human_platform_admin(user_id)
                 deleted = self.repository.delete_user(
                     user_id,
                     expected_revision=expected_revision,
@@ -289,8 +281,8 @@ class IdentityAdminService:
                 reduces_verified_admins = False
                 if not enabled and str(role["code"]) == "platform-admin":
                     self.repository.lock_platform_admin_invariant()
-                    reduces_verified_admins = (
-                        self.repository.is_verified_human_platform_admin(user_id)
+                    reduces_verified_admins = self.repository.is_verified_human_platform_admin(
+                        user_id
                     )
                 if enabled:
                     membership = self.repository.assign_role(

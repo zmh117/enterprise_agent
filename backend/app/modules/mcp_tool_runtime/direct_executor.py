@@ -17,6 +17,7 @@ from app.modules.mcp_tool_runtime.infrastructure.db.drivers import (
     OracleExecutor,
     SqlServerExecutor,
 )
+from app.modules.mcp_tool_runtime.infrastructure.db.executor import QueryExecutor
 from app.modules.mcp_tool_runtime.infrastructure.db.schema_directory import (
     MySqlSchemaInspector,
     OracleSchemaInspector,
@@ -44,7 +45,7 @@ class DirectReadOnlyToolExecutor:
         self.resolver = resolver
         self.limits = limits
         max_bytes = max(4096, limits.max_tool_response_chars * 8)
-        self.executors = {
+        self.executors: dict[DatabaseEngine, QueryExecutor] = {
             DatabaseEngine.MYSQL: MysqlExecutor(max_response_bytes=max_bytes),
             DatabaseEngine.SQLSERVER: SqlServerExecutor(max_response_bytes=max_bytes),
             DatabaseEngine.ORACLE: OracleExecutor(max_response_bytes=max_bytes),
@@ -60,28 +61,34 @@ class DirectReadOnlyToolExecutor:
 
     def get_er_context(self, query: str, context: ToolRequestContext) -> ToolResult:
         del context
+        addressing = self.resolver.directory()
         summary = {
             "query": query,
-            "addressing": self.resolver.directory(),
+            "addressing": addressing,
             "tables": [],
             "fields": [],
             "relationships": [],
             "note": "Use the Resource address and get_schema_directory before querying data.",
         }
-        return ToolResult(summary=summary, raw={"resource_count": len(summary["addressing"]["resources"] )})
+        return ToolResult(
+            summary=summary,
+            raw={"resource_count": len(addressing["resources"])},
+        )
 
-    def get_business_flow_context(
-        self, query: str, context: ToolRequestContext
-    ) -> ToolResult:
+    def get_business_flow_context(self, query: str, context: ToolRequestContext) -> ToolResult:
         del context
+        addressing = self.resolver.directory()
         summary = {
             "query": query,
-            "addressing": self.resolver.directory(),
+            "addressing": addressing,
             "nodes": [],
             "edges": [],
             "note": "Business-flow graph is not connected; use available read-only evidence.",
         }
-        return ToolResult(summary=summary, raw={"resource_count": len(summary["addressing"]["resources"] )})
+        return ToolResult(
+            summary=summary,
+            raw={"resource_count": len(addressing["resources"])},
+        )
 
     def get_schema_directory(
         self,
@@ -95,9 +102,7 @@ class DirectReadOnlyToolExecutor:
         limit: int = 50,
     ) -> ToolResult:
         del context
-        resource = self._resolve(
-            "database", environment, base, workshop, placement
-        )
+        resource = self._resolve("database", environment, base, workshop, placement)
         directory = self.schema_inspectors.for_engine(resource.binding.engine).read(
             resource.binding,
             table_prefix=None,
@@ -132,9 +137,7 @@ class DirectReadOnlyToolExecutor:
         placement: str | None = None,
     ) -> ToolResult:
         del datasource, context
-        resource = self._resolve(
-            "database", environment or "", base or "", workshop, placement
-        )
+        resource = self._resolve("database", environment or "", base or "", workshop, placement)
         binding = resource.binding
         database = binding.database
         assert database is not None
@@ -277,7 +280,9 @@ class DirectReadOnlyToolExecutor:
             minutes=int(minutes),
             limit=int(limit),
         )
-        return self._result(resource, response.summary, raw=response.raw, truncated=response.truncated)
+        return self._result(
+            resource, response.summary, raw=response.raw, truncated=response.truncated
+        )
 
     def diagnose_loki_labels(
         self,
@@ -297,7 +302,9 @@ class DirectReadOnlyToolExecutor:
             minutes=int(minutes),
             limit=int(limit),
         )
-        return self._result(resource, response.summary, raw=response.raw, truncated=response.truncated)
+        return self._result(
+            resource, response.summary, raw=response.raw, truncated=response.truncated
+        )
 
     def diagnose_loki_label_values(
         self,
@@ -320,7 +327,9 @@ class DirectReadOnlyToolExecutor:
             minutes=int(minutes),
             limit=int(limit),
         )
-        return self._result(resource, response.summary, raw=response.raw, truncated=response.truncated)
+        return self._result(
+            resource, response.summary, raw=response.raw, truncated=response.truncated
+        )
 
     def diagnose_loki_probe(
         self,
@@ -343,7 +352,9 @@ class DirectReadOnlyToolExecutor:
             minutes=int(minutes),
             limit=int(limit),
         )
-        return self._result(resource, response.summary, raw=response.raw, truncated=response.truncated)
+        return self._result(
+            resource, response.summary, raw=response.raw, truncated=response.truncated
+        )
 
     def _resolve(
         self,

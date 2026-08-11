@@ -62,12 +62,8 @@ def test_topology_supports_environment_base_and_workshop_leaves_without_virtual_
         code="GL001",
     )
 
-    public = AuthorizationCenterRepository(
-        topology_repository.database
-    ).topology_catalog()
-    environments = {
-        item["code"]: item for item in public
-    }
+    public = AuthorizationCenterRepository(topology_repository.database).topology_catalog()
+    environments = {item["code"]: item for item in public}
 
     assert environments["environment_leaf"]["bases"] == []
 

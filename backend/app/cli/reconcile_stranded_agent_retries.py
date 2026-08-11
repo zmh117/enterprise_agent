@@ -27,9 +27,7 @@ def main() -> None:
             repository=container.agent_repository,
             audit_service=container.audit_service,
             queue_settings=container.settings.queue,
-            mcp_tool_snapshot_service=(
-                container.mcp_tool_snapshot_service
-            ),
+            mcp_tool_snapshot_service=(container.mcp_tool_snapshot_service),
         ).reconcile(
             apply=args.apply,
             job_ids=args.job_id or None,

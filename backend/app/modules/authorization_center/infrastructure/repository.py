@@ -488,9 +488,7 @@ class AuthorizationCenterRepository:
                 )
         return applications
 
-    def application_tool_is_effective(
-        self, application_id: str, tool_identifier: str
-    ) -> bool:
+    def application_tool_is_effective(self, application_id: str, tool_identifier: str) -> bool:
         deployment = self.database.execute_one(
             """
             select p.snapshot_json

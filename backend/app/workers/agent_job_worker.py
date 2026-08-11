@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import signal
 import uuid
+from typing import Any
 
 from app.bootstrap import Container, build_worker_container
 from app.modules.message_bus.application.message_publisher import AgentJobMessage
@@ -41,9 +42,7 @@ class AgentJobWorker:
 
     def handle(self, message: AgentJobMessage) -> None:
         try:
-            dispatch_event = self.container.agent_repository.get_dispatch_event(
-                message.event_id
-            )
+            dispatch_event = self.container.agent_repository.get_dispatch_event(message.event_id)
         except NotFound:
             self.container.audit_service.record(
                 "job.dispatch.message_rejected",
@@ -121,22 +120,22 @@ class AgentJobWorker:
         self.container.consumer.consume_agent_jobs(self.handle)
 
     def run_forever(self) -> None:
-        previous: dict[int, object] = {}
+        previous: dict[signal.Signals, Any] = {}
 
         def shutdown_handler(_signum: int, _frame: object) -> None:
             self.request_shutdown()
             raise KeyboardInterrupt
 
-        for signum in (signal.SIGTERM, signal.SIGINT):
-            previous[signum] = signal.getsignal(signum)
-            signal.signal(signum, shutdown_handler)
+        for handled_signal in (signal.SIGTERM, signal.SIGINT):
+            previous[handled_signal] = signal.getsignal(handled_signal)
+            signal.signal(handled_signal, shutdown_handler)
         try:
             self.run_once()
         except KeyboardInterrupt:
             self.request_shutdown()
         finally:
-            for signum, handler in previous.items():
-                signal.signal(signum, handler)
+            for handled_signal, handler in previous.items():
+                signal.signal(handled_signal, handler)
 
 
 def main() -> None:

@@ -83,9 +83,7 @@ class MysqlExecutor:
         try:
             with conn.cursor() as cursor:
                 cursor.execute("SET SESSION TRANSACTION READ ONLY")
-                cursor.execute(
-                    f"SET SESSION MAX_EXECUTION_TIME = {timeout_seconds * 1000}"
-                )
+                cursor.execute(f"SET SESSION MAX_EXECUTION_TIME = {timeout_seconds * 1000}")
                 cursor.execute(sql)
                 return _rows_from_cursor(
                     cursor,
@@ -160,9 +158,7 @@ class OracleExecutor:
 
         connect_descriptor = str(getattr(db, "connect_descriptor", "") or "")
         if connect_descriptor.strip():
-            raise ResolutionError(
-                "Arbitrary Oracle connect descriptors are not allowed"
-            )
+            raise ResolutionError("Arbitrary Oracle connect descriptors are not allowed")
         use_sid = bool(getattr(db, "use_sid", False))
         if connect_descriptor.strip():
             dsn = build_oracle_dsn(

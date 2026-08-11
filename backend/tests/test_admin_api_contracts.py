@@ -258,10 +258,7 @@ def test_agent_skill_and_channel_catalogs_support_editable_agents() -> None:
         connectors = client.get("/api/admin/connectors")
 
     assert agents.status_code == skills.status_code == 200
-    assert all(
-        agent["management_mode"] == "editable"
-        for agent in agents.json()["agents"]
-    )
+    assert all(agent["management_mode"] == "editable" for agent in agents.json()["agents"])
     assert all("content" not in item for item in skills.json()["skills"])
     email = next(item for item in channel_providers.json()["providers"] if item["code"] == "email")
     assert email["available"] is False
@@ -269,6 +266,7 @@ def test_agent_skill_and_channel_catalogs_support_editable_agents() -> None:
         item["connector_type"].startswith("dingtalk_") for item in connectors.json()["connectors"]
     )
     assert "connector-email-default" not in str(connectors.json())
+
 
 def test_channel_validation_rejects_unavailable_direction_and_plaintext_secret() -> None:
     settings = unified_settings()

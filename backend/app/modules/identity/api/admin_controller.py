@@ -66,9 +66,7 @@ def build_identity_admin_router() -> APIRouter:
         page_size: int = Query(default=25, ge=1, le=100),
         include_disabled: bool = True,
     ) -> dict[str, Any]:
-        require_action(
-            request, resource_type="user", resource_code="*", action="read"
-        )
+        require_action(request, resource_type="user", resource_code="*", action="read")
         c = container(request)
         total = c.identity_repository.count_users(
             include_disabled=include_disabled,
@@ -112,13 +110,9 @@ def build_identity_admin_router() -> APIRouter:
 
     @router.get("/users/{user_id}")
     def get_user(request: Request, user_id: str) -> dict[str, Any]:
-        require_action(
-            request, resource_type="user", resource_code=user_id, action="read"
-        )
+        require_action(request, resource_type="user", resource_code=user_id, action="read")
         c = container(request)
-        authorization_summary = c.authorization_center_service.effective_summary(
-            user_id
-        )
+        authorization_summary = c.authorization_center_service.effective_summary(user_id)
         return {
             "user": c.identity_repository.get_user(user_id),
             "roles": authorization_summary["roles"],
@@ -127,9 +121,7 @@ def build_identity_admin_router() -> APIRouter:
         }
 
     @router.put("/users/{user_id}")
-    def update_user(
-        request: Request, user_id: str, payload: UpdateUserRequest
-    ) -> dict[str, Any]:
+    def update_user(request: Request, user_id: str, payload: UpdateUserRequest) -> dict[str, Any]:
         principal = require_action(
             request,
             resource_type="user",
@@ -164,9 +156,7 @@ def build_identity_admin_router() -> APIRouter:
             raise handle_exception(exc) from exc
 
     @router.post("/users/{user_id}/roles")
-    def assign_role(
-        request: Request, user_id: str, payload: MembershipRequest
-    ) -> dict[str, Any]:
+    def assign_role(request: Request, user_id: str, payload: MembershipRequest) -> dict[str, Any]:
         principal = require_action(
             request,
             resource_type="role",
@@ -237,16 +227,12 @@ def build_identity_admin_router() -> APIRouter:
 
     @router.get("/roles")
     def list_roles(request: Request) -> dict[str, Any]:
-        require_action(
-            request, resource_type="role", resource_code="*", action="manage"
-        )
+        require_action(request, resource_type="role", resource_code="*", action="manage")
         return {"roles": container(request).identity_repository.list_roles()}
 
     @router.get("/roles/{role_id}")
     def get_role(request: Request, role_id: str) -> dict[str, Any]:
-        require_action(
-            request, resource_type="role", resource_code=role_id, action="manage"
-        )
+        require_action(request, resource_type="role", resource_code=role_id, action="manage")
         repository = container(request).identity_repository
         role = repository.get_role(role_id)
         return {
@@ -275,9 +261,7 @@ def build_identity_admin_router() -> APIRouter:
         return {"role": role}
 
     @router.put("/roles/{role_id}")
-    def update_role(
-        request: Request, role_id: str, payload: UpdateRoleRequest
-    ) -> dict[str, Any]:
+    def update_role(request: Request, role_id: str, payload: UpdateRoleRequest) -> dict[str, Any]:
         principal = require_action(
             request,
             resource_type="role",
@@ -300,18 +284,12 @@ def build_identity_admin_router() -> APIRouter:
 
     @router.get("/audit-events")
     def list_audit_events(request: Request, limit: int = 200) -> dict[str, Any]:
-        require_action(
-            request, resource_type="audit", resource_code="*", action="read"
-        )
-        return {
-            "events": container(request).audit_repository.list_recent(limit=limit)
-        }
+        require_action(request, resource_type="audit", resource_code="*", action="read")
+        return {"events": container(request).audit_repository.list_recent(limit=limit)}
 
     @router.get("/dingtalk-tenants")
     def list_dingtalk_tenants(request: Request) -> dict[str, Any]:
-        require_action(
-            request, resource_type="identity", resource_code="*", action="manage"
-        )
+        require_action(request, resource_type="identity", resource_code="*", action="manage")
         c = container(request)
         connectors = [
             row
@@ -385,9 +363,7 @@ def build_identity_admin_router() -> APIRouter:
         external_subject_id: str,
         provider: Literal["dingtalk"] = "dingtalk",
     ) -> dict[str, Any]:
-        require_action(
-            request, resource_type="identity", resource_code="*", action="manage"
-        )
+        require_action(request, resource_type="identity", resource_code="*", action="manage")
         existing = container(request).identity_repository.find_external_identity(
             provider=provider,
             tenant_code=tenant_code,
@@ -400,9 +376,7 @@ def build_identity_admin_router() -> APIRouter:
         }
 
     @router.delete("/users/{user_id}/sessions/{session_id}")
-    def revoke_user_session(
-        request: Request, user_id: str, session_id: str
-    ) -> dict[str, str]:
+    def revoke_user_session(request: Request, user_id: str, session_id: str) -> dict[str, str]:
         principal = require_action(
             request,
             resource_type="user",

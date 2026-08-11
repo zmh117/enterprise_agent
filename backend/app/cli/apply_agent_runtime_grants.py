@@ -25,8 +25,7 @@ def apply_agent_runtime_grants(database: Database, *, grants_path: Path) -> str:
     )
     operation = sql.SQL("ALTER ROLE") if existing is not None else sql.SQL("CREATE ROLE")
     statement = sql.SQL(
-        "{} {} WITH LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE "
-        "NOREPLICATION PASSWORD {}"
+        "{} {} WITH LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD {}"
     ).format(operation, sql.Identifier(ROLE), sql.Literal(password))
     with database.unit_of_work():
         with database.session() as connection:
@@ -96,9 +95,7 @@ def verify_agent_runtime_grants(database: Database) -> None:
                 (ROLE, f"public.{table}", privilege),
             )
             if row and bool(row["allowed"]):
-                raise RuntimeError(
-                    f"Agent Runtime has forbidden privilege: {table}.{privilege}"
-                )
+                raise RuntimeError(f"Agent Runtime has forbidden privilege: {table}.{privilege}")
 
     for table in (
         "agent_runtime_terminal_ledger",
@@ -111,9 +108,7 @@ def verify_agent_runtime_grants(database: Database) -> None:
                 (ROLE, f"public.{table}", privilege),
             )
             if not row or not bool(row["allowed"]):
-                raise RuntimeError(
-                    f"missing Agent Runtime ledger privilege: {table}.{privilege}"
-                )
+                raise RuntimeError(f"missing Agent Runtime ledger privilege: {table}.{privilege}")
         row = database.execute_one(
             "select has_table_privilege(?, ?, 'UPDATE') as allowed",
             (ROLE, f"public.{table}"),

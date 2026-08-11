@@ -22,6 +22,7 @@ from app.modules.managed_channel.domain import (
     DingTalkApplicationInput,
     RuntimeConnectorState,
 )
+
 _RUNTIME_RATE_LOCK = threading.Lock()
 _RUNTIME_RATE_WINDOWS: dict[str, deque[float]] = {}
 
@@ -141,9 +142,7 @@ def build_managed_channel_router() -> APIRouter:
 
     @router.get("")
     def list_channels(request: Request) -> dict[str, Any]:
-        require_action(
-            request, resource_type="channel_connector", resource_code="*", action="read"
-        )
+        require_action(request, resource_type="channel_connector", resource_code="*", action="read")
         try:
             return {"items": container(request).managed_channel_service.list_channels()}
         except Exception as exc:
@@ -151,27 +150,17 @@ def build_managed_channel_router() -> APIRouter:
 
     @router.get("/eligible")
     def eligible(request: Request, trigger_type: str) -> dict[str, Any]:
-        require_action(
-            request, resource_type="channel_connector", resource_code="*", action="read"
-        )
+        require_action(request, resource_type="channel_connector", resource_code="*", action="read")
         try:
-            return {
-                "items": container(request).managed_channel_service.eligible(trigger_type)
-            }
+            return {"items": container(request).managed_channel_service.eligible(trigger_type)}
         except Exception as exc:
             raise handle_exception(exc) from exc
 
     @router.get("/webhook-connector-options")
     def webhook_connector_options(request: Request) -> dict[str, Any]:
-        require_action(
-            request, resource_type="channel_connector", resource_code="*", action="read"
-        )
+        require_action(request, resource_type="channel_connector", resource_code="*", action="read")
         try:
-            return {
-                "items": container(
-                    request
-                ).managed_channel_service.webhook_connector_options()
-            }
+            return {"items": container(request).managed_channel_service.webhook_connector_options()}
         except Exception as exc:
             raise handle_exception(exc) from exc
 
@@ -187,11 +176,7 @@ def build_managed_channel_router() -> APIRouter:
             action="read",
         )
         try:
-            return {
-                "items": container(
-                    request
-                ).managed_channel_service.list_dingtalk_enterprises()
-            }
+            return {"items": container(request).managed_channel_service.list_dingtalk_enterprises()}
         except Exception as exc:
             raise handle_exception(exc) from exc
 
@@ -211,9 +196,7 @@ def build_managed_channel_router() -> APIRouter:
             csrf=True,
         )
         try:
-            item = container(
-                request
-            ).managed_channel_service.create_dingtalk_enterprise(
+            item = container(request).managed_channel_service.create_dingtalk_enterprise(
                 name=payload.name,
                 actor_id=principal.user_id,
             )
@@ -237,9 +220,9 @@ def build_managed_channel_router() -> APIRouter:
         )
         try:
             return {
-                "enterprise": container(
-                    request
-                ).managed_channel_service.get_dingtalk_enterprise(enterprise_id)
+                "enterprise": container(request).managed_channel_service.get_dingtalk_enterprise(
+                    enterprise_id
+                )
             }
         except Exception as exc:
             raise handle_exception(exc) from exc
@@ -261,9 +244,7 @@ def build_managed_channel_router() -> APIRouter:
             csrf=True,
         )
         try:
-            item = container(
-                request
-            ).managed_channel_service.rename_dingtalk_enterprise(
+            item = container(request).managed_channel_service.rename_dingtalk_enterprise(
                 enterprise_id,
                 name=payload.name,
                 expected_revision=payload.expected_revision,
@@ -324,13 +305,9 @@ def build_managed_channel_router() -> APIRouter:
 
     @router.get("/{channel_id}")
     def detail(request: Request, channel_id: str) -> dict[str, Any]:
-        require_action(
-            request, resource_type="channel_connector", resource_code="*", action="read"
-        )
+        require_action(request, resource_type="channel_connector", resource_code="*", action="read")
         try:
-            return {
-                "channel": container(request).managed_channel_service.get_channel(channel_id)
-            }
+            return {"channel": container(request).managed_channel_service.get_channel(channel_id)}
         except Exception as exc:
             raise handle_exception(exc) from exc
 
@@ -356,9 +333,7 @@ def build_managed_channel_router() -> APIRouter:
             raise handle_exception(exc) from exc
 
     @router.post("/webhooks")
-    def create_webhook(
-        request: Request, payload: WebhookApplicationRequest
-    ) -> dict[str, Any]:
+    def create_webhook(request: Request, payload: WebhookApplicationRequest) -> dict[str, Any]:
         principal = require_action(
             request,
             resource_type="channel_connector",
@@ -403,9 +378,7 @@ def build_managed_channel_router() -> APIRouter:
 
     @router.post("/{connector_id}/enable")
     @router.post("/{connector_id}/disable")
-    def set_status(
-        request: Request, connector_id: str, payload: RevisionRequest
-    ) -> dict[str, Any]:
+    def set_status(request: Request, connector_id: str, payload: RevisionRequest) -> dict[str, Any]:
         principal = require_action(
             request,
             resource_type="channel_connector",
@@ -426,9 +399,7 @@ def build_managed_channel_router() -> APIRouter:
             raise handle_exception(exc) from exc
 
     @router.post("/{connector_id}/restart")
-    def restart(
-        request: Request, connector_id: str, payload: RevisionRequest
-    ) -> dict[str, Any]:
+    def restart(request: Request, connector_id: str, payload: RevisionRequest) -> dict[str, Any]:
         principal = require_action(
             request,
             resource_type="channel_connector",
@@ -465,9 +436,7 @@ def build_managed_channel_router() -> APIRouter:
             raise handle_exception(exc) from exc
 
     @router.delete("/{connector_id}")
-    def delete(
-        request: Request, connector_id: str, expected_revision: int
-    ) -> dict[str, Any]:
+    def delete(request: Request, connector_id: str, expected_revision: int) -> dict[str, Any]:
         principal = require_action(
             request,
             resource_type="channel_connector",
@@ -530,10 +499,8 @@ def build_runtime_control_router() -> APIRouter:
     def desired_config(request: Request, payload: RuntimeLeaseRequest) -> dict[str, Any]:
         _require_runtime_auth(request)
         try:
-            result: dict[str, Any] = (
-                container(request).runtime_control_service.desired_snapshot(
+            result: dict[str, Any] = container(request).runtime_control_service.desired_snapshot(
                 payload.runtime_id, payload.lease_token
-                )
             )
             return result
         except Exception as exc:
@@ -632,9 +599,7 @@ def _require_runtime_auth(request: Request) -> None:
     )
 
 
-def _enforce_runtime_rate_limit(
-    request: Request, *, requests_per_minute: int
-) -> None:
+def _enforce_runtime_rate_limit(request: Request, *, requests_per_minute: int) -> None:
     limit = max(1, requests_per_minute)
     key = request.client.host if request.client else "runtime"
     now = time.monotonic()

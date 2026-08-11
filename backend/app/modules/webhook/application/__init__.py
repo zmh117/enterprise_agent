@@ -1,4 +1,5 @@
 """Webhook trigger application services."""
+
 from .mapping import MappingResult, WebhookMapper
 from .trigger_service import TriggerValidator, WebhookTriggerService
 

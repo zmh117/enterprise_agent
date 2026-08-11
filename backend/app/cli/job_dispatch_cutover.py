@@ -17,9 +17,7 @@ from app.shared.migrations import SchemaHeadValidator
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description=(
-            "Dry-run or apply the one-time exact Agent job queue to Outbox cutover"
-        )
+        description=("Dry-run or apply the one-time exact Agent job queue to Outbox cutover")
     )
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--actor-id", default="job-dispatch-cutover-cli")
@@ -45,8 +43,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         expected_digest = str(plan["topology_digest"])
         if args.apply and args.confirm_topology_digest != expected_digest:
             raise SystemExit(
-                "--apply requires the exact --confirm-topology-digest "
-                f"{expected_digest}"
+                f"--apply requires the exact --confirm-topology-digest {expected_digest}"
             )
         scanner = RabbitMQExactQueueScanner(settings.rabbitmq_url)
         queue_names = [
@@ -58,9 +55,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         before = scanner.inspect_exact(queue_names)
         if args.apply:
             active = {
-                name: state["consumers"]
-                for name, state in before.items()
-                if state["consumers"]
+                name: state["consumers"] for name, state in before.items() if state["consumers"]
             }
             if active:
                 raise SystemExit(
@@ -71,17 +66,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         for queue_name in queue_names:
             if not before[queue_name]["exists"]:
                 continue
+
+            def process_message(
+                body: bytes,
+                source_queue: str = queue_name,
+            ) -> dict[str, object]:
+                return service.process_message(
+                    source_queue=source_queue,
+                    body=body,
+                    apply=args.apply,
+                    actor_id=args.actor_id,
+                ).to_dict()
+
             scans.append(
                 scanner.scan_exact(
                     queue_name=queue_name,
                     limit=max(0, args.max_messages_per_queue),
                     apply=args.apply,
-                    process=lambda body, source=queue_name: service.process_message(
-                        source_queue=source,
-                        body=body,
-                        apply=args.apply,
-                        actor_id=args.actor_id,
-                    ).to_dict(),
+                    process=process_message,
                 )
             )
         after = scanner.inspect_exact(queue_names)

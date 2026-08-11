@@ -60,9 +60,7 @@ class RabbitMQ4JobFailureIntegrationTests(unittest.TestCase):
         import pika
 
         suffix = uuid.uuid4().hex
-        self.rabbitmq_url = os.getenv(
-            "RABBITMQ_TEST_URL", "amqp://guest:guest@127.0.0.1:5672/"
-        )
+        self.rabbitmq_url = os.getenv("RABBITMQ_TEST_URL", "amqp://guest:guest@127.0.0.1:5672/")
         self.database_dsn = os.getenv(
             "POSTGRES_TEST_DSN",
             "postgresql://enterprise_agent:enterprise_agent@127.0.0.1:5433/enterprise_agent",
@@ -96,9 +94,7 @@ class RabbitMQ4JobFailureIntegrationTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         if hasattr(self, "channel"):
-            for queue_name in (
-                self.queue.job_queue,
-            ):
+            for queue_name in (self.queue.job_queue,):
                 self.channel.queue_delete(queue=queue_name)
             self.connection.close()
         if hasattr(self, "container"):
@@ -139,9 +135,7 @@ class RabbitMQ4JobFailureIntegrationTests(unittest.TestCase):
         )
         worker.handle(retry_message)
         retry_job = self.container.agent_repository.get_job(retry_message.job_id)
-        retry_event = self.container.agent_repository.get_dispatch_event(
-            retry_message.event_id
-        )
+        retry_event = self.container.agent_repository.get_dispatch_event(retry_message.event_id)
         retry_audit = self.container.database.execute(
             "select event_type, status from audit_event where job_id = ? order by created_at",
             (retry_message.job_id,),

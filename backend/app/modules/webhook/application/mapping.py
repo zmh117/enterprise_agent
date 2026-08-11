@@ -145,9 +145,7 @@ class WebhookMapper:
             safe_summary=safe_payload_summary(_mask(payload), max_chars=self.max_summary_chars),
         )
 
-    def _extract_variables(
-        self, config: dict[str, Any], payload: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _extract_variables(self, config: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
         return {
             name: _bounded_scalar(json_pointer(payload, pointer))
             for name, pointer in config["mapping"]["variables"].items()
@@ -163,15 +161,15 @@ class WebhookMapper:
                 return False
             exists, actual = try_json_pointer(payload, pointer)
             expected = condition.get("value")
-            if operator == "exists" and exists is not bool(expected if expected is not None else True):
+            if operator == "exists" and exists is not bool(
+                expected if expected is not None else True
+            ):
                 return False
             if operator == "equals" and actual != expected:
                 return False
             if operator == "not_equals" and actual == expected:
                 return False
-            if operator == "in" and (
-                not isinstance(expected, list) or actual not in expected
-            ):
+            if operator == "in" and (not isinstance(expected, list) or actual not in expected):
                 return False
         return True
 
@@ -189,7 +187,9 @@ class WebhookMapper:
                         f"Webhook routing value is not allowed for {field}",
                         safe_message="不允许使用此 Webhook 路由值",
                         error_code="webhook_scope_denied",
-                        field_errors=[{"field": f"routing.{field}", "message": "字段值不在允许列表中"}],
+                        field_errors=[
+                            {"field": f"routing.{field}", "message": "字段值不在允许列表中"}
+                        ],
                     )
             result[field] = value
         if not result["project_code"]:
@@ -206,9 +206,7 @@ class WebhookMapper:
         template = str(config["mapping"].get("message_template") or "")
         if not template:
             return fallback[: self.max_message_chars]
-        rendered = _VARIABLE_RE.sub(
-            lambda match: str(variables.get(match.group(1), "")), template
-        )
+        rendered = _VARIABLE_RE.sub(lambda match: str(variables.get(match.group(1), "")), template)
         return rendered[: self.max_message_chars]
 
 
@@ -261,9 +259,12 @@ def _grafana_event_id(payload: dict[str, Any]) -> str:
     )
     if fingerprints:
         return "fingerprints:" + hashlib.sha256("|".join(fingerprints).encode()).hexdigest()
-    return "payload:" + hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()
-    ).hexdigest()
+    return (
+        "payload:"
+        + hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()
+        ).hexdigest()
+    )
 
 
 def _grafana_message(payload: dict[str, Any]) -> str:
@@ -286,7 +287,9 @@ def _grafana_summary(payload: dict[str, Any], *, max_alerts: int) -> dict[str, A
             {
                 "status": str(alert.get("status") or "")[:40],
                 "fingerprint": str(alert.get("fingerprint") or "")[:128],
-                "labels": _mask(alert.get("labels") if isinstance(alert.get("labels"), dict) else {}),
+                "labels": _mask(
+                    alert.get("labels") if isinstance(alert.get("labels"), dict) else {}
+                ),
                 "annotations": _mask(
                     alert.get("annotations") if isinstance(alert.get("annotations"), dict) else {}
                 ),
@@ -325,10 +328,7 @@ def _mask(value: Any) -> Any:
         return [_mask(item) for item in value[:100]]
     if isinstance(value, str):
         lowered = value.lower()
-        if (
-            lowered.startswith(("http://", "https://", "bearer "))
-            or "-----begin " in lowered
-        ):
+        if lowered.startswith(("http://", "https://", "bearer ")) or "-----begin " in lowered:
             return "***"
         return value[:1000]
     return value

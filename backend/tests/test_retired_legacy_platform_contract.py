@@ -63,26 +63,16 @@ RETIRED_ACTIVE_MARKERS = (
 
 def test_retired_management_and_internal_platform_routes_are_absent() -> None:
     app = create_app(make_settings())
-    paths = {
-        str(getattr(route, "path", ""))
-        for route in app.routes
-        if getattr(route, "path", "")
-    }
+    paths = {str(getattr(route, "path", "")) for route in app.routes if getattr(route, "path", "")}
 
-    assert not {
-        path
-        for path in paths
-        if any(marker in path for marker in RETIRED_ROUTE_MARKERS)
-    }
+    assert not {path for path in paths if any(marker in path for marker in RETIRED_ROUTE_MARKERS)}
 
 
 def test_retired_tables_are_absent_and_direct_mcp_tables_are_present() -> None:
     runtime = container()
     tables = {
         str(row["name"])
-        for row in runtime.database.execute(
-            "select name from sqlite_master where type = 'table'"
-        )
+        for row in runtime.database.execute("select name from sqlite_master where type = 'table'")
     }
 
     assert RETIRED_TABLES.isdisjoint(tables)
@@ -93,22 +83,27 @@ def test_retired_tables_are_absent_and_direct_mcp_tables_are_present() -> None:
         "agent_job_mcp_tool_snapshot",
         "rbac_role_application_mcp_tool",
     } <= tables
-    assert runtime.database.execute_one(
-        "select count(*) as count from rbac_role_admin_capability where capability_code like 'builtin_tools.%'"
-    )["count"] == 0
+    assert (
+        runtime.database.execute_one(
+            "select count(*) as count from rbac_role_admin_capability where capability_code like 'builtin_tools.%'"
+        )["count"]
+        == 0
+    )
     job_columns = {
-        str(row["name"])
-        for row in runtime.database.execute("pragma table_info(agent_job)")
+        str(row["name"]) for row in runtime.database.execute("pragma table_info(agent_job)")
     }
     assert {"execution_scope_id", "execution_scope_hash"}.isdisjoint(job_columns)
-    assert runtime.database.execute_one(
-        """
+    assert (
+        runtime.database.execute_one(
+            """
         select count(*) as count
           from platform_runtime_config_definition
          where key like 'INTERNAL_API_%'
             or key = 'FEATURE_REAL_INTERNAL_TOOLS'
         """
-    )["count"] == 0
+        )["count"]
+        == 0
+    )
 
 
 def test_retired_source_paths_and_active_configuration_markers_are_absent() -> None:
@@ -118,8 +113,7 @@ def test_retired_source_paths_and_active_configuration_markers_are_absent() -> N
         if path.is_file():
             residual_paths.append(relative)
         elif path.is_dir() and any(
-            child.is_file() and "__pycache__" not in child.parts
-            for child in path.rglob("*")
+            child.is_file() and "__pycache__" not in child.parts for child in path.rglob("*")
         ):
             residual_paths.append(relative)
     assert residual_paths == []

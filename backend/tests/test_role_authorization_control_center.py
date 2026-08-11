@@ -429,9 +429,12 @@ def test_missing_current_role_never_grants_business_application_access() -> None
     )
     assert decision["allowed"] is False
     assert decision["reason"] == "no_application_role"
-    assert c.database.execute_one(
-        "select name from sqlite_master where type = 'table' and name = 'permission_policy'"
-    ) is None
+    assert (
+        c.database.execute_one(
+            "select name from sqlite_master where type = 'table' and name = 'permission_policy'"
+        )
+        is None
+    )
     c.database.close()
 
 
@@ -908,10 +911,7 @@ def test_user_disable_and_delete_preserve_two_verified_human_admins() -> None:
         confirmed=True,
     )
     assert removed["id"] == second["id"]
-    assert (
-        c.database.execute_one("select id from app_user where id = ?", (second["id"],))
-        is None
-    )
+    assert c.database.execute_one("select id from app_user where id = ?", (second["id"],)) is None
     assert c.identity_repository.verified_human_platform_admin_count() == 2
     c.database.close()
 
@@ -922,9 +922,7 @@ def test_concurrent_platform_admin_removals_cannot_commit_below_two(
     database_path = tmp_path / "platform-admin-invariant.sqlite3"
     settings = replace(_settings(), database_dsn=f"sqlite:///{database_path}")
     first = build_test_container(settings, migrate=True, seed=True)
-    platform_role = first.authorization_center_repository.get_role_by_code(
-        "platform-admin"
-    )
+    platform_role = first.authorization_center_repository.get_role_by_code("platform-admin")
     assert platform_role is not None
     _complete_login_verification(
         first,
@@ -1044,9 +1042,7 @@ def test_four_stage_reauthorization_blocks_revoked_access_without_data_leak() ->
         business_application_id=str(application["id"]),
         business_application_code=str(application["code"]),
         business_application_publication_id=str(application["publication_id"]),
-        business_application_config_hash=str(
-            application["publication_config_hash"]
-        ),
+        business_application_config_hash=str(application["publication_config_hash"]),
         routing_context={
             "project_code": "default",
             "environment": "local",

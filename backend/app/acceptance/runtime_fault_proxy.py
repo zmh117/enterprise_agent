@@ -46,9 +46,7 @@ def create_app() -> FastAPI:
             )
         target = f"{upstream}/{path}"
         headers = {
-            key: value
-            for key, value in request.headers.items()
-            if key.lower() in FORWARDED_HEADERS
+            key: value for key, value in request.headers.items() if key.lower() in FORWARDED_HEADERS
         }
         outbound = urllib.request.Request(
             target,

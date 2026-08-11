@@ -12,9 +12,7 @@ class ApplicationMcpToolCompositionService:
     def __init__(self, database: Database) -> None:
         self.database = database
 
-    def management_catalog(
-        self, *, agent_publication_ids: list[str]
-    ) -> dict[str, Any]:
+    def management_catalog(self, *, agent_publication_ids: list[str]) -> dict[str, Any]:
         values: dict[str, list[dict[str, Any]]] = {}
         for publication_id in agent_publication_ids:
             rows = self.database.execute(
@@ -32,9 +30,7 @@ class ApplicationMcpToolCompositionService:
                     "tool_identifier": str(row["tool_identifier"]),
                     "schema_hash": str(row["schema_hash"]),
                     "description": str(row.get("model_description") or ""),
-                    "resource_kind": MCP_TOOL_MANIFEST[
-                        str(row["tool_identifier"])
-                    ].resource_kind,
+                    "resource_kind": MCP_TOOL_MANIFEST[str(row["tool_identifier"])].resource_kind,
                 }
                 for row in rows
                 if str(row["tool_identifier"]) in MCP_TOOL_MANIFEST

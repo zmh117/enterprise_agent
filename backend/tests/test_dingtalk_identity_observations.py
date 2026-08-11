@@ -337,9 +337,9 @@ def test_same_enterprise_rebind_requires_confirmation_but_other_enterprise_is_in
         replace=False,
     )
 
-    assert container.identity_repository.get_external_identity(original["id"])[
-        "status"
-    ] == "unbound"
+    assert (
+        container.identity_repository.get_external_identity(original["id"])["status"] == "unbound"
+    )
     assert replacement["status"] == "enabled"
     assert other["status"] == "enabled"
     current = container.database.execute_one(

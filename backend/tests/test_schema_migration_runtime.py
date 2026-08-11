@@ -132,9 +132,7 @@ def test_041_upgrade_removes_legacy_authorization_and_targets_but_preserves_curr
     ).run()
     assert before.head == "040"
     database.execute_script(
-        (migrations_dir.parent / "seeds" / "local_seed.sql").read_text(
-            encoding="utf-8"
-        )
+        (migrations_dir.parent / "seeds" / "local_seed.sql").read_text(encoding="utf-8")
     )
     database.execute(
         """
@@ -180,9 +178,7 @@ def test_041_upgrade_removes_legacy_authorization_and_targets_but_preserves_curr
         "agent_publication",
     )
     preserved_counts = {
-        table: int(
-            database.execute_one(f"select count(*) as count from {table}")["count"]
-        )
+        table: int(database.execute_one(f"select count(*) as count from {table}")["count"])
         for table in preserved_tables
     }
 
@@ -195,9 +191,7 @@ def test_041_upgrade_removes_legacy_authorization_and_targets_but_preserves_curr
     assert upgraded.applied == ("041", "042")
     tables = {
         str(row["name"])
-        for row in database.execute(
-            "select name from sqlite_master where type = 'table'"
-        )
+        for row in database.execute("select name from sqlite_master where type = 'table'")
     }
     assert {
         "permission_policy",
@@ -207,16 +201,20 @@ def test_041_upgrade_removes_legacy_authorization_and_targets_but_preserves_curr
         "business_application_revision_target",
         "business_application_publication_target",
     }.isdisjoint(tables)
-    assert database.execute_one(
-        "select id from platform_runtime_config_definition where key like 'INTERNAL_API_%'"
-    ) is None
-    assert database.execute_one(
-        "select id from platform_runtime_config_value where key like 'INTERNAL_API_%'"
-    ) is None
-    assert {
-        table: int(
-            database.execute_one(f"select count(*) as count from {table}")["count"]
+    assert (
+        database.execute_one(
+            "select id from platform_runtime_config_definition where key like 'INTERNAL_API_%'"
         )
+        is None
+    )
+    assert (
+        database.execute_one(
+            "select id from platform_runtime_config_value where key like 'INTERNAL_API_%'"
+        )
+        is None
+    )
+    assert {
+        table: int(database.execute_one(f"select count(*) as count from {table}")["count"])
         for table in preserved_tables
     } == preserved_counts
     assert database.execute("pragma foreign_key_check") == []
@@ -248,17 +246,12 @@ def test_final_schema_comment_manifest_covers_every_owned_table_and_column() -> 
         for match in table_pattern.finditer(artifact.sql):
             table_comments[match.group(1)] = match.group(2).replace("''", "'")
         for match in column_pattern.finditer(artifact.sql):
-            column_comments[(match.group(1), match.group(2))] = match.group(3).replace(
-                "''", "'"
-            )
+            column_comments[(match.group(1), match.group(2))] = match.group(3).replace("''", "'")
 
     owned_tables = {
         str(row["name"])
-        for row in database.execute(
-            "select name from sqlite_master where type = 'table'"
-        )
-        if str(row["name"]) != "schema_migration"
-        and not str(row["name"]).startswith("sqlite_")
+        for row in database.execute("select name from sqlite_master where type = 'table'")
+        if str(row["name"]) != "schema_migration" and not str(row["name"]).startswith("sqlite_")
     }
     owned_columns = {
         (table, str(row["name"]))
@@ -269,10 +262,7 @@ def test_final_schema_comment_manifest_covers_every_owned_table_and_column() -> 
     assert owned_tables - table_comments.keys() == set()
     assert owned_columns - column_comments.keys() == set()
     assert all(re.search(r"[\u3400-\u9fff]", table_comments[table]) for table in owned_tables)
-    assert all(
-        re.search(r"[\u3400-\u9fff]", column_comments[column])
-        for column in owned_columns
-    )
+    assert all(re.search(r"[\u3400-\u9fff]", column_comments[column]) for column in owned_columns)
     assert len(owned_tables) == 85
     assert len(owned_columns) == 980
     database.close()
@@ -403,15 +393,18 @@ def test_pre_028_backup_can_be_restored_and_reupgraded_without_data_loss(
             "041",
             "042",
         )
-        assert upgraded.execute_one(
-            "select username from app_user where id = 'backup-user'"
-        ) == {"username": "backup-user"}
-        assert upgraded.execute_one(
-            """
+        assert upgraded.execute_one("select username from app_user where id = 'backup-user'") == {
+            "username": "backup-user"
+        }
+        assert (
+            upgraded.execute_one(
+                """
             select name from sqlite_master
              where type = 'table' and name = 'builtin_tool_release'
             """
-        ) is None
+            )
+            is None
+        )
     finally:
         upgraded.close()
 
@@ -420,15 +413,18 @@ def test_pre_028_backup_can_be_restored_and_reupgraded_without_data_loss(
     try:
         records = SchemaMigrationLedger(restored).list_records()
         assert records[-1]["version"] == "027"
-        assert restored.execute_one(
-            "select username from app_user where id = 'backup-user'"
-        ) == {"username": "backup-user"}
-        assert restored.execute_one(
-            """
+        assert restored.execute_one("select username from app_user where id = 'backup-user'") == {
+            "username": "backup-user"
+        }
+        assert (
+            restored.execute_one(
+                """
             select name from sqlite_master
              where type = 'table' and name = 'builtin_tool_release'
             """
-        ) is None
+            )
+            is None
+        )
 
         reapplied = Migrator(
             restored,
@@ -453,9 +449,9 @@ def test_pre_028_backup_can_be_restored_and_reupgraded_without_data_loss(
             "042",
         )
         assert reapplied.head == "042"
-        assert restored.execute_one(
-            "select username from app_user where id = 'backup-user'"
-        ) == {"username": "backup-user"}
+        assert restored.execute_one("select username from app_user where id = 'backup-user'") == {
+            "username": "backup-user"
+        }
     finally:
         restored.close()
 

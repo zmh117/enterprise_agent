@@ -316,9 +316,7 @@ class BusinessApplicationService:
             raw_tools=revision.get("mcp_tools") or [],
         )
         snapshot = self._snapshot(application, revision, components)
-        snapshot["mcp_tools"] = self.mcp_tool_composition_service.snapshot(
-            prepared_mcp_tools
-        )
+        snapshot["mcp_tools"] = self.mcp_tool_composition_service.snapshot(prepared_mcp_tools)
         publication_hash = snapshot_hash(snapshot)
         publication = self.repository.create_publication(
             application_id=str(application["id"]),

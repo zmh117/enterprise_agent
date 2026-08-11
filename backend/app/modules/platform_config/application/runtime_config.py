@@ -44,9 +44,7 @@ class RuntimeConfigDefinitionSpec:
 RUNTIME_CONFIG_DEFINITIONS: tuple[RuntimeConfigDefinitionSpec, ...] = (
     RuntimeConfigDefinitionSpec("DATABASE_DSN", "string", "", bootstrap_only=True),
     RuntimeConfigDefinitionSpec("RABBITMQ_URL", "string", "", bootstrap_only=True),
-    RuntimeConfigDefinitionSpec(
-        "APP_CONFIG_MASTER_KEY_FILE", "string", "", bootstrap_only=True
-    ),
+    RuntimeConfigDefinitionSpec("APP_CONFIG_MASTER_KEY_FILE", "string", "", bootstrap_only=True),
     RuntimeConfigDefinitionSpec("APP_ENV", "string", "local", bootstrap_only=True),
     RuntimeConfigDefinitionSpec("SEED_LOCAL_CONFIG", "bool", False, bootstrap_only=True),
     RuntimeConfigDefinitionSpec(
@@ -200,18 +198,12 @@ RUNTIME_CONFIG_DEFINITIONS: tuple[RuntimeConfigDefinitionSpec, ...] = (
         "http://host.docker.internal:3100",
         service_names=("tool-mcp",),
     ),
-    RuntimeConfigDefinitionSpec(
-        "LOKI_MAX_MINUTES", "int", 60, service_names=("tool-mcp",)
-    ),
-    RuntimeConfigDefinitionSpec(
-        "LOKI_MAX_LINES", "int", 500, service_names=("tool-mcp",)
-    ),
+    RuntimeConfigDefinitionSpec("LOKI_MAX_MINUTES", "int", 60, service_names=("tool-mcp",)),
+    RuntimeConfigDefinitionSpec("LOKI_MAX_LINES", "int", 500, service_names=("tool-mcp",)),
     RuntimeConfigDefinitionSpec(
         "LOKI_MAX_RESPONSE_CHARS", "int", 4000, service_names=("tool-mcp",)
     ),
-    RuntimeConfigDefinitionSpec(
-        "LOKI_TENANT_ID", "string", "", service_names=("tool-mcp",)
-    ),
+    RuntimeConfigDefinitionSpec("LOKI_TENANT_ID", "string", "", service_names=("tool-mcp",)),
     RuntimeConfigDefinitionSpec(
         "DINGTALK_CLIENT_ID", "string", "", service_names=("api-server", "dingtalk-stream-ingress")
     ),

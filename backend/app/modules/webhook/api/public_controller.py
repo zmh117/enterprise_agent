@@ -28,8 +28,7 @@ def build_public_webhook_router() -> APIRouter:
                 raw_body=raw_body,
                 content_type=request.headers.get("content-type", ""),
                 headers=request.headers,
-                correlation_id=request.headers.get("x-correlation-id")
-                or new_correlation_id(),
+                correlation_id=request.headers.get("x-correlation-id") or new_correlation_id(),
                 remote_address=request.client.host if request.client else "",
             )
         except Exception as exc:

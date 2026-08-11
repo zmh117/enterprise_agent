@@ -88,9 +88,7 @@ class DebugJobAccessService:
                 (deployment["revision_id"],),
             )
             deliveries = [
-                item
-                for item in delivery_rows
-                if self._debug_delivery_route(item) is not None
+                item for item in delivery_rows if self._debug_delivery_route(item) is not None
             ]
             applications.append(
                 {
@@ -207,9 +205,7 @@ class DebugJobAccessService:
             ),
             fixed_agent_config_hash=str(agent.get("config_hash") or ""),
             continuous_conversation_enabled=False,
-            attachments_enabled=bool(
-                effective_session_policy.get("attachments_enabled", False)
-            ),
+            attachments_enabled=bool(effective_session_policy.get("attachments_enabled", False)),
             business_application_id=str(application["id"]),
             business_application_code=str(application["code"]),
             business_application_publication_id=str(publication["id"]),
@@ -225,15 +221,11 @@ class DebugJobAccessService:
                 "source_connector_id": "connector-debug-api",
                 "business_application_code": str(application["code"]),
                 "business_application_publication_id": str(publication["id"]),
-                "business_application_publication_revision": int(
-                    publication["revision"]
-                ),
+                "business_application_publication_revision": int(publication["revision"]),
                 "business_application_config_hash": str(publication["config_hash"]),
                 "business_application_deployment_id": str(deployment["id"]),
                 "execution_scope": {
-                    key: value
-                    for key, value in scope.items()
-                    if key != "source_role_codes"
+                    key: value for key, value in scope.items() if key != "source_role_codes"
                 },
                 "delivery_binding": delivery_summary,
                 "idempotency_context": {
@@ -244,18 +236,14 @@ class DebugJobAccessService:
                 "session_policy": effective_session_policy,
                 "legacy_fallback": False,
             },
-            conversation_mode=str(
-                effective_session_policy.get("conversation_mode") or "channel"
-            ),
+            conversation_mode=str(effective_session_policy.get("conversation_mode") or "channel"),
             recent_message_limit=(
                 int(effective_session_policy["recent_message_limit"])
                 if effective_session_policy.get("recent_message_limit") is not None
                 else None
             ),
             session_policy=effective_session_policy,
-            application_execution_policy=dict(
-                snapshot.get("execution_policy") or {}
-            ),
+            application_execution_policy=dict(snapshot.get("execution_policy") or {}),
             continue_session_id=continue_session_id,
         )
         return self.create_job_service.execute(command), scoped_idempotency_key
@@ -299,11 +287,7 @@ class DebugJobAccessService:
     ) -> dict[str, Any]:
         options = self.available_options(user_id=user_id, environment=environment)
         application_option = next(
-            (
-                item
-                for item in options["applications"]
-                if str(item["id"]) == application_id
-            ),
+            (item for item in options["applications"] if str(item["id"]) == application_id),
             None,
         )
         if application_option is None:
@@ -434,18 +418,10 @@ class DebugJobAccessService:
         target_reference = str(config.get("target_reference") or "")
         if delivery_type == "dingtalk_group":
             route_type = "dingtalk_enterprise_robot"
-            target = (
-                {"open_conversation_id": target_reference}
-                if target_reference
-                else {}
-            )
+            target = {"open_conversation_id": target_reference} if target_reference else {}
         else:
             route_type = "webhook"
-            target = (
-                {"target_reference": target_reference}
-                if target_reference
-                else {}
-            )
+            target = {"target_reference": target_reference} if target_reference else {}
         return {
             "type": route_type,
             "connector_id": connector_id,

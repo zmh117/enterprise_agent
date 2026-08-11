@@ -20,9 +20,7 @@ def test_unit_of_work_commits_and_returns_connection() -> None:
         pool_max_size=2,
     )
     try:
-        database.execute(
-            "create table example (id integer primary key, value text not null)"
-        )
+        database.execute("create table example (id integer primary key, value text not null)")
 
         with database.unit_of_work():
             database.execute(
@@ -45,9 +43,7 @@ def test_unit_of_work_commits_and_returns_connection() -> None:
 def test_unit_of_work_rolls_back_and_returns_connection_after_error() -> None:
     database = Database("sqlite:///:memory:")
     try:
-        database.execute(
-            "create table example (id integer primary key, value text not null)"
-        )
+        database.execute("create table example (id integer primary key, value text not null)")
 
         with pytest.raises(RuntimeError, match="force rollback"):
             with database.unit_of_work():
@@ -57,9 +53,7 @@ def test_unit_of_work_rolls_back_and_returns_connection_after_error() -> None:
                 )
                 raise RuntimeError("force rollback")
 
-        assert database.execute_one(
-            "select count(*) as count from example"
-        ) == {"count": 0}
+        assert database.execute_one("select count(*) as count from example") == {"count": 0}
         assert database.pool_snapshot().checked_out == 0
     finally:
         database.close()
@@ -68,9 +62,7 @@ def test_unit_of_work_rolls_back_and_returns_connection_after_error() -> None:
 def test_nested_unit_of_work_uses_savepoint() -> None:
     database = Database("sqlite:///:memory:")
     try:
-        database.execute(
-            "create table example (id integer primary key, value text not null)"
-        )
+        database.execute("create table example (id integer primary key, value text not null)")
 
         with database.unit_of_work():
             database.execute(
@@ -84,13 +76,11 @@ def test_nested_unit_of_work_uses_savepoint() -> None:
                         (2, "nested"),
                     )
                     raise RuntimeError("nested rollback")
-            assert database.execute_one(
-                "select count(*) as count from example"
-            ) == {"count": 1}
+            assert database.execute_one("select count(*) as count from example") == {"count": 1}
 
-        assert database.execute(
-            "select id, value from example order by id"
-        ) == [{"id": 1, "value": "outer"}]
+        assert database.execute("select id, value from example order by id") == [
+            {"id": 1, "value": "outer"}
+        ]
     finally:
         database.close()
 
@@ -115,16 +105,12 @@ def test_operation_unit_of_work_rolls_back_multi_statement_service() -> None:
             raise RuntimeError("operation failed")
 
     try:
-        database.execute(
-            "create table example (id integer primary key, value text not null)"
-        )
+        database.execute("create table example (id integer primary key, value text not null)")
 
         with pytest.raises(RuntimeError, match="operation failed"):
             ExampleService(database).fail_after_two_writes()
 
-        assert database.execute_one(
-            "select count(*) as count from example"
-        ) == {"count": 0}
+        assert database.execute_one("select count(*) as count from example") == {"count": 0}
         assert database.pool_snapshot().checked_out == 0
     finally:
         database.close()

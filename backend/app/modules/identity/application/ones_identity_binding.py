@@ -109,8 +109,7 @@ class OnesIdentityBindingService:
             existing = current[0] if current else None
             replacing = bool(
                 existing
-                and str(existing["external_subject_id"])
-                != str(challenge["external_user_id"])
+                and str(existing["external_subject_id"]) != str(challenge["external_user_id"])
             )
             if replacing and not replace_existing:
                 raise NonRetryableExecutionError(
@@ -196,9 +195,7 @@ class OnesIdentityBindingService:
         metadata = dict(identity.get("metadata") or {})
         teams = _normalized_teams(metadata)
         default_team_id = str(metadata.get("default_team_id") or "")
-        default_team = next(
-            (team for team in teams if team["id"] == default_team_id), None
-        )
+        default_team = next((team for team in teams if team["id"] == default_team_id), None)
         return {
             "provider": "ones",
             "user_name": str(identity.get("display_name") or ""),

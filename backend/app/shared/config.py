@@ -298,18 +298,14 @@ def load_settings() -> Settings:
         debug_agent_user_id=os.getenv("DEBUG_AGENT_USER_ID", "local-user"),
         agent_runtime=AgentRuntimeSettings(
             python_base_url=os.getenv("PYTHON_AGENT_RUNTIME_URL", ""),
-            python_allowed_hosts=_csv_tuple(
-                os.getenv("PYTHON_AGENT_RUNTIME_ALLOWED_HOSTS", "")
-            ),
+            python_allowed_hosts=_csv_tuple(os.getenv("PYTHON_AGENT_RUNTIME_ALLOWED_HOSTS", "")),
             typescript_base_url=os.getenv("TYPESCRIPT_AGENT_RUNTIME_URL", ""),
             typescript_allowed_hosts=_csv_tuple(
                 os.getenv("TYPESCRIPT_AGENT_RUNTIME_ALLOWED_HOSTS", "")
             ),
             grant_private_key_file=os.getenv("RUNTIME_GRANT_PRIVATE_KEY_FILE", ""),
             model_probe_auth_token_file=os.getenv("MODEL_PROBE_AUTH_TOKEN_FILE", ""),
-            allow_insecure_internal_http=_env_bool(
-                "AGENT_RUNTIME_ALLOW_INSECURE_INTERNAL_HTTP"
-            ),
+            allow_insecure_internal_http=_env_bool("AGENT_RUNTIME_ALLOW_INSECURE_INTERNAL_HTTP"),
         ),
         dingtalk=DingTalkSettings(
             secret=os.getenv("DINGTALK_SECRET", ""),
@@ -386,21 +382,15 @@ def load_settings() -> Settings:
             ),
             max_retry_count=int(os.getenv("AGENT_MAX_RETRY_COUNT", "3")),
             retry_delay_seconds=int(os.getenv("AGENT_RETRY_DELAY_SECONDS", "30")),
-            dispatch_outbox_max_attempts=int(
-                os.getenv("JOB_DISPATCH_OUTBOX_MAX_ATTEMPTS", "8")
-            ),
-            dispatch_outbox_max_replays=int(
-                os.getenv("JOB_DISPATCH_OUTBOX_MAX_REPLAYS", "3")
-            ),
+            dispatch_outbox_max_attempts=int(os.getenv("JOB_DISPATCH_OUTBOX_MAX_ATTEMPTS", "8")),
+            dispatch_outbox_max_replays=int(os.getenv("JOB_DISPATCH_OUTBOX_MAX_REPLAYS", "3")),
             dispatch_outbox_retry_base_seconds=int(
                 os.getenv("JOB_DISPATCH_OUTBOX_RETRY_BASE_SECONDS", "5")
             ),
             dispatch_outbox_claim_timeout_seconds=int(
                 os.getenv("JOB_DISPATCH_OUTBOX_CLAIM_TIMEOUT_SECONDS", "300")
             ),
-            dispatch_outbox_scan_seconds=int(
-                os.getenv("JOB_DISPATCH_OUTBOX_SCAN_SECONDS", "1")
-            ),
+            dispatch_outbox_scan_seconds=int(os.getenv("JOB_DISPATCH_OUTBOX_SCAN_SECONDS", "1")),
             consumer_heartbeat_seconds=int(os.getenv("RABBITMQ_CONSUMER_HEARTBEAT_SECONDS", "900")),
             consumer_reconnect_seconds=int(os.getenv("RABBITMQ_CONSUMER_RECONNECT_SECONDS", "5")),
         ),
@@ -416,21 +406,13 @@ def load_settings() -> Settings:
         delivery=DeliverySettings(
             chunk_max_chars=int(os.getenv("DELIVERY_CHUNK_MAX_CHARS", "3500")),
             timeout_seconds=int(os.getenv("DELIVERY_TIMEOUT_SECONDS", "5")),
-            outbox_max_attempts=int(
-                os.getenv("DELIVERY_OUTBOX_MAX_ATTEMPTS", "8")
-            ),
-            outbox_max_replays=int(
-                os.getenv("DELIVERY_OUTBOX_MAX_REPLAYS", "3")
-            ),
-            outbox_retry_base_seconds=int(
-                os.getenv("DELIVERY_OUTBOX_RETRY_BASE_SECONDS", "5")
-            ),
+            outbox_max_attempts=int(os.getenv("DELIVERY_OUTBOX_MAX_ATTEMPTS", "8")),
+            outbox_max_replays=int(os.getenv("DELIVERY_OUTBOX_MAX_REPLAYS", "3")),
+            outbox_retry_base_seconds=int(os.getenv("DELIVERY_OUTBOX_RETRY_BASE_SECONDS", "5")),
             outbox_claim_timeout_seconds=int(
                 os.getenv("DELIVERY_OUTBOX_CLAIM_TIMEOUT_SECONDS", "300")
             ),
-            outbox_scan_seconds=int(
-                os.getenv("DELIVERY_OUTBOX_SCAN_SECONDS", "1")
-            ),
+            outbox_scan_seconds=int(os.getenv("DELIVERY_OUTBOX_SCAN_SECONDS", "1")),
         ),
         conversation=ConversationSettings(
             enabled=features.continuous_conversation_compatibility_enabled,
@@ -495,13 +477,9 @@ def load_settings() -> Settings:
             base_url=os.getenv("ONES_IDENTITY_BASE_URL", ""),
             allowed_hosts=_csv_tuple(os.getenv("ONES_IDENTITY_ALLOWED_HOSTS", "")),
             timeout_seconds=int(os.getenv("ONES_IDENTITY_TIMEOUT_SECONDS", "5")),
-            max_response_bytes=int(
-                os.getenv("ONES_IDENTITY_MAX_RESPONSE_BYTES", str(64 * 1024))
-            ),
+            max_response_bytes=int(os.getenv("ONES_IDENTITY_MAX_RESPONSE_BYTES", str(64 * 1024))),
             allow_insecure_local=_env_bool("ONES_IDENTITY_ALLOW_INSECURE_LOCAL"),
-            challenge_ttl_seconds=int(
-                os.getenv("ONES_IDENTITY_CHALLENGE_TTL_SECONDS", "600")
-            ),
+            challenge_ttl_seconds=int(os.getenv("ONES_IDENTITY_CHALLENGE_TTL_SECONDS", "600")),
         ),
         webhooks=WebhookSettings(
             enabled=features.webhook_ingress_compatibility_enabled,
@@ -520,13 +498,9 @@ def load_settings() -> Settings:
             runtime_auth_token_file=os.getenv("DINGTALK_RUNTIME_AUTH_TOKEN_FILE", ""),
             lease_ttl_seconds=int(os.getenv("DINGTALK_RUNTIME_LEASE_TTL_SECONDS", "15")),
             stale_seconds=int(os.getenv("DINGTALK_RUNTIME_STALE_SECONDS", "30")),
-            max_event_bytes=int(
-                os.getenv("DINGTALK_RUNTIME_MAX_EVENT_BYTES", str(256 * 1024))
-            ),
+            max_event_bytes=int(os.getenv("DINGTALK_RUNTIME_MAX_EVENT_BYTES", str(256 * 1024))),
             outbox_max_attempts=int(os.getenv("CHANNEL_OUTBOX_MAX_ATTEMPTS", "8")),
-            outbox_retry_base_seconds=int(
-                os.getenv("CHANNEL_OUTBOX_RETRY_BASE_SECONDS", "5")
-            ),
+            outbox_retry_base_seconds=int(os.getenv("CHANNEL_OUTBOX_RETRY_BASE_SECONDS", "5")),
             internal_requests_per_minute=int(
                 os.getenv("DINGTALK_RUNTIME_REQUESTS_PER_MINUTE", "600")
             ),

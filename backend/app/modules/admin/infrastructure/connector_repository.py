@@ -36,9 +36,7 @@ class AdminConnectorRepository:
             "dingtalk_enterprise_robot",
             "dingtalk_webhook_robot",
         }:
-            raise NotFound(
-                "Channel connector not found", safe_message="未找到渠道连接器"
-            )
+            raise NotFound("Channel connector not found", safe_message="未找到渠道连接器")
         return self._public(row)
 
     def save(self, payload: dict[str, Any], *, expected_revision: int) -> dict[str, Any]:

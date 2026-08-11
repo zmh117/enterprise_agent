@@ -111,9 +111,7 @@ class AgentConfigRepository:
         )
         return self.get_revision(revision_id)
 
-    def publication_for_revision(
-        self, *, agent_id: str, revision_id: str
-    ) -> dict[str, Any] | None:
+    def publication_for_revision(self, *, agent_id: str, revision_id: str) -> dict[str, Any] | None:
         row = self.database.execute_one(
             """
             select * from agent_publication
@@ -239,9 +237,7 @@ class AgentConfigRepository:
             "select * from agent_publication where id = ?", (publication_id,)
         )
         if not row:
-            raise NotFound(
-                "Agent publication not found", safe_message="未找到 Agent 发布版本"
-            )
+            raise NotFound("Agent publication not found", safe_message="未找到 Agent 发布版本")
         return self._publication(row)
 
     def current_publication(self, agent_code: str) -> dict[str, Any]:

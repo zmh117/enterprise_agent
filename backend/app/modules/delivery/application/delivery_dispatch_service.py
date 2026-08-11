@@ -48,16 +48,12 @@ class DeliveryOutboxDispatcher:
         self.worker_id = worker_id or f"delivery-dispatcher-{os.getpid()}"
 
     def dispatch_pending(self, *, limit: int = 100) -> DeliveryDispatchResult:
-        recovered, recovered_dead = (
-            self.repository.recover_stale_delivery_claims()
-        )
+        recovered, recovered_dead = self.repository.recover_stale_delivery_claims()
         succeeded = skipped = retrying = failed = dead = 0
         for _ in range(min(max(1, int(limit)), 1000)):
             event = self.repository.claim_delivery_event(
                 worker_id=self.worker_id,
-                claim_timeout_seconds=(
-                    self.settings.outbox_claim_timeout_seconds
-                ),
+                claim_timeout_seconds=(self.settings.outbox_claim_timeout_seconds),
             )
             if event is None:
                 break
@@ -75,9 +71,7 @@ class DeliveryOutboxDispatcher:
                     retryable=_is_retryable(exc),
                     error_code=_safe_error_code(exc),
                     error_summary=_safe_error_summary(exc),
-                    retry_base_seconds=(
-                        self.settings.outbox_retry_base_seconds
-                    ),
+                    retry_base_seconds=(self.settings.outbox_retry_base_seconds),
                 )
                 if state.status == DeliveryStatus.RETRY_WAIT:
                     retrying += 1
@@ -160,9 +154,7 @@ class DeliveryOutboxDispatcher:
             connector = self.delivery_service.connector_registry.require_delivery(
                 route.connector_id
             )
-            endpoint = self.delivery_service.connector_registry.endpoint_url(
-                connector
-            )
+            endpoint = self.delivery_service.connector_registry.endpoint_url(connector)
             self.delivery_service.connector_registry.assert_host_allowed(
                 connector,
                 endpoint,
@@ -186,9 +178,7 @@ class DeliveryOutboxDispatcher:
                 safe_message="投递适配器未安装",
                 error_code="delivery_adapter_not_installed",
             )
-        title = str(
-            event.delivery_binding.get("title") or "Agent 诊断结果"
-        )
+        title = str(event.delivery_binding.get("title") or "Agent 诊断结果")
         chunks = self.delivery_service.chunker.titled_chunks(
             title=title,
             text=str(artifact["content"]),
@@ -341,12 +331,9 @@ class DeliveryOutboxDispatcher:
         )
         route_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         if (
-            route_hash
-            != str(event.delivery_binding.get("route_hash") or "")
-            or route.type
-            != str(event.delivery_binding.get("route_type") or "")
-            or route.connector_id
-            != str(event.delivery_binding.get("connector_id") or "")
+            route_hash != str(event.delivery_binding.get("route_hash") or "")
+            or route.type != str(event.delivery_binding.get("route_type") or "")
+            or route.connector_id != str(event.delivery_binding.get("connector_id") or "")
         ):
             raise NonRetryableExecutionError(
                 "Persisted Delivery binding no longer matches the Job",
@@ -360,9 +347,7 @@ class DeliveryOutboxDispatcher:
         event: DeliveryEvent,
         artifact: dict[str, object],
     ) -> None:
-        application_id = str(
-            getattr(job, "business_application_id", "") or ""
-        )
+        application_id = str(getattr(job, "business_application_id", "") or "")
         if not application_id:
             return
         if (
@@ -376,19 +361,14 @@ class DeliveryOutboxDispatcher:
                 status="SUCCEEDED",
                 summary="Safe authorization denial notice allowed on original reply route",
                 job_id=str(getattr(job, "id")),
-                actor_id=str(
-                    getattr(job, "internal_user_id", "")
-                    or getattr(job, "user_id", "")
-                ),
+                actor_id=str(getattr(job, "internal_user_id", "") or getattr(job, "user_id", "")),
                 payload={
                     "delivery_id": event.id,
                     "error_code": "business_application_denied",
                 },
             )
             return
-        authorization = (
-            self.delivery_service.business_authorization_service
-        )
+        authorization = self.delivery_service.business_authorization_service
         if authorization is None:
             raise NonRetryableExecutionError(
                 "Business authorization service is unavailable for Delivery",
@@ -396,10 +376,7 @@ class DeliveryOutboxDispatcher:
                 error_code="delivery_authorization_unavailable",
             )
         decision = authorization.decide(
-            user_id=str(
-                getattr(job, "internal_user_id", "")
-                or getattr(job, "user_id", "")
-            ),
+            user_id=str(getattr(job, "internal_user_id", "") or getattr(job, "user_id", "")),
             application_id=application_id,
             stage="delivery",
         )
@@ -409,10 +386,7 @@ class DeliveryOutboxDispatcher:
                 status="DENIED",
                 summary="Business result delivery blocked by authorization",
                 job_id=str(getattr(job, "id")),
-                actor_id=str(
-                    getattr(job, "internal_user_id", "")
-                    or getattr(job, "user_id", "")
-                ),
+                actor_id=str(getattr(job, "internal_user_id", "") or getattr(job, "user_id", "")),
                 payload=decision,
             )
             raise NonRetryableExecutionError(

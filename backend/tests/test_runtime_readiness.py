@@ -114,10 +114,7 @@ def test_unavailable_runtime_is_reported_without_disabling_management_api(monkey
 
         assert status["status"] == "ready"
         assert status["runtime_selection"]["default_runtime"] == "python-v1"
-        assert (
-            status["core"]["agent_runtimes"]["python-v1"]["master_key"]
-            == "unavailable"
-        )
+        assert status["core"]["agent_runtimes"]["python-v1"]["master_key"] == "unavailable"
         assert status["claude_invoked"] is False
         assert status["mcp_invoked"] is False
     finally:
@@ -132,9 +129,7 @@ def test_schema_drift_makes_ready_fail_closed(monkeypatch) -> None:
             "_check_rabbitmq",
             lambda _url: True,
         )
-        runtime.database.execute(
-            "delete from schema_migration where version = '023'"
-        )
+        runtime.database.execute("delete from schema_migration where version = '023'")
         status = main._build_readiness(
             runtime.settings,
             database=runtime.database,

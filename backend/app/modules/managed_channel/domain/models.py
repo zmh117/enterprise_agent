@@ -23,18 +23,14 @@ _DINGTALK_ENTERPRISE_TRANSITIONS = {
     DingTalkEnterpriseStatus.PENDING_VERIFICATION: frozenset(
         {DingTalkEnterpriseStatus.ACTIVE, DingTalkEnterpriseStatus.DISABLED}
     ),
-    DingTalkEnterpriseStatus.ACTIVE: frozenset(
-        {DingTalkEnterpriseStatus.DISABLED}
-    ),
+    DingTalkEnterpriseStatus.ACTIVE: frozenset({DingTalkEnterpriseStatus.DISABLED}),
     DingTalkEnterpriseStatus.DISABLED: frozenset(
         {
             DingTalkEnterpriseStatus.PENDING_VERIFICATION,
             DingTalkEnterpriseStatus.ARCHIVED,
         }
     ),
-    DingTalkEnterpriseStatus.ARCHIVED: frozenset(
-        {DingTalkEnterpriseStatus.PENDING_VERIFICATION}
-    ),
+    DingTalkEnterpriseStatus.ARCHIVED: frozenset({DingTalkEnterpriseStatus.PENDING_VERIFICATION}),
 }
 
 
@@ -123,4 +119,3 @@ class ChannelIngressSubmission:
     payload_hash: str
     request_bytes: int
     reply_credential: str = ""
-

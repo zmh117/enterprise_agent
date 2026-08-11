@@ -207,9 +207,7 @@ class DingTalkStreamMessageService:
                 ack_message="REJECTED",
                 reason=exc.reason,
                 error_code=exc.error_code or "dingtalk_stream_message_rejected",
-                rejection_message=(
-                    exc.message if defer_rejection_notification else None
-                ),
+                rejection_message=(exc.message if defer_rejection_notification else None),
                 rejection_connector_id=(
                     source_connector_id
                     if defer_rejection_notification and exc.message is not None
@@ -249,16 +247,12 @@ class DingTalkStreamMessageService:
             observation = (
                 self.identity_discovery_service.build_pending_observation(
                     event=event,
-                    message_kind=payload.get("msgtype")
-                    or payload.get("messageType"),
-                    occurred_at=payload.get("createAt")
-                    or payload.get("create_at"),
+                    message_kind=payload.get("msgtype") or payload.get("messageType"),
+                    occurred_at=payload.get("createAt") or payload.get("create_at"),
                 )
                 if event is not None
                 and self.identity_discovery_service is not None
-                and self.identity_discovery_service.is_discoverable_rejection(
-                    exc.error_code
-                )
+                and self.identity_discovery_service.is_discoverable_rejection(exc.error_code)
                 else None
             )
             return DingTalkStreamHandleResult(
@@ -507,9 +501,7 @@ class DingTalkStreamMessageService:
             )
         if self.enterprise_connector_resolver is not None:
             governed = self.enterprise_connector_resolver(source_connector_id)
-            dingtalk_enterprise_id = str(
-                governed.get("dingtalk_enterprise_id") or ""
-            )
+            dingtalk_enterprise_id = str(governed.get("dingtalk_enterprise_id") or "")
             if (
                 not dingtalk_enterprise_id
                 or str(governed.get("dingtalk_enterprise_status") or "") != "ACTIVE"
@@ -519,9 +511,7 @@ class DingTalkStreamMessageService:
                     safe_message="钉钉企业尚未完成验证或已停用",
                     error_code="dingtalk_enterprise_unavailable",
                 )
-            expected_corp_id = str(
-                governed.get("dingtalk_enterprise_corp_id") or ""
-            )
+            expected_corp_id = str(governed.get("dingtalk_enterprise_corp_id") or "")
             if (
                 not message.sender_corp_id
                 or not message.chatbot_corp_id
@@ -557,9 +547,7 @@ class DingTalkStreamMessageService:
                     "session_webhook_expires": message.session_webhook_expired_time,
                     "conversation_type": message.conversation_type,
                     "bot_identity": bot_identity,
-                    "source_ingress_event_id": str(
-                        payload.get("_source_ingress_event_id") or ""
-                    ),
+                    "source_ingress_event_id": str(payload.get("_source_ingress_event_id") or ""),
                     "received_at": str(payload.get("_received_at") or ""),
                     "occurred_at": message.occurred_at,
                 },
@@ -572,9 +560,7 @@ class DingTalkStreamMessageService:
                     open_id=message.open_id,
                     display_name=message.sender_display_name,
                     dingtalk_enterprise_id=dingtalk_enterprise_id,
-                    source_ingress_event_id=str(
-                        payload.get("_source_ingress_event_id") or ""
-                    ),
+                    source_ingress_event_id=str(payload.get("_source_ingress_event_id") or ""),
                     occurred_at=message.occurred_at,
                     received_at=str(payload.get("_received_at") or ""),
                 ),

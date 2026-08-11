@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -167,9 +167,7 @@ def build_authorization_center_router() -> APIRouter:
     def role_detail(request: Request, role_id: str) -> dict[str, Any]:
         principal = current_principal(request)
         try:
-            return _service(request).role_detail(
-                actor_id=principal.user_id, role_id=role_id
-            )
+            return _service(request).role_detail(actor_id=principal.user_id, role_id=role_id)
         except Exception as exc:
             raise handle_exception(exc) from exc
 
@@ -288,11 +286,11 @@ def build_authorization_center_router() -> APIRouter:
 
 
 def _service(request: Request) -> AuthorizationCenterService:
-    return container(request).authorization_center_service
+    return cast(AuthorizationCenterService, container(request).authorization_center_service)
 
 
 def _business_service(request: Request) -> BusinessAuthorizationService:
-    return container(request).business_authorization_service
+    return cast(BusinessAuthorizationService, container(request).business_authorization_service)
 
 
 def _write_principal(request: Request) -> Any:

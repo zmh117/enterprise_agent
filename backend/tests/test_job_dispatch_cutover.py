@@ -47,9 +47,7 @@ def test_cutover_dry_run_then_backfills_one_legacy_message_idempotently() -> Non
             "delete from job_dispatch_outbox where job_id = ?",
             (job.id,),
         )
-        body = json.dumps(
-            {"job_id": job.id, "correlation_id": "legacy-correlation"}
-        ).encode()
+        body = json.dumps({"job_id": job.id, "correlation_id": "legacy-correlation"}).encode()
         service = _service(runtime)
 
         preview = service.process_message(
@@ -105,9 +103,7 @@ def test_cutover_quarantines_only_digest_without_raw_payload() -> None:
             apply=True,
             actor_id="cutover-test",
         )
-        rows = runtime.database.execute(
-            "select * from job_dispatch_cutover_quarantine"
-        )
+        rows = runtime.database.execute("select * from job_dispatch_cutover_quarantine")
 
         assert first.classification == "quarantine"
         assert first.disposition == "ack"

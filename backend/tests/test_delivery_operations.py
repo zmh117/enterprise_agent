@@ -135,9 +135,7 @@ def test_dead_replay_reuses_frozen_intent_and_does_not_rerun_agent() -> None:
             """,
             (event.id,),
         )
-        before_artifact = runtime.agent_repository.get_artifact(
-            str(before["result_artifact_id"])
-        )
+        before_artifact = runtime.agent_repository.get_artifact(str(before["result_artifact_id"]))
         before_steps = runtime.database.execute_one(
             "select count(*) as count from agent_step where job_id = ?",
             (job.id,),
@@ -168,19 +166,19 @@ def test_dead_replay_reuses_frozen_intent_and_does_not_rerun_agent() -> None:
         completed = runtime.agent_repository.get_delivery_event(event.id)
         assert completed.status.value == "SUCCEEDED"
         assert runtime.agent_repository.get_job(job.id).status == JobStatus.SUCCEEDED
-        assert runtime.agent_repository.get_artifact(
-            completed.result_artifact_id
-        ) == before_artifact
-        assert runtime.database.execute_one(
-            "select count(*) as count from agent_step where job_id = ?",
-            (job.id,),
-        ) == before_steps
+        assert (
+            runtime.agent_repository.get_artifact(completed.result_artifact_id) == before_artifact
+        )
+        assert (
+            runtime.database.execute_one(
+                "select count(*) as count from agent_step where job_id = ?",
+                (job.id,),
+            )
+            == before_steps
+        )
         assert len(adapter.sent) == 1
         attempts = runtime.agent_repository.list_delivery_attempts(job.id)
-        assert [
-            (item["replay_no"], item["attempt_no"])
-            for item in attempts
-        ] == [(0, 1), (1, 1)]
+        assert [(item["replay_no"], item["attempt_no"]) for item in attempts] == [(0, 1), (1, 1)]
 
         runtime.database.execute(
             """
@@ -232,9 +230,7 @@ def test_replay_override_is_rejected_audited_and_not_persisted() -> None:
         assert "override-payload-secret" not in audit
 
         help_text = build_parser().format_help()
-        replay_help = build_parser()._subparsers._group_actions[0].choices[
-            "replay"
-        ].format_help()
+        replay_help = build_parser()._subparsers._group_actions[0].choices["replay"].format_help()
         assert "--payload" not in help_text + replay_help
         parsed = build_parser().parse_args(
             [

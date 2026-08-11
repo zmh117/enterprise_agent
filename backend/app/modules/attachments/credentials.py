@@ -29,9 +29,7 @@ class AttachmentCredentialCipher:
     def decrypt(self, value: str) -> str:
         try:
             raw = _decode(value)
-            return AESGCM(self.key).decrypt(
-                raw[:12], raw[12:], b"attachment-source"
-            ).decode()
+            return AESGCM(self.key).decrypt(raw[:12], raw[12:], b"attachment-source").decode()
         except Exception as exc:
             raise NonRetryableExecutionError(
                 "Attachment credential decrypt failed",

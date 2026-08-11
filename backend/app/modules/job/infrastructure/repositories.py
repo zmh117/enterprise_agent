@@ -2192,9 +2192,7 @@ class AgentRepository:
                 row.get("model_runtime_provenance_json") or "{}"
             ),
             "agent_runtime_kind": row.get("agent_runtime_kind") or "python-v1",
-            "agent_runtime_protocol_version": (
-                row.get("agent_runtime_protocol_version") or "1.0"
-            ),
+            "agent_runtime_protocol_version": (row.get("agent_runtime_protocol_version") or "1.0"),
             "tool_call_count": int(row.get("execution_policy_tool_call_count") or 0),
             "execution_policy_exhausted": bool(row.get("execution_policy_exhausted") or False),
             "routing_context": self._json_from_text(row.get("routing_context_json") or "{}"),
@@ -2716,9 +2714,7 @@ class AgentRepository:
                 row.get("model_runtime_provenance_json") or "{}"
             ),
             agent_runtime_kind=row.get("agent_runtime_kind") or "python-v1",
-            agent_runtime_protocol_version=(
-                row.get("agent_runtime_protocol_version") or "1.0"
-            ),
+            agent_runtime_protocol_version=(row.get("agent_runtime_protocol_version") or "1.0"),
         )
 
     def _tool_call_from_row(self, row: dict[str, Any]) -> dict[str, Any]:

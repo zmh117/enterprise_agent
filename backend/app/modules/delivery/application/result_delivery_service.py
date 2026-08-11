@@ -114,17 +114,14 @@ class ResultDeliveryService:
             job_id=job.id,
             result_artifact_id=artifact_id,
             application_publication_id=(
-                job.business_application_publication_id
-                or job.agent_publication_id
+                job.business_application_publication_id or job.agent_publication_id
             ),
             delivery_binding={
                 "delivery_kind": delivery_kind,
                 "title": title,
                 "route_type": route.type,
                 "connector_id": route.connector_id,
-                "route_hash": hashlib.sha256(
-                    canonical_route.encode("utf-8")
-                ).hexdigest(),
+                "route_hash": hashlib.sha256(canonical_route.encode("utf-8")).hexdigest(),
                 "route_source": "agent_job.reply_route_json",
                 "failure_error_code": failure_error_code,
             },
@@ -147,6 +144,7 @@ class ResultDeliveryService:
             },
         )
         return event.id
+
 
 def _target_summary(route: ReplyRoute, connector: Connector | None) -> dict[str, Any]:
     summary = {

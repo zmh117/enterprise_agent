@@ -58,16 +58,11 @@ def test_placement_is_persisted_on_resource_identity_not_role_scope() -> None:
     runtime = build_test_container(_settings(), migrate=True, seed=False)
     try:
         resource_columns = {
-            row["name"]
-            for row in runtime.database.execute(
-                "pragma table_info(platform_resource)"
-            )
+            row["name"] for row in runtime.database.execute("pragma table_info(platform_resource)")
         }
         access_scope_columns = {
             row["name"]
-            for row in runtime.database.execute(
-                "pragma table_info(rbac_role_application_scope)"
-            )
+            for row in runtime.database.execute("pragma table_info(rbac_role_application_scope)")
         }
         topology_columns = {
             row["name"]
@@ -76,20 +71,21 @@ def test_placement_is_persisted_on_resource_identity_not_role_scope() -> None:
                 "platform_base",
                 "platform_workshop",
             )
-            for row in runtime.database.execute(
-                f"pragma table_info({table})"
-            )
+            for row in runtime.database.execute(f"pragma table_info({table})")
         }
 
         assert "placement" in resource_columns
         assert "placement" not in access_scope_columns
         assert "placement" not in topology_columns
-        assert runtime.database.execute_one(
-            """
+        assert (
+            runtime.database.execute_one(
+                """
             select name from sqlite_master
              where type = 'table'
                and name = 'business_application_publication_builtin_tool_resource'
             """
-        ) is None
+            )
+            is None
+        )
     finally:
         runtime.database.close()

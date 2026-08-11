@@ -34,9 +34,7 @@ def main() -> None:
                 if result["published"] or result["failed"]:
                     logger.info("Channel outbox scan result=%s", result)
                 if time.monotonic() - last_cleanup >= 24 * 60 * 60:
-                    cleaned = container.identity_discovery_service.cleanup_expired(
-                        limit=1_000
-                    )
+                    cleaned = container.identity_discovery_service.cleanup_expired(limit=1_000)
                     logger.info(
                         "DingTalk identity discovery retention cleanup "
                         "removed_candidates=%s checked_at=%s",

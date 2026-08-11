@@ -30,9 +30,7 @@ def test_webhook_migration_backfills_humans_and_is_repeatable() -> None:
     database.execute_script(migration)
     database.execute_script(migration)
 
-    legacy = database.execute_one(
-        "select account_type from app_user where id = 'legacy-user'"
-    )
+    legacy = database.execute_one("select account_type from app_user where id = 'legacy-user'")
     assert legacy == {"account_type": "human"}
     assert {
         "webhook_trigger_definition",
@@ -44,15 +42,10 @@ def test_webhook_migration_backfills_humans_and_is_repeatable() -> None:
     }.issubset(
         {
             str(row["name"])
-            for row in database.execute(
-                "select name from sqlite_master where type = 'table'"
-            )
+            for row in database.execute("select name from sqlite_master where type = 'table'")
         }
     )
-    columns = {
-        str(row["name"])
-        for row in database.execute("pragma table_info(agent_job)")
-    }
+    columns = {str(row["name"]) for row in database.execute("pragma table_info(agent_job)")}
     assert {
         "webhook_event_id",
         "webhook_trigger_id",

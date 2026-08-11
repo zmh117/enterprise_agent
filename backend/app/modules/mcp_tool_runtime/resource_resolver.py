@@ -276,11 +276,15 @@ class DirectResourceResolver:
             )
         environment_code = environment or str(row.get("environment_code") or "global")
         base_code = base or str(row.get("base_code") or "environment")
-        workshop_value = Workshop(
-            code=workshop,
-            table_prefix="",
-            redis_key_prefix="",
-        ) if workshop else None
+        workshop_value = (
+            Workshop(
+                code=workshop,
+                table_prefix="",
+                redis_key_prefix="",
+            )
+            if workshop
+            else None
+        )
         base_value = Base(
             code=base_code,
             engine=engine,

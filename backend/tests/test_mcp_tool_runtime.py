@@ -191,9 +191,7 @@ def _database_resource(*, code: str, placement: str) -> dict[str, Any]:
                 "username": "readonly",
             }
         ),
-        "secret_refs_json": json.dumps(
-            {"password_ref": "secret://platform/mysql-test-password"}
-        ),
+        "secret_refs_json": json.dumps({"password_ref": "secret://platform/mysql-test-password"}),
         "content_hash": "a" * 64,
     }
 
@@ -274,9 +272,7 @@ def test_tool_mcp_bootstrap_resolves_published_resource_secret() -> None:
                     "database": "diagnostics",
                     "username": "readonly",
                 },
-                "secret_refs": {
-                    "password_ref": "secret://platform/tool_mcp_mysql_password"
-                },
+                "secret_refs": {"password_ref": "secret://platform/tool_mcp_mysql_password"},
             },
             actor_id=actor_id,
         )
@@ -299,10 +295,7 @@ def test_tool_mcp_bootstrap_resolves_published_resource_secret() -> None:
 
         assert resolved.resource_code == "tool_mcp_mysql"
         assert resolved.binding.database is not None
-        assert (
-            resolved.binding.database.password
-            == "resolved-through-platform-secret-repository"
-        )
+        assert resolved.binding.database.password == "resolved-through-platform-secret-repository"
     finally:
         runtime.database.close()
 

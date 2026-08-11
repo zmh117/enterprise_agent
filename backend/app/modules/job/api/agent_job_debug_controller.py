@@ -56,8 +56,7 @@ def build_agent_job_debug_router() -> Any:
                 idempotency_key=payload.idempotency_key,
                 continue_session_id=payload.continue_session_id,
                 correlation_id=(
-                    getattr(request.state, "correlation_id", "")
-                    or new_correlation_id()
+                    getattr(request.state, "correlation_id", "") or new_correlation_id()
                 ),
                 environment="local",
             )
@@ -139,15 +138,9 @@ def build_agent_job_debug_router() -> Any:
             return {
                 "job_id": job_id,
                 "deliveries": {
-                    "events": container.agent_repository.list_delivery_events(
-                        job_id
-                    ),
-                    "attempts": container.agent_repository.list_delivery_attempts(
-                        job_id
-                    ),
-                    "chunks": container.agent_repository.list_delivery_chunks(
-                        job_id
-                    ),
+                    "events": container.agent_repository.list_delivery_events(job_id),
+                    "attempts": container.agent_repository.list_delivery_attempts(job_id),
+                    "chunks": container.agent_repository.list_delivery_chunks(job_id),
                 },
             }
         except NotFound as exc:
@@ -172,42 +165,25 @@ def build_agent_job_debug_router() -> Any:
                 """,
                 (job_id,),
             )
-            dispatch = container.agent_repository.get_dispatch_event_for_job(
-                job_id
-            )
+            dispatch = container.agent_repository.get_dispatch_event_for_job(job_id)
             return {
                 "job": {
                     **job,
-                    "agent_code": str(
-                        (agent or {}).get("code")
-                        or "default-diagnostic-agent"
-                    ),
+                    "agent_code": str((agent or {}).get("code") or "default-diagnostic-agent"),
                     "correlation_id": str(
-                        job.get("business_application_route_decision", {}).get(
-                            "correlation_id"
-                        )
+                        job.get("business_application_route_decision", {}).get("correlation_id")
                         or ""
                     ),
-                    "error_summary": str(
-                        job.get("error_message") or ""
-                    )[:500],
+                    "error_summary": str(job.get("error_message") or "")[:500],
                 },
                 "session_ref": {"id": str(job["session_id"])},
                 "dispatch": asdict(dispatch) if dispatch else None,
                 "steps": container.agent_repository.list_steps(job_id),
-                "tool_calls": container.agent_repository.list_tool_calls(
-                    job_id
-                ),
+                "tool_calls": container.agent_repository.list_tool_calls(job_id),
                 "deliveries": {
-                    "events": container.agent_repository.list_delivery_events(
-                        job_id
-                    ),
-                    "attempts": container.agent_repository.list_delivery_attempts(
-                        job_id
-                    ),
-                    "chunks": container.agent_repository.list_delivery_chunks(
-                        job_id
-                    ),
+                    "events": container.agent_repository.list_delivery_events(job_id),
+                    "attempts": container.agent_repository.list_delivery_attempts(job_id),
+                    "chunks": container.agent_repository.list_delivery_chunks(job_id),
                 },
                 "webhook_events": [],
             }

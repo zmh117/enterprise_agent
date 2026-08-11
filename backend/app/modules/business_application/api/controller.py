@@ -180,9 +180,7 @@ class CatalogResponse(BaseModel):
     agents: list[ComponentReferenceResponse]
     workflows: list[ComponentReferenceResponse]
     connectors: list[ComponentReferenceResponse]
-    mcp_tools_by_agent_publication: dict[str, list[dict[str, Any]]] = Field(
-        default_factory=dict
-    )
+    mcp_tools_by_agent_publication: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
 
 
 class EffectiveApplicationResponse(BaseModel):

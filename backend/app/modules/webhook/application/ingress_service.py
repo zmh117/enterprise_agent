@@ -275,7 +275,9 @@ class WebhookIngressService:
         error: AppError,
         remote_address: str,
     ) -> None:
-        remote_hash = hashlib.sha256(remote_address.encode()).hexdigest()[:16] if remote_address else ""
+        remote_hash = (
+            hashlib.sha256(remote_address.encode()).hexdigest()[:16] if remote_address else ""
+        )
         event, _ = self.event_repository.receive(
             trigger_id=str(definition["id"]),
             trigger_publication_id=str(publication["id"]),

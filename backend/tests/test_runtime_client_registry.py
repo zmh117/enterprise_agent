@@ -49,9 +49,7 @@ def request(runtime_kind: str, protocol: str = "1.0") -> AgentRunRequest:
 def test_registry_routes_only_by_frozen_runtime_kind_without_fallback() -> None:
     python = RecordingRuntimeClient("python")
     typescript = RecordingRuntimeClient("typescript")
-    registry = RuntimeClientRegistry(
-        {"python-v1": python, "typescript-v1": typescript}
-    )
+    registry = RuntimeClientRegistry({"python-v1": python, "typescript-v1": typescript})
 
     assert registry.run(request("python-v1")).final_answer == "python"
     assert registry.run(request("typescript-v1")).final_answer == "typescript"

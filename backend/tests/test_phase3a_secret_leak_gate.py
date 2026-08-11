@@ -151,9 +151,7 @@ def test_phase3a_secret_material_is_confined_to_encrypted_store_and_runtime_memo
         tool_calls = runtime.agent_repository.list_tool_calls(job.id)
         audit_rows = runtime.audit_repository.list_for_job(job.id)
         table_rows = {
-            str(table["name"]): runtime.database.execute(
-                f'select * from "{table["name"]}"'
-            )
+            str(table["name"]): runtime.database.execute(f'select * from "{table["name"]}"')
             for table in runtime.database.execute(
                 """
                 select name

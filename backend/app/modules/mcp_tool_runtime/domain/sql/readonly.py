@@ -51,9 +51,7 @@ def assert_readonly_expression(expression: exp.Expression) -> None:
         raise PolicyViolation("Statement could not be parsed as a read-only query")
     for expression_type in _FORBIDDEN_EXPRESSIONS:
         if list(expression.find_all(expression_type)):
-            raise PolicyViolation(
-                "Mutating or administrative SQL nodes are not allowed"
-            )
+            raise PolicyViolation("Mutating or administrative SQL nodes are not allowed")
     if list(expression.find_all(exp.Into)):
         raise PolicyViolation("SELECT ... INTO is not allowed")
     if list(expression.find_all(exp.Lock)):

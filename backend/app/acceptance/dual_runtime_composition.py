@@ -43,9 +43,7 @@ def _configure_model_connection(
     model: str = "",
 ) -> dict[str, Any]:
     service = runtime.model_connection_service
-    service.dns_resolver = lambda *_args, **_kwargs: [
-        (2, 1, 6, "", ("8.8.8.8", 443))
-    ]
+    service.dns_resolver = lambda *_args, **_kwargs: [(2, 1, 6, "", ("8.8.8.8", 443))]
     try:
         current = service.get(code)
     except NotFound:
@@ -336,8 +334,7 @@ def _assert_runtime_evidence(
     if not terminals:
         raise RuntimeError(f"Job {job_id} has no persisted Runtime terminal")
     if any(
-        item["payload"]["runtime_provenance"]["runtime_kind"] != runtime_kind
-        for item in terminals
+        item["payload"]["runtime_provenance"]["runtime_kind"] != runtime_kind for item in terminals
     ):
         raise RuntimeError(f"Job {job_id} Runtime provenance mismatch")
 
@@ -414,9 +411,7 @@ def _assert_plaintext_secret_absent(runtime: Container, secret: str) -> None:
     for column in columns:
         table_name = str(column["table_name"])
         column_name = str(column["column_name"])
-        if not _SQL_IDENTIFIER.fullmatch(table_name) or not _SQL_IDENTIFIER.fullmatch(
-            column_name
-        ):
+        if not _SQL_IDENTIFIER.fullmatch(table_name) or not _SQL_IDENTIFIER.fullmatch(column_name):
             raise RuntimeError("database metadata contains an unsafe SQL identifier")
         found = runtime.database.execute_one(
             f"select 1 as found from {table_name} "
@@ -427,8 +422,7 @@ def _assert_plaintext_secret_absent(runtime: Container, secret: str) -> None:
             leaked_locations.append(f"{table_name}.{column_name}")
     if leaked_locations:
         raise RuntimeError(
-            "plaintext provider credential persisted in: "
-            + ", ".join(leaked_locations)
+            "plaintext provider credential persisted in: " + ", ".join(leaked_locations)
         )
 
 
@@ -512,7 +506,7 @@ def _run_real_full(runtime: Container) -> int:
             question=(
                 "这是 Tool-use 合规测试。你的第一个动作必须是调用且只调用一次已发布的 "
                 "get_er_context MCP Tool，参数必须为 "
-                "{\"query\":\"enterprise agent acceptance\"}。在收到 tool_result 前禁止输出"
+                '{"query":"enterprise agent acceptance"}。在收到 tool_result 前禁止输出'
                 "文字或最终答案；收到后仅用一句中文说明只读工具调用成功。"
             ),
             agent=publications[runtime_kind],
@@ -550,10 +544,7 @@ def _run_real_full(runtime: Container) -> int:
         retry_job_id = _create_job(
             runtime,
             label=f"real-retry-{runtime_kind}",
-            question=(
-                f"{RETRY_MARKER} 这是隔离重试验收。不要调用工具，"
-                "最终只回复 REAL_RETRY_OK。"
-            ),
+            question=(f"{RETRY_MARKER} 这是隔离重试验收。不要调用工具，最终只回复 REAL_RETRY_OK。"),
             agent=publications[runtime_kind],
             application=applications[runtime_kind],
         )
@@ -712,9 +703,7 @@ def _inspect_real_cancel_job(runtime: Container) -> int:
     }:
         raise RuntimeError(f"real cancellation idempotency counts mismatch: {counts}")
     if job.retry_count != 0 or job.last_error_code != "runtime_cancelled":
-        raise RuntimeError(
-            "real cancellation did not fail closed with runtime_cancelled"
-        )
+        raise RuntimeError("real cancellation did not fail closed with runtime_cancelled")
     if str(delivery.delivery_binding.get("delivery_kind") or "") != "failure":
         raise RuntimeError("real cancellation did not create a failure Delivery")
     attempts = runtime.agent_repository.list_delivery_attempts(job_id)
@@ -795,11 +784,7 @@ def _create_restart_job(runtime: Container) -> int:
                 """,
                 (f"{job_id}.%",),
             )
-            if (
-                job.status == JobStatus.RUNNING
-                and row
-                and int(row["count"]) == 1
-            ):
+            if job.status == JobStatus.RUNNING and row and int(row["count"]) == 1:
                 terminal_observed_before_worker_commit = True
                 break
             if job.status in {JobStatus.SUCCEEDED, JobStatus.FAILED}:
@@ -815,9 +800,7 @@ def _create_restart_job(runtime: Container) -> int:
                 "runtime_kind": runtime_kind,
                 "job_id": job_id,
                 "claim_observed": claim_observed,
-                "terminal_observed_before_worker_commit": (
-                    terminal_observed_before_worker_commit
-                ),
+                "terminal_observed_before_worker_commit": (terminal_observed_before_worker_commit),
             },
             sort_keys=True,
         )

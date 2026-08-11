@@ -51,9 +51,9 @@ def test_success_persists_artifact_job_and_delivery_without_adapter_call() -> No
         assert delivery is not None
         assert delivery.status.value == "PENDING"
         assert delivery.correlation_id == "correlation-success"
-        assert runtime.agent_repository.get_artifact(
-            delivery.result_artifact_id
-        )["content"] == result
+        assert (
+            runtime.agent_repository.get_artifact(delivery.result_artifact_id)["content"] == result
+        )
         assert runtime.agent_repository.list_delivery_attempts(job.id) == []
         assert runtime.result_delivery_service.sent_messages == []
     finally:
@@ -107,9 +107,7 @@ def test_terminal_failure_persists_safe_artifact_and_delivery_in_same_uow() -> N
             reply_route={
                 "type": "dingtalk_stream_session_webhook",
                 "target": {
-                    "session_webhook": (
-                        "https://example.invalid/send?access_token=must-not-leak"
-                    )
+                    "session_webhook": ("https://example.invalid/send?access_token=must-not-leak")
                 },
             },
         )
@@ -133,9 +131,7 @@ def test_terminal_failure_persists_safe_artifact_and_delivery_in_same_uow() -> N
         assert persisted.status == JobStatus.FAILED
         assert delivery is not None
         assert delivery.status.value == "PENDING"
-        artifact = runtime.agent_repository.get_artifact(
-            delivery.result_artifact_id
-        )
+        artifact = runtime.agent_repository.get_artifact(delivery.result_artifact_id)
         payload = json.loads(str(artifact["content"]))
         assert payload["error_code"] == "provider_failure"
         assert "secret" not in payload["message"].lower()

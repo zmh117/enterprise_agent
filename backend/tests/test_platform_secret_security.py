@@ -177,12 +177,8 @@ def test_secret_api_audit_and_logs_never_echo_plaintext_or_crypto_material(
             """,
             (created.json()["secret"]["id"],),
         )
-        audit = runtime.platform_config_service.repository.list_config_audit(
-            limit=20
-        )
-        all_versions = runtime.database.execute(
-            "select * from platform_secret_version"
-        )
+        audit = runtime.platform_config_service.repository.list_config_audit(limit=20)
+        all_versions = runtime.database.execute("select * from platform_secret_version")
 
     assert created.status_code == 200
     assert listed.status_code == 200
@@ -218,10 +214,8 @@ def test_secret_plaintext_cannot_be_copied_to_public_metadata() -> None:
             },
             headers={"x-admin-user-id": "user_local_admin"},
         )
-        secret = (
-            runtime.platform_config_service.repository.get_platform_secret_by_code(
-                "metadata_canary"
-            )
+        secret = runtime.platform_config_service.repository.get_platform_secret_by_code(
+            "metadata_canary"
         )
 
     assert response.status_code == 400
@@ -361,19 +355,17 @@ def test_secret_usage_api_returns_only_dependency_metadata() -> None:
             """,
             (secret["id"],),
         )
-        stored = (
-            runtime.platform_config_service.repository.get_active_secret_version(
-                secret["id"]
-            )
-        )
+        stored = runtime.platform_config_service.repository.get_active_secret_version(secret["id"])
 
     assert response.status_code == 200
     assert duplicate.status_code == 400
     assert version_count == {"count": 1}
     assert usage["usage_count"] == 3
-    assert {
-        item["dependency_type"] for item in usage["dependencies"]
-    } == {"connector", "resource_draft", "runtime_config"}
+    assert {item["dependency_type"] for item in usage["dependencies"]} == {
+        "connector",
+        "resource_draft",
+        "runtime_config",
+    }
     serialized = response.text
     assert stored is not None
     for forbidden in (

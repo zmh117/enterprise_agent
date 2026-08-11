@@ -9,7 +9,7 @@ import threading
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from ...domain.errors import ResolutionError
 from ...domain.topology import OracleClientMode
@@ -88,45 +88,27 @@ def inspect_oracle_client(
 
     candidates = sorted(Path(lib_dir).glob("libclntsh.so*"))
     if not candidates:
-        raise ResolutionError(
-            "Oracle Instant Client libclntsh was not found"
-        )
-    versioned = [
-        candidate
-        for candidate in candidates
-        if ".so.19" in candidate.resolve().name
-    ]
+        raise ResolutionError("Oracle Instant Client libclntsh was not found")
+    versioned = [candidate for candidate in candidates if ".so.19" in candidate.resolve().name]
     if not versioned:
-        raise ResolutionError(
-            "Oracle Instant Client 19c is required"
-        )
+        raise ResolutionError("Oracle Instant Client 19c is required")
     library = versioned[0].resolve()
     try:
         with library.open("rb") as stream:
             header = stream.read(20)
     except OSError as exc:
-        raise ResolutionError(
-            "Oracle Instant Client library could not be inspected"
-        ) from exc
+        raise ResolutionError("Oracle Instant Client library could not be inspected") from exc
     if len(header) < 20 or header[:4] != b"\x7fELF":
-        raise ResolutionError(
-            "Oracle Instant Client library is not an ELF binary"
-        )
+        raise ResolutionError("Oracle Instant Client library is not an ELF binary")
     if header[4] != 2:
-        raise ResolutionError(
-            "Oracle Instant Client must be 64-bit"
-        )
-    byte_order = (
-        "little"
-        if header[5] == 1
-        else "big"
-        if header[5] == 2
-        else ""
-    )
-    if not byte_order:
-        raise ResolutionError(
-            "Oracle Instant Client ELF byte order is invalid"
-        )
+        raise ResolutionError("Oracle Instant Client must be 64-bit")
+    byte_order: Literal["little", "big"]
+    if header[5] == 1:
+        byte_order = "little"
+    elif header[5] == 2:
+        byte_order = "big"
+    else:
+        raise ResolutionError("Oracle Instant Client ELF byte order is invalid")
     machine = int.from_bytes(header[18:20], byte_order)
     architectures = {62: "x86_64", 183: "aarch64"}
     client_architecture = architectures.get(machine, f"elf_machine_{machine}")
@@ -137,9 +119,7 @@ def inspect_oracle_client(
         "aarch64": "aarch64",
     }.get(platform.machine().lower(), platform.machine().lower())
     if client_architecture != runtime_architecture:
-        raise ResolutionError(
-            "Oracle Instant Client architecture does not match the runtime"
-        )
+        raise ResolutionError("Oracle Instant Client architecture does not match the runtime")
     return "19c", client_architecture
 
 
@@ -234,16 +214,12 @@ def assert_oracle_client_mode_ready(mode: OracleClientMode) -> None:
     """
 
     if mode is not OracleClientMode.THICK:
-        raise ResolutionError(
-            "Oracle 11g requires explicit Thick client mode"
-        )
+        raise ResolutionError("Oracle 11g requires explicit Thick client mode")
     result = ensure_oracle_client_initialized()
     if result.state is ThickInitState.THICK:
         return
     if result.state is ThickInitState.THIN_ONLY:
-        raise ResolutionError(
-            "Oracle 11g requires 64-bit Instant Client 19c Thick mode"
-        )
+        raise ResolutionError("Oracle 11g requires 64-bit Instant Client 19c Thick mode")
     raise ResolutionError(
         "Oracle Instant Client 19c Thick initialization failed"
         + (f": {result.error}" if result.error else "")
@@ -259,9 +235,7 @@ def build_oracle_dsn(
     connect_descriptor: str = "",
 ) -> str:
     if connect_descriptor.strip():
-        raise ResolutionError(
-            "Arbitrary Oracle connect descriptors are not allowed"
-        )
+        raise ResolutionError("Arbitrary Oracle connect descriptors are not allowed")
     if use_sid:
         return f"{host}:{port}/{database}"
     # Easy Connect service name form (default).

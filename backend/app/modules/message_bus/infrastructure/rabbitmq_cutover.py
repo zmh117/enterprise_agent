@@ -11,10 +11,7 @@ class RabbitMQExactQueueScanner:
     def inspect_exact(self, queue_names: list[str]) -> dict[str, dict[str, object]]:
         connection = self._connection()
         try:
-            return {
-                name: self._passive_queue_summary(connection, name)
-                for name in queue_names
-            }
+            return {name: self._passive_queue_summary(connection, name) for name in queue_names}
         finally:
             connection.close()
 
@@ -35,9 +32,7 @@ class RabbitMQExactQueueScanner:
             initial_messages = int(state.message_count)
             consumers = int(state.consumer_count)
             if apply and consumers:
-                raise RuntimeError(
-                    f"Exact queue {queue_name} still has {consumers} consumers"
-                )
+                raise RuntimeError(f"Exact queue {queue_name} still has {consumers} consumers")
             scan_count = min(initial_messages, max(0, int(limit)))
             for _ in range(scan_count):
                 method, _, body = channel.basic_get(queue=queue_name, auto_ack=False)
@@ -84,9 +79,7 @@ class RabbitMQExactQueueScanner:
                 if not summary["exists"]:
                     continue
                 if summary["messages"] or summary["consumers"]:
-                    raise RuntimeError(
-                        f"Exact queue {name} is not empty and unused: {summary}"
-                    )
+                    raise RuntimeError(f"Exact queue {name} is not empty and unused: {summary}")
                 channel = connection.channel()
                 channel.queue_delete(
                     queue=name,

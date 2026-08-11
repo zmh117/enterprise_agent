@@ -148,9 +148,7 @@ class HttpLokiClient:
                 "minutes": minutes,
                 "labels": bounded,
                 "label_count": len(bounded),
-                "tenant_configured": bool(
-                    binding.loki and binding.loki.tenant_id
-                ),
+                "tenant_configured": bool(binding.loki and binding.loki.tenant_id),
                 "truncated": truncated,
             },
             raw={"label_count": len(values)},
@@ -196,9 +194,7 @@ class HttpLokiClient:
                 "minutes": minutes,
                 "values": bounded,
                 "value_count": len(bounded),
-                "tenant_configured": bool(
-                    binding.loki and binding.loki.tenant_id
-                ),
+                "tenant_configured": bool(binding.loki and binding.loki.tenant_id),
                 "truncated": truncated,
             },
             raw={"value_count": len(values)},
@@ -262,22 +258,16 @@ class HttpLokiClient:
         if binding.loki.tenant_id:
             headers["X-Scope-OrgID"] = binding.loki.tenant_id
         if binding.loki.auth_token:
-            headers["Authorization"] = (
-                f"Bearer {binding.loki.auth_token}"
-            )
+            headers["Authorization"] = f"Bearer {binding.loki.auth_token}"
         request = Request(url, headers=headers, method="GET")
         try:
             with self._urlopen_func(
                 request,
                 timeout=binding.loki.timeout_seconds,
             ) as response:
-                raw = response.read(
-                    binding.loki.max_response_bytes + 1
-                )
+                raw = response.read(binding.loki.max_response_bytes + 1)
                 if len(raw) > binding.loki.max_response_bytes:
-                    raise PolicyViolation(
-                        "Loki response exceeds configured byte limit"
-                    )
+                    raise PolicyViolation("Loki response exceeds configured byte limit")
                 parsed = json.loads(raw.decode("utf-8"))
         except urllib.error.HTTPError as exc:
             if exc.code in _RETRYABLE_UPSTREAM_STATUSES:
@@ -361,9 +351,7 @@ class FakeLokiClient:
                 "minutes": minutes,
                 "labels": labels,
                 "label_count": len(labels),
-                "tenant_configured": bool(
-                    binding.loki and binding.loki.tenant_id
-                ),
+                "tenant_configured": bool(binding.loki and binding.loki.tenant_id),
                 "truncated": False,
             },
             raw={"label_count": len(labels)},
@@ -390,9 +378,7 @@ class FakeLokiClient:
                 "minutes": minutes,
                 "values": values[:limit],
                 "value_count": len(values[:limit]),
-                "tenant_configured": bool(
-                    binding.loki and binding.loki.tenant_id
-                ),
+                "tenant_configured": bool(binding.loki and binding.loki.tenant_id),
                 "truncated": len(values) > limit,
             },
             raw={"value_count": len(values)},

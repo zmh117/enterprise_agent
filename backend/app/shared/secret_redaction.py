@@ -7,9 +7,7 @@ from typing import Any
 
 REDACTED = "[REDACTED]"
 
-_PLATFORM_SECRET_REF = re.compile(
-    r"^secret://platform/[a-z][a-z0-9_-]{0,127}$"
-)
+_PLATFORM_SECRET_REF = re.compile(r"^secret://platform/[a-z][a-z0-9_-]{0,127}$")
 _SENSITIVE_KEY_PARTS = (
     "apikey",
     "authorization",
@@ -30,12 +28,8 @@ _ASSIGNMENT_PATTERN = re.compile(
     r")\b(\s*[:=]\s*)([^\s,;&]+)"
 )
 _BEARER_PATTERN = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
-_MASTER_KEY_PATTERN = re.compile(
-    r"\bEA_MASTER_KEY_V1:[A-Za-z0-9_-]{20,}\b"
-)
-_PRIVATE_KEY_PATTERN = re.compile(
-    r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----"
-)
+_MASTER_KEY_PATTERN = re.compile(r"\bEA_MASTER_KEY_V1:[A-Za-z0-9_-]{20,}\b")
+_PRIVATE_KEY_PATTERN = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
 _URI_CREDENTIAL_PATTERN = re.compile(
     r"(?P<prefix>[a-z][a-z0-9+.-]*://[^:/@\s]+:)"
     r"(?P<password>[^@\s/]+)"
@@ -73,9 +67,7 @@ def redact_sensitive_text(value: str, *, parse_json: bool = True) -> str:
     redacted = _BEARER_PATTERN.sub("Bearer [REDACTED]", value)
     redacted = _MASTER_KEY_PATTERN.sub(REDACTED, redacted)
     redacted = _URI_CREDENTIAL_PATTERN.sub(
-        lambda match: (
-            f"{match.group('prefix')}{REDACTED}{match.group('suffix')}"
-        ),
+        lambda match: f"{match.group('prefix')}{REDACTED}{match.group('suffix')}",
         redacted,
     )
     return _ASSIGNMENT_PATTERN.sub(
@@ -106,10 +98,7 @@ def sanitize_for_persistence(value: Any, *, _depth: int = 0) -> Any:
             )
         return sanitized
     if isinstance(value, (list, tuple)):
-        return [
-            sanitize_for_persistence(item, _depth=_depth + 1)
-            for item in value
-        ]
+        return [sanitize_for_persistence(item, _depth=_depth + 1) for item in value]
     if isinstance(value, str):
         return redact_sensitive_text(value)
     if value is None or isinstance(value, (bool, int, float)):

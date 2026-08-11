@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import Any, Never
 
 from app.modules.admin.application import AdminCapabilityService
 from app.modules.admin.domain import ADMIN_CAPABILITIES, ADMIN_CAPABILITY_BY_CODE
@@ -49,9 +49,7 @@ class AuthorizationCenterService:
             modules.setdefault(item.module, []).append(item.to_dict())
         return {
             "items": [item.to_dict() for item in ADMIN_CAPABILITIES],
-            "modules": [
-                {"code": code, "items": items} for code, items in sorted(modules.items())
-            ],
+            "modules": [{"code": code, "items": items} for code, items in sorted(modules.items())],
         }
 
     def list_roles(
@@ -94,9 +92,7 @@ class AuthorizationCenterService:
             },
         }
 
-    def role_audit(
-        self, *, actor_id: str, role_id: str, limit: int = 100
-    ) -> dict[str, Any]:
+    def role_audit(self, *, actor_id: str, role_id: str, limit: int = 100) -> dict[str, Any]:
         self._require_catalog(actor_id, "authorization.read")
         self.repository.get_role(role_id)
         rows = self.repository.database.execute(
@@ -118,9 +114,7 @@ class AuthorizationCenterService:
             "items": [
                 {
                     **row,
-                    "action_zh": _ROLE_AUDIT_LABELS.get(
-                        str(row["event_type"]), "角色授权操作"
-                    ),
+                    "action_zh": _ROLE_AUDIT_LABELS.get(str(row["event_type"]), "角色授权操作"),
                 }
                 for row in rows
             ],
@@ -329,8 +323,7 @@ class AuthorizationCenterService:
         if role["protected"] and not confirmed:
             self._confirmation_required("修改平台管理员成员前需要二次确认")
         self_removal = any(
-            str(change.get("user_id") or "") == actor_id
-            and not bool(change.get("enabled"))
+            str(change.get("user_id") or "") == actor_id and not bool(change.get("enabled"))
             for change in changes
         )
         if self_removal and not confirmed:
@@ -366,9 +359,7 @@ class AuthorizationCenterService:
                         self.identity_repository.assign_role(
                             user_id=user_id,
                             role_id=role_id,
-                            expected_revision=(
-                                int(membership["revision"]) if membership else 0
-                            ),
+                            expected_revision=(int(membership["revision"]) if membership else 0),
                             expires_at=change.get("expires_at") or None,
                             assigned_by=actor_id,
                             assignment_source=str(change.get("source") or "manual"),
@@ -472,9 +463,9 @@ class AuthorizationCenterService:
                 item["source_role_codes"].append(str(role["code"]))
                 item["tool_identifiers"].extend(access["tool_identifiers"])
                 item["scopes"].extend(access["scopes"])
-        management = AdminCapabilityService(
-            self.identity_repository, self.authorization
-        ).summary(user_id)
+        management = AdminCapabilityService(self.identity_repository, self.authorization).summary(
+            user_id
+        )
         return {
             "roles": self.identity_repository.list_user_roles(user_id),
             "management_capabilities": management["capabilities"],
@@ -484,24 +475,17 @@ class AuthorizationCenterService:
                     "source_role_codes": sorted(set(item["source_role_codes"])),
                     "tool_identifiers": sorted(set(item["tool_identifiers"])),
                     "scopes": list(
-                        {
-                            str(scope["scope_key"]): scope
-                            for scope in item["scopes"]
-                        }.values()
+                        {str(scope["scope_key"]): scope for scope in item["scopes"]}.values()
                     ),
                 }
                 for item in business.values()
             ],
-            "access_status": (
-                "已获得角色授权" if business else "未获得应用权限"
-            ),
+            "access_status": ("已获得角色授权" if business else "未获得应用权限"),
         }
 
     def assignable_catalog(self, *, actor_id: str) -> dict[str, Any]:
         self._require_catalog(actor_id, "authorization.read")
-        platform_admin = (
-            "platform-admin" in self.identity_repository.role_codes_for_user(actor_id)
-        )
+        platform_admin = "platform-admin" in self.identity_repository.role_codes_for_user(actor_id)
         applications = self.repository.application_catalog()
         topology = self.repository.topology_catalog()
         if not platform_admin:
@@ -576,20 +560,13 @@ class AuthorizationCenterService:
         for code in sorted(closure):
             definition = ADMIN_CAPABILITY_BY_CODE[code]
             source = next(
-                (
-                    item
-                    for item in bindings
-                    if str(item.get("capability_code") or "") == code
-                ),
+                (item for item in bindings if str(item.get("capability_code") or "") == code),
                 {},
             )
             resource_code = str(source.get("resource_code") or definition.resource_code)
             if not actor_is_platform_admin and not (
                 code in actor_bindings
-                and (
-                    "*" in actor_bindings[code]
-                    or resource_code in actor_bindings[code]
-                )
+                and ("*" in actor_bindings[code] or resource_code in actor_bindings[code])
             ):
                 self._field_error(
                     "bindings",
@@ -640,9 +617,7 @@ class AuthorizationCenterService:
                         f"applications.{index}.application_id",
                         "你无权授予该业务应用",
                     )
-            available_codes = {
-                str(value["tool_identifier"]) for value in application["mcp_tools"]
-            }
+            available_codes = {str(value["tool_identifier"]) for value in application["mcp_tools"]}
             tool_identifiers = sorted(
                 {
                     str(value).strip()
@@ -695,9 +670,7 @@ class AuthorizationCenterService:
                     for identifier in access["tool_identifiers"]
                 }
                 grantable_scopes = {
-                    str(scope["scope_key"])
-                    for access in actor_access
-                    for scope in access["scopes"]
+                    str(scope["scope_key"]) for access in actor_access for scope in access["scopes"]
                 }
                 if not set(tool_identifiers) <= grantable_tools:
                     self._field_error(
@@ -744,8 +717,7 @@ class AuthorizationCenterService:
 
     def _role_has_admin_capabilities(self, role: dict[str, Any]) -> bool:
         return bool(
-            role["code"] == "platform-admin"
-            or self.repository.list_admin_bindings(str(role["id"]))
+            role["code"] == "platform-admin" or self.repository.list_admin_bindings(str(role["id"]))
         )
 
     @staticmethod
@@ -786,7 +758,7 @@ class AuthorizationCenterService:
         }
 
     @staticmethod
-    def _field_error(field: str, message: str) -> None:
+    def _field_error(field: str, message: str) -> Never:
         raise NonRetryableExecutionError(
             message,
             safe_message=message,
@@ -991,9 +963,7 @@ class BusinessAuthorizationService:
 
         publication_id = str(publication["id"])
         agent = snapshot.get("agent")
-        agent_publication_id = (
-            str(agent.get("id") or "") if isinstance(agent, dict) else ""
-        )
+        agent_publication_id = str(agent.get("id") or "") if isinstance(agent, dict) else ""
         if not agent_publication_id:
             raise self._runtime_facts_invalid(
                 "Application publication does not pin an Agent publication"
@@ -1013,9 +983,7 @@ class BusinessAuthorizationService:
             "base_code": base,
             "workshop_code": workshop,
         }
-        roles_by_tool: dict[str, set[str]] = {
-            str(tool["tool_identifier"]): set() for tool in tools
-        }
+        roles_by_tool: dict[str, set[str]] = {str(tool["tool_identifier"]): set() for tool in tools}
         for access in accesses:
             if not any(
                 self._scope_matches(
@@ -1027,9 +995,9 @@ class BusinessAuthorizationService:
                 for scope in access["scopes"]
             ):
                 continue
-            for tool_identifier in set(
-                str(value) for value in access["tool_identifiers"]
-            ) & roles_by_tool.keys():
+            for tool_identifier in (
+                set(str(value) for value in access["tool_identifiers"]) & roles_by_tool.keys()
+            ):
                 roles_by_tool[tool_identifier].add(str(access["role_code"]))
         return {
             "schema_version": 3,
@@ -1046,9 +1014,7 @@ class BusinessAuthorizationService:
                     "tool_identifier": str(tool["tool_identifier"]),
                     "server_code": "tool-mcp",
                     "schema_hash": str(tool["schema_hash"]),
-                    "source_role_codes": sorted(
-                        roles_by_tool[str(tool["tool_identifier"])]
-                    ),
+                    "source_role_codes": sorted(roles_by_tool[str(tool["tool_identifier"])]),
                 }
                 for tool in tools
             ],
@@ -1070,9 +1036,7 @@ class BusinessAuthorizationService:
             (environment,),
         )
         if environment_row is None:
-            raise self._runtime_facts_invalid(
-                "Execution Scope environment is unavailable"
-            )
+            raise self._runtime_facts_invalid("Execution Scope environment is unavailable")
         base_row: dict[str, Any] | None = None
         if base:
             base_row = self.repository.database.execute_one(
@@ -1084,15 +1048,11 @@ class BusinessAuthorizationService:
                 (environment_row["id"], base),
             )
             if base_row is None:
-                raise self._runtime_facts_invalid(
-                    "Execution Scope base is unavailable"
-                )
+                raise self._runtime_facts_invalid("Execution Scope base is unavailable")
         workshop_row: dict[str, Any] | None = None
         if workshop:
             if base_row is None:
-                raise self._runtime_facts_invalid(
-                    "Execution Scope workshop has no base"
-                )
+                raise self._runtime_facts_invalid("Execution Scope workshop has no base")
             workshop_row = self.repository.database.execute_one(
                 """
                 select id, code from platform_workshop
@@ -1101,9 +1061,7 @@ class BusinessAuthorizationService:
                 (base_row["id"], workshop),
             )
             if workshop_row is None:
-                raise self._runtime_facts_invalid(
-                    "Execution Scope workshop is unavailable"
-                )
+                raise self._runtime_facts_invalid("Execution Scope workshop is unavailable")
         scope_key = "|".join(
             (
                 str(environment_row["id"]),
@@ -1118,9 +1076,7 @@ class BusinessAuthorizationService:
             "base_id": str((base_row or {}).get("id") or ""),
             "base_code": str((base_row or {}).get("code") or ""),
             "workshop_id": str((workshop_row or {}).get("id") or ""),
-            "workshop_code": str(
-                (workshop_row or {}).get("code") or ""
-            ),
+            "workshop_code": str((workshop_row or {}).get("code") or ""),
         }
 
     @staticmethod
@@ -1173,8 +1129,7 @@ class BusinessAuthorizationService:
         if requested_scope["base_code"] and resource_base != requested_scope["base_code"]:
             return False
         if requested_scope["workshop_code"] and (
-            resource_workshop
-            and resource_workshop != requested_scope["workshop_code"]
+            resource_workshop and resource_workshop != requested_scope["workshop_code"]
         ):
             return False
         return True

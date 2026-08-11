@@ -99,9 +99,10 @@ def test_027_fresh_schema_enforces_enterprise_and_identity_invariants() -> None:
 
 def test_027_migration_contains_no_test_data_cleanup() -> None:
     sql = (
-        default_migrations_dir()
-        / "027_dingtalk_enterprise_identity_observations.sql"
-    ).read_text(encoding="utf-8").lower()
+        (default_migrations_dir() / "027_dingtalk_enterprise_identity_observations.sql")
+        .read_text(encoding="utf-8")
+        .lower()
+    )
 
     assert "delete from" not in sql
     assert "drop table" not in sql

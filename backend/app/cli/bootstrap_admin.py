@@ -13,9 +13,7 @@ from app.shared.migrations import SchemaHeadValidator
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Create the first local platform administrator"
-    )
+    parser = argparse.ArgumentParser(description="Create the first local platform administrator")
     parser.add_argument("--username", required=True)
     parser.add_argument("--display-name", required=True)
     args = parser.parse_args()

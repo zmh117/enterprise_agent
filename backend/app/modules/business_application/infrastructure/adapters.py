@@ -31,10 +31,7 @@ class AgentPublicationAdapter:
                     and runtime_kind == "python-v1"
                     and snapshot.get("runtime_kind") in {None, "python-v1"}
                 )
-                or (
-                    schema_version == 2
-                    and snapshot.get("runtime_kind") == runtime_kind
-                )
+                or (schema_version == 2 and snapshot.get("runtime_kind") == runtime_kind)
             )
         )
         if not integrity_valid:
@@ -67,6 +64,7 @@ class AgentPublicationAdapter:
                 if str(publication["status"]) == "active":
                     values.append(self.resolve(str(publication["id"])))
         return values
+
 
 class WorkflowPublicationAdapter:
     def __init__(self, repository: WorkflowRepository) -> None:

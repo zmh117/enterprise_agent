@@ -230,9 +230,7 @@ class AgentExecutor:
                 self.status_service.fail(job.id, safe_message)
             diagnostics = getattr(exc, "diagnostics", {})
             runtime_provenance = (
-                diagnostics.get("runtime_provenance")
-                if isinstance(diagnostics, dict)
-                else None
+                diagnostics.get("runtime_provenance") if isinstance(diagnostics, dict) else None
             )
             if isinstance(runtime_provenance, dict):
                 self.repository.record_runtime_provenance(job.id, runtime_provenance)

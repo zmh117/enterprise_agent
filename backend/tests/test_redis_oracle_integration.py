@@ -122,9 +122,7 @@ class OracleThickIntegrationTests(unittest.TestCase):
             table_prefix=None,
             oracle_compat=compat,
         )
-        executed = OracleExecutor().execute(
-            binding, analyzed.sql, timeout_seconds=15, max_rows=5
-        )
+        executed = OracleExecutor().execute(binding, analyzed.sql, timeout_seconds=15, max_rows=5)
         self.assertGreaterEqual(len(executed.rows), 1)
 
 
@@ -161,9 +159,7 @@ class OracleSchemaInspectorIntegrationTests(unittest.TestCase):
             user=user,
             password=os.getenv("ORACLE_PASSWORD", "oracle"),
             schema=os.getenv("ORACLE_SCHEMA", user),
-            oracle_client_mode=OracleClientMode(
-                os.getenv("ORACLE_CLIENT_MODE", "auto")
-            ),
+            oracle_client_mode=OracleClientMode(os.getenv("ORACLE_CLIENT_MODE", "auto")),
             use_sid=os.getenv("ORACLE_USE_SID", "0") in {"1", "true", "yes"},
         )
         base = Base(code="main", engine=DatabaseEngine.ORACLE, database=db)

@@ -425,9 +425,7 @@ class BusinessApplicationRepository:
             )
         ]
 
-    def get_deployment(
-        self, application_id: str, environment: str
-    ) -> dict[str, Any] | None:
+    def get_deployment(self, application_id: str, environment: str) -> dict[str, Any] | None:
         row = self.database.execute_one(
             """
             select * from business_application_deployment
@@ -530,9 +528,7 @@ class BusinessApplicationRepository:
                     environment=environment,
                     trigger_type=routes[0]["trigger_type"] if routes else "",
                     connector_id=routes[0]["connector_id"] if routes else "",
-                    normalized_routing_key=(
-                        routes[0]["normalized_routing_key"] if routes else ""
-                    ),
+                    normalized_routing_key=(routes[0]["normalized_routing_key"] if routes else ""),
                 )
                 raise NonRetryableExecutionError(
                     "Business Application route is already active",
@@ -631,9 +627,7 @@ class BusinessApplicationRepository:
         if current != expected_revision:
             raise self.revision_conflict(current)
 
-    def _application(
-        self, row: dict[str, Any], *, include_draft: bool
-    ) -> dict[str, Any]:
+    def _application(self, row: dict[str, Any], *, include_draft: bool) -> dict[str, Any]:
         value = {
             **row,
             "owner_user_id": str(row.get("owner_user_id") or ""),
@@ -683,9 +677,7 @@ class BusinessApplicationRepository:
                     **item,
                     "binding_order": int(item["binding_order"]),
                     "enabled": bool(item["enabled"]),
-                    "service_account_user_id": str(
-                        item.get("service_account_user_id") or ""
-                    ),
+                    "service_account_user_id": str(item.get("service_account_user_id") or ""),
                     "config": json_value(item.get("config_json"), {}),
                 }
                 for item in triggers

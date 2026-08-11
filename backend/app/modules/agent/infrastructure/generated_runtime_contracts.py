@@ -23,6 +23,7 @@ RuntimeKind = Literal["python-v1", "typescript-v1"]
 SafeMessage = str
 RuntimeEvent = dict[str, object] | dict[str, object] | dict[str, object] | dict[str, object]
 
+
 class JsonSummary(TypedDict):
     pass
 

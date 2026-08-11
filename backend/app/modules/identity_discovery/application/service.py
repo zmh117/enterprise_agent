@@ -24,9 +24,7 @@ _DISCOVERY_REJECTION_CODES = frozenset(
 _ALLOWED_MESSAGE_KINDS = frozenset(
     {"text", "markdown", "image", "picture", "file", "audio", "video", "unsupported"}
 )
-_ALLOWED_ATTACHMENT_TYPES = frozenset(
-    {"image", "file", "document", "audio", "video"}
-)
+_ALLOWED_ATTACHMENT_TYPES = frozenset({"image", "file", "document", "audio", "video"})
 
 
 class DingTalkIdentityDiscoveryService:
@@ -83,12 +81,8 @@ class DingTalkIdentityDiscoveryService:
         if event.attachments:
             attachment = event.attachments[0]
             raw_type = str(attachment.media_type or "").strip().lower()
-            attachment_type = (
-                raw_type if raw_type in _ALLOWED_ATTACHMENT_TYPES else "file"
-            )
-            attachment_name = str(attachment.file_name or "")[
-                : self.max_attachment_name_chars
-            ]
+            attachment_type = raw_type if raw_type in _ALLOWED_ATTACHMENT_TYPES else "file"
+            attachment_name = str(attachment.file_name or "")[: self.max_attachment_name_chars]
             if attachment.declared_size is not None:
                 declared_size = int(attachment.declared_size)
                 if 0 <= declared_size <= self.max_attachment_size:
@@ -221,23 +215,21 @@ class DingTalkIdentityDiscoveryService:
                     candidate_id,
                     cutoff=self.cutoff(),
                 )
-                if int(candidate["revision"]) != expected_candidate_revision:
+                candidate_revision = candidate["revision"]
+                if type(candidate_revision) is not int:
+                    raise RuntimeError("DingTalk identity candidate revision must be an integer")
+                if candidate_revision != expected_candidate_revision:
                     raise NonRetryableExecutionError(
                         "Candidate revision conflict",
                         safe_message="候选信息已发生变化，请刷新后重试",
                         error_code="revision_conflict",
                     )
                 historical = self.identity_repository.find_dingtalk_identity(
-                    dingtalk_enterprise_id=str(
-                        candidate["dingtalk_enterprise_id"]
-                    ),
+                    dingtalk_enterprise_id=str(candidate["dingtalk_enterprise_id"]),
                     external_subject_id=str(candidate["external_subject_id"]),
                     include_disabled=True,
                 )
-                if (
-                    historical is not None
-                    and str(historical["user_id"]) != target_user_id
-                ):
+                if historical is not None and str(historical["user_id"]) != target_user_id:
                     raise NonRetryableExecutionError(
                         "Historical identity must be restored by its original owner",
                         safe_message="该钉钉身份已有历史归属，请前往原人员恢复",
@@ -278,14 +270,10 @@ class DingTalkIdentityDiscoveryService:
                 identity = self.identity_service.bind_dingtalk_candidate(
                     actor_id=actor_id,
                     user_id=target_user_id,
-                    dingtalk_enterprise_id=str(
-                        candidate["dingtalk_enterprise_id"]
-                    ),
+                    dingtalk_enterprise_id=str(candidate["dingtalk_enterprise_id"]),
                     external_subject_id=str(candidate["external_subject_id"]),
                     source_connector_id=str(latest["connector_id"]),
-                    source_ingress_event_id=str(
-                        latest["source_ingress_event_id"]
-                    ),
+                    source_ingress_event_id=str(latest["source_ingress_event_id"]),
                     observed_at=str(latest["received_at"]),
                     display_name=str(candidate.get("display_name") or ""),
                     expected_user_revision=expected_user_revision,
@@ -345,11 +333,7 @@ class DingTalkIdentityDiscoveryService:
                 "identity": identity,
                 "memberships": memberships,
                 "authorization_summary": {
-                    "access_status": (
-                        "已获得角色授权"
-                        if business_access
-                        else "未获得应用权限"
-                    ),
+                    "access_status": ("已获得角色授权" if business_access else "未获得应用权限"),
                     "role_ids": role_ids,
                     "management_capabilities": admin_summary["capabilities"],
                     "business_applications": [
@@ -384,9 +368,7 @@ class DingTalkIdentityDiscoveryService:
             raise
 
     def cutoff(self) -> str:
-        return (
-            datetime.now(UTC) - timedelta(days=self.retention_days)
-        ).isoformat()
+        return (datetime.now(UTC) - timedelta(days=self.retention_days)).isoformat()
 
 
 def _parse_dingtalk_occurred_at(value: object) -> str | None:

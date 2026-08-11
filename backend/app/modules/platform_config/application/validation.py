@@ -74,9 +74,7 @@ def validate_topology_code(
     if normalized in _TOPOLOGY_PLACEHOLDER_CODES:
         raise PlatformConfigValidationError(
             f"Placeholder {level} code is forbidden: {code}",
-            safe_message=(
-                f"{level} 必须使用真实业务编码，不能使用占位值"
-            ),
+            safe_message=(f"{level} 必须使用真实业务编码，不能使用占位值"),
             error_code="platform_topology_placeholder_forbidden",
         )
     return code

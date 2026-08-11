@@ -28,9 +28,7 @@ def test_database_contract_rejects_ambiguous_fields_and_projects_runtime() -> No
                 "user": "reader",
                 "username": "other",
             },
-            secret_refs={
-                "password_ref": "secret://platform/mysql_password"
-            },
+            secret_refs={"password_ref": "secret://platform/mysql_password"},
         )
 
     imported = registry.normalize(
@@ -50,15 +48,11 @@ def test_database_contract_rejects_ambiguous_fields_and_projects_runtime() -> No
         "database": "orders",
         "username": "reader",
     }
-    assert imported.secret_refs == {
-        "password_ref": "secret://platform/mysql_password"
-    }
+    assert imported.secret_refs == {"password_ref": "secret://platform/mysql_password"}
     projected = registry.runtime_projection(
         imported,
         resolve_secret=lambda ref: (
-            "resolved-password"
-            if ref == "secret://platform/mysql_password"
-            else ""
+            "resolved-password" if ref == "secret://platform/mysql_password" else ""
         ),
     )
     assert projected["user"] == "reader"
@@ -80,9 +74,7 @@ def test_oracle_contract_requires_exactly_one_structured_address(
             "username": "reader",
             "schema": "APP_READ",
         },
-        secret_refs={
-            "password_ref": "secret://platform/oracle_password"
-        },
+        secret_refs={"password_ref": "secret://platform/oracle_password"},
     )
     assert document.contract_version == "oracle_11g_v1"
     assert document.config[address_key] == "ORCL"
@@ -101,9 +93,7 @@ def test_oracle_contract_requires_exactly_one_structured_address(
                     "username": "reader",
                     **invalid,
                 },
-                secret_refs={
-                    "password_ref": "secret://platform/oracle_password"
-                },
+                secret_refs={"password_ref": "secret://platform/oracle_password"},
             )
 
 
@@ -122,9 +112,7 @@ def test_redis_and_loki_contracts_convert_only_in_import_mode() -> None:
             "db": 1,
             "user": "reader",
         },
-        secret_refs={
-            "password": "secret://platform/redis_password"
-        },
+        secret_refs={"password": "secret://platform/redis_password"},
         import_legacy=True,
     )
     assert redis.config["database"] == 1
@@ -196,9 +184,7 @@ def test_redis_tls_and_loki_auth_limits_are_strict_and_projectable() -> None:
                 "verify_certificate": True,
             },
         },
-        secret_refs={
-            "password_ref": "secret://platform/redis_password"
-        },
+        secret_refs={"password_ref": "secret://platform/redis_password"},
     )
     projected_redis = registry.runtime_projection(
         redis,
@@ -253,10 +239,7 @@ def test_provider_contract_api_is_metadata_only_and_marks_postgres_unavailable()
         )
 
     assert response.status_code == 200
-    contracts = {
-        item["provider_type"]: item
-        for item in response.json()["contracts"]
-    }
+    contracts = {item["provider_type"]: item for item in response.json()["contracts"]}
     assert contracts["mysql"]["available"] is True
     assert contracts["sqlserver"]["available"] is True
     assert contracts["oracle"]["available"] is True

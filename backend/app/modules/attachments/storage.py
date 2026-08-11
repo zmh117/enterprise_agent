@@ -23,17 +23,13 @@ class InMemoryObjectStorage:
             )
         existing = self.objects.get(key)
         if existing is not None and hashlib.sha256(existing).hexdigest() != sha256:
-            raise NonRetryableExecutionError(
-                "Object key collision", safe_message="附件对象冲突"
-            )
+            raise NonRetryableExecutionError("Object key collision", safe_message="附件对象冲突")
         self.objects[key] = data
         return StoredObject(self.bucket, key, len(data), sha256)
 
     def get(self, *, key: str) -> bytes:
         if key not in self.objects:
-            raise NonRetryableExecutionError(
-                "Object not found", safe_message="未找到附件对象"
-            )
+            raise NonRetryableExecutionError("Object not found", safe_message="未找到附件对象")
         return self.objects[key]
 
     def delete(self, *, key: str) -> None:

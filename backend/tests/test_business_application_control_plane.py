@@ -37,9 +37,7 @@ def control_plane_settings() -> object:
     )
 
 
-def draft_payload(
-    *, route: str = "", mcp_tools: list[str] | None = None
-) -> dict[str, object]:
+def draft_payload(*, route: str = "", mcp_tools: list[str] | None = None) -> dict[str, object]:
     triggers: list[dict[str, object]] = []
     deliveries: list[dict[str, object]] = []
     if route:
@@ -256,9 +254,7 @@ def test_repository_is_append_only_and_enforces_revision_conflicts() -> None:
     )
     assert first["revision"] == 2
 
-    ordered_payload = draft_payload(
-        mcp_tools=["get_business_flow_context", "get_er_context"]
-    )
+    ordered_payload = draft_payload(mcp_tools=["get_business_flow_context", "get_er_context"])
     ordered_payload["triggers"] = [
         {
             "trigger_type": "dingtalk_private",
@@ -696,9 +692,7 @@ def test_mcp_tool_catalog_lists_manifest_tools_and_enforces_agent_binding() -> N
     assert ("typescript-diagnostic-agent", "typescript-v1") in catalog_agents
     python_tools = {
         item["tool_identifier"]
-        for item in catalog["mcp_tools_by_agent_publication"][
-            "agent_publication_default_v1"
-        ]
+        for item in catalog["mcp_tools_by_agent_publication"]["agent_publication_default_v1"]
     }
     assert {"get_schema_directory", "query_database"} <= python_tools
 

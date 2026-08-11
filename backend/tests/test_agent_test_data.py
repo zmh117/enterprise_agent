@@ -66,7 +66,9 @@ class AgentTestSeederSqlTests(unittest.TestCase):
         first_insert = next(
             index for index, (sql, _params) in enumerate(cursor.executed) if "INSERT INTO" in sql
         )
-        self.assertTrue(all("DELETE FROM" in sql for sql, _params in cursor.executed[:first_insert]))
+        self.assertTrue(
+            all("DELETE FROM" in sql for sql, _params in cursor.executed[:first_insert])
+        )
         self.assertEqual(
             sum(manifest.EXPECTED_ROW_COUNTS.values()),
             sum(1 for sql, _params in cursor.executed if "INSERT INTO" in sql),
@@ -119,7 +121,11 @@ class AgentTestRedisSeederTests(unittest.TestCase):
         self.assertEqual({"reader", "seed"}, {user for user, _kwargs in client.acl_calls})
         self.assertEqual(
             {item.key: item.value for item in manifest.redis_fixtures("mysql")},
-            {key: value for key, value in client.values.items() if key.startswith("agent_test:mysql:")},
+            {
+                key: value
+                for key, value in client.values.items()
+                if key.startswith("agent_test:mysql:")
+            },
         )
 
 

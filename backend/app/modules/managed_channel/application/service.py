@@ -70,7 +70,9 @@ class ManagedChannelService:
         self.stale_seconds = max(stale_seconds, 10)
 
     def list_channels(self) -> list[dict[str, Any]]:
-        result = [self._dingtalk_public(item) for item in self.repository.list_dingtalk_connectors()]
+        result = [
+            self._dingtalk_public(item) for item in self.repository.list_dingtalk_connectors()
+        ]
         for item in self.webhook_provider.list_channels():
             runtime_status = str(
                 item.get("runtime_status")
@@ -130,8 +132,7 @@ class ManagedChannelService:
 
     def list_dingtalk_enterprises(self) -> list[dict[str, Any]]:
         return [
-            self._enterprise_public(item)
-            for item in self.repository.list_dingtalk_enterprises()
+            self._enterprise_public(item) for item in self.repository.list_dingtalk_enterprises()
         ]
 
     def get_dingtalk_enterprise(self, enterprise_id: str) -> dict[str, Any]:
@@ -265,9 +266,7 @@ class ManagedChannelService:
         enabled: bool,
     ) -> dict[str, Any]:
         normalized = self._validate(payload)
-        enterprise = self.repository.get_dingtalk_enterprise(
-            normalized.dingtalk_enterprise_id
-        )
+        enterprise = self.repository.get_dingtalk_enterprise(normalized.dingtalk_enterprise_id)
         if str(enterprise["status"]) in {
             DingTalkEnterpriseStatus.DISABLED.value,
             DingTalkEnterpriseStatus.ARCHIVED.value,
@@ -313,9 +312,7 @@ class ManagedChannelService:
         rotate_secret: bool,
     ) -> dict[str, Any]:
         normalized = self._validate(payload, secret_required=rotate_secret)
-        enterprise = self.repository.get_dingtalk_enterprise(
-            normalized.dingtalk_enterprise_id
-        )
+        enterprise = self.repository.get_dingtalk_enterprise(normalized.dingtalk_enterprise_id)
         if str(enterprise["status"]) in {
             DingTalkEnterpriseStatus.DISABLED.value,
             DingTalkEnterpriseStatus.ARCHIVED.value,
@@ -327,8 +324,7 @@ class ManagedChannelService:
             )
         current = self.repository.get_connector(connector_id)
         enterprise_changed = (
-            str(current.get("dingtalk_enterprise_id") or "")
-            != normalized.dingtalk_enterprise_id
+            str(current.get("dingtalk_enterprise_id") or "") != normalized.dingtalk_enterprise_id
         )
         duplicate = self.repository.find_by_client_id(normalized.client_id)
         if duplicate and str(duplicate["id"]) != connector_id:
@@ -483,9 +479,7 @@ class ManagedChannelService:
         return result
 
     @operation_unit_of_work(lambda service: service.repository.database)
-    def delete(
-        self, connector_id: str, *, expected_revision: int, actor_id: str
-    ) -> None:
+    def delete(self, connector_id: str, *, expected_revision: int, actor_id: str) -> None:
         references = self.repository.connector_references(connector_id)
         if references:
             raise NonRetryableExecutionError(
@@ -535,10 +529,7 @@ class ManagedChannelService:
                             trigger_type == "dingtalk_private"
                             and item["capabilities"]["private_chat"]
                         )
-                        or (
-                            trigger_type == "dingtalk_group"
-                            and item["capabilities"]["group_chat"]
-                        )
+                        or (trigger_type == "dingtalk_group" and item["capabilities"]["group_chat"])
                     )
                 )
             ]
@@ -571,9 +562,7 @@ class ManagedChannelService:
         status = observed
         connector = self.connector_registry.get(str(item["id"]))
         operational = (
-            self.connector_registry.operational_status(connector)
-            if connector is not None
-            else None
+            self.connector_registry.operational_status(connector) if connector is not None else None
         )
         if operational is not None and operational.status == "MISCONFIGURED":
             status = "MISCONFIGURED"
@@ -592,9 +581,7 @@ class ManagedChannelService:
             "enterprise": {
                 "id": str(item.get("dingtalk_enterprise_id") or ""),
                 "name": str(item.get("dingtalk_enterprise_name") or ""),
-                "status": str(
-                    item.get("dingtalk_enterprise_status") or "UNASSIGNED"
-                ),
+                "status": str(item.get("dingtalk_enterprise_status") or "UNASSIGNED"),
                 "corp_id_verified": bool(
                     item.get("dingtalk_enterprise_corp_id")
                     and item.get("dingtalk_enterprise_verified_at")
@@ -611,18 +598,10 @@ class ManagedChannelService:
             },
             "references": [
                 {
-                    "application_code": str(
-                        reference.get("application_code") or ""
-                    ),
-                    "application_name": str(
-                        reference.get("application_name") or ""
-                    ),
-                    "application_revision": int(
-                        reference.get("application_revision") or 0
-                    ),
-                    "trigger_type": str(
-                        reference.get("trigger_type") or ""
-                    ),
+                    "application_code": str(reference.get("application_code") or ""),
+                    "application_name": str(reference.get("application_name") or ""),
+                    "application_revision": int(reference.get("application_revision") or 0),
+                    "trigger_type": str(reference.get("trigger_type") or ""),
                 }
                 for reference in references
             ],
@@ -633,8 +612,7 @@ class ManagedChannelService:
                 "last_message_at": item.get("last_message_at"),
                 "last_error": (
                     operational.safe_message
-                    if operational is not None
-                    and operational.status == "MISCONFIGURED"
+                    if operational is not None and operational.status == "MISCONFIGURED"
                     else str(item.get("last_error_summary") or "")
                 ),
             },
@@ -705,9 +683,7 @@ class ManagedChannelService:
             "verified_at": item.get("verified_at"),
             "revision": int(item["revision"]),
             "connector_count": int(item.get("connector_count") or 0),
-            "enabled_connector_count": int(
-                item.get("enabled_connector_count") or 0
-            ),
+            "enabled_connector_count": int(item.get("enabled_connector_count") or 0),
             "created_at": item["created_at"],
             "updated_at": item["updated_at"],
         }
@@ -807,9 +783,7 @@ class RuntimeControlService:
         self.repository.require_lease(runtime_id=_runtime_id(runtime_id), lease_token=lease_token)
         items: list[dict[str, Any]] = []
         for connector in self.repository.list_dingtalk_connectors(include_disabled=False):
-            enterprise_status = str(
-                connector.get("dingtalk_enterprise_status") or ""
-            )
+            enterprise_status = str(connector.get("dingtalk_enterprise_status") or "")
             if enterprise_status not in {
                 DingTalkEnterpriseStatus.PENDING_VERIFICATION.value,
                 DingTalkEnterpriseStatus.ACTIVE.value,
@@ -849,9 +823,7 @@ class RuntimeControlService:
                     "name": str(connector["name"]),
                     "client_id": client_id,
                     "client_secret": secret,
-                    "dingtalk_enterprise_id": str(
-                        connector.get("dingtalk_enterprise_id") or ""
-                    ),
+                    "dingtalk_enterprise_id": str(connector.get("dingtalk_enterprise_id") or ""),
                     "enterprise_status": enterprise_status,
                     "allow_private_chat": bool(metadata.get("allow_private_chat", True)),
                     "allow_group_chat": bool(metadata.get("allow_group_chat", True)),
@@ -923,9 +895,7 @@ class RuntimeControlService:
                 error_code="dingtalk_enterprise_required",
             )
         enterprise = self.repository.get_dingtalk_enterprise(enterprise_id)
-        verification_key = (
-            f"{submission.connector_id}:{submission.external_event_id}"
-        )
+        verification_key = f"{submission.connector_id}:{submission.external_event_id}"
         if str(enterprise.get("verification_event_id") or "") == verification_key:
             return (
                 {
@@ -963,9 +933,7 @@ class RuntimeControlService:
                     safe_message="钉钉测试消息的企业信息不一致",
                     error_code="dingtalk_corp_id_mismatch",
                 )
-            require_immutable_dingtalk_corp_id(
-                enterprise.get("corp_id"), sender_corp_id
-            )
+            require_immutable_dingtalk_corp_id(enterprise.get("corp_id"), sender_corp_id)
         except NonRetryableExecutionError as exc:
             self.audit_service.record(
                 "dingtalk_enterprise.message_rejected",
@@ -981,9 +949,7 @@ class RuntimeControlService:
             )
             raise
         if str(enterprise["status"]) == DingTalkEnterpriseStatus.PENDING_VERIFICATION.value:
-            duplicate = self.repository.find_dingtalk_enterprise_by_corp_id(
-                sender_corp_id
-            )
+            duplicate = self.repository.find_dingtalk_enterprise_by_corp_id(sender_corp_id)
             if duplicate and str(duplicate["id"]) != enterprise_id:
                 raise NonRetryableExecutionError(
                     "DingTalk Corp ID belongs to another enterprise",
@@ -1040,12 +1006,9 @@ class RuntimeControlService:
             )
         normalized = json.loads(json.dumps(submission.normalized_event))
         session_webhook = str(
-            normalized.pop("sessionWebhook", "")
-            or normalized.pop("session_webhook", "")
+            normalized.pop("sessionWebhook", "") or normalized.pop("session_webhook", "")
         )
-        ciphertext = (
-            self.credential_cipher.encrypt(session_webhook) if session_webhook else ""
-        )
+        ciphertext = self.credential_cipher.encrypt(session_webhook) if session_webhook else ""
         event, created = self.repository.receive_event(
             source_type="dingding_stream",
             connector_id=submission.connector_id,
@@ -1121,7 +1084,9 @@ class ChannelOutboxPublisher:
                 failed += 1
                 self.repository.mark_outbox_failed(
                     str(item["id"]),
-                    error_summary=_safe_error(str(getattr(exc, "safe_message", type(exc).__name__))),
+                    error_summary=_safe_error(
+                        str(getattr(exc, "safe_message", type(exc).__name__))
+                    ),
                     max_attempts=self.max_attempts,
                     base_delay=self.retry_base_seconds,
                 )

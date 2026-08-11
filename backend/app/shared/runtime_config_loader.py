@@ -95,9 +95,7 @@ def apply_runtime_config_overlay(
         runtime_feature_values,
     )
     claude_model = runtime_value("CLAUDE_MODEL") or runtime_value("ANTHROPIC_MODEL")
-    anthropic_api_key = runtime_value("ANTHROPIC_API_KEY") or runtime_value(
-        "ANTHROPIC_AUTH_TOKEN"
-    )
+    anthropic_api_key = runtime_value("ANTHROPIC_API_KEY") or runtime_value("ANTHROPIC_AUTH_TOKEN")
     updated = replace(
         settings,
         claude_model=_str(claude_model, settings.claude_model),
@@ -234,9 +232,7 @@ def apply_runtime_config_overlay(
             settings.identity,
             enabled=features.unified_identity_enabled,
             web_admin_enabled=features.web_admin_enabled,
-            published_agent_runtime_enabled=(
-                features.published_agent_runtime_enabled
-            ),
+            published_agent_runtime_enabled=(features.published_agent_runtime_enabled),
             test_identity_headers_enabled=features.test_identity_headers_enabled,
         ),
         webhooks=replace(

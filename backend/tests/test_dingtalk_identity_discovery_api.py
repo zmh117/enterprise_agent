@@ -122,9 +122,7 @@ def _dispatch(container, submission: ChannelIngressSubmission) -> dict[str, Any]
     )
     container.channel_outbox_publisher.publish_pending(limit=10)
     assert container.message_bus is not None
-    container.message_bus.consume_channel_events(
-        container.channel_dispatch_service.handle
-    )
+    container.message_bus.consume_channel_events(container.channel_dispatch_service.handle)
     return container.managed_channel_repository.get_event(str(event["id"]))
 
 
@@ -200,10 +198,9 @@ def test_candidate_api_search_filters_cursor_count_and_safe_dto() -> None:
             params={"conversation_scope": "group"},
         )
         assert group_only.status_code == 200
-        assert [
-            item["external_subject_id"]
-            for item in group_only.json()["candidates"]
-        ] == ["staff-api-group"]
+        assert [item["external_subject_id"] for item in group_only.json()["candidates"]] == [
+            "staff-api-group"
+        ]
 
         searched = client.get(
             "/api/admin/dingtalk-identity-candidates",
@@ -227,10 +224,7 @@ def test_candidate_api_search_filters_cursor_count_and_safe_dto() -> None:
             },
         )
         assert second_page.status_code == 200
-        assert (
-            second_page.json()["candidates"][0]["id"]
-            != first_page.json()["candidates"][0]["id"]
-        )
+        assert second_page.json()["candidates"][0]["id"] != first_page.json()["candidates"][0]["id"]
 
         invalid_cursor = client.get(
             "/api/admin/dingtalk-identity-candidates",
@@ -241,9 +235,7 @@ def test_candidate_api_search_filters_cursor_count_and_safe_dto() -> None:
 
         serialized = json.dumps(
             {
-                "list": client.get(
-                    "/api/admin/dingtalk-identity-candidates"
-                ).json(),
+                "list": client.get("/api/admin/dingtalk-identity-candidates").json(),
                 "audit": container.database.execute(
                     "select event_type, summary, payload_summary from audit_event"
                 ),
@@ -282,9 +274,7 @@ def test_candidate_binding_is_trusted_csrf_protected_and_immediately_hidden() ->
 
     with TestClient(app) as client:
         headers = _login(client)
-        candidate = client.get(
-            "/api/admin/dingtalk-identity-candidates"
-        ).json()["candidates"][0]
+        candidate = client.get("/api/admin/dingtalk-identity-candidates").json()["candidates"][0]
         body = {
             "target_user_id": target["id"],
             "expected_candidate_revision": candidate["revision"],
@@ -352,17 +342,13 @@ def test_candidate_binding_is_trusted_csrf_protected_and_immediately_hidden() ->
         assert identity["external_subject_id"] == "staff-api-bind"
         assert identity["connector_id"] == ""
 
-        assert client.get(
-            "/api/admin/dingtalk-identity-candidates/count"
-        ).json() == {"count": 0}
-        assert client.get(
-            f"/api/admin/dingtalk-identity-candidates/{candidate['id']}"
-        ).status_code == 404
+        assert client.get("/api/admin/dingtalk-identity-candidates/count").json() == {"count": 0}
         assert (
-            container.database.execute_one(
-                "select count(*) as count from agent_job"
-            )
-            or {}
+            client.get(f"/api/admin/dingtalk-identity-candidates/{candidate['id']}").status_code
+            == 404
+        )
+        assert (
+            container.database.execute_one("select count(*) as count from agent_job") or {}
         ).get("count") == 0
 
         audit = json.dumps(
@@ -422,9 +408,7 @@ def test_historical_identity_can_only_return_to_original_user() -> None:
 
     with TestClient(app) as client:
         headers = _login(client)
-        candidate = client.get(
-            "/api/admin/dingtalk-identity-candidates"
-        ).json()["candidates"][0]
+        candidate = client.get("/api/admin/dingtalk-identity-candidates").json()["candidates"][0]
         assert candidate["identity_state"] == "restore_required"
         assert candidate["historical_identity"] == {
             "id": identity["id"],
@@ -440,18 +424,16 @@ def test_historical_identity_can_only_return_to_original_user() -> None:
             f"/api/admin/dingtalk-identity-candidates/{candidate['id']}/bind",
             headers=headers,
             json={
-                    "target_user_id": target["id"],
-                    "expected_candidate_revision": candidate["revision"],
-                    "expected_user_revision": target["revision"],
-                    "bind_without_access_confirmed": True,
+                "target_user_id": target["id"],
+                "expected_candidate_revision": candidate["revision"],
+                "expected_user_revision": target["revision"],
+                "bind_without_access_confirmed": True,
             },
         )
         assert conflict.status_code == 409
         assert conflict.json()["detail"]["code"] == "identity_restore_required"
         assert (
-            container.identity_repository.get_external_identity(str(identity["id"]))[
-                "user_id"
-            ]
+            container.identity_repository.get_external_identity(str(identity["id"]))["user_id"]
             == original["id"]
         )
 
@@ -479,9 +461,7 @@ def test_historical_identity_can_only_return_to_original_user() -> None:
         assert restored.status_code == 200
         assert restored.json()["identity"]["id"] == identity["id"]
         assert restored.json()["identity"]["status"] == "enabled"
-        assert client.get(
-            "/api/admin/dingtalk-identity-candidates/count"
-        ).json() == {"count": 0}
+        assert client.get("/api/admin/dingtalk-identity-candidates/count").json() == {"count": 0}
 
 
 def test_candidate_binding_rejects_non_human_disabled_user_and_disabled_connector() -> None:
@@ -514,9 +494,7 @@ def test_candidate_binding_rejects_non_human_disabled_user_and_disabled_connecto
 
     with TestClient(app) as client:
         headers = _login(client)
-        candidate = client.get(
-            "/api/admin/dingtalk-identity-candidates"
-        ).json()["candidates"][0]
+        candidate = client.get("/api/admin/dingtalk-identity-candidates").json()["candidates"][0]
 
         def bind_to(user: dict[str, Any]):
             return client.post(
@@ -543,9 +521,7 @@ def test_candidate_binding_rejects_non_human_disabled_user_and_disabled_connecto
         )
         unavailable = bind_to(valid_user)
         assert unavailable.status_code == 403
-        assert client.get(
-            "/api/admin/dingtalk-identity-candidates/count"
-        ).json() == {"count": 1}
+        assert client.get("/api/admin/dingtalk-identity-candidates/count").json() == {"count": 1}
 
 
 def test_private_and_group_candidates_bind_multiple_roles_atomically() -> None:
@@ -586,12 +562,8 @@ def test_private_and_group_candidates_bind_multiple_roles_atomically() -> None:
     app = create_app(_settings(), container_factory=lambda _: container)
     with TestClient(app) as client:
         headers = _login(client)
-        candidates = client.get(
-            "/api/admin/dingtalk-identity-candidates"
-        ).json()["candidates"]
-        by_subject = {
-            candidate["external_subject_id"]: candidate for candidate in candidates
-        }
+        candidates = client.get("/api/admin/dingtalk-identity-candidates").json()["candidates"]
+        by_subject = {candidate["external_subject_id"]: candidate for candidate in candidates}
         for suffix, _, _ in cases:
             candidate = by_subject[f"staff-multi-role-{suffix}"]
             target = targets[suffix]
@@ -609,23 +581,14 @@ def test_private_and_group_candidates_bind_multiple_roles_atomically() -> None:
             assert bound.status_code == 200, bound.text
             result = bound.json()
             assert len(result["memberships"]) == 2
-            assert result["authorization_summary"]["role_ids"] == [
-                role["id"] for role in roles
-            ]
-            assert (
-                result["authorization_summary"]["access_status"]
-                == "未获得应用权限"
-            )
+            assert result["authorization_summary"]["role_ids"] == [role["id"] for role in roles]
+            assert result["authorization_summary"]["access_status"] == "未获得应用权限"
             assert {
                 row["code"]
-                for row in container.identity_repository.list_user_roles(
-                    str(target["id"])
-                )
+                for row in container.identity_repository.list_user_roles(str(target["id"]))
                 if row["membership_status"] == "enabled"
             } == {"binding-role-1", "binding-role-2"}
-        assert client.get(
-            "/api/admin/dingtalk-identity-candidates/count"
-        ).json() == {"count": 0}
+        assert client.get("/api/admin/dingtalk-identity-candidates/count").json() == {"count": 0}
 
 
 def test_cleanup_removes_only_expired_projection() -> None:
@@ -727,9 +690,7 @@ def test_time_fallback_thirty_day_boundary_and_large_count() -> None:
         row for row in candidates if row["external_subject_id"] == "staff-api-valid-time"
     )
     before_boundary = next(
-        row
-        for row in candidates
-        if row["external_subject_id"] == "staff-api-invalid-time"
+        row for row in candidates if row["external_subject_id"] == "staff-api-invalid-time"
     )
     container.database.execute(
         "update dingtalk_identity_candidate set last_seen_at = ? where id = ?",

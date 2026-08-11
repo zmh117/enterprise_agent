@@ -321,8 +321,7 @@ class ChannelIngressService:
                 for value in deliveries
                 if isinstance(value, dict)
                 and bool(value.get("enabled", True))
-                and str(value.get("delivery_type") or "")
-                in {"dingtalk_group", "webhook_callback"}
+                and str(value.get("delivery_type") or "") in {"dingtalk_group", "webhook_callback"}
             ]
             if len(supported) != 1:
                 raise NonRetryableExecutionError(
@@ -335,9 +334,7 @@ class ChannelIngressService:
             if not isinstance(config, dict):
                 config = {}
             delivery_type = str(binding.get("delivery_type") or "")
-            target_reference = str(
-                config.get("target_reference") or ""
-            )
+            target_reference = str(config.get("target_reference") or "")
             if not target_reference:
                 raise NonRetryableExecutionError(
                     "Business Application Webhook delivery target is missing",
@@ -354,9 +351,7 @@ class ChannelIngressService:
                 target = {"target_reference": target_reference}
             return {
                 "type": route_type,
-                "connector_id": str(
-                    binding.get("connector_id") or ""
-                ),
+                "connector_id": str(binding.get("connector_id") or ""),
                 "target": target,
                 "options": {
                     "business_application_delivery_type": delivery_type,

@@ -181,6 +181,4 @@ def test_job_cancel_and_worker_shutdown_target_the_same_frozen_invocation() -> N
     assert worker.request_shutdown() is True
     worker_thread.join(timeout=2)
     assert not worker_thread.is_alive()
-    assert shutdown_client.cancelled == [
-        (f"{second.id}.attempt-0", "WORKER_SHUTDOWN")
-    ]
+    assert shutdown_client.cancelled == [(f"{second.id}.attempt-0", "WORKER_SHUTDOWN")]

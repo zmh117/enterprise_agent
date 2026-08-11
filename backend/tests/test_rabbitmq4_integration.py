@@ -25,9 +25,7 @@ class RabbitMQ4IntegrationTests(unittest.TestCase):
             self.skipTest(str(exc))
 
         suffix = uuid.uuid4().hex
-        self.rabbitmq_url = os.getenv(
-            "RABBITMQ_TEST_URL", "amqp://guest:guest@127.0.0.1:5672/"
-        )
+        self.rabbitmq_url = os.getenv("RABBITMQ_TEST_URL", "amqp://guest:guest@127.0.0.1:5672/")
         self.queues = QueueSettings(
             job_queue=f"agent.compat.job.{suffix}",
             retry_queue=f"agent.compat.retry.{suffix}",
@@ -39,9 +37,7 @@ class RabbitMQ4IntegrationTests(unittest.TestCase):
     def tearDown(self) -> None:
         if not hasattr(self, "channel"):
             return
-        for queue_name in (
-            self.queues.job_queue,
-        ):
+        for queue_name in (self.queues.job_queue,):
             self.channel.queue_delete(queue=queue_name)
         self.connection.close()
 
@@ -73,6 +69,7 @@ class RabbitMQ4IntegrationTests(unittest.TestCase):
 
             state = self.channel.queue_declare(queue=queue_name, durable=True, passive=True)
             self.assertEqual(0, state.method.message_count)
+
 
 if __name__ == "__main__":
     unittest.main()

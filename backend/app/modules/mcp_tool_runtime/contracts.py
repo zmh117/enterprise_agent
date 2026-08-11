@@ -29,9 +29,7 @@ class ReadOnlyToolExecutor(Protocol):
 
     def get_er_context(self, query: str, context: ToolRequestContext) -> ToolResult: ...
 
-    def get_business_flow_context(
-        self, query: str, context: ToolRequestContext
-    ) -> ToolResult: ...
+    def get_business_flow_context(self, query: str, context: ToolRequestContext) -> ToolResult: ...
 
     def get_schema_directory(
         self,
@@ -147,9 +145,7 @@ class FakeReadOnlyToolExecutor:
     def get_er_context(self, query: str, context: ToolRequestContext) -> ToolResult:
         return self._result("get_er_context", query=query, project_code=context.project_code)
 
-    def get_business_flow_context(
-        self, query: str, context: ToolRequestContext
-    ) -> ToolResult:
+    def get_business_flow_context(self, query: str, context: ToolRequestContext) -> ToolResult:
         return self._result(
             "get_business_flow_context", query=query, project_code=context.project_code
         )

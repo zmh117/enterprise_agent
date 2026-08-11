@@ -85,9 +85,7 @@ class MysqlReadonlyAccountProbe:
                         raise
                     readonly_account = False
                 cursor.execute("SET SESSION TRANSACTION READ ONLY")
-                cursor.execute(
-                    f"SET SESSION MAX_EXECUTION_TIME = {timeout_seconds * 1000}"
-                )
+                cursor.execute(f"SET SESSION MAX_EXECUTION_TIME = {timeout_seconds * 1000}")
                 cursor.execute("START TRANSACTION READ ONLY")
                 cursor.execute("SELECT 1")
                 cursor.fetchone()
@@ -114,19 +112,12 @@ class MysqlReadonlyAccountProbe:
                 )
             privilege_text = normalized.removeprefix("GRANT ").split(" ON ", 1)[0]
             privileges = {
-                privilege.strip().split(" (", 1)[0]
-                for privilege in privilege_text.split(",")
+                privilege.strip().split(" (", 1)[0] for privilege in privilege_text.split(",")
             }
-            if not privileges or not privileges.issubset(
-                _MYSQL_ALLOWED_PRIVILEGES
-            ):
-                raise ReadonlyAccountViolation(
-                    "MySQL account has non-readonly privileges"
-                )
+            if not privileges or not privileges.issubset(_MYSQL_ALLOWED_PRIVILEGES):
+                raise ReadonlyAccountViolation("MySQL account has non-readonly privileges")
             if " WITH GRANT OPTION" in normalized:
-                raise ReadonlyAccountViolation(
-                    "MySQL account has GRANT OPTION"
-                )
+                raise ReadonlyAccountViolation("MySQL account has GRANT OPTION")
 
 
 _SQLSERVER_DANGEROUS_SERVER_ROLES = (
@@ -193,8 +184,7 @@ class SqlServerReadonlyAccountProbe:
             cursor = connection.cursor()
             try:
                 dangerous_roles = (
-                    _SQLSERVER_DANGEROUS_SERVER_ROLES
-                    + _SQLSERVER_DANGEROUS_DATABASE_ROLES
+                    _SQLSERVER_DANGEROUS_SERVER_ROLES + _SQLSERVER_DANGEROUS_DATABASE_ROLES
                 )
                 role_checks = ", ".join(
                     (
@@ -206,32 +196,20 @@ class SqlServerReadonlyAccountProbe:
                 )
                 cursor.execute(f"SELECT {role_checks}")
                 membership = cursor.fetchone() or ()
-                cursor.execute(
-                    "SELECT permission_name "
-                    "FROM fn_my_permissions(NULL, 'DATABASE')"
-                )
+                cursor.execute("SELECT permission_name FROM fn_my_permissions(NULL, 'DATABASE')")
                 permission_rows = list(cursor.fetchall())
                 permissions = {
                     str(
-                        row[0]
-                        if isinstance(row, (tuple, list))
-                        else next(iter(row.values()))
+                        row[0] if isinstance(row, (tuple, list)) else next(iter(row.values()))
                     ).upper()
                     for row in permission_rows
                 }
-                readonly_account = (
-                    not any(value == 1 for value in membership)
-                    and permissions.issubset(
-                        _SQLSERVER_ALLOWED_DATABASE_PERMISSIONS
-                    )
-                )
-                if (
-                    not readonly_account
-                    and not self._allow_privileged_account
-                ):
+                readonly_account = not any(
+                    value == 1 for value in membership
+                ) and permissions.issubset(_SQLSERVER_ALLOWED_DATABASE_PERMISSIONS)
+                if not readonly_account and not self._allow_privileged_account:
                     raise ReadonlyAccountViolation(
-                        "SQL Server account has a privileged role "
-                        "or non-readonly permissions"
+                        "SQL Server account has a privileged role or non-readonly permissions"
                     )
                 cursor.execute(f"SET LOCK_TIMEOUT {timeout_seconds * 1000}")
                 cursor.execute("SELECT 1")
@@ -298,15 +276,11 @@ class Oracle11gReadonlyAccountProbe:
 
             oracledb = imported_oracledb
         if bool(oracledb.is_thin_mode()):
-            raise ReadonlyAccountViolation(
-                "python-oracledb is not using Thick mode"
-            )
+            raise ReadonlyAccountViolation("python-oracledb is not using Thick mode")
         service_name = str(config.get("service_name") or "").strip()
         sid = str(config.get("sid") or "").strip()
         if bool(service_name) == bool(sid):
-            raise ReadonlyAccountViolation(
-                "Oracle requires exactly one Service Name or SID"
-            )
+            raise ReadonlyAccountViolation("Oracle requires exactly one Service Name or SID")
         dsn = (
             oracledb.makedsn(
                 config["host"],
@@ -329,45 +303,29 @@ class Oracle11gReadonlyAccountProbe:
             connection.call_timeout = timeout_seconds * 1000
             version = str(getattr(connection, "version", "") or "")
             if not version.startswith("11.2.0.4"):
-                raise ReadonlyAccountViolation(
-                    "Oracle server is not 11.2.0.4"
-                )
+                raise ReadonlyAccountViolation("Oracle server is not 11.2.0.4")
             cursor = connection.cursor()
             try:
                 schema = str(config.get("schema") or "").strip()
                 if schema:
                     if not schema.replace("_", "").isalnum():
-                        raise ReadonlyAccountViolation(
-                            "Oracle schema is invalid"
-                        )
-                    cursor.execute(
-                        f'ALTER SESSION SET CURRENT_SCHEMA = "{schema.upper()}"'
-                    )
+                        raise ReadonlyAccountViolation("Oracle schema is invalid")
+                    cursor.execute(f'ALTER SESSION SET CURRENT_SCHEMA = "{schema.upper()}"')
                 cursor.execute("SELECT privilege FROM session_privs")
                 system_privileges = self._first_column(cursor.fetchall())
-                cursor.execute(
-                    "SELECT privilege FROM user_tab_privs_recd"
-                )
+                cursor.execute("SELECT privilege FROM user_tab_privs_recd")
                 object_privileges = self._first_column(cursor.fetchall())
                 cursor.execute("SELECT granted_role FROM user_role_privs")
                 roles = self._first_column(cursor.fetchall())
                 readonly_account = (
                     "CREATE SESSION" in system_privileges
-                    and system_privileges.issubset(
-                        _ORACLE_ALLOWED_SYSTEM_PRIVILEGES
-                    )
-                    and object_privileges.issubset(
-                        _ORACLE_ALLOWED_OBJECT_PRIVILEGES
-                    )
+                    and system_privileges.issubset(_ORACLE_ALLOWED_SYSTEM_PRIVILEGES)
+                    and object_privileges.issubset(_ORACLE_ALLOWED_OBJECT_PRIVILEGES)
                     and roles.issubset(_ORACLE_ALLOWED_ROLES)
                 )
-                if (
-                    not readonly_account
-                    and not self._allow_privileged_account
-                ):
+                if not readonly_account and not self._allow_privileged_account:
                     raise ReadonlyAccountViolation(
-                        "Oracle account has a privileged role "
-                        "or non-readonly permissions"
+                        "Oracle account has a privileged role or non-readonly permissions"
                     )
                 cursor.execute(
                     "SELECT parameter, value "
@@ -376,8 +334,7 @@ class Oracle11gReadonlyAccountProbe:
                     "('NLS_CHARACTERSET', 'NLS_NCHAR_CHARACTERSET')"
                 )
                 character_sets = {
-                    str(row[0]).upper(): str(row[1]).upper()
-                    for row in cursor.fetchall()
+                    str(row[0]).upper(): str(row[1]).upper() for row in cursor.fetchall()
                 }
                 if character_sets != {
                     "NLS_CHARACTERSET": "AL32UTF8",
@@ -401,9 +358,7 @@ class Oracle11gReadonlyAccountProbe:
 
                 client = thick_init_result()
                 client_version = client.client_version or client_version
-                client_architecture = (
-                    client.architecture or client_architecture
-                )
+                client_architecture = client.architecture or client_architecture
             return {
                 "connection": True,
                 "readonly_account": readonly_account,
@@ -421,11 +376,7 @@ class Oracle11gReadonlyAccountProbe:
     @staticmethod
     def _first_column(rows: list[Any]) -> set[str]:
         return {
-            str(
-                row[0]
-                if isinstance(row, (tuple, list))
-                else next(iter(row.values()))
-            ).upper()
+            str(row[0] if isinstance(row, (tuple, list)) else next(iter(row.values()))).upper()
             for row in rows
         }
 
@@ -459,14 +410,9 @@ class RedisResourceProbe:
             socket_connect_timeout=timeout_seconds,
             socket_timeout=timeout_seconds,
             ssl=bool(tls.get("enabled", False)),
-            ssl_cert_reqs=(
-                "required"
-                if tls.get("verify_certificate", True)
-                else None
-            ),
+            ssl_cert_reqs=("required" if tls.get("verify_certificate", True) else None),
             ssl_check_hostname=bool(
-                tls.get("enabled", False)
-                and tls.get("verify_certificate", True)
+                tls.get("enabled", False) and tls.get("verify_certificate", True)
             ),
             decode_responses=True,
         )
@@ -479,8 +425,7 @@ class RedisResourceProbe:
                 "standalone": True,
                 "tls": bool(tls.get("enabled", False)),
                 "certificate_verification": bool(
-                    tls.get("enabled", False)
-                    and tls.get("verify_certificate", True)
+                    tls.get("enabled", False) and tls.get("verify_certificate", True)
                 ),
                 "database": int(config["db"]),
             }
@@ -554,9 +499,7 @@ class GovernedResourceTechnicalVerifier:
         allow_privileged_database_accounts: bool = False,
     ) -> None:
         self._resolve_secret = resolve_secret
-        self._provider_contracts = (
-            provider_contracts or ProviderContractRegistry()
-        )
+        self._provider_contracts = provider_contracts or ProviderContractRegistry()
         self._probes = probes or {
             "mysql": MysqlReadonlyAccountProbe(
                 allow_privileged_account=allow_privileged_database_accounts,
@@ -571,9 +514,7 @@ class GovernedResourceTechnicalVerifier:
             "loki": LokiResourceProbe(),
         }
         self._timeout_seconds = timeout_seconds
-        self._allow_oracle_real_verification = (
-            allow_oracle_real_verification
-        )
+        self._allow_oracle_real_verification = allow_oracle_real_verification
 
     def verify(
         self,
@@ -584,10 +525,7 @@ class GovernedResourceTechnicalVerifier:
         provider_type = str(draft["provider_type"])
         contract = self._provider_contracts.require(provider_type)
         probe = self._probes.get(provider_type)
-        if (
-            provider_type == "oracle"
-            and not self._allow_oracle_real_verification
-        ):
+        if provider_type == "oracle" and not self._allow_oracle_real_verification:
             return ResourceVerificationOutcome(
                 status="BLOCKED",
                 provider_contract_version=contract.contract_version,
@@ -595,9 +533,7 @@ class GovernedResourceTechnicalVerifier:
                     "available": False,
                     "real_connection_verified": False,
                 },
-                safe_error_summary=(
-                    "真实 Oracle 11.2.0.4 连接验收尚未完成，禁止发布"
-                ),
+                safe_error_summary=("真实 Oracle 11.2.0.4 连接验收尚未完成，禁止发布"),
             )
         if probe is None:
             return ResourceVerificationOutcome(

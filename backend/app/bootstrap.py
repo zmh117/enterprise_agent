@@ -281,9 +281,7 @@ def build_test_container(
             ).run()
         settings = load_settings_with_db_overlay(
             settings,
-            service_name=(
-                "api-server" if service_name == "test-runtime" else service_name
-            ),
+            service_name=("api-server" if service_name == "test-runtime" else service_name),
             database=database,
         )
     except Exception:

@@ -98,9 +98,7 @@ def test_public_api_rejects_deep_and_oversized_json_without_persisting_body() ->
         response = client.post(
             f"/webhooks/v1/{PUBLIC_ID}",
             json=deep,
-            headers={
-                "authorization": "Bearer test-grafana-token-0123456789abcdefABCDEF"
-            },
+            headers={"authorization": "Bearer test-grafana-token-0123456789abcdefABCDEF"},
         )
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "webhook_payload_invalid"
@@ -110,9 +108,7 @@ def test_public_api_rejects_deep_and_oversized_json_without_persisting_body() ->
             f"/webhooks/v1/{PUBLIC_ID}",
             content=json.dumps({"status": "firing", "value": oversized_secret}),
             headers={
-                "authorization": (
-                    "Bearer test-grafana-token-0123456789abcdefABCDEF"
-                ),
+                "authorization": ("Bearer test-grafana-token-0123456789abcdefABCDEF"),
                 "content-type": "application/json",
             },
         )

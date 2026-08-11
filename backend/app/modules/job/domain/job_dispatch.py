@@ -45,20 +45,23 @@ def can_transition_dispatch(
     current: JobDispatchStatus,
     target: JobDispatchStatus,
 ) -> bool:
-    return target in {
-        JobDispatchStatus.PENDING: {
-            JobDispatchStatus.RUNNING,
-            JobDispatchStatus.DEAD,
-        },
-        JobDispatchStatus.RUNNING: {
-            JobDispatchStatus.PUBLISHED,
-            JobDispatchStatus.RETRY_WAIT,
-            JobDispatchStatus.DEAD,
-        },
-        JobDispatchStatus.RETRY_WAIT: {
-            JobDispatchStatus.RUNNING,
-            JobDispatchStatus.DEAD,
-        },
-        JobDispatchStatus.PUBLISHED: set(),
-        JobDispatchStatus.DEAD: set(),
-    }[current]
+    return (
+        target
+        in {
+            JobDispatchStatus.PENDING: {
+                JobDispatchStatus.RUNNING,
+                JobDispatchStatus.DEAD,
+            },
+            JobDispatchStatus.RUNNING: {
+                JobDispatchStatus.PUBLISHED,
+                JobDispatchStatus.RETRY_WAIT,
+                JobDispatchStatus.DEAD,
+            },
+            JobDispatchStatus.RETRY_WAIT: {
+                JobDispatchStatus.RUNNING,
+                JobDispatchStatus.DEAD,
+            },
+            JobDispatchStatus.PUBLISHED: set(),
+            JobDispatchStatus.DEAD: set(),
+        }[current]
+    )

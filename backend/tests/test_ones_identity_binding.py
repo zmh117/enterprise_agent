@@ -96,9 +96,7 @@ def test_migration_restores_identity_only_challenge_without_legacy_credential() 
     container, _ = runtime()
     tables = {
         str(row["name"])
-        for row in container.database.execute(
-            "select name from sqlite_master where type = 'table'"
-        )
+        for row in container.database.execute("select name from sqlite_master where type = 'table'")
     }
 
     assert "ones_identity_verification_challenge" in tables
@@ -180,9 +178,7 @@ def test_self_binding_reverification_team_selection_and_unbind_store_no_login_ma
             },
         )
         assert reconfirmed.status_code == 200, reconfirmed.text
-        assert reconfirmed.json()["ones"]["teams"] == [
-            {"id": "TEAM-C", "name": "Team C"}
-        ]
+        assert reconfirmed.json()["ones"]["teams"] == [{"id": "TEAM-C", "name": "Team C"}]
 
         unbound = client.delete(
             "/api/me/external-identities/ones",
@@ -201,8 +197,8 @@ def test_self_binding_reverification_team_selection_and_unbind_store_no_login_ma
                     "select * from ones_identity_verification_challenge where user_id = ?",
                     (user["id"],),
                 ),
-                    "audit": container.database.execute(
-                        "select payload_summary from audit_event where actor_id = ?",
+                "audit": container.database.execute(
+                    "select payload_summary from audit_event where actor_id = ?",
                     (user["id"],),
                 ),
             },
@@ -238,9 +234,7 @@ def test_admin_can_read_and_disable_ones_but_cannot_enable_unbind_or_verify_for_
 
     with TestClient(app) as client:
         headers = login(client, "admin", ADMIN_PASSWORD)
-        overview = client.get(
-            f"/api/admin/users/{user['id']}/external-identities"
-        )
+        overview = client.get(f"/api/admin/users/{user['id']}/external-identities")
         assert overview.status_code == 200, overview.text
         assert overview.json()["current"][0]["provider"] == "ones"
         serialized = json.dumps(overview.json(), ensure_ascii=False).lower()
@@ -271,9 +265,7 @@ def test_admin_can_read_and_disable_ones_but_cannot_enable_unbind_or_verify_for_
         )
         assert unbind.status_code == 403
 
-        stored = container.identity_repository.get_external_identity(
-            str(identity["id"])
-        )
+        stored = container.identity_repository.get_external_identity(str(identity["id"]))
 
     assert verifier.calls == []
     assert stored["status"] == "disabled"

@@ -28,6 +28,8 @@ from app.modules.model_connection.domain import (
     ModelRuntimeBinding,
 )
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
+
+
 class _PassiveResponse:
     def __init__(self, payload: dict[str, Any], *, status: int = 200) -> None:
         self.payload = payload
@@ -63,9 +65,7 @@ def test_passive_runtime_readiness_calls_only_version_and_ready(
                     "cli_version": "2.1.226",
                 }
             )
-        return _PassiveResponse(
-            {"ready": True, "database": "ready", "master_key": "ready"}
-        )
+        return _PassiveResponse({"ready": True, "database": "ready", "master_key": "ready"})
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
     result = probe_runtime_readiness(

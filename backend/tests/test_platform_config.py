@@ -39,9 +39,7 @@ class PlatformSecretAndRuntimeConfigTests(unittest.TestCase):
                 "secret://platform/deepseek_api_key",
                 secret["secret_ref"],
             )
-            stored_versions = c.database.execute(
-                "select * from platform_secret_version"
-            )
+            stored_versions = c.database.execute("select * from platform_secret_version")
             self.assertEqual(1, len(stored_versions))
             encoded = str(stored_versions)
             self.assertNotIn("sk-sensitive-value", encoded)

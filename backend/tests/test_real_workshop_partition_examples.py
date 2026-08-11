@@ -22,24 +22,14 @@ REDIS_PREFIXES = {
 
 REDIS_KEYS = {
     "GL001": (
-        "cr999.crmes.CRMES_TEST_GL#GL001@$"
-        "EBRDataText.809901890274822.Sheet4.rows",
-        "cr999.crmes.CRMES_TEST_GL#GL001@$"
-        "[WEIGH]:wo.20250627MAOYAN10-yapi5:weigh_id.list",
-        "cr999.crmes.CRMES_TEST_GL#GL001@$"
-        "[BATCH_RECORD]:674351510281286:exec_param",
-        "cr999.crmes.CRMES_TEST_GL#GL001@$"
-        "[BATCH_RECORD]:675454427238982:states",
+        "cr999.crmes.CRMES_TEST_GL#GL001@$EBRDataText.809901890274822.Sheet4.rows",
+        "cr999.crmes.CRMES_TEST_GL#GL001@$[WEIGH]:wo.20250627MAOYAN10-yapi5:weigh_id.list",
+        "cr999.crmes.CRMES_TEST_GL#GL001@$[BATCH_RECORD]:674351510281286:exec_param",
+        "cr999.crmes.CRMES_TEST_GL#GL001@$[BATCH_RECORD]:675454427238982:states",
     ),
     # GL002 follows the same deployed namespace contract as the supplied GL001 sample.
-    "GL002": (
-        "cr999.crmes.CRMES_TEST_GL#GL002@$"
-        "EBRDataText.809901890274822.Sheet4.rows",
-    ),
-    "CZ002": (
-        "cr999.crmes.CRMES_TEST_CZ#CZ002@$"
-        "[WEIGH]:wo.20260410-11:weigh_id.list",
-    ),
+    "GL002": ("cr999.crmes.CRMES_TEST_GL#GL002@$EBRDataText.809901890274822.Sheet4.rows",),
+    "CZ002": ("cr999.crmes.CRMES_TEST_CZ#CZ002@$[WEIGH]:wo.20260410-11:weigh_id.list",),
 }
 
 

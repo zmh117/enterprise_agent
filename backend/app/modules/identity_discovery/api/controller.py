@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -9,6 +9,9 @@ from app.modules.identity.api.dependencies import (
     container,
     handle_exception,
     require_action,
+)
+from app.modules.identity_discovery.application.service import (
+    DingTalkIdentityDiscoveryService,
 )
 
 
@@ -47,7 +50,11 @@ def build_identity_discovery_router() -> APIRouter:
             action="read",
         )
         try:
-            return container(request).identity_discovery_service.list_candidates(
+            service = cast(
+                DingTalkIdentityDiscoveryService,
+                container(request).identity_discovery_service,
+            )
+            return service.list_candidates(
                 search=search,
                 conversation_scope=conversation_scope,
                 limit=limit,
@@ -64,9 +71,7 @@ def build_identity_discovery_router() -> APIRouter:
             resource_code="*",
             action="read",
         )
-        return {
-            "count": container(request).identity_discovery_service.count_candidates()
-        }
+        return {"count": container(request).identity_discovery_service.count_candidates()}
 
     @router.get("/{candidate_id}")
     def get_candidate(request: Request, candidate_id: str) -> dict[str, Any]:
@@ -77,9 +82,7 @@ def build_identity_discovery_router() -> APIRouter:
             action="read",
         )
         try:
-            candidate = container(request).identity_discovery_service.get_candidate(
-                candidate_id
-            )
+            candidate = container(request).identity_discovery_service.get_candidate(candidate_id)
         except Exception as exc:
             raise handle_exception(exc) from exc
         return {"candidate": candidate}
@@ -98,7 +101,11 @@ def build_identity_discovery_router() -> APIRouter:
             csrf=True,
         )
         try:
-            return container(request).identity_discovery_service.bind_candidate(
+            service = cast(
+                DingTalkIdentityDiscoveryService,
+                container(request).identity_discovery_service,
+            )
+            return service.bind_candidate(
                 actor_id=principal.user_id,
                 candidate_id=candidate_id,
                 target_user_id=payload.target_user_id,

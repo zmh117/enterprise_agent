@@ -127,9 +127,7 @@ def build_agent_config_router() -> APIRouter:
                 agent_code=agent_code,
                 expected_revision=payload.expected_revision,
                 config=payload.config.model_dump(),
-                correlation_id=str(
-                    getattr(request.state, "correlation_id", "") or ""
-                ),
+                correlation_id=str(getattr(request.state, "correlation_id", "") or ""),
             )
         except Exception as exc:
             raise handle_exception(exc) from exc
@@ -168,9 +166,7 @@ def build_agent_config_router() -> APIRouter:
                 actor_id=principal.user_id,
                 agent_code=agent_code,
                 revision_id=payload.revision_id,
-                correlation_id=str(
-                    getattr(request.state, "correlation_id", "") or ""
-                ),
+                correlation_id=str(getattr(request.state, "correlation_id", "") or ""),
             )
         except Exception as exc:
             raise handle_exception(exc) from exc

@@ -184,7 +184,7 @@ def create_tool_server(service: JobToolService) -> Server:
         instructions="Job-frozen read-only tools only.",
     )
 
-    @server.list_tools()
+    @server.list_tools()  # type: ignore[no-untyped-call, untyped-decorator]
     async def list_tools() -> list[types.Tool]:
         request = _request(server)
         return [
@@ -202,7 +202,7 @@ def create_tool_server(service: JobToolService) -> Server:
             for item in service.catalog(_job_id(request))
         ]
 
-    @server.call_tool()
+    @server.call_tool()  # type: ignore[untyped-decorator]
     async def call_tool(name: str, arguments: dict[str, Any]) -> types.CallToolResult:
         request = _request(server)
         try:
@@ -255,9 +255,7 @@ def create_app(
     async def health(_: Request) -> JSONResponse:
         try:
             service.repository.database.execute_one("select 1 as ready")
-            return JSONResponse(
-                {"status": "ok", "server_code": SERVER_CODE, "database": "ready"}
-            )
+            return JSONResponse({"status": "ok", "server_code": SERVER_CODE, "database": "ready"})
         except Exception:
             return JSONResponse(
                 {"status": "degraded", "server_code": SERVER_CODE, "database": "unavailable"},
@@ -333,6 +331,8 @@ def _encoded(value: Any) -> bytes:
 
 def _bounded_result(value: dict[str, Any]) -> dict[str, Any]:
     safe = sanitize_for_persistence(value)
+    if not isinstance(safe, dict):
+        raise TypeError("Sanitized MCP tool result must remain an object")
     if len(_encoded(safe)) > MAX_RESPONSE_BYTES:
         raise ToolMcpError("tool_mcp_response_too_large", "只读工具响应超过大小限制")
     return safe

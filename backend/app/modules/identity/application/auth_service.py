@@ -25,9 +25,7 @@ class AuthService:
         self.audit_service = audit_service
         self.settings = settings
         self.passwords = password_service or PasswordService()
-        self._dummy_password_hash = self.passwords.hash(
-            "not-a-real-user-password"
-        )
+        self._dummy_password_hash = self.passwords.hash("not-a-real-user-password")
 
     def login(
         self,
@@ -112,9 +110,10 @@ class AuthService:
                 error_code="not_authenticated",
             )
         now = datetime.now(UTC)
-        if _parse_time(row["idle_expires_at"]) <= now or _parse_time(
-            row["absolute_expires_at"]
-        ) <= now:
+        if (
+            _parse_time(row["idle_expires_at"]) <= now
+            or _parse_time(row["absolute_expires_at"]) <= now
+        ):
             self.repository.revoke_session(str(row["id"]))
             raise PermissionDenied(
                 "Session expired",
@@ -144,9 +143,7 @@ class AuthService:
             payload={"session_id": principal.session_id},
         )
 
-    def change_password(
-        self, *, principal: AuthenticatedPrincipal, current: str, new: str
-    ) -> None:
+    def change_password(self, *, principal: AuthenticatedPrincipal, current: str, new: str) -> None:
         user = self.repository.get_user(principal.user_id)
         if str(user.get("account_type") or "human") != "human":
             self.audit_service.record(
@@ -186,12 +183,8 @@ class AuthService:
                 safe_message="系统中已存在管理员",
             )
         with self.repository.database.unit_of_work():
-            user = self.repository.create_user(
-                username=username, display_name=display_name
-            )
-            self.repository.set_password_hash(
-                str(user["id"]), self.passwords.hash(password)
-            )
+            user = self.repository.create_user(username=username, display_name=display_name)
+            self.repository.set_password_hash(str(user["id"]), self.passwords.hash(password))
             role = self.repository.get_role_by_code("platform-admin")
             if role is None:
                 role = self.repository.create_role(
@@ -199,14 +192,10 @@ class AuthService:
                     name="平台管理员",
                     description="Full administration role",
                 )
-            self.repository.assign_role(
-                user_id=str(user["id"]), role_id=str(role["id"])
-            )
+            self.repository.assign_role(user_id=str(user["id"]), role_id=str(role["id"]))
         return user
 
-    def _principal(
-        self, user: dict[str, object], *, session_id: str
-    ) -> AuthenticatedPrincipal:
+    def _principal(self, user: dict[str, object], *, session_id: str) -> AuthenticatedPrincipal:
         return AuthenticatedPrincipal(
             user_id=str(user["id"]),
             username=str(user["username"]),

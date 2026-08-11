@@ -87,7 +87,14 @@ class WebhookEventRepository:
                    next_attempt_at, created_at, updated_at)
                 values (?, ?, ?, 'pending', 0, ?, ?, ?)
                 """,
-                (new_id("webhook_outbox"), event_id, correlation_id, timestamp, timestamp, timestamp),
+                (
+                    new_id("webhook_outbox"),
+                    event_id,
+                    correlation_id,
+                    timestamp,
+                    timestamp,
+                    timestamp,
+                ),
             )
         return self.get(event_id), created
 
@@ -272,9 +279,10 @@ class WebhookEventRepository:
                 """,
                 (error_summary[:500], now_iso(), outbox_id),
             )
-        return self.database.execute_one(
-            "select * from webhook_outbox where id = ?", (outbox_id,)
-        ) or {}
+        return (
+            self.database.execute_one("select * from webhook_outbox where id = ?", (outbox_id,))
+            or {}
+        )
 
     def attach_job(self, *, event_id: str, job_id: str) -> dict[str, Any]:
         rows = self.database.execute(
@@ -306,7 +314,9 @@ class WebhookEventRepository:
             "select count(*) as count from webhook_replay_nonce where expires_at < ?",
             (nonce_before,),
         )
-        self.database.execute("delete from webhook_replay_nonce where expires_at < ?", (nonce_before,))
+        self.database.execute(
+            "delete from webhook_replay_nonce where expires_at < ?", (nonce_before,)
+        )
         event_count = self.database.execute_one(
             """
             select count(*) as count from webhook_event

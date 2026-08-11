@@ -27,9 +27,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.apply and args.confirm != CONFIRMATION:
-        raise SystemExit(
-            f"--apply requires --confirm {CONFIRMATION}"
-        )
+        raise SystemExit(f"--apply requires --confirm {CONFIRMATION}")
 
     settings = load_settings()
     database = Database(settings.database_dsn)

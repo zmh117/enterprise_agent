@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
 from queue import Empty, LifoQueue
-from typing import Any, Callable, Iterator, ParamSpec, Protocol, TypeVar
+from typing import Any, Callable, Iterator, Literal, ParamSpec, Protocol, TypeVar
 
 
 DEFAULT_POOL_MIN_SIZE = 1
@@ -70,7 +70,7 @@ class _SQLiteConnectionPool:
         )
         self._timeout_seconds = timeout_seconds
         self._max_size = max_size
-        self._idle: LifoQueue[Any] = LifoQueue(maxsize=max_size)
+        self._idle: LifoQueue[sqlite3.Connection] = LifoQueue(maxsize=max_size)
         self._lock = threading.Lock()
         self._opened = 0
         self._checked_out = 0
@@ -270,17 +270,23 @@ class UnitOfWork:
         self._entered = True
         self._parent = self.database.current_unit_of_work
         self._session_manager = self.database.session()
-        self.connection = self._session_manager.__enter__()
+        connection = self._session_manager.__enter__()
+        if connection is None:
+            raise RuntimeError("Database session did not provide a connection")
+        self.connection = connection
         try:
             if self._parent is None:
-                self.connection.execute(
+                connection.execute(
                     "BEGIN IMMEDIATE" if self.database.engine == "sqlite" else "BEGIN"
                 )
             else:
-                if self.connection is not self._parent.connection:
+                parent_connection = self._parent.connection
+                if parent_connection is None:
+                    raise RuntimeError("Parent Unit of Work does not have a connection")
+                if connection is not parent_connection:
                     raise RuntimeError("Nested Unit of Work must reuse the parent connection")
                 self._savepoint = f"uow_{uuid.uuid4().hex}"
-                self.connection.execute(f"SAVEPOINT {self._savepoint}")
+                connection.execute(f"SAVEPOINT {self._savepoint}")
             self._token = self.database._active_uow.set(self)
             self._external_io_token = _ACTIVE_UNIT_OF_WORK_DEPTH.set(
                 _ACTIVE_UNIT_OF_WORK_DEPTH.get() + 1
@@ -297,7 +303,7 @@ class UnitOfWork:
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
         traceback: Any,
-    ) -> bool:
+    ) -> Literal[False]:
         if self.connection is None or self._token is None or self._external_io_token is None:
             raise RuntimeError("Unit of Work was not entered")
         try:
@@ -455,8 +461,8 @@ class Database:
     ) -> None:
         with self.session() as connection:
             implicit = self.current_unit_of_work is None
-            for statement in self._split_statements(script):
-                statement = self._statement_for_engine(statement)
+            for raw_statement in self._split_statements(script):
+                statement = self._statement_for_engine(raw_statement)
                 if statement is None:
                     continue
                 if self.engine == "sqlite" and self._is_postgres_comment_statement(statement):

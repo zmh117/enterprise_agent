@@ -9,9 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_agent_runtime_grants_are_narrow_and_isolate_business_tables() -> None:
-    grants = (ROOT / "backend/maintenance/agent_runtime_grants.sql").read_text(
-        encoding="utf-8"
-    )
+    grants = (ROOT / "backend/maintenance/agent_runtime_grants.sql").read_text(encoding="utf-8")
     normalized = " ".join(grants.lower().split())
 
     assert "grant all" not in normalized
@@ -22,16 +20,13 @@ def test_agent_runtime_grants_are_narrow_and_isolate_business_tables() -> None:
     assert "grant select (id, protocol, status) on model_connection" in normalized
     assert "ciphertext" in normalized
     assert (
-        "grant select, insert, delete on agent_runtime_terminal_ledger "
-        "to agent_runtime_reader"
+        "grant select, insert, delete on agent_runtime_terminal_ledger to agent_runtime_reader"
     ) in normalized
     assert (
-        "grant select, insert, delete on agent_runtime_invocation_claim "
-        "to agent_runtime_reader"
+        "grant select, insert, delete on agent_runtime_invocation_claim to agent_runtime_reader"
     ) in normalized
     assert (
-        "grant select, insert, delete on agent_runtime_invocation_event "
-        "to agent_runtime_reader"
+        "grant select, insert, delete on agent_runtime_invocation_event to agent_runtime_reader"
     ) in normalized
     assert "update on agent_runtime_terminal_ledger" not in normalized
     assert "update on agent_runtime_invocation_claim" not in normalized
@@ -107,12 +102,8 @@ def test_api_server_alone_receives_fixed_ones_identity_provider_configuration() 
         "ONES_IDENTITY_ALLOWED_HOSTS": "${ONES_IDENTITY_ALLOWED_HOSTS:-}",
         "ONES_IDENTITY_TIMEOUT_SECONDS": "${ONES_IDENTITY_TIMEOUT_SECONDS:-5}",
         "ONES_IDENTITY_MAX_RESPONSE_BYTES": "${ONES_IDENTITY_MAX_RESPONSE_BYTES:-65536}",
-        "ONES_IDENTITY_ALLOW_INSECURE_LOCAL": (
-            "${ONES_IDENTITY_ALLOW_INSECURE_LOCAL:-false}"
-        ),
-        "ONES_IDENTITY_CHALLENGE_TTL_SECONDS": (
-            "${ONES_IDENTITY_CHALLENGE_TTL_SECONDS:-600}"
-        ),
+        "ONES_IDENTITY_ALLOW_INSECURE_LOCAL": ("${ONES_IDENTITY_ALLOW_INSECURE_LOCAL:-false}"),
+        "ONES_IDENTITY_CHALLENGE_TTL_SECONDS": ("${ONES_IDENTITY_CHALLENGE_TTL_SECONDS:-600}"),
     }
 
     api_environment = services["api-server"]["environment"]
@@ -136,11 +127,13 @@ def test_worker_image_has_no_claude_sdk_or_cli_layer() -> None:
     assert "COPY .claude/skills /app/.claude/skills" in worker_section
     assert "COPY .claude/settings" not in worker_section
     assert "python_runtime" not in worker_section
-    assert not (ROOT / "backend/app/modules/agent/infrastructure/claude_code_agent_client.py").exists()
+    assert not (
+        ROOT / "backend/app/modules/agent/infrastructure/claude_code_agent_client.py"
+    ).exists()
 
-    python_runtime_section = dockerfile.split(
-        "FROM claude-runtime AS python-agent-runtime", 1
-    )[1].split("FROM api-server AS tool-mcp", 1)[0]
+    python_runtime_section = dockerfile.split("FROM claude-runtime AS python-agent-runtime", 1)[
+        1
+    ].split("FROM api-server AS tool-mcp", 1)[0]
     assert "COPY backend/app /app/backend/app" not in python_runtime_section
     assert "modules/job" not in python_runtime_section
     assert "modules/delivery" not in python_runtime_section
@@ -157,13 +150,9 @@ def test_runtime_migrator_applies_and_verifies_service_grants_after_schema() -> 
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
     command = " ".join(compose["services"]["migrator"]["command"])
 
-    assert command.index("app.cli.migrate") < command.index(
-        "app.cli.apply_agent_runtime_grants"
-    )
+    assert command.index("app.cli.migrate") < command.index("app.cli.apply_agent_runtime_grants")
     assert (
-        compose["services"]["migrator"]["environment"][
-            "AGENT_RUNTIME_DATABASE_PASSWORD"
-        ]
+        compose["services"]["migrator"]["environment"]["AGENT_RUNTIME_DATABASE_PASSWORD"]
         == "${AGENT_RUNTIME_DATABASE_PASSWORD:-agent_runtime_reader_local}"
     )
 
@@ -176,6 +165,4 @@ def test_async_job_creation_workers_can_reach_both_agent_runtimes() -> None:
         service = services[service_name]
         assert set(service["networks"]) == {"default", "agent-runtime-control"}
         for runtime_name in ("python-agent-runtime", "typescript-agent-runtime"):
-            assert service["depends_on"][runtime_name] == {
-                "condition": "service_healthy"
-            }
+            assert service["depends_on"][runtime_name] == {"condition": "service_healthy"}

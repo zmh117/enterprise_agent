@@ -11,12 +11,8 @@ GOLDEN = Path("agent-runtime/contracts/v1/golden")
 
 
 def test_both_runtime_kinds_share_execution_event_and_terminal_semantics() -> None:
-    base_request = json.loads(
-        (GOLDEN / "execution-request.json").read_text(encoding="utf-8")
-    )
-    safe = json.loads(
-        (GOLDEN / "safe-runtime-fixture.json").read_text(encoding="utf-8")
-    )
+    base_request = json.loads((GOLDEN / "execution-request.json").read_text(encoding="utf-8"))
+    safe = json.loads((GOLDEN / "safe-runtime-fixture.json").read_text(encoding="utf-8"))
 
     for runtime_kind, sdk_version in (
         ("python-v1", "0.2.134"),

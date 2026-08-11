@@ -66,11 +66,7 @@ class LegacyEnvSecretImportService:
         code = validate_code(code)
         target_ref = f"secret://platform/{code}"
         all_locations = self._scan()
-        locations = [
-            location
-            for location in all_locations
-            if location.env_ref == env_ref
-        ]
+        locations = [location for location in all_locations if location.env_ref == env_ref]
         preview = self._report(locations)
         preview.update(
             {
@@ -84,10 +80,7 @@ class LegacyEnvSecretImportService:
         existing = self.repository.get_platform_secret_by_code(code)
         if existing:
             metadata = existing.get("metadata") or {}
-            if (
-                existing.get("ref") != target_ref
-                or metadata.get("legacy_env_ref") != env_ref
-            ):
+            if existing.get("ref") != target_ref or metadata.get("legacy_env_ref") != env_ref:
                 raise PlatformConfigValidationError(
                     f"Platform secret code is already used: {code}",
                     safe_message="目标凭据编码已被其他凭据使用",
@@ -203,9 +196,7 @@ class LegacyEnvSecretImportService:
         source_type: str,
         columns: tuple[str, ...],
     ) -> None:
-        rows = self.repository.database.execute(
-            f"select id, {', '.join(columns)} from {table}"
-        )
+        rows = self.repository.database.execute(f"select id, {', '.join(columns)} from {table}")
         for row in rows:
             for column in columns:
                 value = str(row.get(column) or "")
@@ -229,9 +220,7 @@ class LegacyEnvSecretImportService:
         where: str = "",
     ) -> None:
         where_sql = f" where {where}" if where else ""
-        rows = self.repository.database.execute(
-            f"select id, {column} from {table}{where_sql}"
-        )
+        rows = self.repository.database.execute(f"select id, {column} from {table}{where_sql}")
         for row in rows:
             try:
                 payload = json.loads(str(row.get(column) or "{}"))

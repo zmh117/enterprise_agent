@@ -212,9 +212,7 @@ class RuntimeReadinessEvaluator:
             deployment_environment=deployment_environment,
             reason_code=RuntimeReason.READY.value,
             message=(
-                "业务应用路由已生效；部分策略仅保存但尚未执行"
-                if partial
-                else "业务应用路由已生效"
+                "业务应用路由已生效；部分策略仅保存但尚未执行" if partial else "业务应用路由已生效"
             ),
             components=components,
             affected_routes=affected_routes,
@@ -329,8 +327,7 @@ class RuntimeReadinessEvaluator:
             }.get(trigger_type, "")
             if (
                 not expected_prefix
-                or
-                not routing_key.startswith(expected_prefix)
+                or not routing_key.startswith(expected_prefix)
                 or not routing_key[len(expected_prefix) :]
             ):
                 trigger_blocked = True
@@ -340,11 +337,7 @@ class RuntimeReadinessEvaluator:
                         "接入路由使用了不受支持的路由键",
                     )
                 )
-            expected_actor = (
-                "SERVICE_ACCOUNT"
-                if trigger_type == "webhook"
-                else "CURRENT_SENDER"
-            )
+            expected_actor = "SERVICE_ACCOUNT" if trigger_type == "webhook" else "CURRENT_SENDER"
             if str(trigger.get("actor_policy") or "") != expected_actor:
                 trigger_blocked = True
                 blockers.append(
@@ -388,15 +381,12 @@ class RuntimeReadinessEvaluator:
             if str(value.get("trigger_type") or "") in {"dingtalk_private", "dingtalk_group"}
         ]
         webhook_triggers = [
-            value
-            for value in triggers
-            if str(value.get("trigger_type") or "") == "webhook"
+            value for value in triggers if str(value.get("trigger_type") or "") == "webhook"
         ]
         webhook_deliveries = [
             value
             for value in deliveries
-            if str(value.get("delivery_type") or "")
-            in {"dingtalk_group", "webhook_callback"}
+            if str(value.get("delivery_type") or "") in {"dingtalk_group", "webhook_callback"}
         ]
         delivery_blocked = False
         if supported_triggers:
@@ -467,9 +457,7 @@ class RuntimeReadinessEvaluator:
             else:
                 config = webhook_deliveries[0].get("config") or {}
                 target_reference = (
-                    str(config.get("target_reference") or "")
-                    if isinstance(config, dict)
-                    else ""
+                    str(config.get("target_reference") or "") if isinstance(config, dict) else ""
                 )
                 if not target_reference:
                     delivery_blocked = True

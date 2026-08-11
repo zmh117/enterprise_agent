@@ -32,8 +32,7 @@ RABBITMQ_URL = os.getenv("RABBITMQ_TEST_URL", "")
 pytestmark = pytest.mark.skipif(
     not POSTGRES_ADMIN_DSN or not RABBITMQ_URL,
     reason=(
-        "set MIGRATION_POSTGRES_DSN and RABBITMQ_TEST_URL "
-        "to run the Phase 2B real integration"
+        "set MIGRATION_POSTGRES_DSN and RABBITMQ_TEST_URL to run the Phase 2B real integration"
     ),
 )
 
@@ -80,11 +79,7 @@ def migrated_postgres_dsn() -> str:
 
     database_name = f"phase2b_gate_{uuid.uuid4().hex}"
     with psycopg.connect(POSTGRES_ADMIN_DSN, autocommit=True) as admin:
-        admin.execute(
-            sql.SQL("create database {}").format(
-                sql.Identifier(database_name)
-            )
-        )
+        admin.execute(sql.SQL("create database {}").format(sql.Identifier(database_name)))
     parameters = conninfo_to_dict(POSTGRES_ADMIN_DSN)
     parameters["dbname"] = database_name
     test_dsn = make_conninfo(**parameters)
@@ -109,11 +104,7 @@ def migrated_postgres_dsn() -> str:
                 """,
                 (database_name,),
             )
-            admin.execute(
-                sql.SQL("drop database {}").format(
-                    sql.Identifier(database_name)
-                )
-            )
+            admin.execute(sql.SQL("drop database {}").format(sql.Identifier(database_name)))
 
 
 def _create_job(container: object, label: str) -> object:
@@ -168,9 +159,7 @@ def test_committed_job_survives_dispatch_and_duplicate_event_executes_once(
         assert str(version).startswith("4."), f"RabbitMQ 4 required, got {version}"
 
         committed_job = _create_job(container, "success")
-        committed_event = container.agent_repository.get_dispatch_event_for_job(
-            committed_job.id
-        )
+        committed_event = container.agent_repository.get_dispatch_event_for_job(committed_job.id)
         assert committed_job.status == JobStatus.PENDING
         assert committed_event is not None
         assert committed_event.status.value == "PENDING"
@@ -210,9 +199,7 @@ def test_committed_job_survives_dispatch_and_duplicate_event_executes_once(
         ) == {"count": 1}
 
         failed_job = _create_job(container, "broker-dead")
-        failed_event = container.agent_repository.get_dispatch_event_for_job(
-            failed_job.id
-        )
+        failed_event = container.agent_repository.get_dispatch_event_for_job(failed_job.id)
         assert failed_event is not None
         unavailable_dispatcher = JobDispatchOutboxDispatcher(
             repository=container.agent_repository,
@@ -233,9 +220,7 @@ def test_committed_job_survives_dispatch_and_duplicate_event_executes_once(
             (failed_event.id,),
         )
         second_failure = unavailable_dispatcher.publish_pending(limit=1)
-        terminal_event = container.agent_repository.get_dispatch_event(
-            failed_event.id
-        )
+        terminal_event = container.agent_repository.get_dispatch_event(failed_event.id)
         assert second_failure.failed == 1
         assert second_failure.dead == 1
         assert terminal_event.status.value == "DEAD"

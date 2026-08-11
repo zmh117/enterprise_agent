@@ -29,10 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     replay = commands.add_parser(
         "replay",
-        help=(
-            "Rearm one exact DEAD Delivery with its frozen binding and "
-            "persisted artifact"
-        ),
+        help=("Rearm one exact DEAD Delivery with its frozen binding and persisted artifact"),
     )
     replay.add_argument("--delivery-id", required=True)
     replay.add_argument("--actor-id", default="delivery-replay-cli")
@@ -74,8 +71,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             json.dumps(
                 {
-                    "error_code": exc.error_code
-                    or "delivery_operation_failed",
+                    "error_code": exc.error_code or "delivery_operation_failed",
                     "message": exc.safe_message,
                 },
                 ensure_ascii=False,

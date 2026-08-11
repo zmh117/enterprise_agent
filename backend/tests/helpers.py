@@ -201,9 +201,7 @@ def _ensure_agent_publication_mcp_tools(
     *,
     agent_publication_id: str = "agent_publication_default_v1",
 ) -> tuple[str, ...]:
-    requested = tuple(
-        sorted(set(tool_identifiers).intersection(ToolRegistry.READONLY_TOOLS))
-    )
+    requested = tuple(sorted(set(tool_identifiers).intersection(ToolRegistry.READONLY_TOOLS)))
     if not requested:
         return ()
     published = {
@@ -220,8 +218,7 @@ def _ensure_agent_publication_mcp_tools(
     missing = sorted(set(requested) - published)
     if missing:
         raise AssertionError(
-            "Test Agent publication does not contain requested MCP Tools: "
-            + ", ".join(missing)
+            "Test Agent publication does not contain requested MCP Tools: " + ", ".join(missing)
         )
     return requested
 
@@ -374,20 +371,14 @@ def activate_webhook_test_application(
                 {
                     "trigger_type": "webhook",
                     "connector_id": ingress_connector_id,
-                    "routing_key": (
-                        f"webhook:{webhook_definition_id}"
-                    ),
+                    "routing_key": (f"webhook:{webhook_definition_id}"),
                     "actor_policy": "SERVICE_ACCOUNT",
-                    "service_account_user_id": (
-                        service_account_user_id
-                    ),
+                    "service_account_user_id": (service_account_user_id),
                     "enabled": True,
                     "config": {
                         "conversation_type": "event",
                         "require_mention": False,
-                        "webhook_definition_id": (
-                            webhook_definition_id
-                        ),
+                        "webhook_definition_id": (webhook_definition_id),
                     },
                 }
             ],
@@ -397,9 +388,7 @@ def activate_webhook_test_application(
                     "connector_id": delivery_connector_id,
                     "enabled": True,
                     "config": {
-                        "target_reference": (
-                            delivery_target_reference
-                        ),
+                        "target_reference": (delivery_target_reference),
                         "reply_mode": "fixed",
                     },
                 }
@@ -565,9 +554,7 @@ def prepare_debug_application_access(
         capabilities=capabilities,
         additional_deliveries=additional_deliveries,
     )
-    application = container.business_application_repository.get_by_code(
-        application_code
-    )
+    application = container.business_application_repository.get_by_code(application_code)
     role = container.authorization_center_service.create_role(
         actor_id="user_local_admin",
         code=role_code,
@@ -617,9 +604,7 @@ def prepare_debug_application_access(
         environment="local",
     )
     option = next(
-        item
-        for item in options["applications"]
-        if str(item["id"]) == str(application["id"])
+        item for item in options["applications"] if str(item["id"]) == str(application["id"])
     )
     return {
         "application_id": str(application["id"]),
@@ -628,9 +613,7 @@ def prepare_debug_application_access(
         "environment_id": environment_id,
         "base_id": base_id,
         "delivery_binding_id": str(
-            option["delivery_bindings"][0]["binding_id"]
-            if option["delivery_bindings"]
-            else ""
+            option["delivery_bindings"][0]["binding_id"] if option["delivery_bindings"] else ""
         ),
     }
 

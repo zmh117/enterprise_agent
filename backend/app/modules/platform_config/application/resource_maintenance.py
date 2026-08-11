@@ -212,11 +212,20 @@ class ResourceResetService:
                        prepared_at = ?, updated_at = ?
                  where id = ? and status = 'PREPARING'
                 """,
-                (digest, report["database_fingerprint"], json_text(impact), now_iso(), now_iso(), operation_id),
+                (
+                    digest,
+                    report["database_fingerprint"],
+                    json_text(impact),
+                    now_iso(),
+                    now_iso(),
+                    operation_id,
+                ),
             )
         return {"manifest": manifest, "digest": digest}
 
-    def apply(self, *, operation_id: str, expected_digest: str, confirmed_by: str) -> dict[str, Any]:
+    def apply(
+        self, *, operation_id: str, expected_digest: str, confirmed_by: str
+    ) -> dict[str, Any]:
         if not confirmed_by:
             raise ValueError("Current confirmation actor is required")
         operation = self._operation(operation_id)
@@ -239,8 +248,13 @@ class ResourceResetService:
             (str(item["target_type"]), str(item["target_id"])): str(item["item_digest"])
             for item in stored
         }
-        if report["database_fingerprint"] != operation["database_fingerprint"] or current != expected:
-            self._abort(operation_id, "resource_reset_inventory_changed", "prepare 后资源清单发生变化")
+        if (
+            report["database_fingerprint"] != operation["database_fingerprint"]
+            or current != expected
+        ):
+            self._abort(
+                operation_id, "resource_reset_inventory_changed", "prepare 后资源清单发生变化"
+            )
             raise NonRetryableExecutionError(
                 "Resource reset inventory changed",
                 safe_message="工具资源清单已变化，请重新 report/prepare",
@@ -263,7 +277,9 @@ class ResourceResetService:
                     error_code="resource_reset_conflict",
                 )
             ids_by_type = {
-                target_type: tuple(str(item["target_id"]) for item in stored if item["target_type"] == target_type)
+                target_type: tuple(
+                    str(item["target_id"]) for item in stored if item["target_type"] == target_type
+                )
                 for target_type in ("draft", "verification", "revision", "resource")
             }
             for table, target_type in (
@@ -303,7 +319,9 @@ class ResourceResetService:
         impact = self._json_object(operation.get("impact_summary_json"))
         before = impact.get("protected_counts") or {}
         after = self._protected_counts()
-        protected = all(int(after.get(key, -1)) == int(before.get(key, -2)) for key in PROTECTED_TABLES)
+        protected = all(
+            int(after.get(key, -1)) == int(before.get(key, -2)) for key in PROTECTED_TABLES
+        )
         counts = self.report()["counts"]
         empty = all(int(value) == 0 for value in counts.values())
         if not protected or not empty:
@@ -329,7 +347,9 @@ class ResourceResetService:
             "protected_counts_after": after,
         }
 
-    def _children(self, table: str, query: str, resource_ids: tuple[str, ...]) -> list[dict[str, Any]]:
+    def _children(
+        self, table: str, query: str, resource_ids: tuple[str, ...]
+    ) -> list[dict[str, Any]]:
         del table
         if not resource_ids:
             return []
@@ -371,7 +391,9 @@ class ResourceResetService:
             (operation_id,),
         )
         if row is None:
-            raise NotFound("Resource reset operation not found", safe_message="未找到工具资源重置操作")
+            raise NotFound(
+                "Resource reset operation not found", safe_message="未找到工具资源重置操作"
+            )
         return row
 
     def _abort(self, operation_id: str, error_code: str, error_summary: str) -> None:
@@ -392,7 +414,9 @@ class ResourceResetService:
 
     @staticmethod
     def _digest(value: object) -> str:
-        encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        encoded = json.dumps(
+            value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode()
         return hashlib.sha256(encoded).hexdigest()
 
     @staticmethod

@@ -49,9 +49,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         service = JobDispatchOperationsService(
             repository=AgentRepository(database),
             audit_service=AuditService(AuditRepository(database)),
-            mcp_tool_snapshot_service=(
-                JobMcpToolSnapshotService(database)
-            ),
+            mcp_tool_snapshot_service=(JobMcpToolSnapshotService(database)),
         )
         if args.command == "metrics":
             result = service.metrics()

@@ -20,9 +20,7 @@ class IdentityService:
         self.connector_registry = connector_registry
 
     @operation_unit_of_work(lambda service: service.repository.database)
-    def resolve_external(
-        self, descriptor: ExternalIdentityDescriptor
-    ) -> AuthenticatedPrincipal:
+    def resolve_external(self, descriptor: ExternalIdentityDescriptor) -> AuthenticatedPrincipal:
         if descriptor.provider == "dingtalk":
             if not descriptor.dingtalk_enterprise_id:
                 raise PermissionDenied(

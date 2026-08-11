@@ -55,9 +55,7 @@ def _selection_payload(selection: dict[str, str]) -> dict[str, str]:
 
 def test_debug_create_requires_login_and_does_not_create_job() -> None:
     runtime = _container()
-    with TestClient(
-        create_app(_settings(), container_factory=lambda _: runtime)
-    ) as client:
+    with TestClient(create_app(_settings(), container_factory=lambda _: runtime)) as client:
         response = client.post(
             "/api/agent/jobs",
             json={
@@ -78,9 +76,7 @@ def test_debug_create_uses_authenticated_internal_user() -> None:
         application_code="debug-secure-application",
         role_code="debug-secure-role",
     )
-    with TestClient(
-        create_app(_settings(), container_factory=lambda _: runtime)
-    ) as client:
+    with TestClient(create_app(_settings(), container_factory=lambda _: runtime)) as client:
         first = client.post(
             "/api/agent/jobs",
             headers=_admin_headers(),
@@ -116,10 +112,7 @@ def test_debug_create_uses_authenticated_internal_user() -> None:
         assert job.source_connector_id == "connector-debug-api"
         assert job.reply_route["type"] == "none"
         assert job.business_application_id == selection["application_id"]
-        assert (
-            job.business_application_publication_id
-            == selection["publication_id"]
-        )
+        assert job.business_application_publication_id == selection["publication_id"]
         assert job.routing_context == {
             "project_code": "default",
             "environment": "local",
@@ -132,9 +125,10 @@ def test_debug_create_uses_authenticated_internal_user() -> None:
             "workshop_id": "",
         }
         assert job.business_application_route_decision["legacy_fallback"] is False
-        assert job.business_application_route_decision["authorization_snapshot"][
-            "reason"
-        ] == "application_role_allow"
+        assert (
+            job.business_application_route_decision["authorization_snapshot"]["reason"]
+            == "application_role_allow"
+        )
         session = runtime.agent_repository.get_session(job.session_id)
         assert session.session_policy["continuous_conversation_enabled"] is False
         assert session.application_publication_id == selection["publication_id"]
@@ -160,9 +154,7 @@ def test_debug_create_uses_authenticated_internal_user() -> None:
             },
         )
         assert independent.status_code == 200
-        independent_job = runtime.agent_repository.get_job(
-            independent.json()["job_id"]
-        )
+        independent_job = runtime.agent_repository.get_job(independent.json()["job_id"])
         assert independent_job.session_id != job.session_id
         continued = client.post(
             "/api/agent/jobs",
@@ -175,9 +167,7 @@ def test_debug_create_uses_authenticated_internal_user() -> None:
             },
         )
         assert continued.status_code == 200
-        continued_job = runtime.agent_repository.get_job(
-            continued.json()["job_id"]
-        )
+        continued_job = runtime.agent_repository.get_job(continued.json()["job_id"])
         assert continued_job.session_id == job.session_id
 
         runtime.database.execute(
@@ -196,9 +186,7 @@ def test_debug_create_uses_authenticated_internal_user() -> None:
             },
         )
         assert denied.status_code == 403
-        assert denied.json()["detail"] == (
-            "无法继续该调试会话，请使用当前应用和数据范围创建新会话"
-        )
+        assert denied.json()["detail"] == ("无法继续该调试会话，请使用当前应用和数据范围创建新会话")
         assert runtime.agent_repository.count_rows("agent_job") == before_denied
 
 
@@ -208,9 +196,7 @@ def test_debug_create_requires_agent_debug_execute_capability() -> None:
         username="debug-no-capability",
         display_name="无调试能力",
     )
-    with TestClient(
-        create_app(_settings(), container_factory=lambda _: runtime)
-    ) as client:
+    with TestClient(create_app(_settings(), container_factory=lambda _: runtime)) as client:
         response = client.post(
             "/api/agent/jobs",
             headers={"x-admin-user-id": "debug-no-capability"},
@@ -251,9 +237,7 @@ def test_debug_create_rejects_authority_expanding_fields(
         application_code="debug-reject-fields-application",
         role_code="debug-reject-fields-role",
     )
-    with TestClient(
-        create_app(_settings(), container_factory=lambda _: runtime)
-    ) as client:
+    with TestClient(create_app(_settings(), container_factory=lambda _: runtime)) as client:
         response = client.post(
             "/api/agent/jobs",
             headers=_admin_headers(),
@@ -295,23 +279,16 @@ def test_debug_create_rejects_unavailable_selection_without_side_effects(
         table: runtime.agent_repository.count_rows(table)
         for table in ("agent_session", "agent_job", "agent_message")
     }
-    with TestClient(
-        create_app(_settings(), container_factory=lambda _: runtime)
-    ) as client:
+    with TestClient(create_app(_settings(), container_factory=lambda _: runtime)) as client:
         response = client.post(
             "/api/agent/jobs",
             headers=_admin_headers(),
             json=payload,
         )
-        after = {
-            table: runtime.agent_repository.count_rows(table)
-            for table in before
-        }
+        after = {table: runtime.agent_repository.count_rows(table) for table in before}
 
     assert response.status_code == 403
-    assert response.json() == {
-        "detail": "无权使用所选业务应用、执行范围或投递方式"
-    }
+    assert response.json() == {"detail": "无权使用所选业务应用、执行范围或投递方式"}
     assert after == before
     assert runtime.message_bus is not None
     assert not runtime.message_bus.jobs
@@ -347,9 +324,7 @@ def test_debug_create_pins_existing_authorized_delivery_binding() -> None:
         "delivery_type",
         "connector_id",
     }
-    with TestClient(
-        create_app(_settings(), container_factory=lambda _: runtime)
-    ) as client:
+    with TestClient(create_app(_settings(), container_factory=lambda _: runtime)) as client:
         response = client.post(
             "/api/agent/jobs",
             headers=_admin_headers(),
@@ -367,9 +342,7 @@ def test_debug_create_pins_existing_authorized_delivery_binding() -> None:
         "connector_id": "connector-dingtalk-enterprise-default",
         "target": {"open_conversation_id": "debug-open-conversation"},
         "options": {
-            "business_application_delivery_binding_id": (
-                selection["delivery_binding_id"]
-            ),
+            "business_application_delivery_binding_id": (selection["delivery_binding_id"]),
             "business_application_delivery_type": "dingtalk_group",
         },
     }
@@ -395,9 +368,7 @@ def test_debug_create_rechecks_active_publication_before_writing() -> None:
         """,
         (selection["application_id"], selection["publication_id"]),
     )
-    with TestClient(
-        create_app(_settings(), container_factory=lambda _: runtime)
-    ) as client:
+    with TestClient(create_app(_settings(), container_factory=lambda _: runtime)) as client:
         response = client.post(
             "/api/agent/jobs",
             headers=_admin_headers(),
@@ -448,9 +419,7 @@ def test_debug_create_requires_current_business_application_access() -> None:
         role_id=str(role["id"]),
         assigned_by=ADMIN_ID,
     )
-    with TestClient(
-        create_app(_settings(), container_factory=lambda _: runtime)
-    ) as client:
+    with TestClient(create_app(_settings(), container_factory=lambda _: runtime)) as client:
         response = client.post(
             "/api/agent/jobs",
             headers={"x-admin-user-id": "debug-legacy-only"},

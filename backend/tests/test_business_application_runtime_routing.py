@@ -536,9 +536,7 @@ def test_activation_is_local_only_and_rejects_invalid_runtime_bindings() -> None
     assert mismatch_error.value.field_errors[0]["reason_code"] == "delivery_connector_mismatch"
 
 
-def test_session_policy_is_publication_scoped_and_publication_upgrade_splits_session() -> (
-    None
-):
+def test_session_policy_is_publication_scoped_and_publication_upgrade_splits_session() -> None:
     container = _container()
     policy = {
         "conversation_mode": "channel",
@@ -926,16 +924,19 @@ def test_session_key_modes_and_different_applications_are_isolated() -> None:
     )
     assert channel == same_channel
     assert channel == same_group_other_requester
-    assert len(
-        {
-            channel,
-            other_publication,
-            other_scope,
-            other_application,
-            direct_user_a,
-            direct_user_b,
-        }
-    ) == 6
+    assert (
+        len(
+            {
+                channel,
+                other_publication,
+                other_scope,
+                other_application,
+                direct_user_a,
+                direct_user_b,
+            }
+        )
+        == 6
+    )
     for old_mode in ("actor", "application"):
         with pytest.raises(NonRetryableExecutionError) as unsupported:
             _session_key(**{**common, "conversation_mode": old_mode})

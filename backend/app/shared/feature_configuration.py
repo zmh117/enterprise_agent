@@ -218,9 +218,7 @@ def feature_configuration_from_values(
                 webhook_ingress,
                 source,
                 FeatureClassification.GOVERNED_RUNTIME_POLICY,
-                deprecated=("FEATURE_WEBHOOK_TRIGGERS",)
-                if source.startswith("legacy:")
-                else (),
+                deprecated=("FEATURE_WEBHOOK_TRIGGERS",) if source.startswith("legacy:") else (),
             ),
             _value(
                 "CONTINUOUS_CONVERSATION_COMPATIBILITY",
@@ -236,9 +234,7 @@ def feature_configuration_from_values(
                 message_attachments,
                 source,
                 FeatureClassification.GOVERNED_RUNTIME_POLICY,
-                deprecated=("FEATURE_MESSAGE_ATTACHMENTS",)
-                if source.startswith("legacy:")
-                else (),
+                deprecated=("FEATURE_MESSAGE_ATTACHMENTS",) if source.startswith("legacy:") else (),
             ),
         ),
         diagnostics=diagnostics,
@@ -250,15 +246,10 @@ def resolve_feature_configuration(
     environ: Mapping[str, str],
 ) -> EffectiveFeatureConfiguration:
     diagnostics: list[FeatureDiagnostic] = []
-    canonical = {
-        key: _optional_bool(environ, key)
-        for key in TOP_LEVEL_FEATURE_KEYS
-    }
+    canonical = {key: _optional_bool(environ, key) for key in TOP_LEVEL_FEATURE_KEYS}
     web_admin = canonical["FEATURE_WEB_ADMIN"]
     legacy_identity = _optional_bool(environ, "FEATURE_UNIFIED_IDENTITY")
-    legacy_control_plane = _optional_bool(
-        environ, "FEATURE_BUSINESS_APPLICATION_CONTROL_PLANE"
-    )
+    legacy_control_plane = _optional_bool(environ, "FEATURE_BUSINESS_APPLICATION_CONTROL_PLANE")
     if web_admin is not None:
         conflicts = tuple(
             key
@@ -281,9 +272,7 @@ def resolve_feature_configuration(
     else:
         web_admin = False
         unified_identity = legacy_identity if legacy_identity is not None else False
-        business_control_plane = (
-            legacy_control_plane if legacy_control_plane is not None else False
-        )
+        business_control_plane = legacy_control_plane if legacy_control_plane is not None else False
 
     for legacy_key, target in LEGACY_FEATURE_TARGETS.items():
         if legacy_key in environ:
@@ -307,27 +296,19 @@ def resolve_feature_configuration(
         )
 
     webhook_enabled = _optional_bool(environ, "FEATURE_WEBHOOK_TRIGGERS")
-    conversation_enabled = _optional_bool(
-        environ, "FEATURE_CONTINUOUS_CONVERSATION"
-    )
+    conversation_enabled = _optional_bool(environ, "FEATURE_CONTINUOUS_CONVERSATION")
     attachments_enabled = _optional_bool(environ, "FEATURE_MESSAGE_ATTACHMENTS")
 
     configuration = feature_configuration_from_values(
         web_admin=bool(web_admin),
-        published_agent_runtime=bool(
-            canonical["FEATURE_PUBLISHED_AGENT_RUNTIME"] or False
-        ),
+        published_agent_runtime=bool(canonical["FEATURE_PUBLISHED_AGENT_RUNTIME"] or False),
         real_claude=bool(canonical["FEATURE_REAL_CLAUDE"] or False),
         unified_identity=unified_identity,
         business_application_control_plane=business_control_plane,
         test_identity_headers=test_headers,
         webhook_ingress=True if webhook_enabled is None else webhook_enabled,
-        continuous_conversation=False
-        if conversation_enabled is None
-        else conversation_enabled,
-        message_attachments=False
-        if attachments_enabled is None
-        else attachments_enabled,
+        continuous_conversation=False if conversation_enabled is None else conversation_enabled,
+        message_attachments=False if attachments_enabled is None else attachments_enabled,
         source="environment",
         diagnostics=tuple(diagnostics),
     )
@@ -384,9 +365,7 @@ def apply_runtime_feature_policies(
     )
 
 
-def feature_migration_report(
-    environment: str, environ: Mapping[str, str]
-) -> dict[str, Any]:
+def feature_migration_report(environment: str, environ: Mapping[str, str]) -> dict[str, Any]:
     configuration = resolve_feature_configuration(environment, environ)
     legacy = []
     policy_draft: dict[str, Any] = {}
@@ -424,14 +403,10 @@ def _mark_configuration_sources(
 ) -> EffectiveFeatureConfiguration:
     targets = {
         "UNIFIED_IDENTITY": "FEATURE_UNIFIED_IDENTITY",
-        "BUSINESS_APPLICATION_CONTROL_PLANE": (
-            "FEATURE_BUSINESS_APPLICATION_CONTROL_PLANE"
-        ),
+        "BUSINESS_APPLICATION_CONTROL_PLANE": ("FEATURE_BUSINESS_APPLICATION_CONTROL_PLANE"),
         "TEST_IDENTITY_HEADERS": "FEATURE_TEST_IDENTITY_HEADERS",
         "WEBHOOK_INGRESS_COMPATIBILITY": "FEATURE_WEBHOOK_TRIGGERS",
-        "CONTINUOUS_CONVERSATION_COMPATIBILITY": (
-            "FEATURE_CONTINUOUS_CONVERSATION"
-        ),
+        "CONTINUOUS_CONVERSATION_COMPATIBILITY": ("FEATURE_CONTINUOUS_CONVERSATION"),
         "MESSAGE_ATTACHMENTS_COMPATIBILITY": "FEATURE_MESSAGE_ATTACHMENTS",
     }
     values: list[EffectiveFeatureValue] = []
@@ -449,11 +424,7 @@ def _mark_configuration_sources(
             values.append(
                 replace(
                     item,
-                    source=(
-                        "environment"
-                        if item.key in environ
-                        else "safe-default"
-                    ),
+                    source=("environment" if item.key in environ else "safe-default"),
                 )
             )
         elif item.key in {
@@ -487,9 +458,7 @@ def _parse_bool(value: Any, key: str) -> bool:
         return True
     if normalized in {"0", "false", "no", "off"}:
         return False
-    raise FeatureConfigurationError(
-        f"invalid_feature_boolean: {key} must be true or false"
-    )
+    raise FeatureConfigurationError(f"invalid_feature_boolean: {key} must be true or false")
 
 
 def _coerce_optional_bool(value: Any) -> bool | None:

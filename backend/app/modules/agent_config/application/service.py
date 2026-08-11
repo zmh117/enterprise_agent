@@ -414,9 +414,7 @@ class AgentConfigService:
         )
 
     @operation_unit_of_work(lambda service: service.repository.database)
-    def _rollback(
-        self, *, actor_id: str, agent_code: str, publication_id: str
-    ) -> dict[str, Any]:
+    def _rollback(self, *, actor_id: str, agent_code: str, publication_id: str) -> dict[str, Any]:
         self.authorization.require(
             user_id=actor_id,
             resource_type="agent",

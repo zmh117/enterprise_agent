@@ -44,9 +44,7 @@ class EncryptedDbSecretProvider:
         master_key: str | None = None,
     ) -> None:
         self.repository = repository
-        self.master_key = _normalize_master_key(
-            master_key if master_key is not None else ""
-        )
+        self.master_key = _normalize_master_key(master_key if master_key is not None else "")
         self.key_id = hashlib.sha256(self.master_key).hexdigest()[:16]
 
     def resolve(self, ref: str) -> str:
@@ -195,9 +193,12 @@ class EncryptedDbSecretProvider:
         *,
         action: str,
     ) -> None:
+        revision = secret["revision"]
+        if type(revision) is not int:
+            raise RuntimeError("Platform secret revision must be an integer")
         self.repository.insert_secret_change_event(
             secret_id=str(secret["id"]),
-            secret_revision=int(secret["revision"]),
+            secret_revision=revision,
             action=action,
         )
 
@@ -258,11 +259,7 @@ class EncryptedDbSecretProvider:
         version: int,
     ) -> str:
         plaintext: bytearray | None = None
-        aad = (
-            _aad(secret_id=secret_id, version=version)
-            if algorithm == self.algorithm
-            else None
-        )
+        aad = _aad(secret_id=secret_id, version=version) if algorithm == self.algorithm else None
         if algorithm not in {self.algorithm, self.legacy_algorithm}:
             raise NonRetryableExecutionError(
                 "Unsupported platform secret encryption algorithm",

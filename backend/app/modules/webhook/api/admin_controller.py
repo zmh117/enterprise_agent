@@ -128,15 +128,17 @@ def build_webhook_admin_router() -> APIRouter:
             request, resource_type="webhook_trigger", resource_code="*", action="read"
         )
         try:
-            return {"triggers": container(request).webhook_trigger_service.list(actor_id=principal.user_id)}
+            return {
+                "triggers": container(request).webhook_trigger_service.list(
+                    actor_id=principal.user_id
+                )
+            }
         except Exception as exc:
             raise handle_exception(exc) from exc
 
     @router.get("/webhook-triggers/catalog")
     def catalog(request: Request) -> dict[str, Any]:
-        require_action(
-            request, resource_type="webhook_trigger", resource_code="*", action="read"
-        )
+        require_action(request, resource_type="webhook_trigger", resource_code="*", action="read")
         c = container(request)
         try:
             publication = c.agent_config_service.current_publication(
@@ -155,9 +157,7 @@ def build_webhook_admin_router() -> APIRouter:
                 "revision": publication["revision"],
                 "config_hash": publication["config_hash"],
                 "read_only_tools": sorted(
-                    c.agent_config_service.repository.publication_tools(
-                        str(publication["id"])
-                    )
+                    c.agent_config_service.repository.publication_tools(str(publication["id"]))
                 ),
             },
             "connectors": c.agent_config_service.repository.connector_catalog(),
@@ -223,9 +223,7 @@ def build_webhook_admin_router() -> APIRouter:
         return {"definition": value}
 
     @router.post("/webhook-triggers/{code}/revisions")
-    def save_revision(
-        request: Request, code: str, payload: SaveRevisionRequest
-    ) -> dict[str, Any]:
+    def save_revision(request: Request, code: str, payload: SaveRevisionRequest) -> dict[str, Any]:
         principal = require_action(
             request,
             resource_type="webhook_trigger",
@@ -386,9 +384,7 @@ def build_webhook_admin_router() -> APIRouter:
         limit: int = 50,
         offset: int = 0,
     ) -> dict[str, Any]:
-        require_action(
-            request, resource_type="webhook_trigger", resource_code=code, action="read"
-        )
+        require_action(request, resource_type="webhook_trigger", resource_code=code, action="read")
         c = container(request)
         try:
             definition = c.webhook_trigger_repository.get_definition(code)
