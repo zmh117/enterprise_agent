@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from app.shared.database import Database
 from app.shared.exceptions import NotFound
@@ -21,6 +22,26 @@ def new_id(prefix: str) -> str:
 
 def json_text(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+@dataclass(frozen=True)
+class RuntimeConfigDefinitionReconciliation:
+    entity: dict[str, Any]
+    outcome: Literal["created", "updated", "unchanged"]
+
+
+def _normalize_definition_service_names(service_names: list[str] | None) -> list[str]:
+    return sorted(
+        {
+            str(service_name).strip()
+            for service_name in (service_names or [])
+            if str(service_name).strip()
+        }
+    )
+
+
+def _normalize_definition_description(description: str) -> str:
+    return str(description).replace("\r\n", "\n").replace("\r", "\n")
 
 
 class PlatformConfigRepository:
@@ -882,41 +903,87 @@ class PlatformConfigRepository:
         service_names: list[str] | None = None,
         description: str = "",
         status: str = "enabled",
-    ) -> dict[str, Any]:
-        existing = self.get_runtime_config_definition(key)
-        timestamp = now_iso()
+        expected_revision: int | None = None,
+    ) -> RuntimeConfigDefinitionReconciliation:
+        normalized_key = str(key).strip()
+        normalized_value_type = str(value_type).strip().lower()
+        normalized_service_names = _normalize_definition_service_names(service_names)
+        normalized_description = _normalize_definition_description(description)
+        normalized_status = str(status).strip().lower()
         params = (
-            value_type,
+            normalized_value_type,
             json_text(default),
             int(sensitive),
             int(bootstrap_only),
-            json_text(service_names or []),
-            description,
-            status,
+            json_text(normalized_service_names),
+            normalized_description,
+            normalized_status,
         )
-        if existing:
-            self.database.execute(
+        next_expected_revision = expected_revision
+        for _attempt in range(3):
+            existing = self.get_runtime_config_definition(normalized_key)
+            timestamp = now_iso()
+            if existing is None:
+                entity_id = new_id("runtime_def")
+                inserted = self.database.execute(
+                    """
+                    insert into platform_runtime_config_definition
+                      (id, key, value_type, default_json, sensitive, bootstrap_only,
+                       service_names_json, description, status, revision, created_at, updated_at)
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    on conflict(key) do nothing
+                    returning id
+                    """,
+                    (entity_id, normalized_key, *params, 1, timestamp, timestamp),
+                )
+                if inserted:
+                    return RuntimeConfigDefinitionReconciliation(
+                        entity=self._require_runtime_config_definition(normalized_key),
+                        outcome="created",
+                    )
+                next_expected_revision = None
+                continue
+            existing_semantics = (
+                str(existing["value_type"]).strip().lower(),
+                json_text(existing.get("default")),
+                int(bool(existing.get("sensitive"))),
+                int(bool(existing.get("bootstrap_only"))),
+                json_text(
+                    _normalize_definition_service_names(existing.get("service_names") or [])
+                ),
+                _normalize_definition_description(str(existing.get("description") or "")),
+                str(existing.get("status") or "").strip().lower(),
+            )
+            if existing_semantics == params:
+                return RuntimeConfigDefinitionReconciliation(
+                    entity=existing,
+                    outcome="unchanged",
+                )
+            revision = (
+                next_expected_revision
+                if next_expected_revision is not None
+                else int(existing["revision"])
+            )
+            updated = self.database.execute(
                 """
                 update platform_runtime_config_definition
                 set value_type = ?, default_json = ?, sensitive = ?, bootstrap_only = ?,
                     service_names_json = ?, description = ?, status = ?,
                     revision = revision + 1, updated_at = ?
-                where id = ?
+                where id = ? and revision = ?
+                returning id
                 """,
-                (*params, timestamp, existing["id"]),
+                (*params, timestamp, existing["id"], revision),
             )
-            return self._require_runtime_config_definition(key)
-        entity_id = new_id("runtime_def")
-        self.database.execute(
-            """
-            insert into platform_runtime_config_definition
-              (id, key, value_type, default_json, sensitive, bootstrap_only,
-               service_names_json, description, status, revision, created_at, updated_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (entity_id, key, *params, 1, timestamp, timestamp),
+            if updated:
+                return RuntimeConfigDefinitionReconciliation(
+                    entity=self._require_runtime_config_definition(normalized_key),
+                    outcome="updated",
+                )
+            next_expected_revision = None
+        raise RuntimeError(
+            f"Runtime config definition reconciliation conflicted repeatedly: {normalized_key}"
         )
-        return self._require_runtime_config_definition(key)
 
     def list_runtime_config_definitions(
         self, *, include_disabled: bool = True
@@ -1046,7 +1113,7 @@ class PlatformConfigRepository:
     def runtime_config_revision(self) -> int:
         row = self.database.execute_one(
             """
-            select coalesce(max(revision), 0) as revision from (
+            select coalesce(sum(revision), 0) as revision from (
               select revision from platform_runtime_config_definition
               union all select revision from platform_runtime_config_value
               union all select revision from platform_secret

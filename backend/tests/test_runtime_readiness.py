@@ -70,6 +70,16 @@ def test_ready_checks_schema_database_rabbit_token_and_master_key(
             "supported_runtimes": ["python-v1", "typescript-v1"],
             "protocol_version": "1.0",
         }
+        assert ready["runtime_config"] == {
+            "source": runtime.settings.runtime_config_source,
+            "degraded": runtime.settings.runtime_config_degraded,
+            "revision": runtime.settings.runtime_config_revision,
+            "config_hash": runtime.settings.runtime_config_hash,
+            "errors": list(runtime.settings.runtime_config_errors),
+        }
+        assert isinstance(ready["runtime_config"]["revision"], int)
+        assert len(ready["runtime_config"]["config_hash"]) == 64
+        assert "test-only-master-key" not in str(ready["runtime_config"])
 
         missing_key = main._build_readiness(
             replace(runtime.settings, app_config_master_key=""),

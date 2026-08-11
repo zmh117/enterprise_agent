@@ -296,12 +296,23 @@ def build_platform_config_router() -> APIRouter:
     ) -> dict[str, Any]:
         _require_management_read(request, resource_type="platform_config")
         service = _container(request).platform_config_service
-        service.ensure_runtime_config_definitions()
         return {
             "definitions": service.list_runtime_config_definitions(
                 include_disabled=include_disabled
-            )
+            ),
+            "diagnostics": service.runtime_config_definition_diagnostics(),
         }
+
+    @router.post("/runtime-config/definitions/sync")
+    def sync_runtime_config_definitions(request: Request) -> dict[str, Any]:
+        try:
+            result = _container(request).platform_config_service.ensure_runtime_config_definitions(
+                actor_id=_actor(request),
+                correlation_id=_correlation_id(request),
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"sync": result}
 
     @router.post("/runtime-config/definitions")
     async def upsert_runtime_config_definition(

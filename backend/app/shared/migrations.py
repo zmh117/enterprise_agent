@@ -564,6 +564,195 @@ def _validate_adoption_metadata(
         )
 
 
+def _safe_migrator_build(value: str) -> str:
+    build = value.strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}", build):
+        raise MigrationDefinitionError(
+            "Migrator build must be a non-secret release or commit identifier"
+        )
+    return build
+
+
+def _runtime_config_summary(database: Database) -> dict[str, Any]:
+    row = database.execute_one(
+        """
+        select
+          (select count(*) from platform_runtime_config_definition) as definition_count,
+          (select count(*) from platform_runtime_config_value) as value_count,
+          (select count(*) from platform_secret) as secret_count,
+          (select coalesce(sum(revision), 0) from (
+             select revision from platform_runtime_config_definition
+             union all select revision from platform_runtime_config_value
+             union all select revision from platform_secret
+           ) runtime_config_revisions) as revision
+        """
+    )
+    if row is None:
+        raise MigrationDefinitionError("Runtime config summary could not be read")
+    summary = {
+        "definition_count": int(row["definition_count"]),
+        "value_count": int(row["value_count"]),
+        "secret_count": int(row["secret_count"]),
+        "revision": int(row["revision"]),
+    }
+    return {**summary, "digest": digest_payload(summary)}
+
+
+class BaselineAdoptionInspector:
+    """Read-only evidence collection for legacy baseline adoption operations."""
+
+    def __init__(self, database: Database, migrations_dir: Path) -> None:
+        self.database = database
+        self.migrations_dir = migrations_dir
+
+    def preflight(self, *, migrator_build: str) -> dict[str, Any]:
+        build = _safe_migrator_build(migrator_build)
+        catalog, manifest, migrator = self._load_context(build)
+        validator = SchemaHeadValidator(self.database, self.migrations_dir)
+        if not validator._ledger_exists():
+            raise MigrationDefinitionError(
+                "Baseline adoption preflight requires the exact immutable 042 ledger"
+            )
+        ledger = SchemaMigrationLedger(self.database)
+        records = ledger.read_records()
+        _validate_legacy_manifest_records(records, manifest)
+        adoptions = ledger.read_adoptions() if validator._adoption_table_exists() else []
+        if adoptions:
+            raise MigrationDefinitionError(
+                "Baseline adoption preflight requires an unadopted legacy ledger"
+            )
+        evidence = self._physical_evidence(manifest)
+        counts = _retained_data_counts(self.database)
+        baseline = catalog[0]
+        return {
+            "mode": "preflight",
+            "status": "ready-for-adoption",
+            "source_generation": str(manifest["legacy_generation"]),
+            "source_head": str(manifest["legacy_head"]),
+            "target_baseline": baseline.version,
+            "target_baseline_name": baseline.name,
+            "target_baseline_checksum": baseline.checksum,
+            "legacy_catalog_digest": str(manifest["catalog_digest"]),
+            **evidence,
+            "retained_data_counts": counts,
+            "retained_data_digest": digest_payload(counts),
+            "runtime_config_summary": _runtime_config_summary(self.database),
+            "migrator_build": build,
+        }
+
+    def verify(self, *, expected_migrator_build: str) -> dict[str, Any]:
+        build = _safe_migrator_build(expected_migrator_build)
+        catalog, manifest, migrator = self._load_context(build)
+        schema_head = SchemaHeadValidator(
+            self.database,
+            self.migrations_dir,
+        ).require_current()
+        ledger = SchemaMigrationLedger(self.database)
+        records = ledger.read_records()
+        validator = SchemaHeadValidator(self.database, self.migrations_dir)
+        if not validator._adoption_table_exists():
+            raise MigrationDefinitionError(
+                "Baseline adoption verification requires adoption metadata"
+            )
+        adoptions = ledger.read_adoptions()
+        generation, _ = migrator._validate_baseline_records(
+            records=records,
+            catalog=catalog,
+            manifest=manifest,
+            adoptions=adoptions,
+            require_full=True,
+        )
+        if generation != "adopted-legacy":
+            raise MigrationDefinitionError(
+                "Baseline adoption verification does not accept a fresh baseline database"
+            )
+        adoption = adoptions[0]
+        if str(adoption["migrator_build"]) != build:
+            raise MigrationDefinitionError(
+                "Baseline adoption migrator build does not match the expected build"
+            )
+        evidence = self._physical_evidence(manifest)
+        counts = _retained_data_counts(self.database)
+        try:
+            adopted_counts = json.loads(str(adoption["retained_data_counts_json"]))
+        except json.JSONDecodeError as exc:
+            raise MigrationDefinitionError(
+                "Baseline adoption retained-data evidence is invalid"
+            ) from exc
+        if counts != adopted_counts:
+            raise MigrationDefinitionError(
+                "Baseline adoption retained-data counts changed before verification"
+            )
+        return {
+            "mode": "verify",
+            "status": "adoption-verified",
+            "source_generation": str(manifest["legacy_generation"]),
+            "source_head": str(manifest["legacy_head"]),
+            "target_baseline": catalog[0].version,
+            "schema_head": schema_head,
+            "marker_count": sum(
+                1 for record in records if str(record["version"]) == BASELINE_VERSION
+            ),
+            "adoption_metadata_count": len(adoptions),
+            "legacy_catalog_digest": str(manifest["catalog_digest"]),
+            **evidence,
+            "retained_data_counts": counts,
+            "retained_data_digest": digest_payload(counts),
+            "runtime_config_summary": _runtime_config_summary(self.database),
+            "migrator_build": build,
+            "readiness": {
+                "schema_head_current": True,
+                "adoption_verified": True,
+                "business_start_gate": "schema-verified",
+            },
+        }
+
+    def _load_context(
+        self,
+        migrator_build: str,
+    ) -> tuple[tuple[MigrationArtifact, ...], dict[str, Any], Migrator]:
+        catalog = load_migration_catalog(self.migrations_dir)
+        migrator = Migrator(
+            self.database,
+            self.migrations_dir,
+            migrator_build=migrator_build,
+        )
+        manifest = migrator._load_baseline_manifest()
+        migrator._validate_baseline_catalog(catalog)
+        if catalog[0].version != str(manifest["target_baseline"]):
+            raise MigrationDefinitionError(
+                "Baseline adoption target does not match the immutable manifest"
+            )
+        return catalog, manifest, migrator
+
+    def _physical_evidence(self, manifest: dict[str, Any]) -> dict[str, str]:
+        expected_schema = _manifest_schema_for_engine(manifest, self.database.engine)
+        actual_schema = schema_snapshot(self.database)
+        if str(actual_schema["fingerprint"]) != str(expected_schema["fingerprint"]):
+            raise MigrationDefinitionError(
+                "Legacy 042 schema fingerprint does not match the immutable manifest"
+            )
+        expected_comments = manifest.get("postgres_comments")
+        if not isinstance(expected_comments, dict):
+            raise MigrationDefinitionError(
+                "Legacy manifest is missing the PostgreSQL comment fingerprint"
+            )
+        if self.database.engine == "postgres":
+            actual_comments = postgres_comment_snapshot(self.database)
+            if str(actual_comments["digest"]) != str(expected_comments["digest"]):
+                raise MigrationDefinitionError(
+                    "Legacy 042 PostgreSQL comments do not match the immutable manifest"
+                )
+        elif self.database.execute("pragma foreign_key_check"):
+            raise MigrationDefinitionError(
+                "Legacy 042 schema has foreign key integrity errors"
+            )
+        return {
+            "schema_fingerprint": str(actual_schema["fingerprint"]),
+            "comment_manifest_digest": str(expected_comments["digest"]),
+        }
+
+
 @dataclass(frozen=True)
 class MigrationRunResult:
     head: str

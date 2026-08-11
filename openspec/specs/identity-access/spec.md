@@ -2260,15 +2260,30 @@ ONES 本人与治理摘要 SHALL 展示用户名称、身份状态、默认 Team
 - **THEN** 测试可以注入内部 principal，但该能力不能在生产配置中默认启用
 
 ### Requirement: 首个管理员通过显式 bootstrap 创建
-系统 SHALL 提供显式运维命令创建首个管理员，并 MUST NOT 在生产 migration 或 seed 中创建已知默认密码。
+系统 SHALL 提供在 schema migration 成功后执行的显式、幂等初始管理员 bootstrap；当数据库尚无有效平台管理员时，该操作 SHALL 创建唯一启用的人类用户 `admin`、显示名称 `Administrator`、受保护的 `platform-admin` 角色和启用的成员关系，并写入不含凭据的审计记录。系统 MUST 只保存符合现有密码策略的 Argon2 密码哈希，不得记录、返回或持久化明文密码，并 MUST NOT 在非 local/test 环境的 migration、seed 或 bootstrap 中使用已知默认密码。
 
-#### Scenario: 空系统创建首个管理员
-- **WHEN** 运维人员在没有管理员的环境执行 bootstrap 命令并安全输入凭证
-- **THEN** 系统创建内部用户、管理员角色关系和审计记录
+#### Scenario: Local 空库创建首个管理员
+- **WHEN** schema migration 已成功、`APP_ENV` 为 local 或 test、数据库尚无管理员且 bootstrap 未提供外部密码文件
+- **THEN** 系统创建 `admin`、`platform-admin` 角色和启用成员关系，并使密码 `111111111111` 可用于本地首次登录
+- **THEN** 数据库、日志、审计和命令输出均不包含该明文
 
 #### Scenario: 重复执行 bootstrap
-- **WHEN** 系统已经存在管理员并再次执行未授权 bootstrap
-- **THEN** 系统拒绝创建额外默认管理员
+- **WHEN** 初始管理员、平台管理员角色或成员关系已经存在
+- **THEN** bootstrap 幂等完成且不创建重复用户、重复角色或重复成员关系
+- **THEN** 系统不重置任何现有密码、状态或 revision
+
+#### Scenario: 存在其他管理员
+- **WHEN** 数据库已有至少一个有效平台管理员但不存在固定 ID 的本地管理员 fixture
+- **THEN** bootstrap 保留现有管理员事实并安全退出，不额外创建默认管理员
+
+#### Scenario: Production 空库提供安全密码输入
+- **WHEN** staging、production 或其他非 local/test 空库通过权限受限文件、容器 Secret 或交互式安全输入提供合规初始密码
+- **THEN** 系统创建初始管理员、立即丢弃明文输入并只保存 Argon2 哈希
+
+#### Scenario: Production 空库没有安全密码输入
+- **WHEN** 非 local/test 数据库没有管理员且 bootstrap 未获得受支持的安全密码输入
+- **THEN** 初始化非零退出并阻止业务服务启动，错误不包含密码或其他 Secret
+- **THEN** 系统不得回退到 `111111111111`、命令行明文参数、普通环境变量或仓库内明文
 
 
 <!-- Reconciled from mcp_new capability: `web-admin-console` -->

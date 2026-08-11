@@ -10,10 +10,12 @@ import uuid
 import pytest
 
 from app.bootstrap import build_api_container, build_worker_container
+from app.cli import baseline_adoption as baseline_adoption_cli
 from app.cli import migrate as migrate_cli
 from app.shared.config import Settings
 from app.shared.database import Database, default_migrations_dir
 from app.shared.migrations import (
+    BaselineAdoptionInspector,
     BaselineAdoptionRollback,
     MigrationDefinitionError,
     MigrationExecutionError,
@@ -217,6 +219,123 @@ def test_exact_legacy_042_adoption_preserves_schema_data_and_is_idempotent() -> 
     assert SchemaMigrationLedger(database).read_records()[-1]["version"] == "100"
     assert len(SchemaMigrationLedger(database).read_adoptions()) == 1
     assert database.execute("pragma foreign_key_check") == []
+    database.close()
+
+
+def test_baseline_adoption_preflight_is_read_only_and_returns_safe_evidence() -> None:
+    database = Database("sqlite:///:memory:")
+    Migrator(
+        database,
+        default_migrations_dir(),
+        migrator_build="baseline-fixture",
+    ).run()
+    database.execute(
+        """
+        insert into app_user
+          (id, username, display_name, status, created_at, updated_at)
+        values ('preflight-user', 'preflight-user', 'must-not-appear', 'enabled', ?, ?)
+        """,
+        ("2026-08-11T00:00:00Z", "2026-08-11T00:00:00Z"),
+    )
+    _convert_fresh_baseline_to_legacy_ledger(database)
+    database.execute("drop table schema_baseline_adoption")
+    before_ledger = SchemaMigrationLedger(database).read_records()
+
+    report = BaselineAdoptionInspector(
+        database,
+        default_migrations_dir(),
+    ).preflight(migrator_build="build-2026.08.11")
+
+    assert report["status"] == "ready-for-adoption"
+    assert report["source_head"] == "042"
+    assert report["target_baseline"] == "100"
+    assert report["migrator_build"] == "build-2026.08.11"
+    assert report["retained_data_counts"]["app_user"] == 1
+    assert len(report["retained_data_digest"]) == 64
+    assert report["runtime_config_summary"]["revision"] == 0
+    assert SchemaMigrationLedger(database).read_records() == before_ledger
+    assert database.execute_one(
+        "select name from sqlite_master where type = 'table' and name = 'schema_baseline_adoption'"
+    ) is None
+    assert "must-not-appear" not in json.dumps(report, ensure_ascii=False)
+    database.close()
+
+
+def test_baseline_adoption_verify_checks_marker_counts_config_and_readiness() -> None:
+    database = Database("sqlite:///:memory:")
+    Migrator(
+        database,
+        default_migrations_dir(),
+        migrator_build="baseline-fixture",
+    ).run()
+    _convert_fresh_baseline_to_legacy_ledger(database)
+    Migrator(
+        database,
+        default_migrations_dir(),
+        migrator_build="build-2026.08.11",
+    ).run()
+    before_ledger = SchemaMigrationLedger(database).read_records()
+    before_adoptions = SchemaMigrationLedger(database).read_adoptions()
+
+    report = BaselineAdoptionInspector(
+        database,
+        default_migrations_dir(),
+    ).verify(expected_migrator_build="build-2026.08.11")
+
+    assert report["status"] == "adoption-verified"
+    assert report["schema_head"] == "100"
+    assert report["marker_count"] == 1
+    assert report["adoption_metadata_count"] == 1
+    assert report["runtime_config_summary"] == {
+        "definition_count": 0,
+        "value_count": 0,
+        "secret_count": 0,
+        "revision": 0,
+        "digest": report["runtime_config_summary"]["digest"],
+    }
+    assert report["readiness"] == {
+        "schema_head_current": True,
+        "adoption_verified": True,
+        "business_start_gate": "schema-verified",
+    }
+    assert SchemaMigrationLedger(database).read_records() == before_ledger
+    assert SchemaMigrationLedger(database).read_adoptions() == before_adoptions
+    database.close()
+
+
+def test_failed_adoption_acceptance_allows_marker_only_rollback() -> None:
+    database = Database("sqlite:///:memory:")
+    Migrator(database, default_migrations_dir(), migrator_build="fixture").run()
+    _convert_fresh_baseline_to_legacy_ledger(database)
+    Migrator(
+        database,
+        default_migrations_dir(),
+        migrator_build="build-2026.08.11",
+    ).run()
+    database.execute(
+        """
+        insert into app_user
+          (id, username, display_name, status, created_at, updated_at)
+        values ('unexpected-write', 'unexpected-write', 'Unexpected', 'enabled', ?, ?)
+        """,
+        ("2026-08-11T00:00:00Z", "2026-08-11T00:00:00Z"),
+    )
+
+    with pytest.raises(MigrationDefinitionError, match="counts changed"):
+        BaselineAdoptionInspector(
+            database,
+            default_migrations_dir(),
+        ).verify(expected_migrator_build="build-2026.08.11")
+
+    assert BaselineAdoptionRollback(
+        database,
+        default_migrations_dir(),
+        migrator_build="rollback-test",
+    ).run() == "042"
+    assert SchemaMigrationLedger(database).read_records()[-1]["version"] == "042"
+    assert database.execute_one(
+        "select username from app_user where id = 'unexpected-write'"
+    ) == {"username": "unexpected-write"}
     database.close()
 
 
@@ -436,6 +555,30 @@ def test_migrator_cli_redacts_unexpected_database_failure(
     assert migrate_cli.main(["--build", "test-build"]) == 1
     output = capsys.readouterr().out
     assert output == ("MIGRATION_FAILED: database unavailable or migration lock failed\n")
+    assert "must-not-leak" not in output
+    assert "private-db.internal" not in output
+
+
+def test_baseline_adoption_cli_redacts_unexpected_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fail_without_exposing_connection(
+        self: BaselineAdoptionInspector,
+        *,
+        migrator_build: str,
+    ) -> dict[str, object]:
+        raise RuntimeError("postgresql://user:must-not-leak@private-db.internal/database")
+
+    monkeypatch.setattr(BaselineAdoptionInspector, "preflight", fail_without_exposing_connection)
+
+    assert baseline_adoption_cli.main(
+        ["preflight", "--build", "build-2026.08.11"]
+    ) == 1
+    output = capsys.readouterr().out
+    assert output == (
+        "BASELINE_ADOPTION_PREFLIGHT_FAILED: database unavailable or verification failed\n"
+    )
     assert "must-not-leak" not in output
     assert "private-db.internal" not in output
 

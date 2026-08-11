@@ -50,10 +50,13 @@ POST /api/platform/secrets/deepseek_api_key/disable
 
 ```http
 GET  /api/platform/runtime-config/definitions
+POST /api/platform/runtime-config/definitions/sync
 POST /api/platform/runtime-config/values
 GET  /api/platform/runtime-config/snapshot?service_name=agent-worker
 GET  /api/platform/runtime-config/env-migration
 ```
+
+服务在 schema head 校验通过后的受控初始化阶段对账代码内置 definition。管理员也可以通过带认证、CSRF 和权限校验的 `POST /api/platform/runtime-config/definitions/sync` 显式同步。Definition 列表、snapshot 和 ready diagnostics 都是只读路径，不会创建或更新 definition；若初始化未完成，读取返回 `runtime_config_definition_missing`／degraded 诊断，而不是通过 GET 自我修复数据库。
 
 保存普通运行参数：
 
@@ -86,6 +89,13 @@ GET  /api/platform/runtime-config/env-migration
 ```
 
 修改配置后，重启对应服务生效。后续 Web 平台可以在此基础上增加发布、reload 和拖拽编排配置。
+
+Snapshot 和 `/api/ready` 暴露 `revision` 与 `config_hash`：
+
+- `revision` 是 definitions、values 和相关 Secret metadata 的聚合观测令牌；调用方只能比较是否变化，不得依赖或推算其具体数值，版本升级时数值可以跳变。
+- `config_hash` 是脱敏后的 effective config 内容身份；未影响当前 effective config 的 metadata 变化可以只改变 `revision`。
+- 无变化 definition 对账、GET 和重复 snapshot 不改变这两个标识；真实持久化变化必须改变相应版本标识。
+- 两个字段以及 diagnostics 都不得包含 Secret 明文、完整连接串或原始业务数据。
 
 ## 安全边界
 

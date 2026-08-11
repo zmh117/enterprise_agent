@@ -382,9 +382,10 @@ class RuntimeConfigRegistry:
     def __init__(self, repository: PlatformConfigRepository) -> None:
         self.repository = repository
 
-    def ensure_builtin_definitions(self) -> None:
+    def ensure_builtin_definitions(self) -> dict[str, int]:
+        summary = {"created": 0, "updated": 0, "unchanged": 0}
         for definition in RUNTIME_CONFIG_DEFINITIONS:
-            self.repository.upsert_runtime_config_definition(
+            result = self.repository.upsert_runtime_config_definition(
                 key=definition.key,
                 value_type=definition.value_type,
                 default=definition.default,
@@ -393,6 +394,19 @@ class RuntimeConfigRegistry:
                 service_names=list(definition.service_names),
                 description=definition.description,
             )
+            summary[result.outcome] += 1
+        return summary
+
+    def missing_builtin_definition_keys(self) -> list[str]:
+        existing = {
+            str(definition["key"])
+            for definition in self.repository.list_runtime_config_definitions()
+        }
+        return sorted(
+            definition.key
+            for definition in RUNTIME_CONFIG_DEFINITIONS
+            if definition.key not in existing
+        )
 
     def env_migration_list(self) -> list[dict[str, Any]]:
         return [
@@ -444,7 +458,14 @@ class RuntimeConfigSnapshotBuilder:
         }
         values = self.repository.list_runtime_config_values(include_disabled=include_disabled)
         selected: dict[str, dict[str, Any]] = {}
-        errors: list[str] = []
+        missing_definition_keys = sorted(
+            definition.key
+            for definition in RUNTIME_CONFIG_DEFINITIONS
+            if definition.key not in definitions
+        )
+        errors: list[str] = [
+            f"runtime_config_definition_missing:{key}" for key in missing_definition_keys
+        ]
         scopes = scopes or {}
         for value in values:
             if value["status"] != "enabled":

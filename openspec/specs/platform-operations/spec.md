@@ -841,6 +841,65 @@ Migrator MUST 拒绝重复版本，并在执行前校验已应用 migration 的 
 - **WHEN** 测试或本地环境使用 SQLite 执行同一迁移目录
 - **THEN** PostgreSQL `COMMENT ON` 语句被兼容跳过，最终 SQLite schema 仍与静态注释清单进行完整性对照
 
+### Requirement: 活动迁移目录必须从最终 Schema 基线开始
+系统 MUST 使用 `100_baseline_v1.sql` 作为第一代活动 schema 基线；空 SQLite 或 PostgreSQL 数据库 MUST 直接得到与旧 001–042 完整迁移链最终状态等价的表、字段、约束、索引和适用的 PostgreSQL 中文注释，后续迁移版本 MUST 从 101 单调递增。
+
+#### Scenario: 全新 PostgreSQL 数据库迁移
+- **WHEN** Migrator 面对没有项目表和迁移记录的 PostgreSQL 数据库
+- **THEN** 系统只执行活动基线及其后的迁移，并得到完整最终 schema 与 100% 项目表字段中文注释覆盖
+
+#### Scenario: 全新 SQLite 数据库迁移
+- **WHEN** 测试或本地流程对空 SQLite 数据库执行活动迁移目录
+- **THEN** 系统建立与 PostgreSQL 领域结构等价的 SQLite schema，并安全跳过 PostgreSQL 专用注释语句
+
+### Requirement: Legacy Migration Manifest 必须冻结被替换的迁移身份
+仓库 MUST 保存 001–042 每个迁移的版本、文件名和 checksum，以及整个旧目录的 catalog digest 与最终 schema fingerprint；旧 SQL 不再参与活动迁移解析，legacy manifest 一旦发布 MUST NOT 被原地改写。
+
+#### Scenario: 旧账本完全匹配 manifest
+- **WHEN** Migrator 读取一个精确执行到 042 的旧账本
+- **THEN** 系统逐项验证版本、名称、checksum 和 catalog digest 后才允许进入基线等价验证
+
+#### Scenario: Manifest 或旧账本发生漂移
+- **WHEN** 任一旧迁移记录缺失、重复、名称变化、checksum 不同或 manifest digest 不一致
+- **THEN** Migrator 失败关闭且不得登记基线或执行后续迁移
+
+### Requirement: 精确 042 数据库必须通过 Baseline Adoption 无损接轨
+对账本精确到 042 的数据库，Migrator MUST 验证最终 schema fingerprint、PostgreSQL 注释覆盖和关键保留数据不变量，并在单一事务中登记 100 基线等价事实；系统 MUST 保留旧 ledger 记录且 MUST NOT 重放基线 DDL、清空业务数据或重置 revision。
+
+#### Scenario: 042 数据库成功采纳基线
+- **WHEN** 旧 ledger、schema、注释和数据不变量全部匹配
+- **THEN** 系统记录来源 head、legacy catalog digest、schema fingerprint、100 基线 checksum 和采纳时间，并允许后续 101+ migration
+
+#### Scenario: 042 Schema 存在漂移
+- **WHEN** 账本为 042 但表、字段、约束、索引、注释或关键保留对象不符合基线
+- **THEN** Baseline Adoption 失败且数据库保持原账本和原数据不变
+
+#### Scenario: 重复执行已采纳数据库
+- **WHEN** Migrator 再次处理已经登记 100 等价事实且没有新迁移的数据库
+- **THEN** 系统幂等退出，不重复插入采纳记录或修改业务数据
+
+### Requirement: 非 042 Legacy Head 必须失败关闭
+活动 Migrator MUST 拒绝直接处理 001–041、空洞 ledger、无 ledger 的非空 schema 或未知旧 head，并 SHALL 提示操作人使用旧版本镜像先升级到精确 042；系统不得猜测缺失 migration 或把部分 schema 当作完整基线。
+
+#### Scenario: 数据库只执行到 041
+- **WHEN** 新 Migrator 发现合法但未达到 042 的旧账本
+- **THEN** 系统不执行 100，并返回先使用旧版本升级到 042 的安全提示
+
+#### Scenario: 非空数据库没有账本
+- **WHEN** 新 Migrator 发现项目表存在但没有可验证的旧 ledger
+- **THEN** 系统失败关闭，不依据表名近似匹配自动采纳基线
+
+### Requirement: 空库编排必须在启动业务服务前完成管理员 Bootstrap
+Compose 和受支持的部署脚本 MUST 按“schema migration、初始管理员 bootstrap、Runtime grants”的顺序执行；任一步失败时 Migrator 服务 MUST 非零退出，API、Worker、Runtime 和 Channel 服务不得启动。
+
+#### Scenario: 空库完成完整初始化
+- **WHEN** 部署流程首次处理空数据库
+- **THEN** schema 达到当前 head、初始管理员可登录、Runtime grants 已应用后业务服务才启动
+
+#### Scenario: 管理员 Bootstrap 失败
+- **WHEN** 初始管理员缺少必需安全输入或身份写入失败
+- **THEN** Compose migrator 失败且依赖 `service_completed_successfully` 的服务保持未启动
+
 
 <!-- Reconciled from mcp_new capability: `platform-secret-management` -->
 
@@ -1050,3 +1109,36 @@ Migrator MUST 拒绝重复版本，并在执行前校验已应用 migration 的 
 - **WHEN** 一个 completed change 的 delta 仍按领域化之前的 capability 路径组织
 - **THEN** 维护流程先按明确映射把 delta 语义同步到 canonical domains，再使用跳过重复同步的方式归档
 - **AND** 归档不得重新创建碎片主规格目录
+
+### Requirement: 项目文档必须具有单一入口和稳定分类
+仓库 MUST 在 `docs/README.md` 提供文档总索引，并 SHALL 将当前文档按 architecture、guides、operations、verification 和 reference 分类；历史材料 MUST 位于 archive 分类，不得与当前操作指引平铺混放。
+
+#### Scenario: 维护者查找当前运行架构
+- **WHEN** 维护者从 `docs/README.md` 查找当前系统架构或运行链路
+- **THEN** 索引将其导航到 architecture 下的当前文档，并明确该文档的事实范围
+
+#### Scenario: 维护者查找运维步骤
+- **WHEN** 维护者查找数据库、Compose、Master Key、钉钉重建或 Runtime 运维步骤
+- **THEN** 索引将其导航到 operations 下的可执行 Runbook，而不是历史实施记录
+
+### Requirement: 当前事实、规范意图和历史证据必须明确分层
+当前文档 MUST 区分已由代码或运行验证确认的事实、Canonical OpenSpec 规范意图和带日期的验证快照；ADR、旧实施基线和退役组件说明 MUST NOT 被表述为当前能力。
+
+#### Scenario: 旧 API Platform ADR 被保留
+- **WHEN** 旧 API Capability、Handler、Connection 或 Resource Mapping ADR 仍有审计价值
+- **THEN** 文档移动到 archive 历史区并标记其退役边界，不再出现在当前设计入口
+
+#### Scenario: 验证记录可能过期
+- **WHEN** 文档记录一次 Compose、数据库或 Runtime 实际验收
+- **THEN** 文档标明验证日期、版本或 head，并不得把该快照自动描述为当前实时状态
+
+### Requirement: 文档移动不得破坏仓库引用
+文档重组 MUST 更新根 README、backend README、CONTEXT、OpenSpec artifact、脚本和文档之间的相对链接，并 MUST 提供自动化本地链接检查，拒绝不存在的仓库内 Markdown 目标。
+
+#### Scenario: 文档路径发生移动
+- **WHEN** 当前文档或历史 ADR 被移动到新分类目录
+- **THEN** 所有仓库内引用同步更新且链接检查通过
+
+#### Scenario: 提交包含失效链接
+- **WHEN** Markdown 链接指向不存在的仓库内文件或锚点格式无法解析
+- **THEN** 文档质量门禁返回非零状态并阻止将整理工作标记完成

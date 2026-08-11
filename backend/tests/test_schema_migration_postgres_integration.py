@@ -20,9 +20,16 @@ from app.modules.delivery.infrastructure.adapters import DeliveryAdapter
 from app.modules.job.application.job_dispatch_service import JobDispatchOutboxDispatcher
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.repositories import AgentRepository, AuditRepository
+from app.modules.platform_config.application.runtime_config import (
+    RuntimeConfigRegistry,
+    RuntimeConfigSnapshotBuilder,
+)
+from app.modules.platform_config.infrastructure import PlatformConfigRepository
 from app.shared.config import AgentRuntimeSettings, DeliverySettings, QueueSettings, Settings
 from app.shared.database import Database, default_migrations_dir
 from app.shared.migrations import (
+    BaselineAdoptionInspector,
+    BaselineAdoptionRollback,
     MigrationDefinitionError,
     MigrationExecutionError,
     Migrator,
@@ -186,6 +193,187 @@ def test_postgres_exact_042_adoption_preserves_retained_data(
         ) == {"username": "postgres-adoption-user"}
         assert SchemaMigrationLedger(database).read_records()[-1]["version"] == "100"
         assert len(SchemaMigrationLedger(database).read_adoptions()) == 1
+    finally:
+        database.close()
+
+
+def test_postgres_baseline_adoption_operational_verification_and_rollback(
+    postgres_database_dsn: str,
+) -> None:
+    database = Database(postgres_database_dsn)
+    try:
+        Migrator(
+            database,
+            default_migrations_dir(),
+            migrator_build="postgres-adoption-fixture",
+        ).run()
+        PlatformConfigRepository(database).upsert_runtime_config_definition(
+            key="POSTGRES_ADOPTION_CONFIG",
+            value_type="string",
+            default="safe-default",
+        )
+        database.execute(
+            """
+            insert into app_user
+              (id, username, display_name, status, created_at, updated_at)
+            values ('postgres-adoption-user', 'postgres-adoption-user',
+                    'Postgres Adoption User', 'enabled', ?, ?)
+            """,
+            ("2026-08-11T00:00:00Z", "2026-08-11T00:00:00Z"),
+        )
+        _convert_postgres_baseline_to_legacy_ledger(database)
+        before_records = SchemaMigrationLedger(database).read_records()
+
+        preflight = BaselineAdoptionInspector(
+            database,
+            default_migrations_dir(),
+        ).preflight(migrator_build="build-2026.08.11")
+
+        assert preflight["status"] == "ready-for-adoption"
+        assert preflight["runtime_config_summary"]["revision"] == 1
+        assert SchemaMigrationLedger(database).read_records() == before_records
+        assert SchemaMigrationLedger(database).read_adoptions() == []
+
+        adopted = Migrator(
+            database,
+            default_migrations_dir(),
+            migrator_build="build-2026.08.11",
+        ).run()
+        repeated = Migrator(
+            database,
+            default_migrations_dir(),
+            migrator_build="build-2026.08.11",
+        ).run()
+        verified = BaselineAdoptionInspector(
+            database,
+            default_migrations_dir(),
+        ).verify(expected_migrator_build="build-2026.08.11")
+
+        assert adopted.baselined == 1
+        assert repeated.baselined == 0
+        assert repeated.applied == ()
+        assert verified["status"] == "adoption-verified"
+        assert verified["runtime_config_summary"]["revision"] == 1
+        assert verified["retained_data_counts"]["app_user"] == 1
+
+        database.execute(
+            """
+            insert into app_user
+              (id, username, display_name, status, created_at, updated_at)
+            values ('acceptance-failure-user', 'acceptance-failure-user',
+                    'Acceptance Failure', 'enabled', ?, ?)
+            """,
+            ("2026-08-11T00:00:00Z", "2026-08-11T00:00:00Z"),
+        )
+        with pytest.raises(MigrationDefinitionError, match="counts changed"):
+            BaselineAdoptionInspector(
+                database,
+                default_migrations_dir(),
+            ).verify(expected_migrator_build="build-2026.08.11")
+
+        assert BaselineAdoptionRollback(
+            database,
+            default_migrations_dir(),
+            migrator_build="rollback-test",
+        ).run() == "042"
+        assert SchemaMigrationLedger(database).read_records()[-1]["version"] == "042"
+        assert SchemaMigrationLedger(database).read_adoptions() == []
+    finally:
+        database.close()
+
+
+def test_postgres_concurrent_runtime_config_reconciliation_counts_change_once(
+    postgres_database_dsn: str,
+) -> None:
+    database = Database(postgres_database_dsn)
+    try:
+        Migrator(
+            database,
+            default_migrations_dir(),
+            migrator_build="postgres-runtime-config-fixture",
+        ).run()
+    finally:
+        database.close()
+
+    def reconcile(description: str, barrier: threading.Barrier):
+        worker_database = Database(postgres_database_dsn)
+        try:
+            barrier.wait(timeout=10)
+            return PlatformConfigRepository(
+                worker_database
+            ).upsert_runtime_config_definition(
+                key="CONCURRENT_POSTGRES_CONFIG",
+                value_type="string",
+                default={"stable": True},
+                service_names=["worker-b", "worker-a", "worker-b"],
+                description=description,
+            )
+        finally:
+            worker_database.close()
+
+    create_barrier = threading.Barrier(8)
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        created = list(
+            executor.map(lambda _: reconcile("initial", create_barrier), range(8))
+        )
+    assert [result.outcome for result in created].count("created") == 1
+    assert [result.outcome for result in created].count("unchanged") == 7
+
+    update_barrier = threading.Barrier(8)
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        updated = list(
+            executor.map(lambda _: reconcile("changed", update_barrier), range(8))
+        )
+    assert [result.outcome for result in updated].count("updated") == 1
+    assert [result.outcome for result in updated].count("unchanged") == 7
+
+    database = Database(postgres_database_dsn)
+    try:
+        stored = PlatformConfigRepository(database).get_runtime_config_definition(
+            "CONCURRENT_POSTGRES_CONFIG"
+        )
+        assert stored is not None
+        assert stored["description"] == "changed"
+        assert stored["service_names"] == ["worker-a", "worker-b"]
+        assert stored["revision"] == 2
+    finally:
+        database.close()
+
+
+def test_postgres_runtime_config_reads_and_reconciliation_are_write_free(
+    postgres_database_dsn: str,
+) -> None:
+    database = Database(postgres_database_dsn)
+    try:
+        Migrator(
+            database,
+            default_migrations_dir(),
+            migrator_build="postgres-runtime-read-fixture",
+        ).run()
+        repository = PlatformConfigRepository(database)
+        registry = RuntimeConfigRegistry(repository)
+        builder = RuntimeConfigSnapshotBuilder(repository)
+        first_sync = registry.ensure_builtin_definitions()
+        before_definitions = repository.list_runtime_config_definitions()
+        before_revision = repository.runtime_config_revision()
+        before_audit = repository.list_config_audit(limit=500)
+
+        repeated_sync = registry.ensure_builtin_definitions()
+        first_snapshot = builder.build_snapshot(service_name="api-server")
+        second_snapshot = builder.build_snapshot(service_name="api-server")
+
+        assert first_sync["created"] == len(before_definitions)
+        assert repeated_sync == {
+            "created": 0,
+            "updated": 0,
+            "unchanged": len(before_definitions),
+        }
+        assert repository.list_runtime_config_definitions() == before_definitions
+        assert repository.runtime_config_revision() == before_revision
+        assert repository.list_config_audit(limit=500) == before_audit
+        assert first_snapshot["revision"] == second_snapshot["revision"] == before_revision
+        assert first_snapshot["config_hash"] == second_snapshot["config_hash"]
+        assert first_snapshot["errors"] == second_snapshot["errors"] == []
     finally:
         database.close()
 

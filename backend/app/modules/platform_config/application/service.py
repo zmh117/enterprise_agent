@@ -429,19 +429,19 @@ class PlatformConfigService:
         if actor_id:
             self.require_admin(actor_id)
         before_revision = self.repository.runtime_config_revision()
-        self.runtime_registry.ensure_builtin_definitions()
+        summary = self.runtime_registry.ensure_builtin_definitions()
         after_revision = self.repository.runtime_config_revision()
-        if actor_id:
+        if actor_id and (summary["created"] or summary["updated"]):
             self.repository.record_config_audit(
                 entity_type="runtime_config_definition",
                 entity_id="builtin",
                 action="sync",
                 actor_id=actor_id,
                 before={"revision": before_revision},
-                after={"revision": after_revision},
+                after={"revision": after_revision, **summary},
                 correlation_id=correlation_id,
             )
-        return {"revision": after_revision}
+        return {"revision": after_revision, **summary}
 
     def runtime_config_env_migration(self) -> list[dict[str, Any]]:
         return self.runtime_registry.env_migration_list()
@@ -451,6 +451,17 @@ class PlatformConfigService:
     ) -> list[dict[str, Any]]:
         return self.repository.list_runtime_config_definitions(include_disabled=include_disabled)
 
+    def runtime_config_definition_diagnostics(self) -> list[dict[str, Any]]:
+        missing = self.runtime_registry.missing_builtin_definition_keys()
+        if not missing:
+            return []
+        return [
+            {
+                "code": "runtime_config_definition_missing",
+                "keys": missing,
+            }
+        ]
+
     @operation_unit_of_work(lambda service: service.repository.database)
     def upsert_runtime_config_definition(
         self, payload: dict[str, Any], *, actor_id: str, correlation_id: str = ""
@@ -459,7 +470,7 @@ class PlatformConfigService:
         normalized = validate_runtime_config_definition_payload(payload)
         key = validate_code(normalized["key"], field="key")
         before = self.repository.get_runtime_config_definition(key)
-        entity = self.repository.upsert_runtime_config_definition(
+        reconciliation = self.repository.upsert_runtime_config_definition(
             key=key,
             value_type=normalized["value_type"],
             default=normalized["default"],
@@ -469,7 +480,16 @@ class PlatformConfigService:
             description=normalized["description"],
             status=validate_status(normalized["status"]).value,
         )
-        self._audit("runtime_config_definition", entity, "upsert", actor_id, before, correlation_id)
+        entity = reconciliation.entity
+        if reconciliation.outcome != "unchanged":
+            self._audit(
+                "runtime_config_definition",
+                entity,
+                "upsert",
+                actor_id,
+                before,
+                correlation_id,
+            )
         return entity
 
     def list_runtime_config_values(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
@@ -487,9 +507,6 @@ class PlatformConfigService:
         self.require_admin(actor_id)
         key = validate_code(str(payload.get("key") or ""), field="key")
         definition = self.repository.get_runtime_config_definition(key)
-        if not definition:
-            self.runtime_registry.ensure_builtin_definitions()
-            definition = self.repository.get_runtime_config_definition(key)
         if not definition:
             from app.shared.exceptions import NotFound
 
@@ -546,7 +563,6 @@ class PlatformConfigService:
     def runtime_config_snapshot(
         self, *, service_name: str = "", scopes: dict[str, str] | None = None
     ) -> dict[str, Any]:
-        self.runtime_registry.ensure_builtin_definitions()
         return self.runtime_snapshot_builder.build_snapshot(
             service_name=service_name,
             scopes=scopes or {},
