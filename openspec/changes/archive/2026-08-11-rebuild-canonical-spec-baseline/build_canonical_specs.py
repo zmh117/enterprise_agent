@@ -154,14 +154,18 @@ def read_source_blocks(mapping: list[tuple[str, str]]) -> dict[str, list[dict[st
             seen_titles.add(title)
             enriched = {**block, "source_capability": source, "canonical_domain": domain}
             grouped[domain].append(enriched)
-            manifest_entries.append({key: value for key, value in enriched.items() if key != "text"})
+            manifest_entries.append(
+                {key: value for key, value in enriched.items() if key != "text"}
+            )
     manifest = {
         "source_capability_count": len(mapping),
         "source_requirement_count": len(manifest_entries),
         "source_scenario_count": sum(int(entry["scenario_count"]) for entry in manifest_entries),
         "entries": manifest_entries,
     }
-    MANIFEST_PATH.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    MANIFEST_PATH.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     return grouped
 
 
@@ -179,7 +183,11 @@ def render_domain(
     *,
     delta: bool,
 ) -> str:
-    parts = ["## ADDED Requirements\n" if delta else f"# {domain} Specification\n\n## Purpose\n{PURPOSES[domain]}\n\n## Requirements\n"]
+    parts = [
+        "## ADDED Requirements\n"
+        if delta
+        else f"# {domain} Specification\n\n## Purpose\n{PURPOSES[domain]}\n\n## Requirements\n"
+    ]
     by_source: dict[str, list[dict[str, object]]] = defaultdict(list)
     for block in grouped[domain]:
         by_source[str(block["source_capability"])].append(block)
@@ -188,7 +196,9 @@ def render_domain(
         for block in by_source[source]:
             parts.append(str(block["text"]).rstrip() + "\n\n")
     if domain == "platform-operations":
-        parts.append("<!-- Migrated from baseline governance: `rebuild-canonical-spec-baseline` -->\n\n")
+        parts.append(
+            "<!-- Migrated from baseline governance: `rebuild-canonical-spec-baseline` -->\n\n"
+        )
         parts.append(GOVERNANCE_REQUIREMENTS.rstrip() + "\n")
     return "".join(parts).rstrip() + "\n"
 
@@ -212,7 +222,9 @@ def build(target_root: Path, *, delta: bool) -> None:
 def verify(target_root: Path) -> None:
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     expected = Counter(entry["sha256"] for entry in manifest["entries"])
-    governance_hashes = Counter(block["sha256"] for block in requirement_blocks(GOVERNANCE_REQUIREMENTS))
+    governance_hashes = Counter(
+        block["sha256"] for block in requirement_blocks(GOVERNANCE_REQUIREMENTS)
+    )
     actual_entries: list[dict[str, object]] = []
     for domain in DOMAIN_ORDER:
         path = target_root / domain / "spec.md"

@@ -1,0 +1,170 @@
+# Business Application 控制面
+
+## 职责边界
+
+Business Application 是控制面装配和发布单元：
+
+```text
+Business Application
+  ├─ Agent Publication（必选）
+  ├─ Workflow Publication（可选）
+  ├─ Trigger Binding
+  ├─ Delivery Binding
+  ├─ Session / Execution Policy
+  └─ MCP Tool 显式子集（必须属于 Agent Publication Envelope）
+```
+
+它不复制 Agent 或 Workflow 草稿，不保存 Connector 凭据，也不访问数据库、
+Redis 或 Loki。Identity/RBAC 决定谁能管理应用；Channel Connector 继续持有渠道
+边界；工具目录只来自代码 MCP Manifest。
+
+活动路由解析成功时，有效配置返回：
+
+```json
+{
+  "runtime_wired": true
+}
+```
+
+这表示后续新消息会使用该 publication 固定的 Agent 与 `session_policy`。
+草稿和仅发布但未激活的 revision 不会改变运行路径；三个数据面安全闸门仍优先。
+
+## 功能开关
+
+管理面由一个总开关控制：
+
+```dotenv
+FEATURE_WEB_ADMIN=false
+```
+
+关闭时不注册 `/api/admin` 管理入口。开启后统一身份、Session、RBAC 与业务应用
+控制面原子启用，但不会自动开启已发布 Runtime、真实模型或真实工具。
+
+## 数据模型
+
+- `business_application`：稳定编码、项目、负责人、生命周期和并发 revision。
+- `business_application_revision`：追加式草稿，旧修订不覆盖。
+- `business_application_revision_trigger`：入口与确定性路由键。
+- `business_application_revision_delivery`：非敏感投递引用。
+- `business_application_revision_mcp_tool`：草稿选择的 MCP Tool 显式子集。
+- `business_application_publication_mcp_tool`：发布时冻结的 Tool identifier、schema hash 与顺序。
+- `business_application_publication`：不可变 canonical snapshot 和 SHA-256。
+- `business_application_deployment`：环境级当前 publication 指针。
+- `business_application_active_route`：数据库唯一约束保护的活动路由投影。
+
+发布与激活分离。发布不会自动影响任何环境；历史 publication 可以显式重新激活。
+
+## 本地 Seed
+
+本地 seed 先建立平台管理员的以下权限：
+
+```text
+business_application.read
+business_application.create
+business_application.edit
+business_application.publish
+business_application.activate
+```
+
+依赖默认 Agent Publication 存在后，可以幂等创建未激活草稿：
+
+```bash
+FEATURE_WEB_ADMIN=true \
+  .venv/bin/python -m app.cli.seed_default_business_application
+```
+
+命令不会创建 deployment，也不会修改现有 Agent、Workflow 或 Job。
+
+## 管理 API 示例
+
+以下均为假标识。
+
+创建：
+
+```http
+POST /api/admin/business-applications
+Content-Type: application/json
+X-CSRF-Token: <current-session-csrf>
+
+{
+  "code": "diagnostic-assistant",
+  "name": "生产诊断助手",
+  "description": "只读诊断控制面",
+  "project_code": "default",
+  "owner_user_id": "user_example_admin"
+}
+```
+
+保存草稿：
+
+```http
+PUT /api/admin/business-applications/diagnostic-assistant/draft
+Content-Type: application/json
+X-CSRF-Token: <current-session-csrf>
+
+{
+  "expected_revision": 1,
+  "agent_publication_id": "agent_publication_example_v1",
+  "workflow_publication_id": "",
+  "session_policy": {
+    "conversation_mode": "channel",
+    "recent_message_limit": 20,
+    "retention_days": 30
+  },
+  "execution_policy": {
+    "max_turns": 12,
+    "timeout_seconds": 300,
+    "max_tool_calls": 30
+  },
+  "triggers": [],
+  "deliveries": [],
+  "mcp_tools": ["get_schema_directory", "query_database"]
+}
+```
+
+校验与发布：
+
+```http
+POST /api/admin/business-applications/diagnostic-assistant/validate
+{"revision_id":"business_app_revision_example"}
+```
+
+```http
+POST /api/admin/business-applications/diagnostic-assistant/publish
+{"revision_id":"business_app_revision_example"}
+```
+
+激活、历史回退与停用都使用 deployment 的 `expected_revision`：
+
+```http
+POST /api/admin/business-applications/diagnostic-assistant/environments/test/activate
+{"publication_id":"business_app_publication_example","expected_revision":0}
+```
+
+```http
+POST /api/admin/business-applications/diagnostic-assistant/environments/test/deactivate
+{"expected_revision":1}
+```
+
+## 安全边界
+
+- 所有写操作要求 Web Session、RBAC 和 CSRF。
+- 具体应用无读取权限时按不存在处理，避免枚举。
+- 草稿拒绝 URL、DSN、SQL、LogQL、Shell、Password、Secret、Token、Header、
+  数据库、Redis 和 Loki 配置。
+- MCP Tool 必须存在于所选 Agent Publication Envelope，并以相同 schema hash 冻结。
+- Snapshot、Resolver、审计和前端不返回 Connector Secret、Token、密码或完整敏感 URL。
+- Webhook 只能使用已启用内部服务账号；钉钉入口使用当前发送人。
+
+## 后续数据面接线前置清单
+
+数据面接线必须使用单独 OpenSpec 变更，并全部满足：
+
+1. 将现有入口 binding 显式迁移到 Business Application，禁止隐式全局切换。
+2. 增加按 connector 和 routing key 的灰度开关。
+3. 保留原默认 Agent 路径作为可操作回退。
+4. 验证 Resolver 失败不会回退到其他业务应用。
+5. 验证 actor 上下文由平台注入，模型不能修改。
+6. 完成钉钉私聊、群聊、Webhook、RabbitMQ、只读工具和 Delivery 端到端测试。
+7. 完成历史 publication 回退与入口 routing 回退演练。
+8. 明确 `runtime_wired=true` 的唯一切换位置和审计事件。

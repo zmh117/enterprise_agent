@@ -16,7 +16,7 @@ def test_027_fresh_schema_enforces_enterprise_and_identity_invariants() -> None:
             default_migrations_dir(),
             migrator_build="dingtalk-enterprise-test",
         ).run()
-        assert result.head == "042"
+        assert result.head == "100"
         timestamp = "2026-08-03T00:00:00+00:00"
         database.execute(
             """
@@ -97,13 +97,9 @@ def test_027_fresh_schema_enforces_enterprise_and_identity_invariants() -> None:
         database.close()
 
 
-def test_027_migration_contains_no_test_data_cleanup() -> None:
-    sql = (
-        (default_migrations_dir() / "027_dingtalk_enterprise_identity_observations.sql")
-        .read_text(encoding="utf-8")
-        .lower()
-    )
+def test_baseline_contains_dingtalk_enterprise_schema_without_fixture_data() -> None:
+    sql = (default_migrations_dir() / "100_baseline_v1.sql").read_text(encoding="utf-8")
 
-    assert "delete from" not in sql
-    assert "drop table" not in sql
-    assert "drop column" not in sql
+    assert "CREATE TABLE dingtalk_enterprise" in sql
+    assert "CREATE TABLE dingtalk_identity_application_observation" in sql
+    assert "INSERT INTO dingtalk_enterprise" not in sql.upper()

@@ -15,6 +15,8 @@ jobs:
           python-version: "3.12"
       - run: python -m venv .venv
       - run: .venv/bin/pip install -e '.[dev]'
+      - run: .venv/bin/pytest -q backend/tests/test_schema_migration_runtime.py backend/tests/test_initial_admin_bootstrap.py
+      - run: .venv/bin/python scripts/check_markdown_links.py
       - run: .venv/bin/pytest backend/tests
 
   admin-web:

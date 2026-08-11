@@ -37,7 +37,7 @@ def test_ready_checks_schema_database_rabbit_token_and_master_key(
         assert ready["core"] == {
             "database": True,
             "schema": True,
-            "schema_head": "042",
+            "schema_head": "100",
             "rabbitmq": True,
             "master_key": True,
             "runtime_assembly": True,
@@ -129,7 +129,7 @@ def test_schema_drift_makes_ready_fail_closed(monkeypatch) -> None:
             "_check_rabbitmq",
             lambda _url: True,
         )
-        runtime.database.execute("delete from schema_migration where version = '023'")
+        runtime.database.execute("delete from schema_migration where version = '100'")
         status = main._build_readiness(
             runtime.settings,
             database=runtime.database,

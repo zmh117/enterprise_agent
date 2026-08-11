@@ -29,7 +29,7 @@ ONES 本人身份绑定属于统一身份体系，独立于 MCP 和旧 API Platf
 
 ## 快速开始
 
-已有数据库升级前先阅读 [Compose 基础设施升级手册](docs/compose-postgres18-rabbitmq4-upgrade.md)。`migrator` 是唯一 schema 写入入口；失败时必须修复迁移，不要绕过 `service_completed_successfully`。
+已有数据库升级前先阅读 [Schema Baseline 升级手册](docs/operations/schema-baseline-upgrade.md)。`migrator` 是唯一 schema 写入入口；失败时必须修复迁移，不要绕过 `service_completed_successfully`。
 
 ```bash
 cp .env.example .env
@@ -71,7 +71,7 @@ Compose 的核心执行服务为：
 
 ## 测试数据与验证
 
-本地 MySQL、SQL Server、Oracle、Redis 和 Loki 测试数据说明见 [Agent 测试数据](docs/agent-test-data.md)：
+本地 MySQL、SQL Server、Oracle、Redis 和 Loki 测试数据说明见 [Agent 测试数据](docs/guides/agent-test-data.md)：
 
 ```bash
 scripts/agent_test_data.sh up
@@ -92,8 +92,9 @@ docker compose config --quiet
 
 ## 相关文档
 
-- [统一身份、RBAC 与 Agent 管理端](docs/unified-identity-rbac-admin.md)
-- [连续对话与多模态附件](docs/continuous-multimodal-conversations.md)
-- [Admin Web MVP](docs/admin-web-mvp.md)
-- [标准 MCP 工具服务](docs/tool-mcp.md)
-- [数据库备份与恢复](docs/compose-postgres18-rabbitmq4-upgrade.md)
+- [文档总索引](docs/README.md)
+- [统一身份、RBAC 与 Agent 管理端](docs/architecture/unified-identity-rbac-admin.md)
+- [连续对话与多模态附件](docs/architecture/continuous-multimodal-conversations.md)
+- [Admin Web MVP](docs/architecture/admin-web-mvp.md)
+- [标准 MCP 工具服务](docs/architecture/tool-mcp.md)
+- [数据库备份与恢复](docs/operations/compose-postgres18-rabbitmq4-upgrade.md)

@@ -3,16 +3,28 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import hashlib
+import json
 from pathlib import Path
 import re
 import time
 from typing import Any
 
 from app.shared.database import Database
+from app.shared.schema_baseline import (
+    LEGACY_HEAD,
+    LEGACY_MANIFEST_FILENAME,
+    TARGET_BASELINE,
+    digest_payload,
+    load_legacy_manifest,
+    postgres_comment_snapshot,
+    schema_snapshot,
+)
 
 
 MIGRATION_FILENAME = re.compile(r"^(?P<version>[0-9]{3}[a-z]?)_(?P<name>[a-z0-9][a-z0-9_]*)\.sql$")
 LEGACY_BASELINE_HEAD = "018"
+BASELINE_ADOPTION_SOURCE_HEAD = LEGACY_HEAD
+BASELINE_VERSION = TARGET_BASELINE
 
 
 class MigrationDefinitionError(RuntimeError):
@@ -53,6 +65,36 @@ CREATE TABLE IF NOT EXISTS schema_migration (
     migrator_build TEXT NOT NULL
 )
 """
+
+SCHEMA_BASELINE_ADOPTION_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS schema_baseline_adoption (
+    target_baseline TEXT PRIMARY KEY,
+    source_generation TEXT NOT NULL,
+    source_head TEXT NOT NULL,
+    legacy_catalog_digest TEXT NOT NULL CHECK(length(legacy_catalog_digest) = 64),
+    schema_fingerprint TEXT NOT NULL CHECK(length(schema_fingerprint) = 64),
+    comment_manifest_digest TEXT NOT NULL CHECK(length(comment_manifest_digest) = 64),
+    retained_data_counts_json TEXT NOT NULL,
+    retained_data_digest TEXT NOT NULL CHECK(length(retained_data_digest) = 64),
+    baseline_name TEXT NOT NULL,
+    baseline_checksum TEXT NOT NULL CHECK(length(baseline_checksum) = 64),
+    migrator_build TEXT NOT NULL,
+    adopted_at TEXT NOT NULL
+)
+"""
+
+RETAINED_DATA_TABLES = (
+    "app_user",
+    "user_external_identity",
+    "rbac_role",
+    "rbac_user_role",
+    "agent_definition",
+    "agent_publication",
+    "business_application",
+    "business_application_publication",
+    "integration_connector",
+    "platform_resource",
+)
 
 CREATE_TABLE = re.compile(
     r"\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
@@ -176,6 +218,110 @@ class SchemaMigrationLedger:
              order by version
             """
         )
+
+    def ensure_adoption_table(self) -> None:
+        self.database.execute(SCHEMA_BASELINE_ADOPTION_TABLE_SQL)
+
+    def read_adoptions(self) -> list[dict[str, Any]]:
+        return self.database.execute(
+            """
+            select target_baseline, source_generation, source_head,
+                   legacy_catalog_digest, schema_fingerprint,
+                   comment_manifest_digest, retained_data_counts_json,
+                   retained_data_digest, baseline_name, baseline_checksum,
+                   migrator_build, adopted_at
+              from schema_baseline_adoption
+             order by target_baseline
+            """
+        )
+
+    def adopt_legacy_baseline(
+        self,
+        *,
+        manifest: dict[str, Any],
+        baseline: MigrationArtifact,
+        migrator_build: str,
+    ) -> None:
+        self.ensure_table()
+        self.ensure_adoption_table()
+        with self.database.unit_of_work():
+            records = self.read_records()
+            _validate_legacy_manifest_records(records, manifest)
+            if self.read_adoptions():
+                raise MigrationDefinitionError(
+                    "Legacy baseline adoption metadata already exists without its marker"
+                )
+            expected_schema = _manifest_schema_for_engine(manifest, self.database.engine)
+            actual_schema = schema_snapshot(self.database)
+            if str(actual_schema["fingerprint"]) != str(expected_schema["fingerprint"]):
+                raise MigrationDefinitionError(
+                    "Legacy 042 schema fingerprint does not match the immutable manifest"
+                )
+            expected_comments = manifest.get("postgres_comments")
+            if not isinstance(expected_comments, dict):
+                raise MigrationDefinitionError(
+                    "Legacy manifest is missing the PostgreSQL comment fingerprint"
+                )
+            if self.database.engine == "postgres":
+                actual_comments = postgres_comment_snapshot(self.database)
+                if str(actual_comments["digest"]) != str(expected_comments["digest"]):
+                    raise MigrationDefinitionError(
+                        "Legacy 042 PostgreSQL comments do not match the immutable manifest"
+                    )
+            if self.database.engine == "sqlite":
+                foreign_key_errors = self.database.execute("pragma foreign_key_check")
+                if foreign_key_errors:
+                    raise MigrationDefinitionError(
+                        "Legacy 042 schema has foreign key integrity errors"
+                    )
+            counts = _retained_data_counts(self.database)
+            counts_json = json.dumps(
+                counts,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            adopted_at = datetime.now(UTC).isoformat()
+            self.database.execute(
+                """
+                insert into schema_migration
+                  (version, name, checksum, applied_at, duration_ms, migrator_build)
+                values (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    baseline.version,
+                    baseline.name,
+                    baseline.checksum,
+                    adopted_at,
+                    0,
+                    migrator_build,
+                ),
+            )
+            self.database.execute(
+                """
+                insert into schema_baseline_adoption
+                  (target_baseline, source_generation, source_head,
+                   legacy_catalog_digest, schema_fingerprint,
+                   comment_manifest_digest, retained_data_counts_json,
+                   retained_data_digest, baseline_name, baseline_checksum,
+                   migrator_build, adopted_at)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    baseline.version,
+                    str(manifest["legacy_generation"]),
+                    str(manifest["legacy_head"]),
+                    str(manifest["catalog_digest"]),
+                    str(expected_schema["fingerprint"]),
+                    str(expected_comments["digest"]),
+                    counts_json,
+                    digest_payload(counts),
+                    baseline.name,
+                    baseline.checksum,
+                    migrator_build,
+                    adopted_at,
+                ),
+            )
 
     def baseline_legacy(
         self,
@@ -321,6 +467,103 @@ class SchemaMigrationLedger:
         return tables, columns, indexes
 
 
+def _manifest_schema_for_engine(
+    manifest: dict[str, Any],
+    engine: str,
+) -> dict[str, Any]:
+    key = "sqlite_schema" if engine == "sqlite" else "postgres_schema"
+    snapshot = manifest.get(key)
+    if not isinstance(snapshot, dict) or not isinstance(snapshot.get("fingerprint"), str):
+        raise MigrationDefinitionError(
+            f"Legacy manifest is missing the {engine} schema fingerprint"
+        )
+    return snapshot
+
+
+def _validate_legacy_manifest_records(
+    records: list[dict[str, Any]],
+    manifest: dict[str, Any],
+) -> None:
+    expected = manifest.get("catalog")
+    if not isinstance(expected, list):
+        raise MigrationDefinitionError("Legacy migration manifest catalog is missing")
+    if len(records) != len(expected):
+        current_head = str(records[-1]["version"]) if records else "none"
+        raise MigrationDefinitionError(
+            "Legacy database must have the exact immutable 042 ledger before baseline "
+            f"adoption; current head is {current_head}"
+        )
+    for row, entry in zip(records, expected, strict=True):
+        if (
+            str(row["version"]) != str(entry["version"])
+            or str(row["name"]) != str(entry["name"])
+            or str(row["checksum"]) != str(entry["checksum"])
+        ):
+            raise MigrationDefinitionError(
+                "Legacy migration ledger checksum or identity does not match the "
+                f"immutable manifest at version {entry['version']}"
+            )
+
+
+def _retained_data_counts(database: Database) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for table in RETAINED_DATA_TABLES:
+        row = database.execute_one(f'select count(*) as count from "{table}"')
+        if row is None:
+            raise MigrationDefinitionError(
+                f"Legacy 042 retained-data table could not be counted: {table}"
+            )
+        counts[table] = int(row["count"])
+    return counts
+
+
+def _validate_adoption_metadata(
+    *,
+    rows: list[dict[str, Any]],
+    manifest: dict[str, Any],
+    baseline: MigrationArtifact,
+    engine: str,
+) -> None:
+    if len(rows) != 1:
+        raise MigrationDefinitionError(
+            "Adopted legacy ledger requires exactly one baseline adoption metadata row"
+        )
+    row = rows[0]
+    expected_schema = _manifest_schema_for_engine(manifest, engine)
+    expected_comments = manifest.get("postgres_comments")
+    if not isinstance(expected_comments, dict):
+        raise MigrationDefinitionError(
+            "Legacy manifest is missing the PostgreSQL comment fingerprint"
+        )
+    expected = {
+        "target_baseline": baseline.version,
+        "source_generation": str(manifest["legacy_generation"]),
+        "source_head": str(manifest["legacy_head"]),
+        "legacy_catalog_digest": str(manifest["catalog_digest"]),
+        "schema_fingerprint": str(expected_schema["fingerprint"]),
+        "comment_manifest_digest": str(expected_comments["digest"]),
+        "baseline_name": baseline.name,
+        "baseline_checksum": baseline.checksum,
+    }
+    for key, value in expected.items():
+        if str(row[key]) != value:
+            raise MigrationDefinitionError(
+                f"Baseline adoption metadata does not match immutable field {key}"
+            )
+    try:
+        retained_counts = json.loads(str(row["retained_data_counts_json"]))
+    except json.JSONDecodeError as exc:
+        raise MigrationDefinitionError(
+            "Baseline adoption retained-data evidence is invalid"
+        ) from exc
+    if not isinstance(retained_counts, dict) or digest_payload(retained_counts) != str(
+        row["retained_data_digest"]
+    ):
+        raise MigrationDefinitionError(
+            "Baseline adoption retained-data evidence digest does not match"
+        )
+
+
 @dataclass(frozen=True)
 class MigrationRunResult:
     head: str
@@ -342,6 +585,19 @@ class Migrator:
 
     def run(self) -> MigrationRunResult:
         catalog = load_migration_catalog(self.migrations_dir)
+        baseline_manifest_exists = (self.migrations_dir / LEGACY_MANIFEST_FILENAME).is_file()
+        if baseline_manifest_exists or catalog[0].version == BASELINE_VERSION:
+            if catalog[0].version != BASELINE_VERSION:
+                raise MigrationDefinitionError(
+                    f"Baseline migration catalog must start at {BASELINE_VERSION}"
+                )
+            return self._run_baseline_generation(catalog)
+        return self._run_legacy_catalog(catalog)
+
+    def _run_legacy_catalog(
+        self,
+        catalog: tuple[MigrationArtifact, ...],
+    ) -> MigrationRunResult:
         with self.database.session():
             lock_acquired = False
             try:
@@ -370,6 +626,160 @@ class Migrator:
             finally:
                 if lock_acquired:
                     self._release_lock()
+
+    def _run_baseline_generation(
+        self,
+        catalog: tuple[MigrationArtifact, ...],
+    ) -> MigrationRunResult:
+        manifest = self._load_baseline_manifest()
+        self._validate_baseline_catalog(catalog)
+        with self.database.session():
+            lock_acquired = False
+            try:
+                self._acquire_lock()
+                lock_acquired = True
+                ledger = SchemaMigrationLedger(self.database)
+                ledger.ensure_table()
+                ledger.ensure_adoption_table()
+                records = ledger.read_records()
+                baselined = 0
+                if not records:
+                    if self._application_schema_exists():
+                        raise MigrationDefinitionError(
+                            "Non-empty application schema has no migration ledger; "
+                            "baseline adoption requires the exact immutable 042 ledger"
+                        )
+                elif self._is_exact_legacy_ledger(records, manifest):
+                    ledger.adopt_legacy_baseline(
+                        manifest=manifest,
+                        baseline=catalog[0],
+                        migrator_build=self.migrator_build,
+                    )
+                    baselined = 1
+                    records = ledger.read_records()
+
+                _, active_records = self._validate_baseline_records(
+                    records=records,
+                    catalog=catalog,
+                    manifest=manifest,
+                    adoptions=ledger.read_adoptions(),
+                    require_full=False,
+                )
+                applied: list[str] = []
+                for artifact in catalog[len(active_records) :]:
+                    self._apply_one(artifact)
+                    applied.append(artifact.version)
+                return MigrationRunResult(
+                    head=catalog[-1].version,
+                    baselined=baselined,
+                    applied=tuple(applied),
+                )
+            finally:
+                if lock_acquired:
+                    self._release_lock()
+
+    def _load_baseline_manifest(self) -> dict[str, Any]:
+        path = self.migrations_dir / LEGACY_MANIFEST_FILENAME
+        try:
+            return load_legacy_manifest(path)
+        except ValueError as exc:
+            raise MigrationDefinitionError(str(exc)) from exc
+
+    def _validate_baseline_catalog(
+        self,
+        catalog: tuple[MigrationArtifact, ...],
+    ) -> None:
+        if catalog[0].version != BASELINE_VERSION:
+            raise MigrationDefinitionError(
+                f"Baseline migration catalog must start at {BASELINE_VERSION}"
+            )
+        previous = int(BASELINE_VERSION)
+        for artifact in catalog[1:]:
+            if not re.fullmatch(r"[0-9]{3}", artifact.version):
+                raise MigrationDefinitionError(
+                    "Post-baseline migration versions must be three-digit integers"
+                )
+            current = int(artifact.version)
+            if current < 101 or current <= previous:
+                raise MigrationDefinitionError(
+                    "Post-baseline migration versions must increase monotonically from 101"
+                )
+            previous = current
+
+    def _is_exact_legacy_ledger(
+        self,
+        records: list[dict[str, Any]],
+        manifest: dict[str, Any],
+    ) -> bool:
+        catalog = manifest.get("catalog")
+        if not isinstance(catalog, list) or len(records) != len(catalog):
+            return False
+        return all(
+            str(row["version"]) == str(entry["version"])
+            and str(row["name"]) == str(entry["name"])
+            and str(row["checksum"]) == str(entry["checksum"])
+            for row, entry in zip(records, catalog, strict=True)
+        )
+
+    def _validate_baseline_records(
+        self,
+        *,
+        records: list[dict[str, Any]],
+        catalog: tuple[MigrationArtifact, ...],
+        manifest: dict[str, Any],
+        adoptions: list[dict[str, Any]],
+        require_full: bool,
+    ) -> tuple[str, list[dict[str, Any]]]:
+        legacy_catalog = manifest.get("catalog")
+        if not isinstance(legacy_catalog, list):
+            raise MigrationDefinitionError("Legacy migration manifest catalog is missing")
+        if not records:
+            if adoptions:
+                raise MigrationDefinitionError(
+                    "Baseline adoption metadata exists without a migration marker"
+                )
+            active_records: list[dict[str, Any]] = []
+            generation = "fresh"
+        elif str(records[0]["version"]) == BASELINE_VERSION:
+            if adoptions:
+                raise MigrationDefinitionError(
+                    "Fresh baseline ledger must not contain legacy adoption metadata"
+                )
+            active_records = records
+            generation = "fresh"
+        elif str(records[0]["version"]) == str(legacy_catalog[0]["version"]):
+            if len(records) < len(legacy_catalog):
+                current_head = str(records[-1]["version"])
+                raise MigrationDefinitionError(
+                    "Legacy database must first be upgraded with the old migrator to exact "
+                    f"head {BASELINE_ADOPTION_SOURCE_HEAD}; current head is {current_head}"
+                )
+            legacy_records = records[: len(legacy_catalog)]
+            _validate_legacy_manifest_records(legacy_records, manifest)
+            active_records = records[len(legacy_catalog) :]
+            if not active_records or str(active_records[0]["version"]) != BASELINE_VERSION:
+                raise MigrationDefinitionError(
+                    "Legacy 042 ledger is missing the baseline 100 adoption marker"
+                )
+            _validate_adoption_metadata(
+                rows=adoptions,
+                manifest=manifest,
+                baseline=catalog[0],
+                engine=self.database.engine,
+            )
+            generation = "adopted-legacy"
+        else:
+            raise MigrationDefinitionError(
+                "Migration ledger generation is unknown to this baseline build"
+            )
+
+        self._validate_applied_prefix(active_records, catalog)
+        if require_full and len(active_records) != len(catalog):
+            current_head = str(active_records[-1]["version"]) if active_records else "none"
+            raise MigrationDefinitionError(
+                f"Database schema head is {current_head}; expected {catalog[-1].version}"
+            )
+        return generation, active_records
 
     def _validate_applied_prefix(
         self,
@@ -441,7 +851,10 @@ class Migrator:
                     """
                     select name
                       from sqlite_master
-                     where type = 'table' and name = 'agent_job'
+                     where type = 'table'
+                       and name not in ('schema_migration', 'schema_baseline_adoption')
+                       and name not like 'sqlite_%'
+                     limit 1
                     """
                 )
                 is not None
@@ -451,7 +864,11 @@ class Migrator:
                 """
                 select table_name
                   from information_schema.tables
-                 where table_schema = 'public' and table_name = 'agent_job'
+                 where table_schema = 'public'
+                   and table_type = 'BASE TABLE'
+                   and table_name not in
+                       ('schema_migration', 'schema_baseline_adoption')
+                 limit 1
                 """
             )
             is not None
@@ -476,6 +893,77 @@ class Migrator:
             self.database.close()
 
 
+class BaselineAdoptionRollback:
+    def __init__(
+        self,
+        database: Database,
+        migrations_dir: Path,
+        *,
+        migrator_build: str,
+    ) -> None:
+        self.database = database
+        self.migrations_dir = migrations_dir
+        self.migrator_build = migrator_build.strip() or "unknown"
+
+    def run(self) -> str:
+        catalog = load_migration_catalog(self.migrations_dir)
+        migrator = Migrator(
+            self.database,
+            self.migrations_dir,
+            migrator_build=self.migrator_build,
+        )
+        if catalog[0].version != BASELINE_VERSION:
+            raise MigrationDefinitionError(
+                "Baseline adoption rollback requires the baseline generation catalog"
+            )
+        manifest = migrator._load_baseline_manifest()
+        migrator._validate_baseline_catalog(catalog)
+        with self.database.session():
+            lock_acquired = False
+            try:
+                migrator._acquire_lock()
+                lock_acquired = True
+                ledger = SchemaMigrationLedger(self.database)
+                if (
+                    not SchemaHeadValidator(self.database, self.migrations_dir)._ledger_exists()
+                    or not SchemaHeadValidator(
+                        self.database, self.migrations_dir
+                    )._adoption_table_exists()
+                ):
+                    raise MigrationDefinitionError(
+                        "Baseline adoption rollback requires an adopted legacy ledger"
+                    )
+                records = ledger.read_records()
+                generation, active_records = migrator._validate_baseline_records(
+                    records=records,
+                    catalog=catalog,
+                    manifest=manifest,
+                    adoptions=ledger.read_adoptions(),
+                    require_full=False,
+                )
+                if generation != "adopted-legacy":
+                    raise MigrationDefinitionError(
+                        "Fresh baseline databases cannot use adoption rollback"
+                    )
+                if any(int(str(row["version"])[:3]) >= 101 for row in active_records):
+                    raise MigrationDefinitionError(
+                        "Baseline adoption rollback is forbidden after migration 101 or later"
+                    )
+                with self.database.unit_of_work():
+                    self.database.execute(
+                        "delete from schema_baseline_adoption where target_baseline = ?",
+                        (BASELINE_VERSION,),
+                    )
+                    self.database.execute(
+                        "delete from schema_migration where version = ?",
+                        (BASELINE_VERSION,),
+                    )
+                return BASELINE_ADOPTION_SOURCE_HEAD
+            finally:
+                if lock_acquired:
+                    migrator._release_lock()
+
+
 class SchemaHeadValidator:
     def __init__(self, database: Database, migrations_dir: Path) -> None:
         self.database = database
@@ -489,17 +977,31 @@ class SchemaHeadValidator:
                 raise SchemaHeadError(
                     f"Database schema ledger is missing; expected head {expected_head}"
                 )
-            records = SchemaMigrationLedger(self.database).read_records()
-            Migrator(
+            ledger = SchemaMigrationLedger(self.database)
+            records = ledger.read_records()
+            migrator = Migrator(
                 self.database,
                 self.migrations_dir,
                 migrator_build="schema-head-validator",
-            )._validate_applied_prefix(records, catalog)
-            current_head = str(records[-1]["version"]) if records else "none"
-            if len(records) != len(catalog):
-                raise SchemaHeadError(
-                    f"Database schema head is {current_head}; expected {expected_head}"
+            )
+            if catalog[0].version == BASELINE_VERSION:
+                manifest = migrator._load_baseline_manifest()
+                migrator._validate_baseline_catalog(catalog)
+                adoptions = ledger.read_adoptions() if self._adoption_table_exists() else []
+                migrator._validate_baseline_records(
+                    records=records,
+                    catalog=catalog,
+                    manifest=manifest,
+                    adoptions=adoptions,
+                    require_full=True,
                 )
+            else:
+                migrator._validate_applied_prefix(records, catalog)
+                current_head = str(records[-1]["version"]) if records else "none"
+                if len(records) != len(catalog):
+                    raise SchemaHeadError(
+                        f"Database schema head is {current_head}; expected {expected_head}"
+                    )
             return expected_head
         except SchemaHeadError:
             raise
@@ -529,6 +1031,30 @@ class SchemaHeadValidator:
                   from information_schema.tables
                  where table_schema = 'public'
                    and table_name = 'schema_migration'
+                """
+            )
+            is not None
+        )
+
+    def _adoption_table_exists(self) -> bool:
+        if self.database.engine == "sqlite":
+            return (
+                self.database.execute_one(
+                    """
+                    select name
+                      from sqlite_master
+                     where type = 'table' and name = 'schema_baseline_adoption'
+                    """
+                )
+                is not None
+            )
+        return (
+            self.database.execute_one(
+                """
+                select table_name
+                  from information_schema.tables
+                 where table_schema = 'public'
+                   and table_name = 'schema_baseline_adoption'
                 """
             )
             is not None

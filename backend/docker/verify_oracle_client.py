@@ -43,9 +43,7 @@ def inspect_library(
         raise ValueError(f"Unsupported Oracle client ELF machine: {machine}")
     expected = normalize_architecture(runtime_architecture)
     if architecture != expected:
-        raise ValueError(
-            "Oracle client architecture does not match container architecture"
-        )
+        raise ValueError("Oracle client architecture does not match container architecture")
     return "19c", architecture
 
 

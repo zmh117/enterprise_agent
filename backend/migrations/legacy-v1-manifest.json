@@ -1,0 +1,241 @@
+{
+  "catalog": [
+    {
+      "checksum": "1fe0144a1457657cee07a10c7c43b4961b17f400048acef1a1cf96c147da89be",
+      "name": "001_initial_agent.sql",
+      "version": "001"
+    },
+    {
+      "checksum": "eb9c79adf25cb53bc8259daf6eee610e41800c3a4139a3e1080fb3acdbb84526",
+      "name": "002_configuration.sql",
+      "version": "002"
+    },
+    {
+      "checksum": "94a1fafa75da1edc5d590771766ebfa3c6292cabc16d6c7e75fd6bc87f7d2866",
+      "name": "003_channel_delivery.sql",
+      "version": "003"
+    },
+    {
+      "checksum": "4de9248f13f75e0e594fef85fc7809cf9bf615acb4e12ad34c704de63b835ba6",
+      "name": "004_platform_config_and_workflow.sql",
+      "version": "004"
+    },
+    {
+      "checksum": "87e70fdf75df71ff804ec408d36eccd9875a11716d373d28650d796cfb24731c",
+      "name": "005_platform_secrets_and_runtime_config.sql",
+      "version": "005"
+    },
+    {
+      "checksum": "4d10831b86158256d4d7ed6525bef71cb4efd8875d1e18592c941cb70b7c74b5",
+      "name": "006_continuous_conversation_attachments.sql",
+      "version": "006"
+    },
+    {
+      "checksum": "ddf523e09ecbb7f66372d931d7b8d28f0c02b75021150a91621c3f4083059a96",
+      "name": "007_unified_identity_rbac_agents.sql",
+      "version": "007"
+    },
+    {
+      "checksum": "2d2e4e549e80019c5b98c550ae05b49478f0ad8b803543b065d6a4d7b2bd35b7",
+      "name": "008_webhook_agent_triggers.sql",
+      "version": "008"
+    },
+    {
+      "checksum": "7b2857253c33704d8becda595a27de0b43b8618e064ece61c7be7900f558fc66",
+      "name": "009_admin_web_read_models.sql",
+      "version": "009"
+    },
+    {
+      "checksum": "cce9d0d1060732a9c11e126ba82d43f6e5ae1cb5a1ed6dc718fe7eb87c3cb745",
+      "name": "009a_agent_job_retry_failure_delivery.sql",
+      "version": "009a"
+    },
+    {
+      "checksum": "cdf8e1cdd6ee24f2263996e884e5c0b5cc529eed6ab9368400bf0ee0a963a258",
+      "name": "010_business_application_control_plane.sql",
+      "version": "010"
+    },
+    {
+      "checksum": "1ea950f6f87bc158e0fcfb0d8ea51f0c5c38226c79f699403873f3e1785f2ff9",
+      "name": "011_business_application_runtime_routing.sql",
+      "version": "011"
+    },
+    {
+      "checksum": "25b36aff3ad96f8704b4462b8d91d74020f7d8fc46d095f20b322e1cea228d83",
+      "name": "012_business_application_local_only.sql",
+      "version": "012"
+    },
+    {
+      "checksum": "10dfc6c3c47e95aae113dca967a24ae1895bfe33476d32b6956c84a071dffa15",
+      "name": "013_agent_job_execution_policy.sql",
+      "version": "013"
+    },
+    {
+      "checksum": "75eaa9732d577e78b2a2ade01e599a71feecc268b87aa308c39a409cfbd9ba38",
+      "name": "014_agent_profile_model_connections.sql",
+      "version": "014"
+    },
+    {
+      "checksum": "1eabdc1a49ba8596b14e8c960366d006b253067240dbffffee4b9a36a28b5e89",
+      "name": "015_managed_multi_dingtalk_stream_runtime.sql",
+      "version": "015"
+    },
+    {
+      "checksum": "4029c0895a47389d7dce2d790a70f9de00c0a9a88b4078cc1f25c5d9713cab2c",
+      "name": "016_unbound_dingtalk_identity_discovery.sql",
+      "version": "016"
+    },
+    {
+      "checksum": "1fa15a6ca2519c500b2247e4570ac23231ec05744ad46d680c21c5f20964cc16",
+      "name": "017_role_authorization_control_center.sql",
+      "version": "017"
+    },
+    {
+      "checksum": "1f46be4f0aa62d15af03e2ee44c49c5391d684302f8d0e6f7ddebc7c9ce67d62",
+      "name": "018_runtime_session_isolation.sql",
+      "version": "018"
+    },
+    {
+      "checksum": "38be9470f25c7b34febfde0096eef6aa6756928d3025383037af084b4fd9d2df",
+      "name": "019_job_dispatch_outbox.sql",
+      "version": "019"
+    },
+    {
+      "checksum": "6846d322c205a32e61a9a7b9a75a38343d8c5104030f0572de40a2f129a28534",
+      "name": "020_delivery_outbox.sql",
+      "version": "020"
+    },
+    {
+      "checksum": "f8f8aad4fb36e82faa93c0206a7ff4068beb46915ad8d83dbbe557c4ab1afff5",
+      "name": "021_platform_secret_hardening.sql",
+      "version": "021"
+    },
+    {
+      "checksum": "fc587f4cf3b7317baf97bed5cc3dbc1410dbb176187ef5d0a1fb073021faa2a7",
+      "name": "022_governed_tool_resource_versions.sql",
+      "version": "022"
+    },
+    {
+      "checksum": "cc5f3692797611c62a9d47e1af09c5f76516da8eae88eb42d6989008f8da9cb0",
+      "name": "023_runtime_generation_and_resource_reset.sql",
+      "version": "023"
+    },
+    {
+      "checksum": "b2755c2f7bbc1af8181d97bbc4ce8881e7d39d8cc0e6f60221239d893a79ae00",
+      "name": "024_legacy_authorization_cleanup.sql",
+      "version": "024"
+    },
+    {
+      "checksum": "85d5b9312e0c8c6e64d743e1d76dbebc0a8ff3ca7e76650031e6ad6e96952475",
+      "name": "025_governed_api_capabilities.sql",
+      "version": "025"
+    },
+    {
+      "checksum": "00efad13ad2eb5f065d2287c13deaac20d241279eaee46e49961317daf1f8d4b",
+      "name": "026_allow_plain_http_api_connections.sql",
+      "version": "026"
+    },
+    {
+      "checksum": "fb23553ea01e6103d5017931e6cec93ec2d24630ae874f9a9e1126a7dd323761",
+      "name": "027_dingtalk_enterprise_identity_observations.sql",
+      "version": "027"
+    },
+    {
+      "checksum": "4721aa75b27e96df6ada1611245505364f9ec73848220fe3d288468122a5bd7e",
+      "name": "028_govern_builtin_readonly_tools.sql",
+      "version": "028"
+    },
+    {
+      "checksum": "5777322abbc8db6e0f49fbc5b5c3b2244167615f90006a21ae964223f63c3f9e",
+      "name": "029_loki_global_resource_scope.sql",
+      "version": "029"
+    },
+    {
+      "checksum": "6712db31192b58a2b6475a2234678a3f8fbbb62cbfeecf0fd35d60dc3f22cd97",
+      "name": "030_builtin_tool_legacy_removal_gate.sql",
+      "version": "030"
+    },
+    {
+      "checksum": "f15d51934ba1fe28de41a7f624be60984ad9e8fdff9357dc59f9d4e3daf2050c",
+      "name": "031_direct_agent_tool_snapshot.sql",
+      "version": "031"
+    },
+    {
+      "checksum": "891b4d49133c6a502803da9e1150b7c6f27fb1dd44e10789d0b3e15be334f5c8",
+      "name": "032_exact_builtin_tool_resource_reset.sql",
+      "version": "032"
+    },
+    {
+      "checksum": "cde98335e0a4cba03c0c2594dce30d6931bce0fcfd78ac62b94812b4a463f95a",
+      "name": "033_loki_scope_verification_per_draft.sql",
+      "version": "033"
+    },
+    {
+      "checksum": "474a95d106395038153ca64082da04d84ec3c956c3024e56326f569c47ea43c4",
+      "name": "034_typescript_agent_runtime_events.sql",
+      "version": "034"
+    },
+    {
+      "checksum": "3e81192a24d8cda7c8411519cd8c7bc8f0e4351c8af94e74a44cdd2ce112a01e",
+      "name": "035_dual_agent_runtime_selection.sql",
+      "version": "035"
+    },
+    {
+      "checksum": "e80d919f436b4c440876799a0d06d04d6fe8740f3bd5435b48047276d0ef244d",
+      "name": "036_agent_runtime_invocation_claim.sql",
+      "version": "036"
+    },
+    {
+      "checksum": "e9f17b144497b812daf7589c00a54984f0da8aa2014bc917ff47a6dbb9ea6a44",
+      "name": "037_direct_mcp_tool_runtime.sql",
+      "version": "037"
+    },
+    {
+      "checksum": "6bd5037c96c0f3bcc2234219187766983aa1fce8b832fcea20fc6104734dcb40",
+      "name": "038_retire_legacy_api_platform.sql",
+      "version": "038"
+    },
+    {
+      "checksum": "f1e3bd7a370f45283d646804721c1621d9b8da942f8210dd21fce4c0b854990a",
+      "name": "039_restore_ones_identity_binding.sql",
+      "version": "039"
+    },
+    {
+      "checksum": "e78ae338b9ec9f0bd909c3d9c9fb73b7726a1877206a81937ab6d68dfbb85f2d",
+      "name": "040_remove_legacy_tool_registry.sql",
+      "version": "040"
+    },
+    {
+      "checksum": "e57258f1040854c6a055dde09876ff78a5d2c6f8625fed9034f476ed24bf9c85",
+      "name": "041_remove_retired_authorization_and_target_storage.sql",
+      "version": "041"
+    },
+    {
+      "checksum": "839af7dd476e3ad1566dfa8cb28577627bf3674943581128b9514128b473b0e7",
+      "name": "042_document_public_schema.sql",
+      "version": "042"
+    }
+  ],
+  "catalog_digest": "7068e97e170f74b931d3614bb23241c7117f45ce0a778b7d4e9031293cdae8ee",
+  "format_version": 1,
+  "legacy_generation": "legacy-v1",
+  "legacy_head": "042",
+  "postgres_comments": {
+    "column_count": 980,
+    "digest": "e724245c494d2d19bdae2be10c269e0ac41cbdbd86eacce11be2b169747d2ad4",
+    "table_count": 85
+  },
+  "postgres_schema": {
+    "column_count": 980,
+    "fingerprint": "d85680e889d25abe24054ee1e5a01d5f92ddc4c839df636ddc3725cd04fbb6dc",
+    "index_count": 165,
+    "table_count": 85
+  },
+  "sqlite_schema": {
+    "column_count": 980,
+    "explicit_index_count": 165,
+    "fingerprint": "fd7c965cda8d16eaca970468f1214a5c0688ead39ddcd69d8244b0aff0786f9c",
+    "table_count": 85
+  },
+  "target_baseline": "100"
+}

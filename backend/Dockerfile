@@ -36,6 +36,7 @@ FROM python-deps AS migrator
 COPY backend/app/__init__.py /app/backend/app/
 COPY backend/app/cli /app/backend/app/cli
 COPY backend/app/shared /app/backend/app/shared
+COPY backend/app/modules /app/backend/app/modules
 COPY backend/maintenance /app/backend/maintenance
 COPY backend/migrations /app/backend/migrations
 RUN --mount=type=cache,target=/root/.cache/pip \

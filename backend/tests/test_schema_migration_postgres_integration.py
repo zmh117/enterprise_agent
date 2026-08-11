@@ -7,6 +7,8 @@ import threading
 import uuid
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from app.bootstrap import build_worker_container
 from app.modules.audit.application.audit_service import AuditService
@@ -18,13 +20,18 @@ from app.modules.delivery.infrastructure.adapters import DeliveryAdapter
 from app.modules.job.application.job_dispatch_service import JobDispatchOutboxDispatcher
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.repositories import AgentRepository, AuditRepository
-from app.shared.config import DeliverySettings, QueueSettings, Settings
+from app.shared.config import AgentRuntimeSettings, DeliverySettings, QueueSettings, Settings
 from app.shared.database import Database, default_migrations_dir
 from app.shared.migrations import (
     MigrationDefinitionError,
     MigrationExecutionError,
     Migrator,
     SchemaMigrationLedger,
+)
+from app.shared.schema_baseline import (
+    LEGACY_MANIFEST_FILENAME,
+    load_legacy_manifest,
+    postgres_comment_snapshot,
 )
 
 
@@ -69,6 +76,143 @@ def _write(
     sql: str,
 ) -> None:
     (directory / name).write_text(sql.strip() + "\n", encoding="utf-8")
+
+
+def _convert_postgres_baseline_to_legacy_ledger(database: Database) -> None:
+    manifest = load_legacy_manifest(default_migrations_dir() / LEGACY_MANIFEST_FILENAME)
+    with database.unit_of_work():
+        database.execute("delete from schema_migration")
+        database.execute("delete from schema_baseline_adoption")
+        for artifact in manifest["catalog"]:
+            database.execute(
+                """
+                insert into schema_migration
+                  (version, name, checksum, applied_at, duration_ms, migrator_build)
+                values (?, ?, ?, '2026-08-11T00:00:00Z', 0, 'legacy-fixture')
+                """,
+                (
+                    artifact["version"],
+                    artifact["name"],
+                    artifact["checksum"],
+                ),
+            )
+
+
+def test_postgres_baseline_100_fresh_schema_and_comments(
+    postgres_database_dsn: str,
+) -> None:
+    database = Database(postgres_database_dsn)
+    try:
+        result = Migrator(
+            database,
+            default_migrations_dir(),
+            migrator_build="postgres-baseline-fresh-test",
+        ).run()
+        comments = postgres_comment_snapshot(database)
+
+        assert result.head == "100"
+        assert result.applied == ("100",)
+        assert database.execute_one(
+            """
+            select count(*)::int as count
+              from information_schema.tables
+             where table_schema = 'public'
+               and table_type = 'BASE TABLE'
+               and table_name not in ('schema_migration', 'schema_baseline_adoption')
+            """
+        ) == {"count": 85}
+        assert comments["table_count"] == 85
+        assert comments["column_count"] == 980
+    finally:
+        database.close()
+
+
+def test_postgres_concurrent_baseline_migrators_apply_100_once(
+    postgres_database_dsn: str,
+) -> None:
+    def run(build: str):
+        database = Database(postgres_database_dsn)
+        try:
+            return Migrator(
+                database,
+                default_migrations_dir(),
+                migrator_build=build,
+            ).run()
+        finally:
+            database.close()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(run, ("baseline-build-a", "baseline-build-b")))
+
+    assert sorted(result.applied for result in results) == [(), ("100",)]
+    database = Database(postgres_database_dsn)
+    try:
+        assert [row["version"] for row in SchemaMigrationLedger(database).read_records()] == ["100"]
+    finally:
+        database.close()
+
+
+def test_postgres_exact_042_adoption_preserves_retained_data(
+    postgres_database_dsn: str,
+) -> None:
+    database = Database(postgres_database_dsn)
+    try:
+        Migrator(
+            database,
+            default_migrations_dir(),
+            migrator_build="postgres-adoption-fixture",
+        ).run()
+        database.execute(
+            """
+            insert into app_user
+              (id, username, display_name, status, created_at, updated_at)
+            values ('postgres-adoption-user', 'postgres-adoption-user',
+                    'Postgres Adoption User', 'enabled', ?, ?)
+            """,
+            ("2026-08-11T00:00:00Z", "2026-08-11T00:00:00Z"),
+        )
+        _convert_postgres_baseline_to_legacy_ledger(database)
+
+        result = Migrator(
+            database,
+            default_migrations_dir(),
+            migrator_build="postgres-adoption-test",
+        ).run()
+
+        assert result.baselined == 1
+        assert result.applied == ()
+        assert database.execute_one(
+            "select username from app_user where id = 'postgres-adoption-user'"
+        ) == {"username": "postgres-adoption-user"}
+        assert SchemaMigrationLedger(database).read_records()[-1]["version"] == "100"
+        assert len(SchemaMigrationLedger(database).read_adoptions()) == 1
+    finally:
+        database.close()
+
+
+def test_postgres_legacy_comment_drift_rejects_adoption(
+    postgres_database_dsn: str,
+) -> None:
+    database = Database(postgres_database_dsn)
+    try:
+        Migrator(
+            database,
+            default_migrations_dir(),
+            migrator_build="postgres-comment-drift-fixture",
+        ).run()
+        _convert_postgres_baseline_to_legacy_ledger(database)
+        database.execute("comment on table app_user is 'drifted comment'")
+
+        with pytest.raises(MigrationDefinitionError, match="comments"):
+            Migrator(
+                database,
+                default_migrations_dir(),
+                migrator_build="postgres-comment-drift-test",
+            ).run()
+        assert SchemaMigrationLedger(database).read_records()[-1]["version"] == "042"
+        assert SchemaMigrationLedger(database).read_adoptions() == []
+    finally:
+        database.close()
 
 
 def test_postgres_concurrent_migrators_serialize_on_advisory_lock(
@@ -340,6 +484,7 @@ def test_postgres_job_dispatchers_use_skip_locked_without_duplicate_claims(
 
 def test_postgres_delivery_dispatchers_use_skip_locked_without_duplicate_sends(
     postgres_database_dsn: str,
+    tmp_path: Path,
 ) -> None:
     database = Database(
         postgres_database_dsn,
@@ -355,10 +500,21 @@ def test_postgres_delivery_dispatchers_use_skip_locked_without_duplicate_sends(
     finally:
         database.close()
 
+    private_key_path = tmp_path / "runtime-grant-private.pem"
+    private_key_path.write_bytes(
+        Ed25519PrivateKey.generate().private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
     settings = Settings(
         database_dsn=postgres_database_dsn,
         feature_real_claude=False,
         delivery=DeliverySettings(outbox_max_attempts=2),
+        agent_runtime=AgentRuntimeSettings(
+            grant_private_key_file=str(private_key_path),
+        ),
     )
     runtime = build_worker_container(settings, seed=True)
     sent: list[str] = []

@@ -10,6 +10,7 @@ from app.modules.job.domain.job_dispatch import (
 )
 from app.shared.database import Database, default_migrations_dir
 from app.shared.migrations import Migrator, load_migration_catalog
+from app.shared.schema_baseline import LEGACY_MANIFEST_FILENAME, load_legacy_manifest
 
 
 def test_job_dispatch_outbox_migration_has_stable_contract_and_indexes() -> None:
@@ -21,7 +22,7 @@ def test_job_dispatch_outbox_migration_has_stable_contract_and_indexes() -> None
             migrator_build="job-dispatch-schema-test",
         ).run()
 
-        assert result.head == "042"
+        assert result.head == "100"
         columns = {
             str(row["name"]): row
             for row in database.execute("pragma table_info(job_dispatch_outbox)")
@@ -166,9 +167,12 @@ def test_job_dispatch_status_is_finite_and_terminal_states_do_not_transition() -
     )
 
 
-def test_job_dispatch_migration_extends_but_does_not_change_legacy_baseline() -> None:
+def test_job_dispatch_legacy_evidence_is_frozen_but_active_catalog_is_baseline() -> None:
     catalog = load_migration_catalog(default_migrations_dir())
-    job_dispatch = next(artifact for artifact in catalog if artifact.version == "019")
+    manifest = load_legacy_manifest(default_migrations_dir() / LEGACY_MANIFEST_FILENAME)
+    job_dispatch = next(
+        artifact for artifact in manifest["catalog"] if artifact["version"] == "019"
+    )
 
-    assert catalog[-1].version == "042"
-    assert job_dispatch.name == "019_job_dispatch_outbox.sql"
+    assert catalog[-1].version == "100"
+    assert job_dispatch["name"] == "019_job_dispatch_outbox.sql"

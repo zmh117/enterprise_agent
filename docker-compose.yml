@@ -76,11 +76,12 @@ services:
       DATABASE_DSN: postgresql://enterprise_agent:enterprise_agent@postgres:5432/enterprise_agent
       APP_ENV: ${APP_ENV:-local}
       MIGRATOR_BUILD: ${MIGRATOR_BUILD:-local-compose}
+      INITIAL_ADMIN_PASSWORD_FILE: ${INITIAL_ADMIN_PASSWORD_FILE:-/run/secrets/initial_admin_password}
       AGENT_RUNTIME_DATABASE_PASSWORD: ${AGENT_RUNTIME_DATABASE_PASSWORD:-agent_runtime_reader_local}
     command:
       - /bin/sh
       - -ec
-      - python -m app.cli.migrate && python -m app.cli.apply_agent_runtime_grants
+      - python -m app.cli.migrate && python -m app.cli.bootstrap_admin --non-interactive && python -m app.cli.apply_agent_runtime_grants
     restart: "no"
     depends_on:
       postgres:

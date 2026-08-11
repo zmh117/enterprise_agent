@@ -6,7 +6,7 @@
 
 ONES 自助绑定已经采用服务端两阶段 Challenge，登录响应中能够取得用户名称以及 Team 的 ID 和名称；确认绑定后却只把 Team ID 保存到身份 metadata。个人凭据也缺少可直接支撑“最近成功使用”“最近失败”的结构化事实，当前页面因而只能展示固定租户、空连接器、Revision 和原始状态码。
 
-本变更跨越 managed channel、DingTalk Stream、identity discovery、external identity、external credential、governed API runtime、管理端 API 和前端页面，需要先固定领域边界、状态机、写入顺序和重建策略。`docs/adr/0049-model-dingtalk-identities-by-enterprise-and-observation.md` 记录不可逆的核心模型决策。
+本变更跨越 managed channel、DingTalk Stream、identity discovery、external identity、external credential、governed API runtime、管理端 API 和前端页面，需要先固定领域边界、状态机、写入顺序和重建策略。`docs/reference/decisions/0049-model-dingtalk-identities-by-enterprise-and-observation.md` 记录不可逆的核心模型决策。
 
 ## Goals / Non-Goals
 

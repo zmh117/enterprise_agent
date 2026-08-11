@@ -176,15 +176,15 @@ class AuthService:
 
     def bootstrap_admin(
         self, *, username: str, display_name: str, password: str
-    ) -> dict[str, object]:
+    ) -> dict[str, object] | None:
+        # Do not require, validate, or hash bootstrap password material after an
+        # enabled human platform administrator already exists. The protected
+        # transaction below repeats this check after taking the invariant lock
+        # so concurrent first-start attempts still serialize safely.
         if self.repository.admin_count() > 0:
-            raise PermissionDenied(
-                "Administrator already exists",
-                safe_message="系统中已存在管理员",
-            )
+            return None
+        password_hash = self.passwords.hash(password)
         with self.repository.database.unit_of_work():
-            user = self.repository.create_user(username=username, display_name=display_name)
-            self.repository.set_password_hash(str(user["id"]), self.passwords.hash(password))
             role = self.repository.get_role_by_code("platform-admin")
             if role is None:
                 role = self.repository.create_role(
@@ -192,7 +192,19 @@ class AuthService:
                     name="平台管理员",
                     description="Full administration role",
                 )
+            self.repository.lock_platform_admin_invariant()
+            if self.repository.admin_count() > 0:
+                return None
+            user = self.repository.create_user(username=username, display_name=display_name)
+            self.repository.set_password_hash(str(user["id"]), password_hash)
             self.repository.assign_role(user_id=str(user["id"]), role_id=str(role["id"]))
+            self.audit_service.record(
+                "identity.initial_admin.bootstrapped",
+                status="SUCCEEDED",
+                summary="Initial platform administrator created",
+                actor_id=str(user["id"]),
+                payload={"username_hash": _sha256(username.lower())[:16]},
+            )
         return user
 
     def _principal(self, user: dict[str, object], *, session_id: str) -> AuthenticatedPrincipal:

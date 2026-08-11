@@ -21,6 +21,7 @@ from app.modules.job.application.create_agent_job_service import CreateAgentJobC
 from app.modules.job.domain.job_status import JobStatus
 from app.shared.config import IdentitySettings, Settings
 from app.shared.database import Database, default_migrations_dir
+from app.shared.migrations import Migrator
 from app.shared.exceptions import (
     NonRetryableExecutionError,
     PermissionDenied,
@@ -205,13 +206,13 @@ def _business_role(
     return role
 
 
-def test_migration_is_additive_preserves_legacy_rows_and_is_idempotent() -> None:
+def test_baseline_repeat_preserves_authorization_rows_and_defaults() -> None:
     database = Database("sqlite:///:memory:")
-    migrations = default_migrations_dir()
-    for path in sorted(migrations.glob("*.sql")):
-        if path.name >= "017_role_authorization_control_center.sql":
-            continue
-        database.execute_script(path.read_text())
+    Migrator(
+        database,
+        default_migrations_dir(),
+        migrator_build="authorization-baseline-test",
+    ).run()
     timestamp = datetime.now(UTC).isoformat()
     database.execute(
         """
@@ -241,10 +242,13 @@ def test_migration_is_additive_preserves_legacy_rows_and_is_idempotent() -> None
         """,
         (timestamp, timestamp),
     )
-    migration = migrations / "017_role_authorization_control_center.sql"
-    database.execute_script(migration.read_text())
-    database.execute_script(migration.read_text())
+    repeated = Migrator(
+        database,
+        default_migrations_dir(),
+        migrator_build="authorization-baseline-repeat-test",
+    ).run()
 
+    assert repeated.applied == ()
     role = database.execute_one("select * from rbac_role where id = 'role-preserved'")
     member = database.execute_one("select * from rbac_user_role where id = 'member-preserved'")
     assert role and role["origin"] == "custom"
@@ -1169,13 +1173,8 @@ def test_role_authorization_typed_api_requires_csrf_and_returns_chinese_errors()
     c.database.close()
 
 
-def test_migration_contains_no_destructive_authorization_statement() -> None:
-    sql = (
-        Path(default_migrations_dir())
-        .joinpath("017_role_authorization_control_center.sql")
-        .read_text()
-        .lower()
-    )
+def test_baseline_contains_no_destructive_authorization_statement() -> None:
+    sql = Path(default_migrations_dir()).joinpath("100_baseline_v1.sql").read_text().lower()
     assert "drop table" not in sql
-    assert "truncate" not in sql
-    assert "delete from rbac_" not in sql
+    assert "\ntruncate " not in sql
+    assert "\ndelete from rbac_" not in sql

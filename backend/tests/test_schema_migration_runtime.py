@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import UTC, datetime
+import json
 from pathlib import Path
 import re
-import shutil
 import uuid
 
 import pytest
@@ -13,17 +14,21 @@ from app.cli import migrate as migrate_cli
 from app.shared.config import Settings
 from app.shared.database import Database, default_migrations_dir
 from app.shared.migrations import (
-    LEGACY_BASELINE_HEAD,
+    BaselineAdoptionRollback,
     MigrationDefinitionError,
     MigrationExecutionError,
     Migrator,
     SchemaMigrationLedger,
     SchemaHeadError,
     SchemaHeadValidator,
-    legacy_baseline_artifacts,
     load_migration_catalog,
     migration_checksum,
     normalized_migration_sql,
+)
+from app.shared.schema_baseline import (
+    LEGACY_MANIFEST_FILENAME,
+    catalog_digest,
+    load_legacy_manifest,
 )
 
 
@@ -32,13 +37,43 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
 
     assert len({item.version for item in catalog}) == len(catalog)
     assert len({item.name for item in catalog}) == len(catalog)
-    assert [item.version for item in catalog][8:11] == ["009", "009a", "010"]
-    assert catalog[-1].version == "042"
+    assert [(item.version, item.name) for item in catalog] == [("100", "100_baseline_v1.sql")]
     assert all(len(item.checksum) == 64 for item in catalog)
 
-    baseline = legacy_baseline_artifacts(catalog)
-    assert baseline == tuple(artifact for artifact in catalog if artifact.version <= "018")
-    assert baseline[-1].version == LEGACY_BASELINE_HEAD
+    manifest = load_legacy_manifest(default_migrations_dir() / LEGACY_MANIFEST_FILENAME)
+    assert manifest["legacy_head"] == "042"
+    assert manifest["target_baseline"] == "100"
+    assert len(manifest["catalog"]) == 43
+    assert manifest["catalog_digest"] == catalog_digest(manifest["catalog"])
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("legacy_head", "041"),
+        ("target_baseline", "101"),
+        ("catalog_digest", "0" * 64),
+        ("catalog_checksum", "0" * 64),
+    ],
+)
+def test_legacy_manifest_rejects_immutable_evidence_drift(
+    tmp_path: Path,
+    field: str,
+    value: str,
+) -> None:
+    manifest = load_legacy_manifest(default_migrations_dir() / LEGACY_MANIFEST_FILENAME)
+    if field == "catalog_checksum":
+        manifest["catalog"][0]["checksum"] = value
+    else:
+        manifest[field] = value
+    path = tmp_path / LEGACY_MANIFEST_FILENAME
+    path.write_text(
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="manifest"):
+        load_legacy_manifest(path)
 
 
 def test_migration_checksum_normalizes_line_endings_but_detects_content_drift() -> None:
@@ -59,16 +94,43 @@ def test_migration_catalog_rejects_duplicate_versions_before_database_access(
         load_migration_catalog(tmp_path)
 
 
-def test_compatibility_baseline_refuses_incomplete_schema_without_ledger_rows() -> None:
+@pytest.mark.parametrize("name", ["099_reused.sql", "100a_reused.sql"])
+def test_baseline_catalog_forbids_reusing_versions_before_101(
+    tmp_path: Path,
+    name: str,
+) -> None:
+    migrations = default_migrations_dir()
+    (tmp_path / "100_baseline_v1.sql").write_bytes(
+        (migrations / "100_baseline_v1.sql").read_bytes()
+    )
+    (tmp_path / LEGACY_MANIFEST_FILENAME).write_bytes(
+        (migrations / LEGACY_MANIFEST_FILENAME).read_bytes()
+    )
+    (tmp_path / name).write_text("select 1;\n", encoding="utf-8")
+
+    with pytest.raises(
+        MigrationDefinitionError,
+        match="start at 100|from 101|three-digit integers",
+    ):
+        Migrator(
+            Database("sqlite:///:memory:"),
+            tmp_path,
+            migrator_build="version-gate-test",
+        ).run()
+
+
+def test_baseline_refuses_nonempty_schema_without_ledger_rows() -> None:
     database = Database("sqlite:///:memory:")
-    database.execute_script((default_migrations_dir() / "001_initial_agent.sql").read_text())
-    catalog = load_migration_catalog(default_migrations_dir())
-    ledger = SchemaMigrationLedger(database)
+    database.execute("create table unknown_application_table (id text primary key)")
 
-    with pytest.raises(MigrationDefinitionError, match="missing"):
-        ledger.baseline_legacy(catalog, migrator_build="test-build")
+    with pytest.raises(MigrationDefinitionError, match="Non-empty application schema"):
+        Migrator(
+            database,
+            default_migrations_dir(),
+            migrator_build="test-build",
+        ).run()
 
-    assert ledger.list_records() == []
+    assert SchemaMigrationLedger(database).list_records() == []
 
 
 def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
@@ -82,31 +144,10 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
     first = migrator.run()
     second = migrator.run()
 
-    assert first.head == "042"
+    assert first.head == "100"
     assert first.baselined == 0
-    assert first.applied[-20:] == (
-        "023",
-        "024",
-        "025",
-        "026",
-        "027",
-        "028",
-        "029",
-        "030",
-        "031",
-        "032",
-        "033",
-        "034",
-        "035",
-        "036",
-        "037",
-        "038",
-        "039",
-        "040",
-        "041",
-        "042",
-    )
-    assert second.head == "042"
+    assert first.applied == ("100",)
+    assert second.head == "100"
     assert second.baselined == 0
     assert second.applied == ()
     assert len(SchemaMigrationLedger(database).list_records()) == len(
@@ -114,109 +155,67 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
     )
 
 
-def test_041_upgrade_removes_legacy_authorization_and_targets_but_preserves_current_rbac(
-    tmp_path: Path,
-) -> None:
-    migrations_dir = default_migrations_dir()
-    pre_041_dir = tmp_path / "pre-041-migrations"
-    pre_041_dir.mkdir()
-    for path in migrations_dir.glob("*.sql"):
-        if int(path.name[:3]) < 41:
-            shutil.copy2(path, pre_041_dir / path.name)
+def _convert_fresh_baseline_to_legacy_ledger(database: Database) -> dict[str, object]:
+    manifest = load_legacy_manifest(default_migrations_dir() / LEGACY_MANIFEST_FILENAME)
+    applied_at = datetime.now(UTC).isoformat()
+    with database.unit_of_work():
+        database.execute("delete from schema_migration")
+        database.execute("delete from schema_baseline_adoption")
+        for artifact in manifest["catalog"]:
+            database.execute(
+                """
+                insert into schema_migration
+                  (version, name, checksum, applied_at, duration_ms, migrator_build)
+                values (?, ?, ?, ?, 0, 'legacy-fixture')
+                """,
+                (
+                    artifact["version"],
+                    artifact["name"],
+                    artifact["checksum"],
+                    applied_at,
+                ),
+            )
+    return manifest
 
+
+def test_exact_legacy_042_adoption_preserves_schema_data_and_is_idempotent() -> None:
     database = Database("sqlite:///:memory:")
-    before = Migrator(
+    Migrator(
         database,
-        pre_041_dir,
-        migrator_build="pre-041-upgrade-test",
+        default_migrations_dir(),
+        migrator_build="baseline-fixture",
     ).run()
-    assert before.head == "040"
-    database.execute_script(
-        (migrations_dir.parent / "seeds" / "local_seed.sql").read_text(encoding="utf-8")
-    )
     database.execute(
         """
-        insert into permission_policy
-          (id, subject_type, subject_code, resource_type, resource_code,
-           action, effect, status, priority, revision, created_at, updated_at)
-        values ('legacy-policy-041', 'user', 'user_local_admin', 'project',
-                'default', 'use', 'allow', 'enabled', 1, 1,
-                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        """
+        insert into app_user
+          (id, username, display_name, status, created_at, updated_at)
+        values ('adoption-user', 'adoption-user', 'Adoption User', 'enabled', ?, ?)
+        """,
+        ("2026-08-11T00:00:00Z", "2026-08-11T00:00:00Z"),
     )
-    database.execute(
-        """
-        insert into platform_access_grant
-          (id, subject_type, subject_code, effect, created_at, updated_at)
-        values ('legacy-grant-041', 'user', 'user_local_admin', 'allow',
-                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        """
-    )
-    database.execute(
-        """
-        insert into platform_runtime_config_definition
-          (id, key, value_type, default_json, created_at, updated_at)
-        values ('legacy-config-definition-041', 'INTERNAL_API_TIMEOUT_SECONDS',
-                'integer', '30', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        """
-    )
-    database.execute(
-        """
-        insert into platform_runtime_config_value
-          (id, definition_id, key, value_json, created_at, updated_at)
-        values ('legacy-config-value-041', 'legacy-config-definition-041',
-                'INTERNAL_API_TIMEOUT_SECONDS', '60',
-                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        """
-    )
-    preserved_tables = (
-        "app_user",
-        "user_external_identity",
-        "rbac_role",
-        "rbac_user_role",
-        "agent_definition",
-        "agent_publication",
-    )
-    preserved_counts = {
-        table: int(database.execute_one(f"select count(*) as count from {table}")["count"])
-        for table in preserved_tables
-    }
+    _convert_fresh_baseline_to_legacy_ledger(database)
 
-    upgraded = Migrator(
+    first = Migrator(
         database,
-        migrations_dir,
-        migrator_build="041-upgrade-test",
+        default_migrations_dir(),
+        migrator_build="adoption-test",
+    ).run()
+    second = Migrator(
+        database,
+        default_migrations_dir(),
+        migrator_build="adoption-repeat-test",
     ).run()
 
-    assert upgraded.applied == ("041", "042")
-    tables = {
-        str(row["name"])
-        for row in database.execute("select name from sqlite_master where type = 'table'")
+    assert first.head == "100"
+    assert first.baselined == 1
+    assert first.applied == ()
+    assert second.baselined == 0
+    assert second.applied == ()
+    assert database.execute_one("select username from app_user where id = 'adoption-user'") == {
+        "username": "adoption-user"
     }
-    assert {
-        "permission_policy",
-        "platform_access_grant",
-        "legacy_authorization_cleanup_operation",
-        "agent_job_execution_scope",
-        "business_application_revision_target",
-        "business_application_publication_target",
-    }.isdisjoint(tables)
-    assert (
-        database.execute_one(
-            "select id from platform_runtime_config_definition where key like 'INTERNAL_API_%'"
-        )
-        is None
-    )
-    assert (
-        database.execute_one(
-            "select id from platform_runtime_config_value where key like 'INTERNAL_API_%'"
-        )
-        is None
-    )
-    assert {
-        table: int(database.execute_one(f"select count(*) as count from {table}")["count"])
-        for table in preserved_tables
-    } == preserved_counts
+    assert SchemaMigrationLedger(database).read_records()[-1]["version"] == "100"
+    assert len(SchemaMigrationLedger(database).read_adoptions()) == 1
     assert database.execute("pragma foreign_key_check") == []
     database.close()
 
@@ -251,7 +250,8 @@ def test_final_schema_comment_manifest_covers_every_owned_table_and_column() -> 
     owned_tables = {
         str(row["name"])
         for row in database.execute("select name from sqlite_master where type = 'table'")
-        if str(row["name"]) != "schema_migration" and not str(row["name"]).startswith("sqlite_")
+        if str(row["name"]) not in {"schema_migration", "schema_baseline_adoption"}
+        and not str(row["name"]).startswith("sqlite_")
     }
     owned_columns = {
         (table, str(row["name"]))
@@ -268,192 +268,99 @@ def test_final_schema_comment_manifest_covers_every_owned_table_and_column() -> 
     database.close()
 
 
-def test_retirement_migration_fails_closed_for_unconverted_active_tool_binding(
-    tmp_path: Path,
-) -> None:
-    migrations_dir = default_migrations_dir()
-    pre_retirement_dir = tmp_path / "pre-retirement-migrations"
-    pre_retirement_dir.mkdir()
-    for path in migrations_dir.glob("*.sql"):
-        if int(path.name[:3]) < 40:
-            shutil.copy2(path, pre_retirement_dir / path.name)
+def test_baseline_static_gate_excludes_retired_schema_data_and_plaintext() -> None:
+    sql = (default_migrations_dir() / "100_baseline_v1.sql").read_text(encoding="utf-8")
+    executable_sql = "\n".join(
+        line for line in sql.splitlines() if not line.lstrip().startswith("--")
+    )
+    retired_names = {
+        "api_capability",
+        "api_connection",
+        "api_handler",
+        "external_api_credential",
+        "handler_installation",
+        "permission_policy",
+        "platform_access_grant",
+        "runtime_snapshot_generation",
+        "tool_definition",
+    }
 
-    database = Database("sqlite:///:memory:")
-    before = Migrator(
-        database,
-        pre_retirement_dir,
-        migrator_build="pre-retirement-guard-test",
+    assert not re.search(
+        r"^\s*(?:insert\s+into|update\s+\w+\s+set|delete\s+from)\b",
+        executable_sql,
+        re.IGNORECASE | re.MULTILINE,
+    )
+    assert not re.search(r"\badmin\b|111111111111", executable_sql, re.IGNORECASE)
+    assert not re.search(r"(?:password|token|secret)\s*=", executable_sql, re.IGNORECASE)
+    for retired_name in retired_names:
+        assert not re.search(rf"\b{retired_name}\b", executable_sql, re.IGNORECASE)
+
+
+def test_partial_legacy_head_and_checksum_drift_fail_closed() -> None:
+    partial = Database("sqlite:///:memory:")
+    Migrator(partial, default_migrations_dir(), migrator_build="fixture").run()
+    manifest = _convert_fresh_baseline_to_legacy_ledger(partial)
+    partial.execute("delete from schema_migration where version = '042'")
+    with pytest.raises(MigrationDefinitionError, match="exact head 042"):
+        Migrator(partial, default_migrations_dir(), migrator_build="partial").run()
+    partial.close()
+
+    drifted = Database("sqlite:///:memory:")
+    Migrator(drifted, default_migrations_dir(), migrator_build="fixture").run()
+    _convert_fresh_baseline_to_legacy_ledger(drifted)
+    drifted.execute(
+        "update schema_migration set checksum = ? where version = '042'",
+        ("0" * 64,),
+    )
+    with pytest.raises(MigrationDefinitionError, match="checksum or identity"):
+        Migrator(drifted, default_migrations_dir(), migrator_build="drift").run()
+    assert manifest["legacy_head"] == "042"
+    drifted.close()
+
+
+def test_schema_drift_rejects_legacy_adoption_and_rollback_preserves_schema() -> None:
+    drifted = Database("sqlite:///:memory:")
+    Migrator(drifted, default_migrations_dir(), migrator_build="fixture").run()
+    _convert_fresh_baseline_to_legacy_ledger(drifted)
+    drifted.execute("drop index idx_agent_job_status")
+    with pytest.raises(MigrationDefinitionError, match="schema fingerprint"):
+        Migrator(drifted, default_migrations_dir(), migrator_build="drift").run()
+    drifted.close()
+
+    adopted = Database("sqlite:///:memory:")
+    Migrator(adopted, default_migrations_dir(), migrator_build="fixture").run()
+    _convert_fresh_baseline_to_legacy_ledger(adopted)
+    Migrator(adopted, default_migrations_dir(), migrator_build="adopt").run()
+    before_tables = adopted.execute_one(
+        """
+        select count(*) as count from sqlite_master
+         where type = 'table'
+           and name not in ('schema_migration', 'schema_baseline_adoption')
+           and name not like 'sqlite_%'
+        """
+    )
+
+    restored_head = BaselineAdoptionRollback(
+        adopted,
+        default_migrations_dir(),
+        migrator_build="rollback",
     ).run()
-    assert before.head == "039"
-    database.execute(
-        """
-        insert into agent_definition
-          (id, code, name, description, project_code, status, revision,
-           created_by, created_at, updated_at)
-        values
-          ('agent-legacy', 'agent-legacy', 'Legacy', '', 'default', 'enabled', 1,
-           'test', '2026-08-11T00:00:00Z', '2026-08-11T00:00:00Z')
-        """
-    )
-    database.execute(
-        """
-        insert into agent_revision
-          (id, agent_id, revision, status, config_json, config_hash,
-           validation_json, created_by, created_at, updated_at)
-        values
-          ('agent-revision-legacy', 'agent-legacy', 1, 'published', '{}', '',
-           '{}', 'test', '2026-08-11T00:00:00Z', '2026-08-11T00:00:00Z')
-        """
-    )
-    database.execute(
-        """
-        insert into agent_publication
-          (id, agent_id, revision_id, revision, schema_version, snapshot_json,
-           config_hash, status, published_by, published_at)
-        values
-          ('agent-publication-legacy', 'agent-legacy', 'agent-revision-legacy', 1,
-           1, '{}', '', 'active', 'test', '2026-08-11T00:00:00Z')
-        """
-    )
-    database.execute(
-        """
-        insert into agent_tool_binding (id, publication_id, tool_name, created_at)
-        values ('binding-legacy', 'agent-publication-legacy', 'unknown_tool',
-                '2026-08-11T00:00:00Z')
-        """
-    )
 
-    with pytest.raises(MigrationExecutionError, match="040 failed"):
-        Migrator(
-            database,
-            migrations_dir,
-            migrator_build="retirement-guard-test",
-        ).run()
-
-    assert SchemaMigrationLedger(database).list_records()[-1]["version"] == "039"
-    assert database.execute_one(
-        "select id from agent_tool_binding where id = 'binding-legacy'"
-    ) == {"id": "binding-legacy"}
-
-
-def test_pre_028_backup_can_be_restored_and_reupgraded_without_data_loss(
-    tmp_path: Path,
-) -> None:
-    migrations_dir = default_migrations_dir()
-    pre_change_dir = tmp_path / "pre-change-migrations"
-    pre_change_dir.mkdir()
-    for path in migrations_dir.glob("*.sql"):
-        if int(path.name[:3]) < 28:
-            shutil.copy2(path, pre_change_dir / path.name)
-
-    database_path = tmp_path / "runtime.db"
-    backup_path = tmp_path / "runtime-pre-028.backup.db"
-    database_dsn = f"sqlite:///{database_path}"
-    database = Database(database_dsn)
-    try:
-        before = Migrator(
-            database,
-            pre_change_dir,
-            migrator_build="pre-028-backup-rehearsal",
-        ).run()
-        assert before.head == "027"
-        database.execute(
+    assert restored_head == "042"
+    assert SchemaMigrationLedger(adopted).read_records()[-1]["version"] == "042"
+    assert SchemaMigrationLedger(adopted).read_adoptions() == []
+    assert (
+        adopted.execute_one(
             """
-            insert into app_user
-              (id, username, display_name, status, created_at, updated_at)
-            values ('backup-user', 'backup-user', 'Backup User', 'enabled',
-                    '2026-08-06T00:00:00Z', '2026-08-06T00:00:00Z')
-            """
+        select count(*) as count from sqlite_master
+         where type = 'table'
+           and name not in ('schema_migration', 'schema_baseline_adoption')
+           and name not like 'sqlite_%'
+        """
         )
-    finally:
-        database.close()
-    shutil.copy2(database_path, backup_path)
-
-    upgraded = Database(database_dsn)
-    try:
-        result = Migrator(
-            upgraded,
-            migrations_dir,
-            migrator_build="028-038-upgrade-rehearsal",
-        ).run()
-        assert result.applied == (
-            "028",
-            "029",
-            "030",
-            "031",
-            "032",
-            "033",
-            "034",
-            "035",
-            "036",
-            "037",
-            "038",
-            "039",
-            "040",
-            "041",
-            "042",
-        )
-        assert upgraded.execute_one("select username from app_user where id = 'backup-user'") == {
-            "username": "backup-user"
-        }
-        assert (
-            upgraded.execute_one(
-                """
-            select name from sqlite_master
-             where type = 'table' and name = 'builtin_tool_release'
-            """
-            )
-            is None
-        )
-    finally:
-        upgraded.close()
-
-    shutil.copy2(backup_path, database_path)
-    restored = Database(database_dsn)
-    try:
-        records = SchemaMigrationLedger(restored).list_records()
-        assert records[-1]["version"] == "027"
-        assert restored.execute_one("select username from app_user where id = 'backup-user'") == {
-            "username": "backup-user"
-        }
-        assert (
-            restored.execute_one(
-                """
-            select name from sqlite_master
-             where type = 'table' and name = 'builtin_tool_release'
-            """
-            )
-            is None
-        )
-
-        reapplied = Migrator(
-            restored,
-            migrations_dir,
-            migrator_build="restored-028-038-reupgrade-rehearsal",
-        ).run()
-        assert reapplied.applied == (
-            "028",
-            "029",
-            "030",
-            "031",
-            "032",
-            "033",
-            "034",
-            "035",
-            "036",
-            "037",
-            "038",
-            "039",
-            "040",
-            "041",
-            "042",
-        )
-        assert reapplied.head == "042"
-        assert restored.execute_one("select username from app_user where id = 'backup-user'") == {
-            "username": "backup-user"
-        }
-    finally:
-        restored.close()
+        == before_tables
+    )
+    adopted.close()
 
 
 def test_migrator_rolls_back_entire_failed_version_and_ledger_record(
@@ -538,7 +445,7 @@ def test_schema_head_validator_is_read_only_and_rejects_missing_ledger() -> None
 
     with pytest.raises(
         SchemaHeadError,
-        match="ledger is missing; expected head 042",
+        match="ledger is missing; expected head 100",
     ):
         SchemaHeadValidator(
             database,

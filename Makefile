@@ -1,4 +1,4 @@
-.PHONY: check compile format-check lint typecheck test unittest frontend-check openspec-validate smoke-db-backed-config
+.PHONY: check compile format-check lint typecheck test unittest frontend-check openspec-validate schema-baseline-check docs-link-check smoke-db-backed-config
 
 compile:
 	python3 -m compileall backend
@@ -22,12 +22,15 @@ unittest:
 	PYTHONPATH=backend .venv/bin/python -m unittest discover -s backend/tests -t .
 
 openspec-validate:
-	openspec validate --specs
-	openspec validate connect-internal-tool-platform
-	openspec validate add-local-internal-api-platform-loki
-	openspec validate stabilize-real-tools-runtime-and-loki-diagnostics
+	openspec validate --all --strict
+
+schema-baseline-check:
+	.venv/bin/pytest -q backend/tests/test_schema_migration_runtime.py backend/tests/test_initial_admin_bootstrap.py
+
+docs-link-check:
+	.venv/bin/python scripts/check_markdown_links.py
 
 smoke-db-backed-config:
 	scripts/smoke_db_backed_config.sh
 
-check: compile format-check lint typecheck test unittest frontend-check openspec-validate
+check: compile format-check lint typecheck schema-baseline-check docs-link-check test unittest frontend-check openspec-validate

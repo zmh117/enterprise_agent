@@ -6,7 +6,7 @@
 真实运行结果。
 
 检查器：
-[`scripts/runtime_foundation_gate.py`](../../../../scripts/runtime_foundation_gate.py)
+[`scripts/runtime_foundation_gate.py`](../../../../../scripts/runtime_foundation_gate.py)
 
 ## 使用
 

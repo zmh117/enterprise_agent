@@ -7,16 +7,17 @@ import pytest
 from app.modules.identity.application.passwords import PasswordService
 from app.shared.database import Database, default_migrations_dir
 from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
+from app.shared.migrations import Migrator
 from backend.tests.helpers import container
 
 
-def test_webhook_migration_backfills_humans_and_is_repeatable() -> None:
+def test_baseline_webhook_schema_defaults_humans_and_is_repeatable() -> None:
     database = Database("sqlite:///:memory:")
-    migrations = default_migrations_dir()
-    for path in sorted(migrations.glob("*.sql")):
-        if path.name == "008_webhook_agent_triggers.sql":
-            break
-        database.execute_script(path.read_text())
+    Migrator(
+        database,
+        default_migrations_dir(),
+        migrator_build="webhook-baseline-test",
+    ).run()
     database.execute(
         """
         insert into app_user
@@ -26,10 +27,13 @@ def test_webhook_migration_backfills_humans_and_is_repeatable() -> None:
         """
     )
 
-    migration = (migrations / "008_webhook_agent_triggers.sql").read_text()
-    database.execute_script(migration)
-    database.execute_script(migration)
+    repeated = Migrator(
+        database,
+        default_migrations_dir(),
+        migrator_build="webhook-baseline-repeat-test",
+    ).run()
 
+    assert repeated.applied == ()
     legacy = database.execute_one("select account_type from app_user where id = 'legacy-user'")
     assert legacy == {"account_type": "human"}
     assert {

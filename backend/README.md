@@ -50,6 +50,7 @@ API Capability、Handler、API Connection、Resource Mapping、Tool Release 生�
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 PYTHONPATH=backend .venv/bin/python -m app.cli.migrate
+APP_ENV=local PYTHONPATH=backend .venv/bin/python -m app.cli.bootstrap_admin --non-interactive
 PYTHONPATH=backend .venv/bin/python -m uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
@@ -74,9 +75,14 @@ docker compose up --build
 ## 数据库迁移
 
 - `migrator` 是唯一 schema writer。
+- 活动 schema 从 baseline `100` 开始；未来 migration 从 `101` 单调递增，禁止重用旧版本号。
+- 空库执行 `100`；精确 legacy `042` 通过不可变 manifest 验证后只追加等价 marker，部分 legacy head 失败关闭。
+- Compose 顺序固定为 `migrate -> bootstrap initial admin -> apply runtime grants`。
 - API、Worker、Runtime 相关服务在迁移成功后启动并只读校验 schema head/checksum。
 - 破坏性迁移先检查活动旧引用；已有库升级前必须完成可恢复备份。
 - ONES 身份表和 Team/验证事实必须保留；旧长期个人 API Credential 必须删除。
+
+操作手册见 [空库 Baseline 与管理员](../docs/operations/schema-baseline-bootstrap.md) 和 [Legacy 042 Adoption](../docs/operations/schema-baseline-upgrade.md)。
 
 ## ONES 身份
 
@@ -104,6 +110,7 @@ ONES 绑定由当前用户本人发起。邮箱和密码仅存在于验证请求
 ```bash
 .venv/bin/python -m compileall -q backend/app
 .venv/bin/pytest -q backend/tests
+.venv/bin/python scripts/check_markdown_links.py
 docker compose config --quiet
 ```
 

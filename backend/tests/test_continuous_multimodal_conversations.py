@@ -23,6 +23,7 @@ from app.modules.job.domain.job_status import JobStatus
 from app.modules.agent.application.conversation_context import ConversationContextService
 from app.modules.admin.infrastructure.read_repository import AdminReadRepository
 from app.shared.database import Database, default_migrations_dir
+from app.shared.migrations import Migrator
 from app.shared.exceptions import PermissionDenied, RetryableExecutionError
 from app.shared.exceptions import NonRetryableExecutionError
 from app.shared.config import AttachmentSettings, ConversationSettings, DingTalkSettings, Settings
@@ -362,30 +363,26 @@ def test_duplicate_file_event_does_not_duplicate_attachment_or_task() -> None:
     assert len(c.message_bus.attachments) == 1
 
 
-def test_legacy_sessions_are_backfilled_without_merging() -> None:
+def test_baseline_sessions_require_distinct_explicit_session_keys() -> None:
     database = Database("sqlite:///:memory:")
-    migrations = default_migrations_dir()
-    for name in ("001_initial_agent.sql", "002_configuration.sql", "003_channel_delivery.sql"):
-        database.execute_script((migrations / name).read_text())
+    Migrator(
+        database,
+        default_migrations_dir(),
+        migrator_build="session-key-baseline-test",
+    ).run()
     database.execute(
         """
         insert into agent_session
           (id, dingding_conversation_id, dingding_user_id, source, project_code,
-           source_channel, source_connector_id, external_conversation_id, requester_id,
-           requester_display_name, routing_context_json, reply_route_json, created_at, updated_at)
-        values ('old-a', 'same', 'u', 'dingding', 'default', 'dingding', 'c', 'same',
-                'u', '', '{}', '{}', 'now', 'now'),
-               ('old-b', 'same', 'u', 'dingding', 'default', 'dingding', 'c', 'same',
-                'u', '', '{}', '{}', 'now', 'now')
+           session_key, created_at, updated_at)
+        values ('session-a', 'same', 'u', 'dingding', 'default', 'direct:a', 'now', 'now'),
+               ('session-b', 'same', 'u', 'dingding', 'default', 'direct:b', 'now', 'now')
         """
-    )
-    database.execute_script(
-        (migrations / "006_continuous_conversation_attachments.sql").read_text()
     )
     rows = database.execute("select id, session_key from agent_session order by id")
     assert rows == [
-        {"id": "old-a", "session_key": "legacy:old-a"},
-        {"id": "old-b", "session_key": "legacy:old-b"},
+        {"id": "session-a", "session_key": "direct:a"},
+        {"id": "session-b", "session_key": "direct:b"},
     ]
 
 

@@ -151,12 +151,7 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
             """
         )
     migration_names = [path.name for path in sorted(default_migrations_dir().glob("*.sql"))]
-    assert migration_names.index("009_admin_web_read_models.sql") < migration_names.index(
-        "009a_agent_job_retry_failure_delivery.sql"
-    )
-    assert migration_names.index(
-        "009a_agent_job_retry_failure_delivery.sql"
-    ) < migration_names.index("010_business_application_control_plane.sql")
+    assert migration_names == ["100_baseline_v1.sql"]
     session_columns = {str(row["name"]) for row in db.execute("pragma table_info(agent_session)")}
     assert {
         "application_publication_id",
@@ -371,84 +366,24 @@ def test_publish_activate_resolve_rollback_and_deactivate_do_not_touch_data_plan
     assert application["runtime_wired"] is False
 
 
-def test_local_only_migration_removes_nonlocal_runtime_pointers_but_preserves_history() -> None:
-    container = build_test_container(control_plane_settings(), migrate=True, seed=True)
-    application, _revision, publication = create_draft_publish(
-        container,
-        "local-only-cleanup",
-        route="cleanup-bot",
-    )
-    local_deployment = container.business_application_service.activate(
-        actor_id="user_local_admin",
-        code="local-only-cleanup",
-        environment="local",
-        publication_id=str(publication["id"]),
-        expected_revision=0,
-    )
-    container.database.execute(
-        """
-        insert into business_application_deployment (
-          id, application_id, environment, publication_id, active, revision,
-          activated_by, activated_at, deactivated_by, deactivated_at, updated_at
-        ) values (?, ?, 'test', ?, 1, 1, 'legacy-admin', ?, '', null, ?)
-        """,
-        (
-            "deployment-nonlocal-test",
-            application["id"],
-            publication["id"],
-            "2026-07-24T00:00:00+00:00",
-            "2026-07-24T00:00:00+00:00",
-        ),
-    )
-    container.database.execute(
-        """
-        insert into business_application_active_route (
-          id, deployment_id, application_id, publication_id, environment,
-          trigger_type, connector_id, normalized_routing_key, created_at
-        ) values (?, ?, ?, ?, 'test', 'dingtalk_private', ?, ?, ?)
-        """,
-        (
-            "route-nonlocal-test",
-            "deployment-nonlocal-test",
-            application["id"],
-            publication["id"],
-            "connector-dingtalk-stream-default",
-            "bot:cleanup-bot",
-            "2026-07-24T00:00:00+00:00",
-        ),
-    )
+def test_baseline_schema_contains_no_business_application_fixture_rows() -> None:
+    database = Database("sqlite:///:memory:")
+    Migrator(
+        database,
+        default_migrations_dir(),
+        migrator_build="business-application-baseline-test",
+    ).run()
 
-    container.database.execute_script(
-        (default_migrations_dir() / "012_business_application_local_only.sql").read_text()
-    )
-
-    deployments = container.database.execute(
-        """
-        select id, environment
-          from business_application_deployment
-         where application_id = ?
-         order by environment
-        """,
-        (application["id"],),
-    )
-    routes = container.database.execute(
-        """
-        select deployment_id, environment
-          from business_application_active_route
-         where application_id = ?
-         order by environment
-        """,
-        (application["id"],),
-    )
-    assert deployments == [{"id": local_deployment["id"], "environment": "local"}]
-    assert routes == [{"deployment_id": local_deployment["id"], "environment": "local"}]
-    assert (
-        container.database.execute_one(
-            "select count(*) as count from business_application_publication where id = ?",
-            (publication["id"],),
-        )["count"]
-        == 1
-    )
+    assert database.execute_one("select count(*) as count from business_application") == {
+        "count": 0
+    }
+    assert database.execute_one(
+        "select count(*) as count from business_application_deployment"
+    ) == {"count": 0}
+    assert database.execute_one(
+        "select count(*) as count from business_application_active_route"
+    ) == {"count": 0}
+    database.close()
 
 
 def test_only_published_session_policy_is_visible_to_runtime_resolver() -> None:

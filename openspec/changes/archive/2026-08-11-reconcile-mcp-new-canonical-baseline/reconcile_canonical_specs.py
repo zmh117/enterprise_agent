@@ -10,7 +10,7 @@ import json
 import re
 import shutil
 import subprocess
-from collections import Counter, OrderedDict, defaultdict
+from collections import Counter, OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +28,9 @@ def find_repo_root(start: Path) -> Path:
 REPO_ROOT = find_repo_root(CHANGE_ROOT)
 OPEN_SPEC_ROOT = REPO_ROOT / "openspec"
 CANONICAL_ROOT = OPEN_SPEC_ROOT / "specs"
-ORIGINAL_ARCHIVE = OPEN_SPEC_ROOT / "changes" / "archive" / "2026-08-11-rebuild-canonical-spec-baseline"
+ORIGINAL_ARCHIVE = (
+    OPEN_SPEC_ROOT / "changes" / "archive" / "2026-08-11-rebuild-canonical-spec-baseline"
+)
 ORIGINAL_SNAPSHOT = ORIGINAL_ARCHIVE / "source-specs-snapshot"
 TARGET_SNAPSHOT = CHANGE_ROOT / "target-source-specs-snapshot"
 STAGING_ROOT = CHANGE_ROOT / "_canonical_staging"
@@ -166,7 +168,9 @@ def freeze_source() -> None:
     runtime_target.parent.mkdir(parents=True, exist_ok=False)
     shutil.copy2(runtime_source, runtime_target)
 
-    source_mapping = load_original_mapping() + [("agent-runtime-service-contract", "execution-delivery")]
+    source_mapping = load_original_mapping() + [
+        ("agent-runtime-service-contract", "execution-delivery")
+    ]
     actual_capabilities = sorted(path.name for path in TARGET_SNAPSHOT.iterdir() if path.is_dir())
     expected_capabilities = sorted(source for source, _ in source_mapping)
     if actual_capabilities != expected_capabilities:
@@ -174,7 +178,9 @@ def freeze_source() -> None:
 
     entries: list[dict[str, Any]] = []
     for capability, domain in source_mapping:
-        for block in requirement_blocks((TARGET_SNAPSHOT / capability / "spec.md").read_text(encoding="utf-8")):
+        for block in requirement_blocks(
+            (TARGET_SNAPSHOT / capability / "spec.md").read_text(encoding="utf-8")
+        ):
             entries.append(block_entry(block, capability=capability, domain=domain))
     titles = [entry["title"] for entry in entries]
     if len(titles) != len(set(titles)):
@@ -188,12 +194,20 @@ def freeze_source() -> None:
         "entries": entries,
     }
     write_json(SOURCE_MANIFEST, manifest)
-    print(json.dumps({key: value for key, value in manifest.items() if key != "entries"}, ensure_ascii=False, indent=2))
+    print(
+        json.dumps(
+            {key: value for key, value in manifest.items() if key != "entries"},
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
 
 
 def verify_source_snapshot() -> None:
     manifest = json.loads(SOURCE_MANIFEST.read_text(encoding="utf-8"))
-    domain_by_capability = dict(load_original_mapping() + [("agent-runtime-service-contract", "execution-delivery")])
+    domain_by_capability = dict(
+        load_original_mapping() + [("agent-runtime-service-contract", "execution-delivery")]
+    )
     expected = Counter(
         (
             entry["capability"],
@@ -206,22 +220,36 @@ def verify_source_snapshot() -> None:
     )
     actual: Counter[tuple[Any, ...]] = Counter()
     for capability, domain in domain_by_capability.items():
-        for block in requirement_blocks((TARGET_SNAPSHOT / capability / "spec.md").read_text(encoding="utf-8")):
-            actual[(capability, domain, block["title"], block["sha256"], block["scenario_count"])] += 1
+        for block in requirement_blocks(
+            (TARGET_SNAPSHOT / capability / "spec.md").read_text(encoding="utf-8")
+        ):
+            actual[
+                (capability, domain, block["title"], block["sha256"], block["scenario_count"])
+            ] += 1
     if actual != expected:
         raise ValueError("target source snapshot differs from its frozen manifest")
-    print(json.dumps({"target_source_snapshot_verification": "passed", "requirements": sum(actual.values())}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {"target_source_snapshot_verification": "passed", "requirements": sum(actual.values())},
+            ensure_ascii=False,
+        )
+    )
 
 
 def restore_original_archive() -> None:
     for relative in RESTORE_PATHS:
         repo_relative = f"openspec/changes/archive/2026-08-11-rebuild-canonical-spec-baseline/source-specs-snapshot/{relative}"
-        content = subprocess.run(
-            ["git", "show", f"{SOURCE_COMMIT}:{repo_relative}"],
-            cwd=REPO_ROOT,
-            check=True,
-            stdout=subprocess.PIPE,
-        ).stdout.decode("utf-8").rstrip() + "\n"
+        content = (
+            subprocess.run(
+                ["git", "show", f"{SOURCE_COMMIT}:{repo_relative}"],
+                cwd=REPO_ROOT,
+                check=True,
+                stdout=subprocess.PIPE,
+            )
+            .stdout.decode("utf-8")
+            .rstrip()
+            + "\n"
+        )
         (REPO_ROOT / repo_relative).write_text(content, encoding="utf-8")
     verify_original_archive()
 
@@ -242,10 +270,22 @@ def verify_original_archive() -> None:
     for capability, domain in load_original_mapping():
         path = ORIGINAL_SNAPSHOT / capability / "spec.md"
         for block in requirement_blocks(path.read_text(encoding="utf-8")):
-            actual[(capability, domain, block["title"], block["sha256"], block["scenario_count"])] += 1
+            actual[
+                (capability, domain, block["title"], block["sha256"], block["scenario_count"])
+            ] += 1
     if actual != expected:
-        raise ValueError("original canonical archive snapshot still differs from its frozen manifest")
-    print(json.dumps({"original_archive_snapshot_verification": "passed", "requirements": sum(actual.values())}, ensure_ascii=False))
+        raise ValueError(
+            "original canonical archive snapshot still differs from its frozen manifest"
+        )
+    print(
+        json.dumps(
+            {
+                "original_archive_snapshot_verification": "passed",
+                "requirements": sum(actual.values()),
+            },
+            ensure_ascii=False,
+        )
+    )
 
 
 def parse_delta(path: Path) -> list[dict[str, Any]]:
@@ -264,7 +304,9 @@ def parse_delta(path: Path) -> list[dict[str, Any]]:
             if not pairs:
                 raise ValueError(f"cannot parse RENAMED section: {path}")
             for old_title, new_title in pairs:
-                operations.append({"operation": operation, "from": old_title.strip(), "to": new_title.strip()})
+                operations.append(
+                    {"operation": operation, "from": old_title.strip(), "to": new_title.strip()}
+                )
             continue
         blocks = requirement_blocks(body, require_scenario=operation != "REMOVED")
         if not blocks:
@@ -280,16 +322,24 @@ def load_source_groups() -> tuple[dict[str, OrderedDict[str, dict[str, Any]]], d
     mapping = all_mapping()
     domain_by_capability = dict(mapping)
     groups: dict[str, OrderedDict[str, dict[str, Any]]] = {}
-    source_capabilities = [source for source, _ in load_original_mapping()] + ["agent-runtime-service-contract"]
+    source_capabilities = [source for source, _ in load_original_mapping()] + [
+        "agent-runtime-service-contract"
+    ]
     for capability in source_capabilities:
-        blocks = requirement_blocks((TARGET_SNAPSHOT / capability / "spec.md").read_text(encoding="utf-8"))
+        blocks = requirement_blocks(
+            (TARGET_SNAPSHOT / capability / "spec.md").read_text(encoding="utf-8")
+        )
         groups[capability] = OrderedDict((block["title"], block) for block in blocks)
 
-    platform_blocks = requirement_blocks((CANONICAL_ROOT / "platform-operations" / "spec.md").read_text(encoding="utf-8"))
+    platform_blocks = requirement_blocks(
+        (CANONICAL_ROOT / "platform-operations" / "spec.md").read_text(encoding="utf-8")
+    )
     governance = [block for block in platform_blocks if block["title"] in GOVERNANCE_TITLES]
     if [block["title"] for block in governance] != list(GOVERNANCE_TITLES):
         raise ValueError("cannot resolve all canonical governance Requirements")
-    groups["canonical-baseline-governance"] = OrderedDict((block["title"], block) for block in governance)
+    groups["canonical-baseline-governance"] = OrderedDict(
+        (block["title"], block) for block in governance
+    )
     domain_by_capability["canonical-baseline-governance"] = "platform-operations"
     return groups, domain_by_capability
 
@@ -312,7 +362,9 @@ def apply_change(
                 old_title = operation_item["from"]
                 new_title = operation_item["to"]
                 if old_title not in group or new_title in group:
-                    raise ValueError(f"invalid rename in {change_name}/{capability}: {old_title} -> {new_title}")
+                    raise ValueError(
+                        f"invalid rename in {change_name}/{capability}: {old_title} -> {new_title}"
+                    )
                 block = group.pop(old_title)
                 block_text = block["text"].replace(
                     f"### Requirement: {old_title}", f"### Requirement: {new_title}", 1
@@ -320,7 +372,13 @@ def apply_change(
                 renamed = requirement_blocks(block_text)[0]
                 group[new_title] = renamed
                 operation_log.append(
-                    {"change": change_name, "capability": capability, "operation": operation, "title": old_title, "action": f"renamed:{new_title}"}
+                    {
+                        "change": change_name,
+                        "capability": capability,
+                        "operation": operation,
+                        "title": old_title,
+                        "action": f"renamed:{new_title}",
+                    }
                 )
                 continue
 
@@ -335,7 +393,9 @@ def apply_change(
                     alias_key = (change_name, capability, title)
                     previous_title = MODIFIED_TITLE_ALIASES.get(alias_key)
                     if previous_title is None or previous_title not in group:
-                        raise ValueError(f"MODIFIED Requirement not found: {change_name}/{capability}/{title}")
+                        raise ValueError(
+                            f"MODIFIED Requirement not found: {change_name}/{capability}/{title}"
+                        )
                     before = group[previous_title]
                     replaced: OrderedDict[str, dict[str, Any]] = OrderedDict()
                     for existing_title, existing_block in group.items():
@@ -435,7 +495,9 @@ def build_staging() -> None:
     if duplicates:
         raise ValueError(f"duplicate final Requirement titles: {duplicates}")
 
-    purposes = {domain: purpose_from_spec(CANONICAL_ROOT / domain / "spec.md") for domain in DOMAIN_ORDER}
+    purposes = {
+        domain: purpose_from_spec(CANONICAL_ROOT / domain / "spec.md") for domain in DOMAIN_ORDER
+    }
     STAGING_ROOT.mkdir(parents=True, exist_ok=False)
     for domain in DOMAIN_ORDER:
         output_dir = STAGING_ROOT / domain
@@ -482,7 +544,9 @@ def verify_target(target_root: Path) -> None:
     )
     actual: Counter[tuple[Any, ...]] = Counter()
     for domain in DOMAIN_ORDER:
-        for block in requirement_blocks((target_root / domain / "spec.md").read_text(encoding="utf-8")):
+        for block in requirement_blocks(
+            (target_root / domain / "spec.md").read_text(encoding="utf-8")
+        ):
             actual[(domain, block["title"], block["sha256"], block["scenario_count"])] += 1
     if actual != expected:
         raise ValueError("canonical target differs from reconciliation manifest")
