@@ -16,18 +16,9 @@ from backend.tests.helpers import (
 
 
 def _runtime_container():
-    runtime = container()
-    runtime.database.execute(
-        """
-        insert into permission_policy
-          (id, subject_type, subject_code, resource_type, resource_code,
-           effect, action, status, priority, revision, created_at, updated_at)
-        values ('test-runtime-local-user-project', 'user', 'local-user',
-                'project', 'default', 'allow', 'use', 'enabled', 1, 1,
-                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        on conflict(id) do nothing
-        """
-    )
+    runtime = container(allow_direct_jobs=True)
+    runtime.create_agent_job_service.published_agent_runtime_enabled = True
+    runtime.create_agent_job_service.runtime_readiness_guard = None
     return runtime
 
 

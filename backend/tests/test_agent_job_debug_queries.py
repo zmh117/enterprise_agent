@@ -9,7 +9,10 @@ from app.bootstrap import Container, build_test_container
 from app.main import create_app
 from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
 from app.shared.config import IdentitySettings, Settings
-from backend.tests.helpers import activate_dingtalk_test_application
+from backend.tests.helpers import (
+    activate_dingtalk_test_application,
+    direct_job_permission_service_factory,
+)
 
 
 ADMIN_ID = "user_local_admin"
@@ -30,7 +33,12 @@ def _settings() -> Settings:
 
 
 def _container() -> Container:
-    return build_test_container(_settings(), migrate=True, seed=True)
+    return build_test_container(
+        _settings(),
+        migrate=True,
+        seed=True,
+        permission_service_factory=direct_job_permission_service_factory,
+    )
 
 
 def _headers(username: str) -> dict[str, str]:
@@ -141,7 +149,6 @@ def _create_debug_job(
 ) -> str:
     # Task 2.2 exercises read authorization only. The application-aware Debug
     # creation path replaces this legacy setup in task 2.3.
-    runtime.create_agent_job_service.published_agent_runtime_enabled = False
     job = runtime.create_agent_job_service.execute(
         CreateAgentJobCommand(
             idempotency_key=f"query-test:{idempotency_key}",
@@ -183,7 +190,7 @@ def test_debug_options_require_login_and_explicit_application_scope() -> None:
         unauthenticated = client.get("/api/agent/jobs/_debug-options")
         admin_without_business_role = client.get(
             "/api/agent/jobs/_debug-options",
-            headers=_headers("local-user"),
+            headers=_headers("admin"),
         )
         allowed = client.get(
             "/api/agent/jobs/_debug-options",
@@ -256,7 +263,7 @@ def test_debug_queries_hide_existing_job_from_unrelated_user(suffix: str) -> Non
         )
         administrator = client.get(
             f"/api/agent/jobs/{job_id}{suffix}",
-            headers=_headers("local-user"),
+                headers=_headers("admin"),
         )
 
     assert creator_response.status_code == 200

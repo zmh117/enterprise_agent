@@ -60,22 +60,8 @@ def test_seed_creates_two_runtime_fixed_agents_and_is_idempotent() -> None:
 
 
 def test_job_freezes_runtime_from_exact_agent_publication() -> None:
-    runtime = container()
+    runtime = container(allow_direct_jobs=True)
     publication = runtime.agent_config_service.current_publication(TYPESCRIPT_AGENT)
-    runtime.database.execute_script(
-        """
-        insert into permission_policy
-          (id, subject_type, subject_code, resource_type, resource_code,
-           effect, action, status, priority, revision, created_at, updated_at)
-        values
-          ('test-typescript-project-use', 'user', 'local-user', 'project',
-           'default', 'allow', 'use', 'enabled', 1, 1,
-           CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-          ('test-typescript-agent-use', 'user', 'local-user', 'agent',
-           'typescript-diagnostic-agent', 'allow', 'use', 'enabled', 1, 1,
-           CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
-        """
-    )
 
     job = runtime.create_agent_job_service.execute(
         CreateAgentJobCommand(
@@ -248,22 +234,8 @@ def test_typescript_agent_supports_draft_publish_history_and_rollback() -> None:
 
 
 def test_selected_runtime_readiness_blocks_only_new_job_and_activation() -> None:
-    runtime = container()
+    runtime = container(allow_direct_jobs=True)
     typescript = runtime.agent_config_service.current_publication(TYPESCRIPT_AGENT)
-    runtime.database.execute_script(
-        """
-        insert into permission_policy
-          (id, subject_type, subject_code, resource_type, resource_code,
-           effect, action, status, priority, revision, created_at, updated_at)
-        values
-          ('runtime-ready-project-use', 'user', 'local-user', 'project',
-           'default', 'allow', 'use', 'enabled', 1, 1,
-           CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-          ('runtime-ready-agent-use', 'user', 'local-user', 'agent',
-           'typescript-diagnostic-agent', 'allow', 'use', 'enabled', 1, 1,
-           CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
-        """
-    )
     application = runtime.business_application_service.create(
         actor_id="user_local_admin",
         code="runtime-readiness-activation-test",

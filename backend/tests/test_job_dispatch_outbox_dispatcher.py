@@ -51,6 +51,7 @@ def test_dispatcher_publishes_only_before_recording_confirmed_state() -> None:
             "event_id",
             "job_id",
             "correlation_id",
+            "redelivered",
         }
         assert runtime.message_bus.jobs[0].event_id == event.id
         assert "queue.dispatched" in {

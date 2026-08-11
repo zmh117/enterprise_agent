@@ -15,6 +15,7 @@ RUNTIME_TABLE_DELETE_ORDER = (
     "message_attachment",
     "delivery_chunk",
     "delivery_attempt",
+    "delivery_outbox",
     "agent_tool_call",
     "agent_artifact",
     "agent_step",
@@ -24,6 +25,8 @@ RUNTIME_TABLE_DELETE_ORDER = (
     "webhook_event",
     "webhook_replay_nonce",
     "agent_message",
+    "agent_runtime_event",
+    "agent_job_mcp_tool_snapshot",
     "agent_job",
     "agent_session",
 )
@@ -33,6 +36,7 @@ RUNTIME_DELETE_SQL = {
     "message_attachment": "delete from message_attachment",
     "delivery_chunk": "delete from delivery_chunk",
     "delivery_attempt": "delete from delivery_attempt",
+    "delivery_outbox": "delete from delivery_outbox",
     "agent_tool_call": "delete from agent_tool_call",
     "agent_artifact": "delete from agent_artifact",
     "agent_step": "delete from agent_step",
@@ -42,6 +46,8 @@ RUNTIME_DELETE_SQL = {
     "webhook_event": "delete from webhook_event",
     "webhook_replay_nonce": "delete from webhook_replay_nonce",
     "agent_message": "delete from agent_message",
+    "agent_runtime_event": "delete from agent_runtime_event",
+    "agent_job_mcp_tool_snapshot": "delete from agent_job_mcp_tool_snapshot",
     "agent_job": "delete from agent_job",
     "agent_session": "delete from agent_session",
 }

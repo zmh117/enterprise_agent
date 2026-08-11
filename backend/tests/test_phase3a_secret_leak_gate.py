@@ -14,7 +14,10 @@ from app.modules.job.application.create_agent_job_service import (
     CreateAgentJobCommand,
 )
 from app.shared.config import IdentitySettings
-from backend.tests.helpers import test_settings as make_settings
+from backend.tests.helpers import (
+    direct_job_permission_service_factory,
+    test_settings as make_settings,
+)
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -37,7 +40,12 @@ def test_phase3a_secret_material_is_confined_to_encrypted_store_and_runtime_memo
             cookie_secure=False,
         ),
     )
-    runtime = build_test_container(settings, migrate=True, seed=True)
+    runtime = build_test_container(
+        settings,
+        migrate=True,
+        seed=True,
+        permission_service_factory=direct_job_permission_service_factory,
+    )
     app = create_app(settings, container_factory=lambda _: runtime)
     plaintext = "phase3a-plain-canary-7vQ9mL2x"
 
@@ -49,7 +57,7 @@ def test_phase3a_secret_material_is_confined_to_encrypted_store_and_runtime_memo
                 "value": plaintext,
                 "purpose": "phase3a-gate",
             },
-            headers={"x-admin-user-id": "local-user"},
+            headers={"x-admin-user-id": "admin"},
         )
         assert created_response.status_code == 200
         secret = created_response.json()["secret"]
@@ -64,7 +72,8 @@ def test_phase3a_secret_material_is_confined_to_encrypted_store_and_runtime_memo
         )
         assert crypto is not None
 
-        runtime.create_agent_job_service.published_agent_runtime_enabled = False
+        runtime.create_agent_job_service.published_agent_runtime_enabled = True
+        runtime.create_agent_job_service.runtime_readiness_guard = None
         job = runtime.create_agent_job_service.execute(
             CreateAgentJobCommand(
                 idempotency_key="phase3a-secret-leak-gate",
@@ -118,7 +127,7 @@ def test_phase3a_secret_material_is_confined_to_encrypted_store_and_runtime_memo
             },
         )
 
-        headers = {"x-admin-user-id": "local-user"}
+        headers = {"x-admin-user-id": "admin"}
         api_responses = [
             created_response,
             client.get("/api/platform/secrets", headers=headers),

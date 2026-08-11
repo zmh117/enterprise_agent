@@ -10,6 +10,7 @@ from app.main import create_app
 from app.shared.config import DingTalkSettings, Settings
 from backend.tests.helpers import (
     container,
+    direct_job_permission_service_factory,
     dingtalk_payload,
     dingtalk_sign,
     publish_pending_agent_jobs,
@@ -22,7 +23,14 @@ class DingTalkIngressTests(unittest.TestCase):
         built = []
 
         def factory(factory_settings: Any):
-            c = build_test_container(factory_settings, migrate=True, seed=True)
+            c = build_test_container(
+                factory_settings,
+                migrate=True,
+                seed=True,
+                permission_service_factory=direct_job_permission_service_factory,
+            )
+            c.create_agent_job_service.published_agent_runtime_enabled = True
+            c.create_agent_job_service.runtime_readiness_guard = None
             built.append(c)
             return c
 
@@ -48,7 +56,14 @@ class DingTalkIngressTests(unittest.TestCase):
         built = []
 
         def factory(factory_settings: Any):
-            c = build_test_container(factory_settings, migrate=True, seed=True)
+            c = build_test_container(
+                factory_settings,
+                migrate=True,
+                seed=True,
+                permission_service_factory=direct_job_permission_service_factory,
+            )
+            c.create_agent_job_service.published_agent_runtime_enabled = True
+            c.create_agent_job_service.runtime_readiness_guard = None
             built.append(c)
             return c
 
@@ -123,7 +138,7 @@ class DingTalkIngressTests(unittest.TestCase):
         self.assertEqual(0, len(c.message_bus.jobs))
 
     def test_unauthorized_user_is_rejected(self) -> None:
-        c = container()
+        c = container(allow_direct_jobs=False)
         timestamp = "1710000000000"
         result = c.dingtalk_message_service.handle_webhook(
             payload=dingtalk_payload(user_id="blocked-user"),

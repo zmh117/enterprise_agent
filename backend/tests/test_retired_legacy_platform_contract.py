@@ -30,6 +30,12 @@ RETIRED_TABLES = {
     "agent_tool_binding",
     "tool_definition",
     "datasource_registry",
+    "agent_job_execution_scope",
+    "business_application_revision_target",
+    "business_application_publication_target",
+    "permission_policy",
+    "platform_access_grant",
+    "legacy_authorization_cleanup_operation",
 }
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -90,8 +96,18 @@ def test_retired_tables_are_absent_and_direct_mcp_tables_are_present() -> None:
     assert runtime.database.execute_one(
         "select count(*) as count from rbac_role_admin_capability where capability_code like 'builtin_tools.%'"
     )["count"] == 0
+    job_columns = {
+        str(row["name"])
+        for row in runtime.database.execute("pragma table_info(agent_job)")
+    }
+    assert {"execution_scope_id", "execution_scope_hash"}.isdisjoint(job_columns)
     assert runtime.database.execute_one(
-        "select count(*) as count from permission_policy where resource_type = 'builtin_tool'"
+        """
+        select count(*) as count
+          from platform_runtime_config_definition
+         where key like 'INTERNAL_API_%'
+            or key = 'FEATURE_REAL_INTERNAL_TOOLS'
+        """
     )["count"] == 0
 
 

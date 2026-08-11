@@ -27,7 +27,10 @@ from app.modules.model_connection.domain import (
 )
 from app.shared.config import ExecutionSettings, IdentitySettings
 from app.shared.exceptions import NonRetryableExecutionError
-from backend.tests.helpers import test_settings as build_settings
+from backend.tests.helpers import (
+    direct_job_permission_service_factory,
+    test_settings as build_settings,
+)
 
 
 ADMIN_ID = "user_local_admin"
@@ -43,7 +46,12 @@ def container():
             cookie_secure=False,
         ),
     )
-    value = build_test_container(settings, migrate=True, seed=True)
+    value = build_test_container(
+        settings,
+        migrate=True,
+        seed=True,
+        permission_service_factory=direct_job_permission_service_factory,
+    )
     value.model_connection_service.dns_resolver = lambda *args, **kwargs: [
         (2, 1, 6, "", ("1.1.1.1", 443))
     ]

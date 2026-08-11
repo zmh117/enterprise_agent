@@ -205,39 +205,6 @@ def _business_role(
     return role
 
 
-def _grant_stable_tool_use(
-    c: object,
-    *,
-    user_id: str,
-    tool_identifier: str,
-) -> None:
-    c.database.execute(
-        """
-        insert into permission_policy
-          (id, subject_type, subject_code, resource_type, resource_code,
-           action, effect, priority, status, revision, created_at, updated_at)
-        values (?, 'user', ?, 'tool', ?, 'use', 'allow', 100, 'enabled', 1,
-                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        """,
-        (
-            f"test-tool-use-{user_id}-{tool_identifier}",
-            user_id,
-            tool_identifier,
-        ),
-    )
-    c.database.execute(
-        """
-        insert into permission_policy
-          (id, subject_type, subject_code, resource_type, resource_code,
-           action, effect, priority, status, revision, created_at, updated_at)
-        values (?, 'user', ?, 'project', 'default', 'use', 'allow', 100,
-                'enabled', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        on conflict(id) do nothing
-        """,
-        (f"test-project-use-{user_id}", user_id),
-    )
-
-
 def test_migration_is_additive_preserves_legacy_rows_and_is_idempotent() -> None:
     database = Database("sqlite:///:memory:")
     migrations = default_migrations_dir()
@@ -441,25 +408,11 @@ def test_service_account_cannot_join_role_with_web_capabilities() -> None:
     c.database.close()
 
 
-def test_legacy_permission_policy_never_grants_business_application_access() -> None:
+def test_missing_current_role_never_grants_business_application_access() -> None:
     c = _container()
     legacy_user = c.identity_repository.create_user(
         username="legacy-business-user",
         display_name="旧授权用户",
-    )
-    c.database.execute(
-        """
-        insert into permission_policy
-          (id, subject_type, subject_code, resource_type, resource_code,
-           action, effect, priority, status, revision,
-           created_at, updated_at)
-        values (
-          'legacy-business-allow', 'user', ?, 'project', 'default',
-          'use', 'allow', 100, 'enabled', 1,
-          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-        )
-        """,
-        (str(legacy_user["id"]),),
     )
     c.database.execute(
         """
@@ -476,7 +429,9 @@ def test_legacy_permission_policy_never_grants_business_application_access() -> 
     )
     assert decision["allowed"] is False
     assert decision["reason"] == "no_application_role"
-    assert "legacy_compatible" not in decision
+    assert c.database.execute_one(
+        "select name from sqlite_master where type = 'table' and name = 'permission_policy'"
+    ) is None
     c.database.close()
 
 
@@ -559,27 +514,13 @@ def test_multi_role_union_deny_precedence_and_application_scope_isolation() -> N
     assert cross_scope["reason"] == "application_scope_denied"
     assert isolated["allowed"] is False
 
-    c.database.execute(
-        """
-        insert into permission_policy
-          (id, subject_type, subject_code, resource_type, resource_code,
-           action, effect, priority, status, revision,
-           created_at, updated_at)
-        values (
-          'legacy-business-deny', 'user', ?,
-          'business_application', ?, 'use', 'deny',
-          1, 'enabled', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-        )
-        """,
-        (str(user["id"]), str(application["code"])),
-    )
-    unaffected_by_legacy_deny = c.business_authorization_service.decide(
+    still_allowed_by_current_roles = c.business_authorization_service.decide(
         user_id=str(user["id"]),
         application_id=str(application["id"]),
     )
-    assert unaffected_by_legacy_deny["allowed"] is True
-    assert unaffected_by_legacy_deny["reason"] == "application_role_allow"
-    assert unaffected_by_legacy_deny["source_role_codes"] == sorted(
+    assert still_allowed_by_current_roles["allowed"] is True
+    assert still_allowed_by_current_roles["reason"] == "application_role_allow"
+    assert still_allowed_by_current_roles["source_role_codes"] == sorted(
         [first["code"], second["code"]]
     )
     c.database.close()
@@ -1088,11 +1029,6 @@ def test_four_stage_reauthorization_blocks_revoked_access_without_data_leak() ->
                 "scopes": [base_one],
             }
         ],
-    )
-    _grant_stable_tool_use(
-        c,
-        user_id=str(user["id"]),
-        tool_identifier="query_database",
     )
     command = CreateAgentJobCommand(
         idempotency_key="four-stage-job",

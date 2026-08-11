@@ -385,7 +385,7 @@ def test_dingtalk_enterprise_identity_isolation_conflict_and_unknown_fail_closed
     assert "super-sensitive-token" not in audit_text
 
 
-def test_legacy_policy_and_platform_grant_never_authorize_strict_runtime() -> None:
+def test_retired_legacy_authorization_tables_are_absent_and_strict_runtime_denies() -> None:
     container = unified_container()
     repository = container.identity_repository
     user = repository.create_user(username="diagnostic-user", display_name="Diagnostic User")
@@ -393,20 +393,13 @@ def test_legacy_policy_and_platform_grant_never_authorize_strict_runtime() -> No
     membership = repository.assign_role(
         user_id=str(user["id"]), role_id=str(role["id"]), expected_revision=0
     )
-    container.database.execute(
-        """
-        insert into permission_policy
-          (id, subject_type, subject_code, resource_type, resource_code,
-           action, effect, priority, status, revision,
-           created_at, updated_at)
-        values (
-          'policy-diagnostic-reader-tool', 'role',
-          'diagnostic-reader', 'tool', 'query_database',
-          'use', 'allow', 100, 'enabled', 1,
-          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    tables = {
+        str(row["name"])
+        for row in container.database.execute(
+            "select name from sqlite_master where type = 'table'"
         )
-        """
-    )
+    }
+    assert {"permission_policy", "platform_access_grant"}.isdisjoint(tables)
     allowed = container.authorization_evaluator.decide(
         user_id=str(user["id"]),
         resource_type="tool",
@@ -416,20 +409,6 @@ def test_legacy_policy_and_platform_grant_never_authorize_strict_runtime() -> No
     assert allowed.allowed is False
     assert allowed.reason == "no_strict_admin_capability"
 
-    container.database.execute(
-        """
-        insert into permission_policy
-          (id, subject_type, subject_code, resource_type, resource_code,
-           action, effect, priority, status, revision,
-           created_at, updated_at)
-        values (
-          'policy-diagnostic-user-deny', 'user', ?,
-          'tool', 'query_database', 'use', 'deny',
-          1, 'enabled', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-        )
-        """,
-        (str(user["id"]),),
-    )
     denied = container.authorization_evaluator.decide(
         user_id=str(user["id"]),
         resource_type="tool",
@@ -459,21 +438,6 @@ def test_legacy_policy_and_platform_grant_never_authorize_strict_runtime() -> No
     topology.upsert_base(environment_code="prod", code="base-b", engine="postgresql")
     topology.upsert_workshop(
         environment_code="prod", base_code="base-a", code="ws-denied"
-    )
-    container.database.execute(
-        """
-        insert into platform_access_grant
-          (id, subject_type, subject_code, effect,
-           tool_scope_json, resource_scope_json, condition_json,
-           priority, status, revision, created_at, updated_at)
-        values
-          ('legacy-scope-allow', 'role', 'scope-reader', 'allow',
-           '["query_database"]', '{}', '{}', 100, 'enabled', 1,
-           CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-          ('legacy-scope-deny', 'role', 'scope-reader', 'deny',
-           '["query_database"]', '{}', '{}', 1, 'enabled', 1,
-           CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        """
     )
     evaluator = container.authorization_evaluator
     allowed_scope = evaluator.decide_platform_scope(

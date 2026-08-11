@@ -249,7 +249,7 @@ def test_provider_contract_api_is_metadata_only_and_marks_postgres_unavailable()
     with TestClient(app) as client:
         response = client.get(
             "/api/platform/provider-contracts",
-            headers={"x-admin-user-id": "local-user"},
+            headers={"x-admin-user-id": "admin"},
         )
 
     assert response.status_code == 200

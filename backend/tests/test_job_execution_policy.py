@@ -65,6 +65,7 @@ def test_business_application_policy_only_tightens_agent_limits() -> None:
 
 def test_non_business_job_uses_versioned_runtime_default_snapshot() -> None:
     c = container()
+    c.create_agent_job_service.published_agent_runtime_enabled = False
     job = c.create_agent_job_service.execute(
         CreateAgentJobCommand(
             idempotency_key="policy-default",

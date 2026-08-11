@@ -6,8 +6,11 @@ import hmac
 from datetime import UTC, datetime
 
 from app.bootstrap import Container, build_test_container
+from app.modules.identity.application import AuthorizationEvaluator
+from app.modules.job.infrastructure.repositories import ConfigurationRepository
 from app.modules.message_bus.application.message_publisher import AgentJobMessage
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
+from app.modules.permission.application.permission_service import PermissionService
 from app.shared.config import DingTalkSettings, Settings
 
 
@@ -71,28 +74,67 @@ def test_settings(secret: str = "test-secret") -> Settings:
     )
 
 
-def container(*, configure_seed_secrets: bool = True) -> Container:
+class DirectJobTestPermissionService(PermissionService):
+    """Explicit test substitute for low-level Jobs without an Application."""
+
+    def assert_user_can_create_job(self, *, user_id: str, project_code: str) -> None:
+        del user_id, project_code
+
+    def require_action(
+        self,
+        *,
+        user_id: str,
+        resource_type: str,
+        resource_code: str = "*",
+        action: str = "manage",
+    ) -> None:
+        if resource_type == "agent" and action == "use":
+            return
+        super().require_action(
+            user_id=user_id,
+            resource_type=resource_type,
+            resource_code=resource_code,
+            action=action,
+        )
+
+    def assert_mcp_tool_use_grant(
+        self,
+        *,
+        user_id: str,
+        tool_identifier: str,
+        project_code: str,
+    ) -> None:
+        del user_id, project_code
+        self.assert_registered_readonly_tool(tool_identifier)
+
+
+def direct_job_permission_service_factory(
+    repository: ConfigurationRepository,
+    evaluator: AuthorizationEvaluator,
+) -> PermissionService:
+    return DirectJobTestPermissionService(
+        repository,
+        authorization_evaluator=evaluator,
+    )
+
+
+def container(
+    *,
+    configure_seed_secrets: bool = True,
+    allow_direct_jobs: bool = True,
+) -> Container:
     runtime = build_test_container(
         test_settings(),
         migrate=True,
         seed=True,
         configure_seed_secrets=configure_seed_secrets,
+        permission_service_factory=(
+            direct_job_permission_service_factory if allow_direct_jobs else None
+        ),
     )
-    runtime.database.execute(
-        """
-        insert into permission_policy
-          (id, subject_type, subject_code, resource_type, resource_code,
-           effect, action, status, priority, revision, created_at, updated_at)
-        values
-          ('test-local-user-project', 'user', 'local-user', 'project', '*',
-           'allow', 'use', 'enabled', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-          ('test-local-user-agent', 'user', 'local-user', 'agent', '*',
-           'allow', 'use', 'enabled', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-          ('test-local-user-tools', 'user', 'local-user', 'tool', '*',
-           'allow', 'use', 'enabled', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        on conflict(id) do nothing
-        """
-    )
+    if allow_direct_jobs:
+        runtime.create_agent_job_service.published_agent_runtime_enabled = True
+        runtime.create_agent_job_service.runtime_readiness_guard = None
     return runtime
 
 
@@ -164,17 +206,6 @@ def _ensure_agent_publication_mcp_tools(
     )
     if not requested:
         return ()
-    container.database.execute(
-        """
-        insert into permission_policy
-          (id, subject_type, subject_code, resource_type, resource_code,
-           effect, action, status, priority, revision, created_at, updated_at)
-        values ('test-user-local-admin-mcp-tools', 'user',
-                'user_local_admin', 'tool', '*', 'allow', 'use',
-                'enabled', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        on conflict(id) do nothing
-        """
-    )
     published = {
         str(row["tool_identifier"])
         for row in container.database.execute(

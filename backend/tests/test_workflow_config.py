@@ -17,7 +17,7 @@ class WorkflowConfigTests(unittest.TestCase):
             return container()
 
         with TestClient(create_app(settings, container_factory=factory)) as client:
-            headers = {"x-admin-user-id": "local-user"}
+            headers = {"x-admin-user-id": "user_local_admin"}
             created = client.post(
                 "/api/agent/workflows",
                 headers=headers,
@@ -93,7 +93,7 @@ class WorkflowConfigTests(unittest.TestCase):
             return container()
 
         with TestClient(create_app(settings, container_factory=factory)) as client:
-            headers = {"x-admin-user-id": "local-user"}
+            headers = {"x-admin-user-id": "user_local_admin"}
             client.post(
                 "/api/agent/workflows",
                 headers=headers,

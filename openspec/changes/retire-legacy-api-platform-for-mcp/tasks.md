@@ -53,6 +53,7 @@
 - [x] 7.3 删除 Capability、Handler、API Connection、用于业务调用的个人 API Credential、Resource Mapping、Tool Release 和 Internal API runtime generation/activation 表及旧 JSON 字段；不得删除 ONES 身份事实
 - [x] 7.4 保留工具资源、平台 Secret、模型连接、渠道、角色、用户、ONES 身份/Team/验证时间、Job/Tool Call/Delivery 历史并验证迁移幂等
 - [x] 7.5 更新 seed、测试数据重建、备份恢复和迁移器测试
+- [x] 7.6 通过向前迁移删除遗漏的 Application Target、Job Execution Scope 表与 Job 目标列、旧 `permission_policy`/`platform_access_grant`/清理操作表和全部残留 `INTERNAL_API_*` config definition，同时保留统一 RBAC、身份、会话隔离与历史 Job 主记录
 
 ## 8. 文档、规格与部署清理
 
@@ -60,6 +61,7 @@
 - [x] 8.2 删除 Internal API Platform、Capability/Handler/Connection/Resource Mapping 的过期文档和 UI 文案，并明确 ONES 身份绑定不等于业务调用凭据
 - [x] 8.3 清理活动 `migrate-claude-agent-sdk-to-typescript` 中被双 Runtime 主规格取代的旧 MCP 适配内容
 - [x] 8.4 更新 `.env.example` 与部署脚本，明确保留 Runtime Grant、Model Probe Token 和 Master Key
+- [x] 8.5 删除旧授权清理 CLI/service、DB-backed 测试权限兼容层和 seed/运行时 grants 中的旧表引用，将回归测试迁移到统一 RBAC 或显式测试替身
 
 ## 9. 验证与验收
 
@@ -70,3 +72,4 @@
 - [x] 9.5 构建受影响镜像并验证 `tool-mcp`、两个 Runtime、Worker、API 和 Admin Web readiness
 - [ ] 9.6 验收 Python/TypeScript 的 test MySQL schema/query、普通问候、权限拒绝和钉钉交付链路，并验收 ONES 本人绑定/重验/默认 Team/解绑与管理员只读停用边界
 - [x] 9.7 运行 OpenSpec 全量 strict validation、git diff check 和旧组件全文残留扫描
+- [x] 9.8 在新备份后升级运行库，验证旧表/列/config definition 不存在，且用户、角色、成员、应用授权、ONES 身份、工具资源、Secret、会话和历史 Job 数量保持预期

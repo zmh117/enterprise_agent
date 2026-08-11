@@ -65,19 +65,9 @@ def test_after_runtime_pause_hook_is_bounded_and_test_only(monkeypatch) -> None:
 
 
 def _runtime_with_project_permission():
-    runtime = container()
-    runtime.create_agent_job_service.capability_publication_repository = None
-    runtime.database.execute(
-        """
-        insert into permission_policy
-          (id, subject_type, subject_code, resource_type, resource_code,
-           effect, action, status, priority, revision, created_at, updated_at)
-        values ('test-runtime-user-project', 'user', 'user_local_admin',
-                'project', 'default', 'allow', 'use', 'enabled', 1, 1,
-                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        on conflict(id) do nothing
-        """
-    )
+    runtime = container(allow_direct_jobs=True)
+    runtime.create_agent_job_service.published_agent_runtime_enabled = True
+    runtime.create_agent_job_service.runtime_readiness_guard = None
     return runtime
 
 

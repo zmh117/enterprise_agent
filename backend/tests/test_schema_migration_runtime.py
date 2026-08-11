@@ -32,7 +32,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
     assert len({item.version for item in catalog}) == len(catalog)
     assert len({item.name for item in catalog}) == len(catalog)
     assert [item.version for item in catalog][8:11] == ["009", "009a", "010"]
-    assert catalog[-1].version == "040"
+    assert catalog[-1].version == "041"
     assert all(len(item.checksum) == 64 for item in catalog)
 
     baseline = legacy_baseline_artifacts(catalog)
@@ -81,9 +81,9 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
     first = migrator.run()
     second = migrator.run()
 
-    assert first.head == "040"
+    assert first.head == "041"
     assert first.baselined == 0
-    assert first.applied[-18:] == (
+    assert first.applied[-19:] == (
         "023",
         "024",
         "025",
@@ -102,13 +102,123 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
         "038",
         "039",
         "040",
+        "041",
     )
-    assert second.head == "040"
+    assert second.head == "041"
     assert second.baselined == 0
     assert second.applied == ()
     assert len(SchemaMigrationLedger(database).list_records()) == len(
         load_migration_catalog(default_migrations_dir())
     )
+
+
+def test_041_upgrade_removes_legacy_authorization_and_targets_but_preserves_current_rbac(
+    tmp_path: Path,
+) -> None:
+    migrations_dir = default_migrations_dir()
+    pre_041_dir = tmp_path / "pre-041-migrations"
+    pre_041_dir.mkdir()
+    for path in migrations_dir.glob("*.sql"):
+        if int(path.name[:3]) < 41:
+            shutil.copy2(path, pre_041_dir / path.name)
+
+    database = Database("sqlite:///:memory:")
+    before = Migrator(
+        database,
+        pre_041_dir,
+        migrator_build="pre-041-upgrade-test",
+    ).run()
+    assert before.head == "040"
+    database.execute_script(
+        (migrations_dir.parent / "seeds" / "local_seed.sql").read_text(
+            encoding="utf-8"
+        )
+    )
+    database.execute(
+        """
+        insert into permission_policy
+          (id, subject_type, subject_code, resource_type, resource_code,
+           action, effect, status, priority, revision, created_at, updated_at)
+        values ('legacy-policy-041', 'user', 'user_local_admin', 'project',
+                'default', 'use', 'allow', 'enabled', 1, 1,
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        """
+    )
+    database.execute(
+        """
+        insert into platform_access_grant
+          (id, subject_type, subject_code, effect, created_at, updated_at)
+        values ('legacy-grant-041', 'user', 'user_local_admin', 'allow',
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        """
+    )
+    database.execute(
+        """
+        insert into platform_runtime_config_definition
+          (id, key, value_type, default_json, created_at, updated_at)
+        values ('legacy-config-definition-041', 'INTERNAL_API_TIMEOUT_SECONDS',
+                'integer', '30', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        """
+    )
+    database.execute(
+        """
+        insert into platform_runtime_config_value
+          (id, definition_id, key, value_json, created_at, updated_at)
+        values ('legacy-config-value-041', 'legacy-config-definition-041',
+                'INTERNAL_API_TIMEOUT_SECONDS', '60',
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        """
+    )
+    preserved_tables = (
+        "app_user",
+        "user_external_identity",
+        "rbac_role",
+        "rbac_user_role",
+        "agent_definition",
+        "agent_publication",
+    )
+    preserved_counts = {
+        table: int(
+            database.execute_one(f"select count(*) as count from {table}")["count"]
+        )
+        for table in preserved_tables
+    }
+
+    upgraded = Migrator(
+        database,
+        migrations_dir,
+        migrator_build="041-upgrade-test",
+    ).run()
+
+    assert upgraded.applied == ("041",)
+    tables = {
+        str(row["name"])
+        for row in database.execute(
+            "select name from sqlite_master where type = 'table'"
+        )
+    }
+    assert {
+        "permission_policy",
+        "platform_access_grant",
+        "legacy_authorization_cleanup_operation",
+        "agent_job_execution_scope",
+        "business_application_revision_target",
+        "business_application_publication_target",
+    }.isdisjoint(tables)
+    assert database.execute_one(
+        "select id from platform_runtime_config_definition where key like 'INTERNAL_API_%'"
+    ) is None
+    assert database.execute_one(
+        "select id from platform_runtime_config_value where key like 'INTERNAL_API_%'"
+    ) is None
+    assert {
+        table: int(
+            database.execute_one(f"select count(*) as count from {table}")["count"]
+        )
+        for table in preserved_tables
+    } == preserved_counts
+    assert database.execute("pragma foreign_key_check") == []
+    database.close()
 
 
 def test_retirement_migration_fails_closed_for_unconverted_active_tool_binding(
@@ -118,7 +228,7 @@ def test_retirement_migration_fails_closed_for_unconverted_active_tool_binding(
     pre_retirement_dir = tmp_path / "pre-retirement-migrations"
     pre_retirement_dir.mkdir()
     for path in migrations_dir.glob("*.sql"):
-        if path.name.split("_", 1)[0] != "040":
+        if int(path.name[:3]) < 40:
             shutil.copy2(path, pre_retirement_dir / path.name)
 
     database = Database("sqlite:///:memory:")
@@ -233,6 +343,7 @@ def test_pre_028_backup_can_be_restored_and_reupgraded_without_data_loss(
             "038",
             "039",
             "040",
+            "041",
         )
         assert upgraded.execute_one(
             "select username from app_user where id = 'backup-user'"
@@ -280,8 +391,9 @@ def test_pre_028_backup_can_be_restored_and_reupgraded_without_data_loss(
             "038",
             "039",
             "040",
+            "041",
         )
-        assert reapplied.head == "040"
+        assert reapplied.head == "041"
         assert restored.execute_one(
             "select username from app_user where id = 'backup-user'"
         ) == {"username": "backup-user"}
@@ -371,7 +483,7 @@ def test_schema_head_validator_is_read_only_and_rejects_missing_ledger() -> None
 
     with pytest.raises(
         SchemaHeadError,
-        match="ledger is missing; expected head 040",
+        match="ledger is missing; expected head 041",
     ):
         SchemaHeadValidator(
             database,

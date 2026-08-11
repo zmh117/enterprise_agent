@@ -462,7 +462,12 @@ def test_matched_job_pins_provenance_and_duplicate_event_is_idempotent() -> None
     assert job.business_application_route_decision["resolution_outcome"] == "matched"
     assert "sessionWebhook" not in json.dumps(job.business_application_route_decision)
     queued = container.message_bus.jobs[0]
-    assert set(vars(queued)) == {"event_id", "job_id", "correlation_id"}
+    assert set(vars(queued)) == {
+        "event_id",
+        "job_id",
+        "correlation_id",
+        "redelivered",
+    }
 
 
 def test_activation_is_local_only_and_rejects_invalid_runtime_bindings() -> None:

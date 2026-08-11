@@ -11,3 +11,9 @@
 - **WHEN** 角色授权请求包含 API Capability 或 Resource Mapping
 - **THEN** 后端拒绝旧字段且不创建兼容 grant
 
+### Requirement: 统一 RBAC 必须是唯一授权事实源
+系统 MUST 只使用现行 `rbac_*` 角色、成员、管理能力、应用访问、MCP Tool grant 和数据范围表计算授权；MUST NOT 保留或读取 `permission_policy`、`platform_access_grant`、旧授权清理操作表或 DB-backed 测试兼容层。
+
+#### Scenario: 从包含旧授权数据的数据库升级
+- **WHEN** 数据库同时包含现行统一 RBAC 和旧 policy/grant 行
+- **THEN** 迁移保留现行用户、角色、成员、应用授权和数据范围，并永久删除旧授权表而不把旧行重新解释为有效权限

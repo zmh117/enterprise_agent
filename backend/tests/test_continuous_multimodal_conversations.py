@@ -28,6 +28,7 @@ from app.shared.exceptions import NonRetryableExecutionError
 from app.shared.config import AttachmentSettings, ConversationSettings, DingTalkSettings, Settings
 from backend.tests.helpers import (
     activate_dingtalk_test_application,
+    direct_job_permission_service_factory,
     grant_test_application_access,
 )
 
@@ -89,47 +90,12 @@ def multimodal_container() -> object:
             published_agent_runtime_enabled=True,
         ),
     )
-    container = build_test_container(settings, migrate=True, seed=True)
-    container.permission_service.unified_enabled = False
-    container.database.execute(
-        """
-        insert into permission_policy
-          (id, subject_type, subject_code, resource_type, resource_code, effect,
-           created_at, updated_at)
-        values (?, 'user', 'local-user', 'project', 'default', 'allow',
-                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        """,
-        ("policy-multimodal-local-user",),
+    container = build_test_container(
+        settings,
+        migrate=True,
+        seed=True,
+        permission_service_factory=direct_job_permission_service_factory,
     )
-    container.database.execute(
-        """
-        insert into permission_policy
-          (id, subject_type, subject_code, resource_type, resource_code, action, effect,
-           created_at, updated_at)
-        values (?, 'user', 'local-user', 'agent', 'default-diagnostic-agent', 'use',
-                'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        """,
-        ("policy-multimodal-local-user-agent",),
-    )
-    for policy_id, resource_type, resource_code in (
-        ("policy-multimodal-admin-project", "project", "default"),
-        (
-            "policy-multimodal-admin-agent",
-            "agent",
-            "default-diagnostic-agent",
-        ),
-        ("policy-multimodal-admin-tool", "tool", "*"),
-    ):
-        container.database.execute(
-            """
-            insert into permission_policy
-              (id, subject_type, subject_code, resource_type, resource_code, action,
-               effect, created_at, updated_at)
-            values (?, 'user', 'user_local_admin', ?, ?, 'use', 'allow',
-                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            """,
-            (policy_id, resource_type, resource_code),
-        )
     tool_identifiers = ("get_er_context", "get_business_flow_context")
     activate_dingtalk_test_application(
         container,
@@ -193,26 +159,6 @@ def test_real_sanitized_group_and_direct_contracts_resolve_stable_sessions() -> 
 
 def test_direct_sessions_are_isolated_by_requester() -> None:
     c = multimodal_container()
-    c.database.execute(
-        """
-        insert into permission_policy
-          (id, subject_type, subject_code, resource_type, resource_code, effect,
-           created_at, updated_at)
-        values (?, 'user', 'user-b', 'project', 'default', 'allow', CURRENT_TIMESTAMP,
-                CURRENT_TIMESTAMP)
-        """,
-        ("policy-user-b",),
-    )
-    c.database.execute(
-        """
-        insert into permission_policy
-          (id, subject_type, subject_code, resource_type, resource_code, action, effect,
-           created_at, updated_at)
-        values (?, 'user', 'user-b', 'agent', 'default-diagnostic-agent', 'use', 'allow',
-                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        """,
-        ("policy-user-b-agent",),
-    )
     jobs = []
     for user in ("local-user", "user-b"):
         jobs.append(

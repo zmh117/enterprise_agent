@@ -7,6 +7,13 @@
 - **WHEN** 客户端访问已退役旧平台 API
 - **THEN** 路由不存在且不得返回兼容数据
 
+### Requirement: 运行配置目录不得保留 Internal API 定义
+平台运行配置定义和值 MUST NOT 包含任何 `INTERNAL_API_*` 或 `FEATURE_REAL_INTERNAL_TOOLS` 项，包括历史的 auth token、timeout 和 response-size 定义。
+
+#### Scenario: 已有数据库包含未赋值旧定义
+- **WHEN** 数据库升级前只剩未设置 value 的旧 Internal API 配置定义
+- **THEN** 迁移仍删除这些 definition，配置 API 不再展示或接受它们
+
 ## REMOVED Requirements
 
 ### Requirement: Platform configuration API exposes topology management
@@ -48,4 +55,3 @@
 ### Requirement: 破坏性资源重置不得暴露为普通 CRUD
 **Reason**: 旧要求包含 Mapping/runtime generation 清理。
 **Migration**: 新资源重置契约仅处理工具资源与 revision。
-

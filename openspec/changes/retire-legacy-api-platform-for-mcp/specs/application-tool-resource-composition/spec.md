@@ -25,6 +25,13 @@ Job 创建时 MUST 冻结 Agent/Application Tool 交集、当前用户有效 Too
 - **WHEN** 用户具有 Tool grant 但 Application Publication 未选择该 Tool
 - **THEN** 模型不得获得该 Tool，直接调用也必须被拒绝
 
+### Requirement: 遗留目标冻结存储必须不存在
+系统 MUST NOT 保留 `business_application_revision_target`、`business_application_publication_target`、`agent_job_execution_scope` 或 `agent_job.execution_scope_id/execution_scope_hash` 作为运行目标或授权事实；会话隔离继续使用 `agent_session.execution_scope_hash`，实际工具目标只来自本次 Tool Call 并实时鉴权。
+
+#### Scenario: 已有数据库升级
+- **WHEN** 已执行旧目标冻结迁移的数据库升级到本变更最终 schema
+- **THEN** 遗留目标表、Job 目标列和索引被删除，而历史 Job 主记录、Tool Call 审计与会话隔离事实保持可读
+
 ## REMOVED Requirements
 
 ### Requirement: Agent Publication 必须冻结精确内置工具 Envelope

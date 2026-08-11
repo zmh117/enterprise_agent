@@ -39,7 +39,7 @@ def _settings() -> Settings:
 
 
 def _admin_headers() -> dict[str, str]:
-    return {"x-admin-user-id": "local-user"}
+    return {"x-admin-user-id": "admin"}
 
 
 def _container():
@@ -412,7 +412,7 @@ def test_debug_create_rechecks_active_publication_before_writing() -> None:
     assert job_count == 0
 
 
-def test_debug_create_does_not_use_legacy_compatibility_fallback() -> None:
+def test_debug_create_requires_current_business_application_access() -> None:
     runtime = _container()
     selection = prepare_debug_application_access(
         runtime,
@@ -448,19 +448,6 @@ def test_debug_create_does_not_use_legacy_compatibility_fallback() -> None:
         role_id=str(role["id"]),
         assigned_by=ADMIN_ID,
     )
-    runtime.database.execute(
-        """
-        insert into permission_policy
-          (id, subject_type, subject_code, resource_type, resource_code,
-           action, effect, status, priority, revision, created_at, updated_at)
-        values
-          ('debug-legacy-project', 'user', ?, 'project', 'default',
-           'use', 'allow', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-          ('debug-legacy-agent', 'user', ?, 'agent', 'default-diagnostic-agent',
-           'use', 'allow', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        """,
-        (user["id"], user["id"]),
-    )
     with TestClient(
         create_app(_settings(), container_factory=lambda _: runtime)
     ) as client:
@@ -468,7 +455,7 @@ def test_debug_create_does_not_use_legacy_compatibility_fallback() -> None:
             "/api/agent/jobs",
             headers={"x-admin-user-id": "debug-legacy-only"},
             json={
-                "message": "旧权限不得放行",
+                "message": "缺少应用访问不得放行",
                 **_selection_payload(selection),
             },
         )

@@ -129,10 +129,9 @@ def test_trigger_lifecycle_uses_dedicated_service_account_and_pinned_agent(
     assert service_account["username"] == "svc-webhook-grafana-orders"
     assert c.database.execute_one(
         """
-        select id from permission_policy
-         where subject_type = 'user' and subject_code = ?
-        """,
-        (str(service_account["id"]),),
+        select name from sqlite_master
+         where type = 'table' and name = 'permission_policy'
+        """
     ) is None
 
     validated = service.validate_revision(

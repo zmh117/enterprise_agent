@@ -64,92 +64,6 @@ VALUES
    'enabled', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 
-INSERT INTO permission_policy
-  (id, subject_type, subject_code, resource_type, resource_code, effect,
-   action, status, priority, revision, created_at, updated_at)
-VALUES
-  ('policy-role-admin-users', 'role', 'platform-admin', 'user', '*', 'allow',
-   'manage', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-roles', 'role', 'platform-admin', 'role', '*', 'allow',
-   'manage', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-identities', 'role', 'platform-admin', 'identity', '*', 'allow',
-   'manage', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-agent-edit', 'role', 'platform-admin', 'agent', '*', 'allow',
-   'edit', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-agent-publish', 'role', 'platform-admin', 'agent', '*', 'allow',
-   'publish', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-platform', 'role', 'platform-admin', 'platform_config', '*', 'allow',
-   'manage', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-secrets', 'role', 'platform-admin', 'secret', '*', 'allow',
-   'manage', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-secrets-read', 'role', 'platform-admin', 'secret', '*', 'allow',
-   'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-platform-read', 'role', 'platform-admin', 'platform_config', '*', 'allow',
-   'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-audit', 'role', 'platform-admin', 'audit', '*', 'allow',
-   'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-project', 'role', 'platform-admin', 'project', 'default', 'allow',
-   'use', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-tools', 'role', 'platform-admin', 'tool', '*', 'allow',
-   'use', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-agent-use', 'role', 'platform-admin', 'agent', 'default-diagnostic-agent',
-   'allow', 'use', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-typescript-agent-use', 'role', 'platform-admin', 'agent',
-   'typescript-diagnostic-agent', 'allow', 'use', 'enabled', 10, 1,
-   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-webhook-read', 'role', 'platform-admin', 'webhook_trigger', '*',
-   'allow', 'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-webhook-edit', 'role', 'platform-admin', 'webhook_trigger', '*',
-   'allow', 'edit', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-webhook-publish', 'role', 'platform-admin', 'webhook_trigger', '*',
-   'allow', 'publish', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-webhook-rotate', 'role', 'platform-admin', 'webhook_trigger', '*',
-   'allow', 'rotate', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-webhook-service-account', 'role', 'platform-admin', 'webhook_trigger', '*',
-   'allow', 'manage_service_account', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-dashboard-read', 'role', 'platform-admin', 'admin_dashboard', '*',
-   'allow', 'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-skill-read', 'role', 'platform-admin', 'skill_catalog', '*',
-   'allow', 'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-tool-resource-read', 'role', 'platform-admin', 'tool_resource', '*',
-   'allow', 'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-tool-resource-manage', 'role', 'platform-admin', 'tool_resource', '*',
-   'allow', 'manage', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-tool-resource-test', 'role', 'platform-admin', 'tool_resource', '*',
-   'allow', 'test', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-channel-read', 'role', 'platform-admin', 'channel_connector', '*',
-   'allow', 'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-channel-manage', 'role', 'platform-admin', 'channel_connector', '*',
-   'allow', 'manage', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-channel-restart', 'role', 'platform-admin', 'channel_connector', '*',
-   'allow', 'restart', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-channel-delete', 'role', 'platform-admin', 'channel_connector', '*',
-   'allow', 'delete', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-queue-read', 'role', 'platform-admin', 'queue_status', '*',
-   'allow', 'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-job-read', 'role', 'platform-admin', 'agent_job', '*',
-   'allow', 'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-conversation-read', 'role', 'platform-admin', 'conversation', '*',
-   'allow', 'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-attachment-read', 'role', 'platform-admin', 'attachment', '*',
-   'allow', 'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-business-application-read', 'role', 'platform-admin',
-   'business_application', '*', 'allow', 'read', 'enabled', 10, 1,
-   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-business-application-create', 'role', 'platform-admin',
-   'business_application', '*', 'allow', 'create', 'enabled', 10, 1,
-   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-business-application-edit', 'role', 'platform-admin',
-   'business_application', '*', 'allow', 'edit', 'enabled', 10, 1,
-   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-business-application-publish', 'role', 'platform-admin',
-   'business_application', '*', 'allow', 'publish', 'enabled', 10, 1,
-   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-role-admin-business-application-activate', 'role', 'platform-admin',
-   'business_application', '*', 'allow', 'activate', 'enabled', 10, 1,
-   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-ON CONFLICT(id) DO NOTHING;
-
 INSERT INTO agent_definition
   (id, code, name, description, project_code, status, current_publication_id,
    classification, runtime_kind, revision, created_by, created_at, updated_at)
@@ -263,19 +177,6 @@ VALUES
    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 
-INSERT INTO permission_policy
-  (id, subject_type, subject_code, resource_type, resource_code, effect,
-   action, status, priority, revision, created_at, updated_at)
-VALUES
-  ('policy-webhook-grafana-agent', 'user', 'user_webhook_grafana_default', 'agent',
-   'default-diagnostic-agent', 'allow', 'use', 'enabled', 20, 1,
-   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-webhook-grafana-project', 'user', 'user_webhook_grafana_default', 'project',
-   'default', 'allow', 'use', 'enabled', 20, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-webhook-grafana-tools', 'user', 'user_webhook_grafana_default', 'tool',
-   '*', 'allow', 'use', 'enabled', 20, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-ON CONFLICT(id) DO NOTHING;
-
 INSERT INTO webhook_trigger_definition
   (id, code, name, trigger_type, public_id, connector_id, service_account_id,
    status, current_publication_id, revision, created_by, created_at, updated_at)
@@ -311,24 +212,6 @@ VALUES
    'agent_publication_default_v1', 1,
    'acee515709597912f04ba4e181575c14314121f084dbe561e9e04599179df1b9',
    'active', 'user_local_admin', CURRENT_TIMESTAMP)
-ON CONFLICT(id) DO NOTHING;
-
-INSERT INTO permission_policy
-  (id, subject_type, subject_code, resource_type, resource_code, action,
-   effect, created_at, updated_at)
-VALUES
-  ('policy-user-local', 'user', 'admin', 'project', 'default', 'use',
-   'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-tool-local', 'user', 'admin', 'tool', '*', 'use',
-   'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-platform-config-local', 'user', 'admin', 'platform_config', '*',
-   '*', 'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-secret-local', 'user', 'admin', 'secret', '*', '*',
-   'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-user-grafana', 'user', 'grafana', 'project', 'default', 'use',
-   'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-tool-grafana', 'user', 'grafana', 'tool', '*', 'use',
-   'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 
 INSERT INTO platform_secret_reference

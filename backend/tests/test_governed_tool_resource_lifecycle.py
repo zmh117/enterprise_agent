@@ -60,27 +60,28 @@ class FailingVerifier:
 
 
 def _grant_platform_config_management(runtime: object, user_id: str) -> None:
+    if user_id == "user_local_admin":
+        return
     runtime.database.execute(
         """
-        insert into permission_policy
-          (id, subject_type, subject_code, resource_type, resource_code,
-           action, effect, priority, status, revision, created_at, updated_at)
-        values (?, 'user', ?, 'platform_config', '*', 'manage', 'allow',
-                1, 'enabled', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        insert into app_user
+          (id, username, display_name, email, status, account_type, revision,
+           created_at, updated_at)
+        values (?, ?, ?, '', 'enabled', 'human', 1,
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         on conflict(id) do nothing
         """,
-        (f"test-platform-config-{user_id}", user_id),
+        (user_id, user_id, user_id),
     )
     runtime.database.execute(
         """
-        insert into permission_policy
-          (id, subject_type, subject_code, resource_type, resource_code,
-           action, effect, priority, status, revision, created_at, updated_at)
-        values (?, 'user', ?, 'secret', '*', 'manage', 'allow',
-                1, 'enabled', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        insert into rbac_user_role
+          (id, user_id, role_id, status, revision, created_at, updated_at)
+        values (?, ?, 'role_platform_admin', 'enabled', 1,
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         on conflict(id) do nothing
         """,
-        (f"test-secret-{user_id}", user_id),
+        (f"test-platform-admin-{user_id}", user_id),
     )
 
 

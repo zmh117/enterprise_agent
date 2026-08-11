@@ -357,7 +357,7 @@ class DingTalkIdentityDiscoveryService:
                             "id": item["application_id"],
                             "code": item["application_code"],
                             "name": item["application_name"],
-                            "capability_codes": item["capability_codes"],
+                            "tool_identifiers": item["tool_identifiers"],
                             "scopes": item["scopes"],
                         }
                         for item in business_access

@@ -269,9 +269,8 @@ def build_test_container(
     seed: bool = False,
     configure_seed_secrets: bool = True,
     service_name: str = "test-runtime",
+    permission_service_factory: PermissionServiceFactory | None = None,
 ) -> Container:
-    from app.testing.permission_service import SeedPolicyTestPermissionService
-
     database = Database(settings.database_dsn)
     try:
         if migrate:
@@ -292,16 +291,6 @@ def build_test_container(
         raise
     message_bus = InMemoryMessageBus()
 
-    def test_permission_service_factory(
-        repository: ConfigurationRepository,
-        evaluator: AuthorizationEvaluator,
-    ) -> PermissionService:
-        return SeedPolicyTestPermissionService(
-            repository,
-            authorization_evaluator=evaluator,
-            unified_enabled=(settings.feature_configuration.unified_identity_enabled),
-        )
-
     runtime = _build_container(
         settings=settings,
         service_name=service_name,
@@ -311,7 +300,7 @@ def build_test_container(
         database=database,
         seed=seed,
         use_real_claude=False,
-        permission_service_factory=test_permission_service_factory,
+        permission_service_factory=permission_service_factory,
     )
     if seed and configure_seed_secrets:
         _configure_test_seed_secrets(runtime)

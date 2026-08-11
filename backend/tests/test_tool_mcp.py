@@ -9,21 +9,6 @@ from backend.tests.helpers import container, prepare_debug_application_access
 
 def _runtime_job():
     runtime = container()
-    runtime.database.execute(
-        """
-        insert into permission_policy
-          (id, subject_type, subject_code, resource_type, resource_code,
-           effect, action, status, priority, revision, created_at, updated_at)
-        values
-          ('tool-mcp-test-user-tool', 'user', 'user_local_admin',
-           'tool', '*', 'allow', 'use', 'enabled', 1, 1,
-           CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-          ('tool-mcp-test-user-project', 'user', 'user_local_admin',
-           'project', 'default', 'allow', 'use', 'enabled', 1, 1,
-           CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        on conflict(id) do nothing
-        """
-    )
     selection = prepare_debug_application_access(
         runtime,
         application_code="tool-mcp-application",

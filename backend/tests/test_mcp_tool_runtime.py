@@ -247,20 +247,6 @@ def test_tool_mcp_bootstrap_resolves_published_resource_secret() -> None:
         service_name="tool-mcp",
     )
     actor_id = "user_local_admin"
-    runtime.database.execute(
-        """
-        insert into permission_policy
-          (id, subject_type, subject_code, resource_type, resource_code,
-           action, effect, priority, status, revision, created_at, updated_at)
-        values
-          ('test-tool-mcp-platform-config', 'user', ?, 'platform_config', '*',
-           'manage', 'allow', 1, 'enabled', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-          ('test-tool-mcp-secret', 'user', ?, 'secret', '*',
-           'manage', 'allow', 1, 'enabled', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        on conflict(id) do nothing
-        """,
-        (actor_id, actor_id),
-    )
     try:
         runtime.platform_config_service.upsert_environment(
             {"code": "tool_mcp_test"},
