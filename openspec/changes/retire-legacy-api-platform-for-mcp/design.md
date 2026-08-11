@@ -87,6 +87,12 @@ MCP transport 不承担认证和 RBAC。私网请求只携带非敏感 `X-Job-Id
 
 `migrate-claude-agent-sdk-to-typescript` 的实现已被已归档双 Runtime 变更和主规格部分取代。此次删除其中对 `runtime-tool-mcp`、旧 Capability 运行时和未实施工具迁移的活动要求；可复用的 Runtime 协议事实保留在主规格，避免并存两个事实源。
 
+### 10. 最终 PostgreSQL schema 必须自描述
+
+使用新的静态向前迁移为最终保留的 PostgreSQL `public` 项目自有表和每个字段设置中文 `COMMENT ON`。注释描述领域含义、关联对象、状态/版本/时间或安全边界，不使用无语义的统一占位文本；已有准确中文注释保持原意。`schema_migration` 迁移账本、PostgreSQL 系统表和第三方扩展表不属于项目注释契约。
+
+SQLite 不持久化 PostgreSQL comment metadata，迁移器继续跳过 `COMMENT ON`；测试通过最终 SQLite schema 与静态注释清单求差，保证任何后续迁移新增业务表或字段时必须同步增加注释。PostgreSQL 验收直接查询 `pg_catalog`，要求契约范围内表和字段注释覆盖率均为 100%。
+
 ## Risks / Trade-offs
 
 - [Risk] 删除 Resource Mapping 后同一逻辑目标存在多个资源候选。→ 解析必须要求唯一结果；有 cloud/edge 时要求 Tool 参数显式 placement，歧义绝不回退。
@@ -103,8 +109,9 @@ MCP transport 不承担认证和 RBAC。私网请求只携带非敏感 `X-Job-Id
 3. 切换 Agent/Application/Role API 与前端到 MCP Tool 模型，停止创建 Capability/Resource Mapping 数据；同时确认 ONES 身份绑定仅使用固定身份验证配置和无 Token 挑战。
 4. 切换 `tool-mcp` 直接执行，完成 Python 与 TypeScript Runtime 的 DB/Redis/Loki 回归及 DingTalk 链路验收。
 5. 执行破坏性迁移，删除旧表、字段、权限、路由、模块和 UI；删除旧授权清理 CLI/测试兼容层，保留 `user_external_identity`、统一 RBAC 与会话隔离事实，并为已经执行旧迁移的数据库向前恢复 ONES 身份专用挑战结构。
-6. 删除 Internal API Platform Compose 服务、Docker target、Token secrets、环境变量、文档和测试；验证 Compose 配置与镜像。
-7. 严格验证 OpenSpec、后端、前端、运行时合约、数据库迁移和残留扫描后再归档。
+6. 通过独立向前迁移为最终保留的项目表和字段补齐中文数据库注释，并校验注释清单与最终 schema 完全一致。
+7. 删除 Internal API Platform Compose 服务、Docker target、Token secrets、环境变量、文档和测试；验证 Compose 配置与镜像。
+8. 严格验证 OpenSpec、后端、前端、运行时合约、数据库迁移和残留扫描后再归档。
 
 回滚只允许在破坏性迁移执行前回滚应用镜像；删表后必须通过执行前数据库备份恢复，不提供旧新双写或长期兼容模式。
 

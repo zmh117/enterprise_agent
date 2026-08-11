@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+import re
 import shutil
 import uuid
 
@@ -32,7 +33,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
     assert len({item.version for item in catalog}) == len(catalog)
     assert len({item.name for item in catalog}) == len(catalog)
     assert [item.version for item in catalog][8:11] == ["009", "009a", "010"]
-    assert catalog[-1].version == "041"
+    assert catalog[-1].version == "042"
     assert all(len(item.checksum) == 64 for item in catalog)
 
     baseline = legacy_baseline_artifacts(catalog)
@@ -81,9 +82,9 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
     first = migrator.run()
     second = migrator.run()
 
-    assert first.head == "041"
+    assert first.head == "042"
     assert first.baselined == 0
-    assert first.applied[-19:] == (
+    assert first.applied[-20:] == (
         "023",
         "024",
         "025",
@@ -103,8 +104,9 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
         "039",
         "040",
         "041",
+        "042",
     )
-    assert second.head == "041"
+    assert second.head == "042"
     assert second.baselined == 0
     assert second.applied == ()
     assert len(SchemaMigrationLedger(database).list_records()) == len(
@@ -190,7 +192,7 @@ def test_041_upgrade_removes_legacy_authorization_and_targets_but_preserves_curr
         migrator_build="041-upgrade-test",
     ).run()
 
-    assert upgraded.applied == ("041",)
+    assert upgraded.applied == ("041", "042")
     tables = {
         str(row["name"])
         for row in database.execute(
@@ -218,6 +220,61 @@ def test_041_upgrade_removes_legacy_authorization_and_targets_but_preserves_curr
         for table in preserved_tables
     } == preserved_counts
     assert database.execute("pragma foreign_key_check") == []
+    database.close()
+
+
+def test_final_schema_comment_manifest_covers_every_owned_table_and_column() -> None:
+    database = Database("sqlite:///:memory:")
+    catalog = load_migration_catalog(default_migrations_dir())
+    Migrator(
+        database,
+        default_migrations_dir(),
+        migrator_build="schema-comment-coverage-test",
+    ).run()
+
+    table_pattern = re.compile(
+        r"COMMENT\s+ON\s+TABLE\s+(?:public\.)?\"?([a-z0-9_]+)\"?\s+IS\s+"
+        r"'((?:''|[^'])*)'\s*;",
+        re.IGNORECASE | re.DOTALL,
+    )
+    column_pattern = re.compile(
+        r"COMMENT\s+ON\s+COLUMN\s+(?:public\.)?\"?([a-z0-9_]+)\"?\."
+        r"\"?([a-z0-9_]+)\"?\s+IS\s+'((?:''|[^'])*)'\s*;",
+        re.IGNORECASE | re.DOTALL,
+    )
+    table_comments: dict[str, str] = {}
+    column_comments: dict[tuple[str, str], str] = {}
+    for artifact in catalog:
+        for match in table_pattern.finditer(artifact.sql):
+            table_comments[match.group(1)] = match.group(2).replace("''", "'")
+        for match in column_pattern.finditer(artifact.sql):
+            column_comments[(match.group(1), match.group(2))] = match.group(3).replace(
+                "''", "'"
+            )
+
+    owned_tables = {
+        str(row["name"])
+        for row in database.execute(
+            "select name from sqlite_master where type = 'table'"
+        )
+        if str(row["name"]) != "schema_migration"
+        and not str(row["name"]).startswith("sqlite_")
+    }
+    owned_columns = {
+        (table, str(row["name"]))
+        for table in owned_tables
+        for row in database.execute(f'pragma table_info("{table}")')
+    }
+
+    assert owned_tables - table_comments.keys() == set()
+    assert owned_columns - column_comments.keys() == set()
+    assert all(re.search(r"[\u3400-\u9fff]", table_comments[table]) for table in owned_tables)
+    assert all(
+        re.search(r"[\u3400-\u9fff]", column_comments[column])
+        for column in owned_columns
+    )
+    assert len(owned_tables) == 85
+    assert len(owned_columns) == 980
     database.close()
 
 
@@ -344,6 +401,7 @@ def test_pre_028_backup_can_be_restored_and_reupgraded_without_data_loss(
             "039",
             "040",
             "041",
+            "042",
         )
         assert upgraded.execute_one(
             "select username from app_user where id = 'backup-user'"
@@ -392,8 +450,9 @@ def test_pre_028_backup_can_be_restored_and_reupgraded_without_data_loss(
             "039",
             "040",
             "041",
+            "042",
         )
-        assert reapplied.head == "041"
+        assert reapplied.head == "042"
         assert restored.execute_one(
             "select username from app_user where id = 'backup-user'"
         ) == {"username": "backup-user"}
@@ -483,7 +542,7 @@ def test_schema_head_validator_is_read_only_and_rejects_missing_ledger() -> None
 
     with pytest.raises(
         SchemaHeadError,
-        match="ledger is missing; expected head 041",
+        match="ledger is missing; expected head 042",
     ):
         SchemaHeadValidator(
             database,

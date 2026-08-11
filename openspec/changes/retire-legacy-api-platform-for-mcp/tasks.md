@@ -54,6 +54,7 @@
 - [x] 7.4 保留工具资源、平台 Secret、模型连接、渠道、角色、用户、ONES 身份/Team/验证时间、Job/Tool Call/Delivery 历史并验证迁移幂等
 - [x] 7.5 更新 seed、测试数据重建、备份恢复和迁移器测试
 - [x] 7.6 通过向前迁移删除遗漏的 Application Target、Job Execution Scope 表与 Job 目标列、旧 `permission_policy`/`platform_access_grant`/清理操作表和全部残留 `INTERNAL_API_*` config definition，同时保留统一 RBAC、身份、会话隔离与历史 Job 主记录
+- [x] 7.7 新增静态向前迁移，为最终保留的 PostgreSQL `public` 项目自有表和全部字段补齐中文注释，排除迁移账本、系统表和第三方扩展表
 
 ## 8. 文档、规格与部署清理
 
@@ -70,6 +71,7 @@
 - [x] 9.3 运行 Python/TypeScript Runtime lint、typecheck、合约和测试
 - [x] 9.4 验证空库迁移、已有库升级、迁移失败关闭与 Compose `config --quiet`
 - [x] 9.5 构建受影响镜像并验证 `tool-mcp`、两个 Runtime、Worker、API 和 Admin Web readiness
-- [ ] 9.6 验收 Python/TypeScript 的 test MySQL schema/query、普通问候、权限拒绝和钉钉交付链路，并验收 ONES 本人绑定/重验/默认 Team/解绑与管理员只读停用边界
+- [x] 9.6 验收 Python/TypeScript 的 test MySQL schema/query、普通问候、权限拒绝和钉钉交付链路，并验收 ONES 本人绑定/重验/默认 Team/解绑与管理员只读停用边界
 - [x] 9.7 运行 OpenSpec 全量 strict validation、git diff check 和旧组件全文残留扫描
 - [x] 9.8 在新备份后升级运行库，验证旧表/列/config definition 不存在，且用户、角色、成员、应用授权、ONES 身份、工具资源、Secret、会话和历史 Job 数量保持预期
+- [x] 9.9 增加最终 schema 注释清单覆盖门禁，并在备份后升级运行库，验证项目表和字段的 PostgreSQL 注释覆盖率均为 100%

@@ -16,6 +16,7 @@
 - 清理未完成 `migrate-claude-agent-sdk-to-typescript` 变更中已被双 Runtime 主规格取代的 `runtime-tool-mcp` 文档与任务，避免旧设计继续作为活动规格。
 - 新增破坏性数据库迁移，在迁移前检查不存在引用旧 Capability/Mapping 的活动发布或在途 Job；迁移只删除旧平台数据，不删除工具资源、平台 Secret、模型连接、渠道连接或历史 Job 主记录。
 - **BREAKING**：删除已不再参与现行授权的 `permission_policy`、`platform_access_grant` 与旧授权清理操作表/CLI，以及遗留的 Application Target、Job Execution Scope 表和 `agent_job` 目标冻结列；现行 `rbac_*`、用户、角色、成员关系、应用访问、MCP Tool grant、数据范围与 `agent_session.execution_scope_hash` 会话隔离事实继续保留。
+- 为最终保留的 PostgreSQL `public` 项目自有表及其全部字段补齐中文数据库注释，并以静态向前迁移和 schema 覆盖测试阻止后续新增无注释表或字段；迁移账本、系统表和第三方扩展表不在项目注释契约内。
 
 ## Capabilities
 
@@ -34,6 +35,7 @@
 - `role-authorization-model`: 保留角色应用访问、工具使用权限和数据范围，删除 API Capability 授权入口。
 - `platform-config-api`: 删除旧拓扑/Internal API Platform 配置与资源映射 API，保留工具资源、凭据和必要运行配置。
 - `platform-secret-management`: 删除 Internal API 服务 Token，保留工具资源、模型、渠道和平台凭据。
+- `platform-schema-migration-runtime`: 要求最终项目 schema 的每张表和每个字段都具有可审计的中文数据库注释。
 - `governed-api-capability-control-plane`: 永久移除整个能力控制面。
 - `governed-api-capability-runtime`: 永久移除整个 Capability 运行时。
 - `governed-capability-handler-runtime`: 永久移除整个 Handler 运行时。
@@ -55,5 +57,5 @@
 - 后端：Bootstrap、API routes、Agent/Application/Job 快照、授权预览、外部凭据、平台配置、工具资源、MCP 服务和数据库迁移均受影响；旧模块和测试将物理删除或重写。
 - 前端：删除 API Capability 页面及 Application Capability/Resource Mapping 配置；保留并简化内置工具、工具资源、凭据、角色授权、Agent/Application Tool 选择。
 - 部署：删除三个 Internal API Platform 服务、镜像 target、内部 Token secrets 与环境变量；`tool-mcp` 增加所需数据库/Redis/Loki/Oracle 驱动并继续仅私网暴露。
-- 数据：永久删除 Capability、Handler、API Connection、用于业务调用的个人 API Credential、Application Resource Mapping、遗留 Application Target/Job Execution Scope、旧 `permission_policy`/`platform_access_grant` 及相关发布表；保留平台资源、Secret、模型连接、渠道、现行 `rbac_*`、角色、用户、ONES 身份映射、会话隔离和历史 Job 主体。
+- 数据：永久删除 Capability、Handler、API Connection、用于业务调用的个人 API Credential、Application Resource Mapping、遗留 Application Target/Job Execution Scope、旧 `permission_policy`/`platform_access_grant` 及相关发布表；保留平台资源、Secret、模型连接、渠道、现行 `rbac_*`、角色、用户、ONES 身份映射、会话隔离和历史 Job 主体，并为最终保留的项目表与字段补齐中文数据库注释。
 - 规格：退役一组旧能力规格并新增标准 MCP 工具运行时事实源；归档前必须完成主规格语义同步和全量严格验证。
