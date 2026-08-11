@@ -1,0 +1,17 @@
+{
+  "format_version": 1,
+  "decisions": [
+    {
+      "candidate": "job_dispatch_cutover_quarantine",
+      "status": "blocked",
+      "owner": "job-operations",
+      "unmet_conditions": [
+        "declared target environment inventory is pending",
+        "all-environment cutover disposition evidence is pending",
+        "retention and audit export evidence is pending",
+        "runtime database security and operations approvals are pending",
+        "verified backup and rollback evidence is pending"
+      ]
+    }
+  ]
+}

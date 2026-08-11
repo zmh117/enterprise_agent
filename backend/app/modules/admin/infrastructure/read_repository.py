@@ -22,7 +22,8 @@ class AdminReadRepository:
         rows = self.database.execute(
             """
             select j.id, j.session_id, j.status, j.retry_count, j.max_retry_count,
-                   j.internal_user_id, j.user_id, j.project_code, j.source_channel,
+                   j.internal_user_id, j.requester_id as user_id,
+                   j.requester_id, j.project_code, j.source_channel,
                    j.source_connector_id, j.routing_context_json, j.error_message,
                    j.last_error_code,
                    j.business_application_id, j.business_application_code,
@@ -144,7 +145,8 @@ class AdminReadRepository:
         rows = self.database.execute(
             """
             select j.id, j.session_id, j.status, j.retry_count, j.max_retry_count,
-                   j.internal_user_id, j.user_id, j.project_code, j.source_channel,
+                   j.internal_user_id, j.requester_id as user_id,
+                   j.requester_id, j.project_code, j.source_channel,
                    j.source_connector_id, j.routing_context_json, j.error_message,
                    j.last_error_code,
                    j.business_application_id, j.business_application_code,
@@ -178,7 +180,8 @@ class AdminReadRepository:
         rows = self.database.execute(
             """
             select a.id, a.message_id, a.job_id, j.session_id, j.internal_user_id,
-                   j.user_id, j.routing_context_json, a.media_type, a.file_name,
+                   j.requester_id as user_id, j.requester_id,
+                   j.routing_context_json, a.media_type, a.file_name,
                    a.declared_mime, a.detected_mime, a.declared_size, a.size_bytes,
                    a.status, a.failure_code, a.retry_count, a.sha256,
                    a.object_bucket, a.object_key, a.created_at, a.updated_at,
@@ -197,7 +200,8 @@ class AdminReadRepository:
         rows = self.database.execute(
             """
             select a.id, a.message_id, a.job_id, j.session_id, j.internal_user_id,
-                   j.user_id, j.routing_context_json, a.media_type, a.file_name,
+                   j.requester_id as user_id, j.requester_id,
+                   j.routing_context_json, a.media_type, a.file_name,
                    a.declared_mime, a.detected_mime, a.declared_size, a.size_bytes,
                    a.status, a.failure_code, a.retry_count, a.sha256,
                    a.object_bucket, a.object_key, a.created_at, a.updated_at,
@@ -215,7 +219,8 @@ class AdminReadRepository:
         jobs = self.database.execute(
             """
             select j.id, j.session_id, j.status, j.retry_count, j.max_retry_count,
-                   j.internal_user_id, j.user_id, j.project_code, j.source_channel,
+                   j.internal_user_id, j.requester_id as user_id,
+                   j.requester_id, j.project_code, j.source_channel,
                    j.source_connector_id, j.external_event_id, j.routing_context_json,
                    j.business_application_id, j.business_application_code,
                    j.business_application_publication_id,

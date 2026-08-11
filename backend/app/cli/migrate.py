@@ -19,6 +19,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.getenv("MIGRATOR_BUILD", "local-uncommitted"),
         help="Non-secret build or commit identifier stored in the ledger",
     )
+    parser.add_argument(
+        "--include-schema-contract",
+        action="store_true",
+        help=(
+            "Explicitly include staged contract/drop migrations; existing databases "
+            "must also contain separately authorized contract evidence"
+        ),
+    )
     return parser
 
 
@@ -31,6 +39,7 @@ def main(argv: list[str] | None = None) -> int:
             database,
             default_migrations_dir(),
             migrator_build=args.build,
+            include_schema_contract=bool(args.include_schema_contract),
         ).run()
     except (MigrationDefinitionError, MigrationExecutionError) as exc:
         print(f"MIGRATION_FAILED: {exc}")

@@ -112,6 +112,7 @@ CREATE_INDEX = re.compile(
     re.IGNORECASE,
 )
 MIGRATOR_ADVISORY_LOCK_KEY = 764589320241
+SCHEMA_CONSOLIDATION_CONTRACT_MARKER = "-- migration: schema-consolidation-contract"
 
 
 def normalized_migration_sql(raw: bytes) -> str:
@@ -166,6 +167,31 @@ def load_migration_catalog(migrations_dir: Path) -> tuple[MigrationArtifact, ...
         raise MigrationDefinitionError(f"No migration files found in {migrations_dir}")
     artifacts.sort(key=lambda item: migration_version_key(item.version))
     return tuple(artifacts)
+
+
+def deployable_migration_catalog(
+    catalog: tuple[MigrationArtifact, ...],
+) -> tuple[MigrationArtifact, ...]:
+    """Return the normal startup catalog, excluding staged contract migrations."""
+    contract_indexes = [
+        index
+        for index, artifact in enumerate(catalog)
+        if SCHEMA_CONSOLIDATION_CONTRACT_MARKER in artifact.sql
+    ]
+    if not contract_indexes:
+        return catalog
+    first_contract = contract_indexes[0]
+    if any(
+        SCHEMA_CONSOLIDATION_CONTRACT_MARKER not in artifact.sql
+        for artifact in catalog[first_contract:]
+    ):
+        raise MigrationDefinitionError(
+            "Normal migrations cannot follow a staged schema contract"
+        )
+    deployable = catalog[:first_contract]
+    if not deployable:
+        raise MigrationDefinitionError("Migration catalog cannot contain only contracts")
+    return deployable
 
 
 def legacy_baseline_artifacts(
@@ -767,13 +793,22 @@ class Migrator:
         migrations_dir: Path,
         *,
         migrator_build: str,
+        include_schema_contract: bool = False,
     ) -> None:
         self.database = database
         self.migrations_dir = migrations_dir
         self.migrator_build = migrator_build.strip() or "unknown"
+        self.include_schema_contract = include_schema_contract
 
     def run(self) -> MigrationRunResult:
-        catalog = load_migration_catalog(self.migrations_dir)
+        full_catalog = load_migration_catalog(self.migrations_dir)
+        deployable_catalog = deployable_migration_catalog(full_catalog)
+        catalog = full_catalog if self.include_schema_contract else deployable_catalog
+        if not self.include_schema_contract and self._contract_head_is_already_applied(
+            full_catalog,
+            deployable_catalog,
+        ):
+            catalog = full_catalog
         baseline_manifest_exists = (self.migrations_dir / LEGACY_MANIFEST_FILENAME).is_file()
         if baseline_manifest_exists or catalog[0].version == BASELINE_VERSION:
             if catalog[0].version != BASELINE_VERSION:
@@ -782,6 +817,21 @@ class Migrator:
                 )
             return self._run_baseline_generation(catalog)
         return self._run_legacy_catalog(catalog)
+
+    def _contract_head_is_already_applied(
+        self,
+        full_catalog: tuple[MigrationArtifact, ...],
+        deployable_catalog: tuple[MigrationArtifact, ...],
+    ) -> bool:
+        if len(full_catalog) == len(deployable_catalog):
+            return False
+        try:
+            row = self.database.execute_one(
+                "select version from schema_migration order by version desc limit 1"
+            )
+        except Exception:
+            return False
+        return row is not None and str(row["version"]) == full_catalog[-1].version
 
     def _run_legacy_catalog(
         self,
@@ -831,6 +881,7 @@ class Migrator:
                 ledger.ensure_table()
                 ledger.ensure_adoption_table()
                 records = ledger.read_records()
+                fresh_install = not records and not self._application_schema_exists()
                 baselined = 0
                 if not records:
                     if self._application_schema_exists():
@@ -839,6 +890,11 @@ class Migrator:
                             "baseline adoption requires the exact immutable 042 ledger"
                         )
                 elif self._is_exact_legacy_ledger(records, manifest):
+                    if len(catalog) != 1:
+                        raise MigrationDefinitionError(
+                            "Exact legacy 042 baseline adoption requires the separately "
+                            "authorized baseline-only build at head 100"
+                        )
                     ledger.adopt_legacy_baseline(
                         manifest=manifest,
                         baseline=catalog[0],
@@ -856,7 +912,10 @@ class Migrator:
                 )
                 applied: list[str] = []
                 for artifact in catalog[len(active_records) :]:
-                    self._apply_one(artifact)
+                    self._apply_one(
+                        artifact,
+                        allow_fresh_contract=fresh_install,
+                    )
                     applied.append(artifact.version)
                 return MigrationRunResult(
                     head=catalog[-1].version,
@@ -990,13 +1049,23 @@ class Migrator:
                     f"repository version {artifact.version}"
                 )
 
-    def _apply_one(self, artifact: MigrationArtifact) -> None:
+    def _apply_one(
+        self,
+        artifact: MigrationArtifact,
+        *,
+        allow_fresh_contract: bool = False,
+    ) -> None:
         started = time.monotonic()
         sqlite_foreign_keys_off = (
             self.database.engine == "sqlite"
             and "-- migration: sqlite-foreign-keys-off" in artifact.sql
         )
         try:
+            if (
+                SCHEMA_CONSOLIDATION_CONTRACT_MARKER in artifact.sql
+                and not allow_fresh_contract
+            ):
+                self._require_schema_consolidation_contract(artifact)
             if sqlite_foreign_keys_off:
                 self.database.execute("PRAGMA foreign_keys = OFF")
             with self.database.unit_of_work():
@@ -1032,6 +1101,92 @@ class Migrator:
         finally:
             if sqlite_foreign_keys_off:
                 self.database.execute("PRAGMA foreign_keys = ON")
+
+    def _require_schema_consolidation_contract(
+        self,
+        artifact: MigrationArtifact,
+    ) -> None:
+        current = self.database.execute_one(
+            "select version from schema_migration order by version desc limit 1"
+        )
+        expected_head = str(int(artifact.version) - 1).zfill(3)
+        if current is None or str(current["version"]) != expected_head:
+            raise MigrationDefinitionError(
+                "Schema contract requires the exact expected predecessor head"
+            )
+        approval = self.database.execute_one(
+            """
+            select contract_version, expected_head, target_label,
+                   evidence_digest, backup_reference_digest,
+                   parity_verified, workflow_parity_verified,
+                   zero_legacy_access_verified,
+                   retry_recovery_cycle_observed,
+                   production_release_cycle_observed,
+                   retention_verified, approvals_verified, approved_at
+              from schema_consolidation_contract_approval
+             where contract_version = ?
+            """,
+            (artifact.version,),
+        )
+        if approval is None:
+            raise MigrationDefinitionError(
+                "Schema contract requires separately authorized approval evidence"
+            )
+        gate_fields = (
+            "parity_verified",
+            "workflow_parity_verified",
+            "zero_legacy_access_verified",
+            "retry_recovery_cycle_observed",
+            "production_release_cycle_observed",
+            "retention_verified",
+            "approvals_verified",
+        )
+        if (
+            str(approval["expected_head"]) != expected_head
+            or re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}",
+                str(approval["target_label"] or ""),
+            )
+            is None
+            or re.fullmatch(r"[0-9a-f]{64}", str(approval["evidence_digest"] or ""))
+            is None
+            or re.fullmatch(
+                r"[0-9a-f]{64}",
+                str(approval["backup_reference_digest"] or ""),
+            )
+            is None
+            or not str(approval["approved_at"] or "").strip()
+            or any(int(approval[field]) != 1 for field in gate_fields)
+        ):
+            raise MigrationDefinitionError(
+                "Schema contract approval evidence is incomplete"
+            )
+        try:
+            from app.shared.schema_consolidation import SchemaConsolidationPreflight
+
+            preflight = SchemaConsolidationPreflight(
+                self.database,
+                self.migrations_dir,
+            ).run(expected_head=expected_head)
+        except Exception as exc:
+            raise MigrationDefinitionError(
+                "Schema contract live preflight could not be completed"
+            ) from exc
+        operational_stop_fields = (
+            "webhook_outbox_nonterminal",
+            "channel_ingress_outbox_nonterminal",
+            "job_dispatch_outbox_nonterminal",
+            "delivery_outbox_nonterminal",
+            "agent_job_nonterminal",
+            "runtime_invocation_claim",
+        )
+        if preflight["status"] != "ready" or any(
+            int(preflight["operational"][field]) != 0
+            for field in operational_stop_fields
+        ):
+            raise MigrationDefinitionError(
+                "Schema contract live parity or pending operational preconditions failed"
+            )
 
     def _application_schema_exists(self) -> bool:
         if self.database.engine == "sqlite":
@@ -1159,7 +1314,8 @@ class SchemaHeadValidator:
         self.migrations_dir = migrations_dir
 
     def require_current(self) -> str:
-        catalog = load_migration_catalog(self.migrations_dir)
+        full_catalog = load_migration_catalog(self.migrations_dir)
+        catalog = deployable_migration_catalog(full_catalog)
         expected_head = catalog[-1].version
         try:
             if not self._ledger_exists():
@@ -1168,10 +1324,18 @@ class SchemaHeadValidator:
                 )
             ledger = SchemaMigrationLedger(self.database)
             records = ledger.read_records()
+            if (
+                len(full_catalog) != len(catalog)
+                and records
+                and str(records[-1]["version"]) == full_catalog[-1].version
+            ):
+                catalog = full_catalog
+                expected_head = catalog[-1].version
             migrator = Migrator(
                 self.database,
                 self.migrations_dir,
                 migrator_build="schema-head-validator",
+                include_schema_contract=(catalog is full_catalog),
             )
             if catalog[0].version == BASELINE_VERSION:
                 manifest = migrator._load_baseline_manifest()

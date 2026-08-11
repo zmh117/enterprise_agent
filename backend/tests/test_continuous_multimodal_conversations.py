@@ -184,12 +184,11 @@ def test_direct_sessions_are_isolated_by_requester() -> None:
 def test_legacy_actor_session_remains_readable_but_cannot_accept_new_job() -> None:
     c = multimodal_container()
     session = c.agent_repository.create_session(
-        dingding_conversation_id="legacy-conversation",
-        dingding_user_id="user_local_admin",
-        source="dingding_stream",
         project_code="default",
         source_channel="dingding_stream",
         source_connector_id="connector-dingtalk-stream-default",
+        external_conversation_id="legacy-conversation",
+        requester_id="user_local_admin",
         session_key="legacy-read-only-session",
     )
     c.database.execute(
@@ -214,10 +213,11 @@ def test_legacy_actor_session_remains_readable_but_cannot_accept_new_job() -> No
         c.agent_repository.create_job(
             session_id=session.id,
             idempotency_key="legacy-read-only-job",
-            user_id="user_local_admin",
             project_code="default",
-            source="dingding_stream",
-            user_message="must not attach",
+            source_channel="dingding_stream",
+            source_connector_id="connector-dingtalk-stream-default",
+            requester_id="user_local_admin",
+            input_message="must not attach",
             max_retry_count=0,
         )
     assert blocked.value.error_code == "session_history_read_only"
@@ -373,10 +373,12 @@ def test_baseline_sessions_require_distinct_explicit_session_keys() -> None:
     database.execute(
         """
         insert into agent_session
-          (id, dingding_conversation_id, dingding_user_id, source, project_code,
-           session_key, created_at, updated_at)
-        values ('session-a', 'same', 'u', 'dingding', 'default', 'direct:a', 'now', 'now'),
-               ('session-b', 'same', 'u', 'dingding', 'default', 'direct:b', 'now', 'now')
+          (id, source_channel, source_connector_id, external_conversation_id,
+           requester_id, project_code, session_key, created_at, updated_at)
+        values ('session-a', 'dingding', 'connector-a', 'same', 'u', 'default',
+                'direct:a', 'now', 'now'),
+               ('session-b', 'dingding', 'connector-a', 'same', 'u', 'default',
+                'direct:b', 'now', 'now')
         """
     )
     rows = database.execute("select id, session_key from agent_session order by id")

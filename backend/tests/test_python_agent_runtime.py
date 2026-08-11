@@ -300,6 +300,15 @@ def test_python_runtime_restart_fails_orphan_without_replaying_model(
     ).acquire(request)
     assert replayed.events() == events
     assert replacement.requests == []
+    assert database.execute_one(
+        "select count(*) as count from agent_runtime_terminal_ledger"
+    ) == {"count": 1}
+    assert database.execute_one(
+        "select count(*) as count from agent_runtime_invocation_claim"
+    ) == {"count": 0}
+    assert database.execute_one(
+        "select count(*) as count from agent_runtime_invocation_event"
+    ) == {"count": 0}
 
 
 def test_python_runtime_model_probe_and_fixed_mcp_url_boundary(tmp_path: Path) -> None:

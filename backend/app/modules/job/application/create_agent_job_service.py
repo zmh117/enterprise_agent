@@ -52,9 +52,6 @@ class CreateAgentJobCommand:
     routing_context: dict[str, Any] = field(default_factory=dict)
     reply_route: dict[str, Any] = field(default_factory=dict)
     correlation_id: str | None = None
-    dingding_conversation_id: str | None = None
-    dingding_user_id: str | None = None
-    source: str | None = None
     external_message_id: str = ""
     conversation_type: str = "direct"
     bot_identity: str = ""
@@ -85,15 +82,15 @@ class CreateAgentJobCommand:
 
     @property
     def effective_requester_id(self) -> str:
-        return self.requester_id or self.dingding_user_id or "unknown-user"
+        return self.requester_id or "unknown-user"
 
     @property
     def effective_conversation_id(self) -> str:
-        return self.external_conversation_id or self.dingding_conversation_id or ""
+        return self.external_conversation_id
 
     @property
     def effective_source_channel(self) -> str:
-        return self.source_channel or self.source or "dingding"
+        return self.source_channel
 
     @property
     def effective_routing_context(self) -> dict[str, Any]:
@@ -181,6 +178,12 @@ class CreateAgentJobService:
         )
         requester_id = command.effective_requester_id
         source_channel = command.effective_source_channel
+        external_conversation_id = command.effective_conversation_id
+        if not external_conversation_id and source_channel in ISOLATED_SESSION_SOURCE_CHANNELS:
+            external_conversation_id = _isolated_conversation_id(
+                source_channel=source_channel,
+                idempotency_key=command.idempotency_key,
+            )
         project_code = command.effective_routing_context.get("project_code", command.project_code)
         project_code = str(project_code or command.project_code)
         reply_route = command.effective_reply_route
@@ -399,9 +402,10 @@ class CreateAgentJobService:
                 connector_id=command.source_connector_id,
                 project_code=project_code,
                 conversation_type=command.conversation_type,
-                conversation_id=command.effective_conversation_id,
+                conversation_id=external_conversation_id,
                 requester_id=requester_id,
                 bot_identity=command.bot_identity,
+                external_identity_id=command.external_identity_id,
                 business_application_id=command.business_application_id,
                 business_application_publication_id=(command.business_application_publication_id),
                 execution_scope_hash=execution_scope_hash,
@@ -431,13 +435,10 @@ class CreateAgentJobService:
                 )
                 if command.continue_session_id
                 else self.repository.create_session(
-                    dingding_conversation_id=command.effective_conversation_id,
-                    dingding_user_id=requester_id,
-                    source=source_channel,
                     project_code=project_code,
                     source_channel=source_channel,
                     source_connector_id=command.source_connector_id,
-                    external_conversation_id=command.effective_conversation_id,
+                    external_conversation_id=external_conversation_id,
                     requester_id=requester_id,
                     requester_display_name=command.requester_display_name,
                     routing_context=command.effective_routing_context,
@@ -459,15 +460,17 @@ class CreateAgentJobService:
             job = self.repository.create_job(
                 session_id=session.id,
                 idempotency_key=command.idempotency_key,
-                user_id=requester_id,
                 project_code=project_code,
-                source=source_channel,
-                user_message=command.user_message,
-                max_retry_count=self.queue_settings.max_retry_count,
                 source_channel=source_channel,
                 source_connector_id=command.source_connector_id,
-                external_event_id=command.external_event_id,
                 requester_id=requester_id,
+                input_message=command.user_message,
+                max_retry_count=self.queue_settings.max_retry_count,
+                external_event_id=command.external_event_id,
+                external_message_id=(command.external_message_id or command.external_event_id),
+                requester_display_name=command.requester_display_name,
+                message_type="multimodal" if command.attachments else "text",
+                message_content_status="PENDING" if command.attachments else "READY",
                 routing_context=command.effective_routing_context,
                 reply_route=reply_route,
                 initial_status=(
@@ -521,21 +524,10 @@ class CreateAgentJobService:
                     business_authorization=business_authorization_snapshot,
                     runtime_authorization=runtime_authorization_snapshot,
                 )
-            message_id = self.repository.add_message(
-                session_id=session.id,
-                job_id=job.id,
-                role="user",
-                content=command.user_message,
-                external_message_id=command.external_message_id or command.external_event_id,
-                sender_id=requester_id,
-                sender_display_name=command.requester_display_name,
-                message_type="multimodal" if command.attachments else "text",
-                content_status="PENDING" if command.attachments else "READY",
-            )
             for ordinal, attachment in enumerate(command.attachments, start=1):
                 assert self.credential_cipher is not None
                 created = self.repository.add_attachment(
-                    message_id=message_id,
+                    message_id=job.input_message_id,
                     job_id=job.id,
                     ordinal=ordinal,
                     media_type=attachment.media_type,
@@ -727,6 +719,7 @@ def _session_key(
     conversation_id: str,
     requester_id: str,
     bot_identity: str,
+    external_identity_id: str = "",
     business_application_id: str = "",
     business_application_publication_id: str = "",
     execution_scope_hash: str = "",
@@ -758,17 +751,21 @@ def _session_key(
                 business_application_publication_id,
                 source_channel,
                 connector_id,
+                project_code,
                 conversation_type,
                 conversation_id,
                 requester_scope,
+                external_identity_id,
                 execution_scope_hash,
             ]
         )
         return "session-key:v2:" + hashlib.sha256(canonical.encode()).hexdigest()
     if conversation_type == "group":
-        identity = conversation_id
+        requester_scope = ""
+        external_identity_scope = ""
     else:
-        identity = f"{requester_id}:{bot_identity or connector_id}"
+        requester_scope = requester_id
+        external_identity_scope = external_identity_id
     canonical = "|".join(
         [
             business_application_id or "legacy",
@@ -777,7 +774,10 @@ def _session_key(
             project_code,
             conversation_type,
             conversation_mode,
-            identity,
+            conversation_id,
+            requester_scope,
+            external_identity_scope,
+            bot_identity or connector_id,
         ]
     )
     return "session-key:" + hashlib.sha256(canonical.encode()).hexdigest()
@@ -804,6 +804,13 @@ def _execution_scope_hash(routing_context: dict[str, Any]) -> str:
             separators=(",", ":"),
         ).encode("utf-8")
     ).hexdigest()
+
+
+def _isolated_conversation_id(*, source_channel: str, idempotency_key: str) -> str:
+    digest = hashlib.sha256(
+        f"{source_channel}:{idempotency_key}".encode("utf-8")
+    ).hexdigest()
+    return f"isolated:{source_channel}:{digest}"
 
 
 def _provider_host(base_url: str) -> str:

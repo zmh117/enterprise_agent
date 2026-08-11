@@ -11,11 +11,11 @@ class RepositoryAndJobTests(unittest.TestCase):
         c = container()
         command = {
             "idempotency_key": "same-key",
-            "dingding_conversation_id": "conversation-1",
-            "dingding_user_id": "local-user",
+            "external_conversation_id": "conversation-1",
+            "requester_id": "local-user",
             "user_message": "check order",
             "project_code": "default",
-            "source": "dingding",
+            "source_channel": "dingding",
             "correlation_id": "corr-1",
         }
 
@@ -37,8 +37,8 @@ class RepositoryAndJobTests(unittest.TestCase):
         job = c.create_agent_job_service.execute(
             CreateAgentJobCommand(
                 idempotency_key="claim-key",
-                dingding_conversation_id="conversation-1",
-                dingding_user_id="local-user",
+                external_conversation_id="conversation-1",
+                requester_id="local-user",
                 user_message="check order",
                 project_code="default",
             )

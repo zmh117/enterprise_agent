@@ -120,8 +120,13 @@ def create_draft_publish(
 
 def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
     db = Database("sqlite:///:memory:")
-    db.run_migrations(default_migrations_dir())
-    db.run_migrations(default_migrations_dir())
+    migrator = Migrator(
+        db,
+        default_migrations_dir(),
+        migrator_build="business-application-schema-test",
+    )
+    migrator.run()
+    migrator.run()
     tables = {
         str(row["name"])
         for row in db.execute("select name from sqlite_master where type = 'table'")
@@ -151,7 +156,12 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
             """
         )
     migration_names = [path.name for path in sorted(default_migrations_dir().glob("*.sql"))]
-    assert migration_names == ["100_baseline_v1.sql"]
+    assert migration_names == [
+        "100_baseline_v1.sql",
+        "101_expand_canonical_job_message.sql",
+        "102_schema_consolidation_checkpoint.sql",
+        "103_contract_retire_compatibility_shadows.sql",
+    ]
     session_columns = {str(row["name"]) for row in db.execute("pragma table_info(agent_session)")}
     assert {
         "application_publication_id",

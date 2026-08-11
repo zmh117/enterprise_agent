@@ -365,7 +365,8 @@ def test_greeting_context_does_not_prefetch_resources_or_disclose_unassigned_too
     job = SimpleNamespace(
         id="job-greeting",
         execution_policy=_EXECUTION_POLICY,
-        user_message="你好",
+        input_message="你好",
+        input_message_state="available",
         project_code="default",
         agent_publication_id="agent-publication-1",
         agent_revision=1,
@@ -390,19 +391,21 @@ def test_job_snapshot_does_not_freeze_routing_target_or_resolve_a_resource() -> 
     runtime = container()
     try:
         session = runtime.agent_repository.create_session(
-            dingding_conversation_id="mcp-snapshot-conversation",
-            dingding_user_id="local-user",
-            source="debug",
             project_code="default",
+            source_channel="debug_api",
+            source_connector_id="connector-debug-api",
+            external_conversation_id="mcp-snapshot-conversation",
+            requester_id="local-user",
             routing_context={"environment": "test", "placement": "edge"},
         )
         job = runtime.agent_repository.create_job(
             session_id=session.id,
             idempotency_key="mcp-snapshot-job",
-            user_id="local-user",
             project_code="default",
-            source="debug",
-            user_message="hello",
+            source_channel="debug_api",
+            source_connector_id="connector-debug-api",
+            requester_id="local-user",
+            input_message="hello",
             max_retry_count=0,
             initial_status=JobStatus.PENDING,
             routing_context={"environment": "test", "placement": "edge"},
@@ -438,18 +441,20 @@ def test_job_snapshot_fails_closed_on_schema_drift() -> None:
     runtime = container()
     try:
         session = runtime.agent_repository.create_session(
-            dingding_conversation_id="mcp-drift-conversation",
-            dingding_user_id="local-user",
-            source="debug",
             project_code="default",
+            source_channel="debug_api",
+            source_connector_id="connector-debug-api",
+            external_conversation_id="mcp-drift-conversation",
+            requester_id="local-user",
         )
         job = runtime.agent_repository.create_job(
             session_id=session.id,
             idempotency_key="mcp-drift-job",
-            user_id="local-user",
             project_code="default",
-            source="debug",
-            user_message="hello",
+            source_channel="debug_api",
+            source_connector_id="connector-debug-api",
+            requester_id="local-user",
+            input_message="hello",
             max_retry_count=0,
             agent_publication_id="agent_publication_default_v1",
             execution_policy=_EXECUTION_POLICY,

@@ -102,7 +102,7 @@ class AgentExecutor:
                 )
             try:
                 decision = self.business_authorization_service.require(
-                    user_id=job.internal_user_id or job.user_id,
+                    user_id=job.internal_user_id or job.requester_id,
                     application_id=job.business_application_id,
                     stage="worker_start",
                 )
@@ -121,7 +121,7 @@ class AgentExecutor:
                 status="SUCCEEDED",
                 summary="Business authorization allowed worker start",
                 job_id=job_id,
-                actor_id=job.internal_user_id or job.user_id,
+                actor_id=job.internal_user_id or job.requester_id,
                 payload=decision,
             )
         self.audit_service.record(
@@ -170,7 +170,7 @@ class AgentExecutor:
             )
             run_request = AgentRunRequest(
                 job_id=job.id,
-                user_id=job.internal_user_id or job.user_id,
+                user_id=job.internal_user_id or job.requester_id,
                 project_code=job.project_code,
                 context=context,
                 invocation_id=f"{job.id}.attempt-{job.retry_count}",

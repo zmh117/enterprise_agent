@@ -85,6 +85,19 @@ def _write(
     (directory / name).write_text(sql.strip() + "\n", encoding="utf-8")
 
 
+def _baseline_only_migrations(tmp_path: Path) -> Path:
+    source = default_migrations_dir()
+    target = tmp_path / "postgres-baseline-only"
+    target.mkdir()
+    (target / "100_baseline_v1.sql").write_bytes(
+        (source / "100_baseline_v1.sql").read_bytes()
+    )
+    (target / LEGACY_MANIFEST_FILENAME).write_bytes(
+        (source / LEGACY_MANIFEST_FILENAME).read_bytes()
+    )
+    return target
+
+
 def _convert_postgres_baseline_to_legacy_ledger(database: Database) -> None:
     manifest = load_legacy_manifest(default_migrations_dir() / LEGACY_MANIFEST_FILENAME)
     with database.unit_of_work():
@@ -117,8 +130,8 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "100"
-        assert result.applied == ("100",)
+        assert result.head == "102"
+        assert result.applied == ("100", "101", "102")
         assert database.execute_one(
             """
             select count(*)::int as count
@@ -127,9 +140,46 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
                and table_type = 'BASE TABLE'
                and table_name not in ('schema_migration', 'schema_baseline_adoption')
             """
-        ) == {"count": 85}
-        assert comments["table_count"] == 85
-        assert comments["column_count"] == 980
+        ) == {"count": 87}
+        assert comments["table_count"] == 87
+        assert comments["column_count"] == 1002
+    finally:
+        database.close()
+
+
+def test_postgres_explicit_fresh_contract_schema_and_comments(
+    postgres_database_dsn: str,
+) -> None:
+    database = Database(postgres_database_dsn)
+    try:
+        result = Migrator(
+            database,
+            default_migrations_dir(),
+            migrator_build="postgres-explicit-contract-test",
+            include_schema_contract=True,
+        ).run()
+        comments = postgres_comment_snapshot(database)
+
+        assert result.head == "103"
+        assert result.applied == ("100", "101", "102", "103")
+        assert comments["table_count"] == 87
+        assert comments["column_count"] == 995
+        assert {
+            "dingding_conversation_id",
+            "dingding_user_id",
+            "source",
+        }.isdisjoint(
+            {
+                row["column_name"]
+                for row in database.execute(
+                    """
+                    select column_name
+                      from information_schema.columns
+                     where table_schema = 'public' and table_name = 'agent_session'
+                    """
+                )
+            }
+        )
     finally:
         database.close()
 
@@ -151,22 +201,31 @@ def test_postgres_concurrent_baseline_migrators_apply_100_once(
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(run, ("baseline-build-a", "baseline-build-b")))
 
-    assert sorted(result.applied for result in results) == [(), ("100",)]
+    assert sorted(result.applied for result in results) == [
+        (),
+        ("100", "101", "102"),
+    ]
     database = Database(postgres_database_dsn)
     try:
-        assert [row["version"] for row in SchemaMigrationLedger(database).read_records()] == ["100"]
+        assert [row["version"] for row in SchemaMigrationLedger(database).read_records()] == [
+            "100",
+            "101",
+            "102",
+        ]
     finally:
         database.close()
 
 
 def test_postgres_exact_042_adoption_preserves_retained_data(
     postgres_database_dsn: str,
+    tmp_path: Path,
 ) -> None:
+    migrations = _baseline_only_migrations(tmp_path)
     database = Database(postgres_database_dsn)
     try:
         Migrator(
             database,
-            default_migrations_dir(),
+            migrations,
             migrator_build="postgres-adoption-fixture",
         ).run()
         database.execute(
@@ -182,7 +241,7 @@ def test_postgres_exact_042_adoption_preserves_retained_data(
 
         result = Migrator(
             database,
-            default_migrations_dir(),
+            migrations,
             migrator_build="postgres-adoption-test",
         ).run()
 
@@ -199,12 +258,14 @@ def test_postgres_exact_042_adoption_preserves_retained_data(
 
 def test_postgres_baseline_adoption_operational_verification_and_rollback(
     postgres_database_dsn: str,
+    tmp_path: Path,
 ) -> None:
+    migrations = _baseline_only_migrations(tmp_path)
     database = Database(postgres_database_dsn)
     try:
         Migrator(
             database,
-            default_migrations_dir(),
+            migrations,
             migrator_build="postgres-adoption-fixture",
         ).run()
         PlatformConfigRepository(database).upsert_runtime_config_definition(
@@ -226,7 +287,7 @@ def test_postgres_baseline_adoption_operational_verification_and_rollback(
 
         preflight = BaselineAdoptionInspector(
             database,
-            default_migrations_dir(),
+            migrations,
         ).preflight(migrator_build="build-2026.08.11")
 
         assert preflight["status"] == "ready-for-adoption"
@@ -236,17 +297,17 @@ def test_postgres_baseline_adoption_operational_verification_and_rollback(
 
         adopted = Migrator(
             database,
-            default_migrations_dir(),
+            migrations,
             migrator_build="build-2026.08.11",
         ).run()
         repeated = Migrator(
             database,
-            default_migrations_dir(),
+            migrations,
             migrator_build="build-2026.08.11",
         ).run()
         verified = BaselineAdoptionInspector(
             database,
-            default_migrations_dir(),
+            migrations,
         ).verify(expected_migrator_build="build-2026.08.11")
 
         assert adopted.baselined == 1
@@ -268,12 +329,12 @@ def test_postgres_baseline_adoption_operational_verification_and_rollback(
         with pytest.raises(MigrationDefinitionError, match="counts changed"):
             BaselineAdoptionInspector(
                 database,
-                default_migrations_dir(),
+                migrations,
             ).verify(expected_migrator_build="build-2026.08.11")
 
         assert BaselineAdoptionRollback(
             database,
-            default_migrations_dir(),
+            migrations,
             migrator_build="rollback-test",
         ).run() == "042"
         assert SchemaMigrationLedger(database).read_records()[-1]["version"] == "042"
@@ -380,12 +441,14 @@ def test_postgres_runtime_config_reads_and_reconciliation_are_write_free(
 
 def test_postgres_legacy_comment_drift_rejects_adoption(
     postgres_database_dsn: str,
+    tmp_path: Path,
 ) -> None:
+    migrations = _baseline_only_migrations(tmp_path)
     database = Database(postgres_database_dsn)
     try:
         Migrator(
             database,
-            default_migrations_dir(),
+            migrations,
             migrator_build="postgres-comment-drift-fixture",
         ).run()
         _convert_postgres_baseline_to_legacy_ledger(database)
@@ -394,7 +457,7 @@ def test_postgres_legacy_comment_drift_rejects_adoption(
         with pytest.raises(MigrationDefinitionError, match="comments"):
             Migrator(
                 database,
-                default_migrations_dir(),
+                migrations,
                 migrator_build="postgres-comment-drift-test",
             ).run()
         assert SchemaMigrationLedger(database).read_records()[-1]["version"] == "042"
@@ -724,10 +787,11 @@ def test_postgres_delivery_dispatchers_use_skip_locked_without_duplicate_sends(
     try:
         runtime.result_delivery_service.adapters["postgres_capture"] = CaptureAdapter()
         session = runtime.agent_repository.create_session(
-            dingding_conversation_id="delivery-concurrency",
-            dingding_user_id="delivery-user",
-            source="test",
             project_code="default",
+            source_channel="test",
+            source_connector_id="connector-test",
+            external_conversation_id="delivery-concurrency",
+            requester_id="delivery-user",
             session_key=f"delivery-concurrency-{uuid.uuid4().hex}",
             reply_route={"type": "postgres_capture", "target": {}},
         )
@@ -736,10 +800,11 @@ def test_postgres_delivery_dispatchers_use_skip_locked_without_duplicate_sends(
             job = runtime.agent_repository.create_job(
                 session_id=session.id,
                 idempotency_key=f"delivery-concurrency-{uuid.uuid4().hex}",
-                user_id="delivery-user",
                 project_code="default",
-                source="test",
-                user_message="diagnose",
+                source_channel="test",
+                source_connector_id="connector-test",
+                requester_id="delivery-user",
+                input_message="diagnose",
                 max_retry_count=0,
                 initial_status=JobStatus.SUCCEEDED,
                 reply_route={"type": "postgres_capture", "target": {}},

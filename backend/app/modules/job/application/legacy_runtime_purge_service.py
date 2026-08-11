@@ -149,6 +149,9 @@ class LegacyRuntimePurgeService:
             self.database.execute(
                 "update agent_job set webhook_event_id = null where webhook_event_id is not null"
             )
+            self.database.execute(
+                "update agent_job set input_message_id = null where input_message_id is not null"
+            )
             for table in RUNTIME_TABLE_DELETE_ORDER:
                 self.database.execute(RUNTIME_DELETE_SQL[table])
             if self.database.engine == "postgres":

@@ -63,7 +63,7 @@ class ReadOnlyToolService:
         if not job.business_application_id:
             try:
                 self.permission_service.assert_mcp_tool_use_grant(
-                    user_id=job.internal_user_id or job.user_id,
+                    user_id=job.internal_user_id or job.requester_id,
                     tool_identifier=tool_name,
                     project_code=job.project_code,
                 )
@@ -74,7 +74,7 @@ class ReadOnlyToolService:
             return False
         return bool(
             self.business_authorization_service.decide(
-                user_id=job.internal_user_id or job.user_id,
+                user_id=job.internal_user_id or job.requester_id,
                 application_id=job.business_application_id,
                 tool_identifier=tool_name,
                 stage="tool_exposure",
@@ -96,7 +96,7 @@ class ReadOnlyToolService:
         persisted_tool_call_id = ""
         try:
             job = self.repository.get_job(job_id)
-            expected_user_id = job.internal_user_id or job.user_id
+            expected_user_id = job.internal_user_id or job.requester_id
             if expected_user_id != user_id or job.project_code != project_code:
                 raise ToolPolicyError(
                     "Tool request identity does not match persisted job",

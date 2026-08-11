@@ -67,8 +67,8 @@ def test_non_business_job_uses_versioned_runtime_default_snapshot() -> None:
     job = c.create_agent_job_service.execute(
         CreateAgentJobCommand(
             idempotency_key="policy-default",
-            dingding_conversation_id="conversation-policy",
-            dingding_user_id="local-user",
+            external_conversation_id="conversation-policy",
+            requester_id="local-user",
             user_message="check",
         )
     )
@@ -130,19 +130,21 @@ def test_invalid_policy_snapshots_fail_closed(value: object) -> None:
 def test_repository_rejects_job_without_execution_policy() -> None:
     c = container()
     session = c.agent_repository.create_session(
-        dingding_conversation_id="conversation",
-        dingding_user_id="local-user",
-        source="debug_api",
         project_code="default",
+        source_channel="debug_api",
+        source_connector_id="connector-debug-api",
+        external_conversation_id="conversation",
+        requester_id="local-user",
     )
     with pytest.raises(NonRetryableExecutionError):
         c.agent_repository.create_job(
             session_id=session.id,
             idempotency_key="missing-policy",
-            user_id="local-user",
             project_code="default",
-            source="debug_api",
-            user_message="check",
+            source_channel="debug_api",
+            source_connector_id="connector-debug-api",
+            requester_id="local-user",
+            input_message="check",
             max_retry_count=0,
         )
 
@@ -152,8 +154,8 @@ def test_worker_rejects_missing_policy_before_context_tools_or_model() -> None:
     job = c.create_agent_job_service.execute(
         CreateAgentJobCommand(
             idempotency_key="invalid-worker-policy",
-            dingding_conversation_id="conversation-invalid-policy",
-            dingding_user_id="local-user",
+            external_conversation_id="conversation-invalid-policy",
+            requester_id="local-user",
             user_message="check",
         )
     )
@@ -193,8 +195,8 @@ def test_executor_persists_attempt_usage_and_exhaustion_separately_from_context_
     job = c.create_agent_job_service.execute(
         CreateAgentJobCommand(
             idempotency_key="persist-policy-usage",
-            dingding_conversation_id="conversation-policy-usage",
-            dingding_user_id="local-user",
+            external_conversation_id="conversation-policy-usage",
+            requester_id="local-user",
             user_message="check",
         )
     )
@@ -243,8 +245,8 @@ def test_worker_delivers_safe_non_retryable_tool_budget_failure_once() -> None:
     job = c.create_agent_job_service.execute(
         CreateAgentJobCommand(
             idempotency_key="worker-policy-exhaustion",
-            dingding_conversation_id="conversation-policy-exhaustion",
-            dingding_user_id="local-user",
+            external_conversation_id="conversation-policy-exhaustion",
+            requester_id="local-user",
             user_message="check",
             reply_route={"type": "policy_failure_capture", "target": {}},
         )
@@ -310,8 +312,8 @@ def test_legacy_runtime_purge_preserves_control_plane() -> None:
     job = c.create_agent_job_service.execute(
         CreateAgentJobCommand(
             idempotency_key="purge-policy-test",
-            dingding_conversation_id="conversation-purge",
-            dingding_user_id="local-user",
+            external_conversation_id="conversation-purge",
+            requester_id="local-user",
             user_message="check",
         )
     )
@@ -388,8 +390,8 @@ def test_legacy_runtime_purge_stops_before_database_delete_on_object_failure() -
     job = c.create_agent_job_service.execute(
         CreateAgentJobCommand(
             idempotency_key="purge-object-failure",
-            dingding_conversation_id="conversation-object-failure",
-            dingding_user_id="local-user",
+            external_conversation_id="conversation-object-failure",
+            requester_id="local-user",
             user_message="check",
         )
     )

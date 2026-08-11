@@ -131,7 +131,7 @@ class DingTalkStreamIngressTests(unittest.TestCase):
         self.assertTrue(result.accepted, result)
         self.assertEqual("received", result.status)
         job = c.agent_repository.get_job(result.job_id)
-        self.assertEqual("搜索 ONES 全部的工作项", job.user_message)
+        self.assertEqual("搜索 ONES 全部的工作项", job.input_message)
 
     def test_rich_text_without_text_is_rejected_instead_of_silently_ignored(self) -> None:
         c = routed_container()

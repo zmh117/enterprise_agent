@@ -102,7 +102,7 @@ class JobToolService:
         del correlation_id
         result = self.tool_registry.call(
             job_id=job.id,
-            user_id=job.internal_user_id or job.user_id,
+            user_id=job.internal_user_id or job.requester_id,
             project_code=job.project_code,
             tool_name=descriptor.name,
             arguments=arguments,

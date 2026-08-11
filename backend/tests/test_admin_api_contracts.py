@@ -147,19 +147,19 @@ def test_dashboard_is_scope_filtered_and_queue_failure_is_region_local() -> None
         password="dashboard-limited-password",
     )
     own_session = container.agent_repository.create_session(
-        dingding_conversation_id="own-conversation",
-        dingding_user_id=str(limited["id"]),
-        source="dingding",
         project_code="default",
+        source_channel="dingding",
+        source_connector_id="connector-dingtalk-enterprise-default",
+        external_conversation_id="own-conversation",
         requester_id=str(limited["id"]),
         routing_context={"project_code": "default", "environment": "prod", "base": "guanlan"},
         session_key="dashboard-own",
     )
     other_session = container.agent_repository.create_session(
-        dingding_conversation_id="other-conversation",
-        dingding_user_id="someone-else",
-        source="dingding",
         project_code="default",
+        source_channel="dingding",
+        source_connector_id="connector-dingtalk-enterprise-default",
+        external_conversation_id="other-conversation",
         requester_id="someone-else",
         routing_context={"project_code": "default", "environment": "prod", "base": "longhua"},
         session_key="dashboard-other",
@@ -167,11 +167,12 @@ def test_dashboard_is_scope_filtered_and_queue_failure_is_region_local() -> None
     own_job = container.agent_repository.create_job(
         session_id=own_session.id,
         idempotency_key="dashboard-own-job",
-        user_id=str(limited["id"]),
         internal_user_id=str(limited["id"]),
         project_code="default",
-        source="dingding",
-        user_message="safe own message",
+        source_channel="dingding",
+        source_connector_id="connector-dingtalk-enterprise-default",
+        requester_id=str(limited["id"]),
+        input_message="safe own message",
         max_retry_count=3,
         initial_status=JobStatus.FAILED,
         routing_context={"project_code": "default", "environment": "prod", "base": "guanlan"},
@@ -180,11 +181,12 @@ def test_dashboard_is_scope_filtered_and_queue_failure_is_region_local() -> None
     container.agent_repository.create_job(
         session_id=other_session.id,
         idempotency_key="dashboard-other-job",
-        user_id="someone-else",
         internal_user_id="someone-else",
         project_code="default",
-        source="dingding",
-        user_message="must not leak",
+        source_channel="dingding",
+        source_connector_id="connector-dingtalk-enterprise-default",
+        requester_id="someone-else",
+        input_message="must not leak",
         max_retry_count=3,
         initial_status=JobStatus.FAILED,
         routing_context={"project_code": "default", "environment": "prod", "base": "longhua"},
@@ -347,10 +349,10 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
     settings = unified_settings()
     container = build_test_container(settings, migrate=True, seed=True)
     session = container.agent_repository.create_session(
-        dingding_conversation_id="ops-conversation",
-        dingding_user_id="user_local_admin",
-        source="dingding",
         project_code="default",
+        source_channel="dingding",
+        source_connector_id="connector-dingtalk-enterprise-default",
+        external_conversation_id="ops-conversation",
         requester_id="user_local_admin",
         routing_context={"project_code": "default", "environment": "prod", "base": "guanlan"},
         session_key="ops-session",
@@ -371,11 +373,12 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
     job = container.agent_repository.create_job(
         session_id=session.id,
         idempotency_key="ops-job",
-        user_id="user_local_admin",
         internal_user_id="user_local_admin",
         project_code="default",
-        source="dingding",
-        user_message="diagnose",
+        source_channel="dingding",
+        source_connector_id="connector-dingtalk-enterprise-default",
+        requester_id="user_local_admin",
+        input_message="diagnose",
         max_retry_count=3,
         initial_status=JobStatus.FAILED,
         routing_context={"project_code": "default", "environment": "prod", "base": "guanlan"},
@@ -405,12 +408,8 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
         error_code="synthetic_failure",
         correlation_id="correlation-ops",
     )
-    message_id = container.agent_repository.add_message(
-        session_id=session.id,
-        job_id=job.id,
-        role="user",
-        content="attachment question",
-    )
+    assert job.input_message_id is not None
+    message_id = job.input_message_id
     attachment = container.agent_repository.add_attachment(
         message_id=message_id,
         job_id=job.id,

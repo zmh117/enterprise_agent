@@ -166,7 +166,7 @@ class AttachmentProcessingService:
         job = self.repository.get_job(job_id)
         if job.status != JobStatus.WAITING_INPUT:
             return job.status.value.lower()
-        usable = bool(job.user_message.strip()) or any(
+        usable = bool((job.input_message or "").strip()) or any(
             item.status == "READY" for item in attachments
         )
         if usable:

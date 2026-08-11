@@ -77,12 +77,11 @@ def test_phase3a_secret_material_is_confined_to_encrypted_store_and_runtime_memo
         job = runtime.create_agent_job_service.execute(
             CreateAgentJobCommand(
                 idempotency_key="phase3a-secret-leak-gate",
-                dingding_conversation_id="phase3a-gate-conversation",
-                dingding_user_id="local-user",
+                external_conversation_id="phase3a-gate-conversation",
                 user_message="执行 Phase 3A 脱敏门禁",
                 project_code="default",
                 source_channel="debug_api",
-                source_connector_id="",
+                source_connector_id="connector-debug-api",
                 requester_id="user_local_admin",
             )
         )

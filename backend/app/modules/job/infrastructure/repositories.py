@@ -18,6 +18,94 @@ from app.shared.secret_redaction import (
 )
 
 
+_SESSION_COLUMN_NAMES = (
+    "id",
+    "project_code",
+    "created_at",
+    "updated_at",
+    "source_channel",
+    "source_connector_id",
+    "external_conversation_id",
+    "requester_id",
+    "requester_display_name",
+    "routing_context_json",
+    "reply_route_json",
+    "session_key",
+    "conversation_type",
+    "bot_identity",
+    "summary_text",
+    "summary_through_sequence",
+    "summary_version",
+    "message_sequence",
+    "last_message_at",
+    "external_identity_id",
+    "business_application_id",
+    "business_application_code",
+    "conversation_mode",
+    "recent_message_limit",
+    "session_policy_json",
+    "application_publication_id",
+    "execution_scope_hash",
+    "isolation_key_version",
+    "history_read_only",
+)
+_JOB_COLUMN_NAMES = (
+    "id",
+    "session_id",
+    "idempotency_key",
+    "project_code",
+    "status",
+    "priority",
+    "retry_count",
+    "max_retry_count",
+    "result",
+    "error_message",
+    "created_at",
+    "started_at",
+    "finished_at",
+    "locked_at",
+    "locked_by",
+    "source_channel",
+    "source_connector_id",
+    "external_event_id",
+    "requester_id",
+    "routing_context_json",
+    "reply_route_json",
+    "internal_user_id",
+    "external_identity_id",
+    "agent_definition_id",
+    "agent_publication_id",
+    "agent_revision",
+    "agent_config_hash",
+    "webhook_event_id",
+    "webhook_trigger_id",
+    "webhook_trigger_publication_id",
+    "last_error_code",
+    "last_error_at",
+    "next_retry_at",
+    "business_application_id",
+    "business_application_code",
+    "business_application_publication_id",
+    "business_application_deployment_id",
+    "business_application_route_id",
+    "business_application_config_hash",
+    "business_application_runtime_status",
+    "business_application_route_decision_json",
+    "execution_policy_json",
+    "execution_policy_tool_call_count",
+    "execution_policy_exhausted",
+    "model_runtime_provenance_json",
+    "agent_runtime_kind",
+    "agent_runtime_protocol_version",
+    "input_message_id",
+)
+_SESSION_COLUMNS_SQL = ", ".join(_SESSION_COLUMN_NAMES)
+_JOB_COLUMNS_SQL = ", ".join(_JOB_COLUMN_NAMES)
+_QUALIFIED_JOB_COLUMNS_SQL = ", ".join(
+    f"j.{column}" for column in _JOB_COLUMN_NAMES
+)
+
+
 def now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -62,14 +150,11 @@ class AgentRepository:
     def create_session(
         self,
         *,
-        dingding_conversation_id: str,
-        dingding_user_id: str,
-        source: str,
         project_code: str,
-        source_channel: str | None = None,
-        source_connector_id: str = "",
-        external_conversation_id: str | None = None,
-        requester_id: str | None = None,
+        source_channel: str,
+        source_connector_id: str,
+        external_conversation_id: str,
+        requester_id: str,
         requester_display_name: str = "",
         routing_context: dict[str, Any] | None = None,
         reply_route: dict[str, Any] | None = None,
@@ -95,32 +180,39 @@ class AgentRepository:
             )
         session_id = new_id("session")
         timestamp = now_iso()
-        source_channel = source_channel or source
-        external_conversation_id = external_conversation_id or dingding_conversation_id
-        requester_id = requester_id or dingding_user_id
+        if not all(
+            (
+                project_code,
+                source_channel,
+                source_connector_id,
+                external_conversation_id,
+                requester_id,
+            )
+        ):
+            raise NonRetryableExecutionError(
+                "Canonical Agent session identity is incomplete",
+                safe_message="会话身份或路由上下文不完整",
+                error_code="session_identity_incomplete",
+            )
         routing_context = routing_context or {"project_code": project_code}
         reply_route = reply_route or {"type": "dingtalk_conversation"}
         session_key = session_key or f"legacy:{session_id}"
         self.database.execute(
             """
             insert into agent_session
-              (id, dingding_conversation_id, dingding_user_id, source, project_code,
-               source_channel, source_connector_id, external_conversation_id, requester_id,
+              (id, project_code, source_channel, source_connector_id,
+               external_conversation_id, requester_id,
                requester_display_name, routing_context_json, reply_route_json, created_at, updated_at,
                session_key, conversation_type, bot_identity, external_identity_id,
                business_application_id, business_application_code,
                application_publication_id, execution_scope_hash,
                isolation_key_version, history_read_only, conversation_mode,
                recent_message_limit, session_policy_json)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             on conflict(session_key) do nothing
             """,
             (
                 session_id,
-                dingding_conversation_id,
-                dingding_user_id,
-                source,
                 project_code,
                 source_channel,
                 source_connector_id,
@@ -178,15 +270,17 @@ class AgentRepository:
         *,
         session_id: str,
         idempotency_key: str,
-        user_id: str,
         project_code: str,
-        source: str,
-        user_message: str,
+        source_channel: str,
+        source_connector_id: str,
+        requester_id: str,
+        input_message: str,
         max_retry_count: int,
-        source_channel: str | None = None,
-        source_connector_id: str = "",
         external_event_id: str = "",
-        requester_id: str | None = None,
+        external_message_id: str = "",
+        requester_display_name: str = "",
+        message_type: str = "text",
+        message_content_status: str = "READY",
         routing_context: dict[str, Any] | None = None,
         reply_route: dict[str, Any] | None = None,
         initial_status: JobStatus = JobStatus.PENDING,
@@ -239,78 +333,131 @@ class AgentRepository:
                 safe_message="会话发布版本已变化，请创建新会话",
                 error_code="session_isolation_mismatch",
             )
+        if not all((project_code, source_channel, source_connector_id, requester_id)):
+            raise NonRetryableExecutionError(
+                "Canonical Agent job provenance is incomplete",
+                safe_message="任务来源或请求者上下文不完整",
+                error_code="job_provenance_incomplete",
+            )
         job_id = new_id("job")
         timestamp = now_iso()
-        source_channel = source_channel or source
-        requester_id = requester_id or user_id
         routing_context = routing_context or {"project_code": project_code}
         reply_route = reply_route or {"type": "dingtalk_conversation"}
         normalized_execution_policy = JobExecutionPolicySnapshot.from_dict(
             execution_policy
         ).to_dict()
-        self.database.execute(
-            """
-            insert into agent_job
-              (id, session_id, idempotency_key, user_id, project_code, source, user_message,
-               status, retry_count, max_retry_count, source_channel, source_connector_id,
-               external_event_id, requester_id, routing_context_json, reply_route_json, created_at,
-               internal_user_id, external_identity_id, agent_definition_id,
-               agent_publication_id, agent_revision, agent_config_hash,
-               webhook_event_id, webhook_trigger_id, webhook_trigger_publication_id,
-               business_application_id, business_application_code,
-               business_application_publication_id, business_application_deployment_id,
-               business_application_route_id, business_application_config_hash,
-               business_application_runtime_status,
-               business_application_route_decision_json, execution_policy_json,
-               model_runtime_provenance_json, agent_runtime_kind,
-               agent_runtime_protocol_version)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                job_id,
-                session_id,
-                idempotency_key,
-                user_id,
-                project_code,
-                source,
-                user_message,
-                initial_status.value,
-                0,
-                max_retry_count,
-                source_channel,
-                source_connector_id,
-                external_event_id,
-                requester_id,
-                json.dumps(routing_context, ensure_ascii=False),
-                json.dumps(reply_route, ensure_ascii=False),
-                timestamp,
-                internal_user_id or None,
-                external_identity_id or None,
-                agent_definition_id or None,
-                agent_publication_id or None,
-                agent_revision,
-                agent_config_hash,
-                webhook_event_id or None,
-                webhook_trigger_id or None,
-                webhook_trigger_publication_id or None,
-                business_application_id or None,
-                business_application_code,
-                business_application_publication_id or None,
-                business_application_deployment_id or None,
-                business_application_route_id or None,
-                business_application_config_hash,
-                business_application_runtime_status,
-                json.dumps(
-                    business_application_route_decision or {},
-                    ensure_ascii=False,
+        with self.database.unit_of_work():
+            inserted = self.database.execute_one(
+                """
+                insert into agent_job
+                  (id, session_id, idempotency_key, project_code,
+                   status, retry_count, max_retry_count, source_channel, source_connector_id,
+                   external_event_id, requester_id, routing_context_json, reply_route_json,
+                   created_at, internal_user_id, external_identity_id, agent_definition_id,
+                   agent_publication_id, agent_revision, agent_config_hash,
+                   webhook_event_id, webhook_trigger_id, webhook_trigger_publication_id,
+                   business_application_id, business_application_code,
+                   business_application_publication_id, business_application_deployment_id,
+                   business_application_route_id, business_application_config_hash,
+                   business_application_runtime_status,
+                   business_application_route_decision_json, execution_policy_json,
+                   model_runtime_provenance_json, agent_runtime_kind,
+                   agent_runtime_protocol_version, input_message_id)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null)
+                on conflict(idempotency_key) do nothing
+                returning id
+                """,
+                (
+                    job_id,
+                    session_id,
+                    idempotency_key,
+                    project_code,
+                    initial_status.value,
+                    0,
+                    max_retry_count,
+                    source_channel,
+                    source_connector_id,
+                    external_event_id,
+                    requester_id,
+                    json.dumps(routing_context, ensure_ascii=False),
+                    json.dumps(reply_route, ensure_ascii=False),
+                    timestamp,
+                    internal_user_id or None,
+                    external_identity_id or None,
+                    agent_definition_id or None,
+                    agent_publication_id or None,
+                    agent_revision,
+                    agent_config_hash,
+                    webhook_event_id or None,
+                    webhook_trigger_id or None,
+                    webhook_trigger_publication_id or None,
+                    business_application_id or None,
+                    business_application_code,
+                    business_application_publication_id or None,
+                    business_application_deployment_id or None,
+                    business_application_route_id or None,
+                    business_application_config_hash,
+                    business_application_runtime_status,
+                    json.dumps(
+                        business_application_route_decision or {},
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(normalized_execution_policy, ensure_ascii=False),
+                    json.dumps(model_runtime_provenance or {}, ensure_ascii=False),
+                    agent_runtime_kind,
+                    agent_runtime_protocol_version,
                 ),
-                json.dumps(normalized_execution_policy, ensure_ascii=False),
-                json.dumps(model_runtime_provenance or {}, ensure_ascii=False),
-                agent_runtime_kind,
-                agent_runtime_protocol_version,
-            ),
-        )
+            )
+            if inserted is None:
+                concurrent = self.get_job_by_idempotency_key(idempotency_key)
+                if concurrent is None:
+                    raise NonRetryableExecutionError(
+                        "Idempotent Agent job could not be resolved",
+                        safe_message="无法确定已存在的任务",
+                        error_code="job_idempotency_resolution_failed",
+                    )
+                return concurrent
+            message_id = self.add_message(
+                session_id=session_id,
+                job_id=job_id,
+                role="user",
+                content=input_message,
+                external_message_id=external_message_id,
+                sender_id=requester_id,
+                sender_display_name=requester_display_name,
+                message_type=message_type,
+                content_status=message_content_status,
+            )
+            message = self.database.execute_one(
+                """
+                select id
+                  from agent_message
+                 where id = ? and job_id = ? and session_id = ? and role = 'user'
+                """,
+                (message_id, job_id, session_id),
+            )
+            if message is None:
+                raise NonRetryableExecutionError(
+                    "Canonical Agent input message conflicts with an existing message",
+                    safe_message="任务输入消息与已存在记录冲突",
+                    error_code="job_input_message_conflict",
+                )
+            linked = self.database.execute_one(
+                """
+                update agent_job
+                   set input_message_id = ?
+                 where id = ? and input_message_id is null
+                returning id
+                """,
+                (message_id, job_id),
+            )
+            if linked is None:
+                raise NonRetryableExecutionError(
+                    "Canonical Agent input message could not be linked",
+                    safe_message="无法关联任务输入消息",
+                    error_code="job_input_message_link_failed",
+                )
         return self.get_job(job_id)
 
     def record_runtime_event(self, job_id: str, event: dict[str, Any]) -> None:
@@ -1017,7 +1164,7 @@ class AgentRepository:
 
     def increment_attachment_retry(self, attachment_id: str) -> int:
         row = self.database.execute_one(
-            """
+            f"""
             update message_attachment set retry_count = retry_count + 1, updated_at = ?
             where id = ? returning retry_count
             """,
@@ -1633,7 +1780,7 @@ class AgentRepository:
             ),
         )
         row = self.database.execute_one(
-            """
+            f"""
             select * from delivery_attempt
              where idempotency_key = ?
             """,
@@ -1655,7 +1802,7 @@ class AgentRepository:
         payload_hash: str,
     ) -> bool:
         row = self.database.execute_one(
-            """
+            f"""
             select payload_hash
               from delivery_chunk
              where delivery_outbox_id = ?
@@ -2082,26 +2229,28 @@ class AgentRepository:
             raise NotFound(f"Agent tool call not found: {tool_call_id}")
 
     def get_job(self, job_id: str) -> AgentJob:
-        row = self.database.execute_one("select * from agent_job where id = ?", (job_id,))
+        row = self.database.execute_one(
+            f"select {_JOB_COLUMNS_SQL} from agent_job where id = ?",
+            (job_id,),
+        )
         if not row:
             raise NotFound(f"Agent job not found: {job_id}")
         return self._job_from_row(row)
 
     def get_session(self, session_id: str) -> AgentSession:
-        row = self.database.execute_one("select * from agent_session where id = ?", (session_id,))
+        row = self.database.execute_one(
+            f"select {_SESSION_COLUMNS_SQL} from agent_session where id = ?",
+            (session_id,),
+        )
         if not row:
             raise NotFound(f"Agent session not found: {session_id}")
         return AgentSession(
             id=row["id"],
-            dingding_conversation_id=row["dingding_conversation_id"],
-            dingding_user_id=row["dingding_user_id"],
-            source=row["source"],
             project_code=row["project_code"],
-            source_channel=row.get("source_channel") or row["source"],
+            source_channel=row.get("source_channel") or "",
             source_connector_id=row.get("source_connector_id") or "",
-            external_conversation_id=row.get("external_conversation_id")
-            or row["dingding_conversation_id"],
-            requester_id=row.get("requester_id") or row["dingding_user_id"],
+            external_conversation_id=row.get("external_conversation_id") or "",
+            requester_id=row.get("requester_id") or "",
             requester_display_name=row.get("requester_display_name") or "",
             routing_context=self._json_from_text(row.get("routing_context_json") or "{}"),
             reply_route=self._json_from_text(row.get("reply_route_json") or "{}"),
@@ -2129,20 +2278,27 @@ class AgentRepository:
 
     def get_job_by_idempotency_key(self, idempotency_key: str) -> AgentJob | None:
         row = self.database.execute_one(
-            "select * from agent_job where idempotency_key = ?", (idempotency_key,)
+            f"select {_JOB_COLUMNS_SQL} from agent_job where idempotency_key = ?",
+            (idempotency_key,),
         )
         return self._job_from_row(row) if row else None
 
     def get_job_detail(self, job_id: str) -> dict[str, Any]:
         row = self.database.execute_one(
-            """
-            select j.*,
+            f"""
+            select {_QUALIFIED_JOB_COLUMNS_SQL},
+                   input_message.content as input_message_content,
+                   input_message.content_status as input_message_content_status,
                    c.id as source_connector_record_id,
                    c.name as source_connector_name,
                    c.enabled as source_connector_enabled,
                    c.deleted as source_connector_deleted,
                    c.metadata as source_connector_metadata
               from agent_job j
+              left join agent_message input_message
+                on input_message.id = j.input_message_id
+               and input_message.job_id = j.id
+               and input_message.role = 'user'
               left join integration_connector c
                 on c.id = j.source_connector_id
              where j.id = ?
@@ -2155,14 +2311,14 @@ class AgentRepository:
             "id": row["id"],
             "session_id": row["session_id"],
             "idempotency_key": row["idempotency_key"],
-            "user_id": row["user_id"],
+            "user_id": row.get("requester_id") or "",
             "project_code": row["project_code"],
-            "source": row["source"],
-            "source_channel": row.get("source_channel") or row["source"],
+            "source": row.get("source_channel") or "",
+            "source_channel": row.get("source_channel") or "",
             "source_connector_id": row.get("source_connector_id") or "",
             **source_connector_projection(row),
             "external_event_id": row.get("external_event_id") or "",
-            "requester_id": row.get("requester_id") or row["user_id"],
+            "requester_id": row.get("requester_id") or "",
             "internal_user_id": row.get("internal_user_id") or "",
             "external_identity_id": row.get("external_identity_id") or "",
             "agent_definition_id": row.get("agent_definition_id") or "",
@@ -2197,7 +2353,13 @@ class AgentRepository:
             "execution_policy_exhausted": bool(row.get("execution_policy_exhausted") or False),
             "routing_context": self._json_from_text(row.get("routing_context_json") or "{}"),
             "reply_route": self._json_from_text(row.get("reply_route_json") or "{}"),
-            "user_message": row["user_message"],
+            "user_message": row.get("input_message_content"),
+            "input_message_id": row.get("input_message_id") or "",
+            "input_message_state": (
+                "available"
+                if row.get("input_message_content") is not None
+                else "legacy_message_unavailable"
+            ),
             "status": row["status"],
             "priority": int(row["priority"]),
             "retry_count": int(row["retry_count"]),
@@ -2377,7 +2539,7 @@ class AgentRepository:
     ) -> AgentJob | None:
         timestamp = now_iso()
         row = self.database.execute_one(
-            """
+            f"""
             update agent_job
             set status = ?, started_at = coalesce(started_at, ?), locked_at = ?, locked_by = ?,
                 next_retry_at = null
@@ -2387,7 +2549,7 @@ class AgentRepository:
                 or (status = ? and next_retry_at is not null and next_retry_at <= ?)
                 or (? = 1 and status = ? and agent_runtime_kind in ('python-v1', 'typescript-v1'))
               )
-            returning *
+            returning {_JOB_COLUMNS_SQL}
             """,
             (
                 JobStatus.RUNNING.value,
@@ -2425,7 +2587,7 @@ class AgentRepository:
             else None
         )
         row = self.database.execute_one(
-            """
+            f"""
             update agent_job
             set status = ?, result = coalesce(?, result), error_message = coalesce(?, error_message),
                 last_error_code = case when ? <> '' then ? else last_error_code end,
@@ -2433,7 +2595,7 @@ class AgentRepository:
                 next_retry_at = null,
                 finished_at = coalesce(?, finished_at), locked_at = null, locked_by = null
             where id = ? and status = ?
-            returning *
+            returning {_JOB_COLUMNS_SQL}
             """,
             (
                 target.value,
@@ -2464,12 +2626,12 @@ class AgentRepository:
         next_retry_at: str,
     ) -> AgentJob:
         row = self.database.execute_one(
-            """
+            f"""
             update agent_job
             set retry_count = retry_count + 1, error_message = ?, last_error_code = ?,
                 last_error_at = ?, next_retry_at = ?, status = ?, locked_at = null, locked_by = null
             where id = ? and status = ? and retry_count < max_retry_count
-            returning *
+            returning {_JOB_COLUMNS_SQL}
             """,
             (
                 error_message,
@@ -2507,7 +2669,7 @@ class AgentRepository:
             parameters.extend(job_ids)
         rows = self.database.execute(
             f"""
-            select * from agent_job
+            select {_JOB_COLUMNS_SQL} from agent_job
             where status = ? and retry_count > 0 and error_message is not null
               and result is null {lock_filter}
               {job_filter}
@@ -2528,7 +2690,7 @@ class AgentRepository:
             parameters.extend(job_ids)
         rows = self.database.execute(
             f"""
-            select * from agent_job
+            select {_JOB_COLUMNS_SQL} from agent_job
             where status = ? and retry_count > 0 and result is null
               and next_retry_at is not null and next_retry_at <= ?
               {job_filter}
@@ -2566,7 +2728,7 @@ class AgentRepository:
                 locked_at = null, locked_by = null
             where id = ? and status = ? and retry_count > 0 and error_message is not null
               and result is null {lock_filter}
-            returning *
+            returning {_JOB_COLUMNS_SQL}
             """,
             tuple(parameters),
         )
@@ -2658,14 +2820,32 @@ class AgentRepository:
         )
 
     def _job_from_row(self, row: dict[str, Any]) -> AgentJob:
+        input_message_id = str(row.get("input_message_id") or "")
+        input_message: str | None = None
+        if input_message_id:
+            message = self.database.execute_one(
+                """
+                select content
+                  from agent_message
+                 where id = ? and job_id = ? and session_id = ? and role = 'user'
+                """,
+                (input_message_id, row["id"], row["session_id"]),
+            )
+            if message is not None:
+                input_message = str(message["content"])
         return AgentJob(
             id=row["id"],
             session_id=row["session_id"],
             idempotency_key=row["idempotency_key"],
-            user_id=row["user_id"],
             project_code=row["project_code"],
-            source=row["source"],
-            user_message=row["user_message"],
+            source_channel=row.get("source_channel") or "",
+            source_connector_id=row.get("source_connector_id") or "",
+            requester_id=row.get("requester_id") or "",
+            input_message_id=input_message_id,
+            input_message=input_message,
+            input_message_state=(
+                "available" if input_message is not None else "legacy_message_unavailable"
+            ),
             status=JobStatus(row["status"]),
             retry_count=int(row["retry_count"]),
             max_retry_count=int(row["max_retry_count"]),
@@ -2674,10 +2854,7 @@ class AgentRepository:
             last_error_code=row.get("last_error_code") or "",
             last_error_at=row.get("last_error_at"),
             next_retry_at=row.get("next_retry_at"),
-            source_channel=row.get("source_channel") or row["source"],
-            source_connector_id=row.get("source_connector_id") or "",
             external_event_id=row.get("external_event_id") or "",
-            requester_id=row.get("requester_id") or row["user_id"],
             routing_context=self._json_from_text(row.get("routing_context_json") or "{}"),
             reply_route=self._json_from_text(row.get("reply_route_json") or "{}"),
             internal_user_id=row.get("internal_user_id") or "",

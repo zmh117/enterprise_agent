@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:enterprise-agent:schema-fact-sources:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format_version",
+    "baseline_predecessor",
+    "migration_plan",
+    "entries"
+  ],
+  "properties": {
+    "format_version": {"const": 1},
+    "baseline_predecessor": {"type": "string", "pattern": "^[0-9]{3}$"},
+    "migration_plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expand_candidate",
+        "backfill_checkpoint_candidate",
+        "contract_candidate",
+        "allocation_rule"
+      ],
+      "properties": {
+        "expand_candidate": {"type": "string", "pattern": "^[0-9]{3}$"},
+        "backfill_checkpoint_candidate": {"type": "string", "pattern": "^[0-9]{3}$"},
+        "contract_candidate": {"type": "string", "pattern": "^[0-9]{3}$"},
+        "allocation_rule": {"type": "string", "minLength": 1}
+      }
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/entry"}
+    }
+  },
+  "$defs": {
+    "nonEmptyStrings": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "retirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "earliest_phase", "gates"],
+      "properties": {
+        "status": {
+          "enum": ["retained", "planned", "blocked", "retired"]
+        },
+        "earliest_phase": {
+          "enum": ["never", "observation", "contract/drop", "complete"]
+        },
+        "gates": {"$ref": "#/$defs/nonEmptyStrings"}
+      }
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "object_type",
+        "table",
+        "owner",
+        "semantics",
+        "classification",
+        "writers",
+        "readers",
+        "lifecycle",
+        "retention_policy",
+        "audit_requirement",
+        "retirement",
+        "evidence_refs"
+      ],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]+$"},
+        "object_type": {"enum": ["table", "column"]},
+        "table": {"type": "string", "pattern": "^[a-z_][a-z0-9_]*$"},
+        "column": {"type": "string", "pattern": "^[a-z_][a-z0-9_]*$"},
+        "owner": {"type": "string", "minLength": 1},
+        "semantics": {"type": "string", "minLength": 1},
+        "classification": {
+          "enum": [
+            "canonical_mutable_fact",
+            "immutable_snapshot",
+            "derived_projection",
+            "compatibility_shadow",
+            "operational_coordination_fact",
+            "one_time_migration_artifact"
+          ]
+        },
+        "canonical_source": {"type": "string", "minLength": 1},
+        "source_contract": {"type": "string", "minLength": 1},
+        "writers": {"$ref": "#/$defs/nonEmptyStrings"},
+        "readers": {"$ref": "#/$defs/nonEmptyStrings"},
+        "lifecycle": {"type": "string", "minLength": 1},
+        "retention_policy": {"type": "string", "minLength": 1},
+        "audit_requirement": {"type": "string", "minLength": 1},
+        "retirement": {"$ref": "#/$defs/retirement"},
+        "evidence_refs": {"$ref": "#/$defs/nonEmptyStrings"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"object_type": {"const": "column"}}},
+          "then": {"required": ["column"]},
+          "else": {"not": {"required": ["column"]}}
+        }
+      ]
+    }
+  }
+}

@@ -27,6 +27,12 @@ class AgentContextBuilder:
         self.agent_config_service = agent_config_service
 
     def build(self, job: AgentJob) -> AgentExecutionContext:
+        if job.input_message is None:
+            raise NonRetryableExecutionError(
+                "Canonical Agent input message is unavailable",
+                safe_message="历史任务缺少可执行的输入消息",
+                error_code="legacy_message_unavailable",
+            )
         execution_policy = JobExecutionPolicySnapshot.from_dict(job.execution_policy)
         publication = self._publication(job)
         snapshot = publication.get("snapshot") if publication else {}
@@ -74,7 +80,7 @@ class AgentContextBuilder:
                 "Do not modify code, databases, Redis, services, deployments, or files.",
                 "Every conclusion must cite evidence or state uncertainty.",
             ],
-            user_question=job.user_message,
+            user_question=job.input_message,
             project_code=job.project_code,
             allowed_tools=allowed_tools,
             tool_restrictions=_tool_restrictions(allowed_tools),

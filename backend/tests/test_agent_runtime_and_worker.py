@@ -90,8 +90,8 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
         job = c.create_agent_job_service.execute(
             CreateAgentJobCommand(
                 idempotency_key="runtime-job",
-                dingding_conversation_id="conversation-1",
-                dingding_user_id="local-user",
+                external_conversation_id="conversation-1",
+                requester_id="local-user",
                 user_message="Why is order waiting material?",
                 project_code="default",
             )
@@ -114,8 +114,8 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
         job = c.create_agent_job_service.execute(
             CreateAgentJobCommand(
                 idempotency_key="retry-job",
-                dingding_conversation_id="conversation-1",
-                dingding_user_id="local-user",
+                external_conversation_id="conversation-1",
+                requester_id="local-user",
                 user_message="retry please",
                 project_code="default",
             )
@@ -143,8 +143,8 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
         job = c.create_agent_job_service.execute(
             CreateAgentJobCommand(
                 idempotency_key="retry-tool-events-job",
-                dingding_conversation_id="conversation-1",
-                dingding_user_id="local-user",
+                external_conversation_id="conversation-1",
+                requester_id="local-user",
                 user_message="retry with events",
                 project_code="default",
             )
@@ -171,8 +171,8 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
         job = c.create_agent_job_service.execute(
             CreateAgentJobCommand(
                 idempotency_key="max-turns-tool-events-job",
-                dingding_conversation_id="conversation-1",
-                dingding_user_id="local-user",
+                external_conversation_id="conversation-1",
+                requester_id="local-user",
                 user_message="max turns",
                 project_code="default",
             )
@@ -201,8 +201,8 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
         job = c.create_agent_job_service.execute(
             CreateAgentJobCommand(
                 idempotency_key="tool-event-job",
-                dingding_conversation_id="conversation-1",
-                dingding_user_id="local-user",
+                external_conversation_id="conversation-1",
+                requester_id="local-user",
                 user_message="diagnose with real runtime",
                 project_code="default",
             )
@@ -221,8 +221,8 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
         job = c.create_agent_job_service.execute(
             CreateAgentJobCommand(
                 idempotency_key="worker-job",
-                dingding_conversation_id="conversation-1",
-                dingding_user_id="local-user",
+                external_conversation_id="conversation-1",
+                requester_id="local-user",
                 user_message="diagnose order",
                 project_code="default",
             )

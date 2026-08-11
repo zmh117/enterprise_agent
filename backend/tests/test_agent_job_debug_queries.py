@@ -154,6 +154,7 @@ def _create_debug_job(
             idempotency_key=f"query-test:{idempotency_key}",
             user_message="检查受保护的调试查询",
             requester_id=ADMIN_ID,
+            external_conversation_id=f"debug-query:{idempotency_key}",
             source_channel="debug_api",
             source_connector_id="connector-debug-api",
         )
@@ -162,10 +163,10 @@ def _create_debug_job(
     runtime.database.execute(
         """
         update agent_job
-           set user_id = ?, requester_id = ?, internal_user_id = ?
+           set requester_id = ?, internal_user_id = ?
          where id = ?
         """,
-        (creator_user_id, creator_user_id, creator_user_id, job_id),
+        (creator_user_id, creator_user_id, job_id),
     )
     return job_id
 

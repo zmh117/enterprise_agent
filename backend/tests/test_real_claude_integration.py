@@ -53,8 +53,8 @@ def _run_real_smoke(*, model: str, api_key: str, base_url: str, idempotency_key:
     job = c.create_agent_job_service.execute(
         CreateAgentJobCommand(
             idempotency_key=idempotency_key,
-            dingding_conversation_id="integration-conversation",
-            dingding_user_id="local-user",
+            external_conversation_id="integration-conversation",
+            requester_id="local-user",
             user_message="请用一句话确认真实 Claude Agent SDK 运行时可用，不要调用工具。",
             project_code="default",
         )
@@ -69,12 +69,12 @@ def _run_real_smoke(*, model: str, api_key: str, base_url: str, idempotency_key:
     result = client.run(
         AgentRunRequest(
             job_id=job.id,
-            user_id=job.user_id,
+            user_id=job.requester_id,
             project_code=job.project_code,
             context=AgentExecutionContext(
                 system_role="Enterprise internal read-only diagnostic Agent",
                 safety_rules=["Do not mutate anything.", "Answer briefly."],
-                user_question=job.user_message,
+                user_question=job.input_message or "",
                 project_code=job.project_code,
                 allowed_tools=[],
                 tool_restrictions=["Do not call tools in this smoke test."],

@@ -22,7 +22,7 @@ def test_job_dispatch_outbox_migration_has_stable_contract_and_indexes() -> None
             migrator_build="job-dispatch-schema-test",
         ).run()
 
-        assert result.head == "100"
+        assert result.head == "102"
         columns = {
             str(row["name"]): row
             for row in database.execute("pragma table_info(job_dispatch_outbox)")
@@ -94,20 +94,21 @@ def test_job_dispatch_outbox_rejects_invalid_status_and_attempt_bounds() -> None
         database.execute(
             """
             insert into agent_session
-              (id, dingding_conversation_id, dingding_user_id, source,
-               project_code, created_at, updated_at)
-            values ('session-outbox', 'conversation', 'user', 'test',
-                    'default', ?, ?)
+              (id, project_code, created_at, updated_at, source_channel,
+               source_connector_id, external_conversation_id, requester_id,
+               session_key)
+            values ('session-outbox', 'default', ?, ?, 'test',
+                    'connector-test', 'conversation', 'user', 'session-outbox')
             """,
             (timestamp, timestamp),
         )
         database.execute(
             """
             insert into agent_job
-              (id, session_id, idempotency_key, user_id, project_code,
-               source, user_message, status, created_at)
-            values ('job-outbox', 'session-outbox', 'job-key', 'user',
-                    'default', 'test', 'diagnose', 'PENDING', ?)
+              (id, session_id, idempotency_key, project_code, source_channel,
+               source_connector_id, requester_id, status, created_at)
+            values ('job-outbox', 'session-outbox', 'job-key', 'default',
+                    'test', 'connector-test', 'user', 'PENDING', ?)
             """,
             (timestamp,),
         )
@@ -167,12 +168,12 @@ def test_job_dispatch_status_is_finite_and_terminal_states_do_not_transition() -
     )
 
 
-def test_job_dispatch_legacy_evidence_is_frozen_but_active_catalog_is_baseline() -> None:
+def test_job_dispatch_legacy_evidence_is_frozen_but_active_catalog_is_current() -> None:
     catalog = load_migration_catalog(default_migrations_dir())
     manifest = load_legacy_manifest(default_migrations_dir() / LEGACY_MANIFEST_FILENAME)
     job_dispatch = next(
         artifact for artifact in manifest["catalog"] if artifact["version"] == "019"
     )
 
-    assert catalog[-1].version == "100"
+    assert catalog[-1].version == "103"
     assert job_dispatch["name"] == "019_job_dispatch_outbox.sql"

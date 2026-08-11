@@ -9,6 +9,13 @@ from app.shared.database import Database
 from app.shared.exceptions import NotFound
 
 
+_TEMPLATE_COLUMNS = (
+    "id, code, name, description, project_code, status, version, "
+    "entry_node_key, graph_schema_version, settings_json, created_by, "
+    "created_at, updated_at"
+)
+
+
 def now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -19,6 +26,10 @@ def new_id(prefix: str) -> str:
 
 def json_text(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+class WorkflowDraftConflict(RuntimeError):
+    """The draft changed while an immutable publication was being created."""
 
 
 class WorkflowRepository:
@@ -35,7 +46,6 @@ class WorkflowRepository:
         status: str = "draft",
         entry_node_key: str = "",
         graph_schema_version: int = 1,
-        graph: dict[str, Any] | None = None,
         settings: dict[str, Any] | None = None,
         created_by: str = "",
     ) -> dict[str, Any]:
@@ -46,7 +56,7 @@ class WorkflowRepository:
                 """
                 update agent_workflow_template
                 set name = ?, description = ?, project_code = ?, status = ?,
-                    entry_node_key = ?, graph_schema_version = ?, graph_json = ?,
+                    entry_node_key = ?, graph_schema_version = ?,
                     settings_json = ?, updated_at = ?
                 where id = ?
                 """,
@@ -57,7 +67,6 @@ class WorkflowRepository:
                     status,
                     entry_node_key,
                     graph_schema_version,
-                    json_text(graph or {}),
                     json_text(settings or {}),
                     timestamp,
                     existing["id"],
@@ -69,9 +78,9 @@ class WorkflowRepository:
             """
             insert into agent_workflow_template
               (id, code, name, description, project_code, status, version,
-               entry_node_key, graph_schema_version, graph_json, settings_json,
+               entry_node_key, graph_schema_version, settings_json,
                created_by, created_at, updated_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 template_id,
@@ -83,7 +92,6 @@ class WorkflowRepository:
                 1,
                 entry_node_key,
                 graph_schema_version,
-                json_text(graph or {}),
                 json_text(settings or {}),
                 created_by,
                 timestamp,
@@ -104,14 +112,16 @@ class WorkflowRepository:
             clauses.append("status != 'disabled'")
         where = f"where {' and '.join(clauses)}" if clauses else ""
         rows = self.database.execute(
-            f"select * from agent_workflow_template {where} order by project_code, code",
+            f"select {_TEMPLATE_COLUMNS} from agent_workflow_template "
+            f"{where} order by project_code, code",
             params,
         )
         return [self._parse_template(row) for row in rows]
 
     def get_template(self, template_id: str) -> dict[str, Any]:
         row = self.database.execute_one(
-            "select * from agent_workflow_template where id = ?", (template_id,)
+            f"select {_TEMPLATE_COLUMNS} from agent_workflow_template where id = ?",
+            (template_id,),
         )
         if not row:
             raise NotFound(f"Agent workflow template not found: {template_id}")
@@ -119,7 +129,8 @@ class WorkflowRepository:
 
     def get_template_by_code(self, code: str) -> dict[str, Any] | None:
         row = self.database.execute_one(
-            "select * from agent_workflow_template where code = ?", (code,)
+            f"select {_TEMPLATE_COLUMNS} from agent_workflow_template where code = ?",
+            (code,),
         )
         return self._parse_template(row) if row else None
 
@@ -165,6 +176,7 @@ class WorkflowRepository:
                     existing["id"],
                 ),
             )
+            self._touch_template(str(template["id"]), timestamp)
             return self.get_node(existing["id"])
         node_id = new_id("wf_node")
         self.database.execute(
@@ -187,6 +199,7 @@ class WorkflowRepository:
                 timestamp,
             ),
         )
+        self._touch_template(str(template["id"]), timestamp)
         return self.get_node(node_id)
 
     def list_nodes(self, template_code: str) -> list[dict[str, Any]]:
@@ -251,6 +264,7 @@ class WorkflowRepository:
                     existing["id"],
                 ),
             )
+            self._touch_template(str(template["id"]), timestamp)
             return self.get_edge(existing["id"])
         edge_id = new_id("wf_edge")
         self.database.execute(
@@ -273,7 +287,39 @@ class WorkflowRepository:
                 timestamp,
             ),
         )
+        self._touch_template(str(template["id"]), timestamp)
         return self.get_edge(edge_id)
+
+    def load_normalized_draft(
+        self,
+        template_code: str,
+        *,
+        lock: bool = False,
+    ) -> dict[str, Any]:
+        suffix = " for update" if lock and self.database.engine == "postgres" else ""
+        row = self.database.execute_one(
+            f"select {_TEMPLATE_COLUMNS} from agent_workflow_template where code = ?"
+            + suffix,
+            (template_code,),
+        )
+        if row is None:
+            raise NotFound(f"Agent workflow template not found: {template_code}")
+        template = self._parse_template(row)
+        template_id = str(template["id"])
+        nodes = self.database.execute(
+            "select * from agent_workflow_node where template_id = ? order by node_key",
+            (template_id,),
+        )
+        edges = self.database.execute(
+            "select * from agent_workflow_edge where template_id = ? order by edge_key",
+            (template_id,),
+        )
+        return {
+            "template": template,
+            "nodes": [self._parse_node(node) for node in nodes],
+            "edges": [self._parse_edge(edge) for edge in edges],
+            "expected_updated_at": str(row["updated_at"]),
+        }
 
     def list_edges(self, template_code: str) -> list[dict[str, Any]]:
         template = self._require_template(template_code)
@@ -313,6 +359,7 @@ class WorkflowRepository:
         graph_snapshot: dict[str, Any],
         config_hash: str,
         published_by: str,
+        expected_updated_at: str,
     ) -> dict[str, Any]:
         publication_id = new_id("wf_pub")
         timestamp = now_iso()
@@ -333,15 +380,29 @@ class WorkflowRepository:
                 timestamp,
             ),
         )
-        self.database.execute(
+        updated = self.database.execute(
             """
             update agent_workflow_template
             set status = 'published', version = ?, updated_at = ?
-            where id = ?
+            where id = ? and updated_at = ?
+            returning id
             """,
-            (version, timestamp, template_id),
+            (version, timestamp, template_id, expected_updated_at),
         )
+        if not updated:
+            raise WorkflowDraftConflict("Workflow draft changed during publication")
         return self.get_publication(publication_id)
+
+    def next_publication_version(self, template_id: str) -> int:
+        row = self.database.execute_one(
+            """
+            select coalesce(max(version), 1) + 1 as version
+              from agent_workflow_publication
+             where template_id = ?
+            """,
+            (template_id,),
+        )
+        return int(row["version"]) if row is not None else 1
 
     def get_publication(self, publication_id: str) -> dict[str, Any]:
         row = self.database.execute_one(
@@ -375,9 +436,14 @@ class WorkflowRepository:
             **row,
             "version": int(row.get("version") or 0),
             "graph_schema_version": int(row.get("graph_schema_version") or 1),
-            "graph": self._json_from_text(row.get("graph_json") or "{}"),
             "settings": self._json_from_text(row.get("settings_json") or "{}"),
         }
+
+    def _touch_template(self, template_id: str, timestamp: str) -> None:
+        self.database.execute(
+            "update agent_workflow_template set updated_at = ? where id = ?",
+            (timestamp, template_id),
+        )
 
     def _parse_node(self, row: dict[str, Any]) -> dict[str, Any]:
         return {

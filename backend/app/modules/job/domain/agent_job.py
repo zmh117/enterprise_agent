@@ -9,14 +9,11 @@ from app.modules.job.domain.job_status import JobStatus
 @dataclass(frozen=True)
 class AgentSession:
     id: str
-    dingding_conversation_id: str
-    dingding_user_id: str
-    source: str
     project_code: str
-    source_channel: str = "dingding"
-    source_connector_id: str = "connector-dingtalk-enterprise-default"
-    external_conversation_id: str = ""
-    requester_id: str = ""
+    source_channel: str
+    source_connector_id: str
+    external_conversation_id: str
+    requester_id: str
     requester_display_name: str = ""
     routing_context: dict[str, Any] | None = None
     reply_route: dict[str, Any] | None = None
@@ -43,10 +40,13 @@ class AgentJob:
     id: str
     session_id: str
     idempotency_key: str
-    user_id: str
     project_code: str
-    source: str
-    user_message: str
+    source_channel: str
+    source_connector_id: str
+    requester_id: str
+    input_message_id: str
+    input_message: str | None
+    input_message_state: str
     status: JobStatus
     retry_count: int
     max_retry_count: int
@@ -55,10 +55,7 @@ class AgentJob:
     last_error_code: str = ""
     last_error_at: str | None = None
     next_retry_at: str | None = None
-    source_channel: str = "dingding"
-    source_connector_id: str = "connector-dingtalk-enterprise-default"
     external_event_id: str = ""
-    requester_id: str = ""
     routing_context: dict[str, Any] | None = None
     reply_route: dict[str, Any] | None = None
     internal_user_id: str = ""

@@ -107,7 +107,7 @@ def test_debug_create_uses_authenticated_internal_user() -> None:
         publish_pending_agent_jobs(runtime)
         assert len(runtime.message_bus.jobs) == 1
         job = runtime.agent_repository.get_job(first.json()["job_id"])
-        assert job.user_id == "user_local_admin"
+        assert job.requester_id == "user_local_admin"
         assert job.requester_id == "user_local_admin"
         assert job.source_connector_id == "connector-debug-api"
         assert job.reply_route["type"] == "none"
