@@ -47,7 +47,7 @@ Worker SHALL 为每个 attempt 签发短期 Runtime Grant，至少绑定 issuer�
 - **THEN** Runtime 拒绝调用且不向任何 Tool backend 发出请求
 
 ### Requirement: Runtime不得泄漏凭据和私有推理
-模型 Key、MCP Token、Runtime Grant、Master Key、Secret value、完整 Prompt、原始 Provider/MCP payload 和 private thinking MUST NOT 出现在 RabbitMQ、Job 快照、Runtime 日志、事件、terminal ledger 或响应中。Runtime 只可输出有界脱敏诊断和安全 Tool provenance。
+模型 Key、Runtime Grant、Master Key、Secret value、完整 Prompt、原始 Provider/MCP payload 和 private thinking MUST NOT 出现在 RabbitMQ、Job 快照、Runtime 日志、事件、terminal ledger 或响应中。Runtime 只可输出有界脱敏诊断和安全 Tool provenance；MCP 边界不得创建专用 Token。
 
 #### Scenario: Provider错误包含凭据
 - **WHEN** SDK、CLI 或 MCP 错误文本包含 Token、Authorization Header 或带凭据 URL

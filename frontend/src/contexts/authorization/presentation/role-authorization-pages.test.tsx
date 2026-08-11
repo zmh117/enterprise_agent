@@ -309,7 +309,7 @@ describe("角色授权中心", () => {
             application_code: "diagnostic-app",
             application_name: "诊断应用",
             status: "enabled",
-            capability_codes: ["query_database"],
+            tool_identifiers: ["query_database"],
             scopes: [],
           },
         ],
@@ -343,9 +343,9 @@ describe("角色授权中心", () => {
               description: "",
               project_code: "default",
               status: "enabled",
-              capabilities: [
+              mcp_tools: [
                 {
-                  capability_code: "query_database",
+                  tool_identifier: "query_database",
                   display_name_zh: "只读查询数据库",
                   version_constraint: "",
                 },
@@ -392,7 +392,7 @@ describe("角色授权中心", () => {
         applications: [
           {
             application_id: "app-test",
-            capability_codes: ["query_database"],
+            tool_identifiers: ["query_database"],
             scopes: [{ environment_id: "environment-test" }],
           },
         ],
@@ -459,9 +459,9 @@ describe("角色授权中心", () => {
 
   it.each([
     [
-      "application_capability_safety_ceiling",
+      "application_tool_safety_ceiling",
       false,
-      "所选能力超出业务应用和只读工具安全上限，角色不能授予。",
+      "所选 MCP Tool 超出业务应用安全上限，角色不能授予。",
       "",
     ],
     ["application_scope_denied", false, "角色未授予所选数据范围。", ""],
@@ -510,7 +510,7 @@ describe("角色授权中心", () => {
               description: "",
               project_code: "default",
               status: "enabled",
-              capabilities: [],
+              mcp_tools: [],
             },
           ],
           topology: [],
@@ -529,7 +529,7 @@ describe("角色授权中心", () => {
             reason,
             source_role_codes: ["diagnostic-operator"],
             application: { id: "app-test", code: "diagnostic-app" },
-            capability_code: "",
+            tool_identifier: "",
             scope: {},
           },
           notice: "只显示安全摘要",

@@ -1,6 +1,6 @@
 ## MODIFIED Requirements
 
-### Requirement: Read-only tools are exposed only through an in-process SDK MCP server
+### Requirement: Read-only tools are exposed only through the deployment-fixed standard MCP server
 系统 SHALL 让两个独立 Runtime 通过固定标准 `tool-mcp` 服务访问 Job 冻结的只读 MCP Tool。Runtime MUST NOT 注册旧 Capability Tool、接受任意 Server URL、发送 Runtime Grant/Internal API Token 或在 Tool 不可用时 fallback。MCP transport 不新增 Token、签名、RBAC 或治理层；业务权限与只读边界继续由 Job 和 Tool 实现复核。
 
 #### Scenario: Python Runtime调用允许Tool
@@ -37,4 +37,3 @@
 #### Scenario: Application has no Tool
 - **WHEN** Application MCP Tool 子集为空
 - **THEN** 不注册或批准任何平台 Tool
-

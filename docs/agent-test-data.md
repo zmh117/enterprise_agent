@@ -4,7 +4,7 @@ This local environment is for debugging the read-only diagnostic Agent against r
 MySQL, SQL Server, and Redis services. It is isolated behind the
 `agent-test-data` Compose profile and is not part of the default stack.
 
-Oracle remains supported by the Internal API Platform, but it is intentionally
+Oracle remains supported by the direct `tool-mcp` database adapter, but it is intentionally
 excluded from this local test-data profile because the Oracle test image is not
 available in the current environment.
 
@@ -39,8 +39,8 @@ scripts/agent_test_data.sh reset --yes
 
 - `up` starts the four data services, waits for health checks, seeds, and verifies.
 - `seed` restores the deterministic fixture baseline on existing volumes.
-- `verify` checks direct DB/Redis data and then checks the Internal API Platform
-  routing path through `real-tools`.
+- `verify` checks direct DB/Redis fixtures. Publish the corresponding Resource
+  Revision in the admin UI before running an MCP Tool acceptance Job.
 - `reset --yes` stops only the test-data services and removes only the four
   explicitly named test volumes.
 

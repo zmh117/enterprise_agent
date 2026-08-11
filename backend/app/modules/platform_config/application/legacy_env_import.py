@@ -166,12 +166,6 @@ class LegacyEnvSecretImportService:
             source_type="runtime_config",
             columns=("secret_ref",),
         )
-        self._scan_json(
-            locations,
-            table="platform_resource_binding",
-            source_type="resource_binding",
-            column="secret_refs_json",
-        )
         self._scan_scalar(
             locations,
             table="integration_connector",
@@ -286,15 +280,6 @@ class LegacyEnvSecretImportService:
                     where id = ? and secret_ref = ?
                     """,
                     (target_ref, now_iso(), entity_id, env_ref),
-                )
-            elif source_type == "resource_binding":
-                self._rewrite_json_column(
-                    table="platform_resource_binding",
-                    column="secret_refs_json",
-                    entity_id=entity_id,
-                    env_ref=env_ref,
-                    target_ref=target_ref,
-                    revisioned=True,
                 )
             elif source_type == "connector":
                 scalar_fields = {

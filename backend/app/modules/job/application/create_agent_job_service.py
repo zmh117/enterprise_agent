@@ -499,12 +499,6 @@ class CreateAgentJobService:
                 agent_runtime_kind=agent_runtime_kind,
                 agent_runtime_protocol_version=agent_runtime_protocol_version,
             )
-            execution_scope_snapshot: dict[str, Any] = {}
-            if int(runtime_authorization_snapshot.get("schema_version") or 0) == 2:
-                execution_scope_snapshot = self.repository.create_execution_scope(
-                    job_id=job.id,
-                    runtime_authorization=(runtime_authorization_snapshot),
-                )
             mcp_tool_snapshot: dict[str, Any] = {}
             if command.business_application_id and self.mcp_tool_snapshot_service is not None:
                 mcp_tool_snapshot = self.mcp_tool_snapshot_service.freeze(
@@ -599,8 +593,6 @@ class CreateAgentJobService:
                     "business_application_runtime_status": (
                         command.business_application_runtime_status
                     ),
-                    "execution_scope_id": str(execution_scope_snapshot.get("id") or ""),
-                    "execution_scope_hash": str(execution_scope_snapshot.get("scope_hash") or ""),
                     "mcp_tool_snapshot_id": str(mcp_tool_snapshot.get("id") or ""),
                     "mcp_tool_snapshot_hash": str(
                         mcp_tool_snapshot.get("snapshot_hash") or ""

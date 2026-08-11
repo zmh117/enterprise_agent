@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from app.modules.agent.infrastructure.runtime_protocol import canonical_request_digest
 from app.modules.agent.infrastructure.typescript_runtime_client import RuntimeGrantIssuer
+from app.modules.agent.domain.runtime import AgentExecutionContext, AgentRunRequest
 from app.modules.model_connection.domain import (
     DEFAULT_MODEL_CONNECTION_CODE,
     ModelRuntimeBinding,
@@ -26,7 +27,12 @@ from app.python_runtime.model_binding import (
     PythonModelBindingResolver,
     ResolvedPythonModelBinding,
 )
-from app.python_runtime.sdk_executor import PythonExecutionOutcome, PythonRuntimeSdkExecutor
+from app.python_runtime.claude_agent_sdk_adapter import ClaudeSdk
+from app.python_runtime.sdk_executor import (
+    PythonExecutionOutcome,
+    PythonRuntimeSdkExecutor,
+    RemoteMcpClaudeCodeAgentClient,
+)
 from app.python_runtime.service import PythonRuntimeDependencies, create_app
 from app.shared.database import Database, default_migrations_dir
 from app.shared.migrations import Migrator
@@ -331,6 +337,83 @@ def test_python_runtime_model_probe_and_fixed_mcp_url_boundary(tmp_path: Path) -
         assert "fixed deployment boundary" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("arbitrary MCP URL was accepted")
+
+
+def test_python_runtime_exposes_only_the_fixed_remote_tool_mcp_server() -> None:
+    context = AgentExecutionContext(
+        system_role="readonly diagnostic agent",
+        safety_rules=["readonly"],
+        user_question="inspect test data",
+        project_code="project-1",
+        allowed_tools=["get_schema_directory", "query_database"],
+        tool_restrictions=["bounded"],
+        skills={},
+        retrieved_context={},
+        conversation_summary="",
+        publication_id="agent-publication-1",
+        application_publication_id="application-publication-1",
+    )
+    request = AgentRunRequest(
+        job_id="job-1",
+        user_id="app-user-1",
+        project_code="project-1",
+        invocation_id="invocation-1",
+        context=context,
+    )
+    client = RemoteMcpClaudeCodeAgentClient(
+        limits=build_settings().execution,
+        api_key="runtime-only-model-secret",
+        mcp_server_url="http://tool-mcp:9103/mcp",
+    )
+    captured: dict[str, Any] = {}
+
+    def options(**kwargs: Any) -> dict[str, Any]:
+        captured.update(kwargs)
+        return kwargs
+
+    sdk = ClaudeSdk(
+        query=cast(Any, None),
+        options=options,
+        tool=cast(Any, None),
+        create_sdk_mcp_server=cast(Any, None),
+        tool_annotations=None,
+    )
+    binding = ModelRuntimeBinding(
+        protocol="anthropic_compatible",
+        base_url="https://api.deepseek.com/anthropic",
+        model="deepseek-chat",
+        default_opus_model="deepseek-chat",
+        default_sonnet_model="deepseek-chat",
+        default_haiku_model="deepseek-chat",
+        subagent_model="deepseek-chat",
+        effort_level="max",
+        secret_ref="secret://not-projected",
+    )
+
+    server = client._build_mcp_server(request)
+    built = client._build_options(sdk, context, server, [], binding)
+
+    assert built == captured
+    assert captured["mcp_servers"] == {
+        "tool_mcp": {
+            "type": "http",
+            "url": "http://tool-mcp:9103/mcp",
+            "headers": {
+                "X-Correlation-Id": "job:job-1",
+                "X-Job-Id": "job-1",
+                "X-App-User-Id": "app-user-1",
+                "X-Project-Code": "project-1",
+                "X-Invocation-Id": "invocation-1",
+                "X-Agent-Publication-Id": "agent-publication-1",
+                "X-Application-Publication-Id": "application-publication-1",
+            },
+        }
+    }
+    assert captured["allowed_tools"] == [
+        "mcp__tool_mcp__get_schema_directory",
+        "mcp__tool_mcp__query_database",
+    ]
+    assert "internal" not in captured["mcp_servers"]
 
 
 def test_python_test_only_fake_provider_resolves_binding_and_retries_once() -> None:

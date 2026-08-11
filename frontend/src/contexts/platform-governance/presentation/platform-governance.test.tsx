@@ -87,11 +87,7 @@ function governedOracleResource() {
       updated_at: "2026-07-29T00:00:00Z",
     },
     published_revision: null,
-    effective_revision_id: "",
-    activation_status: "EMPTY",
-    last_known_good_generation_id: "",
     safe_error_summary: "",
-    affected_applications: [],
   }
 }
 
@@ -154,11 +150,7 @@ function governedLokiResource({
           published_at: "2026-08-07T01:50:00Z",
         }
       : null,
-    effective_revision_id: published ? "resource-revision-loki-test-1" : "",
-    activation_status: published ? "READY" : "EMPTY",
-    last_known_good_generation_id: published ? "generation-loki-test" : "",
     safe_error_summary: "",
-    affected_applications: [],
   }
 }
 
@@ -166,14 +158,10 @@ describe("Phase 5 platform governance UI", () => {
   it("exposes governance navigation with separate resources and credential center", () => {
     const group = navigationGroups.find((item) => item.label === "平台治理")
     expect(group?.items.map((item) => item.href)).toEqual([
-      "/platform/api-capabilities",
-      "/platform/builtin-tools",
       "/platform/resources",
       "/platform/secrets",
     ])
     expect(group?.items.map((item) => item.requiredCapability)).toEqual([
-      "api_capabilities.read",
-      "builtin_tools.read",
       "platform.read",
       "secrets.read",
     ])
@@ -466,7 +454,7 @@ describe("Phase 5 platform governance UI", () => {
     ).toBeInTheDocument()
   })
 
-  it("copies a Published Loki Resource Draft inside the policy workflow", async () => {
+  it("creates a new Resource Draft directly from a Published revision", async () => {
     let copied = false
     let copyBody: Record<string, unknown> | undefined
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
@@ -483,9 +471,6 @@ describe("Phase 5 platform governance UI", () => {
           resources: [governedLokiResource({ draft: copied, published: true })],
         })
       }
-      if (url === "/api/platform/loki-scope-policies") {
-        return response({ policies: [] })
-      }
       if (url === "/api/platform/secrets") return response({ secrets: [] })
       if (url.startsWith("/api/platform/environments")) {
         return response({
@@ -508,11 +493,8 @@ describe("Phase 5 platform governance UI", () => {
     renderWithQuery(<ToolResourcesPage />)
 
     fireEvent.click(
-      await screen.findByRole("button", { name: "配置 Loki 查询范围" })
-    )
-    fireEvent.click(
       await screen.findByRole("button", {
-        name: "从 Resource r1 复制 Draft",
+        name: "从 r1 新建草稿",
       })
     )
 
@@ -522,11 +504,11 @@ describe("Phase 5 platform governance UI", () => {
       })
     )
     expect(
-      await screen.findByRole("button", { name: "测试并发现标签" })
+      await screen.findByRole("button", { name: "编辑草稿" })
     ).toBeInTheDocument()
   })
 
-  it("publishes a new verified Loki Resource inside the policy workflow", async () => {
+  it("publishes a verified Resource Draft directly", async () => {
     let published = false
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input)
@@ -542,9 +524,6 @@ describe("Phase 5 platform governance UI", () => {
           resources: [governedLokiResource({ draft: !published, published })],
         })
       }
-      if (url === "/api/platform/loki-scope-policies") {
-        return response({ policies: [] })
-      }
       if (url === "/api/platform/secrets") return response({ secrets: [] })
       if (url.startsWith("/api/platform/environments")) {
         return response({
@@ -566,17 +545,10 @@ describe("Phase 5 platform governance UI", () => {
     })
     renderWithQuery(<ToolResourcesPage />)
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "配置 Loki 查询范围" })
-    )
-    fireEvent.click(
-      await screen.findByRole("button", { name: "发布 Loki Resource" })
-    )
+    fireEvent.click(await screen.findByRole("button", { name: "发布" }))
 
     await waitFor(() => expect(published).toBe(true))
-    expect(
-      (await screen.findAllByText("resource-revision-loki-test-1")).length
-    ).toBeGreaterThan(0)
+    expect(await screen.findByText("r1 · PUBLISHED")).toBeInTheDocument()
   })
 
   it("shows revision transition failures inside the confirmation dialog", async () => {

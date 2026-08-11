@@ -7,6 +7,7 @@ import pytest
 
 from app.modules.webhook.application import TriggerValidator, WebhookMapper, WebhookTriggerService
 from app.modules.webhook.infrastructure import WebhookTriggerRepository
+from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
 from backend.tests.helpers import container
 
@@ -140,7 +141,9 @@ def test_trigger_lifecycle_uses_dedicated_service_account_and_pinned_agent(
         revision_id=str(draft["id"]),
     )
     assert validated["validation"]["valid"] is True
-    assert validated["validation"]["effective_read_only_tools"] == []
+    assert validated["validation"]["effective_read_only_tools"] == sorted(
+        MCP_TOOL_MANIFEST
+    )
 
     before_events = c.agent_repository.count_rows("webhook_event")
     preview = service.preview(

@@ -369,6 +369,12 @@ def build_identity_admin_router() -> APIRouter:
                     "display_name": "钉钉",
                     "available": dingtalk_count > 0,
                 },
+                {
+                    "code": "ones",
+                    "display_name": c.ones_identity_binding_service.display_name,
+                    "available": c.ones_identity_binding_service.available,
+                    "instance_code": c.ones_identity_binding_service.instance_code,
+                },
             ]
         }
 

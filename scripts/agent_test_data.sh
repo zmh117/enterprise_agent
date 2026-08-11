@@ -9,7 +9,7 @@
 #     - agent-test-redis-mysql    对应 MySQL 基地的 Redis
 #     - agent-test-redis-sqlserver对应 SQL Server 基地的 Redis
 #   再用 seeder 写入确定性 MES 表结构 + 正常/异常样例，以及故意不一致的 Redis 缓存，
-#   最后校验「直连数据源」和「Internal API Platform 路由」是否通。
+#   最后校验测试数据源是否可直连。MCP Tool 验收通过工具资源页面发布这些地址后执行。
 #
 # 不做什么
 #   - 不会启动默认的 api-server / agent-worker / postgres / rabbitmq
@@ -30,8 +30,8 @@
 #
 # 典型联调顺序
 #   1) scripts/agent_test_data.sh up
-#   2) 另开终端启动 real-tools / api-server / worker（按 README）
-#   3) 用 Agent 工具查 agent_test 环境下的 MySQL/SQL Server 基地
+#   2) 在工具资源页面为这些数据源创建并发布 MCP Resource
+#   3) 启动 tool-mcp / api-server / worker 后，用 Agent 工具查询
 #   4) 数据脏了或想回到基线：scripts/agent_test_data.sh seed
 #   5) 彻底清空：scripts/agent_test_data.sh reset --yes
 #
@@ -42,7 +42,6 @@
 set -euo pipefail
 
 PROFILE=agent-test-data
-REAL_TOOLS_PROFILE=real-tools
 
 # 四个持久化数据服务（不含一次性 seeder）
 DATA_SERVICES=(
@@ -78,7 +77,7 @@ usage() {
 命令:
   up       启动四个数据服务，等待健康检查，播种，再校验。
   seed     恢复确定性的数据库与 Redis 测试数据基线。
-  verify   校验直连数据源，以及 Internal API Platform 路由。
+  verify   校验测试数据源可直连且 fixture 内容正确。
   reset    停止测试服务，并仅删除白名单内的四个测试卷。
 USAGE
 }
@@ -156,31 +155,8 @@ cmd_verify_direct() {
     python -m app.agent_test_data.seeder verify
 }
 
-# 拉起 internal-api-platform，校验拓扑路由能打到本测试数据源。
-# 当前镜像可能偏旧（缺 agent_test_data / SchemaInspector 新 API）。
-# 全量 --build 依赖 apt，网络不稳时易失败；verify 前把本地源码同步进容器。
-cmd_verify_platform() {
-  compose --profile "${PROFILE}" --profile "${REAL_TOOLS_PROFILE}" up -d internal-api-platform
-  local container_id=""
-  container_id="$(compose --profile "${PROFILE}" --profile "${REAL_TOOLS_PROFILE}" ps -q internal-api-platform)"
-  if [ -z "${container_id}" ]; then
-    echo "internal-api-platform container not found" >&2
-    return 1
-  fi
-  # 目标目录已存在时，docker cp dir dest 会嵌套成 dest/dir；先删再拷。
-  compose --profile "${PROFILE}" --profile "${REAL_TOOLS_PROFILE}" exec -T internal-api-platform \
-    rm -rf /app/backend/app/agent_test_data /app/backend/app/modules/internal_api_platform /app/backend/app/shared
-  docker cp backend/app/agent_test_data "${container_id}:/app/backend/app/agent_test_data"
-  docker cp backend/app/modules/internal_api_platform "${container_id}:/app/backend/app/modules/internal_api_platform"
-  docker cp backend/app/shared "${container_id}:/app/backend/app/shared"
-  # config 已是 compose 只读挂载，无需 docker cp
-  compose --profile "${PROFILE}" --profile "${REAL_TOOLS_PROFILE}" exec -T internal-api-platform \
-    python -m app.agent_test_data.platform_verify
-}
-
 cmd_verify() {
   cmd_verify_direct
-  cmd_verify_platform
 }
 
 # 停测试服务并只删 allowlist 卷；必须显式传 --yes

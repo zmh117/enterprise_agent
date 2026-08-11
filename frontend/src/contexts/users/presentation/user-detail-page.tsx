@@ -6,7 +6,7 @@ import {
   ShieldOffIcon,
   UsersRoundIcon,
 } from "lucide-react"
-import { Link, useParams } from "react-router-dom"
+import { Link, useParams, useSearchParams } from "react-router-dom"
 
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -20,7 +20,6 @@ import {
 import { Input } from "@/components/ui/input"
 import { Checkbox } from "@/components/ui/checkbox"
 import { ExternalIdentityPanel } from "@/contexts/external-identities"
-import { useAdminCapabilitySummary } from "@/contexts/auth/application/admin-capability-query"
 import {
   useUpdateUser,
   useUser,
@@ -42,7 +41,8 @@ import { ApiError } from "@/shared/api/api-client"
 
 export function UserDetailPage() {
   const { userId = "" } = useParams()
-  const adminCapabilities = useAdminCapabilitySummary()
+  const [searchParams] = useSearchParams()
+  const candidateId = searchParams.get("candidate")?.trim() ?? ""
   const query = useUser(userId)
 
   if (query.isLoading) {
@@ -108,8 +108,8 @@ export function UserDetailPage() {
       />
       <ExternalIdentityPanel
         mode="admin"
-        userId={query.data.id}
-        canManage={Boolean(adminCapabilities.data?.capabilities.includes("users.manage"))}
+        user={query.data}
+        discoveryCandidateId={candidateId}
       />
     </div>
   )

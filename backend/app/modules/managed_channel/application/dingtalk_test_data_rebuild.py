@@ -46,13 +46,6 @@ PROTECTED_COUNT_QUERIES = {
         "select count(*) as count from user_external_identity "
         "where provider = 'ones'"
     ),
-    "external_api_credentials": (
-        "select count(*) as count from external_api_credential"
-    ),
-    "capabilities": "select count(*) as count from api_capability",
-    "capability_releases": (
-        "select count(*) as count from api_capability_release"
-    ),
     "agents": "select count(*) as count from agent_definition",
     "agent_publications": "select count(*) as count from agent_publication",
     "business_applications": (
@@ -715,24 +708,7 @@ class DingTalkTestDataRebuildService:
         audit_ids: set[str],
     ) -> list[dict[str, Any]]:
         blockers: list[dict[str, Any]] = []
-        identity_queries = (
-            ("external_api_credential", "external_api_credential"),
-            ("api_capability_verification", "api_capability_verification"),
-            ("agent_job_external_subject", "agent_job_external_subject"),
-        )
-        for label, table in identity_queries:
-            rows = self._by_values(
-                f"""
-                select id, external_identity_id
-                  from {table}
-                 where external_identity_id in ({{placeholders}})
-                 order by id
-                """,
-                identity_ids,
-            )
-            blockers.extend(
-                {"type": label, "id": str(row["id"])} for row in rows
-            )
+        del identity_ids
         audit_refs = self._by_values(
             """
             select id, audit_id

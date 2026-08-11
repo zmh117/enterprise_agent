@@ -28,8 +28,8 @@ dev = [
   "ruff>=0.6",
   "mypy>=1.10",
 ]
-# Database drivers for the internal API platform's multi-dialect gateway.
-# Optional so the base image stays slim; install where real DB access is needed.
+# Database drivers used directly by tool-mcp's bounded read-only resource adapters.
+# Optional so API and Worker images stay slim; install only in the tool-mcp image.
 database = [
   "pymysql>=1.1",
   "pymssql>=2.3",

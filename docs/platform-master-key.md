@@ -36,7 +36,7 @@ APP_CONFIG_MASTER_KEY_FILE=/Users/<user>/.config/enterprise-agent/app-config-mas
 ```
 
 Compose 只把该文件只读挂载为 `/run/secrets/app_config_master_key`。非测试
-API、Worker 和 Internal API Platform 在文件缺失、权限过宽、格式错误时
+API、Worker 和 tool-mcp 在文件缺失、权限过宽、格式错误时
 拒绝启动，不生成临时 Key，也不回退到 `APP_CONFIG_MASTER_KEY` 明文环境变量。
 
 ## 备份

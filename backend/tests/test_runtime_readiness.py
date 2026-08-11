@@ -37,7 +37,7 @@ def test_ready_checks_schema_database_rabbit_token_and_master_key(
         assert ready["core"] == {
             "database": True,
             "schema": True,
-            "schema_head": "038",
+            "schema_head": "040",
             "rabbitmq": True,
             "master_key": True,
             "runtime_assembly": True,
@@ -60,7 +60,7 @@ def test_ready_checks_schema_database_rabbit_token_and_master_key(
         }
         assert ready["tool_mcp"] == {
             "server_code": "tool-mcp",
-            "transport": "stdio",
+            "transport": "streamable_http",
             "resource_resolution": "invocation_time",
         }
         assert ready["claude_invoked"] is False

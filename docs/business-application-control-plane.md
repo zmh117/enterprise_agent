@@ -11,7 +11,7 @@ Business Application
   ├─ Trigger Binding
   ├─ Delivery Binding
   ├─ Session / Execution Policy
-  └─ API Capability Reference（目录接入前必须为空）
+  └─ MCP Tool 显式子集（必须属于 Agent Publication Envelope）
 ```
 
 它不复制 Agent 或 Workflow 草稿，不保存 Connector 凭据，也不访问数据库、

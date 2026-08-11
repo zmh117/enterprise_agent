@@ -2,27 +2,6 @@
 -- Existing rows are managed by the control plane and must never be rewritten
 -- when a runtime service restarts with seeding enabled.
 
-INSERT INTO tool_definition
-  (id, name, risk_level, read_only, enabled, description, created_at, updated_at)
-VALUES
-  ('tool-get-er-context', 'get_er_context', 'low', 1, 1, 'Search compact ER graph context', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('tool-get-business-flow-context', 'get_business_flow_context', 'low', 1, 1, 'Search compact business flow context', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('tool-get-schema-directory', 'get_schema_directory', 'low', 1, 1, 'Read allowed schema directory', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('tool-diagnose-loki-labels', 'diagnose_loki_labels', 'low', 1, 1, 'List bounded Loki labels', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('tool-diagnose-loki-label-values', 'diagnose_loki_label_values', 'low', 1, 1, 'List bounded Loki label values', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('tool-diagnose-loki-probe', 'diagnose_loki_probe', 'low', 1, 1, 'Probe bounded Loki selector results', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('tool-query-loki', 'query_loki', 'low', 1, 1, 'Query bounded Loki logs', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('tool-query-database', 'query_database', 'medium', 1, 1, 'Run policy-approved read-only SQL', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('tool-query-redis-get', 'query_redis_get', 'medium', 1, 1, 'Read approved Redis keys', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('tool-query-redis-scan', 'query_redis_scan', 'medium', 1, 1, 'Scan approved Redis key prefixes', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-ON CONFLICT(id) DO NOTHING;
-
-INSERT INTO integration_connector
-  (id, connector_type, name, base_url, enabled, metadata, created_at, updated_at)
-VALUES
-  ('connector-internal-api', 'internal_api', 'internal-api-platform', 'http://internal-api-platform:9000', 1, '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-ON CONFLICT(id) DO NOTHING;
-
 INSERT INTO integration_connector
   (id, connector_type, name, base_url, enabled, metadata, allow_ingress, allow_delivery,
    secret_ref, endpoint_ref, host_allowlist, created_at, updated_at)
@@ -40,12 +19,6 @@ VALUES
   ('connector-email-default', 'email', 'email-default', '', 1, '{}', 0, 1, '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('connector-webhook-default', 'webhook', 'webhook-default', '', 1, '{}', 0, 1, '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('connector-none', 'none', 'none', '', 1, '{}', 0, 1, '', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-ON CONFLICT(id) DO NOTHING;
-
-INSERT INTO datasource_registry
-  (id, source_type, source_code, connector_id, enabled, metadata, created_at, updated_at)
-VALUES
-  ('datasource-default', 'service', 'default', 'connector-internal-api', 1, '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 
 INSERT INTO app_user
@@ -226,8 +199,8 @@ INSERT INTO agent_revision
    created_by, created_at, updated_at)
 VALUES
   ('agent_revision_typescript_v1', 'agent_typescript_diagnostic', 1, 'published',
-   '{"business_instructions":"Use evidence from approved internal tools and state uncertainty when evidence is incomplete.","business_role":"Enterprise internal read-only diagnostic Agent (TypeScript)","channels":{"delivery":[],"ingress":[]},"execution":{"max_turns":12,"timeout_seconds":300},"model_policy":{"model":"claude-sonnet-4-20250514"},"routing":{"project_code":"default"},"skills":[],"tools":[]}',
-   'f416ee532dc6f1ebe6298401c3f53f0b48e5bbb27792c0f91b7f5a6bcab623fc',
+   '{"business_instructions":"Use evidence from approved MCP tools and state uncertainty when evidence is incomplete.","business_role":"Enterprise internal read-only diagnostic Agent (TypeScript)","channels":{"delivery":[],"ingress":[]},"execution":{"max_turns":12,"timeout_seconds":300},"mcp_tool_ids":["diagnose_loki_label_values","diagnose_loki_labels","diagnose_loki_probe","get_business_flow_context","get_er_context","get_schema_directory","query_database","query_loki","query_redis_get","query_redis_scan"],"model_policy":{"model":"claude-sonnet-4-20250514"},"routing":{"project_code":"default"},"skills":[]}',
+   '70e476bdf1f18af56af4dee2214c8bb48e9d946333aee7dea1e05c38aca61d62',
    '{"valid":true,"errors":[]}', 'user_local_admin', CURRENT_TIMESTAMP,
    CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
@@ -238,8 +211,8 @@ INSERT INTO agent_publication
 VALUES
   ('agent_publication_typescript_v1', 'agent_typescript_diagnostic',
    'agent_revision_typescript_v1', 1, 2,
-   '{"builtin_tool_envelope":[],"business_instructions":"Use evidence from approved internal tools and state uncertainty when evidence is incomplete.","business_role":"Enterprise internal read-only diagnostic Agent (TypeScript)","capability_envelope":[],"channels":{"delivery":[],"ingress":[]},"execution":{"max_turns":12,"timeout_seconds":300},"model_policy":{"model":"claude-sonnet-4-20250514"},"routing":{"project_code":"default"},"runtime_kind":"typescript-v1","skills":[],"tools":[]}',
-   '081ea131c1b34a4da84cf9d91c79159b1a3d3d0ac977d71998bdd568017ead88',
+   '{"business_instructions":"Use evidence from approved MCP tools and state uncertainty when evidence is incomplete.","business_role":"Enterprise internal read-only diagnostic Agent (TypeScript)","channels":{"delivery":[],"ingress":[]},"execution":{"max_turns":12,"timeout_seconds":300},"mcp_tool_envelope":[{"schema_hash":"dbdd1fb7009090387f2479f3e71ab691b67be3ea7fe76345e76c2468610b2796","server_code":"tool-mcp","tool_identifier":"diagnose_loki_label_values"},{"schema_hash":"3fdb9c6cd548513b660a2995cbc5273878e896843aec6c9c6e9b6c1f40d71a27","server_code":"tool-mcp","tool_identifier":"diagnose_loki_labels"},{"schema_hash":"f4f6881d4884b3111e905525c05dbc7f5fd0fb209f7dd3c5163a5d88b999bce1","server_code":"tool-mcp","tool_identifier":"diagnose_loki_probe"},{"schema_hash":"10798ac8d2df2a3150d204e10be2e4fb12cc89650fb68e3a6d3b4b38e1914e26","server_code":"tool-mcp","tool_identifier":"get_business_flow_context"},{"schema_hash":"10798ac8d2df2a3150d204e10be2e4fb12cc89650fb68e3a6d3b4b38e1914e26","server_code":"tool-mcp","tool_identifier":"get_er_context"},{"schema_hash":"7502f1b28fc46291047e9c9d5bc6ba910363596af55aed85a163ea3dc105a1ca","server_code":"tool-mcp","tool_identifier":"get_schema_directory"},{"schema_hash":"9b2fdee7c913e746f58b8149305990f5601044ad7c30b08bc7d4b017d53f6113","server_code":"tool-mcp","tool_identifier":"query_database"},{"schema_hash":"ccec059febb575082e7addfd5b8cc87d5e4e442794b0239e98a73d2897f57108","server_code":"tool-mcp","tool_identifier":"query_loki"},{"schema_hash":"e29e540aeb8e2c982ed7181963deea60f1af7b82f1434a9fd6e1dfdab77c8e50","server_code":"tool-mcp","tool_identifier":"query_redis_get"},{"schema_hash":"f617799ffcb621770965e8bf02042e71ebfc80ba814c05a2b94a4ad0e15d0770","server_code":"tool-mcp","tool_identifier":"query_redis_scan"}],"model_policy":{"model":"claude-sonnet-4-20250514"},"routing":{"project_code":"default"},"runtime_kind":"typescript-v1","skills":[]}',
+   '6b589c94249d813ae5821bb6bfbc4367fde0424631a9a7b6354f82889cadb7dc',
    'typescript-v1', 'active', 'user_local_admin', CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 
@@ -268,12 +241,6 @@ VALUES
   ('agent_publication_typescript_v1', 'tool-mcp', 'query_redis_get', 'e29e540aeb8e2c982ed7181963deea60f1af7b82f1434a9fd6e1dfdab77c8e50', '', 8, CURRENT_TIMESTAMP),
   ('agent_publication_typescript_v1', 'tool-mcp', 'query_redis_scan', 'f617799ffcb621770965e8bf02042e71ebfc80ba814c05a2b94a4ad0e15d0770', '', 9, CURRENT_TIMESTAMP)
 ON CONFLICT(agent_publication_id, tool_identifier) DO NOTHING;
-
-INSERT INTO agent_tool_binding (id, publication_id, tool_name, created_at)
-SELECT 'binding_default_' || name, 'agent_publication_default_v1', name, CURRENT_TIMESTAMP
-FROM tool_definition
-WHERE enabled = 1 AND read_only = 1
-ON CONFLICT(id) DO NOTHING;
 
 INSERT INTO agent_channel_binding
   (id, publication_id, direction, connector_id, config_json, created_at)
@@ -356,8 +323,6 @@ VALUES
    'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('policy-platform-config-local', 'user', 'admin', 'platform_config', '*',
    '*', 'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  ('policy-builtin-tools-local', 'user', 'admin', 'builtin_tool', '*', '*',
-   'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('policy-secret-local', 'user', 'admin', 'secret', '*', '*',
    'allow', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('policy-user-grafana', 'user', 'grafana', 'project', 'default', 'use',

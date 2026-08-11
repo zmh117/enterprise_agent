@@ -12,6 +12,7 @@
 - 让 Python/TypeScript Runtime 使用相同 MCP Tool schema、执行语义和错误分类。
 - 永久删除旧 Capability/Handler/API Connection/Resource Mapping/Internal API Platform 的代码、表、UI、配置、密钥和规格。
 - 保留工具资源、凭据、应用访问、角色工具权限、业务数据范围、Job/Tool Call 审计和只读安全限制。
+- 保留独立于工具调用的 ONES 身份验证与映射，只持久化 User ID、Team、默认 Team 和验证时间。
 - 对活动发布、在途 Job 和资源歧义失败关闭，避免破坏性迁移产生越权或静默漂移。
 
 **Non-Goals:**
@@ -19,6 +20,7 @@
 - 不允许管理员、Agent、Application、用户或模型提交任意 MCP Server URL。
 - 不创建 MCP Server 注册中心、MCP Token、签名密钥、专用 RBAC 或新的 Resource Mapping。
 - 不删除模型连接、钉钉 Connector、交付 Connector、外部身份事实、Runtime Grant 或 Model Probe Token。
+- 不删除 ONES 本人绑定、重新验证、默认 Team、软解绑或管理员只读/停用/审计；管理员不得代用户提交 ONES 邮箱密码，也不得代用户解绑 ONES。
 - 不把 SQL、Shell、脚本、HTTP URL 或模板变成可在 Web 中定义的通用执行器。
 - 不承诺兼容旧 API Capability/Resource Mapping API；迁移完成后旧端点直接不存在。
 
@@ -64,7 +66,7 @@ MCP transport 不承担认证和 RBAC。私网请求只携带非敏感 `X-Job-Id
 
 ### 6. 破坏性迁移采用先切流后删表
 
-新增单向迁移：先新增直接 MCP 所需的 Job Tool 快照字段或表并回填可确定历史；部署新代码并确认没有旧执行引用；最后删除 Capability、API Connection、外部 API Credential、Application Resource Mapping、Internal API runtime generation/activation 等专用表和 JSON 字段。历史快照中的 target/allowed_placements 字段只作为历史数据保留，新的 MCP 调用不得读取它们作为执行约束。
+新增单向迁移：先新增直接 MCP 所需的 Job Tool 快照字段或表并回填可确定历史；部署新代码并确认没有旧执行引用；最后删除 Capability、API Connection、用于业务调用的外部 API Credential、Application Resource Mapping、Internal API runtime generation/activation 等专用表和 JSON 字段。`user_external_identity` 及 ONES 身份元数据继续保留；身份验证使用独立的短时挑战，挑战只保存已验证主体与 Team 候选，不保存邮箱、密码或登录 Token。历史快照中的 target/allowed_placements 字段只作为历史数据保留，新的 MCP 调用不得读取它们作为执行约束。
 
 迁移器在删除前检查：不存在 RUNNING/QUEUED/RETRYING 且引用旧 Capability/Mapping 的 Job；不存在活动 Application Deployment 引用无法转换的旧发布。检查失败则迁移整体失败，不局部删表。
 
@@ -72,7 +74,7 @@ MCP transport 不承担认证和 RBAC。私网请求只携带非敏感 `X-Job-Id
 
 ### 7. 前端删除旧入口并简化配置
 
-删除 API Capability 页面和路由；Application 组成配置删除 Capability Allowlist、资源槽、业务叶子矩阵与 Resource Mapping，只保留 Agent Publication、MCP Tool 子集、会话策略、触发器和投递。Agent 配置使用 MCP Tool Envelope。角色页面继续显示应用、MCP Tool 使用权限和数据范围。工具资源与凭据中心保留。
+删除 API Capability 页面和路由；Application 组成配置删除 Capability Allowlist、资源槽、业务叶子矩阵与 Resource Mapping，只保留 Agent Publication、MCP Tool 子集、会话策略、触发器和投递。Agent 配置使用 MCP Tool Envelope。角色页面继续显示应用、MCP Tool 使用权限和数据范围。工具资源与凭据中心保留。“我的外部身份”继续提供 ONES 本人验证、重新验证、默认 Team 选择和解绑；人员管理对 ONES 只提供身份元数据查看、停用与审计，不显示或接收邮箱密码，也不提供管理员解绑。
 
 ### 8. 密钥和配置边界
 
@@ -89,7 +91,7 @@ MCP transport 不承担认证和 RBAC。私网请求只携带非敏感 `X-Job-Id
 - [Risk] 删除 Resource Mapping 后同一逻辑目标存在多个资源候选。→ 解析必须要求唯一结果；有 cloud/edge 时要求 Tool 参数显式 placement，歧义绝不回退。
 - [Risk] 把驱动放入 `tool-mcp` 增大镜像。→ 使用专用 Docker target，只在该镜像安装 DB/Redis/Loki/Oracle 依赖，Worker/API/Runtime 不安装。
 - [Risk] 破坏性迁移删除治理历史。→ 执行前备份，保留 Job/Tool Call/Delivery 业务历史；迁移检查活动引用并原子失败。
-- [Risk] 移除 API Capability 后 ONES 等外部业务工具不可用。→ 本变更不提供兼容层；需要能力时由代码拥有的专用 MCP Tool 实现另行接入。
+- [Risk] 移除 API Capability 后 ONES 外部业务工具不可用，但身份绑定仍需存在。→ 身份验证与业务调用凭据彻底分离；本变更保留身份映射，不提供 ONES 业务工具。未来 ONES MCP 的调用凭据必须另建规格，不能复用或污染身份模型。
 - [Risk] 私网无 MCP Token 依赖网络隔离。→ `tool-mcp` 不映射宿主端口，仅连接 `agent-runtime-control` 与必要 provider/target 网络，拒绝 Authorization header 和任意 Host/Origin。
 - [Risk] 旧规格和测试数量很大，残留会形成误导。→ 把源码、迁移、Compose、env、前端路由、主规格与全文扫描列为独立完成门禁。
 
@@ -97,9 +99,9 @@ MCP transport 不承担认证和 RBAC。私网请求只携带非敏感 `X-Job-Id
 
 1. 创建数据库备份并记录当前活动 Application/Agent Publication、在途 Job、工具资源和 Secret 数量。
 2. 引入直接 MCP Tool Manifest、唯一资源解析器和内聚执行器，新增/调整 Job Tool 快照；保持旧表只读用于一次性回填。
-3. 切换 Agent/Application/Role API 与前端到 MCP Tool 模型，停止创建 Capability/Resource Mapping 数据。
+3. 切换 Agent/Application/Role API 与前端到 MCP Tool 模型，停止创建 Capability/Resource Mapping 数据；同时确认 ONES 身份绑定仅使用固定身份验证配置和无 Token 挑战。
 4. 切换 `tool-mcp` 直接执行，完成 Python 与 TypeScript Runtime 的 DB/Redis/Loki 回归及 DingTalk 链路验收。
-5. 执行破坏性迁移，删除旧表、字段、权限、路由、模块和 UI。
+5. 执行破坏性迁移，删除旧表、字段、权限、路由、模块和 UI；保留 `user_external_identity`，并为已经执行旧迁移的数据库向前恢复 ONES 身份专用挑战结构。
 6. 删除 Internal API Platform Compose 服务、Docker target、Token secrets、环境变量、文档和测试；验证 Compose 配置与镜像。
 7. 严格验证 OpenSpec、后端、前端、运行时合约、数据库迁移和残留扫描后再归档。
 

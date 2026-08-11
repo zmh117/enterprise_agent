@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -28,9 +28,30 @@ class SelfDingTalkIdentityResponse(StrictResponse):
     staff_id: str
 
 
+class TeamResponse(StrictResponse):
+    id: str
+    name: str
+
+
+class SelfOnesIdentityResponse(StrictResponse):
+    provider: Literal["ones"]
+    user_name: str
+    status: Literal["enabled", "disabled"]
+    default_team: TeamResponse | None
+    verified_at: str | None = None
+    user_id: str
+    teams: list[TeamResponse]
+
+
 class SelfIdentityOverviewResponse(StrictResponse):
     user: UserSummaryResponse
     dingtalk: list[SelfDingTalkIdentityResponse]
+    ones: SelfOnesIdentityResponse | None
+
+
+class SelfOnesStatusResponse(StrictResponse):
+    user: UserSummaryResponse
+    ones: SelfOnesIdentityResponse | None
 
 
 class DingTalkApplicationObservationResponse(StrictResponse):
@@ -47,7 +68,16 @@ class AdminDingTalkIdentityResponse(SelfDingTalkIdentityResponse):
     observations: list[DingTalkApplicationObservationResponse]
 
 
-AdminIdentityResponse = AdminDingTalkIdentityResponse
+class AdminOnesIdentityResponse(SelfOnesIdentityResponse):
+    status: Literal["enabled", "disabled", "unbound"]
+    identity_id: str
+    revision: int = Field(ge=1)
+
+
+AdminIdentityResponse = Annotated[
+    AdminDingTalkIdentityResponse | AdminOnesIdentityResponse,
+    Field(discriminator="provider"),
+]
 
 
 class AdminIdentityOverviewResponse(StrictResponse):
@@ -64,3 +94,20 @@ class IdentityMutationSummaryResponse(StrictResponse):
 
 class IdentityMutationResponse(StrictResponse):
     identity: IdentityMutationSummaryResponse
+
+
+class OnesIdentityChallengeResponse(StrictResponse):
+    id: str
+    provider: Literal["ones"]
+    external_user_id: str
+    display_name: str
+    teams: list[TeamResponse]
+    team_ids: list[str]
+    verified_at: str
+    expires_at: str
+    status: Literal["PENDING", "CONSUMED", "EXPIRED"]
+    created_at: str
+
+
+class BeginOnesIdentityResponse(StrictResponse):
+    challenge: OnesIdentityChallengeResponse

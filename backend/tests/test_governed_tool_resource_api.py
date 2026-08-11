@@ -11,9 +11,6 @@ from app.main import create_app
 from app.modules.platform_config.application.governed_resources import (
     ResourceVerificationOutcome,
 )
-from app.modules.platform_config.application.loki_scope_policy_verifier import (
-    LokiScopePolicyVerificationOutcome,
-)
 from app.shared.config import IdentitySettings, Settings
 from backend.tests.test_unified_identity_rbac import csrf_headers, login
 
@@ -292,108 +289,6 @@ def test_postgres_lists_first_resource_after_creation(postgres_runtime) -> None:
     assert created.status_code == 200, created.text
     assert listed.status_code == 200, listed.text
     assert [item["code"] for item in listed.json()["resources"]] == ["api_resource_mysql"]
-
-
-def test_postgres_creates_and_loads_loki_scope_policy_without_application_usage(
-    postgres_runtime,
-) -> None:
-    service = postgres_runtime.platform_config_service
-    service.upsert_environment(
-        {"code": "postgres_loki_env"},
-        actor_id=ADMIN_ID,
-    )
-    resources = service.governed_resources
-    resources.create_resource(
-        {
-            "code": "postgres_loki",
-            "name": "PostgreSQL Loki",
-            "resource_kind": "loki",
-            "scope_type": "environment",
-            "environment_code": "postgres_loki_env",
-            "provider_type": "loki",
-            "config": {
-                "base_url": "http://loki.invalid:3100",
-                "timeout_seconds": 5,
-                "max_minutes": 60,
-                "max_lines": 200,
-                "max_response_bytes": 65536,
-            },
-            "secret_refs": {},
-        },
-        actor_id=ADMIN_ID,
-    )
-
-    class PassingLokiResourceVerifier:
-        def verify(self, **_kwargs: object) -> ResourceVerificationOutcome:
-            return ResourceVerificationOutcome(
-                status="PASSED",
-                provider_contract_version="loki_v1",
-                checks={"connection": True, "build_info": True},
-            )
-
-    resources.verify_draft(
-        "postgres_loki",
-        actor_id=ADMIN_ID,
-        verifier=PassingLokiResourceVerifier(),
-    )
-    resource_revision = resources.publish_draft(
-        "postgres_loki",
-        actor_id=ADMIN_ID,
-    )
-
-    class ZeroMatchVerifier:
-        def verify(self, **_kwargs: object) -> LokiScopePolicyVerificationOutcome:
-            return LokiScopePolicyVerificationOutcome(
-                status="PASSED",
-                verifier_version="postgres-loki-scope.v1",
-                match_count=0,
-                zero_match_warning=True,
-                result_summary={"match_hash": "0" * 64},
-            )
-
-    service.loki_scope_policies.verifier = ZeroMatchVerifier()  # type: ignore[assignment]
-    app = create_app(
-        postgres_runtime.settings,
-        container_factory=lambda _: postgres_runtime,
-    )
-    with TestClient(app) as client:
-        headers = csrf_headers(login(client))
-        created = client.post(
-            "/api/platform/loki-scope-policies",
-            headers=headers,
-            json={
-                "code": "postgres-loki-scope",
-                "environment_code": "postgres_loki_env",
-                "base_code": "",
-                "resource_revision_id": resource_revision["id"],
-                "conditions": [{"key": "cluster", "value": "mes-cluster"}],
-            },
-        )
-        verified = client.post(
-            "/api/platform/loki-scope-policies/postgres-loki-scope/verify",
-            headers=headers,
-            json={"expected_draft_revision": 1},
-        )
-        published = client.post(
-            "/api/platform/loki-scope-policies/postgres-loki-scope/publish",
-            headers=headers,
-            json={
-                "verification_id": verified.json()["verification"]["id"],
-                "expected_policy_revision": 1,
-            },
-        )
-        detail = client.get(
-            "/api/platform/loki-scope-policies/postgres-loki-scope",
-            headers=headers,
-        )
-
-    assert created.status_code == 200, created.text
-    assert verified.status_code == 200, verified.text
-    assert published.status_code == 200, published.text
-    assert detail.status_code == 200, detail.text
-    assert detail.json()["policy"]["draft"] is None
-    assert detail.json()["policy"]["application_usages"] == []
-    assert detail.json()["policy"]["revisions"][0]["revision"] == 1
 
 
 def test_governed_resource_api_rejects_arbitrary_or_legacy_secret_fields() -> None:

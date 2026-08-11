@@ -69,7 +69,7 @@ def _build_readiness(
         },
         "tool_mcp": {
             "server_code": "tool-mcp",
-            "transport": "stdio",
+            "transport": "streamable_http",
             "resource_resolution": "invocation_time",
         },
         "claude_invoked": False,

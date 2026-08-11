@@ -97,7 +97,7 @@ class _AuditService:
 
 
 class _PermissionService:
-    def assert_builtin_tool_use_grant(self, **_: Any) -> None:
+    def assert_mcp_tool_use_grant(self, **_: Any) -> None:
         return None
 
 

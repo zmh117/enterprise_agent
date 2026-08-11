@@ -17,6 +17,7 @@ from urllib.request import (
 from app.modules.identity.application.ones_identity import (
     OnesIdentityVerifier,
     VerifiedOnesIdentity,
+    VerifiedOnesTeam,
 )
 from app.shared.config import OnesIdentitySettings
 from app.shared.database import assert_external_io_allowed
@@ -172,19 +173,29 @@ class UrllibOnesIdentityVerifier(OnesIdentityVerifier):
             or not isinstance(display_name, str)
         ):
             raise self._invalid_response("response contains an invalid user")
-        team_uuids: list[str] = []
+        normalized_teams: list[VerifiedOnesTeam] = []
+        seen_team_ids: set[str] = set()
         for team in teams:
             if not isinstance(team, dict):
                 raise self._invalid_response("response contains an invalid team")
             team_uuid = team.get("uuid")
             if not isinstance(team_uuid, str) or not team_uuid.strip():
                 raise self._invalid_response("response contains an invalid team UUID")
-            if team_uuid.strip() not in team_uuids:
-                team_uuids.append(team_uuid.strip())
+            normalized_team_id = team_uuid.strip()
+            if normalized_team_id not in seen_team_ids:
+                seen_team_ids.add(normalized_team_id)
+                normalized_teams.append(
+                    VerifiedOnesTeam(
+                        id=normalized_team_id,
+                        name=str(team.get("name") or "").strip(),
+                    )
+                )
+        if not normalized_teams:
+            raise self._invalid_response("response contains no team")
         return VerifiedOnesIdentity.create(
             user_uuid=user_uuid.strip(),
             display_name=display_name.strip(),
-            team_uuids=tuple(team_uuids),
+            teams=tuple(normalized_teams),
         )
 
     @staticmethod

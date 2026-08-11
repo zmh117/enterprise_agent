@@ -4,7 +4,9 @@ import {
   adminExternalIdentityOverviewSchema,
   identityMutationSchema,
   identityProviderSchema,
+  onesIdentityChallengeSchema,
   selfExternalIdentityOverviewSchema,
+  selfOnesStatusSchema,
 } from "@/contexts/external-identities/domain/external-identity"
 import { apiRequest } from "@/shared/api/api-client"
 
@@ -54,5 +56,42 @@ export async function unbindIdentity(
 export async function getSelfExternalIdentities() {
   return selfExternalIdentityOverviewSchema.parse(
     await apiRequest("/api/me/external-identities")
+  )
+}
+
+export async function getSelfOnesIdentity() {
+  return selfOnesStatusSchema.parse(
+    await apiRequest("/api/me/external-identities/ones")
+  )
+}
+
+export async function beginSelfOnesIdentity(input: {
+  email: string
+  password: string
+}) {
+  return z.object({ challenge: onesIdentityChallengeSchema }).parse(
+    await apiRequest("/api/me/external-identities/ones/challenges", {
+      method: "POST",
+      body: input,
+    })
+  ).challenge
+}
+
+export async function confirmSelfOnesIdentity(input: {
+  challenge_id: string
+  default_team_id: string
+  replace_existing: boolean
+}) {
+  return selfOnesStatusSchema.parse(
+    await apiRequest("/api/me/external-identities/ones/confirm", {
+      method: "POST",
+      body: input,
+    })
+  )
+}
+
+export async function unbindSelfOnesIdentity() {
+  return z.object({ status: z.literal("unbound") }).parse(
+    await apiRequest("/api/me/external-identities/ones", { method: "DELETE" })
   )
 }

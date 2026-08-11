@@ -22,7 +22,7 @@
 - 构建：`npm run build`，执行 `tsc -b && vite build`。
 - 容器：`frontend/Dockerfile` 使用 Node 22、`npm ci`、Nginx，并由 Compose 服务 `admin-web` 暴露 `8080`。
 - 2026-07-20 基线：5 个 Vitest 测试通过，ESLint 通过，生产构建通过；产物 JS 327.27 kB（gzip 101.44 kB），CSS 15.82 kB（gzip 4.16 kB）。
-- Compose 配置校验通过，`admin-web`、`api-server`、`agent-worker`、`attachment-worker`、`webhook-worker`、`dingtalk-stream-ingress`、`internal-api-platform`、PostgreSQL、RabbitMQ 和 MinIO 均处于运行状态。
+- 这是迁移前历史基线；当前 Compose 使用 `tool-mcp` 与两个独立 Agent Runtime，不再使用旧内部工具服务。
 
 ## 已有后端能力与本变更边界
 

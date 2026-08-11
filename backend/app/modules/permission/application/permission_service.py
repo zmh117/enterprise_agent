@@ -27,7 +27,7 @@ class PermissionService:
     ) -> None:
         self.config_repository = config_repository
         self.authorization_evaluator = authorization_evaluator
-        self._builtin_tool_identifiers = frozenset(MCP_TOOL_MANIFEST)
+        self._mcp_tool_identifiers = frozenset(MCP_TOOL_MANIFEST)
 
     def assert_user_can_create_job(self, *, user_id: str, project_code: str) -> None:
         if not self._is_allowed(
@@ -49,14 +49,14 @@ class PermissionService:
         project_code: str,
         scope: dict[str, str] | None = None,
     ) -> None:
-        self.assert_builtin_tool_allowed(
+        self.assert_mcp_tool_allowed(
             user_id=user_id,
             tool_identifier=tool_name,
             project_code=project_code,
             scope=scope,
         )
 
-    def assert_builtin_tool_allowed(
+    def assert_mcp_tool_allowed(
         self,
         *,
         user_id: str,
@@ -64,7 +64,7 @@ class PermissionService:
         project_code: str,
         scope: dict[str, str] | None = None,
     ) -> None:
-        self.assert_builtin_tool_use_grant(
+        self.assert_mcp_tool_use_grant(
             user_id=user_id,
             tool_identifier=tool_identifier,
             project_code=project_code,
@@ -84,18 +84,18 @@ class PermissionService:
                     safe_message="当前用户无权访问此数据范围",
                 )
 
-    def assert_builtin_tool_use_grant(
+    def assert_mcp_tool_use_grant(
         self,
         *,
         user_id: str,
         tool_identifier: str,
         project_code: str,
     ) -> None:
-        if tool_identifier not in self._builtin_tool_identifiers:
+        if tool_identifier not in self._mcp_tool_identifiers:
             raise ToolPolicyError(
                 "Tool use Grant target is not a stable Identifier",
-                safe_message="工具使用授权目标不是稳定的内置工具 Identifier",
-                error_code="builtin_tool_use_denied",
+                safe_message="工具使用授权目标不是稳定的 MCP Tool Identifier",
+                error_code="mcp_tool_use_denied",
             )
         self.assert_registered_readonly_tool(tool_identifier)
         if not self._is_allowed(
@@ -111,16 +111,18 @@ class PermissionService:
         self.assert_user_can_create_job(user_id=user_id, project_code=project_code)
 
     def assert_registered_readonly_tool(self, tool_name: str) -> None:
-        tool = self.config_repository.get_tool(tool_name)
-        if not tool or int(tool["enabled"]) != 1:
+        tool = MCP_TOOL_MANIFEST.get(tool_name)
+        if tool is None:
             raise ToolPolicyError(
-                f"Tool {tool_name} is disabled",
-                safe_message="工具已停用",
+                f"MCP Tool {tool_name} is not installed",
+                safe_message="MCP 工具未安装",
+                error_code="mcp_tool_not_installed",
             )
-        if int(tool["read_only"]) != 1:
+        if not tool.read_only:
             raise ToolPolicyError(
                 f"Tool {tool_name} is not read-only",
                 safe_message="只允许使用只读工具",
+                error_code="mcp_tool_not_readonly",
             )
 
     def require_action(

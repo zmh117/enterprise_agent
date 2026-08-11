@@ -92,7 +92,7 @@ def agent_config(connection_revision_id: str) -> dict[str, object]:
             "model_connection_revision_id": connection_revision_id,
         },
         "execution": {"max_turns": 10, "timeout_seconds": 240},
-        "tools": [],
+        "mcp_tool_ids": [],
         "skills": [],
         "routing": {"project_code": "default"},
         "channels": {

@@ -125,6 +125,18 @@ class IdentitySettings:
 
 
 @dataclass(frozen=True)
+class OnesIdentitySettings:
+    instance_code: str = "default"
+    display_name: str = "ONES"
+    base_url: str = ""
+    allowed_hosts: tuple[str, ...] = ()
+    timeout_seconds: int = 5
+    max_response_bytes: int = 64 * 1024
+    allow_insecure_local: bool = False
+    challenge_ttl_seconds: int = 600
+
+
+@dataclass(frozen=True)
 class AgentRuntimeSettings:
     python_base_url: str = ""
     python_allowed_hosts: tuple[str, ...] = ()
@@ -232,6 +244,7 @@ class Settings:
     attachments: AttachmentSettings = field(default_factory=AttachmentSettings)
     object_storage: ObjectStorageSettings = field(default_factory=ObjectStorageSettings)
     identity: IdentitySettings = field(default_factory=IdentitySettings)
+    ones_identity: OnesIdentitySettings = field(default_factory=OnesIdentitySettings)
     agent_runtime: AgentRuntimeSettings = field(default_factory=AgentRuntimeSettings)
     webhooks: WebhookSettings = field(default_factory=WebhookSettings)
     managed_channels: ManagedChannelSettings = field(default_factory=ManagedChannelSettings)
@@ -475,6 +488,20 @@ def load_settings() -> Settings:
             allowed_origins=_csv_tuple(os.getenv("WEB_ALLOWED_ORIGINS", "")),
             dingtalk_tenant_code=os.getenv("DINGTALK_TENANT_CODE", "default"),
             default_agent_code=os.getenv("DEFAULT_AGENT_CODE", "default-diagnostic-agent"),
+        ),
+        ones_identity=OnesIdentitySettings(
+            instance_code=os.getenv("ONES_IDENTITY_INSTANCE_CODE", "default"),
+            display_name=os.getenv("ONES_IDENTITY_DISPLAY_NAME", "ONES"),
+            base_url=os.getenv("ONES_IDENTITY_BASE_URL", ""),
+            allowed_hosts=_csv_tuple(os.getenv("ONES_IDENTITY_ALLOWED_HOSTS", "")),
+            timeout_seconds=int(os.getenv("ONES_IDENTITY_TIMEOUT_SECONDS", "5")),
+            max_response_bytes=int(
+                os.getenv("ONES_IDENTITY_MAX_RESPONSE_BYTES", str(64 * 1024))
+            ),
+            allow_insecure_local=_env_bool("ONES_IDENTITY_ALLOW_INSECURE_LOCAL"),
+            challenge_ttl_seconds=int(
+                os.getenv("ONES_IDENTITY_CHALLENGE_TTL_SECONDS", "600")
+            ),
         ),
         webhooks=WebhookSettings(
             enabled=features.webhook_ingress_compatibility_enabled,

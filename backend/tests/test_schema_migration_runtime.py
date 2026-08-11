@@ -32,7 +32,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
     assert len({item.version for item in catalog}) == len(catalog)
     assert len({item.name for item in catalog}) == len(catalog)
     assert [item.version for item in catalog][8:11] == ["009", "009a", "010"]
-    assert catalog[-1].version == "038"
+    assert catalog[-1].version == "040"
     assert all(len(item.checksum) == 64 for item in catalog)
 
     baseline = legacy_baseline_artifacts(catalog)
@@ -81,9 +81,9 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
     first = migrator.run()
     second = migrator.run()
 
-    assert first.head == "038"
+    assert first.head == "040"
     assert first.baselined == 0
-    assert first.applied[-16:] == (
+    assert first.applied[-18:] == (
         "023",
         "024",
         "025",
@@ -100,13 +100,83 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
         "036",
         "037",
         "038",
+        "039",
+        "040",
     )
-    assert second.head == "038"
+    assert second.head == "040"
     assert second.baselined == 0
     assert second.applied == ()
     assert len(SchemaMigrationLedger(database).list_records()) == len(
         load_migration_catalog(default_migrations_dir())
     )
+
+
+def test_retirement_migration_fails_closed_for_unconverted_active_tool_binding(
+    tmp_path: Path,
+) -> None:
+    migrations_dir = default_migrations_dir()
+    pre_retirement_dir = tmp_path / "pre-retirement-migrations"
+    pre_retirement_dir.mkdir()
+    for path in migrations_dir.glob("*.sql"):
+        if path.name.split("_", 1)[0] != "040":
+            shutil.copy2(path, pre_retirement_dir / path.name)
+
+    database = Database("sqlite:///:memory:")
+    before = Migrator(
+        database,
+        pre_retirement_dir,
+        migrator_build="pre-retirement-guard-test",
+    ).run()
+    assert before.head == "039"
+    database.execute(
+        """
+        insert into agent_definition
+          (id, code, name, description, project_code, status, revision,
+           created_by, created_at, updated_at)
+        values
+          ('agent-legacy', 'agent-legacy', 'Legacy', '', 'default', 'enabled', 1,
+           'test', '2026-08-11T00:00:00Z', '2026-08-11T00:00:00Z')
+        """
+    )
+    database.execute(
+        """
+        insert into agent_revision
+          (id, agent_id, revision, status, config_json, config_hash,
+           validation_json, created_by, created_at, updated_at)
+        values
+          ('agent-revision-legacy', 'agent-legacy', 1, 'published', '{}', '',
+           '{}', 'test', '2026-08-11T00:00:00Z', '2026-08-11T00:00:00Z')
+        """
+    )
+    database.execute(
+        """
+        insert into agent_publication
+          (id, agent_id, revision_id, revision, schema_version, snapshot_json,
+           config_hash, status, published_by, published_at)
+        values
+          ('agent-publication-legacy', 'agent-legacy', 'agent-revision-legacy', 1,
+           1, '{}', '', 'active', 'test', '2026-08-11T00:00:00Z')
+        """
+    )
+    database.execute(
+        """
+        insert into agent_tool_binding (id, publication_id, tool_name, created_at)
+        values ('binding-legacy', 'agent-publication-legacy', 'unknown_tool',
+                '2026-08-11T00:00:00Z')
+        """
+    )
+
+    with pytest.raises(MigrationExecutionError, match="040 failed"):
+        Migrator(
+            database,
+            migrations_dir,
+            migrator_build="retirement-guard-test",
+        ).run()
+
+    assert SchemaMigrationLedger(database).list_records()[-1]["version"] == "039"
+    assert database.execute_one(
+        "select id from agent_tool_binding where id = 'binding-legacy'"
+    ) == {"id": "binding-legacy"}
 
 
 def test_pre_028_backup_can_be_restored_and_reupgraded_without_data_loss(
@@ -161,6 +231,8 @@ def test_pre_028_backup_can_be_restored_and_reupgraded_without_data_loss(
             "036",
             "037",
             "038",
+            "039",
+            "040",
         )
         assert upgraded.execute_one(
             "select username from app_user where id = 'backup-user'"
@@ -206,8 +278,10 @@ def test_pre_028_backup_can_be_restored_and_reupgraded_without_data_loss(
             "036",
             "037",
             "038",
+            "039",
+            "040",
         )
-        assert reapplied.head == "038"
+        assert reapplied.head == "040"
         assert restored.execute_one(
             "select username from app_user where id = 'backup-user'"
         ) == {"username": "backup-user"}
@@ -297,7 +371,7 @@ def test_schema_head_validator_is_read_only_and_rejects_missing_ledger() -> None
 
     with pytest.raises(
         SchemaHeadError,
-        match="ledger is missing; expected head 038",
+        match="ledger is missing; expected head 040",
     ):
         SchemaHeadValidator(
             database,

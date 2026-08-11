@@ -77,7 +77,7 @@ def validate_topology_code(
             safe_message=(
                 f"{level} 必须使用真实业务编码，不能使用占位值"
             ),
-            error_code="builtin_tool_topology_placeholder_forbidden",
+            error_code="platform_topology_placeholder_forbidden",
         )
     return code
 
@@ -109,10 +109,7 @@ def assert_no_resource_placement(
             if normalized in {"placement", "placementkey", "resourceplacement"}:
                 raise PlatformConfigValidationError(
                     f"Resource placement is forbidden in {context}",
-                    safe_message=(
-                        "placement 只能在应用资源映射中配置，"
-                        f"不能写入{context}"
-                    ),
+                    safe_message=f"placement 不能写入{context}，应由 MCP Tool Call 显式选择",
                     error_code="resource_placement_invalid",
                 )
             assert_no_resource_placement(item, context=context)

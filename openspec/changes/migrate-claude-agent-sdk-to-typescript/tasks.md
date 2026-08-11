@@ -20,11 +20,11 @@
 - [x] 3.4 归一化文本、Tool、usage、completed/failed 事件并实现稳定 retry/error 分类和敏感内容屏蔽
 - [x] 3.5 实现无 Tool、单轮、短超时的 `/internal/v1/model-probes`
 
-## 4. 当前工具的远程MCP边界
+## 4. 当前工具的标准 MCP 边界
 
 - [x] 4.1 盘点 `mcp_new` 当前进程内只读 Tool 与受治理业务查询，形成 TypeScript 灰度必需的等价映射
-- [x] 4.2 为灰度 Application 实现受治理远程 MCP 服务或适配器，复核短期 Token、Job、主体、Application、scope、schema hash 和资源绑定
-- [x] 4.3 验证未映射 Tool、未授权 Tool、伪造主体/resource/header、过期 Token 和写 Tool 均失败关闭且不自动回退 Python
+- [x] 4.2 两个 Runtime 连接固定 `tool-mcp`，按 Job、主体、Application、scope、schema hash 和 Published Resource 实时复核，不新增 MCP 认证层
+- [x] 4.3 验证未映射/未授权 Tool、伪造主体/目标、schema drift、资源歧义和写 Tool 均失败关闭且不自动回退 Python
 
 ## 5. Python Worker与模型连接集成
 
@@ -37,18 +37,14 @@
 
 ## 6. 部署与自动验证
 
-- [x] 6.1 增加 Runtime 最小只读数据库授权、Master Key/服务 Token 文件挂载和部署前权限检查
+- [x] 6.1 增加 Runtime 最小只读数据库授权、Master Key/Runtime Grant 文件挂载和部署前权限检查
 - [x] 6.2 更新 Worker 镜像与 Compose，加入非 root、只读文件系统、tmpfs、`cap_drop: ALL`、私有网络和健康依赖的 Runtime/MCP 服务
 - [x] 6.3 运行 TypeScript lint、typecheck、unit、contract、build 和容器策略测试
 - [x] 6.4 运行后端 Ruff、聚焦单元/集成、模型连接、Worker、重试/失败投递、迁移和敏感日志测试
 - [x] 6.5 运行 OpenSpec strict validation、`git diff --check` 并记录仍需真实凭据验证的门禁
 
-## 7. 灰度、真实链路与双Runtime长期运行
+## 7. 后续规格接管
 
-> 后续拓扑由 `separate-agent-worker-and-dual-runtimes` 取代：7.1-7.3 的真实链路与敏感扫描并入新变更 8.6-8.8；7.4 的 RuntimeMigrationGate 验收被 Agent Publication 固定 Runtime 取代；已完成的 7.5 仅记录旧阶段事实，不再作为最终 Worker 镜像或 Python 进程内 SDK 的保留门槛。
-
-- [ ] 7.1 在可丢弃 Application 显式选择 `typescript-v1`，验证真实模型、只读 MCP、取消、重试、Runtime 重启和失败投递
-- [ ] 7.2 验证真实 `DingTalk → Inbox/Outbox → RabbitMQ → Python Worker → TypeScript Runtime → MCP → Result → Delivery` 链路
-- [ ] 7.3 扫描数据库、RabbitMQ、日志、Runtime ledger、事件和 Tool provenance，确认不存在 Key、Token、Secret、完整 Prompt或私有推理
-- [ ] 7.4 验证未命中显式 TypeScript 门禁的新 Job 始终默认 `python-v1`，并完成 TypeScript Application 对未开始 Job 的回滚演练
-- [x] 7.5 固化双 Runtime 长期兼容门禁：保留 Python SDK、进程内真实适配器和 CLI/Node Worker 镜像层，禁止以 TypeScript 灰度完成为由删除
+- [x] 7.1 `separate-agent-worker-and-dual-runtimes` 已接管一个 Worker、两个独立 Runtime、Agent Publication 固定 Runtime 和真实链路验收
+- [x] 7.2 `retire-legacy-api-platform-for-mcp` 已接管标准 `tool-mcp`、旧适配器退役、敏感扫描和双 Runtime MCP 等价验收
+- [x] 7.3 保留 Python SDK 在 Python Runtime 镜像、TypeScript SDK 在 TypeScript Runtime 镜像；Worker 不安装或执行任一 SDK

@@ -62,7 +62,7 @@ class ReadOnlyToolService:
         # again on every Tool Call before resource resolution.
         if not job.business_application_id:
             try:
-                self.permission_service.assert_builtin_tool_use_grant(
+                self.permission_service.assert_mcp_tool_use_grant(
                     user_id=job.internal_user_id or job.user_id,
                     tool_identifier=tool_name,
                     project_code=job.project_code,
@@ -153,7 +153,7 @@ class ReadOnlyToolService:
             else:
                 # Direct Jobs have no application RBAC boundary, so they retain
                 # the legacy fail-closed tool/project permission check.
-                self.permission_service.assert_builtin_tool_use_grant(
+                self.permission_service.assert_mcp_tool_use_grant(
                     user_id=user_id,
                     tool_identifier=tool_name,
                     project_code=project_code,

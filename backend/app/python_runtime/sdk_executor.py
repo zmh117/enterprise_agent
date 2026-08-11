@@ -54,13 +54,7 @@ class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
         )
         self._mcp_server_url = mcp_server_url
 
-    def _build_internal_server(
-        self,
-        _sdk: Any,
-        request: AgentRunRequest,
-        _tool_events: list[dict[str, Any]],
-        _tool_budget: Any,
-    ) -> dict[str, Any]:
+    def _build_mcp_server(self, request: AgentRunRequest) -> dict[str, Any]:
         return {
             "type": "http",
             "url": self._mcp_server_url,

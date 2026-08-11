@@ -15,65 +15,13 @@ from .topology import (
 
 
 @dataclass(frozen=True)
-class TargetRef:
-    """A structured address the Agent uses instead of raw IPs or connection strings."""
-
-    environment: str
-    base: str
-    kind: ResourceKind
-    workshop: str | None = None
-
-
-@dataclass(frozen=True)
 class ResourceBinding:
-    """A resolved, concrete resource plus the workshop partition constraints."""
+    """One published Resource resolved for the current MCP Tool call."""
 
     environment: Environment
     base: Base
     kind: ResourceKind
     workshop: Workshop | None
-    engine: DatabaseEngine
-    database: DatabaseConnection | None = None
-    redis: RedisConnection | None = None
-    loki: LokiConnection | None = None
-    workshop_partition_policy: WorkshopPartitionPolicyFact | None = None
-    loki_scope_policy: LokiScopePolicyFact | None = None
-
-
-@dataclass(frozen=True)
-class WorkshopPartitionPolicyFact:
-    """Exact immutable Workshop Policy Revision copied from a Job Snapshot."""
-
-    policy_revision_id: str
-    content_hash: str
-    database_table_prefix: str | None = None
-    redis_prefixes: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
-class LokiScopePolicyFact:
-    """Exact mandatory Loki selector copied from a Job Snapshot."""
-
-    policy_revision_id: str
-    content_hash: str
-    conditions: tuple[tuple[str, str], ...]
-
-
-@dataclass(frozen=True)
-class RevisionResource:
-    """A generation-local exact Resource Revision projection.
-
-    The connection values exist only in the immutable in-memory generation.
-    Persisted generation metadata stores IDs and active Secret versions, never
-    these resolved values.
-    """
-
-    resource_revision_id: str
-    resource_id: str
-    environment_code: str
-    base_code: str
-    workshop_code: str
-    kind: ResourceKind
     engine: DatabaseEngine
     database: DatabaseConnection | None = None
     redis: RedisConnection | None = None

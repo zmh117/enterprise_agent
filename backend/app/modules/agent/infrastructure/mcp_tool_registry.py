@@ -9,18 +9,7 @@ from app.shared.exceptions import ToolPolicyError
 
 
 class ToolRegistry:
-    READONLY_TOOLS = {
-        "get_er_context",
-        "get_business_flow_context",
-        "get_schema_directory",
-        "diagnose_loki_labels",
-        "diagnose_loki_label_values",
-        "diagnose_loki_probe",
-        "query_loki",
-        "query_database",
-        "query_redis_get",
-        "query_redis_scan",
-    }
+    READONLY_TOOLS = frozenset(MCP_TOOL_MANIFEST)
 
     def __init__(
         self,

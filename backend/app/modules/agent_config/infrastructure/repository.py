@@ -298,12 +298,6 @@ class AgentConfigRepository:
             )
         return self.get_publication(publication_id)
 
-    def enabled_tools(self) -> set[str]:
-        rows = self.database.execute(
-            "select name from tool_definition where enabled = 1 and read_only = 1"
-        )
-        return {str(row["name"]) for row in rows}
-
     def publication_tools(self, publication_id: str) -> set[str]:
         rows = self.database.execute(
             """

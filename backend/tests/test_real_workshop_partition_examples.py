@@ -1,16 +1,11 @@
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from app.modules.mcp_tool_runtime.domain.errors import PolicyViolation
 from app.modules.mcp_tool_runtime.domain.redis_policy import enforce_key_namespace
 from app.modules.mcp_tool_runtime.domain.sql.analyzer import analyze_readonly_query
 from app.modules.mcp_tool_runtime.domain.topology import DatabaseEngine
-from app.modules.platform_config.application.workshop_partition_verifier import (
-    RedisWorkshopPartitionTechnicalVerifier,
-)
 
 
 DATABASE_PREFIXES = {
@@ -87,48 +82,3 @@ def test_redis_namespace_allows_complete_keys_and_rejects_cross_scope(
                 REDIS_KEYS[other_code][0],
                 key_prefixes=(prefix,),
             )
-
-
-def test_real_redis_namespaces_preserve_exact_scope_when_all_probes_match_zero() -> None:
-    calls: list[dict[str, object]] = []
-
-    class EmptyClient:
-        def scan(self, **kwargs: object) -> tuple[int, list[str]]:
-            calls.append(kwargs)
-            return 0, []
-
-        def close(self) -> None:
-            return None
-
-    verifier = RedisWorkshopPartitionTechnicalVerifier(
-        resolve_secret=lambda _ref: "",
-        connect_factory=lambda **_kwargs: EmptyClient(),
-        scan_count=100,
-    )
-    exact_prefixes = tuple(REDIS_PREFIXES.values())
-    outcome = verifier.verify_redis(
-        resource_revision={
-            "provider_type": "redis",
-            "config": {
-                "host": "redis.internal",
-                "port": 6379,
-                "database": 0,
-                "username": "",
-                "tls": {"enabled": False, "verify_certificate": True},
-            },
-            "secret_refs": {},
-        },
-        prefixes=exact_prefixes,
-    )
-
-    assert outcome.status == "PASSED"
-    assert outcome.zero_match_warning is True
-    assert outcome.redis_summary["prefix_count"] == 3
-    assert [call["match"] for call in calls] == [
-        f"{prefix}*" for prefix in exact_prefixes
-    ]
-    assert all(call["cursor"] == 0 and call["count"] == 100 for call in calls)
-
-    persisted = json.dumps(outcome.redis_summary, ensure_ascii=False)
-    assert all(prefix not in persisted for prefix in exact_prefixes)
-    assert all(key not in persisted for keys in REDIS_KEYS.values() for key in keys)

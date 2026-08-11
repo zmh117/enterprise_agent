@@ -6,6 +6,7 @@ from typing import Any
 
 from app.modules.agent_config.application.service import AgentConfigService
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
+from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.identity.application.authorization import AuthorizationEvaluator
@@ -257,9 +258,7 @@ class TriggerValidator:
         assigned_tools = sorted(
             self.agent_config_service.repository.publication_tools(agent_publication_id)
         ) if agent_publication else []
-        enabled_read_only_tools = (
-            self.agent_config_service.repository.enabled_tools() & ToolRegistry.READONLY_TOOLS
-        )
+        enabled_read_only_tools = set(MCP_TOOL_MANIFEST) & ToolRegistry.READONLY_TOOLS
         invalid_tools = sorted(set(assigned_tools) - enabled_read_only_tools)
         if invalid_tools:
             errors.append(

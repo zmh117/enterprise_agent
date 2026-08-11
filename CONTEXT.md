@@ -17,12 +17,16 @@ _Avoid_: 外部凭据、Token 绑定、外部授权
 _Avoid_: 人员姓名、平台显示名称、管理员备注
 
 **外部身份本人模式（External Identity Self Mode）**:
-当前认证主体管理自己外部身份和个人凭据的自助边界。
+当前认证主体管理自己的外部身份绑定、重新验证、默认 Provider 上下文和解绑的自助边界；不表示平台保存或管理可重复使用的 Provider 登录凭据。
 _Avoid_: 管理员模式、代用户绑定、人员详情编辑
 
 **外部身份治理模式（External Identity Governance Mode）**:
-授权管理员从人员管理入口查看并处置用户外部身份和凭据状态的治理边界，包括管理员自己的人员记录。
+授权管理员从人员管理入口查看并处置用户外部身份状态的治理边界，包括管理员自己的人员记录；管理员不得代用户提交 Provider 登录材料或完成本人验证。
 _Avoid_: 本人模式、代输密码、代用户重新验证
+
+**ONES 身份验证证明（ONES Identity Verification Proof）**:
+当前用户在单次 ONES 身份验证请求中临时提交的邮箱和密码，以及仅用于校验响应完整性的登录 Token；这些材料在请求结束前即被丢弃，不进入数据库、Challenge、缓存、日志、审计或 API 响应。
+_Avoid_: 外部 API 凭据、个人 Token、登录会话、运行时授权
 
 **API 能力（API Capability）**:
 向业务应用和 Agent 发布的版本化业务操作及其公开输入输出契约，不暴露底层接口地址、认证信息或传输细节。
@@ -189,7 +193,7 @@ _Avoid_: Capability 全局授权、Agent 全量能力、运行时动态添加
 _Avoid_: 自动回退、会话共享凭据、任意用户
 
 **ONES 默认 Team（ONES Default Team）**:
-用户从 ONES 登录验证返回的已验证 Team 集合中选择的单一默认 Team，是其运行时 ONES 查询上下文。
+用户从 ONES 登录验证返回的已验证 Team 集合中选择的单一默认 Provider 上下文；它只属于身份事实，不自动授予平台或 ONES 权限，也不构成当前运行时工具凭据。
 _Avoid_: 应用配置的 Team、用户消息中的 team_uuid、自动跨 Team
 
 **ONES 验证 Challenge（ONES Verification Challenge）**:

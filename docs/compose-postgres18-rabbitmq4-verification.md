@@ -89,7 +89,7 @@ runtime_config.source: database
 runtime_config.degraded: false
 ```
 
-`internal-api-platform`、`dingtalk-stream-ingress`、`api-server` 和 `agent-worker` 均已重新启动；DeepSeek secret 通过容器部署环境安全 rotate 回数据库，过程中未输出 secret 明文。
+该段为历史升级快照；当前运行拓扑应检查 `tool-mcp`、两个 Agent Runtime、`api-server` 和 `agent-worker`。DeepSeek secret 通过部署环境安全 rotate 回数据库，过程中不得输出 secret 明文。
 
 ## 5. Retry / Dead-letter 一致性
 

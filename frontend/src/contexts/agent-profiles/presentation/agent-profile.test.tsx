@@ -42,15 +42,13 @@ const config = {
     model_connection_revision_id: "model_revision_1",
   },
   execution: { max_turns: 12, timeout_seconds: 300 },
-  tools: ["get_er_context"],
+  mcp_tool_ids: ["get_er_context"],
   skills: [],
   routing: { project_code: "default" },
   channels: {
     ingress: ["connector-dingtalk-stream-default"],
     delivery: ["connector-dingtalk-stream-default"],
   },
-  api_capability_release_ids: [],
-  builtin_tool_release_ids: [],
 }
 
 const modelConfig = {
@@ -147,50 +145,24 @@ function agentPayload(
       },
       catalog: {
         models: [modelConfig.model],
-        tools: [],
         skills: [],
         connectors,
-        api_capabilities: [
+        mcp_tools: [
           {
-            id: "capability-release-1",
-            identifier: "cap__ones__work_item__search",
-            release_revision: 1,
-            name: "搜索 ONES 工作项",
-            description: "搜索当前用户默认 Team 的 ONES 工作项",
-            status: "ACTIVE",
-            release_note: "首版",
-          },
-        ],
-        builtin_tool_releases: [
-          {
-            id: "builtin-tool-release-query-database-1",
-            tool_identifier: "query_database",
-            release_revision: 1,
-            tool_semantic_version: "1.0.0",
-            handler_version: "1.0.0",
-            implementation_digest: "a".repeat(64),
-            public_schema_hash: "b".repeat(64),
-            status: "ACTIVE",
-            display_name: "查询数据库",
-            model_description: "受治理的只读数据库查询",
-            installation_status: "INSTALLED",
-            health_status: "HEALTHY",
-            selectable: true,
+            server_code: "tool-mcp",
+            identifier: "get_er_context",
+            description: "读取 ER 上下文",
+            schema_hash: "a".repeat(64),
+            resource_kind: "graph",
+            read_only: true,
           },
           {
-            id: "builtin-tool-release-query-redis-legacy",
-            tool_identifier: "query_redis_get",
-            release_revision: 1,
-            tool_semantic_version: "1.0.0",
-            handler_version: "1.0.0",
-            implementation_digest: "c".repeat(64),
-            public_schema_hash: "d".repeat(64),
-            status: "DEPRECATED",
-            display_name: "读取 Redis Key",
-            model_description: "受治理的 Redis GET",
-            installation_status: "INSTALLED",
-            health_status: "DEPRECATED",
-            selectable: false,
+            server_code: "tool-mcp",
+            identifier: "query_database",
+            description: "只读查询数据库",
+            schema_hash: "b".repeat(64),
+            resource_kind: "database",
+            read_only: true,
           },
         ],
       },
@@ -1073,7 +1045,7 @@ describe("Agent Profile management", () => {
     expect(screen.getByRole("button", { name: "发现可用模型" })).toBeDisabled()
   })
 
-  it("selects an exact ACTIVE Capability Release and saves its description-backed id", async () => {
+  it("saves the standard MCP tool identifiers selected for publication", async () => {
     let savedConfig: Record<string, unknown> | undefined
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = String(input)
@@ -1113,80 +1085,15 @@ describe("Agent Profile management", () => {
       </QueryClientProvider>
     )
 
-    expect(
-      await screen.findByText("搜索当前用户默认 Team 的 ONES 工作项")
-    ).toBeInTheDocument()
-    fireEvent.click(
-      screen.getByRole("checkbox", {
-        name: /搜索 ONES 工作项/,
-      })
-    )
+    expect(await screen.findByText("MCP 只读工具")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("checkbox", { name: "query_database" }))
     fireEvent.click(screen.getByRole("button", { name: "保存草稿" }))
 
     await waitFor(() =>
       expect(savedConfig).toMatchObject({
-        api_capability_release_ids: ["capability-release-1"],
+        mcp_tool_ids: ["get_er_context", "query_database"],
       })
     )
-  })
-
-  it("selects an exact healthy Built-in Tool Release and warns on deprecated health", async () => {
-    let savedConfig: Record<string, unknown> | undefined
-    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
-      const url = String(input)
-      if (url.includes("/model-connections/")) {
-        return response({ connection: modelConnection })
-      }
-      if (url.endsWith("/draft") && init?.method === "PUT") {
-        const body = JSON.parse(String(init.body)) as {
-          config: Record<string, unknown>
-        }
-        savedConfig = body.config
-        return response({
-          revision: {
-            ...agentPayload().agent.draft,
-            revision: 3,
-            config: body.config,
-          },
-        })
-      }
-      return response(agentPayload())
-    })
-
-    render(
-      <QueryClientProvider
-        client={
-          new QueryClient({
-            defaultOptions: {
-              queries: { retry: false },
-              mutations: { retry: false },
-            },
-          })
-        }
-      >
-        <MemoryRouter>
-          <AgentProfilePage />
-        </MemoryRouter>
-      </QueryClientProvider>
-    )
-
-    expect(await screen.findByText("digest aaaaaaaaaaaa…")).toBeInTheDocument()
-    expect(screen.getByText(/DEPRECATED \/ 安装状态/)).toBeInTheDocument()
-    expect(
-      screen.getByRole("checkbox", { name: /读取 Redis Key/ })
-    ).toBeDisabled()
-    expect(screen.getByText(/历史草稿包含 legacy-v1 名称绑定/)).toHaveTextContent(
-      "get_er_context"
-    )
-    fireEvent.click(screen.getByRole("checkbox", { name: /查询数据库/ }))
-    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }))
-
-    await waitFor(() => {
-      expect(savedConfig).toMatchObject({
-        builtin_tool_release_ids: ["builtin-tool-release-query-database-1"],
-      })
-      expect(savedConfig).not.toHaveProperty("tools")
-    })
   })
 
   it("shows unavailable selected Connectors and blocks validation until changes are saved", async () => {

@@ -134,7 +134,6 @@ class GovernedResourceService:
                     "draft": draft,
                     "draft_verification": draft_verification,
                     "published_revision": published,
-                    "activation_status": "PUBLISHED" if published else "EMPTY",
                 }
             )
         return result

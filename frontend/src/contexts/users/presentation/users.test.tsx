@@ -67,13 +67,11 @@ function adminOnesIdentity(overrides: Record<string, unknown> = {}) {
   return {
     provider: "ones",
     identity_id: "identity-ones",
-    identity_status: "enabled",
-    identity_revision: 2,
+    status: "enabled",
+    revision: 2,
     user_name: "ONES 用户",
-    availability: "AVAILABLE",
     default_team: { id: "team-default", name: "默认 Team" },
     verified_at: "2026-07-22T00:00:00+08:00",
-    last_success_at: "2026-07-23T00:00:00+08:00",
     user_id: "ones-user-1",
     teams: [{ id: "team-default", name: "默认 Team" }],
     ...overrides,
@@ -101,8 +99,7 @@ function selfOnesIdentity(overrides: Record<string, unknown> = {}) {
     ...adminOnesIdentity(overrides),
   }
   delete identity.identity_id
-  delete identity.identity_status
-  delete identity.identity_revision
+  delete identity.revision
   return identity
 }
 
@@ -355,9 +352,8 @@ describe("User and external identity management", () => {
             [
               adminOnesIdentity({
                 identity_id: "identity-history",
-                identity_status: "unbound",
+                status: "unbound",
                 user_name: "Historical ONES User",
-                availability: "UNBOUND",
                 user_id: "ones-history-user",
                 teams: [{ id: "legacy-team", name: "" }],
                 default_team: null,
@@ -386,9 +382,8 @@ describe("User and external identity management", () => {
     expect(screen.queryByRole("button", { name: "软解绑 ONES" })).toBeNull()
   })
 
-  it("labels missing Team names and exposes governed ONES failure facts in Chinese", async () => {
+  it("shows identity-only ONES facts without legacy credential or connection state", async () => {
     const ones = adminOnesIdentity({
-      availability: "REVERIFY_REQUIRED",
       default_team: { id: "team-id-only", name: "" },
       teams: [{ id: "team-id-only", name: "" }],
     })
@@ -396,23 +391,6 @@ describe("User and external identity management", () => {
       const url = String(input)
       if (url.includes("/api/admin/authorization/roles?")) {
         return response(emptyRoles())
-      }
-      if (url.endsWith("/users/user-1/external-credentials/ones")) {
-        return response({
-          user_id: "user-1",
-          ones: {
-            ...ones,
-            credential: {
-              status: "INVALID",
-              revision: 6,
-              last_attempt_at: "2026-08-03T00:00:00+08:00",
-              last_success_at: null,
-              last_error_code: "ones_unauthorized",
-              last_error_at: "2026-08-03T00:00:01+08:00",
-            },
-            connection: null,
-          },
-        })
       }
       if (url.endsWith("/users/user-1/external-identities")) {
         return response(adminOverview([ones]))
@@ -428,23 +406,16 @@ describe("User and external identity management", () => {
     expect(
       (await screen.findAllByText("team-id-only（名称暂不可用）")).length
     ).toBeGreaterThan(0)
-    expect(await screen.findByText("无效，需要重新验证")).toBeInTheDocument()
-    expect(screen.getByText("历史连接已清理")).toBeInTheDocument()
-    expect(screen.getByText("ones_unauthorized")).toBeInTheDocument()
+    expect(screen.getByText("管理员只能查看、停用和审计；重新验证与解绑必须由用户本人完成。")).toBeInTheDocument()
+    expect(screen.queryByText(/凭据缺失|历史连接|Connection/)).toBeNull()
   })
 
-  it("shows an explicit governed empty state when the ONES credential is missing", async () => {
-    const ones = adminOnesIdentity({ availability: "REVERIFY_REQUIRED" })
+  it("shows administrator-disabled ONES identity without management credential actions", async () => {
+    const ones = adminOnesIdentity({ status: "disabled" })
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input)
       if (url.includes("/api/admin/authorization/roles?")) {
         return response(emptyRoles())
-      }
-      if (url.endsWith("/users/user-1/external-credentials/ones")) {
-        return response({
-          user_id: "user-1",
-          ones: { ...ones, credential: null, connection: null },
-        })
       }
       if (url.endsWith("/users/user-1/external-identities")) {
         return response(adminOverview([ones]))
@@ -457,49 +428,10 @@ describe("User and external identity management", () => {
 
     renderDetail()
 
-    expect(await screen.findByText("凭据缺失")).toBeInTheDocument()
-    expect(screen.getByText("历史连接已清理")).toBeInTheDocument()
-  })
-
-  it("labels an administrator-disabled ONES credential without exposing its raw status", async () => {
-    const ones = adminOnesIdentity({ availability: "ADMIN_DISABLED" })
-    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
-      const url = String(input)
-      if (url.includes("/api/admin/authorization/roles?")) {
-        return response(emptyRoles())
-      }
-      if (url.endsWith("/users/user-1/external-credentials/ones")) {
-        return response({
-          user_id: "user-1",
-          ones: {
-            ...ones,
-            credential: {
-              status: "DISABLED",
-              revision: 4,
-              last_attempt_at: null,
-              last_success_at: null,
-              last_error_code: "",
-              last_error_at: null,
-            },
-            connection: { name: "公司 ONES", revision: 3, status: "PUBLISHED" },
-          },
-        })
-      }
-      if (url.endsWith("/users/user-1/external-identities")) {
-        return response(adminOverview([ones]))
-      }
-      if (url.endsWith("/users/user-1")) {
-        return response({ user: user() })
-      }
-      throw new Error(`Unexpected request: ${url}`)
-    })
-
-    renderDetail()
-
-    expect(await screen.findByText("已被管理员停用")).toBeInTheDocument()
-    expect(await screen.findByText("公司 ONES · r3")).toBeInTheDocument()
-    expect(await screen.findByText("已停用")).toBeInTheDocument()
-    expect(screen.queryByText(/^DISABLED$/)).toBeNull()
+    expect((await screen.findAllByText("已停用")).length).toBeGreaterThan(0)
+    expect(screen.queryByRole("button", { name: "启用身份" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "解绑" })).toBeNull()
+    expect(screen.queryByText(/凭据|Connection/)).toBeNull()
   })
 
   it("opens history and offers restore only for a matching trusted candidate", async () => {
@@ -858,7 +790,6 @@ describe("User and external identity management", () => {
             challenge: {
               id: "challenge-1",
               provider: "ones",
-              connection_revision_id: "connection-revision-1",
               external_user_id: "ones-user-1",
               display_name: "庄慕焕",
               teams: [
@@ -866,6 +797,7 @@ describe("User and external identity management", () => {
                 { id: "team-b", name: "Team B" },
               ],
               team_ids: ["team-a", "team-b"],
+              verified_at: "2026-07-31T00:00:00Z",
               expires_at: "2026-08-01T00:00:00Z",
               status: "PENDING",
               created_at: "2026-07-31T00:00:00Z",
@@ -908,7 +840,6 @@ describe("User and external identity management", () => {
     await waitFor(() =>
       expect(confirmBody).toEqual({
         challenge_id: "challenge-1",
-        connection_revision_id: "connection-revision-1",
         default_team_id: "team-b",
         replace_existing: false,
       })

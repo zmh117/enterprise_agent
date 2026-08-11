@@ -39,14 +39,3 @@ class ChannelConnectorReader(Protocol):
 
 class IdentitySubjectReader(Protocol):
     def resolve_service_account(self, user_id: str) -> ComponentReference: ...
-
-
-class CapabilityCatalogReader(Protocol):
-    @property
-    def connected(self) -> bool: ...
-
-    def catalog(self) -> list[ComponentReference]: ...
-
-    def resolve(
-        self, code: str, version_constraint: str, environment: str
-    ) -> ComponentReference: ...

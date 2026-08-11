@@ -79,7 +79,6 @@ import type {
   TopologyItem,
 } from "@/contexts/platform-governance/domain/platform-governance"
 import { ApiError } from "@/shared/api/api-client"
-import { ResourcePolicySheet } from "@/contexts/platform-governance/presentation/resource-policy-sheet"
 
 type Provider = ResourceFormInput["provider_type"]
 type ResourceKind = ResourceFormInput["resource_kind"]
@@ -189,13 +188,11 @@ export function ToolResourcesPage() {
     scope: "all",
     identity: "all",
     revision: "all",
-    activation: "all",
   })
   const [editing, setEditing] = useState<GovernedResource | null | undefined>(
     undefined
   )
   const [confirm, setConfirm] = useState<ConfirmAction | null>(null)
-  const [policyResourceId, setPolicyResourceId] = useState<string | null>(null)
   const confirmPending =
     removeDraft.isPending ||
     setRevisionStatus.isPending ||
@@ -206,10 +203,6 @@ export function ToolResourcesPage() {
       : confirm?.type.endsWith("-identity")
         ? setIdentityStatus.error
         : setRevisionStatus.error
-  const policyResource =
-    (resources.data ?? []).find(
-      (resource) => resource.id === policyResourceId
-    ) ?? null
   const filtered = useMemo(
     () =>
       (resources.data ?? []).filter(
@@ -220,9 +213,7 @@ export function ToolResourcesPage() {
             resource.status === filters.identity) &&
           (filters.revision === "all" ||
             (resource.published_revision?.status ?? "NONE") ===
-              filters.revision) &&
-          (filters.activation === "all" ||
-            resource.activation_status === filters.activation)
+              filters.revision)
       ),
     [filters, resources.data]
   )
@@ -278,8 +269,8 @@ export function ToolResourcesPage() {
             <h1 className="text-2xl font-semibold tracking-tight">工具资源</h1>
             <p className="mt-2 max-w-4xl text-sm leading-6 text-muted-foreground">
               管理 DB、Redis 与 Loki 的稳定资源身份。连接内容按 Draft → VERIFIED
-              → PUBLISHED 发布；发布版本不可原地修改，运行状态明确区分
-              Published、Effective 与 Last Known Good。
+              → PUBLISHED 发布；发布版本不可原地修改，MCP Tool 调用时只解析
+              当前已发布版本。
             </p>
           </div>
           <div className="flex gap-2">
@@ -353,7 +344,6 @@ export function ToolResourcesPage() {
                   revisionId: resource.published_revision.id,
                 })
               }}
-              onManagePolicy={() => setPolicyResourceId(resource.id)}
               onConfirm={(type) => {
                 removeDraft.reset()
                 setRevisionStatus.reset()
@@ -396,16 +386,6 @@ export function ToolResourcesPage() {
                 onSuccess: () => setEditing(undefined),
               })
             }
-          }}
-        />
-      ) : null}
-
-      {policyResource ? (
-        <ResourcePolicySheet
-          resource={policyResource}
-          resources={resources.data ?? []}
-          onOpenChange={(open) => {
-            if (!open) setPolicyResourceId(null)
           }}
         />
       ) : null}
@@ -459,14 +439,12 @@ function ResourceFilters({
     scope: string
     identity: string
     revision: string
-    activation: string
   }
   onChange: (value: {
     kind: string
     scope: string
     identity: string
     revision: string
-    activation: string
   }) => void
 }) {
   const definitions = [
@@ -512,22 +490,10 @@ function ResourceFilters({
         ["NONE", "无发布版本"],
       ],
     },
-    {
-      label: "生效状态",
-      key: "activation",
-      items: [
-        ["all", "全部"],
-        ["EMPTY", "未发布"],
-        ["PENDING", "待装载"],
-        ["READY", "已生效"],
-        ["DEGRADED", "降级"],
-        ["BLOCKED", "阻断"],
-      ],
-    },
   ] as const
   return (
     <Card className="shadow-none">
-      <CardContent className="grid gap-3 py-4 sm:grid-cols-2 xl:grid-cols-5">
+      <CardContent className="grid gap-3 py-4 sm:grid-cols-2 xl:grid-cols-4">
         {definitions.map((definition) => (
           <Field key={definition.key}>
             <FieldLabel>{definition.label}</FieldLabel>
@@ -563,7 +529,6 @@ function ResourceCard({
   onVerify,
   onPublish,
   onCreateDraft,
-  onManagePolicy,
   onConfirm,
 }: {
   resource: GovernedResource
@@ -573,7 +538,6 @@ function ResourceCard({
   onVerify: () => void
   onPublish: () => void
   onCreateDraft: () => void
-  onManagePolicy: () => void
   onConfirm: (type: ConfirmAction["type"]) => void
 }) {
   const published = resource.published_revision
@@ -581,10 +545,7 @@ function ResourceCard({
   const identityEnabled = resource.status === "enabled"
   const identityArchiveBlocked =
     Boolean(draft) ||
-    published?.status === "PUBLISHED" ||
-    resource.affected_applications.some(
-      (application) => application.runtime_status !== "NOT_ACTIVE"
-    )
+    published?.status === "PUBLISHED"
   return (
     <Card className="shadow-none">
       <CardHeader>
@@ -601,9 +562,6 @@ function ResourceCard({
           <div className="flex flex-wrap justify-end gap-2">
             <Badge variant="outline">
               资源身份：{resourceIdentityLabel(resource.status)}
-            </Badge>
-            <Badge variant={activationVariant(resource.activation_status)}>
-              {activationLabel(resource.activation_status)}
             </Badge>
           </div>
         </div>
@@ -635,20 +593,7 @@ function ResourceCard({
               ? `r${published.revision} · ${published.status}`
               : "尚未发布"}
           </dd>
-          <dt className="text-muted-foreground">Effective</dt>
-          <dd className="break-all">
-            {resource.effective_revision_id || "无生效版本"}
-          </dd>
-          <dt className="text-muted-foreground">Last Known Good</dt>
-          <dd className="break-all">
-            {resource.last_known_good_generation_id || "无"}
-          </dd>
         </dl>
-        {resource.safe_error_summary ? (
-          <p className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
-            {resource.safe_error_summary}
-          </p>
-        ) : null}
         {verification ? (
           <p
             role="status"
@@ -664,29 +609,7 @@ function ResourceCard({
               : ""}
           </p>
         ) : null}
-        {resource.affected_applications.length ? (
-          <div>
-            <p className="text-xs font-medium text-muted-foreground">
-              受影响应用
-            </p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {resource.affected_applications.map((application) => (
-                <Badge key={application.publication_id} variant="outline">
-                  {application.application_name} · {application.runtime_status}
-                </Badge>
-              ))}
-            </div>
-          </div>
-        ) : null}
         <div className="flex flex-wrap gap-2">
-          {resource.resource_kind === "loki" ||
-          resource.scope_type === "workshop" ? (
-            <Button size="sm" variant="secondary" onClick={onManagePolicy}>
-              {resource.resource_kind === "loki"
-                ? "配置 Loki 查询范围"
-                : "配置车间隔离策略"}
-            </Button>
-          ) : null}
           {draft ? (
             <>
               <Button
@@ -1447,27 +1370,6 @@ function resourceIdentityLabel(status: GovernedResource["status"]) {
   return { enabled: "启用", disabled: "停用", archived: "归档" }[status]
 }
 
-function activationLabel(status: string) {
-  return (
-    {
-      EMPTY: "未发布",
-      PENDING: "待装载",
-      READY: "已生效",
-      ACTIVE: "已生效",
-      DEGRADED: "降级",
-      BLOCKED: "阻断",
-    }[status] ?? status
-  )
-}
-
-function activationVariant(
-  status: string
-): "default" | "secondary" | "outline" | "destructive" {
-  if (status === "READY" || status === "ACTIVE") return "default"
-  if (status === "DEGRADED" || status === "BLOCKED") return "destructive"
-  return status === "PENDING" ? "secondary" : "outline"
-}
-
 function confirmTitle(type: ConfirmAction["type"] | undefined) {
   if (type === "delete-draft") return "删除当前 Draft？"
   if (type === "disable-revision") return "停用已发布版本？"
@@ -1479,10 +1381,10 @@ function confirmTitle(type: ConfirmAction["type"] | undefined) {
 
 function confirmDescription(type: ConfirmAction["type"] | undefined) {
   if (type === "delete-draft") {
-    return "只删除可编辑草稿，不影响已有 Published 与 Effective 版本。"
+    return "只删除可编辑草稿，不影响已有 Published 版本。"
   }
   if (type === "disable-revision") {
-    return "发布版本不会被物理删除；依赖此版本的应用可能被标记为降级或阻断。"
+    return "发布版本不会被物理删除；停用后新的 MCP Tool 调用不再解析该版本。"
   }
   if (type === "archive-revision") {
     return "归档后该发布版本不可恢复为可用状态，历史与审计仍会保留。"

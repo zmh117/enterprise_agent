@@ -9,7 +9,6 @@ import re
 import shutil
 import subprocess
 import threading
-import time
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -21,9 +20,7 @@ from app.modules.agent.domain.runtime import (
     AgentExecutionContext,
     AgentRunRequest,
     AgentRunResult,
-    ToolCallBudget,
 )
-from app.modules.agent.infrastructure.tool_manifest import TOOL_DEFINITIONS
 from app.modules.model_connection.domain import (
     ANTHROPIC_COMPATIBLE_PROTOCOL,
     ModelRuntimeBinding,
@@ -32,7 +29,6 @@ from app.shared.config import ExecutionSettings
 from app.shared.database import assert_external_io_allowed
 from app.shared.exceptions import (
     DiagnosticLoopExhausted,
-    ExecutionPolicyExceeded,
     NonRetryableExecutionError,
     RetryableExecutionError,
     ToolPolicyError,
@@ -40,7 +36,6 @@ from app.shared.exceptions import (
 
 if TYPE_CHECKING:
     from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
-    from app.modules.mcp_tool_runtime.contracts import ToolResult
     from app.modules.job.infrastructure.repositories import AgentRepository
 
 
@@ -67,7 +62,7 @@ class RealClaudeCodeAgentClient:
         agent_repository: AgentRepository | None = None,
     ) -> None:
         self.model = model
-        self.tool_registry = tool_registry
+        del tool_registry
         self.limits = limits
         self.api_key = api_key
         self.base_url = base_url
@@ -125,10 +120,9 @@ class RealClaudeCodeAgentClient:
     ) -> AgentRunResult:
         sdk = self._load_sdk()
         tool_events: list[dict[str, Any]] = []
-        tool_budget = ToolCallBudget(maximum=request.context.max_tool_calls)
-        internal_server = self._build_internal_server(sdk, request, tool_events, tool_budget)
+        mcp_server = self._build_mcp_server(request)
         cli_stderr: list[str] = []
-        options = self._build_options(sdk, request.context, internal_server, cli_stderr, binding)
+        options = self._build_options(sdk, request.context, mcp_server, cli_stderr, binding)
         prompt = request.context.user_question
         assistant_texts: list[str] = []
         parsed_tool_events: list[dict[str, Any]] = []
@@ -310,94 +304,14 @@ class RealClaudeCodeAgentClient:
                 error_code="claude_sdk_unavailable",
             ) from exc
 
-    def _build_internal_server(
-        self,
-        sdk: ClaudeSdk,
-        request: AgentRunRequest,
-        tool_events: list[dict[str, Any]],
-        tool_budget: ToolCallBudget,
-    ) -> Any:
-        tools = [
-            self._build_tool(sdk, request, tool_name, tool_events, tool_budget)
-            for tool_name in request.context.allowed_tools
-            if tool_name in TOOL_DEFINITIONS
-        ]
-        return sdk.create_sdk_mcp_server(name="internal", tools=tools)
-
-    def _build_tool(
-        self,
-        sdk: ClaudeSdk,
-        request: AgentRunRequest,
-        tool_name: str,
-        tool_events: list[dict[str, Any]],
-        tool_budget: ToolCallBudget,
-    ) -> Any:
-        definition = TOOL_DEFINITIONS[tool_name]
-
-        async def handler(arguments: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
-            started = time.monotonic()
-            try:
-                tool_budget.consume()
-                result = await asyncio.to_thread(
-                    self.tool_registry.call,
-                    job_id=request.job_id,
-                    user_id=request.user_id,
-                    project_code=request.project_code,
-                    tool_name=tool_name,
-                    arguments=arguments,
-                    record_tool_call=False,
-                )
-                event = _tool_event_from_result(
-                    tool_name=tool_name,
-                    arguments=arguments,
-                    result=result,
-                    status="SUCCEEDED",
-                    duration_ms=int((time.monotonic() - started) * 1000),
-                    limits=self.limits,
-                )
-                tool_events.append(event)
-                return _sdk_tool_response(result.summary)
-            except ExecutionPolicyExceeded as exc:
-                tool_events.append(
-                    {
-                        "tool_name": tool_name,
-                        "request_payload": arguments,
-                        "response_summary": {"error": exc.safe_message},
-                        "status": "REJECTED",
-                        "duration_ms": int((time.monotonic() - started) * 1000),
-                        "risk_level": _risk_level(tool_name),
-                        "error_code": exc.error_code,
-                    }
-                )
-                exc.tool_events = list(tool_events)
-                raise
-            except Exception as exc:
-                safe_message = getattr(exc, "safe_message", str(exc))
-                failed_event = {
-                        "tool_name": tool_name,
-                        "request_payload": arguments,
-                        "response_summary": {"error": safe_message},
-                        "status": "FAILED",
-                        "duration_ms": int((time.monotonic() - started) * 1000),
-                        "risk_level": _risk_level(tool_name),
-                    }
-                persisted_tool_call_id = str(
-                    getattr(exc, "persisted_tool_call_id", "") or ""
-                )
-                if persisted_tool_call_id:
-                    failed_event["persisted_tool_call_id"] = (
-                        persisted_tool_call_id
-                    )
-                tool_events.append(failed_event)
-                return _sdk_tool_response({"error": safe_message, "policy": "tool_rejected"})
-
-        decorator = _tool_decorator(
-            sdk,
-            name=tool_name,
-            description=str(definition["description"]),
-            schema=dict(definition["schema"]),
-        )
-        return decorator(handler)
+    def _build_mcp_server(self, request: AgentRunRequest) -> Any | None:
+        if request.context.allowed_tools:
+            raise NonRetryableExecutionError(
+                "Python Runtime requires the deployment-fixed standard MCP server",
+                safe_message="Python Runtime 的标准 MCP 工具服务未配置",
+                error_code="mcp_tool_server_required",
+            )
+        return None
 
     def _build_options(
         self,
@@ -407,11 +321,11 @@ class RealClaudeCodeAgentClient:
         cli_stderr: list[str],
         binding: ModelRuntimeBinding,
     ) -> Any:
-        exact_tools = [f"mcp__internal__{tool_name}" for tool_name in context.allowed_tools]
+        exact_tools = [f"mcp__tool_mcp__{tool_name}" for tool_name in context.allowed_tools]
         return sdk.options(
             model=binding.model,
             system_prompt=_build_system_prompt(context),
-            mcp_servers={"internal": server},
+            mcp_servers={"tool_mcp": server} if server is not None else {},
             allowed_tools=exact_tools,
             disallowed_tools=[
                 "Bash",
@@ -537,33 +451,6 @@ def is_claude_cli_available() -> bool:
     return shutil.which("claude") is not None or shutil.which("claude-code") is not None
 
 
-def _tool_decorator(
-    sdk: ClaudeSdk,
-    *,
-    name: str,
-    description: str,
-    schema: dict[str, Any],
-) -> Any:
-    annotations = _read_only_annotations(sdk)
-    if annotations is None:
-        return sdk.tool(name, description, schema)
-    try:
-        return sdk.tool(name, description, schema, annotations=annotations)
-    except TypeError:
-        return sdk.tool(name, description, schema)
-
-
-def _read_only_annotations(sdk: ClaudeSdk) -> Any | None:
-    if sdk.tool_annotations is None:
-        return {"readOnlyHint": True}
-    for kwargs in ({"readOnlyHint": True}, {"read_only_hint": True}):
-        try:
-            return sdk.tool_annotations(**kwargs)
-        except TypeError:
-            continue
-    return {"readOnlyHint": True}
-
-
 def _build_system_prompt(context: AgentExecutionContext) -> str:
     skill_sections = "\n\n".join(
         f"## Skill: {name}\n{body}" for name, body in sorted(context.skills.items())
@@ -603,42 +490,6 @@ def _build_system_prompt(context: AgentExecutionContext) -> str:
 
 def _numbered(items: list[str]) -> str:
     return "\n".join(f"{index}. {item}" for index, item in enumerate(items, start=1))
-
-
-def _sdk_tool_response(payload: Any) -> dict[str, list[dict[str, str]]]:
-    return {
-        "content": [
-            {
-                "type": "text",
-                "text": json.dumps(payload, ensure_ascii=False, default=str),
-            }
-        ]
-    }
-
-
-def _tool_event_from_result(
-    *,
-    tool_name: str,
-    arguments: dict[str, Any],
-    result: ToolResult,
-    status: str,
-    duration_ms: int,
-    limits: ExecutionSettings,
-) -> dict[str, Any]:
-    event = {
-        "tool_name": tool_name,
-        "request_payload": _bounded_payload(arguments, limits.max_tool_response_chars),
-        "response_summary": _bounded_payload(result.summary, limits.max_tool_response_chars),
-        "status": status,
-        "duration_ms": duration_ms,
-        "risk_level": _risk_level(tool_name),
-    }
-    persisted_tool_call_id = str(
-        result.metadata.get("_persisted_tool_call_id") or ""
-    )
-    if persisted_tool_call_id:
-        event["persisted_tool_call_id"] = persisted_tool_call_id
-    return event
 
 
 def _extract_text_blocks(message: Any) -> list[str]:

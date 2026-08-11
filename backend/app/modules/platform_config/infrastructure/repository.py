@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.shared.database import Database
-from app.shared.exceptions import NonRetryableExecutionError, NotFound
+from app.shared.exceptions import NotFound
 
 from ..application.validation import validate_topology_code
 
@@ -1055,143 +1055,6 @@ class PlatformConfigRepository:
         )
         return int(row["revision"]) if row else 0
 
-    def upsert_resource_binding(
-        self,
-        *,
-        code: str,
-        scope_type: str,
-        resource_kind: str,
-        environment_code: str | None = None,
-        base_code: str | None = None,
-        workshop_code: str | None = None,
-        connector_id: str | None = None,
-        engine: str | None = None,
-        config: dict[str, Any] | None = None,
-        secret_refs: dict[str, str] | None = None,
-        status: str = "enabled",
-        expected_revision: int | None = None,
-    ) -> dict[str, Any]:
-        environment_id, base_id, workshop_id = self.resolve_scope_ids(
-            environment_code=environment_code, base_code=base_code, workshop_code=workshop_code
-        )
-        existing = self.get_resource_binding_by_code(code)
-        timestamp = now_iso()
-        params = (
-            scope_type,
-            environment_id,
-            base_id,
-            workshop_id,
-            resource_kind,
-            connector_id,
-            engine,
-            json_text(config or {}),
-            json_text(secret_refs or {}),
-            status,
-        )
-        if existing:
-            if expected_revision is not None and int(existing["revision"]) != expected_revision:
-                raise NonRetryableExecutionError(
-                    "Platform resource revision conflict",
-                    safe_message="工具资源已发生变化，请刷新后重试",
-                    error_code="revision_conflict",
-                )
-            rows = self.database.execute(
-                """
-                update platform_resource_binding
-                set scope_type = ?, environment_id = ?, base_id = ?, workshop_id = ?,
-                    resource_kind = ?, connector_id = ?, engine = ?, config_json = ?,
-                    secret_refs_json = ?, status = ?, revision = revision + 1,
-                    updated_at = ?
-                where id = ? and (? is null or revision = ?)
-                returning id
-                """,
-                (*params, timestamp, existing["id"], expected_revision, expected_revision),
-            )
-            if not rows:
-                raise NonRetryableExecutionError(
-                    "Platform resource revision conflict",
-                    safe_message="工具资源已发生变化，请刷新后重试",
-                    error_code="revision_conflict",
-                )
-            return self.get_resource_binding(existing["id"])
-        if expected_revision not in {None, 0}:
-            raise NonRetryableExecutionError(
-                "Platform resource revision conflict",
-                safe_message="请求版本中的工具资源不存在",
-                error_code="revision_conflict",
-            )
-        entity_id = new_id("resource")
-        self.database.execute(
-            """
-            insert into platform_resource_binding
-              (id, code, scope_type, environment_id, base_id, workshop_id, resource_kind,
-               connector_id, engine, config_json, secret_refs_json, status, revision,
-               created_at, updated_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (entity_id, code, *params, 1, timestamp, timestamp),
-        )
-        return self.get_resource_binding(entity_id)
-
-    def list_resource_bindings(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
-        where = "" if include_disabled else "where r.status = 'enabled'"
-        rows = self.database.execute(
-            f"""
-            select r.*, e.code as environment_code, b.code as base_code, w.code as workshop_code
-            from platform_resource_binding r
-            left join platform_environment e on e.id = r.environment_id
-            left join platform_base b on b.id = r.base_id
-            left join platform_workshop w on w.id = r.workshop_id
-            {where}
-            order by r.code
-            """
-        )
-        return [self._parse_resource_binding(row) for row in rows]
-
-    def get_resource_binding(self, binding_id: str) -> dict[str, Any]:
-        row = self.database.execute_one(
-            """
-            select r.*, e.code as environment_code, b.code as base_code, w.code as workshop_code
-            from platform_resource_binding r
-            left join platform_environment e on e.id = r.environment_id
-            left join platform_base b on b.id = r.base_id
-            left join platform_workshop w on w.id = r.workshop_id
-            where r.id = ?
-            """,
-            (binding_id,),
-        )
-        if not row:
-            raise NotFound(f"Platform resource binding not found: {binding_id}")
-        return self._parse_resource_binding(row)
-
-    def get_resource_binding_by_code(self, code: str) -> dict[str, Any] | None:
-        row = self.database.execute_one(
-            """
-            select r.*, e.code as environment_code, b.code as base_code, w.code as workshop_code
-            from platform_resource_binding r
-            left join platform_environment e on e.id = r.environment_id
-            left join platform_base b on b.id = r.base_id
-            left join platform_workshop w on w.id = r.workshop_id
-            where r.code = ?
-            """,
-            (code,),
-        )
-        return self._parse_resource_binding(row) if row else None
-
-    def set_resource_binding_status(self, code: str, status: str) -> dict[str, Any]:
-        existing = self.get_resource_binding_by_code(code)
-        if not existing:
-            raise NotFound(f"Platform resource binding not found: {code}")
-        self.database.execute(
-            """
-            update platform_resource_binding
-            set status = ?, revision = revision + 1, updated_at = ?
-            where id = ?
-            """,
-            (status, now_iso(), existing["id"]),
-        )
-        return self.get_resource_binding(existing["id"])
-
     def record_config_audit(
         self,
         *,
@@ -1249,7 +1112,6 @@ class PlatformConfigRepository:
               select revision from platform_environment
               union all select revision from platform_base
               union all select revision from platform_workshop
-              union all select revision from platform_resource_binding
             ) revisions
             """
         )
@@ -1363,14 +1225,6 @@ class PlatformConfigRepository:
             "sensitive": bool(int(row.get("sensitive") or 0)),
             "bootstrap_only": bool(int(row.get("bootstrap_only") or 0)),
             "default": self._json_from_text(row.get("default_json") or "null"),
-            "revision": int(row.get("revision") or 0),
-        }
-
-    def _parse_resource_binding(self, row: dict[str, Any]) -> dict[str, Any]:
-        return {
-            **row,
-            "config": self._json_from_text(row.get("config_json") or "{}"),
-            "secret_refs": self._json_from_text(row.get("secret_refs_json") or "{}"),
             "revision": int(row.get("revision") or 0),
         }
 

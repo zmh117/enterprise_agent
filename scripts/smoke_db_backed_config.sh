@@ -71,7 +71,6 @@ echo "==> Starting Docker Compose services"
   fi
   compose_args+=(postgres rabbitmq api-server agent-worker)
   FEATURE_REAL_CLAUDE="$REAL_CLAUDE" \
-  FEATURE_REAL_INTERNAL_TOOLS="${FEATURE_REAL_INTERNAL_TOOLS:-false}" \
   docker compose "${compose_args[@]}"
 )
 

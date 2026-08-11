@@ -122,7 +122,7 @@ describe("Business Application workbench", () => {
     expect(screen.getByText(/business_application\.read/)).toBeInTheDocument()
   })
 
-  it("renders detail and keeps capabilities as governed empty state", async () => {
+  it("renders detail and keeps MCP tools as an explicit Agent subset", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input)
       if (url.endsWith("/catalog")) {
@@ -142,9 +142,7 @@ describe("Business Application workbench", () => {
               component_type: "dingtalk_enterprise_stream",
             },
           ],
-          capabilities: [],
-          capability_catalog_connected: false,
-          api_capabilities_by_agent_publication: {},
+          mcp_tools_by_agent_publication: {},
         })
       }
       return response({
@@ -158,7 +156,6 @@ describe("Business Application workbench", () => {
           status: "enabled",
           revision: 1,
           runtime_wired: false,
-          capability_catalog_connected: false,
           draft: {
             id: "revision_1",
             application_id: "business_app_test",
@@ -172,7 +169,7 @@ describe("Business Application workbench", () => {
             config_hash: "",
             triggers: [],
             deliveries: [],
-            capabilities: [],
+            mcp_tools: [],
           },
           publications: [
             {
@@ -237,11 +234,11 @@ describe("Business Application workbench", () => {
     ).toHaveClass("sm:col-span-2")
   })
 
-  it("lists governed readonly capabilities and includes selections in the draft", async () => {
+  it("lists the selected Agent publication MCP tools and saves an explicit subset", async () => {
     let savedBody: Record<string, unknown> | undefined
     const draft = {
-      id: "revision_capability_1",
-      application_id: "business_app_capability",
+      id: "revision_mcp_1",
+      application_id: "business_app_mcp",
       revision: 1,
       status: "draft",
       agent_publication_id: "agent_publication_default_v1",
@@ -256,8 +253,7 @@ describe("Business Application workbench", () => {
       config_hash: "",
       triggers: [],
       deliveries: [],
-      capabilities: [],
-      api_capability_release_ids: [],
+      mcp_tools: [],
     }
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = String(input)
@@ -301,40 +297,46 @@ describe("Business Application workbench", () => {
               component_type: "dingtalk_enterprise_stream",
             },
           ],
-          capabilities: [],
-          capability_catalog_connected: true,
-          api_capabilities_by_agent_publication: {
+          mcp_tools_by_agent_publication: {
             agent_publication_default_v1: [
               {
-                identifier: "cap__ones__work_item__search",
-                release_id: "capability-release-1",
-                description: "搜索当前用户默认 Team 的 ONES 工作项",
-                release_revision: 1,
-                status: "ACTIVE",
-                release_note: "首版",
-                deprecation_reason: "",
-                replacement_release_id: null,
-                selectable: true,
+                server_code: "tool-mcp",
+                tool_identifier: "query_database",
+                schema_hash: "a".repeat(64),
+                description: "只读查询数据库",
+                resource_kind: "database",
               },
             ],
+            agent_publication_typescript_v1: [],
           },
         })
       }
       if (init?.method === "PUT" && url.endsWith("/draft")) {
         savedBody = JSON.parse(String(init.body)) as Record<string, unknown>
-        return response({ revision: { ...draft, revision: 2 } })
+        return response({
+          revision: {
+            ...draft,
+            revision: 2,
+            mcp_tools: [
+              {
+                server_code: "tool-mcp",
+                tool_identifier: "query_database",
+                schema_hash: "a".repeat(64),
+              },
+            ],
+          },
+        })
       }
       return response({
         application: {
-          id: "business_app_capability",
-          code: "capability-app",
-          name: "能力配置应用",
+          id: "business_app_mcp",
+          code: "mcp-app",
+          name: "MCP 工具配置应用",
           description: "",
           project_code: "default",
           owner_user_id: "user_admin",
           status: "enabled",
           revision: 1,
-          capability_catalog_connected: true,
           draft,
           publications: [],
           deployments: [],
@@ -353,7 +355,7 @@ describe("Business Application workbench", () => {
           })
         }
       >
-        <MemoryRouter initialEntries={["/applications/capability-app"]}>
+        <MemoryRouter initialEntries={["/applications/mcp-app"]}>
           <Routes>
             <Route
               path="/applications/:code"
@@ -364,7 +366,7 @@ describe("Business Application workbench", () => {
       </QueryClientProvider>
     )
 
-    expect(await screen.findByText("能力配置应用")).toBeInTheDocument()
+    expect(await screen.findByText("MCP 工具配置应用")).toBeInTheDocument()
     fireEvent.click(screen.getByRole("tab", { name: "组成配置" }))
     const conversationMode = (await screen.findByLabelText(
       "会话范围"
@@ -390,16 +392,9 @@ describe("Business Application workbench", () => {
       })
     ).toBeInTheDocument()
     expect(screen.queryByText("操作失败，请重试。")).not.toBeInTheDocument()
-    expect(
-      await screen.findByLabelText(
-        "选择 Capability cap__ones__work_item__search"
-      )
-    ).toBeInTheDocument()
-    const capability = await screen.findByLabelText(
-      "选择 Capability cap__ones__work_item__search"
-    )
-    fireEvent.click(capability)
-    expect(capability).toBeChecked()
+    const mcpTool = await screen.findByLabelText("选择 MCP Tool query_database")
+    fireEvent.click(mcpTool)
+    expect(mcpTool).toBeChecked()
     fireEvent.click(screen.getByRole("button", { name: "保存新草稿" }))
 
     await waitFor(() =>
@@ -407,259 +402,7 @@ describe("Business Application workbench", () => {
         session_policy: {
           conversation_mode: "channel",
         },
-        capabilities: [],
-        api_capability_release_ids: ["capability-release-1"],
-      })
-    )
-  })
-
-  it("configures an explicit Built-in Tool subset and deterministic resource matrix", async () => {
-    let savedBody: Record<string, unknown> | undefined
-    const draft = {
-      id: "revision_builtin_1",
-      application_id: "business_app_builtin",
-      revision: 1,
-      status: "draft",
-      agent_publication_id: "agent_publication_default_v1",
-      workflow_publication_id: "",
-      session_policy: {
-        conversation_mode: "channel",
-        recent_message_limit: 20,
-        retention_days: 30,
-      },
-      execution_policy: {
-        max_turns: 12,
-        timeout_seconds: 300,
-        max_tool_calls: 30,
-      },
-      validation: { valid: false, errors: [] },
-      config_hash: "",
-      triggers: [],
-      deliveries: [],
-      capabilities: [],
-      api_capability_release_ids: [],
-      builtin_tools: [],
-      target_paths: [],
-    }
-    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
-      const url = String(input)
-      if (url.endsWith("/catalog")) {
-        return response({
-          agents: [
-            {
-              id: "agent_publication_default_v1",
-              code: "default-diagnostic-agent",
-              revision: 36,
-              project_code: "default",
-              status: "enabled",
-              config_hash: "agent-hash",
-              direction: "",
-              component_type: "agent_publication",
-            },
-          ],
-          workflows: [],
-          connectors: [],
-          capabilities: [],
-          capability_catalog_connected: false,
-          api_capabilities_by_agent_publication: {},
-          builtin_tools_by_agent_publication: {
-            agent_publication_default_v1: [
-              {
-                tool_identifier: "query_database",
-                tool_release_id: "tool_release_database_v1",
-                release_revision: 1,
-                tool_semantic_version: "1.0.0",
-                handler_version: "1.0.0",
-                implementation_digest: "a".repeat(64),
-                public_schema_hash: "b".repeat(64),
-                display_name: "数据库只读查询",
-                model_description: "只读查询数据库",
-                resource_slots: [
-                  {
-                    code: "database",
-                    resource_kind: "database",
-                    required: true,
-                    allowed_scope_types: ["environment", "base", "workshop"],
-                  },
-                ],
-                release_status: "ACTIVE",
-                installation_status: "INSTALLED",
-                selectable: true,
-              },
-            ],
-          },
-          resource_revisions: [
-            {
-              resource_revision_id: "database_cloud_v1",
-              resource_revision: 1,
-              resource_code: "guanlan-database-cloud",
-              resource_name: "观澜数据库 Cloud",
-              resource_kind: "database",
-              scope_type: "base",
-              environment_code: "sanjiu",
-              base_code: "guanlan",
-              workshop_code: "",
-              content_hash: "cloud-hash",
-            },
-            {
-              resource_revision_id: "database_edge_v1",
-              resource_revision: 1,
-              resource_code: "guanlan-database-edge",
-              resource_name: "观澜数据库 Edge",
-              resource_kind: "database",
-              scope_type: "base",
-              environment_code: "sanjiu",
-              base_code: "guanlan",
-              workshop_code: "",
-              content_hash: "edge-hash",
-            },
-          ],
-          workshop_policy_revisions: [
-            {
-              policy_revision_id: "workshop_policy_gl001_v1",
-              policy_revision: 1,
-              policy_code: "gl001-partition",
-              environment_code: "sanjiu",
-              base_code: "guanlan",
-              workshop_code: "GL001",
-              database_rule_enabled: true,
-              redis_rule_enabled: true,
-              content_hash: "policy-hash",
-            },
-          ],
-          loki_policy_revisions: [],
-          target_paths: [
-            {
-              target_scope_type: "workshop",
-              environment_code: "sanjiu",
-              base_code: "guanlan",
-              workshop_code: "GL001",
-              display_name: "观澜 GL001 车间",
-            },
-          ],
-        })
-      }
-      if (init?.method === "PUT" && url.endsWith("/draft")) {
-        savedBody = JSON.parse(String(init.body)) as Record<string, unknown>
-        return response({
-          revision: {
-            ...draft,
-            revision: 2,
-            builtin_tools: savedBody.builtin_tools,
-            target_paths: savedBody.target_paths,
-          },
-        })
-      }
-      return response({
-        application: {
-          id: "business_app_builtin",
-          code: "builtin-app",
-          name: "内置工具配置应用",
-          description: "",
-          project_code: "default",
-          owner_user_id: "user_admin",
-          status: "enabled",
-          revision: 1,
-          capability_catalog_connected: false,
-          draft,
-          publications: [],
-          deployments: [],
-        },
-      })
-    })
-
-    render(
-      <QueryClientProvider
-        client={
-          new QueryClient({
-            defaultOptions: {
-              queries: { retry: false },
-              mutations: { retry: false },
-            },
-          })
-        }
-      >
-        <MemoryRouter initialEntries={["/applications/builtin-app"]}>
-          <Routes>
-            <Route
-              path="/applications/:code"
-              element={<ApplicationDetailPage />}
-            />
-          </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>
-    )
-
-    expect(await screen.findByText("内置工具配置应用")).toBeInTheDocument()
-    fireEvent.click(screen.getByRole("tab", { name: "组成配置" }))
-    fireEvent.click(
-      await screen.findByLabelText("选择业务目标 sanjiu / guanlan / GL001")
-    )
-    fireEvent.click(screen.getByLabelText("选择 Built-in Tool query_database"))
-    expect(screen.getByText("缺失")).toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole("button", { name: /添加 Mapping/ }))
-    fireEvent.change(
-      screen.getByLabelText("Mapping database Resource Revision"),
-      { target: { value: "database_cloud_v1" } }
-    )
-    fireEvent.change(
-      screen.getByLabelText("Mapping database Workshop Policy"),
-      {
-        target: { value: "workshop_policy_gl001_v1" },
-      }
-    )
-    expect(screen.getByText("唯一解析")).toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole("button", { name: /添加 Mapping/ }))
-    const placements = screen.getAllByLabelText("Mapping database Placement")
-    const resources = screen.getAllByLabelText(
-      "Mapping database Resource Revision"
-    )
-    const policies = screen.getAllByLabelText(
-      "Mapping database Workshop Policy"
-    )
-    fireEvent.change(placements[1]!, { target: { value: "edge" } })
-    fireEvent.change(resources[1]!, {
-      target: { value: "database_edge_v1" },
-    })
-    fireEvent.change(policies[1]!, {
-      target: { value: "workshop_policy_gl001_v1" },
-    })
-    expect(screen.getByText("范围重叠")).toBeInTheDocument()
-    fireEvent.change(placements[0]!, { target: { value: "cloud" } })
-    expect(screen.getByText("运行时须选 placement")).toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole("button", { name: "保存新草稿" }))
-    await waitFor(() =>
-      expect(savedBody).toMatchObject({
-        builtin_tools: [
-          {
-            tool_release_id: "tool_release_database_v1",
-            resources: [
-              {
-                placement: "cloud",
-                resource_revision_id: "database_cloud_v1",
-                workshop_partition_policy_revision_id:
-                  "workshop_policy_gl001_v1",
-              },
-              {
-                placement: "edge",
-                resource_revision_id: "database_edge_v1",
-                workshop_partition_policy_revision_id:
-                  "workshop_policy_gl001_v1",
-              },
-            ],
-          },
-        ],
-        target_paths: [
-          {
-            target_scope_type: "workshop",
-            environment_code: "sanjiu",
-            base_code: "guanlan",
-            workshop_code: "GL001",
-          },
-        ],
+        mcp_tools: ["query_database"],
       })
     )
   })
@@ -701,7 +444,7 @@ describe("Business Application workbench", () => {
         {
           detail: {
             error: {
-              code: "builtin_tool_publish_idempotency_conflict",
+              code: "mcp_resource_publish_revision_conflict",
               message: "发布请求与既有幂等记录冲突",
               correlation_id: "correlation-safe",
               retryable: false,
@@ -713,10 +456,10 @@ describe("Business Application workbench", () => {
     )
 
     await expect(
-      apiRequest("/api/platform/builtin-tools/publish")
+      apiRequest("/api/platform/resources/resource-test/publish")
     ).rejects.toMatchObject({
       status: 409,
-      code: "builtin_tool_publish_idempotency_conflict",
+      code: "mcp_resource_publish_revision_conflict",
       message: "发布请求与既有幂等记录冲突",
     } satisfies Partial<ApiError>)
   })

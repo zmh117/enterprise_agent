@@ -27,17 +27,6 @@ REAL_API_KEY_ENV = "DUAL_RUNTIME_ACCEPTANCE_API_KEY"
 REAL_MODEL = "deepseek-v4-pro[1m]"
 READONLY_TOOL = "get_er_context"
 RETRY_MARKER = "[acceptance:retry-once]"
-REAL_TARGET = {
-    "target_scope_type": "base",
-    "environment_code": "dual-real-local",
-    "base_code": "acceptance-base",
-    "workshop_code": "",
-}
-REAL_ROUTING_CONTEXT = {
-    "environment": "dual-real-local",
-    "base": "acceptance-base",
-    "workshop": "",
-}
 REAL_ACTIONS = {
     "real-full",
     "create-real-cancel-job",
@@ -90,7 +79,7 @@ def _publish_agent(
     *,
     agent_code: str,
     connection_revision_id: str,
-    builtin_tool_release_ids: tuple[str, ...] = (),
+    mcp_tool_ids: tuple[str, ...] = (),
     business_instructions: str = "Return only the deterministic smoke result.",
     timeout_seconds: int = 20,
     max_turns: int = 2,
@@ -109,8 +98,7 @@ def _publish_agent(
         "max_turns": max_turns,
         "timeout_seconds": timeout_seconds,
     }
-    config["tools"] = []
-    config["builtin_tool_release_ids"] = list(builtin_tool_release_ids)
+    config["mcp_tool_ids"] = list(mcp_tool_ids)
     config["skills"] = []
     config["channels"] = {"ingress": [], "delivery": []}
     revision = runtime.agent_config_service.save_draft(
@@ -131,11 +119,10 @@ def _activate_application(
     *,
     code: str,
     agent_publication_id: str,
-    builtin_tool_release_ids: tuple[str, ...] = (),
+    mcp_tool_ids: tuple[str, ...] = (),
     timeout_seconds: int = 20,
     max_turns: int = 2,
     max_tool_calls: int = 0,
-    target_paths: tuple[dict[str, str], ...] = (),
 ) -> dict[str, Any]:
     application = runtime.business_application_service.create(
         actor_id=ACTOR_ID,
@@ -159,7 +146,7 @@ def _activate_application(
         applications=[
             {
                 "application_id": str(application["id"]),
-                "capability_codes": [],
+                "tool_identifiers": list(mcp_tool_ids),
                 "scopes": [],
             }
         ],
@@ -192,12 +179,7 @@ def _activate_application(
             },
             "triggers": [],
             "deliveries": [],
-            "capabilities": [],
-            "builtin_tools": [
-                {"tool_release_id": release_id, "resources": []}
-                for release_id in builtin_tool_release_ids
-            ],
-            "target_paths": list(target_paths),
+            "mcp_tools": list(mcp_tool_ids),
         },
     )
     publication = runtime.business_application_service.publish(
@@ -215,61 +197,18 @@ def _activate_application(
     return runtime.business_application_resolver.resolve_active(code, "local")
 
 
-def _publish_readonly_tool(runtime: Container) -> dict[str, Any]:
-    runtime.database.execute(
-        """
-        insert into permission_policy
-          (id, subject_type, subject_code, resource_type, resource_code,
-           effect, action, status, priority, revision, created_at, updated_at)
-        values ('dual-runtime-real-builtin-tool-admin', 'user', ?,
-                'builtin_tool', '*', 'allow', '*', 'enabled', 100, 1,
-                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        on conflict(id) do nothing
-        """,
-        (ACTOR_ID,),
-    )
-    handlers = runtime.platform_config_service.handlers
-    handlers.reconcile(actor_id=ACTOR_ID)
-    evidence = handlers.verify_payload(
-        {"tool_identifier": READONLY_TOOL, "handler_version": "1.0.0"},
-        actor_id=ACTOR_ID,
-    )
-    return handlers.publish_builtin_tool_payload(
-        {
-            "tool_identifier": READONLY_TOOL,
-            "handler_version": "1.0.0",
-            "verification_id": evidence["id"],
-            "idempotency_key": "dual-runtime-real-get-er-context-v1",
-        },
-        actor_id=ACTOR_ID,
-    )
-
-
 def _prepare_real_runtime(
     runtime: Container,
     runtime_kinds: tuple[str, ...],
     *,
     api_key: str,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
-    runtime.platform_config_service.upsert_environment(
-        {"code": REAL_TARGET["environment_code"]},
-        actor_id=ACTOR_ID,
-    )
-    runtime.platform_config_service.upsert_base(
-        {
-            "environment_code": REAL_TARGET["environment_code"],
-            "code": REAL_TARGET["base_code"],
-            "engine": "mysql",
-        },
-        actor_id=ACTOR_ID,
-    )
     connection = _configure_model_connection(
         runtime,
         api_key=api_key,
         model=REAL_MODEL,
     )
-    release = _publish_readonly_tool(runtime)
-    release_ids = (str(release["id"]),)
+    mcp_tool_ids = (READONLY_TOOL,)
     suffix = uuid.uuid4().hex[:8]
     publications: dict[str, dict[str, Any]] = {}
     applications: dict[str, dict[str, Any]] = {}
@@ -279,7 +218,7 @@ def _prepare_real_runtime(
             runtime,
             agent_code=agent_code,
             connection_revision_id=str(connection["id"]),
-            builtin_tool_release_ids=release_ids,
+            mcp_tool_ids=mcp_tool_ids,
             business_instructions=(
                 "This is a disposable acceptance run. Follow the user request exactly, "
                 "use only the published read-only MCP tool when requested, and keep the "
@@ -296,11 +235,10 @@ def _prepare_real_runtime(
             runtime,
             code=f"dual-real-{runtime_kind.split('-')[0]}-{suffix}",
             agent_publication_id=str(publication["id"]),
-            builtin_tool_release_ids=release_ids,
+            mcp_tool_ids=mcp_tool_ids,
             timeout_seconds=180,
             max_turns=6,
             max_tool_calls=4,
-            target_paths=(dict(REAL_TARGET),),
         )
     return publications, applications
 
@@ -579,7 +517,6 @@ def _run_real_full(runtime: Container) -> int:
             ),
             agent=publications[runtime_kind],
             application=applications[runtime_kind],
-            routing_context=dict(REAL_ROUTING_CONTEXT),
         )
         job_ids.append(tool_job_id)
         tool_job = _wait_for_job(
@@ -619,7 +556,6 @@ def _run_real_full(runtime: Container) -> int:
             ),
             agent=publications[runtime_kind],
             application=applications[runtime_kind],
-            routing_context=dict(REAL_ROUTING_CONTEXT),
         )
         job_ids.append(retry_job_id)
         retry_job = _wait_for_job(
@@ -680,7 +616,6 @@ def _create_real_cancel_job(runtime: Container) -> int:
         ),
         agent=publications[runtime_kind],
         application=applications[runtime_kind],
-        routing_context=dict(REAL_ROUTING_CONTEXT),
     )
     deadline = time.monotonic() + 180
     observed = False

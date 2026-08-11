@@ -10,7 +10,7 @@
 
 - `app_user`、角色、成员关系、Web Session；
 - ONES 身份、加密个人凭据、默认 Team 和使用事实；
-- API Capability、Handler、Agent、业务应用主体及不可变发布；
+- Agent、业务应用主体、MCP Tool 发布事实及不可变发布；
 - 全部 Agent Job、Tool 调用、Delivery Outbox 和投递尝试；
 - 历史 Application Revision 中指向旧 Connector 的 Trigger／Delivery 引用。
 
@@ -41,9 +41,8 @@
 5. 删除 `dingtalk_identity_candidate`。
 6. 删除 `channel_ingress_outbox`，再删除 `channel_ingress_event`。
 7. 删除 `channel_connector_runtime` 和已停止／过期的 `channel_runtime_lease`。
-8. 删除 `provider='dingtalk'` 的 `user_external_identity`。若
-   `external_api_credential`、`api_capability_verification` 或
-   `agent_job_external_subject` 反向引用目标身份，计划标记为 blocker 并拒绝执行。
+8. 删除 `provider='dingtalk'` 的 `user_external_identity`；Job 中已经持久化的
+   发送人和外部身份摘要作为历史事实保留，不反向删除 Job。
 9. 删除 `business_application_active_route`，并停用对应
    `business_application_deployment`；不修改 Revision 和 Publication。
 10. 将仅由目标 Connector 使用、且 `purpose='dingtalk_stream_client_secret'`、

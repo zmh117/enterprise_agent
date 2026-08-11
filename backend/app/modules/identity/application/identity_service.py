@@ -259,6 +259,12 @@ class IdentityService:
         expected_revision: int,
     ) -> dict[str, object]:
         before = self.repository.get_external_identity(identity_id)
+        if str(before["provider"]) == "ones" and status == "enabled":
+            raise PermissionDenied(
+                "Administrators cannot enable ONES identities",
+                safe_message="ONES 身份必须由用户本人重新验证后启用",
+                error_code="ones_self_reverification_required",
+            )
         identity = self.repository.set_external_identity_status(
             identity_id, status=status, expected_revision=expected_revision
         )
@@ -285,6 +291,12 @@ class IdentityService:
         expected_revision: int,
     ) -> dict[str, object]:
         before = self.repository.get_external_identity(identity_id)
+        if str(before["provider"]) == "ones":
+            raise PermissionDenied(
+                "Administrators cannot unbind ONES identities",
+                safe_message="ONES 身份只能由用户本人解绑",
+                error_code="ones_self_unbind_required",
+            )
         identity = self.repository.unbind_external_identity(
             identity_id,
             expected_revision=expected_revision,

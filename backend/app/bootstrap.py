@@ -81,9 +81,12 @@ from app.modules.identity.application import (
     AuthorizationEvaluator,
     IdentityAdminService,
     IdentityService,
+    OnesIdentityBindingService,
 )
 from app.modules.identity.infrastructure import (
     IdentityRepository,
+    OnesIdentityChallengeRepository,
+    UrllibOnesIdentityVerifier,
 )
 from app.modules.identity_discovery import (
     DingTalkIdentityDiscoveryRepository,
@@ -156,6 +159,7 @@ class Container:
     agent_repository: AgentRepository
     identity_repository: IdentityRepository
     identity_service: IdentityService
+    ones_identity_binding_service: OnesIdentityBindingService
     identity_discovery_repository: DingTalkIdentityDiscoveryRepository
     identity_discovery_service: DingTalkIdentityDiscoveryService
     identity_admin_service: IdentityAdminService
@@ -467,6 +471,18 @@ def _build_container(
         identity_repository,
         audit_service,
         connector_registry,
+    )
+    ones_identity_binding_service = OnesIdentityBindingService(
+        identity_repository=identity_repository,
+        challenge_repository=OnesIdentityChallengeRepository(database),
+        verifier=UrllibOnesIdentityVerifier(
+            settings.ones_identity,
+            environment=settings.environment,
+        ),
+        audit_service=audit_service,
+        instance_code=settings.ones_identity.instance_code,
+        display_name=settings.ones_identity.display_name,
+        challenge_ttl_seconds=settings.ones_identity.challenge_ttl_seconds,
     )
     authorization_evaluator = AuthorizationEvaluator(identity_repository, audit_service)
     authorization_center_repository = AuthorizationCenterRepository(database)
@@ -920,6 +936,7 @@ def _build_container(
         agent_repository=agent_repository,
         identity_repository=identity_repository,
         identity_service=identity_service,
+        ones_identity_binding_service=ones_identity_binding_service,
         identity_discovery_repository=identity_discovery_repository,
         identity_discovery_service=identity_discovery_service,
         identity_admin_service=identity_admin_service,

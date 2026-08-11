@@ -6,7 +6,7 @@
 
 ## 硬性前提
 
-- 安排完整维护窗口；停止 API、Internal API Platform、Agent Worker、Job/Delivery
+- 安排完整维护窗口；停止 API、tool-mcp、Agent Runtime、Agent Worker、Job/Delivery
   Dispatcher、Webhook、DingTalk 与 Attachment 服务，只保留 PostgreSQL；
 - 先确认 Job、Job Dispatch、Delivery 与 Webhook Outbox 已排空或已记录精确状态；
 - 对 PostgreSQL 做可恢复备份，并分别备份旧 Master Key 文件；
@@ -75,7 +75,7 @@ where s.status = 'enabled'
 2. 将旧 Key 文件移入受控离线备份位置，再用文件系统原子 rename 把新文件替换
    到 `APP_CONFIG_MASTER_KEY_FILE` 指向的固定路径；
 3. 先运行 one-shot Migrator/schema head 校验；
-4. 只启动 API 与 Internal API Platform，确认 `/ready` 正常，Secret metadata
+4. 只启动 API 与 tool-mcp，确认 `/ready` 正常，Secret metadata
    列表可读，且相关资源没有解密错误；
 5. 依次启动 Worker、Dispatcher、Webhook、DingTalk 与 Attachment 服务；
 6. 检查 `platform_secret_change_event`、资源 readiness 和审计，确认没有 Secret

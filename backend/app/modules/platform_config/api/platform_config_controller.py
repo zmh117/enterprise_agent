@@ -405,7 +405,6 @@ def build_platform_config_router() -> APIRouter:
         scope_type: str = "",
         lifecycle_status: str = "",
         revision_status: str = "",
-        activation_status: str = "",
     ) -> dict[str, Any]:
         _require_management_read(
             request,
@@ -416,7 +415,6 @@ def build_platform_config_router() -> APIRouter:
             "resource_kind": resource_kind.lower(),
             "scope_type": scope_type.lower(),
             "status": lifecycle_status.lower(),
-            "activation_status": activation_status.upper(),
         }
         for key, expected in filters.items():
             if expected:

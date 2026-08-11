@@ -52,7 +52,6 @@ class RuntimeReason(StrEnum):
     WORKFLOW_STORED_ONLY = "workflow_stored_only"
     EXECUTION_POLICY_STORED_ONLY = "execution_policy_stored_only"
     RETENTION_POLICY_STORED_ONLY = "retention_policy_stored_only"
-    CAPABILITY_UNSUPPORTED = "capability_unsupported"
 
 
 @dataclass(frozen=True)
@@ -534,21 +533,6 @@ class RuntimeReadinessEvaluator:
                 RuntimeComponentState.STORED_ONLY,
                 RuntimeReason.WORKFLOW_STORED_ONLY.value,
                 "工作流发布版本已保存，但尚未执行",
-            )
-        capabilities = [
-            value
-            for value in snapshot.get("capabilities") or []
-            if bool(value.get("enabled", True))
-        ]
-        if capabilities:
-            components["capabilities"] = RuntimeComponentStatus(
-                RuntimeComponentState.WIRED,
-                RuntimeReason.READY.value,
-                "已装配的只读业务能力将在角色、Agent 和数据范围交集中执行",
-                fields={
-                    str(value.get("capability_code") or ""): "wired"
-                    for value in capabilities
-                },
             )
         return components, blockers, tuple(affected_routes)
 

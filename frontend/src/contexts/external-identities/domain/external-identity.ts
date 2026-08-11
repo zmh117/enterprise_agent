@@ -1,6 +1,6 @@
 import { z } from "zod"
 
-export const externalIdentityProviderSchema = z.literal("dingtalk")
+export const externalIdentityProviderSchema = z.enum(["dingtalk", "ones"])
 export const externalIdentityStatusSchema = z.enum([
   "enabled",
   "disabled",
@@ -11,6 +11,8 @@ const dingtalkEnterpriseSchema = z.object({
   name: z.string(),
   corp_id: z.string(),
 })
+
+export const onesTeamSchema = z.object({ id: z.string(), name: z.string() })
 
 export const selfDingTalkIdentitySchema = z.object({
   provider: z.literal("dingtalk"),
@@ -35,7 +37,26 @@ export const adminDingTalkIdentitySchema = selfDingTalkIdentitySchema.extend({
   observations: z.array(dingtalkObservationSchema),
 })
 
-export const adminExternalIdentitySchema = adminDingTalkIdentitySchema
+export const selfOnesIdentitySchema = z.object({
+  provider: z.literal("ones"),
+  user_name: z.string(),
+  status: z.enum(["enabled", "disabled"]),
+  default_team: onesTeamSchema.nullable(),
+  verified_at: z.string().nullable().optional(),
+  user_id: z.string(),
+  teams: z.array(onesTeamSchema),
+})
+
+export const adminOnesIdentitySchema = selfOnesIdentitySchema.extend({
+  status: externalIdentityStatusSchema,
+  identity_id: z.string(),
+  revision: z.number().int().positive(),
+})
+
+export const adminExternalIdentitySchema = z.discriminatedUnion("provider", [
+  adminDingTalkIdentitySchema,
+  adminOnesIdentitySchema,
+])
 
 export const adminExternalIdentityOverviewSchema = z.object({
   user_id: z.string(),
@@ -46,6 +67,25 @@ export const adminExternalIdentityOverviewSchema = z.object({
 export const selfExternalIdentityOverviewSchema = z.object({
   user: z.object({ id: z.string(), display_name: z.string() }),
   dingtalk: z.array(selfDingTalkIdentitySchema),
+  ones: selfOnesIdentitySchema.nullable(),
+})
+
+export const selfOnesStatusSchema = z.object({
+  user: z.object({ id: z.string(), display_name: z.string() }),
+  ones: selfOnesIdentitySchema.nullable(),
+})
+
+export const onesIdentityChallengeSchema = z.object({
+  id: z.string(),
+  provider: z.literal("ones"),
+  external_user_id: z.string(),
+  display_name: z.string(),
+  teams: z.array(onesTeamSchema),
+  team_ids: z.array(z.string()),
+  verified_at: z.string(),
+  expires_at: z.string(),
+  status: z.enum(["PENDING", "CONSUMED", "EXPIRED"]),
+  created_at: z.string(),
 })
 
 export const identityProviderSchema = z.object({
@@ -63,5 +103,8 @@ export const identityMutationSchema = z.object({
 
 export type AdminExternalIdentity = z.infer<typeof adminExternalIdentitySchema>
 export type AdminDingTalkIdentity = z.infer<typeof adminDingTalkIdentitySchema>
+export type AdminOnesIdentity = z.infer<typeof adminOnesIdentitySchema>
 export type SelfDingTalkIdentity = z.infer<typeof selfDingTalkIdentitySchema>
+export type SelfOnesIdentity = z.infer<typeof selfOnesIdentitySchema>
 export type IdentityProvider = z.infer<typeof identityProviderSchema>
+export type OnesIdentityChallenge = z.infer<typeof onesIdentityChallengeSchema>

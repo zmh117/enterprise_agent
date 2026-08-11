@@ -126,12 +126,12 @@ PHASE_ONE_TEST_TARGETS = (
         "::test_debug_create_rejects_authority_expanding_fields"
     ),
     (
-        "backend/tests/test_internal_api_service_auth.py"
-        "::test_internal_api_accepts_current_and_next_without_leaking_tokens"
+        "backend/tests/test_mcp_tool_runtime.py"
+        "::test_tool_mcp_bootstrap_resolves_published_resource_secret"
     ),
     (
-        "backend/tests/test_internal_api_job_fact_authorization.py"
-        "::test_internal_api_requires_token_and_authoritative_job_facts"
+        "backend/tests/test_mcp_tool_runtime.py"
+        "::test_job_snapshot_fails_closed_on_schema_drift"
     ),
     (
         "backend/tests/test_business_application_runtime_routing.py"
@@ -219,10 +219,8 @@ PHASE_THREE_B_TEST_TARGETS = (
     "backend/tests/test_database_resource_verifier.py",
     "backend/tests/test_database_driver_boundaries.py",
     "backend/tests/test_oracle_image_contract.py",
-    "backend/tests/test_handler_registry_governance.py",
-    "backend/tests/test_handler_execution_resolution.py",
-    "backend/tests/test_governed_job_execution_scope.py",
-    "backend/tests/test_internal_api_job_fact_authorization.py",
+    "backend/tests/test_mcp_tool_runtime.py",
+    "backend/tests/test_retired_legacy_platform_contract.py",
 )
 
 

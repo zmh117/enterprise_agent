@@ -55,13 +55,6 @@ class DeliveryBinding:
 
 
 @dataclass(frozen=True)
-class CapabilityReference:
-    capability_code: str
-    version_constraint: str = ""
-    enabled: bool = True
-
-
-@dataclass(frozen=True)
 class BusinessApplicationRevision:
     id: str
     application_id: str
@@ -73,7 +66,6 @@ class BusinessApplicationRevision:
     execution_policy: dict[str, Any] = field(default_factory=dict)
     triggers: tuple[TriggerBinding, ...] = ()
     deliveries: tuple[DeliveryBinding, ...] = ()
-    capabilities: tuple[CapabilityReference, ...] = ()
     validation: dict[str, Any] = field(default_factory=dict)
     config_hash: str = ""
     created_by: str = ""
@@ -123,4 +115,3 @@ class Deployment:
     deactivated_by: str = ""
     deactivated_at: str = ""
     updated_at: str = ""
-
