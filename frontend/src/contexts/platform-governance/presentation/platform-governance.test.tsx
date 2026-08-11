@@ -328,6 +328,114 @@ describe("Phase 5 platform governance UI", () => {
     expect(screen.getByLabelText("Port")).toHaveAttribute("type", "number")
   })
 
+  it("accepts a custom environment code and explains the topology boundary", async () => {
+    let createBody: Record<string, unknown> | undefined
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.endsWith("/api/platform/resources") && init?.method === "POST") {
+        createBody = JSON.parse(String(init.body)) as Record<string, unknown>
+        return response({
+          resource: { id: "resource-customer-prod" },
+          draft: {
+            id: "draft-customer-prod",
+            resource_id: "resource-customer-prod",
+            draft_revision: 1,
+            provider_type: "redis",
+            config: {
+              host: "redis.internal",
+              port: 6379,
+              database: 0,
+              username: "",
+              tls: { enabled: false, verify_certificate: true },
+            },
+            secret_refs: {},
+            status: "DRAFT",
+            updated_at: "2026-08-11T00:00:00Z",
+          },
+        })
+      }
+      if (url.includes("/api/platform/resources")) {
+        return response({ resources: [] })
+      }
+      if (url.includes("/api/platform/secrets")) {
+        return response({ secrets: [] })
+      }
+      if (url.includes("/api/platform/environments")) {
+        return response({ environments: [] })
+      }
+      if (url.includes("/api/platform/bases")) {
+        return response({ bases: [] })
+      }
+      return response({ workshops: [] })
+    })
+    renderWithQuery(<ToolResourcesPage />)
+
+    expect(
+      await screen.findByText("当前筛选下没有工具资源")
+    ).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "新建资源" }))
+
+    const environment = screen.getByLabelText("环境")
+    fireEvent.focus(environment)
+    fireEvent.click(environment)
+    fireEvent.input(environment, {
+      target: { value: "customer_prod" },
+      inputType: "insertText",
+    })
+
+    expect(environment).toHaveValue("customer_prod")
+    expect(
+      screen.getByText(
+        "新环境只能用于环境级作用域；基地或车间作用域必须选择已有环境。"
+      )
+    ).toBeInTheDocument()
+
+    const resourceName = screen.getByLabelText("资源名称")
+    fireEvent.blur(environment, { relatedTarget: resourceName })
+    fireEvent.focus(resourceName)
+    expect(environment).toHaveValue("customer_prod")
+
+    const scope = await screen.findByRole("combobox", { name: "作用域层级" })
+    fireEvent.click(scope)
+    const environmentScope = await screen.findByRole("option", { name: "环境" })
+    fireEvent.pointerDown(environmentScope, {
+      pointerType: "mouse",
+      button: 0,
+    })
+    fireEvent.click(environmentScope)
+    expect(environment).toHaveValue("customer_prod")
+    expect(
+      await screen.findByText(
+        "环境“customer_prod”尚不存在，保存 Draft 时将同时创建。"
+      )
+    ).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Provider" }))
+    const redisProvider = await screen.findByRole("option", { name: "Redis" })
+    fireEvent.pointerDown(redisProvider, { pointerType: "mouse", button: 0 })
+    fireEvent.click(redisProvider)
+    fireEvent.change(screen.getByLabelText("资源编码"), {
+      target: { value: "customer_prod_redis" },
+    })
+    fireEvent.change(screen.getByLabelText("资源名称"), {
+      target: { value: "Customer Prod Redis" },
+    })
+    fireEvent.change(screen.getByLabelText("Host"), {
+      target: { value: "redis.internal" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "保存 Draft" }))
+
+    await waitFor(() =>
+      expect(createBody).toMatchObject({
+        scope_type: "environment",
+        environment_code: "customer_prod",
+        base_code: "",
+        workshop_code: "",
+        create_environment_if_missing: true,
+      })
+    )
+  })
+
   it("shows the technical verification status and safe failure reason", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input)

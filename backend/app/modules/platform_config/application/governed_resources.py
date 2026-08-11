@@ -253,6 +253,19 @@ class GovernedResourceService:
                 safe_message="只有 Loki 连接资源可以使用全局范围",
                 error_code="resource_scope_invalid",
             )
+        create_environment_if_missing = payload.get("create_environment_if_missing", False)
+        if not isinstance(create_environment_if_missing, bool):
+            raise NonRetryableExecutionError(
+                "create_environment_if_missing must be boolean",
+                safe_message="自动创建环境参数无效",
+                error_code="resource_environment_autocreate_invalid",
+            )
+        if create_environment_if_missing and scope_type != "environment":
+            raise NonRetryableExecutionError(
+                "Missing Environment can only be created for an Environment-scoped Resource",
+                safe_message="新环境只能直接用于环境级工具资源；基地或车间作用域必须选择已有拓扑",
+                error_code="resource_environment_autocreate_scope_invalid",
+            )
         if scope_type == "global":
             if any(
                 str(payload.get(field) or "")
@@ -265,8 +278,40 @@ class GovernedResourceService:
                 )
             environment_id = base_id = workshop_id = None
         else:
+            environment_code = str(payload.get("environment_code") or "").strip()
+            if create_environment_if_missing:
+                existing_environment = self.config_repository.get_environment_by_code(
+                    environment_code
+                )
+                if existing_environment and existing_environment.get("status") != "enabled":
+                    raise NonRetryableExecutionError(
+                        "Platform Environment exists but is disabled",
+                        safe_message="输入的环境已存在但处于停用状态，请先启用该环境",
+                        error_code="resource_environment_disabled",
+                    )
+                environment, created_environment = (
+                    self.config_repository.create_environment_if_missing(
+                        code=environment_code,
+                        display_name=environment_code,
+                    )
+                )
+                if environment.get("status") != "enabled":
+                    raise NonRetryableExecutionError(
+                        "Platform Environment exists but is disabled",
+                        safe_message="输入的环境已存在但处于停用状态，请先启用该环境",
+                        error_code="resource_environment_disabled",
+                    )
+                if created_environment:
+                    self.config_repository.record_config_audit(
+                        entity_type="environment",
+                        entity_id=str(environment["id"]),
+                        action="create_from_tool_resource",
+                        actor_id=actor_id,
+                        after=environment,
+                        correlation_id=correlation_id,
+                    )
             environment_id, base_id, workshop_id = self.config_repository.resolve_scope_ids(
-                environment_code=str(payload.get("environment_code") or ""),
+                environment_code=environment_code,
                 base_code=str(payload.get("base_code") or ""),
                 workshop_code=str(payload.get("workshop_code") or ""),
             )

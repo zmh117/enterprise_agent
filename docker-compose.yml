@@ -564,6 +564,10 @@ services:
         condition: service_healthy
       migrator:
         condition: service_completed_successfully
+      python-agent-runtime:
+        condition: service_healthy
+      typescript-agent-runtime:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD
@@ -574,6 +578,9 @@ services:
       timeout: 5s
       retries: 4
       start_period: 20s
+    networks:
+      - default
+      - agent-runtime-control
 
   channel-dispatch-worker:
     build:
@@ -594,6 +601,10 @@ services:
         condition: service_healthy
       migrator:
         condition: service_completed_successfully
+      python-agent-runtime:
+        condition: service_healthy
+      typescript-agent-runtime:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD
@@ -604,6 +615,9 @@ services:
       timeout: 5s
       retries: 4
       start_period: 20s
+    networks:
+      - default
+      - agent-runtime-control
 
   attachment-worker:
     # profiles: ["attachments"]

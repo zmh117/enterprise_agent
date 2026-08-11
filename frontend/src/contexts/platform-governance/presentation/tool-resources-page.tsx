@@ -828,6 +828,15 @@ function ResourceFormSheet({
   const secrets = (options.secrets.data ?? []).filter(
     (secret) => secret.configured
   )
+  const normalizedEnvironmentCode = form.environment_code.trim()
+  const environmentExists = (options.environments.data ?? []).some(
+    (item) => item.code === normalizedEnvironmentCode
+  )
+  const createsEnvironment =
+    !resource &&
+    form.scope_type === "environment" &&
+    Boolean(normalizedEnvironmentCode) &&
+    !environmentExists
 
   function setProvider(provider: Provider) {
     const kind: ResourceKind =
@@ -864,7 +873,15 @@ function ResourceFormSheet({
 
   function submit(event: FormEvent) {
     event.preventDefault()
-    const normalized = { ...form, config: { ...form.config } }
+    const normalized = {
+      ...form,
+      environment_code: normalizedEnvironmentCode,
+      base_code: form.base_code.trim(),
+      workshop_code: form.workshop_code.trim(),
+      config: { ...form.config },
+    }
+    if (createsEnvironment) normalized.create_environment_if_missing = true
+    else delete normalized.create_environment_if_missing
     if (normalized.provider_type === "oracle") {
       if (oracleAddressType === "sid") {
         delete normalized.config.service_name
@@ -914,12 +931,16 @@ function ResourceFormSheet({
               />
             </Field>
             <Field>
-              <FieldLabel>Provider</FieldLabel>
+              <FieldLabel htmlFor="resource-provider">Provider</FieldLabel>
               <Select
                 value={form.provider_type}
                 onValueChange={(value) => setProvider(value as Provider)}
               >
-                <SelectTrigger className="w-full">
+                <SelectTrigger
+                  id="resource-provider"
+                  aria-label="Provider"
+                  className="w-full"
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -934,7 +955,7 @@ function ResourceFormSheet({
               </Select>
             </Field>
             <Field>
-              <FieldLabel>作用域层级</FieldLabel>
+              <FieldLabel htmlFor="resource-scope-type">作用域层级</FieldLabel>
               <Select
                 value={form.scope_type}
                 disabled={Boolean(resource)}
@@ -953,7 +974,11 @@ function ResourceFormSheet({
                   })
                 }
               >
-                <SelectTrigger className="w-full">
+                <SelectTrigger
+                  id="resource-scope-type"
+                  aria-label="作用域层级"
+                  className="w-full"
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -978,6 +1003,9 @@ function ResourceFormSheet({
                 value={form.environment_code}
                 disabled={Boolean(resource)}
                 options={options.environments.data ?? []}
+                allowCustomValue={!resource}
+                customValueExists={environmentExists}
+                customValueScopeSupported={form.scope_type === "environment"}
                 onChange={(environmentCode) =>
                   setForm({
                     ...form,
@@ -1067,42 +1095,97 @@ function TopologyCombobox({
   value,
   disabled,
   options,
+  allowCustomValue = false,
+  customValueExists = true,
+  customValueScopeSupported = true,
   onChange,
 }: {
   label: string
   value: string
   disabled: boolean
   options: TopologyItem[]
+  allowCustomValue?: boolean
+  customValueExists?: boolean
+  customValueScopeSupported?: boolean
   onChange: (value: string) => void
 }) {
+  const optionCodes = options.map((option) => option.code)
+  const customValue =
+    allowCustomValue && Boolean(value.trim()) && !customValueExists
+  const inputId = `resource-${label}-code`
+
   return (
     <Field>
-      <FieldLabel>{label}</FieldLabel>
-      <Combobox
-        items={options.map((option) => option.code)}
-        value={value}
-        disabled={disabled}
-        onValueChange={(next) => onChange(String(next ?? ""))}
-      >
-        <ComboboxInput
-          required
-          disabled={disabled}
-          placeholder={`选择${label}`}
-        />
-        <ComboboxContent>
-          <ComboboxEmpty>没有可用{label}</ComboboxEmpty>
-          <ComboboxList>
+      <FieldLabel htmlFor={inputId}>{label}</FieldLabel>
+      {allowCustomValue ? (
+        <>
+          <Input
+            id={inputId}
+            required
+            disabled={disabled}
+            list={`${inputId}-options`}
+            pattern="[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}"
+            maxLength={128}
+            placeholder={`输入或选择${label}`}
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+          />
+          <datalist id={`${inputId}-options`}>
             {options.map((option) => (
-              <ComboboxItem key={option.id} value={option.code}>
-                <span>{option.display_name || option.code}</span>
-                <span className="font-mono text-xs text-muted-foreground">
-                  {option.code}
-                </span>
-              </ComboboxItem>
+              <option
+                key={option.id}
+                value={option.code}
+                label={option.display_name || option.code}
+              />
             ))}
-          </ComboboxList>
-        </ComboboxContent>
-      </Combobox>
+          </datalist>
+        </>
+      ) : (
+        <Combobox
+          items={optionCodes}
+          value={value}
+          disabled={disabled}
+          onValueChange={(next) => onChange(String(next ?? ""))}
+        >
+          <ComboboxInput
+            id={inputId}
+            required
+            disabled={disabled}
+            aria-label={label}
+            placeholder={`选择${label}`}
+          />
+          <ComboboxContent>
+            <ComboboxEmpty>没有可用{label}</ComboboxEmpty>
+            <ComboboxList>
+              {options.map((option) => (
+                <ComboboxItem key={option.id} value={option.code}>
+                  <span>{option.display_name || option.code}</span>
+                  <span className="font-mono text-xs text-muted-foreground">
+                    {option.code}
+                  </span>
+                </ComboboxItem>
+              ))}
+            </ComboboxList>
+          </ComboboxContent>
+        </Combobox>
+      )}
+      {allowCustomValue ? (
+        customValue ? (
+          <FieldDescription
+            className={
+              customValueScopeSupported ? "text-amber-700" : "text-destructive"
+            }
+          >
+            {customValueScopeSupported
+              ? `环境“${value.trim()}”尚不存在，保存 Draft 时将同时创建。`
+              : "新环境只能用于环境级作用域；基地或车间作用域必须选择已有环境。"}
+          </FieldDescription>
+        ) : (
+          <FieldDescription>
+            可选择已有环境，也可直接输入环境编码。
+          </FieldDescription>
+        )
+      ) : null}
     </Field>
   )
 }

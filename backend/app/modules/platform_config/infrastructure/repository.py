@@ -83,6 +83,36 @@ class PlatformConfigRepository:
         )
         return self.get_environment(entity_id)
 
+    def create_environment_if_missing(
+        self,
+        *,
+        code: str,
+        display_name: str = "",
+    ) -> tuple[dict[str, Any], bool]:
+        """Create an enabled environment without mutating an existing one."""
+        code = validate_topology_code(
+            code,
+            field="environment_code",
+            level="Environment",
+        )
+        timestamp = now_iso()
+        entity_id = new_id("env")
+        inserted = self.database.execute(
+            """
+            insert into platform_environment
+              (id, code, display_name, status, aliases_json, metadata_json, revision,
+               created_at, updated_at)
+            values (?, ?, ?, 'enabled', '[]', '{}', 1, ?, ?)
+            on conflict(code) do nothing
+            returning id
+            """,
+            (entity_id, code, display_name, timestamp, timestamp),
+        )
+        environment = self.get_environment_by_code(code)
+        if environment is None:
+            raise RuntimeError(f"Platform environment creation failed: {code}")
+        return environment, bool(inserted)
+
     def list_environments(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
         where = "" if include_disabled else "where status = 'enabled'"
         rows = self.database.execute(f"select * from platform_environment {where} order by code")

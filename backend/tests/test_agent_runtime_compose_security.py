@@ -137,3 +137,16 @@ def test_runtime_migrator_applies_and_verifies_service_grants_after_schema() -> 
         ]
         == "${AGENT_RUNTIME_DATABASE_PASSWORD:-agent_runtime_reader_local}"
     )
+
+
+def test_async_job_creation_workers_can_reach_both_agent_runtimes() -> None:
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    services = compose["services"]
+
+    for service_name in ("channel-dispatch-worker", "webhook-worker"):
+        service = services[service_name]
+        assert set(service["networks"]) == {"default", "agent-runtime-control"}
+        for runtime_name in ("python-agent-runtime", "typescript-agent-runtime"):
+            assert service["depends_on"][runtime_name] == {
+                "condition": "service_healthy"
+            }

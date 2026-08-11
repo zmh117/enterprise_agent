@@ -59,6 +59,20 @@ class FailingVerifier:
         )
 
 
+def _grant_platform_config_management(runtime: object, user_id: str) -> None:
+    runtime.database.execute(
+        """
+        insert into permission_policy
+          (id, subject_type, subject_code, resource_type, resource_code,
+           action, effect, priority, status, revision, created_at, updated_at)
+        values (?, 'user', ?, 'platform_config', '*', 'manage', 'allow',
+                1, 'enabled', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        on conflict(id) do nothing
+        """,
+        (f"test-platform-config-{user_id}", user_id),
+    )
+
+
 def _create_resource() -> tuple[object, object, dict[str, object]]:
     runtime = container()
     service = runtime.platform_config_service.governed_resources
@@ -101,6 +115,139 @@ def _create_resource() -> tuple[object, object, dict[str, object]]:
         actor_id="local-user",
     )
     return runtime, service, created
+
+
+def test_environment_scoped_resource_atomically_creates_an_explicit_missing_environment() -> None:
+    runtime = container()
+    _grant_platform_config_management(runtime, "user_local_admin")
+    service = runtime.platform_config_service.governed_resources
+    try:
+        created = service.create_resource(
+            {
+                "code": "custom_environment_redis",
+                "name": "Custom Environment Redis",
+                "resource_kind": "redis",
+                "scope_type": "environment",
+                "environment_code": "custom_environment",
+                "base_code": "",
+                "workshop_code": "",
+                "create_environment_if_missing": True,
+                "provider_type": "redis",
+                "config": {
+                    "host": "redis.internal",
+                    "port": 6379,
+                    "database": 0,
+                    "username": "",
+                    "tls": {"enabled": False, "verify_certificate": True},
+                },
+                "secret_refs": {},
+            },
+            actor_id="user_local_admin",
+            correlation_id="custom-environment-test",
+        )
+
+        environment = runtime.platform_config_service.repository.get_environment_by_code(
+            "custom_environment"
+        )
+        assert environment is not None
+        assert environment["status"] == "enabled"
+        assert created["resource"]["environment_id"] == environment["id"]
+        assert created["resource"]["scope_type"] == "environment"
+        audits = runtime.platform_config_service.repository.list_config_audit(limit=20)
+        assert any(
+            item["entity_type"] == "environment"
+            and item["entity_id"] == environment["id"]
+            and item["action"] == "create_from_tool_resource"
+            and item["correlation_id"] == "custom-environment-test"
+            for item in audits
+        )
+    finally:
+        runtime.database.close()
+
+
+def test_missing_environment_autocreate_is_rejected_for_base_scope() -> None:
+    runtime = container()
+    _grant_platform_config_management(runtime, "user_local_admin")
+    service = runtime.platform_config_service.governed_resources
+    try:
+        with pytest.raises(NonRetryableExecutionError) as rejected:
+            service.create_resource(
+                {
+                    "code": "invalid_custom_base_redis",
+                    "name": "Invalid Custom Base Redis",
+                    "resource_kind": "redis",
+                    "scope_type": "base",
+                    "environment_code": "missing_base_environment",
+                    "base_code": "missing_base",
+                    "create_environment_if_missing": True,
+                    "provider_type": "redis",
+                    "config": {
+                        "host": "redis.internal",
+                        "port": 6379,
+                        "database": 0,
+                        "username": "",
+                        "tls": {"enabled": False, "verify_certificate": True},
+                    },
+                    "secret_refs": {},
+                },
+                actor_id="user_local_admin",
+            )
+
+        assert rejected.value.error_code == "resource_environment_autocreate_scope_invalid"
+        assert (
+            runtime.platform_config_service.repository.get_environment_by_code(
+                "missing_base_environment"
+            )
+            is None
+        )
+    finally:
+        runtime.database.close()
+
+
+def test_created_environment_rolls_back_when_resource_creation_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = container()
+    _grant_platform_config_management(runtime, "user_local_admin")
+    service = runtime.platform_config_service.governed_resources
+
+    def fail_resource_creation(**_: object) -> dict[str, object]:
+        raise RuntimeError("simulated resource insert failure")
+
+    monkeypatch.setattr(service.repository, "create_resource", fail_resource_creation)
+    try:
+        with pytest.raises(RuntimeError, match="simulated resource insert failure"):
+            service.create_resource(
+                {
+                    "code": "rollback_custom_environment_redis",
+                    "name": "Rollback Custom Environment Redis",
+                    "resource_kind": "redis",
+                    "scope_type": "environment",
+                    "environment_code": "rollback_custom_environment",
+                    "base_code": "",
+                    "workshop_code": "",
+                    "create_environment_if_missing": True,
+                    "provider_type": "redis",
+                    "config": {
+                        "host": "redis.internal",
+                        "port": 6379,
+                        "database": 0,
+                        "username": "",
+                        "tls": {"enabled": False, "verify_certificate": True},
+                    },
+                    "secret_refs": {},
+                },
+                actor_id="user_local_admin",
+            )
+
+        assert (
+            runtime.platform_config_service.repository.get_environment_by_code(
+                "rollback_custom_environment"
+            )
+            is None
+        )
+    finally:
+        runtime.database.close()
 
 
 def test_resource_publish_requires_current_passed_verification() -> None:

@@ -45,6 +45,7 @@ import {
 
 const secretKey = ["platform-governance", "secrets"] as const
 const resourceKey = ["platform-governance", "resources"] as const
+const environmentKey = ["platform-governance", "environments"] as const
 const builtinToolKey = ["platform-governance", "builtin-tools"] as const
 const workshopPolicyKey = [
   "platform-governance",
@@ -101,7 +102,7 @@ export function useResourceFormOptions() {
   return {
     secrets: usePlatformSecrets(),
     environments: useQuery({
-      queryKey: ["platform-governance", "environments"],
+      queryKey: environmentKey,
       queryFn: listEnvironments,
     }),
     bases: useQuery({
@@ -127,9 +128,17 @@ function resourceMutation<TInput, TOutput>(
   }
 }
 
-export const useCreateGovernedResource = resourceMutation(
-  createGovernedResource
-)
+export function useCreateGovernedResource() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: createGovernedResource,
+    onSuccess: () =>
+      Promise.all([
+        client.invalidateQueries({ queryKey: resourceKey }),
+        client.invalidateQueries({ queryKey: environmentKey }),
+      ]),
+  })
+}
 export const useSaveGovernedResourceDraft = resourceMutation(
   ({
     code,

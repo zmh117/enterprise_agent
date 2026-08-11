@@ -589,4 +589,5 @@ export type ResourceFormInput = {
   provider_type: "mysql" | "sqlserver" | "oracle" | "redis" | "loki"
   config: Record<string, unknown>
   secret_refs: Record<string, string>
+  create_environment_if_missing?: boolean
 }
