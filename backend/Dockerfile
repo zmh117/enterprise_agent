@@ -11,10 +11,12 @@ ENV PYTHONPATH=/app/backend
 
 FROM python-deps AS claude-runtime
 COPY --from=node-runtime /usr/local/ /usr/local/
-RUN --mount=type=cache,target=/root/.npm \
-    node --version \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=cache,target=/root/.npm \
+    python -c "import subprocess, sys, tomllib; deps = tomllib.load(open('/app/pyproject.toml', 'rb'))['project']['optional-dependencies']['python-runtime']; subprocess.check_call([sys.executable, '-m', 'pip', 'install', *deps])" \
+    && node --version \
     && npm --version \
-    && npm install -g @anthropic-ai/claude-code
+    && npm install -g @anthropic-ai/claude-code@2.1.226
 
 FROM python-deps AS mock-internal-api-platform
 COPY backend/app/__init__.py backend/app/mock_internal_api_platform.py /app/backend/app/
@@ -111,7 +113,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-deps --no-build-isolation .
 CMD ["python", "-m", "app.workers.dingtalk_stream_ingress_worker"]
 
-FROM claude-runtime AS agent-worker
+FROM python-deps AS agent-worker
 COPY backend/app/__init__.py backend/app/bootstrap.py /app/backend/app/
 COPY backend/app/cli /app/backend/app/cli
 COPY backend/app/shared /app/backend/app/shared
@@ -150,23 +152,40 @@ COPY backend/app/workers /app/backend/app/workers
 COPY backend/migrations /app/backend/migrations
 COPY backend/seeds /app/backend/seeds
 COPY agent-runtime/contracts /app/agent-runtime/contracts
-COPY .claude /app/.claude
 RUN python -c "import app.bootstrap; import app.workers.agent_job_worker; import app.workers.job_dispatch_worker; import app.workers.delivery_dispatch_worker; import app.workers.webhook_dispatch_worker; import app.workers.channel_dispatch_worker"
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-deps --no-build-isolation .
 CMD ["python", "-m", "app.workers.agent_job_worker"]
 
-FROM api-server AS runtime-tool-mcp
-RUN groupadd --system --gid 10001 runtime-tool \
-    && useradd --system --uid 10001 --gid 10001 --no-create-home runtime-tool
+FROM claude-runtime AS python-agent-runtime
+COPY backend/app/__init__.py /app/backend/app/
+COPY backend/app/python_runtime /app/backend/app/python_runtime
+COPY backend/app/shared /app/backend/app/shared
+COPY backend/app/modules/__init__.py /app/backend/app/modules/
+COPY backend/app/modules/agent/__init__.py /app/backend/app/modules/agent/
+COPY backend/app/modules/agent/domain /app/backend/app/modules/agent/domain
+COPY backend/app/modules/agent/infrastructure/__init__.py /app/backend/app/modules/agent/infrastructure/
+COPY backend/app/modules/agent/infrastructure/generated_runtime_contracts.py backend/app/modules/agent/infrastructure/runtime_protocol.py backend/app/modules/agent/infrastructure/tool_manifest.py /app/backend/app/modules/agent/infrastructure/
+COPY backend/app/modules/model_connection/__init__.py /app/backend/app/modules/model_connection/
+COPY backend/app/modules/model_connection/domain /app/backend/app/modules/model_connection/domain
+COPY backend/app/modules/model_connection/infrastructure/__init__.py backend/app/modules/model_connection/infrastructure/repository.py /app/backend/app/modules/model_connection/infrastructure/
+COPY backend/app/modules/platform_config/__init__.py /app/backend/app/modules/platform_config/
+COPY backend/app/modules/platform_config/domain /app/backend/app/modules/platform_config/domain
+COPY backend/app/modules/platform_config/application/__init__.py backend/app/modules/platform_config/application/secrets.py backend/app/modules/platform_config/application/validation.py /app/backend/app/modules/platform_config/application/
+COPY backend/app/modules/platform_config/infrastructure/__init__.py backend/app/modules/platform_config/infrastructure/repository.py /app/backend/app/modules/platform_config/infrastructure/
+COPY agent-runtime/contracts /app/agent-runtime/contracts
+RUN groupadd --system --gid 10002 python-runtime \
+    && useradd --system --uid 10002 --gid 10002 --no-create-home python-runtime \
+    && python -c "import app.python_runtime; import claude_agent_sdk"
+USER 10002:10002
+CMD ["python", "-m", "uvicorn", "app.python_runtime.service:create_app", "--factory", "--host", "0.0.0.0", "--port", "8091"]
+
+FROM api-server AS tool-mcp
+USER root
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -c "import subprocess, sys, tomllib; deps = tomllib.load(open('/app/pyproject.toml', 'rb'))['project']['optional-dependencies']['tool-mcp']; subprocess.check_call([sys.executable, '-m', 'pip', 'install', *deps])" \
+    && groupadd --system --gid 10001 tool-mcp \
+    && useradd --system --uid 10001 --gid 10001 --no-create-home tool-mcp
 COPY backend/app/services /app/backend/app/services
 USER 10001:10001
-CMD ["python", "-m", "uvicorn", "app.services.runtime_tool_mcp:create_default_app", "--factory", "--host", "0.0.0.0", "--port", "9103"]
-
-FROM claude-runtime AS backend-runtime
-COPY backend/app /app/backend/app
-COPY backend/migrations /app/backend/migrations
-COPY backend/seeds /app/backend/seeds
-COPY .claude /app/.claude
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-deps --no-build-isolation .
+CMD ["python", "-m", "uvicorn", "app.services.tool_mcp:create_default_app", "--factory", "--host", "0.0.0.0", "--port", "9103"]

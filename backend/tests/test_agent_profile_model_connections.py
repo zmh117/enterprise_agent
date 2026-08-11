@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from app.bootstrap import build_test_container
 from app.main import create_app
 from app.modules.agent.domain.runtime import AgentExecutionContext, AgentRunRequest
-from app.modules.agent.infrastructure.claude_code_agent_client import (
+from app.python_runtime.claude_agent_sdk_adapter import (
     ClaudeSdk,
     RealClaudeCodeAgentClient,
 )

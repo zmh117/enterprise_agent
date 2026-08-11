@@ -2517,7 +2517,7 @@ class AgentRepository:
         job_id: str,
         worker_id: str,
         *,
-        recover_typescript_running: bool = False,
+        recover_runtime_running: bool = False,
     ) -> AgentJob | None:
         timestamp = now_iso()
         row = self.database.execute_one(
@@ -2529,7 +2529,7 @@ class AgentRepository:
               and (
                 status = ?
                 or (status = ? and next_retry_at is not null and next_retry_at <= ?)
-                or (? = 1 and status = ? and agent_runtime_kind = 'typescript-v1')
+                or (? = 1 and status = ? and agent_runtime_kind in ('python-v1', 'typescript-v1'))
               )
             returning *
             """,
@@ -2542,7 +2542,7 @@ class AgentRepository:
                 JobStatus.PENDING.value,
                 JobStatus.RETRY_WAIT.value,
                 timestamp,
-                int(recover_typescript_running),
+                int(recover_runtime_running),
                 JobStatus.RUNNING.value,
             ),
         )

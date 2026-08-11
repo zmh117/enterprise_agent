@@ -509,7 +509,7 @@ _GENERIC_OUTPUT_SCHEMA = {
 
 
 def build_builtin_handler_registry() -> HandlerRegistry:
-    from app.modules.agent.infrastructure.claude_code_agent_client import (
+    from app.modules.agent.infrastructure.tool_manifest import (
         TOOL_DEFINITIONS,
     )
 

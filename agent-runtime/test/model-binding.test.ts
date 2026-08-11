@@ -30,7 +30,8 @@ function runtimeConfig() {
     DATABASE_URL: "postgresql://runtime:secret@database/enterprise_agent",
     APP_CONFIG_MASTER_KEY_FILE: "/run/secrets/app-config-master-key",
     MODEL_PROVIDER_ALLOWED_HOSTS: "api.deepseek.com",
-    MCP_SERVER_ALLOWED_HOSTS: "ones-mcp.internal,data-mcp.internal"
+    MCP_SERVER_ALLOWED_HOSTS: "tool-mcp",
+    MCP_TOOL_SERVER_URL: "http://tool-mcp:9103/mcp"
   });
 }
 
@@ -275,6 +276,14 @@ test("PostgreSQL role grants keep platform reads column-bounded and ledger write
   assert.match(
     sql,
     /GRANT SELECT, INSERT, DELETE ON agent_runtime_terminal_ledger/
+  );
+  assert.match(
+    sql,
+    /GRANT SELECT, INSERT, DELETE ON agent_runtime_invocation_claim/
+  );
+  assert.match(
+    sql,
+    /GRANT SELECT, INSERT, DELETE ON agent_runtime_invocation_event/
   );
   assert.doesNotMatch(
     sql,

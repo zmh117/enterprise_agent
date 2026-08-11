@@ -8,7 +8,7 @@ from app.modules.admin.domain import ADMIN_CAPABILITIES
 from app.modules.agent_config.application.builtin_tool_envelope import (
     AgentBuiltinToolEnvelopeService,
 )
-from app.modules.agent.infrastructure.claude_code_agent_client import (
+from app.modules.agent.infrastructure.tool_manifest import (
     TOOL_DEFINITIONS,
 )
 from app.modules.internal_tools.domain import (
@@ -313,13 +313,13 @@ def test_handler_installation_publication_and_status_are_governed() -> None:
     runtime = container()
     service = runtime.platform_config_service.handlers
     try:
-        summary = service.reconcile(actor_id="local-user")
+        summary = service.reconcile(actor_id="admin")
         assert summary == {
             "installed": len(TOOL_DEFINITIONS),
             "drifted": 0,
             "missing": 0,
         }
-        assert service.reconcile(actor_id="local-user") == summary
+        assert service.reconcile(actor_id="admin") == summary
         assert runtime.database.execute_one(
             "select count(*) as count from builtin_tool_manifest_projection"
         ) == {"count": len(TOOL_DEFINITIONS)}
@@ -338,19 +338,19 @@ def test_handler_installation_publication_and_status_are_governed() -> None:
                 "handler_id": "query_loki",
                 "handler_version": "1.0.0",
             },
-            actor_id="local-user",
+            actor_id="admin",
         )
         assert publication["status"] == "PUBLISHED"
         disabled = service.set_publication_status(
             str(publication["id"]),
             "disabled",
-            actor_id="local-user",
+            actor_id="admin",
         )
         assert disabled["status"] == "DISABLED"
         archived = service.set_publication_status(
             str(publication["id"]),
             "archived",
-            actor_id="local-user",
+            actor_id="admin",
         )
         assert archived["status"] == "ARCHIVED"
         with pytest.raises(
@@ -360,7 +360,7 @@ def test_handler_installation_publication_and_status_are_governed() -> None:
             service.set_publication_status(
                 str(publication["id"]),
                 "published",
-                actor_id="local-user",
+                actor_id="admin",
             )
         with pytest.raises(
             NonRetryableExecutionError,
@@ -371,7 +371,7 @@ def test_handler_installation_publication_and_status_are_governed() -> None:
                     "handler_id": "query_loki",
                     "handler_version": "1.0.0",
                 },
-                actor_id="local-user",
+                actor_id="admin",
             )
     finally:
         runtime.database.close()
@@ -382,7 +382,7 @@ def test_same_handler_version_digest_drift_blocks_publication() -> None:
     original = build_builtin_handler_registry()
     original_service = runtime.platform_config_service.handlers
     try:
-        original_service.reconcile(actor_id="local-user")
+        original_service.reconcile(actor_id="admin")
         definition = original.require("query_redis_get", "1.0.0")
         drifted_registry = HandlerRegistry(
             (
@@ -398,7 +398,7 @@ def test_same_handler_version_digest_drift_blocks_publication() -> None:
             runtime.platform_config_service.permission_service,
             registry=drifted_registry,
         )
-        summary = drifted_service.reconcile(actor_id="local-user")
+        summary = drifted_service.reconcile(actor_id="admin")
         assert summary["drifted"] == 1
         assert summary["missing"] == len(TOOL_DEFINITIONS) - 1
         assert runtime.database.execute_one(
@@ -433,7 +433,7 @@ def test_same_handler_version_digest_drift_blocks_publication() -> None:
                     "tool_identifier": "query_redis_get",
                     "handler_version": "1.0.0",
                 },
-                actor_id="local-user",
+                actor_id="admin",
             )
         with pytest.raises(
             NonRetryableExecutionError,
@@ -444,7 +444,7 @@ def test_same_handler_version_digest_drift_blocks_publication() -> None:
                     "handler_id": "query_redis_get",
                     "handler_version": "1.0.0",
                 },
-                actor_id="local-user",
+                actor_id="admin",
             )
     finally:
         runtime.database.close()
@@ -454,19 +454,19 @@ def test_fixed_builtin_tool_verifier_persists_bounded_exact_idempotent_evidence(
     runtime = container()
     service = runtime.platform_config_service.handlers
     try:
-        service.reconcile(actor_id="local-user")
+        service.reconcile(actor_id="admin")
         payload = {
             "tool_identifier": "query_database",
             "handler_version": "1.0.0",
         }
         first = service.verify_payload(
             payload,
-            actor_id="local-user",
+            actor_id="admin",
             correlation_id="verifier-test",
         )
         second = service.verify_payload(
             payload,
-            actor_id="local-user",
+            actor_id="admin",
             correlation_id="verifier-test-repeated",
         )
 
@@ -501,7 +501,7 @@ def test_fixed_builtin_tool_verifier_persists_bounded_exact_idempotent_evidence(
         ):
             service.verify_payload(
                 {**payload, "status": "PASSED"},
-                actor_id="local-user",
+                actor_id="admin",
             )
     finally:
         runtime.database.close()
@@ -511,13 +511,13 @@ def test_builtin_tool_release_publish_is_evidence_gated_exact_and_idempotent() -
     runtime = container()
     service = runtime.platform_config_service.handlers
     try:
-        service.reconcile(actor_id="local-user")
+        service.reconcile(actor_id="admin")
         evidence = service.verify_payload(
             {
                 "tool_identifier": "query_database",
                 "handler_version": "1.0.0",
             },
-            actor_id="local-user",
+            actor_id="admin",
         )
         payload = {
             "tool_identifier": "query_database",
@@ -527,12 +527,12 @@ def test_builtin_tool_release_publish_is_evidence_gated_exact_and_idempotent() -
         }
         first = service.publish_builtin_tool_payload(
             payload,
-            actor_id="local-user",
+            actor_id="admin",
             correlation_id="publish-test",
         )
         second = service.publish_builtin_tool_payload(
             payload,
-            actor_id="local-user",
+            actor_id="admin",
             correlation_id="publish-test-repeated",
         )
 
@@ -567,7 +567,7 @@ def test_builtin_tool_release_publish_is_evidence_gated_exact_and_idempotent() -
                 "tool_identifier": "query_redis_get",
                 "handler_version": "1.0.0",
             },
-            actor_id="local-user",
+            actor_id="admin",
         )
         with pytest.raises(
             NonRetryableExecutionError,
@@ -580,7 +580,7 @@ def test_builtin_tool_release_publish_is_evidence_gated_exact_and_idempotent() -
                     "verification_id": redis_evidence["id"],
                     "idempotency_key": "publish-query-database-v1",
                 },
-                actor_id="local-user",
+                actor_id="admin",
             )
 
         with pytest.raises(
@@ -594,7 +594,7 @@ def test_builtin_tool_release_publish_is_evidence_gated_exact_and_idempotent() -
                     "verification_id": "missing-evidence",
                     "idempotency_key": "publish-query-loki-v1",
                 },
-                actor_id="local-user",
+                actor_id="admin",
             )
     finally:
         runtime.database.close()
@@ -618,7 +618,7 @@ def test_agent_envelope_rejects_two_active_releases_for_one_identifier() -> None
         registry=registry,
     )
     try:
-        service.reconcile(actor_id="local-user")
+        service.reconcile(actor_id="admin")
         releases = []
         for definition in (current, next_version):
             evidence = service.verify_payload(
@@ -626,7 +626,7 @@ def test_agent_envelope_rejects_two_active_releases_for_one_identifier() -> None
                     "tool_identifier": definition.tool_identifier,
                     "handler_version": definition.handler_version,
                 },
-                actor_id="local-user",
+                actor_id="admin",
             )
             releases.append(
                 service.publish_builtin_tool_payload(
@@ -636,7 +636,7 @@ def test_agent_envelope_rejects_two_active_releases_for_one_identifier() -> None
                         "verification_id": evidence["id"],
                         "idempotency_key": (f"agent-envelope-{definition.handler_version}"),
                     },
-                    actor_id="local-user",
+                    actor_id="admin",
                 )
             )
 
@@ -657,13 +657,13 @@ def test_builtin_tool_release_lifecycle_separates_health_and_protects_dependenci
     runtime = container()
     service = runtime.platform_config_service.handlers
     try:
-        service.reconcile(actor_id="local-user")
+        service.reconcile(actor_id="admin")
         evidence = service.verify_payload(
             {
                 "tool_identifier": "query_database",
                 "handler_version": "1.0.0",
             },
-            actor_id="local-user",
+            actor_id="admin",
         )
         release = service.publish_builtin_tool_payload(
             {
@@ -672,7 +672,7 @@ def test_builtin_tool_release_lifecycle_separates_health_and_protects_dependenci
                 "verification_id": evidence["id"],
                 "idempotency_key": "lifecycle-query-database-v1",
             },
-            actor_id="local-user",
+            actor_id="admin",
         )
         timestamp = "2026-08-06T00:00:00+00:00"
         runtime.database.execute(
@@ -729,7 +729,7 @@ def test_builtin_tool_release_lifecycle_separates_health_and_protects_dependenci
             str(release["id"]),
             "DEPRECATED",
             reason_code="SOFT_DEPRECATION",
-            actor_id="local-user",
+            actor_id="admin",
         )
         assert deprecated["status"] == "DEPRECATED"
         with pytest.raises(
@@ -740,14 +740,14 @@ def test_builtin_tool_release_lifecycle_separates_health_and_protects_dependenci
                 str(release["id"]),
                 "ARCHIVED",
                 reason_code="ARCHIVE_TEST",
-                actor_id="local-user",
+                actor_id="admin",
             )
 
         disabled = service.set_builtin_tool_release_status(
             str(release["id"]),
             "DISABLED",
             reason_code="EMERGENCY_DISABLE",
-            actor_id="local-user",
+            actor_id="admin",
         )
         assert disabled["status"] == "DISABLED"
         restored = service.set_builtin_tool_release_status(
@@ -755,7 +755,7 @@ def test_builtin_tool_release_lifecycle_separates_health_and_protects_dependenci
             "ACTIVE",
             reason_code="VERIFIED_RESTORE",
             verification_id=str(evidence["id"]),
-            actor_id="local-user",
+            actor_id="admin",
         )
         assert restored["status"] == "ACTIVE"
 
@@ -776,7 +776,7 @@ def test_builtin_tool_release_lifecycle_separates_health_and_protects_dependenci
                 )
             ),
         )
-        drifted_service.reconcile(actor_id="local-user")
+        drifted_service.reconcile(actor_id="admin")
         assert runtime.database.execute_one(
             "select status from builtin_tool_release where id = ?",
             (release["id"],),
@@ -786,7 +786,7 @@ def test_builtin_tool_release_lifecycle_separates_health_and_protects_dependenci
             str(release["id"]),
             "DISABLED",
             reason_code="DISABLE_AFTER_DRIFT",
-            actor_id="local-user",
+            actor_id="admin",
         )
         with pytest.raises(
             NonRetryableExecutionError,
@@ -797,7 +797,7 @@ def test_builtin_tool_release_lifecycle_separates_health_and_protects_dependenci
                 "ACTIVE",
                 reason_code="INVALID_RESTORE",
                 verification_id=str(evidence["id"]),
-                actor_id="local-user",
+                actor_id="admin",
             )
 
         runtime.database.execute(
@@ -811,7 +811,7 @@ def test_builtin_tool_release_lifecycle_separates_health_and_protects_dependenci
             str(release["id"]),
             "ARCHIVED",
             reason_code="DEPENDENCIES_DRAINED",
-            actor_id="local-user",
+            actor_id="admin",
         )
         assert archived["status"] == "ARCHIVED"
         with pytest.raises(
@@ -823,7 +823,7 @@ def test_builtin_tool_release_lifecycle_separates_health_and_protects_dependenci
                 "ACTIVE",
                 reason_code="INVALID_ARCHIVE_RESTORE",
                 verification_id=str(evidence["id"]),
-                actor_id="local-user",
+                actor_id="admin",
             )
     finally:
         runtime.database.close()
@@ -833,7 +833,7 @@ def test_handler_tables_store_manifest_metadata_not_dynamic_implementation() -> 
     runtime = container()
     service = runtime.platform_config_service.handlers
     try:
-        service.reconcile(actor_id="local-user")
+        service.reconcile(actor_id="admin")
         columns = {
             row["name"]
             for row in runtime.database.execute("pragma table_info(handler_installation)")
@@ -865,7 +865,7 @@ def test_handler_tables_store_manifest_metadata_not_dynamic_implementation() -> 
                     "handler_version": "1.0.0",
                     "implementation": {"url": "https://untrusted.invalid/handler"},
                 },
-                actor_id="local-user",
+                actor_id="admin",
             )
         persisted = str(service.repository.list_installations())
         assert "untrusted.invalid" not in persisted

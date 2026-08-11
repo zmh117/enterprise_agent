@@ -289,7 +289,8 @@ export class ClaudeAgentRuntimeExecutor {
     private readonly modelBindings: ModelBindingPort,
     private readonly query: ClaudeQuery = claudeQuery,
     private readonly workspaces: InvocationWorkspaceFactory = new TemporaryWorkspaceFactory(),
-    private readonly now: () => number = () => Date.now()
+    private readonly now: () => number = () => Date.now(),
+    private readonly mcpServerUrl: string = "http://tool-mcp:9103/mcp"
   ) {
     this.execute = this.run.bind(this);
   }
@@ -316,18 +317,18 @@ export class ClaudeAgentRuntimeExecutor {
     >();
     const mcpServers: NonNullable<Options["mcpServers"]> = {};
     for (const server of request.mcp_servers) {
-      const alias =
-        server.server_code === "ones-mcp"
-          ? "ones"
-          : server.server_code === "data-mcp"
-            ? "data"
-            : "platform";
+      const alias = "tools";
       mcpServers[alias] = {
         type: "http",
-        url: server.url,
+        url: this.mcpServerUrl,
         headers: {
-          Authorization: `Bearer ${server.access_token}`,
-          "X-Correlation-Id": `job:${request.job_id}`
+          "X-Correlation-Id": `job:${request.job_id}`,
+          "X-Job-Id": request.job_id,
+          "X-App-User-Id": request.app_user_id,
+          "X-Project-Code": request.project_code,
+          "X-Invocation-Id": request.invocation_id,
+          "X-Agent-Publication-Id": request.agent_publication_id,
+          "X-Application-Publication-Id": request.application_publication_id
         },
         timeout: Math.min(request.limits.timeout_seconds * 1000, 300_000),
         alwaysLoad: true
@@ -377,7 +378,7 @@ export class ClaudeAgentRuntimeExecutor {
         ) {
           emitter.emit("tool_event", {
             tool_call_id: permissionOptions.toolUseID,
-            server_code: indexed?.serverCode ?? "ones-mcp",
+            server_code: indexed?.serverCode ?? "tool-mcp",
             tool_name: indexed?.toolName ?? "unauthorized_tool",
             status: "DENIED",
             request_summary: {},

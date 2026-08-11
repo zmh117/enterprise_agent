@@ -23,15 +23,11 @@ from app.modules.agent.infrastructure.typescript_runtime_client import (
     TypeScriptAgentRuntimeClient,
     probe_runtime_readiness,
 )
-from app.modules.agent.infrastructure.runtime_tool_token import RuntimeToolTokenIssuer
 from app.modules.model_connection.domain import (
     ANTHROPIC_COMPATIBLE_PROTOCOL,
     ModelRuntimeBinding,
 )
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
-MCP_KEY = b"typescript-runtime-client-mcp-signing-key"
-
-
 class _PassiveResponse:
     def __init__(self, payload: dict[str, Any], *, status: int = 200) -> None:
         self.payload = payload
@@ -75,7 +71,6 @@ def test_passive_runtime_readiness_calls_only_version_and_ready(
     result = probe_runtime_readiness(
         RuntimeClientSettings(
             base_url="http://agent-runtime:9102",
-            tool_mcp_url="http://runtime-tool-mcp:9103/mcp",
             allowed_runtime_hosts=("agent-runtime",),
             allow_insecure_internal_http=True,
         )
@@ -120,7 +115,6 @@ def test_passive_runtime_readiness_preserves_degraded_dependency_status(
     result = probe_runtime_readiness(
         RuntimeClientSettings(
             base_url="http://agent-runtime:9102",
-            tool_mcp_url="http://runtime-tool-mcp:9103/mcp",
             allowed_runtime_hosts=("agent-runtime",),
             allow_insecure_internal_http=True,
         )
@@ -179,12 +173,13 @@ def _context() -> AgentExecutionContext:
         ),
         mcp_bindings=(
             McpRuntimeBinding(
-                server_code="runtime-tool-mcp",
+                server_code="tool-mcp",
                 tool_name="query_database",
                 required_scope="tool:query_database",
                 tool_schema_hash="b" * 64,
             ),
         ),
+        runtime_kind="typescript-v1",
     )
 
 
@@ -248,7 +243,7 @@ class GoldenTransport:
                 "timestamp": "2026-08-09T00:00:01Z",
                 "payload": {
                     "tool_call_id": "tool-call-1",
-                    "server_code": "runtime-tool-mcp",
+                    "server_code": "tool-mcp",
                     "tool_name": "query_database",
                     "status": "SUCCEEDED",
                     "request_summary": {"project_code": "project-1"},
@@ -307,15 +302,10 @@ def _client(transport: Any, *, events: list[dict[str, Any]] | None = None):
         TypeScriptAgentRuntimeClient(
             settings=RuntimeClientSettings(
                 base_url="http://agent-runtime:8090",
-                tool_mcp_url="http://runtime-tool-mcp:9103/mcp",
                 allowed_runtime_hosts=("agent-runtime",),
                 allow_insecure_internal_http=True,
             ),
             grant_issuer=RuntimeGrantIssuer(private_pem, now=lambda: 1_800_000_000),
-            mcp_token_issuer=RuntimeToolTokenIssuer(
-                MCP_KEY,
-                now=lambda: 1_800_000_000,
-            ),
             transport=transport,
             event_sink=lambda _job_id, event: captured_events.append(event),
         ),
@@ -343,12 +333,14 @@ def test_worker_builds_exact_request_and_validates_ndjson_terminal() -> None:
         options={"verify_exp": False, "verify_iat": False, "verify_nbf": False},
     )
     assert runtime_claims["azp"] == "agent-worker"
+    assert runtime_claims["runtime_kind"] == "typescript-v1"
     assert runtime_claims["job_id"] == "job-1"
     assert runtime_claims["request_digest"] == transport.request["request_digest"]
     assert runtime_claims["application_publication_id"] == "application-publication-1"
     assert runtime_claims["exp"] - runtime_claims["iat"] == 180
     assert "secret_ref" not in json.dumps(transport.request)
-    assert transport.request["mcp_servers"][0]["server_code"] == "runtime-tool-mcp"
+    assert transport.request["runtime_kind"] == "typescript-v1"
+    assert transport.request["mcp_servers"][0]["server_code"] == "tool-mcp"
     assert transport.request["mcp_servers"][0]["tools"] == [
         {
             "tool_name": "query_database",
@@ -356,17 +348,8 @@ def test_worker_builds_exact_request_and_validates_ndjson_terminal() -> None:
             "tool_schema_hash": "b" * 64,
         }
     ]
-    mcp_claims = jwt.decode(
-        transport.request["mcp_servers"][0]["access_token"],
-        MCP_KEY,
-        algorithms=["HS256"],
-        audience="runtime-tool-mcp",
-        issuer="enterprise-agent-worker",
-        options={"verify_exp": False, "verify_iat": False, "verify_nbf": False},
-    )
-    assert mcp_claims["sub"] == "app-user-1"
-    assert mcp_claims["project_code"] == "project-1"
-    assert mcp_claims["scopes"] == ["tool:query_database"]
+    assert "access_token" not in transport.request["mcp_servers"][0]
+    assert "url" not in transport.request["mcp_servers"][0]
 
 
 def test_worker_maps_runtime_failure_and_preserves_prior_tool_events() -> None:
@@ -420,6 +403,48 @@ def test_worker_reconnects_once_with_same_invocation_to_recover_terminal() -> No
     assert result.final_answer == "final answer"
     assert transport.calls == 2
     assert len(set(transport.digests)) == 1
+
+
+class InterruptedInProgressTransport(GoldenTransport):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+        self.digests: list[str] = []
+
+    def stream(self, **kwargs: Any) -> Iterator[bytes]:
+        self.calls += 1
+        lines = list(super().stream(**kwargs))
+        self.digests.append(self.request["request_digest"])
+        if self.calls == 1:
+            yield lines[0]
+        raise RetryableExecutionError(
+            "runtime connection was lost",
+            safe_message="Agent Runtime 通信失败",
+            error_code="runtime_transport_error",
+            diagnostics={"cancel_reason": "CLIENT_DISCONNECTED"},
+        )
+
+
+def test_observed_stream_never_advances_to_a_new_attempt_when_recovery_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = InterruptedInProgressTransport()
+    persisted_events: list[dict[str, Any]] = []
+    client, _ = _client(transport, events=persisted_events)
+    monkeypatch.setattr(
+        "app.modules.agent.infrastructure.typescript_runtime_client.time.sleep",
+        lambda _seconds: None,
+    )
+
+    with pytest.raises(NonRetryableExecutionError) as raised:
+        client.run(_request())
+
+    assert raised.value.error_code == "runtime_invocation_outcome_unknown"
+    assert raised.value.diagnostics["runtime_events_observed"] == 1
+    assert transport.calls == 1 + 12
+    assert len(set(transport.digests)) == 1
+    assert [event["sequence"] for event in persisted_events] == [1]
+    assert transport.cancel_payload["invocation_id"] == "job-1.attempt-0"
 
 
 class ReconnectFailureTransport(GoldenTransport):

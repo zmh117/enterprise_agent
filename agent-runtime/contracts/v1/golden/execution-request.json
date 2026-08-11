@@ -1,7 +1,8 @@
 {
   "protocol_version": "1.0",
+  "runtime_kind": "typescript-v1",
   "invocation_id": "invocation-1",
-  "request_digest": "2adadab33b1edd3a202593888777f9ed74d44658780fc796b76cb24a4e3ec277",
+  "request_digest": "924fe1460781faeb808c32222ef6db94d5597d5cd466ae884dc549863ceea126",
   "job_id": "job-1",
   "app_user_id": "app-user-1",
   "project_code": "project-1",
@@ -29,9 +30,7 @@
   },
   "mcp_servers": [
     {
-      "server_code": "ones-mcp",
-      "url": "https://ones-mcp.internal/mcp",
-      "access_token": "test-token-value-with-at-least-32-characters",
+      "server_code": "tool-mcp",
       "tools": [
         {
           "tool_name": "ones_work_item_search",

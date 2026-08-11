@@ -121,6 +121,9 @@ VALUES
    'use', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('policy-role-admin-agent-use', 'role', 'platform-admin', 'agent', 'default-diagnostic-agent',
    'allow', 'use', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+  ('policy-role-admin-typescript-agent-use', 'role', 'platform-admin', 'agent',
+   'typescript-diagnostic-agent', 'allow', 'use', 'enabled', 10, 1,
+   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('policy-role-admin-webhook-read', 'role', 'platform-admin', 'webhook_trigger', '*',
    'allow', 'read', 'enabled', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('policy-role-admin-webhook-edit', 'role', 'platform-admin', 'webhook_trigger', '*',
@@ -176,11 +179,11 @@ ON CONFLICT(id) DO NOTHING;
 
 INSERT INTO agent_definition
   (id, code, name, description, project_code, status, current_publication_id,
-   classification, revision, created_by, created_at, updated_at)
+   classification, runtime_kind, revision, created_by, created_at, updated_at)
 VALUES
   ('agent_default_diagnostic', 'default-diagnostic-agent', '默认诊断 Agent',
    'Enterprise internal read-only diagnostic Agent', 'default', 'enabled',
-   'agent_publication_default_v1', 'internal_diagnostic', 1,
+   'agent_publication_default_v1', 'internal_diagnostic', 'python-v1', 1,
    'user_local_admin', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 
@@ -197,13 +200,47 @@ ON CONFLICT(id) DO NOTHING;
 
 INSERT INTO agent_publication
   (id, agent_id, revision_id, revision, schema_version, snapshot_json, config_hash,
-   status, published_by, published_at)
+   runtime_kind, status, published_by, published_at)
 VALUES
   ('agent_publication_default_v1', 'agent_default_diagnostic',
    'agent_revision_default_v1', 1, 1,
    '{"business_role":"Enterprise internal read-only diagnostic Agent","business_instructions":"Use evidence from approved internal tools and state uncertainty when evidence is incomplete.","model_policy":{"model":"claude-sonnet-4-20250514"},"execution":{"max_turns":12,"timeout_seconds":300},"tools":["get_er_context","get_business_flow_context","get_schema_directory","diagnose_loki_labels","diagnose_loki_label_values","diagnose_loki_probe","query_loki","query_database","query_redis_get","query_redis_scan"],"skills":[],"routing":{"project_code":"default"},"channels":{"ingress":["connector-dingtalk-stream-default"],"delivery":["connector-dingtalk-enterprise-default"]}}',
    'acee515709597912f04ba4e181575c14314121f084dbe561e9e04599179df1b9',
-   'active', 'user_local_admin', CURRENT_TIMESTAMP)
+   'python-v1', 'active', 'user_local_admin', CURRENT_TIMESTAMP)
+ON CONFLICT(id) DO NOTHING;
+
+INSERT INTO agent_definition
+  (id, code, name, description, project_code, status, current_publication_id,
+   classification, runtime_kind, revision, created_by, created_at, updated_at)
+VALUES
+  ('agent_typescript_diagnostic', 'typescript-diagnostic-agent',
+   'TypeScript 诊断 Agent',
+   'Enterprise internal read-only diagnostic Agent using TypeScript Runtime',
+   'default', 'enabled', 'agent_publication_typescript_v1',
+   'internal_diagnostic', 'typescript-v1', 1, 'user_local_admin',
+   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+ON CONFLICT(id) DO NOTHING;
+
+INSERT INTO agent_revision
+  (id, agent_id, revision, status, config_json, config_hash, validation_json,
+   created_by, created_at, updated_at)
+VALUES
+  ('agent_revision_typescript_v1', 'agent_typescript_diagnostic', 1, 'published',
+   '{"business_instructions":"Use evidence from approved internal tools and state uncertainty when evidence is incomplete.","business_role":"Enterprise internal read-only diagnostic Agent (TypeScript)","channels":{"delivery":[],"ingress":[]},"execution":{"max_turns":12,"timeout_seconds":300},"model_policy":{"model":"claude-sonnet-4-20250514"},"routing":{"project_code":"default"},"skills":[],"tools":[]}',
+   'f416ee532dc6f1ebe6298401c3f53f0b48e5bbb27792c0f91b7f5a6bcab623fc',
+   '{"valid":true,"errors":[]}', 'user_local_admin', CURRENT_TIMESTAMP,
+   CURRENT_TIMESTAMP)
+ON CONFLICT(id) DO NOTHING;
+
+INSERT INTO agent_publication
+  (id, agent_id, revision_id, revision, schema_version, snapshot_json, config_hash,
+   runtime_kind, status, published_by, published_at)
+VALUES
+  ('agent_publication_typescript_v1', 'agent_typescript_diagnostic',
+   'agent_revision_typescript_v1', 1, 2,
+   '{"builtin_tool_envelope":[],"business_instructions":"Use evidence from approved internal tools and state uncertainty when evidence is incomplete.","business_role":"Enterprise internal read-only diagnostic Agent (TypeScript)","capability_envelope":[],"channels":{"delivery":[],"ingress":[]},"execution":{"max_turns":12,"timeout_seconds":300},"model_policy":{"model":"claude-sonnet-4-20250514"},"routing":{"project_code":"default"},"runtime_kind":"typescript-v1","skills":[],"tools":[]}',
+   '081ea131c1b34a4da84cf9d91c79159b1a3d3d0ac977d71998bdd568017ead88',
+   'typescript-v1', 'active', 'user_local_admin', CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 
 INSERT INTO agent_tool_binding (id, publication_id, tool_name, created_at)

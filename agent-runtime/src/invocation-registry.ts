@@ -6,6 +6,7 @@ import type {
   TerminalResult,
   Usage
 } from "./generated/contracts.js";
+import { randomUUID } from "node:crypto";
 import { assertContract } from "./generated/validators.js";
 import type { TerminalLedger } from "./terminal-ledger.js";
 
@@ -56,12 +57,12 @@ class InvocationRecord {
     return this.events.at(-1)?.event_type === "terminal";
   }
 
-  emit(
+  prepareEvent(
     eventType: "execution_started" | "tool_event" | "assistant_text",
     payload: RuntimeEvent["payload"]
-  ): void {
-    if (this.isTerminal) return;
-    this.append({
+  ): RuntimeEvent | undefined {
+    if (this.isTerminal) return undefined;
+    const event = {
       protocol_version: "1.0",
       invocation_id: this.request.invocation_id,
       request_digest: this.request.request_digest,
@@ -69,7 +70,17 @@ class InvocationRecord {
       event_type: eventType,
       timestamp: this.now().toISOString(),
       payload
-    } as RuntimeEvent);
+    } as RuntimeEvent;
+    assertContract("RuntimeEvent", event);
+    return event;
+  }
+
+  commitEvent(event: RuntimeEvent): void {
+    if (this.isTerminal) return;
+    if (event.sequence !== this.events.length + 1 || event.event_type === "terminal") {
+      throw new InvocationConflictError();
+    }
+    this.append(event);
   }
 
   prepareTerminal(draft: TerminalDraft): RuntimeEvent | undefined {
@@ -123,6 +134,22 @@ class InvocationRecord {
     this.terminalAt = terminalAt.getTime();
   }
 
+  restorePrefix(events: readonly RuntimeEvent[]): void {
+    if (this.events.length > 0) throw new InvocationConflictError();
+    for (const [index, event] of events.entries()) {
+      assertContract("RuntimeEvent", event);
+      if (
+        event.event_type === "terminal" ||
+        event.invocation_id !== this.request.invocation_id ||
+        event.request_digest !== this.request.request_digest ||
+        event.sequence !== index + 1
+      ) {
+        throw new InvocationConflictError();
+      }
+      this.events.push(event);
+    }
+  }
+
   subscribe(listener: EventListener): () => void {
     for (const event of this.events) listener(event);
     if (!this.isTerminal) this.listeners.add(listener);
@@ -150,7 +177,8 @@ export class InvocationRegistry {
     private readonly executor: RuntimeExecutor,
     private readonly ttlMilliseconds: number,
     private readonly now: () => Date = () => new Date(),
-    private readonly terminalLedger?: TerminalLedger
+    private readonly terminalLedger?: TerminalLedger,
+    private readonly ownerInstanceId: string = randomUUID()
   ) {}
 
   async acquire(request: AgentExecutionRequestV1): Promise<InvocationHandle> {
@@ -170,6 +198,22 @@ export class InvocationRegistry {
       }
       record.restore(persisted.events, persisted.terminalAt);
       this.records.set(request.invocation_id, record);
+      return this.handle(record);
+    }
+    const claim = await this.terminalLedger?.claim(request, this.ownerInstanceId);
+    if (claim?.status === "ORPHANED") {
+      record.restorePrefix(claim.events);
+      this.records.set(request.invocation_id, record);
+      await this.finalize(record, {
+        status: "FAILED",
+        failure: {
+          code: "runtime_orphaned_invocation",
+          retry_class: "NEVER",
+          safe_message: "Agent Runtime 在执行中重启；为避免重复模型调用，本次执行已失败"
+        },
+        usage: { input_tokens: 0, output_tokens: 0 },
+        runtime_provenance: this.provenance(request)
+      });
       return this.handle(record);
     }
     this.records.set(request.invocation_id, record);
@@ -207,13 +251,27 @@ export class InvocationRegistry {
   }
 
   private async execute(record: InvocationRecord): Promise<void> {
+    let eventPersistence = Promise.resolve();
     try {
       const terminal = await this.executor(record.request, {
         signal: record.abortController.signal,
-        emit: (eventType, payload) => record.emit(eventType, payload)
+        emit: (eventType, payload) => {
+          eventPersistence = eventPersistence.then(async () => {
+            const event = record.prepareEvent(eventType, payload);
+            if (!event) return;
+            await this.terminalLedger?.append(record.request, event);
+            record.commitEvent(event);
+          });
+        }
       });
+      await eventPersistence;
       await this.finalize(record, terminal);
     } catch {
+      try {
+        await eventPersistence;
+      } catch {
+        // The stable Runtime failure below is persisted when possible.
+      }
       await this.finalize(record, {
         status: "FAILED",
         failure: {

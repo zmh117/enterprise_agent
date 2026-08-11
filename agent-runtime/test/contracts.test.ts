@@ -34,6 +34,28 @@ test("contract rejects unknown fields and unsupported protocol versions", () => 
   );
 });
 
+test("single protocol accepts both fixed Runtime kinds and rejects unknown kinds", () => {
+  const pythonRequest = structuredClone(executionRequest);
+  Object.assign(pythonRequest, { runtime_kind: "python-v1" });
+  pythonRequest.request_digest = canonicalRequestDigest(pythonRequest);
+  assert.doesNotThrow(() => validateExecutionRequest(pythonRequest));
+
+  const unknown = structuredClone(executionRequest);
+  Object.assign(unknown, { runtime_kind: "ruby-v1" });
+  unknown.request_digest = canonicalRequestDigest(unknown);
+  assert.throws(
+    () => assertContract("AgentExecutionRequestV1", unknown),
+    ContractValidationError
+  );
+
+  const pythonProvenance = structuredClone(safeRuntimeFixture.runtime_provenance);
+  Object.assign(pythonProvenance, {
+    runtime_kind: "python-v1",
+    sdk_version: "0.1.0"
+  });
+  assert.doesNotThrow(() => assertContract("RuntimeProvenance", pythonProvenance));
+});
+
 test("request boundary rejects digest mismatch and byte limit", () => {
   const mismatched = structuredClone(executionRequest);
   mismatched.prompt.user_question = "changed after signing";

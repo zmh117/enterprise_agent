@@ -319,7 +319,7 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
               <option value="">请选择已发布 Agent</option>
               {catalog.data?.agents.map((item) => (
                 <option key={item.id} value={item.id}>
-                  {item.code} · r{item.revision}
+                  {item.code} · r{item.revision} · {applicationRuntimeLabel(item.runtime_kind)}
                 </option>
               ))}
             </select>
@@ -2305,6 +2305,12 @@ function formatDate(value: string): string {
   if (!value) return "-"
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
+}
+
+function applicationRuntimeLabel(runtimeKind?: "python-v1" | "typescript-v1") {
+  if (runtimeKind === "typescript-v1") return "TypeScript Runtime"
+  if (runtimeKind === "python-v1") return "Python Runtime"
+  return "Runtime 未标注"
 }
 
 function isLegacyRoutingKey(triggerType: string, routingKey: string): boolean {

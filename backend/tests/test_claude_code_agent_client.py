@@ -11,7 +11,7 @@ from app.modules.agent.domain.runtime import (
     AgentRunRequest,
     GovernedCapabilityNotice,
 )
-from app.modules.agent.infrastructure.claude_code_agent_client import (
+from app.python_runtime.claude_agent_sdk_adapter import (
     ClaudeSdk,
     RealClaudeCodeAgentClient,
 )

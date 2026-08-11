@@ -2,7 +2,7 @@
   "protocol_version": "1.0",
   "tool_event": {
     "tool_call_id": "tool-call-1",
-    "server_code": "ones-mcp",
+    "server_code": "tool-mcp",
     "tool_name": "ones_work_item_search",
     "status": "SUCCEEDED",
     "request_summary": {"project_code": "project-1"},

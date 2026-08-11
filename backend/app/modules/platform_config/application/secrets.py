@@ -76,6 +76,31 @@ class EncryptedDbSecretProvider:
             version=int(version["version"]),
         )
 
+    def decrypt_persisted_version(
+        self,
+        *,
+        ciphertext: str,
+        nonce: str,
+        key_id: str,
+        algorithm: str,
+        secret_id: str,
+        version: int,
+    ) -> str:
+        """Decrypt one already-authorized row without broad repository reads."""
+
+        if key_id and key_id != self.key_id:
+            raise NonRetryableExecutionError(
+                "Platform secret is encrypted with another Master Key",
+                safe_message="平台凭据无法使用当前 Master Key 解密",
+            )
+        return self._decrypt(
+            ciphertext=ciphertext,
+            nonce=nonce,
+            algorithm=algorithm,
+            secret_id=secret_id,
+            version=version,
+        )
+
     def create_secret(
         self,
         *,

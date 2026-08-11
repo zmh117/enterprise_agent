@@ -259,6 +259,18 @@ describe("Business Application workbench", () => {
               project_code: "default",
               status: "enabled",
               config_hash: "agent-hash",
+              runtime_kind: "python-v1",
+              direction: "",
+              component_type: "agent_publication",
+            },
+            {
+              id: "agent_publication_typescript_v1",
+              code: "typescript-diagnostic-agent",
+              revision: 1,
+              project_code: "default",
+              status: "enabled",
+              config_hash: "typescript-agent-hash",
+              runtime_kind: "typescript-v1",
               direction: "",
               component_type: "agent_publication",
             },
@@ -338,6 +350,19 @@ describe("Business Application workbench", () => {
     expect(
       within(conversationMode).getByRole("option", {
         name: "按渠道、发布版本与数据范围隔离",
+      })
+    ).toBeInTheDocument()
+    const agentSelector = screen.getByRole("combobox", {
+      name: "Agent 发布版本",
+    })
+    expect(
+      await within(agentSelector).findByRole("option", {
+        name: "default-diagnostic-agent · r29 · Python Runtime",
+      })
+    ).toBeInTheDocument()
+    expect(
+      await within(agentSelector).findByRole("option", {
+        name: "typescript-diagnostic-agent · r1 · TypeScript Runtime",
       })
     ).toBeInTheDocument()
     expect(

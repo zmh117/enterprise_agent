@@ -1,0 +1,408 @@
+from __future__ import annotations
+
+import inspect
+import json
+import threading
+from dataclasses import replace
+from pathlib import Path
+from typing import Any, cast
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from fastapi.testclient import TestClient
+
+from app.modules.agent.infrastructure.runtime_protocol import canonical_request_digest
+from app.modules.agent.infrastructure.typescript_runtime_client import RuntimeGrantIssuer
+from app.modules.model_connection.domain import (
+    DEFAULT_MODEL_CONNECTION_CODE,
+    ModelRuntimeBinding,
+)
+from app.python_runtime.grant import RuntimeGrantVerifier
+from app.python_runtime.invocations import (
+    PythonInvocationRegistry,
+    PythonTerminalLedger,
+)
+from app.python_runtime.model_binding import (
+    PythonModelBindingResolver,
+    ResolvedPythonModelBinding,
+)
+from app.python_runtime.sdk_executor import PythonExecutionOutcome, PythonRuntimeSdkExecutor
+from app.python_runtime.service import PythonRuntimeDependencies, create_app
+from app.shared.database import Database, default_migrations_dir
+from app.shared.migrations import Migrator
+from backend.tests.helpers import test_settings as build_settings
+from backend.tests.helpers import container
+
+
+class FakePythonExecutor:
+    sdk_version = "0.2.134"
+    cli_version = "2.1.226"
+
+    def __init__(self, *, block_until_cancelled: bool = False) -> None:
+        self.requests: list[dict[str, Any]] = []
+        self.started = threading.Event()
+        self.block_until_cancelled = block_until_cancelled
+
+    def execute(
+        self,
+        request: dict[str, Any],
+        cancel_event: threading.Event,
+    ) -> PythonExecutionOutcome:
+        self.requests.append(request)
+        self.started.set()
+        if self.block_until_cancelled:
+            cancel_event.wait(timeout=2)
+        provenance = _provenance(request)
+        if cancel_event.is_set():
+            return PythonExecutionOutcome(
+                status="CANCELLED",
+                usage={"input_tokens": 0, "output_tokens": 0},
+                runtime_provenance=provenance,
+                failure={
+                    "code": "runtime_cancelled",
+                    "retry_class": "NEVER",
+                    "safe_message": "Agent 执行已取消",
+                },
+            )
+        return PythonExecutionOutcome(
+            status="SUCCEEDED",
+            final_answer="python final answer",
+            usage={"input_tokens": 3, "output_tokens": 2},
+            runtime_provenance=provenance,
+            tool_events=(
+                {
+                    "tool_call_id": "tool-call-1",
+                    "server_code": "tool-mcp",
+                    "tool_name": "ones_work_item_search",
+                    "status": "SUCCEEDED",
+                    "request_summary": {"project_code": "project-1"},
+                    "response_summary": {"count": 1},
+                    "duration_ms": 5,
+                },
+            ),
+        )
+
+    def probe(self, request: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "protocol_version": "1.0",
+            "runtime_kind": "python-v1",
+            "probe_id": request["probe_id"],
+            "success": True,
+            "connection_revision_id": request["model_connection"]["revision_id"],
+            "provider_host": "api.deepseek.com",
+            "model": "deepseek-chat",
+            "runtime_version": "0.1.0",
+            "sdk_version": self.sdk_version,
+            "duration_ms": 1,
+        }
+
+
+class FakePythonBindingResolver:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def resolve(self, revision_id: str, config_hash: str) -> ResolvedPythonModelBinding:
+        self.calls.append((revision_id, config_hash))
+        return ResolvedPythonModelBinding(
+            binding=ModelRuntimeBinding(
+                protocol="anthropic_compatible",
+                base_url="https://api.deepseek.com/anthropic",
+                model="deepseek-chat",
+                default_opus_model="deepseek-chat",
+                default_sonnet_model="deepseek-chat",
+                default_haiku_model="deepseek-chat",
+                subagent_model="deepseek-chat",
+                effort_level="max",
+                connection_id="model-connection-1",
+                connection_code="default",
+                connection_revision_id=revision_id,
+                connection_revision=1,
+                config_hash=config_hash,
+                secret_ref="secret://not-projected",
+            ),
+            api_key="fake-provider-binding-secret",
+        )
+
+
+def _database(tmp_path: Path) -> Database:
+    database = Database(f"sqlite:///{tmp_path / 'python-runtime.db'}")
+    Migrator(database, default_migrations_dir(), migrator_build="python-runtime-test").run()
+    return database
+
+
+def _keys() -> tuple[bytes, bytes]:
+    private = Ed25519PrivateKey.generate()
+    return (
+        private.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        ),
+        private.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        ),
+    )
+
+
+def _request() -> dict[str, Any]:
+    path = Path("agent-runtime/contracts/v1/golden/execution-request.json")
+    request = json.loads(path.read_text(encoding="utf-8"))
+    request["runtime_kind"] = "python-v1"
+    request["request_digest"] = canonical_request_digest(request)
+    return request
+
+
+def _provenance(request: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "runtime_kind": "python-v1",
+        "runtime_version": "0.1.0",
+        "protocol_version": "1.0",
+        "sdk_version": "0.2.134",
+        "cli_version": "2.1.226",
+        "model_connection_revision_id": request["model_connection"]["revision_id"],
+        "model_connection_config_hash": request["model_connection"]["config_hash"],
+    }
+
+
+def _token(private_key: bytes, request: dict[str, Any]) -> str:
+    return RuntimeGrantIssuer(private_key).issue(request)
+
+
+def _dependencies(
+    tmp_path: Path,
+    executor: FakePythonExecutor,
+) -> tuple[PythonRuntimeDependencies, bytes]:
+    database = _database(tmp_path)
+    private_key, public_key = _keys()
+    settings = replace(build_settings(), app_config_master_key="runtime-test-master-key")
+    dependencies = PythonRuntimeDependencies(
+        database=database,
+        registry=PythonInvocationRegistry(executor, PythonTerminalLedger(database)),
+        grant_verifier=RuntimeGrantVerifier(public_key),
+        executor=cast(PythonRuntimeSdkExecutor, executor),
+        model_probe_token="probe-token-" + "x" * 32,
+        settings=settings,
+    )
+    return dependencies, private_key
+
+
+def test_python_runtime_http_contract_replays_one_terminal_without_tokens(
+    tmp_path: Path,
+) -> None:
+    executor = FakePythonExecutor()
+    dependencies, private_key = _dependencies(tmp_path, executor)
+    client = TestClient(create_app(dependencies))
+    request = _request()
+    headers = {"Authorization": f"Bearer {_token(private_key, request)}"}
+
+    first = client.post("/internal/v1/executions", json=request, headers=headers)
+    second = client.post("/internal/v1/executions", json=request, headers=headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    first_events = [json.loads(line) for line in first.text.strip().splitlines()]
+    second_events = [json.loads(line) for line in second.text.strip().splitlines()]
+    assert first_events == second_events
+    assert [event["event_type"] for event in first_events] == [
+        "execution_started",
+        "tool_event",
+        "terminal",
+    ]
+    assert first_events[-1]["payload"]["status"] == "SUCCEEDED"
+    assert first_events[-1]["payload"]["final_answer"] == "python final answer"
+    assert len(executor.requests) == 1
+    serialized = json.dumps(executor.requests)
+    assert "access_token" not in serialized
+    assert "Authorization" not in serialized
+    assert "secret_ref" not in serialized
+
+    terminal = client.get(
+        f"/internal/v1/executions/{request['invocation_id']}/terminal",
+        headers=headers,
+    )
+    assert terminal.status_code == 200
+    assert terminal.json()["status"] == "SUCCEEDED"
+
+
+def test_python_runtime_cancel_wins_once_and_ledger_recovers_after_restart(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    executor = FakePythonExecutor(block_until_cancelled=True)
+    registry = PythonInvocationRegistry(executor, PythonTerminalLedger(database))
+    request = _request()
+
+    invocation = registry.acquire(request)
+    assert executor.started.wait(timeout=1)
+    assert invocation.cancel() is True
+    events = list(invocation.stream())
+
+    assert events[-1]["payload"]["status"] == "CANCELLED"
+    assert len([event for event in events if event["event_type"] == "terminal"]) == 1
+    assert invocation.cancel() is False
+
+    replacement = FakePythonExecutor()
+    recovered = PythonInvocationRegistry(
+        replacement,
+        PythonTerminalLedger(database),
+    ).acquire(request)
+    assert recovered.events() == tuple(events)
+    assert replacement.requests == []
+
+
+def test_python_runtime_restart_fails_orphan_without_replaying_model(
+    tmp_path: Path,
+) -> None:
+    database = _database(tmp_path)
+    request = _request()
+    ledger = PythonTerminalLedger(database)
+    assert ledger.claim(request, "runtime-before-restart").status == "CLAIMED"
+    started = {
+        "protocol_version": "1.0",
+        "invocation_id": request["invocation_id"],
+        "request_digest": request["request_digest"],
+        "sequence": 1,
+        "event_type": "execution_started",
+        "timestamp": "2026-08-11T00:00:00Z",
+        "payload": _provenance(request),
+    }
+    ledger.append(request, started)
+    replacement = FakePythonExecutor()
+
+    recovered = PythonInvocationRegistry(
+        replacement,
+        ledger,
+        owner_instance_id="runtime-after-restart",
+    ).acquire(request)
+    events = recovered.events()
+
+    assert replacement.requests == []
+    assert len(events) == 2
+    assert events[0] == started
+    assert events[1]["event_type"] == "terminal"
+    assert events[1]["payload"]["status"] == "FAILED"
+    assert events[1]["payload"]["failure"] == {
+        "code": "runtime_orphaned_invocation",
+        "retry_class": "NEVER",
+        "safe_message": "Agent Runtime 在执行中重启；为避免重复模型调用，本次执行已失败",
+    }
+    replayed = PythonInvocationRegistry(
+        replacement,
+        ledger,
+        owner_instance_id="runtime-later-restart",
+    ).acquire(request)
+    assert replayed.events() == events
+    assert replacement.requests == []
+
+
+def test_python_runtime_model_probe_and_fixed_mcp_url_boundary(tmp_path: Path) -> None:
+    executor = FakePythonExecutor()
+    dependencies, _private_key = _dependencies(tmp_path, executor)
+    client = TestClient(create_app(dependencies))
+    probe = {
+        "protocol_version": "1.0",
+        "runtime_kind": "python-v1",
+        "probe_id": "probe-1",
+        "model_connection": {"revision_id": "revision-1", "config_hash": "a" * 64},
+        "timeout_seconds": 3,
+    }
+
+    response = client.post(
+        "/internal/v1/model-probes",
+        json=probe,
+        headers={"Authorization": "Bearer " + dependencies.model_probe_token},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["runtime_kind"] == "python-v1"
+    assert response.json()["success"] is True
+    assert client.get("/health").json() == {"status": "ok"}
+    assert client.get("/ready").status_code == 200
+
+    try:
+        PythonRuntimeSdkExecutor(
+            cast(Any, None),
+            limits=build_settings().execution,
+            mcp_server_url="https://attacker.example/mcp",
+            sdk_version="0.2.134",
+        )
+    except ValueError as exc:
+        assert "fixed deployment boundary" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("arbitrary MCP URL was accepted")
+
+
+def test_python_test_only_fake_provider_resolves_binding_and_retries_once() -> None:
+    resolver = FakePythonBindingResolver()
+    executor = PythonRuntimeSdkExecutor(
+        cast(PythonModelBindingResolver, resolver),
+        limits=build_settings().execution,
+        mcp_server_url="http://tool-mcp:9103/mcp",
+        sdk_version="0.2.134",
+        cli_version="2.1.226",
+        fake_provider_mode=True,
+    )
+    first = _request()
+    first["invocation_id"] = f"{first['job_id']}.attempt-0"
+    first["prompt"]["user_question"] = "[smoke:retry-once] verify retry"
+    retry = executor.execute(first, threading.Event())
+    second = dict(first)
+    second["invocation_id"] = f"{first['job_id']}.attempt-1"
+    succeeded = executor.execute(second, threading.Event())
+
+    assert retry.status == "FAILED"
+    assert retry.failure and retry.failure["retry_class"] == "TRANSIENT"
+    assert succeeded.status == "SUCCEEDED"
+    assert succeeded.final_answer == "Python Runtime fake-provider smoke completed."
+    assert len(resolver.calls) == 2
+    assert "binding-secret" not in json.dumps([retry.__dict__, succeeded.__dict__])
+
+
+def test_python_runtime_resolves_only_frozen_model_revision_and_active_secret() -> None:
+    runtime = container()
+    runtime.model_connection_service.dns_resolver = lambda *_args, **_kwargs: [
+        (2, 1, 6, "", ("8.8.8.8", 443))
+    ]
+    connection = runtime.model_connection_service.get(DEFAULT_MODEL_CONNECTION_CODE)
+    config = {
+        "schema_version": 1,
+        "protocol": "anthropic_compatible",
+        "base_url": "https://api.deepseek.com/anthropic",
+        "model": "deepseek-chat",
+        "default_opus_model": "deepseek-chat",
+        "default_sonnet_model": "deepseek-chat",
+        "default_haiku_model": "deepseek-chat",
+        "subagent_model": "deepseek-chat",
+        "effort_level": "max",
+    }
+    revision = runtime.model_connection_service.save_revision(
+        actor_id="user_local_admin",
+        code=DEFAULT_MODEL_CONNECTION_CODE,
+        expected_revision=connection["revision"],
+        config=config,
+    )
+    ready = runtime.model_connection_service.rotate_credential(
+        actor_id="user_local_admin",
+        code=DEFAULT_MODEL_CONNECTION_CODE,
+        expected_revision=revision["revision"],
+        api_key="python-runtime-only-secret-value",
+    )
+    private_revision = runtime.model_connection_service.repository.get_revision(ready["id"])
+    resolver = PythonModelBindingResolver(
+        runtime.database,
+        master_key=runtime.settings.app_config_master_key,
+        allowed_hosts=("api.deepseek.com",),
+    )
+
+    resolved = resolver.resolve(str(ready["id"]), str(private_revision["config_hash"]))
+
+    assert resolved.binding.connection_revision_id == ready["id"]
+    assert resolved.binding.config_hash == private_revision["config_hash"]
+    assert resolved.api_key == "python-runtime-only-secret-value"
+    assert "python-runtime-only-secret-value" not in json.dumps(
+        resolved.binding.public_provenance()
+    )
+    resolver_source = inspect.getsource(PythonModelBindingResolver.resolve).lower()
+    assert "select r.*" not in resolver_source
+    assert "select s.*" not in resolver_source

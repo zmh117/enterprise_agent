@@ -13,6 +13,9 @@
       "type": "string",
       "pattern": "^[a-f0-9]{64}$"
     },
+    "RuntimeKind": {
+      "enum": ["python-v1", "typescript-v1"]
+    },
     "SafeMessage": {
       "type": "string",
       "minLength": 1,
@@ -96,9 +99,10 @@
     "ModelProbeRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["protocol_version", "probe_id", "model_connection", "timeout_seconds"],
+      "required": ["protocol_version", "runtime_kind", "probe_id", "model_connection", "timeout_seconds"],
       "properties": {
         "protocol_version": {"const": "1.0"},
+        "runtime_kind": {"$ref": "#/$defs/RuntimeKind"},
         "probe_id": {"$ref": "#/$defs/Identifier"},
         "model_connection": {"$ref": "#/$defs/ModelConnectionBinding"},
         "timeout_seconds": {"type": "integer", "minimum": 3, "maximum": 20}
@@ -118,6 +122,7 @@
       "additionalProperties": false,
       "required": [
         "protocol_version",
+        "runtime_kind",
         "probe_id",
         "success",
         "connection_revision_id",
@@ -129,13 +134,14 @@
       ],
       "properties": {
         "protocol_version": {"const": "1.0"},
+        "runtime_kind": {"$ref": "#/$defs/RuntimeKind"},
         "probe_id": {"$ref": "#/$defs/Identifier"},
         "success": {"type": "boolean"},
         "connection_revision_id": {"$ref": "#/$defs/Identifier"},
         "provider_host": {"type": "string", "minLength": 1, "maxLength": 253},
         "model": {"type": "string", "minLength": 1, "maxLength": 200},
         "runtime_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
-        "sdk_version": {"const": "0.3.226"},
+        "sdk_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
         "duration_ms": {"type": "integer", "minimum": 0, "maximum": 30000},
         "failure": {"$ref": "#/$defs/ModelProbeFailure"}
       },
@@ -174,11 +180,9 @@
     "McpServerBinding": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["server_code", "url", "access_token", "tools"],
+      "required": ["server_code", "tools"],
       "properties": {
-        "server_code": {"enum": ["ones-mcp", "data-mcp", "runtime-tool-mcp"]},
-        "url": {"type": "string", "format": "uri", "maxLength": 2048},
-        "access_token": {"type": "string", "minLength": 32, "maxLength": 8192},
+        "server_code": {"const": "tool-mcp"},
         "tools": {
           "type": "array",
           "minItems": 1,
@@ -192,6 +196,7 @@
       "additionalProperties": false,
       "required": [
         "protocol_version",
+        "runtime_kind",
         "invocation_id",
         "request_digest",
         "job_id",
@@ -206,6 +211,7 @@
       ],
       "properties": {
         "protocol_version": {"const": "1.0"},
+        "runtime_kind": {"$ref": "#/$defs/RuntimeKind"},
         "invocation_id": {"$ref": "#/$defs/Identifier"},
         "request_digest": {"$ref": "#/$defs/Sha256Digest"},
         "job_id": {"$ref": "#/$defs/Identifier"},
@@ -230,6 +236,7 @@
         "iss",
         "aud",
         "azp",
+        "runtime_kind",
         "sub",
         "job_id",
         "invocation_id",
@@ -245,6 +252,7 @@
         "iss": {"const": "enterprise-agent-worker"},
         "aud": {"const": "agent-runtime"},
         "azp": {"const": "agent-worker"},
+        "runtime_kind": {"$ref": "#/$defs/RuntimeKind"},
         "sub": {"$ref": "#/$defs/Identifier"},
         "job_id": {"$ref": "#/$defs/Identifier"},
         "invocation_id": {"$ref": "#/$defs/Identifier"},
@@ -281,10 +289,10 @@
         "model_connection_config_hash"
       ],
       "properties": {
-        "runtime_kind": {"const": "typescript-v1"},
+        "runtime_kind": {"$ref": "#/$defs/RuntimeKind"},
         "runtime_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
         "protocol_version": {"const": "1.0"},
-        "sdk_version": {"const": "0.3.226"},
+        "sdk_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
         "cli_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
         "model_connection_revision_id": {"$ref": "#/$defs/Identifier"},
         "model_connection_config_hash": {"$ref": "#/$defs/Sha256Digest"}
@@ -314,7 +322,7 @@
       ],
       "properties": {
         "tool_call_id": {"$ref": "#/$defs/Identifier"},
-        "server_code": {"enum": ["ones-mcp", "data-mcp", "runtime-tool-mcp"]},
+        "server_code": {"const": "tool-mcp"},
         "tool_name": {"$ref": "#/$defs/Identifier"},
         "status": {"enum": ["STARTED", "SUCCEEDED", "FAILED", "DENIED"]},
         "request_summary": {"$ref": "#/$defs/JsonSummary"},
@@ -375,7 +383,7 @@
         "protocol_version": {"const": "1.0"},
         "invocation_id": {"$ref": "#/$defs/Identifier"},
         "request_digest": {"$ref": "#/$defs/Sha256Digest"},
-        "reason": {"enum": ["JOB_CANCELLED", "WORKER_TIMEOUT", "CLIENT_DISCONNECTED"]}
+        "reason": {"enum": ["JOB_CANCELLED", "WORKER_TIMEOUT", "CLIENT_DISCONNECTED", "WORKER_SHUTDOWN"]}
       }
     },
     "RuntimeEvent": {

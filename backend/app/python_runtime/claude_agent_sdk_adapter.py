@@ -13,7 +13,7 @@ import time
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any
 from functools import lru_cache
 from urllib.parse import urlsplit
 
@@ -23,12 +23,7 @@ from app.modules.agent.domain.runtime import (
     AgentRunResult,
     ToolCallBudget,
 )
-from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
-from app.modules.api_capability.application import (
-    GovernedApiRuntimeExecutor,
-)
-from app.modules.job.infrastructure.repositories import AgentRepository
-from app.modules.internal_tools.infrastructure.internal_api_client import ToolResult
+from app.modules.agent.infrastructure.tool_manifest import TOOL_DEFINITIONS
 from app.modules.model_connection.domain import (
     ANTHROPIC_COMPATIBLE_PROTOCOL,
     ModelRuntimeBinding,
@@ -43,9 +38,11 @@ from app.shared.exceptions import (
     ToolPolicyError,
 )
 
-
-class ClaudeCodeAgentClient(Protocol):
-    def run(self, request: AgentRunRequest) -> AgentRunResult: ...
+if TYPE_CHECKING:
+    from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
+    from app.modules.api_capability.application import GovernedApiRuntimeExecutor
+    from app.modules.internal_tools.infrastructure.internal_api_client import ToolResult
+    from app.modules.job.infrastructure.repositories import AgentRepository
 
 
 @dataclass(frozen=True)
@@ -55,249 +52,6 @@ class ClaudeSdk:
     tool: Callable[..., Any]
     create_sdk_mcp_server: Callable[..., Any]
     tool_annotations: Any | None
-
-
-# Structured addressing shared by database/redis/loki tools. Optional for backward
-# compatibility with the flat datasource contract; required by the topology-aware platform.
-_ADDRESSING_PROPERTIES: dict[str, Any] = {
-    "environment": {
-        "type": "string",
-        "description": "Environment code, e.g. 'sanjiu' or 'mmk'.",
-    },
-    "base": {
-        "type": "string",
-        "description": "Base business code, e.g. 'guanlan' (观澜基地).",
-    },
-    "workshop": {
-        "type": "string",
-        "description": "Workshop code within a partitioned base, e.g. 'GL001'.",
-    },
-}
-
-_LOKI_SELECTOR_PROPERTIES: dict[str, Any] = {
-    "cluster": {"type": "string"},
-    "container": {"type": "string"},
-    "region": {"type": "string"},
-    "service": {"type": "string"},
-    "service_name": {"type": "string"},
-    "workshop": {"type": "string"},
-}
-
-_PLACEMENT_PROPERTY: dict[str, Any] = {
-    "placement": {
-        "type": "string",
-        "enum": ["cloud", "edge"],
-        "description": (
-            "Required when the Job exposes both cloud and edge resources; "
-            "omit it when the Job has only one or no placement."
-        ),
-    }
-}
-
-
-TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
-    "get_er_context": {
-        "description": "Search compact ER graph context for relevant tables, fields, enums, and relationships.",
-        "schema": {
-            "type": "object",
-            "properties": {"query": {"type": "string"}},
-            "required": ["query"],
-            "additionalProperties": False,
-        },
-    },
-    "get_business_flow_context": {
-        "description": "Search compact business-flow context for relevant process nodes and flow evidence.",
-        "schema": {
-            "type": "object",
-            "properties": {"query": {"type": "string"}},
-            "required": ["query"],
-            "additionalProperties": False,
-        },
-    },
-    "get_schema_directory": {
-        "description": (
-            "Return the allowed read-only schema directory for a target environment/base/workshop. "
-            "Use this before writing SQL. Only query tables and columns listed by this tool."
-        ),
-        "schema": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Optional table-name filter; leave empty for the bounded directory.",
-                },
-                "limit": {"type": "integer", "minimum": 1},
-                **_ADDRESSING_PROPERTIES,
-                **_PLACEMENT_PROPERTY,
-            },
-            "required": ["environment", "base"],
-            "additionalProperties": False,
-        },
-    },
-    "query_loki": {
-        "description": (
-            "Query bounded Loki logs with exact-match label selectors and a small result limit. "
-            "Use selector for labels such as cluster, service_name, container, region, or service; "
-            "for example {'cluster': 'mes-cluster'}."
-        ),
-        "schema": {
-            "type": "object",
-            "properties": {
-                "selector": {
-                    "type": "object",
-                    "properties": _LOKI_SELECTOR_PROPERTIES,
-                    "additionalProperties": False,
-                    "minProperties": 1,
-                },
-                "service": {
-                    "type": "string",
-                    "description": "Backward-compatible shortcut for selector.service.",
-                },
-                "query": {"type": "string"},
-                "minutes": {"type": "integer", "minimum": 1},
-                "limit": {"type": "integer", "minimum": 1},
-                **_ADDRESSING_PROPERTIES,
-            },
-            "required": ["selector"],
-            "additionalProperties": False,
-        },
-    },
-    "diagnose_loki_labels": {
-        "description": (
-            "List bounded Loki label names visible for the resolved environment/base/workshop. "
-            "Use this when a Loki query returns no logs or the correct service label is unclear."
-        ),
-        "schema": {
-            "type": "object",
-            "properties": {
-                "minutes": {"type": "integer", "minimum": 1},
-                "limit": {"type": "integer", "minimum": 1},
-                **_ADDRESSING_PROPERTIES,
-            },
-            "required": ["environment", "base"],
-            "additionalProperties": False,
-        },
-    },
-    "diagnose_loki_label_values": {
-        "description": (
-            "List bounded values for an allowed Loki label such as service, service_name, "
-            "container, cluster, region, or workshop."
-        ),
-        "schema": {
-            "type": "object",
-            "properties": {
-                "label": {
-                    "type": "string",
-                    "enum": [
-                        "cluster",
-                        "container",
-                        "region",
-                        "service",
-                        "service_name",
-                        "workshop",
-                    ],
-                },
-                "minutes": {"type": "integer", "minimum": 1},
-                "limit": {"type": "integer", "minimum": 1},
-                **_ADDRESSING_PROPERTIES,
-            },
-            "required": ["environment", "base", "label"],
-            "additionalProperties": False,
-        },
-    },
-    "diagnose_loki_probe": {
-        "description": (
-            "Probe a bounded Loki selector and keyword to explain empty results. "
-            "Returns stream_count, line_count, and safe empty-result hints."
-        ),
-        "schema": {
-            "type": "object",
-            "properties": {
-                "selector": {
-                    "type": "object",
-                    "properties": _LOKI_SELECTOR_PROPERTIES,
-                    "additionalProperties": False,
-                    "minProperties": 1,
-                },
-                "query": {"type": "string"},
-                "minutes": {"type": "integer", "minimum": 1},
-                "limit": {"type": "integer", "minimum": 1},
-                **_ADDRESSING_PROPERTIES,
-            },
-            "required": ["environment", "base", "selector"],
-            "additionalProperties": False,
-        },
-    },
-    "query_database": {
-        "description": (
-            "Run policy-approved read-only SQL through the internal database gateway. "
-            "Provide structured addressing (environment/base/workshop) so the platform "
-            "routes to the correct base and enforces the workshop table prefix."
-        ),
-        "schema": {
-            "type": "object",
-            "properties": {
-                "datasource": {"type": "string"},
-                "sql": {"type": "string"},
-                "limit": {"type": "integer", "minimum": 1},
-                **_ADDRESSING_PROPERTIES,
-                **_PLACEMENT_PROPERTY,
-            },
-            "required": ["sql"],
-            "additionalProperties": False,
-        },
-    },
-    "query_redis_get": {
-        "description": "Read one approved Redis key through the internal Redis gateway.",
-        "schema": {
-            "type": "object",
-            "properties": {
-                "datasource": {"type": "string"},
-                "key": {"type": "string"},
-                **_ADDRESSING_PROPERTIES,
-                **_PLACEMENT_PROPERTY,
-            },
-            "required": ["key"],
-            "additionalProperties": False,
-        },
-    },
-    "query_redis_scan": {
-        "description": "Scan approved Redis key prefixes with a bounded limit.",
-        "schema": {
-            "type": "object",
-            "properties": {
-                "datasource": {"type": "string"},
-                "pattern": {"type": "string"},
-                "limit": {"type": "integer", "minimum": 1},
-                **_ADDRESSING_PROPERTIES,
-                **_PLACEMENT_PROPERTY,
-            },
-            "required": ["pattern"],
-            "additionalProperties": False,
-        },
-    },
-}
-
-
-class StubClaudeCodeAgentClient:
-    def run(self, request: AgentRunRequest) -> AgentRunResult:
-        context = request.context.retrieved_context
-        evidence = []
-        if "er" in context:
-            evidence.append(f"ER context: {context['er']}")
-        if "business_flow" in context:
-            evidence.append(f"Business flow context: {context['business_flow']}")
-        final_answer = "\n".join(
-            [
-                "Conclusion: read-only diagnostic analysis completed.",
-                f"Question: {request.context.user_question}",
-                "Evidence:",
-                *(f"- {item}" for item in evidence),
-                "Uncertainty: runtime used configured read-only tool summaries only.",
-                "Suggested next actions: review the cited evidence and perform any mutation manually through approved procedures.",
-            ]
-        )
-        return AgentRunResult(final_answer=final_answer)
 
 
 class RealClaudeCodeAgentClient:

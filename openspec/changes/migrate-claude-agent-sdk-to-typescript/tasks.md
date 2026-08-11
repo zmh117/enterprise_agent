@@ -45,6 +45,8 @@
 
 ## 7. 灰度、真实链路与双Runtime长期运行
 
+> 后续拓扑由 `separate-agent-worker-and-dual-runtimes` 取代：7.1-7.3 的真实链路与敏感扫描并入新变更 8.6-8.8；7.4 的 RuntimeMigrationGate 验收被 Agent Publication 固定 Runtime 取代；已完成的 7.5 仅记录旧阶段事实，不再作为最终 Worker 镜像或 Python 进程内 SDK 的保留门槛。
+
 - [ ] 7.1 在可丢弃 Application 显式选择 `typescript-v1`，验证真实模型、只读 MCP、取消、重试、Runtime 重启和失败投递
 - [ ] 7.2 验证真实 `DingTalk → Inbox/Outbox → RabbitMQ → Python Worker → TypeScript Runtime → MCP → Result → Delivery` 链路
 - [ ] 7.3 扫描数据库、RabbitMQ、日志、Runtime ledger、事件和 Tool provenance，确认不存在 Key、Token、Secret、完整 Prompt或私有推理

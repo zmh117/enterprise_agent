@@ -136,24 +136,14 @@ class OnesIdentitySettings:
 
 
 @dataclass(frozen=True)
-class RuntimeToolMcpSettings:
-    server_url: str = "http://runtime-tool-mcp:9103/mcp"
-    token_signing_key_file: str = ""
-    allowed_hosts: tuple[str, ...] = (
-        "runtime-tool-mcp",
-        "runtime-tool-mcp:9103",
-    )
-
-
-@dataclass(frozen=True)
 class AgentRuntimeSettings:
-    base_url: str = ""
-    allowed_hosts: tuple[str, ...] = ()
+    python_base_url: str = ""
+    python_allowed_hosts: tuple[str, ...] = ()
+    typescript_base_url: str = ""
+    typescript_allowed_hosts: tuple[str, ...] = ()
     grant_private_key_file: str = ""
     model_probe_auth_token_file: str = ""
     allow_insecure_internal_http: bool = False
-    typescript_environments: tuple[str, ...] = ()
-    typescript_application_publication_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -261,7 +251,6 @@ class Settings:
     object_storage: ObjectStorageSettings = field(default_factory=ObjectStorageSettings)
     identity: IdentitySettings = field(default_factory=IdentitySettings)
     ones_identity: OnesIdentitySettings = field(default_factory=OnesIdentitySettings)
-    runtime_tool_mcp: RuntimeToolMcpSettings = field(default_factory=RuntimeToolMcpSettings)
     agent_runtime: AgentRuntimeSettings = field(default_factory=AgentRuntimeSettings)
     webhooks: WebhookSettings = field(default_factory=WebhookSettings)
     managed_channels: ManagedChannelSettings = field(default_factory=ManagedChannelSettings)
@@ -327,32 +316,19 @@ def load_settings() -> Settings:
         feature_configuration=features,
         seed_local_config=_env_bool("SEED_LOCAL_CONFIG"),
         debug_agent_user_id=os.getenv("DEBUG_AGENT_USER_ID", "local-user"),
-        runtime_tool_mcp=RuntimeToolMcpSettings(
-            server_url=os.getenv(
-                "RUNTIME_TOOL_MCP_SERVER_URL",
-                "http://runtime-tool-mcp:9103/mcp",
-            ),
-            token_signing_key_file=os.getenv("RUNTIME_TOOL_MCP_SIGNING_KEY_FILE", ""),
-            allowed_hosts=_csv_tuple(
-                os.getenv(
-                    "RUNTIME_TOOL_MCP_ALLOWED_HOSTS",
-                    "runtime-tool-mcp,runtime-tool-mcp:9103",
-                )
-            ),
-        ),
         agent_runtime=AgentRuntimeSettings(
-            base_url=os.getenv("AGENT_RUNTIME_URL", ""),
-            allowed_hosts=_csv_tuple(os.getenv("AGENT_RUNTIME_ALLOWED_HOSTS", "")),
+            python_base_url=os.getenv("PYTHON_AGENT_RUNTIME_URL", ""),
+            python_allowed_hosts=_csv_tuple(
+                os.getenv("PYTHON_AGENT_RUNTIME_ALLOWED_HOSTS", "")
+            ),
+            typescript_base_url=os.getenv("TYPESCRIPT_AGENT_RUNTIME_URL", ""),
+            typescript_allowed_hosts=_csv_tuple(
+                os.getenv("TYPESCRIPT_AGENT_RUNTIME_ALLOWED_HOSTS", "")
+            ),
             grant_private_key_file=os.getenv("RUNTIME_GRANT_PRIVATE_KEY_FILE", ""),
             model_probe_auth_token_file=os.getenv("MODEL_PROBE_AUTH_TOKEN_FILE", ""),
             allow_insecure_internal_http=_env_bool(
                 "AGENT_RUNTIME_ALLOW_INSECURE_INTERNAL_HTTP"
-            ),
-            typescript_environments=_csv_tuple(
-                os.getenv("AGENT_RUNTIME_TYPESCRIPT_ENVIRONMENTS", "")
-            ),
-            typescript_application_publication_ids=_csv_tuple(
-                os.getenv("AGENT_RUNTIME_TYPESCRIPT_APPLICATION_PUBLICATIONS", "")
             ),
         ),
         dingtalk=DingTalkSettings(

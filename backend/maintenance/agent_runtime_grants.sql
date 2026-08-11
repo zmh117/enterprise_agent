@@ -19,3 +19,7 @@ GRANT SELECT (secret_id, version, ciphertext, nonce, key_id, algorithm, status)
 
 GRANT SELECT, INSERT, DELETE ON agent_runtime_terminal_ledger
   TO agent_runtime_reader;
+GRANT SELECT, INSERT, DELETE ON agent_runtime_invocation_claim
+  TO agent_runtime_reader;
+GRANT SELECT, INSERT, DELETE ON agent_runtime_invocation_event
+  TO agent_runtime_reader;

@@ -93,7 +93,7 @@ test("query adapter uses isolated settings and gates every MCP call through canU
   const query = queryFrom(async function* (options) {
     captured = options;
     const permission = await options.canUseTool?.(
-      "mcp__ones__ones_work_item_search",
+      "mcp__tools__ones_work_item_search",
       { project_code: "project-1" },
       {
         signal: new AbortController().signal,
@@ -147,11 +147,15 @@ test("query adapter uses isolated settings and gates every MCP call through canU
     "WebSearch",
     "Shell"
   ]);
-  assert.deepEqual(Object.keys(captured?.mcpServers ?? {}), ["ones"]);
-  assert.equal(captured?.mcpServers?.ones?.type, "http");
+  assert.deepEqual(Object.keys(captured?.mcpServers ?? {}), ["tools"]);
+  assert.equal(captured?.mcpServers?.tools?.type, "http");
+  assert.equal(captured?.mcpServers?.tools?.url, "http://tool-mcp:9103/mcp");
+  assert.equal(
+    Object.hasOwn(captured?.mcpServers?.tools?.headers ?? {}, "Authorization"),
+    false
+  );
   assert.equal(captured?.env?.ANTHROPIC_API_KEY, "model-key-a");
   assert.equal(captured?.env?.ANTHROPIC_BASE_URL, resolved.baseUrl);
-  assert.equal(captured?.systemPrompt?.toString().includes(value.mcp_servers[0]!.access_token), false);
   assert.equal(
     JSON.stringify(Object.entries(process.env).sort(([left], [right]) => left.localeCompare(right))),
     before
@@ -174,7 +178,7 @@ test("no eligible tools means no MCP server and forged/max-budget calls are deni
   const query = queryFrom(async function* (options) {
     captured = options;
     const denied = await options.canUseTool?.(
-      "mcp__ones__ones_work_item_search",
+      "mcp__tools__ones_work_item_search",
       { authorization: "Bearer must-not-escape" },
       {
         signal: new AbortController().signal,
@@ -193,7 +197,7 @@ test("no eligible tools means no MCP server and forged/max-budget calls are deni
   ).execute(value, emitted.value);
 
   assert.equal(terminal.status, "SUCCEEDED");
-  assert.deepEqual(Object.keys(captured?.mcpServers ?? {}), ["ones"]);
+  assert.deepEqual(Object.keys(captured?.mcpServers ?? {}), ["tools"]);
   const deniedEvent = emitted.events.find(
     (event) => event.eventType === "tool_event" && (event.payload as any).status === "DENIED"
   );
@@ -219,7 +223,7 @@ test("untrusted MCP output is summarized and private thinking/raw payloads are d
   const value = request();
   const query = queryFrom(async function* (options) {
     await options.canUseTool?.(
-      "mcp__ones__ones_work_item_search",
+      "mcp__tools__ones_work_item_search",
       {},
       {
         signal: new AbortController().signal,
@@ -266,7 +270,6 @@ test("untrusted MCP output is summarized and private thinking/raw payloads are d
 
   assert.equal(serialized.includes("private chain of thought"), false);
   assert.equal(serialized.includes("mcp-output-secret"), false);
-  assert.equal(serialized.includes(value.mcp_servers[0]!.access_token), false);
   assert.equal(serialized.includes("model-key-a"), false);
   assert.equal(serialized.includes("raw_sdk_message"), false);
 });
@@ -284,7 +287,7 @@ test("forged subject/resource/header inputs and built-in tools fail closed", asy
       requestId: "forged-permission-request"
     };
     const forged = await options.canUseTool?.(
-      "mcp__ones__ones_work_item_search",
+      "mcp__tools__ones_work_item_search",
       {
         subject: "forged-user",
         headers: { Authorization: "Bearer forged-token" },

@@ -172,15 +172,21 @@ def test_rabbitmq_recovery_then_dead_delivery_replay_does_not_rerun_agent(
         queue=queue,
         delivery=delivery,
     )
-    runtime = build_worker_container(settings, seed=True)
+    client = _CountingLongResultClient()
+    runtime = build_worker_container(
+        settings,
+        seed=True,
+        runtime_clients={
+            "python-v1": client,
+            "typescript-v1": client,
+        },
+    )
     runtime.settings = replace(
         runtime.settings,
         queue=queue,
         delivery=delivery,
     )
-    client = _CountingLongResultClient()
     runtime.agent_executor.context_builder = _StaticContextBuilder()  # type: ignore[assignment]
-    runtime.agent_executor.claude_client = client  # type: ignore[assignment]
     runtime.result_delivery_service.chunker.max_chars = 200
     adapter = _SecondChunkOutageAdapter()
     runtime.result_delivery_service.adapters["phase2c_delivery"] = adapter
@@ -197,7 +203,7 @@ def test_rabbitmq_recovery_then_dead_delivery_replay_does_not_rerun_agent(
         job = runtime.create_agent_job_service.execute(
             CreateAgentJobCommand(
                 idempotency_key=f"phase2c-{suffix}",
-                requester_id="local-user",
+                requester_id="user_local_admin",
                 external_conversation_id=f"phase2c-{suffix}",
                 user_message="Phase 2C real chain",
                 source_channel="debug_api",

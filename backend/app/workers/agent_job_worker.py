@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import signal
 import uuid
 
 from app.bootstrap import Container, build_worker_container
@@ -20,6 +21,23 @@ class AgentJobWorker:
             seed=settings.seed_local_config,
         )
         self.worker_id = f"agent-worker-{uuid.uuid4().hex[:8]}"
+        self.active_job_id = ""
+
+    def request_shutdown(self) -> bool:
+        if not self.active_job_id:
+            return False
+        try:
+            return self.container.agent_executor.cancel_active(
+                self.active_job_id,
+                "WORKER_SHUTDOWN",
+            )
+        except Exception:
+            logger.warning(
+                "Failed to cancel active Runtime invocation during Worker shutdown job_id=%s",
+                self.active_job_id,
+                exc_info=True,
+            )
+            return False
 
     def handle(self, message: AgentJobMessage) -> None:
         try:
@@ -62,12 +80,13 @@ class AgentJobWorker:
             ):
                 return
             try:
+                self.active_job_id = dispatch_event.job_id
                 self.container.agent_executor.execute(
                     dispatch_event.job_id,
                     worker_id=self.worker_id,
                     correlation_id=dispatch_event.correlation_id,
                     fail_on_error=False,
-                    recover_typescript_running=message.redelivered,
+                    recover_runtime_running=message.redelivered,
                 )
             except Exception as exc:
                 job = self.container.agent_repository.get_job(message.job_id)
@@ -91,6 +110,8 @@ class AgentJobWorker:
                     exc.__class__.__name__,
                     safe_message,
                 )
+            finally:
+                self.active_job_id = ""
 
         with_correlation(dispatch_event.correlation_id, run)
 
@@ -100,7 +121,22 @@ class AgentJobWorker:
         self.container.consumer.consume_agent_jobs(self.handle)
 
     def run_forever(self) -> None:
-        self.run_once()
+        previous: dict[int, object] = {}
+
+        def shutdown_handler(_signum: int, _frame: object) -> None:
+            self.request_shutdown()
+            raise KeyboardInterrupt
+
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            previous[signum] = signal.getsignal(signum)
+            signal.signal(signum, shutdown_handler)
+        try:
+            self.run_once()
+        except KeyboardInterrupt:
+            self.request_shutdown()
+        finally:
+            for signum, handler in previous.items():
+                signal.signal(signum, handler)
 
 
 def main() -> None:

@@ -10,7 +10,7 @@ const ajv = new Ajv2020({ allErrors: true, strict: true, allowUnionTypes: true }
 addFormats(ajv);
 ajv.addSchema(protocolSchema);
 
-export type ContractName = "Identifier" | "Sha256Digest" | "SafeMessage" | "JsonSummary" | "ExecutionLimits" | "Prompt" | "ModelConnectionBinding" | "ModelProbeRequest" | "ModelProbeFailure" | "ModelProbeResponse" | "McpToolBinding" | "McpServerBinding" | "AgentExecutionRequestV1" | "RuntimeGrantClaims" | "Usage" | "RuntimeProvenance" | "RuntimeFailure" | "ToolEvent" | "TerminalResult" | "CancelRequest" | "RuntimeEvent";
+export type ContractName = "Identifier" | "Sha256Digest" | "RuntimeKind" | "SafeMessage" | "JsonSummary" | "ExecutionLimits" | "Prompt" | "ModelConnectionBinding" | "ModelProbeRequest" | "ModelProbeFailure" | "ModelProbeResponse" | "McpToolBinding" | "McpServerBinding" | "AgentExecutionRequestV1" | "RuntimeGrantClaims" | "Usage" | "RuntimeProvenance" | "RuntimeFailure" | "ToolEvent" | "TerminalResult" | "CancelRequest" | "RuntimeEvent";
 
 export class ContractValidationError extends Error {
   constructor(

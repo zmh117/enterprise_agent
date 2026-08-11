@@ -61,7 +61,7 @@ export function AgentProfilesPage() {
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Agent 配置</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          底层按多 Agent 建模；当前版本只允许编辑默认诊断 Agent。
+          分别管理 Python 与 TypeScript Agent；Runtime 类型创建后不可修改。
         </p>
       </header>
       <div className="grid gap-4 lg:grid-cols-2">
@@ -76,13 +76,9 @@ export function AgentProfilesPage() {
                   </p>
                 </div>
                 <Badge
-                  variant={
-                    profile.management_mode === "editable"
-                      ? "secondary"
-                      : "outline"
-                  }
+                  variant="secondary"
                 >
-                  {profile.management_mode === "editable" ? "可编辑" : "只读"}
+                  {runtimeKindLabel(profile.runtime_kind)}
                 </Badge>
               </div>
               <div className="space-y-2 text-sm">
@@ -105,17 +101,9 @@ export function AgentProfilesPage() {
                   value={String(profile.active_application_count)}
                 />
               </div>
-              {profile.management_mode === "editable" ? (
-                <Button
-                  render={<Link to={`/agent-profiles/${profile.code}`} />}
-                >
-                  进入配置
-                </Button>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  非默认 Agent 在当前 MVP 中不开放编辑。
-                </p>
-              )}
+              <Button render={<Link to={`/agent-profiles/${profile.code}`} />}>
+                进入配置
+              </Button>
             </CardContent>
           </Card>
         ))}
@@ -126,7 +114,7 @@ export function AgentProfilesPage() {
 
 export function AgentProfilePage() {
   const routeCode = useParams().code ?? "default-diagnostic-agent"
-  const agent = useAgentProfile()
+  const agent = useAgentProfile(routeCode)
   const connection = useModelConnection()
 
   if (agent.isLoading || connection.isLoading) {
@@ -155,25 +143,6 @@ export function AgentProfilePage() {
               }}
             >
               重试
-            </Button>
-          </CardContent>
-        </Card>
-      </main>
-    )
-  }
-  if (routeCode !== "default-diagnostic-agent") {
-    return (
-      <main className="mx-auto w-full max-w-[900px] px-4 py-8">
-        <Card className="shadow-none">
-          <CardHeader>
-            <CardTitle>当前 Agent 只读</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm text-muted-foreground">
-            <p>
-              第一版 UI 只开放默认诊断 Agent，不支持创建、复制或删除 Agent。
-            </p>
-            <Button variant="outline" render={<Link to="/agent-profiles" />}>
-              返回 Agent 配置
             </Button>
           </CardContent>
         </Card>
@@ -209,10 +178,12 @@ function Workspace({
             <h1 className="text-2xl font-semibold tracking-tight">
               {agent.definition.name}
             </h1>
-            <Badge variant="outline">唯一可编辑 Agent 配置</Badge>
+            <Badge variant="outline">
+              {runtimeKindLabel(agent.definition.runtime_kind)}
+            </Badge>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            {agent.definition.code} · Claude Agent SDK · {currentModel}
+            {agent.definition.code} · {currentModel}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -261,6 +232,7 @@ function Workspace({
         </TabsContent>
         <TabsContent value="publications">
           <PublicationHistory
+            agentCode={agent.definition.code}
             currentId={agent.definition.current_publication_id ?? ""}
             canPublish={agent.permissions.can_publish}
           />
@@ -817,9 +789,9 @@ function ProfileForm({
     builtin_tool_release_ids: base?.builtin_tool_release_ids ?? [],
   }
   const [form, setForm] = useState<AgentConfig>(() => persistedForm)
-  const save = useSaveAgentDraft()
-  const validate = useValidateAgentDraft()
-  const publish = usePublishAgentDraft()
+  const save = useSaveAgentDraft(agent.definition.code)
+  const validate = useValidateAgentDraft(agent.definition.code)
+  const publish = usePublishAgentDraft(agent.definition.code)
   const draftDirty = JSON.stringify(form) !== JSON.stringify(persistedForm)
 
   function toggleList(field: "tools" | "skills", value: string) {
@@ -872,6 +844,10 @@ function ProfileForm({
           <CardTitle>Agent 配置草稿</CardTitle>
         </CardHeader>
         <CardContent className="space-y-5">
+          <fieldset
+            disabled={!agent.permissions.can_edit_profile}
+            className="space-y-5 disabled:opacity-70"
+          >
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="业务角色" htmlFor="profile-role">
               <Input
@@ -999,11 +975,16 @@ function ProfileForm({
               当前修改尚未保存，请先保存草稿，再校验和发布。
             </p>
           ) : null}
+          </fieldset>
           <div className="flex flex-wrap gap-2">
             <Button
               type="button"
               onClick={() => void saveDraft()}
-              disabled={save.isPending || !currentConnection}
+              disabled={
+                save.isPending ||
+                !currentConnection ||
+                !agent.permissions.can_edit_profile
+              }
             >
               {save.isPending ? (
                 <LoaderCircleIcon className="animate-spin" />
@@ -1019,7 +1000,8 @@ function ProfileForm({
                 !agent.draft ||
                 draftPublished ||
                 draftDirty ||
-                validate.isPending
+                validate.isPending ||
+                !agent.permissions.can_edit_profile
               }
               onClick={() => agent.draft && validate.mutate(agent.draft.id)}
             >
@@ -1364,14 +1346,16 @@ function BuiltinToolReleaseSelector({
 }
 
 function PublicationHistory({
+  agentCode,
   currentId,
   canPublish,
 }: {
+  agentCode: string
   currentId: string
   canPublish: boolean
 }) {
-  const publications = useAgentPublications()
-  const rollback = useRollbackAgentPublication()
+  const publications = useAgentPublications(agentCode)
+  const rollback = useRollbackAgentPublication(agentCode)
   if (publications.isLoading) return <Skeleton className="h-80 w-full" />
   if (publications.isError || !publications.data) {
     return <MutationMessage error={publications.error} />
@@ -1389,6 +1373,9 @@ function PublicationHistory({
                     r{publication.revision}
                   </Badge>
                   {current ? <Badge variant="secondary">当前版本</Badge> : null}
+                  <Badge variant="outline">
+                    {runtimeKindLabel(publication.runtime_kind)}
+                  </Badge>
                   <Badge variant="outline">
                     {publication.model_runtime_mode === "pinned_connection"
                       ? "固定模型连接"
@@ -1436,6 +1423,10 @@ function PublicationHistory({
       <MutationMessage error={rollback.error} />
     </div>
   )
+}
+
+function runtimeKindLabel(runtimeKind: "python-v1" | "typescript-v1") {
+  return runtimeKind === "typescript-v1" ? "TypeScript Runtime" : "Python Runtime"
 }
 
 function ReadOnlyModelSummary({

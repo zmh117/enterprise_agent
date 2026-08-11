@@ -21,7 +21,6 @@ import {
 } from "./protocol.js";
 import type { ReadinessProbe } from "./readiness.js";
 import {
-  assertSafeRemoteUrl,
   EXPECTED_CLI_VERSION,
   EXPECTED_SDK_VERSION,
   type RuntimeConfig
@@ -114,7 +113,6 @@ export function createRuntimeRequestHandler(
   dependencies: RuntimeServerDependencies
 ): RuntimeRequestHandler {
   const {
-    config,
     grantVerifier,
     registry,
     readiness,
@@ -148,8 +146,11 @@ export function createRuntimeRequestHandler(
         const encodedLength = Number(request.headers["content-length"] ?? "0") || undefined;
         const payload = await readJsonBody(request);
         validateExecutionRequest(payload, encodedLength);
-        for (const server of payload.mcp_servers) {
-          assertSafeRemoteUrl(server.url, config.mcpAllowedHosts, "mcp");
+        if (payload.runtime_kind !== "typescript-v1") {
+          throw new ProtocolBoundaryError(
+            "runtime_kind_mismatch",
+            "execution request targets another Runtime"
+          );
         }
         await grantVerifier.verify(bearerToken(request), payload);
         const handle = await registry.acquire(payload);
@@ -190,6 +191,12 @@ export function createRuntimeRequestHandler(
         verifyModelProbeToken(modelProbeToken, bearerToken(request));
         const payload = await readJsonBody(request);
         assertContract("ModelProbeRequest", payload);
+        if ((payload as ModelProbeRequest).runtime_kind !== "typescript-v1") {
+          throw new ProtocolBoundaryError(
+            "runtime_kind_mismatch",
+            "model probe targets another Runtime"
+          );
+        }
         const result = await modelProbe.run(payload as ModelProbeRequest);
         sendJson(response, 200, result);
         return;

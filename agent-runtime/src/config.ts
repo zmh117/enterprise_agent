@@ -24,8 +24,10 @@ export interface RuntimeConfig {
   readonly masterKeyFile: string;
   readonly providerAllowedHosts: ReadonlySet<string>;
   readonly mcpAllowedHosts: ReadonlySet<string>;
+  readonly mcpServerUrl: string;
   readonly ledgerTtlSeconds: number;
   readonly cliVersion: typeof EXPECTED_CLI_VERSION;
+  readonly fakeProviderMode: boolean;
 }
 
 const RUNTIME_ENV_PREFIXES = [
@@ -43,12 +45,14 @@ const ALLOWED_ENV = new Set([
   "AGENT_RUNTIME_LOG_LEVEL",
   "AGENT_RUNTIME_LEDGER_TTL_SECONDS",
   "AGENT_RUNTIME_CLI_VERSION",
+  "AGENT_RUNTIME_TEST_PROVIDER_MODE",
   "RUNTIME_GRANT_PUBLIC_KEY_FILE",
   "MODEL_PROBE_AUTH_TOKEN_FILE",
   "DATABASE_URL",
   "APP_CONFIG_MASTER_KEY_FILE",
   "MODEL_PROVIDER_ALLOWED_HOSTS",
-  "MCP_SERVER_ALLOWED_HOSTS"
+  "MCP_SERVER_ALLOWED_HOSTS",
+  "MCP_TOOL_SERVER_URL"
 ]);
 
 export class RuntimeConfigError extends Error {
@@ -189,6 +193,31 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
       "Runtime key files must use absolute paths"
     );
   }
+  const mcpAllowedHosts = hostSet(
+    required(env, "MCP_SERVER_ALLOWED_HOSTS"),
+    "MCP_SERVER_ALLOWED_HOSTS"
+  );
+  const mcpServerUrl = assertSafeRemoteUrl(
+    required(env, "MCP_TOOL_SERVER_URL"),
+    mcpAllowedHosts,
+    "mcp"
+  ).toString();
+  const fakeProviderMode = env.AGENT_RUNTIME_TEST_PROVIDER_MODE?.trim() || "disabled";
+  if (!new Set(["disabled", "deterministic"]).has(fakeProviderMode)) {
+    throw new RuntimeConfigError(
+      "runtime_config_invalid",
+      "AGENT_RUNTIME_TEST_PROVIDER_MODE must be disabled or deterministic"
+    );
+  }
+  if (
+    fakeProviderMode === "deterministic" &&
+    !new Set(["test", "testing"]).has(env.APP_ENV?.trim() || "")
+  ) {
+    throw new RuntimeConfigError(
+      "runtime_fake_provider_forbidden",
+      "deterministic fake provider is restricted to APP_ENV=test/testing"
+    );
+  }
   return {
     host: env.AGENT_RUNTIME_HOST?.trim() || "0.0.0.0",
     port: integer(env, "AGENT_RUNTIME_PORT", 8090, 1, 65535),
@@ -201,10 +230,8 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
       required(env, "MODEL_PROVIDER_ALLOWED_HOSTS"),
       "MODEL_PROVIDER_ALLOWED_HOSTS"
     ),
-    mcpAllowedHosts: hostSet(
-      required(env, "MCP_SERVER_ALLOWED_HOSTS"),
-      "MCP_SERVER_ALLOWED_HOSTS"
-    ),
+    mcpAllowedHosts,
+    mcpServerUrl,
     ledgerTtlSeconds: integer(
       env,
       "AGENT_RUNTIME_LEDGER_TTL_SECONDS",
@@ -212,7 +239,8 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
       300,
       86400
     ),
-    cliVersion
+    cliVersion,
+    fakeProviderMode: fakeProviderMode === "deterministic"
   };
 }
 

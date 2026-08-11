@@ -90,7 +90,12 @@ def build_agent_config_router() -> APIRouter:
             agent = container(request).agent_config_service.get(agent_code)
             authorization = container(request).authorization_evaluator
             agent["permissions"] = {
-                "can_edit_profile": True,
+                "can_edit_profile": authorization.decide(
+                    user_id=principal.user_id,
+                    resource_type="agent",
+                    resource_code=agent_code,
+                    action="edit",
+                ).allowed,
                 "can_publish": authorization.decide(
                     user_id=principal.user_id,
                     resource_type="agent",

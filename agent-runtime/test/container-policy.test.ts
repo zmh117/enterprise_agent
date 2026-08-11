@@ -32,6 +32,8 @@ test("deployment preflight checks exact runtime versions, grants and secret perm
   assert.match(preflight, /package-lock\.json/);
   assert.match(preflight, /--version/);
   assert.match(preflight, /AGENT_RUNTIME_CLI_VERSION/);
+  assert.match(preflight, /runtimeKinds\.includes\("python-v1"\)/);
+  assert.match(preflight, /runtimeKinds\.includes\("typescript-v1"\)/);
   assert.match(preflight, /has_column_privilege/);
   assert.match(preflight, /has_table_privilege/);
   assert.match(preflight, /APP_CONFIG_MASTER_KEY_FILE/);

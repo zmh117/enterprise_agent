@@ -120,7 +120,7 @@ def _create_job(container: object, label: str) -> object:
     return container.create_agent_job_service.execute(
         CreateAgentJobCommand(
             idempotency_key=f"phase2b-{label}-{uuid.uuid4().hex}",
-            requester_id="local-user",
+            requester_id="user_local_admin",
             external_conversation_id=f"phase2b-{label}",
             user_message=f"Phase 2B {label}",
             source_channel="debug_api",
@@ -149,11 +149,17 @@ def test_committed_job_survives_dispatch_and_duplicate_event_executes_once(
         feature_real_internal_tools=False,
         queue=queue,
     )
-    container = build_worker_container(settings, seed=True)
-    container.settings = replace(container.settings, queue=queue)
     counting_client = _CountingAgentClient()
+    container = build_worker_container(
+        settings,
+        seed=True,
+        runtime_clients={
+            "python-v1": counting_client,
+            "typescript-v1": counting_client,
+        },
+    )
+    container.settings = replace(container.settings, queue=queue)
     container.agent_executor.context_builder = _StaticContextBuilder()  # type: ignore[assignment]
-    container.agent_executor.claude_client = counting_client  # type: ignore[assignment]
     connection = pika.BlockingConnection(pika.URLParameters(RABBITMQ_URL))
     channel = connection.channel()
     try:

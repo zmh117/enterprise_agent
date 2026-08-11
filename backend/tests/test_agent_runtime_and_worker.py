@@ -15,6 +15,22 @@ from backend.tests.helpers import (
 )
 
 
+def _runtime_container():
+    runtime = container()
+    runtime.database.execute(
+        """
+        insert into permission_policy
+          (id, subject_type, subject_code, resource_type, resource_code,
+           effect, action, status, priority, revision, created_at, updated_at)
+        values ('test-runtime-local-user-project', 'user', 'local-user',
+                'project', 'default', 'allow', 'use', 'enabled', 1, 1,
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        on conflict(id) do nothing
+        """
+    )
+    return runtime
+
+
 class FailingClaudeClient:
     def run(self, request: object) -> object:
         raise RetryableExecutionError("timeout", safe_message="Claude timeout")
@@ -79,7 +95,7 @@ class ToolEventClaudeClient:
 
 class AgentRuntimeAndWorkerTests(unittest.TestCase):
     def test_agent_executor_completes_with_evidence_report(self) -> None:
-        c = container()
+        c = _runtime_container()
         job = c.create_agent_job_service.execute(
             CreateAgentJobCommand(
                 idempotency_key="runtime-job",
@@ -103,7 +119,7 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
         self.assertNotIn("private chain", " ".join(row["content"] for row in steps).lower())
 
     def test_worker_routes_retryable_failure_to_retry_queue(self) -> None:
-        c = container()
+        c = _runtime_container()
         job = c.create_agent_job_service.execute(
             CreateAgentJobCommand(
                 idempotency_key="retry-job",
@@ -132,7 +148,7 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
         self.assertEqual(JobStatus.RETRY_WAIT, c.agent_repository.get_job(job.id).status)
 
     def test_retry_pending_job_keeps_failure_tool_events(self) -> None:
-        c = container()
+        c = _runtime_container()
         job = c.create_agent_job_service.execute(
             CreateAgentJobCommand(
                 idempotency_key="retry-tool-events-job",
@@ -160,7 +176,7 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
         self.assertIn("query_database", [call["tool_name"] for call in tool_calls])
 
     def test_max_turns_failure_is_not_retried_and_keeps_tool_events(self) -> None:
-        c = container()
+        c = _runtime_container()
         job = c.create_agent_job_service.execute(
             CreateAgentJobCommand(
                 idempotency_key="max-turns-tool-events-job",
@@ -190,7 +206,7 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
         )
 
     def test_agent_executor_persists_real_runtime_tool_events(self) -> None:
-        c = container()
+        c = _runtime_container()
         job = c.create_agent_job_service.execute(
             CreateAgentJobCommand(
                 idempotency_key="tool-event-job",
@@ -210,7 +226,7 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
         self.assertEqual(JobStatus.SUCCEEDED, c.agent_repository.get_job(job.id).status)
 
     def test_worker_consumes_message_and_ignores_duplicate_delivery(self) -> None:
-        c = container()
+        c = _runtime_container()
         job = c.create_agent_job_service.execute(
             CreateAgentJobCommand(
                 idempotency_key="worker-job",

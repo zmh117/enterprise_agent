@@ -13,6 +13,7 @@ const schemaDigest = createHash("sha256").update(schemaText).digest("hex");
 const selectedDefinitions = [
   "Identifier",
   "Sha256Digest",
+  "RuntimeKind",
   "SafeMessage",
   "JsonSummary",
   "ExecutionLimits",

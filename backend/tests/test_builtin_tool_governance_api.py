@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.bootstrap import build_test_container
 from app.main import create_app
-from app.modules.agent.infrastructure.claude_code_agent_client import (
+from app.modules.agent.infrastructure.tool_manifest import (
     TOOL_DEFINITIONS,
 )
 from app.shared.config import IdentitySettings, Settings
@@ -32,7 +32,7 @@ def test_builtin_tool_governance_api_full_control_plane_is_bounded_and_idempoten
     runtime = build_test_container(_settings(), migrate=True, seed=True)
     app = create_app(_settings(), container_factory=lambda _: runtime)
     headers = {
-        "x-admin-user-id": "local-user",
+        "x-admin-user-id": "user_local_admin",
         "x-correlation-id": "builtin-tool-api-test",
     }
 
@@ -272,7 +272,7 @@ def test_builtin_tool_governance_replaces_invalid_correlation_id() -> None:
         response = client.post(
             "/api/platform/builtin-tools/reconcile",
             headers={
-                "x-admin-user-id": "local-user",
+                "x-admin-user-id": "user_local_admin",
                 "x-correlation-id": "bad id",
             },
         )

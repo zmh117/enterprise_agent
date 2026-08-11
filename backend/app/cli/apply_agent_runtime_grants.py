@@ -101,19 +101,26 @@ def verify_agent_runtime_grants(database: Database) -> None:
                     f"Agent Runtime has forbidden privilege: {table}.{privilege}"
                 )
 
-    for privilege in ("SELECT", "INSERT", "DELETE"):
+    for table in (
+        "agent_runtime_terminal_ledger",
+        "agent_runtime_invocation_claim",
+        "agent_runtime_invocation_event",
+    ):
+        for privilege in ("SELECT", "INSERT", "DELETE"):
+            row = database.execute_one(
+                "select has_table_privilege(?, ?, ?) as allowed",
+                (ROLE, f"public.{table}", privilege),
+            )
+            if not row or not bool(row["allowed"]):
+                raise RuntimeError(
+                    f"missing Agent Runtime ledger privilege: {table}.{privilege}"
+                )
         row = database.execute_one(
-            "select has_table_privilege(?, 'public.agent_runtime_terminal_ledger', ?) as allowed",
-            (ROLE, privilege),
+            "select has_table_privilege(?, ?, 'UPDATE') as allowed",
+            (ROLE, f"public.{table}"),
         )
-        if not row or not bool(row["allowed"]):
-            raise RuntimeError(f"missing Agent Runtime ledger privilege: {privilege}")
-    row = database.execute_one(
-        "select has_table_privilege(?, 'public.agent_runtime_terminal_ledger', 'UPDATE') as allowed",
-        (ROLE,),
-    )
-    if row and bool(row["allowed"]):
-        raise RuntimeError("Agent Runtime ledger UPDATE privilege is forbidden")
+        if row and bool(row["allowed"]):
+            raise RuntimeError(f"Agent Runtime ledger UPDATE privilege is forbidden: {table}")
 
 
 def main() -> int:

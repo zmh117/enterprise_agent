@@ -19,14 +19,10 @@ from app.modules.agent.domain.runtime import (
     McpRuntimeBinding,
 )
 from app.modules.agent.infrastructure.generated_runtime_contracts import validate_contract
-from app.modules.agent.infrastructure.claude_code_agent_client import TOOL_DEFINITIONS
+from app.modules.agent.infrastructure.tool_manifest import TOOL_DEFINITIONS
 from app.modules.agent.infrastructure.runtime_protocol import (
     canonical_request_digest,
     validate_execution_request,
-)
-from app.modules.agent.infrastructure.runtime_tool_token import (
-    RUNTIME_TOOL_MCP_AUDIENCE,
-    RuntimeToolTokenIssuer,
 )
 from app.modules.internal_tools.domain import build_builtin_handler_registry
 from app.shared.database import assert_external_io_allowed
@@ -37,7 +33,10 @@ from app.shared.exceptions import (
 MAX_EVENT_LINE_BYTES = 65_536
 MAX_STREAM_BYTES = 2_097_152
 MAX_EVENTS = 2_048
+IN_PROGRESS_RECOVERY_ATTEMPTS = 12
+IN_PROGRESS_RECOVERY_DELAY_SECONDS = 0.5
 _BUILTIN_HANDLER_REGISTRY = build_builtin_handler_registry()
+STANDARD_TOOL_MCP_CODE = "tool-mcp"
 
 
 class RuntimeTransport(Protocol):
@@ -168,6 +167,7 @@ class RuntimeGrantIssuer:
             "iss": "enterprise-agent-worker",
             "aud": "agent-runtime",
             "azp": "agent-worker",
+            "runtime_kind": str(request["runtime_kind"]),
             "sub": str(request["app_user_id"]),
             "job_id": str(request["job_id"]),
             "invocation_id": str(request["invocation_id"]),
@@ -193,9 +193,9 @@ class RuntimeGrantIssuer:
 @dataclass(frozen=True)
 class RuntimeClientSettings:
     base_url: str
-    tool_mcp_url: str
     allowed_runtime_hosts: tuple[str, ...]
-    allowed_mcp_server_codes: tuple[str, ...] = (RUNTIME_TOOL_MCP_AUDIENCE,)
+    runtime_kind: str = "typescript-v1"
+    allowed_mcp_server_codes: tuple[str, ...] = (STANDARD_TOOL_MCP_CODE,)
     allow_insecure_internal_http: bool = False
 
     def execution_url(self) -> str:
@@ -255,7 +255,7 @@ def probe_runtime_readiness(settings: RuntimeClientSettings) -> dict[str, Any]:
         version = get(base_url, "/version", accepted_statuses={200})
         readiness = get(base_url, "/ready", accepted_statuses={200, 503})
         identity_ready = (
-            version.get("runtime") == "typescript-v1"
+            version.get("runtime") == settings.runtime_kind
             and version.get("protocol_version") == "1.0"
             and isinstance(version.get("runtime_version"), str)
         )
@@ -293,20 +293,18 @@ def probe_runtime_readiness(settings: RuntimeClientSettings) -> dict[str, Any]:
         }
 
 
-class TypeScriptAgentRuntimeClient:
+class AgentRuntimeHttpClient:
     def __init__(
         self,
         *,
         settings: RuntimeClientSettings,
         grant_issuer: RuntimeGrantIssuer,
-        mcp_token_issuer: RuntimeToolTokenIssuer,
         transport: RuntimeTransport | None = None,
         event_sink: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> None:
         self.settings = settings
         self.execution_url = settings.execution_url()
         self.grant_issuer = grant_issuer
-        self.mcp_token_issuer = mcp_token_issuer
         self.transport = transport or UrlLibRuntimeTransport()
         self.event_sink = event_sink
 
@@ -321,12 +319,30 @@ class TypeScriptAgentRuntimeClient:
                 "runtime_terminal_missing",
             }:
                 raise
-            # One same-invocation reconnect recovers a terminal persisted before
-            # the original connection failed. It never changes Runtime kind,
-            # request digest, Publication, MCP scope or retry attempt.
-            try:
-                return self._consume_stream(run_request, request, grant)
-            except RetryableExecutionError as recovery_error:
+            observed = int(exc.diagnostics.get("runtime_events_observed", 0) or 0)
+            recovery_attempts = IN_PROGRESS_RECOVERY_ATTEMPTS if observed else 1
+            recovery_error = exc
+            for recovery_attempt in range(recovery_attempts):
+                if observed:
+                    time.sleep(IN_PROGRESS_RECOVERY_DELAY_SECONDS)
+                try:
+                    # Every recovery uses the exact same invocation and digest.
+                    # Once a stream event was observed, no new Job attempt may
+                    # start until this bounded recovery returns a terminal.
+                    return self._consume_stream(run_request, request, grant)
+                except RetryableExecutionError as candidate:
+                    recovery_error = candidate
+                    observed = max(
+                        observed,
+                        int(candidate.diagnostics.get("runtime_events_observed", 0) or 0),
+                    )
+                    if getattr(candidate, "error_code", "") not in {
+                        "runtime_transport_error",
+                        "runtime_terminal_missing",
+                    }:
+                        raise
+                    if recovery_attempt + 1 < recovery_attempts:
+                        continue
                 if getattr(recovery_error, "error_code", "") not in {
                     "runtime_transport_error",
                     "runtime_terminal_missing",
@@ -341,6 +357,7 @@ class TypeScriptAgentRuntimeClient:
                     "JOB_CANCELLED",
                     "WORKER_TIMEOUT",
                     "CLIENT_DISCONNECTED",
+                    "WORKER_SHUTDOWN",
                 }:
                     reason = "CLIENT_DISCONNECTED"
                 try:
@@ -349,6 +366,19 @@ class TypeScriptAgentRuntimeClient:
                     recovery_error.diagnostics["cancel_error_code"] = getattr(
                         cancel_error, "error_code", "runtime_cancel_failed"
                     )
+                if observed:
+                    raise NonRetryableExecutionError(
+                        "Runtime invocation outcome is unknown after an interrupted stream",
+                        safe_message=(
+                            "Agent Runtime 执行中断；为避免重复模型调用，本次执行已失败"
+                        ),
+                        tool_events=recovery_error.tool_events,
+                        error_code="runtime_invocation_outcome_unknown",
+                        diagnostics={
+                            **recovery_error.diagnostics,
+                            "runtime_events_observed": observed,
+                        },
+                    ) from recovery_error
                 raise
 
     def _consume_stream(
@@ -369,12 +399,22 @@ class TypeScriptAgentRuntimeClient:
         total_bytes = 0
         terminal: dict[str, Any] | None = None
         expected_sequence = 1
-        for raw_line in self.transport.stream(
+        stream = iter(self.transport.stream(
             url=self.execution_url,
             body=body,
             headers=headers,
             timeout_seconds=run_request.context.timeout_seconds + 10,
-        ):
+        ))
+        while True:
+            try:
+                raw_line = next(stream)
+            except StopIteration:
+                break
+            except RetryableExecutionError as exc:
+                exc.diagnostics["runtime_events_observed"] = len(events)
+                if tool_events:
+                    exc.tool_events = tool_events
+                raise
             total_bytes += len(raw_line)
             if len(raw_line) > MAX_EVENT_LINE_BYTES or total_bytes > MAX_STREAM_BYTES:
                 raise self._protocol_error(
@@ -412,6 +452,7 @@ class TypeScriptAgentRuntimeClient:
                 safe_message="Agent Runtime 未返回终态",
                 tool_events=tool_events,
                 error_code="runtime_terminal_missing",
+                diagnostics={"runtime_events_observed": len(events)},
             )
         if int(terminal["last_sequence"]) != expected_sequence - 1:
             raise self._protocol_error("Runtime terminal sequence mismatch", tool_events)
@@ -470,6 +511,12 @@ class TypeScriptAgentRuntimeClient:
 
     def _execution_request(self, run_request: AgentRunRequest) -> dict[str, Any]:
         context = run_request.context
+        if context.runtime_kind != self.settings.runtime_kind:
+            raise NonRetryableExecutionError(
+                "Job runtime kind does not match the fixed Runtime client",
+                safe_message="当前 Job 与目标 Runtime 不匹配",
+                error_code="runtime_kind_mismatch",
+            )
         binding = context.model_runtime_binding
         if binding is None or not binding.connection_revision_id or len(binding.config_hash) != 64:
             raise NonRetryableExecutionError(
@@ -492,16 +539,8 @@ class TypeScriptAgentRuntimeClient:
                     error_code="mcp_server_not_allowed",
                 )
             grouped.setdefault(binding_item.server_code, []).append(binding_item)
-        server_urls = {RUNTIME_TOOL_MCP_AUDIENCE: self.settings.tool_mcp_url}
         mcp_servers: list[dict[str, Any]] = []
         for server_code, tool_bindings in sorted(grouped.items()):
-            url = server_urls.get(server_code, "").strip()
-            if not url:
-                raise NonRetryableExecutionError(
-                    "MCP server URL is missing",
-                    safe_message="MCP 服务地址尚未配置",
-                    error_code="mcp_server_unconfigured",
-                )
             tools = []
             for item in sorted(tool_bindings, key=lambda value: value.tool_name):
                 tool = {
@@ -518,25 +557,15 @@ class TypeScriptAgentRuntimeClient:
                     if value:
                         tool[field] = value
                 tools.append(tool)
-            token = self.mcp_token_issuer.issue(
-                app_user_id=run_request.user_id,
-                job_id=run_request.job_id,
-                application_publication_id=context.application_publication_id,
-                project_code=run_request.project_code,
-                scopes=[item.required_scope for item in tool_bindings],
-                job_timeout_seconds=context.timeout_seconds,
-                tool_bindings=tools,
-            )
             mcp_servers.append(
                 {
                     "server_code": server_code,
-                    "url": url,
-                    "access_token": token,
                     "tools": tools,
                 }
             )
         request: dict[str, Any] = {
             "protocol_version": "1.0",
+            "runtime_kind": context.runtime_kind,
             "invocation_id": run_request.invocation_id or f"{run_request.job_id}.attempt-0",
             "request_digest": "0" * 64,
             "job_id": run_request.job_id,
@@ -600,7 +629,7 @@ class TypeScriptAgentRuntimeClient:
                 )
             bindings.append(
                 McpRuntimeBinding(
-                    server_code=RUNTIME_TOOL_MCP_AUDIENCE,
+                    server_code=STANDARD_TOOL_MCP_CODE,
                     tool_name=tool_name,
                     required_scope=f"tool:{tool_name}",
                     tool_schema_hash=_BUILTIN_HANDLER_REGISTRY.require(
@@ -621,7 +650,7 @@ class TypeScriptAgentRuntimeClient:
                 )
             bindings.append(
                 McpRuntimeBinding(
-                    server_code=RUNTIME_TOOL_MCP_AUDIENCE,
+                    server_code=STANDARD_TOOL_MCP_CODE,
                     tool_name=identifier,
                     required_scope=f"capability:{release_id}",
                     tool_schema_hash=_schema_hash(schema),
@@ -649,3 +678,7 @@ def _schema_hash(schema: dict[str, Any]) -> str:
         sort_keys=True,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+# Compatibility for callers not yet renamed; implementation is runtime-neutral.
+TypeScriptAgentRuntimeClient = AgentRuntimeHttpClient

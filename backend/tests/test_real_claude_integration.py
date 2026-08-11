@@ -6,7 +6,7 @@ from dataclasses import replace
 import pytest
 
 from app.modules.agent.domain.runtime import AgentExecutionContext, AgentRunRequest
-from app.modules.agent.infrastructure.claude_code_agent_client import (
+from app.python_runtime.claude_agent_sdk_adapter import (
     RealClaudeCodeAgentClient,
     is_claude_cli_available,
 )

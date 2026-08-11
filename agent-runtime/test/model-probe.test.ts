@@ -14,6 +14,7 @@ import type { ClaudeQuery } from "../src/claude-runtime.js";
 
 const request: ModelProbeRequest = {
   protocol_version: "1.0",
+  runtime_kind: "typescript-v1",
   probe_id: "probe-test-1",
   model_connection: {
     revision_id: "model-revision-1",

@@ -7,8 +7,8 @@ import json
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from app.modules.agent.infrastructure.runtime_readiness import AgentRuntimeReadinessGuard
 from app.modules.agent_config.application import AgentConfigService
-from app.modules.agent.application.runtime_migration_gate import RuntimeMigrationGate
 from app.modules.api_capability.infrastructure import (
     CapabilityPublicationRepository,
     GovernedApiExecutionRepository,
@@ -150,8 +150,7 @@ class CreateAgentJobService:
         external_api_credential_repository: (ExternalApiCredentialRepository | None) = None,
         identity_repository: IdentityRepository | None = None,
         builtin_tool_snapshot_service: JobBuiltinToolSnapshotService | None = None,
-        runtime_migration_gate: RuntimeMigrationGate | None = None,
-        runtime_environment: str = "local",
+        runtime_readiness_guard: AgentRuntimeReadinessGuard | None = None,
     ) -> None:
         self.repository = repository
         self.permission_service = permission_service
@@ -172,8 +171,7 @@ class CreateAgentJobService:
         self.external_api_credential_repository = external_api_credential_repository
         self.identity_repository = identity_repository
         self.builtin_tool_snapshot_service = builtin_tool_snapshot_service
-        self.runtime_migration_gate = runtime_migration_gate
-        self.runtime_environment = runtime_environment
+        self.runtime_readiness_guard = runtime_readiness_guard
 
     def execute(self, command: CreateAgentJobCommand) -> AgentJob:
         existing = self.repository.get_job_by_idempotency_key(command.idempotency_key)
@@ -182,14 +180,6 @@ class CreateAgentJobService:
                 self.builtin_tool_snapshot_service.verify(existing.id)
             return existing
         self._assert_application_runtime_available(command)
-        runtime_selection = (
-            self.runtime_migration_gate.select(
-                environment=self.runtime_environment,
-                application_publication_id=(command.business_application_publication_id),
-            )
-            if self.runtime_migration_gate is not None
-            else None
-        )
         if command.conversation_mode in {"application", "actor"}:
             raise NonRetryableExecutionError(
                 "Legacy shared session mode cannot create new Jobs",
@@ -270,6 +260,8 @@ class CreateAgentJobService:
         agent_publication_id = ""
         agent_revision = 0
         agent_config_hash = ""
+        agent_runtime_kind = "python-v1"
+        agent_runtime_protocol_version = "1.0"
         agent_snapshot: dict[str, Any] = {}
         model_runtime_provenance: dict[str, Any] = {
             "legacy": True,
@@ -319,6 +311,15 @@ class CreateAgentJobService:
             agent_publication_id = str(publication["id"])
             agent_revision = int(publication["revision"])
             agent_config_hash = str(publication["config_hash"])
+            agent_runtime_kind = str(publication.get("runtime_kind") or "")
+            if agent_runtime_kind not in {"python-v1", "typescript-v1"}:
+                raise NonRetryableExecutionError(
+                    "Pinned Agent publication runtime is unsupported",
+                    safe_message="固定的 Agent Runtime 配置无效",
+                    error_code="agent_runtime_kind_unsupported",
+                )
+            if self.runtime_readiness_guard is not None:
+                self.runtime_readiness_guard.require_ready(agent_runtime_kind)
             agent_snapshot = dict(publication.get("snapshot") or {})
             model_connection = agent_snapshot.get("model_connection") or {}
             model_config = model_connection.get("config") or {}
@@ -530,12 +531,8 @@ class CreateAgentJobService:
                 },
                 execution_policy=execution_policy.to_dict(),
                 model_runtime_provenance=model_runtime_provenance,
-                agent_runtime_kind=(
-                    runtime_selection.runtime_kind if runtime_selection is not None else "python-v1"
-                ),
-                agent_runtime_protocol_version=(
-                    runtime_selection.protocol_version if runtime_selection is not None else "1.0"
-                ),
+                agent_runtime_kind=agent_runtime_kind,
+                agent_runtime_protocol_version=agent_runtime_protocol_version,
             )
             external_subject_snapshot = self._freeze_available_external_subject(
                 job_id=job.id,

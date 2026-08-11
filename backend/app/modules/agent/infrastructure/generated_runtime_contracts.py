@@ -8,7 +8,7 @@ from typing import Literal, NotRequired, TypedDict
 from jsonschema import Draft202012Validator
 
 PROTOCOL_VERSION = "1.0"
-CONTRACT_SCHEMA_SHA256 = "7351ee3557b928a019a41c870b2bb307959cd90fcbe13bccea115695dfe2726d"
+CONTRACT_SCHEMA_SHA256 = "19f1f854314dd9ac0b63824e6d91121ffdb2331dc4fc911bf091b36a570b7cf2"
 CONTRACT_SCHEMA_PATH = (
     Path(__file__).resolve().parents[5]
     / "agent-runtime"
@@ -19,6 +19,7 @@ CONTRACT_SCHEMA_PATH = (
 
 Identifier = str
 Sha256Digest = str
+RuntimeKind = Literal["python-v1", "typescript-v1"]
 SafeMessage = str
 RuntimeEvent = dict[str, object] | dict[str, object] | dict[str, object] | dict[str, object]
 
@@ -51,6 +52,7 @@ class ModelConnectionBinding(TypedDict):
 
 class ModelProbeRequest(TypedDict):
     protocol_version: Literal["1.0"]
+    runtime_kind: RuntimeKind
     probe_id: Identifier
     model_connection: ModelConnectionBinding
     timeout_seconds: int
@@ -63,13 +65,14 @@ class ModelProbeFailure(TypedDict):
 
 class ModelProbeResponse(TypedDict):
     protocol_version: Literal["1.0"]
+    runtime_kind: RuntimeKind
     probe_id: Identifier
     success: bool
     connection_revision_id: Identifier
     provider_host: str
     model: str
     runtime_version: str
-    sdk_version: Literal["0.3.226"]
+    sdk_version: str
     duration_ms: int
     failure: NotRequired[ModelProbeFailure]
 
@@ -84,14 +87,13 @@ class McpToolBinding(TypedDict):
 
 
 class McpServerBinding(TypedDict):
-    server_code: Literal["ones-mcp", "data-mcp", "runtime-tool-mcp"]
-    url: str
-    access_token: str
+    server_code: Literal["tool-mcp"]
     tools: list[McpToolBinding]
 
 
 class AgentExecutionRequestV1(TypedDict):
     protocol_version: Literal["1.0"]
+    runtime_kind: RuntimeKind
     invocation_id: Identifier
     request_digest: Sha256Digest
     job_id: Identifier
@@ -109,6 +111,7 @@ class RuntimeGrantClaims(TypedDict):
     iss: Literal["enterprise-agent-worker"]
     aud: Literal["agent-runtime"]
     azp: Literal["agent-worker"]
+    runtime_kind: RuntimeKind
     sub: Identifier
     job_id: Identifier
     invocation_id: Identifier
@@ -129,10 +132,10 @@ class Usage(TypedDict):
 
 
 class RuntimeProvenance(TypedDict):
-    runtime_kind: Literal["typescript-v1"]
+    runtime_kind: RuntimeKind
     runtime_version: str
     protocol_version: Literal["1.0"]
-    sdk_version: Literal["0.3.226"]
+    sdk_version: str
     cli_version: str
     model_connection_revision_id: Identifier
     model_connection_config_hash: Sha256Digest
@@ -146,7 +149,7 @@ class RuntimeFailure(TypedDict):
 
 class ToolEvent(TypedDict):
     tool_call_id: Identifier
-    server_code: Literal["ones-mcp", "data-mcp", "runtime-tool-mcp"]
+    server_code: Literal["tool-mcp"]
     tool_name: Identifier
     status: Literal["STARTED", "SUCCEEDED", "FAILED", "DENIED"]
     request_summary: JsonSummary
@@ -171,7 +174,7 @@ class CancelRequest(TypedDict):
     protocol_version: Literal["1.0"]
     invocation_id: Identifier
     request_digest: Sha256Digest
-    reason: Literal["JOB_CANCELLED", "WORKER_TIMEOUT", "CLIENT_DISCONNECTED"]
+    reason: Literal["JOB_CANCELLED", "WORKER_TIMEOUT", "CLIENT_DISCONNECTED", "WORKER_SHUTDOWN"]
 
 
 def validate_contract(definition_name: str, payload: object) -> None:

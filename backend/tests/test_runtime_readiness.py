@@ -37,23 +37,26 @@ def test_ready_checks_schema_database_rabbit_token_and_master_key(
         assert ready["core"] == {
             "database": True,
             "schema": True,
-            "schema_head": "034",
+            "schema_head": "036",
             "rabbitmq": True,
             "internal_api_token": True,
             "master_key": True,
             "runtime_assembly": True,
-            "agent_runtime": {
-                "configured": False,
-                "ready": False,
-                "identity": "not_configured",
-                "database": "unavailable",
-                "master_key": "unavailable",
-                "runtime_version": "",
-                "protocol_version": "",
-                "sdk_version": "",
-                "cli_version": "",
-                "model_invoked": False,
-                "mcp_invoked": False,
+            "agent_runtimes": {
+                runtime_kind: {
+                    "configured": False,
+                    "ready": False,
+                    "identity": "not_configured",
+                    "database": "unavailable",
+                    "master_key": "unavailable",
+                    "runtime_version": "",
+                    "protocol_version": "",
+                    "sdk_version": "",
+                    "cli_version": "",
+                    "model_invoked": False,
+                    "mcp_invoked": False,
+                }
+                for runtime_kind in ("python-v1", "typescript-v1")
             },
         }
         assert ready["resources"]["status"] == "EMPTY"
@@ -61,8 +64,7 @@ def test_ready_checks_schema_database_rabbit_token_and_master_key(
         assert ready["mcp_invoked"] is False
         assert ready["runtime_selection"] == {
             "default_runtime": "python-v1",
-            "typescript_required": False,
-            "typescript_canary_publication_count": 0,
+            "supported_runtimes": ["python-v1", "typescript-v1"],
             "protocol_version": "1.0",
         }
 
@@ -76,14 +78,14 @@ def test_ready_checks_schema_database_rabbit_token_and_master_key(
         runtime.database.close()
 
 
-def test_required_typescript_runtime_fails_readiness_closed(monkeypatch) -> None:
+def test_unavailable_runtime_is_reported_without_disabling_management_api(monkeypatch) -> None:
     runtime = container()
     try:
         monkeypatch.setattr(main, "_check_rabbitmq", lambda _url: True)
         monkeypatch.setattr(
             main,
             "_check_agent_runtime",
-            lambda _settings: {
+            lambda _settings, **_kwargs: {
                 "configured": True,
                 "ready": False,
                 "identity": "verified",
@@ -97,19 +99,22 @@ def test_required_typescript_runtime_fails_readiness_closed(monkeypatch) -> None
             runtime.settings,
             environment="canary",
             agent_runtime=AgentRuntimeSettings(
-                base_url="http://agent-runtime:9102",
-                allowed_hosts=("agent-runtime",),
+                python_base_url="http://python-agent-runtime:8091",
+                python_allowed_hosts=("python-agent-runtime",),
+                typescript_base_url="http://typescript-agent-runtime:8090",
+                typescript_allowed_hosts=("typescript-agent-runtime",),
                 allow_insecure_internal_http=True,
-                typescript_environments=("canary",),
             ),
         )
 
         status = main._build_readiness(settings, database=runtime.database)
 
-        assert status["status"] == "not_ready"
-        assert status["runtime_selection"]["default_runtime"] == "typescript-v1"
-        assert status["runtime_selection"]["typescript_required"] is True
-        assert status["core"]["agent_runtime"]["master_key"] == "unavailable"
+        assert status["status"] == "ready"
+        assert status["runtime_selection"]["default_runtime"] == "python-v1"
+        assert (
+            status["core"]["agent_runtimes"]["python-v1"]["master_key"]
+            == "unavailable"
+        )
         assert status["claude_invoked"] is False
         assert status["mcp_invoked"] is False
     finally:

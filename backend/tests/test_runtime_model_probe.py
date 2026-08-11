@@ -67,6 +67,7 @@ def test_runtime_probe_sends_only_fixed_binding_and_accepts_safe_contract(
         return FakeResponse(
             {
                 "protocol_version": "1.0",
+                "runtime_kind": "typescript-v1",
                 "probe_id": payload["probe_id"],
                 "success": True,
                 "connection_revision_id": "revision-1",
@@ -155,8 +156,8 @@ def test_only_api_service_receives_model_probe_bearer_token(tmp_path: Path) -> N
     settings = replace(
         build_settings(),
         agent_runtime=AgentRuntimeSettings(
-            base_url="http://agent-runtime:9102",
-            allowed_hosts=("agent-runtime",),
+            python_base_url="http://python-agent-runtime:8091",
+            python_allowed_hosts=("python-agent-runtime",),
             model_probe_auth_token_file=str(token),
             allow_insecure_internal_http=True,
         ),
@@ -164,4 +165,4 @@ def test_only_api_service_receives_model_probe_bearer_token(tmp_path: Path) -> N
 
     assert _runtime_model_probe_for_service(settings, "api-server") is not None
     assert _runtime_model_probe_for_service(settings, "agent-worker") is None
-    assert _runtime_model_probe_for_service(settings, "runtime-tool-mcp") is None
+    assert _runtime_model_probe_for_service(settings, "tool-mcp") is None

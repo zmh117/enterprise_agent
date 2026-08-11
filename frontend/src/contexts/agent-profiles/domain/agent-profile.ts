@@ -129,6 +129,7 @@ export const agentPublicationSchema = z.object({
   id: z.string(),
   revision: z.number(),
   config_hash: z.string(),
+  runtime_kind: z.enum(["python-v1", "typescript-v1"]).default("python-v1"),
   snapshot: agentConfigSchema.passthrough(),
   published_at: z.string(),
   published_by: z.string(),
@@ -145,6 +146,7 @@ export const agentDetailSchema = z.object({
     project_code: z.string(),
     status: z.string(),
     revision: z.number(),
+    runtime_kind: z.enum(["python-v1", "typescript-v1"]).default("python-v1"),
     current_publication_id: z.string().nullable(),
   }),
   draft: agentRevisionSchema.nullable(),
@@ -230,6 +232,7 @@ export const agentSummarySchema = z.object({
   project_code: z.string(),
   status: z.string(),
   revision: z.number(),
+  runtime_kind: z.enum(["python-v1", "typescript-v1"]).default("python-v1"),
   management_mode: z.enum(["editable", "read_only"]),
   current_publication: z
     .object({

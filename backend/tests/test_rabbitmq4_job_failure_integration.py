@@ -80,7 +80,15 @@ class RabbitMQ4JobFailureIntegrationTests(unittest.TestCase):
             feature_real_internal_tools=False,
             queue=self.queue,
         )
-        self.container = build_worker_container(settings, seed=False)
+        initial_client = _FailingClaudeClient(retryable=True)
+        self.container = build_worker_container(
+            settings,
+            seed=False,
+            runtime_clients={
+                "python-v1": initial_client,
+                "typescript-v1": initial_client,
+            },
+        )
         # DB runtime overlay can tune retry settings, but test queue names must stay isolated.
         self.container.settings = replace(self.container.settings, queue=self.queue)
         self.container.agent_executor.context_builder = _StaticContextBuilder()  # type: ignore[assignment]

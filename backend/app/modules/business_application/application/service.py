@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.modules.agent.infrastructure.runtime_readiness import AgentRuntimeReadinessGuard
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.api_capability.infrastructure import (
     CapabilityPublicationRepository,
@@ -61,6 +62,7 @@ class BusinessApplicationService:
         runtime_evaluator: RuntimeReadinessEvaluator | None = None,
         capability_publication_repository: (CapabilityPublicationRepository | None) = None,
         builtin_tool_composition_service: (ApplicationBuiltinToolCompositionService | None) = None,
+        runtime_readiness_guard: AgentRuntimeReadinessGuard | None = None,
     ) -> None:
         self.repository = repository
         self.authorization = authorization
@@ -75,6 +77,7 @@ class BusinessApplicationService:
             runtime_environment="local",
         )
         self.capability_publication_repository = capability_publication_repository
+        self.runtime_readiness_guard = runtime_readiness_guard
         self.builtin_tool_composition_service = (
             builtin_tool_composition_service
             or ApplicationBuiltinToolCompositionService(repository.database)
@@ -421,8 +424,42 @@ class BusinessApplicationService:
         self._audit("published", actor_id, application, publication=publication)
         return publication
 
-    @operation_unit_of_work(lambda service: service.repository.database)
     def activate(
+        self,
+        *,
+        actor_id: str,
+        code: str,
+        environment: str,
+        publication_id: str,
+        expected_revision: int,
+    ) -> dict[str, Any]:
+        """Probe the selected Runtime before entering the local database UoW."""
+
+        normalized_code = validate_code(code)
+        self._require(actor_id, normalized_code, "activate")
+        application = self.repository.get_by_code(normalized_code)
+        publication = self._verified_publication(publication_id)
+        if str(publication["application_id"]) != str(application["id"]):
+            raise NotFound(
+                "Business Application publication not found",
+                safe_message="未找到业务应用发布版本",
+            )
+        if self.runtime_readiness_guard is not None:
+            agent = dict(publication["snapshot"].get("agent") or {})
+            runtime_kind = str(agent.get("runtime_kind") or "")
+            if not runtime_kind and agent.get("id"):
+                runtime_kind = self.agent_reader.resolve(str(agent["id"])).runtime_kind
+            self.runtime_readiness_guard.require_ready(runtime_kind)
+        return self._activate_in_unit_of_work(
+            actor_id=actor_id,
+            code=code,
+            environment=environment,
+            publication_id=publication_id,
+            expected_revision=expected_revision,
+        )
+
+    @operation_unit_of_work(lambda service: service.repository.database)
+    def _activate_in_unit_of_work(
         self,
         *,
         actor_id: str,
@@ -751,6 +788,7 @@ class BusinessApplicationService:
                 "revision": value.revision,
                 "project_code": value.project_code,
                 "config_hash": value.config_hash,
+                **({"runtime_kind": value.runtime_kind} if value.runtime_kind else {}),
             }
 
         snapshot = {

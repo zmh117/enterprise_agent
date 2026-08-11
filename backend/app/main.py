@@ -3,7 +3,6 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from app.bootstrap import Container, ContainerFactory, build_api_container
-from app.modules.agent.infrastructure.claude_code_agent_client import is_claude_cli_available
 from app.modules.agent.infrastructure.typescript_runtime_client import (
     RuntimeClientSettings,
     probe_runtime_readiness,
@@ -56,15 +55,7 @@ def _build_readiness(
         not token_required
         or bool(settings.internal_api_auth_token_file)
     )
-    agent_runtime = _check_agent_runtime(settings)
-    typescript_environment = settings.environment.strip().lower() in {
-        item.strip().lower()
-        for item in settings.agent_runtime.typescript_environments
-        if item.strip()
-    }
-    typescript_required = typescript_environment or bool(
-        settings.agent_runtime.typescript_application_publication_ids
-    )
+    agent_runtimes = _check_agent_runtimes(settings)
     core_ready = all(
         (
             database_ready,
@@ -72,7 +63,6 @@ def _build_readiness(
             rabbitmq_ready,
             master_key_ready,
             token_ready,
-            (not typescript_required or agent_runtime["ready"]),
         )
     )
     try:
@@ -95,17 +85,14 @@ def _build_readiness(
             "internal_api_token": token_ready,
             "master_key": master_key_ready,
             "runtime_assembly": True,
-            "agent_runtime": agent_runtime,
+            "agent_runtimes": agent_runtimes,
         },
         "resources": governed_runtime,
         "claude_invoked": False,
         "mcp_invoked": False,
         "runtime_selection": {
-            "default_runtime": "typescript-v1" if typescript_environment else "python-v1",
-            "typescript_required": typescript_required,
-            "typescript_canary_publication_count": len(
-                settings.agent_runtime.typescript_application_publication_ids
-            ),
+            "default_runtime": "python-v1",
+            "supported_runtimes": ["python-v1", "typescript-v1"],
             "protocol_version": "1.0",
         },
         **_runtime_config_status(settings),
@@ -128,8 +115,38 @@ def _check_rabbitmq(rabbitmq_url: str) -> bool:
         return False
 
 
-def _check_agent_runtime(settings: Settings) -> dict[str, Any]:
-    if not settings.agent_runtime.base_url:
+def _check_agent_runtimes(settings: Settings) -> dict[str, dict[str, Any]]:
+    configured = (
+        (
+            "python-v1",
+            settings.agent_runtime.python_base_url,
+            settings.agent_runtime.python_allowed_hosts,
+        ),
+        (
+            "typescript-v1",
+            settings.agent_runtime.typescript_base_url,
+            settings.agent_runtime.typescript_allowed_hosts,
+        ),
+    )
+    return {
+        runtime_kind: _check_agent_runtime(
+            settings,
+            runtime_kind=runtime_kind,
+            base_url=base_url,
+            allowed_hosts=allowed_hosts,
+        )
+        for runtime_kind, base_url, allowed_hosts in configured
+    }
+
+
+def _check_agent_runtime(
+    settings: Settings,
+    *,
+    runtime_kind: str,
+    base_url: str,
+    allowed_hosts: tuple[str, ...],
+) -> dict[str, Any]:
+    if not base_url:
         return {
             "configured": False,
             "ready": False,
@@ -145,22 +162,14 @@ def _check_agent_runtime(settings: Settings) -> dict[str, Any]:
         }
     return probe_runtime_readiness(
         RuntimeClientSettings(
-            base_url=settings.agent_runtime.base_url,
-            tool_mcp_url=settings.runtime_tool_mcp.server_url,
-            allowed_runtime_hosts=settings.agent_runtime.allowed_hosts,
+            base_url=base_url,
+            allowed_runtime_hosts=allowed_hosts,
+            runtime_kind=runtime_kind,
             allow_insecure_internal_http=(
                 settings.agent_runtime.allow_insecure_internal_http
             ),
         )
     )
-
-
-def _claude_runtime_status(settings: Settings) -> dict[str, Any]:
-    return {
-        "feature_real_claude": settings.feature_real_claude,
-        "anthropic_api_key_configured": bool(settings.anthropic_api_key),
-        "claude_cli_available": is_claude_cli_available(),
-    }
 
 
 def _internal_tools_status(settings: Settings) -> dict[str, Any]:

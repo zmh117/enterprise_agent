@@ -25,6 +25,7 @@ from app.shared.exceptions import NotFound, NonRetryableExecutionError
 
 
 DEFAULT_AGENT_CODE = "default-diagnostic-agent"
+SUPPORTED_RUNTIME_KINDS = frozenset({"python-v1", "typescript-v1"})
 FORBIDDEN_CONFIG_KEYS = {
     "api_key",
     "apikey",
@@ -103,9 +104,7 @@ class AgentConfigService:
             "draft": latest,
             "current_publication": current,
             "catalog": self.catalog(),
-            "management_mode": (
-                "editable" if definition["code"] == DEFAULT_AGENT_CODE else "read_only"
-            ),
+            "management_mode": "editable",
             "model_connections": (
                 self.model_connection_service.list_connections()
                 if self.model_connection_service is not None
@@ -147,9 +146,7 @@ class AgentConfigService:
             values.append(
                 {
                     **definition,
-                    "management_mode": (
-                        "editable" if definition["code"] == DEFAULT_AGENT_CODE else "read_only"
-                    ),
+                    "management_mode": "editable",
                     "current_publication": (
                         {
                             "id": publication["id"],
@@ -218,7 +215,6 @@ class AgentConfigService:
         expected_revision: int,
         config: dict[str, Any],
     ) -> dict[str, Any]:
-        self._require_mvp_write_agent(agent_code)
         self.authorization.require(
             user_id=actor_id,
             resource_type="agent",
@@ -260,7 +256,6 @@ class AgentConfigService:
     def validate_revision(
         self, *, actor_id: str, agent_code: str, revision_id: str
     ) -> dict[str, Any]:
-        self._require_mvp_write_agent(agent_code)
         self.authorization.require(
             user_id=actor_id,
             resource_type="agent",
@@ -307,7 +302,6 @@ class AgentConfigService:
         agent_code: str,
         revision_id: str,
     ) -> dict[str, Any]:
-        self._require_mvp_write_agent(agent_code)
         self.authorization.require(
             user_id=actor_id,
             resource_type="agent",
@@ -347,6 +341,14 @@ class AgentConfigService:
             )
         with self.repository.database.unit_of_work():
             snapshot = dict(revision["config"])
+            runtime_kind = str(definition.get("runtime_kind") or "")
+            if runtime_kind not in SUPPORTED_RUNTIME_KINDS:
+                raise NonRetryableExecutionError(
+                    "Agent Definition runtime is unsupported",
+                    safe_message="Agent Runtime 配置无效",
+                    error_code="agent_runtime_kind_unsupported",
+                )
+            snapshot["runtime_kind"] = runtime_kind
             release_ids = list(snapshot.pop("api_capability_release_ids", []) or [])
             builtin_tool_release_ids = list(snapshot.pop("builtin_tool_release_ids", []) or [])
             builtin_tool_envelope = (
@@ -395,6 +397,7 @@ class AgentConfigService:
                 agent_id=str(definition["id"]),
                 revision_id=revision_id,
                 revision=int(revision["revision"]),
+                runtime_kind=runtime_kind,
                 snapshot=snapshot,
                 config_hash=_hash(snapshot),
                 actor_id=actor_id,
@@ -421,6 +424,7 @@ class AgentConfigService:
                 "publication_id": publication["id"],
                 "revision": publication["revision"],
                 "config_hash": publication["config_hash"],
+                "runtime_kind": publication["runtime_kind"],
                 "model_connection_revision_id": connection_revision_id,
                 "model_connection_config_hash": (
                     (snapshot.get("model_connection") or {}).get("config_hash") or ""
@@ -455,7 +459,6 @@ class AgentConfigService:
     def _rollback(
         self, *, actor_id: str, agent_code: str, publication_id: str
     ) -> dict[str, Any]:
-        self._require_mvp_write_agent(agent_code)
         self.authorization.require(
             user_id=actor_id,
             resource_type="agent",
@@ -488,17 +491,45 @@ class AgentConfigService:
         return self._verified_publication(publication)
 
     def _verified_publication(self, publication: dict[str, Any]) -> dict[str, Any]:
-        if int(publication.get("schema_version") or 0) != 1:
+        schema_version = int(publication.get("schema_version") or 0)
+        if schema_version not in {1, 2}:
             raise NonRetryableExecutionError(
                 "Unsupported Agent publication schema",
                 safe_message="不支持此 Agent 配置结构版本",
+                error_code="agent_publication_schema_unsupported",
             )
         if _hash(publication["snapshot"]) != str(publication["config_hash"]):
             raise NonRetryableExecutionError(
                 "Agent publication hash mismatch",
                 safe_message="Agent 配置完整性校验失败",
+                error_code="agent_publication_hash_mismatch",
             )
         snapshot = publication["snapshot"]
+        runtime_kind = str(publication.get("runtime_kind") or "")
+        definition = self.repository.get_definition_by_id(str(publication["agent_id"]))
+        definition_runtime = str(definition.get("runtime_kind") or "")
+        if runtime_kind not in SUPPORTED_RUNTIME_KINDS or definition_runtime != runtime_kind:
+            raise NonRetryableExecutionError(
+                "Agent publication runtime does not match its Definition",
+                safe_message="Agent Runtime 发布事实完整性校验失败",
+                error_code="agent_publication_runtime_mismatch",
+            )
+        if schema_version == 1:
+            if runtime_kind != "python-v1" or snapshot.get("runtime_kind") not in {
+                None,
+                "python-v1",
+            }:
+                raise NonRetryableExecutionError(
+                    "Legacy Agent publication runtime is invalid",
+                    safe_message="旧 Agent Runtime 发布事实无效",
+                    error_code="agent_publication_runtime_mismatch",
+                )
+        elif snapshot.get("runtime_kind") != runtime_kind:
+            raise NonRetryableExecutionError(
+                "Agent publication snapshot runtime mismatch",
+                safe_message="Agent Runtime 发布快照完整性校验失败",
+                error_code="agent_publication_runtime_mismatch",
+            )
         if self.builtin_tool_envelopes is not None and "builtin_tool_envelope" in snapshot:
             envelope = snapshot.get("builtin_tool_envelope")
             if not isinstance(envelope, list):
@@ -518,7 +549,10 @@ class AgentConfigService:
 
     def publications(self, agent_code: str) -> list[dict[str, Any]]:
         definition = self.repository.get_definition(agent_code)
-        values = self.repository.list_publications(str(definition["id"]))
+        values = [
+            self._verified_publication(value)
+            for value in self.repository.list_publications(str(definition["id"]))
+        ]
         for publication in values:
             publication["active_applications"] = (
                 self.model_connection_service.repository.active_application_usage(
@@ -539,15 +573,6 @@ class AgentConfigService:
         assigned = self.repository.publication_tools(publication_id)
         enabled = self.repository.enabled_tools()
         return sorted(ToolRegistry.READONLY_TOOLS & assigned & enabled)
-
-    @staticmethod
-    def _require_mvp_write_agent(agent_code: str) -> None:
-        if agent_code != DEFAULT_AGENT_CODE:
-            raise NonRetryableExecutionError(
-                "MVP Agent write attempted for a non-default Agent",
-                safe_message="当前管理版本中此 Agent 只能查看，不能编辑",
-                error_code="agent_read_only",
-            )
 
     def _normalize(self, config: dict[str, Any]) -> dict[str, Any]:
         normalized = {

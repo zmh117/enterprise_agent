@@ -6,7 +6,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react"
-import { MemoryRouter } from "react-router-dom"
+import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { describe, expect, it, vi } from "vitest"
 
 import {
@@ -211,6 +211,7 @@ describe("Agent Profile management", () => {
             project_code: "default",
             status: "enabled",
             revision: 2,
+            runtime_kind: "python-v1",
             management_mode: "editable",
             current_publication: {
               id: "agent_publication_1",
@@ -219,6 +220,20 @@ describe("Agent Profile management", () => {
             },
             model_connection_status: "missing_revision",
             active_application_count: 1,
+          },
+          {
+            id: "agent_2",
+            code: "typescript-diagnostic-agent",
+            name: "TypeScript 诊断 Agent",
+            description: "",
+            project_code: "default",
+            status: "enabled",
+            revision: 1,
+            runtime_kind: "typescript-v1",
+            management_mode: "editable",
+            current_publication: null,
+            model_connection_status: "legacy_global_connection",
+            active_application_count: 0,
           },
         ],
       })
@@ -239,11 +254,84 @@ describe("Agent Profile management", () => {
     )
 
     expect(await screen.findByText("默认诊断 Agent")).toBeInTheDocument()
+    expect(screen.getByText("TypeScript 诊断 Agent")).toBeInTheDocument()
+    expect(screen.getByText("Python Runtime")).toBeInTheDocument()
+    expect(screen.getByText("TypeScript Runtime")).toBeInTheDocument()
     expect(screen.getByText("r3")).toBeInTheDocument()
     expect(screen.getByText("引用版本已删除，请重新配置")).toBeInTheDocument()
-    expect(screen.getByRole("link", { name: "进入配置" })).toHaveAttribute(
+    expect(screen.getAllByRole("link", { name: "进入配置" })[0]).toHaveAttribute(
       "href",
       "/agent-profiles/default-diagnostic-agent"
+    )
+    expect(screen.getAllByRole("link", { name: "进入配置" })[1]).toHaveAttribute(
+      "href",
+      "/agent-profiles/typescript-diagnostic-agent"
+    )
+  })
+
+  it("loads and saves the exact TypeScript Agent selected by the route", async () => {
+    const payload = agentPayload().agent
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((input) => {
+        const url = String(input)
+        if (url.includes("/model-connections/")) {
+          return response({ connection: modelConnection })
+        }
+        if (url.endsWith("/draft")) {
+          return response({ revision: payload.draft })
+        }
+        return response({
+          agent: {
+            ...payload,
+            definition: {
+              ...payload.definition,
+              id: "agent_2",
+              code: "typescript-diagnostic-agent",
+              name: "TypeScript 诊断 Agent",
+              runtime_kind: "typescript-v1",
+            },
+          },
+        })
+      })
+
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: {
+              queries: { retry: false },
+              mutations: { retry: false },
+            },
+          })
+        }
+      >
+        <MemoryRouter
+          initialEntries={["/agent-profiles/typescript-diagnostic-agent"]}
+        >
+          <Routes>
+            <Route path="/agent-profiles/:code" element={<AgentProfilePage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    )
+
+    expect(await screen.findByText("TypeScript 诊断 Agent")).toBeInTheDocument()
+    expect(screen.getByText("TypeScript Runtime")).toBeInTheDocument()
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/admin/agents/typescript-diagnostic-agent",
+      expect.any(Object)
+    )
+
+    fireEvent.change(screen.getByRole("textbox", { name: "业务角色" }), {
+      target: { value: "TypeScript 诊断助手" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }))
+    await waitFor(() =>
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "/api/admin/agents/typescript-diagnostic-agent/draft",
+        expect.objectContaining({ method: "PUT" })
+      )
     )
   })
 
@@ -893,6 +981,8 @@ describe("Agent Profile management", () => {
       }
       return response(
         agentPayload({
+          can_edit_profile: false,
+          can_publish: false,
           can_manage_credential: false,
           can_test_connection: false,
         })
@@ -914,6 +1004,9 @@ describe("Agent Profile management", () => {
     )
 
     expect(await screen.findByText("默认诊断 Agent")).toBeInTheDocument()
+    expect(screen.getByRole("textbox", { name: "业务角色" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "保存草稿" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "发布 Agent" })).toBeDisabled()
     fireEvent.click(screen.getByRole("tab", { name: "模型连接" }))
     expect(screen.getByText("DeepSeek 模型连接向导")).toBeInTheDocument()
     expect(

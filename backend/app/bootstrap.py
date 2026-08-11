@@ -1,26 +1,25 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import os
-
+import time
 from app.modules.agent.application.agent_context_builder import AgentContextBuilder
 from app.modules.agent.application.conversation_context import ConversationContextService
 from app.modules.agent.application.agent_executor import AgentExecutor
 from app.modules.agent.application.agent_result_service import AgentResultService
-from app.modules.agent.application.runtime_migration_gate import RuntimeMigrationGate
-from app.modules.agent.infrastructure.claude_code_agent_client import (
-    RealClaudeCodeAgentClient,
-    StubClaudeCodeAgentClient,
-)
+from app.modules.agent.infrastructure.stub_runtime_client import StubAgentRuntimeClient
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
-from app.modules.agent.infrastructure.routed_runtime_client import RoutedAgentRuntimeClient
-from app.modules.agent.infrastructure.runtime_tool_token import RuntimeToolTokenIssuer
+from app.modules.agent.infrastructure.routed_runtime_client import (
+    AgentRuntimeClient,
+    RuntimeClientRegistry,
+)
+from app.modules.agent.infrastructure.runtime_readiness import AgentRuntimeReadinessGuard
 from app.modules.agent.infrastructure.skill_loader import SkillLoader
 from app.modules.agent.infrastructure.typescript_runtime_client import (
+    AgentRuntimeHttpClient,
     RuntimeClientSettings,
     RuntimeGrantIssuer,
-    TypeScriptAgentRuntimeClient,
 )
 from app.modules.agent_config.application import AgentConfigService
 from app.modules.agent_config.application.builtin_tool_envelope import (
@@ -264,6 +263,7 @@ def build_worker_container(
     *,
     seed: bool = False,
     service_name: str = "agent-worker",
+    runtime_clients: Mapping[str, AgentRuntimeClient] | None = None,
 ) -> Container:
     settings = load_settings_with_db_overlay(settings, service_name=service_name)
     publisher = RabbitMQPublisher(settings.rabbitmq_url, settings.queue)
@@ -283,6 +283,7 @@ def build_worker_container(
         message_bus=None,
         seed=seed,
         use_real_claude=settings.feature_configuration.real_claude_enabled,
+        runtime_clients_override=runtime_clients,
     )
 
 
@@ -390,20 +391,40 @@ def _runtime_model_probe_for_service(
     if service_name != "api-server":
         return None
     if not (
-        settings.agent_runtime.base_url
+        settings.agent_runtime.python_base_url
         and settings.agent_runtime.model_probe_auth_token_file
     ):
         return None
     return RuntimeModelProbeClient(
         RuntimeModelProbeSettings(
-            base_url=settings.agent_runtime.base_url,
-            allowed_hosts=settings.agent_runtime.allowed_hosts,
+            base_url=settings.agent_runtime.python_base_url,
+            allowed_hosts=settings.agent_runtime.python_allowed_hosts,
             auth_token_file=settings.agent_runtime.model_probe_auth_token_file,
             allow_insecure_internal_http=(
                 settings.agent_runtime.allow_insecure_internal_http
             ),
+            runtime_kind="python-v1",
         )
     )
+
+
+def _acceptance_after_runtime_result_hook(
+    environment: str,
+) -> Callable[[], None] | None:
+    raw = os.getenv("AGENT_RUNTIME_ACCEPTANCE_AFTER_RESULT_PAUSE_SECONDS", "").strip()
+    if not raw or raw == "0":
+        return None
+    if environment not in {"test", "testing"}:
+        raise RuntimeError(
+            "AGENT_RUNTIME_ACCEPTANCE_AFTER_RESULT_PAUSE_SECONDS is test-only"
+        )
+    try:
+        seconds = float(raw)
+    except ValueError as exc:
+        raise RuntimeError("Agent Runtime acceptance pause must be numeric") from exc
+    if seconds < 1 or seconds > 60:
+        raise RuntimeError("Agent Runtime acceptance pause must be between 1 and 60 seconds")
+    return lambda: time.sleep(seconds)
 
 
 def _build_container(
@@ -417,6 +438,7 @@ def _build_container(
     seed: bool,
     use_real_claude: bool,
     permission_service_factory: PermissionServiceFactory | None = None,
+    runtime_clients_override: Mapping[str, AgentRuntimeClient] | None = None,
 ) -> Container:
     database = database or Database(settings.database_dsn)
     if seed:
@@ -604,6 +626,7 @@ def _build_container(
         data_plane_enabled=(settings.feature_configuration.published_agent_runtime_enabled),
         runtime_environment="local",
     )
+    agent_runtime_readiness_guard = AgentRuntimeReadinessGuard.from_settings(settings)
     business_application_service = BusinessApplicationService(
         business_application_repository,
         authorization_evaluator,
@@ -615,6 +638,7 @@ def _build_container(
         ToolCapabilityCatalogAdapter(config_repository),
         business_application_runtime_evaluator,
         capability_publication_repository=(capability_publication_repository),
+        runtime_readiness_guard=agent_runtime_readiness_guard,
     )
     business_application_resolver = BusinessApplicationResolver(
         business_application_repository,
@@ -629,7 +653,6 @@ def _build_container(
         database,
         composition=(business_application_service.builtin_tool_composition_service),
     )
-    runtime_migration_gate = RuntimeMigrationGate(settings.agent_runtime)
     create_job_service = CreateAgentJobService(
         repository=agent_repository,
         permission_service=permission_service,
@@ -652,8 +675,7 @@ def _build_container(
         external_api_credential_repository=(external_credential_repository),
         identity_repository=identity_repository,
         builtin_tool_snapshot_service=builtin_tool_snapshot_service,
-        runtime_migration_gate=runtime_migration_gate,
-        runtime_environment=settings.environment,
+        runtime_readiness_guard=agent_runtime_readiness_guard,
     )
     job_dispatcher = JobDispatchOutboxDispatcher(
         repository=agent_repository,
@@ -833,44 +855,48 @@ def _build_container(
         builtin_tool_snapshot_service=builtin_tool_snapshot_service,
     )
     tool_registry = ToolRegistry(tool_service)
-    python_claude_client = (
-        RealClaudeCodeAgentClient(
-            model=settings.claude_model,
-            tool_registry=tool_registry,
-            limits=settings.execution,
-            api_key=settings.anthropic_api_key,
-            base_url=settings.anthropic_base_url,
-            secret_resolver=model_secret_provider.resolve,
-            governed_api_runtime_executor=governed_api_runtime_executor,
-            agent_repository=agent_repository,
+    runtime_clients: dict[str, AgentRuntimeClient] = {}
+    if service_name == "agent-worker" and runtime_clients_override is not None:
+        runtime_clients = dict(runtime_clients_override)
+    elif service_name == "agent-worker":
+        grant_issuer = RuntimeGrantIssuer.from_file(
+            settings.agent_runtime.grant_private_key_file
         )
-        if use_real_claude
-        else StubClaudeCodeAgentClient()
-    )
-    if isinstance(python_claude_client, RealClaudeCodeAgentClient):
-        model_connection_service.tester = python_claude_client.test_connection
-    typescript_runtime_client = None
-    if service_name == "agent-worker" and settings.agent_runtime.base_url:
-        typescript_runtime_client = TypeScriptAgentRuntimeClient(
-            settings=RuntimeClientSettings(
-                base_url=settings.agent_runtime.base_url,
-                tool_mcp_url=settings.runtime_tool_mcp.server_url,
-                allowed_runtime_hosts=settings.agent_runtime.allowed_hosts,
-                allow_insecure_internal_http=(
-                    settings.agent_runtime.allow_insecure_internal_http
+        configured_runtimes = (
+            (
+                "python-v1",
+                settings.agent_runtime.python_base_url,
+                settings.agent_runtime.python_allowed_hosts,
+            ),
+            (
+                "typescript-v1",
+                settings.agent_runtime.typescript_base_url,
+                settings.agent_runtime.typescript_allowed_hosts,
+            ),
+        )
+        for runtime_kind, base_url, allowed_hosts in configured_runtimes:
+            if not base_url:
+                continue
+            runtime_clients[runtime_kind] = AgentRuntimeHttpClient(
+                settings=RuntimeClientSettings(
+                    base_url=base_url,
+                    allowed_runtime_hosts=allowed_hosts,
+                    runtime_kind=runtime_kind,
+                    allow_insecure_internal_http=(
+                        settings.agent_runtime.allow_insecure_internal_http
+                    ),
                 ),
-            ),
-            grant_issuer=RuntimeGrantIssuer.from_file(
-                settings.agent_runtime.grant_private_key_file
-            ),
-            mcp_token_issuer=RuntimeToolTokenIssuer.from_file(
-                settings.runtime_tool_mcp.token_signing_key_file
-            ),
-            event_sink=agent_repository.record_runtime_event,
-        )
-    claude_client = RoutedAgentRuntimeClient(
-        python_client=python_claude_client,
-        typescript_client=typescript_runtime_client,
+                grant_issuer=grant_issuer,
+                event_sink=agent_repository.record_runtime_event,
+            )
+    else:
+        stub_runtime = StubAgentRuntimeClient()
+        runtime_clients = {
+            "python-v1": stub_runtime,
+            "typescript-v1": stub_runtime,
+        }
+    claude_client = RuntimeClientRegistry(
+        runtime_clients,
     )
     dingtalk_conversation_adapter = DingTalkConversationDeliveryAdapter(
         fallback_callback_url=settings.dingtalk.callback_url,
@@ -957,6 +983,9 @@ def _build_container(
         delivery_service=result_delivery_service,
         business_authorization_service=business_authorization_service,
         builtin_tool_snapshot_service=builtin_tool_snapshot_service,
+        after_runtime_result_hook=_acceptance_after_runtime_result_hook(
+            settings.environment
+        ),
     )
     retry_service = JobRetryService(
         repository=agent_repository,

@@ -141,6 +141,7 @@ export class ModelConnectionProbe {
     }
     const response: ModelProbeResponse = {
       protocol_version: "1.0",
+      runtime_kind: "typescript-v1",
       probe_id: request.probe_id,
       success: succeeded,
       connection_revision_id: binding.connectionRevisionId,

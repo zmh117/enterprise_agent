@@ -22,7 +22,7 @@ import {
 export const DEFAULT_AGENT_CODE = "default-diagnostic-agent"
 export const DEFAULT_CONNECTION_CODE = "default-deepseek-anthropic"
 
-const agentKey = ["agent-profile", DEFAULT_AGENT_CODE] as const
+const agentKey = (agentCode: string) => ["agent-profile", agentCode] as const
 const connectionKey = ["model-connection", DEFAULT_CONNECTION_CODE] as const
 
 export function useAgentProfiles() {
@@ -32,10 +32,10 @@ export function useAgentProfiles() {
   })
 }
 
-export function useAgentProfile() {
+export function useAgentProfile(agentCode = DEFAULT_AGENT_CODE) {
   return useQuery({
-    queryKey: agentKey,
-    queryFn: () => getAgentProfile(DEFAULT_AGENT_CODE),
+    queryKey: agentKey(agentCode),
+    queryFn: () => getAgentProfile(agentCode),
   })
 }
 
@@ -46,19 +46,22 @@ export function useModelConnection() {
   })
 }
 
-export function useAgentPublications() {
+export function useAgentPublications(agentCode = DEFAULT_AGENT_CODE) {
   return useQuery({
-    queryKey: [...agentKey, "publications"],
-    queryFn: () => listAgentPublications(DEFAULT_AGENT_CODE),
+    queryKey: [...agentKey(agentCode), "publications"],
+    queryFn: () => listAgentPublications(agentCode),
   })
 }
 
-function useRefreshAgent() {
+function useRefreshAgent(agentCode: string) {
   const client = useQueryClient()
   return () =>
     Promise.all([
-      client.invalidateQueries({ queryKey: agentKey }),
-      client.invalidateQueries({ queryKey: [...agentKey, "publications"] }),
+      client.invalidateQueries({ queryKey: agentKey(agentCode) }),
+      client.invalidateQueries({
+        queryKey: [...agentKey(agentCode), "publications"],
+      }),
+      client.invalidateQueries({ queryKey: ["agent-profiles"] }),
     ])
 }
 
@@ -101,38 +104,38 @@ export function useConfigureConnection() {
   })
 }
 
-export function useSaveAgentDraft() {
-  const refresh = useRefreshAgent()
+export function useSaveAgentDraft(agentCode = DEFAULT_AGENT_CODE) {
+  const refresh = useRefreshAgent(agentCode)
   return useMutation({
     mutationFn: (input: { expectedRevision: number; config: AgentConfig }) =>
-      saveAgentDraft(DEFAULT_AGENT_CODE, input.expectedRevision, input.config),
+      saveAgentDraft(agentCode, input.expectedRevision, input.config),
     onSuccess: refresh,
   })
 }
 
-export function useValidateAgentDraft() {
-  const refresh = useRefreshAgent()
+export function useValidateAgentDraft(agentCode = DEFAULT_AGENT_CODE) {
+  const refresh = useRefreshAgent(agentCode)
   return useMutation({
     mutationFn: (revisionId: string) =>
-      validateAgentDraft(DEFAULT_AGENT_CODE, revisionId),
+      validateAgentDraft(agentCode, revisionId),
     onSuccess: refresh,
   })
 }
 
-export function usePublishAgentDraft() {
-  const refresh = useRefreshAgent()
+export function usePublishAgentDraft(agentCode = DEFAULT_AGENT_CODE) {
+  const refresh = useRefreshAgent(agentCode)
   return useMutation({
     mutationFn: (revisionId: string) =>
-      publishAgentDraft(DEFAULT_AGENT_CODE, revisionId),
+      publishAgentDraft(agentCode, revisionId),
     onSuccess: refresh,
   })
 }
 
-export function useRollbackAgentPublication() {
-  const refresh = useRefreshAgent()
+export function useRollbackAgentPublication(agentCode = DEFAULT_AGENT_CODE) {
+  const refresh = useRefreshAgent(agentCode)
   return useMutation({
     mutationFn: (publicationId: string) =>
-      rollbackAgentPublication(DEFAULT_AGENT_CODE, publicationId),
+      rollbackAgentPublication(agentCode, publicationId),
     onSuccess: refresh,
   })
 }

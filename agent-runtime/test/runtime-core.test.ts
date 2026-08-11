@@ -13,6 +13,7 @@ import {
   loadRuntimeConfig,
   RuntimeConfigError
 } from "../src/config.js";
+import { DeterministicFakeProviderRuntimeExecutor } from "../src/fake-provider.js";
 import type {
   AgentExecutionRequestV1,
   RuntimeEvent,
@@ -46,7 +47,8 @@ function runtimeEnv(): NodeJS.ProcessEnv {
     DATABASE_URL: "postgresql://runtime:secret@database/enterprise_agent",
     APP_CONFIG_MASTER_KEY_FILE: "/run/secrets/app-config-master-key",
     MODEL_PROVIDER_ALLOWED_HOSTS: "api.anthropic.com,provider.internal",
-    MCP_SERVER_ALLOWED_HOSTS: "ones-mcp.internal,data-mcp.internal"
+    MCP_SERVER_ALLOWED_HOSTS: "tool-mcp",
+    MCP_TOOL_SERVER_URL: "http://tool-mcp:9103/mcp"
   };
 }
 
@@ -78,6 +80,7 @@ async function grant(
 ): Promise<string> {
   return new SignJWT({
     azp: "agent-worker",
+    runtime_kind: value.runtime_kind,
     sub: value.app_user_id,
     job_id: value.job_id,
     invocation_id: value.invocation_id,
@@ -111,11 +114,11 @@ test("runtime config rejects unknown settings, floating CLI and unsafe remote UR
   );
   assert.equal(
     assertSafeRemoteUrl(
-      "http://ones-mcp.internal/mcp",
+      "http://tool-mcp:9103/mcp",
       config.mcpAllowedHosts,
       "mcp"
     ).hostname,
-    "ones-mcp.internal"
+    "tool-mcp"
   );
   assert.throws(
     () => assertSafeRemoteUrl("http://api.anthropic.com/v1", config.providerAllowedHosts, "model"),
@@ -127,6 +130,67 @@ test("runtime config rejects unknown settings, floating CLI and unsafe remote UR
     (error: unknown) =>
       error instanceof RuntimeConfigError && error.code === "runtime_remote_host_not_allowed"
   );
+  assert.throws(
+    () =>
+      loadRuntimeConfig({
+        ...runtimeEnv(),
+        AGENT_RUNTIME_TEST_PROVIDER_MODE: "deterministic"
+      }),
+    (error: unknown) =>
+      error instanceof RuntimeConfigError && error.code === "runtime_fake_provider_forbidden"
+  );
+  assert.equal(
+    loadRuntimeConfig({
+      ...runtimeEnv(),
+      APP_ENV: "testing",
+      AGENT_RUNTIME_TEST_PROVIDER_MODE: "deterministic"
+    }).fakeProviderMode,
+    true
+  );
+});
+
+test("test-only fake provider validates binding and has deterministic retry semantics", async () => {
+  let resolutions = 0;
+  const executor = new DeterministicFakeProviderRuntimeExecutor({
+    resolve: async (value) => {
+      resolutions += 1;
+      return {
+        protocol: "anthropic_compatible",
+        baseUrl: "https://api.deepseek.com/anthropic",
+        model: "deepseek-chat",
+        defaultOpusModel: "deepseek-chat",
+        defaultSonnetModel: "deepseek-chat",
+        defaultHaikuModel: "deepseek-chat",
+        subagentModel: "deepseek-chat",
+        effortLevel: "max",
+        connectionRevisionId: value.model_connection.revision_id,
+        configHash: value.model_connection.config_hash,
+        apiKey: "fake-provider-binding-secret"
+      };
+    }
+  });
+  const first = request();
+  first.invocation_id = `${first.job_id}.attempt-0`;
+  first.prompt.user_question = "[smoke:retry-once] verify retry";
+  const emitted: string[] = [];
+  const retry = await executor.execute(first, {
+    signal: new AbortController().signal,
+    emit: (eventType) => emitted.push(eventType)
+  });
+  const second = structuredClone(first);
+  second.invocation_id = `${second.job_id}.attempt-1`;
+  const succeeded = await executor.execute(second, {
+    signal: new AbortController().signal,
+    emit: () => undefined
+  });
+
+  assert.equal(retry.status, "FAILED");
+  assert.equal(retry.failure?.retry_class, "TRANSIENT");
+  assert.equal(succeeded.status, "SUCCEEDED");
+  assert.equal(succeeded.final_answer, "TypeScript Runtime fake-provider smoke completed.");
+  assert.deepEqual(emitted, ["execution_started"]);
+  assert.equal(resolutions, 2);
+  assert.equal(JSON.stringify([retry, succeeded]).includes("binding-secret"), false);
 });
 
 test("structured logger redacts credentials recursively and truncates values", () => {
@@ -169,6 +233,14 @@ test("Runtime Grant verifies every execution binding and prevents cross-invocati
   other.invocation_id = "invocation-2";
   await assert.rejects(
     verifier.verify(token, other),
+    (error: unknown) =>
+      error instanceof RuntimeGrantError && error.code === "runtime_grant_binding_mismatch"
+  );
+
+  const otherRuntime = structuredClone(value);
+  otherRuntime.runtime_kind = "python-v1";
+  await assert.rejects(
+    verifier.verify(token, otherRuntime),
     (error: unknown) =>
       error instanceof RuntimeGrantError && error.code === "runtime_grant_binding_mismatch"
   );
@@ -220,10 +292,37 @@ test("invocation registry starts one execution, replays terminal and rejects dig
 
 class MemoryTerminalLedger implements TerminalLedger {
   value?: PersistedTerminal;
+  claimOwner: string | undefined;
+  claimDigest: string | undefined;
+  claimEvents: RuntimeEvent[] = [];
 
   async load(invocationId: string): Promise<PersistedTerminal | undefined> {
     if (this.value?.events[0]?.invocation_id !== invocationId) return undefined;
     return structuredClone(this.value);
+  }
+
+  async claim(
+    value: AgentExecutionRequestV1,
+    ownerInstanceId: string
+  ): Promise<{ status: "CLAIMED" | "ORPHANED"; events: RuntimeEvent[] }> {
+    if (this.claimDigest && this.claimDigest !== value.request_digest) {
+      throw new Error("claim digest conflict");
+    }
+    if (!this.claimOwner) {
+      this.claimOwner = ownerInstanceId;
+      this.claimDigest = value.request_digest;
+    }
+    return {
+      status: this.claimOwner === ownerInstanceId ? "CLAIMED" : "ORPHANED",
+      events: structuredClone(this.claimEvents)
+    };
+  }
+
+  async append(
+    _value: AgentExecutionRequestV1,
+    event: RuntimeEvent
+  ): Promise<void> {
+    this.claimEvents.push(structuredClone(event));
   }
 
   async save(
@@ -236,6 +335,9 @@ class MemoryTerminalLedger implements TerminalLedger {
       events: structuredClone([...events]),
       terminalAt
     };
+    this.claimOwner = undefined;
+    this.claimDigest = undefined;
+    this.claimEvents = [];
   }
 }
 
@@ -268,6 +370,61 @@ test("terminal ledger replays a completed invocation after Runtime restart", asy
   const conflict = request();
   conflict.request_digest = "d".repeat(64);
   await assert.rejects(restartedRegistry.acquire(conflict), InvocationConflictError);
+});
+
+test("Runtime restart fails an orphaned in-progress invocation without replaying the model", async () => {
+  let executions = 0;
+  const ledger = new MemoryTerminalLedger();
+  const executor: RuntimeExecutor = async (value, emitter): Promise<never> => {
+    executions += 1;
+    emitter.emit("execution_started", provenance(value));
+    return await new Promise<never>(() => undefined);
+  };
+  const firstRegistry = new InvocationRegistry(
+    executor,
+    60_000,
+    undefined,
+    ledger,
+    "runtime-before-restart"
+  );
+  await firstRegistry.acquire(request());
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(executions, 1);
+  assert.equal(ledger.claimEvents.length, 1);
+
+  const restartedRegistry = new InvocationRegistry(
+    executor,
+    60_000,
+    undefined,
+    ledger,
+    "runtime-after-restart"
+  );
+  const recovered = await restartedRegistry.acquire(request());
+  const events: RuntimeEvent[] = [];
+  recovered.subscribe((event) => events.push(event));
+
+  assert.equal(executions, 1);
+  assert.equal(events.length, 2);
+  assert.equal(events[0]?.event_type, "execution_started");
+  assert.equal(events[1]?.event_type, "terminal");
+  assert.equal(events[1]?.payload.status, "FAILED");
+  assert.equal(
+    events[1]?.payload.failure?.code,
+    "runtime_orphaned_invocation"
+  );
+  assert.equal(events[1]?.payload.failure?.retry_class, "NEVER");
+
+  const replayRegistry = new InvocationRegistry(
+    executor,
+    60_000,
+    undefined,
+    ledger,
+    "runtime-later-restart"
+  );
+  const replayed: RuntimeEvent[] = [];
+  (await replayRegistry.acquire(request())).subscribe((event) => replayed.push(event));
+  assert.deepEqual(replayed, events);
+  assert.equal(executions, 1);
 });
 
 test("cancelling a running invocation aborts once and preserves a single terminal", async () => {

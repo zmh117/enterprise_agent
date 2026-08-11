@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import threading
+from collections.abc import Callable
 
 from app.modules.agent.application.agent_context_builder import AgentContextBuilder
 from app.modules.agent.application.agent_result_service import AgentResultService
 from app.modules.agent.domain.runtime import AgentRunRequest
-from app.modules.agent.infrastructure.claude_code_agent_client import ClaudeCodeAgentClient
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
+from app.modules.agent.infrastructure.routed_runtime_client import AgentRuntimeClient
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.authorization_center.application import BusinessAuthorizationService
 from app.modules.delivery.application.result_delivery_service import ResultDeliveryService
@@ -29,12 +31,13 @@ class AgentExecutor:
         audit_service: AuditService,
         status_service: JobStatusService,
         context_builder: AgentContextBuilder,
-        claude_client: ClaudeCodeAgentClient,
+        claude_client: AgentRuntimeClient,
         tool_registry: ToolRegistry,
         result_service: AgentResultService,
         delivery_service: ResultDeliveryService,
         business_authorization_service: BusinessAuthorizationService | None = None,
         builtin_tool_snapshot_service: JobBuiltinToolSnapshotService | None = None,
+        after_runtime_result_hook: Callable[[], None] | None = None,
     ) -> None:
         self.repository = repository
         self.audit_service = audit_service
@@ -46,6 +49,17 @@ class AgentExecutor:
         self.delivery_service = delivery_service
         self.business_authorization_service = business_authorization_service
         self.builtin_tool_snapshot_service = builtin_tool_snapshot_service
+        self.after_runtime_result_hook = after_runtime_result_hook
+        self._active_lock = threading.Lock()
+        self._active_requests: dict[str, AgentRunRequest] = {}
+
+    def cancel_active(self, job_id: str, reason: str) -> bool:
+        with self._active_lock:
+            request = self._active_requests.get(job_id)
+        if request is None:
+            return False
+        self.claude_client.cancel(request, reason)
+        return True
 
     def execute(
         self,
@@ -54,12 +68,12 @@ class AgentExecutor:
         worker_id: str = "agent-worker",
         correlation_id: str = "",
         fail_on_error: bool = True,
-        recover_typescript_running: bool = False,
+        recover_runtime_running: bool = False,
     ) -> str:
         claimed = self.status_service.claim(
             job_id,
             worker_id,
-            recover_typescript_running=recover_typescript_running,
+            recover_runtime_running=recover_runtime_running,
         )
         if claimed is None:
             persisted = self.repository.get_job(job_id)
@@ -154,22 +168,29 @@ class AgentExecutor:
                 title="Context search completed",
                 content="Relevant ER and business-flow context retrieved.",
             )
-            result = self.claude_client.run(
-                AgentRunRequest(
-                    job_id=job.id,
-                    user_id=job.internal_user_id or job.user_id,
-                    project_code=job.project_code,
-                    context=context,
-                    invocation_id=f"{job.id}.attempt-{job.retry_count}",
-                )
+            run_request = AgentRunRequest(
+                job_id=job.id,
+                user_id=job.internal_user_id or job.user_id,
+                project_code=job.project_code,
+                context=context,
+                invocation_id=f"{job.id}.attempt-{job.retry_count}",
             )
+            with self._active_lock:
+                self._active_requests[job.id] = run_request
+            try:
+                result = self.claude_client.run(run_request)
+            finally:
+                with self._active_lock:
+                    if self._active_requests.get(job.id) is run_request:
+                        self._active_requests.pop(job.id, None)
+            if self.after_runtime_result_hook is not None:
+                self.after_runtime_result_hook()
             if result.runtime_provenance:
                 self.repository.record_runtime_provenance(
                     job.id,
                     result.runtime_provenance,
                 )
-            if job.agent_runtime_kind != "typescript-v1":
-                self._persist_tool_events(job.id, result.tool_events)
+            self._persist_tool_events(job.id, result.tool_events)
             self.repository.record_execution_policy_usage(
                 job.id,
                 tool_call_count=len(result.tool_events),
@@ -191,8 +212,7 @@ class AgentExecutor:
         except Exception as exc:
             safe_message = getattr(exc, "safe_message", str(exc))
             tool_events = getattr(exc, "tool_events", [])
-            if job.agent_runtime_kind != "typescript-v1":
-                self._persist_tool_events(job.id, tool_events)
+            self._persist_tool_events(job.id, tool_events)
             self.repository.record_execution_policy_usage(
                 job.id,
                 tool_call_count=len(tool_events),

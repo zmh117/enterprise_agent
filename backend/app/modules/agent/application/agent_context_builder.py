@@ -198,6 +198,9 @@ class AgentContextBuilder:
         if (
             int(publication["revision"]) != int(job.agent_revision or 0)
             or str(publication["config_hash"]) != job.agent_config_hash
+            or str(publication.get("runtime_kind") or "python-v1")
+            != job.agent_runtime_kind
+            or job.agent_runtime_protocol_version != "1.0"
         ):
             raise RuntimeError("Pinned Agent publication does not match the job snapshot reference")
         return publication

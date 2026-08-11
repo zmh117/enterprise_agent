@@ -4,6 +4,7 @@ import { Pool } from "pg";
 
 import { ClaudeAgentRuntimeExecutor } from "./claude-runtime.js";
 import { loadRuntimeConfig, readRequiredSecretFile } from "./config.js";
+import { DeterministicFakeProviderRuntimeExecutor } from "./fake-provider.js";
 import { RuntimeGrantVerifier } from "./grant.js";
 import { InvocationRegistry } from "./invocation-registry.js";
 import { StructuredLogger } from "./logger.js";
@@ -30,11 +31,20 @@ const modelPool = new Pool({
 const secretDecryptor = await PlatformSecretDecryptor.fromFile(config.masterKeyFile);
 const modelBindings = new ModelBindingResolver(modelPool, secretDecryptor, config);
 const modelProbe = new ModelConnectionProbe(modelBindings);
-const claudeRuntime = new ClaudeAgentRuntimeExecutor(modelBindings);
+const claudeRuntime = new ClaudeAgentRuntimeExecutor(
+  modelBindings,
+  undefined,
+  undefined,
+  undefined,
+  config.mcpServerUrl
+);
+const runtimeExecutor = config.fakeProviderMode
+  ? new DeterministicFakeProviderRuntimeExecutor(modelBindings).execute
+  : claudeRuntime.execute;
 const terminalLedger = new PostgresTerminalLedger(modelPool, config.ledgerTtlSeconds);
 
 const registry = new InvocationRegistry(
-  claudeRuntime.execute,
+  runtimeExecutor,
   config.ledgerTtlSeconds * 1000,
   undefined,
   terminalLedger

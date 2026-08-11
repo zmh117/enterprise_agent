@@ -236,7 +236,7 @@ def test_dashboard_api_is_authorized_bounded_and_does_not_probe_resources(
     assert invalid.json()["detail"]["code"] == "invalid_time_window"
 
 
-def test_agent_skill_tool_and_channel_catalogs_enforce_mvp_availability() -> None:
+def test_agent_skill_tool_and_channel_catalogs_support_editable_agents() -> None:
     settings = unified_settings()
     container = build_test_container(settings, migrate=True, seed=True)
     container.database.execute(
@@ -248,14 +248,6 @@ def test_agent_skill_tool_and_channel_catalogs_enforce_mvp_availability() -> Non
                 'enabled', 1, 'user_local_admin', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """
     )
-    with pytest.raises(NonRetryableExecutionError) as read_only:
-        container.agent_config_service.save_draft(
-            actor_id="user_local_admin",
-            agent_code="secondary-agent",
-            expected_revision=0,
-            config={},
-        )
-    assert read_only.value.error_code == "agent_read_only"
     app = create_app(settings, container_factory=lambda _: container)
 
     with TestClient(app) as client:
@@ -267,7 +259,10 @@ def test_agent_skill_tool_and_channel_catalogs_enforce_mvp_availability() -> Non
         connectors = client.get("/api/admin/connectors")
 
     assert agents.status_code == skills.status_code == 200
-    assert agents.json()["agents"][0]["management_mode"] == "editable"
+    assert all(
+        agent["management_mode"] == "editable"
+        for agent in agents.json()["agents"]
+    )
     assert all("content" not in item for item in skills.json()["skills"])
     database = next(
         item for item in tool_providers.json()["providers"] if item["code"] == "database"

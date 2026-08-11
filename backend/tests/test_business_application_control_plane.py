@@ -747,6 +747,11 @@ def test_capability_catalog_lists_readonly_tools_and_enforces_agent_binding() ->
         code="capability-catalog-test",
     )
     assert catalog["capability_catalog_connected"] is True
+    catalog_agents = {
+        (item["code"], item["runtime_kind"]) for item in catalog["agents"]
+    }
+    assert ("default-diagnostic-agent", "python-v1") in catalog_agents
+    assert ("typescript-diagnostic-agent", "typescript-v1") in catalog_agents
     capability_codes = {
         item["code"] for item in catalog["capabilities"]
     }
@@ -814,6 +819,49 @@ def test_capability_catalog_lists_readonly_tools_and_enforces_agent_binding() ->
     )
     assert invalid["validation"]["valid"] is False
     assert "所选 Agent 发布版本未绑定业务能力" in str(invalid["validation"]["errors"])
+
+
+def test_application_agent_reference_fails_closed_on_runtime_or_hash_tampering() -> None:
+    container = build_test_container(control_plane_settings(), migrate=True, seed=True)
+    service = container.business_application_service
+    application = service.create(
+        actor_id="user_local_admin",
+        code="agent-runtime-integrity-test",
+        name="Agent Runtime Integrity Test",
+        description="",
+        project_code="default",
+        owner_user_id="user_local_admin",
+    )
+    catalog = service.catalog(
+        actor_id="user_local_admin",
+        code="agent-runtime-integrity-test",
+    )
+    typescript = next(
+        item for item in catalog["agents"] if item["runtime_kind"] == "typescript-v1"
+    )
+    payload = draft_payload()
+    payload["agent_publication_id"] = typescript["id"]
+    revision = service.save_draft(
+        actor_id="user_local_admin",
+        code="agent-runtime-integrity-test",
+        expected_revision=int(application["revision"]),
+        payload=payload,
+    )
+
+    container.database.execute(
+        "update agent_publication set config_hash = 'tampered' where id = ?",
+        (typescript["id"],),
+    )
+    validated = service.validate(
+        actor_id="user_local_admin",
+        code="agent-runtime-integrity-test",
+        revision_id=str(revision["id"]),
+    )
+
+    assert validated["validation"]["valid"] is False
+    assert validated["validation"]["errors"] == [
+        {"field": "agent_publication_id", "message": "组件不可用"}
+    ]
 
 
 def test_admin_api_enforces_feature_auth_csrf_unknown_fields_and_conflict() -> None:

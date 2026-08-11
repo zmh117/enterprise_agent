@@ -71,6 +71,7 @@ export class RuntimeGrantVerifier {
     const claims = payload as RuntimeGrantClaims;
     if (
       claims.azp !== "agent-worker" ||
+      claims.runtime_kind !== request.runtime_kind ||
       claims.sub !== request.app_user_id ||
       claims.job_id !== request.job_id ||
       claims.invocation_id !== request.invocation_id ||

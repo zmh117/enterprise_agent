@@ -139,6 +139,7 @@ class AgentConfigRepository:
         agent_id: str,
         revision_id: str,
         revision: int,
+        runtime_kind: str,
         snapshot: dict[str, Any],
         config_hash: str,
         actor_id: str,
@@ -157,8 +158,8 @@ class AgentConfigRepository:
             """
             insert into agent_publication
               (id, agent_id, revision_id, revision, schema_version, snapshot_json,
-               config_hash, status, published_by, published_at)
-            values (?, ?, ?, ?, 1, ?, ?, 'active', ?, ?)
+               config_hash, runtime_kind, status, published_by, published_at)
+            values (?, ?, ?, ?, 2, ?, ?, ?, 'active', ?, ?)
             on conflict(agent_id, revision) do nothing
             returning id
             """,
@@ -169,6 +170,7 @@ class AgentConfigRepository:
                 revision,
                 json.dumps(snapshot, ensure_ascii=False, sort_keys=True),
                 config_hash,
+                runtime_kind,
                 actor_id,
                 timestamp,
             ),

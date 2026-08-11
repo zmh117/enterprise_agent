@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 import json
+import uuid
+from datetime import UTC, datetime
 from typing import Any
 
-from app.modules.job.infrastructure.repositories import new_id, now_iso
 from app.shared.database import Database
 from app.shared.exceptions import NotFound, NonRetryableExecutionError
+
+
+def new_id(prefix: str) -> str:
+    return f"{prefix}_{uuid.uuid4().hex}"
+
+
+def now_iso() -> str:
+    return datetime.now(UTC).isoformat()
 
 
 class ModelConnectionRepository:

@@ -8,6 +8,8 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 from fastapi.testclient import TestClient
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from app.bootstrap import (
     build_api_container,
@@ -15,10 +17,9 @@ from app.bootstrap import (
     build_worker_container,
 )
 from app.main import create_app
-from app.modules.agent.infrastructure.claude_code_agent_client import (
-    RealClaudeCodeAgentClient,
-    StubClaudeCodeAgentClient,
-)
+from app.modules.agent.infrastructure.routed_runtime_client import RuntimeClientRegistry
+from app.modules.agent.infrastructure.stub_runtime_client import StubAgentRuntimeClient
+from app.modules.agent.infrastructure.typescript_runtime_client import AgentRuntimeHttpClient
 from app.modules.internal_tools.infrastructure.internal_api_client import (
     FakeInternalApiClient,
     HttpInternalApiClient,
@@ -62,7 +63,7 @@ def _debug_settings() -> Settings:
 
 
 def _debug_headers() -> dict[str, str]:
-    return {"x-admin-user-id": "local-user"}
+    return {"x-admin-user-id": "admin"}
 
 
 def _authorized_debug_payload(
@@ -126,9 +127,26 @@ def _migrated_runtime_settings(
     settings: Settings,
     directory: Path,
 ) -> Settings:
+    private_key_path = directory / "runtime-grant-private.pem"
+    private_key_path.write_bytes(
+        Ed25519PrivateKey.generate().private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+    )
     migrated = replace(
         settings,
         database_dsn=f"sqlite:///{directory / 'runtime.db'}",
+        agent_runtime=replace(
+            settings.agent_runtime,
+            python_base_url="http://python-agent-runtime:9101",
+            python_allowed_hosts=("python-agent-runtime",),
+            typescript_base_url="http://typescript-agent-runtime:9102",
+            typescript_allowed_hosts=("typescript-agent-runtime",),
+            grant_private_key_file=str(private_key_path),
+            allow_insecure_internal_http=True,
+        ),
     )
     database = Database(migrated.database_dsn)
     try:
@@ -167,7 +185,7 @@ class RuntimeWiringAndDebugApiTests(unittest.TestCase):
                 worker_container.database.close()
                 test_container.database.close()
 
-    def test_feature_flag_selects_real_claude_only_for_production_runtime(self) -> None:
+    def test_worker_always_routes_both_runtime_kinds_out_of_process(self) -> None:
         real_settings = replace(
             make_settings(),
             feature_real_claude=True,
@@ -178,7 +196,7 @@ class RuntimeWiringAndDebugApiTests(unittest.TestCase):
                 real_settings,
                 Path(temporary_directory),
             )
-            api_container = build_api_container(real_settings, seed=True)
+            worker_container = build_worker_container(real_settings, seed=True)
             test_container = build_test_container(
                 real_settings,
                 migrate=False,
@@ -186,15 +204,29 @@ class RuntimeWiringAndDebugApiTests(unittest.TestCase):
             )
             try:
                 self.assertIsInstance(
-                    api_container.agent_executor.claude_client,
-                    RealClaudeCodeAgentClient,
+                    worker_container.agent_executor.claude_client,
+                    RuntimeClientRegistry,
+                )
+                worker_clients = worker_container.agent_executor.claude_client._clients
+                self.assertEqual({"python-v1", "typescript-v1"}, set(worker_clients))
+                self.assertTrue(
+                    all(
+                        isinstance(client, AgentRuntimeHttpClient)
+                        for client in worker_clients.values()
+                    )
                 )
                 self.assertIsInstance(
                     test_container.agent_executor.claude_client,
-                    StubClaudeCodeAgentClient,
+                    RuntimeClientRegistry,
+                )
+                self.assertTrue(
+                    all(
+                        isinstance(client, StubAgentRuntimeClient)
+                        for client in test_container.agent_executor.claude_client._clients.values()
+                    )
                 )
             finally:
-                api_container.database.close()
+                worker_container.database.close()
                 test_container.database.close()
 
     def test_feature_flag_selects_real_internal_tools_only_for_production_runtime(self) -> None:
@@ -257,7 +289,7 @@ class RuntimeWiringAndDebugApiTests(unittest.TestCase):
             for index in range(2):
                 response = client.post(
                     "/webhooks/dingding/agent",
-                    json=dingtalk_payload(msg_id=f"msg-{index}"),
+                    json=dingtalk_payload(msg_id=f"msg-{index}", user_id="admin"),
                     headers={
                         "x-dingtalk-timestamp": timestamp,
                         "x-dingtalk-sign": dingtalk_sign("test-secret", timestamp),

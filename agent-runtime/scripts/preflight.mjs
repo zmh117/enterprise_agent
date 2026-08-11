@@ -48,8 +48,11 @@ async function checkStaticContract() {
     fail("preflight_sdk_version_mismatch", "Runtime or SDK version is not exactly pinned");
   }
   const schemaText = JSON.stringify(schema);
+  const runtimeKinds = schema.$defs?.RuntimeKind?.enum;
   if (!schemaText.includes(`"const":"${expected.protocol}"`) ||
-      !schemaText.includes(`"const":"${expected.sdk}"`)) {
+      !Array.isArray(runtimeKinds) ||
+      !runtimeKinds.includes("python-v1") ||
+      !runtimeKinds.includes("typescript-v1")) {
     fail("preflight_contract_version_mismatch", "Protocol schema version constants do not match");
   }
   if (staticOnly) {
@@ -131,8 +134,18 @@ async function checkDatabaseGrants() {
     const ledger = await pool.query(
       "select bool_and(has_table_privilege(current_user, 'agent_runtime_terminal_ledger', privilege)) filter (where expected) allowed, bool_or(has_table_privilege(current_user, 'agent_runtime_terminal_ledger', privilege)) filter (where not expected) forbidden from (values ('SELECT', true), ('INSERT', true), ('DELETE', true), ('UPDATE', false), ('TRUNCATE', false), ('REFERENCES', false), ('TRIGGER', false)) grants(privilege, expected)"
     );
-    if (!ledger.rows[0]?.allowed || ledger.rows[0]?.forbidden) {
-      fail("preflight_ledger_grant_invalid", "terminal ledger grants are invalid");
+    const claim = await pool.query(
+      "select bool_and(has_table_privilege(current_user, 'agent_runtime_invocation_claim', privilege)) filter (where expected) allowed, bool_or(has_table_privilege(current_user, 'agent_runtime_invocation_claim', privilege)) filter (where not expected) forbidden from (values ('SELECT', true), ('INSERT', true), ('DELETE', true), ('UPDATE', false), ('TRUNCATE', false), ('REFERENCES', false), ('TRIGGER', false)) grants(privilege, expected)"
+    );
+    const invocationEvents = await pool.query(
+      "select bool_and(has_table_privilege(current_user, 'agent_runtime_invocation_event', privilege)) filter (where expected) allowed, bool_or(has_table_privilege(current_user, 'agent_runtime_invocation_event', privilege)) filter (where not expected) forbidden from (values ('SELECT', true), ('INSERT', true), ('DELETE', true), ('UPDATE', false), ('TRUNCATE', false), ('REFERENCES', false), ('TRIGGER', false)) grants(privilege, expected)"
+    );
+    if (
+      !ledger.rows[0]?.allowed || ledger.rows[0]?.forbidden ||
+      !claim.rows[0]?.allowed || claim.rows[0]?.forbidden ||
+      !invocationEvents.rows[0]?.allowed || invocationEvents.rows[0]?.forbidden
+    ) {
+      fail("preflight_ledger_grant_invalid", "Runtime ledger grants are invalid");
     }
   } finally {
     await pool.end();

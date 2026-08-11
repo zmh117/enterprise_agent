@@ -14,12 +14,12 @@ class JobStatusService:
         job_id: str,
         worker_id: str,
         *,
-        recover_typescript_running: bool = False,
+        recover_runtime_running: bool = False,
     ) -> AgentJob | None:
         return self.repository.claim_job(
             job_id,
             worker_id,
-            recover_typescript_running=recover_typescript_running,
+            recover_runtime_running=recover_runtime_running,
         )
 
     def succeed(self, job_id: str, result: str) -> AgentJob:

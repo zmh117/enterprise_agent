@@ -22,6 +22,7 @@ class RuntimeModelProbeSettings:
     allowed_hosts: tuple[str, ...]
     auth_token_file: str
     allow_insecure_internal_http: bool = False
+    runtime_kind: str = "typescript-v1"
 
     def endpoint(self) -> str:
         normalized = self.base_url.strip().rstrip("/")
@@ -51,6 +52,9 @@ class RuntimeModelProbeSettings:
 class RuntimeModelProbeClient:
     def __init__(self, settings: RuntimeModelProbeSettings) -> None:
         self.endpoint = settings.endpoint()
+        if settings.runtime_kind not in {"python-v1", "typescript-v1"}:
+            raise ValueError("Agent Runtime model probe kind is unsupported")
+        self.runtime_kind = settings.runtime_kind
         token_path = Path(settings.auth_token_file.strip())
         if not token_path.is_absolute():
             raise ValueError("MODEL_PROBE_AUTH_TOKEN_FILE must be an absolute path")
@@ -73,6 +77,7 @@ class RuntimeModelProbeClient:
         timeout = max(3, min(int(timeout_seconds), 20))
         payload: dict[str, Any] = {
             "protocol_version": "1.0",
+            "runtime_kind": self.runtime_kind,
             "probe_id": f"probe-{uuid.uuid4().hex}",
             "model_connection": {
                 "revision_id": revision_id,
@@ -108,7 +113,11 @@ class RuntimeModelProbeClient:
                 safe_message="模型连接测试运行时不可用",
                 error_code="model_connection_test_unavailable",
             ) from exc
-        if not isinstance(result, dict) or result.get("probe_id") != payload["probe_id"]:
+        if (
+            not isinstance(result, dict)
+            or result.get("probe_id") != payload["probe_id"]
+            or result.get("runtime_kind") != self.runtime_kind
+        ):
             raise NonRetryableExecutionError(
                 "TypeScript Runtime model probe identity mismatch",
                 safe_message="模型连接测试响应无效",

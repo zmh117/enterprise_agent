@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.modules.agent_config.infrastructure import AgentConfigRepository
 from app.modules.business_application.application.ports import ComponentReference
+from app.modules.business_application.domain.policies import snapshot_hash
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.identity.infrastructure import IdentityRepository
 from app.modules.internal_tools.domain import (
@@ -19,6 +20,33 @@ class AgentPublicationAdapter:
     def resolve(self, publication_id: str) -> ComponentReference:
         publication = self.repository.get_publication(publication_id)
         definition = self.repository.get_definition_by_id(str(publication["agent_id"]))
+        schema_version = int(publication.get("schema_version") or 0)
+        runtime_kind = str(publication.get("runtime_kind") or "")
+        definition_runtime_kind = str(definition.get("runtime_kind") or "")
+        snapshot = publication.get("snapshot") or {}
+        integrity_valid = (
+            schema_version in {1, 2}
+            and runtime_kind in {"python-v1", "typescript-v1"}
+            and definition_runtime_kind == runtime_kind
+            and snapshot_hash(snapshot) == str(publication.get("config_hash") or "")
+            and (
+                (
+                    schema_version == 1
+                    and runtime_kind == "python-v1"
+                    and snapshot.get("runtime_kind") in {None, "python-v1"}
+                )
+                or (
+                    schema_version == 2
+                    and snapshot.get("runtime_kind") == runtime_kind
+                )
+            )
+        )
+        if not integrity_valid:
+            raise NonRetryableExecutionError(
+                "Agent publication integrity verification failed",
+                safe_message="Agent 发布版本完整性校验失败",
+                error_code="agent_publication_integrity_error",
+            )
         return ComponentReference(
             id=str(publication["id"]),
             code=str(definition["code"]),
@@ -30,6 +58,7 @@ class AgentPublicationAdapter:
                 else "disabled"
             ),
             config_hash=str(publication["config_hash"]),
+            runtime_kind=runtime_kind,
             component_type="agent_publication",
         )
 

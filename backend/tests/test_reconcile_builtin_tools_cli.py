@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from app.cli import reconcile_builtin_tools
-from app.modules.agent.infrastructure.claude_code_agent_client import (
+from app.modules.agent.infrastructure.tool_manifest import (
     TOOL_DEFINITIONS,
 )
 from backend.tests.helpers import container
@@ -26,7 +26,7 @@ def test_reconcile_builtin_tools_cli_is_idempotent_and_does_not_publish(
     )
 
     assert reconcile_builtin_tools.main(
-        ["--actor-id", "local-user", "--correlation-id", "cli-test"]
+        ["--actor-id", "admin", "--correlation-id", "cli-test"]
     ) == 0
     result = json.loads(capsys.readouterr().out)
     assert result == {
