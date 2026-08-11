@@ -69,8 +69,8 @@
 - [x] 8.3 运行前端 lint/typecheck/test/build，验证两个 Agent 的独立发布与 Application Agent Publication 选择流程
 - [x] 8.4 运行 Compose fake-provider 闭环，分别证明 Python/TypeScript Job 成功、失败、延迟重试、dead-letter 和一次 Delivery
 - [x] 8.5 演练 Worker/两个 Runtime 在执行前、流式中和 Runtime 完成后本地提交前重启，证明 invocation 恢复且不重复模型执行/Delivery
-- [ ] 8.6 使用可丢弃配置分别完成 Python 与 TypeScript 的真实模型、只读 Tool、取消、重试和失败投递 smoke
-- [ ] 8.7 分别验证真实 `DingTalk -> Application Publication -> Agent Publication -> RabbitMQ -> Worker -> selected Runtime -> standard MCP Tool Server -> Result -> Delivery` 两条链路
+- [x] 8.6 使用可丢弃配置分别完成 Python 与 TypeScript 的真实模型、只读 Tool、取消、重试和失败投递 smoke
+- [x] 8.7 分别验证真实 `DingTalk -> Application Publication -> Agent Publication -> RabbitMQ -> Worker -> selected Runtime -> standard MCP Tool Server -> Result -> Delivery` 两条链路
 - [x] 8.8 扫描数据库、RabbitMQ、日志、Runtime ledger、Job/Tool 事件和 Delivery，确认无 Key、Token、Secret、完整 Prompt、原始 payload 或私有推理
 - [x] 8.9 在应用完成显式迁移后删除 Worker 进程内 SDK adapter、RuntimeMigrationGate 代码/配置和旧镜像层，并验证新 Job 无双事实源或跨 Runtime fallback
 - [x] 8.10 运行 OpenSpec strict validation、`git diff --check` 和全量相关回归，证明旧 MCP 服务/key 已删除、Runtime Grant 未泄漏到 MCP，并记录后续控制面退役 change 的明确边界
