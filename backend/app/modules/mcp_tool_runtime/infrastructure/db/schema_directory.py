@@ -146,17 +146,16 @@ class MySqlSchemaInspector:
             raise UpstreamUnavailable("MySQL schema inspection connection failed") from exc
         cur: Any | None = None
         try:
-            like_prefix = _like_prefix(table_prefix)
             cur = conn.cursor()
             cur.execute(
                 """
                 select table_name, column_name, data_type, is_nullable
                 from information_schema.columns
                 where table_schema = %s
-                  and table_name like %s escape '\\'
+                  and table_name like %s escape '='
                 order by table_name, ordinal_position
                 """,
-                (db.database, like_prefix),
+                (db.database, _like_prefix(table_prefix, escape_char="=")),
             )
             tables: dict[str, list[SchemaColumn]] = {}
             columns_truncated = False
@@ -430,15 +429,24 @@ def _require_database(binding: ResourceBinding) -> Any:
     return binding.database
 
 
-def _escape_like(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+def _escape_like(value: str, *, escape_char: str = "\\") -> str:
+    return (
+        value.replace(escape_char, escape_char * 2)
+        .replace("%", f"{escape_char}%")
+        .replace("_", f"{escape_char}_")
+    )
 
 
-def _like_prefix(value: str | None, *, uppercase: bool = False) -> str:
+def _like_prefix(
+    value: str | None,
+    *,
+    uppercase: bool = False,
+    escape_char: str = "\\",
+) -> str:
     text = str(value or "")
     if uppercase:
         text = text.upper()
-    return f"{_escape_like(text)}%"
+    return f"{_escape_like(text, escape_char=escape_char)}%"
 
 
 def _like_contains(value: str, *, uppercase: bool = False) -> str:

@@ -458,7 +458,9 @@ class MySqlSchemaInspectorContractTests(unittest.TestCase):
             )
 
         self.assertEqual(["GL001_EBR_order"], [table.name for table in result.tables])
-        self.assertEqual("GL001\\_%", cursor.calls[0][1][1])
+        sql = cursor.calls[0][0].lower()
+        self.assertIn("escape '='", sql)
+        self.assertEqual("GL001=_%", cursor.calls[0][1][1])
 
 
 class DialectAwarePrefixTests(unittest.TestCase):

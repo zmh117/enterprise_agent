@@ -262,6 +262,7 @@ def build_test_container(
     migrate: bool = True,
     seed: bool = False,
     configure_seed_secrets: bool = True,
+    service_name: str = "test-runtime",
 ) -> Container:
     from app.testing.permission_service import SeedPolicyTestPermissionService
 
@@ -275,7 +276,9 @@ def build_test_container(
             ).run()
         settings = load_settings_with_db_overlay(
             settings,
-            service_name="api-server",
+            service_name=(
+                "api-server" if service_name == "test-runtime" else service_name
+            ),
             database=database,
         )
     except Exception:
@@ -295,7 +298,7 @@ def build_test_container(
 
     runtime = _build_container(
         settings=settings,
-        service_name="test-runtime",
+        service_name=service_name,
         publisher=message_bus,
         consumer=message_bus,
         message_bus=message_bus,
@@ -761,7 +764,7 @@ def _build_container(
             DirectResourceResolver(
                 database,
                 secret_provider=EncryptedDbSecretProvider(
-                    config_repository,
+                    platform_config_repository,
                     master_key=settings.app_config_master_key,
                 ),
             ),

@@ -6,9 +6,11 @@ from typing import Any
 
 import pytest
 
+from app.bootstrap import build_test_container
 from app.modules.job.domain.job_status import JobStatus
-from app.modules.mcp_tool_runtime.job_snapshot import JobMcpToolSnapshotService
 from app.modules.mcp_tool_runtime.contracts import FakeReadOnlyToolExecutor
+from app.modules.mcp_tool_runtime.direct_executor import DirectReadOnlyToolExecutor
+from app.modules.mcp_tool_runtime.job_snapshot import JobMcpToolSnapshotService
 from app.modules.mcp_tool_runtime.manifest import (
     MCP_TOOL_MANIFEST,
     mcp_tool_schema_hash,
@@ -17,13 +19,16 @@ from app.modules.mcp_tool_runtime.manifest import (
 from app.modules.mcp_tool_runtime.policies import assert_readonly_sql
 from app.modules.mcp_tool_runtime.resource_resolver import DirectResourceResolver
 from app.modules.mcp_tool_runtime.service import ReadOnlyToolService
+from app.modules.platform_config.application.governed_resources import (
+    ResourceVerificationOutcome,
+)
 from app.modules.agent.application.agent_context_builder import (
     AgentContextBuilder,
     _tool_restrictions,
 )
 from app.shared.config import ExecutionSettings
 from app.shared.exceptions import ToolPolicyError
-from backend.tests.helpers import container
+from backend.tests.helpers import container, test_settings as _test_settings
 
 
 _EXECUTION_POLICY = {
@@ -48,6 +53,21 @@ class _SecretProvider:
     def resolve(self, ref: str) -> str:
         assert ref == "secret://platform/mysql-test-password"
         return "resolved-only-at-invocation"
+
+
+class _PassingMysqlVerifier:
+    def verify(
+        self,
+        *,
+        resource: dict[str, object],
+        draft: dict[str, object],
+    ) -> ResourceVerificationOutcome:
+        del resource, draft
+        return ResourceVerificationOutcome(
+            status="PASSED",
+            provider_contract_version="mysql_v1",
+            checks={"connection": "passed", "readonly": True},
+        )
 
 
 class _ServiceRepository:
@@ -217,6 +237,88 @@ def test_direct_resource_resolution_requires_exact_target_or_placement() -> None
     with pytest.raises(ToolPolicyError) as missing:
         resolver.resolve(resource_kind="database", environment="production")
     assert missing.value.error_code == "mcp_resource_not_resolved"
+
+
+def test_tool_mcp_bootstrap_resolves_published_resource_secret() -> None:
+    runtime = build_test_container(
+        _test_settings(),
+        migrate=True,
+        seed=True,
+        service_name="tool-mcp",
+    )
+    actor_id = "user_local_admin"
+    runtime.database.execute(
+        """
+        insert into permission_policy
+          (id, subject_type, subject_code, resource_type, resource_code,
+           action, effect, priority, status, revision, created_at, updated_at)
+        values
+          ('test-tool-mcp-platform-config', 'user', ?, 'platform_config', '*',
+           'manage', 'allow', 1, 'enabled', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+          ('test-tool-mcp-secret', 'user', ?, 'secret', '*',
+           'manage', 'allow', 1, 'enabled', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        on conflict(id) do nothing
+        """,
+        (actor_id, actor_id),
+    )
+    try:
+        runtime.platform_config_service.upsert_environment(
+            {"code": "tool_mcp_test"},
+            actor_id=actor_id,
+        )
+        runtime.platform_config_service.create_platform_secret(
+            {
+                "code": "tool_mcp_mysql_password",
+                "value": "resolved-through-platform-secret-repository",
+            },
+            actor_id=actor_id,
+        )
+        resource_service = runtime.platform_config_service.governed_resources
+        resource_service.create_resource(
+            {
+                "code": "tool_mcp_mysql",
+                "name": "Tool MCP MySQL",
+                "resource_kind": "database",
+                "scope_type": "environment",
+                "environment_code": "tool_mcp_test",
+                "provider_type": "mysql",
+                "config": {
+                    "host": "mysql.internal",
+                    "port": 3306,
+                    "database": "diagnostics",
+                    "username": "readonly",
+                },
+                "secret_refs": {
+                    "password_ref": "secret://platform/tool_mcp_mysql_password"
+                },
+            },
+            actor_id=actor_id,
+        )
+        resource_service.verify_draft(
+            "tool_mcp_mysql",
+            actor_id=actor_id,
+            verifier=_PassingMysqlVerifier(),
+        )
+        resource_service.publish_draft(
+            "tool_mcp_mysql",
+            actor_id=actor_id,
+        )
+
+        executor = runtime.tool_service.tool_executor
+        assert isinstance(executor, DirectReadOnlyToolExecutor)
+        resolved = executor.resolver.resolve(
+            resource_kind="database",
+            environment="tool_mcp_test",
+        )
+
+        assert resolved.resource_code == "tool_mcp_mysql"
+        assert resolved.binding.database is not None
+        assert (
+            resolved.binding.database.password
+            == "resolved-through-platform-secret-repository"
+        )
+    finally:
+        runtime.database.close()
 
 
 def test_direct_mcp_sql_policy_rejects_mutation() -> None:
