@@ -4,6 +4,7 @@ import type {
   AgentConfig,
   CredentialSource,
   ModelConnectionConfig,
+  RuntimeKind,
 } from "@/contexts/agent-profiles/domain/agent-profile"
 import {
   configureModelConnection,
@@ -16,6 +17,7 @@ import {
   rollbackAgentPublication,
   saveAgentDraft,
   testDraftModelConnection,
+  testSavedModelConnection,
   validateAgentDraft,
 } from "@/contexts/agent-profiles/infrastructure/agent-profile-api"
 
@@ -87,6 +89,20 @@ export function useTestDraftConnection() {
   return useMutation({
     mutationFn: (input: DraftConnectionInput) =>
       testDraftModelConnection(DEFAULT_CONNECTION_CODE, input),
+  })
+}
+
+export function useTestSavedConnection() {
+  return useMutation({
+    mutationFn: (input: {
+      revisionId: string
+      runtimeKind: RuntimeKind
+      timeoutSeconds?: number
+    }) =>
+      testSavedModelConnection(DEFAULT_CONNECTION_CODE, input.revisionId, {
+        runtime_kind: input.runtimeKind,
+        timeout_seconds: input.timeoutSeconds,
+      }),
   })
 }
 

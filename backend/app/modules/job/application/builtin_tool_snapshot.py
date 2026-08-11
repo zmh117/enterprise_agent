@@ -387,16 +387,12 @@ class JobBuiltinToolSnapshotService:
                 "旧 Job 缺少不可变执行范围",
                 code="builtin_tool_legacy_job_execution_scope_missing",
             )
-        application_publication_id = str(
-            row.get("business_application_publication_id") or ""
-        )
+        application_publication_id = str(row.get("business_application_publication_id") or "")
         agent_publication_id = str(row.get("agent_publication_id") or "")
         if (
             int(row.get("legacy_scope_schema_version") or 0) != 2
-            or str(row.get("scope_application_publication_id") or "")
-            != application_publication_id
-            or str(row.get("scope_agent_publication_id") or "")
-            != agent_publication_id
+            or str(row.get("scope_application_publication_id") or "") != application_publication_id
+            or str(row.get("scope_agent_publication_id") or "") != agent_publication_id
         ):
             raise self._invalid(
                 "Legacy Job execution scope differs from Job publication facts",
@@ -424,8 +420,7 @@ class JobBuiltinToolSnapshotService:
         expected_scope_snapshot = {"job_id": job_id, **runtime_authorization}
         if (
             scope_snapshot != expected_scope_snapshot
-            or snapshot_hash(scope_snapshot)
-            != str(row.get("legacy_scope_hash") or "")
+            or snapshot_hash(scope_snapshot) != str(row.get("legacy_scope_hash") or "")
             or int(runtime_authorization.get("schema_version") or 0) != 2
         ):
             raise self._invalid(
@@ -446,16 +441,11 @@ class JobBuiltinToolSnapshotService:
             agent_publication_id=agent_publication_id,
             tool_release_ids=tool_release_ids,
         )
-        bindings = [
-            self._binding(tool, target, "", [])
-            for tool in tools
-        ]
+        bindings = [self._binding(tool, target, "", []) for tool in tools]
         bindings.sort(key=lambda item: str(item["tool_identifier"]))
         runtime_authorization_hash = snapshot_hash(runtime_authorization)
         business_authorization_hash = snapshot_hash(business_authorization)
-        requester_id = str(
-            row.get("internal_user_id") or row.get("user_id") or ""
-        )
+        requester_id = str(row.get("internal_user_id") or row.get("user_id") or "")
         if not requester_id:
             raise self._invalid(
                 "Legacy Job requester is missing",
@@ -554,10 +544,7 @@ class JobBuiltinToolSnapshotService:
             """,
             (job_id,),
         )
-        if (
-            existing_snapshot is None
-            and (required is None or int(required["count"]) == 0)
-        ):
+        if existing_snapshot is None and (required is None or int(required["count"]) == 0):
             return {}
         row = self.database.execute_one(
             """
@@ -645,9 +632,7 @@ class JobBuiltinToolSnapshotService:
                 code="job_builtin_tool_snapshot_hash_mismatch",
             )
         try:
-            route_decision = json.loads(
-                str(row.get("job_route_decision_json") or "{}")
-            )
+            route_decision = json.loads(str(row.get("job_route_decision_json") or "{}"))
         except json.JSONDecodeError as exc:
             raise self._invalid(
                 "Job route decision JSON is invalid",
@@ -660,12 +645,8 @@ class JobBuiltinToolSnapshotService:
                 "Job 路由授权事实无效",
                 code="job_builtin_tool_authorization_mismatch",
             )
-        business_authorization = route_decision.get(
-            "authorization_snapshot"
-        )
-        runtime_authorization = route_decision.get(
-            "runtime_authorization"
-        )
+        business_authorization = route_decision.get("authorization_snapshot")
+        runtime_authorization = route_decision.get("runtime_authorization")
         if not isinstance(business_authorization, dict) or not isinstance(
             runtime_authorization,
             dict,
@@ -675,24 +656,14 @@ class JobBuiltinToolSnapshotService:
                 "Job 授权快照缺失",
                 code="job_builtin_tool_authorization_mismatch",
             )
-        authoritative_user_id = str(
-            row.get("job_internal_user_id")
-            or row.get("job_user_id")
-            or ""
-        )
+        authoritative_user_id = str(row.get("job_internal_user_id") or row.get("job_user_id") or "")
         expected = {
             "requester_id": authoritative_user_id,
             "application_id": str(row.get("job_application_id") or ""),
-            "application_publication_id": str(
-                row.get("job_application_publication_id") or ""
-            ),
+            "application_publication_id": str(row.get("job_application_publication_id") or ""),
             "target_hash": str(target.get("target_hash") or ""),
-            "business_authorization_hash": snapshot_hash(
-                business_authorization
-            ),
-            "runtime_authorization_hash": snapshot_hash(
-                runtime_authorization
-            ),
+            "business_authorization_hash": snapshot_hash(business_authorization),
+            "runtime_authorization_hash": snapshot_hash(runtime_authorization),
             "runtime_authorization_schema_version": int(
                 runtime_authorization.get("schema_version") or 0
             ),
@@ -787,7 +758,7 @@ class JobBuiltinToolSnapshotService:
                 if requested_id and requested_id != str(target.get(id_field) or ""):
                     matched = False
                     break
-                if requested_code != str(target.get(code_field) or ""):
+                if requested_code and requested_code != str(target.get(code_field) or ""):
                     matched = False
                     break
             if matched:
@@ -831,9 +802,7 @@ class JobBuiltinToolSnapshotService:
             [
                 {
                     "target_scope_type": scope_type,
-                    "environment_code": str(
-                        requested.get("environment_code") or ""
-                    ),
+                    "environment_code": str(requested.get("environment_code") or ""),
                     "base_code": str(requested.get("base_code") or ""),
                     "workshop_code": str(requested.get("workshop_code") or ""),
                 }

@@ -181,7 +181,7 @@ class ComponentReferenceResponse(BaseModel):
     project_code: str
     status: str
     config_hash: str
-    runtime_kind: str = ""
+    runtime_kind: Literal["python-v1", "typescript-v1"] | None = None
     direction: str = ""
     component_type: str = ""
 
@@ -192,16 +192,14 @@ class CatalogResponse(BaseModel):
     connectors: list[ComponentReferenceResponse]
     capabilities: list[dict[str, Any]]
     capability_catalog_connected: bool = False
-    api_capabilities_by_agent_publication: dict[
-        str, list[dict[str, Any]]
-    ] = Field(default_factory=dict)
-    builtin_tools_by_agent_publication: dict[
-        str, list[dict[str, Any]]
-    ] = Field(default_factory=dict)
-    resource_revisions: list[dict[str, Any]] = Field(default_factory=list)
-    workshop_policy_revisions: list[dict[str, Any]] = Field(
-        default_factory=list
+    api_capabilities_by_agent_publication: dict[str, list[dict[str, Any]]] = Field(
+        default_factory=dict
     )
+    builtin_tools_by_agent_publication: dict[str, list[dict[str, Any]]] = Field(
+        default_factory=dict
+    )
+    resource_revisions: list[dict[str, Any]] = Field(default_factory=list)
+    workshop_policy_revisions: list[dict[str, Any]] = Field(default_factory=list)
     loki_policy_revisions: list[dict[str, Any]] = Field(default_factory=list)
     target_paths: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -493,9 +491,7 @@ def build_business_application_router() -> APIRouter:
                 actor_id=principal.user_id,
                 code=code,
                 revision_id=payload.revision_id,
-                correlation_id=str(
-                    getattr(request.state, "correlation_id", "") or ""
-                ),
+                correlation_id=str(getattr(request.state, "correlation_id", "") or ""),
             )
         except Exception as exc:
             raise _http_error(exc) from exc
@@ -519,7 +515,11 @@ def build_business_application_router() -> APIRouter:
             raise _http_error(exc) from exc
         return {"items": values, **_aggregate_runtime(values, request)}
 
-    @router.get("/{code}/catalog", response_model=CatalogResponse)
+    @router.get(
+        "/{code}/catalog",
+        response_model=CatalogResponse,
+        response_model_exclude_none=True,
+    )
     def catalog(request: Request, code: str) -> dict[str, Any]:
         _require_enabled(request)
         principal = current_principal(request)

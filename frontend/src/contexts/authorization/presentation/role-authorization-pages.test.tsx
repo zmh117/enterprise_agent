@@ -13,7 +13,7 @@ function response(body: unknown, status = 200) {
     new Response(JSON.stringify(body), {
       status,
       headers: { "Content-Type": "application/json" },
-    }),
+    })
   )
 }
 
@@ -48,7 +48,7 @@ function capability(
   code: string,
   display_name_zh: string,
   risk_level: "low" | "medium" | "high",
-  dependencies: string[] = [],
+  dependencies: string[] = []
 ) {
   const [resource_type, action] = code.split(".")
   return {
@@ -82,7 +82,7 @@ function renderDetail() {
           <Route path="/users/roles/:roleId" element={<RoleDetailPage />} />
         </Routes>
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   )
 }
 
@@ -107,7 +107,7 @@ function renderList() {
           />
         </Routes>
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   )
 }
 
@@ -122,17 +122,11 @@ describe("角色授权中心", () => {
       const url = String(input)
       if (url.endsWith("/api/admin/capabilities")) {
         return response({
-          capabilities: [
-            "authorization.read",
-            "authorization.manage",
-          ],
+          capabilities: ["authorization.read", "authorization.manage"],
           modules: {},
         })
       }
-      if (
-        url.endsWith("/authorization/roles") &&
-        init?.method === "POST"
-      ) {
+      if (url.endsWith("/authorization/roles") && init?.method === "POST") {
         submitted = JSON.parse(String(init.body))
         return response(detail())
       }
@@ -168,7 +162,7 @@ describe("角色授权中心", () => {
         code: "app-diagnostic",
         description: "用于配置业务应用、只读能力和明确的数据范围。",
         purpose_tags: ["业务访问"],
-      }),
+      })
     )
     expect(await screen.findByText("角色详情已打开")).toBeInTheDocument()
   })
@@ -187,9 +181,7 @@ describe("角色授权中心", () => {
       }
       if (url.endsWith("/authorization/capabilities")) {
         return response({
-          items: [
-            capability("applications.read", "查看业务应用", "low"),
-          ],
+          items: [capability("applications.read", "查看业务应用", "low")],
         })
       }
       throw new Error(`Unexpected request: ${url}`)
@@ -200,16 +192,16 @@ describe("角色授权中心", () => {
     fireEvent.click(screen.getByRole("tab", { name: "管理后台能力" }))
     expect(
       await screen.findByText(
-        "当前账号只能查看此授权区，提交不会包含或覆盖这里的配置。",
-      ),
+        "当前账号只能查看此授权区，提交不会包含或覆盖这里的配置。"
+      )
     ).toBeInTheDocument()
     expect(
-      screen.getByRole("button", { name: "原子保存后台能力" }),
+      screen.getByRole("button", { name: "原子保存后台能力" })
     ).toBeDisabled()
     expect(
       fetch.mock.calls.some(
-        ([, init]) => String(init?.method ?? "GET") !== "GET",
-      ),
+        ([, init]) => String(init?.method ?? "GET") !== "GET"
+      )
     ).toBe(false)
   })
 
@@ -229,7 +221,7 @@ describe("角色授权中心", () => {
       }
       if (
         url.endsWith(
-          "/authorization/roles/role-diagnostic/admin-capabilities",
+          "/authorization/roles/role-diagnostic/admin-capabilities"
         ) &&
         init?.method === "PUT"
       ) {
@@ -257,12 +249,9 @@ describe("角色授权中心", () => {
         return response({
           items: [
             capability("applications.read", "查看业务应用", "low"),
-            capability(
-              "applications.publish",
-              "发布业务应用",
-              "high",
-              ["applications.read"],
-            ),
+            capability("applications.publish", "发布业务应用", "high", [
+              "applications.read",
+            ]),
           ],
         })
       }
@@ -273,22 +262,20 @@ describe("角色授权中心", () => {
     await screen.findByText("诊断操作员")
     fireEvent.click(screen.getByRole("tab", { name: "管理后台能力" }))
     fireEvent.click(
-      await screen.findByRole("checkbox", { name: /发布业务应用/ }),
+      await screen.findByRole("checkbox", { name: /发布业务应用/ })
     )
     expect(
-      screen.getByRole("checkbox", { name: /查看业务应用/ }),
+      screen.getByRole("checkbox", { name: /查看业务应用/ })
     ).toHaveAttribute("data-checked")
     fireEvent.click(
       screen.getByRole("checkbox", {
         name: /我已确认本次高风险授权变更/,
-      }),
+      })
     )
     fireEvent.change(screen.getByLabelText("授权变更原因"), {
       target: { value: "发布职责委派" },
     })
-    fireEvent.click(
-      screen.getByRole("button", { name: "原子保存后台能力" }),
-    )
+    fireEvent.click(screen.getByRole("button", { name: "原子保存后台能力" }))
 
     await waitFor(() =>
       expect(submitted).toEqual({
@@ -305,7 +292,111 @@ describe("角色授权中心", () => {
         ],
         confirmed: true,
         reason: "发布职责委派",
-      }),
+      })
+    )
+  })
+
+  it("无基地环境作为叶子范围可勾选并原子保存", async () => {
+    let submitted: Record<string, unknown> | undefined
+    const businessDetail = {
+      ...detail(),
+      business: {
+        revision: 1,
+        applications: [
+          {
+            id: "role-app-access-test",
+            application_id: "app-test",
+            application_code: "diagnostic-app",
+            application_name: "诊断应用",
+            status: "enabled",
+            capability_codes: ["query_database"],
+            scopes: [],
+          },
+        ],
+      },
+    }
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.endsWith("/api/admin/capabilities")) {
+        return response({
+          capabilities: ["authorization.read", "authorization.manage"],
+          modules: {},
+        })
+      }
+      if (
+        url.endsWith("/authorization/roles/role-diagnostic/business-access") &&
+        init?.method === "PUT"
+      ) {
+        submitted = JSON.parse(String(init.body))
+        return response({ revision: 2, applications: [] })
+      }
+      if (url.endsWith("/authorization/roles/role-diagnostic")) {
+        return response(businessDetail)
+      }
+      if (url.endsWith("/authorization/assignable-catalog")) {
+        return response({
+          applications: [
+            {
+              id: "app-test",
+              code: "diagnostic-app",
+              name: "诊断应用",
+              description: "",
+              project_code: "default",
+              status: "enabled",
+              capabilities: [
+                {
+                  capability_code: "query_database",
+                  display_name_zh: "只读查询数据库",
+                  version_constraint: "",
+                },
+              ],
+            },
+          ],
+          topology: [
+            {
+              id: "environment-test",
+              code: "test",
+              display_name: "测试环境",
+              status: "enabled",
+              bases: [],
+            },
+          ],
+          scope_mode: "explicit_current_set",
+          scope_notice: "当前全部保存明确集合",
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    renderDetail()
+
+    await screen.findByText("诊断操作员")
+    fireEvent.click(screen.getByRole("tab", { name: "业务应用与数据范围" }))
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: "选择 test 环境" })
+    )
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /我已确认本次高风险授权变更/,
+      })
+    )
+    fireEvent.change(screen.getByLabelText("授权变更原因"), {
+      target: { value: "授权测试环境只读诊断" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "原子保存业务授权" }))
+
+    await waitFor(() =>
+      expect(submitted).toEqual({
+        expected_revision: 1,
+        confirmed: true,
+        reason: "授权测试环境只读诊断",
+        applications: [
+          {
+            application_id: "app-test",
+            capability_codes: ["query_database"],
+            scopes: [{ environment_id: "environment-test" }],
+          },
+        ],
+      })
     )
   })
 
@@ -314,16 +405,13 @@ describe("角色授权中心", () => {
       const url = String(input)
       if (url.endsWith("/api/admin/capabilities")) {
         return response({
-          capabilities: [
-            "authorization.read",
-            "authorization.manage",
-          ],
+          capabilities: ["authorization.read", "authorization.manage"],
           modules: {},
         })
       }
       if (
         url.endsWith(
-          "/authorization/roles/role-diagnostic/admin-capabilities",
+          "/authorization/roles/role-diagnostic/admin-capabilities"
         ) &&
         init?.method === "PUT"
       ) {
@@ -336,7 +424,7 @@ describe("角色授权中心", () => {
               correlation_id: "corr-role-conflict",
             },
           },
-          409,
+          409
         )
       }
       if (url.endsWith("/authorization/roles/role-diagnostic")) {
@@ -344,9 +432,7 @@ describe("角色授权中心", () => {
       }
       if (url.endsWith("/authorization/capabilities")) {
         return response({
-          items: [
-            capability("applications.read", "查看业务应用", "low"),
-          ],
+          items: [capability("applications.read", "查看业务应用", "low")],
         })
       }
       throw new Error(`Unexpected request: ${url}`)
@@ -356,20 +442,18 @@ describe("角色授权中心", () => {
     await screen.findByText("诊断操作员")
     fireEvent.click(screen.getByRole("tab", { name: "管理后台能力" }))
     fireEvent.click(
-      await screen.findByRole("checkbox", { name: /查看业务应用/ }),
+      await screen.findByRole("checkbox", { name: /查看业务应用/ })
     )
     const beforeUnload = new Event("beforeunload", { cancelable: true })
     window.dispatchEvent(beforeUnload)
     expect(beforeUnload.defaultPrevented).toBe(true)
-    fireEvent.click(
-      screen.getByRole("button", { name: "原子保存后台能力" }),
-    )
+    fireEvent.click(screen.getByRole("button", { name: "原子保存后台能力" }))
 
     expect(
-      await screen.findByText("角色配置已被其他管理员更新，请刷新后重试"),
+      await screen.findByText("角色配置已被其他管理员更新，请刷新后重试")
     ).toBeInTheDocument()
     expect(
-      screen.getByRole("checkbox", { name: /查看业务应用/ }),
+      screen.getByRole("checkbox", { name: /查看业务应用/ })
     ).toHaveAttribute("data-checked")
   })
 
@@ -380,100 +464,92 @@ describe("角色授权中心", () => {
       "所选能力超出业务应用和只读工具安全上限，角色不能授予。",
       "",
     ],
-    [
-      "application_scope_denied",
-      false,
-      "角色未授予所选数据范围。",
-      "",
-    ],
-  ])(
-    "权限模拟安全展示 %s 决策",
-    async (reason, allowed, message, marker) => {
-      vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
-        const url = String(input)
-        if (url.endsWith("/api/admin/capabilities")) {
-          return response({
-            capabilities: ["authorization.read"],
-            modules: {},
-          })
-        }
-        if (url.endsWith("/authorization/roles/role-diagnostic")) {
-          return response(detail())
-        }
-        if (url.includes("/api/admin/users?")) {
-          return response({
-            users: [
-              {
-                id: "user-test",
-                username: "test-user",
-                display_name: "测试用户",
-                email: "",
-                status: "enabled",
-                account_type: "human",
-                revision: 1,
-                created_at: "2026-07-26T00:00:00Z",
-                updated_at: "2026-07-26T00:00:00Z",
-              },
-            ],
-            pagination: {
-              page: 1,
-              page_size: 100,
-              total: 1,
-              total_pages: 1,
+    ["application_scope_denied", false, "角色未授予所选数据范围。", ""],
+  ])("权限模拟安全展示 %s 决策", async (reason, allowed, message, marker) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.endsWith("/api/admin/capabilities")) {
+        return response({
+          capabilities: ["authorization.read"],
+          modules: {},
+        })
+      }
+      if (url.endsWith("/authorization/roles/role-diagnostic")) {
+        return response(detail())
+      }
+      if (url.includes("/api/admin/users?")) {
+        return response({
+          users: [
+            {
+              id: "user-test",
+              username: "test-user",
+              display_name: "测试用户",
+              email: "",
+              status: "enabled",
+              account_type: "human",
+              revision: 1,
+              created_at: "2026-07-26T00:00:00Z",
+              updated_at: "2026-07-26T00:00:00Z",
             },
-          })
-        }
-        if (url.endsWith("/authorization/assignable-catalog")) {
-          return response({
-            applications: [
-              {
-                id: "app-test",
-                code: "diagnostic-app",
-                name: "诊断应用",
-                description: "",
-                project_code: "default",
-                status: "enabled",
-                capabilities: [],
-              },
-            ],
-            topology: [],
-            scope_mode: "explicit_current_set",
-            scope_notice: "当前全部保存明确集合",
-          })
-        }
-        if (
-          url.endsWith("/authorization/explanations") &&
-          init?.method === "POST"
-        ) {
-          return response({
-            decision: {
-              allowed,
-              stage: "invoke",
-              reason,
-              source_role_codes: ["diagnostic-operator"],
-              application: { id: "app-test", code: "diagnostic-app" },
-              capability_code: "",
-              scope: {},
+          ],
+          pagination: {
+            page: 1,
+            page_size: 100,
+            total: 1,
+            total_pages: 1,
+          },
+        })
+      }
+      if (url.endsWith("/authorization/assignable-catalog")) {
+        return response({
+          applications: [
+            {
+              id: "app-test",
+              code: "diagnostic-app",
+              name: "诊断应用",
+              description: "",
+              project_code: "default",
+              status: "enabled",
+              capabilities: [],
             },
-            notice: "只显示安全摘要",
-          })
-        }
-        throw new Error(`Unexpected request: ${url}`)
-      })
-      renderDetail()
+          ],
+          topology: [],
+          scope_mode: "explicit_current_set",
+          scope_notice: "当前全部保存明确集合",
+        })
+      }
+      if (
+        url.endsWith("/authorization/explanations") &&
+        init?.method === "POST"
+      ) {
+        return response({
+          decision: {
+            allowed,
+            stage: "invoke",
+            reason,
+            source_role_codes: ["diagnostic-operator"],
+            application: { id: "app-test", code: "diagnostic-app" },
+            capability_code: "",
+            scope: {},
+          },
+          notice: "只显示安全摘要",
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    renderDetail()
 
-      await screen.findByText("诊断操作员")
-      fireEvent.click(screen.getByRole("tab", { name: "有效权限预览" }))
-      fireEvent.change(await screen.findByLabelText("用户"), {
-        target: { value: "user-test" },
-      })
-      fireEvent.change(screen.getByLabelText("业务应用"), {
-        target: { value: "app-test" },
-      })
-      fireEvent.click(screen.getByRole("button", { name: "模拟授权决策" }))
+    await screen.findByText("诊断操作员")
+    fireEvent.click(screen.getByRole("tab", { name: "有效权限预览" }))
+    fireEvent.change(await screen.findByLabelText("用户"), {
+      target: { value: "user-test" },
+    })
+    fireEvent.change(screen.getByLabelText("业务应用"), {
+      target: { value: "app-test" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "模拟授权决策" }))
 
-      expect(await screen.findByText(message)).toBeInTheDocument()
-      if (marker) expect(screen.getByText(new RegExp(marker))).toBeInTheDocument()
-    },
-  )
+    expect(await screen.findByText(message)).toBeInTheDocument()
+    if (marker) expect(screen.getByText(new RegExp(marker))).toBeInTheDocument()
+  })
 })

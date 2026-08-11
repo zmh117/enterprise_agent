@@ -7,11 +7,13 @@ import {
   agentSummarySchema,
   modelDiscoveryResultSchema,
   modelDraftTestResultSchema,
+  modelSavedTestResultSchema,
   modelConnectionRevisionSchema,
   modelConnectionSchema,
   type AgentConfig,
   type CredentialSource,
   type ModelConnectionConfig,
+  type RuntimeKind,
 } from "@/contexts/agent-profiles/domain/agent-profile"
 import { apiRequest } from "@/shared/api/api-client"
 
@@ -71,6 +73,21 @@ export async function testDraftModelConnection(
     .parse(
       await apiRequest(
         `/api/admin/model-connections/${encodeURIComponent(code)}/test-draft`,
+        { method: "POST", body: input }
+      )
+    ).result
+}
+
+export async function testSavedModelConnection(
+  code: string,
+  revisionId: string,
+  input: { runtime_kind: RuntimeKind; timeout_seconds?: number }
+) {
+  return z
+    .object({ result: modelSavedTestResultSchema })
+    .parse(
+      await apiRequest(
+        `/api/admin/model-connections/${encodeURIComponent(code)}/revisions/${encodeURIComponent(revisionId)}/test`,
         { method: "POST", body: input }
       )
     ).result

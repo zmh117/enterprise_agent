@@ -129,7 +129,19 @@ describe("Business Application workbench", () => {
         return response({
           agents: [],
           workflows: [],
-          connectors: [],
+          connectors: [
+            {
+              id: "connector-dingtalk-stream-default",
+              code: "dingtalk-stream-default",
+              revision: 3,
+              project_code: "",
+              status: "enabled",
+              config_hash: "",
+              runtime_kind: "",
+              direction: "ingress",
+              component_type: "dingtalk_enterprise_stream",
+            },
+          ],
           capabilities: [],
           capability_catalog_connected: false,
           api_capabilities_by_agent_publication: {},
@@ -276,7 +288,19 @@ describe("Business Application workbench", () => {
             },
           ],
           workflows: [],
-          connectors: [],
+          connectors: [
+            {
+              id: "connector-dingtalk-stream-default",
+              code: "dingtalk-stream-default",
+              revision: 3,
+              project_code: "",
+              status: "enabled",
+              config_hash: "",
+              runtime_kind: "",
+              direction: "ingress",
+              component_type: "dingtalk_enterprise_stream",
+            },
+          ],
           capabilities: [],
           capability_catalog_connected: true,
           api_capabilities_by_agent_publication: {
@@ -365,6 +389,7 @@ describe("Business Application workbench", () => {
         name: "typescript-diagnostic-agent · r1 · TypeScript Runtime",
       })
     ).toBeInTheDocument()
+    expect(screen.queryByText("操作失败，请重试。")).not.toBeInTheDocument()
     expect(
       await screen.findByLabelText(
         "选择 Capability cap__ones__work_item__search"

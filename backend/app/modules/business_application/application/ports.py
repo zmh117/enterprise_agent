@@ -12,7 +12,7 @@ class ComponentReference:
     project_code: str
     status: str
     config_hash: str
-    runtime_kind: str = ""
+    runtime_kind: str | None = None
     direction: str = ""
     component_type: str = ""
 

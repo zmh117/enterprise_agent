@@ -275,6 +275,20 @@ describe("Agent Profile management", () => {
       .spyOn(globalThis, "fetch")
       .mockImplementation((input) => {
         const url = String(input)
+        if (url.endsWith("/revisions/model_revision_1/test")) {
+          return response({
+            result: {
+              success: true,
+              connection_revision_id: "model_revision_1",
+              provider_host: "api.deepseek.com",
+              model: "deepseek-v4-flash",
+              duration_ms: 41,
+              runtime: "typescript-v1",
+              runtime_version: "0.1.0",
+              sdk_version: "0.3.226",
+            },
+          })
+        }
         if (url.includes("/model-connections/")) {
           return response({ connection: modelConnection })
         }
@@ -323,6 +337,26 @@ describe("Agent Profile management", () => {
       expect.any(Object)
     )
 
+    fireEvent.click(screen.getByRole("tab", { name: "模型连接" }))
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "通过 TypeScript Runtime 测试当前连接",
+      })
+    )
+    expect(
+      await screen.findByText(
+        "连接成功 · api.deepseek.com · deepseek-v4-flash · 41ms"
+      )
+    ).toBeInTheDocument()
+    const savedTestCall = fetchSpy.mock.calls.find(([input]) =>
+      String(input).endsWith("/revisions/model_revision_1/test")
+    )
+    expect(JSON.parse(String(savedTestCall?.[1]?.body))).toEqual({
+      runtime_kind: "typescript-v1",
+      timeout_seconds: 15,
+    })
+
+    fireEvent.click(screen.getByRole("tab", { name: "Agent 配置" }))
     fireEvent.change(screen.getByRole("textbox", { name: "业务角色" }), {
       target: { value: "TypeScript 诊断助手" },
     })
@@ -369,6 +403,20 @@ describe("Agent Profile management", () => {
               duration_ms: 82,
               runtime: "claude_agent_sdk",
               detail: "连接成功",
+            },
+          })
+        }
+        if (url.endsWith("/revisions/model_revision_1/test")) {
+          return response({
+            result: {
+              success: true,
+              connection_revision_id: "model_revision_1",
+              provider_host: "api.deepseek.com",
+              model: "deepseek-v4-flash",
+              duration_ms: 82,
+              runtime: "python-v1",
+              runtime_version: "0.1.0",
+              sdk_version: "0.1.0",
             },
           })
         }
@@ -521,7 +569,16 @@ describe("Agent Profile management", () => {
         "连接成功 · api.deepseek.com · deepseek-v4-flash · 82ms"
       )
     ).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "验证并原子保存" })).toBeEnabled()
+    expect(
+      screen.getByRole("button", { name: "验证并原子保存" })
+    ).toBeDisabled()
+    const savedTestCall = fetchSpy.mock.calls.find(([input]) =>
+      String(input).endsWith("/revisions/model_revision_1/test")
+    )
+    expect(JSON.parse(String(savedTestCall?.[1]?.body))).toEqual({
+      runtime_kind: "python-v1",
+      timeout_seconds: 15,
+    })
 
     fireEvent.change(screen.getByRole("combobox", { name: "推理强度" }), {
       target: { value: "high" },
@@ -545,11 +602,7 @@ describe("Agent Profile management", () => {
         expect.objectContaining({ method: "PUT" })
       )
     )
-    expect(
-      fetchSpy.mock.calls.some(([input]) =>
-        /\/(revision|credential|test)$/.test(String(input))
-      )
-    ).toBe(false)
+    expect(savedTestCall).toBeDefined()
 
     fireEvent.change(
       screen.getByRole("combobox", { name: "Credential 来源" }),
@@ -874,6 +927,9 @@ describe("Agent Profile management", () => {
     fireEvent.click(screen.getByRole("tab", { name: "模型连接" }))
     fireEvent.click(screen.getByRole("button", { name: "发现可用模型" }))
     await screen.findByRole("combobox", { name: "主模型" })
+    fireEvent.change(screen.getByRole("combobox", { name: "推理强度" }), {
+      target: { value: "high" },
+    })
     fireEvent.click(screen.getByRole("button", { name: "测试当前配置" }))
     await screen.findByText(
       "连接成功 · api.deepseek.com · deepseek-v4-flash · 50ms"

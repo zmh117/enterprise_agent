@@ -7,7 +7,7 @@ import socket
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, NoReturn, Protocol
 from urllib.parse import urlsplit, urlunsplit
 
@@ -142,6 +142,7 @@ class ModelConnectionService:
         dns_resolver: Callable[..., list[tuple[Any, ...]]] | None = None,
         tester: ModelConnectionTester | None = None,
         runtime_probe: RuntimeModelProbe | None = None,
+        runtime_probes: Mapping[str, RuntimeModelProbe] | None = None,
         model_discoverer: ModelDiscoverer | None = None,
         redirect_checker: Callable[[str, int], None] | None = None,
     ) -> None:
@@ -157,7 +158,10 @@ class ModelConnectionService:
         )
         self.dns_resolver = dns_resolver or socket.getaddrinfo
         self.tester = tester
+        # ``runtime_probe`` remains as the legacy TypeScript default for
+        # callers that have not migrated to explicit Runtime selection.
         self.runtime_probe = runtime_probe
+        self.runtime_probes = dict(runtime_probes or {})
         self.model_discoverer = model_discoverer or _fetch_deepseek_models
         self.redirect_checker = redirect_checker or _assert_provider_does_not_redirect
 
@@ -580,6 +584,7 @@ class ModelConnectionService:
         *,
         actor_id: str,
         revision_id: str,
+        runtime_kind: str = "typescript-v1",
         timeout_seconds: int = 15,
     ) -> dict[str, Any]:
         self._require_agent_editor(actor_id)
@@ -590,20 +595,36 @@ class ModelConnectionService:
             binding = self.runtime_binding(revision_id)
             self.validate_base_url(binding.base_url, validate_dns=True)
             self.redirect_checker(binding.base_url, max(3, min(timeout_seconds, 10)))
-            if self.runtime_probe is None:
+            if runtime_kind not in {"python-v1", "typescript-v1"}:
                 raise NonRetryableExecutionError(
-                    "TypeScript Runtime model probe is unavailable",
+                    f"Unsupported model probe Runtime: {runtime_kind}",
+                    safe_message="模型连接测试 Runtime 类型无效",
+                    error_code="model_connection_test_runtime_invalid",
+                )
+            runtime_probe = self.runtime_probes.get(runtime_kind)
+            if runtime_probe is None and runtime_kind == "typescript-v1":
+                runtime_probe = self.runtime_probe
+            if runtime_probe is None:
+                raise NonRetryableExecutionError(
+                    f"{runtime_kind} model probe is unavailable",
                     safe_message="模型连接测试运行时不可用",
                     error_code="model_connection_test_unavailable",
                 )
-            outcome = self.runtime_probe.probe(
+            outcome = runtime_probe.probe(
                 revision_id=revision_id,
                 config_hash=binding.config_hash,
                 timeout_seconds=max(3, min(timeout_seconds, 20)),
             )
+            outcome_runtime_kind = str(outcome.get("runtime_kind") or "")
+            if outcome_runtime_kind and outcome_runtime_kind != runtime_kind:
+                raise NonRetryableExecutionError(
+                    "Runtime model probe kind mismatch",
+                    safe_message="模型连接测试响应无效",
+                    error_code="model_connection_test_invalid_response",
+                )
             if str(outcome.get("connection_revision_id") or "") != revision_id:
                 raise NonRetryableExecutionError(
-                    "TypeScript Runtime model probe revision mismatch",
+                    "Runtime model probe revision mismatch",
                     safe_message="模型连接测试响应无效",
                     error_code="model_connection_test_invalid_response",
                 )
@@ -611,11 +632,9 @@ class ModelConnectionService:
                 failure = outcome.get("failure")
                 safe_failure = failure if isinstance(failure, dict) else {}
                 raise NonRetryableExecutionError(
-                    "TypeScript Runtime model probe failed",
+                    f"{runtime_kind} model probe failed",
                     safe_message=str(safe_failure.get("safe_message") or "模型连接测试失败"),
-                    error_code=str(
-                        safe_failure.get("code") or "model_connection_test_failed"
-                    ),
+                    error_code=str(safe_failure.get("code") or "model_connection_test_failed"),
                 )
         except Exception as exc:
             safe_message = getattr(exc, "safe_message", "模型连接测试失败")
@@ -652,7 +671,7 @@ class ModelConnectionService:
             "provider_host": str(outcome.get("provider_host") or binding.provider_host),
             "model": str(outcome.get("model") or binding.model),
             "duration_ms": int(outcome.get("duration_ms") or 0),
-            "runtime": "typescript-v1",
+            "runtime": runtime_kind,
             "runtime_version": str(outcome.get("runtime_version") or ""),
             "sdk_version": str(outcome.get("sdk_version") or ""),
         }

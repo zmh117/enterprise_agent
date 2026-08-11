@@ -797,6 +797,56 @@ def test_current_all_saves_explicit_set_and_excludes_future_base() -> None:
     c.database.close()
 
 
+def test_environment_without_bases_is_an_assignable_leaf_scope() -> None:
+    c = _container()
+    _topology(c)
+    application = _active_application(
+        c,
+        "environment-leaf-app",
+        capabilities=("query_database",),
+    )
+    timestamp = datetime.now(UTC).isoformat()
+    c.database.execute(
+        """
+        insert into platform_environment
+          (id, code, display_name, status, created_at, updated_at)
+        values ('environment-leaf-test', 'test', '测试环境', 'enabled', ?, ?)
+        """,
+        (timestamp, timestamp),
+    )
+    user = c.identity_repository.create_user(
+        username="environment-leaf-user",
+        display_name="环境叶子用户",
+    )
+    role = _business_role(
+        c,
+        code="environment-leaf-reader",
+        user_id=str(user["id"]),
+        applications=[
+            {
+                "application_id": application["id"],
+                "capability_codes": ["query_database"],
+                "scopes": [{"environment_id": "environment-leaf-test"}],
+            }
+        ],
+    )
+
+    stored = c.authorization_center_repository.list_business_access(str(role["id"]))
+    assert [scope["scope_key"] for scope in stored[0]["scopes"]] == ["test"]
+    decision = c.business_authorization_service.decide(
+        user_id=str(user["id"]),
+        application_id=str(application["id"]),
+        capability_code="query_database",
+        environment="test",
+        base="",
+        workshop="",
+        stage="tool_call",
+    )
+    assert decision["allowed"] is True
+    assert decision["reason"] == "application_role_allow"
+    c.database.close()
+
+
 def test_grant_delegation_is_resource_bounded_and_cannot_self_escalate() -> None:
     c = _container()
     actor = c.identity_repository.create_user(

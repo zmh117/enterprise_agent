@@ -8,7 +8,10 @@ from typing import Any
 
 import pytest
 
-from app.bootstrap import _runtime_model_probe_for_service
+from app.bootstrap import (
+    _runtime_model_probe_for_service,
+    _runtime_model_probes_for_service,
+)
 from app.modules.model_connection.infrastructure.runtime_probe import (
     RuntimeModelProbeClient,
     RuntimeModelProbeSettings,
@@ -158,11 +161,18 @@ def test_only_api_service_receives_model_probe_bearer_token(tmp_path: Path) -> N
         agent_runtime=AgentRuntimeSettings(
             python_base_url="http://python-agent-runtime:8091",
             python_allowed_hosts=("python-agent-runtime",),
+            typescript_base_url="http://typescript-agent-runtime:9102",
+            typescript_allowed_hosts=("typescript-agent-runtime",),
             model_probe_auth_token_file=str(token),
             allow_insecure_internal_http=True,
         ),
     )
 
     assert _runtime_model_probe_for_service(settings, "api-server") is not None
+    probes = _runtime_model_probes_for_service(settings, "api-server")
+    assert set(probes) == {"python-v1", "typescript-v1"}
+    assert probes["python-v1"].endpoint.startswith("http://python-agent-runtime:8091/")
+    assert probes["typescript-v1"].endpoint.startswith("http://typescript-agent-runtime:9102/")
     assert _runtime_model_probe_for_service(settings, "agent-worker") is None
     assert _runtime_model_probe_for_service(settings, "tool-mcp") is None
+    assert _runtime_model_probes_for_service(settings, "agent-worker") == {}

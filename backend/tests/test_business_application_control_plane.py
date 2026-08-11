@@ -159,10 +159,7 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
     assert migration_names.index(
         "009a_agent_job_retry_failure_delivery.sql"
     ) < migration_names.index("010_business_application_control_plane.sql")
-    session_columns = {
-        str(row["name"])
-        for row in db.execute("pragma table_info(agent_session)")
-    }
+    session_columns = {str(row["name"]) for row in db.execute("pragma table_info(agent_session)")}
     assert {
         "application_publication_id",
         "execution_scope_hash",
@@ -583,11 +580,11 @@ def test_active_business_application_policy_controls_live_channel_sessions() -> 
 
     first = container.dingtalk_stream_message_service.handle_callback(
         payload={
-                "conversationId": "conversation-policy-runtime",
-                "senderStaffId": "local-user",
-                "senderCorpId": "corp-test-enterprise",
-                "chatbotCorpId": "corp-test-enterprise",
-                "msgId": "policy-message-1",
+            "conversationId": "conversation-policy-runtime",
+            "senderStaffId": "local-user",
+            "senderCorpId": "corp-test-enterprise",
+            "chatbotCorpId": "corp-test-enterprise",
+            "msgId": "policy-message-1",
             "robotCode": "test-robot-code",
             "sessionWebhook": "https://oapi.dingtalk.com/robot/sendBySession",
             "text": {"content": "first"},
@@ -596,11 +593,11 @@ def test_active_business_application_policy_controls_live_channel_sessions() -> 
     )
     second = container.dingtalk_stream_message_service.handle_callback(
         payload={
-                "conversationId": "conversation-policy-runtime",
-                "senderStaffId": "local-user",
-                "senderCorpId": "corp-test-enterprise",
-                "chatbotCorpId": "corp-test-enterprise",
-                "msgId": "policy-message-2",
+            "conversationId": "conversation-policy-runtime",
+            "senderStaffId": "local-user",
+            "senderCorpId": "corp-test-enterprise",
+            "chatbotCorpId": "corp-test-enterprise",
+            "msgId": "policy-message-2",
             "robotCode": "test-robot-code",
             "sessionWebhook": "https://oapi.dingtalk.com/robot/sendBySession",
             "text": {"content": "second"},
@@ -747,14 +744,10 @@ def test_capability_catalog_lists_readonly_tools_and_enforces_agent_binding() ->
         code="capability-catalog-test",
     )
     assert catalog["capability_catalog_connected"] is True
-    catalog_agents = {
-        (item["code"], item["runtime_kind"]) for item in catalog["agents"]
-    }
+    catalog_agents = {(item["code"], item["runtime_kind"]) for item in catalog["agents"]}
     assert ("default-diagnostic-agent", "python-v1") in catalog_agents
     assert ("typescript-diagnostic-agent", "typescript-v1") in catalog_agents
-    capability_codes = {
-        item["code"] for item in catalog["capabilities"]
-    }
+    capability_codes = {item["code"] for item in catalog["capabilities"]}
     assert "get_schema_directory" in capability_codes
     assert "query_database" in capability_codes
 
@@ -781,9 +774,7 @@ def test_capability_catalog_lists_readonly_tools_and_enforces_agent_binding() ->
     assert validated["validation"]["errors"] == [
         {
             "field": "capabilities.0.capability_code",
-            "message": (
-                "所选 Agent 发布版本未绑定业务能力：get_schema_directory"
-            ),
+            "message": ("所选 Agent 发布版本未绑定业务能力：get_schema_directory"),
         }
     ]
 
@@ -821,6 +812,35 @@ def test_capability_catalog_lists_readonly_tools_and_enforces_agent_binding() ->
     assert "所选 Agent 发布版本未绑定业务能力" in str(invalid["validation"]["errors"])
 
 
+def test_catalog_http_contract_only_exposes_runtime_kind_for_agents() -> None:
+    settings = control_plane_settings()
+    container = build_test_container(settings, migrate=True, seed=True)
+    container.business_application_service.create(
+        actor_id="user_local_admin",
+        code="catalog-runtime-contract",
+        name="Catalog Runtime Contract",
+        description="",
+        project_code="default",
+        owner_user_id="user_local_admin",
+    )
+    app = create_app(settings, container_factory=lambda _: container)
+
+    with TestClient(app) as client:
+        login(client)
+        response = client.get("/api/admin/business-applications/catalog-runtime-contract/catalog")
+
+    assert response.status_code == 200
+    catalog = response.json()
+    assert {item["runtime_kind"] for item in catalog["agents"]} == {
+        "python-v1",
+        "typescript-v1",
+    }
+    assert catalog["connectors"]
+    assert catalog["capabilities"]
+    assert all("runtime_kind" not in item for item in catalog["connectors"])
+    assert all("runtime_kind" not in item for item in catalog["capabilities"])
+
+
 def test_application_agent_reference_fails_closed_on_runtime_or_hash_tampering() -> None:
     container = build_test_container(control_plane_settings(), migrate=True, seed=True)
     service = container.business_application_service
@@ -836,9 +856,7 @@ def test_application_agent_reference_fails_closed_on_runtime_or_hash_tampering()
         actor_id="user_local_admin",
         code="agent-runtime-integrity-test",
     )
-    typescript = next(
-        item for item in catalog["agents"] if item["runtime_kind"] == "typescript-v1"
-    )
+    typescript = next(item for item in catalog["agents"] if item["runtime_kind"] == "typescript-v1")
     payload = draft_payload()
     payload["agent_publication_id"] = typescript["id"]
     revision = service.save_draft(
@@ -1032,9 +1050,7 @@ def test_local_seed_and_default_application_cli_are_idempotent(
             == 1
         )
         assert (
-            db.execute_one(
-                "select count(*) as count from business_application_deployment"
-            )["count"]
+            db.execute_one("select count(*) as count from business_application_deployment")["count"]
             == 0
         )
     finally:

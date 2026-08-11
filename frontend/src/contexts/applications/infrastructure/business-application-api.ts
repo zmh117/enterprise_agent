@@ -27,7 +27,10 @@ const componentReferenceSchema = z.object({
   project_code: z.string(),
   status: z.string(),
   config_hash: z.string(),
-  runtime_kind: z.enum(["python-v1", "typescript-v1"]).optional(),
+  runtime_kind: z.preprocess(
+    (value) => (value === "" || value === null ? undefined : value),
+    z.enum(["python-v1", "typescript-v1"]).optional()
+  ),
   direction: z.string(),
   component_type: z.string(),
 })

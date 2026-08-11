@@ -448,7 +448,7 @@ class BusinessApplicationService:
             agent = dict(publication["snapshot"].get("agent") or {})
             runtime_kind = str(agent.get("runtime_kind") or "")
             if not runtime_kind and agent.get("id"):
-                runtime_kind = self.agent_reader.resolve(str(agent["id"])).runtime_kind
+                runtime_kind = str(self.agent_reader.resolve(str(agent["id"])).runtime_kind or "")
             self.runtime_readiness_guard.require_ready(runtime_kind)
         return self._activate_in_unit_of_work(
             actor_id=actor_id,
@@ -582,15 +582,19 @@ class BusinessApplicationService:
         application = self.repository.get_by_code(validate_code(code))
         self._require(actor_id, code, "read")
         project_code = str(application["project_code"])
-        agents = [vars(item) for item in self.agent_reader.catalog(project_code)]
+
+        def reference(item: ComponentReference) -> dict[str, Any]:
+            return {key: value for key, value in vars(item).items() if value is not None}
+
+        agents = [reference(item) for item in self.agent_reader.catalog(project_code)]
         builtin_tool_catalog = self.builtin_tool_composition_service.management_catalog(
             agent_publication_ids=[str(item["id"]) for item in agents],
         )
         return {
             "agents": agents,
-            "workflows": [vars(item) for item in self.workflow_reader.catalog(project_code)],
-            "connectors": [vars(item) for item in self.connector_reader.catalog()],
-            "capabilities": [vars(item) for item in self.capability_reader.catalog()],
+            "workflows": [reference(item) for item in self.workflow_reader.catalog(project_code)],
+            "connectors": [reference(item) for item in self.connector_reader.catalog()],
+            "capabilities": [reference(item) for item in self.capability_reader.catalog()],
             "capability_catalog_connected": self.capability_reader.connected,
             "api_capabilities_by_agent_publication": (
                 {
@@ -705,9 +709,7 @@ class BusinessApplicationService:
             internal_definition = next(
                 (
                     definition
-                    for definition in (
-                        self.builtin_tool_composition_service.registry.definitions()
-                    )
+                    for definition in (self.builtin_tool_composition_service.registry.definitions())
                     if capability_code in definition.required_permissions
                     and definition.visibility == "internal_diagnostic"
                 ),

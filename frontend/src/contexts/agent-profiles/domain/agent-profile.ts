@@ -72,6 +72,19 @@ export const modelDraftTestResultSchema = z.object({
   detail: z.string(),
 })
 
+export const runtimeKindSchema = z.enum(["python-v1", "typescript-v1"])
+
+export const modelSavedTestResultSchema = z.object({
+  success: z.boolean(),
+  connection_revision_id: z.string(),
+  provider_host: z.string(),
+  model: z.string(),
+  duration_ms: z.number(),
+  runtime: runtimeKindSchema,
+  runtime_version: z.string(),
+  sdk_version: z.string(),
+})
+
 const modelPolicySchema = z
   .object({
     runtime: z.string().optional(),
@@ -252,3 +265,5 @@ export type ModelConnectionConfig = z.infer<typeof modelConnectionConfigSchema>
 export type CredentialSource = z.infer<typeof credentialSourceSchema>
 export type ModelDiscoveryResult = z.infer<typeof modelDiscoveryResultSchema>
 export type ModelDraftTestResult = z.infer<typeof modelDraftTestResultSchema>
+export type ModelSavedTestResult = z.infer<typeof modelSavedTestResultSchema>
+export type RuntimeKind = z.infer<typeof runtimeKindSchema>

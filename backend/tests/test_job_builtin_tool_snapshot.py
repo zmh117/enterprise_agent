@@ -131,16 +131,13 @@ def _published_application(
             "loki_scope_policy_revision_id": "",
         }
         for placement, resource_revision_id in (
-            (value, resources_by_placement[value])
-            for value in placements
+            (value, resources_by_placement[value]) for value in placements
         )
     ]
     payload["builtin_tools"] = [
         {
             "tool_release_id": releases[tool_identifier]["id"],
-            "resources": [
-                dict(mapping) for mapping in resource_mappings
-            ]
+            "resources": [dict(mapping) for mapping in resource_mappings]
             if tool_identifier in {"get_schema_directory", "query_database"}
             else [],
         }
@@ -202,16 +199,12 @@ def _published_application(
             "environment_id": environment["id"],
             "base_id": base["id"],
             "workshop_id": workshop["id"],
-            "release": releases.get("query_database")
-            or releases[tool_identifiers[0]],
+            "release": releases.get("query_database") or releases[tool_identifiers[0]],
             "releases": releases,
             "policy_revision_id": policy_revision_id,
-            "resource_revision_ids": {
-                resources_by_placement[value] for value in placements
-            },
+            "resource_revision_ids": {resources_by_placement[value] for value in placements},
             "resource_revision_by_placement": {
-                value: resources_by_placement[value]
-                for value in placements
+                value: resources_by_placement[value] for value in placements
             },
         },
     )
@@ -374,6 +367,66 @@ def test_job_target_ambiguity_rolls_back_job_and_dispatch() -> None:
         runtime.database.close()
 
 
+def test_job_target_uses_the_only_published_target_when_scope_is_omitted() -> None:
+    runtime = build_test_container(
+        control_plane_settings(),
+        migrate=True,
+        seed=True,
+    )
+    try:
+        target = {
+            "target_scope_type": "environment",
+            "target_key": "environment:env-test",
+            "environment_id": "env-test",
+            "environment_code": "test",
+            "base_id": "",
+            "base_code": "",
+            "workshop_id": "",
+            "workshop_code": "",
+        }
+
+        resolved = runtime.builtin_tool_snapshot_service._resolve_target(
+            targets=[target],
+            routing_context={"project_code": "default"},
+        )
+
+        assert resolved == target
+    finally:
+        runtime.database.close()
+
+
+def test_job_target_without_scope_still_rejects_multiple_published_targets() -> None:
+    runtime = build_test_container(
+        control_plane_settings(),
+        migrate=True,
+        seed=True,
+    )
+    try:
+        targets = [
+            {
+                "target_scope_type": "environment",
+                "target_key": f"environment:env-{code}",
+                "environment_id": f"env-{code}",
+                "environment_code": code,
+                "base_id": "",
+                "base_code": "",
+                "workshop_id": "",
+                "workshop_code": "",
+            }
+            for code in ("test", "prod")
+        ]
+
+        with pytest.raises(NonRetryableExecutionError) as rejected:
+            runtime.builtin_tool_snapshot_service._resolve_target(
+                targets=targets,
+                routing_context={"project_code": "default"},
+            )
+
+        assert rejected.value.error_code == "job_builtin_tool_target_resolution_invalid"
+    finally:
+        runtime.database.close()
+
+
 def test_dispatch_rejects_tampered_builtin_tool_snapshot() -> None:
     runtime = build_test_container(
         control_plane_settings(),
@@ -435,11 +488,6 @@ def test_agent_tool_catalog_uses_complete_exact_governance_intersection(
             )
         )
 
-        runtime.permission_service.assert_builtin_tool_use_grant(
-            user_id="user_local_admin",
-            tool_identifier="query_database",
-            project_code="default",
-        )
         business_decision = runtime.business_authorization_service.decide(
             user_id="user_local_admin",
             application_id=str(application["id"]),
@@ -450,6 +498,18 @@ def test_agent_tool_catalog_uses_complete_exact_governance_intersection(
             stage="test_tool_exposure",
         )
         assert business_decision["allowed"], business_decision
+
+        def reject_legacy_permission_gate(**_: object) -> None:
+            pytest.fail(
+                "business application tools must use business RBAC instead of "
+                "the legacy permission gate"
+            )
+
+        monkeypatch.setattr(
+            runtime.permission_service,
+            "assert_builtin_tool_use_grant",
+            reject_legacy_permission_gate,
+        )
 
         context = runtime.agent_executor.context_builder.build(job)
         assert context.allowed_tools == ["query_database"]
@@ -477,20 +537,20 @@ def test_agent_tool_catalog_uses_complete_exact_governance_intersection(
             )
         assert target_override.value.error_code == "builtin_tool_target_override_rejected"
 
-        original_is_allowed = runtime.permission_service._is_allowed
-
-        def deny_tool_use(**kwargs: object) -> bool:
-            if kwargs.get("resource_type") == "tool":
-                return False
-            return original_is_allowed(**kwargs)
-
-        monkeypatch.setattr(
-            runtime.permission_service,
-            "_is_allowed",
-            deny_tool_use,
-        )
-        denied_context = runtime.agent_executor.context_builder.build(job)
-        assert denied_context.allowed_tools == []
+        with pytest.raises(ToolPolicyError) as readonly_policy:
+            runtime.tool_service.call_tool(
+                job_id=job.id,
+                user_id="user_local_admin",
+                project_code="default",
+                tool_name="query_database",
+                arguments={
+                    "environment": "job-snapshot",
+                    "base": "guanlan",
+                    "workshop": "GL001",
+                    "sql": "delete from GL001_ORDER",
+                },
+            )
+        assert readonly_policy.value.safe_message == "只允许执行 SELECT 或 WITH 查询"
     finally:
         runtime.database.close()
 
@@ -519,9 +579,7 @@ def test_internal_platform_authorizes_only_exact_job_snapshot_facts() -> None:
             "update agent_job set status = 'RUNNING' where id = ?",
             (job.id,),
         )
-        authorizer = BusinessApplicationJobAccessAuthorizer(
-            runtime.database
-        )
+        authorizer = BusinessApplicationJobAccessAuthorizer(runtime.database)
         tool_call_id = runtime.agent_repository.add_tool_call(
             job_id=job.id,
             tool_name="query_database",
@@ -555,18 +613,10 @@ def test_internal_platform_authorizes_only_exact_job_snapshot_facts() -> None:
         assert authorized.tool_execution_binding_id
         assert authorized.tool_release_id == facts["release"]["id"]
         assert authorized.handler_version == "1.0.0"
-        assert (
-            authorized.implementation_digest
-            == facts["release"]["implementation_digest"]
-        )
+        assert authorized.implementation_digest == facts["release"]["implementation_digest"]
         assert authorized.actual_placement == "cloud"
-        assert authorized.resource_revision_id in facts[
-            "resource_revision_ids"
-        ]
-        assert (
-            authorized.workshop_partition_policy_revision_id
-            == facts["policy_revision_id"]
-        )
+        assert authorized.resource_revision_id in facts["resource_revision_ids"]
+        assert authorized.workshop_partition_policy_revision_id == facts["policy_revision_id"]
         assert authorized.database_table_prefix == "GL001_"
 
         with pytest.raises(AuthorizationError):
@@ -689,9 +739,7 @@ def test_tool_call_placement_is_explicit_deterministic_and_audited() -> None:
             "update agent_job set status = 'RUNNING' where id = ?",
             (job.id,),
         )
-        authorizer = BusinessApplicationJobAccessAuthorizer(
-            runtime.database
-        )
+        authorizer = BusinessApplicationJobAccessAuthorizer(runtime.database)
         target = TargetRef(
             environment="job-snapshot",
             base="guanlan",
@@ -773,22 +821,12 @@ def test_tool_call_placement_is_explicit_deterministic_and_audited() -> None:
         assert edge_fact is not None
         assert edge_fact["tool_release_id"] == facts["release"]["id"]
         assert edge_fact["handler_version"] == "1.0.0"
-        assert (
-            edge_fact["implementation_digest"]
-            == facts["release"]["implementation_digest"]
-        )
+        assert edge_fact["implementation_digest"] == facts["release"]["implementation_digest"]
         assert edge_fact["actual_placement"] == "edge"
-        assert edge_fact["resource_revision_id"] == (
-            authorized.resource_revision_id
-        )
-        assert (
-            edge_fact["workshop_partition_policy_revision_id"]
-            == facts["policy_revision_id"]
-        )
+        assert edge_fact["resource_revision_id"] == (authorized.resource_revision_id)
+        assert edge_fact["workshop_partition_policy_revision_id"] == facts["policy_revision_id"]
         assert edge_fact["authorization_decision"] == "ALLOWED"
-        assert edge_fact["decision_reason_code"] == (
-            "exact_job_snapshot_allowed"
-        )
+        assert edge_fact["decision_reason_code"] == ("exact_job_snapshot_allowed")
         assert edge_fact["correlation_id"] == "placement-edge"
         assert len(edge_fact["effective_scope_hash"]) == 64
         assert len(edge_fact["effective_selector_hash"]) == 64
@@ -814,23 +852,14 @@ def test_existing_job_keeps_original_snapshot_after_application_upgrade() -> Non
             )
         )
         original = runtime.builtin_tool_snapshot_service.verify(job.id)
-        original_candidates = original["snapshot"]["bindings"][0][
-            "candidates"
-        ]
-        original_resources = {
-            value["resource_revision_id"]
-            for value in original_candidates
-        }
+        original_candidates = original["snapshot"]["bindings"][0]["candidates"]
+        original_resources = {value["resource_revision_id"] for value in original_candidates}
         next_cloud_revision = _publish_next_database_resource_revision(
             runtime,
-            previous_revision_id=str(
-                facts["resource_revision_by_placement"]["cloud"]
-            ),
+            previous_revision_id=str(facts["resource_revision_by_placement"]["cloud"]),
         )
-        current_application = (
-            runtime.business_application_repository.get_by_id(
-                str(application["id"])
-            )
+        current_application = runtime.business_application_repository.get_by_id(
+            str(application["id"])
         )
         payload = draft_payload(
             capabilities=[
@@ -861,39 +890,29 @@ def test_existing_job_keeps_original_snapshot_after_application_upgrade() -> Non
                         "workshop_code": "GL001",
                         "placement": placement,
                         "resource_revision_id": resource_revision_id,
-                        "workshop_partition_policy_revision_id": facts[
-                            "policy_revision_id"
-                        ],
+                        "workshop_partition_policy_revision_id": facts["policy_revision_id"],
                         "loki_scope_policy_revision_id": "",
                     }
                     for placement, resource_revision_id in (
                         ("cloud", next_cloud_revision),
                         (
                             "edge",
-                            facts[
-                                "resource_revision_by_placement"
-                            ]["edge"],
+                            facts["resource_revision_by_placement"]["edge"],
                         ),
                     )
                 ],
             }
         ]
-        upgraded_revision = (
-            runtime.business_application_service.save_draft(
-                actor_id="user_local_admin",
-                code="job-builtin-snapshot",
-                expected_revision=int(
-                    current_application["revision"]
-                ),
-                payload=payload,
-            )
+        upgraded_revision = runtime.business_application_service.save_draft(
+            actor_id="user_local_admin",
+            code="job-builtin-snapshot",
+            expected_revision=int(current_application["revision"]),
+            payload=payload,
         )
-        upgraded_publication = (
-            runtime.business_application_service.publish(
-                actor_id="user_local_admin",
-                code="job-builtin-snapshot",
-                revision_id=str(upgraded_revision["id"]),
-            )
+        upgraded_publication = runtime.business_application_service.publish(
+            actor_id="user_local_admin",
+            code="job-builtin-snapshot",
+            revision_id=str(upgraded_revision["id"]),
         )
         runtime.business_application_service.activate(
             actor_id="user_local_admin",
@@ -905,15 +924,10 @@ def test_existing_job_keeps_original_snapshot_after_application_upgrade() -> Non
 
         replayed = runtime.builtin_tool_snapshot_service.verify(job.id)
         assert replayed["snapshot_hash"] == original["snapshot_hash"]
-        assert (
-            replayed["snapshot"]["application_publication"]["id"]
-            == publication["id"]
-        )
+        assert replayed["snapshot"]["application_publication"]["id"] == publication["id"]
         assert {
             value["resource_revision_id"]
-            for value in replayed["snapshot"]["bindings"][0][
-                "candidates"
-            ]
+            for value in replayed["snapshot"]["bindings"][0]["candidates"]
         } == original_resources
         assert next_cloud_revision not in original_resources
 
@@ -962,10 +976,7 @@ def test_dispatch_retry_fails_closed_when_frozen_implementation_unavailable(
                 application,
                 publication,
                 facts,
-                idempotency_key=(
-                    f"job-builtin-snapshot-{failure_kind}-"
-                    f"{failure_value.lower()}"
-                ),
+                idempotency_key=(f"job-builtin-snapshot-{failure_kind}-{failure_value.lower()}"),
             )
         )
         if failure_kind == "release":
@@ -1038,9 +1049,7 @@ def test_retry_and_explicit_replay_revalidate_original_snapshot() -> None:
         )
 
         assert action == "dead"
-        assert runtime.agent_repository.get_job(job.id).status.value == (
-            "FAILED"
-        )
+        assert runtime.agent_repository.get_job(job.id).status.value == ("FAILED")
 
         replay_runtime = build_test_container(
             control_plane_settings(),
@@ -1048,8 +1057,8 @@ def test_retry_and_explicit_replay_revalidate_original_snapshot() -> None:
             seed=True,
         )
         try:
-            replay_application, replay_publication, replay_facts = (
-                _published_application(replay_runtime)
+            replay_application, replay_publication, replay_facts = _published_application(
+                replay_runtime
             )
             replay_job = replay_runtime.create_agent_job_service.execute(
                 _command(
@@ -1057,9 +1066,7 @@ def test_retry_and_explicit_replay_revalidate_original_snapshot() -> None:
                     replay_application,
                     replay_publication,
                     replay_facts,
-                    idempotency_key=(
-                        "job-builtin-snapshot-explicit-replay"
-                    ),
+                    idempotency_key=("job-builtin-snapshot-explicit-replay"),
                 )
             )
             replay_runtime.database.execute(
@@ -1080,9 +1087,7 @@ def test_retry_and_explicit_replay_revalidate_original_snapshot() -> None:
             operations = JobDispatchOperationsService(
                 repository=replay_runtime.agent_repository,
                 audit_service=replay_runtime.audit_service,
-                builtin_tool_snapshot_service=(
-                    replay_runtime.builtin_tool_snapshot_service
-                ),
+                builtin_tool_snapshot_service=(replay_runtime.builtin_tool_snapshot_service),
             )
             with pytest.raises(NonRetryableExecutionError) as rejected:
                 operations.replay(
@@ -1090,9 +1095,7 @@ def test_retry_and_explicit_replay_revalidate_original_snapshot() -> None:
                     actor_id="user_local_admin",
                     reason="验证精确快照重放",
                 )
-            assert rejected.value.error_code == (
-                "job_builtin_tool_release_not_callable"
-            )
+            assert rejected.value.error_code == ("job_builtin_tool_release_not_callable")
             assert (
                 replay_runtime.database.execute_one(
                     """

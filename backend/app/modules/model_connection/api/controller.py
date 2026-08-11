@@ -91,6 +91,7 @@ class ModelDraftTestResponse(StrictResponse):
 
 
 class ModelSavedTestRequest(StrictRequest):
+    runtime_kind: Literal["python-v1", "typescript-v1"] = "typescript-v1"
     timeout_seconds: int = Field(default=15, ge=3, le=20)
 
 
@@ -100,7 +101,7 @@ class ModelSavedTestResultResponse(StrictResponse):
     provider_host: str
     model: str
     duration_ms: int
-    runtime: Literal["typescript-v1"]
+    runtime: Literal["python-v1", "typescript-v1"]
     runtime_version: str
     sdk_version: str
 
@@ -273,6 +274,7 @@ def build_model_connection_router() -> APIRouter:
             result = container(request).model_connection_service.test_saved_revision(
                 actor_id=actor_id,
                 revision_id=revision_id,
+                runtime_kind=payload.runtime_kind,
                 timeout_seconds=payload.timeout_seconds,
             )
         except HTTPException:

@@ -29,6 +29,7 @@ import {
   useRollbackAgentPublication,
   useSaveAgentDraft,
   useTestDraftConnection,
+  useTestSavedConnection,
   useValidateAgentDraft,
 } from "@/contexts/agent-profiles/application/agent-profile-queries"
 import type {
@@ -36,6 +37,7 @@ import type {
   AgentDetail,
   CredentialSource,
   ModelConnectionConfig,
+  RuntimeKind,
 } from "@/contexts/agent-profiles/domain/agent-profile"
 import { ApiError } from "@/shared/api/api-client"
 
@@ -226,6 +228,7 @@ function Workspace({
         <TabsContent value="connection">
           <ConnectionForm
             connection={connection}
+            runtimeKind={agent.definition.runtime_kind}
             canManageCredential={agent.permissions.can_manage_credential}
             canTestConnection={agent.permissions.can_test_connection}
           />
@@ -247,10 +250,12 @@ type ConnectionWizardPhase =
 
 function ConnectionForm({
   connection,
+  runtimeKind,
   canManageCredential,
   canTestConnection,
 }: {
   connection: NonNullable<ReturnType<typeof useModelConnection>["data"]>
+  runtimeKind: RuntimeKind
   canManageCredential: boolean
   canTestConnection: boolean
 }) {
@@ -263,6 +268,7 @@ function ConnectionForm({
   const allowed = canManageCredential && canTestConnection
   const discover = useDiscoverConnection()
   const testDraft = useTestDraftConnection()
+  const testSaved = useTestSavedConnection()
   const configure = useConfigureConnection()
   const [phase, setPhase] = useState<ConnectionWizardPhase>("EDITING")
   const [credentialSource, setCredentialSource] = useState<CredentialSource>(
@@ -275,6 +281,9 @@ function ConnectionForm({
   > | null>(null)
   const [testResult, setTestResult] = useState<Awaited<
     ReturnType<typeof testDraft.mutateAsync>
+  > | null>(null)
+  const [savedTestResult, setSavedTestResult] = useState<Awaited<
+    ReturnType<typeof testSaved.mutateAsync>
   > | null>(null)
   const [form, setForm] = useState<
     Omit<ModelConnectionConfig, "schema_version">
@@ -293,6 +302,7 @@ function ConnectionForm({
     () => () => {
       discover.reset()
       testDraft.reset()
+      testSaved.reset()
       configure.reset()
     },
     // Mutation objects are stable for the lifetime of this wizard.
@@ -327,10 +337,12 @@ function ConnectionForm({
   function invalidateDiscovery({ clearKey = true } = {}) {
     setDiscovery(null)
     setTestResult(null)
+    setSavedTestResult(null)
     setPhase("EDITING")
     setError(null)
     discover.reset()
     testDraft.reset()
+    testSaved.reset()
     configure.reset()
     if (clearKey) setApiKey("")
   }
@@ -338,9 +350,11 @@ function ConnectionForm({
   function invalidateTest(nextForm: typeof form) {
     setForm(nextForm)
     setTestResult(null)
+    setSavedTestResult(null)
     setPhase(nextForm.model ? "MAPPED" : "DISCOVERED")
     setError(null)
     testDraft.reset()
+    testSaved.reset()
     configure.reset()
   }
 
@@ -354,6 +368,7 @@ function ConnectionForm({
       })
       setDiscovery(result)
       setTestResult(null)
+      setSavedTestResult(null)
       const available = new Set(result.models.map((item) => item.id))
       setForm((value) => {
         return {
@@ -379,13 +394,52 @@ function ConnectionForm({
       setError(caught)
       setDiscovery(null)
       setTestResult(null)
+      setSavedTestResult(null)
       setPhase("EDITING")
     } finally {
       discover.reset()
     }
   }
 
+  const isCurrentSavedConfig = Boolean(
+    current &&
+      credentialSource === "existing" &&
+      form.protocol === current.config.protocol &&
+      form.base_url === current.config.base_url &&
+      form.model === current.config.model &&
+      form.default_opus_model === current.config.default_opus_model &&
+      form.default_sonnet_model === current.config.default_sonnet_model &&
+      form.default_haiku_model === current.config.default_haiku_model &&
+      form.subagent_model === current.config.subagent_model &&
+      form.effort_level === current.config.effort_level
+  )
+
+  async function runSavedTest() {
+    if (!current) return
+    setError(null)
+    try {
+      const result = await testSaved.mutateAsync({
+        revisionId: current.id,
+        runtimeKind,
+        timeoutSeconds: 15,
+      })
+      setSavedTestResult(result)
+      setTestResult(null)
+      setPhase("READY")
+    } catch (caught) {
+      setError(caught)
+      setSavedTestResult(null)
+      setPhase(discovery ? "MAPPED" : "EDITING")
+    } finally {
+      testSaved.reset()
+    }
+  }
+
   async function runTest() {
+    if (isCurrentSavedConfig) {
+      await runSavedTest()
+      return
+    }
     setError(null)
     try {
       const result = await testDraft.mutateAsync({
@@ -394,10 +448,12 @@ function ConnectionForm({
         timeout_seconds: 15,
       })
       setTestResult(result)
+      setSavedTestResult(null)
       setPhase("TESTED")
     } catch (caught) {
       setError(caught)
       setTestResult(null)
+      setSavedTestResult(null)
       setPhase("MAPPED")
     } finally {
       testDraft.reset()
@@ -638,9 +694,14 @@ function ConnectionForm({
                 type="button"
                 variant="outline"
                 onClick={() => void runTest()}
-                disabled={!allowed || testDraft.isPending || !form.model}
+                disabled={
+                  !allowed ||
+                  testDraft.isPending ||
+                  testSaved.isPending ||
+                  !form.model
+                }
               >
-                {testDraft.isPending ? (
+                {testDraft.isPending || testSaved.isPending ? (
                   <LoaderCircleIcon className="animate-spin" />
                 ) : (
                   <FlaskConicalIcon />
@@ -650,15 +711,18 @@ function ConnectionForm({
             </section>
           ) : null}
 
-          {testResult ? (
+          {testResult || savedTestResult ? (
             <section className="space-y-3 border-t pt-5">
               <h3 className="font-medium">4. 测试通过</h3>
               <p className="text-sm text-emerald-700">
-                连接成功 · {testResult.provider_host} · {testResult.model} ·{" "}
-                {testResult.duration_ms}ms
+                连接成功 · {(savedTestResult ?? testResult)?.provider_host} ·{" "}
+                {(savedTestResult ?? testResult)?.model} ·{" "}
+                {(savedTestResult ?? testResult)?.duration_ms}ms
               </p>
               <p className="text-xs text-muted-foreground">
-                最终保存会在服务端重新发现模型并再次执行最小 SDK 测试。
+                {savedTestResult
+                  ? `已由 ${runtimeKindLabel(runtimeKind)} 验证当前已保存的连接版本 r${current?.revision ?? connection.revision}，无需重复保存。`
+                  : "最终保存会在服务端重新发现模型并再次执行最小 SDK 测试。"}
               </p>
             </section>
           ) : null}
@@ -705,6 +769,22 @@ function ConnectionForm({
               value={current?.provider_host || "未配置"}
               mono
             />
+            {current && existingCredentialAvailable ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={() => void runSavedTest()}
+                disabled={!allowed || testSaved.isPending}
+              >
+                {testSaved.isPending ? (
+                  <LoaderCircleIcon className="animate-spin" />
+                ) : (
+                  <FlaskConicalIcon />
+                )}
+                通过 {runtimeKindLabel(runtimeKind)} 测试当前连接
+              </Button>
+            ) : null}
             {!allowed ? (
               <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
                 当前账号需要 Agent 编辑和 Secret 管理权限才能配置模型连接。

@@ -635,6 +635,41 @@ def test_saved_connection_probe_delegates_fixed_revision_to_typescript_runtime()
     assert "secret" not in json.dumps(result).lower()
 
 
+def test_saved_connection_probe_selects_requested_runtime() -> None:
+    c = container()
+    revision = ready_connection(c)
+    observed: list[str] = []
+
+    class Probe:
+        def __init__(self, runtime_kind: str) -> None:
+            self.runtime_kind = runtime_kind
+
+        def probe(self, **kwargs: Any) -> dict[str, Any]:
+            observed.append(self.runtime_kind)
+            return {
+                "runtime_kind": self.runtime_kind,
+                "success": True,
+                "connection_revision_id": kwargs["revision_id"],
+                "provider_host": "api.deepseek.com",
+                "model": "deepseek-v4-flash",
+                "duration_ms": 7,
+            }
+
+    c.model_connection_service.runtime_probes = {
+        runtime_kind: Probe(runtime_kind) for runtime_kind in ("python-v1", "typescript-v1")
+    }
+    c.model_connection_service.redirect_checker = lambda *_args, **_kwargs: None
+
+    result = c.model_connection_service.test_saved_revision(
+        actor_id=ADMIN_ID,
+        revision_id=str(revision["id"]),
+        runtime_kind="python-v1",
+    )
+
+    assert observed == ["python-v1"]
+    assert result["runtime"] == "python-v1"
+
+
 def test_admin_api_exposes_saved_revision_typescript_probe() -> None:
     settings, c = web_container()
     revision = ready_connection(c)
@@ -669,7 +704,7 @@ def test_admin_api_exposes_saved_revision_typescript_probe() -> None:
             f"/api/admin/model-connections/{DEFAULT_MODEL_CONNECTION_CODE}"
             f"/revisions/{revision['id']}/test",
             headers={"origin": "http://admin.test", "x-csrf-token": csrf},
-            json={"timeout_seconds": 12},
+            json={"runtime_kind": "typescript-v1", "timeout_seconds": 12},
         )
 
     assert response.status_code == 200

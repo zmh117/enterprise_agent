@@ -26,12 +26,7 @@ import {
 } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   useAdminCapabilityCatalog,
   useAssignableCatalog,
@@ -86,7 +81,7 @@ export function RoleAuthorizationPage() {
   const roles = useRoles({ search, status, origin })
   const capabilities = useAdminCapabilitySummary()
   const canManage = Boolean(
-    capabilities.data?.capabilities.includes("authorization.manage"),
+    capabilities.data?.capabilities.includes("authorization.manage")
   )
 
   return (
@@ -161,7 +156,6 @@ export function RoleAuthorizationPage() {
           <RoleCard key={role.id} role={role} />
         ))}
       </div>
-
     </div>
   )
 }
@@ -179,8 +173,7 @@ function CreateRoleCard({
   const [code, setCode] = useState("")
   const [description, setDescription] = useState("")
   const [copyFrom, setCopyFrom] = useState("")
-  const [template, setTemplate] =
-    useState<keyof typeof roleTemplates>("blank")
+  const [template, setTemplate] = useState<keyof typeof roleTemplates>("blank")
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
@@ -189,15 +182,13 @@ function CreateRoleCard({
       {
         name: name.trim(),
         code: code.trim(),
-        description:
-          description.trim() || selectedTemplate.description,
+        description: description.trim() || selectedTemplate.description,
         purpose_tags: [...selectedTemplate.purposeTags],
         copy_from_role_id: copyFrom || undefined,
       },
       {
-        onSuccess: (detail) =>
-          navigate(`/users/roles/${detail.role.id}`),
-      },
+        onSuccess: (detail) => navigate(`/users/roles/${detail.role.id}`),
+      }
     )
   }
 
@@ -219,7 +210,10 @@ function CreateRoleCard({
                 onChange={(event) => setName(event.target.value)}
               />
             </Labeled>
-            <Labeled label="角色编码" hint="创建后不可修改，例如 readonly-operator">
+            <Labeled
+              label="角色编码"
+              hint="创建后不可修改，例如 readonly-operator"
+            >
               <Input
                 required
                 pattern="[a-z][a-z0-9-]{1,63}"
@@ -246,17 +240,13 @@ function CreateRoleCard({
                   ))}
               </select>
             </Labeled>
-            <Labeled
-              label="起始模板"
-              hint="复制已有角色时模板自动切换为空白"
-            >
+            <Labeled label="起始模板" hint="复制已有角色时模板自动切换为空白">
               <select
                 className={`${nativeSelectClass} w-full`}
                 value={template}
                 disabled={Boolean(copyFrom)}
                 onChange={(event) => {
-                  const value = event.target
-                    .value as keyof typeof roleTemplates
+                  const value = event.target.value as keyof typeof roleTemplates
                   setTemplate(value)
                   if (!description.trim()) {
                     setDescription(roleTemplates[value].description)
@@ -305,7 +295,9 @@ function RoleCard({ role }: { role: Role }) {
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <CardTitle>{role.name}</CardTitle>
-              <Badge variant={role.status === "enabled" ? "secondary" : "outline"}>
+              <Badge
+                variant={role.status === "enabled" ? "secondary" : "outline"}
+              >
                 {role.status === "enabled" ? "已启用" : "已停用"}
               </Badge>
               <Badge variant="outline">
@@ -317,7 +309,10 @@ function RoleCard({ role }: { role: Role }) {
             </CardDescription>
           </div>
           {role.protected ? (
-            <ShieldCheckIcon className="size-5 text-primary" aria-label="受保护角色" />
+            <ShieldCheckIcon
+              className="size-5 text-primary"
+              aria-label="受保护角色"
+            />
           ) : null}
         </div>
       </CardHeader>
@@ -351,7 +346,10 @@ export function RoleDetailPage() {
       <div className="mx-auto max-w-3xl space-y-4 px-6 py-10">
         <h1 className="text-2xl font-semibold">无法加载角色</h1>
         <RequestError error={query.error} />
-        <Link to="/users/roles" className={buttonVariants({ variant: "outline" })}>
+        <Link
+          to="/users/roles"
+          className={buttonVariants({ variant: "outline" })}
+        >
           返回角色列表
         </Link>
       </div>
@@ -375,10 +373,10 @@ function RoleDetailContent({ detail }: { detail: RoleDetail }) {
   const role = detail.role
   const capabilities = useAdminCapabilitySummary()
   const canManage = Boolean(
-    capabilities.data?.capabilities.includes("authorization.manage"),
+    capabilities.data?.capabilities.includes("authorization.manage")
   )
   const canAssign = Boolean(
-    capabilities.data?.capabilities.includes("authorization.assign"),
+    capabilities.data?.capabilities.includes("authorization.assign")
   )
   return (
     <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
@@ -555,13 +553,19 @@ function MetadataPanel({ role }: { role: Role }) {
         <form className="space-y-4" onSubmit={submit}>
           <div className="grid gap-4 md:grid-cols-2">
             <Labeled label="角色名称">
-              <Input value={name} onChange={(event) => setName(event.target.value)} />
+              <Input
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+              />
             </Labeled>
             <Labeled label="角色编码">
               <Input value={role.code} disabled />
             </Labeled>
             <Labeled label="用途标签" hint="使用顿号或逗号分隔">
-              <Input value={tags} onChange={(event) => setTags(event.target.value)} />
+              <Input
+                value={tags}
+                onChange={(event) => setTags(event.target.value)}
+              />
             </Labeled>
             <Labeled label="状态">
               <select
@@ -611,7 +615,7 @@ function MembersPanel({ detail }: { detail: RoleDetail }) {
         enabled: member.membership_status === "enabled",
         expires_at: member.expires_at ?? "",
       },
-    ]),
+    ])
   )
   const [selection, setSelection] = useState(current)
   const dirty = JSON.stringify([...selection]) !== JSON.stringify([...current])
@@ -715,7 +719,7 @@ function AdminCapabilitiesPanel({ detail }: { detail: RoleDetail }) {
   const catalog = useAdminCapabilityCatalog()
   const mutation = useUpdateRoleAdmin(role.id)
   const currentCodes = new Set(
-    detail.admin.bindings.map((binding) => binding.capability_code),
+    detail.admin.bindings.map((binding) => binding.capability_code)
   )
   const [selectedCodes, setSelectedCodes] = useState(currentCodes)
   const [confirmed, setConfirmed] = useState(false)
@@ -726,7 +730,7 @@ function AdminCapabilitiesPanel({ detail }: { detail: RoleDetail }) {
   useUnsavedWarning(dirty)
 
   const definitions = new Map(
-    catalog.data?.items.map((item) => [item.code, item]) ?? [],
+    catalog.data?.items.map((item) => [item.code, item]) ?? []
   )
   const grouped = useMemo(() => {
     const result = new Map<string, AdminCapability[]>()
@@ -768,7 +772,8 @@ function AdminCapabilitiesPanel({ detail }: { detail: RoleDetail }) {
         <CardHeader>
           <CardTitle>全部管理后台能力</CardTitle>
           <CardDescription>
-            `platform-admin` 自动拥有管理目录当前及未来新增能力，但不会因此获得业务应用、工具或数据访问权限。
+            `platform-admin`
+            自动拥有管理目录当前及未来新增能力，但不会因此获得业务应用、工具或数据访问权限。
           </CardDescription>
         </CardHeader>
       </Card>
@@ -846,12 +851,14 @@ function BusinessAccessPanel({ detail }: { detail: RoleDetail }) {
         capabilityCodes: new Set(application.capability_codes),
         scopeKeys: new Set(application.scopes.map((scope) => scope.scope_key)),
       },
-    ]),
+    ])
   )
   const [selection, setSelection] = useState(initial)
   const [confirmed, setConfirmed] = useState(false)
   const [reason, setReason] = useState("")
-  const dirty = serializeApplicationSelection(selection) !== serializeApplicationSelection(initial)
+  const dirty =
+    serializeApplicationSelection(selection) !==
+    serializeApplicationSelection(initial)
   useUnsavedWarning(dirty)
 
   if (role.protected) {
@@ -860,7 +867,8 @@ function BusinessAccessPanel({ detail }: { detail: RoleDetail }) {
         <CardHeader>
           <CardTitle>未配置业务访问</CardTitle>
           <CardDescription>
-            受保护的 `platform-admin` 只管理控制面，不允许在此角色中配置业务应用、工具或数据访问。
+            受保护的 `platform-admin`
+            只管理控制面，不允许在此角色中配置业务应用、工具或数据访问。
           </CardDescription>
         </CardHeader>
       </Card>
@@ -946,7 +954,7 @@ function BusinessApplicationCard({
               onChange(
                 checked
                   ? { capabilityCodes: new Set(), scopeKeys: new Set() }
-                  : undefined,
+                  : undefined
               )
             }
           />
@@ -970,7 +978,7 @@ function BusinessApplicationCard({
                 >
                   <Checkbox
                     checked={selected.capabilityCodes.has(
-                      capability.capability_code,
+                      capability.capability_code
                     )}
                     onCheckedChange={(checked) => {
                       const codes = new Set(selected.capabilityCodes)
@@ -1002,9 +1010,7 @@ function BusinessApplicationCard({
                   key={environment.id}
                   environment={environment}
                   selected={selected.scopeKeys}
-                  onChange={(scopeKeys) =>
-                    update({ ...selected, scopeKeys })
-                  }
+                  onChange={(scopeKeys) => update({ ...selected, scopeKeys })}
                 />
               ))}
             </div>
@@ -1024,8 +1030,9 @@ function ScopeTree({
   selected: Set<string>
   onChange: (value: Set<string>) => void
 }) {
+  const environmentKey = environment.code
   const allBaseKeys = environment.bases.map(
-    (base) => `${environment.code}/${base.code}`,
+    (base) => `${environment.code}/${base.code}`
   )
   const toggleMany = (keys: string[], checked: boolean) => {
     const next = new Set(selected)
@@ -1038,69 +1045,87 @@ function ScopeTree({
         <span className="font-medium">
           {environment.display_name || environment.code}
         </span>
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Checkbox
-            checked={
-              allBaseKeys.length > 0 &&
-              allBaseKeys.every((key) => selected.has(key))
-            }
-            onCheckedChange={(checked) =>
-              toggleMany(allBaseKeys, Boolean(checked))
-            }
-          />
-          当前全部基地（保存明确集合）
-        </label>
+        {allBaseKeys.length > 0 ? (
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Checkbox
+              checked={allBaseKeys.every((key) => selected.has(key))}
+              onCheckedChange={(checked) =>
+                toggleMany(allBaseKeys, Boolean(checked))
+              }
+            />
+            当前全部基地（保存明确集合）
+          </label>
+        ) : (
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Checkbox
+              checked={selected.has(environmentKey)}
+              onCheckedChange={(checked) =>
+                toggleMany([environmentKey], Boolean(checked))
+              }
+            />
+            选择 {environment.code} 环境
+          </label>
+        )}
       </div>
-      <div className="mt-3 grid gap-3 lg:grid-cols-2">
-        {environment.bases.map((base) => {
-          const baseKey = `${environment.code}/${base.code}`
-          const workshopKeys = base.workshops.map(
-            (workshop) => `${baseKey}/${workshop.code}`,
-          )
-          return (
-            <div key={base.id} className="rounded-md bg-muted/40 p-3">
-              <label className="flex items-center gap-2 text-sm font-medium">
-                <Checkbox
-                  checked={selected.has(baseKey)}
-                  onCheckedChange={(checked) =>
-                    toggleMany([baseKey], Boolean(checked))
-                  }
-                />
-                {base.display_name || base.code}
-              </label>
-              {workshopKeys.length ? (
-                <>
-                  <label className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
-                    <Checkbox
-                      checked={workshopKeys.every((key) => selected.has(key))}
-                      onCheckedChange={(checked) =>
-                        toggleMany(workshopKeys, Boolean(checked))
-                      }
-                    />
-                    当前全部车间（保存明确集合）
-                  </label>
-                  <div className="mt-2 space-y-2 pl-6">
-                    {base.workshops.map((workshop) => {
-                      const key = `${baseKey}/${workshop.code}`
-                      return (
-                        <label key={workshop.id} className="flex items-center gap-2 text-xs">
-                          <Checkbox
-                            checked={selected.has(key)}
-                            onCheckedChange={(checked) =>
-                              toggleMany([key], Boolean(checked))
-                            }
-                          />
-                          {workshop.display_name || workshop.code}
-                        </label>
-                      )
-                    })}
-                  </div>
-                </>
-              ) : null}
-            </div>
-          )
-        })}
-      </div>
+      {environment.bases.length > 0 ? (
+        <div className="mt-3 grid gap-3 lg:grid-cols-2">
+          {environment.bases.map((base) => {
+            const baseKey = `${environment.code}/${base.code}`
+            const workshopKeys = base.workshops.map(
+              (workshop) => `${baseKey}/${workshop.code}`
+            )
+            return (
+              <div key={base.id} className="rounded-md bg-muted/40 p-3">
+                <label className="flex items-center gap-2 text-sm font-medium">
+                  <Checkbox
+                    checked={selected.has(baseKey)}
+                    onCheckedChange={(checked) =>
+                      toggleMany([baseKey], Boolean(checked))
+                    }
+                  />
+                  {base.display_name || base.code}
+                </label>
+                {workshopKeys.length ? (
+                  <>
+                    <label className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+                      <Checkbox
+                        checked={workshopKeys.every((key) => selected.has(key))}
+                        onCheckedChange={(checked) =>
+                          toggleMany(workshopKeys, Boolean(checked))
+                        }
+                      />
+                      当前全部车间（保存明确集合）
+                    </label>
+                    <div className="mt-2 space-y-2 pl-6">
+                      {base.workshops.map((workshop) => {
+                        const key = `${baseKey}/${workshop.code}`
+                        return (
+                          <label
+                            key={workshop.id}
+                            className="flex items-center gap-2 text-xs"
+                          >
+                            <Checkbox
+                              checked={selected.has(key)}
+                              onCheckedChange={(checked) =>
+                                toggleMany([key], Boolean(checked))
+                              }
+                            />
+                            {workshop.display_name || workshop.code}
+                          </label>
+                        )
+                      })}
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            )
+          })}
+        </div>
+      ) : (
+        <p className="mt-2 text-xs text-muted-foreground">
+          此环境没有基地层级，环境本身就是可授权的业务目标。
+        </p>
+      )}
     </div>
   )
 }
@@ -1119,7 +1144,7 @@ function AuthorizationPreviewPanel() {
   const [capability, setCapability] = useState("")
 
   const application = catalog.data?.applications.find(
-    (item) => item.id === applicationId,
+    (item) => item.id === applicationId
   )
   return (
     <Card className="shadow-none">
@@ -1264,7 +1289,9 @@ function Labeled({
     <label className="space-y-2">
       <span className="block text-sm font-medium">{label}</span>
       {children}
-      {hint ? <span className="block text-xs text-muted-foreground">{hint}</span> : null}
+      {hint ? (
+        <span className="block text-xs text-muted-foreground">{hint}</span>
+      ) : null}
     </label>
   )
 }
@@ -1311,14 +1338,14 @@ function useUnsavedWarning(dirty: boolean) {
 function addWithDependencies(
   target: Set<string>,
   code: string,
-  definitions: Map<string, AdminCapability>,
+  definitions: Map<string, AdminCapability>
 ) {
   if (target.has(code)) return
   target.add(code)
   definitions
     .get(code)
     ?.dependencies.forEach((dependency) =>
-      addWithDependencies(target, dependency, definitions),
+      addWithDependencies(target, dependency, definitions)
     )
 }
 
@@ -1363,7 +1390,7 @@ function explicitScopeMap(topology: CatalogEnvironment[]) {
 }
 
 function serializeApplicationSelection(
-  value: Map<string, ApplicationSelection>,
+  value: Map<string, ApplicationSelection>
 ) {
   return JSON.stringify(
     [...value.entries()]
@@ -1372,7 +1399,7 @@ function serializeApplicationSelection(
         [...selection.capabilityCodes].sort(),
         [...selection.scopeKeys].sort(),
       ])
-      .sort(),
+      .sort()
   )
 }
 

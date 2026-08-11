@@ -386,26 +386,45 @@ def _runtime_model_probe_for_service(
     settings: Settings,
     service_name: str,
 ) -> RuntimeModelProbeClient | None:
+    return _runtime_model_probes_for_service(settings, service_name).get("python-v1")
+
+
+def _runtime_model_probes_for_service(
+    settings: Settings,
+    service_name: str,
+) -> dict[str, RuntimeModelProbeClient]:
     # This bearer credential belongs to the control-plane probe only. The
     # worker resolves execution grants independently and must never receive it.
     if service_name != "api-server":
-        return None
-    if not (
-        settings.agent_runtime.python_base_url
-        and settings.agent_runtime.model_probe_auth_token_file
-    ):
-        return None
-    return RuntimeModelProbeClient(
-        RuntimeModelProbeSettings(
-            base_url=settings.agent_runtime.python_base_url,
-            allowed_hosts=settings.agent_runtime.python_allowed_hosts,
-            auth_token_file=settings.agent_runtime.model_probe_auth_token_file,
-            allow_insecure_internal_http=(
-                settings.agent_runtime.allow_insecure_internal_http
-            ),
-            runtime_kind="python-v1",
-        )
+        return {}
+    token_file = settings.agent_runtime.model_probe_auth_token_file
+    if not token_file:
+        return {}
+    runtime_settings = (
+        (
+            "python-v1",
+            settings.agent_runtime.python_base_url,
+            settings.agent_runtime.python_allowed_hosts,
+        ),
+        (
+            "typescript-v1",
+            settings.agent_runtime.typescript_base_url,
+            settings.agent_runtime.typescript_allowed_hosts,
+        ),
     )
+    return {
+        runtime_kind: RuntimeModelProbeClient(
+            RuntimeModelProbeSettings(
+                base_url=base_url,
+                allowed_hosts=allowed_hosts,
+                auth_token_file=token_file,
+                allow_insecure_internal_http=(settings.agent_runtime.allow_insecure_internal_http),
+                runtime_kind=runtime_kind,
+            )
+        )
+        for runtime_kind, base_url, allowed_hosts in runtime_settings
+        if base_url
+    }
 
 
 def _acceptance_after_runtime_result_hook(
@@ -415,9 +434,7 @@ def _acceptance_after_runtime_result_hook(
     if not raw or raw == "0":
         return None
     if environment not in {"test", "testing"}:
-        raise RuntimeError(
-            "AGENT_RUNTIME_ACCEPTANCE_AFTER_RESULT_PAUSE_SECONDS is test-only"
-        )
+        raise RuntimeError("AGENT_RUNTIME_ACCEPTANCE_AFTER_RESULT_PAUSE_SECONDS is test-only")
     try:
         seconds = float(raw)
     except ValueError as exc:
@@ -548,7 +565,7 @@ def _build_container(
         authorization_evaluator,
         audit_service,
         allowed_hosts=set(settings.model_provider_host_allowlist),
-        runtime_probe=_runtime_model_probe_for_service(settings, service_name),
+        runtime_probes=_runtime_model_probes_for_service(settings, service_name),
     )
     api_connection_service = ApiConnectionService(
         api_connection_repository,
@@ -859,9 +876,7 @@ def _build_container(
     if service_name == "agent-worker" and runtime_clients_override is not None:
         runtime_clients = dict(runtime_clients_override)
     elif service_name == "agent-worker":
-        grant_issuer = RuntimeGrantIssuer.from_file(
-            settings.agent_runtime.grant_private_key_file
-        )
+        grant_issuer = RuntimeGrantIssuer.from_file(settings.agent_runtime.grant_private_key_file)
         configured_runtimes = (
             (
                 "python-v1",
@@ -983,9 +998,7 @@ def _build_container(
         delivery_service=result_delivery_service,
         business_authorization_service=business_authorization_service,
         builtin_tool_snapshot_service=builtin_tool_snapshot_service,
-        after_runtime_result_hook=_acceptance_after_runtime_result_hook(
-            settings.environment
-        ),
+        after_runtime_result_hook=_acceptance_after_runtime_result_hook(settings.environment),
     )
     retry_service = JobRetryService(
         repository=agent_repository,
