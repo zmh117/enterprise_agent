@@ -5,7 +5,7 @@
 
 ## Requirements
 
-<!-- Migrated from canonical source capability: `agent-test-data-environment` -->
+<!-- Reconciled from mcp_new capability: `agent-test-data-environment` -->
 
 ### Requirement: Compose 按 profile 提供两套独立测试基地
 系统 SHALL 在 `agent-test-data` Compose profile 中提供 MySQL、SQL Server 两个数据库服务，并为每个数据库服务提供一一对应且不共享数据卷的 Redis 服务。该 profile 未启用时，四个测试数据服务 SHALL 不启动。
@@ -125,7 +125,7 @@
 - **THEN** 不得将 MySQL 和 Redis 成功误报为完整环境成功
 
 
-<!-- Migrated from canonical source capability: `compose-infrastructure-major-upgrade` -->
+<!-- Reconciled from mcp_new capability: `compose-infrastructure-major-upgrade` -->
 
 ### Requirement: Compose 必须默认运行 PostgreSQL 18 和 RabbitMQ 4
 系统 SHALL 将 Compose 默认数据库镜像设为 `postgres:18`，将默认消息代理镜像设为 `rabbitmq:4-management`，并 MUST 保持现有服务名、容器内端口及应用连接契约不变。
@@ -190,7 +190,7 @@
 - **THEN** 验证结果包含数据库版本与数据核验、RabbitMQ 版本与队列拓扑、API ready、Agent Job 成功执行以及 retry/dead-letter 路径
 
 
-<!-- Migrated from canonical source capability: `db-backed-config-compose-smoke` -->
+<!-- Reconciled from mcp_new capability: `db-backed-config-compose-smoke` -->
 
 ### Requirement: Compose smoke shall verify DB-backed config end to end
 系统 SHALL 提供 Docker Compose 下的 smoke 验证流程，覆盖 PostgreSQL migration、api-server、agent-worker、Web-managed secret、DB-backed runtime config overlay、RabbitMQ 消费和 Agent job 完成状态。
@@ -237,7 +237,7 @@
 - **THEN** 流程 MUST 不要求真实 DeepSeek API key，也不得调用外部模型 API
 
 
-<!-- Migrated from canonical source capability: `feature-configuration-simplification` -->
+<!-- Reconciled from mcp_new capability: `feature-configuration-simplification` -->
 
 ### Requirement: 普通部署只暴露四个顶层功能开关
 系统 SHALL 将 `FEATURE_WEB_ADMIN`、`FEATURE_PUBLISHED_AGENT_RUNTIME`、`FEATURE_REAL_CLAUDE` 和 `FEATURE_REAL_INTERNAL_TOOLS` 作为普通部署模板中唯一的顶层 `FEATURE_*` 配置。数据库、RabbitMQ、主加密密钥等 bootstrap 配置不属于该数量限制。
@@ -327,63 +327,7 @@
 - **AND** 迁移工具不得自动发布、修改消息路由或开启外部调用
 
 
-<!-- Migrated from canonical source capability: `platform-config-api` -->
-
-### Requirement: Platform configuration API exposes topology management
-系统 SHALL 提供 Web 配置平台使用的 REST API，用于管理环境、基地、车间、稳定 Resource Identity、Resource Draft、验证结果、不可变 Revision、应用发布绑定和 Secret reference。
-
-#### Scenario: List topology
-- **WHEN** 管理端请求平台 topology 列表
-- **THEN** 系统返回启用和禁用的环境、基地、车间以及必要的分页或过滤信息
-
-#### Scenario: Create resource draft
-- **WHEN** 管理端为某作用域提交合法的 DB、Redis 或 Loki Draft
-- **THEN** 系统保存 Draft、写入配置审计，并明确返回 DRAFT、published 与 effective 状态
-
-#### Scenario: Bind resource revision
-- **WHEN** 业务应用发布选择一个可用 Resource Revision
-- **THEN** 系统保存具体 revision binding，而不是浮动 Resource Identity
-
-### Requirement: Platform configuration API validates domain invariants
-系统 SHALL 在保存配置前校验领域约束，包括编码唯一性、父子关系存在、资源类型合法、secret ref 合法、只读工具边界和配置 JSON schema。
-
-#### Scenario: Duplicate environment code rejected
-- **WHEN** 管理端创建已存在编码的环境
-- **THEN** 系统拒绝请求并返回冲突错误
-
-#### Scenario: Invalid workshop parent rejected
-- **WHEN** 管理端创建车间但指定不存在的基地
-- **THEN** 系统拒绝请求并返回校验错误
-
-#### Scenario: Mutation tool binding rejected
-- **WHEN** 管理端试图为 MVP 诊断流程启用写库、删 Redis 或重启服务类工具
-- **THEN** 系统拒绝保存配置，因为第一版只允许只读诊断工具
-
-### Requirement: YAML topology import upserts database configuration
-系统 SHALL 将 YAML import 限定为 bootstrap 或显式迁移操作；导入结果只能创建或更新 PostgreSQL topology 与 Resource Draft，MUST NOT 自动发布或覆盖现有 Published Revision。
-
-#### Scenario: Import new yaml topology
-- **WHEN** 授权管理员导入包含新环境、基地、车间和资源配置的 YAML
-- **THEN** 系统创建对应 topology 与 Draft，返回 created、updated、skipped 和 requires-secret-migration 统计
-
-#### Scenario: Import existing yaml topology
-- **WHEN** 相同稳定编码和内容被再次导入
-- **THEN** 系统幂等处理，不创建重复对象或 Published Revision
-
-#### Scenario: Import attempts to overwrite published resource
-- **WHEN** YAML 内容与现有 Published Revision 不同
-- **THEN** 系统创建新 Draft 并要求重新验证、发布，不得直接改变有效运行时
-
-### Requirement: API exposes runtime topology snapshot
-系统 SHALL 提供只读 snapshot API，展示 PostgreSQL 中当前 published/effective Resource Revision、应用 binding、runtime generation、Last Known Good 和安全错误摘要。
-
-#### Scenario: Snapshot from database
-- **WHEN** PostgreSQL 中存在已发布且成功装载的 topology 与资源
-- **THEN** snapshot API 返回 source 为 database，并同时标明 published revision 与 effective revision
-
-#### Scenario: Snapshot validation error
-- **WHEN** Published Revision 缺少可解析 Secret 或运行时无法装载
-- **THEN** snapshot API 返回 degraded/blocked 状态和脱敏错误，不得静默回退 YAML
+<!-- Reconciled from mcp_new capability: `platform-config-api` -->
 
 ### Requirement: API responses do not leak secret values
 系统 SHALL 确保所有平台配置 API 响应只返回 secret reference 元数据，MUST NOT 返回任何解析后的真实密钥值。
@@ -395,50 +339,6 @@
 #### Scenario: Export topology snapshot
 - **WHEN** 系统导出 topology snapshot
 - **THEN** snapshot 中的 credential 字段仍然是 secret reference，不包含明文 token 或 password
-
-### Requirement: Imported topology can be verified as runtime-ready
-系统 SHALL 让通过 YAML import 或平台配置 API 写入的 topology 能被验证为 Internal API Platform 可消费的 runtime snapshot。
-
-#### Scenario: YAML import produces database snapshot
-- **WHEN** 管理端导入合法 topology YAML 到 PostgreSQL
-- **THEN** `/api/platform/topology-snapshot` 返回 source 为 database 或可被运行时加载的 DB-backed snapshot，并包含启用资源数量和访问授权摘要
-
-#### Scenario: Imported topology has validation errors
-- **WHEN** 导入后的启用资源绑定缺少运行时必须字段
-- **THEN** snapshot API 返回配置错误详情，并且不得把该配置标记为 runtime valid
-
-### Requirement: Platform configuration API supports runtime verification workflow
-系统 SHALL 提供足够的只读 API 输出，让开发者或后续 Web 平台确认当前 DB 配置能驱动只读诊断工具。
-
-#### Scenario: Verify effective topology
-- **WHEN** 开发者查询平台 topology snapshot
-- **THEN** 响应包含启用 environment/base/workshop、resource binding 作用域、resource kind、secret reference 摘要和配置 revision/hash
-
-#### Scenario: Verify disabled resource exclusion
-- **WHEN** 管理端禁用某个 resource binding 后查询 topology snapshot
-- **THEN** snapshot 不包含该禁用资源，且 revision/hash 发生可观测变化
-
-### Requirement: Platform configuration API documents restart or reload semantics
-系统 SHALL 文档化基于 revision 轮询、完整快照构建、原子切换和 Last Known Good 的热加载语义。
-
-#### Scenario: 新 revision 成功激活
-- **WHEN** Internal API Platform 检测到可装载的新 Published Revision
-- **THEN** 新请求使用新 generation，进行中请求继续使用其已捕获的旧 generation
-
-#### Scenario: 新 revision 激活失败
-- **WHEN** 新快照构建失败
-- **THEN** 文档和 API 明确显示 published 不等于 effective，并保留 Last Known Good
-
-### Requirement: Platform API accepts secret values through write-only fields
-系统 SHALL 提供平台密钥管理 API，允许管理端通过 write-only 字段提交 secret 明文值，并只返回 secret ref、状态和脱敏摘要。
-
-#### Scenario: Create secret through API
-- **WHEN** 管理端调用 secret 创建接口并提交明文 value
-- **THEN** API 返回 secret metadata 和 `secret_ref`，响应中不包含明文 value
-
-#### Scenario: Read secret through API
-- **WHEN** 管理端查询 secret 详情
-- **THEN** API 返回 configured/version/updated_at/masked_summary，不返回明文 value
 
 ### Requirement: Platform API manages DB-backed runtime config
 系统 SHALL 提供 runtime config 的 CRUD、启停、snapshot 和校验 API，供后续 Web 配置页面使用。
@@ -505,26 +405,22 @@
 - **WHEN** 启动前检查或草稿发布校验发现新旧配置冲突
 - **THEN** API 返回稳定的冲突代码、冲突键和迁移目标
 
-### Requirement: Resource API 必须实施技术发布门禁
-Resource API MUST 在发布前校验字段 schema、`secret://platform/` 引用、连接、只读账号、Provider 可用性和当前 Draft digest；本次不要求审核审批。
+### Requirement: 平台配置不得暴露旧 API 平台对象
+平台配置 API MUST 不提供 API Capability、Handler、API Connection、Application Resource Mapping、Internal API topology/runtime generation/activation 或 Internal API Token 的读取与写入端点；工具资源、凭据、模型和渠道配置继续使用各自边界。
 
-#### Scenario: 单个授权发布者发布
-- **WHEN** 用户具备发布权限且 Draft 为当前 VERIFIED 内容
-- **THEN** 系统可以直接创建不可变 Published Revision 并审计
+#### Scenario: 请求旧管理端点
+- **WHEN** 客户端访问已退役旧平台 API
+- **THEN** 路由不存在且不得返回兼容数据
 
-#### Scenario: Draft 在验证后被修改
-- **WHEN** Draft digest 与最近验证结果不一致
-- **THEN** 发布必须拒绝并要求重新验证
+### Requirement: 运行配置目录不得保留 Internal API 定义
+平台运行配置定义和值 MUST NOT 包含任何 `INTERNAL_API_*` 或 `FEATURE_REAL_INTERNAL_TOOLS` 项，包括历史的 auth token、timeout 和 response-size 定义。
 
-### Requirement: 破坏性资源重置不得暴露为普通 CRUD
-全量资源重置 MUST 只通过受控维护 CLI 的 report/prepare/apply/verify 执行，普通 Web/API 删除不得物理删除 Published Revision。
-
-#### Scenario: 管理员从页面删除已发布资源
-- **WHEN** 管理员对 Published Resource 使用普通删除操作
-- **THEN** API 必须拒绝，并提供 disable/archive 语义
+#### Scenario: 已有数据库包含未赋值旧定义
+- **WHEN** 数据库升级前只剩未设置 value 的旧 Internal API 配置定义
+- **THEN** 迁移仍删除这些 definition，配置 API 不再展示或接受它们
 
 
-<!-- Migrated from canonical source capability: `platform-config-registry` -->
+<!-- Reconciled from mcp_new capability: `platform-config-registry` -->
 
 ### Requirement: Platform topology is persisted in PostgreSQL
 系统 SHALL 在 PostgreSQL 中持久化 Environment、可选 Base 和可选 Workshop 的真实层级关系、启停状态、别名和扩展元数据；平台 MUST NOT 要求每个 Environment 都有 Base 或每个 Base 都有 Workshop，也不得保存用于补层级的虚节点。
@@ -721,7 +617,7 @@ Registry SHALL 只在资源实际存在物理位置差异时保存 `cloud` 或 `
 - **THEN** Registry 只保存枚举值 `edge`，不把它写入 Environment/Base/Workshop code
 
 
-<!-- Migrated from canonical source capability: `platform-runtime-acceptance` -->
+<!-- Reconciled from mcp_new capability: `platform-runtime-acceptance` -->
 
 ### Requirement: JavaScript 构建与 CI 必须统一使用 npm
 仓库 SHALL 以现有 npm lockfile 为唯一 JavaScript 依赖锁，CI 和容器构建 MUST 使用 `npm ci`，不得继续引用不存在或非权威的 pnpm lockfile。
@@ -767,7 +663,7 @@ Registry SHALL 只在资源实际存在物理位置差异时保存 `cloud` 或 `
 - **THEN** 报告只能声明本地功能通过，不得声明公网生产安全
 
 
-<!-- Migrated from canonical source capability: `platform-runtime-config` -->
+<!-- Reconciled from mcp_new capability: `platform-runtime-config` -->
 
 ### Requirement: Runtime settings are persisted as typed configuration
 系统 SHALL 将可 Web 配置的运行参数以 typed key 形式持久化到 PostgreSQL，而不是保存整份 `.env` 文本。
@@ -888,7 +784,7 @@ DB、Redis、Loki runtime MUST 只从 PostgreSQL Published Resource Revision 和
 - **THEN** 当前请求继续使用启动时捕获的 generation，后续请求使用新 generation
 
 
-<!-- Migrated from canonical source capability: `platform-schema-migration-runtime` -->
+<!-- Reconciled from mcp_new capability: `platform-schema-migration-runtime` -->
 
 ### Requirement: 只有一次性 Migrator 可以修改平台 schema
 系统 MUST 由独立 one-shot Migrator 应用 schema migration；API、Worker、Dispatcher 和 Internal API Platform MUST NOT 在自身启动或请求处理中执行 migration。
@@ -930,8 +826,23 @@ Migrator MUST 拒绝重复版本，并在执行前校验已应用 migration 的 
 - **WHEN** 操作需要调用模型、HTTP、RabbitMQ 或 DingTalk
 - **THEN** 本地数据库事务必须在外部调用前完成，外部副作用通过 Outbox 或独立步骤驱动
 
+### Requirement: 最终项目 Schema 必须具有完整中文注释
+系统 MUST 通过向前迁移为 PostgreSQL `public` schema 中最终保留的每张项目自有表和每个字段设置非空中文注释；注释 SHALL 描述领域含义、关联对象、状态、版本、时间或安全边界，不得使用统一无语义占位文本。`schema_migration` 迁移账本、PostgreSQL 系统表和第三方扩展表不属于项目注释范围。
 
-<!-- Migrated from canonical source capability: `platform-secret-management` -->
+#### Scenario: 已有数据库升级
+- **WHEN** 已执行到前一 schema head 的 PostgreSQL 数据库升级
+- **THEN** 所有最终保留的项目表和字段都具有非空中文 comment，业务数据、约束和索引保持不变
+
+#### Scenario: 新迁移增加表或字段
+- **WHEN** 后续迁移新增项目自有表或字段但没有同步声明注释
+- **THEN** schema 注释覆盖测试失败并阻止发布
+
+#### Scenario: SQLite 运行迁移
+- **WHEN** 测试或本地环境使用 SQLite 执行同一迁移目录
+- **THEN** PostgreSQL `COMMENT ON` 语句被兼容跳过，最终 SQLite schema 仍与静态注释清单进行完整性对照
+
+
+<!-- Reconciled from mcp_new capability: `platform-secret-management` -->
 
 ### Requirement: Web-managed secrets are encrypted before persistence
 系统 SHALL 允许管理端提交 secret 明文值，但 MUST 在写入持久化存储前加密或转存到 Secret Provider，并且 MUST NOT 在 PostgreSQL 配置表、审计、日志、API 响应或 Agent prompt 中保存明文。
@@ -1043,8 +954,19 @@ Migrator MUST 拒绝重复版本，并在执行前校验已应用 migration 的 
 - **WHEN** 已发布资源引用的 active Secret 被禁用
 - **THEN** 相关资源必须重新装载失败或进入 MISCONFIGURED，并保留 Last Known Good 行为
 
+### Requirement: Internal API 与 Runtime Tool 专用密钥必须永久删除
+系统 MUST 不创建、挂载、解析或展示 Internal API server/client Token、`runtime-tool-mcp` HS256 signing key、MCP access token 或相关 Secret usage；平台凭据中心只保留工具资源、模型、渠道和其它仍存在的业务 Secret。
 
-<!-- Migrated from canonical source capability: `safe-real-model-tool-testing` -->
+#### Scenario: 升级已有数据库
+- **WHEN** 破坏性迁移发现仅被已退役组件引用的 Internal API 或 Runtime Tool Secret metadata
+- **THEN** 系统删除其 usage 和 metadata，审计不得包含 Secret 值
+
+#### Scenario: 新配置提交旧 Secret code
+- **WHEN** 管理 API 或 Compose 尝试配置已退役专用 Secret
+- **THEN** 配置校验失败且不得形成兼容用途
+
+
+<!-- Reconciled from mcp_new capability: `safe-real-model-tool-testing` -->
 
 ### Requirement: Real model tests shall use synthetic or sanitized evidence by default
 系统 SHALL 默认只使用合成日志、合成业务问题或已脱敏工具摘要执行真实 Claude/DeepSeek + real-tools 端到端测试。
@@ -1079,7 +1001,8 @@ Migrator MUST 拒绝重复版本，并在执行前校验已应用 migration 的 
 - **WHEN** 开发者只需要验证真实 Loki/Internal API Platform 链路
 - **THEN** 文档 SHALL 提供 `FEATURE_REAL_CLAUDE=false` 的测试路径
 
-<!-- Migrated from baseline governance: `rebuild-canonical-spec-baseline` -->
+
+<!-- Reconciled from mcp_new capability: `canonical-baseline-governance` -->
 
 ### Requirement: Canonical 主规格是唯一当前规范基线
 仓库 SHALL 仅将 `openspec/specs/<canonical-domain>/spec.md` 视为当前已接受规范的 canonical baseline。Active change、archive、proposal、design、tasks、evidence、ADR 和运行手册 MUST NOT 覆盖 canonical Requirement；需要改变当前规范时 MUST 通过明确的 OpenSpec change 更新 canonical specs。
@@ -1108,7 +1031,7 @@ Migrator MUST 拒绝重复版本，并在执行前校验已应用 migration 的 
 - **THEN** Codex 可读取相关 archive，但将其标记为历史证据且不把它当作当前规范
 
 ### Requirement: Archive 保持完整且不参与默认规范解析
-基线重建 SHALL 保留 `openspec/changes/archive/` 下的历史内容，不得为了减少默认上下文而删除或改写既有 archive。默认规范解析 MUST 排除 archive；历史内容只有在显式追溯时才参与证据分析。
+基线重建 SHALL 保留 `openspec/changes/archive/` 下的历史内容，不得为了减少默认上下文而删除或改写既有 archive。默认规范解析 MUST 排除 archive；历史内容只有在显式追溯时才参与证据分析。分叉分支合并涉及旧规格路径和 archive 内迁移快照的 rename／modify 交叉时，维护流程 MUST 独立验证 archive manifest，并将目标分支的已接受差异重新同步到 canonical domain，而不得接受仅有“无 Git 冲突”的结果。
 
 #### Scenario: 重建 Canonical Baseline
 - **WHEN** 维护者替换或重组主规格文件
@@ -1117,3 +1040,13 @@ Migrator MUST 拒绝重复版本，并在执行前校验已应用 migration 的 
 #### Scenario: 默认规格检索
 - **WHEN** Codex 搜索当前领域要求且用户没有请求历史
 - **THEN** 搜索范围排除 `openspec/changes/archive/`
+
+#### Scenario: 分叉分支修改了被迁移的旧规格
+- **WHEN** canonical baseline 提交把旧规格移动到 archive，而目标分支在共同基点后修改了同一旧规格路径
+- **THEN** 合并流程验证 archive 快照仍与其冻结 manifest 一致，并把目标差异同步到对应 canonical domain
+- **AND** 流程不得因为 Git merge 无文本冲突就宣称 canonical 对账完成
+
+#### Scenario: 领域化后归档旧 Capability Delta
+- **WHEN** 一个 completed change 的 delta 仍按领域化之前的 capability 路径组织
+- **THEN** 维护流程先按明确映射把 delta 语义同步到 canonical domains，再使用跳过重复同步的方式归档
+- **AND** 归档不得重新创建碎片主规格目录

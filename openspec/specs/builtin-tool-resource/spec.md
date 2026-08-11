@@ -5,7 +5,7 @@
 
 ## Requirements
 
-<!-- Migrated from canonical source capability: `base-scoped-redis-loki` -->
+<!-- Reconciled from mcp_new capability: `base-scoped-redis-loki` -->
 
 ### Requirement: Redis and Loki resolve at the base level
 The system SHALL allow Redis to resolve from an exact Environment-level or Base-level Resource Mapping and to be inherited by child Workshops through their frozen namespace policies. Loki SHALL instead resolve from an exact global or Environment-level Resource Mapping plus an Environment and optional Base Scope Policy; Loki MUST NOT require a Base, Workshop or placement-level connection binding.
@@ -119,141 +119,39 @@ The system SHALL constrain Loki queries using the exact Environment and optional
 - **THEN** the effective Loki selector remains the frozen Environment/Base Policy and does not add `GL001`, replica or placement conditions automatically
 
 
-<!-- Migrated from canonical source capability: `built-in-readonly-tool-governance` -->
+<!-- Reconciled from mcp_new capability: `built-in-readonly-tool-governance` -->
 
 ### Requirement: 内置只读工具实现必须来自代码 Manifest
-系统 MUST 从代码 Registry 加载内置只读工具的稳定 Identifier、语义版本、Handler Version、输入/输出 Schema、模型描述、风险等级、所需权限、逻辑资源槽、固定 Verifier Plan 和 Implementation Digest；数据库和管理 API MUST NOT 创建或覆盖这些实现字段。
+系统 MUST 由 `tool-mcp` 从代码 Manifest 加载稳定 Tool Identifier、输入 Schema、模型描述、资源类型、只读限制和实现函数；数据库和管理 API MUST NOT 创建或覆盖实现，不再维护 Handler Version、Installation、Verification Evidence 或 Built-in Tool Release。
 
 #### Scenario: 部署合法代码 Manifest
-- **WHEN** 新部署包含一个格式合法且 Identifier 未冲突的内置只读工具 Manifest
-- **THEN** 系统可以对账该 Manifest，但不会自动验证或发布 Release
+- **WHEN** 新部署包含格式合法且 Identifier/schema 未冲突的只读 MCP Tool Manifest
+- **THEN** `tool-mcp` 注册该实现，Agent 管理目录可读取其非敏感定义
 
 #### Scenario: 管理端提交动态实现
-- **WHEN** 管理员尝试为内置只读工具保存任意 HTTP、MCP、SQL、Shell、脚本、模板、函数或完整 URL 实现
-- **THEN** 系统拒绝请求且不得保存或执行该内容
-
-#### Scenario: Manifest 扩大安全边界
-- **WHEN** 新 Manifest 扩大公开 Schema、风险等级、所需权限或资源访问边界但复用原稳定 Identifier
-- **THEN** 系统将安装标记为 DRIFTED 并拒绝发布，要求使用新的稳定 Identifier
-
-### Requirement: 部署对账必须产生明确 Installation 状态
-系统 SHALL 通过幂等 reconcile 比较代码 Registry 与数据库 Installation，并为每个精确 Handler Version 和 Implementation Digest 产生 `INSTALLED`、`MISSING` 或 `DRIFTED` 状态；reconcile MUST NOT 自动创建可调用 Release。
-
-#### Scenario: 代码与安装记录一致
-- **WHEN** Manifest 的 Identifier、Handler Version 和 Implementation Digest 与 Installation 一致
-- **THEN** reconcile 将 Installation 标记为 INSTALLED 并记录本次对账摘要
-
-#### Scenario: 已发布实现不在当前部署
-- **WHEN** 数据库存在 Tool Release 但当前代码 Registry 缺少其精确实现
-- **THEN** reconcile 将对应 Installation 标记为 MISSING，后续新调用失败关闭
-
-#### Scenario: 相同版本 digest 不一致
-- **WHEN** 代码声明相同 Identifier 和 Handler Version 但 Implementation Digest 与数据库记录不同
-- **THEN** reconcile 将其标记为 DRIFTED，不得把该部署视为已安装精确实现
-
-### Requirement: Tool Release 发布必须依赖固定机器验证
-系统 MUST 只运行 Manifest 声明且由代码实现的固定 Verifier Plan；成功证据 MUST 绑定 Installation ID、Handler Version、Implementation Digest、Verifier Version、规范化输入摘要和时间，内容变化后旧证据立即失效，且不得人工覆盖验证结果。
-
-#### Scenario: 当前实现验证成功
-- **WHEN** 授权管理员对 INSTALLED 的精确实现运行 verifier 且所有必需检查通过
-- **THEN** 系统保存脱敏的成功证据并允许该精确实现进入发布校验
-
-#### Scenario: 验证后实现改变
-- **WHEN** Implementation Digest、Handler Version 或 Verifier Version 在成功验证后改变
-- **THEN** 旧证据失效，Publish 必须拒绝直到新实现重新验证
-
-#### Scenario: 管理员尝试手工通过
-- **WHEN** 管理员提交手工备注、任意脚本结果或直接修改状态来替代机器验证
-- **THEN** 系统拒绝将其作为发布证据
-
-### Requirement: Built-in Tool Release 必须不可变且生命周期受控
-系统 SHALL 从当前成功验证证据创建不可变 Built-in Tool Release，并 MUST 支持 `ACTIVE`、`DEPRECATED`、`DISABLED`、`ARCHIVED` 状态；内容字段发布后不得修改，生命周期动作必须审计。
-
-#### Scenario: 发布已验证实现
-- **WHEN** 授权发布者提交当前 Installation、成功证据和幂等键
-- **THEN** 系统原子创建或复用同一个 ACTIVE Release，并冻结 Manifest、Handler Version、Implementation Digest 和证据引用
-
-#### Scenario: 软废弃 Release
-- **WHEN** 管理员把 ACTIVE Release 设为 DEPRECATED
-- **THEN** 既有 Publication 可以继续调用并显示警告，但新 Agent Publication 不得选择该 Release
-
-#### Scenario: 紧急禁用 Release
-- **WHEN** 管理员把 Release 设为 DISABLED
-- **THEN** 所有后续新调用失败关闭，历史 Publication、Job 和审计保持不变
-
-#### Scenario: 恢复已禁用 Release
-- **WHEN** 授权管理员确认精确实现为 INSTALLED、重新验证成功且依赖校验通过后恢复 DISABLED Release
-- **THEN** 系统可将其恢复为 ACTIVE并记录原因、actor、证据和时间
-
-#### Scenario: 归档 Release
-- **WHEN** Release 仍被活动 Publication 或非终态、可恢复 Job 引用
-- **THEN** 系统拒绝 ARCHIVED；只有依赖归零后才允许进入不可恢复的 ARCHIVED 终态
-
-### Requirement: Release 生命周期与运行健康必须分离
-系统 MUST 分别计算 Release 生命周期和 Installation/Resource/Policy 运行健康；`MISSING`、`DRIFTED`、`DEGRADED` 或 `EMPTY` MUST NOT 自动改写 Release 生命周期，但运行时必须依据两者共同失败关闭。
-
-#### Scenario: ACTIVE Release 的实现缺失
-- **WHEN** Release 为 ACTIVE 但精确 Installation 为 MISSING
-- **THEN** 管理端同时显示 ACTIVE 与 MISSING，运行时拒绝调用且不自动禁用或换版
-
-#### Scenario: Loki 长期无数据
-- **WHEN** Tool Release 依赖的已发布 Loki Scope Policy 健康为 EMPTY
-- **THEN** Release 状态保持不变，查询继续使用原强制范围并返回空结果告警
-
-### Requirement: 管理权限必须细分且互不隐式授予
-系统 MUST 分别执行 `builtin_tools.read`、`builtin_tools.reconcile`、`builtin_tools.verify`、`builtin_tools.publish`、`builtin_tools.lifecycle`，且这些权限 MUST NOT 隐式授予 `tool_resources.*`、Agent/Application 发布权限或运行 `tool:use` 权限。
-
-#### Scenario: 只读管理员查看目录
-- **WHEN** 管理员只有 `builtin_tools.read`
-- **THEN** 可以查看非敏感 Manifest、Installation、Evidence 摘要和 Release 历史，但不能 reconcile、verify、publish 或改变生命周期
-
-#### Scenario: 发布者缺少资源权限
-- **WHEN** 操作者有 `builtin_tools.publish` 但没有 `tool_resources.publish`
-- **THEN** 可以发布满足条件的 Tool Release，但不能发布或修改 Tool Resource
+- **WHEN** 管理员尝试保存任意 HTTP、MCP、SQL、Shell、脚本、模板、函数或完整 URL 实现
+- **THEN** 系统拒绝且不得保存或执行
 
 ### Requirement: 运行使用授权必须绑定稳定 Tool Identifier
-系统 SHALL 以稳定 Tool Identifier 作为 `tool:use` Grant 目标，并 MUST 在运行时继续校验精确 Release、Application Allowlist 和数据范围；Grant MUST NOT 单独指定或浮动解析 Release 版本。
+系统 SHALL 以稳定 MCP Tool Identifier 作为 `tool:use` Grant 目标，并 MUST 在运行时校验 Agent Tool Envelope、Application Tool 子集、应用访问、数据范围和唯一资源解析；Grant MUST NOT 指定 Handler/Release/Server URL。
 
-#### Scenario: 稳定工具授权命中精确 Release
-- **WHEN** 用户具有某稳定 Identifier 的 `tool:use` 且 Job 冻结了该 Identifier 的可调用精确 Release
-- **THEN** 授权可进入后续资源和范围校验，不需要为每个兼容 Release 重建 Grant
+#### Scenario: 稳定工具授权命中 MCP Tool
+- **WHEN** 用户具有某稳定 Identifier 的 `tool:use` 且 Job 冻结同一 identifier/schema hash
+- **THEN** 授权进入资源和范围校验
 
 #### Scenario: 应用未选择该工具
-- **WHEN** 用户具有稳定 Identifier 的 `tool:use` 但 Application Publication 未选择该 Tool Release
-- **THEN** 系统拒绝调用且不向模型暴露该工具
-
-### Requirement: legacy-v1 必须通过两阶段迁移退出活动运行时
-系统 MUST 把 `legacy-v1` 视为名称级旧绑定标记而非版本，并 SHALL 通过 additive/cutover 和 removal 两阶段迁移；迁移期间不得根据 latest、默认值或第一个候选猜测精确 Release。
-
-#### Scenario: 第一阶段开始后写入旧绑定
-- **WHEN** 任何 API、导入器或运行时尝试创建新的 `legacy-v1` 名称级绑定
-- **THEN** 系统拒绝写入并要求精确 Tool Release 与资源策略快照
-
-#### Scenario: 旧 Job 只有一个可证明候选
-- **WHEN** 非终态、待重试或可 replay Job 可从其原 Publication、代码 digest 和资源事实唯一确定精确绑定
-- **THEN** 迁移在幂等事务中物化 Execution Snapshot 并记录迁移证据
-
-#### Scenario: 旧 Job 候选不唯一
-- **WHEN** 旧 Job 对应零个或多个可能 Release、Resource 或 Policy
-- **THEN** 系统隔离该 Job 并阻止重试/恢复，不得自动选择候选
-
-#### Scenario: 移除兼容路径
-- **WHEN** 新 legacy 写入、活动 Publication legacy 引用、非终态及可恢复 Job legacy 引用均为零，且真实运行与投递链验收通过
-- **THEN** 系统删除 legacy 兼容读取、写入和旧 Publication 激活入口，同时保留终态历史记录供审计
+- **WHEN** 用户具有 Grant 但 Application Publication 未选择该 Tool
+- **THEN** 系统拒绝且不向模型暴露该 Tool
 
 ### Requirement: 内置工具管理界面必须展示定义、证据、发布和生效差异
-“平台治理 → 只读工具” MUST 展示 Code Manifest、Installation 状态、Verification Evidence 摘要、Release 生命周期、依赖 Publication 和 Effective 状态，并按细粒度权限控制动作。
+“平台治理 → 只读工具” SHALL 作为只读 MCP Tool Manifest 目录展示 identifier、描述、schema hash、资源类型、安装可用性和近期运行健康；MUST NOT 提供 reconcile、verify、publish、lifecycle 或动态实现编辑动作。
 
-#### Scenario: Release 已发布但部署漂移
-- **WHEN** 管理员查看一个 ACTIVE Release 且当前 Installation 为 DRIFTED
-- **THEN** 页面同时显示冻结 digest、当前 digest、DRIFTED 和不可调用原因，不得只显示“已发布”
-
-#### Scenario: 管理员查看验证失败
-- **WHEN** verifier 失败并产生包含敏感上游错误的原始响应
-- **THEN** 页面和 API 只显示脱敏错误类别、步骤和 correlation id，不返回凭据或无界原始响应
+#### Scenario: 管理员查看工具目录
+- **WHEN** 管理员具有工具目录读取权限
+- **THEN** 页面显示代码 Manifest 和可用性，不显示已删除的 Handler/Release/Evidence 控件
 
 
-<!-- Migrated from canonical source capability: `governed-tool-resource-management` -->
+<!-- Reconciled from mcp_new capability: `governed-tool-resource-management` -->
 
 ### Requirement: 工具资源必须通过草稿、验证和发布生命周期
 DB、Redis、Loki Resource MUST 具有稳定身份、可编辑 Draft、技术验证结果和不可变 Published Revision；正常发布路径为 `DRAFT → VERIFIED → PUBLISHED`，不包含审核审批步骤。
@@ -274,26 +172,26 @@ Draft 可以删除；Published Revision MUST NOT 被原地修改或通过普通 
 - **THEN** 系统必须拒绝，并要求从该版本创建新 Draft
 
 ### Requirement: 业务应用发布必须绑定具体 Resource Revision
-业务应用发布 MUST 为每个逻辑资源槽保存具体 Resource Revision ID；运行中的 Job 不得跟随 Resource Identity 的后续浮动版本。
+业务应用发布 MUST NOT 绑定或保存 Resource Revision。工具资源保持独立发布；`tool-mcp` MUST 在每次 Tool Call 时按 Agent 提供且通过当前角色数据范围校验的目标、资源类型与可选 placement 解析唯一 Published Resource Revision，并记录实际版本。
 
 #### Scenario: 资源发布新版本
-- **WHEN** 某 Resource 发布新 revision，但业务应用尚未重新发布
-- **THEN** 该业务应用继续绑定原 revision
+- **WHEN** 某 Resource 发布新 revision 且旧 revision 已停用
+- **THEN** 新 Tool Call 只可解析当前可用且唯一的 revision，既有 Job 若无法满足其冻结边界则失败关闭
+
+#### Scenario: 应用尝试提交资源绑定
+- **WHEN** Application Draft 或 Publish payload 包含 Resource Revision、slot 或 mapping
+- **THEN** 系统拒绝旧字段且不保存兼容映射
 
 ### Requirement: 运行时必须原子热加载并保留 Last Known Good
-运行时 SHALL 轮询发布版本并完整构建不可变资源快照后原子切换；加载失败不得用部分或无效快照覆盖 Last Known Good。
+`tool-mcp` SHALL 在单次调用内读取一个一致的资源 revision/Secret 快照并完成连接；系统 MUST NOT 维护 Internal API Platform activation 或 Application Last Known Good 映射。资源解析或连接失败时仅该 Tool Call 失败，不能回退到未授权旧 revision。
 
-#### Scenario: 新快照加载成功
-- **WHEN** 新发布 revision 的 Secret 与驱动均可解析
-- **THEN** 进行中请求继续使用旧快照，新请求使用新快照
+#### Scenario: 当前资源可解析
+- **WHEN** 唯一 Published Resource Revision、active Secret 和驱动均可用
+- **THEN** Tool Call 使用该一致快照执行并记录 revision
 
-#### Scenario: 新快照加载失败
-- **WHEN** 新 revision 缺少 Secret 或连接初始化失败
-- **THEN** 运行时保留 Last Known Good，将相关资源和应用标为 degraded，并记录脱敏错误
-
-#### Scenario: 必需资源没有 Last Known Good
-- **WHEN** 已发布应用所需资源从未成功装载
-- **THEN** 仅该应用必须被标为 blocked 并拒绝新建资源依赖 Job
+#### Scenario: 资源或 Secret 不可用
+- **WHEN** revision 被禁用、Secret 缺失或连接初始化失败
+- **THEN** Tool Call 以安全配置错误失败且不使用旧缓存或其他候选
 
 ### Requirement: 工具资源管理界面必须展示实际生效状态
 “平台治理 → 工具资源” MUST 支持 DB、Redis、Loki 的列表、Draft 编辑、Secret 选择、测试、发布、disable/archive，并区分 draft、published、effective 和 activation 状态。
@@ -303,7 +201,7 @@ Draft 可以删除；Published Revision MUST NOT 被原地修改或通过普通 
 - **THEN** 界面必须同时显示 Published Revision、当前 Effective Revision、失败状态和安全错误，不能误报已生效
 
 ### Requirement: 全量资源重置必须使用四阶段维护命令
-系统 MUST 提供 `resource-reset report/prepare/apply/verify`，只清理 DB、Redis、Loki 资源、revision、binding 和当前快照；Provider、Secret、身份、RBAC、应用、Job、Delivery、审计和历史快照必须保留。
+系统 MUST 提供 `resource-reset report/prepare/apply/verify`，只清理 DB、Redis、Loki 资源及 revision；Provider、Secret、身份、RBAC、应用、Job、Delivery 和审计必须保留。命令 MUST 不再处理 Application Resource Binding、Resource Mapping、runtime generation 或 activation 表。
 
 #### Scenario: Prepare 后状态发生变化
 - **WHEN** apply 前的对象清单 digest 与 prepare 结果不一致
@@ -314,335 +212,11 @@ Draft 可以删除；Published Revision MUST NOT 被原地修改或通过普通 
 - **THEN** prepare 必须中止，不得强杀任务或继续删除资源
 
 #### Scenario: 用户确认精确清单
-- **WHEN** apply 再次展示 operation ID、备份引用和精确影响并得到明确确认
-- **THEN** 系统在单个受控事务中清理目标并把依赖应用标为 blocked
+- **WHEN** apply 再次展示 operation ID、备份引用和精确资源清单并得到明确确认
+- **THEN** 系统在单个受控事务中清理资源，不修改应用或创建 blocked 映射状态
 
 
-<!-- Migrated from canonical source capability: `internal-platform-topology` -->
-
-### Requirement: Platform models an environment/base/workshop topology
-The system SHALL model only the topology levels that exist for a deployment: Environment, optional Base within that Environment, and optional Workshop within that Base. A Workshop SHALL be a logical partition inside a Base rather than an independently connected business target, and the platform MUST NOT create phantom `default` or `none` nodes to fill absent levels.
-
-#### Scenario: Full three-tier topology
-- **WHEN** the platform stores environment `sanjiu` with base `guanlan` and workshops `GL001` and `GL002`
-- **THEN** both workshops are distinct logical targets that may inherit the same base-level DB or Redis connection and remain isolated by published partition policies
-
-#### Scenario: Environment without a base
-- **WHEN** a deployment has one environment-level database or Redis and no business base or workshop
-- **THEN** the Environment is the effective leaf target and no synthetic Base or Workshop is created
-
-#### Scenario: Base without workshops
-- **WHEN** an Environment contains a Base whose data is not divided into workshops
-- **THEN** the Base is the effective leaf target and no workshop-specific partition policy is required
-
-#### Scenario: Child is submitted without its parent
-- **WHEN** configuration attempts to create a Workshop without a real Base or a Base without a real Environment
-- **THEN** the platform rejects the invalid topology relationship
-
-### Requirement: Bases are addressed by business code, not IP
-The system SHALL address bases using a stable business code (e.g. `guanlan`) rather than an IP address, while connection details (host/IP, port) SHALL be internal configuration not exposed to the Agent or the model.
-
-#### Scenario: Agent addresses a base by code
-- **WHEN** a tool request references base `guanlan`
-- **THEN** the platform resolves the base by code and never requires the caller to supply an IP address
-
-### Requirement: Database engine is defined per base
-The system SHALL derive the database engine from the exact Published Database Resource Revision selected for the effective Environment or Base target. All Workshops inheriting one selected parent resource SHALL use that revision's engine, while a different placement MAY select another revision only when it declares a compatible engine and the same Workshop partition policy semantics.
-
-#### Scenario: Workshops inherit base engine
-- **WHEN** base `guanlan` is mapped to a MySQL Resource Revision for workshops `GL001` and `GL002`
-- **THEN** both workshops execute against that revision's MySQL engine and apply their own frozen table-prefix policies
-
-#### Scenario: Environment has no base
-- **WHEN** an Environment leaf is mapped directly to a SQL Server Resource Revision
-- **THEN** database requests resolve that engine without requiring a Base code
-
-#### Scenario: Cloud and edge engines disagree
-- **WHEN** the same logical target's cloud and edge database mappings declare incompatible engines for one tool contract
-- **THEN** Application Publish rejects the mapping instead of changing SQL semantics by placement
-
-### Requirement: Topology is loaded from YAML and seed configuration
-The system SHALL persist topology in PostgreSQL and SHALL resolve runtime connections only from Published Resource Revisions. YAML and seed configuration MAY be used only for bootstrap or explicit import into Draft records; they MUST NOT directly override or replace an effective runtime snapshot.
-
-#### Scenario: Topology imported from YAML
-- **WHEN** an administrator explicitly imports YAML describing environments, bases, workshops and legacy resource data
-- **THEN** the platform creates or updates topology and Resource Draft records that require validation and publication
-
-#### Scenario: Secrets are referenced, not inlined
-- **WHEN** an imported base connection requires a password
-- **THEN** import must map it to a platform Secret migration; no plaintext is stored in topology or Resource Revision
-
-#### Scenario: Database runtime configuration is invalid
-- **WHEN** a Published Resource Revision fails to load but legacy YAML remains available
-- **THEN** the platform keeps Last Known Good or blocks the affected application and MUST NOT fall back to YAML
-
-### Requirement: Structured addressing resolves to a concrete resource binding
-The system SHALL resolve the Job's actual `environment` + optional `base` + optional `workshop` Business Target Path, logical resource slot, and optional placement into the exact Resource Revision and policy revisions frozen by the Application Publication before executing any query.
-
-#### Scenario: Unknown target is rejected
-- **WHEN** a tool request references an Environment, Base, or Workshop absent from the Job Execution Snapshot
-- **THEN** the platform returns a non-retryable resolution error and does not attempt any upstream connection
-
-#### Scenario: Omitted absent level is accepted
-- **WHEN** a Job targets an Environment that has no Base or Workshop levels and omits those fields
-- **THEN** the platform resolves the environment-level Mapping without inventing missing codes
-
-#### Scenario: Missing workshop for a partitioned base
-- **WHEN** a database or Redis request targets a Base with Workshop children but the Job scope has no Workshop
-- **THEN** the platform rejects the request instead of guessing a Workshop or using an unpartitioned parent view
-
-#### Scenario: Floating resource version exists
-- **WHEN** the same Resource Identity has a newer revision than the one bound to the Job
-- **THEN** resolution returns the Job-bound revision and never floats to the newer revision
-
-#### Scenario: Resource mapping is ambiguous
-- **WHEN** the frozen mapping data produces zero or multiple candidates for one slot, target and placement
-- **THEN** resolution fails closed and does not use a first, latest, default or closest-scope fallback
-
-### Requirement: Topology bindings describe Redis mode and Oracle client options
-The system SHALL allow base Redis bindings to declare connection mode (`standalone` or `cluster`) and cluster startup nodes, and SHALL allow Oracle base database bindings to declare client mode, optional SID vs service-name usage, optional connect descriptor, and Oracle SQL compatibility (`modern` or `legacy`). Omitted Redis mode SHALL default to standalone; omitted Oracle client/compat options SHALL use safe defaults that preserve existing behavior.
-
-#### Scenario: Cluster Redis binding loaded from topology
-- **WHEN** topology configuration for a base includes Redis `mode: cluster` and a list of startup nodes (with secrets resolved for password as today)
-- **THEN** the resolved Redis resource binding exposes cluster mode and nodes for the gateway to use
-
-#### Scenario: Oracle legacy binding loaded from topology
-- **WHEN** topology configuration for an Oracle base includes thick/legacy-related options (client mode, compat, SID or connect descriptor)
-- **THEN** the resolved database resource binding exposes those options without revealing secrets to the Agent
-
-#### Scenario: Existing standalone Redis topology remains valid
-- **WHEN** topology configuration omits Redis mode and only provides host/port/db/password refs as before
-- **THEN** the platform treats the binding as standalone and continues to resolve successfully
-
-### Requirement: Resource placement must be independent from business topology
-The system SHALL model optional Resource Placement separately from Environment/Base/Workshop, with first-phase values `cloud` and `edge`; placement MUST NOT create topology nodes or alter the logical identity of a Base or Workshop.
-
-#### Scenario: Same workshop has cloud and edge resources
-- **WHEN** GL001 has both cloud and edge database Resource Revisions
-- **THEN** both mappings target the same Environment/Base/Workshop path and differ only by placement
-
-#### Scenario: Resource has no placement dimension
-- **WHEN** a deployment has one resource for an effective target
-- **THEN** its mapping omits placement and the API rejects `none` or `default` placeholders
-
-#### Scenario: Placement is used as a base code
-- **WHEN** configuration attempts to create `guanlan_cloud` and `guanlan_edge` as pseudo-Bases solely to represent resource location
-- **THEN** validation rejects or migration reports those pseudo-nodes for explicit normalization
-
-
-<!-- Migrated from canonical source capability: `internal-tool-platform-integration` -->
-
-### Requirement: Runtime can select real Internal API Platform
-The system SHALL select the HTTP Internal API Platform client for API and worker runtime when `FEATURE_REAL_INTERNAL_TOOLS=true`, and SHALL keep the fake internal API client for test runtime and default local execution unless explicitly enabled.
-
-#### Scenario: Real internal tools are enabled
-- **WHEN** the worker starts with `FEATURE_REAL_INTERNAL_TOOLS=true` and a configured `INTERNAL_API_BASE_URL`
-- **THEN** the runtime injects `HttpInternalApiClient` into `ReadOnlyToolService`
-
-#### Scenario: Tests keep fake internal tools
-- **WHEN** unit tests build the test container without overriding internal tools
-- **THEN** the runtime injects `FakeInternalApiClient` and does not require a networked Internal API Platform
-
-### Requirement: Internal API requests include execution context
-The system SHALL send the persisted Job ID and correlation ID with every Internal API Platform tool request and MUST authenticate with a required service Bearer Token loaded from a file. User, application, project and scope headers MAY be included only for server-side consistency checks.
-
-#### Scenario: Tool request carries authoritative lookup keys
-- **WHEN** Agent calls any read-only tool through `HttpInternalApiClient`
-- **THEN** the request includes `X-Agent-Job-Id` and `X-Correlation-Id`, plus any non-authoritative consistency headers
-
-#### Scenario: Tool request uses required authorization
-- **WHEN** a non-test Worker starts with real internal tools
-- **THEN** it loads the service Token from `INTERNAL_API_AUTH_TOKEN_FILE`, sends `Authorization: Bearer <token>`, and never writes the Token to logs, audit or summaries
-
-#### Scenario: Required Token file is absent
-- **WHEN** a non-test Worker or Internal API Platform starts without its required Token file
-- **THEN** startup must fail instead of accepting unauthenticated tool traffic
-
-### Requirement: Internal API responses use a safe envelope
-The system SHALL normalize Internal API Platform responses into `ToolResult(summary, raw)` and SHALL use the `summary` field for persisted tool-call summaries and model-visible evidence.
-
-#### Scenario: Platform returns summary envelope
-- **WHEN** the internal platform returns a JSON object containing `summary`, `raw`, `truncated`, and `metadata`
-- **THEN** the client stores `summary` as `ToolResult.summary` and stores the full response as `ToolResult.raw` in memory only
-
-#### Scenario: Platform returns legacy body
-- **WHEN** the internal platform returns a JSON object without a `summary` field
-- **THEN** the client treats the response body as the summary while still applying bounded persistence in the tool service
-
-### Requirement: Internal API failures are classified
-The system SHALL classify Internal API Platform HTTP and transport failures so Agent job retry behavior is deterministic.
-
-#### Scenario: Transient platform failure
-- **WHEN** the internal platform request times out, fails with a transient network error, or returns HTTP 429, 502, 503, or 504
-- **THEN** the tool call raises a retryable execution error that can be handled by job retry policy
-
-#### Scenario: Non-retryable platform rejection
-- **WHEN** the internal platform returns HTTP 400, 401, 403, 404, or an explicit policy denial
-- **THEN** the tool call fails with a non-retryable safe error and records the rejected tool call
-
-### Requirement: Local mock platform can verify HTTP tool flow
-The system SHALL provide a local mock or test double for Internal API Platform that implements the six MVP read-only endpoints with the same response envelope as the real platform.
-
-#### Scenario: Docker Compose validates mock platform
-- **WHEN** Docker Compose runs with `FEATURE_REAL_INTERNAL_TOOLS=true` and `INTERNAL_API_BASE_URL` pointing to the mock platform
-- **THEN** a debug Agent job can call HTTP tools, persist tool-call summaries, and produce a diagnostic report without requiring real internal data sources
-
-### Requirement: Internal API Platform 必须重新读取 Job 授权事实
-Internal API Platform MUST use the authenticated Job ID to load current Job state and its immutable application publication, Handler, Resource Revision and Execution Scope before every tool operation.
-
-#### Scenario: Service Token 有效但 Job 不属于请求范围
-- **WHEN** request headers attempt to name a resource outside the loaded Job scope
-- **THEN** the platform rejects the request without opening an upstream connection
-
-### Requirement: Internal API 服务 Token 必须支持受控轮换
-系统 SHALL 支持 current/next Token 在短暂维护窗口重叠，并使用常量时间比较；完成轮换后 MUST 移除旧 Token。
-
-#### Scenario: 轮换窗口内使用 next Token
-- **WHEN** next Token 已部署到服务端并开始逐个更新调用方
-- **THEN** current 和 next 均可通过认证，且审计不记录 Token 内容
-
-#### Scenario: 轮换完成
-- **WHEN** 所有调用方已切换到 next Token
-- **THEN** 运维必须将其提升为 current 并撤销旧 Token
-
-
-<!-- Migrated from canonical source capability: `local-internal-api-platform-structure` -->
-
-### Requirement: Top-level local platform entrypoint remains compatible
-系统 SHALL 保留本地 Internal API Platform 的顶层 FastAPI factory 入口，使现有 Compose 和 uvicorn 启动路径无需迁移即可继续启动服务。
-
-#### Scenario: Compose command imports the top-level entrypoint
-- **WHEN** local tools profile 使用 `app.local_internal_api_platform:create_app` 启动 `local-internal-api-platform`
-- **THEN** Python import 能解析到 FastAPI factory，并创建本地平台应用实例
-
-#### Scenario: Top-level entrypoint delegates implementation
-- **WHEN** 开发者查看 `backend/app/local_internal_api_platform.py`
-- **THEN** 该文件只保留入口兼容职责，不包含 endpoint、Loki gateway、summary 转换或数据源访问实现细节
-
-### Requirement: Local platform implementation is modularized
-系统 SHALL 将本地 Internal API Platform 的实现拆分到 `backend/app/modules/local_internal_api_platform/`，并按职责隔离 app factory、routes、schemas、Loki gateway 和 envelope/error helper。
-
-#### Scenario: App factory lives in the module package
-- **WHEN** 代码调用 `app.modules.local_internal_api_platform.app.create_app`
-- **THEN** 该 factory 加载配置、创建本地平台依赖并注册工具 endpoint
-
-#### Scenario: Loki behavior lives outside routes
-- **WHEN** `POST /tools/loki/query` 被调用
-- **THEN** route 层只负责 HTTP 编排，Loki 输入校验、LogQL 构造、upstream 查询、错误分类和 summary 转换由 Loki gateway 模块处理
-
-#### Scenario: Shared response helpers are isolated
-- **WHEN** context placeholder、Loki 成功响应或禁用工具错误需要返回 Internal API Platform 兼容结构
-- **THEN** 标准 envelope、`tool_not_configured` 和安全错误文本处理由共享 helper 提供，而不是散落在 route 或 gateway 代码中
-
-### Requirement: Modularization preserves local platform behavior
-系统 MUST 保持本地 Internal API Platform 的外部 endpoint、成功响应 envelope、错误结构和安全边界不变。
-
-#### Scenario: Health endpoint behavior is unchanged
-- **WHEN** 开发者请求 `GET /health`
-- **THEN** 响应仍包含 `status`、`mode=local-internal-api-platform` 和 Loki 配置摘要
-
-#### Scenario: Placeholder context behavior is unchanged
-- **WHEN** Agent 调用 `/tools/context/er` 或 `/tools/context/business-flow`
-- **THEN** 响应仍返回明确标记为 local placeholder 的 summary、raw、truncated 和 metadata envelope
-
-#### Scenario: Loki query behavior is unchanged
-- **WHEN** Agent 调用 `/tools/loki/query`
-- **THEN** 本地平台仍按现有 service、keyword、minutes、limit 和 response chars 限制查询 Loki，并返回 bounded summary、raw 摘要、truncated 标记和 metadata
-
-#### Scenario: Unconfigured tools remain disabled
-- **WHEN** Agent 调用 `/tools/database/query`、`/tools/redis/get` 或 `/tools/redis/scan`
-- **THEN** 本地平台仍返回安全的 `tool_not_configured` 错误，并且 MUST NOT 连接真实数据库或 Redis
-
-### Requirement: Tests cover both entrypoint compatibility and module internals
-系统 SHALL 更新测试，使本地平台 endpoint 回归覆盖顶层入口，同时直接覆盖模块化后的 Loki gateway 和 helper 行为。
-
-#### Scenario: Endpoint tests use top-level entrypoint
-- **WHEN** 测试验证 `/health`、context endpoint、Loki endpoint 和禁用工具 endpoint
-- **THEN** 测试通过 `app.local_internal_api_platform.create_app` 创建应用，证明现有启动入口仍可用
-
-#### Scenario: Unit tests use module imports
-- **WHEN** 测试验证 LogQL 构造、Loki 输入校验、upstream 错误分类、summary 截断和敏感字段脱敏
-- **THEN** 测试直接导入 `app.modules.local_internal_api_platform` 下的实现模块，证明内部职责可被单独测试
-
-
-<!-- Migrated from canonical source capability: `local-internal-api-platform` -->
-
-### Requirement: Local Internal API Platform is available for development
-The system SHALL provide a local development Internal API Platform service that exposes the MVP read-only tool endpoints without changing Agent runtime dependencies.
-
-#### Scenario: Local platform starts in Compose
-- **WHEN** the developer starts Docker Compose with the local tools profile
-- **THEN** `local-internal-api-platform` starts as a service on the Compose network and exposes port `9000` to other containers
-
-#### Scenario: Worker targets local platform
-- **WHEN** `FEATURE_REAL_INTERNAL_TOOLS=true` and `INTERNAL_API_BASE_URL=http://local-internal-api-platform:9000`
-- **THEN** `agent-worker` sends tool calls to the local platform through `HttpInternalApiClient`
-
-### Requirement: Local platform queries real Loki through bounded endpoint
-The local platform SHALL implement `POST /tools/loki/query` by querying the configured Loki HTTP API with bounded read-only parameters.
-
-#### Scenario: Loki query succeeds
-- **WHEN** the platform receives `query_loki` with an allowed service, keyword, time range, and limit
-- **THEN** it queries Loki through `LOKI_BASE_URL` and returns a bounded summary envelope containing service, line count, highlights, stream labels, and metadata
-
-#### Scenario: Loki runs on host machine
-- **WHEN** Loki is reachable from the host at `http://localhost:3100`
-- **THEN** the Compose default configuration uses `http://host.docker.internal:3100` as `LOKI_BASE_URL` for container-to-host access
-
-#### Scenario: Loki is unavailable
-- **WHEN** `LOKI_BASE_URL` cannot be reached or Loki returns a transient upstream error
-- **THEN** the platform returns a retryable Internal API Platform error response without exposing credentials or unbounded upstream details
-
-### Requirement: Loki query input is constrained
-The local platform MUST constrain Loki query input before calling Loki.
-
-#### Scenario: Query exceeds time range
-- **WHEN** `minutes` exceeds `LOKI_MAX_MINUTES`
-- **THEN** the platform rejects the request with a safe policy or validation error and does not call Loki
-
-#### Scenario: Query exceeds line limit
-- **WHEN** `limit` exceeds `LOKI_MAX_LINES`
-- **THEN** the platform rejects or clamps the request according to configuration and records truncation metadata
-
-#### Scenario: Unsafe selector is supplied
-- **WHEN** the request contains an empty selector, an unsupported selector label, or a selector value with unsafe characters
-- **THEN** the platform rejects the request before constructing LogQL
-
-### Requirement: Local context endpoints provide explicit placeholders
-The local platform SHALL implement ER and business-flow context endpoints with explicit local placeholder summaries until real graph-context services are connected.
-
-#### Scenario: ER context is requested
-- **WHEN** Agent calls `get_er_context`
-- **THEN** the local platform returns an envelope that identifies the response as local placeholder context and includes the query and project code
-
-#### Scenario: Business-flow context is requested
-- **WHEN** Agent calls `get_business_flow_context`
-- **THEN** the local platform returns an envelope that identifies the response as local placeholder context and includes the query and project code
-
-### Requirement: Unconfigured database and Redis tools are disabled by default
-The local platform MUST NOT return fake database or Redis evidence when those real sources are not configured.
-
-#### Scenario: Database tool is called before configuration
-- **WHEN** Agent calls `query_database` against the local platform without an enabled database gateway
-- **THEN** the platform returns a safe `tool_not_configured` error and does not execute SQL
-
-#### Scenario: Redis tool is called before configuration
-- **WHEN** Agent calls `query_redis_get` or `query_redis_scan` against the local platform without an enabled Redis gateway
-- **THEN** the platform returns a safe `tool_not_configured` error and does not access Redis
-
-### Requirement: Real Claude and local Loki can be validated end to end
-The system SHALL document and support an end-to-end local verification path using real Claude/DeepSeek and local Loki.
-
-#### Scenario: Real diagnostic job uses local Loki
-- **WHEN** the developer starts `api-server`, `agent-worker`, RabbitMQ, PostgreSQL, and `local-internal-api-platform` with real Claude enabled
-- **THEN** submitting a debug Agent job eventually produces a terminal job status and persists steps and tool-call records that show local platform tool activity
-
-#### Scenario: Verification keeps write operations unavailable
-- **WHEN** real Claude attempts a database, Redis mutation, or unsupported write operation during local verification
-- **THEN** the system rejects the operation and records the safe failure without mutating external systems
-
-
-<!-- Migrated from canonical source capability: `loki-diagnostics` -->
+<!-- Reconciled from mcp_new capability: `loki-diagnostics` -->
 
 ### Requirement: Loki diagnostics shall expose bounded label discovery
 系统 SHALL 提供受限的 Loki label 诊断能力，用于列出当前授权目标在指定时间窗口内可见的 label 名称。
@@ -691,7 +265,7 @@ Loki 诊断 endpoint SHALL 使用与真实 `query_loki` 相同的 environment/ba
 - **AND** 响应 MUST NOT 暴露认证 token 或 secret
 
 
-<!-- Migrated from canonical source capability: `loki-scope-selector-policy` -->
+<!-- Reconciled from mcp_new capability: `loki-scope-selector-policy` -->
 
 ### Requirement: Loki Resource 只允许 global 或 environment 连接范围
 系统 SHALL 允许 Loki Resource Revision 声明 global scope 或一个精确 Environment scope，并 MUST NOT 把 Base、Workshop 或 cloud/edge placement 作为 Loki 连接资源范围。
@@ -844,7 +418,7 @@ Loki Resource 管理界面 SHALL 只把 Draft 或 Published Revision 引用该 R
 - **THEN** 系统标记安全的上游健康错误，与“成功但为空”区分，并且不泄露 Secret
 
 
-<!-- Migrated from canonical source capability: `multi-dialect-database-gateway` -->
+<!-- Reconciled from mcp_new capability: `multi-dialect-database-gateway` -->
 
 ### Requirement: Database gateway supports MySQL, SQL Server, and Oracle
 The system SHALL execute read-only queries against MySQL, SQL Server, and Oracle engines through a common resource-revision contract. PostgreSQL business data sources MUST NOT be published until a PostgreSQL runtime Handler is implemented.
@@ -967,7 +541,7 @@ Oracle 目标 MUST 为 11.2.0.4 单实例，使用 `host`、`port` 以及 `servi
 - **THEN** Oracle Draft 不得进入 PUBLISHED，状态必须明确为等待真实连接验证
 
 
-<!-- Migrated from canonical source capability: `multi-dialect-schema-inspection` -->
+<!-- Reconciled from mcp_new capability: `multi-dialect-schema-inspection` -->
 
 ### Requirement: SchemaInspectorFactory 必须按数据库引擎选择 inspector
 系统 SHALL 提供统一的 `SchemaInspectorFactory`，根据 resolved resource binding 的数据库引擎返回 MySQL、Oracle 或 SQL Server schema inspector。应用服务 MUST 依赖 factory 契约，而不是自行分支或维护引擎 reader 字典。
@@ -1018,25 +592,21 @@ SQL Server schema inspector SHALL 从 SQL Server 系统目录读取目标 databa
 - **THEN** inspector 只查询系统目录元数据，不执行针对业务表的样例数据查询
 
 
-<!-- Migrated from canonical source capability: `oracle-instant-client-runtime` -->
+<!-- Reconciled from mcp_new capability: `oracle-instant-client-runtime` -->
 
 ### Requirement: Internal API Platform image bundles Oracle Instant Client
-The system SHALL ship Oracle Instant Client libraries inside the `internal-api-platform` runtime image so that thick-mode Oracle connections can be initialized in container deployments without mounting client libraries from the host.
+若平台支持 Oracle thick/legacy 连接，系统 SHALL 仅在 `tool-mcp` 镜像中安装匹配架构的 Oracle Instant Client，并由 Oracle Resource Revision 显式选择模式；Internal API Platform 镜像和服务 MUST 不存在。
 
-#### Scenario: Image contains Instant Client libraries
-- **WHEN** the `internal-api-platform` image is built
-- **THEN** Instant Client shared libraries are present in the image and discoverable via the configured library path environment
+#### Scenario: 构建 tool-mcp Oracle 镜像
+- **WHEN** vendor 目录提供受支持的 Oracle Instant Client
+- **THEN** `tool-mcp` 可以初始化 thick client，Worker/API/Runtime 镜像不包含该客户端
 
-#### Scenario: Process initializes thick client when libraries exist
-- **WHEN** the platform process starts and Instant Client libraries are present
-- **THEN** the process initializes oracledb thick mode once successfully (or records a clear startup failure if initialization fails)
-
-#### Scenario: Other service images stay without Instant Client
-- **WHEN** `api-server` or `agent-worker` images are built
-- **THEN** those images are not required to include Oracle Instant Client
+#### Scenario: 未提供 thick client
+- **WHEN** Oracle Resource 要求 thick 模式但镜像没有客户端
+- **THEN** 资源验证和 Tool Call 失败关闭且不回退到不兼容模式
 
 
-<!-- Migrated from canonical source capability: `platform-access-control` -->
+<!-- Reconciled from mcp_new capability: `platform-access-control` -->
 
 ### Requirement: Platform enforces environment/base/workshop access scope
 The system SHALL enforce platform-side access scope against the actual Business Target Path: Environment, optional Base and optional Workshop. Authorization SHALL be independent of the Agent-side stable Tool Identifier permission, and Resource Placement (`cloud`/`edge`) MUST NOT be a user, group or role authorization dimension.
@@ -1153,7 +723,7 @@ The system SHALL audit access-control decisions (allow/deny) with the resolved t
 - **THEN** 模型不获得该工具，直接调用也被拒绝
 
 
-<!-- Migrated from canonical source capability: `readonly-tool-platform` -->
+<!-- Reconciled from mcp_new capability: `readonly-tool-platform` -->
 
 ### Requirement: Tool calls go through internal API platform
 The system SHALL route Claude tool calls through internal API platform client contracts instead of direct database, Redis, Loki, ER, or business-flow clients inside the Agent runtime. When real internal tools are enabled, the runtime SHALL perform these calls through the configured HTTP Internal API Platform; when disabled, tests and local development MAY use the fake client with the same application contract.
@@ -1560,79 +1130,24 @@ Agent Runtime 和 Internal API Platform MUST 在构建和执行 Tool Call 时校
 - **THEN** 运行时拒绝调用并记录 DRIFTED，不自动使用当前实现
 
 
-<!-- Migrated from canonical source capability: `real-tools-runtime` -->
+<!-- Reconciled from mcp_new capability: `real-tools-runtime` -->
 
-### Requirement: Real-tools profile shall start the topology-aware platform
-系统 SHALL 提供明确的 `real-tools` 运行模式，用于启动拓扑化 `internal-api-platform`，并使 `api-server` 与 `agent-worker` 通过 `INTERNAL_API_BASE_URL=http://internal-api-platform:9000` 调用该平台。
+### Requirement: Real-tools 必须通过标准 MCP Tool Runtime 执行
+真实工具验收 SHALL 启动 PostgreSQL、RabbitMQ、`tool-mcp`、两个 Agent Runtime、Worker 与所需工具资源；MUST NOT 启动 Internal API Platform 或配置 `INTERNAL_API_*`。
 
-#### Scenario: 启动 real-tools 主线
-- **WHEN** 开发者按文档使用 `real-tools` profile 启动 Docker Compose
-- **THEN** 系统启动 `internal-api-platform`、`api-server`、`agent-worker`、`postgres` 和 `rabbitmq`
-- **AND** `agent-worker` 环境变量中的 `INTERNAL_API_BASE_URL` 指向 `http://internal-api-platform:9000`
+#### Scenario: 真实数据库工具链
+- **WHEN** Python 或 TypeScript Agent Job 对已授权目标调用数据库只读 Tool
+- **THEN** 请求沿 `Runtime -> tool-mcp -> Resource` 完成并记录精确审计
 
-#### Scenario: real-tools 不依赖 local platform
-- **WHEN** 系统运行在 `real-tools` 模式
-- **THEN** Agent 工具请求 SHALL 进入 `internal-api-platform`
-- **AND** 系统 MUST NOT 要求同时启动 `local-internal-api-platform`
+### Requirement: Real-tools 验收必须覆盖拒绝和恢复
+验收 MUST 覆盖未授权 Tool、数据范围越界、资源零命中、多命中、Secret 不可用、只读策略拒绝以及配置恢复后的成功调用。
 
-### Requirement: Runtime modes shall be documented and distinguishable
-系统 SHALL 文档化 fake、mock-tools、local-tools、real-tools 四种运行模式的用途、启动命令、关键环境变量和验收标准。
-
-#### Scenario: 开发者选择运行模式
-- **WHEN** 开发者阅读 README 或等价文档
-- **THEN** 文档明确说明 fake 用于无外部工具、mock-tools 用于假证据、local-tools 用于宿主 Loki 快速联调、real-tools 用于正式拓扑化工具平台
-
-#### Scenario: 错误 profile 配置可被识别
-- **WHEN** `FEATURE_REAL_INTERNAL_TOOLS=true` 但 `INTERNAL_API_BASE_URL` 没有指向当前已启动的平台服务
-- **THEN** 文档和 smoke test SHALL 提供检查命令帮助开发者发现配置不一致
-
-### Requirement: Real-tools smoke test shall verify platform and agent layers
-系统 SHALL 提供分层 smoke test，并在最终 Gate 使用新鲜合成事件验证 Grafana Bearer Webhook、Inbox/Job Outbox、RabbitMQ、Agent Worker、真实只读 MySQL 或 SQL Server 工具、Job 结果、Delivery Outbox 与真实 DingTalk 回复。
-
-#### Scenario: 平台层 smoke test
-- **WHEN** 开发者执行 real-tools 平台测试
-- **THEN** 可以验证 schema head、Internal API service Token、Job fact authorization、published resource snapshot、只读目标解析和安全工具结果
-
-#### Scenario: Agent 层 smoke test
-- **WHEN** 开发者通过受保护 Debug 入口提交 Job
-- **THEN** 可以查询 Job、steps、tool-calls、dispatch Outbox 和独立 Delivery 状态
-
-#### Scenario: Grafana 到 DingTalk 真实闭环
-- **WHEN** 本地 Grafana 使用有效 Bearer Token 发送合成 firing 事件
-- **THEN** 同一 correlation 链必须产生真实只读工具证据和真实 DingTalk 送达证据
-
-### Requirement: Missing real-tools configuration shall fail safely
-系统 SHALL 在 real-tools 缺少 topology、secret、Loki base URL 或访问授权时返回安全错误，不得误报为成功查询。
-
-#### Scenario: 缺少平台 secret
-- **WHEN** real-tools 请求需要的 secret env 未配置
-- **THEN** Internal API Platform MUST 返回非敏感错误摘要
-- **AND** 响应 MUST NOT 泄露 secret 名称对应的真实值
-
-#### Scenario: 未授权用户访问目标
-- **WHEN** 请求用户无权访问指定 environment/base/workshop
-- **THEN** Internal API Platform SHALL 拒绝请求并记录访问决策
-
-### Requirement: Real-tools 验收必须覆盖拒绝与恢复
-smoke/integration 验收 MUST 证明无效 Webhook Token 不创建 Job、缺少严格 RBAC 被拒绝、RabbitMQ 恢复后 Outbox 可继续、Worker 错误进入有限 retry/DEAD、Delivery 可独立恢复且 Secret 不泄漏。
-
-#### Scenario: 无效 Bearer Token
-- **WHEN** Grafana 请求使用错误 Token
-- **THEN** 不得创建 Agent Job 或 Job Dispatch Outbox
-
-#### Scenario: RabbitMQ 短暂中断
-- **WHEN** Outbox 已提交而 RabbitMQ 暂时不可用
-- **THEN** RabbitMQ 恢复后同一幂等 event 被发布且只产生一个业务结果
-
-### Requirement: Real-tools 报告必须说明本地边界和延期测试
-验收报告 MUST 明确 HTTP 仅用于本地/Compose，并将真实 Oracle 11.2.0.4、Worker RUNNING 崩溃恢复、任务取消和生产 HTTPS 标为未实现或延期。
-
-#### Scenario: 本地闭环全部通过
-- **WHEN** MySQL/SQL Server 与 DingTalk 链路通过
-- **THEN** 报告不得因此声称 Oracle 或公网生产安全已通过
+#### Scenario: 歧义资源修复
+- **WHEN** 两个资源导致调用被拒绝，管理员停用冲突 revision 后重试新 Job
+- **THEN** 新调用唯一解析并成功，旧失败历史保持不变
 
 
-<!-- Migrated from canonical source capability: `workshop-resource-partition-policy` -->
+<!-- Reconciled from mcp_new capability: `workshop-resource-partition-policy` -->
 
 ### Requirement: Workshop Resource Partition Policy 必须版本化发布
 系统 SHALL 为每个需要共享物理资源的逻辑 Workshop 管理稳定 Policy Identity、可编辑 Draft、机器验证证据和不可变 Published Revision；修改任何前缀或规则后 MUST 创建新 Draft、重新验证并发布新 revision。
@@ -1749,3 +1264,98 @@ Redis Resource 连接测试 MUST 只验证受治理连接字段、Secret、认�
 #### Scenario: 云边策略不一致
 - **WHEN** cloud Mapping 引用 GL001 Policy A 而 edge Mapping 引用 GL001 Policy B
 - **THEN** Application Publish 拒绝并指出同一逻辑 Workshop 的策略不一致
+
+
+<!-- Reconciled from mcp_new capability: `standard-mcp-tool-runtime` -->
+
+### Requirement: 双 Runtime 只使用固定标准 MCP Tool Server
+系统 SHALL 由单一 `tool-mcp` 服务使用官方 MCP SDK 向 Python 与 TypeScript Runtime 提供工具；Runtime MUST 只连接部署固定的私网地址和 `server_code=tool-mcp`，不得接受 Agent、Application、用户或模型提供的 MCP Server URL。
+
+#### Scenario: 两个 Runtime 调用同一工具
+- **WHEN** Python 与 TypeScript Runtime 分别执行冻结了同一 Tool 的 Job
+- **THEN** 两端必须使用同一 MCP Tool schema 和等价执行语义
+
+#### Scenario: payload 提供自定义 Server
+- **WHEN** 请求或模型输出包含自定义 MCP URL、Server code 或 transport
+- **THEN** Runtime 和 `tool-mcp` 必须在连接或调用前拒绝
+
+### Requirement: MCP Tool 实现必须由代码 Manifest 拥有
+系统 MUST 从代码 Manifest 注册稳定 Tool identifier、描述、输入 Schema、只读标记、资源类型和实现函数；数据库和管理 API MUST NOT 创建或覆盖 URL、SQL、Shell、脚本、模板或任意可执行实现。
+
+#### Scenario: 部署合法 Manifest
+- **WHEN** `tool-mcp` 启动并加载无冲突的代码 Manifest
+- **THEN** MCP `tools/list` 只返回当前 Job 冻结且授权的 Manifest 子集
+
+#### Scenario: 管理端提交动态实现
+- **WHEN** 管理端尝试创建任意 MCP/HTTP/SQL/Shell/脚本实现
+- **THEN** 系统拒绝且不持久化该内容
+
+### Requirement: MCP 调用必须绑定有效 Job
+每个 MCP 调用 MUST 携带非敏感 Job 标识；`tool-mcp` MUST 重新读取 Job，并要求状态为 RUNNING、Runtime/protocol 合法、Tool 存在于 Job 冻结集合且 schema hash 一致。
+
+#### Scenario: 合法 Job 调用冻结工具
+- **WHEN** RUNNING Job 调用其冻结的精确 Tool
+- **THEN** `tool-mcp` 进入资源、权限和只读策略校验
+
+#### Scenario: Job 或 Tool 不匹配
+- **WHEN** Job 不存在、非 RUNNING、Tool 未冻结或 schema hash 漂移
+- **THEN** 调用在连接上游前失败关闭
+
+### Requirement: 工具资源必须按调用目标唯一解析
+`tool-mcp` SHALL 使用 Agent 在当前 Tool Call 中提供的 `environment`、可选 `base`/`workshop`/`placement`、Tool 资源类型和当前可用 Published Resource Revision 解析资源；调用目标 MUST 先通过当前角色数据范围校验。匹配结果 MUST 恰好为一个，不得按顺序、默认值、最近父级或最新版本猜测；Job Snapshot 或 Routing Context 中的历史目标字段 MUST NOT 覆盖调用参数。
+
+#### Scenario: test 环境唯一 MySQL 资源
+- **WHEN** Tool Call 目标为 `environment=test` 且只有一个符合条件的已发布 MySQL Resource Revision
+- **THEN** 工具使用该版本并记录资源 identity/revision 的非敏感审计
+
+#### Scenario: 环境级资源不要求基地或车间
+- **WHEN** Agent 调用目标为 `environment=test`、未提供 base/workshop，且存在唯一 environment scope 资源
+- **THEN** 资源可以唯一解析，服务端不得要求虚构基地或车间
+
+#### Scenario: 调用目标超出角色数据范围
+- **WHEN** Agent 提供的 environment/base/workshop 不在当前用户角色数据范围内
+- **THEN** 调用在资源连接前失败关闭，且不得尝试其它环境或候选
+
+#### Scenario: 资源零命中或多命中
+- **WHEN** 目标没有资源或存在两个同等候选
+- **THEN** Tool Call 返回稳定资源解析错误且不访问任何候选
+
+#### Scenario: cloud 与 edge 并存
+- **WHEN** 同一逻辑目标存在 cloud 与 edge 资源
+- **THEN** 调用必须提供明确 placement，否则失败关闭
+
+### Requirement: 数据库 Redis Loki 执行必须保持只读安全边界
+`tool-mcp` MUST 在进程内执行数据库、Redis 与 Loki 工具，并保留方言感知只读 SQL、表/前缀隔离、行数/超时、Redis Key 前缀、Loki selector/时间/行数和响应大小限制。
+
+#### Scenario: 合法只读数据库查询
+- **WHEN** 查询只读取允许表且满足已授权的 Tool Call 目标和上限
+- **THEN** 执行器返回有界、脱敏且标记为不可信内部证据的结果
+
+#### Scenario: 写 SQL 或越界目标
+- **WHEN** SQL 包含写操作、多语句、未允许表，或参数尝试覆盖资源/租户/前缀事实
+- **THEN** 执行器必须在目标执行前拒绝
+
+### Requirement: MCP Transport 不新增认证和治理层
+`tool-mcp` MUST 不签发或验证 Bearer Token/JWT，不挂载 Runtime Grant，不拥有 signing key，不新增 MCP 专用 RBAC、授权表或 Resource Mapping；业务权限由 Job、角色、应用和工具实现复核。
+
+#### Scenario: Runtime 调用 MCP
+- **WHEN** Runtime 发起工具调用
+- **THEN** 请求不包含 Runtime Grant、模型 Key、Internal API Token 或 MCP access token
+
+#### Scenario: 请求携带 Authorization
+- **WHEN** MCP HTTP 请求携带 Authorization header
+- **THEN** 服务拒绝该请求，避免形成未定义凭据协议
+
+### Requirement: 工具调用审计必须精确且不含 Secret
+系统 SHALL 记录 Job、Agent/Application Publication、Tool identifier/schema hash、业务目标、实际 placement、Resource Revision、权限判定、correlation id、耗时与有界结果摘要；MUST NOT 记录连接密码、Token、完整 Prompt 或无界上游响应。
+
+#### Scenario: 工具调用完成
+- **WHEN** Tool Call 成功或失败
+- **THEN** 历史记录足以定位精确工具、目标和资源版本且不泄漏 Secret
+
+### Requirement: 旧平台和专用密钥不得回归
+发布检查 MUST 拒绝 `runtime-tool-mcp`、`RUNTIME_TOOL_MCP_*`、HS256 issuer/verifier/signing key、Internal API Platform 服务、Internal API Token secret 或 `INTERNAL_API_*` 配置残留。
+
+#### Scenario: 残留扫描命中旧链路
+- **WHEN** 代码、Compose、env 示例或活动规格包含旧运行组件或配置
+- **THEN** 验收失败直到残留被删除

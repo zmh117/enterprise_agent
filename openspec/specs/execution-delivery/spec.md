@@ -5,7 +5,7 @@
 
 ## Requirements
 
-<!-- Migrated from canonical source capability: `agent-job-debug-api` -->
+<!-- Reconciled from mcp_new capability: `agent-job-debug-api` -->
 
 ### Requirement: 调试 API 必须能创建 Agent Job
 系统 SHALL 提供受登录态保护的调试 Job 创建 API，用于在不依赖外部 Channel 的情况下创建只读诊断 Job，并复用业务应用发布、严格 RBAC、审计、持久化和 Outbox 链路。API MUST 使用当前登录用户，且只接受该用户有权使用的已发布业务应用、Execution Scope、消息和幂等键。
@@ -136,7 +136,7 @@ Job、Step 和 Tool Call 查询 MUST 要求登录，并仅允许 Job 创建人�
 - **THEN** 系统固化该 binding；页面不得允许填写任意 Connector 或目标地址
 
 
-<!-- Migrated from canonical source capability: `agent-job-lifecycle` -->
+<!-- Reconciled from mcp_new capability: `agent-job-lifecycle` -->
 
 ### Requirement: Agent sessions and jobs are persisted
 The system SHALL persist Agent sessions, Agent jobs, user messages, assistant messages, retry metadata, result summaries, failure reasons, source channel metadata, requester identity, routing context, reply route, and an immutable Tool Execution Snapshot before dispatch. The Snapshot MUST include the exact Agent/Application Publication, Tool Releases, Handler Versions, Implementation Digests, Business Target Path, permitted placements, Resource Revisions, Partition/Loki Policy IDs/revisions/hashes and authorization-fact summary required by the Job.
@@ -443,70 +443,95 @@ Job 创建后 MUST 保持外部 User ID 和 default Team ID 快照不可变；�
 - **THEN** 系统保留其只读审计记录，但不得从该记录创建新执行
 
 
-<!-- Migrated from canonical source capability: `claude-agent-runtime-integration` -->
+<!-- Reconciled from mcp_new capability: `claude-agent-runtime-integration` -->
 
 ### Requirement: Real runtime is implemented with the Claude Agent SDK
-The system SHALL implement `RealClaudeCodeAgentClient` using the Claude Agent SDK (`claude_agent_sdk`) entry points (`ClaudeSDKClient` or `query` with `ClaudeAgentOptions`) instead of calling the raw Anthropic Messages API. Only the infrastructure client module SHALL import the SDK.
+系统 SHALL 在独立 TypeScript `agent-runtime` 服务中使用官方 `@anthropic-ai/claude-agent-sdk` 执行 `typescript-v1` Agent loop，并 SHALL 长期保留现有 Python Claude Agent SDK 作为 `python-v1` 执行路径。公共编排层 SHALL 只依赖语言无关的 `AgentRunResult`/Runtime client 契约；每条 Runtime 的 SDK 类型不得泄漏到公共 Job 编排逻辑。
 
-#### Scenario: Real client drives an agent loop
-- **WHEN** `RealClaudeCodeAgentClient.run()` executes a job with a valid API key and CLI available
-- **THEN** it issues the diagnostic prompt through the Claude Agent SDK and consumes the SDK message stream until a final result message is produced
+#### Scenario: TypeScript Runtime驱动Agent loop
+- **WHEN** `AgentExecutor` 执行一个固定为 `typescript-v1` 且配置有效的 Job
+- **THEN** Python Runtime client 调用 TypeScript Runtime，由 Runtime 消费 SDK message stream 并返回规范最终结果
 
-#### Scenario: SDK types do not leak into application layer
-- **WHEN** `AgentExecutor` invokes the client
-- **THEN** it receives an `AgentRunResult` and never imports or references `claude_agent_sdk` types
+#### Scenario: SDK类型不泄漏到Python应用层
+- **WHEN** Python `AgentExecutor` 调用路由 Runtime client
+- **THEN** 公共编排逻辑只处理 Runtime client 契约和 `AgentRunResult`，不直接处理 TypeScript SDK 类型或 Python `claude_agent_sdk` 消息类型
+
+#### Scenario: Python Runtime长期保留
+- **WHEN** 新 Job 未命中任何显式 TypeScript 环境或 Application Publication 门禁
+- **THEN** Job 固定为 `python-v1` 并由现有 Python Claude Agent SDK 路径执行
+- **AND** TypeScript 灰度或 E2E 完成不得自动删除、禁用或降级 Python Runtime
 
 ### Requirement: Real runtime is selectable via feature flag
-The system SHALL select `RealClaudeCodeAgentClient` when `FEATURE_REAL_CLAUDE=true` and `StubClaudeCodeAgentClient` otherwise for API and worker runtime containers. Test runtime SHALL continue to use stub by default unless a test explicitly injects a fake client.
+系统 SHALL 通过显式环境/Application 门禁与不可变 Job Runtime 快照选择 `python-v1` 或 `typescript-v1`。未命中 TypeScript 门禁时 MUST 默认选择 `python-v1`；同一 attempt 和 retry MUST 使用冻结 Runtime，且在 Runtime 故障时 MUST NOT 自动跨实现 fallback。测试容器默认继续使用 stub，除非测试显式注入 Runtime client。
 
-#### Scenario: Compose worker uses real runtime when enabled
-- **WHEN** `agent-worker` starts with `FEATURE_REAL_CLAUDE=true` and a valid Anthropic API key
-- **THEN** the worker container injects `RealClaudeCodeAgentClient` into `AgentExecutor`
+#### Scenario: 默认选择Python Runtime
+- **WHEN** 新 Job 没有命中显式 TypeScript 门禁
+- **THEN** 系统把 `python-v1` 和协议版本固定到 Job
 
-#### Scenario: Local tests keep stub runtime
-- **WHEN** unit tests build the test container without overriding the Claude client
-- **THEN** `AgentExecutor` uses `StubClaudeCodeAgentClient` and does not require the SDK, an API key, or the CLI
+#### Scenario: 指定Application使用TypeScript Runtime
+- **WHEN** 测试 Application 的已发布配置固定 `typescript-v1`
+- **THEN** 新 Job 和其所有 retry 均调用 TypeScript Runtime
+
+#### Scenario: TypeScript Runtime不可用
+- **WHEN** 固定为 `typescript-v1` 的 attempt 无法连接 Runtime
+- **THEN** 系统按稳定错误分类进入本地 retry/终态流程，不自动改用 Python SDK
+
+#### Scenario: 本地测试保持Stub
+- **WHEN** 单元测试构建测试 Container 且未覆盖客户端
+- **THEN** `AgentExecutor` 使用 stub，不需要模型凭据、Node 服务或外部网络
 
 ### Requirement: Anthropic credentials and CLI runtime are validated before execution
-The system SHALL read `ANTHROPIC_API_KEY` from environment configuration when real Claude runtime is enabled and MAY read optional `ANTHROPIC_BASE_URL`. The system SHALL surface a clear error when the SDK or its underlying Claude Code CLI runtime is unavailable.
+系统 SHALL 在所选 Runtime 内按 Job 固定模型连接解析 Anthropic 兼容凭据，并验证该 Runtime 所需 SDK/CLI；`agent-worker` MUST 不持有 provider 明文凭据或 Claude Code CLI。缺少凭据、SDK 或 CLI MUST 返回安全、不可重试的配置错误。
 
-#### Scenario: Missing API key fails fast
-- **WHEN** `FEATURE_REAL_CLAUDE=true` and `ANTHROPIC_API_KEY` is empty
-- **THEN** real Claude execution fails with a non-retryable configuration error and a safe user-facing message
+#### Scenario: 缺少API key
+- **WHEN** 所选 Runtime 无法解析 Job 固定 Credential binding 的 active Secret
+- **THEN** 执行在调用模型前以不可重试配置错误失败且安全通知不包含 Secret
 
-#### Scenario: Missing CLI runtime is not retried indefinitely
-- **WHEN** the Claude Agent SDK cannot locate its CLI runtime
-- **THEN** execution fails with a non-retryable error rather than being re-queued as a transient failure
+#### Scenario: Python Runtime缺少CLI
+- **WHEN** Python Claude Agent SDK 无法定位其所需 CLI runtime
+- **THEN** Python Runtime 返回不可重试依赖错误而不无限重试
 
-### Requirement: Read-only tools are exposed only through an in-process SDK MCP server
-The system SHALL expose MVP internal read-only tools and governed external API QUERY Capabilities to the SDK through in-process SDK MCP servers registered via `ClaudeAgentOptions.mcp_servers`. Internal tools SHALL continue to execute through `ToolRegistry` with the current job context; governed Capabilities SHALL execute through the governed Capability resolver/executor with the frozen job, Agent Publication, Application Publication and subject context.
+#### Scenario: Worker镜像检查
+- **WHEN** 部署检查纯 Worker 镜像
+- **THEN** 其中不存在 provider 明文凭据注入、任一 Agent SDK 或 Claude Code CLI
 
-#### Scenario: Model calls a registered read-only tool
-- **WHEN** Claude calls `mcp__internal__query_database` with valid read-only arguments
-- **THEN** the runtime routes the call through `ToolRegistry` to `ReadOnlyToolService` and returns the tool result to the model
+### Requirement: Read-only tools are exposed only through the deployment-fixed standard MCP server
+系统 SHALL 让两个独立 Runtime 通过固定标准 `tool-mcp` 服务访问 Job 冻结的只读 MCP Tool。Runtime MUST NOT 注册旧 Capability Tool、接受任意 Server URL、发送 Runtime Grant/Internal API Token 或在 Tool 不可用时 fallback。MCP transport 不新增 Token、签名、RBAC 或治理层；业务权限与只读边界继续由 Job 和 Tool 实现复核。
 
-#### Scenario: Model calls a governed Capability
-- **WHEN** Claude calls an exposed `cap__ones__work_item__search` with valid public input
-- **THEN** the runtime routes the call through the governed Capability executor and not through an arbitrary web fetch or model-provided URL
+#### Scenario: Python Runtime调用允许Tool
+- **WHEN** Python SDK 调用 Job 精确允许的 MCP Tool
+- **THEN** 调用通过标准 MCP SDK 进入直接工具实现并返回安全结果
 
-#### Scenario: Tool context is bound per job
-- **WHEN** two different jobs run through the real runtime
-- **THEN** each job's internal and governed Tool invocations use that job's own identifiers, frozen publications and requester context and do not leak context between jobs
+#### Scenario: TypeScript Runtime调用允许Tool
+- **WHEN** TypeScript SDK 调用 Job 精确允许的 MCP Tool
+- **THEN** 调用通过同一服务进入等价直接工具实现
+
+#### Scenario: Tool上下文按Job隔离
+- **WHEN** 两个 Runtime 并发调用相同 Tool
+- **THEN** 每次调用使用各自 Job/Publication/目标上下文且不共享模型凭据或可变全局上下文
+
+#### Scenario: 模型提供任意MCP地址
+- **WHEN** 请求内容或模型输出尝试注册未冻结 MCP Server URL 或 Tool
+- **THEN** Runtime 与服务端失败关闭
+
+#### Scenario: 旧平台对象被配置
+- **WHEN** 启动或执行配置包含旧 Capability、Handler、Resource Mapping、Internal API Token、`RUNTIME_TOOL_MCP_*` 或 HS256 signing key
+- **THEN** 部署预检失败且不启动兼容模式
 
 ### Requirement: Built-in mutating tools are disabled
-The system SHALL prevent the SDK's built-in mutating tools such as Bash, Write, Edit, file modification, deployment or web fetch from being available or approved. The system SHALL auto-approve only the exact internal read-only and governed `cap__*` QUERY tools resolved for the current Job; it SHALL deny all other tools through `allowed_tools`, `disallowed_tools`, `permission_mode`, or `can_use_tool`.
+系统 SHALL 禁止 SDK 的 Bash、Write、Edit、NotebookEdit、WebFetch、WebSearch、Shell、文件修改、部署或其它开放执行工具。系统 MUST 只自动批准当前 Job 冻结且满足角色、应用、数据范围与唯一资源解析的 MCP 只读 Tool，不再注册 `cap__*` Capability Tool。
 
 #### Scenario: Model attempts a built-in write tool
-- **WHEN** the SDK runtime would otherwise allow a built-in Bash, Write, or Edit tool
-- **THEN** the tool is not available or its call is denied, so no mutation can occur
+- **WHEN** SDK 尝试调用 Bash、Write 或 Edit
+- **THEN** 该工具不可用或调用被拒绝
 
-#### Scenario: Only current governed set is auto-approved
-- **WHEN** the Agent runs a Job whose Application Allowlist includes one Capability Release
-- **THEN** only existing permitted internal tools and that exact resolved `cap__*` Tool are pre-approved, while other Capability names and generic web fetch remain denied
+#### Scenario: Only current MCP set is auto-approved
+- **WHEN** Application Publication 只选择一个 MCP Tool
+- **THEN** 只有该 Tool 可进入 allowedTools/自动批准集合
 
-#### Scenario: Application has no Capability
-- **WHEN** the frozen Application Capability Allowlist is empty
-- **THEN** no `cap__*` Tool is registered or auto-approved and existing internal Tool behavior remains unchanged
+#### Scenario: Application has no Tool
+- **WHEN** Application MCP Tool 子集为空
+- **THEN** 不注册或批准任何平台 Tool
 
 ### Requirement: Execution is bounded by turns and wall-clock time
 系统 SHALL 使用 Job 固定的有效执行策略限制真实 Claude Agent 执行的 SDK 最大轮次、单次 attempt 墙钟时间和内部工具调用次数。所有进入 Worker 的 Job MUST 具有合法的当前 Execution Policy 快照；Worker MUST NOT 对缺失或不支持的策略使用 `AGENT_MAX_TURNS`、`AGENT_TIMEOUT_SECONDS` 或 Agent Publication 进行运行时 fallback。
@@ -553,13 +578,6 @@ The system SHALL prevent the SDK's built-in mutating tools such as Bash, Write, 
 - **WHEN** 工具调用因为 SQL policy、只读边界或权限被拒绝
 - **THEN** runtime 将安全拒绝结果返回模型或终止本次执行，不将其误分类为 SDK transport retry
 
-### Requirement: Async SDK is bridged into synchronous execution
-The system SHALL bridge the asynchronous Claude Agent SDK into the synchronous `AgentExecutor` and worker without leaking event-loop management into application code.
-
-#### Scenario: Synchronous executor runs async SDK
-- **WHEN** the synchronous `AgentExecutor.execute()` calls `RealClaudeCodeAgentClient.run()`
-- **THEN** the client manages its own event loop (e.g. `asyncio.run`) and returns a plain `AgentRunResult`
-
 ### Requirement: Tool events are returned without private reasoning
 The system SHALL populate `AgentRunResult.tool_events` with safe summaries of each internal or governed Tool invocation, attempt outcome, result size and applicable Capability Release/classification provenance, excluding raw secrets, authentication material, raw HTTP bodies, full unbounded payloads and private model chain-of-thought including SDK thinking blocks.
 
@@ -572,15 +590,15 @@ The system SHALL populate `AgentRunResult.tool_events` with safe summaries of ea
 - **THEN** the event summary includes safe classification and attempt count without including external body, Token or authentication Header
 
 ### Requirement: Health endpoints report runtime mode without invoking Claude
-The system SHALL expose whether real Claude is enabled, whether an API key is configured, and whether the SDK CLI runtime is detected, without making live Claude API calls during health or readiness checks.
+系统 SHALL 聚合所选 Runtime 模式、TypeScript Runtime readiness、协议/SDK 版本和必要依赖的脱敏状态。健康与就绪检查 MUST NOT 调用 Claude、模型 Provider 或业务 MCP Tool。
 
-#### Scenario: Ready check with stub mode
-- **WHEN** `/api/ready` is called with `FEATURE_REAL_CLAUDE=false`
-- **THEN** the response indicates Claude is not invoked and real runtime is disabled
+#### Scenario: Python默认模式
+- **WHEN** `/api/ready` 在默认双 Runtime 配置下被调用
+- **THEN** 响应报告默认 Runtime 为 `python-v1` 及 TypeScript Runtime 可用性，但不调用模型
 
-#### Scenario: Ready check with missing key
-- **WHEN** `/api/ready` is called with `FEATURE_REAL_CLAUDE=true` and no API key
-- **THEN** the response reports real runtime enabled but not configured
+#### Scenario: TypeScript Runtime缺少配置
+- **WHEN** TypeScript Runtime 被启用但 Grant、模型连接、Master Key 文件或依赖未就绪
+- **THEN** readiness 失败关闭并返回脱敏原因
 
 ### Requirement: 失败路径必须保留真实运行时工具事件
 系统 SHALL 在真实 Claude SDK 执行失败、超时或达到最大轮次时，保留失败前已经发生的工具调用安全摘要，并将这些摘要交给应用层持久化。工具事件 MUST 不包含私有推理、密钥、未脱敏 raw payload 或不受限响应正文。
@@ -627,15 +645,15 @@ The system SHALL expose whether real Claude is enabled, whether an API key is co
 - **THEN** ready 或执行前校验返回安全配置错误，不调用外部模型 API
 
 ### Requirement: Claude runtime DB-backed settings shall be smoke-verifiable
-系统 SHALL 提供 smoke 流程，验证 Claude/DeepSeek runtime 的 base URL、model、max turns 和 API key secret ref 可从 DB-backed runtime config 进入 `agent-worker`。
+系统 SHALL 提供 smoke 流程，分别验证 Python 与 TypeScript Runtime 的 base URL、model、max turns 和 API key Secret ref 能从 Job 固定模型连接进入所选 Runtime，而不是进入 `agent-worker`。
 
-#### Scenario: Stub runtime validates config overlay without external API
-- **WHEN** 默认 smoke 使用 `FEATURE_REAL_CLAUDE=false`
-- **THEN** 流程 SHALL 仍能验证 DB-backed runtime config 被 `api-server` 和 `agent-worker` 读取，而不调用外部模型 API
+#### Scenario: Fake Runtime验证配置投影
+- **WHEN** 默认 smoke 使用 fake provider 且不启用真实外部调用
+- **THEN** 流程仍能验证 Job 固定模型连接被正确投影到两个 Runtime 请求，并确认 Worker 不接收明文 Key
 
-#### Scenario: Optional real DeepSeek runtime uses secret ref
-- **WHEN** 开发者显式启用 `FEATURE_REAL_CLAUDE=true` 并配置 `ANTHROPIC_API_KEY=secret://platform/deepseek_api_key`
-- **THEN** `agent-worker` SHALL 在执行前通过 SecretResolver 解析 key，并且 ready/job/debug 输出 MUST 不包含明文 key
+#### Scenario: 可选真实Runtime使用Secret ref
+- **WHEN** 开发者显式选择一个 Runtime、提供有效 Secret ref 并启用真实 smoke
+- **THEN** 对应 Runtime 在执行前解析 active Secret，ready/job/debug 输出不包含明文 Key
 
 ### Requirement: Real-model smoke shall fail safely when credentials are invalid
 系统 SHALL 在真实 DeepSeek/Claude smoke 中，当 API key 缺失、禁用或仍为占位符时，返回安全配置错误并避免无限重试。
@@ -773,7 +791,7 @@ Claude Tool循环 SHALL 能读取一个受治理Capability的规范化公开输�
 - **THEN** 该 Capability 不进入 MCP Server、`allowed_tools` 或 Tool 自动批准集合，模型也不得声称已经调用或验证其连通性
 
 
-<!-- Migrated from canonical source capability: `claude-diagnostic-runtime` -->
+<!-- Reconciled from mcp_new capability: `claude-diagnostic-runtime` -->
 
 ### Requirement: AgentExecutor runs persisted diagnostic jobs
 The system SHALL provide an AgentExecutor that accepts an Agent job identifier, loads persisted job context, executes the read-only diagnostic workflow, records execution output, and updates job status.
@@ -870,7 +888,7 @@ The system SHALL add execution steps when the real runtime starts, completes con
 - **THEN** 最终报告包含结论、已验证证据、限制/不确定性和非变更类下一步，不建议 Agent 执行写操作或自动修复
 
 
-<!-- Migrated from canonical source capability: `rabbitmq-agent-job-execution` -->
+<!-- Reconciled from mcp_new capability: `rabbitmq-agent-job-execution` -->
 
 ### Requirement: API 服务必须使用 RabbitMQ 投递 Agent Job
 在 Docker Compose/runtime 装配中，API MUST 在创建 Job 的事务内写入 Job Dispatch Outbox；独立 Dispatcher SHALL 使用 RabbitMQPublisher 发布到当前 Agent Job exchange/queue。API 请求线程不得在数据库提交后直接发布。
@@ -888,15 +906,19 @@ The system SHALL add execution steps when the real runtime starts, completes con
 - **THEN** 可以使用内存 Publisher/Consumer，但仍必须验证 Outbox 领域行为
 
 ### Requirement: Worker 必须消费真实 RabbitMQ 队列
-在 Docker Compose / runtime 装配中，`agent-worker` SHALL 使用 `RabbitMQConsumer` 持续消费 `agent.job.queue` 并调用 Agent job handler。
+在 Docker Compose/runtime 装配中，`agent-worker` SHALL 使用 `RabbitMQConsumer` 持续消费 `agent.job.queue`，claim 固定 Job，并通过平台固定的 Runtime client registry 调用 Job Publication 决定的独立 Runtime。Worker MUST 不得进程内加载或执行任一 Claude Agent SDK。
 
-#### Scenario: Worker 消费队列任务
-- **WHEN** `agent.job.queue` 中存在未消费 job 消息
-- **THEN** `agent-worker` 从 RabbitMQ 接收消息，并将 `job_id` 传递给 `AgentExecutor`
+#### Scenario: Worker消费Python Job
+- **WHEN** `agent.job.queue` 中存在固定为 `python-v1` 的未消费 Job 消息
+- **THEN** `agent-worker` 从 RabbitMQ 接收消息、claim Job，并调用 `python-agent-runtime`
 
-#### Scenario: Worker 成功执行后确认消息
-- **WHEN** `AgentExecutor` 成功将 job 执行到 `SUCCEEDED`
-- **THEN** `agent-worker` ack 当前 RabbitMQ 消息，且不会再次执行同一消息
+#### Scenario: Worker消费TypeScript Job
+- **WHEN** `agent.job.queue` 中存在固定为 `typescript-v1` 的未消费 Job 消息
+- **THEN** `agent-worker` 从 RabbitMQ 接收消息、claim Job，并调用 `typescript-agent-runtime`
+
+#### Scenario: Worker成功执行后确认消息
+- **WHEN** Runtime 终态已验证且 Worker 成功将 Job、结果与 Delivery Outbox 提交到本地数据库
+- **THEN** `agent-worker` ack 当前 RabbitMQ 消息，且不会再次执行同一模型 invocation
 
 ### Requirement: 跨进程 Job 执行必须落到同一个 PostgreSQL
 系统 SHALL 确保 `api-server` 和 `agent-worker` 使用同一个 `DATABASE_DSN`，使 API 创建的 job 能被 worker 读取、claim、执行并更新结果。
@@ -940,18 +962,22 @@ Job 和 Outbox 失败 MUST 分别按照错误分类、到期时间和最大次�
 - **THEN** Outbox 保持可恢复状态并有限退避，不丢失已提交 Job
 
 ### Requirement: Docker Compose 必须可验证完整闭环
-系统 SHALL 提供 Docker Compose 级验证方式，证明 `api-server`、PostgreSQL 18、RabbitMQ 4 Management 和 `agent-worker` 能协同完成成功 Job、真实延迟重试、dead-letter 和终态失败投递闭环。
+系统 SHALL 提供 Docker Compose 级验证方式，证明 `api-server`、PostgreSQL 18、RabbitMQ 4 Management、纯编排 `agent-worker`、`python-agent-runtime`、`typescript-agent-runtime` 和 Delivery Dispatcher 能协同完成两种 Runtime 的成功 Job、真实延迟重试、dead-letter 和终态失败投递闭环。
 
-#### Scenario: curl 验证成功闭环
-- **WHEN** 使用 Docker Compose 启动服务并通过 curl 提交调试问题
-- **THEN** 系统返回 `job_id`，Worker 经 RabbitMQ 4 消费后将 Job 更新为 `SUCCEEDED`，查询 Job 能看到最终诊断报告
+#### Scenario: Python Runtime成功闭环
+- **WHEN** 使用 Docker Compose 启动服务并通过受支持入口提交选择 Python Agent 的问题
+- **THEN** Worker 经 RabbitMQ 消费后调用 Python Runtime，将 Job 更新为 `SUCCEEDED`，查询能看到结果且配置渠道收到一次投递
 
-#### Scenario: 验证 RabbitMQ 4 延迟重试回流
-- **WHEN** 集成 smoke 首次触发可重试错误并配置短延迟
-- **THEN** 测试观察 retry queue 入队、到期、dead-letter 回主队列、同一 Job 再次被 Worker claim，并最终成功或耗尽重试进入终态
+#### Scenario: TypeScript Runtime成功闭环
+- **WHEN** 使用 Docker Compose 启动服务并通过受支持入口提交选择 TypeScript Agent 的问题
+- **THEN** Worker 经 RabbitMQ 消费后调用 TypeScript Runtime，将 Job 更新为 `SUCCEEDED`，查询能看到结果且配置渠道收到一次投递
 
-#### Scenario: 验证 RabbitMQ 4 最终失败路径
-- **WHEN** 集成 smoke 持续触发可重试错误直到次数耗尽或直接触发不可重试错误
+#### Scenario: 验证RabbitMQ 4延迟重试回流
+- **WHEN** 任一 Runtime 的集成 smoke 首次触发可重试错误并配置短延迟
+- **THEN** 测试观察 retry queue 入队、到期、dead-letter 回主队列、同一 Job 被再次 claim，并使用原冻结 Runtime 最终成功或进入终态
+
+#### Scenario: 验证RabbitMQ 4最终失败路径
+- **WHEN** 任一 Runtime 持续触发可重试错误直到次数耗尽或直接触发不可重试错误
 - **THEN** Job 状态、retry count、dead-letter 消息、审计和一次安全失败 delivery attempt 保持一致
 
 ### Requirement: Agent Job retry queue 拓扑必须可延迟回流且可兼容升级
@@ -987,8 +1013,64 @@ Outbox 切换成功后，系统 MUST 确认旧消息已排空或隔离、无消�
 - **WHEN** 切换核验发现旧队列仍有未转换消息
 - **THEN** 删除必须停止，消息进入转换或隔离流程
 
+### Requirement: Worker必须拥有跨Runtime执行的业务状态
+`agent-worker` SHALL 独占 claim、授权复核、Publication/hash 校验、retry/终态决策、Tool 事件与结果持久化、Delivery Outbox 创建和 RabbitMQ ack。Python/TypeScript Runtime MUST NOT 直接改变这些业务事实。
 
-<!-- Migrated from canonical source capability: `result-delivery-routing` -->
+#### Scenario: Runtime执行成功
+- **WHEN** 固定 Runtime 返回合法 completed 终态
+- **THEN** Worker 在本地事务中保存结果、将 Job 转为 SUCCEEDED 并创建唯一 Delivery Outbox 后再确认 RabbitMQ 消息
+
+#### Scenario: Runtime执行失败
+- **WHEN** 固定 Runtime 返回 failed 终态或协议客户端抛出分类错误
+- **THEN** Worker 使用现有 Job policy 决定 RETRY_WAIT 或 FAILED/TIMEOUT，并仅在终态创建一次安全失败投递
+
+#### Scenario: Runtime越权写业务状态
+- **WHEN** 部署检查 Runtime 数据库授权和容器配置
+- **THEN** 两个 Runtime 均不具备 Agent Job、授权、RabbitMQ Outbox 或 Delivery 写权限
+
+### Requirement: RabbitMQ确认必须等待本地终态提交
+Worker MUST 在 TypeScript Runtime 终态被验证且本地 Job/结果/Delivery 事务提交后才 ack 当前 RabbitMQ 消息。Runtime 已完成但本地提交失败时，Worker SHALL 通过相同 invocation/digest 恢复终态，不得直接启动新的模型执行。
+
+#### Scenario: Runtime完成后数据库提交失败
+- **WHEN** Runtime 已返回 completed 但 Python 本地事务回滚
+- **THEN** RabbitMQ 消息不被错误确认，重试使用相同 invocation/digest 获取既有安全终态
+
+#### Scenario: 重复RabbitMQ消息
+- **WHEN** 相同 dispatch event 被重复投递
+- **THEN** Job claim、Runtime invocation 幂等和本地终态共同阻止重复模型执行与重复 Delivery
+
+### Requirement: Runtime选择必须来自Job固定的Agent Publication
+Worker MUST 使用 Job 创建事务中从 Agent Publication 固定的 runtime kind 和协议版本选择 Runtime。环境变量、Application allowlist、Runtime 健康状态或错误不得覆盖该选择；未知或不一致的值 MUST 失败关闭。
+
+#### Scenario: 固定Runtime发生瞬时故障
+- **WHEN** `typescript-v1` Job 调用 TypeScript Runtime 发生可重试连接错误
+- **THEN** Worker 仍以 `typescript-v1` 调度后续 retry，不自动改用 Python Runtime
+
+#### Scenario: Job与Publication Runtime不一致
+- **WHEN** 新 schema Job 的 runtime kind 与其 Agent Publication snapshot 不一致
+- **THEN** Worker 在调用模型前以不可重试完整性错误停止并创建安全失败结果
+
+#### Scenario: 旧迁移门禁仍有配置
+- **WHEN** 环境中残留 TypeScript environment/Application allowlist 配置
+- **THEN** 新 Job 创建与 Worker 执行不读取该配置，运维预检报告残留项供删除
+
+### Requirement: Python Worker必须拥有跨语言执行的业务状态
+系统 SHALL 继续由 Python `agent-worker` 消费 RabbitMQ、claim Job、复核授权、决定 retry/终态、持久化安全 Tool 事件、保存结果并创建 Delivery Outbox。TypeScript Runtime MUST NOT 直接消费业务队列、修改 Job 状态、发布 retry 消息或创建 Delivery。
+
+#### Scenario: TypeScript执行成功
+- **WHEN** Runtime 为一次 attempt 返回合法 completed 终态
+- **THEN** Python Worker 在本地事务中保存结果、将 Job 转为 SUCCEEDED 并创建 Delivery Outbox 后再确认 RabbitMQ 消息
+
+#### Scenario: TypeScript执行失败
+- **WHEN** Runtime 返回稳定 failed 终态或协议客户端抛出分类错误
+- **THEN** Python Worker 使用现有 retry policy 决定 RETRY_WAIT 或 FAILED/TIMEOUT，并在终态创建一次安全失败投递
+
+#### Scenario: Runtime越权写业务状态
+- **WHEN** 部署检查 Runtime 数据库授权和容器配置
+- **THEN** Runtime 只具备模型连接/active Secret 所需最小读权限，不具备 Agent Job、授权或 Delivery 写权限
+
+
+<!-- Reconciled from mcp_new capability: `result-delivery-routing` -->
 
 ### Requirement: Agent results are delivered through reply routes
 系统 SHALL 在 Agent 结果或安全失败通知持久化的同一事务内创建 Delivery Outbox event，并由独立 Delivery Dispatcher 按 Job 固化的 reply route 执行；Agent runtime 不得直接调用特定平台 client。
@@ -1188,7 +1270,7 @@ Outbox 切换成功后，系统 MUST 确认旧消息已排空或隔离、无消�
 - **THEN** 系统必须拒绝并记录审计
 
 
-<!-- Migrated from canonical source capability: `runtime-session-isolation` -->
+<!-- Reconciled from mcp_new capability: `runtime-session-isolation` -->
 
 ### Requirement: 新连续会话必须绑定发布版本和 Execution Scope
 系统 MUST 以业务应用发布 ID、Connector、外部 conversation ID 和 Execution Scope hash 构造连续会话身份；发布或范围变化时必须创建新 Session。
@@ -1227,7 +1309,7 @@ Webhook/Grafana 每个外部事件 MUST 默认创建独立 Session；Debug 每�
 - **THEN** 系统必须阻止并要求重新发布为受支持的隔离策略
 
 
-<!-- Migrated from canonical source capability: `transactional-runtime-outbox` -->
+<!-- Reconciled from mcp_new capability: `transactional-runtime-outbox` -->
 
 ### Requirement: Job 创建与 dispatch event 必须原子持久化
 系统 MUST 在同一个 Unit of Work 中持久化 Agent Job 与唯一的 Job Dispatch Outbox event，API 不得在数据库提交后直接依赖一次 RabbitMQ publish 保证投递。
@@ -1290,3 +1372,214 @@ Job dispatch、Delivery attempt 和 Delivery chunk MUST 使用稳定唯一键及
 #### Scenario: 存在无法转换的旧消息
 - **WHEN** backfill 无法确定某条旧消息的幂等身份或目标
 - **THEN** 该消息必须进入隔离清单并阻止宣告切换完成
+
+
+<!-- Reconciled from mcp_new capability: `agent-runtime-service-contract` -->
+
+### Requirement: Python与TypeScript Runtime必须是独立服务
+系统 SHALL 提供 `python-v1` 与 `typescript-v1` 两个独立 Agent Runtime 服务；每个服务只执行一次 Agent attempt，不得消费 RabbitMQ、claim Job、决定 retry、写 Job/Delivery 业务状态或直接投递结果。
+
+#### Scenario: Worker调用Python Runtime
+- **WHEN** Job 固定的 runtime kind 为 `python-v1`
+- **THEN** Worker 通过内部 Runtime client 调用 `python-agent-runtime`
+- **AND** Python Runtime 使用 Python Claude Agent SDK 完成本次 attempt
+
+#### Scenario: Worker调用TypeScript Runtime
+- **WHEN** Job 固定的 runtime kind 为 `typescript-v1`
+- **THEN** Worker 通过内部 Runtime client 调用 `typescript-agent-runtime`
+- **AND** TypeScript Runtime 使用 TypeScript Claude Agent SDK 完成本次 attempt
+
+#### Scenario: Runtime尝试拥有业务状态
+- **WHEN** 检查任一 Runtime 的队列订阅、数据库角色和容器配置
+- **THEN** Runtime 不具备 RabbitMQ consumer 或 Job/Delivery 写权限
+
+### Requirement: 双Runtime必须实现同一版本化执行协议
+两个 Runtime MUST 实现同一份版本化执行、事件、取消、终态恢复和错误 schema。协议 SHALL 固定 runtime kind、invocation、attempt、request digest、Publication/hash、模型连接、执行限制、Tool allowlist 和 correlation ID；Runtime URL 不得来自 Agent、Application、外部请求或模型输出。
+
+#### Scenario: 相同合约用例运行于两个Runtime
+- **WHEN** contract suite 对 Python 与 TypeScript Runtime 执行同一 accepted、tool、completed、failed 和 cancel fixture
+- **THEN** 两端均返回 schema 合法、sequence 单调且唯一终态的结果
+
+#### Scenario: Runtime协议版本不受支持
+- **WHEN** Worker 或 Runtime 收到不受支持的协议版本、未知 runtime kind 或超限事件
+- **THEN** 调用以稳定协议错误失败关闭且不执行模型
+
+#### Scenario: 请求尝试指定任意Runtime地址
+- **WHEN** Agent/Application 配置或外部 payload 包含自定义 Runtime URL
+- **THEN** 系统忽略或拒绝该字段，只使用平台固定的 Runtime client registry
+
+### Requirement: Runtime执行必须支持幂等终态恢复
+Runtime MUST 以 `invocation_id + request_digest` 标识一次逻辑执行，并 SHALL 保存有界、脱敏的终态以支持 Worker 断线或本地事务失败后的恢复。相同 invocation 与不同 digest 的请求 MUST 被拒绝，恢复不得启动第二次模型执行。
+
+#### Scenario: Runtime完成后Worker提交失败
+- **WHEN** Runtime 已产生 completed 终态但 Worker 的本地 Job 事务回滚
+- **THEN** Worker 使用相同 invocation/digest 获取既有终态并重新提交本地事务
+- **AND** Runtime 不再次调用模型
+
+#### Scenario: 重复请求摘要冲突
+- **WHEN** 相同 invocation ID 携带不同 request digest 到达 Runtime
+- **THEN** Runtime 返回不可重试的 digest conflict 且不复用或覆盖旧终态
+
+#### Scenario: Runtime在模型执行中重启
+- **WHEN** 新 Runtime 进程收到相同 invocation/digest，且持久化 claim 表明旧进程已开始该 invocation 但尚未保存终态
+- **THEN** Runtime 保存并返回 `runtime_orphaned_invocation` 不可自动重试终态，且不得再次调用模型
+- **AND** 该失败只能由操作者创建新的 Job/invocation 显式重试，不得在原 Job attempt 内自动重放
+
+### Requirement: Runtime取消与超时必须产生确定终态
+Worker SHALL 能通过版本化协议取消运行中的 attempt；Runtime MUST 将取消、墙钟超时、最大轮次和最大 Tool Call 映射为稳定错误码和 retry class，并最终只产生一个终态。
+
+#### Scenario: Worker取消运行中attempt
+- **WHEN** Job 被取消、Worker shutdown 或 attempt 超过固定墙钟时间
+- **THEN** Worker 向原 Runtime 发送取消请求
+- **AND** Runtime 中止 SDK 会话并返回或保存一个规范取消/超时终态
+
+#### Scenario: 取消与完成并发
+- **WHEN** cancel 与 SDK completed 几乎同时发生
+- **THEN** invocation ledger 只接受一个终态且后续读取返回同一结果
+
+### Requirement: Runtime健康与模型探测必须语言对等
+两个 Runtime SHALL 提供 health、readiness、version 和无 Tool 模型连接 probe。health/readiness MUST NOT 调用模型或 MCP Tool；probe MUST 使用固定模型连接 revision/hash、单轮、安全合成输入和短超时，并返回脱敏结果。
+
+#### Scenario: 平台聚合双Runtime readiness
+- **WHEN** 管理员读取平台 readiness
+- **THEN** 响应分别展示 `python-v1` 与 `typescript-v1` 的协议、SDK/CLI 和配置状态
+- **AND** 检查不产生外部模型费用
+
+#### Scenario: 显式测试模型连接
+- **WHEN** 授权管理员对任一 Runtime 兼容的模型连接发起 probe
+- **THEN** 对应 Runtime 禁用 Tool 并返回版本、脱敏 provider host、model、耗时和稳定错误码
+
+### Requirement: Runtime镜像必须隔离SDK依赖
+`agent-worker` 镜像 MUST 不包含 Python/TypeScript Agent SDK 或 Claude Code CLI。Python SDK 与其所需 CLI SHALL 只安装在 Python Runtime 镜像；TypeScript SDK SHALL 只安装在 TypeScript Runtime 镜像。
+
+#### Scenario: 检查Worker镜像内容
+- **WHEN** CI 对最终 `agent-worker` 镜像执行依赖和可执行文件检查
+- **THEN** Python Claude Agent SDK、TypeScript Claude Agent SDK 和 Claude Code CLI 均不存在
+
+#### Scenario: 检查Runtime镜像内容
+- **WHEN** CI 分别检查两个 Runtime 镜像
+- **THEN** 每个镜像只包含其实现所需的 SDK/CLI 和协议产物
+
+### Requirement: 双Runtime必须共享无专用密钥的标准MCP工具服务
+系统 SHALL 使用官方 MCP SDK 提供单一标准 MCP Tool Server，供 Python 与 TypeScript Runtime 调用。系统 MUST 删除 `runtime-tool-mcp`、其 HS256 signing key、access token issuer/verifier 和专用 claims；标准 MCP Tool Server MUST NOT 引入替代 Token、签名密钥、治理控制面或任意 Server URL。
+
+#### Scenario: Python与TypeScript调用相同工具
+- **WHEN** 两个 Runtime 分别执行包含同一冻结 Tool 的 Job
+- **THEN** 两端通过同一标准 MCP Tool Server 和 Tool schema 获得等价安全结果
+
+#### Scenario: MCP服务部署边界
+- **WHEN** 检查 Compose、端口和网络配置
+- **THEN** 标准 MCP Tool Server 只在固定私有网络可达且不映射宿主机端口
+- **AND** 服务不挂载 Runtime Tool signing key 或要求 MCP Bearer Token
+
+#### Scenario: 请求提供任意MCP地址
+- **WHEN** Agent、Application、用户 payload 或模型输出包含自定义 MCP Server URL
+- **THEN** 两个 Runtime 均拒绝该地址，只使用平台部署时固定的标准 MCP Tool Server
+
+#### Scenario: 旧Runtime Tool配置残留
+- **WHEN** 部署或代码扫描发现 `runtime-tool-mcp` 服务、`RUNTIME_TOOL_MCP_*` 配置、HS256 issuer/verifier 或 signing key secret
+- **THEN** 发布检查失败，直到旧服务及密钥链路被完全删除
+
+### Requirement: Runtime Grant不得扩展为MCP认证
+Worker→Runtime 的 Runtime Grant SHALL 继续只绑定执行、取消和终态恢复请求。Runtime Grant 的私钥、公钥或 Bearer Token MUST NOT 传递给标准 MCP Tool Server，也不得作为替代的 MCP signing key。
+
+#### Scenario: Runtime调用MCP工具
+- **WHEN** Python 或 TypeScript Runtime 调用标准 MCP Tool Server
+- **THEN** 请求不携带 Runtime Grant，MCP Tool Server 也不读取 Runtime Grant key pair
+
+#### Scenario: Worker调用Runtime
+- **WHEN** Worker 创建或取消一次 Runtime invocation
+- **THEN** 对应 Runtime 仍校验绑定该 Job、Publication、invocation 和 request digest 的短期 Runtime Grant
+
+### Requirement: Runtime 请求必须只冻结 MCP Tool 而不包含旧平台对象
+Worker 发送给 Python/TypeScript Runtime 的执行请求 SHALL 只包含固定 `tool-mcp` Server code、精确 Tool identifier/schema hash 和 Job 标识；MUST NOT 包含 Capability Release、Handler Revision、API Connection、Resource Mapping、Resource Revision、Internal API Token 或任意 MCP URL。
+
+#### Scenario: Worker 构造 Runtime 请求
+- **WHEN** Job 冻结了两个 MCP Tool
+- **THEN** Runtime 请求只携带这两个 Tool 的稳定标识和 schema hash，并由 Runtime 使用部署固定 URL
+
+#### Scenario: 请求包含旧平台字段
+- **WHEN** 请求包含 capability、handler、connection、resource_mapping 或 internal_api_token
+- **THEN** Runtime 合约校验失败且不启动模型调用
+
+
+<!-- Reconciled from mcp_new capability: `typescript-agent-runtime-service` -->
+
+### Requirement: 系统必须提供独立TypeScript Agent Runtime
+系统 SHALL 通过独立 TypeScript 服务执行官方 `@anthropic-ai/claude-agent-sdk`，并 MUST 精确锁定 SDK 和 Node 版本。Runtime MUST NOT 直接消费业务 RabbitMQ 队列、写 Agent Job/授权/Delivery 表或在启动时安装依赖。
+
+#### Scenario: Worker调用TypeScript Runtime
+- **WHEN** Python Worker 执行固定为 `typescript-v1` 的 Job attempt
+- **THEN** Worker 通过版本化内部协议调用 TypeScript Runtime
+- **AND** Runtime 返回规范事件和唯一终态，不直接修改 Job 状态
+
+#### Scenario: Runtime镜像启动
+- **WHEN** Compose 启动 `agent-runtime`
+- **THEN** 服务以非 root、只读文件系统和精确 lockfile 依赖启动
+- **AND** 镜像不包含 Python Claude Agent SDK
+
+### Requirement: 执行协议必须严格版本化且有界
+Runtime MUST 校验执行请求 protocol version、invocation、attempt、Job/Publication/model revision 与 hash、执行限制、Tool allowlist 和 request digest。流式响应 MUST 使用单调 sequence、受支持事件类型、字段及总字节上限，并且 MUST 只有一个 completed 或 failed 终态。
+
+#### Scenario: 合法请求返回规范事件流
+- **WHEN** Worker 提交 schema 合法且授权匹配的执行请求
+- **THEN** Runtime 先返回 accepted，再返回零个或多个安全事件，最后返回唯一终态
+
+#### Scenario: 请求摘要或协议不匹配
+- **WHEN** 请求的 protocol、digest、Publication hash 或字段上限无效
+- **THEN** Runtime 在调用模型和 MCP 前失败关闭并返回稳定协议错误码
+
+### Requirement: Runtime Grant必须绑定单次执行
+Worker SHALL 为每个 attempt 签发短期 Runtime Grant，至少绑定 issuer、audience、authorized party、Job、invocation、Publication/hash、request digest、JTI 和 expiry。Runtime MUST 验证全部 claims 和重放状态，不得仅依赖私有网络位置。
+
+#### Scenario: 有效Grant启动执行
+- **WHEN** Grant 的 audience、Job、invocation、digest 和有效期与请求完全一致
+- **THEN** Runtime 允许该 invocation 进入执行
+
+#### Scenario: Grant被重放或篡改
+- **WHEN** JTI 已被不同摘要使用、Grant 已过期或任一绑定不一致
+- **THEN** Runtime 在读取 Secret、调用模型或连接 MCP 前拒绝请求
+
+### Requirement: Runtime必须隔离SDK配置和工具权限
+每次 SDK 调用 MUST 使用独立 options/env，显式设置 `settingSources: []`，仅注册请求固定的远程 MCP Server，并以精确 `allowedTools` 和 deny-by-default `canUseTool` 限制 Tool。Bash、Write、Edit、NotebookEdit、WebFetch、WebSearch、Shell 和文件修改能力 MUST 被禁用。
+
+#### Scenario: 模型调用允许的只读Tool
+- **WHEN** Job 请求固定了一个合法 MCP Server、Tool、schema hash 和 scope
+- **THEN** Runtime 只允许对应 `mcp__<server>__<tool>` 调用，并由 MCP 服务再次复核 Job 和 scope
+
+#### Scenario: 模型尝试调用未授权工具
+- **WHEN** 模型请求内置写工具、Web 工具或不在精确集合中的 MCP Tool
+- **THEN** Runtime 拒绝调用且不向任何 Tool backend 发出请求
+
+### Requirement: Runtime不得泄漏凭据和私有推理
+模型 Key、Runtime Grant、Master Key、Secret value、完整 Prompt、原始 Provider/MCP payload 和 private thinking MUST NOT 出现在 RabbitMQ、Job 快照、Runtime 日志、事件、terminal ledger 或响应中。Runtime 只可输出有界脱敏诊断和安全 Tool provenance；MCP 边界不得创建专用 Token。
+
+#### Scenario: Provider错误包含凭据
+- **WHEN** SDK、CLI 或 MCP 错误文本包含 Token、Authorization Header 或带凭据 URL
+- **THEN** Runtime 在记录或返回前屏蔽并截断敏感内容
+
+#### Scenario: SDK产生thinking消息
+- **WHEN** SDK 流包含 thinking 或其他私有推理 block
+- **THEN** Runtime 丢弃该内容，不写入事件、日志或 Job provenance
+
+### Requirement: Runtime执行必须可取消且可幂等恢复
+Runtime SHALL 支持取消进行中的 invocation，并把取消传播到 SDK AbortController 和 MCP 请求。相同 `invocation_id + request_digest` MUST 不重复启动模型执行；已终态调用 SHALL 可返回既有安全终态，不同 digest MUST 冲突失败。
+
+#### Scenario: Worker超时后取消
+- **WHEN** Job attempt 超时、被撤销或 Worker 连接断开
+- **THEN** Worker 请求取消，Runtime 终止 SDK/MCP 活动并返回稳定 cancel/timeout 分类
+
+#### Scenario: Worker在终态后断线
+- **WHEN** Runtime 已完成但 Worker 尚未提交本地事务即断线
+- **THEN** Worker 使用相同 invocation 和 digest 读取既有终态，而不重复调用模型
+
+### Requirement: Runtime必须提供无副作用健康与模型探针
+Runtime SHALL 提供 health、ready、version 和受服务授权保护的模型 probe。健康检查 MUST NOT 调用模型或业务 MCP；模型 probe MUST 固定连接 revision/config hash、禁止 Tool、单轮、短超时且只返回脱敏结果。
+
+#### Scenario: Readiness检查
+- **WHEN** 编排系统调用 Runtime readiness
+- **THEN** Runtime 报告协议、SDK、配置、Secret/DB 依赖的脱敏状态且不产生模型费用
+
+#### Scenario: 模型连接Probe
+- **WHEN** Python 服务提交通过 RBAC/SSRF 校验的固定模型连接 probe
+- **THEN** Runtime 使用 active Secret 完成无 Tool 探测并只返回版本、脱敏 host/model、耗时和稳定错误码

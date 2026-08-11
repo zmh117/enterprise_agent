@@ -5,7 +5,7 @@
 
 ## Requirements
 
-<!-- Migrated from canonical source capability: `channel-connector-configuration` -->
+<!-- Reconciled from mcp_new capability: `channel-connector-configuration` -->
 
 ### Requirement: Connectors declare allowed directions
 系统 SHALL 为每个 Channel/Delivery connector 配置 `allow_ingress` 和 `allow_delivery`，并在运行时强制校验。Webhook ingress 还 MUST 绑定已启用 Connector、已发布 Trigger Binding 和已发布业务应用版本，不得依赖全局 `FEATURE_WEBHOOK_TRIGGERS` 作为长期启停事实源。
@@ -187,7 +187,7 @@ Grafana 和 Generic Webhook Connector MUST 使用标准 `Authorization: Bearer`�
 - **THEN** 页面显示历史连接名称或 ID 及“已清理／不可用”状态，记录本身仍可读取
 
 
-<!-- Migrated from canonical source capability: `channel-ingress-contract` -->
+<!-- Reconciled from mcp_new capability: `channel-ingress-contract` -->
 
 ### Requirement: Channel requests are normalized before Agent job creation
 系统 SHALL 在创建 Agent Job 前将外部请求归一化为 Channel event，但 requester、业务应用发布、Connector binding 和 Execution Scope MUST 由服务端已发布绑定与身份解析产生，外部 payload 不得覆盖这些授权事实。
@@ -376,7 +376,7 @@ Grafana 和 Generic Webhook Connector MUST 使用标准 `Authorization: Bearer`�
 - **THEN** 系统可以正常处理，且验收不得将其表述为公网生产安全
 
 
-<!-- Migrated from canonical source capability: `continuous-agent-conversation` -->
+<!-- Reconciled from mcp_new capability: `continuous-agent-conversation` -->
 
 ### Requirement: 群聊和私聊使用稳定且隔离的会话身份
 系统 SHALL 根据Channel、connector、project、会话类型和外部身份生成稳定session key并原子解析或创建session。群聊 MUST 以外部群conversation为边界，私聊 MUST 以请求人和机器人身份为边界。
@@ -442,7 +442,7 @@ Grafana 和 Generic Webhook Connector MUST 使用标准 `Authorization: Bearer`�
 - **THEN** 系统返回有界上下文并审计消息范围和截断状态
 
 
-<!-- Migrated from canonical source capability: `dingtalk-agent-ingress` -->
+<!-- Reconciled from mcp_new capability: `dingtalk-agent-ingress` -->
 
 ### Requirement: DingTalk message identity is parsed
 The system SHALL parse and persist the DingTalk Stream conversation identity, actual DingTalk sender identity, source channel, connector identity, external event identity, and user message content needed to resolve an active Business Application Publication and create an Agent session and Agent job. Private and group messages MUST resolve the actual sender independently and MUST NOT use a group-level shared user, administrator, or service account as the external execution subject.
@@ -649,7 +649,7 @@ The system SHALL evaluate DingTalk Agent, tool and platform access using the res
 - **THEN** 系统只为实际发送人形成候选并拒绝 Job，不复用已绑定群成员身份
 
 
-<!-- Migrated from canonical source capability: `dingtalk-stream-ingress` -->
+<!-- Reconciled from mcp_new capability: `dingtalk-stream-ingress` -->
 
 ### Requirement: DingTalk Stream ingress connects with configured enterprise app credentials
 系统 SHALL 由单个 `dingtalk-runtime` 使用控制面中所有已启用且配置完整的钉钉企业 App Connector，为每个 Connector 建立独立 DingTalk Stream Client。
@@ -838,7 +838,7 @@ Stream 重试和重连 MUST 使用稳定事件 ID 保持企业验证与业务分
 - **THEN** 系统复用现有 Channel Event 或 Job 结果，不重复更新昵称审计、观察记录或创建 Job
 
 
-<!-- Migrated from canonical source capability: `multimodal-message-storage` -->
+<!-- Reconciled from mcp_new capability: `multimodal-message-storage` -->
 
 ### Requirement: 系统分层保存MVP多模态消息
 系统 SHALL 在PostgreSQL保存消息正文、附件元数据、状态和有界提取文本，并在私有S3兼容对象存储保存原始二进制。原始二进制 MUST NOT 写入PostgreSQL、RabbitMQ、日志或审计payload。
@@ -937,7 +937,7 @@ Stream 重试和重连 MUST 使用稳定事件 ID 保持企业验证与业务分
 - **THEN** 系统生成安全报告且不自动删除对象
 
 
-<!-- Migrated from canonical source capability: `webhook-event-processing` -->
+<!-- Reconciled from mcp_new capability: `webhook-event-processing` -->
 
 ### Requirement: 公共 Webhook 入口只接收有界 JSON 请求
 系统 SHALL 通过不可预测的 `public_id` 解析已启用 Trigger publication，并 MUST 在处理前执行 HTTPS 部署约束、Content-Type、请求大小、JSON 结构深度和集合数量限制。
@@ -1045,7 +1045,7 @@ Stream 重试和重连 MUST 使用稳定事件 ID 保持企业验证与业务分
 - **THEN** 系统清理可删除摘要，同时保留 Agent job、审计和 Delivery 的独立事实记录
 
 
-<!-- Migrated from canonical source capability: `webhook-trigger-management` -->
+<!-- Reconciled from mcp_new capability: `webhook-trigger-management` -->
 
 ### Requirement: 管理员可以管理 Webhook Trigger 草稿和发布版本
 系统 SHALL 为 Webhook Trigger 保存定义、可编辑草稿 revision、校验结果、不可变 publication、当前 publication 指针和回滚历史，并 MUST 使用 expected revision 防止并发覆盖。

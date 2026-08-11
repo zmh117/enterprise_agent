@@ -1,0 +1,4 @@
+capability	canonical_domain	origin
+agent-runtime-service-contract	execution-delivery	mcp_new_main_spec
+typescript-agent-runtime-service	execution-delivery	migrate-claude-agent-sdk-to-typescript
+standard-mcp-tool-runtime	builtin-tool-resource	retire-legacy-api-platform-for-mcp

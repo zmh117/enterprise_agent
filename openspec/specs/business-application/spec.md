@@ -5,270 +5,42 @@
 
 ## Requirements
 
-<!-- Migrated from canonical source capability: `api-capability-publication-composition` -->
+<!-- Reconciled from mcp_new capability: `application-tool-resource-composition` -->
 
-### Requirement: ACTIVE Release 进入 Agent 和 Application 配置目录
-系统 SHALL 把可供新配置使用的 `ACTIVE` Capability Release 投影到 Agent 和 Application 管理目录，并 MUST 展示名称、稳定 Identifier、业务 `description`、Release Revision 和运维状态；管理端 MAY 展示 `release_note`，模型上下文 MUST NOT 包含该字段。
+### Requirement: Agent 与 Application 必须冻结精确 MCP Tool 子集
+Agent Publication SHALL 冻结代码 Manifest 中精确 Tool identifier 与 schema hash；Application Publication MUST 只冻结所选 Agent Tool Envelope 的显式子集，不得保存 Capability Release、Handler Version、Resource Mapping 或动态 Server URL。
 
-#### Scenario: 管理员配置 Agent
-- **WHEN** 目录存在多个 `ACTIVE` Release
-- **THEN** 界面默认推荐最新 Release，并允许管理员展开选择仍为 ACTIVE 的旧 Release
+#### Scenario: 应用选择 Agent 工具子集
+- **WHEN** 管理员从 Agent Publication 的 MCP Tool Envelope 选择部分工具并发布应用
+- **THEN** Application Publication 冻结 identifier/schema hash 子集且后续代码变化不自动替换
 
-#### Scenario: 目录包含 DEPRECATED Release
-- **WHEN** 某 Release 已软废弃且已有配置仍引用它
-- **THEN** 历史引用处显示警告和可用替代信息，但新配置候选列表不得允许选择它
+### Requirement: Job 必须冻结工具但不得冻结调用目标
+Job 创建时 MUST 冻结 Agent/Application Tool 交集、当前用户有效 Tool grant 与发布/授权摘要；MUST NOT 从 DingTalk Routing Context 或用户消息冻结 `environment`、`base`、`workshop`、`placement`，也 MUST NOT 复制 Application Resource Mapping。目标由 Agent 按已发布 Skill 在每次 Tool Call 中显式提供，并由服务端实时复核当前数据范围。
 
-### Requirement: Agent Publication 冻结精确 Capability Envelope
-Agent Draft SHALL 对同一 Capability Identifier 至多选择一个精确 `ACTIVE` Release；Agent Publish MUST 将 Identifier、Release ID、Capability/Handler Revision、公开 Schema hash 和业务描述冻结为不可变 Agent Capability Envelope。
+#### Scenario: 配置在 Job 重试前变化
+- **WHEN** Tool Manifest、角色 Grant、工具资源或后续用户消息在 Job 首次执行后变化
+- **THEN** 重试继续使用原 Job 工具发布快照，但使用本次 Tool Call 目标，并对撤权、越界和资源歧义失败关闭
 
-#### Scenario: Agent 选择一个 Capability Release
-- **WHEN** 管理员保存并发布选择了 `cap__ones__work_item__search` 某一 ACTIVE Release 的 Agent
-- **THEN** Agent Publication 冻结该精确 Release而不跟随后续新版本
+#### Scenario: Routing Context 目标为空但消息提供环境
+- **WHEN** DingTalk Routing Context 的目标字段为空而当前消息明确要求 `environment=test`
+- **THEN** Agent 可以按 Skill 以 `environment=test` 调用已分配 Tool，服务端不得用空 Routing Context 覆盖或拒绝该目标
 
-#### Scenario: Agent 对同一 Identifier 选择两个 Release
-- **WHEN** Agent Draft 包含同一 Identifier 的多个 Release
-- **THEN** 系统拒绝保存或发布并指出冲突项
+### Requirement: Tool 可调用性必须满足业务治理交集
+运行时 MUST 只暴露同时满足 Agent Envelope、Application 子集、有效角色 Tool grant、应用访问、业务数据范围、Manifest/schema 一致和唯一资源解析的 Tool。
 
-#### Scenario: 发布时 Release 已不再 ACTIVE
-- **WHEN** Draft 保存后目标 Release 被废弃、禁用或归档
-- **THEN** Agent Publish 重新校验并失败关闭
+#### Scenario: 用户有工具权限但应用未选择
+- **WHEN** 用户具有 Tool grant 但 Application Publication 未选择该 Tool
+- **THEN** 模型不得获得该 Tool，直接调用也必须被拒绝
 
-### Requirement: Application Capability Allowlist 只能是 Agent Envelope 子集
-Application Draft MUST 引用精确 Agent Publication，并 SHALL 只允许从该 Publication 的 Agent Capability Envelope 中显式选择 Capability Release 子集；后端 MUST 拒绝任何越过 Agent 上限、替换 Release ID 或自行指定版本的请求。
+### Requirement: 遗留目标冻结存储必须不存在
+系统 MUST NOT 保留 `business_application_revision_target`、`business_application_publication_target`、`agent_job_execution_scope` 或 `agent_job.execution_scope_id/execution_scope_hash` 作为运行目标或授权事实；会话隔离继续使用 `agent_session.execution_scope_hash`，实际工具目标只来自本次 Tool Call 并实时鉴权。
 
-#### Scenario: 应用选择 Agent 已有能力
-- **WHEN** 管理员勾选所选 Agent Publication 中的一部分 Capability
-- **THEN** Application Publication 冻结精确子集为 Application Capability Allowlist
+#### Scenario: 已有数据库升级
+- **WHEN** 已执行旧目标冻结迁移的数据库升级到本变更最终 schema
+- **THEN** 遗留目标表、Job 目标列和索引被删除，而历史 Job 主记录、Tool Call 审计与会话隔离事实保持可读
 
-#### Scenario: Agent 未选择 Capability
-- **WHEN** 应用请求配置 Agent Envelope 中不存在的 Identifier
-- **THEN** 系统拒绝保存或发布，应用界面也不得提供该候选
 
-#### Scenario: 应用未选择 Capability
-- **WHEN** Agent Envelope 包含某 Release但 Application Allowlist 未包含它
-- **THEN** 该 Capability 不得进入该应用的模型 Tool Catalog或执行路径
-
-### Requirement: Application 不独立选择 Capability 版本
-Application 配置界面 MUST 直接展示所选 Agent Publication 冻结的精确 Capability Release，且 MUST NOT 提供独立版本选择器或自动解析“最新版本”。
-
-#### Scenario: 应用查看 Agent Capability
-- **WHEN** 管理员选择一个精确 Agent Publication
-- **THEN** 每个应用候选显示 Agent 已冻结的 Release Revision，管理员只能勾选或取消
-
-#### Scenario: 新 Capability Release 发布
-- **WHEN** 相同 Identifier 发布更高 Release Revision
-- **THEN** 既有 Agent/Application Draft 与 Publication 均不自动切换
-
-### Requirement: Agent 升级时重新验证应用能力子集
-应用切换到新的 Agent Publication 时 MUST 重新校验原 Application Capability Allowlist；若新 Agent 缺少原 Capability、只含 DEPRECATED Release 或公开 Schema 不兼容，系统 MUST 阻止应用发布并要求管理员显式替换或移除。
-
-#### Scenario: 新 Agent 保留兼容 Release
-- **WHEN** 应用升级 Agent 且原能力子集在新 Envelope 中存在兼容 ACTIVE Release，并由管理员明确选择
-- **THEN** 系统允许创建新的 Application Publication
-
-#### Scenario: 新 Agent 移除原能力
-- **WHEN** 新 Agent Envelope 不再包含应用原来选择的 Identifier
-- **THEN** 系统阻止发布，不静默删除 Application Allowlist 项
-
-#### Scenario: 新 Agent 只有软废弃版本
-- **WHEN** 新 Agent 引用路径只能提供 DEPRECATED Release
-- **THEN** 系统阻止新的应用升级并显示替换或移除要求
-
-### Requirement: 既有 Publication 不跟随配置变化
-Agent、Application 和 Capability 新发布、软废弃或替代关系 MUST NOT 自动改写既有 Agent/Application Publication；只有管理员显式创建并发布新版本才能升级绑定。
-
-#### Scenario: Agent 发布新版本
-- **WHEN** 现有应用仍引用旧 Agent Publication
-- **THEN** 应用继续使用旧 Agent Capability Envelope 和 Allowlist
-
-#### Scenario: Capability 设置 replacement
-- **WHEN** DEPRECATED Release 指向新的 replacement_release_id
-- **THEN** 既有应用不自动替换，管理员必须显式升级并重新发布
-
-### Requirement: 钉钉应用访问不新增 Capability 用户角色 Grant
-第一版钉钉 Application Access SHALL 来自消息路由命中绑定活动 Application Publication 的连接器以及实际发送人解析为启用内部用户；该访问资格同时给出 Application Capability Allowlist 的运行资格，系统 MUST NOT 再要求逐用户或逐角色 Capability Code `use` Grant。
-
-#### Scenario: 启用用户命中活动应用
-- **WHEN** 钉钉消息由已绑定且启用的内部用户发送，并命中活动应用路由
-- **THEN** 用户取得该应用 Allowlist 的候选调用资格，仍须通过 Release、身份、Team 和 Token 校验
-
-#### Scenario: 用户没有 Capability 角色 Grant
-- **WHEN** 用户满足钉钉应用访问条件但系统不存在 Capability `use` Grant
-- **THEN** 系统不得仅因缺少该 Grant 拒绝已允许的 Capability
-
-#### Scenario: 其他 Trigger 类型访问
-- **WHEN** 请求来自非钉钉 Trigger
-- **THEN** 系统继续使用该 Trigger 已定义的访问策略，不把钉钉规则扩展为全局规则
-
-### Requirement: 发布链替代全局功能开关
-受治理 Capability 只有依次完成 Connection、Capability Release、Agent Publication 和 Application Publication 的显式发布后才能进入运行时；系统 MUST NOT 为该功能新增全局 Feature Flag 或功能开关页面。
-
-#### Scenario: Capability 已发布但应用未选择
-- **WHEN** Release 为 ACTIVE 但没有活动 Application Publication允许它
-- **THEN** 现有运行时行为不变，模型无法看到或调用该 Capability
-
-#### Scenario: 需要紧急停止
-- **WHEN** 运维人员需要阻止某 Capability 的新调用
-- **THEN** 使用具体 Release 的 `DISABLED` 状态失败关闭，不删除历史或切换全局开关
-
-### Requirement: Release 状态对选择和历史运行具有确定语义
-`DEPRECATED` Release SHALL 允许既有 Application Publication继续执行但阻止新 Agent/Application 选择与升级；`DISABLED` 和 `ARCHIVED` Release MUST 阻止所有新调用；系统 MUST NOT 按日期自动禁用或自动升级。
-
-#### Scenario: 既有应用调用 DEPRECATED Release
-- **WHEN** 历史 Application Publication 已冻结一个后来 DEPRECATED 的 Release
-- **THEN** 运行时仍可暴露和执行，并在管理端显示废弃警告
-
-#### Scenario: 既有应用调用 DISABLED Release
-- **WHEN** 历史 Application Publication 冻结的 Release 已被 DISABLED
-- **THEN** Tool 构建或执行失败关闭并记录安全状态原因
-
-
-<!-- Migrated from canonical source capability: `application-tool-resource-composition` -->
-
-### Requirement: Agent Publication 必须冻结精确内置工具 Envelope
-Agent Draft SHALL 对同一稳定 Tool Identifier 至多选择一个 `ACTIVE` Built-in Tool Release；Agent Publish MUST 冻结 Tool Release ID、Handler Version、Implementation Digest、公开 Schema Hash 和模型描述，不得保存名称级或 `latest` 引用。
-
-#### Scenario: Agent 发布精确工具版本
-- **WHEN** 管理员发布选择了一个 ACTIVE Tool Release 的 Agent Draft
-- **THEN** 新 Agent Publication 包含该精确 Tool Envelope，后续新 Release 不会自动替换它
-
-#### Scenario: 同一 Identifier 选择多个版本
-- **WHEN** Agent Draft 对同一稳定 Identifier 选择两个 Tool Release
-- **THEN** 系统拒绝保存或发布并指出冲突项
-
-#### Scenario: 发布时 Release 已失效
-- **WHEN** Draft 保存后目标 Release 变为 DEPRECATED、DISABLED、ARCHIVED 或精确实现不再 INSTALLED
-- **THEN** Agent Publish 重新校验并失败关闭
-
-### Requirement: Application Publication 只能冻结 Agent Tool Envelope 的显式子集
-Application Draft MUST 引用精确 Agent Publication，并 SHALL 只允许显式选择该 Publication 中的 Built-in Tool Release 子集；Application Publish MUST 冻结该子集且不得自动继承、替换或独立选择版本。
-
-#### Scenario: 应用选择 Agent 已有工具
-- **WHEN** 管理员勾选 Agent Tool Envelope 中的一部分 Tool Release
-- **THEN** Application Publication 冻结精确 Application Tool Allowlist
-
-#### Scenario: 应用请求 Agent 未包含工具
-- **WHEN** 请求包含 Agent Tool Envelope 中不存在的 Identifier 或不同 Release ID
-- **THEN** 后端拒绝保存或发布，前端也不得提供该候选
-
-#### Scenario: Agent 发布新版本
-- **WHEN** 同一 Agent 后续发布了新的 Tool Envelope
-- **THEN** 既有 Application Draft 和 Publication 不自动切换，必须显式升级并重新校验
-
-### Requirement: 一个逻辑资源槽必须支持 1..N 条精确资源映射
-Application Publication SHALL 为每个被选工具的必需逻辑资源槽冻结一条或多条 Mapping；每条 Mapping MUST 包含业务目标 scope、可选 placement、精确 Resource Revision，以及适用时的 Partition Policy Revision 或 Loki Scope Policy Revision。
-
-#### Scenario: 基地数据库服务多个车间
-- **WHEN** 一个基地级数据库 Resource Revision 绑定到包含 GL001、GL002、GL003 的应用目标
-- **THEN** 同一资源映射可由三个车间继承，但每个车间必须冻结自己的 Partition Policy Revision
-
-#### Scenario: 同一基地同时有云边资源
-- **WHEN** 应用为同一数据库 slot 和基地配置 cloud 与 edge 两个 Resource Revision
-- **THEN** Publication 保存两条 placement 不同的精确 Mapping，不创建伪基地或伪车间
-
-#### Scenario: 环境没有 placement
-- **WHEN** 目标资源没有云边区分
-- **THEN** Mapping 的 placement 必须缺省，提交 `none`、`default` 或其它占位值时发布失败
-
-### Requirement: Application Draft 必须显式声明有限叶子目标
-Application Draft SHALL 显式保存允许执行的真实叶子 `target_paths`，每条路径 MUST 是当前启用的 Environment leaf、Base leaf 或 Workshop leaf；系统 MUST NOT 从 Resource Mapping、角色 Grant 或当前 topology 全量反向推导应用目标。
-
-#### Scenario: 显式选择 GL001 和 GL002
-- **WHEN** 管理员把 `sanjiu/guanlan/GL001` 与 `sanjiu/guanlan/GL002` 保存为应用目标
-- **THEN** Draft 冻结两个精确 topology 目标，发布器只为这两个目标展开资源矩阵
-
-#### Scenario: 选择仍有 Workshop 的 Base
-- **WHEN** 管理员把仍包含启用 Workshop 的 Base 作为叶子目标提交
-- **THEN** 系统拒绝保存并要求选择实际 Workshop 叶子
-
-#### Scenario: Mapping 指向清单外目标
-- **WHEN** Resource Mapping 不覆盖任何显式 `target_paths` 或试图隐式增加目标
-- **THEN** Application Publish 拒绝且不扩大应用目标范围
-
-#### Scenario: Topology 后续新增叶子
-- **WHEN** Application Publication 发布后同一 Base 新增 Workshop
-- **THEN** 新 Workshop 不自动进入既有 Publication，必须显式更新 Draft 目标并重新发布
-
-### Requirement: Application Publish 必须证明每个有效组合唯一可解析
-发布器 MUST 展开所有已选工具、必需资源槽、Application Draft 显式声明的有限叶子目标和已配置 placement，并验证每个有效组合恰好命中一个 Mapping；零命中、多个命中、范围重叠、策略不匹配或非 Published 依赖均 MUST 阻止发布。
-
-#### Scenario: 必需资源缺失
-- **WHEN** 某 Workshop 的数据库 slot 没有可继承的 Published Resource Revision
-- **THEN** Application Publish 拒绝并返回缺失的工具、slot 和目标摘要
-
-#### Scenario: 环境与基地映射重叠
-- **WHEN** 同一 slot 和 placement 的环境级与基地级 Mapping 会同时覆盖同一个有效叶子目标
-- **THEN** Application Publish 以歧义拒绝，不采用最近父级或优先级规则
-
-#### Scenario: Loki global 与 environment 重叠
-- **WHEN** 同一应用的一个环境同时命中 global Loki 和 environment Loki Mapping
-- **THEN** Application Publish 拒绝该组合
-
-### Requirement: Application Publication 必须冻结完整解析表
-系统 SHALL 在发布时持久化规范化且不可变的目标解析表及内容 Hash，包含 Tool Release、slot、目标、placement、Resource Revision 和策略 revision；运行时 MUST 读取该表而不得查询 Resource Identity 的最新版本。
-
-#### Scenario: Resource 发布新 revision
-- **WHEN** Resource Identity 后续发布新 revision，但应用没有重新发布
-- **THEN** 既有应用和新建 Job 继续使用 Application Publication 冻结的旧 revision
-
-#### Scenario: Policy 发布新 revision
-- **WHEN** Workshop Partition Policy 或 Loki Scope Policy 发布新 revision
-- **THEN** 既有 Application Publication 不自动切换
-
-### Requirement: Job 必须复制不可变 Tool Execution Snapshot
-Job 创建时 MUST 从活动 Application Publication 复制 Agent Publication ID、Tool Release ID、Handler Version、Implementation Digest、目标路径、可用 placements、全部 Resource Mapping、Partition Policy 与 Loki Scope Policy 的 ID/revision/hash，以及授权事实摘要。
-
-#### Scenario: 新 Job 创建成功
-- **WHEN** 入站请求命中一个可执行的 Application Publication 和合法业务目标
-- **THEN** 系统在分发前持久化完整 Tool Execution Snapshot
-
-#### Scenario: Job 重试期间配置改变
-- **WHEN** Job 首次执行后 Tool Release、Resource 或 Policy 发布了新版本
-- **THEN** 重试仍使用原 Snapshot，不能浮动到新版本
-
-#### Scenario: 冻结 Release 被禁用
-- **WHEN** Job 重试前其冻结 Tool Release 变为 DISABLED 或 ARCHIVED
-- **THEN** 重试按生命周期失败关闭，不得替换为其他 ACTIVE Release
-
-### Requirement: 每次 Tool Call 必须解析一个明确 placement
-当 Job Snapshot 为目标保存多个 placement 时，每次 Tool Call MUST 通过受控调用参数或确定性系统路由选择恰好一个 placement，并记录选择；Agent 不得借此改变业务目标或权限范围。
-
-#### Scenario: 目标只有一个 placement
-- **WHEN** 某 slot 对 Job 目标仅有 cloud Mapping
-- **THEN** 运行时选择 cloud 并记录实际 Resource Revision
-
-#### Scenario: 目标有 cloud 和 edge
-- **WHEN** 某 slot 对同一目标同时有 cloud 和 edge Mapping 且调用明确请求其中一个允许值
-- **THEN** 运行时只使用该 placement 的精确 Resource Revision
-
-#### Scenario: 多 placement 未明确选择
-- **WHEN** 候选包含 cloud 和 edge 但调用与系统路由无法唯一确定一个
-- **THEN** 运行时在访问上游前失败关闭，不默认选择 cloud、edge 或第一条
-
-### Requirement: 可调用工具必须满足完整治理交集
-运行时 MUST 只暴露并执行同时满足精确实现已安装、Release 可调用、Agent Envelope、Application Allowlist、稳定工具使用授权、业务目标授权、精确资源映射和有效策略的工具。
-
-#### Scenario: 任一交集条件缺失
-- **WHEN** Tool Release 已发布但用户没有目标 Workshop 权限或资源映射无效
-- **THEN** 模型不得获得该可调用 Tool 定义，直接调用也必须被 Internal API Platform 拒绝
-
-#### Scenario: Agent 伪造资源事实
-- **WHEN** Tool 请求尝试覆盖 Resource Revision、tenant、table prefix、Redis prefix 或强制 Loki selector
-- **THEN** Internal API Platform 使用 Job Snapshot 中的事实并拒绝冲突输入
-
-### Requirement: Tool Call 审计必须记录精确事实且不含 Secret
-系统 SHALL 记录 Job、Application Publication、Tool Release、Handler Version、Implementation Digest、业务目标、实际 placement、Resource Revision、Policy Revision、有效范围 Hash、判定结果和 correlation id；MUST NOT 记录凭据、连接明文或无界业务响应。
-
-#### Scenario: 工具调用成功
-- **WHEN** 一个 DB、Redis 或 Loki Tool Call 成功完成
-- **THEN** 审计能够还原所用精确版本和范围，同时结果正文只保留有界脱敏摘要
-
-#### Scenario: 资源解析歧义
-- **WHEN** 运行时检测到零个或多个候选 Mapping
-- **THEN** 系统记录安全的解析原因和候选数量，不记录 endpoint、username 或 Secret 值
-
-
-<!-- Migrated from canonical source capability: `business-application-admin-workbench` -->
+<!-- Reconciled from mcp_new capability: `business-application-admin-workbench` -->
 
 ### Requirement: 管理API受统一身份和应用级权限保护
 系统 SHALL 复用现有Web Session、RBAC和CSRF保护Business Application管理API，并 MUST 使用`business_application`资源及read、create、edit、publish、activate动作进行授权。
@@ -380,7 +152,7 @@ Job 创建时 MUST 从活动 Application Publication 复制 Agent Publication ID
 - **AND** 关键状态不只通过颜色表达
 
 
-<!-- Migrated from canonical source capability: `business-application-control-plane` -->
+<!-- Reconciled from mcp_new capability: `business-application-control-plane` -->
 
 ### Requirement: 系统持久化稳定的业务应用聚合
 系统 SHALL 为每个 Business Application 持久化唯一编码、名称、描述、项目范围、负责人、生命周期状态和当前修订信息，并 MUST 将业务应用作为 Agent、Workflow、Channel 和未来 API Capability 的装配边界。
@@ -468,7 +240,7 @@ Job 创建时 MUST 从活动 Application Publication 复制 Agent Publication ID
 - **AND** 不暗示该应用已经接管生产入口
 
 
-<!-- Migrated from canonical source capability: `business-application-execution-policy` -->
+<!-- Reconciled from mcp_new capability: `business-application-execution-policy` -->
 
 ### Requirement: 业务应用执行策略必须固定到Agent Job
 系统 MUST 在业务应用路由命中且创建 Agent Job 前，从命中的 Business Application Publication 读取 `max_turns`、`timeout_seconds` 和 `max_tool_calls`，计算有效执行策略并把请求值、有效值、策略版本及来源 Publication 一并持久化到 Job。迁移后的每个新 Agent Job MUST 具有合法 v1 Execution Policy 快照；Worker MUST 只使用 Job 固定的策略，MUST NOT 在消费、重试或执行时重新解析当前活动 Deployment。
@@ -588,42 +360,45 @@ Job 创建时 MUST 从活动 Application Publication 复制 Agent Publication ID
 - **AND** 管理员无需重新建立控制面配置
 
 
-<!-- Migrated from canonical source capability: `business-application-publication` -->
+<!-- Reconciled from mcp_new capability: `business-application-publication` -->
 
 ### Requirement: 发布前执行跨组件完整校验
-系统 MUST 在创建 Business Application Publication 前校验应用状态、草稿完整性、Agent Publication、Workflow Publication、Channel Connector、Trigger、Actor、Delivery、Capability、项目范围和策略约束。
+系统 MUST 在创建 Business Application Publication 前校验应用状态、草稿完整性、Agent Publication、Workflow Publication、Channel Connector、Trigger、Actor、Delivery、MCP Tool 子集、业务范围和策略约束。所选 Agent Publication MUST 包含受支持且一致的 runtime kind；应用草稿不得保存 Runtime override、API Capability 或 Resource Mapping。
 
 #### Scenario: 发布合法草稿
-- **WHEN** enabled应用的草稿引用有效且范围兼容的已发布组件，并且所有策略通过校验
-- **THEN** 系统将该 revision 标记为校验通过并允许创建 publication
+- **WHEN** enabled 应用引用有效 Python/TypeScript Agent Publication、Agent Envelope 内的 MCP Tool 子集和其它合法组件
+- **THEN** 系统允许创建 Publication，Runtime 由 Agent Publication 唯一派生
 
 #### Scenario: 引用已禁用或不存在的组件
-- **WHEN** 草稿引用不存在、已禁用、完整性校验失败或项目范围冲突的组件
-- **THEN** 系统拒绝发布并返回按字段和组件分类的校验结果
-- **AND** 不创建部分 publication
+- **WHEN** 草稿引用不存在、已禁用、完整性失败或范围冲突的组件
+- **THEN** 系统拒绝且不创建部分 Publication
 
-#### Scenario: 未解析Capability
-- **WHEN** 草稿包含当前 Capability Catalog 无法解析的编码或版本
-- **THEN** 系统拒绝发布并指出未解析的 Capability
-- **AND** 不把该编码映射为现有数据库、Redis或Loki内部工具
+#### Scenario: 未解析MCP Tool
+- **WHEN** 草稿包含所选 Agent Publication Envelope 中不存在或 schema hash 不一致的 Tool
+- **THEN** 系统拒绝并指出未解析 Tool，不映射为其它工具
+
+#### Scenario: Agent Runtime不受支持
+- **WHEN** 所选 Agent Publication runtime kind 缺失、不受支持或与 Definition 不一致
+- **THEN** 系统拒绝且不猜测 Runtime
+
+#### Scenario: 应用提交旧平台字段
+- **WHEN** payload 提交 runtime override、API Capability、Handler、Connection 或 Resource Mapping 字段
+- **THEN** 系统拒绝旧字段且不保存兼容数据
 
 ### Requirement: 发布创建不可变且可验证的应用快照
-系统 SHALL 为每次成功发布创建不可变 snapshot，冻结应用元数据、组件 Publication ID、组件 revision/version、组件 hash、Trigger、Delivery、Capability引用和策略，并 MUST 保存 snapshot schema version 与 canonical SHA-256。
+系统 SHALL 为每次成功发布创建不可变 snapshot，冻结应用元数据、组件 Publication ID/revision/hash、Agent runtime kind、Trigger、Delivery、精确 MCP Tool 子集、业务范围和策略，并保存 schema version 与 canonical SHA-256。Snapshot MUST NOT 包含 API Capability、Handler、API Connection 或 Resource Mapping。
 
 #### Scenario: 创建应用发布快照
 - **WHEN** 合法 revision 首次发布
-- **THEN** 系统在单一事务中创建 publication、保存 snapshot 与 hash 并记录发布审计
-- **AND** publication 关联其来源 revision 和发布主体
+- **THEN** 系统在单一事务中创建 Publication、Snapshot、hash 和审计
 
 #### Scenario: 组件后续产生新版本
-- **WHEN** 被引用 Agent 或 Workflow 后续发布新版本
-- **THEN** 已有应用 publication 仍引用原 Publication ID、revision 和 hash
-- **AND** 只有新的应用 revision 和 publication 才能采用新组件
+- **WHEN** Agent、Workflow 或 Tool Manifest 后续变化
+- **THEN** 已有 Publication 仍使用冻结版本；只有新应用 Revision 可采用新值
 
 #### Scenario: 检测快照篡改
-- **WHEN** 读取 publication 时重新计算的 canonical hash 与保存值不一致或 schema version 不受支持
-- **THEN** 系统拒绝解析、激活或返回其作为有效配置
-- **AND** 记录不包含快照敏感内容的完整性失败审计
+- **WHEN** canonical hash、Runtime 投影或 Tool schema hash 不一致
+- **THEN** 系统拒绝解析和激活并记录安全审计
 
 ### Requirement: 发布与环境激活相互分离
 系统 SHALL 允许 publication 在不影响任何环境的情况下创建，并 MUST 通过显式 deployment 操作将一个有效 publication 激活到指定环境。
@@ -651,21 +426,19 @@ Job 创建时 MUST 从活动 Application Publication 复制 Agent Publication ID
 - **AND** 目标环境现有 deployment 保持不变
 
 ### Requirement: Resolver确定性读取活动应用
-系统 SHALL 提供按 application code 与 environment，以及按规范化Trigger键解析活动 publication 的只读端口，并 MUST 对停用、未激活、冲突和完整性失败返回明确配置错误。
+系统 SHALL 按 application/environment 或规范化 Trigger 键解析唯一活动 Publication，并返回 Agent/Workflow、Trigger、Delivery、MCP Tool 子集、业务范围、策略和完整性摘要；MUST NOT 返回旧 Capability/Resource Mapping 或 Secret。
 
 #### Scenario: 按应用解析活动发布
-- **WHEN** 调用方查询一个enabled应用在test环境的有效配置
-- **THEN** Resolver返回唯一publication、Agent/Workflow引用、Trigger、Delivery、Capability引用、策略和完整性摘要
-- **AND** 响应不包含Secret或外部系统凭据
+- **WHEN** 查询 enabled 应用在 test 环境的有效配置
+- **THEN** Resolver 返回唯一 Publication 与 MCP Tool 子集且不含 Secret
 
 #### Scenario: 按Trigger解析活动应用
-- **WHEN** 调用方使用唯一的environment、trigger type、connector ID和routing key查询
-- **THEN** Resolver返回唯一业务应用及其活动publication
+- **WHEN** 使用唯一 environment、trigger type、connector ID 和 routing key 查询
+- **THEN** Resolver 返回唯一业务应用及活动 Publication
 
 #### Scenario: 没有有效部署
-- **WHEN** 应用在目标环境未激活、已停用或publication完整性失败
-- **THEN** Resolver返回非重试配置错误
-- **AND** 不回退到任意其他业务应用
+- **WHEN** 应用未激活、已停用或完整性失败
+- **THEN** Resolver 返回非重试配置错误且不回退
 
 ### Requirement: 历史publication可以显式重新激活
 系统 SHALL 允许有权限的用户把仍然有效的历史 publication 重新激活到环境以实现回退，并 MUST 支持显式停用环境 deployment。
@@ -693,8 +466,23 @@ Job 创建时 MUST 从活动 Application Publication 复制 Agent Publication ID
 - **THEN** API返回版本、hash、组件引用、环境和审计摘要
 - **AND** 不返回任何Secret值或可直接访问外部系统的认证材料
 
+### Requirement: 应用必须通过Agent Publication选择Runtime
+Business Application 管理 API 与前端 SHALL 允许管理员从有效 Agent Publication 中选择一个版本，并展示 Agent code、publication revision 和只读 runtime kind。发布新 Agent 不得自动切换任何应用；切换必须创建并发布新的应用 revision，并按现有规则显式激活。
 
-<!-- Migrated from canonical source capability: `business-application-role-access` -->
+#### Scenario: 应用选择Python Agent
+- **WHEN** 管理员选择 `default-diagnostic-agent` 的有效 Publication
+- **THEN** 应用页面显示 `python-v1`，后续新 Job 从该 Publication 固定 Python Runtime
+
+#### Scenario: 应用选择TypeScript Agent
+- **WHEN** 管理员选择 `typescript-diagnostic-agent` 的有效 Publication 并发布、激活应用
+- **THEN** 后续新 Job 固定 `typescript-v1`，既有 Job 和未重新激活的应用版本不受影响
+
+#### Scenario: Agent发布新版本
+- **WHEN** 已被应用引用的 Agent 发布新 revision
+- **THEN** 应用继续使用原 Agent Publication，直到管理员显式更新、发布并激活应用
+
+
+<!-- Reconciled from mcp_new capability: `business-application-role-access` -->
 
 ### Requirement: 业务应用是用户运行授权的入口对象
 系统 SHALL 允许角色对具体业务应用授予 `invoke` 或等价使用能力。业务应用路由下命中的应用授权 MUST 封装该应用固定的项目和 Agent 运行入口许可，普通管理员不得再为同一路径手工组合项目和 Agent 使用权限。
@@ -765,7 +553,7 @@ Job 创建时 MUST 从活动 Application Publication 复制 Agent Publication ID
 - **THEN** 系统按该服务账号的角色执行应用授权和工具范围检查
 
 
-<!-- Migrated from canonical source capability: `business-application-runtime-routing` -->
+<!-- Reconciled from mcp_new capability: `business-application-runtime-routing` -->
 
 ### Requirement: 应用部署只使用local且与业务数据环境相互独立
 系统 MUST 只允许创建、激活、回退、查询或停用 `local` Business Application Deployment，并 MUST NOT 使用 Channel event 的业务数据 `routing.environment` 选择应用版本。
@@ -907,7 +695,7 @@ Job 创建时 MUST 从活动 Application Publication 复制 Agent Publication ID
 - **AND** 管理员可以从运行记录定位到对应应用版本
 
 
-<!-- Migrated from canonical source capability: `business-application-ui-prototype` -->
+<!-- Reconciled from mcp_new capability: `business-application-ui-prototype` -->
 
 ### Requirement: 原型展示一个Runtime多个业务应用的产品模型
 系统 SHALL 展示一个共享Agent Runtime、多个Agent Profile和多个Business Application之间的关系，业务应用 MUST 作为前端主要管理对象，而不是把Channel、Workflow、Profile和Capability展示为缺少装配关系的平行资源。

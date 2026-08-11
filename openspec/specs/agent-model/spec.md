@@ -5,7 +5,7 @@
 
 ## Requirements
 
-<!-- Migrated from canonical source capability: `agent-control-plane-dashboard-prototype` -->
+<!-- Reconciled from mcp_new capability: `agent-control-plane-dashboard-prototype` -->
 
 ### Requirement: 原型提供Agent应用平台静态Shell
 系统 SHALL 将现有通用模板替换为中文“Agent应用平台”Shell，并展示总览、业务应用、Agent配置、API能力、运行中心和系统管理的目标导航；除总览外的未实现模块 MUST 明确标记为规划中或不可操作。
@@ -68,7 +68,7 @@
 - **AND** 原型状态可由文字、Badge或图标共同识别
 
 
-<!-- Migrated from canonical source capability: `agent-profile-model-connection-management` -->
+<!-- Reconciled from mcp_new capability: `agent-profile-model-connection-management` -->
 
 ### Requirement: Web必须提供默认Agent Profile管理入口
 系统 SHALL 在管理 Web 增加“Agent 配置 / Agent Profile”菜单、Profile 列表和详情页，并 MUST 使用真实管理 API 展示草稿、当前 Publication、Effective Config、校验结果和 Publication 历史。第一版 MUST 只允许编辑现有 `default-diagnostic-agent`，MUST NOT 提供新建、复制或删除 Agent Profile。
@@ -151,17 +151,20 @@
 - **AND** 已发布业务应用及已入队 Job 保持各自固定版本
 
 ### Requirement: 模型连接测试必须使用真实受限Runtime并防止SSRF
-系统 SHALL 提供模型连接测试动作，测试 MUST 使用保存后的模型连接和 active Secret，通过与生产 Job 相同的 Claude Agent SDK 兼容路径执行无工具、单轮、短超时探测。系统 MUST 只允许 HTTPS 和部署侧 Provider host allowlist，禁止 URL userinfo、fragment、未批准重定向、回环、链路本地和私有目标，并 MUST 返回 Provider Host、模型、耗时和安全结果，不返回 Key、Prompt、模型响应正文或内部异常详情。
+系统 SHALL 提供模型连接测试动作，测试 MUST 使用保存后的模型连接和 active Secret，通过独立 TypeScript Runtime 的官方 Claude Agent SDK 路径执行无工具、单轮、短超时探测。Python API MUST 先执行 RBAC、HTTPS、Provider host allowlist、userinfo、fragment、重定向、回环、链路本地和私网目标校验；Runtime MUST 再按固定 revision/config hash 解析连接。响应 MUST 只包含 Provider Host、模型、Runtime/SDK 版本、耗时和安全结果，不得包含 Key、Secret ref、Prompt、模型响应正文或内部异常详情。
 
 #### Scenario: 测试已保存DeepSeek连接
-- **WHEN** Secret 管理员测试已保存且 host 被允许的 DeepSeek Anthropic-compatible连接
-- **THEN** 系统使用 active Key 完成受限 SDK 探测并返回成功状态和耗时
-- **AND** 测试不调用任何内部 MCP 工具
+- **WHEN** Secret 管理员测试已保存、host 被允许且 revision/config hash 固定的 DeepSeek Anthropic-compatible 连接
+- **THEN** Python 服务把受限 probe 委托给 TypeScript Runtime，Runtime 使用 active Key 完成无 Tool 探测并返回安全状态和耗时
 
 #### Scenario: 测试未批准URL
 - **WHEN** 管理员提交回环、私网、HTTP、带 userinfo 或 host 不在 allowlist 的 Base URL
-- **THEN** 系统在发起网络请求前拒绝连接
+- **THEN** Python 服务在调用 Runtime 前拒绝连接
 - **AND** 审计只记录脱敏 host、actor、结果和 correlation ID
+
+#### Scenario: 连接版本发生漂移
+- **WHEN** Runtime 读取到的模型连接 revision 或 config hash 与 probe 请求不一致
+- **THEN** Runtime 在调用 Provider 前失败关闭并返回稳定配置漂移错误
 
 ### Requirement: Agent Profile模型连接操作必须授权和审计
 系统 SHALL 复用统一 RBAC：读取 Profile 需要 Agent read/edit 权限，保存草稿需要 Agent edit 权限，发布和回滚需要 Agent publish 权限，创建或轮换 Key 及执行真实连接测试需要 Secret 管理权限。所有写操作和连接测试 MUST 记录不含敏感值的审计事件。
@@ -176,7 +179,7 @@
 - **AND** 审计不包含 Key、Secret ref、Prompt 或模型响应
 
 
-<!-- Migrated from canonical source capability: `agent-workflow-template-config` -->
+<!-- Reconciled from mcp_new capability: `agent-workflow-template-config` -->
 
 ### Requirement: Agent workflow templates are persisted
 系统 SHALL 在 PostgreSQL 中持久化 Agent 诊断流程模板，并 MUST 支持草稿、已发布、禁用等状态。
@@ -230,7 +233,7 @@
 - **THEN** 系统只更新配置表和发布快照，不立即启动 Agent job 或执行工具调用
 
 
-<!-- Migrated from canonical source capability: `deepseek-model-connection-setup` -->
+<!-- Reconciled from mcp_new capability: `deepseek-model-connection-setup` -->
 
 ### Requirement: 管理Web必须提供连续的DeepSeek模型连接配置向导
 系统 SHALL 在默认 Agent Profile 的“模型与连接”区域提供单一连续向导，依次完成 DeepSeek Anthropic Base URL 与 Credential 输入、模型发现、模型映射、真实配置测试和最终保存。系统 MUST NOT 再要求管理员通过独立的连接 revision 保存、Credential 弹窗和已保存版本测试完成一次配置。
@@ -372,29 +375,38 @@
 - **AND** 日志、审计和前端状态不包含敏感原文
 
 
-<!-- Migrated from canonical source capability: `multi-agent-configuration` -->
+<!-- Reconciled from mcp_new capability: `multi-agent-configuration` -->
 
 ### Requirement: Agent 定义按多 Agent 模型持久化
-系统 SHALL 持久化多个 Agent 定义，每个定义具有稳定 code、名称、说明、项目范围、状态和当前发布指针。
+系统 SHALL 持久化多个 Agent 定义，每个定义具有稳定 code、名称、说明、项目范围、状态、当前发布指针和创建后不可变的 `runtime_kind`。系统 MUST 初始化固定 `python-v1` 的默认诊断 Agent 和固定 `typescript-v1` 的 TypeScript 诊断 Agent，且不得通过修改同一 Agent 的 runtime kind 完成 Runtime 切换。
 
-#### Scenario: 默认诊断 Agent 初始化
+#### Scenario: 两个内置Agent初始化
 - **WHEN** 系统完成 migration 和 seed
-- **THEN** 系统存在稳定 code 为 `default-diagnostic-agent` 的默认只读诊断 Agent
+- **THEN** 系统存在稳定 code 为 `default-diagnostic-agent` 且 runtime kind 为 `python-v1` 的 Agent
+- **AND** 存在稳定 code 为 `typescript-diagnostic-agent` 且 runtime kind 为 `typescript-v1` 的 Agent
 
-#### Scenario: 后端读取指定 Agent
+#### Scenario: 后端读取指定Agent
 - **WHEN** API 或运行时按 Agent code 请求配置
-- **THEN** repository 按通用多 Agent 模型返回对应定义，而不是依赖单例配置表
+- **THEN** repository 按通用多 Agent 模型返回对应定义及 runtime kind，而不是依赖单例配置表
+
+#### Scenario: 修改既有Agent的Runtime
+- **WHEN** 管理员尝试把既有 Agent Definition 的 runtime kind 从 Python 改为 TypeScript 或反向修改
+- **THEN** 系统拒绝修改并提示选择或创建另一 Agent
 
 ### Requirement: Agent 草稿与发布快照分离
-系统 SHALL 为 Agent 保存可编辑草稿 revision，并 MUST 在发布时创建包含完整有效配置、schema version 和 config hash 的不可变 publication snapshot。
+系统 SHALL 为 Agent 保存可编辑草稿 revision，并 MUST 在发布时创建包含完整有效配置、不可变 runtime kind、schema version 和 config hash 的不可变 publication snapshot。草稿不得覆盖 Definition 的 runtime kind。
 
-#### Scenario: 编辑已发布 Agent 草稿
-- **WHEN** 管理员修改已发布 Agent 的业务指令或工具分配
-- **THEN** 系统只创建或更新新的草稿 revision，现有 publication 保持不变
+#### Scenario: 编辑已发布Agent草稿
+- **WHEN** 管理员修改任一内置 Agent 的业务指令或工具分配
+- **THEN** 系统只创建或更新该 Agent 的新草稿 revision，现有 publication 与 runtime kind 保持不变
 
 #### Scenario: 发布合法草稿
-- **WHEN** 具备发布权限的管理员发布通过校验的草稿
-- **THEN** 系统创建新的不可变 publication，并更新该 Agent 的当前发布指针
+- **WHEN** 具备发布权限的管理员发布通过校验的 Python 或 TypeScript Agent 草稿
+- **THEN** 系统创建包含对应 runtime kind 的新不可变 publication，并更新该 Agent 的当前发布指针
+
+#### Scenario: 草稿伪造Runtime
+- **WHEN** 草稿 payload 的 runtime kind 与 Agent Definition 不一致
+- **THEN** 系统拒绝校验和发布且不创建 publication
 
 ### Requirement: Agent 发布配置区分可编辑业务层和强制安全层
 系统 SHALL 允许草稿配置业务指令、模型策略、执行限制、只读工具、Skill、默认 routing 和 Channel/Delivery 绑定，但 MUST NOT 允许配置覆盖平台安全规则、用户权限、只读工具策略、SDK 写工具禁用或 secret 明文。
@@ -408,19 +420,23 @@
 - **THEN** 系统拒绝校验和发布
 
 ### Requirement: Agent job 固定发布版本
-系统 SHALL 在创建 job 的数据库事务中保存 Agent definition、publication ID、revision 和 config hash。worker 和 retry MUST 使用 job 固定的 publication，而不是重新读取当前发布指针或草稿。
+系统 SHALL 在创建 Job 的数据库事务中保存 Agent definition、publication ID、revision、config hash、runtime kind 和 Runtime 协议版本。Worker 和 retry MUST 使用 Job 固定的 publication 与 Runtime，不得重新读取当前发布指针、草稿或迁移门禁，也不得在故障时跨 Runtime fallback。
 
-#### Scenario: 发布后创建 job
-- **WHEN** 默认 Agent 当前 publication 有效且用户提交请求
-- **THEN** job 在发布队列前固定该 publication ID、revision 和 hash
+#### Scenario: 发布后创建Job
+- **WHEN** Application 选择的 Agent Publication 有效且用户提交请求
+- **THEN** Job 在发布队列前固定该 publication ID、revision、hash、runtime kind 和协议版本
 
-#### Scenario: job 排队期间发布新版本
-- **WHEN** job 已固定版本后管理员发布新的 Agent revision
-- **THEN** 已排队 job 继续使用原版本，新 job 使用新版本
+#### Scenario: Job排队期间发布新版本
+- **WHEN** Job 已固定版本后管理员发布新的 Agent revision
+- **THEN** 已排队 Job 继续使用原版本和 Runtime，新 Job 才使用新 Publication
 
-#### Scenario: job 重试
-- **WHEN** job 因瞬时错误进入 retry
-- **THEN** 重试仍使用原 publication snapshot
+#### Scenario: Job重试
+- **WHEN** Job 因瞬时错误进入 retry
+- **THEN** 重试仍使用原 publication snapshot、runtime kind、协议版本和 invocation 规则
+
+#### Scenario: 固定Runtime不可用
+- **WHEN** Job 固定的 Runtime 暂时不可连接
+- **THEN** Worker 按固定错误分类重试或终止，不自动调用另一 Runtime
 
 ### Requirement: Agent 发布支持校验和回滚
 系统 SHALL 在发布前校验引用的模型策略、工具、Skill、connector、项目和安全边界，并 MUST 通过切换当前发布指针回滚到历史 publication，不修改历史快照。
@@ -439,3 +455,14 @@
 #### Scenario: 默认 Agent 尚未发布
 - **WHEN** Channel 请求选择默认 Agent但它没有有效 publication
 - **THEN** 系统返回安全配置错误且不发布 Agent job
+
+### Requirement: Agent管理界面必须支持两个Runtime Agent
+Agent 管理 API 与前端 SHALL 列出 Python、TypeScript 两个内置 Agent，并允许具备权限的管理员分别编辑草稿、校验、发布、查看历史和回滚；页面 MUST 清楚展示只读 runtime kind。
+
+#### Scenario: 管理员发布TypeScript Agent
+- **WHEN** 管理员进入 `typescript-diagnostic-agent` 并提交合法草稿
+- **THEN** 页面允许完成校验和发布并显示新 Publication 及 `typescript-v1` 标签
+
+#### Scenario: 管理员查看Python Agent历史
+- **WHEN** 管理员选择 `default-diagnostic-agent`
+- **THEN** 页面展示其 Python runtime 标签、草稿和历史 Publication，而不是把非默认 Agent 强制设为只读

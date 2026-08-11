@@ -5,7 +5,7 @@
 
 ## Requirements
 
-<!-- Migrated from canonical source capability: `admin-capability-catalog` -->
+<!-- Reconciled from mcp_new capability: `admin-capability-catalog` -->
 
 ### Requirement: 管理能力由后端注册目录定义
 系统 SHALL 在后端维护唯一的管理能力目录，每项能力 MUST 包含稳定编码、中文名称、模块、业务动作、风险等级、依赖能力和支持的资源范围类型。管理员不得通过 UI 或通用 API 创建任意能力编码。
@@ -62,7 +62,7 @@
 - **THEN** 只有 `platform-admin` 自动获得，其他角色需要管理员显式评估和勾选
 
 
-<!-- Migrated from canonical source capability: `admin-user-directory` -->
+<!-- Reconciled from mcp_new capability: `admin-user-directory` -->
 
 ### Requirement: 管理员使用真实用户目录
 
@@ -202,7 +202,7 @@
 - **THEN** 这些入口 SHALL 保持禁用、隐藏或明确标记为未开放，不得展示伪功能
 
 
-<!-- Migrated from canonical source capability: `admin-web-session-integration` -->
+<!-- Reconciled from mcp_new capability: `admin-web-session-integration` -->
 
 ### Requirement: 管理Web连接现有服务端Session认证
 系统 SHALL 提供真实登录页并使用现有登录和当前用户API建立管理端认证状态，MUST 通过HttpOnly Cookie承载Session且不得在Local Storage、Session Storage、URL或前端持久化状态保存Session Token。
@@ -312,7 +312,7 @@
 - **AND** 错误状态不只依赖颜色表达
 
 
-<!-- Migrated from canonical source capability: `agent-audit-permission` -->
+<!-- Reconciled from mcp_new capability: `agent-audit-permission` -->
 
 ### Requirement: Users must be authorized before Agent job creation
 The system SHALL check connector ingress authorization and the access policy applicable to the resolved Trigger before creating an Agent job from any Channel message. For DingTalk messages resolved to an active Business Application Publication, the system SHALL authorize application access when the actual sender maps to an enabled internal user and MUST NOT require an additional application user allowlist, role, or Capability `use` grant; other Trigger types SHALL retain their defined requester, service-account, service, project, or role policies.
@@ -586,7 +586,7 @@ The system SHALL audit user creation and disablement, password/session security 
 - **THEN** 系统通过普通成员更新审计记录原时间、新时间和操作者，不要求独立审批记录
 
 
-<!-- Migrated from canonical source capability: `dingtalk-enterprise-governance` -->
+<!-- Reconciled from mcp_new capability: `dingtalk-enterprise-governance` -->
 
 ### Requirement: 钉钉企业以真实 Corp ID 建立命名空间
 系统 SHALL 将钉钉企业作为独立治理资源，使用内部 ID 建立关系，并在验证成功后以非空真实 Corp ID 作为不可变外部稳定标识；管理员维护的企业名称 MUST NOT 代替 Corp ID 参与身份唯一性判断。
@@ -686,7 +686,7 @@ The system SHALL audit user creation and disablement, password/session security 
 - **THEN** 既有业务应用主体仍存在，但必须显式选择新连接并重新发布，不得自动把历史发布改指新连接
 
 
-<!-- Migrated from canonical source capability: `dingtalk-identity-governance` -->
+<!-- Reconciled from mcp_new capability: `dingtalk-identity-governance` -->
 
 ### Requirement: 钉钉身份按企业和用户 ID 唯一
 系统 MUST 以“钉钉企业 + `senderStaffId`”唯一识别钉钉外部身份，并 MUST 保证每个“内部用户 + 钉钉企业”至多存在一个 `enabled` 或 `disabled` 的当前身份；身份不得因通过不同钉钉应用出现而重复创建。
@@ -816,7 +816,7 @@ The system SHALL audit user creation and disablement, password/session security 
 - **THEN** 系统进入受信候选分支且不写正式身份观察、不创建 Agent Job
 
 
-<!-- Migrated from canonical source capability: `dingtalk-ones-identity-binding` -->
+<!-- Reconciled from mcp_new capability: `dingtalk-ones-identity-binding` -->
 
 ### Requirement: 外部身份提供方范围固定
 
@@ -857,33 +857,15 @@ The system SHALL audit user creation and disablement, password/session security 
 - **THEN** 系统 SHALL 返回冲突错误，不得自动覆盖或迁移绑定
 
 ### Requirement: ONES 身份通过服务端登录验证
-
-系统 SHALL 使用服务端配置的受信任 ONES 实例和固定登录端点验证管理员输入的 ONES 邮箱与一次性密码，并 SHALL 使用响应中的用户 UUID 作为外部身份标识。
+系统 SHALL 使用服务端固定且独立于 API Connection、Capability 与 MCP 的受信 ONES 身份配置，由当前用户本人提交邮箱与一次性密码完成验证，并使用响应中的用户 UUID 作为外部身份标识。管理员不得为其他用户输入邮箱密码或代为验证。
 
 #### Scenario: ONES 凭据验证成功
+- **WHEN** 当前用户提交有效邮箱与一次性密码
+- **THEN** 系统调用固定登录端点，严格校验响应，并经无 Token Challenge 保存 User ID、显示名称、Team、默认 Team 和验证时间
 
-- **WHEN** 管理员为目标用户提交 ONES 邮箱和有效的一次性密码
-- **THEN** 系统 SHALL 调用固定的 `/project/api/project/auth/login` 端点，校验响应结构，并保存 ONES 用户 UUID、显示名称、实例编码、团队 UUID 列表和验证时间
-
-#### Scenario: ONES 凭据无效
-
-- **WHEN** ONES 登录接口拒绝邮箱或密码
-- **THEN** 系统 SHALL 返回安全且可理解的验证失败结果，不得创建候选或失败身份记录
-
-#### Scenario: 管理员尝试手工填写 ONES UUID
-
-- **WHEN** 绑定请求包含手工指定的 ONES 用户 UUID、令牌、团队或目标 URL
-- **THEN** 系统 SHALL 拒绝这些客户端控制的可信字段，身份数据必须来自受信任 ONES 登录响应
-
-#### Scenario: 同一 ONES 身份重复绑定
-
-- **WHEN** 经验证的 ONES UUID 已绑定到目标用户
-- **THEN** 系统 SHALL 幂等更新允许更新的展示信息和验证时间，不得创建重复记录
-
-#### Scenario: ONES 身份已属于其他用户
-
-- **WHEN** 经验证的 ONES UUID 已绑定到另一个系统用户
-- **THEN** 系统 SHALL 返回冲突错误，不得自动覆盖或迁移绑定
+#### Scenario: 管理员尝试代用户验证
+- **WHEN** 管理员在人员管理上下文提交他人的邮箱密码
+- **THEN** 系统拒绝且不访问 ONES 登录端点
 
 ### Requirement: ONES 验证网络边界受控
 
@@ -910,42 +892,22 @@ The system SHALL audit user creation and disablement, password/session security 
 - **THEN** 系统 SHALL 视为验证失败且不得创建或更新身份
 
 ### Requirement: ONES 凭据和令牌不得持久化
-
-系统 MUST NOT 将 ONES 明文密码、登录响应令牌或原始登录响应保存到数据库、缓存、日志、审计详情、错误信息或前端状态持久层。
+系统 MUST NOT 将 ONES 邮箱、明文密码、登录 Token 或原始登录响应保存到数据库、缓存、日志、审计、API 响应或前端持久层；旧 External API Credential 不得作为身份绑定依赖恢复。
 
 #### Scenario: ONES 登录成功并返回令牌
-
 - **WHEN** ONES 登录响应包含用户令牌
-- **THEN** 系统 SHALL 在当前验证请求内丢弃令牌，仅保留允许的身份字段
-
-#### Scenario: ONES 登录失败
-
-- **WHEN** 网络调用或登录验证失败
-- **THEN** 日志和审计事件 SHALL 仅包含脱敏错误分类、目标实例编码和请求追踪信息，不得包含邮箱密码、令牌或原始响应
-
-#### Scenario: 绑定对话框关闭
-
-- **WHEN** ONES 绑定成功、失败或用户关闭对话框
-- **THEN** 前端 SHALL 清空密码字段且不得把密码写入 URL、本地存储或会话存储
+- **THEN** 系统在当前请求内丢弃令牌，仅保留允许的身份与 Team 字段
 
 ### Requirement: 外部身份生命周期可管理
+系统 SHALL 区分提供方治理动作：钉钉身份继续由管理员按受信候选进行启停和软解绑；ONES 身份由本人绑定、重新验证和软解绑，管理员只可查看、停用和审计，不得启用、代验证或代解绑 ONES。
 
-系统 SHALL 在用户详情中展示钉钉和 ONES 身份，并支持启用、停用和软解绑；所有变更 SHALL 使用版本号保护并保留审计轨迹。
+#### Scenario: 管理员停用 ONES 身份
+- **WHEN** 管理员使用当前 Revision 停用 ONES 身份
+- **THEN** 系统停用并记录审计，重新启用必须由本人完成新一轮验证
 
-#### Scenario: 停用外部身份
-
-- **WHEN** 管理员使用当前 `expected_revision` 停用一个外部身份
-- **THEN** 系统 SHALL 将其标记为停用、递增版本号并保留身份记录
-
-#### Scenario: 软解绑外部身份
-
-- **WHEN** 管理员确认解绑并提交当前 `expected_revision`
-- **THEN** 系统 SHALL 将身份标记为已解绑而不是物理删除，并记录操作者和时间
-
-#### Scenario: 并发修改外部身份
-
-- **WHEN** 管理员使用过期的 `expected_revision` 修改身份
-- **THEN** 系统 SHALL 返回冲突错误且不得覆盖较新的状态
+#### Scenario: 管理员尝试解绑 ONES 身份
+- **WHEN** 管理员调用通用身份解绑接口处理 ONES 身份
+- **THEN** 系统拒绝且保持身份事实不变
 
 ### Requirement: 身份状态参与运行时身份解析
 
@@ -1000,16 +962,14 @@ The system SHALL audit user creation and disablement, password/session security 
 - **THEN** 系统 SHALL 返回验证失败且数据库中不得出现该次失败产生的身份记录
 
 ### Requirement: 本阶段不接入 ONES 业务能力
+ONES 身份绑定 SHALL 独立于工具运行时，不创建 API Capability、API Connection、业务调用 Token 或 MCP Tool 调用凭据。未来 ONES MCP 凭据必须由独立规格定义。
 
-本变更 SHALL NOT 创建 ONES 需求、任务、缺陷查询能力，不得新增 API Capability、工作流节点或 Agent 工具。
-
-#### Scenario: 完成 ONES 身份绑定功能
-
-- **WHEN** 本变更交付
-- **THEN** 用户管理页面 SHALL 仅能管理 ONES 身份关联，不得出现需求、任务、缺陷查询或业务调用入口
+#### Scenario: 完成 ONES 身份绑定
+- **WHEN** 用户完成绑定或重新验证
+- **THEN** 系统只更新身份事实，不授予或触发任何 ONES 业务调用能力
 
 
-<!-- Migrated from canonical source capability: `external-identity-presentation` -->
+<!-- Reconciled from mcp_new capability: `external-identity-presentation` -->
 
 ### Requirement: 本人和治理接口使用不同身份投影
 系统 MUST 根据“我的外部身份”和“人员管理 → 用户详情”两个入口分别返回本人投影和治理投影，不得返回完整数据库行后仅依赖前端隐藏越权字段；即使管理员查看自己的人员记录，人员详情仍 MUST 使用治理投影。
@@ -1087,64 +1047,25 @@ The system SHALL audit user creation and disablement, password/session security 
 - **THEN** 系统非破坏转换为名称为空的结构化候选，保留默认 Team 和个人凭据，并在下次重新验证后刷新名称
 
 ### Requirement: ONES 身份与凭据状态分别治理
-系统 MUST 分别保存并展示 ONES 身份绑定状态和个人凭据状态；本人摘要 SHALL 由两者计算“可使用”“需要重新验证”或“已被管理员停用”的业务可用状态，治理详情不得只返回无法解释的原始 `ACTIVE` 标签。
+ONES 身份页面 MUST 只治理身份绑定状态；用于旧 API Capability 的个人业务调用凭据状态、Revision、最近调用事实和错误码 MUST 删除，且身份不得因 Credential 不存在而显示为不可用。
 
-#### Scenario: 身份与凭据均可用
-- **WHEN** ONES 身份已启用且精确关联的个人凭据有效
-- **THEN** 本人摘要显示“可使用”，管理员详情分别显示“身份绑定状态：已启用”和“个人凭据状态：有效”
-
-#### Scenario: 身份存在但凭据缺失或失效
-- **WHEN** 当前身份没有精确关联凭据、凭据无效或认证失败
-- **THEN** 本人摘要显示“需要重新验证”及安全操作提示，不返回原始错误码
-
-#### Scenario: 身份或凭据被治理停用
-- **WHEN** 管理员停用身份或个人凭据
-- **THEN** 本人摘要显示“已被管理员停用”，且不得提供绕过治理状态的运行时能力
+#### Scenario: 身份已启用且没有个人业务调用凭据
+- **WHEN** 当前 ONES 身份已启用并具有已验证 Team
+- **THEN** 本人摘要显示身份已绑定，不提示缺少 Credential 或要求为业务调用重新验证
 
 ### Requirement: ONES 默认摘要只展示业务字段
-ONES 本人和治理模式的默认摘要 SHALL 统一展示 ONES 用户名称、业务可用状态、默认 Team、最近验证和最近成功使用；默认摘要 MUST NOT 展示固定“租户／实例：ones”“连接器：服务端 ONES 实例”、身份 Revision、凭据 Revision 或原始错误码。
+ONES 本人与治理摘要 SHALL 展示用户名称、身份状态、默认 Team、最近验证和适用操作；MUST NOT 展示 API Connection、个人 Credential、MCP 状态或调用错误。
 
-#### Scenario: ONES 绑定可用
-- **WHEN** 页面加载一个具有默认 Team 和有效凭据的当前 ONES 身份
-- **THEN** 默认卡只展示约定五类业务字段和适用操作，不展示固定占位或技术 Revision
-
-#### Scenario: 从旧通用身份卡升级
-- **WHEN** 旧记录仍含 `tenant_code=ones` 或空 Connector 字段
-- **THEN** 新页面忽略这些通用占位字段，不将其渲染为用户可见信息
+#### Scenario: ONES 身份已绑定
+- **WHEN** 页面加载具有默认 Team 的当前身份
+- **THEN** 默认卡展示身份与 Team 事实，不展示 Connection/Credential Revision
 
 ### Requirement: ONES 账户详情按本人和管理员划分
-系统 SHALL 允许本人展开自己的 ONES User ID 和全部已验证 Team 名称／ID；管理员治理详情 SHALL 在具备相应权限时额外展示身份记录 ID 与 Revision、个人凭据状态与 Revision、所绑定 ONES Connection 名称和精确发布版本、最近尝试、最近错误码和错误时间。
-
-#### Scenario: 本人展开 ONES 账户详情
-- **WHEN** 当前用户展开本人 ONES 卡片
-- **THEN** 系统只返回和展示自己的 User ID 与 Team 明细，不返回凭据 Revision、Connection 内部版本或错误码
+系统 SHALL 允许本人展开自己的 ONES User ID 和全部已验证 Team；管理员治理详情 SHALL 只展示身份记录 ID、Revision、状态和验证时间，MUST NOT 显示邮箱密码表单、API Connection、个人 Credential 或代用户重新验证入口。
 
 #### Scenario: 管理员展开 ONES 技术详情
-- **WHEN** 具备外部凭据读取权限的管理员展开他人 ONES 技术详情
-- **THEN** 系统返回允许的身份、凭据、Connection 和调用状态元数据，但不允许管理员绑定或重新验证他人凭据
-
-### Requirement: ONES 凭据记录真实使用事实
-系统 SHALL 为 ONES 个人凭据维护最近尝试时间、最近成功使用时间、最近错误码和错误发生时间；只有使用持久化个人凭据发起真实外部请求且最终规范化输出通过 Output Schema 校验时，才更新最近成功使用。
-
-#### Scenario: Agent Runtime 成功调用 ONES
-- **WHEN** Agent 使用当前用户个人凭据完成 ONES 请求、Mapping 和 Output Schema 校验
-- **THEN** 系统更新最近尝试和最近成功使用，并在调用审计中标记来源 `RUNTIME`
-
-#### Scenario: 管理员 Capability Test 成功
-- **WHEN** 管理员使用自己的持久化个人凭据完成 Capability Test
-- **THEN** 系统更新最近尝试和最近成功使用，并在调用审计中标记来源 `ADMIN_TEST`
-
-#### Scenario: ONES 调用终态失败
-- **WHEN** 使用个人凭据的真实请求最终失败
-- **THEN** 系统更新最近尝试、最近错误码和错误时间，不覆盖已有最近成功使用时间
-
-#### Scenario: 本人重新验证凭据
-- **WHEN** 用户完成登录验证和 Challenge 确认但未调用 ONES 业务 API
-- **THEN** 系统只更新最近验证，不更新最近尝试或最近成功使用
-
-#### Scenario: Connection 启动验证成功
-- **WHEN** 首个 Connection 使用瞬时管理员密码和 Token 完成启动验证
-- **THEN** 系统不更新任何持久化个人凭据的使用事实
+- **WHEN** 具备身份治理权限的管理员查看他人 ONES 身份
+- **THEN** 系统只返回允许的身份元数据和审计事实
 
 ### Requirement: 身份响应根本不包含认证材料
 本人和治理外部身份接口 MUST NOT 返回 Token、密码、可逆密文、认证 Header、Client Secret、Session Webhook、Verification Challenge 内部 Token 或原始外部响应；前端不得通过日志或其他管理接口拼接这些材料。
@@ -1158,7 +1079,7 @@ ONES 本人和治理模式的默认摘要 SHALL 统一展示 ONES 用户名称�
 - **THEN** 专用响应白名单排除这些字段，测试证明它们不出现在响应 JSON
 
 
-<!-- Migrated from canonical source capability: `external-identity-ui-prototype` -->
+<!-- Reconciled from mcp_new capability: `external-identity-ui-prototype` -->
 
 ### Requirement: 原型以内部联系人为统一权限主体
 系统 SHALL 以内部联系人作为唯一平台用户和授权主体，并展示钉钉、ONES及未来其他系统账号作为该人员的外部身份映射；页面 MUST NOT 将外部账号直接展示为独立平台权限主体。
@@ -1214,7 +1135,7 @@ ONES 本人和治理模式的默认摘要 SHALL 统一展示 ONES 用户名称�
 - **AND** 不展示任何可用于访问外部系统的凭据值
 
 
-<!-- Migrated from canonical source capability: `identity-authorization-bootstrap-reset` -->
+<!-- Reconciled from mcp_new capability: `identity-authorization-bootstrap-reset` -->
 
 ### Requirement: 重置只能通过受控运维入口执行
 系统 SHALL 仅允许具有主机和数据库运维权限的操作者通过专用命令执行身份与授权重置，MUST NOT 提供可由普通 Web 会话、Agent、Channel 或公开 API 直接触发的重置接口。执行前 MUST 确认角色授权控制中心所需迁移已全部应用。
@@ -1368,7 +1289,7 @@ ONES 本人和治理模式的默认摘要 SHALL 统一展示 ONES 用户名称�
 - **THEN** 操作者只看到中文安全说明和可关联的操作 ID，内部堆栈不得通过 Web 页面或 Channel 返回
 
 
-<!-- Migrated from canonical source capability: `multi-provider-external-identity-management` -->
+<!-- Reconciled from mcp_new capability: `multi-provider-external-identity-management` -->
 
 ### Requirement: 外部身份Connection定义受信Provider实例
 系统 SHALL 持久化外部身份Connection的稳定编码、Provider、tenant/instance、验证模式、状态和受控连接引用，并 MUST 区分DingTalk Channel Connector与ONES业务系统Connection。
@@ -1523,22 +1444,14 @@ ONES 本人和治理模式的默认摘要 SHALL 统一展示 ONES 用户名称�
 - **AND** 不返回任何可重放的认证材料
 
 
-<!-- Migrated from canonical source capability: `ones-identity-verification` -->
+<!-- Reconciled from mcp_new capability: `ones-identity-verification` -->
 
 ### Requirement: ONES验证只通过受信Connection发起
-系统 SHALL 使用已启用ONES Connection中的固定Base URL和代码内固定登录Path执行身份验证，MUST NOT接受浏览器或请求体提供的URL、Method、Path、Header或代理。
+这里的受信 Connection SHALL 收敛为服务端固定的 ONES 身份提供方配置，而不是已退役的通用 API Connection。系统 MUST 使用固定 Base URL、代码内固定登录 Path 和主机白名单执行验证，不接受浏览器或请求体提供 URL、Method、Path、Header、代理、API Connection Revision 或 MCP Server。
 
-#### Scenario: 使用已启用ONES Connection
-- **WHEN** 用户验证属于自己的pending Claim且Connection启用
-- **THEN** 后端向该Connection的`/project/api/project/auth/login`发送固定JSON登录请求
-
-#### Scenario: Connection未启用
-- **WHEN** Claim引用disabled、未知或非ONES Connection
-- **THEN** 系统拒绝验证且不发起网络请求
-
-#### Scenario: 请求尝试覆盖URL
-- **WHEN** 客户端提交Base URL、Path、Header或重定向目标等未定义字段
-- **THEN** API返回422并拒绝整个请求
+#### Scenario: 身份提供方未配置
+- **WHEN** 固定 ONES 身份配置不可用
+- **THEN** 系统拒绝验证且不尝试旧 API Connection 或任意 MCP 地址
 
 ### Requirement: ONES验证材料只存在于单次请求内
 系统 MUST 把ONES email和password作为短生命周期Verification Proof，并 MUST NOT将password或登录响应Token写入数据库、Identity、Claim、Verification Attempt、Cache、日志、审计、API响应或浏览器持久化存储。
@@ -1613,34 +1526,18 @@ ONES 本人和治理模式的默认摘要 SHALL 统一展示 ONES 用户名称�
 - **AND** 不说明邮箱是否存在
 
 ### Requirement: 成功验证原子绑定ONES身份
-系统 MUST 在单一事务中校验Claim revision、内部用户、Connection、唯一subject和现有Identity，然后创建或刷新Identity并完成Claim。
+系统 MUST 使用不含 Token 的短时单次身份 Challenge，在确认默认 Team 时原子校验当前用户、唯一 subject、候选 Team 和现有 Identity，然后创建或刷新 Identity 并消费 Challenge。
 
 #### Scenario: 新ONES主体验证成功
-- **WHEN** 规范化subject尚未绑定且Claim、用户、Connection均有效
-- **THEN** 系统创建verified/provider_login Identity并把Claim标记为verified
-
-#### Scenario: 同一用户重复验证
-- **WHEN** subject已经属于当前内部用户
-- **THEN** 系统幂等刷新last verified和team上下文
-- **AND** 不创建第二条Identity
-
-#### Scenario: subject属于其它用户
-- **WHEN** subject已经绑定另一个内部用户
-- **THEN** 系统把Claim标记为conflict并保留原Identity
-- **AND** 不返回另一个用户的敏感详情
+- **WHEN** 当前用户确认合法 Challenge 和候选 Team
+- **THEN** 系统创建 verified/provider_login Identity 并保存最新 Team、默认 Team 和验证时间，不创建个人业务调用 Credential
 
 ### Requirement: ONES团队上下文不等于授权
-系统 SHALL 保存经过验证的team UUID列表和last verified时间用于后续身份上下文，MUST NOT把team UUID自动转为内部角色、项目范围、Capability授权或业务调用Token。
+系统 SHALL 保存经过验证的 Team ID/名称、默认 Team 和最近验证时间作为身份上下文，MUST NOT把 Team 自动转为内部角色、数据范围、Capability、MCP Tool 授权或业务调用 Token。
 
-#### Scenario: 用户属于多个team
-- **WHEN** ONES登录响应包含多个合法team UUID
-- **THEN** Identity保存去重后的team列表并在页面展示安全摘要
-- **AND** 用户内部RBAC保持不变
-
-#### Scenario: team成员关系变化
-- **WHEN** 用户重新验证后team列表发生变化
-- **THEN** 系统以新验证结果更新Provider上下文并记录前后数量
-- **AND** 不自动删除或新增平台授权
+#### Scenario: 用户属于多个Team
+- **WHEN** ONES 登录响应包含多个合法 Team
+- **THEN** Identity 保存去重后的候选与默认 Team，内部 RBAC 保持不变
 
 ### Requirement: ONES Mock用于无真实凭据的集成验证
 系统 SHALL 支持在开发测试中通过`docker-compose.ones-mock.yml`验证登录、subject/team提取、重复绑定、冲突和错误路径，并 MUST 使用明显的Mock凭据与标识。
@@ -1655,7 +1552,7 @@ ONES 本人和治理模式的默认摘要 SHALL 统一展示 ONES 用户名称�
 - **THEN** 新增代码、测试、fixture和文档不包含真实ONES IP、邮箱、用户UUID、团队UUID或Token
 
 
-<!-- Migrated from canonical source capability: `role-authorization-admin-console` -->
+<!-- Reconciled from mcp_new capability: `role-authorization-admin-console` -->
 
 ### Requirement: 管理端提供角色与授权导航和页面
 系统 SHALL 在“用户与外部身份”导航组中依次提供“人员管理”“角色与授权”“未绑定钉钉用户”，并 SHALL 提供 `/users/roles` 和 `/users/roles/:roleId` 路由。
@@ -1751,7 +1648,7 @@ ONES 本人和治理模式的默认摘要 SHALL 统一展示 ONES 用户名称�
 - **THEN** 前端显示中文安全提示，不直接展示内部英文异常或堆栈
 
 
-<!-- Migrated from canonical source capability: `role-authorization-model` -->
+<!-- Reconciled from mcp_new capability: `role-authorization-model` -->
 
 ### Requirement: 自定义角色统一承载管理能力和业务访问能力
 系统 SHALL 使用同一个自定义角色聚合管理后台能力、业务应用访问、只读业务能力和数据范围，且 MUST 将“平台管理角色”和“业务访问角色”仅作为模板或用途标签，不得作为互斥的授权主体类型。
@@ -1855,8 +1752,26 @@ ONES 本人和治理模式的默认摘要 SHALL 统一展示 ONES 用户名称�
 - **WHEN** 管理员确认停用一个自定义角色
 - **THEN** 系统展示受影响成员和资源摘要、停用该角色并保留原配置
 
+### Requirement: 角色业务工具授权必须只引用 MCP Tool Identifier
+角色 SHALL 继续承载业务应用访问、稳定 MCP Tool 使用权限和业务数据范围；角色模型 MUST NOT 保存或展示 API Capability、Handler、API Connection、Resource Mapping 或 Resource Revision grant。
 
-<!-- Migrated from canonical source capability: `role-based-access-control` -->
+#### Scenario: 授权 test 环境数据库工具
+- **WHEN** 管理员为角色选择应用、`query_database`/`get_schema_directory` MCP Tool 和 `environment=test` 数据范围
+- **THEN** 成员的新 Job 可以在应用 Tool 子集内访问 test 目标，资源由 `tool-mcp` 唯一解析
+
+#### Scenario: 旧 Capability 授权字段提交
+- **WHEN** 角色授权请求包含 API Capability 或 Resource Mapping
+- **THEN** 后端拒绝旧字段且不创建兼容 grant
+
+### Requirement: 统一 RBAC 必须是唯一授权事实源
+系统 MUST 只使用现行 `rbac_*` 角色、成员、管理能力、应用访问、MCP Tool grant 和数据范围表计算授权；MUST NOT 保留或读取 `permission_policy`、`platform_access_grant`、旧授权清理操作表或 DB-backed 测试兼容层。
+
+#### Scenario: 从包含旧授权数据的数据库升级
+- **WHEN** 数据库同时包含现行统一 RBAC 和旧 policy/grant 行
+- **THEN** 迁移保留现行用户、角色、成员、应用授权和数据范围，并永久删除旧授权表而不把旧行重新解释为有效权限
+
+
+<!-- Reconciled from mcp_new capability: `role-based-access-control` -->
 
 ### Requirement: 用户可以通过角色继承权限
 系统 SHALL 持久化角色和用户角色关系，并 MUST 只展开 enabled 用户、enabled 角色和 enabled membership。
@@ -1910,7 +1825,7 @@ ONES 本人和治理模式的默认摘要 SHALL 统一展示 ONES 用户名称�
 - **THEN** 系统记录可排障的安全决策 trace，并向调用方返回不泄漏内部策略细节的错误
 
 
-<!-- Migrated from canonical source capability: `service-account-identity` -->
+<!-- Reconciled from mcp_new capability: `service-account-identity` -->
 
 ### Requirement: Webhook 使用不可交互登录的服务账号
 系统 SHALL 支持 `account_type=service` 的内部账号，并 MUST 禁止该账号创建密码凭证、Web session或绑定钉钉等人类外部身份。
@@ -1961,7 +1876,7 @@ ONES 本人和治理模式的默认摘要 SHALL 统一展示 ONES 用户名称�
 - **THEN** tool call 和权限审计记录 Trigger 服务账号为主体，并保留 Trigger publication 引用
 
 
-<!-- Migrated from canonical source capability: `unbound-dingtalk-identity-discovery` -->
+<!-- Reconciled from mcp_new capability: `unbound-dingtalk-identity-discovery` -->
 
 ### Requirement: 未绑定钉钉消息形成安全发现候选
 
@@ -2225,7 +2140,7 @@ ONES 本人和治理模式的默认摘要 SHALL 统一展示 ONES 用户名称�
 - **THEN** 页面 SHALL 只提供查看、筛选、刷新、去绑定或前往原人员恢复等身份管理操作
 
 
-<!-- Migrated from canonical source capability: `unified-user-identity` -->
+<!-- Reconciled from mcp_new capability: `unified-user-identity` -->
 
 ### Requirement: 内部用户是跨入口唯一权限主体
 系统 SHALL 为每个自然人或受管服务账号创建稳定的内部用户 ID，并 MUST 让 Web 登录、钉钉入口、Agent job、工具调用、配置操作和审计使用该内部用户 ID 作为权限主体。
@@ -2294,7 +2209,7 @@ ONES 本人和治理模式的默认摘要 SHALL 统一展示 ONES 用户名称�
 - **THEN** 系统不自动合并，报告人工处理项，并保持历史记录不变
 
 
-<!-- Migrated from canonical source capability: `web-admin-authentication` -->
+<!-- Reconciled from mcp_new capability: `web-admin-authentication` -->
 
 ### Requirement: 管理端支持安全的本地账号登录
 系统 SHALL 支持启用用户通过用户名和密码登录管理端，并 MUST 使用经过审计的强密码哈希算法保存密码验证材料。系统 MUST NOT 保存或返回明文密码。
@@ -2356,7 +2271,7 @@ ONES 本人和治理模式的默认摘要 SHALL 统一展示 ONES 用户名称�
 - **THEN** 系统拒绝创建额外默认管理员
 
 
-<!-- Migrated from canonical source capability: `web-admin-console` -->
+<!-- Reconciled from mcp_new capability: `web-admin-console` -->
 
 ### Requirement: 管理端提供认证后的基础页面
 系统 SHALL 提供登录页和认证后的管理端外壳，并 MUST 对未认证用户隐藏管理数据和操作。
