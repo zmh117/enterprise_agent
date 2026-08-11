@@ -3,6 +3,16 @@ schema: spec-driven
 context: |
   语言：中文（简体）
   所有产出物必须用简体中文撰写。
+  当前已接受规范的唯一 canonical baseline 位于 openspec/specs/ 下的 8 个领域：
+  identity-access、agent-model、business-application、channel-conversation、
+  execution-delivery、builtin-tool-resource、governed-api-capability、platform-operations。
+  创建或修改 OpenSpec artifact 时，只读取与当前请求相关的 canonical domain spec。
+  不得默认扫描 openspec/changes/ 或 openspec/changes/archive/；只有用户指定 active change、
+  执行 change 工作流或明确要求历史审计时，才读取对应目录。
+  Active change delta、archive、proposal、design、tasks、evidence、ADR 和运行手册均不得覆盖
+  canonical Requirement。需要改变当前规范时，必须通过明确 change 更新 canonical specs。
+  Canonical spec 表达已接受规范，不自动证明运行能力已经实现；实现状态仍需代码、migration、
+  测试和必要的运行证据，并区分 Confirmed-current 与 Documented-intent。
 
 # Project context (optional)
 # This is shown to AI when creating artifacts.
