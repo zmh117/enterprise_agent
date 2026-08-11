@@ -21,9 +21,9 @@ class RedisClusterIntegrationTests(unittest.TestCase):
     """
 
     def test_cluster_get_within_prefix(self) -> None:
-        from app.modules.internal_api_platform.domain.addressing import ResourceBinding
-        from app.modules.internal_api_platform.domain.redis_policy import enforce_key_namespace
-        from app.modules.internal_api_platform.domain.topology import (
+        from app.modules.mcp_tool_runtime.domain.addressing import ResourceBinding
+        from app.modules.mcp_tool_runtime.domain.redis_policy import enforce_key_namespace
+        from app.modules.mcp_tool_runtime.domain.topology import (
             Base,
             DatabaseEngine,
             Environment,
@@ -32,7 +32,7 @@ class RedisClusterIntegrationTests(unittest.TestCase):
             RedisNode,
             ResourceKind,
         )
-        from app.modules.internal_api_platform.infrastructure.redis_gateway import RealRedisGateway
+        from app.modules.mcp_tool_runtime.infrastructure.redis_gateway import RealRedisGateway
 
         nodes_raw = os.getenv("REDIS_CLUSTER_NODES", "127.0.0.1:6379")
         nodes = []
@@ -72,9 +72,9 @@ class OracleThickIntegrationTests(unittest.TestCase):
     """
 
     def test_thick_readonly_select(self) -> None:
-        from app.modules.internal_api_platform.domain.addressing import ResourceBinding
-        from app.modules.internal_api_platform.domain.sql.analyzer import analyze_readonly_query
-        from app.modules.internal_api_platform.domain.topology import (
+        from app.modules.mcp_tool_runtime.domain.addressing import ResourceBinding
+        from app.modules.mcp_tool_runtime.domain.sql.analyzer import analyze_readonly_query
+        from app.modules.mcp_tool_runtime.domain.topology import (
             Base,
             DatabaseConnection,
             DatabaseEngine,
@@ -83,8 +83,8 @@ class OracleThickIntegrationTests(unittest.TestCase):
             OracleCompat,
             ResourceKind,
         )
-        from app.modules.internal_api_platform.infrastructure.db.drivers import OracleExecutor
-        from app.modules.internal_api_platform.infrastructure.db.oracle_client import (
+        from app.modules.mcp_tool_runtime.infrastructure.db.drivers import OracleExecutor
+        from app.modules.mcp_tool_runtime.infrastructure.db.oracle_client import (
             ensure_oracle_client_initialized,
             reset_oracle_client_state_for_tests,
         )
@@ -140,8 +140,8 @@ class OracleSchemaInspectorIntegrationTests(unittest.TestCase):
     """
 
     def test_oracle_schema_preview(self) -> None:
-        from app.modules.internal_api_platform.domain.addressing import ResourceBinding
-        from app.modules.internal_api_platform.domain.topology import (
+        from app.modules.mcp_tool_runtime.domain.addressing import ResourceBinding
+        from app.modules.mcp_tool_runtime.domain.topology import (
             Base,
             DatabaseConnection,
             DatabaseEngine,
@@ -149,7 +149,7 @@ class OracleSchemaInspectorIntegrationTests(unittest.TestCase):
             OracleClientMode,
             ResourceKind,
         )
-        from app.modules.internal_api_platform.infrastructure.db.schema_directory import (
+        from app.modules.mcp_tool_runtime.infrastructure.db.schema_directory import (
             OracleSchemaInspector,
         )
 
@@ -197,15 +197,15 @@ class SqlServerSchemaInspectorIntegrationTests(unittest.TestCase):
     """
 
     def test_sqlserver_schema_preview(self) -> None:
-        from app.modules.internal_api_platform.domain.addressing import ResourceBinding
-        from app.modules.internal_api_platform.domain.topology import (
+        from app.modules.mcp_tool_runtime.domain.addressing import ResourceBinding
+        from app.modules.mcp_tool_runtime.domain.topology import (
             Base,
             DatabaseConnection,
             DatabaseEngine,
             Environment,
             ResourceKind,
         )
-        from app.modules.internal_api_platform.infrastructure.db.schema_directory import (
+        from app.modules.mcp_tool_runtime.infrastructure.db.schema_directory import (
             SqlServerSchemaInspector,
         )
 

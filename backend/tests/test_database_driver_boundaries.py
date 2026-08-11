@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.modules.internal_api_platform.infrastructure.db.drivers import (
+from app.modules.mcp_tool_runtime.infrastructure.db.drivers import (
     _rows_from_cursor,
 )
 

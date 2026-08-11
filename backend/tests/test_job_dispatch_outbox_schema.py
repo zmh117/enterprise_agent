@@ -21,7 +21,7 @@ def test_job_dispatch_outbox_migration_has_stable_contract_and_indexes() -> None
             migrator_build="job-dispatch-schema-test",
         ).run()
 
-        assert result.head == "033"
+        assert result.head == "038"
         columns = {
             str(row["name"]): row
             for row in database.execute("pragma table_info(job_dispatch_outbox)")
@@ -175,5 +175,5 @@ def test_job_dispatch_migration_extends_but_does_not_change_legacy_baseline() ->
         artifact for artifact in catalog if artifact.version == "019"
     )
 
-    assert catalog[-1].version == "033"
+    assert catalog[-1].version == "038"
     assert job_dispatch.name == "019_job_dispatch_outbox.sql"

@@ -21,8 +21,9 @@ def test_compose_business_services_wait_for_one_shot_migrator() -> None:
     assert "APP_STARTUP_MIGRATE" not in COMPOSE_PATH.read_text(encoding="utf-8")
 
     for service_name in (
-        "local-internal-api-platform",
-        "internal-api-platform",
+        "tool-mcp",
+        "typescript-agent-runtime",
+        "python-agent-runtime",
         "api-server",
         "agent-worker",
         "job-dispatch-worker",
@@ -39,8 +40,9 @@ def test_runtime_services_do_not_force_local_seed_replay() -> None:
     compose = yaml.safe_load(COMPOSE_PATH.read_text(encoding="utf-8"))
     services = compose["services"]
     for service_name in (
-        "local-internal-api-platform",
-        "internal-api-platform",
+        "tool-mcp",
+        "typescript-agent-runtime",
+        "python-agent-runtime",
         "api-server",
         "agent-worker",
         "job-dispatch-worker",
@@ -49,9 +51,9 @@ def test_runtime_services_do_not_force_local_seed_replay() -> None:
         "channel-dispatch-worker",
         "attachment-worker",
     ):
-        assert services[service_name]["environment"]["SEED_LOCAL_CONFIG"] == (
-            "${SEED_LOCAL_CONFIG:-false}"
-        )
+        assert services[service_name].get("environment", {}).get(
+            "SEED_LOCAL_CONFIG", "${SEED_LOCAL_CONFIG:-false}"
+        ) == "${SEED_LOCAL_CONFIG:-false}"
 
 
 def test_local_seed_is_additive_for_control_plane_connectors() -> None:

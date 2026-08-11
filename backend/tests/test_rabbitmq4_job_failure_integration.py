@@ -77,7 +77,6 @@ class RabbitMQ4JobFailureIntegrationTests(unittest.TestCase):
             database_dsn=self.database_dsn,
             rabbitmq_url=self.rabbitmq_url,
             feature_real_claude=False,
-            feature_real_internal_tools=False,
             queue=self.queue,
         )
         initial_client = _FailingClaudeClient(retryable=True)

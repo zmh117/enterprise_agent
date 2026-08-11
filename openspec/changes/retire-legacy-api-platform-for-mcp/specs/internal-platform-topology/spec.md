@@ -18,7 +18,7 @@
 
 ### Requirement: Structured addressing resolves to a concrete resource binding
 **Reason**: topology resource binding 与 Application Mapping 删除。
-**Migration**: `tool-mcp` 按 Job 目标直接解析唯一 Resource Revision。
+**Migration**: `tool-mcp` 按 Agent 显式提供且实时鉴权的 Tool Call 目标直接解析唯一 Resource Revision。
 
 ### Requirement: Topology bindings describe Redis mode and Oracle client options
 **Reason**: topology binding 删除。
@@ -27,4 +27,3 @@
 ### Requirement: Resource placement must be independent from business topology
 **Reason**: 旧 topology 规格退役。
 **Migration**: placement 继续作为 Resource 与 Job 的正交可选字段，由标准 MCP Runtime 约束。
-

@@ -19,13 +19,12 @@ from backend.tests.helpers import test_settings as make_test_settings
 from backend.tests.test_unified_identity_rbac import csrf_headers, login
 
 
-def test_four_top_level_features_have_safe_independent_defaults() -> None:
+def test_three_top_level_features_have_safe_independent_defaults() -> None:
     features = resolve_feature_configuration("production", {})
 
     assert features.web_admin_enabled is False
     assert features.published_agent_runtime_enabled is False
     assert features.real_claude_enabled is False
-    assert features.real_internal_tools_enabled is False
     assert features.unified_identity_enabled is False
     assert features.business_application_control_plane_enabled is False
 
@@ -41,7 +40,6 @@ def test_web_admin_atomically_enables_management_without_data_plane() -> None:
     assert features.business_application_control_plane_enabled is True
     assert features.published_agent_runtime_enabled is False
     assert features.real_claude_enabled is False
-    assert features.real_internal_tools_enabled is False
 
 
 @pytest.mark.parametrize(
@@ -50,7 +48,6 @@ def test_web_admin_atomically_enables_management_without_data_plane() -> None:
         ("FEATURE_WEB_ADMIN", "web_admin_enabled"),
         ("FEATURE_PUBLISHED_AGENT_RUNTIME", "published_agent_runtime_enabled"),
         ("FEATURE_REAL_CLAUDE", "real_claude_enabled"),
-        ("FEATURE_REAL_INTERNAL_TOOLS", "real_internal_tools_enabled"),
     ],
 )
 def test_each_top_level_feature_can_be_enabled_independently(
@@ -63,7 +60,6 @@ def test_each_top_level_feature_can_be_enabled_independently(
             "FEATURE_WEB_ADMIN",
             "FEATURE_PUBLISHED_AGENT_RUNTIME",
             "FEATURE_REAL_CLAUDE",
-            "FEATURE_REAL_INTERNAL_TOOLS",
         )},
     )
 
@@ -72,7 +68,6 @@ def test_each_top_level_feature_can_be_enabled_independently(
         ("FEATURE_WEB_ADMIN", "web_admin_enabled"),
         ("FEATURE_PUBLISHED_AGENT_RUNTIME", "published_agent_runtime_enabled"),
         ("FEATURE_REAL_CLAUDE", "real_claude_enabled"),
-        ("FEATURE_REAL_INTERNAL_TOOLS", "real_internal_tools_enabled"),
     ):
         if key != enabled_key:
             assert getattr(features, property_name) is False
@@ -107,25 +102,17 @@ def test_test_identity_headers_fail_closed_outside_test() -> None:
     assert features.item("TEST_IDENTITY_HEADERS").classification == "test-only"
 
 
-def test_runtime_database_cannot_enable_a_closed_deployment_gate() -> None:
+def test_retired_internal_tools_feature_flag_is_not_part_of_effective_configuration() -> None:
     features = resolve_feature_configuration(
         "production",
-        {"FEATURE_REAL_INTERNAL_TOOLS": "false"},
+        {"FEATURE_REAL_INTERNAL_TOOLS": "true"},
     )
     effective = apply_runtime_feature_policies(
         features,
         {"FEATURE_REAL_INTERNAL_TOOLS": True},
     )
 
-    assert effective.real_internal_tools_enabled is False
-    item = effective.item("FEATURE_REAL_INTERNAL_TOOLS")
-    assert item is not None
-    assert item.requested_value is True
-    assert item.blocked_by == "FEATURE_REAL_INTERNAL_TOOLS"
-    assert any(
-        diagnostic.code == "deployment_gate_blocked_runtime_value"
-        for diagnostic in effective.diagnostics
-    )
+    assert effective.item("FEATURE_REAL_INTERNAL_TOOLS") is None
 
 
 def test_migration_audit_is_read_only_and_builds_unpublished_policy_draft() -> None:
@@ -194,12 +181,11 @@ def test_authorized_admin_can_read_masked_effective_feature_snapshot() -> None:
     assert "api_key" not in str(payload).lower()
 
 
-def test_operator_templates_expose_only_four_top_level_feature_flags() -> None:
+def test_operator_templates_expose_only_three_top_level_feature_flags() -> None:
     expected = {
         "FEATURE_WEB_ADMIN",
         "FEATURE_PUBLISHED_AGENT_RUNTIME",
         "FEATURE_REAL_CLAUDE",
-        "FEATURE_REAL_INTERNAL_TOOLS",
     }
     env_keys = {
         line.split("=", 1)[0]

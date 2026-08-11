@@ -52,6 +52,7 @@ COPY backend/config /app/backend/config
 COPY backend/migrations /app/backend/migrations
 COPY backend/seeds /app/backend/seeds
 COPY agent-runtime/contracts /app/agent-runtime/contracts
+COPY .claude/skills /app/.claude/skills
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-deps --no-build-isolation .
 CMD ["python", "-m", "uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
@@ -103,6 +104,7 @@ COPY backend/app/workers /app/backend/app/workers
 COPY backend/migrations /app/backend/migrations
 COPY backend/seeds /app/backend/seeds
 COPY agent-runtime/contracts /app/agent-runtime/contracts
+COPY .claude/skills /app/.claude/skills
 RUN python -c "import app.bootstrap; import app.workers.agent_job_worker; import app.workers.job_dispatch_worker; import app.workers.delivery_dispatch_worker; import app.workers.webhook_dispatch_worker; import app.workers.channel_dispatch_worker"
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-deps --no-build-isolation .

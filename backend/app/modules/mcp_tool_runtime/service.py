@@ -52,13 +52,14 @@ class ReadOnlyToolService:
         exact = self._exact_tool_context(job_id=job_id, tool_name=tool_name)
         if exact is None:
             return False
-        target, bindings = exact
+        _, bindings = exact
         if not bindings or any(
             binding["resource_slot"] and not binding["candidates"] for binding in bindings
         ):
             return False
-        # Business Jobs use the stable application MCP Tool and target-scope
-        # grants below. Direct Jobs use the platform tool/project policies.
+        # Exposure verifies only the frozen Tool/publication grant. The Agent
+        # has not selected a target yet; exact scope authorization is enforced
+        # again on every Tool Call before resource resolution.
         if not job.business_application_id:
             try:
                 self.permission_service.assert_builtin_tool_use_grant(
@@ -76,7 +77,6 @@ class ReadOnlyToolService:
                 user_id=job.internal_user_id or job.user_id,
                 application_id=job.business_application_id,
                 tool_identifier=tool_name,
-                **_target_scope(target),
                 stage="tool_exposure",
             )["allowed"]
         )
@@ -119,19 +119,6 @@ class ReadOnlyToolService:
                     error_code="mcp_tool_not_in_job_snapshot",
                 )
             scope = _addressing_from_arguments(arguments)
-            frozen_scope = _target_scope(exact[0])
-            if any(
-                field in scope
-                and str(scope.get(field) or "")
-                != str(frozen_scope.get(field) or "")
-                for field in ("environment", "base", "workshop")
-            ):
-                raise ToolPolicyError(
-                    "Tool request target differs from the Job exact Snapshot",
-                    safe_message="工具请求目标与 Job 冻结范围不一致",
-                    error_code="mcp_tool_target_override_rejected",
-                )
-            scope = frozen_scope
             if job.business_application_id:
                 if self.business_authorization_service is None:
                     raise ToolPolicyError(
@@ -467,14 +454,6 @@ def _addressing_from_arguments(arguments: dict[str, Any]) -> dict[str, str]:
     return addressing
 
 
-def _target_scope(target: dict[str, Any]) -> dict[str, str]:
-    return {
-        "environment": str(target.get("environment_code") or ""),
-        "base": str(target.get("base_code") or ""),
-        "workshop": str(target.get("workshop_code") or ""),
-    }
-
-
 def _placement_from_arguments(
     arguments: dict[str, Any],
 ) -> str | None:
@@ -486,7 +465,7 @@ def _placement_from_arguments(
         raise ToolPolicyError(
             "Resource placement must be cloud or edge",
             safe_message="资源位置只能选择 cloud 或 edge",
-            error_code="builtin_tool_placement_invalid",
+            error_code="resource_placement_invalid",
         )
     return placement
 

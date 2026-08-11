@@ -13,7 +13,6 @@ from app.modules.platform_config.application.validation import (
 )
 from app.modules.platform_config.domain import ResourcePlacement
 from app.shared.config import IdentitySettings, Settings
-from app.shared.exceptions import NonRetryableExecutionError
 
 
 def _settings() -> Settings:
@@ -40,43 +39,7 @@ def test_resource_placement_is_optional_and_has_only_cloud_or_edge() -> None:
     for invalid in ("none", "default", "standalone", "Cloud", "cloud,edge"):
         with pytest.raises(PlatformConfigValidationError) as raised:
             validate_resource_placement(invalid)
-        assert raised.value.error_code == "builtin_tool_placement_invalid"
-
-
-def test_placement_is_rejected_from_topology_and_resource_identity_payloads() -> None:
-    runtime = build_test_container(_settings(), migrate=True, seed=True)
-    try:
-        with pytest.raises(PlatformConfigValidationError) as topology_error:
-            runtime.platform_config_service.upsert_environment(
-                {
-                    "code": "placement_environment",
-                    "metadata": {"placement": "cloud"},
-                },
-                actor_id="user_local_admin",
-            )
-        assert (
-            topology_error.value.error_code
-            == "builtin_tool_placement_invalid"
-        )
-
-        with pytest.raises(NonRetryableExecutionError) as resource_error:
-            runtime.platform_config_service.governed_resources.create_resource(
-                {
-                    "code": "placement_resource",
-                    "name": "Placement Resource",
-                    "resource_kind": "database",
-                    "scope_type": "environment",
-                    "environment_code": "placement_environment",
-                    "placement": "edge",
-                },
-                actor_id="user_local_admin",
-            )
-        assert (
-            resource_error.value.error_code
-            == "builtin_tool_placement_invalid"
-        )
-    finally:
-        runtime.database.close()
+        assert raised.value.error_code == "resource_placement_invalid"
 
 
 def test_placement_cannot_be_submitted_as_role_data_scope() -> None:
@@ -91,14 +54,13 @@ def test_placement_cannot_be_submitted_as_role_data_scope() -> None:
         )
 
 
-def test_placement_is_persisted_only_on_resource_mapping_not_access_scope() -> None:
+def test_placement_is_persisted_on_resource_identity_not_role_scope() -> None:
     runtime = build_test_container(_settings(), migrate=True, seed=False)
     try:
-        mapping_columns = {
+        resource_columns = {
             row["name"]
             for row in runtime.database.execute(
-                "pragma table_info("
-                "business_application_publication_builtin_tool_resource)"
+                "pragma table_info(platform_resource)"
             )
         }
         access_scope_columns = {
@@ -119,8 +81,15 @@ def test_placement_is_persisted_only_on_resource_mapping_not_access_scope() -> N
             )
         }
 
-        assert {"placement", "placement_key"} <= mapping_columns
+        assert "placement" in resource_columns
         assert "placement" not in access_scope_columns
         assert "placement" not in topology_columns
+        assert runtime.database.execute_one(
+            """
+            select name from sqlite_master
+             where type = 'table'
+               and name = 'business_application_publication_builtin_tool_resource'
+            """
+        ) is None
     finally:
         runtime.database.close()

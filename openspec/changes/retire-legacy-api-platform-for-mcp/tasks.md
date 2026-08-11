@@ -7,7 +7,7 @@
 ## 2. 标准 MCP Tool 直接运行时
 
 - [ ] 2.1 将内置工具代码 Registry 收敛为 MCP Tool Manifest，去除 Handler Version/Release 运行依赖
-- [ ] 2.2 实现基于 Job Tool/Target/Role scope 的唯一工具资源解析器，覆盖 environment/base/workshop/placement 零命中和多命中
+- [x] 2.2 实现基于 Job Tool、调用参数与当前 Role scope 的唯一工具资源解析器，覆盖 environment/base/workshop/placement 零命中和多命中
 - [ ] 2.3 将数据库只读 SQL、schema directory、Redis 与 Loki 执行能力内聚到 `tool-mcp`
 - [ ] 2.4 让 `tool-mcp` 直接解析 Resource Revision 与平台 Secret，并移除 GovernedApiRuntimeExecutor/InternalApiClient 依赖
 - [ ] 2.5 更新 Tool MCP schema、错误分类、结果 envelope 和审计，确保不记录 Secret/Prompt/无界响应
@@ -19,9 +19,9 @@
 - [ ] 3.1 从 Agent Draft/Publication/API/UI 删除 API Capability Envelope 与 Built-in Tool Release 字段，改为 MCP Tool identifier/schema hash
 - [ ] 3.2 从 Application Draft/Publication/API/UI 删除 Capability Allowlist、Resource Mapping、资源矩阵和旧解析表
 - [ ] 3.3 保留 Application MCP Tool 显式子集并校验其属于所选 Agent Publication Envelope
-- [ ] 3.4 调整 Job 创建和快照，只冻结 MCP Tool、业务目标、数据范围、placement 与授权摘要
+- [x] 3.4 调整 Job 创建和快照，只冻结 MCP Tool 与发布/授权摘要；不得冻结或强制覆盖调用时 environment/base/workshop/placement
 - [ ] 3.5 调整角色授权/有效权限预览，只保留应用访问、MCP Tool 使用权限和业务数据范围
-- [ ] 3.6 更新 DingTalk→Application→Agent→Job 链路，确保普通问候不因资源解析失败，只有实际工具调用才解析资源
+- [x] 3.6 更新 DingTalk→Application→Agent→Job 链路，确保 Routing Context 不充当工具目标快照、普通问候不解析资源、只有实际工具调用才由 Skill 选择目标并实时鉴权
 
 ## 4. 永久删除旧 API Capability 平台
 
@@ -29,7 +29,7 @@
 - [ ] 4.2 删除 API Capability/Handler/API Connection 前端页面、路由、请求模型和导航权限
 - [ ] 4.3 删除 Agent/Application/Job/身份模块对 Capability Release、Handler、API Connection 和 Mapping Plan 的依赖
 - [ ] 4.4 删除仅服务于旧 API Capability 的 ONES Challenge、个人 API Credential 和相关权限/界面，保留通用外部身份事实
-- [ ] 4.5 删除旧 Capability/Connection/Handler 单元和集成测试，并为不存在的旧端点增加回归
+- [x] 4.5 删除旧 Capability/Connection/Handler 单元和集成测试，并为不存在的旧端点增加回归
 
 ## 5. 永久删除 Resource Mapping 与旧工具发布控制面
 
@@ -48,7 +48,7 @@
 
 ## 7. 数据库破坏性迁移
 
-- [ ] 7.1 新增迁移，回填可确定的 Agent/Application/Job MCP Tool identifier/schema hash 与业务目标快照
+- [ ] 7.1 新增迁移，回填可确定的 Agent/Application/Job MCP Tool identifier/schema hash；不新增业务目标冻结字段
 - [ ] 7.2 在迁移中拒绝仍被活动发布或在途 Job 引用且无法确定转换的旧数据
 - [ ] 7.3 删除 Capability、Handler、API Connection、个人 API Credential、Resource Mapping、Tool Release 和 Internal API runtime generation/activation 表及旧 JSON 字段
 - [ ] 7.4 保留工具资源、平台 Secret、模型连接、渠道、角色、用户、Job/Tool Call/Delivery 历史并验证迁移幂等

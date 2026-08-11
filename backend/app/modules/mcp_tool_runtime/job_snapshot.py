@@ -12,7 +12,7 @@ from .manifest import MCP_TOOL_MANIFEST
 
 
 class JobMcpToolSnapshotService:
-    """Freeze MCP Tool and target facts; Resource resolution is invocation-time only."""
+    """Freeze exact MCP Tool publication facts; targets are invocation-time inputs."""
 
     def __init__(self, database: Database, *_: Any, **__: Any) -> None:
         self.database = database
@@ -137,7 +137,7 @@ class JobMcpToolSnapshotService:
             return None
         definition = MCP_TOOL_MANIFEST[tool_identifier]
         return (
-            dict(snapshot.get("target") or {}),
+            {},
             [
                 {
                     "tool_identifier": tool_identifier,
@@ -146,9 +146,7 @@ class JobMcpToolSnapshotService:
                     "resource_kind": definition.resource_kind,
                     "resource_slot": "",
                     "candidates": [],
-                    "available_placements": list(
-                        snapshot.get("allowed_placements") or []
-                    ),
+                    "available_placements": [],
                 }
             ],
         )
@@ -163,19 +161,16 @@ class JobMcpToolSnapshotService:
         tools: list[dict[str, Any]],
         authorization: dict[str, Any],
     ) -> dict[str, Any]:
+        # Routing Context selects the application/channel route. It is not a
+        # trustworthy or stable business-resource target and must never be
+        # frozen into the MCP execution boundary.
+        del routing_context
         existing = self.database.execute_one(
             "select id from agent_job_mcp_tool_snapshot where job_id = ?",
             (job_id,),
         )
         if existing is not None:
             return self.verify(job_id)
-        target = {
-            "environment_code": str(routing_context.get("environment") or ""),
-            "base_code": str(routing_context.get("base") or ""),
-            "workshop_code": str(routing_context.get("workshop") or ""),
-        }
-        placement = str(routing_context.get("placement") or "").strip().lower()
-        allowed_placements = [placement] if placement in {"cloud", "edge"} else []
         normalized_tools = []
         for row in tools:
             identifier = str(row["tool_identifier"])
@@ -202,8 +197,6 @@ class JobMcpToolSnapshotService:
             "job_id": job_id,
             "application_publication_id": application_publication_id,
             "agent_publication_id": agent_publication_id,
-            "target": target,
-            "allowed_placements": allowed_placements,
             "tools": normalized_tools,
         }
         authorization_hash = self._hash(authorization)

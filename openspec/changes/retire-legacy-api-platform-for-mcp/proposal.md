@@ -5,11 +5,11 @@
 ## What Changes
 
 - **BREAKING**：永久删除 API Capability、Capability Handler、API Connection 的后端模块、管理 API、前端工作台、发布引用、运行时执行器、权限项和数据库表；这里的 Connection 不包含模型连接、钉钉 Connector 或交付 Connector。
-- **BREAKING**：永久删除 Application Resource Mapping 及其草稿、发布、Job 快照、唯一解析矩阵和管理界面；Agent/Application 只冻结精确 MCP Tool 集合，Job 冻结 Tool、业务目标与数据范围。
+- **BREAKING**：永久删除 Application Resource Mapping 及其草稿、发布、Job 快照、唯一解析矩阵和管理界面；Agent/Application 与 Job 只冻结精确 MCP Tool 集合及发布/授权摘要，不冻结用户消息中的 environment/base/workshop/placement。
 - **BREAKING**：永久删除 `internal-api-platform`、`local-internal-api-platform`、`mock-internal-api-platform` 服务与模块、Internal API HTTP Client、服务 Token issuer/verifier、Compose secrets、`INTERNAL_API_*`、`FEATURE_REAL_INTERNAL_TOOLS` 和相关镜像/文档/测试。
 - 保留单一私网 `tool-mcp`，直接使用官方 MCP SDK 注册代码拥有的只读工具；Python 与 TypeScript Runtime 继续共享该服务，不接受 Agent、Application、用户或模型提供的任意 MCP Server URL。
 - 将数据库、Redis、Loki 的只读执行器、目标解析和安全策略收敛到 `tool-mcp` 进程内，不再经过内部 HTTP 平台。
-- 保留工具资源、不可变资源发布版本、凭据中心、角色工具使用权限、应用访问权限和业务数据范围；`tool-mcp` 根据 Job 冻结的业务目标与工具资源目录直接解析唯一资源。
+- 保留工具资源、不可变资源发布版本、凭据中心、角色工具使用权限、应用访问权限和业务数据范围；Agent 按已发布 Skill 从当前消息与会话判断 Tool Call 目标，`tool-mcp` 对调用参数实时复核角色范围并从工具资源目录直接解析唯一资源。
 - 不增加 MCP Token、签名密钥、专用 RBAC、MCP 治理控制面或任意 URL/SQL/Shell/脚本执行器。
 - 保留 Worker→Runtime 的 Runtime Grant 和模型探测 Token；它们不得传递给 MCP。
 - 清理未完成 `migrate-claude-agent-sdk-to-typescript` 变更中已被双 Runtime 主规格取代的 `runtime-tool-mcp` 文档与任务，避免旧设计继续作为活动规格。
@@ -27,7 +27,7 @@
 - `claude-agent-runtime-integration`: 删除 `cap__*` Capability 运行时和 Internal API Platform 依赖，只保留标准 MCP 只读工具调用。
 - `built-in-readonly-tool-governance`: 将代码 Handler Registry 收敛为代码拥有的 MCP Tool Manifest/实现，不再发布 Handler Release 控制面。
 - `governed-tool-resource-management`: 保留工具资源与凭据生命周期，但取消 Application Resource Revision 绑定和 Internal API Platform 热加载。
-- `application-tool-resource-composition`: 删除全部 Application Resource Mapping 要求，改为 Agent/Application 精确 MCP Tool 子集与 Job 业务目标快照。
+- `application-tool-resource-composition`: 删除全部 Application Resource Mapping 要求，改为 Agent/Application/Job 精确 MCP Tool 子集与调用时目标解析。
 - `business-application-publication`: 发布校验不再包含 Capability 或 Resource Mapping，改为校验 Agent MCP Tool Envelope、应用工具子集和业务范围。
 - `role-authorization-model`: 保留角色应用访问、工具使用权限和数据范围，删除 API Capability 授权入口。
 - `platform-config-api`: 删除旧拓扑/Internal API Platform 配置与资源映射 API，保留工具资源、凭据和必要运行配置。

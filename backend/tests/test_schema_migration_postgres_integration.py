@@ -375,7 +375,6 @@ def test_postgres_delivery_dispatchers_use_skip_locked_without_duplicate_sends(
     settings = Settings(
         database_dsn=postgres_database_dsn,
         feature_real_claude=False,
-        feature_real_internal_tools=False,
         delivery=DeliverySettings(outbox_max_attempts=2),
     )
     runtime = build_worker_container(settings, seed=True)

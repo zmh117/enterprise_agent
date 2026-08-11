@@ -30,10 +30,6 @@ from backend.tests.helpers import (
     activate_dingtalk_test_application,
     grant_test_application_access,
 )
-from backend.tests.test_agent_publication_runtime import (
-    publish_builtin_tool,
-    publishable_config,
-)
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "dingtalk_stream"
@@ -134,44 +130,14 @@ def multimodal_container() -> object:
             """,
             (policy_id, resource_type, resource_code),
         )
-    container.database.execute(
-        """
-        insert into permission_policy
-          (id, subject_type, subject_code, resource_type, resource_code, action,
-           effect, status, priority, revision, created_at, updated_at)
-        values ('policy-multimodal-admin-builtin-tools', 'user',
-                'user_local_admin', 'builtin_tool', '*', '*', 'allow',
-                'enabled', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        """
-    )
     tool_identifiers = ("get_er_context", "get_business_flow_context")
-    releases = [
-        publish_builtin_tool(container, tool_identifier)
-        for tool_identifier in tool_identifiers
-    ]
-    current_agent = container.agent_config_service.get()
-    agent_revision = container.agent_config_service.save_draft(
-        actor_id="user_local_admin",
-        agent_code="default-diagnostic-agent",
-        expected_revision=int(current_agent["draft"]["revision"]),
-        config=publishable_config(
-            container,
-            builtin_tool_release_ids=[str(release["id"]) for release in releases],
-        ),
-    )
-    agent_publication = container.agent_config_service.publish(
-        actor_id="user_local_admin",
-        agent_code="default-diagnostic-agent",
-        revision_id=str(agent_revision["id"]),
-    )
     activate_dingtalk_test_application(
         container,
         code="multimodal-test-application",
         robot_code="robot-redacted",
         group_conversation_ids=("group-conversation-redacted",),
         attachments_enabled=True,
-        capabilities=(),
-        agent_publication_id=str(agent_publication["id"]),
+        capabilities=tool_identifiers,
     )
     application = container.business_application_repository.get_by_code(
         "multimodal-test-application"
@@ -180,7 +146,7 @@ def multimodal_container() -> object:
         container,
         application_id=str(application["id"]),
         role_code="multimodal-runtime-reader",
-        capabilities=(),
+        capabilities=tool_identifiers,
     )
     return container
 

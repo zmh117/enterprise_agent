@@ -7,12 +7,16 @@ Agent Publication SHALL 冻结代码 Manifest 中精确 Tool identifier 与 sche
 - **WHEN** 管理员从 Agent Publication 的 MCP Tool Envelope 选择部分工具并发布应用
 - **THEN** Application Publication 冻结 identifier/schema hash 子集且后续代码变化不自动替换
 
-### Requirement: Job 必须冻结工具与业务目标快照
-Job 创建时 MUST 冻结 Agent/Application Tool 交集、当前用户有效 Tool grant、业务目标、数据范围和可选 placement 集合；MUST NOT 复制 Application Resource Mapping。
+### Requirement: Job 必须冻结工具但不得冻结调用目标
+Job 创建时 MUST 冻结 Agent/Application Tool 交集、当前用户有效 Tool grant 与发布/授权摘要；MUST NOT 从 DingTalk Routing Context 或用户消息冻结 `environment`、`base`、`workshop`、`placement`，也 MUST NOT 复制 Application Resource Mapping。目标由 Agent 按已发布 Skill 在每次 Tool Call 中显式提供，并由服务端实时复核当前数据范围。
 
 #### Scenario: 配置在 Job 重试前变化
-- **WHEN** Tool Manifest、角色 Grant 或工具资源在 Job 首次执行后变化
-- **THEN** 重试继续使用原 Job 工具/目标快照，并对需要实时复核的撤权事实失败关闭
+- **WHEN** Tool Manifest、角色 Grant、工具资源或后续用户消息在 Job 首次执行后变化
+- **THEN** 重试继续使用原 Job 工具发布快照，但使用本次 Tool Call 目标，并对撤权、越界和资源歧义失败关闭
+
+#### Scenario: Routing Context 目标为空但消息提供环境
+- **WHEN** DingTalk Routing Context 的目标字段为空而当前消息明确要求 `environment=test`
+- **THEN** Agent 可以按 Skill 以 `environment=test` 调用已分配 Tool，服务端不得用空 Routing Context 覆盖或拒绝该目标
 
 ### Requirement: Tool 可调用性必须满足业务治理交集
 运行时 MUST 只暴露同时满足 Agent Envelope、Application 子集、有效角色 Tool grant、应用访问、业务数据范围、Manifest/schema 一致和唯一资源解析的 Tool。
@@ -33,11 +37,11 @@ Job 创建时 MUST 冻结 Agent/Application Tool 交集、当前用户有效 Too
 
 ### Requirement: 一个逻辑资源槽必须支持 1..N 条精确资源映射
 **Reason**: Application Resource Mapping 永久退役。
-**Migration**: 删除映射；运行时按 Job 目标和工具资源目录唯一解析。
+**Migration**: 删除映射；运行时按 Tool Call 目标和工具资源目录唯一解析。
 
 ### Requirement: Application Draft 必须显式声明有限叶子目标
 **Reason**: 旧叶子目标矩阵与 Resource Mapping 耦合。
-**Migration**: 应用保留业务范围声明，Job 从请求目标和角色数据范围冻结实际目标。
+**Migration**: 应用保留业务范围声明；Agent 在调用时选择目标，角色数据范围由服务端实时校验。
 
 ### Requirement: Application Publish 必须证明每个有效组合唯一可解析
 **Reason**: 发布期 Resource Mapping 矩阵永久退役。
@@ -49,7 +53,7 @@ Job 创建时 MUST 冻结 Agent/Application Tool 交集、当前用户有效 Too
 
 ### Requirement: Job 必须复制不可变 Tool Execution Snapshot
 **Reason**: 旧快照包含 Handler Release 和 Resource Mapping。
-**Migration**: 使用新的 Tool/Target 快照替代。
+**Migration**: 使用只含精确 Tool 与发布/授权摘要的新快照替代；目标记录在实际 Tool Call 审计中。
 
 ### Requirement: 每次 Tool Call 必须解析一个明确 placement
 **Reason**: 旧实现通过 Mapping 选择 placement。
@@ -62,4 +66,3 @@ Job 创建时 MUST 冻结 Agent/Application Tool 交集、当前用户有效 Too
 ### Requirement: Tool Call 审计必须记录精确事实且不含 Secret
 **Reason**: 旧审计字段依赖 Handler/Mapping/Policy revision。
 **Migration**: 使用 MCP Tool identifier/schema、目标、placement 和实际 Resource Revision 审计。
-

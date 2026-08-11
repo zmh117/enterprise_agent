@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: 业务应用发布必须绑定具体 Resource Revision
-业务应用发布 MUST NOT 绑定或保存 Resource Revision。工具资源保持独立发布；`tool-mcp` MUST 在每次 Tool Call 时按 Job 冻结目标、数据范围、资源类型与 placement 解析唯一 Published Resource Revision，并记录实际版本。
+业务应用发布 MUST NOT 绑定或保存 Resource Revision。工具资源保持独立发布；`tool-mcp` MUST 在每次 Tool Call 时按 Agent 提供且通过当前角色数据范围校验的目标、资源类型与可选 placement 解析唯一 Published Resource Revision，并记录实际版本。
 
 #### Scenario: 资源发布新版本
 - **WHEN** 某 Resource 发布新 revision 且旧 revision 已停用
@@ -38,4 +38,3 @@
 #### Scenario: 用户确认精确清单
 - **WHEN** apply 再次展示 operation ID、备份引用和精确资源清单并得到明确确认
 - **THEN** 系统在单个受控事务中清理资源，不修改应用或创建 blocked 映射状态
-

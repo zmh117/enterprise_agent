@@ -208,9 +208,6 @@ class CreateAgentJobService:
                 business_decision = self.business_authorization_service.require(
                     user_id=requester_id,
                     application_id=command.business_application_id,
-                    environment=str(command.effective_routing_context.get("environment") or ""),
-                    base=str(command.effective_routing_context.get("base") or ""),
-                    workshop=str(command.effective_routing_context.get("workshop") or ""),
                     stage="job_create",
                 )
                 business_application_authorized = True
@@ -424,9 +421,6 @@ class CreateAgentJobService:
                         application_id=command.business_application_id,
                         publication_id=command.business_application_publication_id,
                         publication_config_hash=command.business_application_config_hash,
-                        environment=str(command.effective_routing_context.get("environment") or ""),
-                        base=str(command.effective_routing_context.get("base") or ""),
-                        workshop=str(command.effective_routing_context.get("workshop") or ""),
                     )
                 )
             session = (

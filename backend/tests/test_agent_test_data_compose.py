@@ -74,7 +74,7 @@ class AgentTestDataComposeTests(unittest.TestCase):
             "AGENT_TEST_SQLSERVER_SA_PASSWORD",
             "AGENT_TEST_REDIS_",
         )
-        for service_name in ("internal-api-platform", "agent-worker"):
+        for service_name in ("tool-mcp", "agent-worker"):
             environment = services[service_name]["environment"]
             for key in environment:
                 self.assertFalse(

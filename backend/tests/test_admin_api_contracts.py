@@ -236,7 +236,7 @@ def test_dashboard_api_is_authorized_bounded_and_does_not_probe_resources(
     assert invalid.json()["detail"]["code"] == "invalid_time_window"
 
 
-def test_agent_skill_tool_and_channel_catalogs_support_editable_agents() -> None:
+def test_agent_skill_and_channel_catalogs_support_editable_agents() -> None:
     settings = unified_settings()
     container = build_test_container(settings, migrate=True, seed=True)
     container.database.execute(
@@ -254,7 +254,6 @@ def test_agent_skill_tool_and_channel_catalogs_support_editable_agents() -> None
         login(client)
         agents = client.get("/api/admin/agents")
         skills = client.get("/api/admin/skills")
-        tool_providers = client.get("/api/admin/tool-providers")
         channel_providers = client.get("/api/admin/channel-providers")
         connectors = client.get("/api/admin/connectors")
 
@@ -264,83 +263,12 @@ def test_agent_skill_tool_and_channel_catalogs_support_editable_agents() -> None
         for agent in agents.json()["agents"]
     )
     assert all("content" not in item for item in skills.json()["skills"])
-    database = next(
-        item for item in tool_providers.json()["providers"] if item["code"] == "database"
-    )
-    assert database["dialects"] == ["postgresql", "mysql", "sqlserver"]
-    assert "oracle" not in str(tool_providers.json()).lower()
     email = next(item for item in channel_providers.json()["providers"] if item["code"] == "email")
     assert email["available"] is False
     assert all(
         item["connector_type"].startswith("dingtalk_") for item in connectors.json()["connectors"]
     )
     assert "connector-email-default" not in str(connectors.json())
-
-
-def test_tool_resource_contract_rejects_plaintext_and_enforces_revision() -> None:
-    settings = unified_settings()
-    container = build_test_container(settings, migrate=True, seed=True)
-    container.platform_config_service.upsert_environment(
-        {"code": "prod", "display_name": "Production", "status": "enabled"},
-        actor_id="user_local_admin",
-    )
-    container.platform_config_service.create_platform_secret(
-        {
-            "code": "loki_token",
-            "value": "loki-contract-test-token",
-            "purpose": "tool-resource-test",
-        },
-        actor_id="user_local_admin",
-    )
-    app = create_app(settings, container_factory=lambda _: container)
-    payload = {
-        "expected_revision": 0,
-        "code": "prod_loki",
-        "scope_type": "environment",
-        "environment_code": "prod",
-        "resource_kind": "loki",
-        "engine": "",
-        "config": {
-            "base_url": "https://loki.internal",
-            "host_allowlist": ["loki.internal"],
-        },
-        "secret_refs": {"token": "secret://platform/loki_token"},
-        "status": "enabled",
-    }
-
-    with TestClient(app) as client:
-        csrf = login(client)
-        created = client.post("/api/admin/tool-resources", headers=csrf_headers(csrf), json=payload)
-        updated_payload = {**payload, "expected_revision": 1, "status": "disabled"}
-        updated = client.put(
-            "/api/admin/tool-resources/prod_loki",
-            headers=csrf_headers(csrf),
-            json=updated_payload,
-        )
-        stale = client.put(
-            "/api/admin/tool-resources/prod_loki",
-            headers=csrf_headers(csrf),
-            json=updated_payload,
-        )
-        plaintext = client.post(
-            "/api/admin/tool-resources",
-            headers=csrf_headers(csrf),
-            json={
-                **payload,
-                "code": "bad_loki",
-                "config": {**payload["config"], "token": "plain-secret"},
-            },
-        )
-
-    assert created.status_code == 200, created.text
-    assert created.json()["resource"]["revision"] == 1
-    assert updated.status_code == 200
-    assert updated.json()["resource"]["revision"] == 2
-    assert stale.status_code == 409
-    assert stale.json()["detail"]["code"] == "revision_conflict"
-    assert plaintext.status_code == 400
-    assert "plain-secret" not in plaintext.text
-
 
 def test_channel_validation_rejects_unavailable_direction_and_plaintext_secret() -> None:
     settings = unified_settings()

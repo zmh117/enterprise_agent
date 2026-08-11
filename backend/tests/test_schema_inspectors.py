@@ -6,34 +6,22 @@ import unittest
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-from fastapi.testclient import TestClient
-
-from app.modules.internal_api_platform.app import create_app
-from app.modules.internal_api_platform.application.platform_service import PlatformService
-from app.modules.internal_api_platform.domain.access import AccessPolicy, AccessScope, ScopeRule
-from app.modules.internal_api_platform.domain.addressing import ResourceBinding
-from app.modules.internal_api_platform.domain.errors import (
-    PolicyViolation,
+from app.modules.mcp_tool_runtime.domain.addressing import ResourceBinding
+from app.modules.mcp_tool_runtime.domain.errors import (
     ResolutionError,
     UpstreamUnavailable,
 )
-from app.modules.internal_api_platform.domain.schema_directory import (
-    SchemaColumn,
+from app.modules.mcp_tool_runtime.domain.schema_directory import (
     SchemaDirectory,
-    SchemaTable,
 )
-from app.modules.internal_api_platform.domain.topology import (
+from app.modules.mcp_tool_runtime.domain.topology import (
     Base,
     DatabaseConnection,
     DatabaseEngine,
     Environment,
-    OracleCompat,
     ResourceKind,
-    Topology,
 )
-from app.modules.internal_api_platform.infrastructure.db.executor import FakeQueryExecutor
-from app.modules.internal_api_platform.infrastructure.db.schema_directory import (
-    FakeSchemaInspector,
+from app.modules.mcp_tool_runtime.infrastructure.db.schema_directory import (
     MySqlSchemaInspector,
     OracleSchemaInspector,
     SchemaInspectorFactory,
@@ -41,10 +29,6 @@ from app.modules.internal_api_platform.infrastructure.db.schema_directory import
     UnsupportedSchemaInspector,
     table_name_has_prefix,
 )
-from app.modules.internal_api_platform.infrastructure.loki_gateway import FakeLokiClient
-from app.modules.internal_api_platform.infrastructure.redis_gateway import FakeRedisGateway
-from app.modules.internal_api_platform.infrastructure.registry import TopologyRegistry
-from app.shared.config import Settings
 
 
 class _ScriptedCursor:
@@ -165,7 +149,7 @@ class OracleSchemaInspectorTests(unittest.TestCase):
         with (
             patch.dict(sys.modules, {"oracledb": module}),
             patch(
-                "app.modules.internal_api_platform.infrastructure.db.schema_directory."
+                "app.modules.mcp_tool_runtime.infrastructure.db.schema_directory."
                 "assert_oracle_client_mode_ready"
             ),
         ):
@@ -207,7 +191,7 @@ class OracleSchemaInspectorTests(unittest.TestCase):
         with (
             patch.dict(sys.modules, {"oracledb": module}),
             patch(
-                "app.modules.internal_api_platform.infrastructure.db.schema_directory."
+                "app.modules.mcp_tool_runtime.infrastructure.db.schema_directory."
                 "assert_oracle_client_mode_ready"
             ),
             self.assertRaises(ResolutionError),
@@ -232,7 +216,7 @@ class OracleSchemaInspectorTests(unittest.TestCase):
         with (
             patch.dict(sys.modules, {"oracledb": module}),
             patch(
-                "app.modules.internal_api_platform.infrastructure.db.schema_directory."
+                "app.modules.mcp_tool_runtime.infrastructure.db.schema_directory."
                 "assert_oracle_client_mode_ready"
             ),
             self.assertRaises(UpstreamUnavailable) as raised,
@@ -258,7 +242,7 @@ class OracleSchemaInspectorTests(unittest.TestCase):
         with (
             patch.dict(sys.modules, {"oracledb": module}),
             patch(
-                "app.modules.internal_api_platform.infrastructure.db.schema_directory."
+                "app.modules.mcp_tool_runtime.infrastructure.db.schema_directory."
                 "assert_oracle_client_mode_ready"
             ),
             self.assertRaises(UpstreamUnavailable) as raised,
@@ -279,7 +263,7 @@ class OracleSchemaInspectorTests(unittest.TestCase):
         with (
             patch.dict(sys.modules, {"oracledb": None}),
             patch(
-                "app.modules.internal_api_platform.infrastructure.db.schema_directory."
+                "app.modules.mcp_tool_runtime.infrastructure.db.schema_directory."
                 "assert_oracle_client_mode_ready"
             ),
             self.assertRaises(ResolutionError) as raised,
@@ -503,110 +487,6 @@ class DialectAwarePrefixTests(unittest.TestCase):
                         "GL001_",
                         engine=engine,
                     )
-                )
-
-
-class MultiDialectSchemaDirectoryServiceTests(unittest.TestCase):
-    def _service(
-        self,
-        engine: DatabaseEngine,
-        *,
-        tables: list[SchemaTable],
-    ) -> PlatformService:
-        db = DatabaseConnection(
-            host="private-db.internal",
-            port=1521 if engine is DatabaseEngine.ORACLE else 1433,
-            database="APPDB",
-            user="reader",
-            password="top-secret-password",
-            schema="APP_OWNER" if engine is DatabaseEngine.ORACLE else "dbo",
-            oracle_compat=OracleCompat.LEGACY,
-        )
-        base = Base(code="main", engine=engine, database=db)
-        environment = Environment(code="prod", bases={"main": base})
-        return PlatformService(
-            registry=TopologyRegistry(Topology(environments={"prod": environment})),
-            access_policy=AccessPolicy(scopes={"operator": AccessScope(rules=[ScopeRule()])}),
-            executors={engine: FakeQueryExecutor(rows=[{"status": "ok"}])},
-            schema_inspector_factory=SchemaInspectorFactory(
-                {engine: FakeSchemaInspector(tables=tables)}
-            ),
-            redis_gateway=FakeRedisGateway(),
-            loki_client=FakeLokiClient(),
-        )
-
-    def test_api_contract_returns_bounded_oracle_and_sqlserver_metadata(self) -> None:
-        for engine in (DatabaseEngine.ORACLE, DatabaseEngine.SQLSERVER):
-            with self.subTest(engine=engine.value):
-                service = self._service(
-                    engine,
-                    tables=[
-                        SchemaTable("orders", [SchemaColumn("id", "number", False)]),
-                        SchemaTable("order_lines", [SchemaColumn("id", "number", False)]),
-                    ],
-                )
-                response = TestClient(
-                    create_app(Settings(environment="test"), service=service)
-                ).post(
-                    "/tools/schema/directory",
-                    json={
-                        "environment": "prod",
-                        "base": "main",
-                        "query": "order",
-                        "limit": 1,
-                    },
-                    headers={"x-agent-user-id": "operator"},
-                )
-
-                self.assertEqual(200, response.status_code)
-                body = response.json()
-                self.assertEqual(engine.value, body["summary"]["engine"])
-                self.assertEqual(1, body["summary"]["table_count"])
-                self.assertTrue(body["truncated"])
-                self.assertEqual("internal-api-platform-schema", body["metadata"]["source"])
-                self.assertNotIn("private-db.internal", str(body))
-                self.assertNotIn("top-secret-password", str(body))
-
-    def test_api_contract_preserves_access_control(self) -> None:
-        service = self._service(
-            DatabaseEngine.SQLSERVER,
-            tables=[SchemaTable("orders", [SchemaColumn("id", "int", False)])],
-        )
-        response = TestClient(create_app(Settings(environment="test"), service=service)).post(
-            "/tools/schema/directory",
-            json={"environment": "prod", "base": "main"},
-            headers={"x-agent-user-id": "unauthorized"},
-        )
-        self.assertEqual(403, response.status_code)
-        self.assertEqual("access_denied", response.json()["detail"]["error"]["code"])
-
-    def test_query_validation_uses_schema_for_oracle_and_sqlserver(self) -> None:
-        for engine in (DatabaseEngine.ORACLE, DatabaseEngine.SQLSERVER):
-            with self.subTest(engine=engine.value):
-                service = self._service(
-                    engine,
-                    tables=[SchemaTable("orders", [SchemaColumn("id", "number", False)])],
-                )
-                result = service.query_database(
-                    user_id="operator",
-                    environment="prod",
-                    base="main",
-                    workshop=None,
-                    sql="select * from orders",
-                )
-                self.assertEqual(1, result.summary["row_count"])
-
-                with self.assertRaises(PolicyViolation) as raised:
-                    service.query_database(
-                        user_id="operator",
-                        environment="prod",
-                        base="main",
-                        workshop=None,
-                        sql="select * from missing_table",
-                    )
-                self.assertEqual(
-                    "stop_or_use_schema_directory",
-                    raised.exception.diagnostic_action,
                 )
 
 

@@ -46,7 +46,7 @@ def _insert_resource(database: Database, *, resource_id: str, code: str) -> None
     )
 
 
-def test_governed_resource_schema_has_stable_version_and_activation_records() -> None:
+def test_governed_resource_schema_has_stable_revision_records_without_legacy_mapping() -> None:
     database = Database("sqlite:///:memory:")
     result = Migrator(
         database,
@@ -54,7 +54,7 @@ def test_governed_resource_schema_has_stable_version_and_activation_records() ->
         migrator_build="resource-schema-test",
     ).run()
 
-    assert result.head == "033"
+    assert result.head == "038"
     tables = {
         row["name"]
         for row in database.execute("select name from sqlite_master where type = 'table'")
@@ -64,20 +64,18 @@ def test_governed_resource_schema_has_stable_version_and_activation_records() ->
         "platform_resource_draft",
         "platform_resource_verification",
         "platform_resource_revision",
+        "agent_job_execution_scope",
+        "agent_job_execution_binding",
+    }.issubset(tables)
+    assert {
         "business_application_resource_binding",
         "business_application_publication_handler",
         "business_application_publication_resource",
-        "agent_job_execution_scope",
-        "agent_job_execution_binding",
         "platform_resource_activation",
-    }.issubset(tables)
-    assert {
         "runtime_snapshot_generation",
         "tool_resource_runtime_state",
         "business_application_runtime_state",
-        "resource_reset_operation",
-        "resource_reset_target",
-    }.issubset(tables)
+    }.isdisjoint(tables)
     agent_columns = {row["name"] for row in database.execute("pragma table_info(agent_definition)")}
     job_columns = {row["name"] for row in database.execute("pragma table_info(agent_job)")}
     assert "classification" in agent_columns
@@ -88,7 +86,7 @@ def test_governed_resource_schema_has_stable_version_and_activation_records() ->
     database.close()
 
 
-def test_resource_scope_draft_revision_and_activation_constraints_fail_closed() -> None:
+def test_resource_scope_draft_and_revision_constraints_fail_closed() -> None:
     database = Database("sqlite:///:memory:")
     Migrator(
         database,
@@ -176,31 +174,6 @@ def test_resource_scope_draft_revision_and_activation_constraints_fail_closed() 
     )
     assert verification == {"draft_id": None}
 
-    with pytest.raises(Exception):
-        database.execute(
-            """
-            insert into platform_resource_activation
-              (id, resource_id, runtime_environment, published_revision_id,
-               published_generation, status, observed_at)
-            values ('activation-invalid', 'resource-two', 'local',
-                    'resource-revision-one', 1, 'BLOCKED',
-                    '2026-07-28T00:00:00+00:00')
-            """
-        )
-    database.execute(
-        """
-        insert into platform_resource_activation
-          (id, resource_id, runtime_environment, published_revision_id,
-           effective_revision_id, last_known_good_revision_id,
-           published_generation, effective_generation, status, observed_at,
-           activated_at)
-        values ('activation-one', 'resource-one', 'local',
-                'resource-revision-one', 'resource-revision-one',
-                'resource-revision-one', 1, 1, 'ACTIVE',
-                '2026-07-28T00:00:00+00:00',
-                '2026-07-28T00:00:00+00:00')
-        """
-    )
     with pytest.raises(Exception):
         database.execute("delete from platform_resource where id = 'resource-one'")
     database.close()

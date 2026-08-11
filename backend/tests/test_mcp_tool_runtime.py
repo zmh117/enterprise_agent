@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.mcp_tool_runtime.job_snapshot import JobMcpToolSnapshotService
+from app.modules.mcp_tool_runtime.contracts import FakeReadOnlyToolExecutor
 from app.modules.mcp_tool_runtime.manifest import (
     MCP_TOOL_MANIFEST,
     mcp_tool_schema_hash,
@@ -14,6 +16,12 @@ from app.modules.mcp_tool_runtime.manifest import (
 )
 from app.modules.mcp_tool_runtime.policies import assert_readonly_sql
 from app.modules.mcp_tool_runtime.resource_resolver import DirectResourceResolver
+from app.modules.mcp_tool_runtime.service import ReadOnlyToolService
+from app.modules.agent.application.agent_context_builder import (
+    AgentContextBuilder,
+    _tool_restrictions,
+)
+from app.shared.config import ExecutionSettings
 from app.shared.exceptions import ToolPolicyError
 from backend.tests.helpers import container
 
@@ -40,6 +48,105 @@ class _SecretProvider:
     def resolve(self, ref: str) -> str:
         assert ref == "secret://platform/mysql-test-password"
         return "resolved-only-at-invocation"
+
+
+class _ServiceRepository:
+    def __init__(self) -> None:
+        self.job = SimpleNamespace(
+            id="job-dynamic-target",
+            user_id="user-1",
+            internal_user_id="user-1",
+            project_code="default",
+            business_application_id="application-1",
+        )
+
+    def get_job(self, job_id: str) -> Any:
+        assert job_id == self.job.id
+        return self.job
+
+    def add_tool_call(self, **_: Any) -> str:
+        return "tool-call-1"
+
+    def complete_tool_call(self, *_: Any, **__: Any) -> None:
+        return None
+
+
+class _AuditService:
+    def record(self, *_: Any, **__: Any) -> str:
+        return "audit-1"
+
+
+class _PermissionService:
+    def assert_builtin_tool_use_grant(self, **_: Any) -> None:
+        return None
+
+
+class _OldTargetSnapshot:
+    def tool_binding(self, **_: Any) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        return (
+            {
+                "environment_code": "",
+                "base_code": "",
+                "workshop_code": "",
+            },
+            [
+                {
+                    "resource_slot": "",
+                    "candidates": [],
+                    "schema_hash": MCP_TOOL_MANIFEST["get_schema_directory"].schema_hash,
+                }
+            ],
+        )
+
+
+class _BusinessAuthorization:
+    def __init__(self) -> None:
+        self.decisions: list[dict[str, Any]] = []
+        self.requirements: list[dict[str, Any]] = []
+
+    def decide(self, **kwargs: Any) -> dict[str, Any]:
+        self.decisions.append(kwargs)
+        return {"allowed": True}
+
+    def require(self, **kwargs: Any) -> dict[str, Any]:
+        self.requirements.append(kwargs)
+        return {"allowed": True, "scope": kwargs}
+
+
+class _NoPrefetchToolRegistry:
+    def __init__(self) -> None:
+        self.tool_service = self
+        self.calls: list[dict[str, Any]] = []
+
+    def available_tools(self) -> list[str]:
+        return ["get_schema_directory"]
+
+    def is_tool_visible_for_job(self, **_: Any) -> bool:
+        return True
+
+    def call(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        raise AssertionError("Agent context construction must not pre-call a Tool")
+
+
+class _SkillLoader:
+    def load(self, *_: Any) -> dict[str, str]:
+        return {}
+
+
+class _AgentConfigService:
+    def __init__(self, runtime_kind: str) -> None:
+        self.runtime_kind = runtime_kind
+
+    def publication(self, publication_id: str) -> dict[str, Any]:
+        assert publication_id == "agent-publication-1"
+        return {
+            "id": publication_id,
+            "revision": 1,
+            "config_hash": "agent-config-hash",
+            "runtime_kind": self.runtime_kind,
+            "snapshot": {"skills": [], "model_policy": {}},
+        }
 
 
 def _database_resource(*, code: str, placement: str) -> dict[str, Any]:
@@ -120,7 +227,85 @@ def test_direct_mcp_sql_policy_rejects_mutation() -> None:
         assert_readonly_sql("with changed as (update orders set state='x') select 1")
 
 
-def test_job_snapshot_freezes_target_without_resolving_a_resource() -> None:
+def test_tool_call_uses_agent_target_even_for_an_old_empty_target_snapshot() -> None:
+    executor = FakeReadOnlyToolExecutor()
+    authorization = _BusinessAuthorization()
+    service = ReadOnlyToolService(
+        tool_executor=executor,
+        permission_service=_PermissionService(),  # type: ignore[arg-type]
+        audit_service=_AuditService(),  # type: ignore[arg-type]
+        repository=_ServiceRepository(),  # type: ignore[arg-type]
+        limits=ExecutionSettings(),
+        business_authorization_service=authorization,  # type: ignore[arg-type]
+        mcp_tool_snapshot_service=_OldTargetSnapshot(),  # type: ignore[arg-type]
+    )
+
+    assert service.is_tool_visible_for_job(
+        job_id="job-dynamic-target",
+        tool_name="get_schema_directory",
+    )
+    assert "environment" not in authorization.decisions[-1]
+
+    result = service.call_tool(
+        job_id="job-dynamic-target",
+        user_id="user-1",
+        project_code="default",
+        tool_name="get_schema_directory",
+        arguments={"environment": "test", "limit": 10},
+    )
+
+    assert authorization.requirements[-1]["environment"] == "test"
+    assert authorization.requirements[-1]["base"] == ""
+    assert authorization.requirements[-1]["workshop"] == ""
+    assert result.summary["environment"] == "test"
+    assert executor.calls[-1][1]["environment"] == "test"
+
+
+def test_tool_restrictions_do_not_disclose_unassigned_tool_identifiers() -> None:
+    unassigned_text = " ".join(_tool_restrictions([]))
+    assert "get_schema_directory" not in unassigned_text
+    assert "query_database" not in unassigned_text
+
+    database_only_text = " ".join(_tool_restrictions(["query_database"]))
+    assert "query_database" not in database_only_text
+    assert "get_schema_directory" not in database_only_text
+
+
+@pytest.mark.parametrize("runtime_kind", ["python-v1", "typescript-v1"])
+def test_greeting_context_does_not_prefetch_resources_or_disclose_unassigned_tools(
+    runtime_kind: str,
+) -> None:
+    registry = _NoPrefetchToolRegistry()
+    builder = AgentContextBuilder(
+        tool_registry=registry,  # type: ignore[arg-type]
+        skill_loader=_SkillLoader(),  # type: ignore[arg-type]
+        agent_config_service=_AgentConfigService(runtime_kind),  # type: ignore[arg-type]
+    )
+    job = SimpleNamespace(
+        id="job-greeting",
+        execution_policy=_EXECUTION_POLICY,
+        user_message="你好",
+        project_code="default",
+        agent_publication_id="agent-publication-1",
+        agent_revision=1,
+        agent_config_hash="agent-config-hash",
+        agent_runtime_kind=runtime_kind,
+        agent_runtime_protocol_version="1.0",
+        business_application_publication_id="application-publication-1",
+    )
+
+    context = builder.build(job)  # type: ignore[arg-type]
+
+    assert registry.calls == []
+    assert context.allowed_tools == ["get_schema_directory"]
+    assert context.retrieved_context == {"conversation": {}}
+    serialized = json.dumps(context.retrieved_context, ensure_ascii=False)
+    assert "tool_not_assigned" not in serialized
+    assert "get_er_context" not in serialized
+    assert "get_business_flow_context" not in serialized
+
+
+def test_job_snapshot_does_not_freeze_routing_target_or_resolve_a_resource() -> None:
     runtime = container()
     try:
         session = runtime.agent_repository.create_session(
@@ -153,13 +338,16 @@ def test_job_snapshot_freezes_target_without_resolving_a_resource() -> None:
             runtime_authorization={},
         )
 
-        assert frozen["snapshot"]["target"] == {
-            "environment_code": "test",
-            "base_code": "",
-            "workshop_code": "",
-        }
-        assert frozen["snapshot"]["allowed_placements"] == ["edge"]
+        assert "target" not in frozen["snapshot"]
+        assert "allowed_placements" not in frozen["snapshot"]
         assert frozen["snapshot"]["tools"]
+        binding = runtime.mcp_tool_snapshot_service.tool_binding(
+            job_id=job.id,
+            tool_identifier=frozen["snapshot"]["tools"][0]["tool_identifier"],
+        )
+        assert binding is not None
+        assert binding[0] == {}
+        assert binding[1][0]["available_placements"] == []
         assert runtime.database.execute("select * from platform_resource") == []
     finally:
         runtime.database.close()

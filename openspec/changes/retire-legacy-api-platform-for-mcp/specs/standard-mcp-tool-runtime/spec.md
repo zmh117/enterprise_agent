@@ -33,12 +33,20 @@
 - **WHEN** Job 不存在、非 RUNNING、Tool 未冻结或 schema hash 漂移
 - **THEN** 调用在连接上游前失败关闭
 
-### Requirement: 工具资源必须按业务目标唯一解析
-`tool-mcp` SHALL 使用 Job 冻结的业务目标、数据范围、可选 placement、Tool 资源类型和当前可用 Published Resource Revision 解析资源；匹配结果 MUST 恰好为一个，不得按顺序、默认值、最近父级或最新版本猜测。
+### Requirement: 工具资源必须按调用目标唯一解析
+`tool-mcp` SHALL 使用 Agent 在当前 Tool Call 中提供的 `environment`、可选 `base`/`workshop`/`placement`、Tool 资源类型和当前可用 Published Resource Revision 解析资源；调用目标 MUST 先通过当前角色数据范围校验。匹配结果 MUST 恰好为一个，不得按顺序、默认值、最近父级或最新版本猜测；Job Snapshot 或 Routing Context 中的历史目标字段 MUST NOT 覆盖调用参数。
 
 #### Scenario: test 环境唯一 MySQL 资源
-- **WHEN** Job 目标为 `environment=test` 且只有一个符合条件的已发布 MySQL Resource Revision
+- **WHEN** Tool Call 目标为 `environment=test` 且只有一个符合条件的已发布 MySQL Resource Revision
 - **THEN** 工具使用该版本并记录资源 identity/revision 的非敏感审计
+
+#### Scenario: 环境级资源不要求基地或车间
+- **WHEN** Agent 调用目标为 `environment=test`、未提供 base/workshop，且存在唯一 environment scope 资源
+- **THEN** 资源可以唯一解析，服务端不得要求虚构基地或车间
+
+#### Scenario: 调用目标超出角色数据范围
+- **WHEN** Agent 提供的 environment/base/workshop 不在当前用户角色数据范围内
+- **THEN** 调用在资源连接前失败关闭，且不得尝试其它环境或候选
 
 #### Scenario: 资源零命中或多命中
 - **WHEN** 目标没有资源或存在两个同等候选
@@ -46,13 +54,13 @@
 
 #### Scenario: cloud 与 edge 并存
 - **WHEN** 同一逻辑目标存在 cloud 与 edge 资源
-- **THEN** 调用必须提供 Job 允许集合内的明确 placement，否则失败关闭
+- **THEN** 调用必须提供明确 placement，否则失败关闭
 
 ### Requirement: 数据库 Redis Loki 执行必须保持只读安全边界
 `tool-mcp` MUST 在进程内执行数据库、Redis 与 Loki 工具，并保留方言感知只读 SQL、表/前缀隔离、行数/超时、Redis Key 前缀、Loki selector/时间/行数和响应大小限制。
 
 #### Scenario: 合法只读数据库查询
-- **WHEN** 查询只读取允许表且满足 Job 目标和上限
+- **WHEN** 查询只读取允许表且满足已授权的 Tool Call 目标和上限
 - **THEN** 执行器返回有界、脱敏且标记为不可信内部证据的结果
 
 #### Scenario: 写 SQL 或越界目标
@@ -83,4 +91,3 @@
 #### Scenario: 残留扫描命中旧链路
 - **WHEN** 代码、Compose、env 示例或活动规格包含旧运行组件或配置
 - **THEN** 验收失败直到残留被删除
-

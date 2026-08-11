@@ -44,6 +44,11 @@ class ChannelConnectorRequest(StrictRequest):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class RevisionStatusRequest(StrictRequest):
+    expected_revision: int = Field(ge=0)
+    status: Literal["enabled", "disabled"]
+
+
 def build_admin_router() -> APIRouter:
     router = APIRouter(prefix="/api/admin", tags=["administration"])
 

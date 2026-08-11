@@ -112,7 +112,7 @@ def _grant_role(
             applications=[
                 {
                     "application_id": business_application_id,
-                    "capability_codes": [],
+                    "tool_identifiers": [],
                     "scopes": [scope] if scope else [],
                 }
             ],

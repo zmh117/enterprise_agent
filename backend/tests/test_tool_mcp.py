@@ -45,8 +45,7 @@ def _runtime_job():
     service = JobToolService(
         repository=runtime.agent_repository,
         tool_registry=ToolRegistry(runtime.tool_service),
-        snapshot_service=runtime.builtin_tool_snapshot_service,
-        governed_executor=runtime.governed_api_runtime_executor,
+        snapshot_service=runtime.mcp_tool_snapshot_service,
     )
     return runtime, claimed, service
 

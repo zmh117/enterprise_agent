@@ -37,9 +37,8 @@ def test_ready_checks_schema_database_rabbit_token_and_master_key(
         assert ready["core"] == {
             "database": True,
             "schema": True,
-            "schema_head": "036",
+            "schema_head": "038",
             "rabbitmq": True,
-            "internal_api_token": True,
             "master_key": True,
             "runtime_assembly": True,
             "agent_runtimes": {
@@ -59,7 +58,11 @@ def test_ready_checks_schema_database_rabbit_token_and_master_key(
                 for runtime_kind in ("python-v1", "typescript-v1")
             },
         }
-        assert ready["resources"]["status"] == "EMPTY"
+        assert ready["tool_mcp"] == {
+            "server_code": "tool-mcp",
+            "transport": "stdio",
+            "resource_resolution": "invocation_time",
+        }
         assert ready["claude_invoked"] is False
         assert ready["mcp_invoked"] is False
         assert ready["runtime_selection"] == {

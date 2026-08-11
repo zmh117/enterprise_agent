@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from app.modules.internal_api_platform.domain.errors import ResolutionError
-from app.modules.internal_api_platform.infrastructure.db.oracle_client import (
+from app.modules.mcp_tool_runtime.domain.errors import ResolutionError
+from app.modules.mcp_tool_runtime.infrastructure.db.oracle_client import (
     inspect_oracle_client,
 )
 
@@ -133,7 +133,7 @@ def test_oracle_image_layout_is_fail_closed_and_shell_is_valid() -> None:
     readme = README.read_text()
 
     assert "verify_oracle_client.py" in dockerfile
-    assert "Thin is never used as a fallback" in dockerfile
+    assert "setup_oracle_client.sh" in dockerfile
     assert "libclntsh.so.19" in setup
     assert "--find-in-archive" in setup
     assert "19c" in readme

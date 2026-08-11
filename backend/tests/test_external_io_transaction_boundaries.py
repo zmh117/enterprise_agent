@@ -10,12 +10,8 @@ from app.modules.channel.domain.channel_event import ReplyRoute
 from app.modules.delivery.infrastructure.adapters import (
     DingTalkStreamSessionWebhookDeliveryAdapter,
 )
-from app.modules.internal_api_platform.infrastructure.db.drivers import (
+from app.modules.mcp_tool_runtime.infrastructure.db.drivers import (
     MysqlExecutor,
-)
-from app.modules.internal_tools.infrastructure.internal_api_client import (
-    HttpInternalApiClient,
-    ToolRequestContext,
 )
 from app.modules.message_bus.infrastructure.rabbitmq_publisher import (
     RabbitMQPublisher,
@@ -38,37 +34,6 @@ def test_rabbitmq_publish_is_rejected_before_network_inside_uow() -> None:
                     "job-1",
                     "correlation-1",
                 )
-    finally:
-        database.close()
-
-
-def test_internal_tool_http_is_rejected_before_transport_inside_uow() -> None:
-    database = Database("sqlite:///:memory:")
-    transport_called = False
-
-    def forbidden_transport(*args: object, **kwargs: object) -> object:
-        del args, kwargs
-        nonlocal transport_called
-        transport_called = True
-        raise AssertionError("transport must not run")
-
-    client = HttpInternalApiClient(
-        "http://internal-api.invalid",
-        urlopen_func=forbidden_transport,
-    )
-    context = ToolRequestContext(
-        job_id="job-1",
-        user_id="user-1",
-        project_code="default",
-    )
-    try:
-        with database.unit_of_work():
-            with pytest.raises(
-                ExternalIOInUnitOfWorkError,
-                match="internal_api.http",
-            ):
-                client.get_er_context("orders", context)
-        assert transport_called is False
     finally:
         database.close()
 

@@ -62,17 +62,6 @@ class AgentContextBuilder:
                     error_code="model_connection_integrity_failed",
                 )
         allowed_tools = self._allowed_tools(job, publication)
-        er_context = self._context_tool(
-            job, allowed_tools, "get_er_context", {"query": job.user_message}
-        )
-        business_flow_context = self._context_tool(
-            job,
-            allowed_tools,
-            "get_business_flow_context",
-            {"query": job.user_message},
-        )
-        er_summary = er_context.get("summary") or {}
-        schema_context = self._schema_context(job, er_summary, allowed_tools)
         conversation = self.conversation_service.build(job) if self.conversation_service else None
         skill_names = tuple(str(item) for item in snapshot.get("skills") or [])
         return AgentExecutionContext(
@@ -90,37 +79,11 @@ class AgentContextBuilder:
             user_question=job.user_message,
             project_code=job.project_code,
             allowed_tools=allowed_tools,
-            tool_restrictions=[
-                "SQL must be read-only and bounded.",
-                "Redis operations must be get or bounded scan.",
-                "Loki queries must be bounded by service, time range, and result size.",
-                "Call get_schema_directory before query_database for the resolved target.",
-                "SQL may reference only tables and columns listed in schema_directory.",
-                (
-                    "Do not guess table names such as mo, order, production_order, or adjacent "
-                    "business tables when they are absent from schema_directory."
-                ),
-                (
-                    "If schema_directory is empty, lacks order/status/material fields, or tools "
-                    "return structured table/column/policy rejections, stop tool calls and report "
-                    "'不具备诊断证据' with the verified limitations."
-                ),
-                (
-                    "For query_database/query_redis_get/query_redis_scan/query_loki, resolve and "
-                    "pass environment/base/workshop. Map the user's natural language (e.g. 观澜基地, "
-                    "GL001 车间) to codes using the 'addressing' directory in the ER context: base "
-                    "uses business codes (观澜基地 -> guanlan), workshops are logical partitions "
-                    "(GL001). Omit workshop only for non-partitioned bases. Never guess codes that "
-                    "are absent from the addressing directory."
-                ),
-            ],
+            tool_restrictions=_tool_restrictions(allowed_tools),
             skills=(
                 self.skill_loader.load(skill_names) if publication else self.skill_loader.load()
             ),
             retrieved_context={
-                "er": er_summary,
-                "business_flow": business_flow_context.get("summary") or {},
-                "schema_directory": schema_context,
                 "conversation": (
                     {
                         "recent_messages": conversation.recent_messages,
@@ -181,85 +144,41 @@ class AgentContextBuilder:
             )
         ]
 
-    def _context_tool(
-        self,
-        job: AgentJob,
-        allowed_tools: list[str],
-        tool_name: str,
-        arguments: dict[str, Any],
-    ) -> dict[str, Any]:
-        if tool_name not in allowed_tools:
-            return {"summary": {"status": "tool_not_assigned", "tool_name": tool_name}}
-        result = self.tool_registry.call(
-            job_id=job.id,
-            user_id=job.internal_user_id or job.user_id,
-            project_code=job.project_code,
-            tool_name=tool_name,
-            arguments=arguments,
-        )
-        return {"summary": result.summary}
+def _tool_restrictions(allowed_tools: list[str]) -> list[str]:
+    """Describe only tools the current Job actually exposes to the model."""
 
-    def _schema_context(
-        self,
-        job: AgentJob,
-        er_summary: dict[str, Any],
-        allowed_tools: list[str],
-    ) -> dict[str, Any]:
-        if "get_schema_directory" not in allowed_tools:
-            return {
-                "status": "tool_not_assigned",
-                "tool_name": "get_schema_directory",
-            }
-        target = _resolve_single_target(job.user_message, er_summary.get("addressing"))
-        if target is None:
-            return {
-                "status": "target_not_resolved",
-                "instruction": (
-                    "Resolve environment/base/workshop from addressing before calling "
-                    "get_schema_directory. Do not guess absent target codes."
+    assigned = set(allowed_tools)
+    restrictions = [
+        "Never invent or probe environment, base, workshop, or placement codes.",
+        (
+            "Choose target arguments from the latest user request and relevant conversation; "
+            "when the target is missing, conflicting, or ambiguous, ask for clarification."
+        ),
+    ]
+    if "query_database" in assigned:
+        restrictions.extend(
+            [
+                "SQL must be read-only and bounded.",
+                "SQL may reference only tables and columns returned by an assigned schema tool.",
+                (
+                    "If schema evidence is unavailable or a table/column/policy check rejects the "
+                    "request, stop tool calls and report '不具备诊断证据'."
                 ),
-            }
-        try:
-            result = self.tool_registry.call(
-                job_id=job.id,
-                user_id=job.internal_user_id or job.user_id,
-                project_code=job.project_code,
-                tool_name="get_schema_directory",
-                arguments={**target, "query": "", "limit": 50},
+            ]
+        )
+        if "get_schema_directory" in assigned:
+            restrictions.append(
+                "Call get_schema_directory before query_database using the same selected target."
             )
-            return result.summary
-        except Exception as exc:
-            return {
-                "status": "schema_directory_unavailable",
-                "target": target,
-                "error": getattr(exc, "safe_message", str(exc)),
-                "diagnostic_action": "stop_and_report_insufficient_evidence",
-            }
-
-
-def _resolve_single_target(message: str, addressing: Any) -> dict[str, str] | None:
-    if not isinstance(addressing, dict):
-        return None
-    text = message.lower()
-    matches: dict[tuple[str, str, str], dict[str, str]] = {}
-    for resource in addressing.get("resources") or []:
-        if not isinstance(resource, dict):
-            continue
-        environment = str(resource.get("environment") or "")
-        base = str(resource.get("base") or "")
-        workshop = str(resource.get("workshop") or "")
-        if not environment or environment.lower() not in text:
-            continue
-        if base and base.lower() not in text:
-            continue
-        if workshop and workshop.lower() not in text:
-            continue
-        target = {"environment": environment}
-        if base:
-            target["base"] = base
-        if workshop:
-            target["workshop"] = workshop
-        matches[(environment, base, workshop)] = target
-    if len(matches) == 1:
-        return next(iter(matches.values()))
-    return None
+    if {"query_redis_get", "query_redis_scan"} & assigned:
+        restrictions.append("Redis operations must be get or bounded scan.")
+    if {
+        "query_loki",
+        "diagnose_loki_labels",
+        "diagnose_loki_label_values",
+        "diagnose_loki_probe",
+    } & assigned:
+        restrictions.append(
+            "Loki queries must be bounded by service, time range, and result size."
+        )
+    return restrictions

@@ -24,7 +24,6 @@ from app.modules.platform_config.infrastructure.governed_resource_repository imp
 )
 from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import (
-    NonRetryableExecutionError,
     PermissionDenied,
 )
 

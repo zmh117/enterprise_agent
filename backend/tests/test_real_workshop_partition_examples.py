@@ -4,10 +4,10 @@ import json
 
 import pytest
 
-from app.modules.internal_api_platform.domain.errors import PolicyViolation
-from app.modules.internal_api_platform.domain.redis_policy import enforce_key_namespace
-from app.modules.internal_api_platform.domain.sql.analyzer import analyze_readonly_query
-from app.modules.internal_api_platform.domain.topology import DatabaseEngine
+from app.modules.mcp_tool_runtime.domain.errors import PolicyViolation
+from app.modules.mcp_tool_runtime.domain.redis_policy import enforce_key_namespace
+from app.modules.mcp_tool_runtime.domain.sql.analyzer import analyze_readonly_query
+from app.modules.mcp_tool_runtime.domain.topology import DatabaseEngine
 from app.modules.platform_config.application.workshop_partition_verifier import (
     RedisWorkshopPartitionTechnicalVerifier,
 )

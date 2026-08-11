@@ -18,7 +18,7 @@
 
 ### Requirement: 系统上下文字段不可由 Agent 覆盖
 **Reason**: Capability Mapping 输入管线删除。
-**Migration**: MCP Tool 系统目标字段仍由 Job 冻结且不可覆盖。
+**Migration**: MCP Tool 目标由 Agent 按 Skill 在调用时提供；服务端以角色数据范围、只读策略和唯一资源解析约束，不能由 Routing Context 静默覆盖。
 
 ### Requirement: 固定执行管线解释已编译 Mapping Plan
 **Reason**: Mapping Plan 和执行管线删除。
@@ -51,4 +51,3 @@
 ### Requirement: Agent 可通过公开 Schema 组合 Capability
 **Reason**: Capability 组合永久删除。
 **Migration**: Agent 只可组合其冻结 MCP Tool 的公开 schema。
-

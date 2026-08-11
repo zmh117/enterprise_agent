@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from app.modules.platform_config.application.snapshot import (
-    PlatformTopologySnapshotBuilder,
+from app.modules.authorization_center.infrastructure.repository import (
+    AuthorizationCenterRepository,
 )
 from app.modules.platform_config.application.validation import (
     PlatformConfigValidationError,
@@ -62,48 +62,24 @@ def test_topology_supports_environment_base_and_workshop_leaves_without_virtual_
         code="GL001",
     )
 
-    public = PlatformTopologySnapshotBuilder(
-        topology_repository
-    ).build_public_snapshot()
+    public = AuthorizationCenterRepository(
+        topology_repository.database
+    ).topology_catalog()
     environments = {
-        item["code"]: item for item in public["environments"]
+        item["code"]: item for item in public
     }
 
     assert environments["environment_leaf"]["bases"] == []
-    assert environments["environment_leaf"]["target_level"] == "environment"
-    assert environments["environment_leaf"]["is_leaf"] is True
 
     base_tree = environments["base_tree"]
-    assert base_tree["target_level"] == "environment"
-    assert base_tree["is_leaf"] is False
     assert len(base_tree["bases"]) == 1
     base_leaf = base_tree["bases"][0]
     assert base_leaf["code"] == "base_leaf"
     assert base_leaf["workshops"] == []
-    assert base_leaf["target_level"] == "base"
-    assert base_leaf["is_leaf"] is True
 
     workshop_tree = environments["workshop_tree"]
     workshop_parent = workshop_tree["bases"][0]
-    assert workshop_parent["is_leaf"] is False
-    assert workshop_parent["workshops"] == [
-        {
-            "code": "GL001",
-            "display_name": "",
-            "table_prefix": "",
-            "redis_key_prefix": "",
-            "loki_labels": {},
-            "aliases": [],
-            "resources": [],
-            "target_level": "workshop",
-            "is_leaf": True,
-            "target_path": {
-                "environment": "workshop_tree",
-                "base": "workshop_parent",
-                "workshop": "GL001",
-            },
-        }
-    ]
+    assert [item["code"] for item in workshop_parent["workshops"]] == ["GL001"]
 
     encoded = str(public).lower()
     assert "'code': 'default'" not in encoded

@@ -40,12 +40,12 @@ Manifest 是代码事实，不在 Web 中编辑实现。Agent Publication 冻结
 
 保留 `platform_resource` 的 Draft/Verification/Revision、Secret Ref 和资源生命周期。删除 `business_application_*_resource*`、`*_builtin_tool_resource*`、资源槽、有限目标矩阵和 Job 映射快照。
 
-Job 创建时冻结：应用/Agent Tool 交集、发送人有效工具权限、业务目标范围、角色数据范围。`tool-mcp` 调用时使用这些不可变事实和 Tool 所需资源类型，从已发布且启用的工具资源中解析唯一匹配：
+Job 创建时只冻结应用/Agent Tool 交集、发送人有效工具权限摘要和发布完整性事实，不从 DingTalk Routing Context 或用户消息冻结 `environment`、`base`、`workshop`、`placement`。Agent 按当前消息、会话和已发布 Skill 为每次 Tool Call 选择目标参数；用户输入可能变化或不准确，因此 Skill 必须在不确定时澄清，不能猜测或跨环境探测。`tool-mcp` 在每次调用时先用当前角色数据范围复核 Agent 给出的目标，再按 Tool 所需资源类型从已发布且启用的工具资源中解析唯一匹配：
 
 1. `environment` 必须精确相等；
 2. `base`/`workshop` 只在资源声明了对应层级时匹配；
-3. Job 数据范围必须覆盖目标；
-4. 若 Tool 参数包含 `placement`，必须在 Job 允许集合中精确匹配；
+3. 当前角色数据范围必须覆盖调用目标；
+4. 若 Tool 参数包含 `placement`，必须精确匹配；若候选 placement 不唯一则调用失败；
 5. 匹配为零或大于一均失败，不使用排序、默认值或最近版本猜测。
 
 这保留 `environment=test` 的动态资源能力，同时移除应用逐工具映射。
@@ -64,7 +64,7 @@ MCP transport 不承担认证和 RBAC。私网请求只携带非敏感 `X-Job-Id
 
 ### 6. 破坏性迁移采用先切流后删表
 
-新增单向迁移：先新增直接 MCP 所需的 Job Tool/Target 快照字段或表并回填可确定历史；部署新代码并确认没有旧执行引用；最后删除 Capability、API Connection、外部 API Credential、Application Resource Mapping、Internal API runtime generation/activation 等专用表和 JSON 字段。
+新增单向迁移：先新增直接 MCP 所需的 Job Tool 快照字段或表并回填可确定历史；部署新代码并确认没有旧执行引用；最后删除 Capability、API Connection、外部 API Credential、Application Resource Mapping、Internal API runtime generation/activation 等专用表和 JSON 字段。历史快照中的 target/allowed_placements 字段只作为历史数据保留，新的 MCP 调用不得读取它们作为执行约束。
 
 迁移器在删除前检查：不存在 RUNNING/QUEUED/RETRYING 且引用旧 Capability/Mapping 的 Job；不存在活动 Application Deployment 引用无法转换的旧发布。检查失败则迁移整体失败，不局部删表。
 
@@ -96,7 +96,7 @@ MCP transport 不承担认证和 RBAC。私网请求只携带非敏感 `X-Job-Id
 ## Migration Plan
 
 1. 创建数据库备份并记录当前活动 Application/Agent Publication、在途 Job、工具资源和 Secret 数量。
-2. 引入直接 MCP Tool Manifest、唯一资源解析器和内聚执行器，新增/调整 Job Tool/Target 快照；保持旧表只读用于一次性回填。
+2. 引入直接 MCP Tool Manifest、唯一资源解析器和内聚执行器，新增/调整 Job Tool 快照；保持旧表只读用于一次性回填。
 3. 切换 Agent/Application/Role API 与前端到 MCP Tool 模型，停止创建 Capability/Resource Mapping 数据。
 4. 切换 `tool-mcp` 直接执行，完成 Python 与 TypeScript Runtime 的 DB/Redis/Loki 回归及 DingTalk 链路验收。
 5. 执行破坏性迁移，删除旧表、字段、权限、路由、模块和 UI。

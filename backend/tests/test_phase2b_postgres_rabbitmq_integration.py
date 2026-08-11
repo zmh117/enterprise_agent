@@ -146,7 +146,6 @@ def test_committed_job_survives_dispatch_and_duplicate_event_executes_once(
         database_dsn=migrated_postgres_dsn,
         rabbitmq_url=RABBITMQ_URL,
         feature_real_claude=False,
-        feature_real_internal_tools=False,
         queue=queue,
     )
     counting_client = _CountingAgentClient()

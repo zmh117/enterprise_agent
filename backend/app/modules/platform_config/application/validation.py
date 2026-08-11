@@ -94,7 +94,7 @@ def validate_resource_placement(
         raise PlatformConfigValidationError(
             f"Invalid Resource placement: {text}",
             safe_message="资源位置只能为 cloud、edge 或缺省",
-            error_code="builtin_tool_placement_invalid",
+            error_code="resource_placement_invalid",
         ) from exc
 
 
@@ -113,7 +113,7 @@ def assert_no_resource_placement(
                         "placement 只能在应用资源映射中配置，"
                         f"不能写入{context}"
                     ),
-                    error_code="builtin_tool_placement_invalid",
+                    error_code="resource_placement_invalid",
                 )
             assert_no_resource_placement(item, context=context)
     elif isinstance(value, (list, tuple)):

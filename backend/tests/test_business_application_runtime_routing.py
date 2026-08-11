@@ -167,7 +167,7 @@ def _publish(
         applications=[
             {
                 "application_id": application["id"],
-                "capability_codes": [],
+                "tool_identifiers": [],
                 "scopes": [{"environment_id": sanjiu["id"]}],
             }
         ],

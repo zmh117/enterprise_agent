@@ -38,7 +38,7 @@ def control_plane_settings() -> object:
 
 
 def draft_payload(
-    *, route: str = "", capabilities: list[dict[str, object]] | None = None
+    *, route: str = "", mcp_tools: list[str] | None = None
 ) -> dict[str, object]:
     triggers: list[dict[str, object]] = []
     deliveries: list[dict[str, object]] = []
@@ -84,7 +84,7 @@ def draft_payload(
         },
         "triggers": triggers,
         "deliveries": deliveries,
-        "capabilities": capabilities or [],
+        "mcp_tools": mcp_tools or [],
     }
 
 
@@ -257,18 +257,7 @@ def test_repository_is_append_only_and_enforces_revision_conflicts() -> None:
     assert first["revision"] == 2
 
     ordered_payload = draft_payload(
-        capabilities=[
-            {
-                "capability_code": "first-capability",
-                "version_constraint": "1",
-                "enabled": True,
-            },
-            {
-                "capability_code": "second-capability",
-                "version_constraint": "2",
-                "enabled": False,
-            },
-        ]
+        mcp_tools=["get_business_flow_context", "get_er_context"]
     )
     ordered_payload["triggers"] = [
         {
@@ -297,9 +286,9 @@ def test_repository_is_append_only_and_enforces_revision_conflicts() -> None:
         "first-route",
         "second-route",
     ]
-    assert [item["capability_code"] for item in ordered["capabilities"]] == [
-        "first-capability",
-        "second-capability",
+    assert [item["tool_identifier"] for item in ordered["mcp_tools"]] == [
+        "get_business_flow_context",
+        "get_er_context",
     ]
 
 
@@ -686,54 +675,13 @@ def test_activation_route_projection_rejects_conflicting_application() -> None:
     )
 
 
-def test_capability_can_be_drafted_but_blocks_validation_and_publication() -> None:
+def test_mcp_tool_catalog_lists_manifest_tools_and_enforces_agent_binding() -> None:
     container = build_test_container(control_plane_settings(), migrate=True, seed=True)
     service = container.business_application_service
     application = service.create(
         actor_id="user_local_admin",
-        code="capability-test",
-        name="Capability Test",
-        description="",
-        project_code="default",
-        owner_user_id="user_local_admin",
-    )
-    revision = service.save_draft(
-        actor_id="user_local_admin",
-        code="capability-test",
-        expected_revision=int(application["revision"]),
-        payload=draft_payload(
-            capabilities=[
-                {
-                    "capability_code": "order-query-detail",
-                    "version_constraint": "1.x",
-                    "enabled": True,
-                }
-            ]
-        ),
-    )
-    validated = service.validate(
-        actor_id="user_local_admin",
-        code="capability-test",
-        revision_id=str(revision["id"]),
-    )
-    assert validated["validation"]["valid"] is False
-    assert "能力" in str(validated["validation"]["errors"])
-    with pytest.raises(NonRetryableExecutionError) as invalid:
-        service.publish(
-            actor_id="user_local_admin",
-            code="capability-test",
-            revision_id=str(revision["id"]),
-        )
-    assert invalid.value.error_code == "validation_failed"
-
-
-def test_capability_catalog_lists_readonly_tools_and_enforces_agent_binding() -> None:
-    container = build_test_container(control_plane_settings(), migrate=True, seed=True)
-    service = container.business_application_service
-    application = service.create(
-        actor_id="user_local_admin",
-        code="capability-catalog-test",
-        name="Capability Catalog Test",
+        code="mcp-tool-catalog-test",
+        name="MCP Tool Catalog Test",
         description="",
         project_code="default",
         owner_user_id="user_local_admin",
@@ -741,75 +689,45 @@ def test_capability_catalog_lists_readonly_tools_and_enforces_agent_binding() ->
 
     catalog = service.catalog(
         actor_id="user_local_admin",
-        code="capability-catalog-test",
+        code="mcp-tool-catalog-test",
     )
-    assert catalog["capability_catalog_connected"] is True
     catalog_agents = {(item["code"], item["runtime_kind"]) for item in catalog["agents"]}
     assert ("default-diagnostic-agent", "python-v1") in catalog_agents
     assert ("typescript-diagnostic-agent", "typescript-v1") in catalog_agents
-    capability_codes = {item["code"] for item in catalog["capabilities"]}
-    assert "get_schema_directory" in capability_codes
-    assert "query_database" in capability_codes
+    python_tools = {
+        item["tool_identifier"]
+        for item in catalog["mcp_tools_by_agent_publication"][
+            "agent_publication_default_v1"
+        ]
+    }
+    assert {"get_schema_directory", "query_database"} <= python_tools
 
     valid_revision = service.save_draft(
         actor_id="user_local_admin",
-        code="capability-catalog-test",
+        code="mcp-tool-catalog-test",
         expected_revision=int(application["revision"]),
-        payload=draft_payload(
-            capabilities=[
-                {
-                    "capability_code": "get_schema_directory",
-                    "version_constraint": "1",
-                    "enabled": True,
-                }
-            ]
-        ),
+        payload=draft_payload(mcp_tools=["get_schema_directory"]),
     )
     validated = service.validate(
         actor_id="user_local_admin",
-        code="capability-catalog-test",
+        code="mcp-tool-catalog-test",
         revision_id=str(valid_revision["id"]),
     )
-    assert validated["validation"]["valid"] is False
-    assert validated["validation"]["errors"] == [
+    assert validated["validation"] == {"valid": True, "errors": []}
+
+    with pytest.raises(NonRetryableExecutionError) as invalid:
+        service.save_draft(
+            actor_id="user_local_admin",
+            code="mcp-tool-catalog-test",
+            expected_revision=int(valid_revision["revision"]),
+            payload=draft_payload(mcp_tools=["unbound_readonly"]),
+        )
+    assert invalid.value.field_errors == [
         {
-            "field": "capabilities.0.capability_code",
-            "message": ("所选 Agent 发布版本未绑定业务能力：get_schema_directory"),
+            "field": "mcp_tools.0",
+            "message": "所选 MCP Tool 不在 Agent 发布范围内或 Schema 已变化",
         }
     ]
-
-    container.database.execute(
-        """
-        insert into tool_definition
-          (id, name, risk_level, read_only, enabled, description, created_at, updated_at)
-        values
-          ('tool-unbound-readonly', 'unbound_readonly', 'low', 1, 1,
-           'Not bound to the selected Agent publication', CURRENT_TIMESTAMP,
-           CURRENT_TIMESTAMP)
-        """
-    )
-    current = container.business_application_repository.get_by_code("capability-catalog-test")
-    invalid_revision = service.save_draft(
-        actor_id="user_local_admin",
-        code="capability-catalog-test",
-        expected_revision=int(current["revision"]),
-        payload=draft_payload(
-            capabilities=[
-                {
-                    "capability_code": "unbound_readonly",
-                    "version_constraint": "1",
-                    "enabled": True,
-                }
-            ]
-        ),
-    )
-    invalid = service.validate(
-        actor_id="user_local_admin",
-        code="capability-catalog-test",
-        revision_id=str(invalid_revision["id"]),
-    )
-    assert invalid["validation"]["valid"] is False
-    assert "所选 Agent 发布版本未绑定业务能力" in str(invalid["validation"]["errors"])
 
 
 def test_catalog_http_contract_only_exposes_runtime_kind_for_agents() -> None:
@@ -836,9 +754,13 @@ def test_catalog_http_contract_only_exposes_runtime_kind_for_agents() -> None:
         "typescript-v1",
     }
     assert catalog["connectors"]
-    assert catalog["capabilities"]
+    assert catalog["mcp_tools_by_agent_publication"]
     assert all("runtime_kind" not in item for item in catalog["connectors"])
-    assert all("runtime_kind" not in item for item in catalog["capabilities"])
+    assert all(
+        "runtime_kind" not in item
+        for tools in catalog["mcp_tools_by_agent_publication"].values()
+        for item in tools
+    )
 
 
 def test_application_agent_reference_fails_closed_on_runtime_or_hash_tampering() -> None:

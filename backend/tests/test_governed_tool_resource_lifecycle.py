@@ -71,10 +71,22 @@ def _grant_platform_config_management(runtime: object, user_id: str) -> None:
         """,
         (f"test-platform-config-{user_id}", user_id),
     )
+    runtime.database.execute(
+        """
+        insert into permission_policy
+          (id, subject_type, subject_code, resource_type, resource_code,
+           action, effect, priority, status, revision, created_at, updated_at)
+        values (?, 'user', ?, 'secret', '*', 'manage', 'allow',
+                1, 'enabled', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        on conflict(id) do nothing
+        """,
+        (f"test-secret-{user_id}", user_id),
+    )
 
 
 def _create_resource() -> tuple[object, object, dict[str, object]]:
     runtime = container()
+    _grant_platform_config_management(runtime, "local-user")
     service = runtime.platform_config_service.governed_resources
     runtime.platform_config_service.upsert_environment(
         {"code": "governed_env"},

@@ -1,19 +1,18 @@
 from __future__ import annotations
 
-import textwrap
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock, patch
 
-from app.modules.internal_api_platform.domain.addressing import ResourceBinding
-from app.modules.internal_api_platform.domain.errors import PolicyViolation, ResolutionError
-from app.modules.internal_api_platform.domain.redis_policy import (
+from app.modules.mcp_tool_runtime.domain.addressing import ResourceBinding
+from app.modules.mcp_tool_runtime.domain.errors import PolicyViolation, ResolutionError
+from app.modules.mcp_tool_runtime.domain.redis_policy import (
     enforce_key_namespace,
     enforce_scan_pattern,
 )
-from app.modules.internal_api_platform.domain.sql.analyzer import analyze_readonly_query
-from app.modules.internal_api_platform.domain.topology import (
+from app.modules.mcp_tool_runtime.domain.sql.analyzer import analyze_readonly_query
+from app.modules.mcp_tool_runtime.domain.topology import (
     Base,
     DatabaseConnection,
     DatabaseEngine,
@@ -25,11 +24,7 @@ from app.modules.internal_api_platform.domain.topology import (
     RedisNode,
     ResourceKind,
 )
-from app.modules.internal_api_platform.infrastructure.config import (
-    TopologyConfigError,
-    load_platform_config,
-)
-from app.modules.internal_api_platform.infrastructure.db.oracle_client import (
+from app.modules.mcp_tool_runtime.infrastructure.db.oracle_client import (
     ThickInitState,
     assert_oracle_client_mode_ready,
     build_oracle_dsn,
@@ -38,8 +33,7 @@ from app.modules.internal_api_platform.infrastructure.db.oracle_client import (
     inspect_oracle_client,
     reset_oracle_client_state_for_tests,
 )
-from app.modules.internal_api_platform.infrastructure.redis_gateway import RealRedisGateway
-from app.modules.internal_api_platform.infrastructure.secrets import MappingSecretResolver
+from app.modules.mcp_tool_runtime.infrastructure.redis_gateway import RealRedisGateway
 from app.modules.platform_config.application.validation import (
     PlatformConfigValidationError,
     normalize_oracle_database_config,
@@ -48,92 +42,6 @@ from app.modules.platform_config.application.validation import (
 
 
 class RedisClusterConfigTests(unittest.TestCase):
-    def test_standalone_default_from_yaml(self) -> None:
-        config = textwrap.dedent(
-            """
-            environments:
-              e:
-                bases:
-                  b:
-                    engine: mysql
-                    redis:
-                      host: redis.local
-                      port: 6379
-            """
-        )
-        with TemporaryDirectory() as tmp:
-            path = Path(tmp) / "t.yaml"
-            path.write_text(config)
-            topology, _ = load_platform_config(path, resolver=MappingSecretResolver({}))
-        redis = topology.environment("e").base("b").redis  # type: ignore[union-attr]
-        self.assertEqual(RedisMode.STANDALONE, redis.mode)
-        self.assertEqual("redis.local", redis.host)
-
-    def test_cluster_nodes_loaded(self) -> None:
-        config = textwrap.dedent(
-            """
-            environments:
-              e:
-                bases:
-                  b:
-                    engine: mysql
-                    redis:
-                      mode: cluster
-                      password: pw
-                      nodes:
-                        - { host: 10.0.0.1, port: 6379 }
-                        - { host: 10.0.0.2, port: 6380 }
-            """
-        )
-        with TemporaryDirectory() as tmp:
-            path = Path(tmp) / "t.yaml"
-            path.write_text(config)
-            topology, _ = load_platform_config(path, resolver=MappingSecretResolver({}))
-        redis = topology.environment("e").base("b").redis  # type: ignore[union-attr]
-        self.assertEqual(RedisMode.CLUSTER, redis.mode)
-        self.assertEqual(2, len(redis.nodes))
-        self.assertEqual("10.0.0.1", redis.host)
-        self.assertEqual(("10.0.0.1", "10.0.0.2"), tuple(n.host for n in redis.startup_nodes()))
-
-    def test_cluster_missing_nodes_rejected(self) -> None:
-        config = textwrap.dedent(
-            """
-            environments:
-              e:
-                bases:
-                  b:
-                    engine: mysql
-                    redis:
-                      mode: cluster
-            """
-        )
-        with TemporaryDirectory() as tmp:
-            path = Path(tmp) / "t.yaml"
-            path.write_text(config)
-            with self.assertRaises(TopologyConfigError):
-                load_platform_config(path, resolver=MappingSecretResolver({}))
-
-    def test_cluster_nonzero_db_rejected(self) -> None:
-        config = textwrap.dedent(
-            """
-            environments:
-              e:
-                bases:
-                  b:
-                    engine: mysql
-                    redis:
-                      mode: cluster
-                      db: 2
-                      nodes:
-                        - { host: 10.0.0.1, port: 6379 }
-            """
-        )
-        with TemporaryDirectory() as tmp:
-            path = Path(tmp) / "t.yaml"
-            path.write_text(config)
-            with self.assertRaises(TopologyConfigError):
-                load_platform_config(path, resolver=MappingSecretResolver({}))
-
     def test_normalize_redis_resource_config_cluster(self) -> None:
         normalized = normalize_redis_resource_config(
             {"mode": "cluster", "nodes": [{"host": "a", "port": 6379}]}
@@ -276,34 +184,6 @@ class OracleCompatAndClientTests(unittest.TestCase):
         self.assertIn("ROWNUM <= 10", analyzed.sql)
         self.assertNotIn("FETCH FIRST", analyzed.sql)
 
-    def test_oracle_yaml_fields(self) -> None:
-        config = textwrap.dedent(
-            """
-            environments:
-              e:
-                bases:
-                  b:
-                    engine: oracle
-                    database:
-                      host: ora.local
-                      port: 1521
-                      database: ORCL
-                      user: u
-                      password: p
-                      oracle_client_mode: thick
-                      oracle_compat: legacy
-                      use_sid: true
-            """
-        )
-        with TemporaryDirectory() as tmp:
-            path = Path(tmp) / "t.yaml"
-            path.write_text(config)
-            topology, _ = load_platform_config(path, resolver=MappingSecretResolver({}))
-        db = topology.environment("e").base("b").database  # type: ignore[union-attr]
-        self.assertEqual(OracleClientMode.THICK, db.oracle_client_mode)
-        self.assertEqual(OracleCompat.LEGACY, db.oracle_compat)
-        self.assertTrue(db.use_sid)
-
     def test_dsn_sid_vs_service(self) -> None:
         fake = MagicMock()
         fake.makedsn = MagicMock(side_effect=lambda *a, **k: f"dsn:{k}")
@@ -325,7 +205,7 @@ class OracleCompatAndClientTests(unittest.TestCase):
 
     def test_thick_required_without_client_fails(self) -> None:
         with patch(
-            "app.modules.internal_api_platform.infrastructure.db.oracle_client.resolve_oracle_client_lib_dir",
+            "app.modules.mcp_tool_runtime.infrastructure.db.oracle_client.resolve_oracle_client_lib_dir",
             return_value="",
         ):
             reset_oracle_client_state_for_tests()
@@ -336,7 +216,7 @@ class OracleCompatAndClientTests(unittest.TestCase):
 
     def test_auto_cannot_fall_back_to_thin_when_no_client(self) -> None:
         with patch(
-            "app.modules.internal_api_platform.infrastructure.db.oracle_client.resolve_oracle_client_lib_dir",
+            "app.modules.mcp_tool_runtime.infrastructure.db.oracle_client.resolve_oracle_client_lib_dir",
             return_value="",
         ):
             reset_oracle_client_state_for_tests()
@@ -355,7 +235,7 @@ class OracleCompatAndClientTests(unittest.TestCase):
             header[18:20] = (62).to_bytes(2, "little")
             library.write_bytes(header)
             with patch(
-                "app.modules.internal_api_platform.infrastructure.db.oracle_client.platform.machine",
+                "app.modules.mcp_tool_runtime.infrastructure.db.oracle_client.platform.machine",
                 return_value="x86_64",
             ):
                 self.assertEqual(
@@ -374,7 +254,7 @@ class OracleCompatAndClientTests(unittest.TestCase):
             library.write_bytes(header)
             with (
                 patch(
-                    "app.modules.internal_api_platform.infrastructure.db.oracle_client.platform.machine",
+                    "app.modules.mcp_tool_runtime.infrastructure.db.oracle_client.platform.machine",
                     return_value="aarch64",
                 ),
                 self.assertRaises(ResolutionError),

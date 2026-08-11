@@ -471,7 +471,7 @@ def routed_container(settings: Settings | None = None):
         applications=[
             {
                 "application_id": application["id"],
-                "capability_codes": [],
+                "tool_identifiers": [],
                 "scopes": [],
             }
         ],

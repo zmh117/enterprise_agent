@@ -168,7 +168,6 @@ def test_rabbitmq_recovery_then_dead_delivery_replay_does_not_rerun_agent(
         database_dsn=migrated_postgres_dsn,
         rabbitmq_url=RABBITMQ_URL,
         feature_real_claude=False,
-        feature_real_internal_tools=False,
         queue=queue,
         delivery=delivery,
     )

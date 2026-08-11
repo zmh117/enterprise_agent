@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
-from app.modules.internal_api_platform.infrastructure.secrets import (
+from app.modules.mcp_tool_runtime.infrastructure.secrets import (
     DbBackedSecretResolver,
 )
 from app.modules.platform_config.application.validation import (
@@ -18,8 +18,14 @@ from app.shared.exceptions import NonRetryableExecutionError
 from backend.tests.helpers import container, test_settings as make_settings
 
 
-def test_platform_secret_versions_are_aad_bound_and_have_one_active_version() -> None:
+def _container():
     runtime = container()
+    runtime.permission_service.unified_enabled = True
+    return runtime
+
+
+def test_platform_secret_versions_are_aad_bound_and_have_one_active_version() -> None:
+    runtime = _container()
     resolver = DbBackedSecretResolver(
         runtime.platform_config_service.repository,
         master_key=runtime.settings.app_config_master_key,
@@ -28,12 +34,12 @@ def test_platform_secret_versions_are_aad_bound_and_have_one_active_version() ->
 
     created = service.create_platform_secret(
         {"code": "db_password", "value": "first-sensitive-value"},
-        actor_id="local-user",
+        actor_id="user_local_admin",
     )
     rotated = service.rotate_platform_secret(
         "db_password",
         {"value": "second-sensitive-value"},
-        actor_id="local-user",
+        actor_id="user_local_admin",
     )
 
     versions = runtime.database.execute(
@@ -72,15 +78,15 @@ def test_platform_secret_versions_are_aad_bound_and_have_one_active_version() ->
 
 
 def test_platform_secret_ciphertext_cannot_be_swapped_between_secret_contexts() -> None:
-    runtime = container()
+    runtime = _container()
     service = runtime.platform_config_service
     first = service.create_platform_secret(
         {"code": "first_secret", "value": "same-sensitive-value"},
-        actor_id="local-user",
+        actor_id="user_local_admin",
     )
     second = service.create_platform_secret(
         {"code": "second_secret", "value": "same-sensitive-value"},
-        actor_id="local-user",
+        actor_id="user_local_admin",
     )
     first_version = runtime.database.execute_one(
         """
@@ -116,14 +122,14 @@ def test_platform_secret_ciphertext_cannot_be_swapped_between_secret_contexts() 
 
 
 def test_disabled_platform_secret_has_no_active_version_and_fails_closed() -> None:
-    runtime = container()
+    runtime = _container()
     secret = runtime.platform_config_service.create_platform_secret(
         {"code": "disabled_secret", "value": "disable-sensitive-value"},
-        actor_id="local-user",
+        actor_id="user_local_admin",
     )
     disabled = runtime.platform_config_service.disable_platform_secret(
         "disabled_secret",
-        actor_id="local-user",
+        actor_id="user_local_admin",
     )
     resolver = DbBackedSecretResolver(
         runtime.platform_config_service.repository,
@@ -147,7 +153,7 @@ def test_disabled_platform_secret_has_no_active_version_and_fails_closed() -> No
 def test_secret_api_audit_and_logs_never_echo_plaintext_or_crypto_material(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    runtime = container()
+    runtime = _container()
     app = create_app(make_settings(), container_factory=lambda _: runtime)
     plaintext = "q7Z-secret-9283-with-x9Vp"
 
@@ -159,7 +165,7 @@ def test_secret_api_audit_and_logs_never_echo_plaintext_or_crypto_material(
                 "value": plaintext,
                 "purpose": "database-password",
             },
-            headers={"x-admin-user-id": "local-user"},
+            headers={"x-admin-user-id": "user_local_admin"},
         )
         listed = client.get("/api/platform/secrets")
         fetched = client.get("/api/platform/secrets/leak_canary")
@@ -198,7 +204,7 @@ def test_secret_api_audit_and_logs_never_echo_plaintext_or_crypto_material(
 
 
 def test_secret_plaintext_cannot_be_copied_to_public_metadata() -> None:
-    runtime = container()
+    runtime = _container()
     app = create_app(make_settings(), container_factory=lambda _: runtime)
     plaintext = "metadata-canary-sensitive-value"
 
@@ -210,7 +216,7 @@ def test_secret_plaintext_cannot_be_copied_to_public_metadata() -> None:
                 "value": plaintext,
                 "metadata": {"note": plaintext},
             },
-            headers={"x-admin-user-id": "local-user"},
+            headers={"x-admin-user-id": "user_local_admin"},
         )
         secret = (
             runtime.platform_config_service.repository.get_platform_secret_by_code(
@@ -239,7 +245,7 @@ def test_new_secret_bindings_reject_legacy_and_reserved_providers(
     ref: str,
     safe_message: str,
 ) -> None:
-    runtime = container()
+    runtime = _container()
     resolver = DbBackedSecretResolver(
         runtime.platform_config_service.repository,
         master_key=runtime.settings.app_config_master_key,
@@ -263,36 +269,8 @@ def test_new_secret_bindings_reject_legacy_and_reserved_providers(
     assert resolution_error.value.safe_message == expected_runtime_message
 
 
-def test_new_resource_binding_requires_existing_active_platform_secret() -> None:
-    runtime = container()
-    service = runtime.platform_config_service
-
-    with pytest.raises(PlatformConfigValidationError) as missing:
-        service.upsert_resource_binding(
-            {
-                "code": "new_mysql",
-                "scope_type": "base",
-                "environment_code": "default",
-                "base_code": "default",
-                "resource_kind": "database",
-                "engine": "mysql",
-                "config": {
-                    "host": "mysql",
-                    "port": 3306,
-                    "database": "app",
-                    "username": "reader",
-                },
-                "secret_refs": {
-                    "password": "secret://platform/missing_password"
-                },
-            },
-            actor_id="local-user",
-        )
-    assert "不存在、已禁用" in missing.value.safe_message
-
-
 def test_secret_usage_api_returns_only_dependency_metadata() -> None:
-    runtime = container()
+    runtime = _container()
     service = runtime.platform_config_service
     plaintext = "usage-secret-value-never-returned"
     secret = service.create_platform_secret(
@@ -301,11 +279,11 @@ def test_secret_usage_api_returns_only_dependency_metadata() -> None:
             "value": plaintext,
             "purpose": "dependency-test",
         },
-        actor_id="local-user",
+        actor_id="user_local_admin",
     )
     service.upsert_environment(
         {"code": "usage_env"},
-        actor_id="local-user",
+        actor_id="user_local_admin",
     )
     service.upsert_base(
         {
@@ -313,25 +291,26 @@ def test_secret_usage_api_returns_only_dependency_metadata() -> None:
             "code": "usage_base",
             "engine": "mysql",
         },
-        actor_id="local-user",
+        actor_id="user_local_admin",
     )
-    service.upsert_resource_binding(
+    service.governed_resources.create_resource(
         {
             "code": "usage_database",
+            "name": "Usage Database",
+            "resource_kind": "database",
             "scope_type": "base",
             "environment_code": "usage_env",
             "base_code": "usage_base",
-            "resource_kind": "database",
-            "engine": "mysql",
+            "provider_type": "mysql",
             "config": {
                 "host": "mysql",
                 "port": 3306,
                 "database": "usage",
                 "username": "reader",
             },
-            "secret_refs": {"password": secret["secret_ref"]},
+            "secret_refs": {"password_ref": secret["secret_ref"]},
         },
-        actor_id="local-user",
+        actor_id="user_local_admin",
     )
     service.upsert_runtime_config_definition(
         {
@@ -339,14 +318,14 @@ def test_secret_usage_api_returns_only_dependency_metadata() -> None:
             "value_type": "secret_ref",
             "sensitive": True,
         },
-        actor_id="local-user",
+        actor_id="user_local_admin",
     )
     service.upsert_runtime_config_value(
         {
             "key": "USAGE_RUNTIME_SECRET",
             "secret_ref": secret["secret_ref"],
         },
-        actor_id="local-user",
+        actor_id="user_local_admin",
     )
     timestamp = now_iso()
     runtime.database.execute(
@@ -371,7 +350,7 @@ def test_secret_usage_api_returns_only_dependency_metadata() -> None:
         duplicate = client.post(
             "/api/platform/secrets",
             json={"code": "usage_secret", "value": "must-not-rotate"},
-            headers={"x-admin-user-id": "local-user"},
+            headers={"x-admin-user-id": "user_local_admin"},
         )
         usage = response.json()["usage"]
         version_count = runtime.database.execute_one(
@@ -394,7 +373,7 @@ def test_secret_usage_api_returns_only_dependency_metadata() -> None:
     assert usage["usage_count"] == 3
     assert {
         item["dependency_type"] for item in usage["dependencies"]
-    } == {"connector", "resource_binding", "runtime_config"}
+    } == {"connector", "resource_draft", "runtime_config"}
     serialized = response.text
     assert stored is not None
     for forbidden in (
