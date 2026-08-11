@@ -81,6 +81,8 @@ from app.modules.identity.application import (
     AuthorizationEvaluator,
     IdentityAdminService,
     IdentityService,
+)
+from app.modules.identity.application.ones_identity_binding import (
     OnesIdentityBindingService,
 )
 from app.modules.identity.infrastructure import (

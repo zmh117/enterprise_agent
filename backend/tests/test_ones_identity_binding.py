@@ -19,6 +19,14 @@ ADMIN_PASSWORD = "111111111111"
 ORIGIN = "http://admin.test"
 
 
+def test_ones_identity_verifier_can_be_imported_without_bootstrap_ordering() -> None:
+    from app.modules.identity.infrastructure.ones_identity_verifier import (
+        UrllibOnesIdentityVerifier,
+    )
+
+    assert UrllibOnesIdentityVerifier.__name__ == "UrllibOnesIdentityVerifier"
+
+
 class FakeOnesVerifier:
     available = True
 

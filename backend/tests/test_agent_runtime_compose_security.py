@@ -97,6 +97,34 @@ def test_dual_runtimes_and_standard_mcp_are_hardened_and_secret_scoped() -> None
     assert compose["networks"]["agent-runtime-control"]["internal"] is True
 
 
+def test_api_server_alone_receives_fixed_ones_identity_provider_configuration() -> None:
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    services = compose["services"]
+    expected = {
+        "ONES_IDENTITY_INSTANCE_CODE": "${ONES_IDENTITY_INSTANCE_CODE:-default}",
+        "ONES_IDENTITY_DISPLAY_NAME": "${ONES_IDENTITY_DISPLAY_NAME:-ONES}",
+        "ONES_IDENTITY_BASE_URL": "${ONES_IDENTITY_BASE_URL:-}",
+        "ONES_IDENTITY_ALLOWED_HOSTS": "${ONES_IDENTITY_ALLOWED_HOSTS:-}",
+        "ONES_IDENTITY_TIMEOUT_SECONDS": "${ONES_IDENTITY_TIMEOUT_SECONDS:-5}",
+        "ONES_IDENTITY_MAX_RESPONSE_BYTES": "${ONES_IDENTITY_MAX_RESPONSE_BYTES:-65536}",
+        "ONES_IDENTITY_ALLOW_INSECURE_LOCAL": (
+            "${ONES_IDENTITY_ALLOW_INSECURE_LOCAL:-false}"
+        ),
+        "ONES_IDENTITY_CHALLENGE_TTL_SECONDS": (
+            "${ONES_IDENTITY_CHALLENGE_TTL_SECONDS:-600}"
+        ),
+    }
+
+    api_environment = services["api-server"]["environment"]
+    assert {key: api_environment[key] for key in expected} == expected
+
+    for service_name, service in services.items():
+        if service_name == "api-server":
+            continue
+        environment = service.get("environment", {})
+        assert not set(expected).intersection(environment), service_name
+
+
 def test_worker_image_has_no_claude_sdk_or_cli_layer() -> None:
     dockerfile = (ROOT / "backend/Dockerfile").read_text(encoding="utf-8")
     worker_section = dockerfile.split("FROM python-deps AS agent-worker", 1)[1].split(
