@@ -10,6 +10,18 @@ COMPOSE_PATH = ROOT / "docker-compose.yml"
 LOCAL_SEED_PATH = ROOT / "backend" / "seeds" / "local_seed.sql"
 
 
+def test_compose_postgres_uses_asia_shanghai_timezone() -> None:
+    compose = yaml.safe_load(COMPOSE_PATH.read_text(encoding="utf-8"))
+    postgres = compose["services"]["postgres"]
+
+    assert postgres["environment"]["TZ"] == "Asia/Shanghai"
+    assert postgres["command"] == [
+        "postgres",
+        "-c",
+        "timezone=Asia/Shanghai",
+    ]
+
+
 def test_compose_business_services_wait_for_one_shot_migrator() -> None:
     compose = yaml.safe_load(COMPOSE_PATH.read_text(encoding="utf-8"))
     services = compose["services"]

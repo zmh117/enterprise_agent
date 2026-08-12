@@ -53,10 +53,15 @@ x-api-env: &api-env
 services:
   postgres:
     image: ${POSTGRES_IMAGE:-postgres:18}
+    command:
+      - postgres
+      - -c
+      - timezone=Asia/Shanghai
     environment:
       POSTGRES_DB: enterprise_agent
       POSTGRES_USER: enterprise_agent
       POSTGRES_PASSWORD: enterprise_agent
+      TZ: Asia/Shanghai
     ports:
       - "5433:5432"
     volumes:
