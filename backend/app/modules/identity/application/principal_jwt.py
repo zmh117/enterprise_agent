@@ -57,14 +57,15 @@ class PrincipalTokenError(NonRetryableExecutionError):
     """Fail-closed Principal authentication/signing error with a stable safe surface."""
 
 
-class PrincipalPermissionPort(Protocol):
-    def assert_mcp_tool_use_grant(
+class PrincipalBusinessAuthorizationPort(Protocol):
+    def require(
         self,
         *,
         user_id: str,
+        application_id: str,
         tool_identifier: str,
-        project_code: str,
-    ) -> None: ...
+        stage: str,
+    ) -> dict[str, Any]: ...
 
 
 def _b64url(value: bytes) -> str:
@@ -247,7 +248,7 @@ class PrincipalTokenIssuer:
         self,
         database: Database,
         snapshot_service: JobMcpToolSnapshotService,
-        permission_service: PrincipalPermissionPort,
+        business_authorization_service: PrincipalBusinessAuthorizationPort,
         signing_key: PrincipalSigningKey,
         audit_service: AuditService,
         *,
@@ -259,7 +260,7 @@ class PrincipalTokenIssuer:
             raise ValueError("Principal JWT TTL must be between 1 and 300 seconds")
         self.database = database
         self.snapshot_service = snapshot_service
-        self.permission_service = permission_service
+        self.business_authorization_service = business_authorization_service
         self.signing_key = signing_key
         self.audit_service = audit_service
         self.ttl_seconds = ttl_seconds
@@ -277,10 +278,11 @@ class PrincipalTokenIssuer:
             facts = self._job_facts(job_id)
             snapshot = self.snapshot_service.verify(job_id)
             self._validate_snapshot(facts, snapshot)
-            self.permission_service.assert_mcp_tool_use_grant(
+            self.business_authorization_service.require(
                 user_id=facts["internal_user_id"],
+                application_id=facts["business_application_id"],
                 tool_identifier=ONES_SEARCH_TOOL,
-                project_code=facts["project_code"],
+                stage="principal_jwt_issue",
             )
             issued_at = self._now()
             jti = self._jti_factory()
@@ -352,7 +354,8 @@ class PrincipalTokenIssuer:
         row = self.database.execute_one(
             """
             select j.id, j.status, j.session_id, j.project_code,
-                   j.internal_user_id, j.agent_publication_id,
+                   j.internal_user_id, j.business_application_id,
+                   j.agent_publication_id,
                    j.business_application_publication_id,
                    u.status as user_status, u.account_type as user_account_type,
                    s.application_publication_id as session_application_publication_id
@@ -386,6 +389,7 @@ class PrincipalTokenIssuer:
             "session_id",
             "project_code",
             "internal_user_id",
+            "business_application_id",
             "agent_publication_id",
             "business_application_publication_id",
         )

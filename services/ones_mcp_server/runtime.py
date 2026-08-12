@@ -55,14 +55,15 @@ _FORBIDDEN_BUSINESS_KEYS = frozenset(
 logger = logging.getLogger(__name__)
 
 
-class PrincipalPermissionPort(Protocol):
-    def assert_mcp_tool_use_grant(
+class PrincipalBusinessAuthorizationPort(Protocol):
+    def require(
         self,
         *,
         user_id: str,
+        application_id: str,
         tool_identifier: str,
-        project_code: str,
-    ) -> None: ...
+        stage: str,
+    ) -> dict[str, Any]: ...
 
 
 class OnesMcpError(NonRetryableExecutionError):
@@ -267,13 +268,13 @@ class OnesPrincipalResolver:
         database: Database,
         verifier: PrincipalTokenVerifier,
         snapshot_service: JobMcpToolSnapshotService,
-        permission_service: PrincipalPermissionPort,
+        business_authorization_service: PrincipalBusinessAuthorizationPort,
         credential_repository: ExternalIdentityCredentialRepository,
     ) -> None:
         self.database = database
         self.verifier = verifier
         self.snapshot_service = snapshot_service
-        self.permission_service = permission_service
+        self.business_authorization_service = business_authorization_service
         self.credential_repository = credential_repository
 
     def authenticate(self, token: str) -> dict[str, Any]:
@@ -287,6 +288,7 @@ class OnesPrincipalResolver:
         job = self.database.execute_one(
             """
             select j.id, j.session_id, j.project_code, j.internal_user_id,
+                   j.business_application_id,
                    j.agent_publication_id,
                    j.business_application_publication_id,
                    s.application_publication_id,
@@ -325,10 +327,11 @@ class OnesPrincipalResolver:
             or str(verified.get("authorization_hash") or "") != claims["authorization_hash"]
         ):
             raise self._denied("ones_principal_snapshot_denied")
-        self.permission_service.assert_mcp_tool_use_grant(
+        self.business_authorization_service.require(
             user_id=claims["sub"],
+            application_id=str(job["business_application_id"]),
             tool_identifier=TOOL_IDENTIFIER,
-            project_code=str(job["project_code"]),
+            stage="ones_principal_resolve",
         )
         identities = self.database.execute(
             """

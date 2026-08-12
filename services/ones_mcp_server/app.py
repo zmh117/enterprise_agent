@@ -331,7 +331,7 @@ def service_from_container(runtime: Container) -> OnesWorkItemSearchService:
             runtime.database,
             verifier,
             runtime.mcp_tool_snapshot_service,
-            runtime.permission_service,
+            runtime.business_authorization_service,
             credentials,
         ),
         provider,

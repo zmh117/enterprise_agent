@@ -22,7 +22,7 @@ from app.modules.identity.application.principal_jwt import (
     PrincipalTokenVerifier,
     write_public_jwks_file,
 )
-from app.shared.exceptions import ToolPolicyError
+from app.shared.exceptions import PermissionDenied
 
 
 NOW = 1_786_400_000
@@ -73,6 +73,7 @@ class _Database:
             "session_id": "session-1",
             "project_code": "default",
             "internal_user_id": "user-1",
+            "business_application_id": "application-1",
             "agent_publication_id": "agent-publication-1",
             "business_application_publication_id": "application-publication-1",
             "user_status": "enabled",
@@ -109,53 +110,42 @@ class _Snapshot:
         return self.value
 
 
-class _Permission:
+class _BusinessAuthorization:
     def __init__(self, *, denied: bool = False) -> None:
         self.denied = denied
         self.calls: list[dict[str, str]] = []
 
-    def assert_mcp_tool_use_grant(
-        self,
-        *,
-        user_id: str,
-        tool_identifier: str,
-        project_code: str,
-    ) -> None:
-        self.calls.append(
-            {
-                "user_id": user_id,
-                "tool_identifier": tool_identifier,
-                "project_code": project_code,
-            }
-        )
+    def require(self, **kwargs: str) -> dict[str, Any]:
+        self.calls.append(dict(kwargs))
         if self.denied:
-            raise ToolPolicyError(
+            raise PermissionDenied(
                 "denied",
                 safe_message="无权调用 ONES 查询",
-                error_code="mcp_tool_use_denied",
+                error_code="business_application_denied",
             )
+        return {"allowed": True, **kwargs}
 
 
 def _issuer(
     *,
     database: _Database | None = None,
     snapshot: _Snapshot | None = None,
-    permission: _Permission | None = None,
+    authorization: _BusinessAuthorization | None = None,
     audit: _Audit | None = None,
-) -> tuple[PrincipalTokenIssuer, PrincipalSigningKey, _Audit, _Permission]:
+) -> tuple[PrincipalTokenIssuer, PrincipalSigningKey, _Audit, _BusinessAuthorization]:
     signing_key, _ = _key()
     audit = audit or _Audit()
-    permission = permission or _Permission()
+    authorization = authorization or _BusinessAuthorization()
     issuer = PrincipalTokenIssuer(
         database or _Database(),  # type: ignore[arg-type]
         snapshot or _Snapshot(),  # type: ignore[arg-type]
-        permission,
+        authorization,
         signing_key,
         audit,  # type: ignore[arg-type]
         now=lambda: NOW,
         jti_factory=lambda: "principal-jti-1",
     )
-    return issuer, signing_key, audit, permission
+    return issuer, signing_key, audit, authorization
 
 
 def _claims() -> dict[str, Any]:
@@ -246,8 +236,8 @@ def test_jwks_rejects_private_wrong_fingerprint_duplicate_and_non_ed25519() -> N
         PrincipalJwks.from_dict({"keys": [{**valid, "crv": "X25519"}]})
 
 
-def test_issuer_derives_bounded_claims_from_job_snapshot_and_current_grant() -> None:
-    issuer, signing_key, audit, permission = _issuer()
+def test_issuer_derives_bounded_claims_from_snapshot_and_current_application_grant() -> None:
+    issuer, signing_key, audit, authorization = _issuer()
     token = issuer.issue_for_job(job_id="job-1")
     claims = jwt.decode(token, options={"verify_signature": False})
     header = jwt.get_unverified_header(token)
@@ -255,11 +245,12 @@ def test_issuer_derives_bounded_claims_from_job_snapshot_and_current_grant() -> 
     assert header == {"alg": "EdDSA", "kid": signing_key.kid, "typ": "JWT"}
     assert claims == _claims()
     assert claims["exp"] - claims["iat"] == 300
-    assert permission.calls == [
+    assert authorization.calls == [
         {
             "user_id": "user-1",
+            "application_id": "application-1",
             "tool_identifier": "ones_work_item_search",
-            "project_code": "default",
+            "stage": "principal_jwt_issue",
         }
     ]
     assert audit.events[-1]["event_type"] == "principal.jwt.issued"
@@ -281,13 +272,14 @@ def test_issuer_derives_bounded_claims_from_job_snapshot_and_current_grant() -> 
         (_Database(status="PENDING"), None, False, "principal_job_not_running"),
         (_Database(user_status="disabled"), None, False, "principal_user_inactive"),
         (_Database(user_account_type="service"), None, False, "principal_user_inactive"),
+        (_Database(business_application_id=""), None, False, "principal_job_invalid"),
         (
             _Database(),
             lambda value: value["snapshot"].update({"application_publication_id": "wrong"}),
             False,
             "principal_snapshot_invalid",
         ),
-        (_Database(), None, True, "mcp_tool_use_denied"),
+        (_Database(), None, True, "business_application_denied"),
     ],
 )
 def test_issuer_fails_closed_and_audits_denial(
@@ -303,11 +295,11 @@ def test_issuer_fails_closed_and_audits_denial(
     issuer, _, _, _ = _issuer(
         database=database,
         snapshot=snapshot,
-        permission=_Permission(denied=denied),
+        authorization=_BusinessAuthorization(denied=denied),
         audit=audit,
     )
 
-    with pytest.raises((PrincipalTokenError, ToolPolicyError)) as rejected:
+    with pytest.raises((PrincipalTokenError, PermissionDenied)) as rejected:
         issuer.issue_for_job(job_id="job-1")
     assert rejected.value.error_code == error_code
     assert audit.events[-1]["event_type"] == "principal.jwt.issue_denied"

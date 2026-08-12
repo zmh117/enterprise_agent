@@ -28,7 +28,7 @@ from app.modules.identity.infrastructure.external_identity_credentials import (
 from app.main import create_app as create_control_plane_app
 from app.modules.job.infrastructure.repositories import now_iso
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
-from app.shared.exceptions import AppError, NonRetryableExecutionError, ToolPolicyError
+from app.shared.exceptions import AppError, NonRetryableExecutionError
 from backend.tests.helpers import container, prepare_debug_application_access
 from ones_mock.mock_ones_api import MockOnesSettings, create_app as create_mock_app
 from services.ones_mcp_server.app import create_app as create_mcp_app
@@ -186,7 +186,7 @@ def _fixture(*, initial_token: str | None = None) -> dict[str, Any]:
     issuer = PrincipalTokenIssuer(
         runtime.database,
         runtime.mcp_tool_snapshot_service,
-        runtime.permission_service,
+        runtime.business_authorization_service,
         signing_key,
         runtime.audit_service,
     )
@@ -217,7 +217,7 @@ def _fixture(*, initial_token: str | None = None) -> dict[str, Any]:
             runtime.database,
             verifier,
             runtime.mcp_tool_snapshot_service,
-            runtime.permission_service,
+            runtime.business_authorization_service,
             credentials,
         ),
         provider,
@@ -234,6 +234,7 @@ def _fixture(*, initial_token: str | None = None) -> dict[str, Any]:
         "service": service,
         "login": login,
         "mock": mock,
+        "selection": selection,
     }
 
 
@@ -723,13 +724,12 @@ def test_ones_mcp_fails_closed_for_missing_or_ambiguous_current_identity() -> No
     [
         ("user_disabled", "ones_principal_user_inactive"),
         ("identity_disabled", "ones_identity_missing"),
-        ("tool_revoked", "mcp_tool_use_denied"),
+        ("tool_revoked", "business_application_denied"),
     ],
 )
 def test_ones_mcp_rechecks_current_user_identity_and_tool_grant(
     revoked_fact: str,
     error_code: str,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fixture = _fixture()
     if revoked_fact == "user_disabled":
@@ -743,18 +743,14 @@ def test_ones_mcp_rechecks_current_user_identity_and_tool_grant(
             (fixture["identity"]["id"],),
         )
     else:
-
-        def reject_current_grant(**_kwargs: Any) -> None:
-            raise ToolPolicyError(
-                "fixed test grant revoked",
-                safe_message="当前用户无权调用此工具",
-                error_code="mcp_tool_use_denied",
-            )
-
-        monkeypatch.setattr(
-            fixture["service"].resolver.permission_service,
-            "assert_mcp_tool_use_grant",
-            reject_current_grant,
+        fixture["runtime"].database.execute(
+            "delete from rbac_role_application_mcp_tool "
+            "where tool_identifier = ? and application_access_id in ("
+            "select id from rbac_role_application_access where application_id = ?)",
+            (
+                "ones_work_item_search",
+                fixture["selection"]["application_id"],
+            ),
         )
 
     with pytest.raises(AppError) as raised:

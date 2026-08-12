@@ -618,7 +618,7 @@ def _build_container(
         principal_token_issuer = PrincipalTokenIssuer(
             database,
             mcp_tool_snapshot_service,
-            permission_service,
+            business_authorization_service,
             PrincipalSigningKey.from_file(
                 settings.principal_jwt.signing_private_key_file,
                 environment=settings.environment,
