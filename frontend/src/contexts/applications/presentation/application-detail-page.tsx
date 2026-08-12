@@ -313,7 +313,8 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
               <option value="">请选择已发布 Agent</option>
               {catalog.data?.agents.map((item) => (
                 <option key={item.id} value={item.id}>
-                  {item.code} · r{item.revision} · {applicationRuntimeLabel(item.runtime_kind)}
+                  {item.code} · r{item.revision} ·{" "}
+                  {applicationRuntimeLabel(item.runtime_kind)}
                 </option>
               ))}
             </select>
@@ -353,11 +354,7 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
       <PolicyEditor form={form} setForm={setForm} />
       <BindingsEditor form={form} setForm={setForm} catalog={catalog.data} />
 
-      <McpToolSelector
-        form={form}
-        setForm={setForm}
-        catalog={catalog.data}
-      />
+      <McpToolSelector form={form} setForm={setForm} catalog={catalog.data} />
 
       <MutationError error={save.error} />
       <div className="sticky bottom-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background/95 p-3 shadow-lg backdrop-blur">
@@ -522,7 +519,7 @@ function McpToolSelector({
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm leading-6 text-muted-foreground">
-          应用只能选择 Agent 发布版本已经冻结的 tool-mcp 工具。资源不在应用中做
+          应用只能选择 Agent 发布版本已经冻结的 MCP 工具。资源不在应用中做
           Mapping；实际调用时根据 Job 目标唯一解析已发布 Tool Resource。
         </p>
         {!form.agent_publication_id ? (
@@ -546,6 +543,7 @@ function McpToolSelector({
                     {tool.tool_identifier}
                   </span>
                   <span className="mt-1 block text-xs text-muted-foreground">
+                    {tool.server_code} ·{" "}
                     {tool.resource_kind
                       ? `调用时解析 ${tool.resource_kind} Resource`
                       : "不需要外部 Resource"}

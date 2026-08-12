@@ -95,3 +95,8 @@
 - [x] 11.1 将 `ones-mcp` 独立依赖升级为稳定版 `mcp==2.0.0`，按 v2 低层 `Server` 显式 Context/Params handler API 迁移 Tool 注册与 Principal Bearer 读取，移除 v1 `server.request_context` 依赖
 - [x] 11.2 保持 `ones-mcp` 为本地/Compose Streamable HTTP 无状态服务，验证 v2 `server/discover` 新协议调用与旧协议初始化回退；不增加 Cursor、stdio 或独立凭据旁路
 - [x] 11.3 运行 ONES MCP、JWT、身份、刷新、审计、Runtime 与 Compose 聚焦回归，重建 `ones-mcp` 镜像并记录 SDK v2 运行证据、Mock 边界和静态检查结果
+
+## 12. 可扩展MCP Server Code管理投影
+
+- [x] 12.1 新增共享有界 `mcpServerCodeSchema`，移除 Agent 详情、Application revision 与 Application catalog 对 `tool-mcp` 的前端字面量限制，并更新页面文案
+- [x] 12.2 增加 `ones-mcp`、未来合法 Server Code 与非法 URL/格式回归，运行前端聚焦测试、全量测试、lint、typecheck、build、OpenSpec strict 和差异检查

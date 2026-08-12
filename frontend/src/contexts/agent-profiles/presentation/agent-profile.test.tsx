@@ -157,11 +157,11 @@ function agentPayload(
             read_only: true,
           },
           {
-            server_code: "tool-mcp",
-            identifier: "query_database",
-            description: "只读查询数据库",
+            server_code: "ones-mcp",
+            identifier: "ones_work_item_search",
+            description: "只读查询 ONES 工作项",
             schema_hash: "b".repeat(64),
-            resource_kind: "database",
+            resource_kind: "",
             read_only: true,
           },
         ],
@@ -1329,12 +1329,14 @@ describe("Agent Profile management", () => {
     )
 
     expect(await screen.findByText("MCP 只读工具")).toBeInTheDocument()
-    fireEvent.click(screen.getByRole("checkbox", { name: "query_database" }))
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "ones_work_item_search" })
+    )
     fireEvent.click(screen.getByRole("button", { name: "保存草稿" }))
 
     await waitFor(() =>
       expect(savedConfig).toMatchObject({
-        mcp_tool_ids: ["get_er_context", "query_database"],
+        mcp_tool_ids: ["get_er_context", "ones_work_item_search"],
       })
     )
   })

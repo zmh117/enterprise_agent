@@ -300,11 +300,11 @@ describe("Business Application workbench", () => {
           mcp_tools_by_agent_publication: {
             agent_publication_default_v1: [
               {
-                server_code: "tool-mcp",
-                tool_identifier: "query_database",
+                server_code: "gitlab-mcp",
+                tool_identifier: "search_merge_requests",
                 schema_hash: "a".repeat(64),
-                description: "只读查询数据库",
-                resource_kind: "database",
+                description: "只读查询合并请求",
+                resource_kind: "gitlab",
               },
             ],
             agent_publication_typescript_v1: [],
@@ -319,8 +319,8 @@ describe("Business Application workbench", () => {
             revision: 2,
             mcp_tools: [
               {
-                server_code: "tool-mcp",
-                tool_identifier: "query_database",
+                server_code: "gitlab-mcp",
+                tool_identifier: "search_merge_requests",
                 schema_hash: "a".repeat(64),
               },
             ],
@@ -392,7 +392,9 @@ describe("Business Application workbench", () => {
       })
     ).toBeInTheDocument()
     expect(screen.queryByText("操作失败，请重试。")).not.toBeInTheDocument()
-    const mcpTool = await screen.findByLabelText("选择 MCP Tool query_database")
+    const mcpTool = await screen.findByLabelText(
+      "选择 MCP Tool search_merge_requests"
+    )
     fireEvent.click(mcpTool)
     expect(mcpTool).toBeChecked()
     fireEvent.click(screen.getByRole("button", { name: "保存新草稿" }))
@@ -402,7 +404,7 @@ describe("Business Application workbench", () => {
         session_policy: {
           conversation_mode: "channel",
         },
-        mcp_tools: ["query_database"],
+        mcp_tools: ["search_merge_requests"],
       })
     )
   })

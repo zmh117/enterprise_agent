@@ -16,6 +16,10 @@
 
 ## Focused behavior
 
+- Extensible MCP server-code frontend regression: `30 passed`. Agent detail
+  parses `ones-mcp`, Application catalog parses a future governed `gitlab-mcp`,
+  and the shared bounded schema rejects empty, uppercase, underscore, oversized
+  and URL-like values without enumerating known servers.
 - MCP SDK v2 migration regression covering ONES MCP, Principal JWT, identity
   binding, credential refresh, audit and both Runtime contracts: `74 passed`.
   The protocol test exercises stateless v2 `server/discover`, `tools/list` and
@@ -32,6 +36,10 @@
   build passed.
 - Frontend: `87 passed`; lint, typecheck and production build passed. The build
   emitted only the existing large-chunk warning.
+- Frontend after the server-code compatibility fix: `96 passed`; lint,
+  typecheck, Prettier and production build passed. The rebuilt `admin-web`
+  container started successfully; the build emitted only the existing
+  large-chunk warning.
 
 ## Deployment
 

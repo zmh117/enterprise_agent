@@ -95,3 +95,14 @@ ONES MCP MAY 在进程内短暂解密登录材料和 Token，但 MUST NOT 把密
 #### Scenario: 双Runtime执行Mock查询
 - **WHEN** Python 与 TypeScript Runtime 分别执行同一已冻结 ONES 查询 Job fixture
 - **THEN** 两端调用 `ones-mcp` 并得到 schema 等价的有界 Mock 结果与审计证据
+
+### Requirement: 管理前端必须兼容代码注册的MCP Server Code
+Agent 与 Application 管理前端 SHALL 使用共享的有界代码格式解析治理目录中的 `server_code`，MUST NOT 把当前 `tool-mcp`、`ones-mcp` 或未来 Server 名称硬编码为封闭枚举。该解析兼容性 MUST NOT 允许客户端提供 Server URL、Header、凭据或绕过后端 Manifest 与 Runtime 注册表。
+
+#### Scenario: 治理目录增加新MCP Server
+- **WHEN** 后端代码 Manifest 返回格式合法的新增 `server_code` 和只读 Tool 定义
+- **THEN** Agent 详情与 Application Tool 选择页面正常解析并展示目录，不因未知 Server 名称停留在加载态
+
+#### Scenario: 治理目录返回非法Server Code
+- **WHEN** `server_code` 为空、超长、包含 URL 或不符合代码格式
+- **THEN** 前端拒绝该响应并显示加载错误，不把该值用于 Runtime 地址解析

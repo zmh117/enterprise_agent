@@ -1,5 +1,7 @@
 import { z } from "zod"
 
+import { mcpServerCodeSchema } from "@/shared/domain/mcp-server-code"
+
 export const runtimeComponentSchema = z.object({
   status: z.enum([
     "wired",
@@ -73,7 +75,7 @@ const deliverySchema = z
 
 const mcpToolSelectionSchema = z
   .object({
-    server_code: z.literal("tool-mcp"),
+    server_code: mcpServerCodeSchema,
     tool_identifier: z.string(),
     schema_hash: z.string(),
     selection_order: z.number().optional(),

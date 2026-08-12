@@ -11,6 +11,7 @@ import {
   type SaveDraftInput,
 } from "@/contexts/applications/domain/business-application"
 import { apiRequest } from "@/shared/api/api-client"
+import { mcpServerCodeSchema } from "@/shared/domain/mcp-server-code"
 
 const listResponseSchema = runtimeStateSchema.extend({
   items: z.array(applicationSummarySchema),
@@ -44,7 +45,7 @@ export const catalogSchema = z.object({
       z.string(),
       z.array(
         z.object({
-          server_code: z.literal("tool-mcp"),
+          server_code: mcpServerCodeSchema,
           tool_identifier: z.string(),
           schema_hash: z.string(),
           description: z.string(),

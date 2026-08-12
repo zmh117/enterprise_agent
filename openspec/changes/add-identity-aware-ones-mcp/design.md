@@ -97,6 +97,12 @@ ONES MCP 首次使用当前加密 Token 查询。收到 401 后，它先重新�
 
 第一阶段只支持平台 Runtime 与本地测试通过固定 HTTP URL 调用。不得为了 Cursor 或独立客户端增加 stdio 入口、长期 Token、直接读取 ONES credential 的旁路或跳过 Job/Principal JWT/RBAC/审计的 standalone 模式。v2 服务应接受 2026-07-28 `server/discover` 请求，并保持 SDK 提供的旧协议初始化回退，以便现有双 Runtime HTTP 客户端平滑调用。
 
+### 11. 管理前端解析治理目录中的可扩展Server Code
+
+Agent 与 Application 管理前端不得把 `server_code` 枚举为当前已知的 `tool-mcp` 或 `ones-mcp`。前端使用共享的、有长度和代码格式限制的 schema 解析后端治理目录返回值，使后续代码注册的 GitLab、Jira 等 MCP 不需要同步修改每个页面的枚举。
+
+该兼容性只作用于管理 API 的只读目录和已冻结选择投影，不允许浏览器提交 MCP URL、Header、认证信息或创建任意 Server。Runtime 仍只接受部署时注册并由执行协议允许的 Server；增加新 MCP 时必须显式增加后端 Manifest、Runtime 注册表、认证边界和发布验证。
+
 ## Risks / Trade-offs
 
 - [Risk] 加密保存密码扩大凭据泄漏影响面。→ 使用独立表、AES-GCM AAD、主密钥文件、最小容器挂载、API 零回显、软解绑清密文和敏感扫描测试。

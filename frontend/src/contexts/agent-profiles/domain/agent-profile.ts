@@ -1,5 +1,7 @@
 import { z } from "zod"
 
+import { mcpServerCodeSchema } from "@/shared/domain/mcp-server-code"
+
 const credentialSchema = z.object({
   configured: z.boolean(),
   masked: z.string(),
@@ -194,7 +196,7 @@ export const agentDetailSchema = z.object({
     mcp_tools: z
       .array(
         z.object({
-          server_code: z.literal("tool-mcp"),
+          server_code: mcpServerCodeSchema,
           identifier: z.string(),
           description: z.string(),
           schema_hash: z.string(),
