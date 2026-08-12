@@ -98,3 +98,4 @@ docker compose config --quiet
 - [Admin Web MVP](docs/architecture/admin-web-mvp.md)
 - [标准 MCP 工具服务](docs/architecture/tool-mcp.md)
 - [数据库备份与恢复](docs/operations/compose-postgres18-rabbitmq4-upgrade.md)
+  1
