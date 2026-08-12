@@ -14,6 +14,11 @@ from app.modules.agent.infrastructure.generated_runtime_contracts_v1_1 import (
     CONTRACT_SCHEMA_PATH as CONTRACT_SCHEMA_PATH_V11,
     validate_contract as validate_v11_contract,
 )
+from app.modules.agent.infrastructure.generated_runtime_contracts_v1_2 import (
+    AgentExecutionRequestV12,
+    CONTRACT_SCHEMA_PATH as CONTRACT_SCHEMA_PATH_V12,
+    validate_contract as validate_v12_contract,
+)
 
 
 class RuntimeProtocolError(ValueError):
@@ -38,11 +43,14 @@ def validate_execution_request(
     payload: object,
     *,
     encoded_bytes: int | None = None,
-) -> AgentExecutionRequestV1 | AgentExecutionRequestV11:
+) -> AgentExecutionRequestV1 | AgentExecutionRequestV11 | AgentExecutionRequestV12:
     protocol_version = _protocol_version(payload)
-    limits_path = (
-        CONTRACT_SCHEMA_PATH_V11 if protocol_version == "1.1" else CONTRACT_SCHEMA_PATH
-    ).with_name("limits.json")
+    contract_path = {
+        "1.0": CONTRACT_SCHEMA_PATH,
+        "1.1": CONTRACT_SCHEMA_PATH_V11,
+        "1.2": CONTRACT_SCHEMA_PATH_V12,
+    }[protocol_version]
+    limits_path = contract_path.with_name("limits.json")
     limits = json.loads(limits_path.read_text(encoding="utf-8"))
     size = encoded_bytes
     if size is None:
@@ -53,8 +61,13 @@ def validate_execution_request(
             f"request is {size} bytes; maximum is {limits['max_request_bytes']}",
         )
     try:
+        request_contract = {
+            "1.0": "AgentExecutionRequestV1",
+            "1.1": "AgentExecutionRequestV11",
+            "1.2": "AgentExecutionRequestV12",
+        }[protocol_version]
         validate_runtime_contract(
-            "AgentExecutionRequestV11" if protocol_version == "1.1" else "AgentExecutionRequestV1",
+            request_contract,
             payload,
             protocol_version=protocol_version,
         )
@@ -67,7 +80,10 @@ def validate_execution_request(
             "runtime_request_digest_mismatch",
             "request digest does not match the canonical request body",
         )
-    return cast(AgentExecutionRequestV1 | AgentExecutionRequestV11, payload)
+    return cast(
+        AgentExecutionRequestV1 | AgentExecutionRequestV11 | AgentExecutionRequestV12,
+        payload,
+    )
 
 
 def validate_runtime_contract(
@@ -77,6 +93,9 @@ def validate_runtime_contract(
     protocol_version: str | None = None,
 ) -> None:
     version = protocol_version or _protocol_version(payload)
+    if version == "1.2":
+        validate_v12_contract(definition_name, payload)
+        return
     if version == "1.1":
         validate_v11_contract(definition_name, payload)
         return
@@ -89,6 +108,6 @@ def validate_runtime_contract(
 def _protocol_version(payload: object) -> str:
     if isinstance(payload, dict):
         value = payload.get("protocol_version")
-        if value in {"1.0", "1.1"}:
+        if value in {"1.0", "1.1", "1.2"}:
             return str(value)
     return "1.0"

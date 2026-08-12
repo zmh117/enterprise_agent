@@ -275,6 +275,10 @@ def build_admin_router() -> APIRouter:
         project: str = "",
         session_id: str = "",
         correlation_id: str = "",
+        execution_status: str = "",
+        delivery_status: str = "",
+        failure_stage: str = "",
+        model: str = "",
         limit: int = 25,
         cursor: str = "",
     ) -> dict[str, Any]:
@@ -297,6 +301,22 @@ def build_admin_router() -> APIRouter:
                 and (not project or item.get("project_code") == project)
                 and (not session_id or item.get("session_id") == session_id)
                 and (not correlation_id or item.get("correlation_id") == correlation_id)
+                and (
+                    not execution_status
+                    or item["execution_summary"]["execution_status"]
+                    in set(execution_status.split(","))
+                )
+                and (
+                    not delivery_status
+                    or item["execution_summary"]["delivery_status"]
+                    in set(delivery_status.split(","))
+                )
+                and (
+                    not failure_stage
+                    or item["execution_summary"]["display_failure_stage"]
+                    in set(failure_stage.split(","))
+                )
+                and (not model or model in item["execution_summary"]["models"])
             ]
             values = _after_cursor(values, page.cursor, "created_at")
             return _page(values, page, "created_at") | {

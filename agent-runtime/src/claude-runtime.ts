@@ -13,7 +13,11 @@ import errors from "../contracts/v1/errors.json" with { type: "json" };
 import type { JsonSummary } from "./generated/contracts.js";
 import type {
   AgentExecutionRequest,
+  ApiRetry,
+  ExecutionAccounting,
+  ModelCall,
   RuntimeFailure,
+  RuntimeInitialization,
   RuntimeProvenance,
   ToolEvent,
   Usage
@@ -111,7 +115,9 @@ interface PlatformToolMetadata {
 interface NormalizedResult {
   answer: string;
   usage: Usage;
+  accounting: ExecutionAccounting | undefined;
   failure?: RuntimeFailure;
+  modelRequestStartedAt: number | undefined;
 }
 
 function runtimeProvenance(
@@ -319,6 +325,93 @@ function usage(value: unknown): Usage {
       Number(candidate.cache_creation_input_tokens ?? 0) || 0
     )
   };
+}
+
+function nullableToken(candidate: Record<string, unknown>, key: string): number | null {
+  if (!Object.hasOwn(candidate, key)) return null;
+  const number = Number(candidate[key]);
+  return Number.isFinite(number) && number >= 0 ? Math.trunc(number) : null;
+}
+
+function nullableUsage(value: unknown): {
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cache_read_input_tokens: number | null;
+  cache_creation_input_tokens: number | null;
+} {
+  const candidate =
+    value !== null && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  return {
+    input_tokens: nullableToken(candidate, "input_tokens"),
+    output_tokens: nullableToken(candidate, "output_tokens"),
+    cache_read_input_tokens: nullableToken(candidate, "cache_read_input_tokens"),
+    cache_creation_input_tokens: nullableToken(candidate, "cache_creation_input_tokens")
+  };
+}
+
+function finiteNonNegative(value: unknown): number | null {
+  const number = Number(value);
+  return value !== null && value !== undefined && Number.isFinite(number) && number >= 0
+    ? number
+    : null;
+}
+
+function normalizeAccounting(message: SDKMessage): ExecutionAccounting | undefined {
+  if (message.type !== "result") return undefined;
+  const raw = message as unknown as Record<string, unknown>;
+  const rawModelUsage =
+    raw.modelUsage !== null && typeof raw.modelUsage === "object" && !Array.isArray(raw.modelUsage)
+      ? (raw.modelUsage as Record<string, unknown>)
+      : {};
+  const modelUsage = Object.entries(rawModelUsage)
+    .slice(0, 64)
+    .flatMap(([modelId, value]) => {
+      if (!modelId || value === null || typeof value !== "object" || Array.isArray(value)) return [];
+      const item = value as Record<string, unknown>;
+      return [{
+        model_id: safeText(modelId, 200),
+        canonical_model:
+          typeof item.canonicalModel === "string" ? safeText(item.canonicalModel, 200) : null,
+        provider: typeof item.provider === "string" ? safeText(item.provider, 64) : null,
+        usage: {
+          input_tokens: nullableToken(item, "inputTokens"),
+          output_tokens: nullableToken(item, "outputTokens"),
+          cache_read_input_tokens: nullableToken(item, "cacheReadInputTokens"),
+          cache_creation_input_tokens: nullableToken(item, "cacheCreationInputTokens")
+        },
+        estimated_cost_usd: finiteNonNegative(item.costUSD)
+      }];
+    });
+  const hasUsage = raw.usage !== null && typeof raw.usage === "object";
+  const accountingStatus = modelUsage.length > 0 ? "COMPLETE" : hasUsage ? "PARTIAL" : "UNAVAILABLE";
+  return {
+    status: accountingStatus,
+    duration_ms: finiteNonNegative(raw.duration_ms),
+    duration_api_ms: finiteNonNegative(raw.duration_api_ms),
+    num_turns: finiteNonNegative(raw.num_turns),
+    usage: nullableUsage(raw.usage),
+    model_usage: modelUsage,
+    estimated_cost_usd: finiteNonNegative(raw.total_cost_usd),
+    permission_denials_count: Array.isArray(raw.permission_denials)
+      ? Math.min(raw.permission_denials.length, 1024)
+      : 0
+  };
+}
+
+function normalizeMcpStatus(status: unknown): "CONNECTED" | "FAILED" | "DISCONNECTED" | "UNKNOWN" {
+  const value = String(status ?? "").toLowerCase();
+  if (value === "connected") return "CONNECTED";
+  if (value === "failed") return "FAILED";
+  if (value === "disconnected") return "DISCONNECTED";
+  return "UNKNOWN";
+}
+
+function normalizeServerCode(name: unknown): string | null {
+  if (name === "tools") return "tool-mcp";
+  if (name === "ones") return "ones-mcp";
+  return identifierOrNull(name);
 }
 
 function failure(
@@ -545,7 +638,9 @@ export class ClaudeAgentRuntimeExecutor {
     };
     const normalized: NormalizedResult = {
       answer: "",
-      usage: { input_tokens: 0, output_tokens: 0 }
+      usage: { input_tokens: 0, output_tokens: 0 },
+      accounting: undefined,
+      modelRequestStartedAt: undefined
     };
     emitter.emit("execution_started", provenance);
     try {
@@ -560,6 +655,9 @@ export class ClaudeAgentRuntimeExecutor {
           status: "FAILED",
           failure: normalized.failure,
           usage: normalized.usage,
+          ...(request.protocol_version === "1.2" && normalized.accounting
+            ? { accounting: normalized.accounting }
+            : {}),
           runtime_provenance: provenance
         };
       }
@@ -572,6 +670,9 @@ export class ClaudeAgentRuntimeExecutor {
             "模型运行结束但未返回最终结果"
           ),
           usage: normalized.usage,
+          ...(request.protocol_version === "1.2" && normalized.accounting
+            ? { accounting: normalized.accounting }
+            : {}),
           runtime_provenance: provenance
         };
       }
@@ -579,6 +680,9 @@ export class ClaudeAgentRuntimeExecutor {
         status: "SUCCEEDED",
         final_answer: normalized.answer,
         usage: normalized.usage,
+        ...(request.protocol_version === "1.2" && normalized.accounting
+          ? { accounting: normalized.accounting }
+          : {}),
         runtime_provenance: provenance
       };
     } catch (error) {
@@ -587,6 +691,9 @@ export class ClaudeAgentRuntimeExecutor {
           status: "CANCELLED",
           failure: failure("runtime_cancelled", "NEVER", "Agent 执行已取消"),
           usage: normalized.usage,
+          ...(request.protocol_version === "1.2" && normalized.accounting
+            ? { accounting: normalized.accounting }
+            : {}),
           runtime_provenance: provenance
         };
       }
@@ -594,6 +701,9 @@ export class ClaudeAgentRuntimeExecutor {
         status: "FAILED",
         failure: classifyThrown(error, timedOut),
         usage: normalized.usage,
+        ...(request.protocol_version === "1.2" && normalized.accounting
+          ? { accounting: normalized.accounting }
+          : {}),
         runtime_provenance: provenance
       };
     } finally {
@@ -610,12 +720,79 @@ export class ClaudeAgentRuntimeExecutor {
     calls: Map<string, ToolCallState>,
     normalized: NormalizedResult
   ): void {
+    if (request.protocol_version === "1.2" && message.type === "system" && message.subtype === "status") {
+      if (message.status === "requesting" && normalized.modelRequestStartedAt === undefined) {
+        normalized.modelRequestStartedAt = this.now();
+      }
+      return;
+    }
+    if (request.protocol_version === "1.2" && message.type === "system" && message.subtype === "init") {
+      const mcpServers: RuntimeInitialization["mcp_servers"] = message.mcp_servers.flatMap(
+        (server) => {
+          const serverCode = normalizeServerCode(server.name);
+          return serverCode
+            ? [{ server_code: serverCode, status: normalizeMcpStatus(server.status) }]
+            : [];
+        }
+      );
+      emitter.emit("runtime_initialized", {
+        model_id: safeText(message.model, 200),
+        mcp_servers: mcpServers
+      } satisfies RuntimeInitialization);
+      const requestedServers = new Set(request.mcp_servers.map((server) => server.server_code));
+      if (mcpServers.some((server) => requestedServers.has(server.server_code) && server.status === "FAILED")) {
+        normalized.failure = failure(
+          "runtime_mcp_connection_failed",
+          "TRANSIENT",
+          "MCP Server 连接失败"
+        );
+      }
+      return;
+    }
+    if (request.protocol_version === "1.2" && message.type === "system" && message.subtype === "api_retry") {
+      emitter.emit("api_retry", {
+        attempt: message.attempt,
+        max_retries: message.max_retries,
+        retry_delay_ms: message.retry_delay_ms,
+        error_status: message.error_status,
+        error_code: message.error
+      } satisfies ApiRetry);
+      return;
+    }
     if (message.type === "assistant") {
       const messageFailure = classifyMessageError(message.error);
       if (messageFailure) normalized.failure = messageFailure;
-      for (const block of message.message.content) {
-        if (block.type === "text" && block.text) {
-          emitter.emit("assistant_text", { text: safeText(block.text, 32768) });
+      if (request.protocol_version === "1.2") {
+        const completedAt = this.now();
+        const startedAt = normalized.modelRequestStartedAt;
+        const rawMessage = message.message as unknown as Record<string, unknown>;
+        const messageId = identifierOrNull(rawMessage.id) ?? identifierOrNull(message.uuid) ?? "model-call";
+        emitter.emit("model_call", {
+          model_call_id: messageId,
+          provider_request_id:
+            typeof message.request_id === "string" ? safeText(message.request_id, 200) : null,
+          provider_message_id:
+            typeof rawMessage.id === "string" ? safeText(rawMessage.id, 200) : null,
+          model_id:
+            typeof rawMessage.model === "string" ? safeText(rawMessage.model, 200) : "unknown-model",
+          status: messageFailure ? "FAILED" : "SUCCEEDED",
+          started_at: startedAt === undefined ? null : new Date(startedAt).toISOString(),
+          completed_at: new Date(completedAt).toISOString(),
+          duration_ms: startedAt === undefined ? null : Math.max(0, completedAt - startedAt),
+          duration_source: startedAt === undefined ? "UNAVAILABLE" : "SDK_OBSERVED",
+          usage: nullableUsage(rawMessage.usage),
+          stop_reason:
+            typeof rawMessage.stop_reason === "string" ? safeText(rawMessage.stop_reason, 128) : null,
+          error_code: message.error ?? null,
+          error_summary: messageFailure?.safe_message ?? null
+        } satisfies ModelCall);
+        normalized.modelRequestStartedAt = undefined;
+      }
+      if (request.protocol_version !== "1.2") {
+        for (const block of message.message.content) {
+          if (block.type === "text" && block.text) {
+            emitter.emit("assistant_text", { text: safeText(block.text, 32768) });
+          }
         }
       }
       return;
@@ -655,6 +832,7 @@ export class ClaudeAgentRuntimeExecutor {
     }
     if (message.type !== "result") return;
     normalized.usage = usage(message.usage);
+    if (request.protocol_version === "1.2") normalized.accounting = normalizeAccounting(message);
     if (message.subtype === "success") {
       if (message.is_error || !message.result) {
         normalized.failure = failure(

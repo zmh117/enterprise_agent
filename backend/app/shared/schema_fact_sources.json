@@ -706,6 +706,36 @@
       "audit_requirement": "bounded complete business JSON is allowed, while authentication material is structurally rejected on every path",
       "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["replacement preserves exact mcp_call_id evidence and independent retention"]},
       "evidence_refs": ["change:unify-mcp-operation-audit", "schema:105_expand_unified_mcp_operation_audit"]
+    },
+    {
+      "id": "audit.agent_job_execution_summary",
+      "object_type": "table",
+      "table": "agent_job_execution_summary",
+      "owner": "job-runtime-audit",
+      "semantics": "Rebuildable one-to-one Job execution accounting and typed failure projection; never a replacement for agent_job lifecycle state.",
+      "classification": "canonical_mutable_fact",
+      "writers": ["code:backend/app/modules/job/infrastructure/execution_audit_repository.py"],
+      "readers": ["code:backend/app/modules/job/infrastructure/execution_audit_repository.py", "code:backend/app/modules/admin/infrastructure/read_repository.py"],
+      "lifecycle": "rebuilt from unique Runtime invocation evidence and retained with the Job",
+      "retention_policy": "same-as-agent-job",
+      "audit_requirement": "contains numeric accounting, safe model identifiers, typed failure fields, and bounded summaries only; never Prompt, response, raw SDK message, private thinking, or credentials",
+      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["replacement preserves deterministic Job accounting and typed failure evidence"]},
+      "evidence_refs": ["change:improve-agent-run-audit", "schema:106_expand_agent_run_audit"]
+    },
+    {
+      "id": "audit.agent_model_call",
+      "object_type": "table",
+      "table": "agent_model_call",
+      "owner": "job-runtime-audit",
+      "semantics": "Canonical safe projection of one SDK-observed model response turn with stable Runtime identity and nullable measurements.",
+      "classification": "canonical_mutable_fact",
+      "writers": ["code:backend/app/modules/job/infrastructure/execution_audit_repository.py"],
+      "readers": ["code:backend/app/modules/job/infrastructure/execution_audit_repository.py", "code:backend/app/modules/admin/infrastructure/read_repository.py"],
+      "lifecycle": "idempotently created from a validated model_call event and retained with the Job",
+      "retention_policy": "same-as-agent-job",
+      "audit_requirement": "stores safe request and message identifiers, bounded error metadata, Token counts, and SDK-observed duration only; content fields are structurally absent",
+      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["replacement preserves stable model-turn identity and unknown-value semantics"]},
+      "evidence_refs": ["change:improve-agent-run-audit", "schema:106_expand_agent_run_audit"]
     }
   ]
 }

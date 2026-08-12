@@ -976,7 +976,9 @@ def test_mcp_audit_retention_deletes_business_payload_and_invalid_config_is_unre
 
 def test_ones_mcp_readiness_requires_the_credential_and_audit_schema() -> None:
     fixture = _fixture()
-    fixture["runtime"].database.execute("delete from schema_migration where version = '105'")
+    fixture["runtime"].database.execute(
+        "delete from schema_migration where cast(version as integer) >= 105"
+    )
     app = create_mcp_app(
         fixture["service"],
         database=fixture["runtime"].database,

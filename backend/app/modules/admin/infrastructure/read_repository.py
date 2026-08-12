@@ -36,6 +36,26 @@ class AdminReadRepository:
                    j.execution_policy_tool_call_count,
                    j.execution_policy_exhausted,
                    j.created_at, j.started_at, j.finished_at,
+                   s.accounting_status as audit_accounting_status,
+                   s.observed_model_turn_count as audit_observed_model_turn_count,
+                   s.api_retry_count as audit_api_retry_count,
+                   s.runtime_invocation_count as audit_runtime_invocation_count,
+                   s.total_duration_ms as audit_total_duration_ms,
+                   s.total_api_duration_ms as audit_total_api_duration_ms,
+                   s.input_tokens as audit_input_tokens,
+                   s.output_tokens as audit_output_tokens,
+                   s.cache_creation_input_tokens as audit_cache_creation_input_tokens,
+                   s.cache_read_input_tokens as audit_cache_read_input_tokens,
+                   s.model_usage_json as audit_model_usage_json,
+                   s.estimated_cost_usd as audit_estimated_cost_usd,
+                   s.execution_status as audit_execution_status,
+                   s.execution_failure_stage as audit_execution_failure_stage,
+                   s.failure_code as audit_failure_code,
+                   s.failure_summary as audit_failure_summary,
+                   s.retry_exhausted as audit_retry_exhausted,
+                   s.source_protocol_version as audit_source_protocol_version,
+                   (select o.status from delivery_outbox o where o.job_id = j.id
+                     order by o.created_at desc, o.id desc limit 1) as audit_delivery_status,
                    d.code as agent_code,
                    c.id as source_connector_record_id,
                    c.name as source_connector_name,
@@ -46,6 +66,7 @@ class AdminReadRepository:
             from agent_job j
             left join agent_definition d on d.id = j.agent_definition_id
             left join integration_connector c on c.id = j.source_connector_id
+            left join agent_job_execution_summary s on s.job_id = j.id
             where j.created_at >= ? and j.created_at < ?
             order by j.created_at desc, j.id desc
             limit ?
@@ -159,6 +180,26 @@ class AdminReadRepository:
                    j.execution_policy_tool_call_count,
                    j.execution_policy_exhausted,
                    j.created_at, j.started_at, j.finished_at,
+                   s.accounting_status as audit_accounting_status,
+                   s.observed_model_turn_count as audit_observed_model_turn_count,
+                   s.api_retry_count as audit_api_retry_count,
+                   s.runtime_invocation_count as audit_runtime_invocation_count,
+                   s.total_duration_ms as audit_total_duration_ms,
+                   s.total_api_duration_ms as audit_total_api_duration_ms,
+                   s.input_tokens as audit_input_tokens,
+                   s.output_tokens as audit_output_tokens,
+                   s.cache_creation_input_tokens as audit_cache_creation_input_tokens,
+                   s.cache_read_input_tokens as audit_cache_read_input_tokens,
+                   s.model_usage_json as audit_model_usage_json,
+                   s.estimated_cost_usd as audit_estimated_cost_usd,
+                   s.execution_status as audit_execution_status,
+                   s.execution_failure_stage as audit_execution_failure_stage,
+                   s.failure_code as audit_failure_code,
+                   s.failure_summary as audit_failure_summary,
+                   s.retry_exhausted as audit_retry_exhausted,
+                   s.source_protocol_version as audit_source_protocol_version,
+                   (select o.status from delivery_outbox o where o.job_id = j.id
+                     order by o.created_at desc, o.id desc limit 1) as audit_delivery_status,
                    d.code as agent_code,
                    c.id as source_connector_record_id,
                    c.name as source_connector_name,
@@ -168,6 +209,7 @@ class AdminReadRepository:
             from agent_job j
             left join agent_definition d on d.id = j.agent_definition_id
             left join integration_connector c on c.id = j.source_connector_id
+            left join agent_job_execution_summary s on s.job_id = j.id
             where j.session_id = ? order by j.created_at, j.id limit ?
             """,
             (session_id, limit),
@@ -233,6 +275,26 @@ class AdminReadRepository:
                    j.execution_policy_exhausted,
                    j.error_message, j.last_error_code,
                    j.created_at, j.started_at, j.finished_at,
+                   s.accounting_status as audit_accounting_status,
+                   s.observed_model_turn_count as audit_observed_model_turn_count,
+                   s.api_retry_count as audit_api_retry_count,
+                   s.runtime_invocation_count as audit_runtime_invocation_count,
+                   s.total_duration_ms as audit_total_duration_ms,
+                   s.total_api_duration_ms as audit_total_api_duration_ms,
+                   s.input_tokens as audit_input_tokens,
+                   s.output_tokens as audit_output_tokens,
+                   s.cache_creation_input_tokens as audit_cache_creation_input_tokens,
+                   s.cache_read_input_tokens as audit_cache_read_input_tokens,
+                   s.model_usage_json as audit_model_usage_json,
+                   s.estimated_cost_usd as audit_estimated_cost_usd,
+                   s.execution_status as audit_execution_status,
+                   s.execution_failure_stage as audit_execution_failure_stage,
+                   s.failure_code as audit_failure_code,
+                   s.failure_summary as audit_failure_summary,
+                   s.retry_exhausted as audit_retry_exhausted,
+                   s.source_protocol_version as audit_source_protocol_version,
+                   (select o.status from delivery_outbox o where o.job_id = j.id
+                     order by o.created_at desc, o.id desc limit 1) as audit_delivery_status,
                    d.code as agent_code,
                    c.id as source_connector_record_id,
                    c.name as source_connector_name,
@@ -242,6 +304,7 @@ class AdminReadRepository:
             from agent_job j
             left join agent_definition d on d.id = j.agent_definition_id
             left join integration_connector c on c.id = j.source_connector_id
+            left join agent_job_execution_summary s on s.job_id = j.id
             where j.id = ?
             """,
             (job_id,),
@@ -263,6 +326,12 @@ class AdminReadRepository:
             """,
             (job_id,),
         )
+        from app.modules.job.infrastructure.execution_audit_repository import (
+            ExecutionAuditRepository,
+        )
+
+        execution_audit = ExecutionAuditRepository(self.database)
+        model_calls = execution_audit.list_model_calls(job_id, limit=50)
         agent_repository = AgentRepository(self.database)
         delivery_events = agent_repository.list_delivery_events(job_id)
         delivery_attempts = agent_repository.list_delivery_attempts(job_id)
@@ -280,6 +349,17 @@ class AdminReadRepository:
             "session_ref": {"id": job["session_id"]},
             "steps": [_safe_times(row) for row in steps],
             "tool_calls": [_safe_times(row) for row in tools],
+            "execution_summary": job["execution_summary"],
+            "model_calls": model_calls,
+            "mcp_operation_links": [
+                {
+                    "agent_tool_call_id": str(row.get("id") or ""),
+                    "mcp_call_id": str(row.get("mcp_call_id") or ""),
+                    "server_code": str(row.get("server_code") or ""),
+                }
+                for row in tools
+                if row.get("mcp_call_id")
+            ],
             "deliveries": {
                 "events": [_safe_times(row) for row in delivery_events],
                 "attempts": [_safe_times(row) for row in delivery_attempts],
@@ -321,6 +401,7 @@ class AdminReadRepository:
         item["business_application_runtime_status"] = str(
             item.get("business_application_runtime_status") or "legacy_unattributed"
         )
+        item["execution_summary"] = _execution_summary(item)
         return _safe_times(item)
 
     @staticmethod
@@ -352,6 +433,68 @@ def _json_object(value: Any) -> dict[str, Any]:
     except (TypeError, ValueError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _execution_summary(item: dict[str, Any]) -> dict[str, Any]:
+    prefix = "audit_"
+    accounting_status = str(item.pop(f"{prefix}accounting_status", "") or "UNAVAILABLE")
+    model_usage = _json_array(item.pop(f"{prefix}model_usage_json", "[]"))
+    execution_status = str(item.pop(f"{prefix}execution_status", "") or "UNKNOWN")
+    delivery_status = str(item.pop(f"{prefix}delivery_status", "") or "NOT_REQUESTED")
+    failure_stage = item.pop(f"{prefix}execution_failure_stage", None)
+    display_failure_stage = (
+        "DELIVERY"
+        if execution_status == "SUCCEEDED" and delivery_status in {"FAILED", "DEAD"}
+        else failure_stage
+    )
+    estimated_cost = item.pop(f"{prefix}estimated_cost_usd", None)
+    return {
+        "accounting_status": accounting_status,
+        "observed_model_turn_count": int(
+            item.pop(f"{prefix}observed_model_turn_count", 0) or 0
+        ),
+        "api_retry_count": int(item.pop(f"{prefix}api_retry_count", 0) or 0),
+        "runtime_invocation_count": int(
+            item.pop(f"{prefix}runtime_invocation_count", 0) or 0
+        ),
+        **{
+            field: (
+                int(value) if value is not None else None
+            )
+            for field in (
+                "total_duration_ms",
+                "total_api_duration_ms",
+                "input_tokens",
+                "output_tokens",
+                "cache_creation_input_tokens",
+                "cache_read_input_tokens",
+            )
+            for value in [item.pop(f"{prefix}{field}", None)]
+        },
+        "model_usage": model_usage,
+        "models": [str(value.get("model_id") or "") for value in model_usage],
+        "estimated_cost_usd": str(estimated_cost) if estimated_cost is not None else None,
+        "execution_status": execution_status,
+        "delivery_status": delivery_status,
+        "execution_failure_stage": failure_stage,
+        "display_failure_stage": display_failure_stage,
+        "failure_code": item.pop(f"{prefix}failure_code", None),
+        "failure_summary": item.pop(f"{prefix}failure_summary", None),
+        "retry_exhausted": bool(item.pop(f"{prefix}retry_exhausted", 0) or False),
+        "source_protocol_version": str(
+            item.pop(f"{prefix}source_protocol_version", "") or "1.0"
+        ),
+    }
+
+
+def _json_array(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    try:
+        parsed = json.loads(str(value or "[]"))
+    except (TypeError, ValueError):
+        return []
+    return [item for item in parsed if isinstance(item, dict)] if isinstance(parsed, list) else []
 
 
 def _safe_times(value: dict[str, Any]) -> dict[str, Any]:

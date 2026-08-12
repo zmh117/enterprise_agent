@@ -16,6 +16,19 @@ import type {
   ToolEvent as ToolEventV11,
   Usage as UsageV11
 } from "./generated/contracts-v1_1.js";
+import type {
+  AgentExecutionRequestV12,
+  ApiRetry,
+  ExecutionAccounting,
+  ModelCall,
+  RuntimeEvent as RuntimeEventV12,
+  RuntimeFailure as RuntimeFailureV12,
+  RuntimeInitialization,
+  RuntimeProvenance as RuntimeProvenanceV12,
+  TerminalResult as TerminalResultV12,
+  ToolEvent as ToolEventV12,
+  Usage as UsageV12
+} from "./generated/contracts-v1_2.js";
 import {
   assertContract as assertV1Contract,
   type ContractName as ContractNameV1
@@ -24,21 +37,30 @@ import {
   assertContract as assertV11Contract,
   type ContractName as ContractNameV11
 } from "./generated/validators-v1_1.js";
+import {
+  assertContract as assertV12Contract,
+  type ContractName as ContractNameV12
+} from "./generated/validators-v1_2.js";
 
-export type RuntimeProtocolVersion = "1.0" | "1.1";
-export type AgentExecutionRequest = AgentExecutionRequestV1 | AgentExecutionRequestV11;
-export type RuntimeEvent = RuntimeEventV1 | RuntimeEventV11;
-export type RuntimeFailure = RuntimeFailureV1 | RuntimeFailureV11;
-export type RuntimeProvenance = RuntimeProvenanceV1 | RuntimeProvenanceV11;
-export type TerminalResult = TerminalResultV1 | TerminalResultV11;
-export type ToolEvent = ToolEventV1 | ToolEventV11;
-export type Usage = UsageV1 | UsageV11;
+export type RuntimeProtocolVersion = "1.0" | "1.1" | "1.2";
+export type AgentExecutionRequest = AgentExecutionRequestV1 | AgentExecutionRequestV11 | AgentExecutionRequestV12;
+export type RuntimeEvent = RuntimeEventV1 | RuntimeEventV11 | RuntimeEventV12;
+export type RuntimeFailure = RuntimeFailureV1 | RuntimeFailureV11 | RuntimeFailureV12;
+export type RuntimeProvenance = RuntimeProvenanceV1 | RuntimeProvenanceV11 | RuntimeProvenanceV12;
+export type TerminalResult = TerminalResultV1 | TerminalResultV11 | TerminalResultV12;
+export type ToolEvent = ToolEventV1 | ToolEventV11 | ToolEventV12;
+export type Usage = UsageV1 | UsageV11 | UsageV12;
+export type { ApiRetry, ExecutionAccounting, ModelCall, RuntimeInitialization };
 
 export function assertRuntimeContract(
-  name: ContractNameV1 | ContractNameV11,
+  name: ContractNameV1 | ContractNameV11 | ContractNameV12,
   payload: unknown,
   protocolVersion: RuntimeProtocolVersion
 ): void {
+  if (protocolVersion === "1.2") {
+    assertV12Contract(name as ContractNameV12, payload);
+    return;
+  }
   if (protocolVersion === "1.1") {
     assertV11Contract(name as ContractNameV11, payload);
     return;

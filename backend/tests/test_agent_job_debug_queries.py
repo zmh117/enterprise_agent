@@ -8,6 +8,9 @@ from fastapi.testclient import TestClient
 from app.bootstrap import Container, build_test_container
 from app.main import create_app
 from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
+from app.modules.job.infrastructure.execution_audit_repository import (
+    ExecutionAuditRepository,
+)
 from app.shared.config import IdentitySettings, Settings
 from backend.tests.helpers import (
     activate_dingtalk_test_application,
@@ -359,4 +362,124 @@ def test_application_operator_can_read_attributed_job() -> None:
 
     assert response.status_code == 200
     assert response.json()["business_application_code"] == application["code"]
+    runtime.database.close()
+
+
+def test_job_evidence_returns_safe_paginated_model_calls_without_runtime_json() -> None:
+    runtime = _container()
+    creator = _create_user(runtime, "model-audit-owner")
+    _create_user(runtime, "model-audit-unrelated")
+    _grant_role(
+        runtime,
+        code="model-audit-owner-role",
+        user_id=str(creator["id"]),
+        admin_capability="agent.debug.execute",
+    )
+    job_id = _create_debug_job(
+        runtime=runtime,
+        creator_user_id=str(creator["id"]),
+        idempotency_key="model-audit-evidence",
+    )
+    runtime.database.execute(
+        "update agent_job set agent_runtime_protocol_version = '1.2' where id = ?",
+        (job_id,),
+    )
+    audit = ExecutionAuditRepository(runtime.database)
+    audit.record_runtime_event(
+        job_id,
+        {
+            "protocol_version": "1.2",
+            "invocation_id": f"{job_id}.attempt-0",
+            "request_digest": "a" * 64,
+            "sequence": 1,
+            "event_type": "model_call",
+            "timestamp": "2026-08-12T00:00:01Z",
+            "payload": {
+                "model_call_id": "message-safe-1",
+                "provider_request_id": "request-safe-1",
+                "provider_message_id": "message-safe-1",
+                "model_id": "claude-safe-model",
+                "status": "SUCCEEDED",
+                "started_at": None,
+                "completed_at": "2026-08-12T00:00:01Z",
+                "duration_ms": None,
+                "duration_source": "UNAVAILABLE",
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 2,
+                    "cache_creation_input_tokens": None,
+                    "cache_read_input_tokens": None,
+                },
+                "stop_reason": "end_turn",
+                "error_code": None,
+                "error_summary": None,
+                "raw_sdk_message": "must-not-project",
+            },
+        },
+    )
+    audit.record_runtime_event(
+        job_id,
+        {
+            "protocol_version": "1.2",
+            "invocation_id": f"{job_id}.attempt-0",
+            "request_digest": "a" * 64,
+            "sequence": 2,
+            "event_type": "model_call",
+            "timestamp": "2026-08-12T00:00:02Z",
+            "payload": {
+                "model_call_id": "message-safe-2",
+                "provider_request_id": "request-safe-2",
+                "provider_message_id": "message-safe-2",
+                "model_id": "claude-safe-model",
+                "status": "SUCCEEDED",
+                "started_at": None,
+                "completed_at": "2026-08-12T00:00:02Z",
+                "duration_ms": None,
+                "duration_source": "UNAVAILABLE",
+                "usage": {
+                    "input_tokens": 8,
+                    "output_tokens": 3,
+                    "cache_creation_input_tokens": None,
+                    "cache_read_input_tokens": None,
+                },
+                "stop_reason": "end_turn",
+                "error_code": None,
+                "error_summary": None,
+            },
+        },
+    )
+    audit.rebuild_summary(job_id)
+
+    with TestClient(create_app(_settings(), container_factory=lambda _: runtime)) as client:
+        evidence = client.get(
+            f"/api/agent/jobs/{job_id}/evidence",
+            headers=_headers("model-audit-owner"),
+        )
+        model_calls = client.get(
+            f"/api/agent/jobs/{job_id}/model-calls?limit=1",
+            headers=_headers("model-audit-owner"),
+        )
+        next_page = client.get(
+            f"/api/agent/jobs/{job_id}/model-calls?limit=1"
+            f"&cursor={model_calls.json()['next_cursor']}",
+            headers=_headers("model-audit-owner"),
+        )
+        hidden = client.get(
+            f"/api/agent/jobs/{job_id}/model-calls?limit=1",
+            headers=_headers("model-audit-unrelated"),
+        )
+
+    assert evidence.status_code == model_calls.status_code == next_page.status_code == 200
+    assert hidden.status_code == 404
+    assert evidence.json()["execution_summary"]["accounting_status"] == "PARTIAL"
+    projected = model_calls.json()["items"][0]
+    assert projected["provider_request_id"] == "request-safe-1"
+    assert projected["duration_source"] == "UNAVAILABLE"
+    assert model_calls.json()["has_more"] is True
+    assert next_page.json()["items"][0]["provider_request_id"] == "request-safe-2"
+    assert next_page.json()["has_more"] is False
+    serialized = str(evidence.json()) + str(model_calls.json()) + str(next_page.json())
+    assert "raw_sdk_message" not in serialized
+    assert "must-not-project" not in serialized
+    assert "runtime_events" not in serialized
     runtime.database.close()

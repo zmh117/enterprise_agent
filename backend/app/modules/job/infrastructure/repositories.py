@@ -114,6 +114,154 @@ def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex}"
 
 
+def _safe_runtime_event_payload(event_type: str, value: object) -> dict[str, Any]:
+    """Persist only the audit-safe subset; token counts are measurements, not secrets."""
+    payload = value if isinstance(value, dict) else {}
+    if event_type == "runtime_initialized":
+        return {
+            "model_id": str(payload.get("model_id") or "")[:200],
+            "mcp_servers": [
+                {
+                    "server_code": str(item.get("server_code") or "")[:128],
+                    "status": str(item.get("status") or "UNKNOWN")[:32],
+                }
+                for item in payload.get("mcp_servers") or []
+                if isinstance(item, dict)
+            ][:64],
+        }
+    if event_type == "model_call":
+        return {
+            "model_call_id": str(payload.get("model_call_id") or "")[:200],
+            "provider_request_id": _optional_bounded_string(
+                payload.get("provider_request_id"), 200
+            ),
+            "provider_message_id": _optional_bounded_string(
+                payload.get("provider_message_id"), 200
+            ),
+            "model_id": str(payload.get("model_id") or "unknown")[:200],
+            "status": str(payload.get("status") or "FAILED")[:32],
+            "started_at": _optional_bounded_string(payload.get("started_at"), 64),
+            "completed_at": _optional_bounded_string(payload.get("completed_at"), 64),
+            "duration_ms": _optional_nonnegative_integer(payload.get("duration_ms")),
+            "duration_source": str(payload.get("duration_source") or "UNAVAILABLE")[:32],
+            "usage": _runtime_token_usage(payload.get("usage")),
+            "stop_reason": _optional_bounded_string(payload.get("stop_reason"), 128),
+            "error_code": _optional_bounded_string(payload.get("error_code"), 128),
+            "error_summary": _optional_bounded_string(payload.get("error_summary"), 2048),
+        }
+    if event_type == "api_retry":
+        return {
+            "attempt": _optional_nonnegative_integer(payload.get("attempt")),
+            "max_retries": _optional_nonnegative_integer(payload.get("max_retries")),
+            "retry_delay_ms": _optional_nonnegative_integer(payload.get("retry_delay_ms")),
+            "error_status": _optional_nonnegative_integer(payload.get("error_status")),
+            "error_code": str(payload.get("error_code") or "unknown")[:128],
+        }
+    if event_type == "terminal":
+        safe = {
+            key: payload.get(key)
+            for key in (
+                "protocol_version",
+                "invocation_id",
+                "request_digest",
+                "last_sequence",
+                "status",
+                "cancel_reason",
+            )
+            if key in payload
+        }
+        safe["usage"] = _runtime_token_usage(payload.get("usage"))
+        if isinstance(payload.get("accounting"), dict):
+            safe["accounting"] = _safe_runtime_accounting(payload["accounting"])
+        if isinstance(payload.get("runtime_provenance"), dict):
+            safe["runtime_provenance"] = sanitize_for_persistence(
+                payload["runtime_provenance"]
+            )
+        if isinstance(payload.get("failure"), dict):
+            failure = payload["failure"]
+            safe["failure"] = {
+                "code": str(failure.get("code") or "runtime_failure")[:128],
+                "retry_class": str(failure.get("retry_class") or "PERMANENT")[:32],
+                "safe_message": str(failure.get("safe_message") or "")[:2048],
+            }
+        return safe
+    if event_type == "assistant_text":
+        text = str(payload.get("text") or "")
+        return {"content_status": "OMITTED", "character_count": len(text)}
+    return sanitize_for_persistence(payload)
+
+
+def _safe_runtime_accounting(value: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "status": str(value.get("status") or "UNAVAILABLE")[:32],
+        "duration_ms": _optional_nonnegative_integer(value.get("duration_ms")),
+        "duration_api_ms": _optional_nonnegative_integer(value.get("duration_api_ms")),
+        "num_turns": _optional_nonnegative_integer(value.get("num_turns")),
+        "usage": _runtime_token_usage(value.get("usage")),
+        "estimated_cost_usd": _optional_nonnegative_number(value.get("estimated_cost_usd")),
+        "permission_denials_count": _optional_nonnegative_integer(
+            value.get("permission_denials_count")
+        ),
+        "model_usage": [],
+    }
+    for item in value.get("model_usage") or []:
+        if not isinstance(item, dict):
+            continue
+        result["model_usage"].append(
+            {
+                "model_id": str(item.get("model_id") or "unknown")[:200],
+                "canonical_model": str(item.get("canonical_model") or "")[:200],
+                "provider": str(item.get("provider") or "")[:100],
+                "usage": _runtime_token_usage(item.get("usage")),
+                "estimated_cost_usd": _optional_nonnegative_number(
+                    item.get("estimated_cost_usd")
+                ),
+            }
+        )
+    result["model_usage"] = result["model_usage"][:64]
+    return result
+
+
+def _runtime_token_usage(value: object) -> dict[str, int | None]:
+    usage = value if isinstance(value, dict) else {}
+    return {
+        field: _optional_nonnegative_integer(usage.get(field))
+        for field in (
+            "input_tokens",
+            "output_tokens",
+            "cache_creation_input_tokens",
+            "cache_read_input_tokens",
+        )
+    }
+
+
+def _optional_nonnegative_integer(value: object) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        candidate = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return candidate if 0 <= candidate <= 9_223_372_036_854_775_807 else None
+
+
+def _optional_nonnegative_number(value: object) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        candidate = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return candidate if 0 <= candidate < float("inf") else None
+
+
+def _optional_bounded_string(value: object, maximum: int) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    return text[:maximum] if text else None
+
+
 def source_connector_projection(row: dict[str, Any]) -> dict[str, str]:
     connector_id = str(row.get("source_connector_id") or "")
     connector_name = str(row.get("source_connector_name") or "")
@@ -469,7 +617,15 @@ class AgentRepository:
             not invocation_id
             or len(request_digest) != 64
             or sequence < 1
-            or event_type not in {"execution_started", "tool_event", "assistant_text", "terminal"}
+            or event_type not in {
+                "execution_started",
+                "runtime_initialized",
+                "model_call",
+                "api_retry",
+                "tool_event",
+                "assistant_text",
+                "terminal",
+            }
         ):
             raise NonRetryableExecutionError(
                 "Runtime event identity is invalid",
@@ -477,7 +633,7 @@ class AgentRepository:
                 error_code="runtime_event_invalid",
             )
         payload_json = json.dumps(
-            sanitize_for_persistence(event.get("payload") or {}),
+            _safe_runtime_event_payload(event_type, event.get("payload") or {}),
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),

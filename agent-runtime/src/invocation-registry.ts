@@ -1,5 +1,6 @@
 import type {
   AgentExecutionRequest,
+  ExecutionAccounting,
   RuntimeEvent,
   RuntimeFailure,
   RuntimeProvenance,
@@ -13,7 +14,13 @@ import type { TerminalLedger } from "./terminal-ledger.js";
 export interface ExecutionEmitter {
   readonly signal: AbortSignal;
   emit(
-    eventType: "execution_started" | "tool_event" | "assistant_text",
+    eventType:
+      | "execution_started"
+      | "runtime_initialized"
+      | "model_call"
+      | "api_retry"
+      | "tool_event"
+      | "assistant_text",
     payload: RuntimeEvent["payload"]
   ): void;
 }
@@ -27,6 +34,7 @@ export interface TerminalDraft {
   readonly final_answer?: string;
   readonly failure?: RuntimeFailure;
   readonly usage: Usage;
+  readonly accounting?: ExecutionAccounting;
   readonly runtime_provenance: RuntimeProvenance;
 }
 
@@ -64,7 +72,13 @@ class InvocationRecord {
   }
 
   prepareEvent(
-    eventType: "execution_started" | "tool_event" | "assistant_text",
+    eventType:
+      | "execution_started"
+      | "runtime_initialized"
+      | "model_call"
+      | "api_retry"
+      | "tool_event"
+      | "assistant_text",
     payload: RuntimeEvent["payload"]
   ): RuntimeEvent | undefined {
     if (this.isTerminal) return undefined;
@@ -101,6 +115,26 @@ class InvocationRecord {
       ...(draft.final_answer === undefined ? {} : { final_answer: draft.final_answer }),
       ...(draft.failure === undefined ? {} : { failure: draft.failure }),
       usage: draft.usage,
+      ...(this.request.protocol_version === "1.2"
+        ? {
+            accounting:
+              draft.accounting ?? {
+                status: "UNAVAILABLE",
+                duration_ms: null,
+                duration_api_ms: null,
+                num_turns: null,
+                usage: {
+                  input_tokens: null,
+                  output_tokens: null,
+                  cache_read_input_tokens: null,
+                  cache_creation_input_tokens: null
+                },
+                model_usage: [],
+                estimated_cost_usd: null,
+                permission_denials_count: 0
+              }
+          }
+        : {}),
       runtime_provenance: draft.runtime_provenance
     } as TerminalResult;
     const event = {

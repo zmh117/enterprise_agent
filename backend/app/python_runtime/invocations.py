@@ -422,7 +422,12 @@ class PythonInvocationRegistry:
                 "retry_class": "NEVER",
                 "safe_message": ("Agent Runtime 在执行中重启；为避免重复模型调用，本次执行已失败"),
             },
-            "usage": {"input_tokens": 0, "output_tokens": 0},
+            "usage": _usage_for_protocol(request, {"input_tokens": 0, "output_tokens": 0}),
+            **(
+                {"accounting": _unavailable_accounting()}
+                if request["protocol_version"] == "1.2"
+                else {}
+            ),
             "runtime_provenance": _fallback_provenance(request),
         }
         invocation.commit_event(invocation.prepare_event("terminal", terminal))
@@ -453,6 +458,14 @@ class PythonInvocationRegistry:
                     "safe_message": "Python Agent Runtime 暂时不可用",
                 },
             )
+        for runtime_event in outcome.runtime_events:
+            event_type = str(runtime_event.get("event_type") or "")
+            payload = runtime_event.get("payload")
+            if event_type not in {"runtime_initialized", "model_call", "api_retry"}:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            self._persist_and_emit(invocation, event_type, dict(payload))
         for tool_event in outcome.tool_events:
             self._persist_and_emit(invocation, "tool_event", dict(tool_event))
         last_sequence = len(invocation.events()) + 1
@@ -462,7 +475,12 @@ class PythonInvocationRegistry:
             "request_digest": request["request_digest"],
             "last_sequence": last_sequence,
             "status": outcome.status,
-            "usage": outcome.usage,
+            "usage": _usage_for_protocol(request, outcome.usage),
+            **(
+                {"accounting": outcome.accounting or _unavailable_accounting()}
+                if request["protocol_version"] == "1.2"
+                else {}
+            ),
             "runtime_provenance": outcome.runtime_provenance,
         }
         if outcome.status == "SUCCEEDED":
@@ -497,4 +515,35 @@ def _fallback_provenance(request: dict[str, Any]) -> dict[str, Any]:
         "cli_version": "2.1.226",
         "model_connection_revision_id": request["model_connection"]["revision_id"],
         "model_connection_config_hash": request["model_connection"]["config_hash"],
+    }
+
+
+def _usage_for_protocol(
+    request: dict[str, Any], usage: dict[str, int | None]
+) -> dict[str, int | None]:
+    if request["protocol_version"] != "1.2":
+        return usage
+    return {
+        "input_tokens": usage.get("input_tokens"),
+        "output_tokens": usage.get("output_tokens"),
+        "cache_read_input_tokens": usage.get("cache_read_input_tokens"),
+        "cache_creation_input_tokens": usage.get("cache_creation_input_tokens"),
+    }
+
+
+def _unavailable_accounting() -> dict[str, Any]:
+    return {
+        "status": "UNAVAILABLE",
+        "duration_ms": None,
+        "duration_api_ms": None,
+        "num_turns": None,
+        "usage": {
+            "input_tokens": None,
+            "output_tokens": None,
+            "cache_read_input_tokens": None,
+            "cache_creation_input_tokens": None,
+        },
+        "model_usage": [],
+        "estimated_cost_usd": None,
+        "permission_denials_count": 0,
     }

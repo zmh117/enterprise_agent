@@ -4,12 +4,13 @@ import {
   getConversation,
   getRuntimeJob,
   listRuntimeJobs,
+  type RuntimeJobFilters,
 } from "@/contexts/operations/infrastructure/runtime-record-api"
 
-export function useRuntimeJobs() {
+export function useRuntimeJobs(filters: RuntimeJobFilters = {}) {
   return useQuery({
-    queryKey: ["operations", "jobs"],
-    queryFn: listRuntimeJobs,
+    queryKey: ["operations", "jobs", filters],
+    queryFn: () => listRuntimeJobs(filters),
   })
 }
 

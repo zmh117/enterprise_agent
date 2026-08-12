@@ -10,9 +10,11 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from functools import lru_cache
 from urllib.parse import urlsplit
@@ -49,6 +51,268 @@ class ClaudeSdk:
     tool_annotations: Any | None
 
 
+class _SdkAuditNormalizer:
+    """Projects only bounded SDK metadata; never message content or raw payloads."""
+
+    def __init__(self) -> None:
+        self.events: list[dict[str, Any]] = []
+        self.accounting: dict[str, Any] = _unavailable_accounting()
+        self._request_started_at: float | None = None
+        self._request_started_wall: str | None = None
+
+    def consume(self, message: Any) -> None:
+        message_type = _sdk_message_type(message)
+        subtype = str(_value(message, "subtype") or "")
+        data = _value(message, "data")
+        source = data if isinstance(data, dict) else message
+        if message_type == "system" and subtype == "status":
+            if _value(source, "status") == "requesting" and self._request_started_at is None:
+                self._request_started_at = time.monotonic()
+                self._request_started_wall = _utc_now()
+            return
+        if message_type == "system" and subtype == "init":
+            servers = []
+            raw_servers = _value(source, "mcp_servers") or []
+            if isinstance(raw_servers, list):
+                for item in raw_servers[:32]:
+                    name = _value(item, "name")
+                    server_code = _safe_server_code(name)
+                    if server_code:
+                        servers.append(
+                            {
+                                "server_code": server_code,
+                                "status": _safe_mcp_status(_value(item, "status")),
+                            }
+                        )
+            self.events.append(
+                {
+                    "event_type": "runtime_initialized",
+                    "payload": {
+                        "model_id": _bounded_identifier_text(
+                            _value(source, "model") or "unknown-model", 200
+                        ),
+                        "mcp_servers": servers,
+                    },
+                }
+            )
+            return
+        if message_type == "system" and subtype == "api_retry":
+            self.events.append(
+                {
+                    "event_type": "api_retry",
+                    "payload": {
+                        "attempt": _bounded_int(_value(source, "attempt"), 1, 32, 1),
+                        "max_retries": _bounded_int(
+                            _value(source, "max_retries"), 1, 32, 1
+                        ),
+                        "retry_delay_ms": _bounded_int(
+                            _value(source, "retry_delay_ms"), 0, 1_800_000, 0
+                        ),
+                        "error_status": _http_status_or_none(
+                            _value(source, "error_status")
+                        ),
+                        "error_code": _bounded_identifier_text(
+                            _value(source, "error") or "unknown", 128
+                        ),
+                    },
+                }
+            )
+            return
+        if message_type == "assistant":
+            body = _value(message, "message") or message
+            completed_monotonic = time.monotonic()
+            completed_wall = _utc_now()
+            started = self._request_started_at
+            message_id = _identifier_or_none(
+                _value(body, "id") or _value(body, "message_id") or _value(message, "uuid")
+            ) or "model-call"
+            error_code = _identifier_or_none(_value(message, "error"))
+            self.events.append(
+                {
+                    "event_type": "model_call",
+                    "payload": {
+                        "model_call_id": message_id,
+                        "provider_request_id": _bounded_optional_text(
+                            _value(message, "request_id"), 200
+                        ),
+                        "provider_message_id": _bounded_optional_text(
+                            _value(body, "id") or _value(body, "message_id"), 200
+                        ),
+                        "model_id": _bounded_identifier_text(
+                            _value(body, "model") or "unknown-model", 200
+                        ),
+                        "status": "FAILED" if error_code else "SUCCEEDED",
+                        "started_at": self._request_started_wall if started is not None else None,
+                        "completed_at": completed_wall,
+                        "duration_ms": (
+                            max(0, int((completed_monotonic - started) * 1000))
+                            if started is not None
+                            else None
+                        ),
+                        "duration_source": (
+                            "SDK_OBSERVED" if started is not None else "UNAVAILABLE"
+                        ),
+                        "usage": _nullable_usage(_value(body, "usage")),
+                        "stop_reason": _bounded_optional_text(
+                            _value(body, "stop_reason"), 128
+                        ),
+                        "error_code": error_code,
+                        "error_summary": (
+                            "模型响应失败" if error_code else None
+                        ),
+                    },
+                }
+            )
+            self._request_started_at = None
+            self._request_started_wall = None
+            return
+        if message_type == "result":
+            self.accounting = _result_accounting(message)
+
+
+def _sdk_message_type(message: Any) -> str:
+    explicit = _value(message, "type")
+    if isinstance(explicit, str):
+        return explicit
+    name = message.__class__.__name__.lower()
+    if name.endswith("message"):
+        name = name.removesuffix("message")
+    return {"system": "system", "assistant": "assistant", "result": "result"}.get(
+        name, name
+    )
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _bounded_optional_text(value: Any, maximum: int) -> str | None:
+    if not isinstance(value, str) or not value:
+        return None
+    return _redact_sensitive_text(value)[:maximum]
+
+
+def _bounded_identifier_text(value: Any, maximum: int) -> str:
+    text = _redact_sensitive_text(str(value or "unknown"))[:maximum]
+    return text or "unknown"
+
+
+def _bounded_int(value: Any, minimum: int, maximum: int, fallback: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return max(minimum, min(number, maximum))
+
+
+def _non_negative_or_none(value: Any) -> int | float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number < 0 or number != number or number in {float("inf"), float("-inf")}:
+        return None
+    return int(number) if number.is_integer() else number
+
+
+def _token_or_none(source: dict[str, Any], *names: str) -> int | None:
+    for name in names:
+        if name in source:
+            value = _non_negative_or_none(source[name])
+            return int(value) if value is not None else None
+    return None
+
+
+def _nullable_usage(value: Any) -> dict[str, int | None]:
+    source = value if isinstance(value, dict) else {}
+    return {
+        "input_tokens": _token_or_none(source, "input_tokens", "inputTokens"),
+        "output_tokens": _token_or_none(source, "output_tokens", "outputTokens"),
+        "cache_read_input_tokens": _token_or_none(
+            source, "cache_read_input_tokens", "cacheReadInputTokens"
+        ),
+        "cache_creation_input_tokens": _token_or_none(
+            source, "cache_creation_input_tokens", "cacheCreationInputTokens"
+        ),
+    }
+
+
+def _unavailable_accounting() -> dict[str, Any]:
+    return {
+        "status": "UNAVAILABLE",
+        "duration_ms": None,
+        "duration_api_ms": None,
+        "num_turns": None,
+        "usage": _nullable_usage(None),
+        "model_usage": [],
+        "estimated_cost_usd": None,
+        "permission_denials_count": 0,
+    }
+
+
+def _result_accounting(message: Any) -> dict[str, Any]:
+    raw_models = _value(message, "modelUsage") or _value(message, "model_usage") or {}
+    models: list[dict[str, Any]] = []
+    if isinstance(raw_models, dict):
+        for model_id, item in list(raw_models.items())[:64]:
+            if not isinstance(item, dict):
+                continue
+            models.append(
+                {
+                    "model_id": _bounded_identifier_text(model_id, 200),
+                    "canonical_model": _bounded_optional_text(
+                        item.get("canonicalModel") or item.get("canonical_model"), 200
+                    ),
+                    "provider": _bounded_optional_text(item.get("provider"), 64),
+                    "usage": _nullable_usage(item),
+                    "estimated_cost_usd": _non_negative_or_none(
+                        item.get("costUSD", item.get("cost_usd"))
+                    ),
+                }
+            )
+    raw_usage = _value(message, "usage")
+    return {
+        "status": "COMPLETE" if models else "PARTIAL" if isinstance(raw_usage, dict) else "UNAVAILABLE",
+        "duration_ms": _non_negative_or_none(_value(message, "duration_ms")),
+        "duration_api_ms": _non_negative_or_none(_value(message, "duration_api_ms")),
+        "num_turns": _non_negative_or_none(_value(message, "num_turns")),
+        "usage": _nullable_usage(raw_usage),
+        "model_usage": models,
+        "estimated_cost_usd": _non_negative_or_none(
+            _value(message, "total_cost_usd")
+        ),
+        "permission_denials_count": min(
+            len(_value(message, "permission_denials") or []), 1024
+        ),
+    }
+
+
+def _safe_server_code(value: Any) -> str | None:
+    if value in {"tools", "tool_mcp"}:
+        return "tool-mcp"
+    if value in {"ones", "ones_mcp"}:
+        return "ones-mcp"
+    return _identifier_or_none(value)
+
+
+def _safe_mcp_status(value: Any) -> str:
+    return {
+        "connected": "CONNECTED",
+        "failed": "FAILED",
+        "disconnected": "DISCONNECTED",
+    }.get(str(value or "").lower(), "UNKNOWN")
+
+
+def _http_status_or_none(value: Any) -> int | None:
+    try:
+        status = int(value)
+    except (TypeError, ValueError):
+        return None
+    return status if 100 <= status <= 599 else None
+
+
 class RealClaudeCodeAgentClient:
     def __init__(
         self,
@@ -70,6 +334,8 @@ class RealClaudeCodeAgentClient:
         self.sdk_loader = sdk_loader or load_claude_agent_sdk
         self.secret_resolver = secret_resolver
         self.agent_repository = agent_repository
+        self.last_runtime_events: list[dict[str, Any]] = []
+        self.last_accounting: dict[str, Any] = _unavailable_accounting()
 
     def run(self, request: AgentRunRequest) -> AgentRunResult:
         assert_external_io_allowed("model.run")
@@ -129,10 +395,17 @@ class RealClaudeCodeAgentClient:
         parsed_tool_events: list[dict[str, Any]] = []
         parsed_tool_calls: dict[str, dict[str, Any]] = {}
         final_answer = ""
+        audit = _SdkAuditNormalizer()
+        self.last_runtime_events = []
+        self.last_accounting = _unavailable_accounting()
 
         async def consume() -> None:
             nonlocal final_answer
             async for message in sdk.query(prompt=prompt, options=options):
+                if request.context.runtime_protocol_version == "1.2":
+                    audit.consume(message)
+                    self.last_runtime_events = list(audit.events)
+                    self.last_accounting = dict(audit.accounting)
                 error_result = _result_error_details(message)
                 if error_result is not None:
                     detail, inconsistent = error_result

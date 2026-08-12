@@ -35,7 +35,7 @@ class InvocationSecretContextPort(Protocol):
 
 PYTHON_RUNTIME_VERSION = "0.1.0"
 PYTHON_RUNTIME_KIND = "python-v1"
-PROTOCOL_VERSION = "1.0"
+PROTOCOL_VERSION = "1.2"
 MCP_CALL_ID_META_KEY = "enterprise-agent/mcp-call-id"
 AGENT_TOOL_CALL_ID_META_KEY = "enterprise-agent/agent-tool-call-id"
 SDK_BUILTIN_TOOLS = frozenset(
@@ -64,10 +64,12 @@ PLATFORM_SDK_TOOLS: frozenset[str] = frozenset()
 @dataclass(frozen=True)
 class PythonExecutionOutcome:
     status: str
-    usage: dict[str, int]
+    usage: dict[str, int | None]
     runtime_provenance: dict[str, Any]
     final_answer: str = ""
+    runtime_events: tuple[dict[str, Any], ...] = ()
     tool_events: tuple[dict[str, Any], ...] = ()
+    accounting: dict[str, Any] | None = None
     failure: dict[str, str] | None = None
 
 
@@ -236,6 +238,8 @@ class PythonRuntimeSdkExecutor:
                 status="FAILED",
                 usage={"input_tokens": 0, "output_tokens": 0},
                 runtime_provenance=provenance,
+                runtime_events=tuple(client.last_runtime_events),
+                accounting=dict(client.last_accounting),
                 tool_events=_normalize_tool_events(exc.tool_events, request),
                 failure={
                     "code": str(exc.error_code or "runtime_transport_error"),
@@ -248,6 +252,8 @@ class PythonRuntimeSdkExecutor:
                 status="FAILED",
                 usage={"input_tokens": 0, "output_tokens": 0},
                 runtime_provenance=provenance,
+                runtime_events=tuple(client.last_runtime_events),
+                accounting=dict(client.last_accounting),
                 tool_events=_normalize_tool_events(exc.tool_events, request),
                 failure={
                     "code": str(exc.error_code or "runtime_configuration_error"),
@@ -262,6 +268,8 @@ class PythonRuntimeSdkExecutor:
             final_answer=result.final_answer,
             usage={"input_tokens": 0, "output_tokens": 0},
             runtime_provenance=provenance,
+            runtime_events=tuple(client.last_runtime_events),
+            accounting=dict(client.last_accounting),
             tool_events=_normalize_tool_events(result.tool_events, request),
         )
 
@@ -740,7 +748,7 @@ def _normalize_tool_events(
             "response_summary": {"available": bool(event.get("response_summary"))},
             "duration_ms": max(0, int(event.get("duration_ms") or 0)),
         }
-        if protocol_version == "1.1":
+        if protocol_version in {"1.1", "1.2"}:
             item.update(
                 {
                     "tool_origin": tool_origin,

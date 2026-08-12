@@ -21,6 +21,7 @@ from app.modules.agent.infrastructure.runtime_protocol import (
 
 CONTRACT_ROOT = Path(__file__).parents[2] / "agent-runtime" / "contracts" / "v1"
 CONTRACT_ROOT_V11 = Path(__file__).parents[2] / "agent-runtime" / "contracts" / "v1.1"
+CONTRACT_ROOT_V12 = Path(__file__).parents[2] / "agent-runtime" / "contracts" / "v1.2"
 
 
 def _request() -> dict[str, Any]:
@@ -50,6 +51,28 @@ def test_worker_dual_reads_v1_and_v11_while_schemas_remain_strict() -> None:
         validate_contract("AgentExecutionRequestV1", request_v11)
     with pytest.raises(ValueError):
         validate_v11_contract("AgentExecutionRequestV11", request_v1)
+
+
+def test_worker_reads_v12_observability_events_and_keeps_older_minors() -> None:
+    request_v12 = json.loads(
+        (CONTRACT_ROOT_V12 / "golden" / "execution-request.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    fixture = json.loads(
+        (CONTRACT_ROOT_V12 / "golden" / "safe-runtime-fixture.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert validate_execution_request(request_v12) == request_v12
+    for name in (
+        "runtime_initialized_event",
+        "model_call_event",
+        "api_retry_event",
+        "terminal_event",
+    ):
+        validate_runtime_contract("RuntimeEvent", fixture[name], protocol_version="1.2")
 
 
 def test_worker_v11_accepts_exact_origins_and_old_worker_rejects_new_event() -> None:

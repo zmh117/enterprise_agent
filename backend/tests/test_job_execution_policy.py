@@ -367,19 +367,21 @@ def test_legacy_runtime_purge_preserves_control_plane() -> None:
         c.database.execute(
             """
             insert into agent_session
-              (id, dingding_conversation_id, dingding_user_id, source, project_code,
-               created_at, updated_at)
-            values ('session-invalid', 'c', 'u', 'debug_api', 'default', 'now', 'now')
+              (id, source_channel, source_connector_id,
+               external_conversation_id, requester_id, project_code,
+               session_key, created_at, updated_at)
+            values ('session-invalid', 'debug_api', 'connector-debug-api',
+                    'c', 'u', 'default', 'session-invalid', 'now', 'now')
             """
         )
         c.database.execute(
             """
             insert into agent_job
-              (id, session_id, idempotency_key, user_id, project_code, source,
-               user_message, status, created_at)
+              (id, session_id, idempotency_key, requester_id, project_code,
+               source_channel, source_connector_id, status, created_at)
             values (
               'job-invalid', 'session-invalid', 'job-invalid', 'u', 'default',
-              'debug_api', 'x', 'PENDING', 'now'
+              'debug_api', 'connector-debug-api', 'PENDING', 'now'
             )
             """
         )

@@ -33,7 +33,11 @@ from app.python_runtime.model_binding import (
     PythonModelBindingResolver,
     ResolvedPythonModelBinding,
 )
-from app.python_runtime.claude_agent_sdk_adapter import ClaudeSdk, _extract_tool_events
+from app.python_runtime.claude_agent_sdk_adapter import (
+    ClaudeSdk,
+    RealClaudeCodeAgentClient,
+    _extract_tool_events,
+)
 from app.python_runtime.sdk_executor import (
     PythonExecutionOutcome,
     PythonRuntimeSdkExecutor,
@@ -89,10 +93,71 @@ class FakePythonExecutor:
             final_answer="python final answer",
             usage={"input_tokens": 3, "output_tokens": 2},
             runtime_provenance=provenance,
+            runtime_events=(
+                (
+                    {
+                        "event_type": "runtime_initialized",
+                        "payload": {"model_id": "claude-safe-model", "mcp_servers": []},
+                    },
+                    {
+                        "event_type": "model_call",
+                        "payload": {
+                            "model_call_id": "python-message-safe-1",
+                            "provider_request_id": None,
+                            "provider_message_id": "python-message-safe-1",
+                            "model_id": "claude-safe-model",
+                            "status": "SUCCEEDED",
+                            "started_at": None,
+                            "completed_at": "2026-08-12T00:00:01Z",
+                            "duration_ms": None,
+                            "duration_source": "UNAVAILABLE",
+                            "usage": {
+                                "input_tokens": 3,
+                                "output_tokens": 2,
+                                "cache_read_input_tokens": 0,
+                                "cache_creation_input_tokens": 0,
+                            },
+                            "stop_reason": "end_turn",
+                            "error_code": None,
+                            "error_summary": None,
+                        },
+                    },
+                )
+                if request["protocol_version"] == "1.2"
+                else ()
+            ),
+            accounting=(
+                {
+                    "status": "COMPLETE",
+                    "duration_ms": 20,
+                    "duration_api_ms": 10,
+                    "num_turns": 1,
+                    "usage": {
+                        "input_tokens": 3,
+                        "output_tokens": 2,
+                        "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0,
+                    },
+                    "model_usage": [],
+                    "estimated_cost_usd": 0.001,
+                    "permission_denials_count": 0,
+                }
+                if request["protocol_version"] == "1.2"
+                else None
+            ),
             tool_events=(
                 {
                     "tool_call_id": "tool-call-1",
                     "server_code": "ones-mcp",
+                    **(
+                        {
+                            "tool_origin": "mcp",
+                            "mcp_call_id": None,
+                            "persisted_tool_call_id": None,
+                        }
+                        if request["protocol_version"] == "1.2"
+                        else {}
+                    ),
                     "tool_name": "ones_work_item_search",
                     "status": "SUCCEEDED",
                     "request_summary": {"project_code": "project-1"},
@@ -173,11 +238,20 @@ def _request() -> dict[str, Any]:
     return request
 
 
+def _request_v12() -> dict[str, Any]:
+    path = Path("agent-runtime/contracts/v1.2/golden/execution-request.json")
+    request = json.loads(path.read_text(encoding="utf-8"))
+    request["runtime_kind"] = "python-v1"
+    request["mcp_servers"] = []
+    request["request_digest"] = canonical_request_digest(request)
+    return request
+
+
 def _provenance(request: dict[str, Any]) -> dict[str, Any]:
     return {
         "runtime_kind": "python-v1",
         "runtime_version": "0.1.0",
-        "protocol_version": "1.0",
+        "protocol_version": request["protocol_version"],
         "sdk_version": "0.2.134",
         "cli_version": "2.1.226",
         "model_connection_revision_id": request["model_connection"]["revision_id"],
@@ -252,6 +326,41 @@ def test_python_runtime_http_contract_replays_one_terminal_without_tokens(
     )
     assert terminal.status_code == 200
     assert terminal.json()["status"] == "SUCCEEDED"
+
+
+def test_python_runtime_v12_streams_observability_before_accounting_terminal(
+    tmp_path: Path,
+) -> None:
+    executor = FakePythonExecutor()
+    dependencies, private_key = _dependencies(tmp_path, executor)
+    client = TestClient(create_app(dependencies))
+    request = _request_v12()
+
+    response = client.post(
+        "/internal/v1/executions",
+        json=request,
+        headers={"Authorization": f"Bearer {_token(private_key, request)}"},
+    )
+    replay = client.post(
+        "/internal/v1/executions",
+        json=request,
+        headers={"Authorization": f"Bearer {_token(private_key, request)}"},
+    )
+
+    assert response.status_code == 200
+    events = [json.loads(line) for line in response.text.strip().splitlines()]
+    assert [event["event_type"] for event in events] == [
+        "execution_started",
+        "runtime_initialized",
+        "model_call",
+        "tool_event",
+        "terminal",
+    ]
+    terminal = events[-1]["payload"]
+    assert terminal["accounting"]["status"] == "COMPLETE"
+    assert terminal["accounting"]["estimated_cost_usd"] == 0.001
+    assert replay.text == response.text
+    assert len(executor.requests) == 1
 
 
 def test_python_runtime_rejects_missing_ones_principal_before_execution(
@@ -465,6 +574,140 @@ def test_python_runtime_exposes_only_the_fixed_remote_tool_mcp_server() -> None:
         "mcp__tool_mcp__query_database",
     ]
     assert "internal" not in captured["mcp_servers"]
+
+
+def test_python_sdk_projects_same_v12_observability_fixture_as_typescript() -> None:
+    fixture = json.loads(
+        Path("agent-runtime/contracts/v1.2/golden/sdk-observability-fixture.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    async def query(**_kwargs: Any) -> Any:
+        for name in ("status_requesting", "init", "api_retry", "assistant", "result_success"):
+            yield fixture[name]
+
+    sdk = ClaudeSdk(
+        query=query,
+        options=lambda **kwargs: kwargs,
+        tool=cast(Any, None),
+        create_sdk_mcp_server=cast(Any, None),
+        tool_annotations=None,
+    )
+    context = AgentExecutionContext(
+        system_role="readonly agent",
+        safety_rules=["readonly"],
+        user_question="safe fixture",
+        project_code="project-1",
+        allowed_tools=[],
+        tool_restrictions=["bounded"],
+        skills={},
+        retrieved_context={},
+        conversation_summary="",
+        runtime_protocol_version="1.2",
+    )
+    client = RealClaudeCodeAgentClient(
+        model="claude-safe-model",
+        tool_registry=cast(Any, None),
+        limits=build_settings().execution,
+        api_key="runtime-model-key-value",
+        sdk_loader=lambda: sdk,
+    )
+
+    result = client.run(
+        AgentRunRequest(
+            job_id="job-safe-1",
+            user_id="user-safe-1",
+            project_code="project-1",
+            invocation_id="invocation-safe-1",
+            context=context,
+        )
+    )
+
+    assert result.final_answer == "bounded result omitted by audit normalizer"
+    assert [item["event_type"] for item in client.last_runtime_events] == [
+        "runtime_initialized",
+        "api_retry",
+        "model_call",
+    ]
+    assert client.last_runtime_events[-1]["payload"]["duration_source"] == (
+        "SDK_OBSERVED"
+    )
+    assert client.last_runtime_events[-1]["payload"]["provider_request_id"] == (
+        "request-safe-1"
+    )
+    assert client.last_accounting["status"] == "COMPLETE"
+    assert client.last_accounting["duration_api_ms"] == 1800
+    serialized = json.dumps(client.last_runtime_events)
+    assert "bounded result omitted" not in serialized
+
+
+def test_python_sdk_keeps_unknown_accounting_and_omits_raw_content() -> None:
+    fixture = json.loads(
+        Path("agent-runtime/contracts/v1.2/golden/sdk-observability-fixture.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assistant = json.loads(json.dumps(fixture["assistant"]))
+    assistant["message"]["content"] = [
+        {"type": "thinking", "thinking": "private-thinking-must-not-persist"},
+        {"type": "text", "text": "full-answer-must-not-persist"},
+    ]
+    result = json.loads(json.dumps(fixture["result_success"]))
+    result.pop("usage")
+    result.pop("modelUsage")
+    result["result"] = "final answer remains execution-only"
+
+    async def query(**_kwargs: Any) -> Any:
+        yield assistant
+        yield result
+
+    sdk = ClaudeSdk(
+        query=query,
+        options=lambda **kwargs: kwargs,
+        tool=cast(Any, None),
+        create_sdk_mcp_server=cast(Any, None),
+        tool_annotations=None,
+    )
+    client = RealClaudeCodeAgentClient(
+        model="claude-safe-model",
+        tool_registry=cast(Any, None),
+        limits=build_settings().execution,
+        api_key="runtime-model-key-value",
+        sdk_loader=lambda: sdk,
+    )
+
+    client.run(
+        AgentRunRequest(
+            job_id="job-safe-unknown",
+            user_id="user-safe-unknown",
+            project_code="project-1",
+            invocation_id="invocation-safe-unknown",
+            context=AgentExecutionContext(
+                system_role="readonly agent",
+                safety_rules=["readonly"],
+                user_question="safe fixture",
+                project_code="project-1",
+                allowed_tools=[],
+                tool_restrictions=["bounded"],
+                skills={},
+                retrieved_context={},
+                conversation_summary="",
+                runtime_protocol_version="1.2",
+            ),
+        )
+    )
+
+    model_call = client.last_runtime_events[-1]["payload"]
+    serialized = json.dumps(client.last_runtime_events)
+    assert model_call["duration_source"] == "UNAVAILABLE"
+    assert model_call["duration_ms"] is None
+    assert model_call["started_at"] is None
+    assert client.last_accounting["status"] == "UNAVAILABLE"
+    assert client.last_accounting["usage"]["input_tokens"] is None
+    assert "private-thinking-must-not-persist" not in serialized
+    assert "full-answer-must-not-persist" not in serialized
+    assert "final answer remains execution-only" not in serialized
 
 
 def test_python_runtime_routes_principal_only_to_fixed_ones_mcp_server() -> None:

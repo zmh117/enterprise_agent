@@ -7,6 +7,8 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 
 import executionRequestFixture from "../contracts/v1.1/golden/execution-request.json" with { type: "json" };
+import executionRequestFixtureV12 from "../contracts/v1.2/golden/execution-request.json" with { type: "json" };
+import sdkObservabilityFixture from "../contracts/v1.2/golden/sdk-observability-fixture.json" with { type: "json" };
 import {
   ClaudeAgentRuntimeExecutor,
   isolatedSdkEnvironment,
@@ -14,12 +16,19 @@ import {
   type InvocationWorkspaceFactory
 } from "../src/claude-runtime.js";
 import type { AgentExecutionRequestV11 } from "../src/generated/contracts-v1_1.js";
+import type { AgentExecutionRequestV12 } from "../src/generated/contracts-v1_2.js";
 import type { RuntimeEvent } from "../src/runtime-contracts.js";
 import type { ExecutionEmitter } from "../src/invocation-registry.js";
 import type { ResolvedModelBinding } from "../src/model-binding.js";
 
 function request(): AgentExecutionRequestV11 {
   const value = structuredClone(executionRequestFixture) as AgentExecutionRequestV11;
+  value.mcp_servers[0]!.server_code = "tool-mcp";
+  return value;
+}
+
+function requestV12(): AgentExecutionRequestV12 {
+  const value = structuredClone(executionRequestFixtureV12) as AgentExecutionRequestV12;
   value.mcp_servers[0]!.server_code = "tool-mcp";
   return value;
 }
@@ -84,6 +93,95 @@ function workspace(): InvocationWorkspaceFactory & { cleaned: boolean } {
     }
   };
 }
+
+test("v1.2 projects safe SDK model, retry, MCP initialization and ResultMessage accounting", async () => {
+  const value = requestV12();
+  const messages = [
+    sdkObservabilityFixture.status_requesting,
+    sdkObservabilityFixture.init,
+    sdkObservabilityFixture.api_retry,
+    sdkObservabilityFixture.assistant,
+    sdkObservabilityFixture.result_success
+  ] as unknown as SDKMessage[];
+  let tick = Date.parse("2026-08-12T00:00:00Z");
+  const emitted = emitter();
+  const runtime = new ClaudeAgentRuntimeExecutor(
+    { resolve: async () => binding("claude-safe-model") },
+    queryFrom(async function* () {
+      for (const message of messages) yield message;
+    }),
+    workspace(),
+    () => {
+      const current = tick;
+      tick += 250;
+      return current;
+    }
+  );
+
+  const terminal = await runtime.execute(value, emitted.value);
+
+  assert.deepEqual(
+    emitted.events.map((event) => event.eventType),
+    ["execution_started", "runtime_initialized", "api_retry", "model_call"]
+  );
+  const initialized = emitted.events[1]!.payload as any;
+  assert.deepEqual(initialized.mcp_servers, [
+    { server_code: "tool-mcp", status: "CONNECTED" },
+    { server_code: "ones-mcp", status: "FAILED" }
+  ]);
+  const modelCall = emitted.events[3]!.payload as any;
+  assert.equal(modelCall.duration_source, "SDK_OBSERVED");
+  assert.equal(modelCall.duration_ms, 250);
+  assert.equal(modelCall.provider_request_id, "request-safe-1");
+  assert.deepEqual(modelCall.usage, {
+    input_tokens: 120,
+    output_tokens: 32,
+    cache_read_input_tokens: 16,
+    cache_creation_input_tokens: 8
+  });
+  assert.equal((terminal as any).accounting.status, "COMPLETE");
+  assert.equal((terminal as any).accounting.duration_api_ms, 1800);
+  assert.equal((terminal as any).accounting.estimated_cost_usd, 0.012345);
+  assert.equal(JSON.stringify(emitted.events).includes("bounded result omitted"), false);
+  assert.equal(terminal.final_answer, "bounded result omitted by audit normalizer");
+});
+
+test("v1.2 keeps model duration and accounting unavailable without reliable SDK evidence", async () => {
+  const value = requestV12();
+  const assistant = structuredClone(sdkObservabilityFixture.assistant) as any;
+  assistant.message.content = [
+    { type: "thinking", thinking: "private-thinking-must-not-persist" },
+    { type: "text", text: "full-answer-must-not-persist" }
+  ];
+  const result = structuredClone(sdkObservabilityFixture.result_success) as any;
+  delete result.usage;
+  delete result.modelUsage;
+  result.result = "final answer remains execution-only";
+  const emitted = emitter();
+  const runtime = new ClaudeAgentRuntimeExecutor(
+    { resolve: async () => binding("claude-safe-model") },
+    queryFrom(async function* () {
+      yield assistant as SDKMessage;
+      yield result as SDKMessage;
+    }),
+    workspace(),
+    () => Date.parse("2026-08-12T00:00:01Z")
+  );
+
+  const terminal = await runtime.execute(value, emitted.value);
+  const modelCall = emitted.events.find((event) => event.eventType === "model_call")!
+    .payload as any;
+  const serializedEvents = JSON.stringify(emitted.events);
+
+  assert.equal(modelCall.duration_source, "UNAVAILABLE");
+  assert.equal(modelCall.duration_ms, null);
+  assert.equal(modelCall.started_at, null);
+  assert.equal((terminal as any).accounting.status, "UNAVAILABLE");
+  assert.equal((terminal as any).accounting.usage.input_tokens, null);
+  assert.equal(serializedEvents.includes("private-thinking-must-not-persist"), false);
+  assert.equal(serializedEvents.includes("full-answer-must-not-persist"), false);
+  assert.equal(serializedEvents.includes("final answer remains execution-only"), false);
+});
 
 test("query adapter uses isolated settings and gates every MCP call through canUseTool", async () => {
   const value = request();

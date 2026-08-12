@@ -111,6 +111,9 @@ from app.modules.job.infrastructure.repositories import (
     AuditRepository,
     ConfigurationRepository,
 )
+from app.modules.job.infrastructure.execution_audit_repository import (
+    ExecutionAuditRepository,
+)
 from app.modules.message_bus.application.message_publisher import MessageConsumer, MessagePublisher
 from app.modules.message_bus.infrastructure.in_memory_bus import InMemoryMessageBus
 from app.modules.message_bus.infrastructure.rabbitmq_consumer import RabbitMQConsumer
@@ -853,7 +856,7 @@ def _build_container(
                     ),
                 ),
                 grant_issuer=grant_issuer,
-                event_sink=agent_repository.record_runtime_event,
+                event_sink=ExecutionAuditRepository(database).record_runtime_event,
                 principal_token_issuer=principal_token_issuer,
             )
     else:

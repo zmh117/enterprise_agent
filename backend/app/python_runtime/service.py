@@ -85,8 +85,8 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
         return {
             "runtime": PYTHON_RUNTIME_KIND,
             "runtime_version": PYTHON_RUNTIME_VERSION,
-            "protocol_version": "1.1",
-            "supported_protocol_versions": "1.0,1.1",
+            "protocol_version": "1.2",
+            "supported_protocol_versions": "1.0,1.1,1.2",
             "sdk_version": runtime.executor.sdk_version,
             "cli_version": runtime.executor.cli_version,
         }

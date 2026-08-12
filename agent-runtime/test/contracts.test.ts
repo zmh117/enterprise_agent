@@ -5,14 +5,20 @@ import { test } from "node:test";
 import errors from "../contracts/v1/errors.json" with { type: "json" };
 import executionRequest from "../contracts/v1/golden/execution-request.json" with { type: "json" };
 import executionRequestV11 from "../contracts/v1.1/golden/execution-request.json" with { type: "json" };
+import executionRequestV12 from "../contracts/v1.2/golden/execution-request.json" with { type: "json" };
 import safeRuntimeFixture from "../contracts/v1/golden/safe-runtime-fixture.json" with { type: "json" };
 import safeRuntimeFixtureV11 from "../contracts/v1.1/golden/safe-runtime-fixture.json" with { type: "json" };
+import safeRuntimeFixtureV12 from "../contracts/v1.2/golden/safe-runtime-fixture.json" with { type: "json" };
 import limits from "../contracts/v1/limits.json" with { type: "json" };
 import { assertContract, ContractValidationError } from "../src/generated/validators.js";
 import {
   assertContract as assertV11Contract,
   ContractValidationError as ContractValidationErrorV11
 } from "../src/generated/validators-v1_1.js";
+import {
+  assertContract as assertV12Contract,
+  ContractValidationError as ContractValidationErrorV12
+} from "../src/generated/validators-v1_2.js";
 import {
   canonicalRequestDigest,
   ProtocolBoundaryError,
@@ -24,13 +30,18 @@ test("golden request has the same canonical digest and validates", () => {
   assert.doesNotThrow(() => validateExecutionRequest(executionRequest));
 });
 
-test("v1.0 and v1.1 remain strict while the Runtime boundary dual-reads both", () => {
+test("v1.0, v1.1 and v1.2 remain strict while the Runtime boundary reads supported minors", () => {
   assert.equal(
     canonicalRequestDigest(executionRequestV11),
     executionRequestV11.request_digest
   );
   assert.doesNotThrow(() => validateExecutionRequest(executionRequest));
   assert.doesNotThrow(() => validateExecutionRequest(executionRequestV11));
+  assert.equal(
+    canonicalRequestDigest(executionRequestV12),
+    executionRequestV12.request_digest
+  );
+  assert.doesNotThrow(() => validateExecutionRequest(executionRequestV12));
   assert.throws(
     () => assertContract("AgentExecutionRequestV1", executionRequestV11),
     ContractValidationError
@@ -38,6 +49,10 @@ test("v1.0 and v1.1 remain strict while the Runtime boundary dual-reads both", (
   assert.throws(
     () => assertV11Contract("AgentExecutionRequestV11", executionRequest),
     ContractValidationErrorV11
+  );
+  assert.throws(
+    () => assertV12Contract("AgentExecutionRequestV12", executionRequestV11),
+    ContractValidationErrorV12
   );
 });
 
@@ -66,6 +81,21 @@ test("v1.1 Tool Events distinguish MCP and SDK origins without fuzzy server defa
       ...safeRuntimeFixtureV11.tool_event,
       server_code: "future-readonly-mcp"
     })
+  );
+});
+
+test("v1.2 validates safe runtime initialization, model calls, retries and accounting", () => {
+  const fixture = safeRuntimeFixtureV12 as Record<string, unknown>;
+  for (const name of ["runtime_initialized_event", "model_call_event", "api_retry_event", "terminal_event"]) {
+    assert.doesNotThrow(() => assertV12Contract("RuntimeEvent", fixture[name]));
+  }
+  assert.throws(
+    () =>
+      assertV12Contract("ModelCall", {
+        ...(fixture.model_call as Record<string, unknown>),
+        duration_source: "PROVIDER_HTTP"
+      }),
+    ContractValidationErrorV12
   );
 });
 

@@ -20,6 +20,9 @@ from app.modules.delivery.infrastructure.adapters import DeliveryAdapter
 from app.modules.job.application.job_dispatch_service import JobDispatchOutboxDispatcher
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.repositories import AgentRepository, AuditRepository
+from app.modules.job.infrastructure.execution_audit_repository import (
+    ExecutionAuditRepository,
+)
 from app.modules.mcp_audit import McpAuditContext, McpAuditCoordinator
 from app.modules.platform_config.application.runtime_config import (
     RuntimeConfigRegistry,
@@ -135,8 +138,8 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "105"
-        assert result.applied == ("100", "101", "102", "103", "104", "105")
+        assert result.head == "106"
+        assert result.applied == ("100", "101", "102", "103", "104", "105", "106")
         assert database.execute_one(
             """
             select count(*)::int as count
@@ -145,9 +148,9 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
                and table_type = 'BASE TABLE'
                and table_name not in ('schema_migration', 'schema_baseline_adoption')
             """
-        ) == {"count": 89}
-        assert comments["table_count"] == 89
-        assert comments["column_count"] == 1079
+        ) == {"count": 91}
+        assert comments["table_count"] == 91
+        assert comments["column_count"] == 1122
     finally:
         database.close()
 
@@ -165,10 +168,10 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "105"
-        assert result.applied == ("100", "101", "102", "103", "104", "105")
-        assert comments["table_count"] == 89
-        assert comments["column_count"] == 1079
+        assert result.head == "106"
+        assert result.applied == ("100", "101", "102", "103", "104", "105", "106")
+        assert comments["table_count"] == 91
+        assert comments["column_count"] == 1122
         assert {
             "dingding_conversation_id",
             "dingding_user_id",
@@ -208,7 +211,7 @@ def test_postgres_concurrent_baseline_migrators_apply_100_once(
 
     assert sorted(result.applied for result in results) == [
         (),
-        ("100", "101", "102", "103", "104", "105"),
+        ("100", "101", "102", "103", "104", "105", "106"),
     ]
     database = Database(postgres_database_dsn)
     try:
@@ -219,7 +222,159 @@ def test_postgres_concurrent_baseline_migrators_apply_100_once(
             "103",
             "104",
             "105",
+            "106",
         ]
+    finally:
+        database.close()
+
+
+def test_postgres_agent_run_audit_precision_constraints_and_cascade(
+    postgres_database_dsn: str,
+) -> None:
+    database = Database(postgres_database_dsn)
+    try:
+        Migrator(
+            database,
+            default_migrations_dir(),
+            migrator_build="postgres-agent-run-audit-test",
+        ).run()
+        timestamp = "2026-08-12T00:00:00+00:00"
+        database.execute(
+            """
+            insert into agent_session
+              (id, project_code, created_at, updated_at, source_channel,
+               source_connector_id, external_conversation_id, requester_id, session_key)
+            values ('postgres-audit-session', 'default', ?, ?, 'test',
+                    'connector-test', 'audit-conversation', 'audit-user',
+                    'postgres-audit-session')
+            """,
+            (timestamp, timestamp),
+        )
+        database.execute(
+            """
+            insert into agent_job
+              (id, session_id, idempotency_key, project_code, status, created_at,
+               source_channel, source_connector_id, requester_id,
+               agent_runtime_protocol_version)
+            values ('postgres-audit-job', 'postgres-audit-session',
+                    'postgres-audit-job', 'default', 'SUCCEEDED', ?, 'test',
+                    'connector-test', 'audit-user', '1.2')
+            """,
+            (timestamp,),
+        )
+        repository = ExecutionAuditRepository(database)
+        digest = "a" * 64
+        model_event = {
+            "protocol_version": "1.2",
+            "invocation_id": "postgres-invocation",
+            "request_digest": digest,
+            "sequence": 1,
+            "event_type": "model_call",
+            "timestamp": timestamp,
+            "payload": {
+                "model_call_id": "postgres-model-call",
+                "provider_request_id": None,
+                "provider_message_id": "postgres-message",
+                "model_id": "claude-safe-model",
+                "status": "SUCCEEDED",
+                "started_at": None,
+                "completed_at": timestamp,
+                "duration_ms": None,
+                "duration_source": "UNAVAILABLE",
+                "usage": {
+                    "input_tokens": 9_000_000_000,
+                    "output_tokens": 4_000_000_000,
+                    "cache_creation_input_tokens": None,
+                    "cache_read_input_tokens": None,
+                },
+                "stop_reason": "end_turn",
+                "error_code": None,
+                "error_summary": None,
+            },
+        }
+        second_model_event = {
+            **model_event,
+            "sequence": 2,
+            "payload": {
+                **model_event["payload"],
+                "model_call_id": "postgres-model-call-2",
+                "provider_message_id": "postgres-message-2",
+            },
+        }
+        terminal = {
+            "protocol_version": "1.2",
+            "invocation_id": "postgres-invocation",
+            "request_digest": digest,
+            "sequence": 3,
+            "event_type": "terminal",
+            "timestamp": timestamp,
+            "payload": {
+                "protocol_version": "1.2",
+                "invocation_id": "postgres-invocation",
+                "request_digest": digest,
+                "last_sequence": 3,
+                "status": "SUCCEEDED",
+                "final_answer": "must-not-enter-audit-event",
+                "usage": {
+                    "input_tokens": 9_000_000_000,
+                    "output_tokens": 4_000_000_000,
+                    "cache_creation_input_tokens": None,
+                    "cache_read_input_tokens": None,
+                },
+                "accounting": {
+                    "status": "COMPLETE",
+                    "duration_ms": 1,
+                    "duration_api_ms": None,
+                    "num_turns": 1,
+                    "usage": {
+                        "input_tokens": 9_000_000_000,
+                        "output_tokens": 4_000_000_000,
+                        "cache_creation_input_tokens": None,
+                        "cache_read_input_tokens": None,
+                    },
+                    "model_usage": [],
+                    "estimated_cost_usd": 0.123456789012,
+                    "permission_denials_count": 0,
+                },
+                "runtime_provenance": {
+                    "runtime_kind": "typescript-v1",
+                    "runtime_version": "0.1.0",
+                    "protocol_version": "1.2",
+                    "sdk_version": "0.3.226",
+                    "cli_version": "2.1.226",
+                    "model_connection_revision_id": "revision-1",
+                    "model_connection_config_hash": "b" * 64,
+                },
+            },
+        }
+        repository.record_runtime_event("postgres-audit-job", model_event)
+        repository.record_runtime_event("postgres-audit-job", second_model_event)
+        repository.record_runtime_event("postgres-audit-job", terminal)
+        summary = repository.rebuild_summary("postgres-audit-job")
+        first_page = repository.list_model_calls("postgres-audit-job", limit=1)
+        second_page = repository.list_model_calls(
+            "postgres-audit-job", limit=1, cursor=first_page["next_cursor"]
+        )
+
+        assert summary["input_tokens"] == 9_000_000_000
+        assert summary["estimated_cost_usd"] == "0.123456789012"
+        assert first_page["has_more"] is True
+        assert first_page["items"][0]["runtime_sequence"] == 1
+        assert second_page["has_more"] is False
+        assert second_page["items"][0]["runtime_sequence"] == 2
+        serialized = str(AgentRepository(database).list_runtime_events("postgres-audit-job"))
+        assert "must-not-enter-audit-event" not in serialized
+
+        database.execute(
+            "delete from agent_runtime_event where job_id = 'postgres-audit-job'"
+        )
+        database.execute("delete from agent_job where id = 'postgres-audit-job'")
+        assert database.execute_one(
+            "select count(*)::int as count from agent_model_call"
+        ) == {"count": 0}
+        assert database.execute_one(
+            "select count(*)::int as count from agent_job_execution_summary"
+        ) == {"count": 0}
     finally:
         database.close()
 

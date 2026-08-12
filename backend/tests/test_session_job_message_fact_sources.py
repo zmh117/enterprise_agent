@@ -51,14 +51,8 @@ def test_job_creation_writes_only_canonical_session_job_and_message_facts() -> N
         "dingding_conversation_id",
         "dingding_user_id",
         "source",
-    }.issubset(session_columns)
-    assert {"user_id", "source", "user_message"}.issubset(job_columns)
-    assert session_row["dingding_conversation_id"] is None
-    assert session_row["dingding_user_id"] is None
-    assert session_row["source"] is None
-    assert job_row["user_id"] is None
-    assert job_row["source"] is None
-    assert job_row["user_message"] is None
+    }.isdisjoint(session_columns)
+    assert {"user_id", "source", "user_message"}.isdisjoint(job_columns)
     assert job_row["input_message_id"] == message_row["id"]
     assert message_row["job_id"] == job.id
     assert message_row["session_id"] == job.session_id

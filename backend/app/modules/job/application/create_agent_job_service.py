@@ -302,7 +302,7 @@ class CreateAgentJobService:
                     safe_message="固定的 Agent Runtime 配置无效",
                     error_code="agent_runtime_kind_unsupported",
                 )
-            agent_runtime_protocol_version = "1.1"
+            agent_runtime_protocol_version = "1.2"
             if self.runtime_readiness_guard is not None:
                 self.runtime_readiness_guard.require_ready(agent_runtime_kind)
             agent_snapshot = dict(publication.get("snapshot") or {})

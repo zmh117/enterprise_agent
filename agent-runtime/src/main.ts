@@ -78,8 +78,8 @@ await once(server, "listening");
 logger.log("info", "runtime_started", {
   host: config.host,
   port: config.port,
-  protocol_version: "1.1",
-  supported_protocol_versions: ["1.0", "1.1"],
+  protocol_version: "1.2",
+  supported_protocol_versions: ["1.0", "1.1", "1.2"],
   sdk_version: "0.3.226",
   cli_version: "2.1.226"
 });

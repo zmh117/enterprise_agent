@@ -13,6 +13,56 @@ const jobExecutionPolicySchema = z.object({
   sources: z.record(z.string(), z.string()),
 })
 
+const nullableCounterSchema = z.number().int().nonnegative().nullable()
+
+const executionSummarySchema = z.object({
+  accounting_status: z.enum(["COMPLETE", "PARTIAL", "UNAVAILABLE"]),
+  observed_model_turn_count: z.number().int().nonnegative().default(0),
+  api_retry_count: z.number().int().nonnegative().default(0),
+  runtime_invocation_count: z.number().int().nonnegative().default(0),
+  total_duration_ms: nullableCounterSchema,
+  total_api_duration_ms: nullableCounterSchema,
+  input_tokens: nullableCounterSchema,
+  output_tokens: nullableCounterSchema,
+  cache_creation_input_tokens: nullableCounterSchema,
+  cache_read_input_tokens: nullableCounterSchema,
+  model_usage: z.array(z.record(z.string(), z.unknown())).default([]),
+  models: z.array(z.string()).default([]),
+  estimated_cost_usd: z.string().nullable(),
+  execution_status: z.enum(["SUCCEEDED", "FAILED", "CANCELLED", "UNKNOWN"]),
+  delivery_status: z.string().default("NOT_REQUESTED"),
+  execution_failure_stage: z.string().nullable(),
+  display_failure_stage: z.string().nullable(),
+  failure_code: z.string().nullable(),
+  failure_summary: z.string().nullable(),
+  retry_exhausted: z.boolean().default(false),
+  source_protocol_version: z.string().default("1.0"),
+})
+
+const unavailableExecutionSummary = {
+  accounting_status: "UNAVAILABLE" as const,
+  observed_model_turn_count: 0,
+  api_retry_count: 0,
+  runtime_invocation_count: 0,
+  total_duration_ms: null,
+  total_api_duration_ms: null,
+  input_tokens: null,
+  output_tokens: null,
+  cache_creation_input_tokens: null,
+  cache_read_input_tokens: null,
+  model_usage: [],
+  models: [],
+  estimated_cost_usd: null,
+  execution_status: "UNKNOWN" as const,
+  delivery_status: "NOT_REQUESTED",
+  execution_failure_stage: null,
+  display_failure_stage: null,
+  failure_code: null,
+  failure_summary: null,
+  retry_exhausted: false,
+  source_protocol_version: "1.0",
+}
+
 export const runtimeJobSchema = z
   .object({
     id: z.string(),
@@ -66,6 +116,9 @@ export const runtimeJobSchema = z
     execution_policy: jobExecutionPolicySchema,
     tool_call_count: z.number().int().nonnegative().default(0),
     execution_policy_exhausted: z.boolean().default(false),
+    execution_summary: executionSummarySchema.default(
+      unavailableExecutionSummary
+    ),
     last_error_code: z.string().default(""),
     error_summary: z.string().default(""),
     created_at: z.string(),
@@ -175,6 +228,38 @@ const jobDispatchSchema = z
   })
   .passthrough()
 
+const modelCallSchema = z
+  .object({
+    id: z.string(),
+    job_id: z.string(),
+    invocation_id: z.string(),
+    request_digest: z.string(),
+    runtime_sequence: z.number().int().positive(),
+    provider_request_id: z.string().nullable(),
+    provider_message_id: z.string().nullable(),
+    model_id: z.string(),
+    status: z.enum(["SUCCEEDED", "FAILED"]),
+    started_at: z.string().nullable(),
+    completed_at: z.string(),
+    duration_ms: nullableCounterSchema,
+    duration_source: z.enum(["SDK_OBSERVED", "UNAVAILABLE"]),
+    input_tokens: nullableCounterSchema,
+    output_tokens: nullableCounterSchema,
+    cache_creation_input_tokens: nullableCounterSchema,
+    cache_read_input_tokens: nullableCounterSchema,
+    stop_reason: z.string().nullable(),
+    error_code: z.string().nullable(),
+    error_summary: z.string().nullable(),
+  })
+  .passthrough()
+
+export const modelCallPageSchema = z.object({
+  items: z.array(modelCallSchema).default([]),
+  limit: z.number().int().positive().default(50),
+  has_more: z.boolean().default(false),
+  next_cursor: z.string().nullable().default(null),
+})
+
 export const runtimeJobDetailSchema = z
   .object({
     job: runtimeJobSchema,
@@ -182,6 +267,18 @@ export const runtimeJobDetailSchema = z
     dispatch: jobDispatchSchema.nullish(),
     steps: z.array(z.record(z.string(), z.unknown())).default([]),
     tool_calls: z.array(z.record(z.string(), z.unknown())).default([]),
+    execution_summary: executionSummarySchema.default(
+      unavailableExecutionSummary
+    ),
+    model_calls: modelCallPageSchema.default({
+      items: [],
+      limit: 50,
+      has_more: false,
+      next_cursor: null,
+    }),
+    mcp_operation_links: z
+      .array(z.record(z.string(), z.string()))
+      .default([]),
     deliveries: deliveryTimelineSchema,
     webhook_events: z.array(z.record(z.string(), z.unknown())).default([]),
   })
@@ -216,6 +313,9 @@ export const conversationDetailSchema = z
   .passthrough()
 
 export type RuntimeJob = z.infer<typeof runtimeJobSchema>
+export type ExecutionSummary = z.infer<typeof executionSummarySchema>
+export type ModelCall = z.infer<typeof modelCallSchema>
+export type ModelCallPage = z.infer<typeof modelCallPageSchema>
 export type DeliveryEvent = z.infer<typeof deliveryEventSchema>
 export type DeliveryAttempt = z.infer<typeof deliveryAttemptSchema>
 export type DeliveryChunk = z.infer<typeof deliveryChunkSchema>

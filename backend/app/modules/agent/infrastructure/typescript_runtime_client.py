@@ -274,7 +274,7 @@ def probe_runtime_readiness(settings: RuntimeClientSettings) -> dict[str, Any]:
         readiness = get(base_url, "/ready", accepted_statuses={200, 503})
         identity_ready = (
             version.get("runtime") == settings.runtime_kind
-            and version.get("protocol_version") in {"1.0", "1.1"}
+            and version.get("protocol_version") in {"1.0", "1.1", "1.2"}
             and isinstance(version.get("runtime_version"), str)
         )
         dependency_ready = (
@@ -495,6 +495,13 @@ class AgentRuntimeHttpClient:
                 final_answer=str(terminal["final_answer"]),
                 tool_events=tool_events,
                 runtime_provenance=provenance,
+                runtime_events=[
+                    event
+                    for event in events
+                    if event["event_type"]
+                    in {"runtime_initialized", "model_call", "api_retry"}
+                ],
+                execution_accounting=dict(terminal.get("accounting") or {}),
             )
         failure = dict(terminal.get("failure") or {})
         exception_type = (
@@ -507,7 +514,16 @@ class AgentRuntimeHttpClient:
             safe_message=str(failure.get("safe_message") or "Agent Runtime 执行失败"),
             tool_events=tool_events,
             error_code=str(failure.get("code") or "runtime_failure"),
-            diagnostics={"runtime_provenance": provenance},
+            diagnostics={
+                "runtime_provenance": provenance,
+                "runtime_events": [
+                    event
+                    for event in events
+                    if event["event_type"]
+                    in {"runtime_initialized", "model_call", "api_retry"}
+                ],
+                "execution_accounting": dict(terminal.get("accounting") or {}),
+            },
         )
 
     def cancel(self, run_request: AgentRunRequest, reason: str) -> dict[str, Any]:
@@ -597,7 +613,7 @@ class AgentRuntimeHttpClient:
                 }
             )
         protocol_version = str(context.runtime_protocol_version or "1.0")
-        if protocol_version not in {"1.0", "1.1"}:
+        if protocol_version not in {"1.0", "1.1", "1.2"}:
             raise NonRetryableExecutionError(
                 "Job runtime protocol version is unsupported",
                 safe_message="当前 Job Runtime 协议版本不受支持",

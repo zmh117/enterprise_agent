@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import limitsV1 from "../contracts/v1/limits.json" with { type: "json" };
 import limitsV11 from "../contracts/v1.1/limits.json" with { type: "json" };
+import limitsV12 from "../contracts/v1.2/limits.json" with { type: "json" };
 import type { AgentExecutionRequest } from "./runtime-contracts.js";
 import { assertRuntimeContract } from "./runtime-contracts.js";
 
@@ -35,12 +36,12 @@ export function validateExecutionRequest(
   payload: unknown,
   encodedBytes = Buffer.byteLength(JSON.stringify(payload), "utf8")
 ): asserts payload is AgentExecutionRequest {
-  const protocolVersion =
-    typeof payload === "object" && payload !== null &&
-    (payload as { protocol_version?: unknown }).protocol_version === "1.1"
-      ? "1.1"
-      : "1.0";
-  const limits = protocolVersion === "1.1" ? limitsV11 : limitsV1;
+  const requestedVersion =
+    typeof payload === "object" && payload !== null
+      ? (payload as { protocol_version?: unknown }).protocol_version
+      : undefined;
+  const protocolVersion = requestedVersion === "1.2" ? "1.2" : requestedVersion === "1.1" ? "1.1" : "1.0";
+  const limits = protocolVersion === "1.2" ? limitsV12 : protocolVersion === "1.1" ? limitsV11 : limitsV1;
   if (encodedBytes > limits.max_request_bytes) {
     throw new ProtocolBoundaryError(
       "runtime_request_too_large",
@@ -49,7 +50,11 @@ export function validateExecutionRequest(
   }
   try {
     assertRuntimeContract(
-      protocolVersion === "1.1" ? "AgentExecutionRequestV11" : "AgentExecutionRequestV1",
+      protocolVersion === "1.2"
+        ? "AgentExecutionRequestV12"
+        : protocolVersion === "1.1"
+          ? "AgentExecutionRequestV11"
+          : "AgentExecutionRequestV1",
       payload,
       protocolVersion
     );

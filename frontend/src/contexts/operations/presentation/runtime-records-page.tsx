@@ -5,11 +5,13 @@ import {
   RefreshCwIcon,
 } from "lucide-react"
 import { Link, useParams } from "react-router-dom"
+import { useState } from "react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Input } from "@/components/ui/input"
 import {
   useConversation,
   useRuntimeJob,
@@ -19,12 +21,25 @@ import type {
   DeliveryAttempt,
   DeliveryChunk,
   DeliveryEvent,
+  ExecutionSummary,
+  ModelCall,
+  ModelCallPage,
   RuntimeJob,
 } from "@/contexts/operations/domain/runtime-record"
+import { listRuntimeJobModelCalls } from "@/contexts/operations/infrastructure/runtime-record-api"
 import { ApplicationState } from "@/contexts/applications/presentation/application-state"
 
 export function RuntimeRecordsPage() {
-  const query = useRuntimeJobs()
+  const [filters, setFilters] = useState({
+    userId: "",
+    agent: "",
+    model: "",
+    executionStatus: "",
+    deliveryStatus: "",
+    failureStage: "",
+  })
+  const [appliedFilters, setAppliedFilters] = useState(filters)
+  const query = useRuntimeJobs(appliedFilters)
   return (
     <div className="mx-auto w-full max-w-[1500px] space-y-5 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
       <header className="flex flex-wrap items-end justify-between gap-4">
@@ -35,8 +50,8 @@ export function RuntimeRecordsPage() {
           </div>
           <h1 className="mt-2 text-2xl font-semibold">Agent 运行记录</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            展示任务固定的业务应用、发布版本、部署与路由
-            归因；历史记录不会按当前配置猜测回填。
+            展示用户、Agent、模型、工具、Token、耗时、估算成本和稳定失败位置；
+            Agent 执行与结果投递保持独立。
           </p>
         </div>
         <Button
@@ -51,6 +66,58 @@ export function RuntimeRecordsPage() {
           刷新
         </Button>
       </header>
+      <form
+        className="grid gap-3 rounded-xl border p-4 sm:grid-cols-2 xl:grid-cols-6"
+        aria-label="运行记录筛选"
+        onSubmit={(event) => {
+          event.preventDefault()
+          setAppliedFilters(filters)
+        }}
+      >
+        {[
+          ["userId", "用户安全标识"],
+          ["agent", "Agent"],
+          ["model", "模型"],
+          ["executionStatus", "执行状态"],
+          ["deliveryStatus", "Delivery 状态"],
+          ["failureStage", "失败位置"],
+        ].map(([key, label]) => (
+          <label key={key} className="space-y-1 text-xs text-muted-foreground">
+            {label}
+            <Input
+              value={filters[key as keyof typeof filters]}
+              placeholder={label}
+              onChange={(event) =>
+                setFilters((current) => ({
+                  ...current,
+                  [key]: event.target.value,
+                }))
+              }
+            />
+          </label>
+        ))}
+        <div className="flex gap-2 sm:col-span-2 xl:col-span-6">
+          <Button type="submit">应用筛选</Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              const empty = {
+                userId: "",
+                agent: "",
+                model: "",
+                executionStatus: "",
+                deliveryStatus: "",
+                failureStage: "",
+              }
+              setFilters(empty)
+              setAppliedFilters(empty)
+            }}
+          >
+            清空
+          </Button>
+        </div>
+      </form>
       {query.isLoading ? <Skeleton className="h-72 w-full" /> : null}
       {query.isError ? (
         <ApplicationState
@@ -80,8 +147,9 @@ export function RuntimeRecordsPage() {
 
 function JobRow({ job }: { job: RuntimeJob }) {
   const attributed = Boolean(job.business_application_id)
+  const summary = job.execution_summary
   return (
-    <article className="grid gap-3 p-4 text-sm lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] lg:items-center">
+    <article className="grid gap-3 p-4 text-sm xl:grid-cols-[minmax(14rem,1.1fr)_minmax(11rem,.8fr)_minmax(18rem,1.4fr)_auto] xl:items-center">
       <div className="min-w-0">
         <Link
           to={`/operations/jobs/${encodeURIComponent(job.id)}`}
@@ -90,7 +158,8 @@ function JobRow({ job }: { job: RuntimeJob }) {
           {job.id}
         </Link>
         <p className="mt-1 text-xs text-muted-foreground">
-          {job.source_channel} · {job.agent_code} · {formatDate(job.created_at)}
+          用户 {job.internal_user_id || "未知"} · {job.source_channel} ·{" "}
+          {formatDate(job.created_at)}
         </p>
       </div>
       <div className="min-w-0">
@@ -105,8 +174,35 @@ function JobRow({ job }: { job: RuntimeJob }) {
             : "legacy_unattributed"}
         </p>
       </div>
+      <div className="min-w-0 space-y-1 text-xs">
+        <p className="font-medium">
+          {summary.models.length ? summary.models.join("、") : "模型未知"}
+        </p>
+        <p className="text-muted-foreground">
+          总耗时 {formatDuration(summary.total_duration_ms)} · API{" "}
+          {formatDuration(summary.total_api_duration_ms)}
+        </p>
+        <p className="text-muted-foreground">
+          输入 {formatCounter(summary.input_tokens)} · 输出{" "}
+          {formatCounter(summary.output_tokens)} · 缓存创建{" "}
+          {formatCounter(summary.cache_creation_input_tokens)} · 缓存读取{" "}
+          {formatCounter(summary.cache_read_input_tokens)}
+        </p>
+        <p className="text-muted-foreground">
+          估算成本 {formatCost(summary.estimated_cost_usd)} · 工具{" "}
+          {job.tool_call_count} 次
+        </p>
+      </div>
       <div className="flex flex-wrap gap-2">
         <Badge variant="secondary">{jobStatusLabel(job.status)}</Badge>
+        <Badge variant="outline">
+          {accountingStatusLabel(summary.accounting_status)}
+        </Badge>
+        {summary.display_failure_stage ? (
+          <Badge variant="destructive">
+            {failureStageLabel(summary.display_failure_stage)}
+          </Badge>
+        ) : null}
         <Badge variant="outline">
           {runtimeStatusLabel(job.business_application_runtime_status)}
         </Badge>
@@ -184,11 +280,18 @@ export function RuntimeJobDetailPage() {
           ]}
         />
       </div>
+      <ExecutionAccountingPanel summary={query.data.execution_summary} />
+      <ModelCallsPanel
+        key={job.id}
+        jobId={job.id}
+        initialPage={query.data.model_calls}
+      />
       <ExecutionEvidenceTimeline
         job={job}
         dispatch={query.data.dispatch}
         steps={query.data.steps}
         toolCalls={query.data.tool_calls}
+        mcpOperationLinks={query.data.mcp_operation_links}
       />
       <DeliveryTimeline
         jobStatus={job.status}
@@ -216,16 +319,208 @@ export function RuntimeJobDetailPage() {
   )
 }
 
+function ExecutionAccountingPanel({ summary }: { summary: ExecutionSummary }) {
+  return (
+    <Card className="mt-4 shadow-none">
+      <CardHeader>
+        <CardTitle className="flex flex-wrap items-center gap-2">
+          执行核算
+          <Badge variant="outline">
+            {accountingStatusLabel(summary.accounting_status)}
+          </Badge>
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Agent 执行 {summary.execution_status} · Delivery {summary.delivery_status}
+        </p>
+      </CardHeader>
+      <CardContent>
+        <dl className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
+          <Metric label="总耗时" value={formatDuration(summary.total_duration_ms)} />
+          <Metric
+            label="模型 API 耗时"
+            value={formatDuration(summary.total_api_duration_ms)}
+          />
+          <Metric label="输入 Token" value={formatCounter(summary.input_tokens)} />
+          <Metric label="输出 Token" value={formatCounter(summary.output_tokens)} />
+          <Metric
+            label="缓存创建 Token"
+            value={formatCounter(summary.cache_creation_input_tokens)}
+          />
+          <Metric
+            label="缓存读取 Token"
+            value={formatCounter(summary.cache_read_input_tokens)}
+          />
+          <Metric
+            label="估算成本"
+            value={formatCost(summary.estimated_cost_usd)}
+          />
+          <Metric
+            label="轮次 / Runtime"
+            value={`${summary.observed_model_turn_count} / ${summary.runtime_invocation_count}`}
+          />
+        </dl>
+        <p className="mt-4 text-xs text-muted-foreground">
+          <span>{summary.api_retry_count} 次 API 重试</span>
+          {summary.display_failure_stage
+            ? ` · 失败位置 ${failureStageLabel(summary.display_failure_stage)}`
+            : " · 未定位到执行失败"}
+          {summary.retry_exhausted ? " · Job 重试已耗尽" : ""}
+        </p>
+      </CardContent>
+    </Card>
+  )
+}
+
+function ModelCallsPanel({
+  jobId,
+  initialPage,
+}: {
+  jobId: string
+  initialPage: ModelCallPage
+}) {
+  const [calls, setCalls] = useState<ModelCall[]>(initialPage.items)
+  const [hasMore, setHasMore] = useState(initialPage.has_more)
+  const [cursor, setCursor] = useState(initialPage.next_cursor)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const [loadError, setLoadError] = useState("")
+
+  async function loadMore() {
+    if (!cursor || isLoadingMore) return
+    setIsLoadingMore(true)
+    setLoadError("")
+    try {
+      const page = await listRuntimeJobModelCalls(jobId, cursor, initialPage.limit)
+      setCalls((current) => {
+        const knownIds = new Set(current.map((call) => call.id))
+        return [...current, ...page.items.filter((call) => !knownIds.has(call.id))]
+      })
+      setHasMore(page.has_more)
+      setCursor(page.next_cursor)
+    } catch {
+      setLoadError("加载更多模型请求失败，请重试。")
+    } finally {
+      setIsLoadingMore(false)
+    }
+  }
+
+  return (
+    <Card className="mt-4 shadow-none">
+      <CardHeader>
+        <CardTitle>模型请求</CardTitle>
+        <p className="text-sm text-muted-foreground">
+          只展示 SDK 安全标识和统计，不展示 Prompt、完整回复或原始 Provider 载荷。
+        </p>
+      </CardHeader>
+      <CardContent>
+        {calls.length ? (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[900px] text-left text-sm">
+              <thead className="border-b text-xs text-muted-foreground">
+                <tr>
+                  <th className="pb-2 font-medium">模型 / 标识</th>
+                  <th className="pb-2 font-medium">状态</th>
+                  <th className="pb-2 font-medium">耗时</th>
+                  <th className="pb-2 font-medium">Token</th>
+                  <th className="pb-2 font-medium">停止 / 错误</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {calls.map((call) => (
+                  <tr key={call.id}>
+                    <td className="py-3 pr-4">
+                      <p className="font-medium">{call.model_id}</p>
+                      {call.provider_request_id ? (
+                        <p className="mt-1 font-mono text-xs text-muted-foreground">
+                          Request {call.provider_request_id}
+                        </p>
+                      ) : null}
+                      {call.provider_message_id ? (
+                        <p className="font-mono text-xs text-muted-foreground">
+                          Message {call.provider_message_id}
+                        </p>
+                      ) : null}
+                      {!call.provider_request_id && !call.provider_message_id ? (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          标识不可用
+                        </p>
+                      ) : null}
+                    </td>
+                    <td className="py-3 pr-4">{call.status}</td>
+                    <td className="py-3 pr-4">
+                      {call.duration_source === "SDK_OBSERVED"
+                        ? `SDK 观测 · ${formatDuration(call.duration_ms)}`
+                        : "不可用"}
+                    </td>
+                    <td className="py-3 pr-4 text-xs">
+                      <p>
+                        输入 {formatCounter(call.input_tokens)} · 输出{" "}
+                        {formatCounter(call.output_tokens)}
+                      </p>
+                      <p className="mt-1 text-muted-foreground">
+                        缓存创建 {formatCounter(call.cache_creation_input_tokens)} ·
+                        缓存读取 {formatCounter(call.cache_read_input_tokens)}
+                      </p>
+                    </td>
+                    <td className="py-3 text-xs">
+                      {[
+                        call.stop_reason ? `停止 ${call.stop_reason}` : "",
+                        call.error_code ? `错误 ${call.error_code}` : "",
+                        call.error_summary || "",
+                      ]
+                        .filter(Boolean)
+                        .join(" · ") || "未知"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">没有可用的模型轮次统计。</p>
+        )}
+        {loadError ? (
+          <p className="mt-3 text-xs text-destructive" role="alert">
+            {loadError}
+          </p>
+        ) : null}
+        {hasMore && cursor ? (
+          <Button
+            className="mt-3"
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={isLoadingMore}
+            onClick={() => void loadMore()}
+          >
+            {isLoadingMore ? "加载中…" : "加载更多模型请求"}
+          </Button>
+        ) : null}
+      </CardContent>
+    </Card>
+  )
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="mt-1 font-medium">{value}</dd>
+    </div>
+  )
+}
+
 function ExecutionEvidenceTimeline({
   job,
   dispatch,
   steps,
   toolCalls,
+  mcpOperationLinks,
 }: {
   job: RuntimeJob
   dispatch: Record<string, unknown> | null | undefined
   steps: Array<Record<string, unknown>>
   toolCalls: Array<Record<string, unknown>>
+  mcpOperationLinks: Array<Record<string, string>>
 }) {
   return (
     <div className="mt-4 grid gap-4 xl:grid-cols-3">
@@ -312,6 +607,26 @@ function ExecutionEvidenceTimeline({
             </ol>
           ) : (
             <p className="text-sm text-muted-foreground">尚无工具调用。</p>
+          )}
+        </CardContent>
+      </Card>
+      <Card className="shadow-none">
+        <CardHeader>
+          <CardTitle>MCP 审计关联</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {mcpOperationLinks.length ? (
+            <ol className="space-y-3" aria-label="MCP 审计关联列表">
+              {mcpOperationLinks.map((link, index) => (
+                <TimelineItem
+                  key={`${link.agent_tool_call_id}:${link.mcp_call_id}:${index}`}
+                  label={`${link.server_code || "MCP"} · ${link.mcp_call_id}`}
+                  value={`Tool Call ${link.agent_tool_call_id}`}
+                />
+              ))}
+            </ol>
+          ) : (
+            <p className="text-sm text-muted-foreground">尚无 MCP 审计关联。</p>
           )}
         </CardContent>
       </Card>
@@ -666,6 +981,17 @@ const deliveryChunkStatusLabels: Record<string, string> = {
   SKIPPED: "已跳过",
 }
 
+const failureStageLabels: Record<string, string> = {
+  RUNTIME_START: "Runtime 启动",
+  RUNTIME_PROTOCOL: "Runtime 协议",
+  MCP_CONNECTION: "MCP 连接",
+  MODEL_API: "模型 API",
+  TOOL_PERMISSION: "工具权限",
+  TOOL_EXECUTION: "工具执行",
+  DELIVERY: "结果投递",
+  UNKNOWN: "未知位置",
+}
+
 function jobStatusLabel(status: string): string {
   return jobStatusLabels[status] ?? status
 }
@@ -698,6 +1024,16 @@ function deliveryAttemptStatusLabel(status: string): string {
 
 function deliveryChunkStatusLabel(status: string): string {
   return deliveryChunkStatusLabels[status] ?? status
+}
+
+function accountingStatusLabel(status: string): string {
+  if (status === "COMPLETE") return "统计完整"
+  if (status === "PARTIAL") return "统计部分可用"
+  return "统计不可用"
+}
+
+function failureStageLabel(stage: string): string {
+  return failureStageLabels[stage] ?? stage
 }
 
 function deliveryOutcomeText(
@@ -751,6 +1087,20 @@ function formatDate(value: string | null | undefined) {
   if (!value) return "-"
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
+}
+
+function formatDuration(value: number | null): string {
+  return value === null ? "未知" : `${(value / 1000).toFixed(2)} 秒`
+}
+
+function formatCounter(value: number | null): string {
+  return value === null ? "未知" : value.toLocaleString()
+}
+
+function formatCost(value: string | null): string {
+  if (value === null) return "未知"
+  const amount = Number(value)
+  return Number.isFinite(amount) ? `$${amount.toFixed(6)}` : "未知"
 }
 
 function policyText(value: {

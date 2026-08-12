@@ -14,6 +14,9 @@ from app.modules.identity.api.dependencies import (
 )
 from app.shared.exceptions import AppError, NotFound
 from app.shared.logging import new_correlation_id
+from app.modules.job.infrastructure.execution_audit_repository import (
+    ExecutionAuditRepository,
+)
 
 
 class DebugJobCreateRequest(BaseModel):
@@ -146,6 +149,33 @@ def build_agent_job_debug_router() -> Any:
         except NotFound as exc:
             raise HTTPException(status_code=404, detail=exc.safe_message) from exc
 
+    @router.get("/{job_id}/model-calls")
+    def list_model_calls(
+        request: Request,
+        job_id: str,
+        limit: int = 50,
+        cursor: str = "",
+    ) -> dict[str, Any]:
+        try:
+            container = _container(request)
+            principal = current_principal(request)
+            container.debug_job_access_service.require_job_read(
+                user_id=principal.user_id,
+                job_id=job_id,
+            )
+            return {
+                "job_id": job_id,
+                **ExecutionAuditRepository(container.database).list_model_calls(
+                    job_id,
+                    limit=limit,
+                    cursor=cursor or None,
+                ),
+            }
+        except NotFound as exc:
+            raise HTTPException(status_code=404, detail=exc.safe_message) from exc
+        except AppError as exc:
+            raise handle_exception(exc) from exc
+
     @router.get("/{job_id}/evidence")
     def job_evidence(request: Request, job_id: str) -> dict[str, Any]:
         try:
@@ -166,6 +196,23 @@ def build_agent_job_debug_router() -> Any:
                 (job_id,),
             )
             dispatch = container.agent_repository.get_dispatch_event_for_job(job_id)
+            execution_audit = ExecutionAuditRepository(container.database)
+            execution_summary = execution_audit.get_summary(job_id)
+            delivery_events = container.agent_repository.list_delivery_events(job_id)
+            delivery_status = (
+                str(delivery_events[-1].get("status") or "NOT_REQUESTED")
+                if delivery_events
+                else "NOT_REQUESTED"
+            )
+            execution_summary["delivery_status"] = delivery_status
+            execution_summary["display_failure_stage"] = (
+                "DELIVERY"
+                if execution_summary["execution_status"] == "SUCCEEDED"
+                and delivery_status in {"FAILED", "DEAD"}
+                else execution_summary["execution_failure_stage"]
+            )
+            model_calls = execution_audit.list_model_calls(job_id, limit=50)
+            tool_calls = container.agent_repository.list_tool_calls(job_id)
             return {
                 "job": {
                     **job,
@@ -179,9 +226,20 @@ def build_agent_job_debug_router() -> Any:
                 "session_ref": {"id": str(job["session_id"])},
                 "dispatch": asdict(dispatch) if dispatch else None,
                 "steps": container.agent_repository.list_steps(job_id),
-                "tool_calls": container.agent_repository.list_tool_calls(job_id),
+                "tool_calls": tool_calls,
+                "execution_summary": execution_summary,
+                "model_calls": model_calls,
+                "mcp_operation_links": [
+                    {
+                        "agent_tool_call_id": str(item.get("id") or ""),
+                        "mcp_call_id": str(item.get("mcp_call_id") or ""),
+                        "server_code": str(item.get("server_code") or ""),
+                    }
+                    for item in tool_calls
+                    if item.get("mcp_call_id")
+                ],
                 "deliveries": {
-                    "events": container.agent_repository.list_delivery_events(job_id),
+                    "events": delivery_events,
                     "attempts": container.agent_repository.list_delivery_attempts(job_id),
                     "chunks": container.agent_repository.list_delivery_chunks(job_id),
                 },

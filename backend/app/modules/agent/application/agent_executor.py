@@ -18,6 +18,9 @@ from app.modules.mcp_tool_runtime.job_snapshot import (
 from app.modules.job.domain.agent_job import AgentJob
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.repositories import AgentRepository
+from app.modules.job.infrastructure.execution_audit_repository import (
+    ExecutionAuditRepository,
+)
 from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import PermissionDenied
 
@@ -37,6 +40,7 @@ class AgentExecutor:
         business_authorization_service: BusinessAuthorizationService | None = None,
         mcp_tool_snapshot_service: JobMcpToolSnapshotService | None = None,
         after_runtime_result_hook: Callable[[], None] | None = None,
+        execution_audit_repository: ExecutionAuditRepository | None = None,
     ) -> None:
         self.repository = repository
         self.audit_service = audit_service
@@ -49,6 +53,9 @@ class AgentExecutor:
         self.business_authorization_service = business_authorization_service
         self.mcp_tool_snapshot_service = mcp_tool_snapshot_service
         self.after_runtime_result_hook = after_runtime_result_hook
+        self.execution_audit_repository = execution_audit_repository or ExecutionAuditRepository(
+            repository.database
+        )
         self._active_lock = threading.Lock()
         self._active_requests: dict[str, AgentRunRequest] = {}
 
@@ -207,6 +214,7 @@ class AgentExecutor:
                 worker_id=worker_id,
                 correlation_id=correlation_id,
             )
+            self.execution_audit_repository.rebuild_summary(job.id)
             return result.final_answer
         except Exception as exc:
             safe_message = getattr(exc, "safe_message", str(exc))
@@ -227,6 +235,7 @@ class AgentExecutor:
             )
             if fail_on_error:
                 self.status_service.fail(job.id, safe_message)
+            self.execution_audit_repository.rebuild_summary(job.id)
             diagnostics = getattr(exc, "diagnostics", {})
             runtime_provenance = (
                 diagnostics.get("runtime_provenance") if isinstance(diagnostics, dict) else None

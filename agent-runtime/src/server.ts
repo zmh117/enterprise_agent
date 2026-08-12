@@ -1,11 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
 import limits from "../contracts/v1/limits.json" with { type: "json" };
-import type {
-  CancelRequest,
-  DraftModelProbeRequest,
-  ModelProbeRequest
-} from "./generated/contracts.js";
+import type { DraftModelProbeRequest, ModelProbeRequest } from "./generated/contracts.js";
 import { assertContract } from "./generated/validators.js";
 import { RuntimeGrantError, RuntimeGrantVerifier } from "./grant.js";
 import {
@@ -29,6 +25,17 @@ import {
   EXPECTED_SDK_VERSION,
   type RuntimeConfig
 } from "./config.js";
+import {
+  assertRuntimeContract,
+  type RuntimeProtocolVersion
+} from "./runtime-contracts.js";
+
+type CancelRequest = {
+  protocol_version: RuntimeProtocolVersion;
+  invocation_id: string;
+  request_digest: string;
+  reason: "JOB_CANCELLED" | "WORKER_TIMEOUT" | "CLIENT_DISCONNECTED" | "WORKER_SHUTDOWN";
+};
 
 export interface RuntimeServerDependencies {
   readonly config: RuntimeConfig;
@@ -171,8 +178,8 @@ export function createRuntimeRequestHandler(
         sendJson(response, 200, {
           runtime: "typescript-v1",
           runtime_version: "0.1.0",
-          protocol_version: "1.1",
-          supported_protocol_versions: ["1.0", "1.1"],
+          protocol_version: "1.2",
+          supported_protocol_versions: ["1.0", "1.1", "1.2"],
           sdk_version: EXPECTED_SDK_VERSION,
           cli_version: EXPECTED_CLI_VERSION
         });
@@ -276,7 +283,14 @@ export function createRuntimeRequestHandler(
           return;
         }
         const payload = await readJsonBody(request);
-        assertContract("CancelRequest", payload);
+        const cancelVersion = (payload as { protocol_version?: unknown }).protocol_version;
+        if (cancelVersion !== "1.0" && cancelVersion !== "1.1" && cancelVersion !== "1.2") {
+          throw new ProtocolBoundaryError(
+            "runtime_protocol_unsupported",
+            "cancel request protocol version is unsupported"
+          );
+        }
+        assertRuntimeContract("CancelRequest", payload, cancelVersion);
         const cancel = payload as CancelRequest;
         if (
           cancel.invocation_id !== handle.request.invocation_id ||

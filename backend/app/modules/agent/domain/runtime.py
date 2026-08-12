@@ -74,6 +74,8 @@ class AgentRunResult:
     final_answer: str
     tool_events: list[dict[str, Any]] = field(default_factory=list)
     runtime_provenance: dict[str, Any] = field(default_factory=dict)
+    runtime_events: list[dict[str, Any]] = field(default_factory=list)
+    execution_accounting: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

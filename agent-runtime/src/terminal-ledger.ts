@@ -254,7 +254,11 @@ export class PostgresTerminalLedger implements TerminalLedger {
       try {
         event = JSON.parse(row.event_json);
         const protocolVersion = (event as { protocol_version?: unknown }).protocol_version;
-        if (protocolVersion !== "1.0" && protocolVersion !== "1.1") {
+        if (
+          protocolVersion !== "1.0" &&
+          protocolVersion !== "1.1" &&
+          protocolVersion !== "1.2"
+        ) {
           throw new TerminalLedgerConflictError();
         }
         assertRuntimeContract("RuntimeEvent", event, protocolVersion);
