@@ -223,7 +223,7 @@
       "additionalProperties": false,
       "required": ["server_code", "tools"],
       "properties": {
-        "server_code": {"const": "tool-mcp"},
+        "server_code": {"enum": ["tool-mcp", "ones-mcp"]},
         "tools": {
           "type": "array",
           "minItems": 1,
@@ -363,7 +363,7 @@
       ],
       "properties": {
         "tool_call_id": {"$ref": "#/$defs/Identifier"},
-        "server_code": {"const": "tool-mcp"},
+        "server_code": {"enum": ["tool-mcp", "ones-mcp"]},
         "tool_name": {"$ref": "#/$defs/Identifier"},
         "status": {"enum": ["STARTED", "SUCCEEDED", "FAILED", "DENIED"]},
         "request_summary": {"$ref": "#/$defs/JsonSummary"},

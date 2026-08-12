@@ -375,6 +375,46 @@ def test_agent_publication_pins_connection_and_job_records_safe_provenance() -> 
     )
 
 
+def test_agent_publication_persists_manifest_owned_ones_server_code() -> None:
+    c = container()
+    connection_revision = ready_connection(c)
+    agent = c.agent_config_service.get(AGENT_CODE)
+    config = agent_config(str(connection_revision["id"]))
+    config["mcp_tool_ids"] = ["get_schema_directory", "ones_work_item_search"]
+    draft = c.agent_config_service.save_draft(
+        actor_id=ADMIN_ID,
+        agent_code=AGENT_CODE,
+        expected_revision=int(agent["draft"]["revision"]),
+        config=config,
+    )
+    publication = c.agent_config_service.publish(
+        actor_id=ADMIN_ID,
+        agent_code=AGENT_CODE,
+        revision_id=str(draft["id"]),
+    )
+
+    assert {
+        (item["server_code"], item["tool_identifier"])
+        for item in publication["snapshot"]["mcp_tool_envelope"]
+    } == {
+        ("tool-mcp", "get_schema_directory"),
+        ("ones-mcp", "ones_work_item_search"),
+    }
+    facts = c.database.execute(
+        """
+        select server_code, tool_identifier
+          from agent_publication_mcp_tool
+         where agent_publication_id = ?
+         order by tool_identifier
+        """,
+        (publication["id"],),
+    )
+    assert facts == [
+        {"server_code": "tool-mcp", "tool_identifier": "get_schema_directory"},
+        {"server_code": "ones-mcp", "tool_identifier": "ones_work_item_search"},
+    ]
+
+
 def test_agent_list_degrades_missing_published_model_revision_instead_of_500() -> None:
     settings, c = web_container()
     connection_revision = ready_connection(c)

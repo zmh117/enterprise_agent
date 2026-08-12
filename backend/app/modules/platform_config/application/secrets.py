@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import base64
-import hashlib
 import json
 import os
 from typing import Protocol
@@ -9,6 +7,13 @@ from typing import Protocol
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.shared.exceptions import NonRetryableExecutionError, NotFound
+from app.shared.secret_crypto import (
+    decode_base64url,
+    encode_base64url,
+    master_key_id,
+    normalize_master_key,
+    zero_bytes,
+)
 
 from ..infrastructure.repository import PlatformConfigRepository
 from .validation import PlatformConfigValidationError, validate_code, validate_secret_ref
@@ -44,8 +49,8 @@ class EncryptedDbSecretProvider:
         master_key: str | None = None,
     ) -> None:
         self.repository = repository
-        self.master_key = _normalize_master_key(master_key if master_key is not None else "")
-        self.key_id = hashlib.sha256(self.master_key).hexdigest()[:16]
+        self.master_key = normalize_master_key(master_key if master_key is not None else "")
+        self.key_id = master_key_id(self.master_key)
 
     def resolve(self, ref: str) -> str:
         ref = validate_secret_ref(ref)
@@ -243,11 +248,11 @@ class EncryptedDbSecretProvider:
                 _aad(secret_id=secret_id, version=version),
             )
             return {
-                "ciphertext": _b64(ciphertext),
-                "nonce": _b64(nonce),
+                "ciphertext": encode_base64url(ciphertext),
+                "nonce": encode_base64url(nonce),
             }
         finally:
-            _zero(plaintext)
+            zero_bytes(plaintext)
 
     def _decrypt(
         self,
@@ -268,8 +273,8 @@ class EncryptedDbSecretProvider:
         try:
             plaintext = bytearray(
                 AESGCM(self.master_key).decrypt(
-                    _unb64(nonce),
-                    _unb64(ciphertext),
+                    decode_base64url(nonce),
+                    decode_base64url(ciphertext),
                     aad,
                 )
             )
@@ -281,7 +286,7 @@ class EncryptedDbSecretProvider:
             ) from None
         finally:
             if plaintext is not None:
-                _zero(plaintext)
+                zero_bytes(plaintext)
         return plaintext.decode("utf-8")
 
     def _require_value(self, value: str) -> None:
@@ -318,36 +323,5 @@ def mask_secret(value: str) -> str:
     return "********" if str(value or "") else ""
 
 
-def _normalize_master_key(value: str) -> bytes:
-    text = str(value or "").strip()
-    if not text or text in {"change-me", "<your-master-key>"}:
-        raise NonRetryableExecutionError(
-            "Master Key file is required for encrypted DB secrets",
-            safe_message="加密数据库凭据需要配置 Master Key 文件",
-        )
-    for candidate in (text, text + "=" * (-len(text) % 4)):
-        try:
-            decoded = base64.urlsafe_b64decode(candidate.encode("utf-8"))
-        except Exception:
-            continue
-        if len(decoded) == 32:
-            return decoded
-    return hashlib.sha256(text.encode("utf-8")).digest()
-
-
-def _b64(value: bytes) -> str:
-    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
-
-
-def _unb64(value: str) -> bytes:
-    padded = value + "=" * (-len(value) % 4)
-    return base64.urlsafe_b64decode(padded.encode("ascii"))
-
-
 def _aad(*, secret_id: str, version: int) -> bytes:
     return f"platform-secret|v1|{secret_id}|{version}".encode("utf-8")
-
-
-def _zero(value: bytearray) -> None:
-    for index in range(len(value)):
-        value[index] = 0

@@ -22,6 +22,7 @@ from app.shared.master_key import load_master_key_settings
 
 from .grant import RuntimeGrantError, RuntimeGrantVerifier
 from .invocations import (
+    InvocationSecretContext,
     InvocationConflictError,
     PythonInvocationRegistry,
     PythonTerminalLedger,
@@ -128,7 +129,10 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
                 detail={"code": "runtime_kind_mismatch", "message": "Runtime 请求目标不匹配"},
             )
         runtime.grant_verifier.verify(_bearer(authorization), validated)
-        invocation = runtime.registry.acquire(validated)
+        invocation = runtime.registry.acquire(
+            validated,
+            _principal_secret_context(request, validated),
+        )
 
         def stream() -> Any:
             for event in invocation.stream():
@@ -272,6 +276,10 @@ def _default_dependencies() -> PythonRuntimeDependencies:
         binding_resolver,
         limits=settings.execution,
         mcp_server_url=os.getenv("MCP_TOOL_SERVER_URL", "http://tool-mcp:9103/mcp"),
+        ones_mcp_server_url=os.getenv(
+            "ONES_MCP_SERVER_URL",
+            "http://ones-mcp:9104/mcp",
+        ),
         fake_provider_mode=_fake_provider_mode(settings.environment),
     )
     ledger = PythonTerminalLedger(
@@ -296,6 +304,40 @@ def _bearer(authorization: str) -> str:
     if not authorization.startswith("Bearer "):
         return ""
     return authorization.removeprefix("Bearer ").strip()
+
+
+def _principal_secret_context(
+    request: Request,
+    payload: dict[str, Any],
+) -> InvocationSecretContext:
+    values = request.headers.getlist("x-mcp-principal-token")
+    requires_principal = any(
+        str(server.get("server_code") or "") == "ones-mcp"
+        for server in payload.get("mcp_servers") or []
+        if isinstance(server, dict)
+    )
+    if len(values) > 1:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "runtime_principal_token_invalid", "message": "平台身份凭证无效"},
+        )
+    token = values[0].strip() if values else ""
+    if requires_principal and not token:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "runtime_principal_token_missing", "message": "缺少平台身份凭证"},
+        )
+    if not requires_principal and token:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "runtime_principal_token_unexpected", "message": "平台身份凭证无效"},
+        )
+    if len(token) > 8192 or "\r" in token or "\n" in token:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "runtime_principal_token_invalid", "message": "平台身份凭证无效"},
+        )
+    return InvocationSecretContext(principal_token=token)
 
 
 def _constant_token(expected: str, provided: str) -> bool:

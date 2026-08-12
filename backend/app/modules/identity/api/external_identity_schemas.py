@@ -36,6 +36,18 @@ class TeamResponse(StrictResponse):
     name: str
 
 
+class ExternalCredentialStatusResponse(StrictResponse):
+    configured: bool
+    status: Literal["ACTIVE", "REAUTH_REQUIRED", "DISABLED", "UNBOUND"]
+    revision: int = Field(ge=1)
+    verified_at: str
+    token_refreshed_at: str | None = None
+    last_used_at: str | None = None
+    reauth_required_at: str | None = None
+    disabled_at: str | None = None
+    unbound_at: str | None = None
+
+
 class OnesIdentityResponseBase(StrictResponse):
     provider: Literal["ones"]
     user_name: str
@@ -43,6 +55,7 @@ class OnesIdentityResponseBase(StrictResponse):
     verified_at: str | None = None
     user_id: str
     teams: list[TeamResponse]
+    credential: ExternalCredentialStatusResponse | None
 
 
 class SelfOnesIdentityResponse(OnesIdentityResponseBase):

@@ -14,12 +14,26 @@ from app.shared.database import Database
 from .sdk_executor import PythonExecutionOutcome
 
 
+class InvocationSecretContextPort(Protocol):
+    @property
+    def principal_token(self) -> str: ...
+
+
 class PythonRuntimeExecutor(Protocol):
     def execute(
         self,
         request: dict[str, Any],
         cancel_event: threading.Event,
+        secret_context: InvocationSecretContextPort,
     ) -> PythonExecutionOutcome: ...
+
+
+@dataclass(frozen=True)
+class InvocationSecretContext:
+    principal_token: str = ""
+
+    def __repr__(self) -> str:
+        return "InvocationSecretContext(principal_token=<hidden>)"
 
 
 class InvocationConflictError(RuntimeError):
@@ -255,9 +269,11 @@ class RuntimeInvocation:
         self,
         request: dict[str, Any],
         *,
+        secret_context: InvocationSecretContext | None = None,
         persisted_events: tuple[dict[str, Any], ...] = (),
     ) -> None:
         self.request = request
+        self.secret_context = secret_context or InvocationSecretContext()
         self.cancel_event = threading.Event()
         self._events = list(persisted_events)
         self._terminal = bool(
@@ -350,7 +366,11 @@ class PythonInvocationRegistry:
         self._invocations: dict[str, RuntimeInvocation] = {}
         self._lock = threading.Lock()
 
-    def acquire(self, request: dict[str, Any]) -> RuntimeInvocation:
+    def acquire(
+        self,
+        request: dict[str, Any],
+        secret_context: InvocationSecretContext | None = None,
+    ) -> RuntimeInvocation:
         invocation_id = str(request["invocation_id"])
         with self._lock:
             existing = self._invocations.get(invocation_id)
@@ -364,17 +384,22 @@ class PythonInvocationRegistry:
                     raise InvocationConflictError("Invocation digest conflict")
                 invocation = RuntimeInvocation(
                     request,
+                    secret_context=secret_context,
                     persisted_events=persisted.events,
                 )
                 self._invocations[invocation_id] = invocation
                 return invocation
             claim = self._ledger.claim(request, self._owner_instance_id)
             if claim.status == "ORPHANED":
-                invocation = RuntimeInvocation(request, persisted_events=claim.events)
+                invocation = RuntimeInvocation(
+                    request,
+                    secret_context=secret_context,
+                    persisted_events=claim.events,
+                )
                 self._invocations[invocation_id] = invocation
                 self._fail_orphaned(invocation)
                 return invocation
-            invocation = RuntimeInvocation(request)
+            invocation = RuntimeInvocation(request, secret_context=secret_context)
             self._invocations[invocation_id] = invocation
             threading.Thread(
                 target=self._run,
@@ -412,7 +437,11 @@ class PythonInvocationRegistry:
         request = invocation.request
         self._persist_and_emit(invocation, "execution_started", _fallback_provenance(request))
         try:
-            outcome = self._executor.execute(request, invocation.cancel_event)
+            outcome = self._executor.execute(
+                request,
+                invocation.cancel_event,
+                invocation.secret_context,
+            )
         except Exception:
             outcome = PythonExecutionOutcome(
                 status="FAILED",

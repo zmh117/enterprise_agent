@@ -21,7 +21,9 @@ import type { ExecutionEmitter } from "../src/invocation-registry.js";
 import type { ResolvedModelBinding } from "../src/model-binding.js";
 
 function request(): AgentExecutionRequestV1 {
-  return structuredClone(executionRequestFixture) as AgentExecutionRequestV1;
+  const value = structuredClone(executionRequestFixture) as AgentExecutionRequestV1;
+  value.mcp_servers[0]!.server_code = "tool-mcp";
+  return value;
 }
 
 function binding(model = "deepseek-chat", apiKey = "model-key-a"): ResolvedModelBinding {
@@ -169,6 +171,44 @@ test("query adapter uses isolated settings and gates every MCP call through canU
       ["tool_event", "SUCCEEDED"]
     ]
   );
+});
+
+test("ONES MCP receives the invocation-only Principal Token and tool-mcp never does", async () => {
+  const value = structuredClone(executionRequestFixture) as AgentExecutionRequestV1;
+  let captured: Options | undefined;
+  const runtime = new ClaudeAgentRuntimeExecutor(
+    { resolve: async () => binding() },
+    queryFrom(async function* (options) {
+      captured = options;
+      yield successResult();
+    }),
+    workspace()
+  );
+  const principal = "test-only-principal-token";
+
+  const terminal = await runtime.execute(value, emitter().value, {
+    principalToken: principal
+  });
+
+  assert.equal(terminal.status, "SUCCEEDED");
+  assert.deepEqual(Object.keys(captured?.mcpServers ?? {}), ["ones"]);
+  const onesServer = captured?.mcpServers?.ones as any;
+  assert.equal(onesServer?.url, "http://ones-mcp:9104/mcp");
+  assert.equal(onesServer?.headers?.Authorization, `Bearer ${principal}`);
+  assert.equal(JSON.stringify(terminal).includes(principal), false);
+
+  const toolRequest = request();
+  let toolCaptured: Options | undefined;
+  await new ClaudeAgentRuntimeExecutor(
+    { resolve: async () => binding() },
+    queryFrom(async function* (options) {
+      toolCaptured = options;
+      yield successResult();
+    }),
+    workspace()
+  ).execute(toolRequest, emitter().value);
+  const toolServer = toolCaptured?.mcpServers?.tools as any;
+  assert.equal(Object.hasOwn(toolServer?.headers ?? {}, "Authorization"), false);
 });
 
 test("no eligible tools means no MCP server and forged/max-budget calls are denied", async () => {

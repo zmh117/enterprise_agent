@@ -243,8 +243,8 @@ class GoldenTransport:
                 "timestamp": "2026-08-09T00:00:01Z",
                 "payload": {
                     "tool_call_id": "tool-call-1",
-                    "server_code": "tool-mcp",
-                    "tool_name": "query_database",
+                    "server_code": self.request["mcp_servers"][0]["server_code"],
+                    "tool_name": self.request["mcp_servers"][0]["tools"][0]["tool_name"],
                     "status": "SUCCEEDED",
                     "request_summary": {"project_code": "project-1"},
                     "response_summary": {"count": 1},
@@ -295,7 +295,12 @@ class GoldenTransport:
         return {"status": "cancelled"}
 
 
-def _client(transport: Any, *, events: list[dict[str, Any]] | None = None):
+def _client(
+    transport: Any,
+    *,
+    events: list[dict[str, Any]] | None = None,
+    principal_token_issuer: Any | None = None,
+):
     private_pem, public_pem = _private_key()
     captured_events = events if events is not None else []
     return (
@@ -306,6 +311,7 @@ def _client(transport: Any, *, events: list[dict[str, Any]] | None = None):
                 allow_insecure_internal_http=True,
             ),
             grant_issuer=RuntimeGrantIssuer(private_pem, now=lambda: 1_800_000_000),
+            principal_token_issuer=principal_token_issuer,
             transport=transport,
             event_sink=lambda _job_id, event: captured_events.append(event),
         ),
@@ -350,6 +356,76 @@ def test_worker_builds_exact_request_and_validates_ndjson_terminal() -> None:
     ]
     assert "access_token" not in transport.request["mcp_servers"][0]
     assert "url" not in transport.request["mcp_servers"][0]
+
+
+class _PrincipalTokenIssuer:
+    def __init__(self) -> None:
+        self.job_ids: list[str] = []
+
+    def issue_for_job(self, *, job_id: str) -> str:
+        self.job_ids.append(job_id)
+        return "test-only-principal-token"
+
+
+def test_worker_projects_principal_only_to_runtime_header_for_ones_mcp() -> None:
+    issuer = _PrincipalTokenIssuer()
+    transport = GoldenTransport()
+    captured_events: list[dict[str, Any]] = []
+    client, _ = _client(
+        transport,
+        events=captured_events,
+        principal_token_issuer=issuer,
+    )
+    request = _request()
+    request = replace(
+        request,
+        context=replace(
+            request.context,
+            allowed_tools=["ones_work_item_search"],
+            mcp_bindings=(
+                McpRuntimeBinding(
+                    server_code="ones-mcp",
+                    tool_name="ones_work_item_search",
+                    required_scope="mcp:ones-mcp:ones_work_item_search:invoke",
+                    tool_schema_hash="c" * 64,
+                ),
+            ),
+        ),
+    )
+
+    result = client.run(request)
+
+    assert result.final_answer == "final answer"
+    assert issuer.job_ids == ["job-1"]
+    assert transport.headers["X-MCP-Principal-Token"] == "test-only-principal-token"
+    assert transport.request["mcp_servers"][0]["server_code"] == "ones-mcp"
+    persisted = json.dumps([transport.request, captured_events])
+    assert "test-only-principal-token" not in persisted
+
+
+def test_worker_fails_closed_when_ones_mcp_has_no_principal_issuer() -> None:
+    client, _ = _client(GoldenTransport())
+    request = _request()
+    request = replace(
+        request,
+        context=replace(
+            request.context,
+            allowed_tools=["ones_work_item_search"],
+            mcp_bindings=(
+                McpRuntimeBinding(
+                    server_code="ones-mcp",
+                    tool_name="ones_work_item_search",
+                    required_scope="mcp:ones-mcp:ones_work_item_search:invoke",
+                    tool_schema_hash="c" * 64,
+                ),
+            ),
+        ),
+    )
+
+    with pytest.raises(NonRetryableExecutionError) as raised:
+        client.run(request)
+
+    assert raised.value.error_code == "principal_token_issuer_unavailable"
 
 
 def test_worker_maps_runtime_failure_and_preserves_prior_tool_events() -> None:

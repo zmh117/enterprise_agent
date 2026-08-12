@@ -33,7 +33,7 @@ class JobMcpToolSnapshotService:
         del requester_id, application_id, application_config_hash, business_authorization
         tools = self.database.execute(
             """
-            select tool_identifier, schema_hash
+            select server_code, tool_identifier, schema_hash
               from business_application_publication_mcp_tool
              where application_publication_id = ?
                and agent_publication_id = ?
@@ -69,7 +69,7 @@ class JobMcpToolSnapshotService:
         del requester_id, business_authorization
         tools = self.database.execute(
             """
-            select tool_identifier, schema_hash
+            select server_code, tool_identifier, schema_hash
               from agent_publication_mcp_tool
              where agent_publication_id = ?
              order by tool_identifier
@@ -106,10 +106,14 @@ class JobMcpToolSnapshotService:
             )
         for tool in snapshot.get("tools") or []:
             definition = MCP_TOOL_MANIFEST.get(str(tool.get("tool_identifier") or ""))
-            if definition is None or definition.schema_hash != str(tool.get("schema_hash") or ""):
+            if (
+                definition is None
+                or definition.server_code != str(tool.get("server_code") or "")
+                or definition.schema_hash != str(tool.get("schema_hash") or "")
+            ):
                 raise ToolPolicyError(
-                    "Job MCP Tool schema drift detected",
-                    safe_message="MCP 工具 Schema 已变化，请重新发布 Agent 和应用",
+                    "Job MCP Tool server or schema drift detected",
+                    safe_message="MCP 工具服务或 Schema 已变化，请重新发布 Agent 和应用",
                     error_code="mcp_tool_schema_drift",
                 )
         return {
@@ -178,15 +182,16 @@ class JobMcpToolSnapshotService:
             if definition is None:
                 continue
             schema_hash = str(row.get("schema_hash") or definition.schema_hash)
-            if schema_hash != definition.schema_hash:
+            server_code = str(row.get("server_code") or "")
+            if schema_hash != definition.schema_hash or server_code != definition.server_code:
                 raise ToolPolicyError(
-                    "Publication MCP Tool schema does not match the code manifest",
-                    safe_message="发布版本中的 MCP 工具 Schema 已失效，请重新发布",
+                    "Publication MCP Tool server or schema does not match the code manifest",
+                    safe_message="发布版本中的 MCP 工具服务或 Schema 已失效，请重新发布",
                     error_code="mcp_tool_schema_drift",
                 )
             normalized_tools.append(
                 {
-                    "server_code": "tool-mcp",
+                    "server_code": definition.server_code,
                     "tool_identifier": identifier,
                     "schema_hash": definition.schema_hash,
                     "resource_kind": definition.resource_kind,

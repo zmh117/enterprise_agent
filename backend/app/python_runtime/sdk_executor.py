@@ -4,7 +4,7 @@ import importlib.metadata
 import os
 import threading
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import urlsplit
 
 from app.modules.agent.domain.runtime import (
@@ -14,11 +14,19 @@ from app.modules.agent.domain.runtime import (
 )
 from app.python_runtime.claude_agent_sdk_adapter import (
     RealClaudeCodeAgentClient,
+    _append_cli_stderr,
+    _build_system_prompt,
 )
 from app.shared.config import ExecutionSettings
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
 
 from .model_binding import PythonModelBindingResolver
+
+
+class InvocationSecretContextPort(Protocol):
+    @property
+    def principal_token(self) -> str: ...
+
 
 PYTHON_RUNTIME_VERSION = "0.1.0"
 PYTHON_RUNTIME_KIND = "python-v1"
@@ -36,7 +44,7 @@ class PythonExecutionOutcome:
 
 
 class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
-    """Existing Python SDK adapter with only a deployment-fixed remote MCP server."""
+    """Python SDK adapter with two code-owned, deployment-fixed MCP servers."""
 
     def __init__(
         self,
@@ -44,6 +52,8 @@ class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
         limits: ExecutionSettings,
         api_key: str,
         mcp_server_url: str,
+        ones_mcp_server_url: str = "http://ones-mcp:9104/mcp",
+        principal_token: str = "",
     ) -> None:
         super().__init__(
             model="",
@@ -53,21 +63,81 @@ class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
             secret_resolver=lambda _ref: api_key,
         )
         self._mcp_server_url = mcp_server_url
+        self._ones_mcp_server_url = ones_mcp_server_url
+        self._principal_token = principal_token
 
-    def _build_mcp_server(self, request: AgentRunRequest) -> dict[str, Any]:
-        return {
-            "type": "http",
-            "url": self._mcp_server_url,
-            "headers": {
-                "X-Correlation-Id": f"job:{request.job_id}",
-                "X-Job-Id": request.job_id,
-                "X-App-User-Id": request.user_id,
-                "X-Project-Code": request.project_code,
-                "X-Invocation-Id": request.invocation_id,
-                "X-Agent-Publication-Id": request.context.publication_id,
-                "X-Application-Publication-Id": (request.context.application_publication_id),
-            },
+    def _build_mcp_server(self, request: AgentRunRequest) -> dict[str, dict[str, Any]]:
+        shared_headers = {
+            "X-Correlation-Id": f"job:{request.job_id}",
+            "X-Job-Id": request.job_id,
+            "X-App-User-Id": request.user_id,
+            "X-Project-Code": request.project_code,
+            "X-Invocation-Id": request.invocation_id,
+            "X-Agent-Publication-Id": request.context.publication_id,
+            "X-Application-Publication-Id": (request.context.application_publication_id),
         }
+        servers: dict[str, dict[str, Any]] = {}
+        server_codes = {binding.server_code for binding in request.context.mcp_bindings} or (
+            {"tool-mcp"} if request.context.allowed_tools else set()
+        )
+        if "tool-mcp" in server_codes:
+            servers["tool_mcp"] = {
+                "type": "http",
+                "url": self._mcp_server_url,
+                "headers": dict(shared_headers),
+            }
+        if "ones-mcp" in server_codes:
+            if not self._principal_token:
+                raise NonRetryableExecutionError(
+                    "Python Runtime ONES MCP Principal Token is missing",
+                    safe_message="当前调用缺少平台身份凭证",
+                    error_code="runtime_principal_token_missing",
+                )
+            servers["ones_mcp"] = {
+                "type": "http",
+                "url": self._ones_mcp_server_url,
+                "headers": {
+                    **shared_headers,
+                    "Authorization": f"Bearer {self._principal_token}",
+                },
+            }
+        return servers
+
+    def _build_options(
+        self,
+        sdk: Any,
+        context: AgentExecutionContext,
+        server: Any,
+        cli_stderr: list[str],
+        binding: Any,
+    ) -> Any:
+        exact_tools = []
+        for item in context.mcp_bindings:
+            alias = "ones_mcp" if item.server_code == "ones-mcp" else "tool_mcp"
+            exact_tools.append(f"mcp__{alias}__{item.tool_name}")
+        if not context.mcp_bindings:
+            exact_tools = [f"mcp__tool_mcp__{name}" for name in context.allowed_tools]
+        return sdk.options(
+            model=binding.model,
+            system_prompt=_build_system_prompt(context),
+            mcp_servers=server,
+            allowed_tools=exact_tools,
+            disallowed_tools=[
+                "Bash",
+                "Write",
+                "Edit",
+                "WebFetch",
+                "WebSearch",
+                "NotebookEdit",
+            ],
+            permission_mode="dontAsk",
+            max_turns=context.max_turns,
+            stderr=lambda line: _append_cli_stderr(
+                cli_stderr,
+                line,
+                self.limits.max_tool_response_chars,
+            ),
+        )
 
 
 class PythonRuntimeSdkExecutor:
@@ -77,6 +147,7 @@ class PythonRuntimeSdkExecutor:
         *,
         limits: ExecutionSettings,
         mcp_server_url: str,
+        ones_mcp_server_url: str = "http://ones-mcp:9104/mcp",
         sdk_version: str | None = None,
         cli_version: str | None = None,
         fake_provider_mode: bool = False,
@@ -84,6 +155,10 @@ class PythonRuntimeSdkExecutor:
         self._bindings = binding_resolver
         self._limits = limits
         self._mcp_server_url = _fixed_mcp_server_url(mcp_server_url)
+        self._ones_mcp_server_url = _fixed_mcp_server_url(
+            ones_mcp_server_url,
+            server_code="ones-mcp",
+        )
         self._sdk_version: str = sdk_version or importlib.metadata.version("claude-agent-sdk")
         self._cli_version: str = (
             cli_version or os.getenv("PYTHON_AGENT_RUNTIME_CLI_VERSION", "2.1.226") or "2.1.226"
@@ -102,6 +177,7 @@ class PythonRuntimeSdkExecutor:
         self,
         request: dict[str, Any],
         cancel_event: threading.Event,
+        secret_context: InvocationSecretContextPort | None = None,
     ) -> PythonExecutionOutcome:
         resolved = self._bindings.resolve(
             str(request["model_connection"]["revision_id"]),
@@ -117,6 +193,8 @@ class PythonRuntimeSdkExecutor:
             limits=self._limits,
             api_key=resolved.api_key,
             mcp_server_url=self._mcp_server_url,
+            ones_mcp_server_url=self._ones_mcp_server_url,
+            principal_token=(secret_context.principal_token if secret_context else ""),
         )
         try:
             result = client.run(run_request)
@@ -125,7 +203,7 @@ class PythonRuntimeSdkExecutor:
                 status="FAILED",
                 usage={"input_tokens": 0, "output_tokens": 0},
                 runtime_provenance=provenance,
-                tool_events=_normalize_tool_events(exc.tool_events),
+                tool_events=_normalize_tool_events(exc.tool_events, request),
                 failure={
                     "code": str(exc.error_code or "runtime_transport_error"),
                     "retry_class": "TRANSIENT",
@@ -137,7 +215,7 @@ class PythonRuntimeSdkExecutor:
                 status="FAILED",
                 usage={"input_tokens": 0, "output_tokens": 0},
                 runtime_provenance=provenance,
-                tool_events=_normalize_tool_events(exc.tool_events),
+                tool_events=_normalize_tool_events(exc.tool_events, request),
                 failure={
                     "code": str(exc.error_code or "runtime_configuration_error"),
                     "retry_class": "CONFIGURATION",
@@ -151,7 +229,7 @@ class PythonRuntimeSdkExecutor:
             final_answer=result.final_answer,
             usage={"input_tokens": 0, "output_tokens": 0},
             runtime_provenance=provenance,
-            tool_events=_normalize_tool_events(result.tool_events),
+            tool_events=_normalize_tool_events(result.tool_events, request),
         )
 
     def probe(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -170,6 +248,7 @@ class PythonRuntimeSdkExecutor:
                 limits=self._limits,
                 api_key=resolved.api_key,
                 mcp_server_url=self._mcp_server_url,
+                ones_mcp_server_url=self._ones_mcp_server_url,
             )
             client.test_connection(
                 resolved.binding,
@@ -258,12 +337,12 @@ class PythonRuntimeSdkExecutor:
         )
 
 
-def _fixed_mcp_server_url(raw: str) -> str:
+def _fixed_mcp_server_url(raw: str, *, server_code: str = "tool-mcp") -> str:
     parsed = urlsplit(raw.strip())
     host = (parsed.hostname or "").lower()
     if (
         parsed.scheme not in {"http", "https"}
-        or host not in {"tool-mcp", "localhost", "127.0.0.1", "::1"}
+        or host not in {server_code, "localhost", "127.0.0.1", "::1"}
         or parsed.username is not None
         or parsed.password is not None
         or parsed.query
@@ -320,9 +399,28 @@ def _agent_request(request: dict[str, Any], binding: Any) -> AgentRunRequest:
     )
 
 
-def _normalize_tool_events(events: list[dict[str, Any]]) -> tuple[dict[str, Any], ...]:
+def _normalize_tool_events(
+    events: list[dict[str, Any]],
+    request: dict[str, Any],
+) -> tuple[dict[str, Any], ...]:
+    published = {
+        str(tool["tool_name"]): str(server["server_code"])
+        for server in request.get("mcp_servers") or []
+        for tool in server.get("tools") or []
+    }
     normalized: list[dict[str, Any]] = []
     for index, event in enumerate(events[:128], start=1):
+        tool_name = str(event.get("tool_name") or "unknown_tool")
+        alias_server = ""
+        if tool_name.startswith("mcp__"):
+            parts = tool_name.split("__", 2)
+            if len(parts) == 3:
+                alias_server = {
+                    "tool_mcp": "tool-mcp",
+                    "ones_mcp": "ones-mcp",
+                }.get(parts[1], "")
+                tool_name = parts[2]
+        server_code = published.get(tool_name, alias_server or "tool-mcp")
         raw_status = str(event.get("status") or "FAILED").upper()
         status = {
             "REJECTED": "DENIED",
@@ -332,8 +430,8 @@ def _normalize_tool_events(events: list[dict[str, Any]]) -> tuple[dict[str, Any]
         }.get(raw_status, "FAILED")
         item: dict[str, Any] = {
             "tool_call_id": str(event.get("tool_call_id") or f"python-tool-{index}"),
-            "server_code": "tool-mcp",
-            "tool_name": str(event.get("tool_name") or "unknown_tool"),
+            "server_code": server_code,
+            "tool_name": tool_name,
             "status": status,
             "request_summary": {"available": bool(event.get("request_payload"))},
             "response_summary": {"available": bool(event.get("response_summary"))},

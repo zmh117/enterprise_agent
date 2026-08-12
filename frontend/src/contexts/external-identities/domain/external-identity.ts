@@ -45,6 +45,19 @@ export const selfOnesIdentitySchema = z.object({
   verified_at: z.string().nullable().optional(),
   user_id: z.string(),
   teams: z.array(onesTeamSchema),
+  credential: z
+    .object({
+      configured: z.boolean(),
+      status: z.enum(["ACTIVE", "REAUTH_REQUIRED", "DISABLED", "UNBOUND"]),
+      revision: z.number().int().positive(),
+      verified_at: z.string(),
+      token_refreshed_at: z.string().nullable(),
+      last_used_at: z.string().nullable(),
+      reauth_required_at: z.string().nullable(),
+      disabled_at: z.string().nullable(),
+      unbound_at: z.string().nullable(),
+    })
+    .nullable(),
 })
 
 export const adminOnesIdentitySchema = selfOnesIdentitySchema.extend({

@@ -49,6 +49,40 @@ export function validateExecutionRequest(
     );
   }
   const request = payload as AgentExecutionRequestV1;
+  const serverCodes = request.mcp_servers.map((server) => server.server_code);
+  if (new Set(serverCodes).size !== serverCodes.length) {
+    throw new ProtocolBoundaryError(
+      "runtime_mcp_server_duplicate",
+      "each fixed MCP server may appear at most once"
+    );
+  }
+  for (const server of request.mcp_servers) {
+    const toolNames = server.tools.map((tool) => tool.tool_name);
+    if (new Set(toolNames).size !== toolNames.length) {
+      throw new ProtocolBoundaryError(
+        "runtime_mcp_tool_duplicate",
+        "each MCP Tool may appear at most once per server"
+      );
+    }
+    if (
+      server.server_code === "ones-mcp" &&
+      toolNames.some((toolName) => toolName !== "ones_work_item_search")
+    ) {
+      throw new ProtocolBoundaryError(
+        "runtime_mcp_tool_server_mismatch",
+        "ones-mcp only accepts the fixed ONES query Tool"
+      );
+    }
+    if (
+      server.server_code === "tool-mcp" &&
+      toolNames.includes("ones_work_item_search")
+    ) {
+      throw new ProtocolBoundaryError(
+        "runtime_mcp_tool_server_mismatch",
+        "ONES query Tool cannot be routed to tool-mcp"
+      );
+    }
+  }
   const actual = canonicalRequestDigest(request as unknown as Record<string, unknown>);
   if (actual !== request.request_digest) {
     throw new ProtocolBoundaryError(

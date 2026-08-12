@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import tomllib
 from typing import Any
 
 import pytest
+import yaml
 
 from services.ones_mcp_server.contracts import (
     ISSUE_TYPES,
@@ -18,6 +20,7 @@ from services.ones_mcp_server.contracts import (
     ProviderContractError,
     validate_provider_target,
 )
+from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -102,6 +105,10 @@ def test_first_phase_ones_contract_is_single_fixed_readonly_tool() -> None:
     assert LOGIN_PATH == "/project/api/project/auth/login"
     assert WORK_ITEM_SEARCH_PATH == "/project/api/project/items/graphql"
     assert WORK_ITEM_SEARCH_DOCUMENT.startswith("query SearchWorkItems(")
+    definition = MCP_TOOL_MANIFEST[TOOL_IDENTIFIER]
+    assert definition.server_code == SERVER_CODE
+    assert definition.input_schema == TOOL_INPUT_SCHEMA
+    assert definition.read_only is True
 
 
 def test_provider_target_requires_https_except_explicit_local_mock() -> None:
@@ -137,3 +144,82 @@ def test_provider_target_requires_https_except_explicit_local_mock() -> None:
                 app_env=environment,
                 allow_insecure_local=allow_insecure,
             )
+
+
+def test_compose_keeps_principal_keys_provider_config_and_runtime_urls_separated() -> None:
+    compose = yaml.safe_load((REPOSITORY_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    services = compose["services"]
+    ones = services["ones-mcp"]
+    assert ones["build"]["target"] == "ones-mcp"
+    assert ones["read_only"] is True
+    assert "ports" not in ones
+    assert ones["expose"] == ["9104"]
+    assert set(ones["networks"]) == {"agent-runtime-control", "provider-egress"}
+    assert set(ones["secrets"]) == {"app_config_master_key", "principal_jwks"}
+    assert ones["environment"]["PRINCIPAL_JWKS_FILE"] == ("/run/secrets/principal_jwks")
+    assert ones["environment"]["ONES_MCP_PROVIDER_BASE_URL"] == (
+        "${ONES_MCP_PROVIDER_BASE_URL:-http://ones-mock:19121}"
+    )
+    assert ones["environment"]["ONES_MCP_PROVIDER_ALLOWED_HOSTS"] == (
+        "${ONES_MCP_PROVIDER_ALLOWED_HOSTS:-ones-mock}"
+    )
+    assert ones["environment"]["ONES_MCP_PROVIDER_ALLOW_INSECURE_LOCAL"] == (
+        "${ONES_MCP_PROVIDER_ALLOW_INSECURE_LOCAL:-true}"
+    )
+    assert ones["depends_on"]["ones-mock"]["condition"] == "service_healthy"
+    assert not {
+        "ONES_IDENTITY_BASE_URL",
+        "ONES_IDENTITY_ALLOWED_HOSTS",
+        "PRINCIPAL_JWT_PRIVATE_KEY_FILE",
+        "DINGTALK_RUNTIME_AUTH_TOKEN_FILE",
+        "PYTHON_AGENT_RUNTIME_URL",
+        "TYPESCRIPT_AGENT_RUNTIME_URL",
+        "S3_ACCESS_KEY",
+        "S3_SECRET_KEY",
+    }.intersection(ones["environment"])
+
+    worker = services["agent-worker"]
+    assert worker["environment"]["PRINCIPAL_JWT_PRIVATE_KEY_FILE"] == (
+        "/run/secrets/principal_jwt_private_key"
+    )
+    assert "principal_jwt_private_key" in worker["secrets"]
+    for service_name, service in services.items():
+        if service_name != "agent-worker":
+            assert "principal_jwt_private_key" not in service.get("secrets", [])
+
+    for runtime_name in ("typescript-agent-runtime", "python-agent-runtime"):
+        runtime = services[runtime_name]
+        assert runtime["environment"]["ONES_MCP_SERVER_URL"] == ("http://ones-mcp:9104/mcp")
+        assert runtime["depends_on"]["ones-mcp"]["condition"] == "service_healthy"
+        assert not {
+            "PRINCIPAL_JWT_PRIVATE_KEY_FILE",
+            "PRINCIPAL_JWKS_FILE",
+            "ONES_MCP_PROVIDER_BASE_URL",
+            "ONES_MCP_PROVIDER_ALLOWED_HOSTS",
+        }.intersection(runtime["environment"])
+
+    dockerfile = (REPOSITORY_ROOT / "backend/Dockerfile").read_text(encoding="utf-8")
+    assert "FROM api-server AS ones-mcp" in dockerfile
+    assert 'USER 10003:10003\nCMD ["python", "-m", "services.ones_mcp_server"]' in dockerfile
+    project = tomllib.loads(
+        (REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    assert project["project"]["optional-dependencies"]["ones-mcp"] == ["mcp==1.28.1"]
+
+
+def test_compose_local_ones_mock_is_internal_and_not_host_published() -> None:
+    compose = yaml.safe_load((REPOSITORY_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    mock = compose["services"]["ones-mock"]
+    assert mock["build"] == {
+        "context": "./ones_mock",
+        "dockerfile": "Dockerfile",
+    }
+    assert mock["read_only"] is True
+    assert mock["cap_drop"] == ["ALL"]
+    assert mock["security_opt"] == ["no-new-privileges:true"]
+    assert mock["networks"] == ["agent-runtime-control"]
+    assert mock["expose"] == ["19121"]
+    assert "ports" not in mock
+
+    dockerfile = (REPOSITORY_ROOT / "ones_mock/Dockerfile").read_text(encoding="utf-8")
+    assert "USER 10004:10004" in dockerfile

@@ -8,7 +8,7 @@ from typing import Literal, NotRequired, TypedDict
 from jsonschema import Draft202012Validator
 
 PROTOCOL_VERSION = "1.0"
-CONTRACT_SCHEMA_SHA256 = "69900ca78ee70ad87660e4d37d8627aece35ddd7155e900500995e655b225b98"
+CONTRACT_SCHEMA_SHA256 = "30a3e6f2fb733b63d057e01e589c7c5dbc8224d4c28992a13b0cdfb6014a1397"
 CONTRACT_SCHEMA_PATH = (
     Path(__file__).resolve().parents[5]
     / "agent-runtime"
@@ -22,6 +22,7 @@ Sha256Digest = str
 RuntimeKind = Literal["python-v1", "typescript-v1"]
 SafeMessage = str
 RuntimeEvent = dict[str, object] | dict[str, object] | dict[str, object] | dict[str, object]
+
 
 class JsonSummary(TypedDict):
     pass
@@ -103,7 +104,7 @@ class McpToolBinding(TypedDict):
 
 
 class McpServerBinding(TypedDict):
-    server_code: Literal["tool-mcp"]
+    server_code: Literal["tool-mcp", "ones-mcp"]
     tools: list[McpToolBinding]
 
 
@@ -165,7 +166,7 @@ class RuntimeFailure(TypedDict):
 
 class ToolEvent(TypedDict):
     tool_call_id: Identifier
-    server_code: Literal["tool-mcp"]
+    server_code: Literal["tool-mcp", "ones-mcp"]
     tool_name: Identifier
     status: Literal["STARTED", "SUCCEEDED", "FAILED", "DENIED"]
     request_summary: JsonSummary

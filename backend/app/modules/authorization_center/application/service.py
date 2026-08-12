@@ -970,7 +970,7 @@ class BusinessAuthorizationService:
             )
         tools = self.repository.database.execute(
             """
-            select allowlist.tool_identifier, allowlist.schema_hash
+            select allowlist.server_code, allowlist.tool_identifier, allowlist.schema_hash
               from business_application_publication_mcp_tool allowlist
              where allowlist.application_publication_id = ?
                and allowlist.agent_publication_id = ?
@@ -1012,7 +1012,7 @@ class BusinessAuthorizationService:
             "tool_grants": [
                 {
                     "tool_identifier": str(tool["tool_identifier"]),
-                    "server_code": "tool-mcp",
+                    "server_code": str(tool["server_code"]),
                     "schema_hash": str(tool["schema_hash"]),
                     "source_role_codes": sorted(roles_by_tool[str(tool["tool_identifier"])]),
                 }

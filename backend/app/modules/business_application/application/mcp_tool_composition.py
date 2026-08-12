@@ -17,7 +17,7 @@ class ApplicationMcpToolCompositionService:
         for publication_id in agent_publication_ids:
             rows = self.database.execute(
                 """
-                select tool_identifier, schema_hash, model_description
+                select server_code, tool_identifier, schema_hash, model_description
                   from agent_publication_mcp_tool
                  where agent_publication_id = ?
                  order by selection_order
@@ -26,7 +26,7 @@ class ApplicationMcpToolCompositionService:
             )
             values[publication_id] = [
                 {
-                    "server_code": "tool-mcp",
+                    "server_code": str(row["server_code"]),
                     "tool_identifier": str(row["tool_identifier"]),
                     "schema_hash": str(row["schema_hash"]),
                     "description": str(row.get("model_description") or ""),
@@ -44,10 +44,13 @@ class ApplicationMcpToolCompositionService:
         raw_tools: list[Any],
     ) -> list[dict[str, Any]]:
         available = {
-            str(row["tool_identifier"]): str(row["schema_hash"])
+            str(row["tool_identifier"]): {
+                "server_code": str(row["server_code"]),
+                "schema_hash": str(row["schema_hash"]),
+            }
             for row in self.database.execute(
                 """
-                select tool_identifier, schema_hash
+                select server_code, tool_identifier, schema_hash
                   from agent_publication_mcp_tool
                  where agent_publication_id = ?
                 """,
@@ -66,12 +69,22 @@ class ApplicationMcpToolCompositionService:
                     continue
                 raise self._invalid(index, "MCP Tool identifier 不能为空")
             definition = MCP_TOOL_MANIFEST.get(identifier)
-            if definition is None or available.get(identifier) != definition.schema_hash:
+            requested_server = (
+                str(raw.get("server_code") or "").strip() if isinstance(raw, dict) else ""
+            )
+            published = available.get(identifier)
+            if (
+                definition is None
+                or published is None
+                or published["schema_hash"] != definition.schema_hash
+                or published["server_code"] != definition.server_code
+                or (requested_server and requested_server != definition.server_code)
+            ):
                 raise self._invalid(index, "所选 MCP Tool 不在 Agent 发布范围内或 Schema 已变化")
             selected.append(identifier)
         return [
             {
-                "server_code": "tool-mcp",
+                "server_code": MCP_TOOL_MANIFEST[identifier].server_code,
                 "tool_identifier": identifier,
                 "schema_hash": MCP_TOOL_MANIFEST[identifier].schema_hash,
                 "resource_kind": MCP_TOOL_MANIFEST[identifier].resource_kind,
@@ -94,11 +107,12 @@ class ApplicationMcpToolCompositionService:
                 insert into business_application_revision_mcp_tool
                   (application_revision_id, agent_publication_id, server_code,
                    tool_identifier, schema_hash, selection_order, created_at)
-                values (?, ?, 'tool-mcp', ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     application_revision_id,
                     agent_publication_id,
+                    tool["server_code"],
                     tool["tool_identifier"],
                     tool["schema_hash"],
                     tool["selection_order"],
@@ -126,11 +140,12 @@ class ApplicationMcpToolCompositionService:
                 insert into business_application_publication_mcp_tool
                   (application_publication_id, agent_publication_id, server_code,
                    tool_identifier, schema_hash, selection_order, created_at)
-                values (?, ?, 'tool-mcp', ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     application_publication_id,
                     agent_publication_id,
+                    tool["server_code"],
                     tool["tool_identifier"],
                     tool["schema_hash"],
                     tool["selection_order"],
@@ -142,7 +157,7 @@ class ApplicationMcpToolCompositionService:
     def snapshot(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return [
             {
-                "server_code": "tool-mcp",
+                "server_code": str(tool["server_code"]),
                 "tool_identifier": str(tool["tool_identifier"]),
                 "schema_hash": str(tool["schema_hash"]),
                 "resource_kind": str(tool.get("resource_kind") or ""),

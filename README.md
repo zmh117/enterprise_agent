@@ -8,20 +8,20 @@
   -> PostgreSQL + RabbitMQ
   -> agent-worker
   -> Python Runtime 或 TypeScript Runtime
-  -> tool-mcp
-  -> 已发布工具资源 + Secret Ref
+  -> tool-mcp 或 ones-mcp
+  -> 已发布工具资源 / 当前用户加密 ONES 凭据
   -> Job / Tool Call / Delivery / Audit
 ```
 
 旧 API Capability、Handler、API Connection、Application Resource Mapping 和 Internal API Platform 已永久退役。`tool-mcp` 使用代码 Manifest 暴露固定只读工具，Agent Publication 冻结 tool identifier 与 schema hash，Application Publication 只能选择其显式子集。
 
-ONES 本人身份绑定属于统一身份体系，独立于 MCP 和旧 API Platform。绑定只保存 ONES User ID、显示名称、Team、默认 Team 和验证时间；邮箱与密码仅用于单次验证，不保存登录 Token 或长期业务调用凭据。
+ONES 本人身份绑定属于统一身份体系，独立于旧 API Platform。绑定保存 ONES User ID、Team、默认 Team，以及用平台主密钥加密的登录材料和当前 Token；所有公开投影只返回凭据状态。Agent 只能通过短期 Ed25519 Principal JWT 调用独立 `ones-mcp`，JWT 不携带 ONES 身份或凭据。
 
 ## 当前边界
 
 - 两个独立 Agent Runtime：`python-v1` 与 `typescript-v1`。
 - 一个 Worker 负责调度，并按 Agent Publication 选择对应 Runtime。
-- 标准 MCP Server：固定服务码 `tool-mcp`，不签发或验证 MCP 专用 Token。
+- 标准 MCP Server：`tool-mcp` 继续无个人认证；`ones-mcp` 仅发布 `ones_work_item_search` 并验证短期 Principal JWT。
 - 只读工具：ER、业务流、数据库 schema/query、Redis、Loki。
 - 工具资源：Draft、技术验证、Publish、Disable、Archive；运行时只解析已发布 Revision。
 - 工具目标由 Agent 根据用户输入和发布 Skill 在每次 Tool Call 中显式提供，服务端实时复核角色、应用、数据范围和唯一资源。
@@ -39,11 +39,15 @@ make check
 docker compose up --build
 ```
 
+本地主 Compose 会同时启动内部 `ones-mock`，供 ONES 本人绑定、Token 刷新和
+`ones_work_item_search` 验收使用；该服务不发布宿主端口。生产部署必须显式覆盖为
+受信 HTTPS ONES Provider，`APP_ENV=production` 会拒绝仓库内 HTTP Mock 默认值。
+
 查看服务状态：
 
 ```bash
 docker compose ps
-docker compose logs migrator tool-mcp agent-worker
+docker compose logs migrator tool-mcp ones-mcp agent-worker
 ```
 
 Compose 的核心执行服务为：
@@ -52,7 +56,7 @@ Compose 的核心执行服务为：
 - `postgres`、`rabbitmq`
 - `agent-worker`
 - `python-agent-runtime`、`typescript-agent-runtime`
-- `tool-mcp`
+- `tool-mcp`、`ones-mcp`、仅本地验收使用的内部 `ones-mock`
 - 钉钉、Webhook、投递和附件 Worker
 
 ## 配置与 Secret
@@ -64,6 +68,7 @@ Compose 的核心执行服务为：
 - `DATABASE_DSN`
 - `APP_CONFIG_MASTER_KEY_FILE`
 - `RUNTIME_GRANT_*`
+- `PRINCIPAL_JWT_PRIVATE_KEY_FILE`、`PRINCIPAL_JWKS_FILE`
 - `MODEL_PROBE_AUTH_TOKEN_FILE`
 - 两个 Runtime 的固定服务 URL
 
@@ -97,5 +102,6 @@ docker compose config --quiet
 - [连续对话与多模态附件](docs/architecture/continuous-multimodal-conversations.md)
 - [Admin Web MVP](docs/architecture/admin-web-mvp.md)
 - [标准 MCP 工具服务](docs/architecture/tool-mcp.md)
+- [统一身份 ONES MCP](docs/architecture/identity-aware-ones-mcp.md)
 - [数据库备份与恢复](docs/operations/compose-postgres18-rabbitmq4-upgrade.md)
   1

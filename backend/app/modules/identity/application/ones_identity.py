@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Protocol
 
@@ -17,6 +17,14 @@ class VerifiedOnesIdentity:
     display_name: str
     teams: tuple[VerifiedOnesTeam, ...]
     verified_at: str
+    token: str = field(repr=False)
+
+    def __repr__(self) -> str:
+        return (
+            "VerifiedOnesIdentity("
+            f"user_uuid={self.user_uuid!r}, display_name={self.display_name!r}, "
+            f"teams={self.teams!r}, verified_at={self.verified_at!r}, token=<hidden>)"
+        )
 
     @property
     def team_uuids(self) -> tuple[str, ...]:
@@ -30,6 +38,7 @@ class VerifiedOnesIdentity:
         display_name: str,
         team_uuids: tuple[str, ...] = (),
         teams: tuple[VerifiedOnesTeam, ...] = (),
+        token: str,
     ) -> VerifiedOnesIdentity:
         normalized: list[VerifiedOnesTeam] = []
         seen: set[str] = set()
@@ -44,6 +53,7 @@ class VerifiedOnesIdentity:
             display_name=display_name,
             teams=tuple(normalized),
             verified_at=datetime.now(UTC).isoformat(),
+            token=token,
         )
 
 

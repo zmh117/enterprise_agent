@@ -16,8 +16,11 @@ from app.modules.business_application.domain.policies import (
     snapshot_hash,
     validate_execution_policy,
 )
+from app.modules.job.domain.job_status import JobStatus
+from app.modules.mcp_tool_runtime.job_snapshot import JobMcpToolSnapshotService
+from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.database import Database, default_migrations_dir
-from app.shared.exceptions import NonRetryableExecutionError
+from app.shared.exceptions import NonRetryableExecutionError, ToolPolicyError
 from app.shared.migrations import Migrator
 from backend.tests.helpers import (
     ensure_active_dingtalk_test_enterprise,
@@ -161,6 +164,7 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
         "101_expand_canonical_job_message.sql",
         "102_schema_consolidation_checkpoint.sql",
         "103_contract_retire_compatibility_shadows.sql",
+        "104_add_identity_aware_ones_mcp.sql",
     ]
     session_columns = {str(row["name"]) for row in db.execute("pragma table_info(agent_session)")}
     assert {
@@ -667,6 +671,188 @@ def test_mcp_tool_catalog_lists_manifest_tools_and_enforces_agent_binding() -> N
             "message": "所选 MCP Tool 不在 Agent 发布范围内或 Schema 已变化",
         }
     ]
+
+
+def test_ones_tool_preserves_server_through_agent_application_and_job_snapshot() -> None:
+    container = build_test_container(control_plane_settings(), migrate=True, seed=True)
+    definition = MCP_TOOL_MANIFEST["ones_work_item_search"]
+    container.database.execute(
+        """
+        insert into agent_publication_mcp_tool
+          (agent_publication_id, server_code, tool_identifier, schema_hash,
+           model_description, selection_order, created_at)
+        values ('agent_publication_default_v1', ?, ?, ?, ?, 10, CURRENT_TIMESTAMP)
+        """,
+        (
+            definition.server_code,
+            definition.identifier,
+            definition.schema_hash,
+            definition.description,
+        ),
+    )
+    existing = container.database.execute_one(
+        """
+        select server_code from agent_publication_mcp_tool
+         where agent_publication_id = 'agent_publication_default_v1'
+           and tool_identifier = 'get_schema_directory'
+        """
+    )
+    assert existing == {"server_code": "tool-mcp"}
+
+    service = container.business_application_service
+    application = service.create(
+        actor_id="user_local_admin",
+        code="ones-server-provenance-test",
+        name="ONES server provenance",
+        description="",
+        project_code="default",
+        owner_user_id="user_local_admin",
+    )
+    catalog = service.catalog(
+        actor_id="user_local_admin",
+        code="ones-server-provenance-test",
+    )
+    catalog_entry = next(
+        item
+        for item in catalog["mcp_tools_by_agent_publication"]["agent_publication_default_v1"]
+        if item["tool_identifier"] == definition.identifier
+    )
+    assert catalog_entry["server_code"] == "ones-mcp"
+
+    wrong_payload = draft_payload()
+    wrong_payload["mcp_tools"] = [
+        {"server_code": "tool-mcp", "tool_identifier": definition.identifier}
+    ]
+    with pytest.raises(NonRetryableExecutionError):
+        service.save_draft(
+            actor_id="user_local_admin",
+            code="ones-server-provenance-test",
+            expected_revision=int(application["revision"]),
+            payload=wrong_payload,
+        )
+
+    payload = draft_payload()
+    payload["mcp_tools"] = [{"server_code": "ones-mcp", "tool_identifier": definition.identifier}]
+    revision = service.save_draft(
+        actor_id="user_local_admin",
+        code="ones-server-provenance-test",
+        expected_revision=int(application["revision"]),
+        payload=payload,
+    )
+    revision_fact = container.database.execute_one(
+        """
+        select server_code, tool_identifier, schema_hash
+          from business_application_revision_mcp_tool
+         where application_revision_id = ?
+        """,
+        (revision["id"],),
+    )
+    assert revision_fact == {
+        "server_code": "ones-mcp",
+        "tool_identifier": definition.identifier,
+        "schema_hash": definition.schema_hash,
+    }
+    publication = service.publish(
+        actor_id="user_local_admin",
+        code="ones-server-provenance-test",
+        revision_id=str(revision["id"]),
+    )
+    publication_fact = container.database.execute_one(
+        """
+        select server_code, tool_identifier, schema_hash
+          from business_application_publication_mcp_tool
+         where application_publication_id = ?
+        """,
+        (publication["id"],),
+    )
+    assert publication_fact == revision_fact
+
+    session = container.agent_repository.create_session(
+        project_code="default",
+        source_channel="debug_api",
+        source_connector_id="connector-debug-api",
+        external_conversation_id="ones-server-provenance",
+        requester_id="user_local_admin",
+        business_application_id=str(application["id"]),
+        business_application_code=str(application["code"]),
+        application_publication_id=str(publication["id"]),
+        execution_scope_hash="ones-server-provenance",
+    )
+    job = container.agent_repository.create_job(
+        session_id=session.id,
+        idempotency_key="ones-server-provenance-job",
+        project_code="default",
+        source_channel="debug_api",
+        source_connector_id="connector-debug-api",
+        requester_id="user_local_admin",
+        input_message="query ONES",
+        max_retry_count=0,
+        initial_status=JobStatus.RUNNING,
+        internal_user_id="user_local_admin",
+        agent_publication_id="agent_publication_default_v1",
+        business_application_id=str(application["id"]),
+        business_application_code=str(application["code"]),
+        business_application_publication_id=str(publication["id"]),
+        execution_policy={
+            "schema_version": 1,
+            "requested": {
+                "max_turns": 12,
+                "timeout_seconds": 300,
+                "max_tool_calls": 30,
+            },
+            "effective": {
+                "max_turns": 12,
+                "timeout_seconds": 300,
+                "max_tool_calls": 30,
+            },
+            "sources": {"source_kind": "runtime_default"},
+        },
+    )
+    frozen = container.mcp_tool_snapshot_service.freeze(
+        job_id=job.id,
+        requester_id="user_local_admin",
+        application_id=str(application["id"]),
+        application_publication_id=str(publication["id"]),
+        application_config_hash=str(publication["config_hash"]),
+        agent_publication_id="agent_publication_default_v1",
+        routing_context={},
+        business_authorization={},
+        runtime_authorization={
+            "tool_grants": [
+                {
+                    "server_code": "ones-mcp",
+                    "tool_identifier": definition.identifier,
+                    "source_role_codes": ["ones-reader"],
+                }
+            ]
+        },
+    )
+    assert frozen["snapshot"]["tools"] == [
+        {
+            "server_code": "ones-mcp",
+            "tool_identifier": definition.identifier,
+            "schema_hash": definition.schema_hash,
+            "resource_kind": "",
+        }
+    ]
+
+    tampered = dict(frozen["snapshot"])
+    tampered["tools"] = [{**frozen["snapshot"]["tools"][0], "server_code": "tool-mcp"}]
+    container.database.execute(
+        """
+        update agent_job_mcp_tool_snapshot
+           set snapshot_json = ?, snapshot_hash = ?
+         where job_id = ?
+        """,
+        (
+            JobMcpToolSnapshotService._json_text(tampered),
+            JobMcpToolSnapshotService._hash(tampered),
+            job.id,
+        ),
+    )
+    with pytest.raises(ToolPolicyError) as drift:
+        container.mcp_tool_snapshot_service.verify(job.id)
+    assert drift.value.error_code == "mcp_tool_schema_drift"
 
 
 def test_catalog_http_contract_only_exposes_runtime_kind_for_agents() -> None:

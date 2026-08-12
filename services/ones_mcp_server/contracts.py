@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 SERVER_CODE: Final = "ones-mcp"
 SERVER_VERSION: Final = "0.1.0"
 TOOL_IDENTIFIER: Final = "ones_work_item_search"
-REQUIRED_SCOPE: Final = "ones:work-item:read"
+REQUIRED_SCOPE: Final = "mcp:ones-mcp:ones_work_item_search:invoke"
 
 LOGIN_PATH: Final = "/project/api/project/auth/login"
 WORK_ITEM_SEARCH_PATH: Final = "/project/api/project/items/graphql"
@@ -103,4 +103,3 @@ def validate_provider_target(
     if not local_http:
         raise ProviderContractError("ONES Provider must use HTTPS")
     return ProviderTarget(candidate.rstrip("/"), host, True)
-

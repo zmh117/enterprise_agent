@@ -74,6 +74,17 @@ function adminOnesIdentity(overrides: Record<string, unknown> = {}) {
     verified_at: "2026-07-22T00:00:00+08:00",
     user_id: "ones-user-1",
     teams: [{ id: "team-default", name: "默认 Team" }],
+    credential: {
+      configured: true,
+      status: "ACTIVE",
+      revision: 2,
+      verified_at: "2026-07-22T00:00:00+08:00",
+      token_refreshed_at: null,
+      last_used_at: null,
+      reauth_required_at: null,
+      disabled_at: null,
+      unbound_at: null,
+    },
     ...overrides,
   }
 }
@@ -382,10 +393,11 @@ describe("User and external identity management", () => {
     expect(screen.queryByRole("button", { name: "软解绑 ONES" })).toBeNull()
   })
 
-  it("shows identity-only ONES facts without legacy credential or connection state", async () => {
+  it("shows ONES identity facts and current credential status without legacy connection state", async () => {
     const ones = adminOnesIdentity({
       default_team: { id: "team-id-only", name: "" },
       teams: [{ id: "team-id-only", name: "" }],
+      credential: null,
     })
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input)
@@ -407,7 +419,8 @@ describe("User and external identity management", () => {
       (await screen.findAllByText("team-id-only（名称暂不可用）")).length
     ).toBeGreaterThan(0)
     expect(screen.getByText("管理员只能查看、停用和审计；重新验证与解绑必须由用户本人完成。")).toBeInTheDocument()
-    expect(screen.queryByText(/凭据缺失|历史连接|Connection/)).toBeNull()
+    expect(screen.getAllByText("需要本人重新验证").length).toBeGreaterThan(0)
+    expect(screen.queryByText(/历史连接|Connection/)).toBeNull()
   })
 
   it("shows administrator-disabled ONES identity without management credential actions", async () => {
@@ -431,7 +444,8 @@ describe("User and external identity management", () => {
     expect((await screen.findAllByText("已停用")).length).toBeGreaterThan(0)
     expect(screen.queryByRole("button", { name: "启用身份" })).toBeNull()
     expect(screen.queryByRole("button", { name: "解绑" })).toBeNull()
-    expect(screen.queryByText(/凭据|Connection/)).toBeNull()
+    expect(screen.getByText("可用 · r2")).toBeInTheDocument()
+    expect(screen.queryByText(/Connection/)).toBeNull()
   })
 
   it("opens history and offers restore only for a matching trusted candidate", async () => {

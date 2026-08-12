@@ -155,3 +155,14 @@ ENV LD_LIBRARY_PATH=/opt/oracle/instantclient
 COPY backend/app/services /app/backend/app/services
 USER 10001:10001
 CMD ["python", "-m", "uvicorn", "app.services.tool_mcp:create_default_app", "--factory", "--host", "0.0.0.0", "--port", "9103"]
+
+FROM api-server AS ones-mcp
+USER root
+COPY services /app/services
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -c "import subprocess, sys, tomllib; deps = tomllib.load(open('/app/pyproject.toml', 'rb'))['project']['optional-dependencies']['ones-mcp']; subprocess.check_call([sys.executable, '-m', 'pip', 'install', *deps])" \
+    && groupadd --system --gid 10003 ones-mcp \
+    && useradd --system --uid 10003 --gid 10003 --no-create-home ones-mcp \
+    && python -c "import services.ones_mcp_server.app"
+USER 10003:10003
+CMD ["python", "-m", "services.ones_mcp_server"]

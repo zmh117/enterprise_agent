@@ -418,7 +418,7 @@ class AgentConfigRepository:
             """
             select tool_identifier as tool_name
               from agent_publication_mcp_tool
-             where agent_publication_id = ? and server_code = 'tool-mcp'
+             where agent_publication_id = ?
             """,
             (publication_id,),
         )
@@ -447,10 +447,11 @@ class AgentConfigRepository:
                 insert into agent_publication_mcp_tool
                   (agent_publication_id, server_code, tool_identifier,
                    schema_hash, model_description, selection_order, created_at)
-                values (?, 'tool-mcp', ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     agent_publication_id,
+                    str(envelope["server_code"]),
                     str(envelope["tool_identifier"]),
                     str(envelope["schema_hash"]),
                     str(envelope.get("description") or ""),
@@ -476,7 +477,7 @@ class AgentConfigRepository:
         )
         expected = [
             {
-                "server_code": "tool-mcp",
+                "server_code": str(item["server_code"]),
                 "tool_identifier": str(item["tool_identifier"]),
                 "schema_hash": str(item["schema_hash"]),
             }

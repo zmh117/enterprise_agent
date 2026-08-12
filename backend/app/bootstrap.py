@@ -81,11 +81,15 @@ from app.modules.identity.application import (
     AuthorizationEvaluator,
     IdentityAdminService,
     IdentityService,
+    PrincipalSigningKey,
+    PrincipalTokenIssuer,
 )
 from app.modules.identity.application.ones_identity_binding import (
     OnesIdentityBindingService,
 )
 from app.modules.identity.infrastructure import (
+    ExternalIdentityCredentialCipher,
+    ExternalIdentityCredentialRepository,
     IdentityRepository,
     OnesIdentityChallengeRepository,
     UrllibOnesIdentityVerifier,
@@ -162,6 +166,8 @@ class Container:
     identity_repository: IdentityRepository
     identity_service: IdentityService
     ones_identity_binding_service: OnesIdentityBindingService
+    external_identity_credential_repository: ExternalIdentityCredentialRepository | None
+    principal_token_issuer: PrincipalTokenIssuer | None
     identity_discovery_repository: DingTalkIdentityDiscoveryRepository
     identity_discovery_service: DingTalkIdentityDiscoveryService
     identity_admin_service: IdentityAdminService
@@ -457,14 +463,32 @@ def _build_container(
         config_repository,
         reference_resolver=model_secret_provider.resolve,
     )
+    external_identity_credential_cipher = (
+        ExternalIdentityCredentialCipher(settings.app_config_master_key)
+        if settings.app_config_master_key
+        else None
+    )
+    external_identity_credential_repository = (
+        ExternalIdentityCredentialRepository(
+            database,
+            external_identity_credential_cipher,
+        )
+        if external_identity_credential_cipher is not None
+        else None
+    )
     identity_service = IdentityService(
         identity_repository,
         audit_service,
         connector_registry,
+        credential_repository=external_identity_credential_repository,
     )
     ones_identity_binding_service = OnesIdentityBindingService(
         identity_repository=identity_repository,
-        challenge_repository=OnesIdentityChallengeRepository(database),
+        challenge_repository=OnesIdentityChallengeRepository(
+            database,
+            external_identity_credential_cipher,
+        ),
+        credential_repository=external_identity_credential_repository,
         verifier=UrllibOnesIdentityVerifier(
             settings.ones_identity,
             environment=settings.environment,
@@ -589,6 +613,19 @@ def _build_container(
     mcp_tool_snapshot_service = JobMcpToolSnapshotService(
         database,
     )
+    principal_token_issuer: PrincipalTokenIssuer | None = None
+    if service_name == "agent-worker" and runtime_clients_override is None:
+        principal_token_issuer = PrincipalTokenIssuer(
+            database,
+            mcp_tool_snapshot_service,
+            permission_service,
+            PrincipalSigningKey.from_file(
+                settings.principal_jwt.signing_private_key_file,
+                environment=settings.environment,
+            ),
+            audit_service,
+            ttl_seconds=settings.principal_jwt.ttl_seconds,
+        )
     create_job_service = CreateAgentJobService(
         repository=agent_repository,
         permission_service=permission_service,
@@ -817,6 +854,7 @@ def _build_container(
                 ),
                 grant_issuer=grant_issuer,
                 event_sink=agent_repository.record_runtime_event,
+                principal_token_issuer=principal_token_issuer,
             )
     else:
         stub_runtime = StubAgentRuntimeClient()
@@ -927,6 +965,8 @@ def _build_container(
         identity_repository=identity_repository,
         identity_service=identity_service,
         ones_identity_binding_service=ones_identity_binding_service,
+        external_identity_credential_repository=external_identity_credential_repository,
+        principal_token_issuer=principal_token_issuer,
         identity_discovery_repository=identity_discovery_repository,
         identity_discovery_service=identity_discovery_service,
         identity_admin_service=identity_admin_service,

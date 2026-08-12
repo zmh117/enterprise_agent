@@ -20,6 +20,10 @@ project:
 # 登录该邮箱时返回故意破坏的合同，供适配器负向测试
 invalid_response_email: invalid.response@example.test
 
+control_passwords:
+  subject_changed: ones-mock-subject-changed-not-a-secret
+  team_missing: ones-mock-team-missing-not-a-secret
+
 users:
   - email: mock.user@example.test
     password: ones-mock-password-not-a-secret

@@ -13,8 +13,9 @@ docker compose -f docker-compose.ones-mock.yml up --build -d
 docker compose -f docker-compose.ones-mock.yml ps
 ```
 
-默认地址：`http://127.0.0.1:19121`。主机端口可用 `ONES_MOCK_PORT` 覆盖。
-其他容器访问（Docker Desktop）可用 `http://host.docker.internal:19121`。
+独立启动时默认地址为 `http://127.0.0.1:19121`。主仓库直接执行
+`docker compose up -d` 时，Mock 不发布宿主端口，只允许主 Compose 内部通过
+`http://ones-mock:19121` 访问。
 
 ## Mock 用户（见 mock.yaml）
 
@@ -52,21 +53,49 @@ curl -sS http://127.0.0.1:19121/project/api/project/auth/login \
 ```
 
 响应中的 `user.uuid`、`user.token`、`teams[0].uuid` 分别用于
-`Ones-User-Id`、`Ones-Auth-Token` 和 URL 中的 `{team_uuid}`。
+`Ones-User-Id`、`Ones-Auth-Token` 和当前默认 Team。示例全部是仓库固定假凭据，
+不得替换或提交真实 ONES Secret。
 
 ## 主系统身份绑定
 
 ```env
 ONES_IDENTITY_INSTANCE_CODE=default
 ONES_IDENTITY_DISPLAY_NAME=ONES
-ONES_IDENTITY_BASE_URL=http://host.docker.internal:19121
-ONES_IDENTITY_ALLOWED_HOSTS=host.docker.internal
+ONES_IDENTITY_BASE_URL=http://ones-mock:19121
+ONES_IDENTITY_ALLOWED_HOSTS=ones-mock
 ONES_IDENTITY_TIMEOUT_SECONDS=5
 ONES_IDENTITY_MAX_RESPONSE_BYTES=65536
 ONES_IDENTITY_ALLOW_INSECURE_LOCAL=true
 ```
 
 ## 查询需求 / 任务 / 缺陷
+
+`ones-mcp` 第一阶段使用固定治理端点：
+
+```text
+POST /project/api/project/items/graphql
+```
+
+请求体固定为 GraphQL `query` 与 variables：`keyword`、`issue_type`、`limit`、
+`user_id`、`team_id`。身份、Team、URL、Header 和 query 均不能由 Tool Input 指定。
+
+以下 keyword 是稳定负向控制：
+
+```text
+__401__          每次查询返回 401，用于验证最多刷新一次
+__403__          Team 权限拒绝
+__429__          限流
+__500__          Provider 5xx
+__redirect__     重定向（客户端必须拒绝跟随）
+__bad_json__     非法 JSON
+__oversize__     超大响应
+__missing_field__ 缺少必填业务字段
+```
+
+`mock.yaml` 中的 `control_passwords.subject_changed` 与 `team_missing` 用于刷新登录时
+稳定触发 subject 变化和默认 Team 消失。
+
+旧的详细任务列表 Mock 端点仍保留给人工兼容性调试：
 
 ```text
 POST /project/api/project/team/{team_uuid}/items/graphql?t=group-task-data
@@ -97,4 +126,5 @@ curl -sS 'http://127.0.0.1:19121/project/api/project/team/MOCK-ONES-TEAM-001/ite
 
 ## 当前边界
 
-当前 Agent 平台主要调用登录端点做用户身份绑定；工作项接口供后续 Capability 联调。
+Mock 查询、401 刷新和审计通过只证明仓库内契约闭环，不代表真实 ONES GraphQL
+兼容性或生产 E2E 已验收。

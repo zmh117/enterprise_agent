@@ -14,7 +14,11 @@ from fastapi.testclient import TestClient
 
 from app.modules.agent.infrastructure.runtime_protocol import canonical_request_digest
 from app.modules.agent.infrastructure.typescript_runtime_client import RuntimeGrantIssuer
-from app.modules.agent.domain.runtime import AgentExecutionContext, AgentRunRequest
+from app.modules.agent.domain.runtime import (
+    AgentExecutionContext,
+    AgentRunRequest,
+    McpRuntimeBinding,
+)
 from app.modules.model_connection.domain import (
     DEFAULT_MODEL_CONNECTION_CODE,
     ModelRuntimeBinding,
@@ -33,6 +37,7 @@ from app.python_runtime.sdk_executor import (
     PythonExecutionOutcome,
     PythonRuntimeSdkExecutor,
     RemoteMcpClaudeCodeAgentClient,
+    _normalize_tool_events,
 )
 from app.python_runtime.service import PythonRuntimeDependencies, create_app
 from app.shared.database import Database, default_migrations_dir
@@ -51,6 +56,7 @@ class FakePythonExecutor:
 
     def __init__(self, *, block_until_cancelled: bool = False) -> None:
         self.requests: list[dict[str, Any]] = []
+        self.principal_tokens: list[str] = []
         self.started = threading.Event()
         self.block_until_cancelled = block_until_cancelled
 
@@ -58,8 +64,10 @@ class FakePythonExecutor:
         self,
         request: dict[str, Any],
         cancel_event: threading.Event,
+        secret_context: Any,
     ) -> PythonExecutionOutcome:
         self.requests.append(request)
+        self.principal_tokens.append(str(secret_context.principal_token))
         self.started.set()
         if self.block_until_cancelled:
             cancel_event.wait(timeout=2)
@@ -83,7 +91,7 @@ class FakePythonExecutor:
             tool_events=(
                 {
                     "tool_call_id": "tool-call-1",
-                    "server_code": "tool-mcp",
+                    "server_code": "ones-mcp",
                     "tool_name": "ones_work_item_search",
                     "status": "SUCCEEDED",
                     "request_summary": {"project_code": "project-1"},
@@ -205,7 +213,11 @@ def test_python_runtime_http_contract_replays_one_terminal_without_tokens(
     dependencies, private_key = _dependencies(tmp_path, executor)
     client = TestClient(create_app(dependencies))
     request = _request()
-    headers = {"Authorization": f"Bearer {_token(private_key, request)}"}
+    principal = "test-only-python-principal-token"
+    headers = {
+        "Authorization": f"Bearer {_token(private_key, request)}",
+        "X-MCP-Principal-Token": principal,
+    }
 
     first = client.post("/internal/v1/executions", json=request, headers=headers)
     second = client.post("/internal/v1/executions", json=request, headers=headers)
@@ -223,10 +235,15 @@ def test_python_runtime_http_contract_replays_one_terminal_without_tokens(
     assert first_events[-1]["payload"]["status"] == "SUCCEEDED"
     assert first_events[-1]["payload"]["final_answer"] == "python final answer"
     assert len(executor.requests) == 1
+    assert executor.principal_tokens == [principal]
     serialized = json.dumps(executor.requests)
     assert "access_token" not in serialized
     assert "Authorization" not in serialized
     assert "secret_ref" not in serialized
+    ledger_text = json.dumps(
+        dependencies.database.execute("select * from agent_runtime_terminal_ledger")
+    )
+    assert principal not in ledger_text
 
     terminal = client.get(
         f"/internal/v1/executions/{request['invocation_id']}/terminal",
@@ -234,6 +251,25 @@ def test_python_runtime_http_contract_replays_one_terminal_without_tokens(
     )
     assert terminal.status_code == 200
     assert terminal.json()["status"] == "SUCCEEDED"
+
+
+def test_python_runtime_rejects_missing_ones_principal_before_execution(
+    tmp_path: Path,
+) -> None:
+    executor = FakePythonExecutor()
+    dependencies, private_key = _dependencies(tmp_path, executor)
+    client = TestClient(create_app(dependencies))
+    request = _request()
+
+    response = client.post(
+        "/internal/v1/executions",
+        json=request,
+        headers={"Authorization": f"Bearer {_token(private_key, request)}"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "runtime_principal_token_missing"
+    assert executor.requests == []
 
 
 def test_python_runtime_cancel_wins_once_and_ledger_recovers_after_restart(
@@ -428,6 +464,94 @@ def test_python_runtime_exposes_only_the_fixed_remote_tool_mcp_server() -> None:
         "mcp__tool_mcp__query_database",
     ]
     assert "internal" not in captured["mcp_servers"]
+
+
+def test_python_runtime_routes_principal_only_to_fixed_ones_mcp_server() -> None:
+    context = AgentExecutionContext(
+        system_role="readonly ONES agent",
+        safety_rules=["readonly"],
+        user_question="search ONES work items",
+        project_code="project-1",
+        allowed_tools=["ones_work_item_search"],
+        tool_restrictions=["bounded"],
+        skills={},
+        retrieved_context={},
+        conversation_summary="",
+        publication_id="agent-publication-1",
+        application_publication_id="application-publication-1",
+        mcp_bindings=(
+            McpRuntimeBinding(
+                server_code="ones-mcp",
+                tool_name="ones_work_item_search",
+                required_scope="mcp:ones-mcp:ones_work_item_search:invoke",
+                tool_schema_hash="c" * 64,
+            ),
+        ),
+    )
+    request = AgentRunRequest(
+        job_id="job-1",
+        user_id="app-user-1",
+        project_code="project-1",
+        invocation_id="invocation-1",
+        context=context,
+    )
+    principal = "test-only-principal-token"
+    client = RemoteMcpClaudeCodeAgentClient(
+        limits=build_settings().execution,
+        api_key="runtime-only-model-secret",
+        mcp_server_url="http://tool-mcp:9103/mcp",
+        ones_mcp_server_url="http://ones-mcp:9104/mcp",
+        principal_token=principal,
+    )
+    captured: dict[str, Any] = {}
+
+    def options(**kwargs: Any) -> dict[str, Any]:
+        captured.update(kwargs)
+        return kwargs
+
+    sdk = ClaudeSdk(
+        query=cast(Any, None),
+        options=options,
+        tool=cast(Any, None),
+        create_sdk_mcp_server=cast(Any, None),
+        tool_annotations=None,
+    )
+    binding = ModelRuntimeBinding(
+        protocol="anthropic_compatible",
+        base_url="https://api.deepseek.com/anthropic",
+        model="deepseek-chat",
+        default_opus_model="deepseek-chat",
+        default_sonnet_model="deepseek-chat",
+        default_haiku_model="deepseek-chat",
+        subagent_model="deepseek-chat",
+        effort_level="max",
+        secret_ref="secret://not-projected",
+    )
+
+    server = client._build_mcp_server(request)
+    client._build_options(sdk, context, server, [], binding)
+
+    assert set(captured["mcp_servers"]) == {"ones_mcp"}
+    assert captured["mcp_servers"]["ones_mcp"]["url"] == ("http://ones-mcp:9104/mcp")
+    assert captured["mcp_servers"]["ones_mcp"]["headers"]["Authorization"] == (
+        f"Bearer {principal}"
+    )
+    assert captured["allowed_tools"] == ["mcp__ones_mcp__ones_work_item_search"]
+    assert principal not in repr(context)
+
+    normalized = _normalize_tool_events(
+        [
+            {
+                "tool_name": "mcp__ones_mcp__ones_work_item_search",
+                "status": "SUCCEEDED",
+                "request_payload": {"keyword": "test"},
+                "response_summary": {"count": 1},
+            }
+        ],
+        _request(),
+    )
+    assert normalized[0]["server_code"] == "ones-mcp"
+    assert normalized[0]["tool_name"] == "ones_work_item_search"
 
 
 def test_python_test_only_fake_provider_resolves_binding_and_retries_once() -> None:

@@ -9,6 +9,7 @@ from typing import Any
 import yaml
 from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.responses import Response
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 
@@ -34,6 +35,7 @@ class MockOnesConfig:
     project_scope_uuid: str
     project_scope_name_pinyin: str
     invalid_response_email: str
+    control_passwords: dict[str, str]
     issue_types: dict[str, dict[str, Any]]
     priorities: dict[str, dict[str, Any]]
     statuses: dict[str, dict[str, Any]]
@@ -232,6 +234,13 @@ def load_config(path: str | Path | None = None) -> MockOnesConfig:
             data.get("invalid_response_email"),
             "invalid_response_email",
         ),
+        control_passwords={
+            str(key): _require_str(value, f"control_passwords.{key}")
+            for key, value in _require_mapping(
+                data.get("control_passwords"),
+                "control_passwords",
+            ).items()
+        },
         issue_types={
             str(key): _require_mapping(value, f"issue_types.{key}")
             for key, value in issue_types.items()
@@ -482,6 +491,34 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
                 "user": {"name": "Invalid Mock User"},
                 "teams": "invalid",
             }
+        control_user = next(
+            (user for user in config.users if user.email == payload.email),
+            None,
+        )
+        if control_user is not None and payload.password == config.control_passwords.get(
+            "subject_changed"
+        ):
+            return {
+                "user": {
+                    "uuid": control_user.uuid + "-CHANGED",
+                    "email": control_user.email,
+                    "name": control_user.name + " Changed",
+                    "token": control_user.token,
+                },
+                "teams": list(config.teams),
+            }
+        if control_user is not None and payload.password == config.control_passwords.get(
+            "team_missing"
+        ):
+            return {
+                "user": {
+                    "uuid": control_user.uuid,
+                    "email": control_user.email,
+                    "name": control_user.name,
+                    "token": control_user.token,
+                },
+                "teams": [{"uuid": "MOCK-ONES-TEAM-MISSING", "name": "Missing Team"}],
+            }
         user = config.find_user_by_credentials(payload.email, payload.password)
         if user is None:
             raise HTTPException(
@@ -542,6 +579,8 @@ def create_app(settings: MockOnesConfig | MockOnesSettings | None = None) -> Fas
                 status_code=500,
                 detail={"code": "server_error"},
             )
+        if keyword == "__redirect__":
+            return RedirectResponse("/health", status_code=307)
         if keyword == "__bad_json__":
             return Response(
                 content="{not-json",

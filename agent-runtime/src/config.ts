@@ -25,6 +25,7 @@ export interface RuntimeConfig {
   readonly providerAllowedHosts: ReadonlySet<string>;
   readonly mcpAllowedHosts: ReadonlySet<string>;
   readonly mcpServerUrl: string;
+  readonly onesMcpServerUrl: string;
   readonly ledgerTtlSeconds: number;
   readonly cliVersion: typeof EXPECTED_CLI_VERSION;
   readonly fakeProviderMode: boolean;
@@ -36,6 +37,7 @@ const RUNTIME_ENV_PREFIXES = [
   "MODEL_PROVIDER_",
   "MODEL_PROBE_",
   "MCP_SERVER_",
+  "ONES_MCP_",
   "APP_CONFIG_"
 ];
 
@@ -52,7 +54,8 @@ const ALLOWED_ENV = new Set([
   "APP_CONFIG_MASTER_KEY_FILE",
   "MODEL_PROVIDER_ALLOWED_HOSTS",
   "MCP_SERVER_ALLOWED_HOSTS",
-  "MCP_TOOL_SERVER_URL"
+  "MCP_TOOL_SERVER_URL",
+  "ONES_MCP_SERVER_URL"
 ]);
 
 export class RuntimeConfigError extends Error {
@@ -202,6 +205,17 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     mcpAllowedHosts,
     "mcp"
   ).toString();
+  const onesMcpServerUrl = assertSafeRemoteUrl(
+    required(env, "ONES_MCP_SERVER_URL"),
+    mcpAllowedHosts,
+    "mcp"
+  ).toString();
+  if (new URL(mcpServerUrl).hostname === new URL(onesMcpServerUrl).hostname) {
+    throw new RuntimeConfigError(
+      "runtime_mcp_server_identity_conflict",
+      "tool-mcp and ones-mcp must use distinct fixed service hosts"
+    );
+  }
   const fakeProviderMode = env.AGENT_RUNTIME_TEST_PROVIDER_MODE?.trim() || "disabled";
   if (!new Set(["disabled", "deterministic"]).has(fakeProviderMode)) {
     throw new RuntimeConfigError(
@@ -232,6 +246,7 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     ),
     mcpAllowedHosts,
     mcpServerUrl,
+    onesMcpServerUrl,
     ledgerTtlSeconds: integer(
       env,
       "AGENT_RUNTIME_LEDGER_TTL_SECONDS",

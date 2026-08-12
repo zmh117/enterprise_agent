@@ -20,6 +20,7 @@ import type {
 } from "./generated/contracts.js";
 import type {
   ExecutionEmitter,
+  InvocationSecretContext,
   RuntimeExecutor,
   TerminalDraft
 } from "./invocation-registry.js";
@@ -290,14 +291,16 @@ export class ClaudeAgentRuntimeExecutor {
     private readonly query: ClaudeQuery = claudeQuery,
     private readonly workspaces: InvocationWorkspaceFactory = new TemporaryWorkspaceFactory(),
     private readonly now: () => number = () => Date.now(),
-    private readonly mcpServerUrl: string = "http://tool-mcp:9103/mcp"
+    private readonly toolMcpServerUrl: string = "http://tool-mcp:9103/mcp",
+    private readonly onesMcpServerUrl: string = "http://ones-mcp:9104/mcp"
   ) {
     this.execute = this.run.bind(this);
   }
 
   private async run(
     request: AgentExecutionRequestV1,
-    emitter: ExecutionEmitter
+    emitter: ExecutionEmitter,
+    secrets: InvocationSecretContext = {}
   ): Promise<TerminalDraft> {
     const binding = await this.modelBindings.resolve(request);
     const provenance = runtimeProvenance(request, binding);
@@ -317,19 +320,25 @@ export class ClaudeAgentRuntimeExecutor {
     >();
     const mcpServers: NonNullable<Options["mcpServers"]> = {};
     for (const server of request.mcp_servers) {
-      const alias = "tools";
+      const isOnes = server.server_code === "ones-mcp";
+      const alias = isOnes ? "ones" : "tools";
+      if (isOnes && !secrets.principalToken) {
+        throw new Error("Principal Token is required for the fixed ONES MCP server");
+      }
+      const headers: Record<string, string> = {
+        "X-Correlation-Id": `job:${request.job_id}`,
+        "X-Job-Id": request.job_id,
+        "X-App-User-Id": request.app_user_id,
+        "X-Project-Code": request.project_code,
+        "X-Invocation-Id": request.invocation_id,
+        "X-Agent-Publication-Id": request.agent_publication_id,
+        "X-Application-Publication-Id": request.application_publication_id
+      };
+      if (isOnes) headers.Authorization = `Bearer ${secrets.principalToken}`;
       mcpServers[alias] = {
         type: "http",
-        url: this.mcpServerUrl,
-        headers: {
-          "X-Correlation-Id": `job:${request.job_id}`,
-          "X-Job-Id": request.job_id,
-          "X-App-User-Id": request.app_user_id,
-          "X-Project-Code": request.project_code,
-          "X-Invocation-Id": request.invocation_id,
-          "X-Agent-Publication-Id": request.agent_publication_id,
-          "X-Application-Publication-Id": request.application_publication_id
-        },
+        url: isOnes ? this.onesMcpServerUrl : this.toolMcpServerUrl,
+        headers,
         timeout: Math.min(request.limits.timeout_seconds * 1000, 300_000),
         alwaysLoad: true
       };

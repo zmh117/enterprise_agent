@@ -7,7 +7,12 @@ from app.modules.identity.application.ones_identity import OnesIdentityVerifier
 from app.modules.identity.infrastructure.ones_identity_challenges import (
     OnesIdentityChallengeRepository,
 )
+from app.modules.identity.infrastructure.external_identity_credentials import (
+    CredentialSecretBundle,
+    ExternalIdentityCredentialRepository,
+)
 from app.modules.identity.infrastructure.repository import IdentityRepository
+from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import AppError, NonRetryableExecutionError, PermissionDenied
 
 
@@ -17,6 +22,7 @@ class OnesIdentityBindingService:
         *,
         identity_repository: IdentityRepository,
         challenge_repository: OnesIdentityChallengeRepository,
+        credential_repository: ExternalIdentityCredentialRepository | None,
         verifier: OnesIdentityVerifier,
         audit_service: AuditService,
         instance_code: str,
@@ -25,6 +31,7 @@ class OnesIdentityBindingService:
     ) -> None:
         self.identity_repository = identity_repository
         self.challenge_repository = challenge_repository
+        self.credential_repository = credential_repository
         self.verifier = verifier
         self.audit_service = audit_service
         self.instance_code = instance_code.strip() or "default"
@@ -33,7 +40,7 @@ class OnesIdentityBindingService:
 
     @property
     def available(self) -> bool:
-        return self.verifier.available
+        return self.verifier.available and self.credential_repository is not None
 
     def begin_self_binding(
         self,
@@ -43,7 +50,7 @@ class OnesIdentityBindingService:
         password: str,
     ) -> dict[str, Any]:
         self._require_self_user(actor_id)
-        if not self.verifier.available:
+        if not self.verifier.available or self.credential_repository is None:
             raise NonRetryableExecutionError(
                 "ONES identity provider is unavailable",
                 safe_message="ONES 身份验证不可用",
@@ -67,6 +74,8 @@ class OnesIdentityBindingService:
         challenge = self.challenge_repository.create(
             user_id=actor_id,
             verified=verified,
+            email=email,
+            password=password,
             ttl_seconds=self.challenge_ttl_seconds,
         )
         self.audit_service.record(
@@ -92,65 +101,119 @@ class OnesIdentityBindingService:
         replace_existing: bool = False,
     ) -> dict[str, Any]:
         self._require_self_user(actor_id)
-        database = self.identity_repository.database
-        with database.unit_of_work():
-            challenge = self.challenge_repository.consume(
-                challenge_id,
-                user_id=actor_id,
+        prepared_secrets = self.challenge_repository.prepare(
+            challenge_id,
+            user_id=actor_id,
+            default_team_id=default_team_id,
+        )
+        try:
+            self._confirm_transaction(
+                actor_id=actor_id,
+                challenge_id=challenge_id,
                 default_team_id=default_team_id,
+                replace_existing=replace_existing,
+                prepared_secrets=prepared_secrets,
             )
-            current = self._current_identities(actor_id)
-            if len(current) > 1:
-                raise NonRetryableExecutionError(
-                    "Multiple current ONES identities exist",
-                    safe_message="ONES 身份数据不一致，请联系管理员",
-                    error_code="ones_identity_inconsistent",
-                )
-            existing = current[0] if current else None
-            replacing = bool(
-                existing
-                and str(existing["external_subject_id"]) != str(challenge["external_user_id"])
-            )
-            if replacing and not replace_existing:
-                raise NonRetryableExecutionError(
-                    "Explicit confirmation is required to replace ONES identity",
-                    safe_message="当前账号已绑定其他 ONES 用户，请确认换绑",
-                    error_code="ones_identity_replace_confirmation_required",
-                )
-            if replacing and existing is not None:
-                self.identity_repository.unbind_external_identity(
-                    str(existing["id"]),
-                    expected_revision=int(existing["revision"]),
-                )
-            identity = self.identity_repository.bind_external_identity(
-                user_id=actor_id,
-                provider="ones",
-                tenant_code=self.instance_code,
-                external_subject_id=str(challenge["external_user_id"]),
-                connector_id="",
-                display_name=str(challenge["display_name"]),
-                metadata={
-                    "verification_method": "ones_password_login",
-                    "teams": list(challenge["teams"]),
-                    "team_uuids": list(challenge["team_ids"]),
-                    "default_team_id": default_team_id.strip(),
-                },
-            )
+        except AppError as exc:
+            if exc.error_code != "ones_identity_replace_confirmation_required":
+                self.challenge_repository.invalidate(challenge_id, user_id=actor_id)
             self.audit_service.record(
-                "identity.ones.bound",
-                status="SUCCEEDED",
-                summary="ONES identity facts bound",
+                "identity.ones.binding_failed",
+                status="FAILED",
+                summary="ONES identity binding confirmation failed",
                 actor_id=actor_id,
                 payload={
                     "user_id": actor_id,
-                    "identity_id": identity["id"],
+                    "challenge_id": challenge_id,
                     "instance_code": self.instance_code,
-                    "default_team_id": default_team_id.strip(),
-                    "team_count": len(challenge["teams"]),
-                    "replaced_existing": replacing,
+                    "error_code": exc.error_code or "ones_binding_failed",
                 },
             )
+            raise
         return self.self_status(actor_id=actor_id)
+
+    @operation_unit_of_work(lambda service: service.identity_repository.database)
+    def _confirm_transaction(
+        self,
+        *,
+        actor_id: str,
+        challenge_id: str,
+        default_team_id: str,
+        replace_existing: bool,
+        prepared_secrets: CredentialSecretBundle,
+    ) -> None:
+        credential_repository = self._require_credential_repository()
+        challenge, secrets = self.challenge_repository.consume(
+            challenge_id,
+            user_id=actor_id,
+            default_team_id=default_team_id,
+            prepared_secrets=prepared_secrets,
+        )
+        current = self._current_identities(actor_id)
+        if len(current) > 1:
+            raise NonRetryableExecutionError(
+                "Multiple current ONES identities exist",
+                safe_message="ONES 身份数据不一致，请联系管理员",
+                error_code="ones_identity_inconsistent",
+            )
+        existing = current[0] if current else None
+        replacing = bool(
+            existing and str(existing["external_subject_id"]) != str(challenge["external_user_id"])
+        )
+        if replacing and not replace_existing:
+            raise NonRetryableExecutionError(
+                "Explicit confirmation is required to replace ONES identity",
+                safe_message="当前账号已绑定其他 ONES 用户，请确认换绑",
+                error_code="ones_identity_replace_confirmation_required",
+            )
+        if replacing and existing is not None:
+            old_credential = credential_repository.get_by_identity(str(existing["id"]))
+            if old_credential is not None:
+                credential_repository.unbind(
+                    credential_id=str(old_credential["id"]),
+                    expected_revision=int(old_credential["revision"]),
+                )
+            self.identity_repository.unbind_external_identity(
+                str(existing["id"]),
+                expected_revision=int(existing["revision"]),
+            )
+        identity = self.identity_repository.bind_external_identity(
+            user_id=actor_id,
+            provider="ones",
+            tenant_code=self.instance_code,
+            external_subject_id=str(challenge["external_user_id"]),
+            connector_id="",
+            display_name=str(challenge["display_name"]),
+            metadata={
+                "verification_method": "ones_password_login",
+                "teams": list(challenge["teams"]),
+                "team_uuids": list(challenge["team_ids"]),
+                "default_team_id": default_team_id.strip(),
+            },
+        )
+        credential = credential_repository.upsert_active(
+            external_identity_id=str(identity["id"]),
+            provider="ones",
+            secrets=secrets,
+            verified_at=str(challenge["verified_at"]),
+        )
+        self.audit_service.record(
+            "identity.ones.bound",
+            status="SUCCEEDED",
+            summary="ONES identity facts bound",
+            actor_id=actor_id,
+            payload={
+                "user_id": actor_id,
+                "identity_id": identity["id"],
+                "instance_code": self.instance_code,
+                "default_team_id": default_team_id.strip(),
+                "team_count": len(challenge["teams"]),
+                "replaced_existing": replacing,
+                "provider_email": secrets.email,
+                "provider_user_id": challenge["external_user_id"],
+                "credential_revision": credential["revision"],
+            },
+        )
 
     def self_status(self, *, actor_id: str) -> dict[str, Any]:
         user = self._require_self_user(actor_id)
@@ -178,7 +241,16 @@ class OnesIdentityBindingService:
         if not current:
             return
         identity = current[0]
+        credential_repository = self._require_credential_repository()
         with self.identity_repository.database.unit_of_work():
+            credential = credential_repository.get_by_identity(str(identity["id"]))
+            credential_revision: int | None = None
+            if credential is not None:
+                projected = credential_repository.unbind(
+                    credential_id=str(credential["id"]),
+                    expected_revision=int(credential["revision"]),
+                )
+                credential_revision = int(projected["revision"])
             self.identity_repository.unbind_external_identity(
                 str(identity["id"]), expected_revision=int(identity["revision"])
             )
@@ -187,11 +259,15 @@ class OnesIdentityBindingService:
                 status="SUCCEEDED",
                 summary="User soft-unbound own ONES identity",
                 actor_id=actor_id,
-                payload={"user_id": actor_id, "identity_id": identity["id"]},
+                payload={
+                    "user_id": actor_id,
+                    "identity_id": identity["id"],
+                    "provider_user_id": identity["external_subject_id"],
+                    "credential_revision": credential_revision,
+                },
             )
 
-    @staticmethod
-    def project_self(identity: dict[str, Any]) -> dict[str, Any]:
+    def project_self(self, identity: dict[str, Any]) -> dict[str, Any]:
         metadata = dict(identity.get("metadata") or {})
         teams = _normalized_teams(metadata)
         default_team_id = str(metadata.get("default_team_id") or "")
@@ -204,12 +280,16 @@ class OnesIdentityBindingService:
             "verified_at": identity.get("verified_at"),
             "user_id": str(identity.get("external_subject_id") or ""),
             "teams": teams,
+            "credential": (
+                self.credential_repository.safe_projection_for_identity(str(identity["id"]))
+                if self.credential_repository is not None
+                else None
+            ),
         }
 
-    @classmethod
-    def project_admin(cls, identity: dict[str, Any]) -> dict[str, Any]:
+    def project_admin(self, identity: dict[str, Any]) -> dict[str, Any]:
         return {
-            **cls.project_self(identity),
+            **self.project_self(identity),
             "identity_id": str(identity["id"]),
             "revision": int(identity.get("revision") or 1),
         }
@@ -236,6 +316,15 @@ class OnesIdentityBindingService:
                 error_code="identity_user_inactive",
             )
         return user
+
+    def _require_credential_repository(self) -> ExternalIdentityCredentialRepository:
+        if self.credential_repository is None:
+            raise NonRetryableExecutionError(
+                "External identity credential storage is unavailable",
+                safe_message="ONES 身份验证暂时不可用",
+                error_code="ones_credential_encryption_unavailable",
+            )
+        return self.credential_repository
 
 
 def _normalized_teams(metadata: dict[str, Any]) -> list[dict[str, str]]:

@@ -19,6 +19,7 @@ from app.modules.admin.domain import (
 )
 from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
 from app.modules.job.domain.job_status import JobStatus
+from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.config import IdentitySettings, Settings
 from app.shared.database import Database, default_migrations_dir
 from app.shared.migrations import Migrator
@@ -1006,6 +1007,91 @@ class _RecordingDeliveryAdapter:
     ) -> None:
         del connector, route, title
         self.messages.append(text)
+
+
+def test_ones_tool_uses_agent_application_and_role_intersection_with_server_provenance() -> None:
+    c = _container()
+    definition = MCP_TOOL_MANIFEST["ones_work_item_search"]
+    c.database.execute(
+        """
+        insert into agent_publication_mcp_tool
+          (agent_publication_id, server_code, tool_identifier, schema_hash,
+           model_description, selection_order, created_at)
+        values ('agent_publication_default_v1', ?, ?, ?, ?, 10, CURRENT_TIMESTAMP)
+        """,
+        (
+            definition.server_code,
+            definition.identifier,
+            definition.schema_hash,
+            definition.description,
+        ),
+    )
+    base_one, _ = _topology(c)
+    application = _active_application(
+        c,
+        "ones-role-intersection",
+        capabilities=(definition.identifier,),
+    )
+    user = c.identity_repository.create_user(
+        username="ones-role-reader",
+        display_name="ONES role reader",
+    )
+    role = _business_role(
+        c,
+        code="ones-role-reader",
+        user_id=str(user["id"]),
+        applications=[
+            {
+                "application_id": application["id"],
+                "tool_identifiers": [definition.identifier],
+                "scopes": [base_one],
+            }
+        ],
+    )
+
+    decision = c.business_authorization_service.decide(
+        user_id=str(user["id"]),
+        application_id=str(application["id"]),
+        tool_identifier=definition.identifier,
+        environment="local",
+        base="base-one",
+    )
+    assert decision["allowed"] is True
+    facts = c.business_authorization_service.capture_runtime_facts(
+        user_id=str(user["id"]),
+        application_id=str(application["id"]),
+        publication_id=str(application["publication_id"]),
+        publication_config_hash=str(application["publication_config_hash"]),
+        environment="local",
+        base="base-one",
+    )
+    assert facts["tool_grants"] == [
+        {
+            "tool_identifier": definition.identifier,
+            "server_code": "ones-mcp",
+            "schema_hash": definition.schema_hash,
+            "source_role_codes": ["ones-role-reader"],
+        }
+    ]
+
+    membership = c.database.execute_one(
+        "select * from rbac_user_role where user_id = ? and role_id = ?",
+        (user["id"], role["id"]),
+    )
+    assert membership is not None
+    c.identity_repository.remove_role(
+        user_id=str(user["id"]),
+        role_id=str(role["id"]),
+        expected_revision=int(membership["revision"]),
+    )
+    revoked = c.business_authorization_service.decide(
+        user_id=str(user["id"]),
+        application_id=str(application["id"]),
+        tool_identifier=definition.identifier,
+        environment="local",
+        base="base-one",
+    )
+    assert revoked["allowed"] is False
 
 
 def test_four_stage_reauthorization_blocks_revoked_access_without_data_leak() -> None:

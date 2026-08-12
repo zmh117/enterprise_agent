@@ -47,8 +47,9 @@ function runtimeEnv(): NodeJS.ProcessEnv {
     DATABASE_URL: "postgresql://runtime:secret@database/enterprise_agent",
     APP_CONFIG_MASTER_KEY_FILE: "/run/secrets/app-config-master-key",
     MODEL_PROVIDER_ALLOWED_HOSTS: "api.anthropic.com,provider.internal",
-    MCP_SERVER_ALLOWED_HOSTS: "tool-mcp",
-    MCP_TOOL_SERVER_URL: "http://tool-mcp:9103/mcp"
+    MCP_SERVER_ALLOWED_HOSTS: "tool-mcp,ones-mcp",
+    MCP_TOOL_SERVER_URL: "http://tool-mcp:9103/mcp",
+    ONES_MCP_SERVER_URL: "http://ones-mcp:9104/mcp"
   };
 }
 
@@ -578,7 +579,8 @@ test("HTTP runtime exposes passive health/version/readiness and strict NDJSON te
     JSON.stringify(value),
     {
       authorization: `Bearer ${runtimeGrant}`,
-      "content-type": "application/json"
+      "content-type": "application/json",
+      "x-mcp-principal-token": "test-only-principal-token"
     }
   );
   assert.equal(response.status, 200);

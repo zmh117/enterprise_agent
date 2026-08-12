@@ -2197,6 +2197,37 @@ class AgentRepository:
         )
         return tool_call_id
 
+    def link_mcp_operation_audits(
+        self,
+        *,
+        job_id: str,
+        tool_name: str,
+        tool_call_id: str,
+    ) -> None:
+        rows = self.database.execute(
+            """
+            update mcp_operation_audit
+               set agent_tool_call_id = ?
+             where job_id = ? and tool_identifier = ?
+               and agent_tool_call_id is null
+            returning audit_event_id
+            """,
+            (tool_call_id, job_id, tool_name),
+        )
+        audit_id = next(
+            (
+                str(row["audit_event_id"])
+                for row in rows
+                if row.get("audit_event_id")
+            ),
+            "",
+        )
+        if audit_id:
+            self.database.execute(
+                "update agent_tool_call set audit_id = ? where id = ?",
+                (audit_id, tool_call_id),
+            )
+
     def complete_tool_call(
         self,
         tool_call_id: str,

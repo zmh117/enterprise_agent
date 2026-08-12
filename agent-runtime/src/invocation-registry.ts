@@ -18,6 +18,10 @@ export interface ExecutionEmitter {
   ): void;
 }
 
+export interface InvocationSecretContext {
+  readonly principalToken?: string;
+}
+
 export interface TerminalDraft {
   readonly status: "SUCCEEDED" | "FAILED" | "CANCELLED";
   readonly final_answer?: string;
@@ -28,7 +32,8 @@ export interface TerminalDraft {
 
 export type RuntimeExecutor = (
   request: AgentExecutionRequestV1,
-  emitter: ExecutionEmitter
+  emitter: ExecutionEmitter,
+  secrets?: InvocationSecretContext
 ) => Promise<TerminalDraft>;
 
 export class InvocationConflictError extends Error {
@@ -50,6 +55,7 @@ class InvocationRecord {
 
   constructor(
     readonly request: AgentExecutionRequestV1,
+    readonly secrets: InvocationSecretContext,
     private readonly now: () => Date
   ) {}
 
@@ -181,7 +187,10 @@ export class InvocationRegistry {
     private readonly ownerInstanceId: string = randomUUID()
   ) {}
 
-  async acquire(request: AgentExecutionRequestV1): Promise<InvocationHandle> {
+  async acquire(
+    request: AgentExecutionRequestV1,
+    secrets: InvocationSecretContext = {}
+  ): Promise<InvocationHandle> {
     this.prune();
     const existing = this.records.get(request.invocation_id);
     if (existing) {
@@ -190,7 +199,7 @@ export class InvocationRegistry {
       }
       return this.handle(existing);
     }
-    const record = new InvocationRecord(request, this.now);
+    const record = new InvocationRecord(request, secrets, this.now);
     const persisted = await this.terminalLedger?.load(request.invocation_id);
     if (persisted) {
       if (persisted.requestDigest !== request.request_digest) {
@@ -263,7 +272,7 @@ export class InvocationRegistry {
             record.commitEvent(event);
           });
         }
-      });
+      }, record.secrets);
       await eventPersistence;
       await this.finalize(record, terminal);
     } catch {

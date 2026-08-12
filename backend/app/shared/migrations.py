@@ -172,7 +172,14 @@ def load_migration_catalog(migrations_dir: Path) -> tuple[MigrationArtifact, ...
 def deployable_migration_catalog(
     catalog: tuple[MigrationArtifact, ...],
 ) -> tuple[MigrationArtifact, ...]:
-    """Return the normal startup catalog, excluding staged contract migrations."""
+    """Return the normal startup catalog, excluding a staged contract tail.
+
+    A schema contract is staged only while it and any following contract
+    migrations form the catalog tail. Appending a normal forward migration is
+    an explicit release boundary: fresh databases may apply the complete chain,
+    while existing databases still pass the contract approval gate in
+    ``_apply_one`` before that normal migration can run.
+    """
     contract_indexes = [
         index
         for index, artifact in enumerate(catalog)
@@ -185,9 +192,7 @@ def deployable_migration_catalog(
         SCHEMA_CONSOLIDATION_CONTRACT_MARKER not in artifact.sql
         for artifact in catalog[first_contract:]
     ):
-        raise MigrationDefinitionError(
-            "Normal migrations cannot follow a staged schema contract"
-        )
+        return catalog
     deployable = catalog[:first_contract]
     if not deployable:
         raise MigrationDefinitionError("Migration catalog cannot contain only contracts")

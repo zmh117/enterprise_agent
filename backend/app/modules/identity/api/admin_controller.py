@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Literal
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app.modules.identity.api.dependencies import (
@@ -287,6 +288,64 @@ def build_identity_admin_router() -> APIRouter:
         require_action(request, resource_type="audit", resource_code="*", action="read")
         return {"events": container(request).audit_repository.list_recent(limit=limit)}
 
+    @router.get("/mcp-operation-audits")
+    def list_mcp_operation_audits(
+        request: Request,
+        job_id: str = Query(default="", max_length=200),
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> dict[str, Any]:
+        principal = require_action(
+            request,
+            resource_type="audit",
+            resource_code="*",
+            action="read",
+        )
+        c = container(request)
+        where = "where job_id = ?" if job_id else ""
+        params: tuple[Any, ...] = (job_id, limit) if job_id else (limit,)
+        rows = c.database.execute(
+            f"""
+            select * from mcp_operation_audit
+            {where}
+            order by created_at desc, id desc
+            limit ?
+            """,
+            params,
+        )
+        c.audit_service.record(
+            "mcp.audit.read",
+            status="success",
+            summary="MCP operation audit list read",
+            actor_id=principal.user_id,
+            payload={"job_id": job_id, "count": len(rows), "limit": limit},
+        )
+        return {"events": [_mcp_audit_projection(row) for row in rows]}
+
+    @router.get("/mcp-operation-audits/{audit_id}")
+    def get_mcp_operation_audit(request: Request, audit_id: str) -> dict[str, Any]:
+        principal = require_action(
+            request,
+            resource_type="audit",
+            resource_code="*",
+            action="read",
+        )
+        c = container(request)
+        row = c.database.execute_one(
+            "select * from mcp_operation_audit where id = ?",
+            (audit_id,),
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="未找到 MCP 操作审计")
+        c.audit_service.record(
+            "mcp.audit.read",
+            status="success",
+            summary="MCP operation audit detail read",
+            job_id=str(row["job_id"]),
+            actor_id=principal.user_id,
+            payload={"mcp_operation_audit_id": audit_id},
+        )
+        return {"event": _mcp_audit_projection(row)}
+
     @router.get("/dingtalk-tenants")
     def list_dingtalk_tenants(request: Request) -> dict[str, Any]:
         require_action(request, resource_type="identity", resource_code="*", action="manage")
@@ -402,6 +461,23 @@ def build_identity_admin_router() -> APIRouter:
         return {"status": "revoked"}
 
     return router
+
+
+def _mcp_audit_projection(row: dict[str, Any]) -> dict[str, Any]:
+    projected = dict(row)
+    for name in (
+        "tool_request_json",
+        "provider_request_json",
+        "provider_response_json",
+        "tool_response_json",
+    ):
+        try:
+            parsed = json.loads(str(projected.get(name) or "{}"))
+        except json.JSONDecodeError:
+            parsed = {}
+        projected[name.removesuffix("_json")] = parsed if isinstance(parsed, dict) else {}
+        projected.pop(name, None)
+    return projected
 
 
 def _identity_mutation_summary(identity: dict[str, Any]) -> dict[str, Any]:

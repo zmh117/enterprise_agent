@@ -148,6 +148,24 @@ class AgentRuntimeSettings:
 
 
 @dataclass(frozen=True)
+class PrincipalJwtSettings:
+    signing_private_key_file: str = ""
+    public_jwks_file: str = ""
+    ttl_seconds: int = 5 * 60
+
+
+@dataclass(frozen=True)
+class OnesMcpSettings:
+    provider_base_url: str = ""
+    provider_allowed_hosts: tuple[str, ...] = ()
+    allow_insecure_local: bool = False
+    timeout_seconds: int = 5
+    max_request_bytes: int = 32 * 1024
+    max_response_bytes: int = 256 * 1024
+    audit_retention_days: int = 0
+
+
+@dataclass(frozen=True)
 class WebhookSettings:
     enabled: bool = True
     max_body_bytes: int = 1024 * 1024
@@ -246,6 +264,8 @@ class Settings:
     identity: IdentitySettings = field(default_factory=IdentitySettings)
     ones_identity: OnesIdentitySettings = field(default_factory=OnesIdentitySettings)
     agent_runtime: AgentRuntimeSettings = field(default_factory=AgentRuntimeSettings)
+    principal_jwt: PrincipalJwtSettings = field(default_factory=PrincipalJwtSettings)
+    ones_mcp: OnesMcpSettings = field(default_factory=OnesMcpSettings)
     webhooks: WebhookSettings = field(default_factory=WebhookSettings)
     managed_channels: ManagedChannelSettings = field(default_factory=ManagedChannelSettings)
 
@@ -306,6 +326,22 @@ def load_settings() -> Settings:
             grant_private_key_file=os.getenv("RUNTIME_GRANT_PRIVATE_KEY_FILE", ""),
             model_probe_auth_token_file=os.getenv("MODEL_PROBE_AUTH_TOKEN_FILE", ""),
             allow_insecure_internal_http=_env_bool("AGENT_RUNTIME_ALLOW_INSECURE_INTERNAL_HTTP"),
+        ),
+        principal_jwt=PrincipalJwtSettings(
+            signing_private_key_file=os.getenv("PRINCIPAL_JWT_PRIVATE_KEY_FILE", ""),
+            public_jwks_file=os.getenv("PRINCIPAL_JWKS_FILE", ""),
+            ttl_seconds=int(os.getenv("PRINCIPAL_JWT_TTL_SECONDS", "300")),
+        ),
+        ones_mcp=OnesMcpSettings(
+            provider_base_url=os.getenv("ONES_MCP_PROVIDER_BASE_URL", ""),
+            provider_allowed_hosts=_csv_tuple(os.getenv("ONES_MCP_PROVIDER_ALLOWED_HOSTS", "")),
+            allow_insecure_local=_env_bool("ONES_MCP_PROVIDER_ALLOW_INSECURE_LOCAL"),
+            timeout_seconds=int(os.getenv("ONES_MCP_PROVIDER_TIMEOUT_SECONDS", "5")),
+            max_request_bytes=int(os.getenv("ONES_MCP_MAX_REQUEST_BYTES", str(32 * 1024))),
+            max_response_bytes=int(
+                os.getenv("ONES_MCP_PROVIDER_MAX_RESPONSE_BYTES", str(256 * 1024))
+            ),
+            audit_retention_days=int(os.getenv("MCP_OPERATION_AUDIT_RETENTION_DAYS", "0")),
         ),
         dingtalk=DingTalkSettings(
             secret=os.getenv("DINGTALK_SECRET", ""),

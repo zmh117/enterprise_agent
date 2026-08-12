@@ -40,11 +40,14 @@ x-api-env: &api-env
   # Worker、Runtime 或 MCP，也不依赖已退役的 API Connection。
   ONES_IDENTITY_INSTANCE_CODE: ${ONES_IDENTITY_INSTANCE_CODE:-default}
   ONES_IDENTITY_DISPLAY_NAME: ${ONES_IDENTITY_DISPLAY_NAME:-ONES}
-  ONES_IDENTITY_BASE_URL: ${ONES_IDENTITY_BASE_URL:-}
-  ONES_IDENTITY_ALLOWED_HOSTS: ${ONES_IDENTITY_ALLOWED_HOSTS:-}
+  # Plain `docker compose up` is a local acceptance stack and binds against the
+  # repository-owned Mock. Production still rejects this HTTP target through
+  # APP_ENV=production and must explicitly provide an HTTPS Provider allowlist.
+  ONES_IDENTITY_BASE_URL: ${ONES_IDENTITY_BASE_URL:-http://ones-mock:19121}
+  ONES_IDENTITY_ALLOWED_HOSTS: ${ONES_IDENTITY_ALLOWED_HOSTS:-ones-mock}
   ONES_IDENTITY_TIMEOUT_SECONDS: ${ONES_IDENTITY_TIMEOUT_SECONDS:-5}
   ONES_IDENTITY_MAX_RESPONSE_BYTES: ${ONES_IDENTITY_MAX_RESPONSE_BYTES:-65536}
-  ONES_IDENTITY_ALLOW_INSECURE_LOCAL: ${ONES_IDENTITY_ALLOW_INSECURE_LOCAL:-false}
+  ONES_IDENTITY_ALLOW_INSECURE_LOCAL: ${ONES_IDENTITY_ALLOW_INSECURE_LOCAL:-true}
   ONES_IDENTITY_CHALLENGE_TTL_SECONDS: ${ONES_IDENTITY_CHALLENGE_TTL_SECONDS:-600}
 
 services:
@@ -136,6 +139,37 @@ services:
       minio:
         condition: service_healthy
 
+  ones-mock:
+    build:
+      context: ./ones_mock
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777,uid=10004,gid=10004
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    expose:
+      - "19121"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:19121/health', timeout=2)"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    networks:
+      - agent-runtime-control
+
   tool-mcp:
     build:
       context: .
@@ -177,6 +211,60 @@ services:
       - agent-runtime-control
       - provider-egress
 
+  ones-mcp:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: ones-mcp
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777,uid=10003,gid=10003
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      <<: *database-env
+      APP_ENV: ${APP_ENV:-local}
+      SEED_LOCAL_CONFIG: "false"
+      PRINCIPAL_JWKS_FILE: /run/secrets/principal_jwks
+      ONES_MCP_PROVIDER_BASE_URL: ${ONES_MCP_PROVIDER_BASE_URL:-http://ones-mock:19121}
+      ONES_MCP_PROVIDER_ALLOWED_HOSTS: ${ONES_MCP_PROVIDER_ALLOWED_HOSTS:-ones-mock}
+      ONES_MCP_PROVIDER_ALLOW_INSECURE_LOCAL: ${ONES_MCP_PROVIDER_ALLOW_INSECURE_LOCAL:-true}
+      ONES_MCP_PROVIDER_TIMEOUT_SECONDS: ${ONES_MCP_PROVIDER_TIMEOUT_SECONDS:-5}
+      ONES_MCP_PROVIDER_MAX_RESPONSE_BYTES: ${ONES_MCP_PROVIDER_MAX_RESPONSE_BYTES:-262144}
+      ONES_MCP_MAX_REQUEST_BYTES: ${ONES_MCP_MAX_REQUEST_BYTES:-32768}
+      MCP_OPERATION_AUDIT_RETENTION_DAYS: ${MCP_OPERATION_AUDIT_RETENTION_DAYS:-90}
+    secrets:
+      - app_config_master_key
+      - principal_jwks
+    expose:
+      - "9104"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+      ones-mock:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9104/health', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+    networks:
+      - agent-runtime-control
+      - provider-egress
+
   typescript-agent-runtime:
     build:
       context: ./agent-runtime
@@ -199,8 +287,9 @@ services:
       DATABASE_URL: ${AGENT_RUNTIME_DATABASE_DSN:-postgresql://agent_runtime_reader:agent_runtime_reader_local@postgres:5432/enterprise_agent}
       APP_CONFIG_MASTER_KEY_FILE: /run/secrets/app_config_master_key
       MODEL_PROVIDER_ALLOWED_HOSTS: ${MODEL_PROVIDER_HOST_ALLOWLIST:-api.deepseek.com}
-      MCP_SERVER_ALLOWED_HOSTS: tool-mcp
+      MCP_SERVER_ALLOWED_HOSTS: tool-mcp,ones-mcp
       MCP_TOOL_SERVER_URL: http://tool-mcp:9103/mcp
+      ONES_MCP_SERVER_URL: http://ones-mcp:9104/mcp
       AGENT_RUNTIME_TEST_PROVIDER_MODE: ${AGENT_RUNTIME_TEST_PROVIDER_MODE:-disabled}
     secrets:
       - app_config_master_key
@@ -214,6 +303,8 @@ services:
       migrator:
         condition: service_completed_successfully
       tool-mcp:
+        condition: service_healthy
+      ones-mcp:
         condition: service_healthy
     healthcheck:
       test:
@@ -254,6 +345,7 @@ services:
       RUNTIME_GRANT_PUBLIC_KEY_FILE: /run/secrets/runtime_grant_public_key
       MODEL_PROBE_AUTH_TOKEN_FILE: /run/secrets/model_probe_auth_token
       MCP_TOOL_SERVER_URL: http://tool-mcp:9103/mcp
+      ONES_MCP_SERVER_URL: http://ones-mcp:9104/mcp
       PYTHON_AGENT_RUNTIME_CLI_VERSION: "2.1.226"
       PYTHON_AGENT_RUNTIME_LEDGER_TTL_SECONDS: ${PYTHON_AGENT_RUNTIME_LEDGER_TTL_SECONDS:-3600}
       AGENT_RUNTIME_TEST_PROVIDER_MODE: ${AGENT_RUNTIME_TEST_PROVIDER_MODE:-disabled}
@@ -269,6 +361,8 @@ services:
       migrator:
         condition: service_completed_successfully
       tool-mcp:
+        condition: service_healthy
+      ones-mcp:
         condition: service_healthy
     healthcheck:
       test:
@@ -382,9 +476,11 @@ services:
     environment:
       <<: *worker-env
       RUNTIME_GRANT_PRIVATE_KEY_FILE: /run/secrets/runtime_grant_private_key
+      PRINCIPAL_JWT_PRIVATE_KEY_FILE: /run/secrets/principal_jwt_private_key
     secrets:
       - app_config_master_key
       - runtime_grant_private_key
+      - principal_jwt_private_key
     depends_on:
       postgres:
         condition: service_healthy
@@ -393,6 +489,8 @@ services:
       migrator:
         condition: service_completed_successfully
       tool-mcp:
+        condition: service_healthy
+      ones-mcp:
         condition: service_healthy
       python-agent-runtime:
         condition: service_healthy
@@ -558,6 +656,10 @@ secrets:
     file: ${RUNTIME_GRANT_PRIVATE_KEY_FILE:-${HOME}/.config/enterprise-agent/runtime-grant-private.pem}
   runtime_grant_public_key:
     file: ${RUNTIME_GRANT_PUBLIC_KEY_FILE:-${HOME}/.config/enterprise-agent/runtime-grant-public.pem}
+  principal_jwt_private_key:
+    file: ${PRINCIPAL_JWT_PRIVATE_KEY_FILE:-${HOME}/.config/enterprise-agent/principal-jwt-private.pem}
+  principal_jwks:
+    file: ${PRINCIPAL_JWKS_FILE:-${HOME}/.config/enterprise-agent/principal-jwks.json}
   model_probe_auth_token:
     file: ${MODEL_PROBE_AUTH_TOKEN_FILE:-${HOME}/.config/enterprise-agent/model-probe-auth-token}
 

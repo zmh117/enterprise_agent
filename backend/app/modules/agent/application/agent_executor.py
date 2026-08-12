@@ -288,7 +288,7 @@ class AgentExecutor:
             duration = _int_value(event.get("duration_ms"))
             audit_id_value = event.get("audit_id")
             audit_id = audit_id_value if isinstance(audit_id_value, str) else None
-            self.repository.add_tool_call(
+            tool_call_id = self.repository.add_tool_call(
                 job_id=job_id,
                 tool_name=tool_name,
                 request_payload=_dict_value(event.get("request_payload")),
@@ -298,6 +298,12 @@ class AgentExecutor:
                 risk_level=str(event.get("risk_level", "medium")),
                 audit_id=audit_id,
             )
+            if str(event.get("server_code") or "") == "ones-mcp":
+                self.repository.link_mcp_operation_audits(
+                    job_id=job_id,
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                )
 
 
 def _dict_value(value: object) -> dict[str, object]:

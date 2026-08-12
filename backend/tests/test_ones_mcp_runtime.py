@@ -1,0 +1,911 @@
+from __future__ import annotations
+
+import io
+import json
+from dataclasses import dataclass, replace
+from typing import Any
+from urllib.error import HTTPError
+from urllib.parse import urlsplit
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from fastapi.testclient import TestClient
+import pytest
+
+from app.modules.identity.application.ones_identity import (
+    VerifiedOnesIdentity,
+    VerifiedOnesTeam,
+)
+from app.modules.identity.application.principal_jwt import (
+    PrincipalJwks,
+    PrincipalSigningKey,
+    PrincipalTokenIssuer,
+    PrincipalTokenVerifier,
+)
+from app.modules.identity.infrastructure.external_identity_credentials import (
+    CredentialSecretBundle,
+)
+from app.main import create_app as create_control_plane_app
+from app.modules.job.infrastructure.repositories import now_iso
+from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
+from app.shared.exceptions import AppError, NonRetryableExecutionError, ToolPolicyError
+from backend.tests.helpers import container, prepare_debug_application_access
+from ones_mock.mock_ones_api import MockOnesSettings, create_app as create_mock_app
+from services.ones_mcp_server.app import create_app as create_mcp_app
+from services.ones_mcp_server.contracts import validate_provider_target
+from services.ones_mcp_server.runtime import (
+    McpOperationAuditRepository,
+    OnesPrincipalResolver,
+    OnesMcpError,
+    OnesProviderClient,
+    OnesWorkItemSearchService,
+)
+
+
+@dataclass
+class _ProviderResponse:
+    status: int
+    content: bytes
+
+    def __enter__(self) -> _ProviderResponse:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def read(self, limit: int) -> bytes:
+        return self.content[:limit]
+
+
+class _MockProviderTransport:
+    def __init__(self) -> None:
+        self.client = TestClient(create_mock_app(), follow_redirects=False)
+
+    def __call__(self, request: Any, _timeout: float) -> _ProviderResponse:
+        target = urlsplit(request.full_url)
+        payload = json.loads(bytes(request.data or b"{}").decode("utf-8"))
+        headers = {key: value for key, value in request.header_items()}
+        response = self.client.post(target.path, json=payload, headers=headers)
+        if response.status_code >= 400:
+            raise HTTPError(
+                request.full_url,
+                response.status_code,
+                "mock provider error",
+                response.headers,
+                io.BytesIO(response.content),
+            )
+        return _ProviderResponse(response.status_code, response.content)
+
+
+class _MockLoginVerifier:
+    available = True
+
+    def __init__(self) -> None:
+        self.settings = MockOnesSettings()
+        self.calls = 0
+
+    def verify(self, *, email: str, password: str) -> VerifiedOnesIdentity:
+        self.calls += 1
+        assert email == self.settings.email
+        assert password == self.settings.password
+        return VerifiedOnesIdentity.create(
+            user_uuid=self.settings.user_uuid,
+            display_name=self.settings.user_name,
+            teams=(
+                VerifiedOnesTeam(
+                    id=self.settings.team_uuid,
+                    name=self.settings.team_name,
+                ),
+            ),
+            token=self.settings.token,
+        )
+
+
+def _signing_key() -> PrincipalSigningKey:
+    private = Ed25519PrivateKey.generate()
+    return PrincipalSigningKey.from_pem(
+        private.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+
+
+def _fixture(*, initial_token: str | None = None) -> dict[str, Any]:
+    runtime = container()
+    definition = MCP_TOOL_MANIFEST["ones_work_item_search"]
+    next_order = runtime.database.execute_one(
+        "select coalesce(max(selection_order), -1) + 1 as value "
+        "from agent_publication_mcp_tool where agent_publication_id = ?",
+        ("agent_publication_default_v1",),
+    )
+    assert next_order is not None
+    runtime.database.execute(
+        """
+        insert into agent_publication_mcp_tool
+          (agent_publication_id, server_code, tool_identifier, schema_hash,
+           model_description, selection_order, created_at)
+        values (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "agent_publication_default_v1",
+            definition.server_code,
+            definition.identifier,
+            definition.schema_hash,
+            definition.description,
+            int(next_order["value"]),
+            now_iso(),
+        ),
+    )
+    selection = prepare_debug_application_access(
+        runtime,
+        application_code="ones-mcp-runtime-test",
+        role_code="ones-mcp-runtime-reader",
+        capabilities=("ones_work_item_search",),
+    )
+    job, _ = runtime.debug_job_access_service.create_job(
+        user_id="user_local_admin",
+        display_name="Administrator",
+        message="search ONES work items",
+        application_id=selection["application_id"],
+        execution_scope_id=selection["execution_scope_id"],
+        idempotency_key="ones-mcp-runtime-job",
+        correlation_id="ones-mcp-runtime-correlation",
+        environment="local",
+    )
+    claimed = runtime.agent_repository.claim_job(job.id, "agent-worker-test")
+    assert claimed is not None
+    mock = MockOnesSettings()
+    identity = runtime.identity_repository.bind_external_identity(
+        user_id="user_local_admin",
+        provider="ones",
+        tenant_code="default",
+        external_subject_id=mock.user_uuid,
+        connector_id="",
+        display_name=mock.user_name,
+        metadata={
+            "team_uuids": [mock.team_uuid],
+            "teams": [{"id": mock.team_uuid, "name": mock.team_name}],
+            "default_team_id": mock.team_uuid,
+        },
+    )
+    credentials = runtime.external_identity_credential_repository
+    assert credentials is not None
+    credentials.upsert_active(
+        external_identity_id=str(identity["id"]),
+        provider="ones",
+        secrets=CredentialSecretBundle(
+            email=mock.email,
+            password=mock.password,
+            token=initial_token or mock.token,
+        ),
+        verified_at=now_iso(),
+    )
+    signing_key = _signing_key()
+    issuer = PrincipalTokenIssuer(
+        runtime.database,
+        runtime.mcp_tool_snapshot_service,
+        runtime.permission_service,
+        signing_key,
+        runtime.audit_service,
+    )
+    token = issuer.issue_for_job(job_id=claimed.id)
+    verifier = PrincipalTokenVerifier(
+        PrincipalJwks.from_dict(signing_key.public_jwks()),
+        audit_service=runtime.audit_service,
+    )
+    audit = McpOperationAuditRepository(
+        runtime.database,
+        max_payload_bytes=256 * 1024,
+        platform_audit_service=runtime.audit_service,
+    )
+    login = _MockLoginVerifier()
+    provider = OnesProviderClient(
+        validate_provider_target(
+            "http://ones-mock:8001",
+            allowed_hosts=("ones-mock",),
+            app_env="test",
+            allow_insecure_local=True,
+        ),
+        timeout_seconds=5,
+        max_response_bytes=256 * 1024,
+        open_response=_MockProviderTransport(),
+    )
+    service = OnesWorkItemSearchService(
+        OnesPrincipalResolver(
+            runtime.database,
+            verifier,
+            runtime.mcp_tool_snapshot_service,
+            runtime.permission_service,
+            credentials,
+        ),
+        provider,
+        login,
+        credentials,
+        audit,
+    )
+    return {
+        "runtime": runtime,
+        "job": claimed,
+        "identity": identity,
+        "token": token,
+        "claims": service.authenticate(token),
+        "service": service,
+        "login": login,
+        "mock": mock,
+    }
+
+
+def test_ones_mcp_mock_query_persists_complete_unmasked_business_audit() -> None:
+    fixture = _fixture()
+    service = fixture["service"]
+    result = service.search(
+        claims=fixture["claims"],
+        arguments={"keyword": "traceability", "issue_type": "demand", "limit": 10},
+        correlation_id="ones-query-1",
+    )
+
+    assert result == {
+        "items": [
+            {
+                "number": 900101,
+                "name": "Mock requirement: add production order traceability",
+                "type": "demand",
+            }
+        ],
+        "total": 1,
+        "truncated": False,
+        "untrusted_data": True,
+    }
+    rows = fixture["runtime"].database.execute(
+        "select * from mcp_operation_audit where correlation_id = ? order by created_at, id",
+        ("ones-query-1",),
+    )
+    assert len(rows) == 2
+    provider = next(row for row in rows if row["event_kind"] == "PROVIDER")
+    tool = next(row for row in rows if row["event_kind"] == "TOOL")
+    assert json.loads(provider["provider_request_json"])["variables"] == {
+        "keyword": "traceability",
+        "issue_type": "demand",
+        "limit": 10,
+        "team_id": fixture["mock"].team_uuid,
+        "user_id": fixture["mock"].user_uuid,
+    }
+    assert (
+        json.loads(provider["provider_response_json"])["data"]["workItems"]["items"][0]["name"]
+        == result["items"][0]["name"]
+    )
+    assert json.loads(tool["tool_request_json"])["keyword"] == "traceability"
+    assert json.loads(tool["tool_response_json"]) == result
+    assert provider["provider_email"] == fixture["mock"].email
+    evidence = json.dumps(rows, ensure_ascii=False)
+    assert fixture["mock"].password not in evidence
+    assert fixture["mock"].token not in evidence
+    assert fixture["token"] not in evidence
+    tool_call_id = fixture["runtime"].agent_repository.add_tool_call(
+        job_id=fixture["job"].id,
+        tool_name="ones_work_item_search",
+        request_payload={"keyword": "traceability"},
+        response_summary={"count": 1},
+        status="SUCCEEDED",
+        duration_ms=1,
+        risk_level="low",
+    )
+    fixture["runtime"].agent_repository.link_mcp_operation_audits(
+        job_id=fixture["job"].id,
+        tool_name="ones_work_item_search",
+        tool_call_id=tool_call_id,
+    )
+    linked = fixture["runtime"].database.execute(
+        "select agent_tool_call_id, audit_event_id from mcp_operation_audit "
+        "where correlation_id = ?",
+        ("ones-query-1",),
+    )
+    assert {row["agent_tool_call_id"] for row in linked} == {tool_call_id}
+    assert all(row["audit_event_id"] for row in linked)
+
+
+def test_ones_mcp_refreshes_stale_token_once_and_retries_mock_query() -> None:
+    fixture = _fixture(initial_token="stale-test-token")
+    result = fixture["service"].search(
+        claims=fixture["claims"],
+        arguments={"keyword": "#900103", "issue_type": "defect", "limit": 5},
+        correlation_id="ones-query-refresh",
+    )
+
+    assert result["items"][0]["number"] == 900103
+    assert fixture["login"].calls == 1
+    credential = fixture["runtime"].external_identity_credential_repository.get_by_identity(
+        str(fixture["identity"]["id"])
+    )
+    assert credential is not None
+    assert credential["revision"] == 2
+    rows = fixture["runtime"].database.execute(
+        "select event_kind, attempt, status, error_code from mcp_operation_audit "
+        "where correlation_id = ? order by created_at, id",
+        ("ones-query-refresh",),
+    )
+    assert {(row["event_kind"], row["attempt"], row["status"]) for row in rows} == {
+        ("PROVIDER", 0, "FAILED"),
+        ("CREDENTIAL", 0, "SUCCEEDED"),
+        ("PROVIDER", 1, "SUCCEEDED"),
+        ("TOOL", 0, "SUCCEEDED"),
+    }
+
+
+def test_ones_mcp_streamable_http_requires_bearer_and_publishes_one_tool() -> None:
+    fixture = _fixture()
+    app = create_mcp_app(
+        fixture["service"],
+        database=fixture["runtime"].database,
+        max_request_bytes=32 * 1024,
+        audit_retention_days=30,
+        allowed_hosts=("testserver",),
+    )
+    base_headers = {
+        "content-type": "application/json",
+        "accept": "application/json, text/event-stream",
+    }
+    auth_headers = {**base_headers, "authorization": f"Bearer {fixture['token']}"}
+
+    with TestClient(app) as client:
+        missing = client.post(
+            "/mcp",
+            headers=base_headers,
+            json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        )
+        duplicate = client.post(
+            "/mcp",
+            headers=[
+                *base_headers.items(),
+                ("authorization", f"Bearer {fixture['token']}"),
+                ("authorization", f"Bearer {fixture['token']}"),
+            ],
+            json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        )
+        origin = client.post(
+            "/mcp",
+            headers={**auth_headers, "origin": "https://untrusted.example"},
+            json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        )
+        wrong_host = client.post(
+            "/mcp",
+            headers={**auth_headers, "host": "untrusted.example"},
+            json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        )
+        oversized = client.post(
+            "/mcp",
+            headers=auth_headers,
+            content=b"x" * (32 * 1024 + 1),
+        )
+        initialized = client.post(
+            "/mcp",
+            headers=auth_headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "runtime-test", "version": "1"},
+                },
+            },
+        )
+        listed = client.post(
+            "/mcp",
+            headers={**auth_headers, "mcp-protocol-version": "2025-06-18"},
+            json={"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}},
+        )
+
+    assert missing.status_code == 401
+    assert duplicate.status_code == 401
+    assert origin.status_code == 403
+    assert wrong_host.status_code == 421
+    assert oversized.status_code == 413
+    assert initialized.status_code == 200
+    assert initialized.json()["result"]["serverInfo"]["name"] == "Enterprise ONES MCP"
+    assert [item["name"] for item in listed.json()["result"]["tools"]] == ["ones_work_item_search"]
+
+
+@pytest.mark.parametrize(
+    ("keyword", "error_code"),
+    [
+        ("__403__", "ones_provider_forbidden"),
+        ("__429__", "ones_provider_rate_limited"),
+        ("__500__", "ones_provider_unavailable"),
+        ("__redirect__", "ones_provider_redirect_rejected"),
+        ("__bad_json__", "ones_provider_response_invalid"),
+        ("__oversize__", "ones_provider_response_too_large"),
+        ("__missing_field__", "ones_provider_schema_invalid"),
+    ],
+)
+def test_ones_mcp_classifies_provider_failures_without_persisting_error_bodies(
+    keyword: str,
+    error_code: str,
+) -> None:
+    fixture = _fixture()
+
+    with pytest.raises(AppError) as raised:
+        fixture["service"].search(
+            claims=fixture["claims"],
+            arguments={"keyword": keyword, "issue_type": "defect", "limit": 5},
+            correlation_id="ones-query-provider-failure",
+        )
+
+    assert raised.value.error_code == error_code
+    rows = fixture["runtime"].database.execute(
+        "select * from mcp_operation_audit where correlation_id = ?",
+        ("ones-query-provider-failure",),
+    )
+    provider = next(row for row in rows if row["event_kind"] == "PROVIDER")
+    assert provider["status"] == "FAILED"
+    assert provider["error_code"] == error_code
+    assert json.loads(provider["provider_response_json"]) == {}
+
+
+def test_ones_mcp_classifies_provider_timeout_without_persisting_a_response() -> None:
+    fixture = _fixture()
+
+    def time_out(*_args: Any, **_kwargs: Any) -> _ProviderResponse:
+        raise TimeoutError("fixed test timeout")
+
+    fixture["service"].provider._open_response = time_out
+
+    with pytest.raises(AppError) as raised:
+        fixture["service"].search(
+            claims=fixture["claims"],
+            arguments={"keyword": "traceability", "issue_type": "demand", "limit": 5},
+            correlation_id="ones-query-provider-timeout",
+        )
+
+    assert raised.value.error_code == "ones_provider_unavailable"
+    provider = fixture["runtime"].database.execute_one(
+        "select status, error_code, provider_response_json "
+        "from mcp_operation_audit where correlation_id = ? and event_kind = 'PROVIDER'",
+        ("ones-query-provider-timeout",),
+    )
+    assert provider == {
+        "status": "FAILED",
+        "error_code": "ones_provider_unavailable",
+        "provider_response_json": "{}",
+    }
+
+
+@pytest.mark.parametrize(
+    ("refresh_outcome", "credential_error"),
+    [
+        ("invalid_credentials", "ones_invalid_credentials"),
+        ("subject_changed", "ones_credential_identity_changed"),
+        ("team_missing", "ones_credential_identity_changed"),
+    ],
+)
+def test_ones_mcp_refresh_fails_closed_when_login_identity_is_not_current(
+    refresh_outcome: str,
+    credential_error: str,
+) -> None:
+    fixture = _fixture(initial_token="stale-test-token")
+    mock = fixture["mock"]
+
+    def verify(*, email: str, password: str) -> VerifiedOnesIdentity:
+        assert email == mock.email
+        assert password == mock.password
+        if refresh_outcome == "invalid_credentials":
+            raise NonRetryableExecutionError(
+                "fixed mock credentials rejected",
+                safe_message="ONES 邮箱或密码错误",
+                error_code="ones_invalid_credentials",
+            )
+        return VerifiedOnesIdentity.create(
+            user_uuid=(
+                "MOCK-ONES-USER-CHANGED" if refresh_outcome == "subject_changed" else mock.user_uuid
+            ),
+            display_name=mock.user_name,
+            teams=(
+                VerifiedOnesTeam(
+                    id=(
+                        "MOCK-ONES-TEAM-OTHER"
+                        if refresh_outcome == "team_missing"
+                        else mock.team_uuid
+                    ),
+                    name="Mock Team",
+                ),
+            ),
+            token=mock.token,
+        )
+
+    fixture["login"].verify = verify
+
+    with pytest.raises(AppError) as raised:
+        fixture["service"].search(
+            claims=fixture["claims"],
+            arguments={"keyword": "traceability", "issue_type": "demand", "limit": 5},
+            correlation_id=f"ones-query-refresh-{refresh_outcome}",
+        )
+
+    assert raised.value.error_code == "ones_credential_reverification_required"
+    credential = fixture["runtime"].external_identity_credential_repository.get_by_identity(
+        str(fixture["identity"]["id"])
+    )
+    assert credential is not None
+    assert credential["status"] == "REAUTH_REQUIRED"
+    assert credential["last_error_code"] == credential_error
+
+
+def test_ones_mcp_refresh_cas_conflict_does_not_overwrite_the_winning_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _fixture(initial_token="stale-test-token")
+    credentials = fixture["runtime"].external_identity_credential_repository
+    original_rotate = credentials.rotate_token
+
+    def lose_cas(*, credential_id: str, expected_revision: int, token: str) -> dict[str, Any]:
+        original_rotate(
+            credential_id=credential_id,
+            expected_revision=expected_revision,
+            token="concurrent-refresh-winner-token",
+        )
+        return original_rotate(
+            credential_id=credential_id,
+            expected_revision=expected_revision,
+            token=token,
+        )
+
+    monkeypatch.setattr(credentials, "rotate_token", lose_cas)
+
+    with pytest.raises(AppError) as raised:
+        fixture["service"].search(
+            claims=fixture["claims"],
+            arguments={"keyword": "traceability", "issue_type": "demand", "limit": 5},
+            correlation_id="ones-query-refresh-cas-conflict",
+        )
+
+    assert raised.value.error_code == "ones_credential_reverification_required"
+    credential = credentials.resolve_active(
+        credentials.get_by_identity(str(fixture["identity"]["id"]))["id"]
+    )
+    assert credential.revision == 2
+    assert credential.secrets.token == "concurrent-refresh-winner-token"
+
+
+def test_ones_mcp_second_401_marks_credential_reverification_required() -> None:
+    fixture = _fixture(initial_token="stale-test-token")
+
+    with pytest.raises(AppError) as raised:
+        fixture["service"].search(
+            claims=fixture["claims"],
+            arguments={"keyword": "__401__", "issue_type": "defect", "limit": 5},
+            correlation_id="ones-query-second-401",
+        )
+
+    assert raised.value.error_code == "ones_credential_reverification_required"
+    credential = fixture["runtime"].external_identity_credential_repository.get_by_identity(
+        str(fixture["identity"]["id"])
+    )
+    assert credential is not None
+    assert credential["status"] == "REAUTH_REQUIRED"
+    assert credential["last_error_code"] == "ones_provider_unauthorized_after_refresh"
+
+
+def test_ones_mcp_rejects_extra_identity_fields_before_resolving_credentials() -> None:
+    fixture = _fixture()
+
+    with pytest.raises(AppError) as raised:
+        fixture["service"].search(
+            claims=fixture["claims"],
+            arguments={
+                "keyword": "traceability",
+                "issue_type": "demand",
+                "limit": 5,
+                "user_id": "forged-user",
+            },
+            correlation_id="ones-query-forged-identity",
+        )
+
+    assert raised.value.error_code == "ones_tool_input_invalid"
+    assert (
+        fixture["runtime"].database.execute(
+            "select * from mcp_operation_audit where correlation_id = ?",
+            ("ones-query-forged-identity",),
+        )
+        == []
+    )
+
+
+def test_ones_mcp_fails_closed_for_missing_or_ambiguous_current_identity() -> None:
+    missing = _fixture()
+    missing["runtime"].database.execute(
+        "delete from external_identity_credential where external_identity_id = ?",
+        (missing["identity"]["id"],),
+    )
+    with pytest.raises(AppError) as no_credential:
+        missing["service"].search(
+            claims=missing["claims"],
+            arguments={"keyword": "traceability", "issue_type": "demand", "limit": 5},
+            correlation_id="ones-query-no-credential",
+        )
+    assert no_credential.value.error_code == "ones_credential_reverification_required"
+
+    ambiguous = _fixture()
+    ambiguous["runtime"].identity_repository.bind_external_identity(
+        user_id="user_local_admin",
+        provider="ones",
+        tenant_code="default",
+        external_subject_id="MOCK-ONES-USER-OTHER",
+        connector_id="",
+        display_name="Other ONES Identity",
+        metadata={
+            "team_uuids": [ambiguous["mock"].team_uuid],
+            "default_team_id": ambiguous["mock"].team_uuid,
+        },
+    )
+    with pytest.raises(AppError) as multiple:
+        ambiguous["service"].search(
+            claims=ambiguous["claims"],
+            arguments={"keyword": "traceability", "issue_type": "demand", "limit": 5},
+            correlation_id="ones-query-ambiguous",
+        )
+    assert multiple.value.error_code == "ones_identity_ambiguous"
+
+
+@pytest.mark.parametrize(
+    ("revoked_fact", "error_code"),
+    [
+        ("user_disabled", "ones_principal_user_inactive"),
+        ("identity_disabled", "ones_identity_missing"),
+        ("tool_revoked", "mcp_tool_use_denied"),
+    ],
+)
+def test_ones_mcp_rechecks_current_user_identity_and_tool_grant(
+    revoked_fact: str,
+    error_code: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _fixture()
+    if revoked_fact == "user_disabled":
+        fixture["runtime"].database.execute(
+            "update app_user set status = 'disabled' where id = ?",
+            ("user_local_admin",),
+        )
+    elif revoked_fact == "identity_disabled":
+        fixture["runtime"].database.execute(
+            "update user_external_identity set status = 'disabled' where id = ?",
+            (fixture["identity"]["id"],),
+        )
+    else:
+
+        def reject_current_grant(**_kwargs: Any) -> None:
+            raise ToolPolicyError(
+                "fixed test grant revoked",
+                safe_message="当前用户无权调用此工具",
+                error_code="mcp_tool_use_denied",
+            )
+
+        monkeypatch.setattr(
+            fixture["service"].resolver.permission_service,
+            "assert_mcp_tool_use_grant",
+            reject_current_grant,
+        )
+
+    with pytest.raises(AppError) as raised:
+        fixture["service"].search(
+            claims=fixture["claims"],
+            arguments={"keyword": "traceability", "issue_type": "demand", "limit": 5},
+            correlation_id=f"ones-query-{revoked_fact}",
+        )
+
+    assert raised.value.error_code == error_code
+
+
+def test_ones_mock_has_stable_refresh_identity_and_team_change_controls() -> None:
+    mock = MockOnesSettings()
+    client = TestClient(create_mock_app(), follow_redirects=False)
+
+    changed = client.post(
+        "/project/api/project/auth/login",
+        json={
+            "email": mock.email,
+            "password": mock.config.control_passwords["subject_changed"],
+        },
+    )
+    missing_team = client.post(
+        "/project/api/project/auth/login",
+        json={
+            "email": mock.email,
+            "password": mock.config.control_passwords["team_missing"],
+        },
+    )
+
+    assert changed.status_code == 200
+    assert changed.json()["user"]["uuid"] != mock.user_uuid
+    assert missing_team.status_code == 200
+    assert mock.team_uuid not in {team["uuid"] for team in missing_team.json()["teams"]}
+
+
+def test_mcp_audit_detail_requires_audit_read_and_records_the_read() -> None:
+    fixture = _fixture()
+    fixture["service"].search(
+        claims=fixture["claims"],
+        arguments={"keyword": "traceability", "issue_type": "demand", "limit": 5},
+        correlation_id="ones-audit-read",
+    )
+    runtime = fixture["runtime"]
+    audit_row = runtime.database.execute_one(
+        "select id from mcp_operation_audit where correlation_id = ? "
+        "order by created_at, id limit 1",
+        ("ones-audit-read",),
+    )
+    assert audit_row is not None
+    settings = replace(
+        runtime.settings,
+        environment="test",
+        identity=replace(
+            runtime.settings.identity,
+            enabled=True,
+            web_admin_enabled=True,
+            test_identity_headers_enabled=True,
+            cookie_secure=False,
+        ),
+    )
+    runtime.settings = settings
+    app = create_control_plane_app(settings, container_factory=lambda _: runtime)
+
+    with TestClient(app) as client:
+        unauthorized = client.get(f"/api/admin/mcp-operation-audits/{audit_row['id']}")
+        authorized = client.get(
+            f"/api/admin/mcp-operation-audits/{audit_row['id']}",
+            headers={"x-admin-user-id": "admin"},
+        )
+        read_audit = runtime.database.execute_one(
+            "select actor_id from audit_event where event_type = 'mcp.audit.read' "
+            "order by created_at desc limit 1"
+        )
+
+    assert unauthorized.status_code == 401
+    assert authorized.status_code == 200
+    assert authorized.json()["event"]["provider_request"]["variables"]["keyword"] == (
+        "traceability"
+    )
+    assert read_audit == {"actor_id": "user_local_admin"}
+
+
+def test_ones_mcp_fails_closed_when_required_business_audit_cannot_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _fixture()
+
+    def reject_audit(*_args: Any, **_kwargs: Any) -> str:
+        raise OnesMcpError(
+            "audit unavailable",
+            safe_message="ONES 查询审计不可用，请稍后重试",
+            error_code="mcp_audit_unavailable",
+        )
+
+    monkeypatch.setattr(fixture["service"].audit, "record", reject_audit)
+
+    with pytest.raises(AppError) as raised:
+        fixture["service"].search(
+            claims=fixture["claims"],
+            arguments={"keyword": "traceability", "issue_type": "demand", "limit": 5},
+            correlation_id="ones-query-audit-down",
+        )
+
+    assert raised.value.error_code == "mcp_audit_unavailable"
+
+
+def test_mcp_audit_failure_rolls_back_platform_audit_and_logs_only_error_type(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    fixture = _fixture()
+    database = fixture["runtime"].database
+    original_execute = database.execute
+
+    def fail_mcp_detail(sql: str, params: Any = ()) -> list[dict[str, Any]]:
+        if "insert into mcp_operation_audit" in sql:
+            raise RuntimeError("fixed persistence failure")
+        return original_execute(sql, params)
+
+    before = database.execute_one(
+        "select count(*) as count from audit_event where event_type = 'mcp.operation'"
+    )
+    assert before is not None
+    caplog.set_level("ERROR", logger="services.ones_mcp_server.runtime")
+    monkeypatch.setattr(database, "execute", fail_mcp_detail)
+
+    with pytest.raises(AppError) as raised:
+        fixture["service"].search(
+            claims=fixture["claims"],
+            arguments={"keyword": "traceability", "issue_type": "demand", "limit": 5},
+            correlation_id="ones-query-audit-transaction",
+        )
+
+    monkeypatch.setattr(database, "execute", original_execute)
+    after = database.execute_one(
+        "select count(*) as count from audit_event where event_type = 'mcp.operation'"
+    )
+    assert raised.value.error_code == "mcp_audit_unavailable"
+    assert after == before
+    assert "error_type=RuntimeError" in caplog.text
+    assert "traceability" not in caplog.text
+    assert fixture["token"] not in caplog.text
+
+
+def test_ones_mcp_rejects_provider_auth_fields_before_business_audit() -> None:
+    fixture = _fixture()
+    response = {
+        "data": {
+            "workItems": {
+                "items": [],
+                "total": 0,
+                "truncated": False,
+            }
+        },
+        "token": "must-never-be-audited",
+    }
+    fixture["service"].provider._open_response = lambda *_args: _ProviderResponse(
+        200,
+        json.dumps(response).encode("utf-8"),
+    )
+
+    with pytest.raises(AppError) as raised:
+        fixture["service"].search(
+            claims=fixture["claims"],
+            arguments={"keyword": "traceability", "issue_type": "demand", "limit": 5},
+            correlation_id="ones-query-secret-field",
+        )
+
+    assert raised.value.error_code == "ones_provider_secret_violation"
+    rows = fixture["runtime"].database.execute(
+        "select provider_response_json from mcp_operation_audit where correlation_id = ?",
+        ("ones-query-secret-field",),
+    )
+    assert rows
+    assert all("must-never-be-audited" not in row["provider_response_json"] for row in rows)
+
+
+def test_mcp_audit_retention_deletes_business_payload_and_invalid_config_is_unready() -> None:
+    fixture = _fixture()
+    fixture["service"].search(
+        claims=fixture["claims"],
+        arguments={"keyword": "traceability", "issue_type": "demand", "limit": 5},
+        correlation_id="ones-query-expired-audit",
+    )
+    fixture["runtime"].database.execute(
+        "update mcp_operation_audit set created_at = '2000-01-01T00:00:00+00:00' "
+        "where correlation_id = ?",
+        ("ones-query-expired-audit",),
+    )
+
+    deleted = fixture["service"].audit.purge_expired(retention_days=30)
+
+    assert deleted == 2
+    app = create_mcp_app(
+        fixture["service"],
+        database=fixture["runtime"].database,
+        max_request_bytes=32 * 1024,
+        audit_retention_days=0,
+        allowed_hosts=("testserver",),
+    )
+    with TestClient(app) as client:
+        health = client.get("/health")
+    assert health.status_code == 503
+
+
+def test_ones_mcp_readiness_requires_the_credential_and_audit_schema() -> None:
+    fixture = _fixture()
+    fixture["runtime"].database.execute("delete from schema_migration where version = '104'")
+    app = create_mcp_app(
+        fixture["service"],
+        database=fixture["runtime"].database,
+        max_request_bytes=32 * 1024,
+        audit_retention_days=30,
+        allowed_hosts=("testserver",),
+    )
+
+    with TestClient(app) as client:
+        health = client.get("/health")
+
+    assert health.status_code == 503
+    assert health.json()["status"] == "degraded"

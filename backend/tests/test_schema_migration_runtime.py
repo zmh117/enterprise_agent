@@ -45,12 +45,15 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
         ("101", "101_expand_canonical_job_message.sql"),
         ("102", "102_schema_consolidation_checkpoint.sql"),
         ("103", "103_contract_retire_compatibility_shadows.sql"),
+        ("104", "104_add_identity_aware_ones_mcp.sql"),
     ]
     assert all(len(item.checksum) == 64 for item in catalog)
     assert [item.version for item in deployable_migration_catalog(catalog)] == [
         "100",
         "101",
         "102",
+        "103",
+        "104",
     ]
 
     manifest = load_legacy_manifest(default_migrations_dir() / LEGACY_MANIFEST_FILENAME)
@@ -157,10 +160,10 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
     first = migrator.run()
     second = migrator.run()
 
-    assert first.head == "102"
+    assert first.head == "104"
     assert first.baselined == 0
-    assert first.applied == ("100", "101", "102")
-    assert second.head == "102"
+    assert first.applied == ("100", "101", "102", "103", "104")
+    assert second.head == "104"
     assert second.baselined == 0
     assert second.applied == ()
     assert len(SchemaMigrationLedger(database).list_records()) == len(
@@ -168,7 +171,7 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
     )
 
 
-def test_explicit_fresh_contract_is_supported_but_never_applied_by_default() -> None:
+def test_explicit_fresh_contract_remains_supported_after_release() -> None:
     database = Database("sqlite:///:memory:")
 
     result = Migrator(
@@ -178,28 +181,138 @@ def test_explicit_fresh_contract_is_supported_but_never_applied_by_default() -> 
         include_schema_contract=True,
     ).run()
 
-    assert result.head == "103"
-    assert result.applied == ("100", "101", "102", "103")
-    assert SchemaHeadValidator(database, default_migrations_dir()).require_current() == "103"
-    assert Migrator(
-        database,
-        default_migrations_dir(),
-        migrator_build="post-contract-normal-startup",
-    ).run().applied == ()
+    assert result.head == "104"
+    assert result.applied == ("100", "101", "102", "103", "104")
+    assert SchemaHeadValidator(database, default_migrations_dir()).require_current() == "104"
+    assert (
+        Migrator(
+            database,
+            default_migrations_dir(),
+            migrator_build="post-contract-normal-startup",
+        )
+        .run()
+        .applied
+        == ()
+    )
     assert {
         "dingding_conversation_id",
         "dingding_user_id",
         "source",
-    }.isdisjoint(
-        {row["name"] for row in database.execute("pragma table_info(agent_session)")}
-    )
+    }.isdisjoint({row["name"] for row in database.execute("pragma table_info(agent_session)")})
     assert {"user_id", "source", "user_message"}.isdisjoint(
         {row["name"] for row in database.execute("pragma table_info(agent_job)")}
     )
     assert "graph_json" not in {
-        row["name"]
-        for row in database.execute("pragma table_info(agent_workflow_template)")
+        row["name"] for row in database.execute("pragma table_info(agent_workflow_template)")
     }
+
+
+def test_identity_aware_ones_mcp_migration_upgrades_103_and_enforces_schema(
+    tmp_path: Path,
+) -> None:
+    database = Database("sqlite:///:memory:")
+    through_103 = _migrations_through(tmp_path, "103")
+    initial = Migrator(
+        database,
+        through_103,
+        migrator_build="identity-aware-ones-predecessor",
+        include_schema_contract=True,
+    ).run()
+    assert initial.head == "103"
+    timestamp = "2026-08-12T00:00:00+00:00"
+    database.execute(
+        """
+        insert into app_user
+          (id, username, display_name, status, created_at, updated_at)
+        values ('ones-migration-user', 'ones-migration-user', 'ONES Migration User',
+                'enabled', ?, ?)
+        """,
+        (timestamp, timestamp),
+    )
+    database.execute(
+        """
+        insert into user_external_identity
+          (id, user_id, provider, tenant_code, external_subject_id, connector_id,
+           display_name, status, verified_at, metadata_json, revision,
+           created_at, updated_at)
+        values ('ones-migration-identity', 'ones-migration-user', 'ones', 'default',
+                'ONES-MIGRATION-SUBJECT', '', 'ONES Migration Subject', 'enabled',
+                ?, '{}', 1, ?, ?)
+        """,
+        (timestamp, timestamp, timestamp),
+    )
+
+    upgraded = Migrator(
+        database,
+        default_migrations_dir(),
+        migrator_build="identity-aware-ones-upgrade",
+    ).run()
+    repeated = Migrator(
+        database,
+        default_migrations_dir(),
+        migrator_build="identity-aware-ones-repeat",
+    ).run()
+
+    assert upgraded.applied == ("104",)
+    assert repeated.applied == ()
+    assert database.execute_one(
+        "select external_subject_id from user_external_identity where id = ?",
+        ("ones-migration-identity",),
+    ) == {"external_subject_id": "ONES-MIGRATION-SUBJECT"}
+    tables = {
+        str(row["name"])
+        for row in database.execute("select name from sqlite_master where type = 'table'")
+    }
+    assert {"external_identity_credential", "mcp_operation_audit"}.issubset(tables)
+    challenge_columns = {
+        str(row["name"])
+        for row in database.execute("pragma table_info(ones_identity_verification_challenge)")
+    }
+    assert {
+        "login_material_ciphertext",
+        "login_material_nonce",
+        "token_ciphertext",
+        "token_nonce",
+        "credential_key_id",
+        "credential_algorithm",
+    }.issubset(challenge_columns)
+    credential_foreign_keys = {
+        (str(row["table"]), str(row["from"]), str(row["to"]))
+        for row in database.execute("pragma foreign_key_list(external_identity_credential)")
+    }
+    assert (
+        "user_external_identity",
+        "external_identity_id",
+        "id",
+    ) in credential_foreign_keys
+    audit_foreign_key_tables = {
+        str(row["table"])
+        for row in database.execute("pragma foreign_key_list(mcp_operation_audit)")
+    }
+    assert {
+        "agent_job",
+        "agent_session",
+        "app_user",
+        "user_external_identity",
+        "external_identity_credential",
+        "audit_event",
+        "agent_tool_call",
+    }.issubset(audit_foreign_key_tables)
+    indexes = {
+        str(row["name"])
+        for row in database.execute("select name from sqlite_master where type = 'index'")
+    }
+    assert {
+        "idx_external_identity_credential_provider_status",
+        "idx_external_identity_credential_updated",
+        "idx_mcp_operation_audit_created",
+        "idx_mcp_operation_audit_correlation",
+        "idx_mcp_operation_audit_job",
+        "idx_mcp_operation_audit_actor",
+        "idx_mcp_operation_audit_identity",
+        "idx_mcp_operation_audit_principal",
+        "idx_mcp_operation_audit_status",
+    }.issubset(indexes)
 
 
 def _convert_fresh_baseline_to_legacy_ledger(database: Database) -> dict[str, object]:
@@ -229,9 +342,7 @@ def _baseline_only_migrations(tmp_path: Path) -> Path:
     source = default_migrations_dir()
     target = tmp_path / "baseline-only"
     target.mkdir()
-    (target / "100_baseline_v1.sql").write_bytes(
-        (source / "100_baseline_v1.sql").read_bytes()
-    )
+    (target / "100_baseline_v1.sql").write_bytes((source / "100_baseline_v1.sql").read_bytes())
     (target / LEGACY_MANIFEST_FILENAME).write_bytes(
         (source / LEGACY_MANIFEST_FILENAME).read_bytes()
     )
@@ -293,7 +404,7 @@ def test_existing_database_contract_requires_separate_approval(tmp_path: Path) -
         include_schema_contract=True,
     ).run()
 
-    assert result.applied == ("103",)
+    assert result.applied == ("103", "104")
     assert "user_message" not in {
         row["name"] for row in database.execute("pragma table_info(agent_job)")
     }
@@ -472,9 +583,12 @@ def test_baseline_adoption_preflight_is_read_only_and_returns_safe_evidence(
     assert len(report["retained_data_digest"]) == 64
     assert report["runtime_config_summary"]["revision"] == 0
     assert SchemaMigrationLedger(database).read_records() == before_ledger
-    assert database.execute_one(
-        "select name from sqlite_master where type = 'table' and name = 'schema_baseline_adoption'"
-    ) is None
+    assert (
+        database.execute_one(
+            "select name from sqlite_master where type = 'table' and name = 'schema_baseline_adoption'"
+        )
+        is None
+    )
     assert "must-not-appear" not in json.dumps(report, ensure_ascii=False)
     database.close()
 
@@ -549,15 +663,18 @@ def test_failed_adoption_acceptance_allows_marker_only_rollback(tmp_path: Path) 
             migrations,
         ).verify(expected_migrator_build="build-2026.08.11")
 
-    assert BaselineAdoptionRollback(
-        database,
-        migrations,
-        migrator_build="rollback-test",
-    ).run() == "042"
+    assert (
+        BaselineAdoptionRollback(
+            database,
+            migrations,
+            migrator_build="rollback-test",
+        ).run()
+        == "042"
+    )
     assert SchemaMigrationLedger(database).read_records()[-1]["version"] == "042"
-    assert database.execute_one(
-        "select username from app_user where id = 'unexpected-write'"
-    ) == {"username": "unexpected-write"}
+    assert database.execute_one("select username from app_user where id = 'unexpected-write'") == {
+        "username": "unexpected-write"
+    }
     database.close()
 
 
@@ -604,8 +721,8 @@ def test_final_schema_comment_manifest_covers_every_owned_table_and_column() -> 
     assert owned_columns - column_comments.keys() == set()
     assert all(re.search(r"[\u3400-\u9fff]", table_comments[table]) for table in owned_tables)
     assert all(re.search(r"[\u3400-\u9fff]", column_comments[column]) for column in owned_columns)
-    assert len(owned_tables) == 87
-    assert len(owned_columns) == 1002
+    assert len(owned_tables) == 89
+    assert len(owned_columns) == 1051
     database.close()
 
 
@@ -797,9 +914,7 @@ def test_baseline_adoption_cli_redacts_unexpected_failure(
 
     monkeypatch.setattr(BaselineAdoptionInspector, "preflight", fail_without_exposing_connection)
 
-    assert baseline_adoption_cli.main(
-        ["preflight", "--build", "build-2026.08.11"]
-    ) == 1
+    assert baseline_adoption_cli.main(["preflight", "--build", "build-2026.08.11"]) == 1
     output = capsys.readouterr().out
     assert output == (
         "BASELINE_ADOPTION_PREFLIGHT_FAILED: database unavailable or verification failed\n"
@@ -813,7 +928,7 @@ def test_schema_head_validator_is_read_only_and_rejects_missing_ledger() -> None
 
     with pytest.raises(
         SchemaHeadError,
-        match="ledger is missing; expected head 102",
+        match="ledger is missing; expected head 104",
     ):
         SchemaHeadValidator(
             database,

@@ -46,7 +46,8 @@ const claudeRuntime = new ClaudeAgentRuntimeExecutor(
   undefined,
   undefined,
   undefined,
-  config.mcpServerUrl
+  config.mcpServerUrl,
+  config.onesMcpServerUrl
 );
 const runtimeExecutor = config.fakeProviderMode
   ? new DeterministicFakeProviderRuntimeExecutor(modelBindings).execute

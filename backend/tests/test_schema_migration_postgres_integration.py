@@ -89,9 +89,7 @@ def _baseline_only_migrations(tmp_path: Path) -> Path:
     source = default_migrations_dir()
     target = tmp_path / "postgres-baseline-only"
     target.mkdir()
-    (target / "100_baseline_v1.sql").write_bytes(
-        (source / "100_baseline_v1.sql").read_bytes()
-    )
+    (target / "100_baseline_v1.sql").write_bytes((source / "100_baseline_v1.sql").read_bytes())
     (target / LEGACY_MANIFEST_FILENAME).write_bytes(
         (source / LEGACY_MANIFEST_FILENAME).read_bytes()
     )
@@ -130,8 +128,8 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "102"
-        assert result.applied == ("100", "101", "102")
+        assert result.head == "104"
+        assert result.applied == ("100", "101", "102", "103", "104")
         assert database.execute_one(
             """
             select count(*)::int as count
@@ -140,9 +138,9 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
                and table_type = 'BASE TABLE'
                and table_name not in ('schema_migration', 'schema_baseline_adoption')
             """
-        ) == {"count": 87}
-        assert comments["table_count"] == 87
-        assert comments["column_count"] == 1002
+        ) == {"count": 89}
+        assert comments["table_count"] == 89
+        assert comments["column_count"] == 1051
     finally:
         database.close()
 
@@ -160,10 +158,10 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "103"
-        assert result.applied == ("100", "101", "102", "103")
-        assert comments["table_count"] == 87
-        assert comments["column_count"] == 995
+        assert result.head == "104"
+        assert result.applied == ("100", "101", "102", "103", "104")
+        assert comments["table_count"] == 89
+        assert comments["column_count"] == 1051
         assert {
             "dingding_conversation_id",
             "dingding_user_id",
@@ -203,7 +201,7 @@ def test_postgres_concurrent_baseline_migrators_apply_100_once(
 
     assert sorted(result.applied for result in results) == [
         (),
-        ("100", "101", "102"),
+        ("100", "101", "102", "103", "104"),
     ]
     database = Database(postgres_database_dsn)
     try:
@@ -211,6 +209,8 @@ def test_postgres_concurrent_baseline_migrators_apply_100_once(
             "100",
             "101",
             "102",
+            "103",
+            "104",
         ]
     finally:
         database.close()
@@ -332,11 +332,14 @@ def test_postgres_baseline_adoption_operational_verification_and_rollback(
                 migrations,
             ).verify(expected_migrator_build="build-2026.08.11")
 
-        assert BaselineAdoptionRollback(
-            database,
-            migrations,
-            migrator_build="rollback-test",
-        ).run() == "042"
+        assert (
+            BaselineAdoptionRollback(
+                database,
+                migrations,
+                migrator_build="rollback-test",
+            ).run()
+            == "042"
+        )
         assert SchemaMigrationLedger(database).read_records()[-1]["version"] == "042"
         assert SchemaMigrationLedger(database).read_adoptions() == []
     finally:
@@ -360,9 +363,7 @@ def test_postgres_concurrent_runtime_config_reconciliation_counts_change_once(
         worker_database = Database(postgres_database_dsn)
         try:
             barrier.wait(timeout=10)
-            return PlatformConfigRepository(
-                worker_database
-            ).upsert_runtime_config_definition(
+            return PlatformConfigRepository(worker_database).upsert_runtime_config_definition(
                 key="CONCURRENT_POSTGRES_CONFIG",
                 value_type="string",
                 default={"stable": True},
@@ -374,17 +375,13 @@ def test_postgres_concurrent_runtime_config_reconciliation_counts_change_once(
 
     create_barrier = threading.Barrier(8)
     with ThreadPoolExecutor(max_workers=8) as executor:
-        created = list(
-            executor.map(lambda _: reconcile("initial", create_barrier), range(8))
-        )
+        created = list(executor.map(lambda _: reconcile("initial", create_barrier), range(8)))
     assert [result.outcome for result in created].count("created") == 1
     assert [result.outcome for result in created].count("unchanged") == 7
 
     update_barrier = threading.Barrier(8)
     with ThreadPoolExecutor(max_workers=8) as executor:
-        updated = list(
-            executor.map(lambda _: reconcile("changed", update_barrier), range(8))
-        )
+        updated = list(executor.map(lambda _: reconcile("changed", update_barrier), range(8)))
     assert [result.outcome for result in updated].count("updated") == 1
     assert [result.outcome for result in updated].count("unchanged") == 7
 

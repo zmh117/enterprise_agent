@@ -168,10 +168,13 @@ class UrllibOnesIdentityVerifier(OnesIdentityVerifier):
             raise self._invalid_response("response is missing user or teams")
         user_uuid = user.get("uuid")
         display_name = user.get("name")
+        token = user.get("token")
         if (
             not isinstance(user_uuid, str)
             or not user_uuid.strip()
             or not isinstance(display_name, str)
+            or not isinstance(token, str)
+            or not token
         ):
             raise self._invalid_response("response contains an invalid user")
         normalized_teams: list[VerifiedOnesTeam] = []
@@ -197,6 +200,7 @@ class UrllibOnesIdentityVerifier(OnesIdentityVerifier):
             user_uuid=user_uuid.strip(),
             display_name=display_name.strip(),
             teams=tuple(normalized_teams),
+            token=token,
         )
 
     @staticmethod

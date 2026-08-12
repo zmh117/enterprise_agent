@@ -250,7 +250,7 @@ class AgentConfigService:
             "connectors": self.repository.connector_catalog(),
             "mcp_tools": [
                 {
-                    "server_code": "tool-mcp",
+                    "server_code": definition.server_code,
                     "identifier": definition.identifier,
                     "description": definition.description,
                     "schema_hash": definition.schema_hash,
@@ -417,7 +417,7 @@ class AgentConfigService:
             tool_ids = list(snapshot.pop("mcp_tool_ids", []) or [])
             mcp_tool_envelope = [
                 {
-                    "server_code": "tool-mcp",
+                    "server_code": MCP_TOOL_MANIFEST[identifier].server_code,
                     "tool_identifier": identifier,
                     "schema_hash": MCP_TOOL_MANIFEST[identifier].schema_hash,
                 }

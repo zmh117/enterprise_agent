@@ -81,6 +81,42 @@ function bearerToken(request: IncomingMessage): string {
   return authorization.slice("Bearer ".length).trim();
 }
 
+function principalToken(
+  request: IncomingMessage,
+  payload: { readonly mcp_servers: ReadonlyArray<{ readonly server_code: string }> }
+): string | undefined {
+  const header = request.headers["x-mcp-principal-token"];
+  const requiresPrincipal = payload.mcp_servers.some(
+    (server) => server.server_code === "ones-mcp"
+  );
+  if (Array.isArray(header)) {
+    throw new RuntimeGrantError(
+      "runtime_principal_token_invalid",
+      "duplicate Principal Token headers are forbidden"
+    );
+  }
+  const token = typeof header === "string" ? header.trim() : "";
+  if (requiresPrincipal && !token) {
+    throw new RuntimeGrantError(
+      "runtime_principal_token_missing",
+      "ONES MCP requires a Principal Token"
+    );
+  }
+  if (!requiresPrincipal && token) {
+    throw new RuntimeGrantError(
+      "runtime_principal_token_unexpected",
+      "Principal Token is forbidden without an ONES MCP binding"
+    );
+  }
+  if (token.length > 8192 || /[\r\n]/u.test(token)) {
+    throw new RuntimeGrantError(
+      "runtime_principal_token_invalid",
+      "Principal Token header is invalid"
+    );
+  }
+  return token || undefined;
+}
+
 function sendJson(response: ServerResponse, status: number, body: object): void {
   response.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
@@ -157,7 +193,11 @@ export function createRuntimeRequestHandler(
           );
         }
         await grantVerifier.verify(bearerToken(request), payload);
-        const handle = await registry.acquire(payload);
+        const token = principalToken(request, payload);
+        const handle = await registry.acquire(
+          payload,
+          token ? { principalToken: token } : {}
+        );
         response.writeHead(200, {
           "content-type": "application/x-ndjson; charset=utf-8",
           "cache-control": "no-store",

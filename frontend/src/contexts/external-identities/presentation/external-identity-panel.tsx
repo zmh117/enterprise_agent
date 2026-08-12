@@ -425,7 +425,7 @@ function SelfExternalIdentityPanel() {
           <div>
             <CardTitle>我的外部身份</CardTitle>
             <CardDescription className="mt-1">
-              钉钉身份只读；ONES 密码仅用于本次验证，不会保存。
+              钉钉身份只读；ONES 登录材料确认后加密保存，仅供本人查询与 Token 刷新。
             </CardDescription>
           </div>
           <Button
@@ -487,7 +487,7 @@ function SelfExternalIdentityPanel() {
             </>
           ) : (
             <p className="mt-3 text-sm text-muted-foreground">
-              完成登录验证并选择默认 Team 后，平台只保存身份映射；这不会授予 ONES 业务调用权限。
+              完成本人验证并选择默认 Team 后，平台会保存身份映射与加密凭据；实际查询仍需 Agent、应用和角色共同授权。
             </p>
           )}
         </article>
@@ -501,7 +501,7 @@ function SelfExternalIdentityPanel() {
         open={confirmUnbind}
         onOpenChange={setConfirmUnbind}
         title="解绑本人 ONES"
-        description="解绑会软停用当前 ONES 身份并保留审计历史；不会处理任何业务调用凭据。"
+        description="解绑会软停用当前 ONES 身份、立即清除加密登录材料与 Token，并保留审计历史。"
         confirmLabel="确认解绑"
         destructive
         pending={unbind.isPending}
@@ -552,7 +552,10 @@ function SelfDingTalkCard({ identity }: { identity: SelfDingTalkIdentity }) {
 function OnesBusinessSummary({
   identity,
 }: {
-  identity: Pick<SelfOnesIdentity, "default_team" | "verified_at">
+  identity: Pick<
+    SelfOnesIdentity,
+    "default_team" | "verified_at" | "credential"
+  >
 }) {
   return (
     <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-2">
@@ -563,6 +566,20 @@ function OnesBusinessSummary({
       <IdentityField
         label="最近验证"
         value={formatDate(identity.verified_at)}
+      />
+      <IdentityField
+        label="查询凭据"
+        value={credentialStatusLabel(identity.credential)}
+      />
+      <IdentityField
+        label="最近使用 / Token 刷新"
+        value={
+          identity.credential
+            ? `${formatDate(identity.credential.last_used_at)} / ${formatDate(
+                identity.credential.token_refreshed_at
+              )}`
+            : "需要本人重新验证"
+        }
       />
     </dl>
   )
@@ -824,7 +841,7 @@ function SelfOnesBindingSheet({
         <SheetHeader>
           <SheetTitle>{hasExisting ? "重新验证 ONES" : "绑定 ONES"}</SheetTitle>
           <SheetDescription>
-            邮箱和密码只用于本次登录；平台只保存 ONES User ID、已验证 Team、默认 Team和验证时间，不保存登录 Token。
+            邮箱和密码只在当前页面内存中输入；确认后平台会加密保存登录材料与当前 Token，用于本人授权查询和 Token 自动刷新，公开页面不会返回原文。
           </SheetDescription>
         </SheetHeader>
         {!challenge ? (
@@ -975,6 +992,16 @@ function Loading({ label }: { label: string }) {
 function formatTeam(team: { id: string; name: string } | null) {
   if (!team) return "未选择"
   return team.name ? `${team.name}（${team.id}）` : `${team.id}（名称暂不可用）`
+}
+
+function credentialStatusLabel(value: SelfOnesIdentity["credential"]) {
+  if (!value || !value.configured) return "需要本人重新验证"
+  return {
+    ACTIVE: `可用 · r${value.revision}`,
+    REAUTH_REQUIRED: `需要本人重新验证 · r${value.revision}`,
+    DISABLED: `已停用 · r${value.revision}`,
+    UNBOUND: `已解绑 · r${value.revision}`,
+  }[value.status]
 }
 
 function identityStatusLabel(value: AdminOnesIdentity["status"]) {

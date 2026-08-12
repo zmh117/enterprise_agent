@@ -3,7 +3,10 @@ from __future__ import annotations
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.identity.domain import AuthenticatedPrincipal, ExternalIdentityDescriptor
-from app.modules.identity.infrastructure import IdentityRepository
+from app.modules.identity.infrastructure import (
+    ExternalIdentityCredentialRepository,
+    IdentityRepository,
+)
 from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
 
@@ -14,10 +17,12 @@ class IdentityService:
         repository: IdentityRepository,
         audit_service: AuditService,
         connector_registry: ConnectorRegistry | None = None,
+        credential_repository: ExternalIdentityCredentialRepository | None = None,
     ) -> None:
         self.repository = repository
         self.audit_service = audit_service
         self.connector_registry = connector_registry
+        self.credential_repository = credential_repository
 
     @operation_unit_of_work(lambda service: service.repository.database)
     def resolve_external(self, descriptor: ExternalIdentityDescriptor) -> AuthenticatedPrincipal:
@@ -263,6 +268,19 @@ class IdentityService:
                 safe_message="ONES 身份必须由用户本人重新验证后启用",
                 error_code="ones_self_reverification_required",
             )
+        credential_revision: int | None = None
+        if (
+            str(before["provider"]) == "ones"
+            and status == "disabled"
+            and self.credential_repository is not None
+        ):
+            credential = self.credential_repository.get_by_identity(identity_id)
+            if credential is not None and str(credential["status"]) != "DISABLED":
+                projected = self.credential_repository.disable(
+                    credential_id=str(credential["id"]),
+                    expected_revision=int(credential["revision"]),
+                )
+                credential_revision = int(projected["revision"])
         identity = self.repository.set_external_identity_status(
             identity_id, status=status, expected_revision=expected_revision
         )
@@ -276,6 +294,8 @@ class IdentityService:
                 "user_id": identity["user_id"],
                 "before_status": before["status"],
                 "after_status": status,
+                "provider_user_id": before.get("external_subject_id"),
+                "credential_revision": credential_revision,
             },
         )
         return identity
