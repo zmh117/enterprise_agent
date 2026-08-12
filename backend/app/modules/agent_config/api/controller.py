@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -58,6 +58,23 @@ class AgentDraftRequest(StrictRequest):
     config: AgentDraftConfigRequest
 
 
+class AgentCreateRequest(StrictRequest):
+    code: str = Field(
+        min_length=1,
+        max_length=120,
+        pattern=r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+    )
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=500)
+    project_code: str = Field(
+        default="default",
+        min_length=1,
+        max_length=120,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+    )
+    runtime_kind: Literal["python-v1", "typescript-v1"]
+
+
 class RevisionRequest(BaseModel):
     revision_id: str
 
@@ -71,8 +88,49 @@ def build_agent_config_router() -> APIRouter:
 
     @router.get("")
     def list_agents(request: Request) -> dict[str, Any]:
-        require_action(request, resource_type="agent", resource_code="*", action="read")
-        return {"agents": container(request).agent_config_service.list_agents()}
+        principal = require_action(
+            request,
+            resource_type="agent",
+            resource_code="*",
+            action="read",
+        )
+        can_create = (
+            container(request)
+            .authorization_evaluator.decide(
+                user_id=principal.user_id,
+                resource_type="agent",
+                resource_code="*",
+                action="edit",
+            )
+            .allowed
+        )
+        return {
+            "agents": container(request).agent_config_service.list_agents(),
+            "permissions": {"can_create": can_create},
+        }
+
+    @router.post("")
+    def create_agent(request: Request, payload: AgentCreateRequest) -> dict[str, Any]:
+        principal = require_action(
+            request,
+            resource_type="agent",
+            resource_code="*",
+            action="edit",
+            csrf=True,
+        )
+        try:
+            created = container(request).agent_config_service.create_agent(
+                actor_id=principal.user_id,
+                code=payload.code,
+                name=payload.name,
+                description=payload.description,
+                project_code=payload.project_code,
+                runtime_kind=payload.runtime_kind,
+                correlation_id=str(getattr(request.state, "correlation_id", "") or ""),
+            )
+        except Exception as exc:
+            raise handle_exception(exc) from exc
+        return created
 
     @router.get("/{agent_code}")
     def get_agent(request: Request, agent_code: str) -> dict[str, Any]:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any
 
 from app.modules.agent.infrastructure.skill_loader import SkillLoader
@@ -10,12 +11,15 @@ from app.modules.audit.application.audit_service import AuditService
 from app.modules.identity.application.authorization import AuthorizationEvaluator
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.modules.model_connection.application import ModelConnectionService
+from app.modules.model_connection.domain import DEFAULT_MODEL_CONNECTION_CODE
 from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import NotFound, NonRetryableExecutionError
 
 
 DEFAULT_AGENT_CODE = "default-diagnostic-agent"
 SUPPORTED_RUNTIME_KINDS = frozenset({"python-v1", "typescript-v1"})
+AGENT_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
+PROJECT_CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 FORBIDDEN_CONFIG_KEYS = {
     "api_key",
     "apikey",
@@ -141,6 +145,100 @@ class AgentConfigService:
                 }
             )
         return values
+
+    def create_agent(
+        self,
+        *,
+        actor_id: str,
+        code: str,
+        name: str,
+        description: str,
+        project_code: str,
+        runtime_kind: str,
+        correlation_id: str = "",
+    ) -> dict[str, Any]:
+        del correlation_id
+        return self._create_agent(
+            actor_id=actor_id,
+            code=code,
+            name=name,
+            description=description,
+            project_code=project_code,
+            runtime_kind=runtime_kind,
+        )
+
+    @operation_unit_of_work(lambda service: service.repository.database)
+    def _create_agent(
+        self,
+        *,
+        actor_id: str,
+        code: str,
+        name: str,
+        description: str,
+        project_code: str,
+        runtime_kind: str,
+    ) -> dict[str, Any]:
+        self.authorization.require(
+            user_id=actor_id,
+            resource_type="agent",
+            resource_code="*",
+            action="edit",
+        )
+        normalized = _normalize_definition_fields(
+            code=code,
+            name=name,
+            description=description,
+            project_code=project_code,
+            runtime_kind=runtime_kind,
+        )
+        config = self.initial_config(
+            name=normalized["name"],
+            project_code=normalized["project_code"],
+        )
+        created = self.repository.create_definition_with_initial_draft(
+            code=normalized["code"],
+            name=normalized["name"],
+            description=normalized["description"],
+            project_code=normalized["project_code"],
+            runtime_kind=normalized["runtime_kind"],
+            classification="business",
+            config=config,
+            config_hash=_hash(config),
+            actor_id=actor_id,
+        )
+        self.audit_service.record(
+            "agent.definition.created",
+            status="SUCCEEDED",
+            summary="Agent definition and initial draft created",
+            actor_id=actor_id,
+            payload={
+                "agent_code": normalized["code"],
+                "runtime_kind": normalized["runtime_kind"],
+                "project_code": normalized["project_code"],
+                "initial_revision": created["draft"]["revision"],
+            },
+        )
+        return created
+
+    def initial_config(self, *, name: str, project_code: str) -> dict[str, Any]:
+        model = sorted(self.allowed_models)[0]
+        connection_revision_id = ""
+        if self.model_connection_service is not None:
+            try:
+                connection = self.model_connection_service.get(DEFAULT_MODEL_CONNECTION_CODE)
+                revision = connection.get("current_revision") or {}
+                connection_model = str((revision.get("config") or {}).get("model") or "")
+                if connection_model:
+                    model = connection_model
+                connection_revision_id = str(revision.get("id") or "")
+            except NotFound:
+                pass
+        return build_initial_agent_config(
+            name=name,
+            project_code=project_code,
+            model=model,
+            model_connection_revision_id=connection_revision_id,
+        )
 
     def skill_catalog(self) -> list[dict[str, Any]]:
         return self.skill_loader.catalog()
@@ -708,10 +806,93 @@ class AgentConfigService:
         return errors
 
 
-def _hash(config: dict[str, Any]) -> str:
+def build_initial_agent_config(
+    *,
+    name: str,
+    project_code: str,
+    model: str,
+    model_connection_revision_id: str = "",
+) -> dict[str, Any]:
+    return {
+        "business_role": name,
+        "business_instructions": "",
+        "model_policy": {
+            "runtime": "claude_agent_sdk",
+            "model": model,
+            "model_connection_revision_id": model_connection_revision_id,
+        },
+        "execution": {"max_turns": 12, "timeout_seconds": 300},
+        "skills": [],
+        "routing": {"project_code": project_code},
+        "channels": {"ingress": [], "delivery": []},
+        "mcp_tool_ids": [],
+    }
+
+
+def _normalize_definition_fields(
+    *,
+    code: str,
+    name: str,
+    description: str,
+    project_code: str,
+    runtime_kind: str,
+) -> dict[str, str]:
+    normalized_name = name.strip()
+    normalized_description = description.strip()
+    normalized_project_code = project_code.strip()
+    field_errors: list[dict[str, str]] = []
+    if code != code.strip() or AGENT_CODE_PATTERN.fullmatch(code) is None or len(code) > 120:
+        field_errors.append(
+            {
+                "field": "code",
+                "message": "必须是 120 字符以内的小写 kebab-case 编码",
+            }
+        )
+    if not normalized_name or len(normalized_name) > 120:
+        field_errors.append({"field": "name", "message": "名称长度必须在 1 到 120 之间"})
+    if len(normalized_description) > 500:
+        field_errors.append({"field": "description", "message": "说明不能超过 500 字符"})
+    if (
+        not normalized_project_code
+        or len(normalized_project_code) > 120
+        or PROJECT_CODE_PATTERN.fullmatch(normalized_project_code) is None
+    ):
+        field_errors.append(
+            {
+                "field": "project_code",
+                "message": "项目编码格式无效",
+            }
+        )
+    if runtime_kind not in SUPPORTED_RUNTIME_KINDS:
+        field_errors.append(
+            {
+                "field": "runtime_kind",
+                "message": "仅支持 python-v1 或 typescript-v1",
+            }
+        )
+    if field_errors:
+        raise NonRetryableExecutionError(
+            "Agent definition is invalid",
+            safe_message="Agent 基本信息无效",
+            error_code="validation_failed",
+            field_errors=field_errors,
+        )
+    return {
+        "code": code,
+        "name": normalized_name,
+        "description": normalized_description,
+        "project_code": normalized_project_code,
+        "runtime_kind": runtime_kind,
+    }
+
+
+def agent_config_hash(config: dict[str, Any]) -> str:
     return hashlib.sha256(
         json.dumps(config, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+
+
+_hash = agent_config_hash
 
 
 def _provider_host(base_url: str) -> str:

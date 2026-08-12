@@ -49,6 +49,7 @@ class DiscoverModelsRequest(CredentialProbeRequest):
 
 
 class TestDraftRequest(CredentialProbeRequest):
+    runtime_kind: Literal["python-v1", "typescript-v1"] = "typescript-v1"
     config: ModelConnectionConfigRequest
 
 
@@ -217,6 +218,7 @@ def build_model_connection_router() -> APIRouter:
                 api_key=payload.api_key,
                 config=payload.config.model_dump(),
                 timeout_seconds=payload.timeout_seconds,
+                runtime_kind=payload.runtime_kind,
             )
         except Exception as exc:
             raise handle_exception(exc) from exc
@@ -244,6 +246,7 @@ def build_model_connection_router() -> APIRouter:
                 api_key=payload.api_key,
                 config=payload.config.model_dump(),
                 timeout_seconds=payload.timeout_seconds,
+                runtime_kind=payload.runtime_kind,
             )
         except Exception as exc:
             raise handle_exception(exc) from exc

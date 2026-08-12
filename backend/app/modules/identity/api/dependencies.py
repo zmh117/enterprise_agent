@@ -128,6 +128,7 @@ def handle_exception(exc: Exception) -> HTTPException:
                 "username_conflict",
                 "revision_already_published",
                 "credential_ownership_conflict",
+                "agent_code_conflict",
             }
             else 400
         )

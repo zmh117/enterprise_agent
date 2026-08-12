@@ -108,6 +108,47 @@
         "timeout_seconds": {"type": "integer", "minimum": 3, "maximum": 20}
       }
     },
+    "ModelProbeCredentialEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "nonce", "ciphertext", "expires_at"],
+      "properties": {
+        "algorithm": {"const": "AES-256-GCM-DERIVED-PROBE-V1"},
+        "nonce": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 16,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "ciphertext": {
+          "type": "string",
+          "minLength": 24,
+          "maxLength": 16384,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "expires_at": {"type": "integer", "minimum": 1}
+      }
+    },
+    "DraftModelProbeRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol_version",
+        "runtime_kind",
+        "probe_id",
+        "config_hash",
+        "credential_envelope",
+        "timeout_seconds"
+      ],
+      "properties": {
+        "protocol_version": {"const": "1.0"},
+        "runtime_kind": {"$ref": "#/$defs/RuntimeKind"},
+        "probe_id": {"$ref": "#/$defs/Identifier"},
+        "config_hash": {"$ref": "#/$defs/Sha256Digest"},
+        "credential_envelope": {"$ref": "#/$defs/ModelProbeCredentialEnvelope"},
+        "timeout_seconds": {"type": "integer", "minimum": 3, "maximum": 20}
+      }
+    },
     "ModelProbeFailure": {
       "type": "object",
       "additionalProperties": false,

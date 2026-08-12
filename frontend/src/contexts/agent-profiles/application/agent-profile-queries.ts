@@ -2,12 +2,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 import type {
   AgentConfig,
+  AgentCreateInput,
   CredentialSource,
   ModelConnectionConfig,
   RuntimeKind,
 } from "@/contexts/agent-profiles/domain/agent-profile"
 import {
   configureModelConnection,
+  createAgentProfile,
   discoverModelConnection,
   getAgentProfile,
   getModelConnection,
@@ -31,6 +33,14 @@ export function useAgentProfiles() {
   return useQuery({
     queryKey: ["agent-profiles"],
     queryFn: listAgentProfiles,
+  })
+}
+
+export function useCreateAgentProfile() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (input: AgentCreateInput) => createAgentProfile(input),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["agent-profiles"] }),
   })
 }
 
@@ -73,6 +83,7 @@ type CredentialInput = {
 }
 
 type DraftConnectionInput = CredentialInput & {
+  runtime_kind: RuntimeKind
   config: Omit<ModelConnectionConfig, "schema_version">
   timeout_seconds?: number
 }

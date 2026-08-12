@@ -220,6 +220,43 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
         validate_contract("ModelProbeResponse", response)
         return response
 
+    @app.post("/internal/v1/model-probes/draft")
+    async def draft_model_probe(
+        request: Request,
+        authorization: str = Header(default=""),
+    ) -> dict[str, Any]:
+        if not _constant_token(runtime.model_probe_token, _bearer(authorization)):
+            raise HTTPException(status_code=401, detail="模型探针服务身份校验失败")
+        payload = await request.json()
+        try:
+            validate_contract("DraftModelProbeRequest", payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="草稿模型探针请求无效") from exc
+        if payload["runtime_kind"] != PYTHON_RUNTIME_KIND:
+            raise HTTPException(status_code=400, detail="Runtime 请求目标不匹配")
+        started = time.monotonic()
+        try:
+            response = runtime.executor.probe_draft(dict(payload))
+        except Exception as exc:
+            response = {
+                "protocol_version": PROTOCOL_VERSION,
+                "runtime_kind": PYTHON_RUNTIME_KIND,
+                "probe_id": payload["probe_id"],
+                "success": False,
+                "connection_revision_id": f"draft-{payload['probe_id']}",
+                "provider_host": "unavailable",
+                "model": "unavailable",
+                "runtime_version": PYTHON_RUNTIME_VERSION,
+                "sdk_version": runtime.executor.sdk_version,
+                "duration_ms": min(30_000, int((time.monotonic() - started) * 1000)),
+                "failure": {
+                    "code": str(getattr(exc, "error_code", "model_connection_test_failed")),
+                    "safe_message": str(getattr(exc, "safe_message", "模型连接测试失败")),
+                },
+            }
+        validate_contract("ModelProbeResponse", response)
+        return response
+
     return app
 
 

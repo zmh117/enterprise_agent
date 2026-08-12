@@ -10,6 +10,7 @@ import { InvocationRegistry } from "./invocation-registry.js";
 import { StructuredLogger } from "./logger.js";
 import { ModelBindingResolver } from "./model-binding.js";
 import { ModelConnectionProbe } from "./model-probe.js";
+import { ModelProbeEnvelopeDecryptor } from "./model-probe-envelope.js";
 import { PlatformSecretDecryptor } from "./platform-secret.js";
 import { RuntimeReadinessProbe } from "./readiness.js";
 import { createRuntimeServer } from "./server.js";
@@ -29,7 +30,16 @@ const modelPool = new Pool({
   application_name: "enterprise-agent-runtime-model-binding"
 });
 const secretDecryptor = await PlatformSecretDecryptor.fromFile(config.masterKeyFile);
-const modelBindings = new ModelBindingResolver(modelPool, secretDecryptor, config);
+const probeEnvelopeDecryptor = await ModelProbeEnvelopeDecryptor.fromFile(
+  config.masterKeyFile
+);
+const modelBindings = new ModelBindingResolver(
+  modelPool,
+  secretDecryptor,
+  config,
+  undefined,
+  probeEnvelopeDecryptor
+);
 const modelProbe = new ModelConnectionProbe(modelBindings);
 const claudeRuntime = new ClaudeAgentRuntimeExecutor(
   modelBindings,

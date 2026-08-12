@@ -45,6 +45,11 @@ STABLE_PROBE_ERROR_CODES = frozenset(
         "model_connection_test_failed",
         "model_connection_test_timeout",
         "model_connection_test_unavailable",
+        "model_connection_test_invalid_response",
+        "model_connection_test_runtime_invalid",
+        "model_connection_credential_rejected",
+        "model_connection_rate_limited",
+        "model_connection_probe_envelope_invalid",
         "model_connection_credential_unavailable",
         "model_connection_rotation_required",
         "revision_conflict",
@@ -82,6 +87,14 @@ class RuntimeModelProbe(Protocol):
         *,
         revision_id: str,
         config_hash: str,
+        timeout_seconds: int,
+    ) -> dict[str, Any]: ...
+
+    def probe_draft(
+        self,
+        *,
+        binding: ModelRuntimeBinding,
+        api_key: str,
         timeout_seconds: int,
     ) -> dict[str, Any]: ...
 
@@ -243,6 +256,7 @@ class ModelConnectionService:
         config: dict[str, Any],
         api_key: str = "",
         timeout_seconds: int = 15,
+        runtime_kind: str = "typescript-v1",
     ) -> dict[str, Any]:
         self._require_agent_editor(actor_id)
         self._require_secret_admin(actor_id)
@@ -262,7 +276,12 @@ class ModelConnectionService:
                 timeout_seconds,
             )
             self._require_discovered_models(normalized, models)
-            self._test_temporary_binding(binding, credential, timeout_seconds)
+            self._test_temporary_binding(
+                binding,
+                credential,
+                timeout_seconds,
+                runtime_kind=runtime_kind,
+            )
         except Exception as exc:
             self._record_probe_audit(
                 actor_id=actor_id,
@@ -304,6 +323,7 @@ class ModelConnectionService:
         config: dict[str, Any],
         api_key: str = "",
         timeout_seconds: int = 15,
+        runtime_kind: str = "typescript-v1",
     ) -> dict[str, Any]:
         self._require_agent_editor(actor_id)
         self._require_secret_admin(actor_id)
@@ -323,7 +343,12 @@ class ModelConnectionService:
                 timeout_seconds,
             )
             self._require_discovered_models(normalized, models)
-            self._test_temporary_binding(binding, credential, timeout_seconds)
+            self._test_temporary_binding(
+                binding,
+                credential,
+                timeout_seconds,
+                runtime_kind=runtime_kind,
+            )
         except Exception as exc:
             self._record_probe_audit(
                 actor_id=actor_id,
@@ -1011,15 +1036,67 @@ class ModelConnectionService:
         binding: ModelRuntimeBinding,
         api_key: str,
         timeout_seconds: int,
+        *,
+        runtime_kind: str,
     ) -> None:
-        if self.tester is None:
+        if runtime_kind not in {"python-v1", "typescript-v1"}:
+            raise NonRetryableExecutionError(
+                f"Unsupported model probe Runtime: {runtime_kind}",
+                safe_message="模型连接测试 Runtime 类型无效",
+                error_code="model_connection_test_runtime_invalid",
+            )
+        runtime_probe = self.runtime_probes.get(runtime_kind)
+        if runtime_probe is None and runtime_kind == "typescript-v1":
+            runtime_probe = self.runtime_probe
+        if runtime_probe is None and self.tester is None:
             raise NonRetryableExecutionError(
                 "Model connection tester is unavailable",
                 safe_message="模型连接测试运行时不可用",
                 error_code="model_connection_test_unavailable",
             )
         try:
-            self.tester(binding, api_key, max(3, min(int(timeout_seconds), 30)))
+            timeout = max(3, min(int(timeout_seconds), 20))
+            if runtime_probe is not None:
+                outcome = runtime_probe.probe_draft(
+                    binding=binding,
+                    api_key=api_key,
+                    timeout_seconds=timeout,
+                )
+                if str(outcome.get("runtime_kind") or "") != runtime_kind:
+                    raise NonRetryableExecutionError(
+                        "Draft Runtime model probe kind mismatch",
+                        safe_message="模型连接测试响应无效",
+                        error_code="model_connection_test_invalid_response",
+                    )
+                if not bool(outcome.get("success")):
+                    failure = outcome.get("failure")
+                    safe_failure = failure if isinstance(failure, dict) else {}
+                    raise NonRetryableExecutionError(
+                        f"{runtime_kind} draft model probe failed",
+                        safe_message=str(safe_failure.get("safe_message") or "模型连接测试失败"),
+                        error_code=str(safe_failure.get("code") or "model_connection_test_failed"),
+                    )
+                if (
+                    str(outcome.get("provider_host") or "") != binding.provider_host
+                    or str(outcome.get("model") or "") != binding.model
+                ):
+                    raise NonRetryableExecutionError(
+                        "Draft Runtime model probe binding mismatch",
+                        safe_message="模型连接测试响应无效",
+                        error_code="model_connection_test_invalid_response",
+                    )
+            else:
+                assert self.tester is not None
+                self.tester(binding, api_key, timeout)
+        except NonRetryableExecutionError as exc:
+            code = str(exc.error_code or "")
+            if code in STABLE_PROBE_ERROR_CODES:
+                raise
+            raise NonRetryableExecutionError(
+                "Model connection test failed",
+                safe_message="模型连接测试失败，请检查模型和 Credential",
+                error_code="model_connection_test_failed",
+            ) from exc
         except Exception as exc:
             code = _stable_probe_error_code(exc)
             if code == "model_connection_test_timeout":

@@ -4,11 +4,12 @@ import {
   CheckCircle2Icon,
   FlaskConicalIcon,
   LoaderCircleIcon,
+  PlusIcon,
   RotateCcwIcon,
   SaveIcon,
   SendIcon,
 } from "lucide-react"
-import { Link, useParams } from "react-router-dom"
+import { Link, useNavigate, useParams } from "react-router-dom"
 import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
@@ -16,13 +17,22 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Textarea } from "@/components/ui/textarea"
 import {
   useAgentProfile,
   useAgentProfiles,
   useAgentPublications,
   useConfigureConnection,
+  useCreateAgentProfile,
   useDiscoverConnection,
   useModelConnection,
   usePublishAgentDraft,
@@ -43,6 +53,7 @@ import { ApiError } from "@/shared/api/api-client"
 
 export function AgentProfilesPage() {
   const profiles = useAgentProfiles()
+  const [showCreate, setShowCreate] = useState(false)
   if (profiles.isLoading) {
     return (
       <main className="mx-auto w-full max-w-[1400px] space-y-5 px-4 py-6 sm:px-6 lg:px-8">
@@ -58,16 +69,56 @@ export function AgentProfilesPage() {
       </main>
     )
   }
+  const canCreate = profiles.data.permissions.can_create
+  const agents = profiles.data.agents
   return (
     <main className="mx-auto w-full max-w-[1400px] space-y-5 px-4 py-6 sm:px-6 lg:px-8">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Agent 配置</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          分别管理 Python 与 TypeScript Agent；Runtime 类型创建后不可修改。
-        </p>
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Agent 配置</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            分别管理 Python 与 TypeScript Agent；Runtime 类型创建后不可修改。
+          </p>
+        </div>
+        {canCreate ? (
+          <Button onClick={() => setShowCreate((current) => !current)}>
+            <PlusIcon aria-hidden="true" />
+            新建 Agent
+          </Button>
+        ) : null}
       </header>
+
+      {showCreate && canCreate ? (
+        <CreateAgentPanel onCancel={() => setShowCreate(false)} />
+      ) : null}
+
+      {agents.length === 0 ? (
+        <Card className="border-dashed shadow-none">
+          <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
+            <BotIcon
+              className="size-9 text-muted-foreground"
+              aria-hidden="true"
+            />
+            <div>
+              <p className="font-semibold">还没有 Agent</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {canCreate
+                  ? "新建一个 Agent，并选择 Python 或 TypeScript Runtime。"
+                  : "当前没有可查看的 Agent，请联系平台管理员。"}
+              </p>
+            </div>
+            {canCreate && !showCreate ? (
+              <Button variant="outline" onClick={() => setShowCreate(true)}>
+                <PlusIcon aria-hidden="true" />
+                新建 Agent
+              </Button>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
+
       <div className="grid gap-4 lg:grid-cols-2">
-        {profiles.data.map((profile) => (
+        {agents.map((profile) => (
           <Card key={profile.id} className="shadow-none">
             <CardContent className="space-y-4 py-5">
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -77,9 +128,7 @@ export function AgentProfilesPage() {
                     {profile.code}
                   </p>
                 </div>
-                <Badge
-                  variant="secondary"
-                >
+                <Badge variant="secondary">
                   {runtimeKindLabel(profile.runtime_kind)}
                 </Badge>
               </div>
@@ -111,6 +160,145 @@ export function AgentProfilesPage() {
         ))}
       </div>
     </main>
+  )
+}
+
+function CreateAgentPanel({ onCancel }: { onCancel: () => void }) {
+  const navigate = useNavigate()
+  const create = useCreateAgentProfile()
+  const [form, setForm] = useState<{
+    code: string
+    name: string
+    description: string
+    project_code: string
+    runtime_kind: RuntimeKind
+  }>({
+    code: "",
+    name: "",
+    description: "",
+    project_code: "default",
+    runtime_kind: "python-v1",
+  })
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    try {
+      const created = await create.mutateAsync(form)
+      toast.success(`Agent ${created.definition.name} 已创建`)
+      navigate(`/agent-profiles/${encodeURIComponent(created.definition.code)}`)
+    } catch {
+      // Structured error is rendered below while preserving the form state.
+    }
+  }
+
+  return (
+    <Card className="shadow-none">
+      <CardHeader>
+        <CardTitle>新建 Agent</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={submit} className="space-y-5">
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="Agent 编码" htmlFor="create-agent-code">
+              <Input
+                id="create-agent-code"
+                required
+                maxLength={120}
+                pattern="[a-z][a-z0-9]*(?:-[a-z0-9]+)*"
+                placeholder="例如：operations-agent"
+                value={form.code}
+                onChange={(event) =>
+                  setForm({ ...form, code: event.target.value })
+                }
+              />
+            </Field>
+            <Field label="名称" htmlFor="create-agent-name">
+              <Input
+                id="create-agent-name"
+                required
+                maxLength={120}
+                placeholder="例如：运维诊断 Agent"
+                value={form.name}
+                onChange={(event) =>
+                  setForm({ ...form, name: event.target.value })
+                }
+              />
+            </Field>
+            <Field label="项目编码" htmlFor="create-agent-project">
+              <Input
+                id="create-agent-project"
+                required
+                maxLength={120}
+                value={form.project_code}
+                onChange={(event) =>
+                  setForm({ ...form, project_code: event.target.value })
+                }
+              />
+            </Field>
+            <Field label="Runtime" htmlFor="create-agent-runtime">
+              <Select
+                value={form.runtime_kind}
+                onValueChange={(value) =>
+                  setForm({
+                    ...form,
+                    runtime_kind: String(value) as RuntimeKind,
+                  })
+                }
+              >
+                <SelectTrigger
+                  id="create-agent-runtime"
+                  aria-label="Runtime"
+                  className="w-full"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="python-v1">Python Runtime</SelectItem>
+                  <SelectItem value="typescript-v1">
+                    TypeScript Runtime
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+          </div>
+          <Field label="说明" htmlFor="create-agent-description">
+            <Textarea
+              id="create-agent-description"
+              maxLength={500}
+              rows={3}
+              placeholder="说明这个 Agent 的用途"
+              value={form.description}
+              onChange={(event) =>
+                setForm({ ...form, description: event.target.value })
+              }
+            />
+          </Field>
+          <div className="rounded-lg border border-amber-300/70 bg-amber-50/40 p-3 text-sm text-muted-foreground dark:bg-amber-950/10">
+            Agent 编码与 Runtime
+            创建后不可修改。新建只生成初始草稿，不会自动发布或切换业务应用。
+          </div>
+          <MutationMessage error={create.error} />
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={create.isPending}
+              onClick={onCancel}
+            >
+              取消
+            </Button>
+            <Button type="submit" disabled={create.isPending}>
+              {create.isPending ? (
+                <LoaderCircleIcon className="animate-spin" aria-hidden="true" />
+              ) : (
+                <PlusIcon aria-hidden="true" />
+              )}
+              创建 Agent
+            </Button>
+          </div>
+        </form>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -403,15 +591,15 @@ function ConnectionForm({
 
   const isCurrentSavedConfig = Boolean(
     current &&
-      credentialSource === "existing" &&
-      form.protocol === current.config.protocol &&
-      form.base_url === current.config.base_url &&
-      form.model === current.config.model &&
-      form.default_opus_model === current.config.default_opus_model &&
-      form.default_sonnet_model === current.config.default_sonnet_model &&
-      form.default_haiku_model === current.config.default_haiku_model &&
-      form.subagent_model === current.config.subagent_model &&
-      form.effort_level === current.config.effort_level
+    credentialSource === "existing" &&
+    form.protocol === current.config.protocol &&
+    form.base_url === current.config.base_url &&
+    form.model === current.config.model &&
+    form.default_opus_model === current.config.default_opus_model &&
+    form.default_sonnet_model === current.config.default_sonnet_model &&
+    form.default_haiku_model === current.config.default_haiku_model &&
+    form.subagent_model === current.config.subagent_model &&
+    form.effort_level === current.config.effort_level
   )
 
   async function runSavedTest() {
@@ -444,6 +632,7 @@ function ConnectionForm({
     try {
       const result = await testDraft.mutateAsync({
         ...credentialInput(),
+        runtime_kind: runtimeKind,
         config: form,
         timeout_seconds: 15,
       })
@@ -467,6 +656,7 @@ function ConnectionForm({
       const revision = await configure.mutateAsync({
         expected_revision: connection.revision,
         ...credentialInput(),
+        runtime_kind: runtimeKind,
         config: form,
         timeout_seconds: 15,
       })
@@ -926,124 +1116,127 @@ function ProfileForm({
             disabled={!agent.permissions.can_edit_profile}
             className="space-y-5 disabled:opacity-70"
           >
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field label="业务角色" htmlFor="profile-role">
-              <Input
-                id="profile-role"
-                value={form.business_role}
-                onChange={(event) =>
-                  setForm({ ...form, business_role: event.target.value })
-                }
-              />
-            </Field>
-            <Field label="项目编码" htmlFor="profile-project">
-              <Input
-                id="profile-project"
-                value={form.routing.project_code}
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="业务角色" htmlFor="profile-role">
+                <Input
+                  id="profile-role"
+                  value={form.business_role}
+                  onChange={(event) =>
+                    setForm({ ...form, business_role: event.target.value })
+                  }
+                />
+              </Field>
+              <Field label="项目编码" htmlFor="profile-project">
+                <Input
+                  id="profile-project"
+                  value={form.routing.project_code}
+                  onChange={(event) =>
+                    setForm({
+                      ...form,
+                      routing: { project_code: event.target.value },
+                    })
+                  }
+                />
+              </Field>
+            </div>
+            <Field label="业务指令" htmlFor="profile-instructions">
+              <textarea
+                id="profile-instructions"
+                className={textareaClass}
+                rows={7}
+                value={form.business_instructions}
                 onChange={(event) =>
                   setForm({
                     ...form,
-                    routing: { project_code: event.target.value },
+                    business_instructions: event.target.value,
                   })
                 }
               />
             </Field>
-          </div>
-          <Field label="业务指令" htmlFor="profile-instructions">
-            <textarea
-              id="profile-instructions"
-              className={textareaClass}
-              rows={7}
-              value={form.business_instructions}
-              onChange={(event) =>
-                setForm({ ...form, business_instructions: event.target.value })
-              }
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="最大轮次" htmlFor="profile-turns">
+                <Input
+                  id="profile-turns"
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={form.execution.max_turns}
+                  onChange={(event) =>
+                    setForm({
+                      ...form,
+                      execution: {
+                        ...form.execution,
+                        max_turns: Number(event.target.value),
+                      },
+                    })
+                  }
+                />
+              </Field>
+              <Field label="超时秒数" htmlFor="profile-timeout">
+                <Input
+                  id="profile-timeout"
+                  type="number"
+                  min={10}
+                  max={3600}
+                  value={form.execution.timeout_seconds}
+                  onChange={(event) =>
+                    setForm({
+                      ...form,
+                      execution: {
+                        ...form.execution,
+                        timeout_seconds: Number(event.target.value),
+                      },
+                    })
+                  }
+                />
+              </Field>
+            </div>
+            <ReadOnlyModelSummary connection={connection} />
+            <Checklist
+              title="MCP 只读工具"
+              items={agent.catalog.mcp_tools.map((tool) => tool.identifier)}
+              selected={form.mcp_tool_ids}
+              onToggle={(value) => toggleList("mcp_tool_ids", value)}
             />
-          </Field>
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field label="最大轮次" htmlFor="profile-turns">
-              <Input
-                id="profile-turns"
-                type="number"
-                min={1}
-                max={100}
-                value={form.execution.max_turns}
-                onChange={(event) =>
-                  setForm({
-                    ...form,
-                    execution: {
-                      ...form.execution,
-                      max_turns: Number(event.target.value),
-                    },
-                  })
-                }
+            <Checklist
+              title="技能"
+              items={agent.catalog.skills}
+              selected={form.skills}
+              onToggle={(value) => toggleList("skills", value)}
+            />
+            <div className="grid gap-4 lg:grid-cols-2">
+              <ConnectorChecklist
+                title="入口 Connector"
+                direction="ingress"
+                connectors={agent.catalog.connectors}
+                selected={form.channels.ingress}
+                onToggle={(value) => toggleConnector("ingress", value)}
               />
-            </Field>
-            <Field label="超时秒数" htmlFor="profile-timeout">
-              <Input
-                id="profile-timeout"
-                type="number"
-                min={10}
-                max={3600}
-                value={form.execution.timeout_seconds}
-                onChange={(event) =>
-                  setForm({
-                    ...form,
-                    execution: {
-                      ...form.execution,
-                      timeout_seconds: Number(event.target.value),
-                    },
-                  })
-                }
+              <ConnectorChecklist
+                title="投递 Connector"
+                direction="delivery"
+                connectors={agent.catalog.connectors}
+                selected={form.channels.delivery}
+                onToggle={(value) => toggleConnector("delivery", value)}
               />
-            </Field>
-          </div>
-          <ReadOnlyModelSummary connection={connection} />
-          <Checklist
-            title="MCP 只读工具"
-            items={agent.catalog.mcp_tools.map((tool) => tool.identifier)}
-            selected={form.mcp_tool_ids}
-            onToggle={(value) => toggleList("mcp_tool_ids", value)}
-          />
-          <Checklist
-            title="技能"
-            items={agent.catalog.skills}
-            selected={form.skills}
-            onToggle={(value) => toggleList("skills", value)}
-          />
-          <div className="grid gap-4 lg:grid-cols-2">
-            <ConnectorChecklist
-              title="入口 Connector"
-              direction="ingress"
-              connectors={agent.catalog.connectors}
-              selected={form.channels.ingress}
-              onToggle={(value) => toggleConnector("ingress", value)}
+            </div>
+            <MutationMessage
+              error={save.error ?? validate.error ?? publish.error}
             />
-            <ConnectorChecklist
-              title="投递 Connector"
-              direction="delivery"
-              connectors={agent.catalog.connectors}
-              selected={form.channels.delivery}
-              onToggle={(value) => toggleConnector("delivery", value)}
-            />
-          </div>
-          <MutationMessage
-            error={save.error ?? validate.error ?? publish.error}
-          />
-          {validationErrors.length ? (
-            <ul className="space-y-1 rounded-lg border border-destructive/40 p-4 text-sm text-destructive">
-              {validationErrors.map((error) => (
-                <li key={`${error.field}:${error.message}`}>
-                  {error.field}: {error.message}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          {draftDirty ? (
-            <p className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-              当前修改尚未保存，请先保存草稿，再校验和发布。
-            </p>
-          ) : null}
+            {validationErrors.length ? (
+              <ul className="space-y-1 rounded-lg border border-destructive/40 p-4 text-sm text-destructive">
+                {validationErrors.map((error) => (
+                  <li key={`${error.field}:${error.message}`}>
+                    {error.field}: {error.message}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {draftDirty ? (
+              <p className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                当前修改尚未保存，请先保存草稿，再校验和发布。
+              </p>
+            ) : null}
           </fieldset>
           <div className="flex flex-wrap gap-2">
             <Button
@@ -1240,7 +1433,9 @@ function PublicationHistory({
 }
 
 function runtimeKindLabel(runtimeKind: "python-v1" | "typescript-v1") {
-  return runtimeKind === "typescript-v1" ? "TypeScript Runtime" : "Python Runtime"
+  return runtimeKind === "typescript-v1"
+    ? "TypeScript Runtime"
+    : "Python Runtime"
 }
 
 function ReadOnlyModelSummary({

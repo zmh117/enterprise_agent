@@ -1,16 +1,18 @@
 import { z } from "zod"
 
 import {
+  agentCreationResultSchema,
   agentDetailSchema,
+  agentListResponseSchema,
   agentPublicationSchema,
   agentRevisionSchema,
-  agentSummarySchema,
   modelDiscoveryResultSchema,
   modelDraftTestResultSchema,
   modelSavedTestResultSchema,
   modelConnectionRevisionSchema,
   modelConnectionSchema,
   type AgentConfig,
+  type AgentCreateInput,
   type CredentialSource,
   type ModelConnectionConfig,
   type RuntimeKind,
@@ -18,9 +20,13 @@ import {
 import { apiRequest } from "@/shared/api/api-client"
 
 export async function listAgentProfiles() {
-  return z
-    .object({ agents: z.array(agentSummarySchema) })
-    .parse(await apiRequest("/api/admin/agents")).agents
+  return agentListResponseSchema.parse(await apiRequest("/api/admin/agents"))
+}
+
+export async function createAgentProfile(input: AgentCreateInput) {
+  return agentCreationResultSchema.parse(
+    await apiRequest("/api/admin/agents", { method: "POST", body: input })
+  )
 }
 
 export async function getAgentProfile(code: string) {
@@ -46,6 +52,7 @@ type CredentialInput = {
 }
 
 type DraftConnectionInput = CredentialInput & {
+  runtime_kind: RuntimeKind
   config: Omit<ModelConnectionConfig, "schema_version">
   timeout_seconds?: number
 }

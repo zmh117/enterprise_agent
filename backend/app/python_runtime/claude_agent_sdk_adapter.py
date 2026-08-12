@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import threading
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
@@ -201,45 +202,62 @@ class RealClaudeCodeAgentClient:
         async def probe() -> dict[str, Any]:
             sdk = self._load_sdk()
             stderr: list[str] = []
-            options = sdk.options(
-                model=binding.model,
-                system_prompt=(
-                    "You are performing an administrator-requested connection test. Return only OK."
-                ),
-                mcp_servers={},
-                allowed_tools=[],
-                permission_mode="dontAsk",
-                max_turns=1,
-                stderr=lambda line: _append_cli_stderr(
-                    stderr, line, self.limits.max_tool_response_chars
-                ),
-            )
-            received = False
+            with tempfile.TemporaryDirectory(prefix="enterprise-agent-model-probe-") as workspace:
+                options = sdk.options(
+                    model=binding.model,
+                    system_prompt=(
+                        "You are performing an administrator-requested connection test. "
+                        "Return only OK. Do not use tools, files, skills, or external context."
+                    ),
+                    mcp_servers={},
+                    strict_mcp_config=True,
+                    tools=[],
+                    allowed_tools=[],
+                    disallowed_tools=[
+                        "Bash",
+                        "Write",
+                        "Edit",
+                        "NotebookEdit",
+                        "WebFetch",
+                        "WebSearch",
+                        "Shell",
+                    ],
+                    permission_mode="dontAsk",
+                    max_turns=1,
+                    cwd=workspace,
+                    setting_sources=[],
+                    skills=[],
+                    effort=binding.effort_level,
+                    stderr=lambda line: _append_cli_stderr(
+                        stderr, line, self.limits.max_tool_response_chars
+                    ),
+                )
+                received = False
 
-            async def consume() -> None:
-                nonlocal received
-                async for message in sdk.query(prompt="Reply OK.", options=options):
-                    error_result = _result_error_details(message)
-                    if error_result is not None:
-                        raise RetryableExecutionError(
-                            error_result[0],
-                            safe_message="模型提供方拒绝了连接测试",
-                            error_code="model_connection_provider_rejected",
-                        )
-                    if _extract_result_text(message) or _extract_text_blocks(message):
-                        received = True
+                async def consume() -> None:
+                    nonlocal received
+                    async for message in sdk.query(prompt="Reply OK.", options=options):
+                        error_result = _result_error_details(message)
+                        if error_result is not None:
+                            raise RetryableExecutionError(
+                                error_result[0],
+                                safe_message="模型提供方拒绝了连接测试",
+                                error_code="model_connection_provider_rejected",
+                            )
+                        if _extract_result_text(message) or _extract_text_blocks(message):
+                            received = True
 
-            try:
-                with _temporary_claude_env(api_key, binding):
-                    await asyncio.wait_for(consume(), timeout=timeout_seconds)
-            except asyncio.TimeoutError as exc:
-                raise RetryableExecutionError(
-                    "Model connection test timed out",
-                    safe_message="模型连接测试超时",
-                    error_code="model_connection_test_timeout",
-                ) from exc
-            except Exception as exc:
-                self._raise_mapped_sdk_error(exc, stderr, [], binding)
+                try:
+                    with _temporary_claude_env(api_key, binding):
+                        await asyncio.wait_for(consume(), timeout=timeout_seconds)
+                except asyncio.TimeoutError as exc:
+                    raise RetryableExecutionError(
+                        "Model connection test timed out",
+                        safe_message="模型连接测试超时",
+                        error_code="model_connection_test_timeout",
+                    ) from exc
+                except Exception as exc:
+                    self._raise_mapped_sdk_error(exc, stderr, [], binding)
             if not received:
                 raise RetryableExecutionError(
                     "Model connection test returned no content",

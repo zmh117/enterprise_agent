@@ -170,6 +170,43 @@ function agentPayload(
   }
 }
 
+function createdAgentPayload(
+  code: string,
+  runtimeKind: "python-v1" | "typescript-v1"
+) {
+  return {
+    definition: {
+      id: `agent-${code}`,
+      code,
+      name: "新建 Agent",
+      description: "",
+      project_code: "default",
+      status: "enabled",
+      revision: 1,
+      runtime_kind: runtimeKind,
+      current_publication_id: null,
+      classification: "business",
+    },
+    draft: {
+      id: `revision-${code}`,
+      revision: 1,
+      status: "draft",
+      config_hash: "initial-hash",
+      config: {
+        ...config,
+        business_role: "新建 Agent",
+        business_instructions: "",
+        mcp_tool_ids: [],
+        skills: [],
+        channels: { ingress: [], delivery: [] },
+      },
+      validation: {},
+      created_at: "2026-08-12T00:00:00+08:00",
+      updated_at: "2026-08-12T00:00:00+08:00",
+    },
+  }
+}
+
 describe("Agent Profile management", () => {
   it("renders the Profile list from the management API", async () => {
     vi.spyOn(globalThis, "fetch").mockReturnValue(
@@ -231,14 +268,206 @@ describe("Agent Profile management", () => {
     expect(screen.getByText("TypeScript Runtime")).toBeInTheDocument()
     expect(screen.getByText("r3")).toBeInTheDocument()
     expect(screen.getByText("引用版本已删除，请重新配置")).toBeInTheDocument()
-    expect(screen.getAllByRole("link", { name: "进入配置" })[0]).toHaveAttribute(
-      "href",
-      "/agent-profiles/default-diagnostic-agent"
+    expect(
+      screen.getAllByRole("link", { name: "进入配置" })[0]
+    ).toHaveAttribute("href", "/agent-profiles/default-diagnostic-agent")
+    expect(
+      screen.getAllByRole("link", { name: "进入配置" })[1]
+    ).toHaveAttribute("href", "/agent-profiles/typescript-diagnostic-agent")
+  })
+
+  it("renders an actionable empty state and creates a Python Agent", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((input, init) => {
+        if (String(input) === "/api/admin/agents" && init?.method === "POST") {
+          return response(createdAgentPayload("operations-agent", "python-v1"))
+        }
+        return response({
+          agents: [],
+          permissions: { can_create: true },
+        })
+      })
+
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: {
+              queries: { retry: false },
+              mutations: { retry: false },
+            },
+          })
+        }
+      >
+        <MemoryRouter initialEntries={["/agent-profiles"]}>
+          <Routes>
+            <Route path="/agent-profiles" element={<AgentProfilesPage />} />
+            <Route
+              path="/agent-profiles/:code"
+              element={<p>已进入新建 Agent 详情</p>}
+            />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
     )
-    expect(screen.getAllByRole("link", { name: "进入配置" })[1]).toHaveAttribute(
-      "href",
-      "/agent-profiles/typescript-diagnostic-agent"
+
+    expect(await screen.findByText("还没有 Agent")).toBeInTheDocument()
+    fireEvent.click(screen.getAllByRole("button", { name: "新建 Agent" })[0])
+    fireEvent.change(screen.getByRole("textbox", { name: "Agent 编码" }), {
+      target: { value: "operations-agent" },
+    })
+    fireEvent.change(screen.getByRole("textbox", { name: "名称" }), {
+      target: { value: "运维 Agent" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "创建 Agent" }))
+
+    expect(await screen.findByText("已进入新建 Agent 详情")).toBeInTheDocument()
+    const createCall = fetchSpy.mock.calls.find(
+      ([input, init]) =>
+        String(input) === "/api/admin/agents" && init?.method === "POST"
     )
+    expect(JSON.parse(String(createCall?.[1]?.body))).toEqual({
+      code: "operations-agent",
+      name: "运维 Agent",
+      description: "",
+      project_code: "default",
+      runtime_kind: "python-v1",
+    })
+  })
+
+  it("allows choosing the TypeScript Runtime when creating an Agent", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((input, init) => {
+        if (String(input) === "/api/admin/agents" && init?.method === "POST") {
+          return response(
+            createdAgentPayload("typescript-operations-agent", "typescript-v1")
+          )
+        }
+        return response({
+          agents: [],
+          permissions: { can_create: true },
+        })
+      })
+
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: {
+              queries: { retry: false },
+              mutations: { retry: false },
+            },
+          })
+        }
+      >
+        <MemoryRouter>
+          <AgentProfilesPage />
+        </MemoryRouter>
+      </QueryClientProvider>
+    )
+
+    await screen.findByText("还没有 Agent")
+    fireEvent.click(screen.getAllByRole("button", { name: "新建 Agent" })[0])
+    fireEvent.change(screen.getByRole("textbox", { name: "Agent 编码" }), {
+      target: { value: "typescript-operations-agent" },
+    })
+    fireEvent.change(screen.getByRole("textbox", { name: "名称" }), {
+      target: { value: "TypeScript 运维 Agent" },
+    })
+    fireEvent.click(screen.getByRole("combobox", { name: "Runtime" }))
+    const typescriptOption = await screen.findByRole("option", {
+      name: "TypeScript Runtime",
+    })
+    fireEvent.pointerDown(typescriptOption, {
+      pointerType: "mouse",
+      button: 0,
+    })
+    fireEvent.click(typescriptOption)
+    fireEvent.click(screen.getByRole("button", { name: "创建 Agent" }))
+
+    await waitFor(() =>
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "/api/admin/agents",
+        expect.objectContaining({ method: "POST" })
+      )
+    )
+    const createCall = fetchSpy.mock.calls.find(
+      ([input, init]) =>
+        String(input) === "/api/admin/agents" && init?.method === "POST"
+    )
+    expect(JSON.parse(String(createCall?.[1]?.body)).runtime_kind).toBe(
+      "typescript-v1"
+    )
+  })
+
+  it("hides creation without permission and preserves input after conflict", async () => {
+    const deniedFetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockReturnValue(
+        response({ agents: [], permissions: { can_create: false } })
+      )
+    const firstClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    const deniedView = render(
+      <QueryClientProvider client={firstClient}>
+        <MemoryRouter>
+          <AgentProfilesPage />
+        </MemoryRouter>
+      </QueryClientProvider>
+    )
+
+    expect(
+      await screen.findByText("当前没有可查看的 Agent，请联系平台管理员。")
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: "新建 Agent" })
+    ).not.toBeInTheDocument()
+    deniedView.unmount()
+    firstClient.clear()
+    deniedFetch.mockRestore()
+
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      if (String(input) === "/api/admin/agents" && init?.method === "POST") {
+        return errorResponse(409, {
+          code: "agent_code_conflict",
+          message: "Agent 编码已存在",
+          field_errors: [{ field: "code", message: "Agent 编码已存在" }],
+        })
+      }
+      return response({ agents: [], permissions: { can_create: true } })
+    })
+
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: {
+              queries: { retry: false },
+              mutations: { retry: false },
+            },
+          })
+        }
+      >
+        <MemoryRouter>
+          <AgentProfilesPage />
+        </MemoryRouter>
+      </QueryClientProvider>
+    )
+
+    await screen.findByText("还没有 Agent")
+    fireEvent.click(screen.getAllByRole("button", { name: "新建 Agent" })[0])
+    const code = screen.getByRole("textbox", { name: "Agent 编码" })
+    fireEvent.change(code, { target: { value: "duplicate-agent" } })
+    fireEvent.change(screen.getByRole("textbox", { name: "名称" }), {
+      target: { value: "重复 Agent" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "创建 Agent" }))
+
+    expect(await screen.findByText("Agent 编码已存在")).toBeInTheDocument()
+    expect(code).toHaveValue("duplicate-agent")
   })
 
   it("loads and saves the exact TypeScript Agent selected by the route", async () => {
@@ -296,7 +525,10 @@ describe("Agent Profile management", () => {
           initialEntries={["/agent-profiles/typescript-diagnostic-agent"]}
         >
           <Routes>
-            <Route path="/agent-profiles/:code" element={<AgentProfilePage />} />
+            <Route
+              path="/agent-profiles/:code"
+              element={<AgentProfilePage />}
+            />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>
@@ -779,6 +1011,12 @@ describe("Agent Profile management", () => {
     await screen.findByText(
       "连接成功 · api.deepseek.com · deepseek-v4-flash · 80ms"
     )
+    const draftTestCall = fetchSpy.mock.calls.find(([input]) =>
+      String(input).endsWith("/test-draft")
+    )
+    expect(JSON.parse(String(draftTestCall?.[1]?.body)).runtime_kind).toBe(
+      "python-v1"
+    )
     fireEvent.click(screen.getByRole("button", { name: "验证并原子保存" }))
     await waitFor(() => expect(keyInput).toHaveValue(""))
     expect(
@@ -791,7 +1029,11 @@ describe("Agent Profile management", () => {
     )
     expect(configureCall).toBeDefined()
     expect(JSON.parse(String(configureCall?.[1]?.body))).toEqual(
-      expect.objectContaining({ expected_revision: 0, api_key: plaintext })
+      expect.objectContaining({
+        expected_revision: 0,
+        api_key: plaintext,
+        runtime_kind: "python-v1",
+      })
     )
   })
 
@@ -921,6 +1163,7 @@ describe("Agent Profile management", () => {
         expected_revision: 1,
         credential_source: "existing",
         api_key: "",
+        runtime_kind: "python-v1",
       })
     )
     expect(

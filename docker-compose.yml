@@ -81,7 +81,7 @@ services:
     command:
       - /bin/sh
       - -ec
-      - python -m app.cli.migrate && python -m app.cli.bootstrap_admin --non-interactive && python -m app.cli.apply_agent_runtime_grants
+      - python -m app.cli.migrate && python -m app.cli.bootstrap_admin --non-interactive && python -m app.cli.bootstrap_agents && python -m app.cli.apply_agent_runtime_grants
     restart: "no"
     depends_on:
       postgres:

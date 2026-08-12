@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import inspect
 import json
 import threading
@@ -36,6 +37,10 @@ from app.python_runtime.sdk_executor import (
 from app.python_runtime.service import PythonRuntimeDependencies, create_app
 from app.shared.database import Database, default_migrations_dir
 from app.shared.migrations import Migrator
+from app.shared.model_probe_envelope import (
+    ModelProbeEnvelopeCipher,
+    ModelProbeEnvelopeError,
+)
 from backend.tests.helpers import test_settings as build_settings
 from backend.tests.helpers import container
 
@@ -300,15 +305,15 @@ def test_python_runtime_restart_fails_orphan_without_replaying_model(
     ).acquire(request)
     assert replayed.events() == events
     assert replacement.requests == []
-    assert database.execute_one(
-        "select count(*) as count from agent_runtime_terminal_ledger"
-    ) == {"count": 1}
-    assert database.execute_one(
-        "select count(*) as count from agent_runtime_invocation_claim"
-    ) == {"count": 0}
-    assert database.execute_one(
-        "select count(*) as count from agent_runtime_invocation_event"
-    ) == {"count": 0}
+    assert database.execute_one("select count(*) as count from agent_runtime_terminal_ledger") == {
+        "count": 1
+    }
+    assert database.execute_one("select count(*) as count from agent_runtime_invocation_claim") == {
+        "count": 0
+    }
+    assert database.execute_one("select count(*) as count from agent_runtime_invocation_event") == {
+        "count": 0
+    }
 
 
 def test_python_runtime_model_probe_and_fixed_mcp_url_boundary(tmp_path: Path) -> None:
@@ -498,3 +503,62 @@ def test_python_runtime_resolves_only_frozen_model_revision_and_active_secret() 
     resolver_source = inspect.getsource(PythonModelBindingResolver.resolve).lower()
     assert "select r.*" not in resolver_source
     assert "select s.*" not in resolver_source
+
+
+def test_python_runtime_decrypts_draft_probe_once_without_persisting_credential(
+    tmp_path: Path,
+) -> None:
+    master_key = "python-draft-probe-test-master-key"
+    config = {
+        "schema_version": 1,
+        "protocol": "anthropic_compatible",
+        "base_url": "https://api.deepseek.com/anthropic",
+        "model": "deepseek-chat",
+        "default_opus_model": "deepseek-chat",
+        "default_sonnet_model": "deepseek-chat",
+        "default_haiku_model": "deepseek-chat",
+        "subagent_model": "deepseek-chat",
+        "effort_level": "max",
+    }
+    config_hash = hashlib.sha256(
+        json.dumps(
+            config,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    request: dict[str, Any] = {
+        "protocol_version": "1.0",
+        "runtime_kind": "python-v1",
+        "probe_id": "probe-python-draft-test",
+        "config_hash": config_hash,
+        "timeout_seconds": 15,
+    }
+    request["credential_envelope"] = ModelProbeEnvelopeCipher(master_key).encrypt(
+        probe_id=request["probe_id"],
+        runtime_kind=request["runtime_kind"],
+        config_hash=config_hash,
+        config=config,
+        api_key="fixture-python-draft-key",
+        lifetime_seconds=30,
+    )
+    resolver = PythonModelBindingResolver(
+        _database(tmp_path),
+        master_key=master_key,
+        allowed_hosts=("api.deepseek.com",),
+        dns_resolver=lambda *_args, **_kwargs: [(2, 1, 6, "", ("8.8.8.8", 443))],
+    )
+
+    resolved = resolver.resolve_draft(request)
+
+    assert resolved.binding.connection_revision_id == "draft-probe-python-draft-test"
+    assert resolved.api_key == "fixture-python-draft-key"
+    assert "fixture-python-draft-key" not in json.dumps(request)
+    assert "deepseek-chat" not in json.dumps(request)
+    try:
+        resolver.resolve_draft(request)
+    except ModelProbeEnvelopeError:
+        pass
+    else:  # pragma: no cover
+        raise AssertionError("draft probe envelope replay was accepted")

@@ -56,7 +56,7 @@ test("model probe is a single-turn no-tool Runtime call with a safe response", a
     })();
   }) as unknown as ClaudeQuery;
   const probe = new ModelConnectionProbe(
-    { resolve: async () => binding },
+    { resolve: async () => binding, resolveDraft: async () => binding },
     query,
     async () => new Response(null, { status: 404 }),
     (() => {
@@ -83,7 +83,7 @@ test("model probe rejects redirects and invalid service identity", async () => {
     throw new Error("query must not be called after redirect");
   }) as unknown as ClaudeQuery;
   const probe = new ModelConnectionProbe(
-    { resolve: async () => binding },
+    { resolve: async () => binding, resolveDraft: async () => binding },
     query,
     async () => new Response(null, { status: 302 }),
     () => 1000

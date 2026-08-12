@@ -383,6 +383,7 @@ def _runtime_model_probes_for_service(
                 base_url=base_url,
                 allowed_hosts=allowed_hosts,
                 auth_token_file=token_file,
+                master_key=settings.app_config_master_key,
                 allow_insecure_internal_http=(settings.agent_runtime.allow_insecure_internal_http),
                 runtime_kind=runtime_kind,
             )

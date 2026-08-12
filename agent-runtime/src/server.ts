@@ -1,7 +1,11 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
 import limits from "../contracts/v1/limits.json" with { type: "json" };
-import type { CancelRequest, ModelProbeRequest } from "./generated/contracts.js";
+import type {
+  CancelRequest,
+  DraftModelProbeRequest,
+  ModelProbeRequest
+} from "./generated/contracts.js";
 import { assertContract } from "./generated/validators.js";
 import { RuntimeGrantError, RuntimeGrantVerifier } from "./grant.js";
 import {
@@ -198,6 +202,27 @@ export function createRuntimeRequestHandler(
           );
         }
         const result = await modelProbe.run(payload as ModelProbeRequest);
+        sendJson(response, 200, result);
+        return;
+      }
+      if (request.method === "POST" && request.url === "/internal/v1/model-probes/draft") {
+        if (!modelProbe || !modelProbeToken) {
+          throw new RequestBodyError(
+            "model_connection_test_unavailable",
+            503,
+            "model probe is unavailable"
+          );
+        }
+        verifyModelProbeToken(modelProbeToken, bearerToken(request));
+        const payload = await readJsonBody(request);
+        assertContract("DraftModelProbeRequest", payload);
+        if ((payload as DraftModelProbeRequest).runtime_kind !== "typescript-v1") {
+          throw new ProtocolBoundaryError(
+            "runtime_kind_mismatch",
+            "draft model probe targets another Runtime"
+          );
+        }
+        const result = await modelProbe.runDraft(payload as DraftModelProbeRequest);
         sendJson(response, 200, result);
         return;
       }

@@ -8,7 +8,7 @@ from typing import Literal, NotRequired, TypedDict
 from jsonschema import Draft202012Validator
 
 PROTOCOL_VERSION = "1.0"
-CONTRACT_SCHEMA_SHA256 = "19f1f854314dd9ac0b63824e6d91121ffdb2331dc4fc911bf091b36a570b7cf2"
+CONTRACT_SCHEMA_SHA256 = "69900ca78ee70ad87660e4d37d8627aece35ddd7155e900500995e655b225b98"
 CONTRACT_SCHEMA_PATH = (
     Path(__file__).resolve().parents[5]
     / "agent-runtime"
@@ -22,7 +22,6 @@ Sha256Digest = str
 RuntimeKind = Literal["python-v1", "typescript-v1"]
 SafeMessage = str
 RuntimeEvent = dict[str, object] | dict[str, object] | dict[str, object] | dict[str, object]
-
 
 class JsonSummary(TypedDict):
     pass
@@ -56,6 +55,22 @@ class ModelProbeRequest(TypedDict):
     runtime_kind: RuntimeKind
     probe_id: Identifier
     model_connection: ModelConnectionBinding
+    timeout_seconds: int
+
+
+class ModelProbeCredentialEnvelope(TypedDict):
+    algorithm: Literal["AES-256-GCM-DERIVED-PROBE-V1"]
+    nonce: str
+    ciphertext: str
+    expires_at: int
+
+
+class DraftModelProbeRequest(TypedDict):
+    protocol_version: Literal["1.0"]
+    runtime_kind: RuntimeKind
+    probe_id: Identifier
+    config_hash: Sha256Digest
+    credential_envelope: ModelProbeCredentialEnvelope
     timeout_seconds: int
 
 

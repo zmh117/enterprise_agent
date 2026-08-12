@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
+import socket
 from dataclasses import dataclass
+from typing import Any, Callable
 from urllib.parse import urlsplit
 
 from app.modules.model_connection.domain import ModelRuntimeBinding
@@ -10,6 +13,20 @@ from app.modules.platform_config.application.secrets import EncryptedDbSecretPro
 from app.modules.platform_config.infrastructure import PlatformConfigRepository
 from app.shared.database import Database
 from app.shared.exceptions import NonRetryableExecutionError
+from app.shared.model_probe_envelope import ModelProbeEnvelopeCipher
+
+
+_CONFIG_FIELDS = {
+    "schema_version",
+    "protocol",
+    "base_url",
+    "model",
+    "default_opus_model",
+    "default_sonnet_model",
+    "default_haiku_model",
+    "subagent_model",
+    "effort_level",
+}
 
 
 @dataclass(frozen=True)
@@ -27,11 +44,14 @@ class PythonModelBindingResolver:
         *,
         master_key: str,
         allowed_hosts: tuple[str, ...],
+        dns_resolver: Callable[..., list[tuple[Any, ...]]] = socket.getaddrinfo,
     ) -> None:
         self._database = database
         platform = PlatformConfigRepository(database)
         self._secrets = EncryptedDbSecretProvider(platform, master_key=master_key)
         self._allowed_hosts = frozenset(host.lower() for host in allowed_hosts if host)
+        self._dns_resolver = dns_resolver
+        self._probe_envelopes = ModelProbeEnvelopeCipher(master_key)
 
     def resolve(self, revision_id: str, config_hash: str) -> ResolvedPythonModelBinding:
         revision = self._database.execute_one(
@@ -163,3 +183,95 @@ class PythonModelBindingResolver:
             secret_ref="",
         )
         return ResolvedPythonModelBinding(binding=binding, api_key=api_key)
+
+    def resolve_draft(self, request: dict[str, Any]) -> ResolvedPythonModelBinding:
+        decrypted = self._probe_envelopes.decrypt(
+            request,
+            expected_runtime_kind="python-v1",
+        )
+        config = decrypted.config
+        if set(config) != _CONFIG_FIELDS:
+            raise NonRetryableExecutionError(
+                "Draft model connection config fields are invalid",
+                safe_message="模型连接配置不完整",
+                error_code="model_connection_integrity_failed",
+            )
+        if config.get("schema_version") != 1 or config.get("protocol") != "anthropic_compatible":
+            raise NonRetryableExecutionError(
+                "Draft model connection protocol is invalid",
+                safe_message="模型连接配置不完整",
+                error_code="model_connection_integrity_failed",
+            )
+        provider_url = urlsplit(str(config.get("base_url") or ""))
+        provider_host = (provider_url.hostname or "").lower()
+        if (
+            provider_url.scheme != "https"
+            or provider_host not in self._allowed_hosts
+            or provider_url.username is not None
+            or provider_url.password is not None
+            or provider_url.port not in {None, 443}
+            or provider_url.path.rstrip("/") != "/anthropic"
+            or provider_url.query
+            or provider_url.fragment
+        ):
+            raise NonRetryableExecutionError(
+                "Draft model provider URL is outside the Runtime boundary",
+                safe_message="模型服务地址不受支持",
+                error_code="model_connection_host_not_allowed",
+            )
+        try:
+            addresses = {
+                str(item[4][0])
+                for item in self._dns_resolver(provider_host, 443, type=socket.SOCK_STREAM)
+            }
+            if not addresses or any(not ipaddress.ip_address(item).is_global for item in addresses):
+                raise ValueError("provider DNS is not public")
+        except Exception as exc:
+            raise NonRetryableExecutionError(
+                "Draft model provider DNS is outside the public network boundary",
+                safe_message="模型服务地址不受支持",
+                error_code="model_connection_host_not_allowed",
+            ) from exc
+        required_models = (
+            "model",
+            "default_opus_model",
+            "default_sonnet_model",
+            "default_haiku_model",
+            "subagent_model",
+        )
+        models = {field: str(config.get(field) or "").strip() for field in required_models}
+        if any(
+            not value or len(value) > 200 or any(ord(character) < 32 for character in value)
+            for value in models.values()
+        ):
+            raise NonRetryableExecutionError(
+                "Draft model mapping is invalid",
+                safe_message="模型连接配置不完整",
+                error_code="model_connection_integrity_failed",
+            )
+        effort = str(config.get("effort_level") or "")
+        if effort not in {"low", "medium", "high", "max"}:
+            raise NonRetryableExecutionError(
+                "Draft model effort level is invalid",
+                safe_message="模型连接配置不完整",
+                error_code="model_connection_integrity_failed",
+            )
+        probe_id = str(request["probe_id"])
+        config_hash = str(request["config_hash"])
+        binding = ModelRuntimeBinding(
+            protocol="anthropic_compatible",
+            base_url=str(config["base_url"]),
+            model=models["model"],
+            default_opus_model=models["default_opus_model"],
+            default_sonnet_model=models["default_sonnet_model"],
+            default_haiku_model=models["default_haiku_model"],
+            subagent_model=models["subagent_model"],
+            effort_level=effort,
+            connection_id="draft-model-probe",
+            connection_code="draft-model-probe",
+            connection_revision_id=f"draft-{probe_id}",
+            connection_revision=0,
+            config_hash=config_hash,
+            secret_ref="",
+        )
+        return ResolvedPythonModelBinding(binding=binding, api_key=decrypted.api_key)

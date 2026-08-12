@@ -20,6 +20,8 @@ const selectedDefinitions = [
   "Prompt",
   "ModelConnectionBinding",
   "ModelProbeRequest",
+  "ModelProbeCredentialEnvelope",
+  "DraftModelProbeRequest",
   "ModelProbeFailure",
   "ModelProbeResponse",
   "McpToolBinding",

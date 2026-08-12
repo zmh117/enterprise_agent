@@ -74,6 +74,19 @@ export const modelDraftTestResultSchema = z.object({
 
 export const runtimeKindSchema = z.enum(["python-v1", "typescript-v1"])
 
+export const agentDefinitionSchema = z.object({
+  id: z.string(),
+  code: z.string(),
+  name: z.string(),
+  description: z.string(),
+  project_code: z.string(),
+  status: z.string(),
+  revision: z.number(),
+  runtime_kind: runtimeKindSchema.default("python-v1"),
+  current_publication_id: z.string().nullable(),
+  classification: z.string().optional(),
+})
+
 export const modelSavedTestResultSchema = z.object({
   success: z.boolean(),
   connection_revision_id: z.string(),
@@ -149,17 +162,7 @@ export const agentPublicationSchema = z.object({
 })
 
 export const agentDetailSchema = z.object({
-  definition: z.object({
-    id: z.string(),
-    code: z.string(),
-    name: z.string(),
-    description: z.string(),
-    project_code: z.string(),
-    status: z.string(),
-    revision: z.number(),
-    runtime_kind: z.enum(["python-v1", "typescript-v1"]).default("python-v1"),
-    current_publication_id: z.string().nullable(),
-  }),
+  definition: agentDefinitionSchema,
   draft: agentRevisionSchema.nullable(),
   current_publication: agentPublicationSchema.nullable(),
   permissions: z
@@ -224,6 +227,18 @@ export const agentSummarySchema = z.object({
   active_application_count: z.number(),
 })
 
+export const agentListResponseSchema = z.object({
+  agents: z.array(agentSummarySchema),
+  permissions: z
+    .object({ can_create: z.boolean() })
+    .default({ can_create: false }),
+})
+
+export const agentCreationResultSchema = z.object({
+  definition: agentDefinitionSchema,
+  draft: agentRevisionSchema,
+})
+
 export type AgentConfig = z.infer<typeof agentConfigSchema>
 export type AgentDetail = z.infer<typeof agentDetailSchema>
 export type ModelConnection = z.infer<typeof modelConnectionSchema>
@@ -233,3 +248,11 @@ export type ModelDiscoveryResult = z.infer<typeof modelDiscoveryResultSchema>
 export type ModelDraftTestResult = z.infer<typeof modelDraftTestResultSchema>
 export type ModelSavedTestResult = z.infer<typeof modelSavedTestResultSchema>
 export type RuntimeKind = z.infer<typeof runtimeKindSchema>
+export type AgentCreationResult = z.infer<typeof agentCreationResultSchema>
+export type AgentCreateInput = {
+  code: string
+  name: string
+  description: string
+  project_code: string
+  runtime_kind: RuntimeKind
+}

@@ -11,6 +11,7 @@ import {
 
 import { isolatedSdkEnvironment, type ClaudeQuery } from "./claude-runtime.js";
 import type {
+  DraftModelProbeRequest,
   ModelProbeRequest,
   ModelProbeResponse
 } from "./generated/contracts.js";
@@ -29,7 +30,13 @@ export class ModelProbeAuthenticationError extends Error {
 
 export interface ModelProbeBindingPort {
   resolve(request: ModelProbeRequest): Promise<ResolvedModelBinding>;
+  resolveDraft(request: DraftModelProbeRequest): Promise<ResolvedModelBinding>;
 }
+
+type ProbeExecutionRequest = Pick<
+  ModelProbeRequest,
+  "probe_id" | "timeout_seconds"
+>;
 
 export function verifyModelProbeToken(expected: string, provided: string): void {
   const expectedBuffer = Buffer.from(expected, "utf8");
@@ -67,8 +74,19 @@ export class ModelConnectionProbe {
 
   async run(request: ModelProbeRequest): Promise<ModelProbeResponse> {
     assertContract("ModelProbeRequest", request);
+    return this.runResolved(request, await this.modelBindings.resolve(request));
+  }
+
+  async runDraft(request: DraftModelProbeRequest): Promise<ModelProbeResponse> {
+    assertContract("DraftModelProbeRequest", request);
+    return this.runResolved(request, await this.modelBindings.resolveDraft(request));
+  }
+
+  private async runResolved(
+    request: ProbeExecutionRequest,
+    binding: ResolvedModelBinding
+  ): Promise<ModelProbeResponse> {
     const started = this.now();
-    const binding = await this.modelBindings.resolve(request);
     const workspace = await mkdtemp(join(tmpdir(), "enterprise-agent-model-probe-"));
     const abortController = new AbortController();
     const timeout = setTimeout(

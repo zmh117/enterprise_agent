@@ -159,6 +159,12 @@ class PythonRuntimeSdkExecutor:
             str(request["model_connection"]["revision_id"]),
             str(request["model_connection"]["config_hash"]),
         )
+        return self._probe_resolved(request, resolved)
+
+    def probe_draft(self, request: dict[str, Any]) -> dict[str, Any]:
+        return self._probe_resolved(request, self._bindings.resolve_draft(request))
+
+    def _probe_resolved(self, request: dict[str, Any], resolved: Any) -> dict[str, Any]:
         if not self._fake_provider_mode:
             client = RemoteMcpClaudeCodeAgentClient(
                 limits=self._limits,

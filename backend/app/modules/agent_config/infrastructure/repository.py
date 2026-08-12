@@ -16,8 +16,14 @@ class AgentConfigRepository:
         where = "" if include_disabled else "where status = 'enabled'"
         return self.database.execute(f"select * from agent_definition {where} order by code")
 
+    def find_definition(self, code: str) -> dict[str, Any] | None:
+        return self.database.execute_one(
+            "select * from agent_definition where code = ?",
+            (code,),
+        )
+
     def get_definition(self, code: str) -> dict[str, Any]:
-        row = self.database.execute_one("select * from agent_definition where code = ?", (code,))
+        row = self.find_definition(code)
         if not row:
             raise NotFound("Agent not found", safe_message="未找到 Agent")
         return row
@@ -43,6 +49,119 @@ class AgentConfigRepository:
         if not row:
             raise NotFound("Agent revision not found", safe_message="未找到 Agent 修订版本")
         return self._revision(row)
+
+    def create_definition_with_initial_draft(
+        self,
+        *,
+        code: str,
+        name: str,
+        description: str,
+        project_code: str,
+        runtime_kind: str,
+        classification: str,
+        config: dict[str, Any],
+        config_hash: str,
+        actor_id: str,
+        agent_id: str | None = None,
+        revision_id: str | None = None,
+    ) -> dict[str, Any]:
+        timestamp = now_iso()
+        resolved_agent_id = agent_id or new_id("agent_definition")
+        inserted = self.database.execute(
+            """
+            insert into agent_definition
+              (id, code, name, description, project_code, status,
+               current_publication_id, revision, created_by, created_at,
+               updated_at, classification, runtime_kind)
+            values (?, ?, ?, ?, ?, 'enabled', null, 1, ?, ?, ?, ?, ?)
+            on conflict(code) do nothing
+            returning id
+            """,
+            (
+                resolved_agent_id,
+                code,
+                name,
+                description,
+                project_code,
+                actor_id,
+                timestamp,
+                timestamp,
+                classification,
+                runtime_kind,
+            ),
+        )
+        if not inserted:
+            raise NonRetryableExecutionError(
+                "Agent code already exists",
+                safe_message="Agent 编码已存在",
+                error_code="agent_code_conflict",
+                field_errors=[{"field": "code", "message": "Agent 编码已存在"}],
+            )
+        resolved_revision_id = revision_id or new_id("agent_revision")
+        self.database.execute(
+            """
+            insert into agent_revision
+              (id, agent_id, revision, status, config_json, config_hash,
+               validation_json, created_by, created_at, updated_at)
+            values (?, ?, 1, 'draft', ?, ?, '{}', ?, ?, ?)
+            """,
+            (
+                resolved_revision_id,
+                resolved_agent_id,
+                json.dumps(config, ensure_ascii=False, sort_keys=True),
+                config_hash,
+                actor_id,
+                timestamp,
+                timestamp,
+            ),
+        )
+        return {
+            "definition": self.get_definition(code),
+            "draft": self.get_revision(resolved_revision_id),
+        }
+
+    def create_initial_draft_if_missing(
+        self,
+        *,
+        agent_id: str,
+        config: dict[str, Any],
+        config_hash: str,
+        actor_id: str,
+    ) -> tuple[dict[str, Any], bool]:
+        existing = self.latest_revision(agent_id)
+        if existing is not None:
+            return existing, False
+        revision_id = new_id("agent_revision")
+        timestamp = now_iso()
+        inserted = self.database.execute(
+            """
+            insert into agent_revision
+              (id, agent_id, revision, status, config_json, config_hash,
+               validation_json, created_by, created_at, updated_at)
+            values (?, ?, 1, 'draft', ?, ?, '{}', ?, ?, ?)
+            on conflict(agent_id, revision) do nothing
+            returning id
+            """,
+            (
+                revision_id,
+                agent_id,
+                json.dumps(config, ensure_ascii=False, sort_keys=True),
+                config_hash,
+                actor_id,
+                timestamp,
+                timestamp,
+            ),
+        )
+        if inserted:
+            return self.get_revision(revision_id), True
+        concurrent = self.latest_revision(agent_id)
+        if concurrent is None:
+            raise NonRetryableExecutionError(
+                "Agent initial draft conflict could not be resolved",
+                safe_message="Agent 初始草稿创建冲突，请重试",
+                error_code="revision_conflict",
+            )
+        return concurrent, False
 
     def save_draft(
         self,

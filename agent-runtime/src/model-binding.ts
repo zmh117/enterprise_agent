@@ -2,12 +2,19 @@ import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import { lookup } from "node:dns/promises";
 
-import type { ModelConnectionBinding } from "./generated/contracts.js";
+import type {
+  DraftModelProbeRequest,
+  ModelConnectionBinding
+} from "./generated/contracts.js";
 import { assertSafeRemoteUrl, type RuntimeConfig } from "./config.js";
 import {
   PlatformSecretDecryptor,
   type EncryptedPlatformSecret
 } from "./platform-secret.js";
+import {
+  ModelProbeEnvelopeDecryptor,
+  ModelProbeEnvelopeError
+} from "./model-probe-envelope.js";
 
 export interface RuntimeSqlClient {
   query<T extends Record<string, unknown>>(
@@ -128,7 +135,8 @@ export class ModelBindingResolver {
     private readonly database: RuntimeSqlClient,
     private readonly decryptor: PlatformSecretDecryptor,
     private readonly config: RuntimeConfig,
-    private readonly dnsLookup: DnsLookup = defaultDnsLookup
+    private readonly dnsLookup: DnsLookup = defaultDnsLookup,
+    private readonly probeEnvelopes?: ModelProbeEnvelopeDecryptor
   ) {}
 
   async resolve(request: ModelBindingRequest): Promise<ResolvedModelBinding> {
@@ -196,12 +204,67 @@ export class ModelBindingResolver {
         "Model connection configuration is not valid JSON"
       );
     }
+    if (row.connection_protocol !== "anthropic_compatible") {
+      throw new ModelBindingError(
+        "runtime_model_config_integrity_failed",
+        "Model connection configuration failed integrity validation"
+      );
+    }
+    const encryptedSecret: EncryptedPlatformSecret = {
+      secretId: row.secret_id,
+      version: Number(row.active_version),
+      ciphertext: row.ciphertext,
+      nonce: row.nonce,
+      keyId: row.key_id,
+      algorithm: row.algorithm
+    };
+    return this.resolveConfig(
+      modelConfig,
+      row.revision_id,
+      row.config_hash,
+      this.decryptor.decrypt(encryptedSecret)
+    );
+  }
+
+  async resolveDraft(request: DraftModelProbeRequest): Promise<ResolvedModelBinding> {
+    if (!this.probeEnvelopes) {
+      throw new ModelBindingError(
+        "model_connection_test_unavailable",
+        "Draft model probe encryption is unavailable"
+      );
+    }
+    try {
+      const decrypted = this.probeEnvelopes.decrypt(request);
+      return await this.resolveConfig(
+        decrypted.config,
+        `draft-${request.probe_id}`,
+        request.config_hash,
+        decrypted.apiKey
+      );
+    } catch (error) {
+      if (error instanceof ModelBindingError) throw error;
+      if (error instanceof ModelProbeEnvelopeError) {
+        throw new ModelBindingError(error.code, error.message);
+      }
+      throw new ModelBindingError(
+        "model_connection_probe_envelope_invalid",
+        "Draft model probe envelope is invalid"
+      );
+    }
+  }
+
+  private async resolveConfig(
+    modelConfig: Record<string, unknown>,
+    connectionRevisionId: string,
+    configHash: string,
+    apiKey: string
+  ): Promise<ResolvedModelBinding> {
     if (
       [...Object.keys(modelConfig)].some((field) => !CONFIG_FIELDS.has(field)) ||
+      Object.keys(modelConfig).length !== CONFIG_FIELDS.size ||
       modelConfig.schema_version !== 1 ||
       modelConfig.protocol !== "anthropic_compatible" ||
-      row.connection_protocol !== "anthropic_compatible" ||
-      canonicalConfigHash(modelConfig) !== row.config_hash
+      canonicalConfigHash(modelConfig) !== configHash
     ) {
       throw new ModelBindingError(
         "runtime_model_config_integrity_failed",
@@ -239,14 +302,6 @@ export class ModelBindingResolver {
         "Model effort level is invalid"
       );
     }
-    const encryptedSecret: EncryptedPlatformSecret = {
-      secretId: row.secret_id,
-      version: Number(row.active_version),
-      ciphertext: row.ciphertext,
-      nonce: row.nonce,
-      keyId: row.key_id,
-      algorithm: row.algorithm
-    };
     return {
       protocol: "anthropic_compatible",
       baseUrl: providerUrl.toString().replace(/\/$/, ""),
@@ -256,9 +311,9 @@ export class ModelBindingResolver {
       defaultHaikuModel: requiredModel(modelConfig, "default_haiku_model"),
       subagentModel: requiredModel(modelConfig, "subagent_model"),
       effortLevel: effort as ResolvedModelBinding["effortLevel"],
-      connectionRevisionId: row.revision_id,
-      configHash: row.config_hash,
-      apiKey: this.decryptor.decrypt(encryptedSecret)
+      connectionRevisionId,
+      configHash,
+      apiKey
     };
   }
 }
