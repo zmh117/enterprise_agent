@@ -69,7 +69,8 @@ PY
   rm -f "$principal_public_der"
 fi
 
-chmod 0600 "$private_key" "$public_key" "$probe_token" "$principal_private_key"
+chmod 0600 "$private_key" "$public_key" "$probe_token"
+chmod 0400 "$principal_private_key"
 chmod 0644 "$principal_jwks"
 
 echo "Agent Runtime secret files are complete in $target_dir"

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import stat
 from pathlib import Path
+import subprocess
 import tomllib
 from typing import Any
 
@@ -206,6 +208,22 @@ def test_compose_keeps_principal_keys_provider_config_and_runtime_urls_separated
     )
     assert project["project"]["optional-dependencies"]["ones-mcp"] == ["mcp==2.0.0"]
     assert project["project"]["optional-dependencies"]["tool-mcp"] == ["mcp==1.28.1"]
+
+
+def test_secret_bootstrap_makes_container_principal_private_key_read_only(
+    tmp_path: Path,
+) -> None:
+    script = REPOSITORY_ROOT / "scripts/bootstrap_agent_runtime_secrets.sh"
+    subprocess.run([str(script), str(tmp_path)], check=True, capture_output=True, text=True)
+
+    principal_private_key = tmp_path / "principal-jwt-private.pem"
+    assert stat.S_IMODE(principal_private_key.stat().st_mode) == 0o400
+    assert stat.S_IMODE((tmp_path / "principal-jwks.json").stat().st_mode) == 0o644
+
+    loaded = principal_private_key.read_bytes()
+    subprocess.run([str(script), str(tmp_path)], check=True, capture_output=True, text=True)
+    assert principal_private_key.read_bytes() == loaded
+    assert stat.S_IMODE(principal_private_key.stat().st_mode) == 0o400
 
 
 def test_compose_local_ones_mock_is_internal_and_not_host_published() -> None:
