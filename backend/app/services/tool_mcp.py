@@ -11,7 +11,7 @@ from typing import Any
 
 import uvicorn
 from mcp import types
-from mcp.server import Server
+from mcp.server import Server, ServerRequestContext
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
@@ -86,6 +86,9 @@ class JobToolService:
 
     def descriptor(self, job_id: str, tool_name: str) -> tuple[AgentJob, ToolDescriptor]:
         job = self.require_job(job_id)
+        definition = MCP_TOOL_MANIFEST.get(tool_name)
+        if definition is None or definition.server_code != SERVER_CODE:
+            raise ToolMcpError("tool_mcp_tool_denied", "当前 Job 未发布此只读工具")
         matches = [item for item in self.catalog(job_id) if item.name == tool_name]
         if len(matches) != 1:
             raise ToolMcpError("tool_mcp_tool_denied", "当前 Job 未发布此只读工具")
@@ -100,6 +103,9 @@ class JobToolService:
         correlation_id: str,
     ) -> dict[str, Any]:
         del correlation_id
+        definition = MCP_TOOL_MANIFEST.get(descriptor.name)
+        if definition is None or definition.server_code != SERVER_CODE:
+            raise ToolMcpError("tool_mcp_tool_denied", "当前 Job 未发布此只读工具")
         result = self.tool_registry.call(
             job_id=job.id,
             user_id=job.internal_user_id or job.requester_id,
@@ -120,12 +126,14 @@ class JobToolService:
     def _mcp_descriptors(self, job: AgentJob) -> tuple[ToolDescriptor, ...]:
         values: list[ToolDescriptor] = []
         for tool_name in self.tool_registry.available_tools():
+            definition = MCP_TOOL_MANIFEST[tool_name]
+            if definition.server_code != SERVER_CODE:
+                continue
             if not self.tool_registry.tool_service.is_tool_visible_for_job(
                 job_id=job.id,
                 tool_name=tool_name,
             ):
                 continue
-            definition = MCP_TOOL_MANIFEST[tool_name]
             exact = self.snapshot_service.tool_binding(
                 job_id=job.id,
                 tool_identifier=tool_name,
@@ -178,40 +186,40 @@ class _StreamableHttpApp:
 
 
 def create_tool_server(service: JobToolService) -> Server:
-    server = Server(
-        "Enterprise Tool MCP",
-        version=SERVER_VERSION,
-        instructions="Job-frozen read-only tools only.",
-    )
+    async def list_tools(
+        context: ServerRequestContext,
+        _params: types.PaginatedRequestParams | None,
+    ) -> types.ListToolsResult:
+        request = _request(context)
+        return types.ListToolsResult(
+            tools=[
+                types.Tool(
+                    name=item.name,
+                    description=item.description,
+                    input_schema=item.input_schema,
+                    annotations=types.ToolAnnotations(
+                        read_only_hint=True,
+                        destructive_hint=False,
+                        idempotent_hint=False,
+                        open_world_hint=False,
+                    ),
+                )
+                for item in service.catalog(_job_id(request))
+            ]
+        )
 
-    @server.list_tools()  # type: ignore[no-untyped-call, untyped-decorator]
-    async def list_tools() -> list[types.Tool]:
-        request = _request(server)
-        return [
-            types.Tool(
-                name=item.name,
-                description=item.description,
-                inputSchema=item.input_schema,
-                annotations=types.ToolAnnotations(
-                    readOnlyHint=True,
-                    destructiveHint=False,
-                    idempotentHint=False,
-                    openWorldHint=False,
-                ),
-            )
-            for item in service.catalog(_job_id(request))
-        ]
-
-    @server.call_tool()  # type: ignore[untyped-decorator]
-    async def call_tool(name: str, arguments: dict[str, Any]) -> types.CallToolResult:
-        request = _request(server)
+    async def call_tool(
+        context: ServerRequestContext,
+        params: types.CallToolRequestParams,
+    ) -> types.CallToolResult:
+        request = _request(context)
         try:
-            job, descriptor = service.descriptor(_job_id(request), name)
+            job, descriptor = service.descriptor(_job_id(request), params.name)
             result = await asyncio.to_thread(
                 service.invoke,
                 job=job,
                 descriptor=descriptor,
-                arguments=arguments,
+                arguments=params.arguments or {},
                 correlation_id=str(request.headers.get("x-correlation-id") or "")[:128],
             )
             return _tool_result(result, is_error=False)
@@ -226,13 +234,19 @@ def create_tool_server(service: JobToolService) -> Server:
                 is_error=True,
             )
         except Exception:
-            logger.exception("Tool MCP call failed safely tool_name=%s", name)
+            logger.exception("Tool MCP call failed safely tool_name=%s", params.name)
             return _tool_result(
                 {"error": "只读工具暂时不可用", "error_code": "tool_mcp_unavailable"},
                 is_error=True,
             )
 
-    return server
+    return Server(
+        "Enterprise Tool MCP",
+        version=SERVER_VERSION,
+        instructions="Job-frozen tool-mcp read-only tools only.",
+        on_list_tools=list_tools,
+        on_call_tool=call_tool,
+    )
 
 
 def create_app(
@@ -295,8 +309,8 @@ def _service_from_container(runtime: Container) -> JobToolService:
     )
 
 
-def _request(server: Server) -> Request:
-    request = server.request_context.request
+def _request(context: ServerRequestContext) -> Request:
+    request = context.request
     if not isinstance(request, Request):
         raise ToolMcpError("tool_mcp_transport_invalid", "MCP 传输上下文无效")
     return request
@@ -314,8 +328,8 @@ def _tool_result(payload: dict[str, Any], *, is_error: bool) -> types.CallToolRe
     encoded = json.dumps(safe, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=encoded)],
-        structuredContent=safe,
-        isError=is_error,
+        structured_content=safe,
+        is_error=is_error,
     )
 
 

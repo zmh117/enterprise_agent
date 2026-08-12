@@ -1,19 +1,47 @@
 from __future__ import annotations
 
+import pytest
 from starlette.testclient import TestClient
 
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
-from app.services.tool_mcp import JobToolService, create_app
+from app.modules.job.infrastructure.repositories import now_iso
+from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
+from app.services.tool_mcp import JobToolService, ToolMcpError, create_app
 from backend.tests.helpers import container, prepare_debug_application_access
 
 
-def _runtime_job():
+def _runtime_job(*, capabilities: tuple[str, ...] = ("get_er_context",)):
     runtime = container()
+    if "ones_work_item_search" in capabilities:
+        definition = MCP_TOOL_MANIFEST["ones_work_item_search"]
+        next_order = runtime.database.execute_one(
+            "select coalesce(max(selection_order), -1) + 1 as value "
+            "from agent_publication_mcp_tool where agent_publication_id = ?",
+            ("agent_publication_default_v1",),
+        )
+        assert next_order is not None
+        runtime.database.execute(
+            """
+            insert into agent_publication_mcp_tool
+              (agent_publication_id, server_code, tool_identifier, schema_hash,
+               model_description, selection_order, created_at)
+            values (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "agent_publication_default_v1",
+                definition.server_code,
+                definition.identifier,
+                definition.schema_hash,
+                definition.description,
+                int(next_order["value"]),
+                now_iso(),
+            ),
+        )
     selection = prepare_debug_application_access(
         runtime,
         application_code="tool-mcp-application",
         role_code="tool-mcp-role",
-        capabilities=("get_er_context",),
+        capabilities=capabilities,
     )
     job, _ = runtime.debug_job_access_service.create_job(
         user_id="user_local_admin",
@@ -33,6 +61,17 @@ def _runtime_job():
         snapshot_service=runtime.mcp_tool_snapshot_service,
     )
     return runtime, claimed, service
+
+
+def test_tool_mcp_excludes_tools_owned_by_other_mcp_servers() -> None:
+    _runtime, job, service = _runtime_job(
+        capabilities=("get_er_context", "ones_work_item_search")
+    )
+
+    assert [item.name for item in service.catalog(job.id)] == ["get_er_context"]
+    with pytest.raises(ToolMcpError) as denied:
+        service.descriptor(job.id, "ones_work_item_search")
+    assert denied.value.code == "tool_mcp_tool_denied"
 
 
 def test_standard_tool_mcp_invokes_job_frozen_readonly_tool_for_both_runtimes() -> None:

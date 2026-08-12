@@ -207,7 +207,7 @@ def test_compose_keeps_principal_keys_provider_config_and_runtime_urls_separated
         (REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )
     assert project["project"]["optional-dependencies"]["ones-mcp"] == ["mcp==2.0.0"]
-    assert project["project"]["optional-dependencies"]["tool-mcp"] == ["mcp==1.28.1"]
+    assert project["project"]["optional-dependencies"]["tool-mcp"] == ["mcp==2.0.0"]
 
 
 def test_secret_bootstrap_makes_container_principal_private_key_read_only(

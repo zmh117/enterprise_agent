@@ -153,6 +153,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && useradd --system --uid 10001 --gid 10001 --no-create-home tool-mcp
 ENV LD_LIBRARY_PATH=/opt/oracle/instantclient
 COPY backend/app/services /app/backend/app/services
+RUN python -c "import app.services.tool_mcp"
 USER 10001:10001
 CMD ["python", "-m", "uvicorn", "app.services.tool_mcp:create_default_app", "--factory", "--host", "0.0.0.0", "--port", "9103"]
 
