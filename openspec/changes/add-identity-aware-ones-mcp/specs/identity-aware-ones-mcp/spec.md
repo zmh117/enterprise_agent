@@ -11,6 +11,21 @@
 - **WHEN** 模型请求 `ones_work_item_create`、`ones_work_item_update` 或任意未冻结 Tool
 - **THEN** Runtime 或 MCP 在外部调用前拒绝请求并记录拒绝
 
+### Requirement: ONES MCP必须使用SDK v2无状态HTTP
+`ones-mcp` SHALL 使用稳定版 MCP Python SDK v2 和 Streamable HTTP 无状态传输，每个请求 MUST 使用显式 handler context 解析当前平台 Principal，且 MUST NOT 依赖跨请求 MCP Session、v1 `server.request_context`、stdio 或独立客户端凭据旁路。
+
+#### Scenario: 新协议本地HTTP调用
+- **WHEN** 本地测试客户端使用 MCP 2026-07-28 `server/discover` 调用固定 `/mcp` URL
+- **THEN** 服务无初始化 Session 地返回能力，再由 `tools/list` 返回唯一 Tool，并在调用时继续验证当前请求的 Principal JWT
+
+#### Scenario: 旧协议Runtime回退
+- **WHEN** 现有 Runtime HTTP 客户端使用旧协议 `initialize` 与 `tools/list`
+- **THEN** SDK 在同一无状态 HTTP 入口兼容处理，服务不分配跨请求 `Mcp-Session-Id`
+
+#### Scenario: 独立客户端请求旁路平台身份
+- **WHEN** Cursor、stdio 或本地进程未提供受信 Job 派生的 Principal JWT
+- **THEN** 服务拒绝请求且不读取外部身份、credential 或调用 ONES
+
 ### Requirement: ONES查询公开输入输出必须有界
 `ones_work_item_search` SHALL 只接受 `keyword`、`issue_type` 和 `limit`；`keyword` 长度为 1..200，`issue_type` 只允许 `demand|task|defect`，`limit` 为 1..50。输出 SHALL 只包含有界 `number/name/type` 列表、`total`、`truncated` 和 `untrusted_data=true`。
 

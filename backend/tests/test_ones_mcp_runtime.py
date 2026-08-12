@@ -334,7 +334,7 @@ def test_ones_mcp_refreshes_stale_token_once_and_retries_mock_query() -> None:
     }
 
 
-def test_ones_mcp_streamable_http_requires_bearer_and_publishes_one_tool() -> None:
+def test_ones_mcp_v2_stateless_http_requires_bearer_and_supports_both_protocol_eras() -> None:
     fixture = _fixture()
     app = create_mcp_app(
         fixture["service"],
@@ -348,6 +348,11 @@ def test_ones_mcp_streamable_http_requires_bearer_and_publishes_one_tool() -> No
         "accept": "application/json, text/event-stream",
     }
     auth_headers = {**base_headers, "authorization": f"Bearer {fixture['token']}"}
+    modern_meta = {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": {"name": "runtime-test", "version": "2"},
+        "io.modelcontextprotocol/clientCapabilities": {},
+    }
 
     with TestClient(app) as client:
         missing = client.post(
@@ -398,6 +403,58 @@ def test_ones_mcp_streamable_http_requires_bearer_and_publishes_one_tool() -> No
             headers={**auth_headers, "mcp-protocol-version": "2025-06-18"},
             json={"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}},
         )
+        discovered_v2 = client.post(
+            "/mcp",
+            headers={
+                **auth_headers,
+                "mcp-protocol-version": "2026-07-28",
+                "mcp-method": "server/discover",
+            },
+            json={
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "server/discover",
+                "params": {"_meta": modern_meta},
+            },
+        )
+        listed_v2 = client.post(
+            "/mcp",
+            headers={
+                **auth_headers,
+                "mcp-protocol-version": "2026-07-28",
+                "mcp-method": "tools/list",
+            },
+            json={
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "tools/list",
+                "params": {"_meta": modern_meta},
+            },
+        )
+        called_v2 = client.post(
+            "/mcp",
+            headers={
+                **auth_headers,
+                "mcp-protocol-version": "2026-07-28",
+                "mcp-method": "tools/call",
+                "mcp-name": "ones_work_item_search",
+                "x-correlation-id": "ones-query-mcp-v2",
+            },
+            json={
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "tools/call",
+                "params": {
+                    "_meta": modern_meta,
+                    "name": "ones_work_item_search",
+                    "arguments": {
+                        "keyword": "traceability",
+                        "issue_type": "demand",
+                        "limit": 10,
+                    },
+                },
+            },
+        )
 
     assert missing.status_code == 401
     assert duplicate.status_code == 401
@@ -406,7 +463,19 @@ def test_ones_mcp_streamable_http_requires_bearer_and_publishes_one_tool() -> No
     assert oversized.status_code == 413
     assert initialized.status_code == 200
     assert initialized.json()["result"]["serverInfo"]["name"] == "Enterprise ONES MCP"
+    assert "mcp-session-id" not in initialized.headers
     assert [item["name"] for item in listed.json()["result"]["tools"]] == ["ones_work_item_search"]
+    assert discovered_v2.status_code == 200
+    assert discovered_v2.json()["result"]["supportedVersions"] == ["2026-07-28"]
+    assert discovered_v2.json()["result"]["capabilities"]["tools"] == {"listChanged": False}
+    assert "mcp-session-id" not in discovered_v2.headers
+    assert [item["name"] for item in listed_v2.json()["result"]["tools"]] == [
+        "ones_work_item_search"
+    ]
+    assert called_v2.status_code == 200, called_v2.text
+    assert called_v2.json()["result"]["isError"] is False
+    assert called_v2.json()["result"]["structuredContent"]["items"][0]["number"] == 900101
+    assert "mcp-session-id" not in called_v2.headers
 
 
 @pytest.mark.parametrize(

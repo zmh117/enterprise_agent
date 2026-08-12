@@ -4,6 +4,16 @@
 `keyword`、`issue_type=demand|task|defect` 和 `limit=1..50`，输出仅包含有界的
 工作项编号、名称、类型、总数、截断标记及 `untrusted_data=true`。
 
+## MCP 传输边界
+
+`ones-mcp` 固定使用 `mcp==2.0.0` 的无状态 Streamable HTTP。平台 Runtime 和本地
+测试只通过部署配置中的固定 HTTP URL 调用；服务不保存跨请求 MCP Session，也不提供
+Cursor/stdio 启动方式或独立 ONES 凭据旁路。服务支持 v2 `server/discover`、`tools/list`
+和 `tools/call`，同时保留 SDK 的旧协议初始化回退供现有 Runtime HTTP 客户端使用。
+
+`ones-mcp` 依赖只安装在独立镜像中。`tool-mcp` 与 Python Agent Runtime 继续使用各自
+兼容的 MCP SDK v1 依赖，避免 `claude-agent-sdk` 的 `<2` 约束与 ONES MCP v2 冲突。
+
 ## 身份与凭据边界
 
 1. Agent Worker 从运行中的 Job、当前用户、发布快照与当前 RBAC 签发最长五分钟的

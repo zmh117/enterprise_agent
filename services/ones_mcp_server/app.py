@@ -11,7 +11,7 @@ from typing import Any, Awaitable, Callable
 
 import uvicorn
 from mcp import types
-from mcp.server import Server
+from mcp.server import Server, ServerRequestContext
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
@@ -141,36 +141,36 @@ class OnesMcpSecurityMiddleware:
 
 
 def create_ones_server(service: OnesWorkItemSearchService) -> Server:
-    server = Server(
-        "Enterprise ONES MCP",
-        version=SERVER_VERSION,
-        instructions="Identity-aware ONES work-item search only.",
-    )
-
-    @server.list_tools()  # type: ignore[no-untyped-call, untyped-decorator]
-    async def list_tools() -> list[types.Tool]:
-        request = _request(server)
+    async def list_tools(
+        context: ServerRequestContext,
+        _params: types.PaginatedRequestParams | None,
+    ) -> types.ListToolsResult:
+        request = _request(context)
         service.authenticate(_bearer(request))
-        return [
-            types.Tool(
-                name=TOOL_IDENTIFIER,
-                description="按关键字和类型查询当前用户默认 Team 的 ONES 工作项。",
-                inputSchema=TOOL_INPUT_SCHEMA,
-                annotations=types.ToolAnnotations(
-                    readOnlyHint=True,
-                    destructiveHint=False,
-                    idempotentHint=True,
-                    openWorldHint=False,
-                ),
-            )
-        ]
+        return types.ListToolsResult(
+            tools=[
+                types.Tool(
+                    name=TOOL_IDENTIFIER,
+                    description="按关键字和类型查询当前用户默认 Team 的 ONES 工作项。",
+                    input_schema=TOOL_INPUT_SCHEMA,
+                    annotations=types.ToolAnnotations(
+                        read_only_hint=True,
+                        destructive_hint=False,
+                        idempotent_hint=True,
+                        open_world_hint=False,
+                    ),
+                )
+            ]
+        )
 
-    @server.call_tool()  # type: ignore[untyped-decorator]
-    async def call_tool(name: str, arguments: dict[str, Any]) -> types.CallToolResult:
-        request = _request(server)
+    async def call_tool(
+        context: ServerRequestContext,
+        params: types.CallToolRequestParams,
+    ) -> types.CallToolResult:
+        request = _request(context)
         try:
             claims = service.authenticate(_bearer(request))
-            if name != TOOL_IDENTIFIER:
+            if params.name != TOOL_IDENTIFIER:
                 raise OnesMcpError(
                     "ONES MCP Tool is not published",
                     safe_message="当前 ONES 工具未发布",
@@ -179,7 +179,7 @@ def create_ones_server(service: OnesWorkItemSearchService) -> Server:
             result = await asyncio.to_thread(
                 service.search,
                 claims=claims,
-                arguments=arguments,
+                arguments=params.arguments or {},
                 correlation_id=str(request.headers.get("x-correlation-id") or "")[:128],
             )
             return _tool_result(result, is_error=False)
@@ -192,13 +192,19 @@ def create_ones_server(service: OnesWorkItemSearchService) -> Server:
                 is_error=True,
             )
         except Exception:
-            logger.exception("ONES MCP call failed safely tool_name=%s", name)
+            logger.exception("ONES MCP call failed safely tool_name=%s", params.name)
             return _tool_result(
                 {"error": "ONES 查询暂时不可用", "error_code": "ones_mcp_unavailable"},
                 is_error=True,
             )
 
-    return server
+    return Server(
+        "Enterprise ONES MCP",
+        version=SERVER_VERSION,
+        instructions="Identity-aware ONES work-item search only.",
+        on_list_tools=list_tools,
+        on_call_tool=call_tool,
+    )
 
 
 def create_app(
@@ -219,6 +225,7 @@ def create_app(
         app=server,
         json_response=True,
         stateless=True,
+        max_request_body_size=max_request_bytes,
         security_settings=TransportSecuritySettings(
             enable_dns_rebinding_protection=True,
             allowed_hosts=list(allowed_hosts),
@@ -380,8 +387,8 @@ async def _retention_loop(
         await asyncio.sleep(60 * 60)
 
 
-def _request(server: Server) -> Request:
-    request = server.request_context.request
+def _request(context: ServerRequestContext) -> Request:
+    request = context.request
     if not isinstance(request, Request):
         raise OnesMcpError(
             "ONES MCP transport context is invalid",
@@ -417,8 +424,8 @@ def _tool_result(payload: dict[str, Any], *, is_error: bool) -> types.CallToolRe
         is_error = True
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=encoded)],
-        structuredContent=payload,
-        isError=is_error,
+        structured_content=payload,
+        is_error=is_error,
     )
 
 

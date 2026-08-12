@@ -91,6 +91,12 @@ ONES MCP 首次使用当前加密 Token 查询。收到 401 后，它先重新�
 
 本地测试允许固定 `ones_mock` HTTP host；生产只允许 HTTPS、禁用代理和重定向，并限制超时、请求体、响应体和解析字段。
 
+### 10. ONES MCP采用Python SDK v2无状态HTTP
+
+`ones-mcp` 固定使用稳定版 `mcp==2.0.0` 和 Streamable HTTP 无状态传输。服务使用 v2 显式 handler context 读取当前 HTTP Authorization Header，不依赖已移除的 v1 `server.request_context`；每个 HTTP 请求独立处理，不保存 `Mcp-Session-Id` 或跨请求 Principal 状态。
+
+第一阶段只支持平台 Runtime 与本地测试通过固定 HTTP URL 调用。不得为了 Cursor 或独立客户端增加 stdio 入口、长期 Token、直接读取 ONES credential 的旁路或跳过 Job/Principal JWT/RBAC/审计的 standalone 模式。v2 服务应接受 2026-07-28 `server/discover` 请求，并保持 SDK 提供的旧协议初始化回退，以便现有双 Runtime HTTP 客户端平滑调用。
+
 ## Risks / Trade-offs
 
 - [Risk] 加密保存密码扩大凭据泄漏影响面。→ 使用独立表、AES-GCM AAD、主密钥文件、最小容器挂载、API 零回显、软解绑清密文和敏感扫描测试。

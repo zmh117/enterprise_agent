@@ -39,11 +39,13 @@ database = [
 python-runtime = [
   "claude-agent-sdk==0.2.134",
 ]
+# The governed Tool server and Python Runtime still depend on the SDK v1 line.
+# Keep ONES MCP isolated in its own image so its v2 transport cannot alter them.
 tool-mcp = [
   "mcp==1.28.1",
 ]
 ones-mcp = [
-  "mcp==1.28.1",
+  "mcp==2.0.0",
 ]
 
 [build-system]

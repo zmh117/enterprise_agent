@@ -21,7 +21,7 @@ ONES 本人身份绑定属于统一身份体系，独立于旧 API Platform。�
 
 - 两个独立 Agent Runtime：`python-v1` 与 `typescript-v1`。
 - 一个 Worker 负责调度，并按 Agent Publication 选择对应 Runtime。
-- 标准 MCP Server：`tool-mcp` 继续无个人认证；`ones-mcp` 仅发布 `ones_work_item_search` 并验证短期 Principal JWT。
+- 标准 MCP Server：`tool-mcp` 继续无个人认证；`ones-mcp` 使用 MCP Python SDK 2.0 无状态 Streamable HTTP，仅发布 `ones_work_item_search` 并验证短期 Principal JWT；第一阶段不提供 Cursor/stdio 旁路。
 - 只读工具：ER、业务流、数据库 schema/query、Redis、Loki。
 - 工具资源：Draft、技术验证、Publish、Disable、Archive；运行时只解析已发布 Revision。
 - 工具目标由 Agent 根据用户输入和发布 Skill 在每次 Tool Call 中显式提供，服务端实时复核角色、应用、数据范围和唯一资源。

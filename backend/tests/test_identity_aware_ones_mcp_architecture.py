@@ -204,7 +204,8 @@ def test_compose_keeps_principal_keys_provider_config_and_runtime_urls_separated
     project = tomllib.loads(
         (REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )
-    assert project["project"]["optional-dependencies"]["ones-mcp"] == ["mcp==1.28.1"]
+    assert project["project"]["optional-dependencies"]["ones-mcp"] == ["mcp==2.0.0"]
+    assert project["project"]["optional-dependencies"]["tool-mcp"] == ["mcp==1.28.1"]
 
 
 def test_compose_local_ones_mock_is_internal_and_not_host_published() -> None:

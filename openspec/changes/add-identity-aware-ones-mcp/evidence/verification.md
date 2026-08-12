@@ -16,6 +16,11 @@
 
 ## Focused behavior
 
+- MCP SDK v2 migration regression covering ONES MCP, Principal JWT, identity
+  binding, credential refresh, audit and both Runtime contracts: `74 passed`.
+  The protocol test exercises stateless v2 `server/discover`, `tools/list` and
+  `tools/call`, plus the SDK's legacy initialize/list fallback, without a
+  Cursor/stdio entry point.
 - Identity, credential, Principal JWT, authorization, publication, dual Runtime,
   ONES MCP and audit suite: `106 passed`.
 - Final ONES MCP suite: `28 passed`, including Mock query, one-time 401 refresh,
@@ -46,6 +51,11 @@
   ONES image build exposed a missing MCP SDK dependency; the dependency is now a
   pinned, image-specific `ones-mcp` optional dependency and the rebuilt image
   imports successfully.
+- The rebuilt running `ones-mcp` image reports `mcp==2.0.0`. The separately
+  built `tool-mcp` reports `mcp==1.28.1`, while Python Agent Runtime resolves
+  `mcp==1.29.0` under `claude-agent-sdk`'s v1 constraint. All three services and
+  TypeScript Runtime were healthy after the rebuild; recent service logs showed
+  successful readiness/health probes and no ONES MCP startup error.
 - The rebuilt ONES MCP image returned successful `/health` against a temporary
   PostgreSQL head 104 with a temporary JWKS and the configured master-key mount.
   Temporary verification keys were deleted afterwards.
@@ -70,8 +80,8 @@
   `agent_config/api/controller.py` and `shared/schema_consolidation.py`.
 - Repository-wide Ruff still reports five pre-existing findings: three unrelated
   no-placeholder f-strings in `job/infrastructure/repositories.py` and two unused
-  imports in `shared/schema_consolidation.py`. Focused ONES MCP Ruff and mypy
-  checks pass.
+  imports in `shared/schema_consolidation.py`. Focused ONES MCP v2 Ruff checks
+  pass.
 
 ## Acceptance boundary
 

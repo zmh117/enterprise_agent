@@ -89,3 +89,9 @@
 - [x] 10.6 执行 Mock 正向链及 JWT/授权/身份/credential/Provider 全部负向用例，核对 Job、Tool Call、MCP audit 和 Token revision 数据库证据
 - [x] 10.7 运行认证秘密扫描、审计业务原文一致性检查、旧组件残留扫描、OpenSpec 全量 strict validation 和 `git diff --check`
 - [x] 10.8 记录验收边界：Mock 通过不等于真实 ONES、真实 DingTalk→Runtime→ONES→Delivery E2E 未执行时不得标记生产可用
+
+## 11. MCP Python SDK v2迁移
+
+- [x] 11.1 将 `ones-mcp` 独立依赖升级为稳定版 `mcp==2.0.0`，按 v2 低层 `Server` 显式 Context/Params handler API 迁移 Tool 注册与 Principal Bearer 读取，移除 v1 `server.request_context` 依赖
+- [x] 11.2 保持 `ones-mcp` 为本地/Compose Streamable HTTP 无状态服务，验证 v2 `server/discover` 新协议调用与旧协议初始化回退；不增加 Cursor、stdio 或独立凭据旁路
+- [x] 11.3 运行 ONES MCP、JWT、身份、刷新、审计、Runtime 与 Compose 聚焦回归，重建 `ones-mcp` 镜像并记录 SDK v2 运行证据、Mock 边界和静态检查结果
