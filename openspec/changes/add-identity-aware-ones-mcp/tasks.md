@@ -1,14 +1,14 @@
 ## 1. 迁移前事实与边界门禁
 
-- [ ] 1.1 记录当前 `mcp_new` 分支、未提交修改、活动 OpenSpec、迁移 038-041、现有 ONES 身份数量和运行中 Job，确认本变更不覆盖既有退役工作
-- [ ] 1.2 增加架构残留门禁：允许新的 EdDSA Principal JWT，但继续禁止旧 `runtime-tool-mcp`、HS256 MCP signing key、任意 MCP URL、API Capability/Connection 和通用 HTTP/GraphQL Tool 回归
-- [ ] 1.3 固定第一阶段 Tool/Provider 契约：仅 `ones-mcp:ones_work_item_search`，生产 HTTPS allowlist，本地仅显式允许 `ones_mock` HTTP
+- [x] 1.1 记录当前 `mcp_new` 分支、未提交修改、活动 OpenSpec、代码迁移 100-103、legacy manifest/ledger 中的 038-041、现有 ONES 身份数量和运行中 Job，确认本变更不覆盖既有退役工作
+- [x] 1.2 增加架构残留门禁：允许新的 EdDSA Principal JWT，但继续禁止旧 `runtime-tool-mcp`、HS256 MCP signing key、任意 MCP URL、API Capability/Connection 和通用 HTTP/GraphQL Tool 回归
+- [x] 1.3 固定第一阶段 Tool/Provider 契约：仅 `ones-mcp:ones_work_item_search`，生产 HTTPS allowlist，本地仅显式允许 `ones_mock` HTTP
 
 ## 2. 外部身份凭据数据与加密
 
-- [ ] 2.1 新增前向数据库迁移，创建一对一 `external_identity_credential`，包含 Provider、状态、revision、登录材料/Token 密文、nonce、key ID、算法和安全生命周期时间
+- [ ] 2.1 新增 `104_add_identity_aware_ones_mcp.sql` 前向数据库迁移，创建一对一 `external_identity_credential`，包含 Provider、状态、revision、登录材料/Token 密文、nonce、key ID、算法和安全生命周期时间；不得复用或改写 001-103 与 legacy manifest
 - [ ] 2.2 扩展 ONES verification challenge 以暂存绑定 challenge 的加密登录材料与 Token，并保证消费、过期或失败后秘密不可继续使用
-- [ ] 2.3 新增 `mcp_operation_audit` 及 Job、actor、jti、identity、credential revision、correlation 和时间索引，不删除既有身份/Job/Tool Call/Audit 历史
+- [ ] 2.3 新增 `mcp_operation_audit` 及 Job、actor、jti、identity、credential revision、correlation、载荷 schema version、完整有界 Tool/Provider 业务请求响应 JSON 和时间索引，不删除既有身份/Job/Tool Call/Audit 历史
 - [ ] 2.4 实现带 credential/challenge purpose AAD 的 AES-256-GCM cipher，复用平台主密钥加载与 key ID 规则并覆盖篡改、错 key、错 AAD 和空值失败
 - [ ] 2.5 实现通用外部 credential repository：原子 upsert、optimistic revision Token 轮换、REAUTH_REQUIRED、停用、解绑清密文和只读安全投影
 - [ ] 2.6 验证 SQLite 测试库与 PostgreSQL 迁移的空库、新库升级、幂等、外键和索引行为
@@ -21,7 +21,7 @@
 - [ ] 3.4 实现显式换绑、重复确认、过期 challenge、其它用户 subject 冲突和服务账号绑定失败关闭
 - [ ] 3.5 修改本人软解绑和管理员停用边界，使运行时 credential 立即不可用；管理员继续不能代绑、重验或解绑
 - [ ] 3.6 扩展本人/管理员 ONES 状态投影，只显示 credential configured/status/revision/安全时间，不返回邮箱、Token、密文、nonce 或 key ID
-- [ ] 3.7 增加绑定、重验、换绑、停用、解绑和失败路径的 API/事务/并发/脱敏回归
+- [ ] 3.7 增加绑定、重验、换绑、停用、解绑和失败路径的 API/事务/并发/身份原文审计与认证秘密隔离回归
 
 ## 4. Principal JWT签发与公钥分发
 
@@ -29,7 +29,7 @@
 - [ ] 4.2 实现 `PrincipalTokenIssuer`，只从运行 Job、内部用户、session、Publication、MCP Tool 快照和当前授权派生 claims，最长有效期五分钟
 - [ ] 4.3 实现 `PrincipalTokenVerifier`，严格校验 `alg=EdDSA`、kid、issuer、audience、scope、iat/nbf/exp、jti 和 claim 类型
 - [ ] 4.4 增加 Principal JWT 安全投影/JWKS 读取接口或部署只读 JWKS 文件，并确保私钥只挂载到可信 Worker 签发进程
-- [ ] 4.5 审计 JWT 签发成功、签发拒绝和验证拒绝，只保存 kid、jti、Job、audience/scope hash、时间和安全错误码
+- [ ] 4.5 审计 JWT 签发成功、签发拒绝和验证拒绝，保存 kid、jti、Job、audience、完整 scope、时间和安全错误码，但不保存 JWT、签名、Authorization 或私钥
 - [ ] 4.6 覆盖伪造签名、HS256、alg none、未知 kid、错误 issuer/audience、scope 扩大、过期/未生效、Job 用户不匹配和用户停用测试
 
 ## 5. MCP Tool目录、发布与Job快照
@@ -63,11 +63,12 @@
 
 ## 8. MCP操作与凭据生命周期审计
 
-- [ ] 8.1 实现 MCP 操作审计 repository/service，在同一 correlation/Job/principal 链记录 Tool、Provider attempt、credential revision、状态、耗时和安全错误
-- [ ] 8.2 查询请求只审计 keyword hash/长度、类型、limit；响应只审计 count、total、truncated，不保存 GraphQL、原始正文或工作项完整内容
+- [ ] 8.1 实现 MCP 操作审计 repository/service，在同一 correlation/Job/principal 链记录 Tool、Provider attempt、credential revision、状态、耗时、安全错误和载荷 schema version
+- [ ] 8.2 原样审计完整有界 Tool Input、固定 GraphQL document/variables、Provider 业务响应和 Tool Output，不对 keyword、邮箱/User ID、工作项或其它业务字段做 hash、掩码、摘要或裁剪
 - [ ] 8.3 将绑定/重验、JWT、Token refresh、REAUTH_REQUIRED、停用/解绑与现有 `audit_event`、`agent_tool_call` 和新 MCP 审计关联
-- [ ] 8.4 审计写入失败时 Tool 失败关闭，不把未审计 Provider 成功结果交给 Agent，并记录不含结果正文的安全服务错误
-- [ ] 8.5 增加已知邮箱、密码、ONES Token、Principal JWT、Authorization、密文和 nonce 的数据库/日志/事件/响应全文泄漏回归
+- [ ] 8.4 审计写入失败时 Tool 失败关闭，不把未审计 Provider 成功结果交给 Agent，并记录不含业务结果或认证秘密的安全服务错误
+- [ ] 8.5 增加审计业务载荷逐字段原值一致性测试，并增加已知密码、ONES Token、Principal JWT、Authorization/Cookie、私钥、密文和 nonce 的数据库/日志/事件/响应全文泄漏回归；邮箱/User ID 应只在授权审计中按原值出现
+- [ ] 8.6 复用 `audit:*:read` 保护完整 MCP 审计详情、记录审计读取行为，并实现必填 `MCP_OPERATION_AUDIT_RETENTION_DAYS` 配置、readiness 校验和到期清理审计
 
 ## 9. Mock、前端与部署
 
@@ -86,5 +87,5 @@
 - [ ] 10.4 运行前端测试、类型检查和生产构建，验证绑定状态与秘密清理
 - [ ] 10.5 运行 Compose config、受影响镜像构建和 readiness，验证私网端口、secret mounts、host allowlist 与服务依赖
 - [ ] 10.6 执行 Mock 正向链及 JWT/授权/身份/credential/Provider 全部负向用例，核对 Job、Tool Call、MCP audit 和 Token revision 数据库证据
-- [ ] 10.7 运行敏感信息扫描、旧组件残留扫描、OpenSpec 全量 strict validation 和 `git diff --check`
+- [ ] 10.7 运行认证秘密扫描、审计业务原文一致性检查、旧组件残留扫描、OpenSpec 全量 strict validation 和 `git diff --check`
 - [ ] 10.8 记录验收边界：Mock 通过不等于真实 ONES、真实 DingTalk→Runtime→ONES→Delivery E2E 未执行时不得标记生产可用

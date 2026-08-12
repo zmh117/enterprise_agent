@@ -48,7 +48,7 @@
 #### Scenario: 完整Mock正向链成功
 - **WHEN** 测试用户完成绑定且 Job 的 Agent/Application/角色均授权 ONES 查询
 - **THEN** 两个 Runtime 均通过 `ones-mcp` 使用该用户的 User/Team/Token 获得规范化 Mock 结果
-- **AND** 审计能关联入口、Job、JWT jti、Tool Call、credential revision、Provider attempt 和结果且不含凭据
+- **AND** 审计能关联入口、Job、JWT jti、Tool Call、credential revision、Provider attempt 和结果，原样保存完整有界查询业务载荷且不含认证秘密
 
 ### Requirement: V1 端到端验收覆盖失败关闭和回归
 交付验收 MUST 证明 Tool 未选、角色未授权、JWT 缺失/伪造/过期、用户未绑定、credential 缺失、401刷新失败、Team撤销和身份停用均失败关闭；同时 MUST 证明现有 `tool-mcp` 和未选择 ONES Tool 的历史 Agent/Application 保持原行为。

@@ -1,6 +1,6 @@
 ## Context
 
-当前系统已经以 `app_user` 和 `user_external_identity` 保存统一用户及 ONES 身份事实，并通过两阶段本人验证选择默认 Team。迁移 038/039 有意删除了旧 API Capability 个人凭据和历史 HS256 MCP Token，因此现状只能验证 ONES 身份，不能让 Agent 代表当前用户查询 ONES。
+当前系统已经以 `app_user` 和 `user_external_identity` 保存统一用户及 ONES 身份事实，并通过两阶段本人验证选择默认 Team。当前代码迁移代际为 `100_baseline_v1.sql` 与前向迁移 `101–103`；历史 `038–041` 只通过 `legacy-v1-manifest.json` 和已采用 legacy ledger 保留不可变证据，其中的退役决策已经折叠进 baseline。现状只能验证 ONES 身份，不能让 Agent 代表当前用户查询 ONES。
 
 Python/TypeScript Runtime 当前只接受固定 `tool-mcp`，以 `X-Job-Id` 调用私网 MCP；Runtime 执行协议、终态 ledger 和 request digest 都不得保存运行密钥。本变更需要增加第二个固定 MCP 服务、短期平台 Principal JWT 和个人 Provider 凭据，同时避免恢复任意 MCP URL、旧 Capability/Connection 控制面或通用 HTTP/GraphQL 执行器。
 
@@ -11,14 +11,14 @@ Python/TypeScript Runtime 当前只接受固定 `tool-mcp`，以 `X-Job-Id` 调�
 - 建立可复用于其它业务 MCP 的统一 Principal JWT，而不是 ONES 专用 JWT。
 - 让本人 ONES 绑定原子保存加密登录材料和 Token，并支持 401 后自动重新登录。
 - 让两个 Runtime 通过同一固定 `ones-mcp` 和同一 Tool schema 查询 `ones_mock`。
-- 在 Job、JWT、外部身份、凭据版本、Provider 尝试和 Tool Call 之间形成脱敏审计链。
+- 在 Job、JWT、外部身份、凭据版本、Provider 尝试和 Tool Call 之间形成保留有界业务原文的审计链。
 - 保持身份、凭据、平台 RBAC、ONES 原生权限和 Tool 发布范围彼此独立。
 
 **Non-Goals:**
 
 - 第一阶段不实现 ONES 新增、修改、删除、评论或任意 GraphQL/HTTP Tool。
 - 不允许 Agent、Application、用户、模型或外部请求注册任意 MCP Server、Provider URL 或 JWT audience。
-- 不把 ONES Token、密码、邮箱、Principal JWT 或签名私钥写入 Prompt、RabbitMQ、Runtime ledger、审计、错误响应或 Tool 输出。
+- 不把 ONES Token、密码、Principal JWT、Authorization/Cookie、签名私钥、密文或 nonce 写入 Prompt、RabbitMQ、Runtime ledger、审计、日志、错误响应或 Tool 输出；ONES 邮箱/User ID 和查询业务载荷允许进入受 `audit:*:read` 保护的审计存储。
 - 不恢复旧 API Capability、API Connection、`provider_credential` 历史模型或共享 HS256 MCP signing key。
 - 不在本阶段拆出新的独立 Identity 微服务进程；统一身份能力先作为现有后端的明确模块边界交付。
 
@@ -79,9 +79,11 @@ ONES MCP 首次使用当前加密 Token 查询。收到 401 后，它先重新�
 
 ### 8. 审计分为平台事件、Tool Call 和 MCP 操作证据
 
-现有 `audit_event` 记录绑定、重验、JWT 签发拒绝、凭据轮换状态；`agent_tool_call` 继续记录模型侧 Tool 摘要。新增 `mcp_operation_audit` 记录真实 MCP/Provider 操作：correlation ID、Job、session、principal `jti`、actor、外部身份、Team、server/tool、operation、credential revision、attempt、status、error code、duration、请求/响应安全摘要和时间。
+现有 `audit_event` 记录绑定、重验、JWT 签发拒绝、凭据轮换状态；`agent_tool_call` 继续关联模型侧 Tool Call。新增 `mcp_operation_audit` 记录真实 MCP/Provider 操作：correlation ID、Job、session、principal `jti`、actor、ONES 邮箱/User ID、外部身份、Team、server/tool、operation、credential revision、attempt、status、error code、duration、载荷 schema version、完整有界业务请求/响应和时间。
 
-搜索请求只保存 keyword hash/长度、类型和 limit；响应只保存数量、total、truncated。JWT、Authorization、邮箱、密码、Token、GraphQL 原文、原始响应和工作项完整正文均不得持久化。审计写入失败不得把成功 Provider 调用伪装为未发生；Tool 返回安全失败并保留可定位错误码。
+查询审计原样保存 Tool Input、固定 GraphQL document 与 variables、Provider 业务响应以及规范化 Tool Output；不得对 keyword、工作项字段或其它业务字段做 hash、掩码或摘要。认证材料不属于业务载荷，审计 schema 和序列化器必须结构性排除密码、ONES Token、Principal JWT、Authorization/Cookie、私钥、密文和 nonce；登录/刷新只记录邮箱/User ID、credential revision、状态和错误等不可重放事实，不保存认证请求/响应原文。任何载荷必须先通过既有 Tool/Provider 大小上限和 JSON schema，超限或非法正文不得作为业务载荷持久化。
+
+完整审计详情只允许已认证且通过现有 `audit:*:read` 授权的调用方读取。部署必须配置 `MCP_OPERATION_AUDIT_RETENTION_DAYS`，系统按该保留期清理 MCP 业务载荷与对应操作记录；缺少或非法配置时 `ones-mcp` readiness 失败。审计写入失败不得把成功 Provider 调用伪装为未发生；Tool 返回安全失败并保留可定位错误码。
 
 ### 9. 部署与密钥边界
 
@@ -96,15 +98,16 @@ ONES MCP 首次使用当前加密 Token 查询。收到 401 后，它先重新�
 - [Risk] 多实例同时遇到 401 会重复登录。→ 本地锁加数据库 revision CAS；冲突实例重新读取新 Token，不覆盖较新版本。
 - [Risk] 新活动变更与正在收尾的旧平台退役变更语义冲突。→ 使用独立前向迁移和 delta spec，明确只覆盖 ONES 凭据与专用 MCP，不恢复旧 Capability/Connection/HS256 组件。
 - [Risk] Runtime Header 被错误记录。→ Header 值不进入执行 schema、digest、logger、事件或 ledger，并增加全仓敏感值回归测试。
+- [Risk] 完整业务原文包含个人信息和项目内容。→ 复用 `audit:*:read`、记录审计读取行为、要求显式保留期、限制导出与接口分页，并保持业务载荷大小上限。
 - [Risk] Mock 查询成功不等于真实 ONES 兼容。→ 第一阶段验收只声明 Mock 合约通过；真实 ONES 上线需要独立连接验证与 E2E 证据。
 
 ## Migration Plan
 
-1. 创建新表和 challenge 加密列，迁移不修改既有身份事实；旧身份保持“已绑定但无运行凭据”，查询时返回需要重验。
+1. 以 `104_add_identity_aware_ones_mcp.sql` 创建新表和 challenge 加密列；不得修改或复用 `001–103`，不得改写 `legacy-v1-manifest.json`。迁移不修改既有身份事实；旧身份保持“已绑定但无运行凭据”，查询时返回需要重验。
 2. 部署 Identity credential/JWT 代码和本人重验流程；只有新确认的 challenge 才产生 `ACTIVE` 凭据。
 3. 部署 `ones-mcp`、JWKS 与 Runtime 固定 URL，但尚不把 Tool 加入任何已发布 Agent/Application。
 4. 更新 MCP Tool Manifest、Runtime 合约和发布组合，重新发布明确选择 `ones_work_item_search` 的 Agent/Application。
-5. 使用 `ones_mock` 验收绑定、查询、401 自动登录、失败关闭、双 Runtime 和审计脱敏。
+5. 使用 `ones_mock` 验收绑定、查询、401 自动登录、失败关闭、双 Runtime、完整业务原文审计和认证秘密隔离。
 6. 回滚应用代码时保留新表；停止发布 `ones-mcp` Tool 并停用服务即可阻断调用。已经保存的凭据由运维显式解绑或后续清理迁移处理，不自动解密导出。
 
 ## Open Questions

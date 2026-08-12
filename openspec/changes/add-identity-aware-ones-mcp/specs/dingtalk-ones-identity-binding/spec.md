@@ -3,7 +3,7 @@
 ### Requirement: ONES 凭据和令牌不得持久化
 **Reason**: Agent 查询 ONES 需要可续期的用户凭据；完全丢弃 Token 和密码会在 Token 失效后强制人工重绑。
 
-**Migration**: 旧身份事实继续保留但运行时不可用，用户必须本人重新验证一次；新流程只把邮箱、密码和 Token 保存为专用 AES-GCM 密文，所有公开投影与审计仍保持零秘密。
+**Migration**: 旧身份事实继续保留但运行时不可用，用户必须本人重新验证一次；新流程把邮箱、密码和 Token 保存为专用 AES-GCM 密文。公开投影继续保持零认证秘密；审计可原样保存邮箱/User ID 等身份事实，但不得保存密码、Token 或其它可重放材料。
 
 ### Requirement: 本阶段不接入 ONES 业务能力
 **Reason**: 本变更明确接入唯一只读 `ones_work_item_search` MCP Tool。
@@ -21,7 +21,7 @@
 
 #### Scenario: ONES凭据无效
 - **WHEN** ONES 登录接口拒绝邮箱或密码
-- **THEN** 系统返回安全验证失败，不创建身份或当前 credential，且不记录邮箱、密码、Token 或原始响应
+- **THEN** 系统返回安全验证失败，不创建身份或当前 credential；审计可记录提交邮箱、actor 和安全错误码，但不得记录密码、Token 或 Provider 认证响应原文
 
 #### Scenario: 客户端提交可信字段
 - **WHEN** 请求包含手工 ONES UUID、Token、Team、目标 URL、Header 或 Provider 配置
@@ -59,7 +59,7 @@
 
 #### Scenario: Mock拒绝旧Token
 - **WHEN** Mock 使已保存 Token 返回401但邮箱密码仍有效
-- **THEN** `ones-mcp` 自动登录、更新加密 Token、最多重试一次并留下脱敏审计
+- **THEN** `ones-mcp` 自动登录、更新加密 Token、最多重试一次并留下完整查询业务原文及无认证秘密的凭据生命周期审计
 
 ## ADDED Requirements
 

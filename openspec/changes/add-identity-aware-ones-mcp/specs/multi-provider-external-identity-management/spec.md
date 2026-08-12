@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: 外部身份管理不得暴露凭据和敏感载荷
-系统 MUST 在 API、页面、Prompt、RabbitMQ、日志、审计和错误中排除密码、Session Token、CSRF 值、Provider Token、AppSecret、完整 Webhook URL、Principal JWT 和原始外部响应。数据库 MAY 只在专用 credential 表中保存使用平台主密钥加密的 Provider 登录材料与 Token，不得把明文或密文复制到 Identity metadata、Claim、Verification Attempt 公开投影或审计。
+系统 MUST 在 API、页面、Prompt、RabbitMQ、日志、审计和错误中排除密码、Session Token、CSRF 值、Provider Token、AppSecret、完整 Webhook URL、Principal JWT、Authorization/Cookie、私钥、密文和 nonce。数据库 MAY 只在专用 credential 表中保存使用平台主密钥加密的 Provider 登录材料与 Token，不得把密码/Token 明文或任何凭据密文复制到 Identity metadata、Claim、Verification Attempt 公开投影或审计。受 `audit:*:read` 和保留期保护的审计 MAY 原样保存邮箱/User ID 及有界 Provider 业务请求/响应，但不得保存 Provider 认证请求/响应原文。
 
 #### Scenario: 查看身份与验证历史
 - **WHEN** 用户或管理员查看 Identity、Claim、Verification Attempt 或 credential 状态
@@ -10,7 +10,7 @@
 
 #### Scenario: 检查数据库明文
 - **WHEN** ONES 本人绑定、查询和 Token 自动刷新完成
-- **THEN** 登录邮箱、密码与 Token 只存在于 AES-GCM 密文列，且不出现在其它业务表或 JSON metadata
+- **THEN** 密码与 Token 只存在于 AES-GCM 密文列，且不出现在其它业务表或 JSON metadata；登录邮箱可作为身份事实原样出现在授权审计字段中
 
 ## ADDED Requirements
 

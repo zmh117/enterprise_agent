@@ -67,12 +67,12 @@ ONES MCP SHALL 在查询首次返回 401 后解析当前加密登录材料，调
 - **WHEN** 更新 Token 后原查询再次返回 401
 - **THEN** MCP 不进行第二次登录，标记需要重验并失败关闭
 
-### Requirement: ONES凭据不得离开受信执行边界
-ONES MCP MAY 在进程内短暂解密登录材料和 Token，但 MUST NOT 把它们返回给 Runtime、模型或用户，也不得写入 Tool event、审计、日志、异常、metric label 或终端 ledger。
+### Requirement: ONES认证秘密不得离开受信执行边界
+ONES MCP MAY 在进程内短暂解密登录材料和 Token，但 MUST NOT 把密码、Token、Principal JWT、Authorization/Cookie、密文或 nonce 返回给 Runtime、模型或用户，也不得写入 Tool event、审计、日志、异常、metric label 或终端 ledger。ONES 邮箱/User ID 和完整有界查询业务载荷 SHALL 进入受权限和保留期控制的 MCP 操作审计。
 
 #### Scenario: 扫描成功与失败证据
 - **WHEN** 测试完成绑定、查询、401刷新和失败路径
-- **THEN** 数据库公开投影、审计、日志、Runtime 事件和 Tool 输出中都找不到邮箱、密码、Token 或 Principal JWT 原文
+- **THEN** MCP 操作审计包含预期邮箱/User ID 与完整有界查询业务载荷，数据库公开投影、所有审计、日志、Runtime 事件和 Tool 输出中都找不到密码、Token、Principal JWT、Authorization/Cookie、密文或 nonce
 
 ### Requirement: Python与TypeScript Runtime必须等价调用ONES MCP
 两个 Runtime SHALL 使用相同固定 `ones-mcp` URL、Principal JWT Header、Tool schema、模型 Tool 名和失败分类，并继续执行精确 Tool allowlist 与调用预算。
