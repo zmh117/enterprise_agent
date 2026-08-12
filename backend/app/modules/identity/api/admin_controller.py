@@ -292,6 +292,11 @@ def build_identity_admin_router() -> APIRouter:
     def list_mcp_operation_audits(
         request: Request,
         job_id: str = Query(default="", max_length=200),
+        server_code: str = Query(default="", max_length=128),
+        tool_identifier: str = Query(default="", max_length=200),
+        event_kind: str = Query(default="", max_length=32),
+        status: str = Query(default="", max_length=32),
+        mcp_call_id: str = Query(default="", max_length=200),
         limit: int = Query(default=100, ge=1, le=500),
     ) -> dict[str, Any]:
         principal = require_action(
@@ -301,8 +306,20 @@ def build_identity_admin_router() -> APIRouter:
             action="read",
         )
         c = container(request)
-        where = "where job_id = ?" if job_id else ""
-        params: tuple[Any, ...] = (job_id, limit) if job_id else (limit,)
+        filters = {
+            "job_id": job_id,
+            "server_code": server_code,
+            "tool_identifier": tool_identifier,
+            "event_kind": event_kind,
+            "status": status,
+            "mcp_call_id": mcp_call_id,
+        }
+        clauses = [f"{column} = ?" for column, value in filters.items() if value]
+        where = f"where {' and '.join(clauses)}" if clauses else ""
+        params: tuple[Any, ...] = (
+            *(value for value in filters.values() if value),
+            limit,
+        )
         rows = c.database.execute(
             f"""
             select * from mcp_operation_audit
@@ -317,7 +334,7 @@ def build_identity_admin_router() -> APIRouter:
             status="success",
             summary="MCP operation audit list read",
             actor_id=principal.user_id,
-            payload={"job_id": job_id, "count": len(rows), "limit": limit},
+            payload={**filters, "count": len(rows), "limit": limit},
         )
         return {"events": [_mcp_audit_projection(row) for row in rows]}
 
@@ -470,6 +487,8 @@ def _mcp_audit_projection(row: dict[str, Any]) -> dict[str, Any]:
         "provider_request_json",
         "provider_response_json",
         "tool_response_json",
+        "business_request_json",
+        "business_response_json",
     ):
         try:
             parsed = json.loads(str(projected.get(name) or "{}"))
@@ -477,6 +496,8 @@ def _mcp_audit_projection(row: dict[str, Any]) -> dict[str, Any]:
             parsed = {}
         projected[name.removesuffix("_json")] = parsed if isinstance(parsed, dict) else {}
         projected.pop(name, None)
+    projected["request_truncated"] = bool(projected.get("request_truncated"))
+    projected["response_truncated"] = bool(projected.get("response_truncated"))
     return projected
 
 

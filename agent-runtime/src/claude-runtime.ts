@@ -10,14 +10,14 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 
 import errors from "../contracts/v1/errors.json" with { type: "json" };
+import type { JsonSummary } from "./generated/contracts.js";
 import type {
-  AgentExecutionRequestV1,
-  JsonSummary,
-  McpServerBinding,
+  AgentExecutionRequest,
   RuntimeFailure,
   RuntimeProvenance,
+  ToolEvent,
   Usage
-} from "./generated/contracts.js";
+} from "./runtime-contracts.js";
 import type {
   ExecutionEmitter,
   InvocationSecretContext,
@@ -35,6 +35,23 @@ const DANGEROUS_BUILTINS = [
   "WebSearch",
   "Shell"
 ] as const;
+const SDK_BUILTIN_TOOLS = new Set<string>([
+  ...DANGEROUS_BUILTINS,
+  "Agent",
+  "Task",
+  "Read",
+  "Glob",
+  "Grep",
+  "LS",
+  "TodoRead",
+  "TodoWrite",
+  "AskUserQuestion",
+  "Skill"
+]);
+// Code-owned catalog only. Adding an entry requires a governed platform SDK Tool.
+const PLATFORM_SDK_TOOLS = new Set<string>();
+const MCP_CALL_ID_META_KEY = "enterprise-agent/mcp-call-id";
+const AGENT_TOOL_CALL_ID_META_KEY = "enterprise-agent/agent-tool-call-id";
 
 const DENIED_FIELDS = new Set(errors.sensitive_field_denylist.map((item) => item.toLowerCase()));
 const FORBIDDEN_TOOL_INPUT_FIELDS = new Set([
@@ -52,7 +69,7 @@ const FORBIDDEN_TOOL_INPUT_FIELDS = new Set([
 ]);
 
 export interface ModelBindingPort {
-  resolve(request: AgentExecutionRequestV1): Promise<ResolvedModelBinding>;
+  resolve(request: AgentExecutionRequest): Promise<ResolvedModelBinding>;
 }
 
 export type ClaudeQuery = typeof claudeQuery;
@@ -79,9 +96,16 @@ class TemporaryWorkspaceFactory implements InvocationWorkspaceFactory {
 }
 
 interface ToolCallState {
-  readonly serverCode: McpServerBinding["server_code"];
+  readonly serverCode: AgentExecutionRequest["mcp_servers"][number]["server_code"];
   readonly toolName: string;
   readonly startedAt: number;
+}
+
+type ToolOrigin = "mcp" | "sdk_builtin" | "sdk_custom" | "unknown";
+
+interface PlatformToolMetadata {
+  readonly mcpCallId: string | null;
+  readonly agentToolCallId: string | null;
 }
 
 interface NormalizedResult {
@@ -91,13 +115,13 @@ interface NormalizedResult {
 }
 
 function runtimeProvenance(
-  request: AgentExecutionRequestV1,
+  request: AgentExecutionRequest,
   binding: ResolvedModelBinding
 ): RuntimeProvenance {
   return {
     runtime_kind: "typescript-v1",
     runtime_version: "0.1.0",
-    protocol_version: "1.0",
+    protocol_version: request.protocol_version,
     sdk_version: "0.3.226",
     cli_version: "2.1.226",
     model_connection_revision_id: request.model_connection.revision_id,
@@ -105,7 +129,7 @@ function runtimeProvenance(
   };
 }
 
-function systemPrompt(request: AgentExecutionRequestV1): string {
+function systemPrompt(request: AgentExecutionRequest): string {
   const tools = request.mcp_servers.flatMap((server) =>
     server.tools.map((tool) => `${server.server_code}:${tool.tool_name}`)
   );
@@ -174,6 +198,87 @@ function containsForbiddenToolInput(value: unknown, depth = 0): boolean {
       FORBIDDEN_TOOL_INPUT_FIELDS.has(key.toLowerCase()) ||
       containsForbiddenToolInput(child, depth + 1)
   );
+}
+
+function toolOrigin(toolName: string, isPublishedMcp: boolean): ToolOrigin {
+  if (isPublishedMcp) return "mcp";
+  if (SDK_BUILTIN_TOOLS.has(toolName)) return "sdk_builtin";
+  if (PLATFORM_SDK_TOOLS.has(toolName)) return "sdk_custom";
+  return "unknown";
+}
+
+function identifierOrNull(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value) ? value : null;
+}
+
+function platformToolMetadata(message: SDKMessage): PlatformToolMetadata {
+  if (message.type !== "user") return { mcpCallId: null, agentToolCallId: null };
+  const result = message.tool_use_result;
+  if (result === null || typeof result !== "object" || Array.isArray(result)) {
+    return { mcpCallId: null, agentToolCallId: null };
+  }
+  const meta = (result as Record<string, unknown>)._meta;
+  if (meta === null || typeof meta !== "object" || Array.isArray(meta)) {
+    return { mcpCallId: null, agentToolCallId: null };
+  }
+  const values = meta as Record<string, unknown>;
+  return {
+    mcpCallId: identifierOrNull(values[MCP_CALL_ID_META_KEY]),
+    agentToolCallId: identifierOrNull(values[AGENT_TOOL_CALL_ID_META_KEY])
+  };
+}
+
+function emitToolEvent(
+  request: AgentExecutionRequest,
+  emitter: ExecutionEmitter,
+  event: {
+    readonly toolCallId: string;
+    readonly origin: ToolOrigin;
+    readonly serverCode:
+      | AgentExecutionRequest["mcp_servers"][number]["server_code"]
+      | null;
+    readonly mcpCallId?: string | null;
+    readonly persistedToolCallId?: string | null;
+    readonly toolName: string;
+    readonly status: "STARTED" | "SUCCEEDED" | "FAILED" | "DENIED";
+    readonly requestSummary: JsonSummary;
+    readonly responseSummary: JsonSummary;
+    readonly durationMs: number;
+    readonly failure?: RuntimeFailure;
+  }
+): void {
+  if (request.protocol_version === "1.0") {
+    // V1 cannot represent SDK/unknown origins without falsely assigning an MCP server.
+    if (event.origin !== "mcp" || event.serverCode === null) return;
+    if (event.serverCode !== "tool-mcp" && event.serverCode !== "ones-mcp") return;
+    emitter.emit("tool_event", {
+      tool_call_id: event.toolCallId,
+      server_code: event.serverCode,
+      tool_name: event.toolName,
+      status: event.status,
+      request_summary: event.requestSummary,
+      response_summary: event.responseSummary,
+      duration_ms: event.durationMs,
+      ...(event.failure ? { failure: event.failure } : {})
+    });
+    return;
+  }
+  const payload: ToolEvent = {
+    tool_call_id: event.toolCallId,
+    tool_origin: event.origin,
+    server_code: event.origin === "mcp" ? event.serverCode : null,
+    mcp_call_id: event.origin === "mcp" ? (event.mcpCallId ?? null) : null,
+    persisted_tool_call_id:
+      event.origin === "mcp" ? (event.persistedToolCallId ?? null) : null,
+    tool_name: event.toolName,
+    status: event.status,
+    request_summary: event.requestSummary,
+    response_summary: event.responseSummary,
+    duration_ms: event.durationMs,
+    ...(event.failure ? { failure: event.failure } : {})
+  };
+  emitter.emit("tool_event", payload);
 }
 
 function summary(value: unknown): JsonSummary {
@@ -298,7 +403,7 @@ export class ClaudeAgentRuntimeExecutor {
   }
 
   private async run(
-    request: AgentExecutionRequestV1,
+    request: AgentExecutionRequest,
     emitter: ExecutionEmitter,
     secrets: InvocationSecretContext = {}
   ): Promise<TerminalDraft> {
@@ -316,10 +421,16 @@ export class ClaudeAgentRuntimeExecutor {
     const allowedTools = new Set<string>();
     const toolIndex = new Map<
       string,
-      { serverCode: McpServerBinding["server_code"]; toolName: string }
+      {
+        serverCode: AgentExecutionRequest["mcp_servers"][number]["server_code"];
+        toolName: string;
+      }
     >();
     const mcpServers: NonNullable<Options["mcpServers"]> = {};
     for (const server of request.mcp_servers) {
+      if (server.server_code !== "tool-mcp" && server.server_code !== "ones-mcp") {
+        throw new Error(`Unsupported governed MCP server: ${server.server_code}`);
+      }
       const isOnes = server.server_code === "ones-mcp";
       const alias = isOnes ? "ones" : "tools";
       if (isOnes && !secrets.principalToken) {
@@ -385,14 +496,16 @@ export class ClaudeAgentRuntimeExecutor {
           containsForbiddenToolInput(input) ||
           attemptedToolCalls > request.limits.max_tool_calls
         ) {
-          emitter.emit("tool_event", {
-            tool_call_id: permissionOptions.toolUseID,
-            server_code: indexed?.serverCode ?? "tool-mcp",
-            tool_name: indexed?.toolName ?? "unauthorized_tool",
+          const origin = toolOrigin(toolName, indexed !== undefined);
+          emitToolEvent(request, emitter, {
+            toolCallId: permissionOptions.toolUseID,
+            origin,
+            serverCode: indexed?.serverCode ?? null,
+            toolName: indexed?.toolName ?? identifierOrNull(toolName) ?? "unauthorized_tool",
             status: "DENIED",
-            request_summary: {},
-            response_summary: {},
-            duration_ms: 0,
+            requestSummary: {},
+            responseSummary: {},
+            durationMs: 0,
             failure: failure(
               attemptedToolCalls > request.limits.max_tool_calls
                 ? "runtime_max_tool_calls"
@@ -413,14 +526,15 @@ export class ClaudeAgentRuntimeExecutor {
           toolName: indexed.toolName,
           startedAt: this.now()
         });
-        emitter.emit("tool_event", {
-          tool_call_id: permissionOptions.toolUseID,
-          server_code: indexed.serverCode,
-          tool_name: indexed.toolName,
+        emitToolEvent(request, emitter, {
+          toolCallId: permissionOptions.toolUseID,
+          origin: "mcp",
+          serverCode: indexed.serverCode,
+          toolName: indexed.toolName,
           status: "STARTED",
-          request_summary: summary(input),
-          response_summary: {},
-          duration_ms: 0
+          requestSummary: summary(input),
+          responseSummary: {},
+          durationMs: 0
         });
         return {
           behavior: "allow",
@@ -439,7 +553,7 @@ export class ClaudeAgentRuntimeExecutor {
         prompt: request.prompt.user_question,
         options
       })) {
-        this.consumeMessage(message, emitter, calls, normalized);
+        this.consumeMessage(request, message, emitter, calls, normalized);
       }
       if (normalized.failure) {
         return {
@@ -490,6 +604,7 @@ export class ClaudeAgentRuntimeExecutor {
   }
 
   private consumeMessage(
+    request: AgentExecutionRequest,
     message: SDKMessage,
     emitter: ExecutionEmitter,
     calls: Map<string, ToolCallState>,
@@ -506,20 +621,24 @@ export class ClaudeAgentRuntimeExecutor {
       return;
     }
     if (message.type === "user") {
+      const metadata = platformToolMetadata(message);
       const blocks = Array.isArray(message.message.content) ? message.message.content : [];
       for (const block of blocks) {
         if (block.type !== "tool_result") continue;
         const call = calls.get(block.tool_use_id);
         if (!call) continue;
         const failed = block.is_error === true;
-        emitter.emit("tool_event", {
-          tool_call_id: block.tool_use_id,
-          server_code: call.serverCode,
-          tool_name: call.toolName,
+        emitToolEvent(request, emitter, {
+          toolCallId: block.tool_use_id,
+          origin: "mcp",
+          serverCode: call.serverCode,
+          mcpCallId: metadata.mcpCallId,
+          persistedToolCallId: metadata.agentToolCallId,
+          toolName: call.toolName,
           status: failed ? "FAILED" : "SUCCEEDED",
-          request_summary: {},
-          response_summary: summary(block.content),
-          duration_ms: Math.max(0, this.now() - call.startedAt),
+          requestSummary: {},
+          responseSummary: summary(block.content),
+          durationMs: Math.max(0, this.now() - call.startedAt),
           ...(failed
             ? {
                 failure: failure(

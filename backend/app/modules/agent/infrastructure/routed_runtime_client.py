@@ -6,7 +6,7 @@ from typing import Protocol
 from app.modules.agent.domain.runtime import AgentRunRequest, AgentRunResult
 from app.shared.exceptions import NonRetryableExecutionError
 
-RUNTIME_PROTOCOL_V1 = "1.0"
+SUPPORTED_RUNTIME_PROTOCOLS = frozenset({"1.0", "1.1"})
 SUPPORTED_RUNTIME_KINDS = frozenset({"python-v1", "typescript-v1"})
 
 
@@ -39,7 +39,7 @@ class RuntimeClientRegistry:
                 safe_message="Job 固定的 Agent Runtime 不受支持",
                 error_code="agent_runtime_kind_unsupported",
             )
-        if protocol_version != RUNTIME_PROTOCOL_V1:
+        if protocol_version not in SUPPORTED_RUNTIME_PROTOCOLS:
             raise NonRetryableExecutionError(
                 "Job contains an unsupported Agent Runtime protocol",
                 safe_message="Job 固定的 Agent Runtime 协议不受支持",

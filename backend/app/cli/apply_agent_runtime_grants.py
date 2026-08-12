@@ -83,6 +83,8 @@ def verify_agent_runtime_grants(database: Database) -> None:
 
     forbidden_tables = (
         "agent_job",
+        "agent_tool_call",
+        "mcp_operation_audit",
         "audit_event",
         "agent_publication",
         "business_application_publication",

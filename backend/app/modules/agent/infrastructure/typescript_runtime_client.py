@@ -17,10 +17,10 @@ from app.modules.agent.domain.runtime import (
     AgentRunResult,
     McpRuntimeBinding,
 )
-from app.modules.agent.infrastructure.generated_runtime_contracts import validate_contract
 from app.modules.agent.infrastructure.runtime_protocol import (
     canonical_request_digest,
     validate_execution_request,
+    validate_runtime_contract,
 )
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.database import assert_external_io_allowed
@@ -193,7 +193,11 @@ class RuntimeGrantIssuer:
             "exp": now + ttl_seconds,
             "jti": f"{request['invocation_id']}.{request['request_digest'][:16]}",
         }
-        validate_contract("RuntimeGrantClaims", claims)
+        validate_runtime_contract(
+            "RuntimeGrantClaims",
+            claims,
+            protocol_version=str(request["protocol_version"]),
+        )
         return str(
             jwt.encode(
                 claims,
@@ -270,7 +274,7 @@ def probe_runtime_readiness(settings: RuntimeClientSettings) -> dict[str, Any]:
         readiness = get(base_url, "/ready", accepted_statuses={200, 503})
         identity_ready = (
             version.get("runtime") == settings.runtime_kind
-            and version.get("protocol_version") == "1.0"
+            and version.get("protocol_version") in {"1.0", "1.1"}
             and isinstance(version.get("runtime_version"), str)
         )
         dependency_ready = (
@@ -449,12 +453,13 @@ class AgentRuntimeHttpClient:
                 )
             try:
                 event = json.loads(raw_line.decode("utf-8"))
-                validate_contract("RuntimeEvent", event)
+                validate_runtime_contract("RuntimeEvent", event)
             except (UnicodeError, ValueError, TypeError) as exc:
                 raise self._protocol_error("Runtime emitted an invalid event", tool_events) from exc
             if (
                 event["invocation_id"] != request["invocation_id"]
                 or event["request_digest"] != request["request_digest"]
+                or event["protocol_version"] != request["protocol_version"]
                 or int(event["sequence"]) != expected_sequence
                 or terminal is not None
             ):
@@ -466,7 +471,12 @@ class AgentRuntimeHttpClient:
             if self.event_sink is not None:
                 self.event_sink(run_request.job_id, event)
             if event["event_type"] == "tool_event":
-                tool_events.append(dict(event["payload"]))
+                tool_events.append(
+                    {
+                        **dict(event["payload"]),
+                        "invocation_id": str(event["invocation_id"]),
+                    }
+                )
             if event["event_type"] == "terminal":
                 terminal = dict(event["payload"])
         if terminal is None:
@@ -512,12 +522,12 @@ class AgentRuntimeHttpClient:
     ) -> dict[str, Any]:
         grant = self.grant_issuer.issue(request)
         payload = {
-            "protocol_version": "1.0",
+            "protocol_version": request["protocol_version"],
             "invocation_id": request["invocation_id"],
             "request_digest": request["request_digest"],
             "reason": reason,
         }
-        validate_contract("CancelRequest", payload)
+        validate_runtime_contract("CancelRequest", payload)
         return self.transport.post(
             url=(
                 f"{self.settings.base_url.rstrip('/')}/internal/v1/executions/"
@@ -586,8 +596,15 @@ class AgentRuntimeHttpClient:
                     "tools": tools,
                 }
             )
+        protocol_version = str(context.runtime_protocol_version or "1.0")
+        if protocol_version not in {"1.0", "1.1"}:
+            raise NonRetryableExecutionError(
+                "Job runtime protocol version is unsupported",
+                safe_message="当前 Job Runtime 协议版本不受支持",
+                error_code="runtime_protocol_unsupported",
+            )
         request: dict[str, Any] = {
-            "protocol_version": "1.0",
+            "protocol_version": protocol_version,
             "runtime_kind": context.runtime_kind,
             "invocation_id": run_request.invocation_id or f"{run_request.job_id}.attempt-0",
             "request_digest": "0" * 64,

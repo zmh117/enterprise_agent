@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 
-import limits from "../contracts/v1/limits.json" with { type: "json" };
-import type { AgentExecutionRequestV1 } from "./generated/contracts.js";
-import { assertContract } from "./generated/validators.js";
+import limitsV1 from "../contracts/v1/limits.json" with { type: "json" };
+import limitsV11 from "../contracts/v1.1/limits.json" with { type: "json" };
+import type { AgentExecutionRequest } from "./runtime-contracts.js";
+import { assertRuntimeContract } from "./runtime-contracts.js";
 
 export class ProtocolBoundaryError extends Error {
   constructor(readonly code: string, message: string) {
@@ -33,7 +34,13 @@ export function canonicalRequestDigest(payload: Record<string, unknown>): string
 export function validateExecutionRequest(
   payload: unknown,
   encodedBytes = Buffer.byteLength(JSON.stringify(payload), "utf8")
-): asserts payload is AgentExecutionRequestV1 {
+): asserts payload is AgentExecutionRequest {
+  const protocolVersion =
+    typeof payload === "object" && payload !== null &&
+    (payload as { protocol_version?: unknown }).protocol_version === "1.1"
+      ? "1.1"
+      : "1.0";
+  const limits = protocolVersion === "1.1" ? limitsV11 : limitsV1;
   if (encodedBytes > limits.max_request_bytes) {
     throw new ProtocolBoundaryError(
       "runtime_request_too_large",
@@ -41,14 +48,18 @@ export function validateExecutionRequest(
     );
   }
   try {
-    assertContract("AgentExecutionRequestV1", payload);
+    assertRuntimeContract(
+      protocolVersion === "1.1" ? "AgentExecutionRequestV11" : "AgentExecutionRequestV1",
+      payload,
+      protocolVersion
+    );
   } catch (error) {
     throw new ProtocolBoundaryError(
       "runtime_request_invalid",
       error instanceof Error ? error.message : "request schema validation failed"
     );
   }
-  const request = payload as AgentExecutionRequestV1;
+  const request = payload as AgentExecutionRequest;
   const serverCodes = request.mcp_servers.map((server) => server.server_code);
   if (new Set(serverCodes).size !== serverCodes.length) {
     throw new ProtocolBoundaryError(

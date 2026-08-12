@@ -29,6 +29,7 @@ class ToolRegistry:
         tool_name: str,
         arguments: dict[str, Any],
         record_tool_call: bool = True,
+        persisted_tool_call_id: str = "",
     ) -> ToolResult:
         if tool_name not in self.READONLY_TOOLS:
             raise ToolPolicyError(f"Tool {tool_name} is not registered for MVP")
@@ -45,4 +46,5 @@ class ToolRegistry:
             tool_name=tool_name,
             arguments=arguments,
             record_tool_call=record_tool_call,
+            persisted_tool_call_id=persisted_tool_call_id,
         )

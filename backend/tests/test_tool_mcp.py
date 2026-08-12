@@ -6,7 +6,14 @@ from starlette.testclient import TestClient
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
 from app.modules.job.infrastructure.repositories import now_iso
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
-from app.services.tool_mcp import JobToolService, ToolMcpError, create_app
+from app.modules.mcp_audit import McpAuditCoordinator
+from app.shared.exceptions import ToolPolicyError
+from app.services.tool_mcp import (
+    JobToolService,
+    ToolMcpError,
+    ToolRequestIdentity,
+    create_app,
+)
 from backend.tests.helpers import container, prepare_debug_application_access
 
 
@@ -59,8 +66,24 @@ def _runtime_job(*, capabilities: tuple[str, ...] = ("get_er_context",)):
         repository=runtime.agent_repository,
         tool_registry=ToolRegistry(runtime.tool_service),
         snapshot_service=runtime.mcp_tool_snapshot_service,
+        audit_coordinator=McpAuditCoordinator(
+            runtime.database,
+            max_payload_bytes=512 * 1024,
+            audit_service=runtime.audit_service,
+        ),
     )
     return runtime, claimed, service
+
+
+def _request_identity(job, correlation_id: str) -> ToolRequestIdentity:
+    return ToolRequestIdentity(
+        invocation_id=f"{job.id}.attempt-{job.retry_count}",
+        app_user_id=job.internal_user_id,
+        project_code=job.project_code,
+        agent_publication_id=job.agent_publication_id,
+        application_publication_id=job.business_application_publication_id,
+        correlation_id=correlation_id,
+    )
 
 
 def test_tool_mcp_excludes_tools_owned_by_other_mcp_servers() -> None:
@@ -84,10 +107,10 @@ def test_standard_tool_mcp_invokes_job_frozen_readonly_tool_for_both_runtimes() 
         job=selected_job,
         descriptor=descriptor,
         arguments={"query": "order"},
-        correlation_id="tool-call-1",
+        request_identity=_request_identity(job, "tool-call-1"),
     )
 
-    assert result["security"]["trust"] == "untrusted_internal_evidence"
+    assert result.payload["security"]["trust"] == "untrusted_internal_evidence"
     assert [item["tool_name"] for item in runtime.agent_repository.list_tool_calls(job.id)] == [
         "get_er_context"
     ]
@@ -106,6 +129,12 @@ def test_standard_mcp_http_has_no_auth_protocol_and_rejects_credentials() -> Non
         "content-type": "application/json",
         "accept": "application/json, text/event-stream",
         "x-job-id": job.id,
+        "x-invocation-id": f"{job.id}.attempt-{job.retry_count}",
+        "x-app-user-id": job.internal_user_id,
+        "x-project-code": job.project_code,
+        "x-agent-publication-id": job.agent_publication_id,
+        "x-application-publication-id": job.business_application_publication_id,
+        "x-correlation-id": "tool-mcp-http-test",
     }
 
     with TestClient(app) as client:
@@ -155,3 +184,82 @@ def test_standard_mcp_http_has_no_auth_protocol_and_rejects_credentials() -> Non
     assert [item["name"] for item in listed.json()["result"]["tools"]] == ["get_er_context"]
     assert called.status_code == 200
     assert called.json()["result"]["isError"] is False
+    assert set(called.json()["result"]["_meta"]) == {
+        "enterprise-agent/mcp-call-id",
+        "enterprise-agent/agent-tool-call-id",
+    }
+    assert len(
+        _runtime.database.execute(
+            "select id from mcp_operation_audit where job_id = ?",
+            (job.id,),
+        )
+    ) == 2
+
+
+def test_tool_mcp_repeated_same_name_calls_keep_distinct_exact_links() -> None:
+    runtime, job, service = _runtime_job()
+    selected_job, descriptor = service.descriptor(job.id, "get_er_context")
+
+    def invoke(index: int):
+        return service.invoke(
+            job=selected_job,
+            descriptor=descriptor,
+            arguments={"query": f"order-{index}"},
+            request_identity=_request_identity(job, f"tool-concurrent-{index}"),
+        )
+
+    results = [invoke(index) for index in range(2)]
+
+    assert len({item.audit_handle.mcp_call_id for item in results}) == 2
+    rows = runtime.database.execute(
+        "select id, mcp_call_id from agent_tool_call where job_id = ? order by id",
+        (job.id,),
+    )
+    assert len(rows) == 2
+    assert len({row["mcp_call_id"] for row in rows}) == 2
+    audits = runtime.database.execute(
+        "select mcp_call_id, agent_tool_call_id, event_kind "
+        "from mcp_operation_audit where job_id = ?",
+        (job.id,),
+    )
+    mapping = {
+        row["mcp_call_id"]: row["agent_tool_call_id"]
+        for row in audits
+        if row["event_kind"] == "TOOL"
+    }
+    assert len(mapping) == 2
+    assert len(set(mapping.values())) == 2
+
+
+def test_tool_mcp_audit_failure_closes_before_tool_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _runtime, job, service = _runtime_job()
+    selected_job, descriptor = service.descriptor(job.id, "get_er_context")
+    executed = False
+
+    def reject_audit(*_args, **_kwargs):
+        raise ToolPolicyError(
+            "audit unavailable",
+            safe_message="MCP 操作审计不可用",
+            error_code="mcp_audit_unavailable",
+        )
+
+    def execute_tool(**_kwargs):
+        nonlocal executed
+        executed = True
+        raise AssertionError("tool must not execute")
+
+    monkeypatch.setattr(service.audit_coordinator, "begin", reject_audit)
+    monkeypatch.setattr(service.tool_registry, "call", execute_tool)
+
+    with pytest.raises(ToolPolicyError) as raised:
+        service.invoke(
+            job=selected_job,
+            descriptor=descriptor,
+            arguments={"query": "order"},
+            request_identity=_request_identity(job, "tool-audit-down"),
+        )
+
+    assert raised.value.error_code == "mcp_audit_unavailable"
+    assert executed is False

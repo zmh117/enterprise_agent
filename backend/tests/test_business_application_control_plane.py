@@ -165,6 +165,7 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
         "102_schema_consolidation_checkpoint.sql",
         "103_contract_retire_compatibility_shadows.sql",
         "104_add_identity_aware_ones_mcp.sql",
+        "105_expand_unified_mcp_operation_audit.sql",
     ]
     session_columns = {str(row["name"]) for row in db.execute("pragma table_info(agent_session)")}
     assert {

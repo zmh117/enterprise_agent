@@ -4,9 +4,15 @@ import { test } from "node:test";
 
 import errors from "../contracts/v1/errors.json" with { type: "json" };
 import executionRequest from "../contracts/v1/golden/execution-request.json" with { type: "json" };
+import executionRequestV11 from "../contracts/v1.1/golden/execution-request.json" with { type: "json" };
 import safeRuntimeFixture from "../contracts/v1/golden/safe-runtime-fixture.json" with { type: "json" };
+import safeRuntimeFixtureV11 from "../contracts/v1.1/golden/safe-runtime-fixture.json" with { type: "json" };
 import limits from "../contracts/v1/limits.json" with { type: "json" };
 import { assertContract, ContractValidationError } from "../src/generated/validators.js";
+import {
+  assertContract as assertV11Contract,
+  ContractValidationError as ContractValidationErrorV11
+} from "../src/generated/validators-v1_1.js";
 import {
   canonicalRequestDigest,
   ProtocolBoundaryError,
@@ -16,6 +22,51 @@ import {
 test("golden request has the same canonical digest and validates", () => {
   assert.equal(canonicalRequestDigest(executionRequest), executionRequest.request_digest);
   assert.doesNotThrow(() => validateExecutionRequest(executionRequest));
+});
+
+test("v1.0 and v1.1 remain strict while the Runtime boundary dual-reads both", () => {
+  assert.equal(
+    canonicalRequestDigest(executionRequestV11),
+    executionRequestV11.request_digest
+  );
+  assert.doesNotThrow(() => validateExecutionRequest(executionRequest));
+  assert.doesNotThrow(() => validateExecutionRequest(executionRequestV11));
+  assert.throws(
+    () => assertContract("AgentExecutionRequestV1", executionRequestV11),
+    ContractValidationError
+  );
+  assert.throws(
+    () => assertV11Contract("AgentExecutionRequestV11", executionRequest),
+    ContractValidationErrorV11
+  );
+});
+
+test("v1.1 Tool Events distinguish MCP and SDK origins without fuzzy server defaults", () => {
+  assert.doesNotThrow(() => assertV11Contract("ToolEvent", safeRuntimeFixtureV11.tool_event));
+  const sdkUnknown = {
+    ...safeRuntimeFixtureV11.tool_event,
+    tool_origin: "unknown",
+    server_code: null,
+    mcp_call_id: null,
+    persisted_tool_call_id: null
+  };
+  assert.doesNotThrow(() => assertV11Contract("ToolEvent", sdkUnknown));
+  assert.throws(
+    () => assertV11Contract("ToolEvent", { ...sdkUnknown, server_code: "tool-mcp" }),
+    ContractValidationErrorV11
+  );
+  const mcpTerminalWithoutIds = {
+    ...safeRuntimeFixtureV11.tool_event,
+    mcp_call_id: null,
+    persisted_tool_call_id: null
+  };
+  assert.doesNotThrow(() => assertV11Contract("ToolEvent", mcpTerminalWithoutIds));
+  assert.doesNotThrow(() =>
+    assertV11Contract("ToolEvent", {
+      ...safeRuntimeFixtureV11.tool_event,
+      server_code: "future-readonly-mcp"
+    })
+  );
 });
 
 test("contract rejects unknown fields and unsupported protocol versions", () => {

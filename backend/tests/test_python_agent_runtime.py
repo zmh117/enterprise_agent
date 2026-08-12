@@ -6,6 +6,7 @@ import json
 import threading
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 from cryptography.hazmat.primitives import serialization
@@ -32,7 +33,7 @@ from app.python_runtime.model_binding import (
     PythonModelBindingResolver,
     ResolvedPythonModelBinding,
 )
-from app.python_runtime.claude_agent_sdk_adapter import ClaudeSdk
+from app.python_runtime.claude_agent_sdk_adapter import ClaudeSdk, _extract_tool_events
 from app.python_runtime.sdk_executor import (
     PythonExecutionOutcome,
     PythonRuntimeSdkExecutor,
@@ -542,6 +543,7 @@ def test_python_runtime_routes_principal_only_to_fixed_ones_mcp_server() -> None
     normalized = _normalize_tool_events(
         [
             {
+                "tool_call_id": "python-tool-use-1",
                 "tool_name": "mcp__ones_mcp__ones_work_item_search",
                 "status": "SUCCEEDED",
                 "request_payload": {"keyword": "test"},
@@ -552,6 +554,69 @@ def test_python_runtime_routes_principal_only_to_fixed_ones_mcp_server() -> None
     )
     assert normalized[0]["server_code"] == "ones-mcp"
     assert normalized[0]["tool_name"] == "ones_work_item_search"
+
+
+def test_python_runtime_preserves_sdk_tool_use_id_meta_and_exact_origin() -> None:
+    calls: dict[str, dict[str, Any]] = {}
+    limits = build_settings().execution
+    started = _extract_tool_events(
+        {
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "sdk-tool-use-1",
+                    "name": "mcp__ones_mcp__ones_work_item_search",
+                    "input": {"keyword": "test"},
+                }
+            ]
+        },
+        limits,
+        calls,
+    )
+    completed = _extract_tool_events(
+        {
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "sdk-tool-use-1",
+                    "content": {"count": 1},
+                }
+            ],
+            "tool_use_result": {
+                "_meta": {
+                    "enterprise-agent/mcp-call-id": "mcp-call-python",
+                    "enterprise-agent/agent-tool-call-id": "agent-tool-call-python",
+                }
+            },
+        },
+        limits,
+        calls,
+    )
+    request = _request()
+    request["protocol_version"] = "1.1"
+
+    normalized = _normalize_tool_events([*started, *completed], request)
+
+    assert [event["tool_call_id"] for event in normalized] == [
+        "sdk-tool-use-1",
+        "sdk-tool-use-1",
+    ]
+    assert normalized[0]["tool_origin"] == "mcp"
+    assert "invocation_id" not in normalized[0]
+    assert normalized[1]["mcp_call_id"] == "mcp-call-python"
+    assert normalized[1]["persisted_tool_call_id"] == "agent-tool-call-python"
+
+    classified = _normalize_tool_events(
+        [
+            {"tool_call_id": "builtin-1", "tool_name": "Bash", "status": "DENIED"},
+            {"tool_call_id": "unknown-1", "tool_name": "mystery", "status": "DENIED"},
+        ],
+        request,
+    )
+    assert [(event["tool_origin"], event["server_code"]) for event in classified] == [
+        ("sdk_builtin", None),
+        ("unknown", None),
+    ]
 
 
 def test_python_test_only_fake_provider_resolves_binding_and_retries_once() -> None:
@@ -578,6 +643,90 @@ def test_python_test_only_fake_provider_resolves_binding_and_retries_once() -> N
     assert succeeded.final_answer == "Python Runtime fake-provider smoke completed."
     assert len(resolver.calls) == 2
     assert "binding-secret" not in json.dumps([retry.__dict__, succeeded.__dict__])
+
+
+def test_python_test_only_fake_provider_calls_ones_concurrently_with_exact_meta(
+    monkeypatch: Any,
+) -> None:
+    lock = threading.Lock()
+    tool_calls = 0
+    authorization_headers: list[str] = []
+
+    class Response:
+        headers = {"content-type": "application/json"}
+
+        def __init__(self, payload: dict[str, Any]) -> None:
+            self.payload = payload
+
+        def __enter__(self) -> Response:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, _limit: int) -> bytes:
+            return json.dumps(self.payload).encode("utf-8")
+
+    def fake_urlopen(request: Any, timeout: int) -> Response:
+        nonlocal tool_calls
+        assert timeout == 10
+        authorization_headers.append(str(request.headers.get("Authorization") or ""))
+        payload = json.loads(bytes(request.data).decode("utf-8"))
+        if payload["method"] != "tools/call":
+            return Response({"jsonrpc": "2.0", "id": 1, "result": {}})
+        with lock:
+            tool_calls += 1
+            index = tool_calls
+        return Response(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": {
+                    "isError": False,
+                    "content": [{"type": "text", "text": "ok"}],
+                    "_meta": {
+                        "enterprise-agent/mcp-call-id": f"mcp-call-python-{index}",
+                        "enterprise-agent/agent-tool-call-id": f"agent-tool-python-{index}",
+                    },
+                },
+            }
+        )
+
+    monkeypatch.setattr("app.python_runtime.sdk_executor.urlopen", fake_urlopen)
+    executor = PythonRuntimeSdkExecutor(
+        cast(PythonModelBindingResolver, FakePythonBindingResolver()),
+        limits=build_settings().execution,
+        mcp_server_url="http://tool-mcp:9103/mcp",
+        sdk_version="0.2.134",
+        cli_version="2.1.226",
+        fake_provider_mode=True,
+    )
+    request = _request()
+    request["protocol_version"] = "1.1"
+    request["prompt"]["user_question"] = (
+        "[smoke:mcp:ones-mcp-concurrent] verify exact metadata"
+    )
+    result = executor.execute(
+        request,
+        threading.Event(),
+        SimpleNamespace(principal_token="test-only-principal-token"),
+    )
+
+    assert result.status == "SUCCEEDED"
+    assert tool_calls == 2
+    assert authorization_headers == ["Bearer test-only-principal-token"] * 4
+    assert len(result.tool_events) == 4
+    assert [item["status"] for item in result.tool_events] == [
+        "STARTED",
+        "STARTED",
+        "SUCCEEDED",
+        "SUCCEEDED",
+    ]
+    assert {item["mcp_call_id"] for item in result.tool_events[2:]} == {
+        "mcp-call-python-1",
+        "mcp-call-python-2",
+    }
+    assert "test-only-principal-token" not in json.dumps(result.tool_events)
 
 
 def test_python_runtime_resolves_only_frozen_model_revision_and_active_secret() -> None:

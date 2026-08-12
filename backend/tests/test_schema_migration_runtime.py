@@ -46,6 +46,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
         ("102", "102_schema_consolidation_checkpoint.sql"),
         ("103", "103_contract_retire_compatibility_shadows.sql"),
         ("104", "104_add_identity_aware_ones_mcp.sql"),
+        ("105", "105_expand_unified_mcp_operation_audit.sql"),
     ]
     assert all(len(item.checksum) == 64 for item in catalog)
     assert [item.version for item in deployable_migration_catalog(catalog)] == [
@@ -54,6 +55,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
         "102",
         "103",
         "104",
+        "105",
     ]
 
     manifest = load_legacy_manifest(default_migrations_dir() / LEGACY_MANIFEST_FILENAME)
@@ -160,10 +162,10 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
     first = migrator.run()
     second = migrator.run()
 
-    assert first.head == "104"
+    assert first.head == "105"
     assert first.baselined == 0
-    assert first.applied == ("100", "101", "102", "103", "104")
-    assert second.head == "104"
+    assert first.applied == ("100", "101", "102", "103", "104", "105")
+    assert second.head == "105"
     assert second.baselined == 0
     assert second.applied == ()
     assert len(SchemaMigrationLedger(database).list_records()) == len(
@@ -181,9 +183,9 @@ def test_explicit_fresh_contract_remains_supported_after_release() -> None:
         include_schema_contract=True,
     ).run()
 
-    assert result.head == "104"
-    assert result.applied == ("100", "101", "102", "103", "104")
-    assert SchemaHeadValidator(database, default_migrations_dir()).require_current() == "104"
+    assert result.head == "105"
+    assert result.applied == ("100", "101", "102", "103", "104", "105")
+    assert SchemaHeadValidator(database, default_migrations_dir()).require_current() == "105"
     assert (
         Migrator(
             database,
@@ -253,7 +255,7 @@ def test_identity_aware_ones_mcp_migration_upgrades_103_and_enforces_schema(
         migrator_build="identity-aware-ones-repeat",
     ).run()
 
-    assert upgraded.applied == ("104",)
+    assert upgraded.applied == ("104", "105")
     assert repeated.applied == ()
     assert database.execute_one(
         "select external_subject_id from user_external_identity where id = ?",
@@ -313,6 +315,93 @@ def test_identity_aware_ones_mcp_migration_upgrades_103_and_enforces_schema(
         "idx_mcp_operation_audit_principal",
         "idx_mcp_operation_audit_status",
     }.issubset(indexes)
+
+
+def test_unified_mcp_audit_migration_preserves_legacy_rows_without_guessing_links(
+    tmp_path: Path,
+) -> None:
+    database = Database("sqlite:///:memory:")
+    through_104 = _migrations_through(tmp_path, "104")
+    Migrator(
+        database,
+        through_104,
+        migrator_build="unified-audit-predecessor",
+        include_schema_contract=True,
+    ).run()
+    timestamp = "2026-08-12T00:00:00+00:00"
+    database.execute(
+        """
+        insert into app_user
+          (id, username, display_name, status, created_at, updated_at)
+        values ('legacy-audit-user', 'legacy-audit-user', 'Legacy Audit User',
+                'enabled', ?, ?)
+        """,
+        (timestamp, timestamp),
+    )
+    database.execute(
+        """
+        insert into agent_session
+          (id, project_code, created_at, updated_at, source_channel,
+           source_connector_id, external_conversation_id, requester_id, session_key)
+        values ('legacy-audit-session', 'default', ?, ?, 'test', 'connector-test',
+                'conversation', 'legacy-audit-user', 'legacy-audit-session')
+        """,
+        (timestamp, timestamp),
+    )
+    database.execute(
+        """
+        insert into agent_job
+          (id, session_id, idempotency_key, project_code, status, created_at,
+           source_channel, source_connector_id, requester_id, internal_user_id)
+        values ('legacy-audit-job', 'legacy-audit-session', 'legacy-audit-job',
+                'default', 'SUCCEEDED', ?, 'test', 'connector-test',
+                'legacy-audit-user', 'legacy-audit-user')
+        """,
+        (timestamp,),
+    )
+    database.execute(
+        """
+        insert into agent_tool_call
+          (id, job_id, tool_name, request_payload, response_summary, status,
+           duration_ms, risk_level, created_at)
+        values ('same-name-unrelated-tool-call', 'legacy-audit-job',
+                'ones_work_item_search', '{}', '{}', 'SUCCEEDED', 1, 'low', ?)
+        """,
+        (timestamp,),
+    )
+    database.execute(
+        """
+        insert into mcp_operation_audit
+          (id, correlation_id, job_id, session_id, principal_jti,
+           actor_user_id, actor_type, server_code, tool_identifier, operation,
+           event_kind, attempt, status, payload_schema_version,
+           tool_request_json, provider_request_json, provider_response_json,
+           tool_response_json, created_at)
+        values ('legacy-ones-audit', 'legacy-correlation', 'legacy-audit-job',
+                'legacy-audit-session', 'legacy-jti', 'legacy-audit-user', 'user',
+                'ones-mcp', 'ones_work_item_search', 'read', 'TOOL', 0,
+                'SUCCEEDED', 1, '{"keyword":"legacy"}', '{}', '{}',
+                '{"total":1}', ?)
+        """,
+        (timestamp,),
+    )
+
+    upgraded = Migrator(
+        database,
+        default_migrations_dir(),
+        migrator_build="unified-audit-upgrade",
+    ).run()
+
+    assert upgraded.applied == ("105",)
+    row = database.execute_one(
+        "select * from mcp_operation_audit where id = 'legacy-ones-audit'"
+    )
+    assert row is not None
+    assert row["mcp_call_id"] == "legacy:legacy-ones-audit"
+    assert row["legacy_link_status"] == "LEGACY_UNLINKED"
+    assert row["agent_tool_call_id"] is None
+    assert json.loads(str(row["business_request_json"])) == {"keyword": "legacy"}
+    assert json.loads(str(row["business_response_json"])) == {"total": 1}
 
 
 def _convert_fresh_baseline_to_legacy_ledger(database: Database) -> dict[str, object]:
@@ -404,7 +493,7 @@ def test_existing_database_contract_requires_separate_approval(tmp_path: Path) -
         include_schema_contract=True,
     ).run()
 
-    assert result.applied == ("103", "104")
+    assert result.applied == ("103", "104", "105")
     assert "user_message" not in {
         row["name"] for row in database.execute("pragma table_info(agent_job)")
     }
@@ -722,7 +811,7 @@ def test_final_schema_comment_manifest_covers_every_owned_table_and_column() -> 
     assert all(re.search(r"[\u3400-\u9fff]", table_comments[table]) for table in owned_tables)
     assert all(re.search(r"[\u3400-\u9fff]", column_comments[column]) for column in owned_columns)
     assert len(owned_tables) == 89
-    assert len(owned_columns) == 1051
+    assert len(owned_columns) == 1079
     database.close()
 
 
@@ -928,7 +1017,7 @@ def test_schema_head_validator_is_read_only_and_rejects_missing_ledger() -> None
 
     with pytest.raises(
         SchemaHeadError,
-        match="ledger is missing; expected head 104",
+        match="ledger is missing; expected head 105",
     ):
         SchemaHeadValidator(
             database,

@@ -20,12 +20,19 @@ from app.modules.delivery.infrastructure.adapters import DeliveryAdapter
 from app.modules.job.application.job_dispatch_service import JobDispatchOutboxDispatcher
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.repositories import AgentRepository, AuditRepository
+from app.modules.mcp_audit import McpAuditContext, McpAuditCoordinator
 from app.modules.platform_config.application.runtime_config import (
     RuntimeConfigRegistry,
     RuntimeConfigSnapshotBuilder,
 )
 from app.modules.platform_config.infrastructure import PlatformConfigRepository
-from app.shared.config import AgentRuntimeSettings, DeliverySettings, QueueSettings, Settings
+from app.shared.config import (
+    AgentRuntimeSettings,
+    DeliverySettings,
+    PrincipalJwtSettings,
+    QueueSettings,
+    Settings,
+)
 from app.shared.database import Database, default_migrations_dir
 from app.shared.migrations import (
     BaselineAdoptionInspector,
@@ -128,8 +135,8 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "104"
-        assert result.applied == ("100", "101", "102", "103", "104")
+        assert result.head == "105"
+        assert result.applied == ("100", "101", "102", "103", "104", "105")
         assert database.execute_one(
             """
             select count(*)::int as count
@@ -140,7 +147,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
             """
         ) == {"count": 89}
         assert comments["table_count"] == 89
-        assert comments["column_count"] == 1051
+        assert comments["column_count"] == 1079
     finally:
         database.close()
 
@@ -158,10 +165,10 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "104"
-        assert result.applied == ("100", "101", "102", "103", "104")
+        assert result.head == "105"
+        assert result.applied == ("100", "101", "102", "103", "104", "105")
         assert comments["table_count"] == 89
-        assert comments["column_count"] == 1051
+        assert comments["column_count"] == 1079
         assert {
             "dingding_conversation_id",
             "dingding_user_id",
@@ -201,7 +208,7 @@ def test_postgres_concurrent_baseline_migrators_apply_100_once(
 
     assert sorted(result.applied for result in results) == [
         (),
-        ("100", "101", "102", "103", "104"),
+        ("100", "101", "102", "103", "104", "105"),
     ]
     database = Database(postgres_database_dsn)
     try:
@@ -211,6 +218,7 @@ def test_postgres_concurrent_baseline_migrators_apply_100_once(
             "102",
             "103",
             "104",
+            "105",
         ]
     finally:
         database.close()
@@ -641,6 +649,114 @@ def test_postgres_operation_uows_isolate_concurrent_commit_and_rollback(
         database.close()
 
 
+def test_postgres_concurrent_same_name_mcp_calls_keep_exact_links(
+    postgres_database_dsn: str,
+) -> None:
+    database = Database(
+        postgres_database_dsn,
+        pool_min_size=0,
+        pool_max_size=8,
+    )
+    try:
+        Migrator(
+            database,
+            default_migrations_dir(),
+            migrator_build="postgres-mcp-audit-concurrency-test",
+        ).run()
+        timestamp = "2026-08-12T00:00:00+00:00"
+        database.execute(
+            """
+            insert into app_user
+              (id, username, display_name, status, created_at, updated_at)
+            values ('mcp-concurrent-user', 'mcp-concurrent-user',
+                    'MCP Concurrent User', 'enabled', ?, ?)
+            """,
+            (timestamp, timestamp),
+        )
+        repository = AgentRepository(database)
+        session = repository.create_session(
+            project_code="default",
+            source_channel="test",
+            source_connector_id="connector-test",
+            external_conversation_id="mcp-audit-concurrent",
+            requester_id="mcp-concurrent-user",
+            session_key=f"mcp-audit-concurrent-{uuid.uuid4().hex}",
+            reply_route={"type": "test"},
+        )
+        job = repository.create_job(
+            session_id=session.id,
+            idempotency_key=f"mcp-audit-concurrent-{uuid.uuid4().hex}",
+            project_code="default",
+            source_channel="test",
+            source_connector_id="connector-test",
+            requester_id="mcp-concurrent-user",
+            input_message="query order",
+            max_retry_count=0,
+            execution_policy={
+                "schema_version": 1,
+                "requested": {"max_turns": 1, "timeout_seconds": 30, "max_tool_calls": 2},
+                "effective": {"max_turns": 1, "timeout_seconds": 30, "max_tool_calls": 2},
+                "sources": {"source_kind": "runtime_default"},
+            },
+        )
+        coordinator = McpAuditCoordinator(database, max_payload_bytes=64 * 1024)
+        barrier = threading.Barrier(2)
+
+        def invoke(index: int):
+            barrier.wait(timeout=5)
+            handle = coordinator.begin(
+                McpAuditContext(
+                    correlation_id=f"mcp-concurrent-{index}",
+                    job_id=job.id,
+                    session_id=session.id,
+                    invocation_id=f"{job.id}.attempt-0",
+                    actor_user_id="mcp-concurrent-user",
+                    server_code="tool-mcp",
+                    tool_identifier="get_er_context",
+                ),
+                business_request={"query": f"order-{index}"},
+            )
+            coordinator.append_event(
+                handle,
+                event_kind="AUTHORIZATION",
+                status="SUCCEEDED",
+                authorization_decision="ALLOW",
+                authorization_reason="test_allow",
+            )
+            coordinator.complete(
+                handle,
+                status="SUCCEEDED",
+                business_response={"index": index},
+                duration_ms=1,
+            )
+            return handle
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            handles = list(executor.map(invoke, range(2)))
+
+        assert len({handle.mcp_call_id for handle in handles}) == 2
+        assert len({handle.agent_tool_call_id for handle in handles}) == 2
+        rows = database.execute(
+            """
+            select mcp_call_id, agent_tool_call_id, event_kind, status
+              from mcp_operation_audit
+             where job_id = ?
+             order by mcp_call_id, event_kind
+            """,
+            (job.id,),
+        )
+        assert len(rows) == 4
+        for handle in handles:
+            linked = [row for row in rows if row["mcp_call_id"] == handle.mcp_call_id]
+            assert {row["event_kind"] for row in linked} == {"TOOL", "AUTHORIZATION"}
+            assert {row["agent_tool_call_id"] for row in linked} == {
+                handle.agent_tool_call_id
+            }
+            assert {row["status"] for row in linked} == {"SUCCEEDED"}
+    finally:
+        database.close()
+
+
 def test_postgres_job_dispatchers_use_skip_locked_without_duplicate_claims(
     postgres_database_dsn: str,
 ) -> None:
@@ -674,10 +790,12 @@ def test_postgres_job_dispatchers_use_skip_locked_without_duplicate_claims(
         database.execute(
             """
             insert into agent_session
-              (id, dingding_conversation_id, dingding_user_id, source,
-               project_code, created_at, updated_at)
-            values ('session-dispatch-concurrency', 'conversation', 'user',
-                    'test', 'default', ?, ?)
+              (id, project_code, created_at, updated_at, source_channel,
+               source_connector_id, external_conversation_id, requester_id,
+               session_key)
+            values ('session-dispatch-concurrency', 'default', ?, ?, 'test',
+                    'connector-test', 'conversation', 'user',
+                    'session-dispatch-concurrency')
             """,
             (timestamp, timestamp),
         )
@@ -686,10 +804,10 @@ def test_postgres_job_dispatchers_use_skip_locked_without_duplicate_claims(
             database.execute(
                 """
                 insert into agent_job
-                  (id, session_id, idempotency_key, user_id, project_code,
-                   source, user_message, status, created_at)
-                values (?, 'session-dispatch-concurrency', ?, 'user',
-                        'default', 'test', 'diagnose', 'PENDING', ?)
+                  (id, session_id, idempotency_key, project_code, status,
+                   created_at, source_channel, source_connector_id, requester_id)
+                values (?, 'session-dispatch-concurrency', ?, 'default',
+                        'PENDING', ?, 'test', 'connector-test', 'user')
                 """,
                 (job_id, f"dispatch-concurrency-{index}", timestamp),
             )
@@ -756,12 +874,16 @@ def test_postgres_delivery_dispatchers_use_skip_locked_without_duplicate_sends(
             serialization.NoEncryption(),
         )
     )
+    private_key_path.chmod(0o600)
     settings = Settings(
         database_dsn=postgres_database_dsn,
         feature_real_claude=False,
         delivery=DeliverySettings(outbox_max_attempts=2),
         agent_runtime=AgentRuntimeSettings(
             grant_private_key_file=str(private_key_path),
+        ),
+        principal_jwt=PrincipalJwtSettings(
+            signing_private_key_file=str(private_key_path),
         ),
     )
     runtime = build_worker_container(settings, seed=True)

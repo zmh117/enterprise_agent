@@ -20,9 +20,10 @@ from app.modules.identity.infrastructure.external_identity_credentials import (
     ExternalIdentityCredentialRepository,
     ResolvedExternalCredential,
 )
-from app.modules.job.infrastructure.repositories import new_id, now_iso
+from app.modules.mcp_audit import McpAuditContext, McpAuditCoordinator, McpAuditHandle
 from app.modules.mcp_tool_runtime.job_snapshot import JobMcpToolSnapshotService
-from app.shared.database import Database, assert_external_io_allowed, operation_unit_of_work
+from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
+from app.shared.database import Database, assert_external_io_allowed
 from app.shared.exceptions import AppError, NonRetryableExecutionError, RetryableExecutionError
 from services.ones_mcp_server.contracts import (
     ISSUE_TYPES,
@@ -37,21 +38,6 @@ from services.ones_mcp_server.contracts import (
 )
 
 
-_FORBIDDEN_BUSINESS_KEYS = frozenset(
-    {
-        "authorization",
-        "cookie",
-        "password",
-        "token",
-        "access_token",
-        "refresh_token",
-        "ciphertext",
-        "nonce",
-        "private_key",
-        "principal_jwt",
-        "principal_token",
-    }
-)
 logger = logging.getLogger(__name__)
 
 
@@ -74,6 +60,12 @@ class OnesProviderUnauthorized(OnesMcpError):
     pass
 
 
+class OnesSearchResult(dict[str, Any]):
+    def __init__(self, payload: dict[str, Any], audit_handle: McpAuditHandle) -> None:
+        super().__init__(payload)
+        self.audit_handle = audit_handle
+
+
 @dataclass(frozen=True, slots=True)
 class ResolvedOnesPrincipal:
     job_id: str
@@ -85,181 +77,6 @@ class ResolvedOnesPrincipal:
     provider_email: str
     team_id: str
     credential: ResolvedExternalCredential
-
-
-@dataclass(frozen=True, slots=True)
-class AuditContext:
-    correlation_id: str
-    principal: ResolvedOnesPrincipal
-
-
-class McpOperationAuditRepository:
-    """Persist complete bounded business evidence while rejecting auth material."""
-
-    def __init__(
-        self,
-        database: Database,
-        *,
-        max_payload_bytes: int,
-        platform_audit_service: Any | None = None,
-    ) -> None:
-        if not 1024 <= max_payload_bytes <= 1024 * 1024:
-            raise ValueError("MCP audit payload limit is invalid")
-        self.database = database
-        self.max_payload_bytes = max_payload_bytes
-        self.platform_audit_service = platform_audit_service
-
-    @operation_unit_of_work(lambda repository: repository.database)
-    def record(
-        self,
-        context: AuditContext,
-        *,
-        operation: str,
-        event_kind: str,
-        attempt: int,
-        status: str,
-        error_code: str = "",
-        duration_ms: int = 0,
-        tool_request: dict[str, Any] | None = None,
-        provider_request: dict[str, Any] | None = None,
-        provider_response: dict[str, Any] | None = None,
-        tool_response: dict[str, Any] | None = None,
-    ) -> str:
-        values = (
-            tool_request or {},
-            provider_request or {},
-            provider_response or {},
-            tool_response or {},
-        )
-        serialized = tuple(self._business_json(value) for value in values)
-        principal = context.principal
-        audit_id = new_id("mcp_audit")
-        try:
-            platform_audit_id = (
-                self.platform_audit_service.record(
-                    "mcp.operation",
-                    status=status,
-                    summary="ONES MCP operation evidence persisted",
-                    job_id=principal.job_id,
-                    actor_id=principal.actor_user_id,
-                    payload={
-                        "mcp_operation_audit_id": audit_id,
-                        "correlation_id": context.correlation_id,
-                        "principal_jti": principal.principal_jti,
-                        "external_identity_id": principal.external_identity_id,
-                        "credential_revision": principal.credential.revision,
-                        "server_code": SERVER_CODE,
-                        "tool_identifier": TOOL_IDENTIFIER,
-                        "operation": operation,
-                        "event_kind": event_kind,
-                        "attempt": attempt,
-                        "status": status,
-                        "error_code": error_code[:128],
-                    },
-                )
-                if self.platform_audit_service is not None
-                else None
-            )
-            self.database.execute(
-                """
-                insert into mcp_operation_audit
-                  (id, correlation_id, job_id, session_id, principal_jti,
-                   actor_user_id, actor_type, external_identity_id,
-                   credential_id, credential_revision, provider, team_id,
-                   provider_email, provider_user_id, server_code,
-                   tool_identifier, operation, event_kind, attempt, status,
-                   error_code, duration_ms, payload_schema_version,
-                   tool_request_json, provider_request_json,
-                   provider_response_json, tool_response_json, audit_event_id,
-                   created_at)
-                values (?, ?, ?, ?, ?, ?, 'user', ?, ?, ?, 'ones', ?, ?, ?,
-                        ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    audit_id,
-                    context.correlation_id,
-                    principal.job_id,
-                    principal.session_id,
-                    principal.principal_jti,
-                    principal.actor_user_id,
-                    principal.external_identity_id,
-                    principal.credential.id,
-                    principal.credential.revision,
-                    principal.team_id,
-                    principal.provider_email,
-                    principal.provider_user_id,
-                    SERVER_CODE,
-                    TOOL_IDENTIFIER,
-                    operation,
-                    event_kind,
-                    max(0, attempt),
-                    status,
-                    error_code[:128],
-                    max(0, duration_ms),
-                    *serialized,
-                    platform_audit_id,
-                    now_iso(),
-                ),
-            )
-        except Exception as exc:
-            logger.error(
-                "MCP operation audit persistence failed safely error_type=%s",
-                type(exc).__name__,
-            )
-            raise OnesMcpError(
-                "MCP operation audit could not be persisted",
-                safe_message="ONES 查询审计不可用，请稍后重试",
-                error_code="mcp_audit_unavailable",
-            ) from exc
-        return audit_id
-
-    def purge_expired(self, *, retention_days: int) -> int:
-        if not 1 <= retention_days <= 3650:
-            raise ValueError("MCP operation audit retention is invalid")
-        cutoff = time.time() - retention_days * 24 * 60 * 60
-        cutoff_iso = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(cutoff))
-        deleted = self.database.execute(
-            "delete from mcp_operation_audit where created_at < ? returning id",
-            (cutoff_iso,),
-        )
-        return len(deleted)
-
-    def _business_json(self, value: dict[str, Any]) -> str:
-        if not isinstance(value, dict):
-            raise OnesMcpError(
-                "MCP audit business payload must be an object",
-                safe_message="ONES 查询审计载荷无效",
-                error_code="mcp_audit_payload_invalid",
-            )
-        self._reject_secret_fields(value)
-        serialized = json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        if len(serialized.encode("utf-8")) > self.max_payload_bytes:
-            raise OnesMcpError(
-                "MCP audit business payload exceeds its bound",
-                safe_message="ONES 查询审计载荷超限",
-                error_code="mcp_audit_payload_too_large",
-            )
-        return serialized
-
-    @classmethod
-    def _reject_secret_fields(cls, value: Any) -> None:
-        if isinstance(value, dict):
-            for key, child in value.items():
-                if str(key).strip().lower() in _FORBIDDEN_BUSINESS_KEYS:
-                    raise OnesMcpError(
-                        "Authentication material appeared in a business payload",
-                        safe_message="ONES 返回了无效业务数据",
-                        error_code="ones_provider_secret_violation",
-                    )
-                cls._reject_secret_fields(child)
-        elif isinstance(value, list):
-            for child in value:
-                cls._reject_secret_fields(child)
 
 
 class OnesPrincipalResolver:
@@ -282,6 +99,49 @@ class OnesPrincipalResolver:
             token,
             self.database,
             required_scope=ONES_SEARCH_SCOPE,
+        )
+
+    def audit_context(
+        self,
+        claims: dict[str, Any],
+        *,
+        invocation_id: str,
+        correlation_id: str,
+    ) -> McpAuditContext:
+        job = self.database.execute_one(
+            """
+            select id, session_id, retry_count, internal_user_id,
+                   agent_publication_id, business_application_publication_id
+              from agent_job
+             where id = ? and status = 'RUNNING'
+            """,
+            (claims["job_id"],),
+        )
+        if job is None or str(job["internal_user_id"]) != str(claims["sub"]):
+            raise self._denied("ones_principal_provenance_mismatch")
+        expected_invocation_id = f"{job['id']}.attempt-{int(job['retry_count'])}"
+        effective_invocation_id = invocation_id or expected_invocation_id
+        if (
+            effective_invocation_id != expected_invocation_id
+            or str(job["session_id"]) != str(claims["session_id"])
+            or str(job["agent_publication_id"]) != str(claims["agent_publication_id"])
+            or str(job["business_application_publication_id"])
+            != str(claims["application_publication_id"])
+        ):
+            raise self._denied("ones_principal_provenance_mismatch")
+        definition = MCP_TOOL_MANIFEST[TOOL_IDENTIFIER]
+        return McpAuditContext(
+            correlation_id=(correlation_id.strip() or f"job:{job['id']}")[:128],
+            job_id=str(job["id"]),
+            session_id=str(job["session_id"]),
+            invocation_id=effective_invocation_id,
+            actor_user_id=str(claims["sub"]),
+            server_code=SERVER_CODE,
+            tool_identifier=TOOL_IDENTIFIER,
+            tool_schema_hash=definition.schema_hash,
+            agent_publication_id=str(job["agent_publication_id"]),
+            application_publication_id=str(job["business_application_publication_id"]),
+            provider="ones",
         )
 
     def resolve(self, claims: dict[str, Any]) -> ResolvedOnesPrincipal:
@@ -475,7 +335,7 @@ class OnesProviderClient:
             raise self._invalid_response("ones_provider_response_invalid") from None
         if not isinstance(parsed, dict):
             raise self._invalid_response("ones_provider_response_invalid")
-        McpOperationAuditRepository._reject_secret_fields(parsed)
+        McpAuditCoordinator.reject_auth_material(parsed)
         return parsed
 
     @staticmethod
@@ -572,7 +432,7 @@ class OnesWorkItemSearchService:
         provider: OnesProviderClient,
         login_verifier: OnesIdentityVerifier,
         credentials: ExternalIdentityCredentialRepository,
-        audit: McpOperationAuditRepository,
+        audit: McpAuditCoordinator,
     ) -> None:
         self.resolver = resolver
         self.provider = provider
@@ -591,79 +451,118 @@ class OnesWorkItemSearchService:
         claims: dict[str, Any],
         arguments: dict[str, Any],
         correlation_id: str,
-    ) -> dict[str, Any]:
+        invocation_id: str = "",
+    ) -> OnesSearchResult:
         tool_request = self._validate_arguments(arguments)
-        principal = self.resolver.resolve(claims)
-        audit_context = AuditContext(
-            correlation_id=(correlation_id.strip() or f"job:{principal.job_id}")[:128],
-            principal=principal,
+        base_context = self.resolver.audit_context(
+            claims,
+            invocation_id=invocation_id,
+            correlation_id=correlation_id,
+        )
+        handle = self.audit.begin(
+            base_context,
+            business_request=tool_request,
         )
         started = time.monotonic()
+        authorization_persisted = False
         try:
+            principal = self.resolver.resolve(claims)
+            handle = self.audit.enrich_context(
+                handle,
+                replace(
+                    base_context,
+                    principal_jti=principal.principal_jti,
+                    external_identity_id=principal.external_identity_id,
+                    credential_id=principal.credential.id,
+                    credential_revision=principal.credential.revision,
+                    provider="ones",
+                    team_id=principal.team_id,
+                    provider_email=principal.provider_email,
+                    provider_user_id=principal.provider_user_id,
+                ),
+            )
+            self.audit.append_event(
+                handle,
+                event_kind="AUTHORIZATION",
+                status="SUCCEEDED",
+                authorization_decision="ALLOW",
+                authorization_reason="principal_identity_and_scope_allowed",
+                business_request={"stage": "ones_principal_resolve"},
+            )
+            authorization_persisted = True
             output = self._search_with_refresh(
                 claims=claims,
-                context=audit_context,
+                handle=handle,
+                principal=principal,
                 tool_request=tool_request,
             )
-            self.audit.record(
-                audit_context,
-                operation="read",
-                event_kind="TOOL",
-                attempt=0,
+            self.audit.complete(
+                handle,
                 status="SUCCEEDED",
                 duration_ms=int((time.monotonic() - started) * 1000),
-                tool_request=tool_request,
-                tool_response=output,
+                business_response=output,
             )
-            return output
+            return OnesSearchResult(output, handle)
         except AppError as exc:
-            if getattr(exc, "error_code", "") != "mcp_audit_unavailable":
-                self.audit.record(
-                    audit_context,
-                    operation="read",
-                    event_kind="TOOL",
-                    attempt=0,
-                    status="FAILED",
-                    error_code=str(getattr(exc, "error_code", "") or "ones_mcp_failed"),
-                    duration_ms=int((time.monotonic() - started) * 1000),
-                    tool_request=tool_request,
+            setattr(exc, "mcp_audit_handle", handle)
+            if getattr(exc, "error_code", "") == "mcp_audit_unavailable":
+                raise
+            if not authorization_persisted:
+                self.audit.append_event(
+                    handle,
+                    event_kind="AUTHORIZATION",
+                    status="DENIED",
+                    error_code=_error_code(exc),
+                    authorization_decision="DENY",
+                    authorization_reason=_error_code(exc),
+                    business_request={"stage": "ones_principal_resolve"},
                 )
+            self.audit.complete(
+                handle,
+                status="DENIED" if not authorization_persisted else "FAILED",
+                error_code=_error_code(exc),
+                duration_ms=int((time.monotonic() - started) * 1000),
+                business_response={
+                    "error": str(exc.safe_message),
+                    "error_code": _error_code(exc),
+                },
+            )
             raise
 
     def _search_with_refresh(
         self,
         *,
         claims: dict[str, Any],
-        context: AuditContext,
+        handle: McpAuditHandle,
+        principal: ResolvedOnesPrincipal,
         tool_request: dict[str, Any],
     ) -> dict[str, Any]:
         try:
-            return self._provider_attempt(context, tool_request, attempt=0)
+            return self._provider_attempt(handle, principal, tool_request, attempt=0)
         except OnesProviderUnauthorized:
             pass
-        original_revision = context.principal.credential.revision
-        lock = self._lock_for(context.principal.credential.id)
+        original_revision = principal.credential.revision
+        lock = self._lock_for(principal.credential.id)
         with lock:
             current = self.resolver.resolve(claims)
             if current.credential.revision == original_revision:
-                self._refresh_credential(context, current)
+                self._refresh_credential(handle, current)
             refreshed = self.resolver.resolve(claims)
-        retry_context = AuditContext(context.correlation_id, refreshed)
         try:
-            output = self._provider_attempt(retry_context, tool_request, attempt=1)
+            output = self._provider_attempt(handle, refreshed, tool_request, attempt=1)
         except OnesProviderUnauthorized:
             self.credentials.mark_reauth_required(
                 credential_id=refreshed.credential.id,
                 expected_revision=refreshed.credential.revision,
                 error_code="ones_provider_unauthorized_after_refresh",
             )
-            self.audit.record(
-                retry_context,
-                operation="credential_refresh",
+            self.audit.append_event(
+                handle,
                 event_kind="CREDENTIAL",
                 attempt=1,
                 status="FAILED",
                 error_code="ones_provider_unauthorized_after_refresh",
+                credential_revision=refreshed.credential.revision,
             )
             raise OnesMcpError(
                 "ONES Provider rejected the refreshed Token",
@@ -678,7 +577,8 @@ class OnesWorkItemSearchService:
 
     def _provider_attempt(
         self,
-        context: AuditContext,
+        handle: McpAuditHandle,
+        principal: ResolvedOnesPrincipal,
         tool_request: dict[str, Any],
         *,
         attempt: int,
@@ -688,50 +588,47 @@ class OnesWorkItemSearchService:
             "query": WORK_ITEM_SEARCH_DOCUMENT,
             "variables": {
                 **tool_request,
-                "user_id": context.principal.provider_user_id,
-                "team_id": context.principal.team_id,
+                "user_id": principal.provider_user_id,
+                "team_id": principal.team_id,
             },
         }
         try:
             actual_request, provider_response, output = self.provider.search(
-                context.principal,
+                principal,
                 tool_request,
             )
-            self.audit.record(
-                context,
-                operation="read",
+            self.audit.append_event(
+                handle,
                 event_kind="PROVIDER",
                 attempt=attempt,
                 status="SUCCEEDED",
                 duration_ms=int((time.monotonic() - started) * 1000),
-                tool_request=tool_request,
-                provider_request=actual_request,
-                provider_response=provider_response,
-                tool_response=output,
+                business_request=actual_request,
+                business_response={"provider_response": provider_response, "tool": output},
+                credential_revision=principal.credential.revision,
             )
             if attempt == 0:
                 self.credentials.mark_used(
-                    credential_id=context.principal.credential.id,
-                    expected_revision=context.principal.credential.revision,
+                    credential_id=principal.credential.id,
+                    expected_revision=principal.credential.revision,
                 )
             return output
         except AppError as exc:
-            self.audit.record(
-                context,
-                operation="read",
+            self.audit.append_event(
+                handle,
                 event_kind="PROVIDER",
                 attempt=attempt,
                 status="FAILED",
                 error_code=str(getattr(exc, "error_code", "") or "ones_provider_failed"),
                 duration_ms=int((time.monotonic() - started) * 1000),
-                tool_request=tool_request,
-                provider_request=provider_request,
+                business_request=provider_request,
+                credential_revision=principal.credential.revision,
             )
             raise
 
     def _refresh_credential(
         self,
-        context: AuditContext,
+        handle: McpAuditHandle,
         principal: ResolvedOnesPrincipal,
     ) -> None:
         started = time.monotonic()
@@ -754,21 +651,13 @@ class OnesWorkItemSearchService:
                 expected_revision=principal.credential.revision,
                 token=verified.token,
             )
-            refreshed_context = AuditContext(
-                context.correlation_id,
-                replace(
-                    principal,
-                    credential=self.credentials.resolve_active(principal.credential.id),
-                ),
-            )
-            self.audit.record(
-                refreshed_context,
-                operation="credential_refresh",
+            self.audit.append_event(
+                handle,
                 event_kind="CREDENTIAL",
                 attempt=0,
                 status="SUCCEEDED",
                 duration_ms=int((time.monotonic() - started) * 1000),
-                tool_request={
+                business_request={
                     "provider_email": principal.provider_email,
                     "provider_user_id": principal.provider_user_id,
                     "previous_revision": principal.credential.revision,
@@ -788,15 +677,14 @@ class OnesWorkItemSearchService:
                 )
             except AppError:
                 pass
-            self.audit.record(
-                context,
-                operation="credential_refresh",
+            self.audit.append_event(
+                handle,
                 event_kind="CREDENTIAL",
                 attempt=0,
                 status="FAILED",
                 error_code=str(getattr(exc, "error_code", "") or "ones_credential_refresh_failed"),
                 duration_ms=int((time.monotonic() - started) * 1000),
-                tool_request={
+                business_request={
                     "provider_email": principal.provider_email,
                     "provider_user_id": principal.provider_user_id,
                     "revision": principal.credential.revision,
@@ -840,6 +728,10 @@ class OnesWorkItemSearchService:
     def _lock_for(self, credential_id: str) -> threading.Lock:
         with self._locks_guard:
             return self._credential_locks.setdefault(credential_id, threading.Lock())
+
+
+def _error_code(exc: Exception) -> str:
+    return str(getattr(exc, "error_code", "") or "ones_mcp_failed")[:128]
 
 
 assert REQUIRED_SCOPE == ONES_SEARCH_SCOPE

@@ -2,21 +2,30 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 import re
 import time
 import uuid
 from typing import Any
 
+import yaml
+
 from app.bootstrap import Container, build_api_container
+from app.modules.identity.infrastructure.external_identity_credentials import (
+    CredentialSecretBundle,
+)
 from app.modules.job.application.create_agent_job_service import (
     CreateAgentJobCommand,
 )
 from app.modules.job.domain.job_status import JobStatus
+from app.modules.job.infrastructure.repositories import now_iso
+from app.modules.platform_config.infrastructure import PlatformConfigRepository
 from app.shared.config import load_settings
 from app.shared.exceptions import NotFound
 
 
-ACTOR_ID = "user_local_admin"
+ACTOR_USERNAME = "admin"
+ACTOR_ID = ""
 AGENTS = {
     "python-v1": "default-diagnostic-agent",
     "typescript-v1": "typescript-diagnostic-agent",
@@ -26,6 +35,9 @@ TEST_SECRET_CANARY = "dual-runtime-acceptance-provider-secret-canary-v1"
 REAL_API_KEY_ENV = "DUAL_RUNTIME_ACCEPTANCE_API_KEY"
 REAL_MODEL = "deepseek-v4-pro[1m]"
 READONLY_TOOL = "get_er_context"
+ONES_TOOL = "ones_work_item_search"
+ONES_MOCK_CONFIG_ENV = "ONES_MOCK_ACCEPTANCE_CONFIG"
+STALE_ONES_TOKEN = "dual-runtime-acceptance-stale-ones-token"
 RETRY_MARKER = "[acceptance:retry-once]"
 REAL_ACTIONS = {
     "real-full",
@@ -137,25 +149,6 @@ def _activate_application(
         description="Explicit isolated Compose acceptance access",
         purpose_tags=["业务运行"],
     )["role"]
-    runtime.authorization_center_service.replace_business_access(
-        actor_id=ACTOR_ID,
-        role_id=str(role["id"]),
-        expected_revision=1,
-        applications=[
-            {
-                "application_id": str(application["id"]),
-                "tool_identifiers": list(mcp_tool_ids),
-                "scopes": [],
-            }
-        ],
-        confirmed=True,
-        reason="隔离双 Runtime Compose 验收",
-    )
-    runtime.identity_repository.assign_role(
-        user_id=ACTOR_ID,
-        role_id=str(role["id"]),
-        assigned_by=ACTOR_ID,
-    )
     revision = runtime.business_application_service.save_draft(
         actor_id=ACTOR_ID,
         code=code,
@@ -191,6 +184,32 @@ def _activate_application(
         environment="local",
         publication_id=str(publication["id"]),
         expected_revision=0,
+    )
+    scopes: list[dict[str, str]] = []
+    if mcp_tool_ids:
+        environment = PlatformConfigRepository(runtime.database).upsert_environment(
+            code="acceptance",
+            display_name="Isolated acceptance environment",
+        )
+        scopes = [{"environment_id": str(environment["id"])}]
+    runtime.authorization_center_service.replace_business_access(
+        actor_id=ACTOR_ID,
+        role_id=str(role["id"]),
+        expected_revision=1,
+        applications=[
+            {
+                "application_id": str(application["id"]),
+                "tool_identifiers": list(mcp_tool_ids),
+                "scopes": scopes,
+            }
+        ],
+        confirmed=True,
+        reason="隔离双 Runtime Compose 验收",
+    )
+    runtime.identity_repository.assign_role(
+        user_id=ACTOR_ID,
+        role_id=str(role["id"]),
+        assigned_by=ACTOR_ID,
     )
     return runtime.business_application_resolver.resolve_active(code, "local")
 
@@ -241,6 +260,101 @@ def _prepare_real_runtime(
     return publications, applications
 
 
+def _prepare_mcp_runtime(
+    runtime: Container,
+    runtime_kinds: tuple[str, ...],
+) -> tuple[
+    dict[str, dict[str, Any]],
+    dict[str, dict[str, Any]],
+    tuple[str, ...],
+]:
+    sensitive_values = _configure_ones_mock_identity(runtime)
+    connection = _configure_model_connection(runtime, code="mcp-acceptance-deepseek")
+    mcp_tool_ids = (READONLY_TOOL, ONES_TOOL)
+    suffix = uuid.uuid4().hex[:8]
+    publications: dict[str, dict[str, Any]] = {}
+    applications: dict[str, dict[str, Any]] = {}
+    for runtime_kind in runtime_kinds:
+        agent_code = AGENTS[runtime_kind]
+        publication = _publish_agent(
+            runtime,
+            agent_code=agent_code,
+            connection_revision_id=str(connection["id"]),
+            mcp_tool_ids=mcp_tool_ids,
+            business_instructions="Run only the deterministic MCP acceptance Tool.",
+            timeout_seconds=60,
+            max_turns=4,
+        )
+        publications[runtime_kind] = {**publication, "agent_code": agent_code}
+        applications[runtime_kind] = _activate_application(
+            runtime,
+            code=f"dual-mcp-{runtime_kind.split('-')[0]}-{suffix}",
+            agent_publication_id=str(publication["id"]),
+            mcp_tool_ids=mcp_tool_ids,
+            timeout_seconds=60,
+            max_turns=4,
+            max_tool_calls=8,
+        )
+    return publications, applications, sensitive_values
+
+
+def _configure_ones_mock_identity(runtime: Container) -> tuple[str, ...]:
+    config_path = Path(os.getenv(ONES_MOCK_CONFIG_ENV, ""))
+    if not config_path.is_file() or config_path.stat().st_size > 64 * 1024:
+        raise RuntimeError("ONES mock acceptance config is missing or too large")
+    raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise RuntimeError("ONES mock acceptance config is invalid")
+    users = raw.get("users")
+    team = raw.get("team")
+    if not isinstance(users, list) or not users or not isinstance(users[0], dict):
+        raise RuntimeError("ONES mock acceptance user is invalid")
+    if not isinstance(team, dict):
+        raise RuntimeError("ONES mock acceptance Team is invalid")
+    primary = users[0]
+
+    def required(mapping: dict[str, Any], key: str) -> str:
+        value = str(mapping.get(key) or "").strip()
+        if not value:
+            raise RuntimeError("ONES mock acceptance field is missing")
+        return value
+
+    email = required(primary, "email")
+    password = required(primary, "password")
+    provider_user_id = required(primary, "uuid")
+    display_name = required(primary, "name")
+    provider_token = required(primary, "token")
+    team_id = required(team, "uuid")
+    team_name = required(team, "name")
+    identity = runtime.identity_repository.bind_external_identity(
+        user_id=ACTOR_ID,
+        provider="ones",
+        tenant_code="default",
+        external_subject_id=provider_user_id,
+        connector_id="",
+        display_name=display_name,
+        metadata={
+            "team_uuids": [team_id],
+            "teams": [{"id": team_id, "name": team_name}],
+            "default_team_id": team_id,
+        },
+    )
+    credentials = runtime.external_identity_credential_repository
+    if credentials is None:
+        raise RuntimeError("ONES credential repository is unavailable")
+    credentials.upsert_active(
+        external_identity_id=str(identity["id"]),
+        provider="ones",
+        secrets=CredentialSecretBundle(
+            email=email,
+            password=password,
+            token=STALE_ONES_TOKEN,
+        ),
+        verified_at=now_iso(),
+    )
+    return password, provider_token, STALE_ONES_TOKEN
+
+
 def _create_job(
     runtime: Container,
     *,
@@ -261,8 +375,8 @@ def _create_job(
             external_conversation_id=f"dual-runtime-compose-{label}",
             external_event_id=f"dual-runtime-compose-{label}-{uuid.uuid4().hex}",
             user_message=question,
-            source_channel="dingding",
-            source_connector_id="",
+            source_channel="debug_api",
+            source_connector_id="connector-debug-api",
             project_code="default",
             routing_context={
                 "project_code": "default",
@@ -337,6 +451,112 @@ def _assert_runtime_evidence(
         item["payload"]["runtime_provenance"]["runtime_kind"] != runtime_kind for item in terminals
     ):
         raise RuntimeError(f"Job {job_id} Runtime provenance mismatch")
+
+
+def _assert_mcp_evidence(
+    runtime: Container,
+    *,
+    job_id: str,
+    server_code: str,
+    tool_name: str,
+    expected_calls: int,
+    require_refresh: bool = False,
+) -> None:
+    calls = [
+        item
+        for item in runtime.agent_repository.list_tool_calls(job_id)
+        if item["tool_name"] == tool_name
+    ]
+    if len(calls) != expected_calls:
+        raise RuntimeError(
+            f"Job {job_id} has {len(calls)} {tool_name} calls; expected {expected_calls}"
+        )
+    if any(
+        item["status"] != "SUCCEEDED"
+        or item["tool_origin"] != "mcp"
+        or item["server_code"] != server_code
+        or item["persisted_by"] != "mcp_server"
+        or not item["runtime_tool_call_id"]
+        or not item["mcp_call_id"]
+        for item in calls
+    ):
+        raise RuntimeError(f"Job {job_id} MCP Agent Tool Call evidence is incomplete")
+    audits = runtime.database.execute(
+        "select * from mcp_operation_audit where job_id = ? order by created_at, id",
+        (job_id,),
+    )
+    roots = [item for item in audits if item["event_kind"] == "TOOL"]
+    if len(roots) != expected_calls:
+        raise RuntimeError(
+            f"Job {job_id} has {len(roots)} MCP roots; expected {expected_calls}"
+        )
+    root_by_call = {str(item["mcp_call_id"]): item for item in roots}
+    if len(root_by_call) != expected_calls:
+        raise RuntimeError(f"Job {job_id} MCP root IDs are not unique")
+    for call in calls:
+        mcp_call_id = str(call["mcp_call_id"])
+        root = root_by_call.get(mcp_call_id)
+        linked = [item for item in audits if str(item["mcp_call_id"]) == mcp_call_id]
+        if root is None or str(root["agent_tool_call_id"]) != str(call["id"]):
+            raise RuntimeError(f"Job {job_id} MCP root did not link the exact Tool Call")
+        if any(str(item["agent_tool_call_id"]) != str(call["id"]) for item in linked):
+            raise RuntimeError(f"Job {job_id} MCP children crossed Tool Call roots")
+        if any(
+            item["event_kind"] != "TOOL" and str(item["parent_audit_id"]) != str(root["id"])
+            for item in linked
+        ):
+            raise RuntimeError(f"Job {job_id} MCP child parent linkage is incomplete")
+        event_kinds = {str(item["event_kind"]) for item in linked}
+        required = {"TOOL", "AUTHORIZATION"}
+        if server_code == "ones-mcp":
+            required.add("PROVIDER")
+        if not required.issubset(event_kinds):
+            raise RuntimeError(f"Job {job_id} MCP evidence kinds are incomplete")
+    if require_refresh:
+        provider_attempts = {
+            (int(item["attempt"]), str(item["status"]))
+            for item in audits
+            if item["event_kind"] == "PROVIDER"
+        }
+        if not {(0, "FAILED"), (1, "SUCCEEDED")}.issubset(provider_attempts):
+            raise RuntimeError(f"Job {job_id} ONES refresh evidence is incomplete")
+        if not any(item["event_kind"] == "CREDENTIAL" for item in audits):
+            raise RuntimeError(f"Job {job_id} ONES credential refresh evidence is missing")
+
+
+def _assert_mcp_online_invariants(
+    runtime: Container,
+    *,
+    job_ids: list[str],
+    sensitive_values: tuple[str, ...],
+) -> None:
+    placeholders = ",".join("?" for _ in job_ids)
+    audits = runtime.database.execute(
+        f"select * from mcp_operation_audit where job_id in ({placeholders})",
+        tuple(job_ids),
+    )
+    if not audits:
+        raise RuntimeError("MCP online invariant scan has no post-cutover evidence")
+    if any(not item["agent_tool_call_id"] or not item["mcp_call_id"] for item in audits):
+        raise RuntimeError("MCP online invariant scan found an empty exact link")
+    evidence = json.dumps(audits, ensure_ascii=False)
+    if any(value and value in evidence for value in sensitive_values):
+        raise RuntimeError("MCP online invariant scan found authentication material")
+    duplicate = runtime.database.execute_one(
+        f"""
+        select count(*) as count
+          from (
+            select mcp_call_id
+              from mcp_operation_audit
+             where job_id in ({placeholders}) and event_kind = 'TOOL'
+             group by mcp_call_id
+            having count(*) <> 1
+          ) roots
+        """,
+        tuple(job_ids),
+    )
+    if duplicate is None or int(duplicate["count"]) != 0:
+        raise RuntimeError("MCP online invariant scan found duplicate roots")
 
 
 def _assert_sensitive_boundaries(runtime: Container, job_ids: list[str]) -> None:
@@ -864,11 +1084,19 @@ def _inspect_restart_job(runtime: Container) -> int:
 
 
 def main() -> int:
+    global ACTOR_ID
+
     settings = load_settings()
     if settings.environment not in {"test", "testing"}:
         raise RuntimeError("dual Runtime Compose acceptance requires APP_ENV=test/testing")
     runtime = build_api_container(settings, seed=False)
     try:
+        actor = runtime.identity_repository.get_user_by_username(ACTOR_USERNAME)
+        if actor is None:
+            raise RuntimeError(
+                f"dual Runtime Compose acceptance actor {ACTOR_USERNAME!r} is missing"
+            )
+        ACTOR_ID = str(actor["id"])
         if runtime.settings.queue.retry_delay_seconds != 1:
             raise RuntimeError("AGENT_RETRY_DELAY_SECONDS must be 1 for acceptance")
         action = os.getenv("DUAL_RUNTIME_ACCEPTANCE_ACTION", "full").strip()
@@ -938,6 +1166,68 @@ def main() -> int:
                     "delivery_status": delivery.status.value,
                 }
             )
+        mcp_publications, mcp_applications, mcp_sensitive_values = _prepare_mcp_runtime(
+            runtime,
+            tuple(AGENTS),
+        )
+        mcp_scenarios = (
+            ("python-v1", "tool-mcp", READONLY_TOOL, "[smoke:mcp:tool-mcp]", 1, False),
+            ("python-v1", "ones-mcp", ONES_TOOL, "[smoke:mcp:ones-mcp]", 1, True),
+            (
+                "typescript-v1",
+                "tool-mcp",
+                READONLY_TOOL,
+                "[smoke:mcp:tool-mcp]",
+                1,
+                False,
+            ),
+            (
+                "typescript-v1",
+                "ones-mcp",
+                ONES_TOOL,
+                "[smoke:mcp:ones-mcp-concurrent]",
+                2,
+                False,
+            ),
+        )
+        mcp_job_ids: list[str] = []
+        for runtime_kind, server_code, tool_name, marker, call_count, refresh in mcp_scenarios:
+            label = f"{runtime_kind}-{server_code}-{uuid.uuid4().hex[:6]}"
+            job_id = _create_job(
+                runtime,
+                label=label,
+                question=f"{marker} isolated MCP acceptance",
+                agent=mcp_publications[runtime_kind],
+                application=mcp_applications[runtime_kind],
+            )
+            job_ids.append(job_id)
+            mcp_job_ids.append(job_id)
+            job = _wait_for_job(runtime, job_id, expected=JobStatus.SUCCEEDED)
+            delivery = _wait_for_delivery(runtime, job_id)
+            _assert_runtime_evidence(runtime, job_id=job_id, runtime_kind=runtime_kind)
+            _assert_mcp_evidence(
+                runtime,
+                job_id=job_id,
+                server_code=server_code,
+                tool_name=tool_name,
+                expected_calls=call_count,
+                require_refresh=refresh,
+            )
+            results.append(
+                {
+                    "runtime_kind": runtime_kind,
+                    "outcome": f"mcp-{server_code}",
+                    "job_status": job.status.value,
+                    "retry_count": job.retry_count,
+                    "delivery_status": delivery.status.value,
+                    "mcp_tool_calls": call_count,
+                }
+            )
+        _assert_mcp_online_invariants(
+            runtime,
+            job_ids=mcp_job_ids,
+            sensitive_values=mcp_sensitive_values,
+        )
         _assert_sensitive_boundaries(runtime, job_ids)
         print(json.dumps({"status": "passed", "scenarios": results}, sort_keys=True))
         return 0

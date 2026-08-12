@@ -12,8 +12,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src test scripts --max-warnings=0",
     "test": "tsc -p tsconfig.json && node --test dist/test/*.test.js",
-    "generate:contracts": "node scripts/generate-contracts.mjs",
-    "check:contracts": "node scripts/generate-contracts.mjs --check",
+    "generate:contracts": "node scripts/generate-contracts.mjs && node scripts/generate-contracts-v1_1.mjs",
+    "check:contracts": "node scripts/generate-contracts.mjs --check && node scripts/generate-contracts-v1_1.mjs --check",
     "preflight": "node scripts/preflight.mjs",
     "preflight:static": "node scripts/preflight.mjs --static",
     "start": "node dist/src/main.js"

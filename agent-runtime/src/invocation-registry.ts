@@ -1,13 +1,13 @@
 import type {
-  AgentExecutionRequestV1,
+  AgentExecutionRequest,
   RuntimeEvent,
   RuntimeFailure,
   RuntimeProvenance,
   TerminalResult,
   Usage
-} from "./generated/contracts.js";
+} from "./runtime-contracts.js";
 import { randomUUID } from "node:crypto";
-import { assertContract } from "./generated/validators.js";
+import { assertRuntimeContract } from "./runtime-contracts.js";
 import type { TerminalLedger } from "./terminal-ledger.js";
 
 export interface ExecutionEmitter {
@@ -31,7 +31,7 @@ export interface TerminalDraft {
 }
 
 export type RuntimeExecutor = (
-  request: AgentExecutionRequestV1,
+  request: AgentExecutionRequest,
   emitter: ExecutionEmitter,
   secrets?: InvocationSecretContext
 ) => Promise<TerminalDraft>;
@@ -54,7 +54,7 @@ class InvocationRecord {
   terminalAt = 0;
 
   constructor(
-    readonly request: AgentExecutionRequestV1,
+    readonly request: AgentExecutionRequest,
     readonly secrets: InvocationSecretContext,
     private readonly now: () => Date
   ) {}
@@ -69,7 +69,7 @@ class InvocationRecord {
   ): RuntimeEvent | undefined {
     if (this.isTerminal) return undefined;
     const event = {
-      protocol_version: "1.0",
+      protocol_version: this.request.protocol_version,
       invocation_id: this.request.invocation_id,
       request_digest: this.request.request_digest,
       sequence: this.events.length + 1,
@@ -77,7 +77,7 @@ class InvocationRecord {
       timestamp: this.now().toISOString(),
       payload
     } as RuntimeEvent;
-    assertContract("RuntimeEvent", event);
+    assertRuntimeContract("RuntimeEvent", event, this.request.protocol_version);
     return event;
   }
 
@@ -92,8 +92,8 @@ class InvocationRecord {
   prepareTerminal(draft: TerminalDraft): RuntimeEvent | undefined {
     if (this.isTerminal) return undefined;
     const sequence = this.events.length + 1;
-    const terminal: TerminalResult = {
-      protocol_version: "1.0",
+    const terminal = {
+      protocol_version: this.request.protocol_version,
       invocation_id: this.request.invocation_id,
       request_digest: this.request.request_digest,
       last_sequence: sequence,
@@ -102,17 +102,17 @@ class InvocationRecord {
       ...(draft.failure === undefined ? {} : { failure: draft.failure }),
       usage: draft.usage,
       runtime_provenance: draft.runtime_provenance
-    };
-    const event: RuntimeEvent = {
-      protocol_version: "1.0",
+    } as TerminalResult;
+    const event = {
+      protocol_version: this.request.protocol_version,
       invocation_id: this.request.invocation_id,
       request_digest: this.request.request_digest,
       sequence,
       event_type: "terminal",
       timestamp: this.now().toISOString(),
       payload: terminal
-    };
-    assertContract("RuntimeEvent", event);
+    } as RuntimeEvent;
+    assertRuntimeContract("RuntimeEvent", event, this.request.protocol_version);
     return event;
   }
 
@@ -126,7 +126,7 @@ class InvocationRecord {
   restore(events: readonly RuntimeEvent[], terminalAt: Date): void {
     if (this.events.length > 0) throw new InvocationConflictError();
     for (const [index, event] of events.entries()) {
-      assertContract("RuntimeEvent", event);
+      assertRuntimeContract("RuntimeEvent", event, this.request.protocol_version);
       if (
         event.invocation_id !== this.request.invocation_id ||
         event.request_digest !== this.request.request_digest ||
@@ -143,7 +143,7 @@ class InvocationRecord {
   restorePrefix(events: readonly RuntimeEvent[]): void {
     if (this.events.length > 0) throw new InvocationConflictError();
     for (const [index, event] of events.entries()) {
-      assertContract("RuntimeEvent", event);
+      assertRuntimeContract("RuntimeEvent", event, this.request.protocol_version);
       if (
         event.event_type === "terminal" ||
         event.invocation_id !== this.request.invocation_id ||
@@ -163,14 +163,14 @@ class InvocationRecord {
   }
 
   private append(event: RuntimeEvent): void {
-    assertContract("RuntimeEvent", event);
+    assertRuntimeContract("RuntimeEvent", event, this.request.protocol_version);
     this.events.push(event);
     for (const listener of this.listeners) listener(event);
   }
 }
 
 export interface InvocationHandle {
-  readonly request: AgentExecutionRequestV1;
+  readonly request: AgentExecutionRequest;
   readonly isTerminal: boolean;
   subscribe(listener: EventListener): () => void;
   cancel(reason: string): Promise<void>;
@@ -188,7 +188,7 @@ export class InvocationRegistry {
   ) {}
 
   async acquire(
-    request: AgentExecutionRequestV1,
+    request: AgentExecutionRequest,
     secrets: InvocationSecretContext = {}
   ): Promise<InvocationHandle> {
     this.prune();
@@ -323,11 +323,11 @@ export class InvocationRegistry {
     record.commitTerminal(terminal, terminalAt);
   }
 
-  private provenance(request: AgentExecutionRequestV1): RuntimeProvenance {
+  private provenance(request: AgentExecutionRequest): RuntimeProvenance {
     return {
       runtime_kind: "typescript-v1",
       runtime_version: "0.1.0",
-      protocol_version: "1.0",
+      protocol_version: request.protocol_version,
       sdk_version: "0.3.226",
       cli_version: "2.1.226",
       model_connection_revision_id: request.model_connection.revision_id,

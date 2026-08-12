@@ -256,7 +256,9 @@ class AdminReadRepository:
         tools = self.database.execute(
             """
             select id, tool_name, substr(response_summary, 1, 2000) as response_summary,
-                   status, duration_ms, risk_level, audit_id, created_at
+                   status, duration_ms, risk_level, audit_id, created_at,
+                   invocation_id, runtime_tool_call_id, tool_origin,
+                   server_code, mcp_call_id, persisted_by
             from agent_tool_call where job_id = ? order by created_at, id
             """,
             (job_id,),

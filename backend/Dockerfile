@@ -119,7 +119,7 @@ COPY backend/app/modules/__init__.py /app/backend/app/modules/
 COPY backend/app/modules/agent/__init__.py /app/backend/app/modules/agent/
 COPY backend/app/modules/agent/domain /app/backend/app/modules/agent/domain
 COPY backend/app/modules/agent/infrastructure/__init__.py /app/backend/app/modules/agent/infrastructure/
-COPY backend/app/modules/agent/infrastructure/generated_runtime_contracts.py backend/app/modules/agent/infrastructure/runtime_protocol.py backend/app/modules/agent/infrastructure/tool_manifest.py /app/backend/app/modules/agent/infrastructure/
+COPY backend/app/modules/agent/infrastructure/generated_runtime_contracts.py backend/app/modules/agent/infrastructure/generated_runtime_contracts_v1_1.py backend/app/modules/agent/infrastructure/runtime_protocol.py backend/app/modules/agent/infrastructure/tool_manifest.py /app/backend/app/modules/agent/infrastructure/
 COPY backend/app/modules/model_connection/__init__.py /app/backend/app/modules/model_connection/
 COPY backend/app/modules/model_connection/domain /app/backend/app/modules/model_connection/domain
 COPY backend/app/modules/model_connection/infrastructure/__init__.py backend/app/modules/model_connection/infrastructure/repository.py /app/backend/app/modules/model_connection/infrastructure/

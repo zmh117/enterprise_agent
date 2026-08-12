@@ -676,6 +676,36 @@
       "audit_requirement": "export only stable IDs, disposition, and safe reason codes",
       "retirement": {"status": "blocked", "earliest_phase": "contract/drop", "gates": ["all environment cutovers complete", "zero unresolved rows", "zero production readers", "zero production writers", "retention period complete", "audit export complete", "owner approvals", "verified backup and rollback"]},
       "evidence_refs": ["change:consolidate-schema-fact-sources-and-retire-legacy-tables", "deployment-gated:all-target-environments"]
+    },
+    {
+      "id": "audit.agent_tool_call",
+      "object_type": "table",
+      "table": "agent_tool_call",
+      "owner": "job-runtime-audit",
+      "semantics": "Canonical long-lived fact for one Runtime-observed logical Tool Use across MCP, SDK builtin, SDK custom, unknown, success, failure, and denial paths.",
+      "classification": "canonical_mutable_fact",
+      "writers": ["code:backend/app/modules/mcp_audit/application.py", "code:backend/app/modules/job/infrastructure/repositories.py"],
+      "readers": ["code:backend/app/modules/job/infrastructure/repositories.py", "code:backend/app/modules/admin/infrastructure/read_repository.py"],
+      "lifecycle": "STARTED to one terminal status, then retained with the Job after detailed MCP evidence expires",
+      "retention_policy": "same-as-agent-job",
+      "audit_requirement": "retain exact Runtime and MCP identifiers plus bounded safe summaries; never infer links by tool name or time window",
+      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["replacement preserves Runtime Tool history and exact MCP linkage"]},
+      "evidence_refs": ["change:unify-mcp-operation-audit", "schema:105_expand_unified_mcp_operation_audit"]
+    },
+    {
+      "id": "audit.mcp_operation",
+      "object_type": "table",
+      "table": "mcp_operation_audit",
+      "owner": "mcp-governance-audit",
+      "semantics": "Detailed one-to-many execution evidence for an MCP Tool root and its authorization, resource, provider, and credential events.",
+      "classification": "canonical_mutable_fact",
+      "writers": ["code:backend/app/modules/mcp_audit/application.py"],
+      "readers": ["code:backend/app/modules/identity/api/admin_controller.py"],
+      "lifecycle": "TOOL root STARTED before governed external access, followed by child evidence and terminal completion",
+      "retention_policy": "MCP_OPERATION_AUDIT_RETENTION_DAYS",
+      "audit_requirement": "bounded complete business JSON is allowed, while authentication material is structurally rejected on every path",
+      "retirement": {"status": "retained", "earliest_phase": "never", "gates": ["replacement preserves exact mcp_call_id evidence and independent retention"]},
+      "evidence_refs": ["change:unify-mcp-operation-audit", "schema:105_expand_unified_mcp_operation_audit"]
     }
   ]
 }

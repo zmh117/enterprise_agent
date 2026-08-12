@@ -2,10 +2,8 @@ import { createPublicKey, type KeyObject } from "node:crypto";
 
 import { jwtVerify } from "jose";
 
-import type {
-  AgentExecutionRequestV1,
-  RuntimeGrantClaims
-} from "./generated/contracts.js";
+import type { RuntimeGrantClaims } from "./generated/contracts.js";
+import type { AgentExecutionRequest } from "./runtime-contracts.js";
 import { assertContract } from "./generated/validators.js";
 
 export class RuntimeGrantError extends Error {
@@ -48,7 +46,7 @@ export class RuntimeGrantVerifier {
     }
   }
 
-  async verify(token: string, request: AgentExecutionRequestV1): Promise<RuntimeGrantClaims> {
+  async verify(token: string, request: AgentExecutionRequest): Promise<RuntimeGrantClaims> {
     if (!token || token.length > 16384) {
       throw new RuntimeGrantError("runtime_grant_invalid", "Runtime Grant is missing or too large");
     }

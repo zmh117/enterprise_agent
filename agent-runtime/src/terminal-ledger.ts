@@ -1,10 +1,7 @@
 import type { Pool } from "pg";
 
-import type {
-  AgentExecutionRequestV1,
-  RuntimeEvent
-} from "./generated/contracts.js";
-import { assertContract } from "./generated/validators.js";
+import type { AgentExecutionRequest, RuntimeEvent } from "./runtime-contracts.js";
+import { assertRuntimeContract } from "./runtime-contracts.js";
 
 export interface PersistedTerminal {
   readonly requestDigest: string;
@@ -20,12 +17,12 @@ export interface PersistedClaim {
 export interface TerminalLedger {
   load(invocationId: string): Promise<PersistedTerminal | undefined>;
   claim(
-    request: AgentExecutionRequestV1,
+    request: AgentExecutionRequest,
     ownerInstanceId: string
   ): Promise<PersistedClaim>;
-  append(request: AgentExecutionRequestV1, event: RuntimeEvent): Promise<void>;
+  append(request: AgentExecutionRequest, event: RuntimeEvent): Promise<void>;
   save(
-    request: AgentExecutionRequestV1,
+    request: AgentExecutionRequest,
     events: readonly RuntimeEvent[],
     terminalAt: Date
   ): Promise<void>;
@@ -70,7 +67,9 @@ export class PostgresTerminalLedger implements TerminalLedger {
     if (!Array.isArray(events) || events.length === 0) {
       throw new TerminalLedgerConflictError();
     }
-    for (const event of events) assertContract("RuntimeEvent", event);
+    for (const event of events) {
+      assertRuntimeContract("RuntimeEvent", event, event.protocol_version);
+    }
     const normalized = events as RuntimeEvent[];
     if (normalized.at(-1)?.event_type !== "terminal") {
       throw new TerminalLedgerConflictError();
@@ -83,7 +82,7 @@ export class PostgresTerminalLedger implements TerminalLedger {
   }
 
   async claim(
-    request: AgentExecutionRequestV1,
+    request: AgentExecutionRequest,
     ownerInstanceId: string
   ): Promise<PersistedClaim> {
     const now = this.now();
@@ -128,10 +127,10 @@ export class PostgresTerminalLedger implements TerminalLedger {
   }
 
   async append(
-    request: AgentExecutionRequestV1,
+    request: AgentExecutionRequest,
     event: RuntimeEvent
   ): Promise<void> {
-    assertContract("RuntimeEvent", event);
+    assertRuntimeContract("RuntimeEvent", event, event.protocol_version);
     if (
       event.event_type === "terminal" ||
       event.invocation_id !== request.invocation_id ||
@@ -176,14 +175,16 @@ export class PostgresTerminalLedger implements TerminalLedger {
   }
 
   async save(
-    request: AgentExecutionRequestV1,
+    request: AgentExecutionRequest,
     events: readonly RuntimeEvent[],
     terminalAt: Date
   ): Promise<void> {
     if (events.at(-1)?.event_type !== "terminal") {
       throw new TerminalLedgerConflictError();
     }
-    for (const event of events) assertContract("RuntimeEvent", event);
+    for (const event of events) {
+      assertRuntimeContract("RuntimeEvent", event, event.protocol_version);
+    }
     const eventsJson = JSON.stringify(events);
     const expiresAt = new Date(terminalAt.getTime() + this.ttlSeconds * 1000);
     await this.pool.query(
@@ -229,7 +230,7 @@ export class PostgresTerminalLedger implements TerminalLedger {
   }
 
   private async loadInvocationEvents(
-    request: AgentExecutionRequestV1
+    request: AgentExecutionRequest
   ): Promise<RuntimeEvent[]> {
     const result = await this.pool.query<{
       request_digest: string;
@@ -252,7 +253,11 @@ export class PostgresTerminalLedger implements TerminalLedger {
       let event: unknown;
       try {
         event = JSON.parse(row.event_json);
-        assertContract("RuntimeEvent", event);
+        const protocolVersion = (event as { protocol_version?: unknown }).protocol_version;
+        if (protocolVersion !== "1.0" && protocolVersion !== "1.1") {
+          throw new TerminalLedgerConflictError();
+        }
+        assertRuntimeContract("RuntimeEvent", event, protocolVersion);
       } catch {
         throw new TerminalLedgerConflictError();
       }

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from app.acceptance.runtime_fault_proxy import _must_fail_first_job_attempt
+from app.acceptance.runtime_fault_proxy import FORWARDED_HEADERS, _must_fail_first_job_attempt
 
 
 def _body(invocation_id: str, question: str) -> bytes:
@@ -35,3 +35,7 @@ def test_fault_proxy_fails_only_marked_first_job_attempt() -> None:
         method="POST",
         body=b"{}",
     )
+
+
+def test_fault_proxy_forwards_invocation_only_principal_token() -> None:
+    assert "x-mcp-principal-token" in FORWARDED_HEADERS

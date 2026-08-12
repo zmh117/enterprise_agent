@@ -2166,6 +2166,12 @@ class AgentRepository:
         duration_ms: int,
         risk_level: str,
         audit_id: str | None = None,
+        invocation_id: str | None = None,
+        runtime_tool_call_id: str | None = None,
+        tool_origin: str = "unknown",
+        server_code: str | None = None,
+        mcp_call_id: str | None = None,
+        persisted_by: str = "worker",
     ) -> str:
         tool_call_id = new_id("tool")
         safe_request = sanitize_for_persistence(request_payload)
@@ -2179,8 +2185,10 @@ class AgentRepository:
             """
             insert into agent_tool_call
               (id, job_id, tool_name, request_payload, response_summary, status,
-               duration_ms, risk_level, audit_id, created_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               duration_ms, risk_level, audit_id, created_at, invocation_id,
+               runtime_tool_call_id, tool_origin, server_code, mcp_call_id,
+               persisted_by)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 tool_call_id,
@@ -2193,40 +2201,129 @@ class AgentRepository:
                 risk_level,
                 audit_id,
                 now_iso(),
+                invocation_id,
+                runtime_tool_call_id,
+                tool_origin,
+                server_code,
+                mcp_call_id,
+                persisted_by,
             ),
         )
         return tool_call_id
 
-    def link_mcp_operation_audits(
+    def upsert_runtime_tool_call(
         self,
         *,
         job_id: str,
+        invocation_id: str,
+        runtime_tool_call_id: str,
+        tool_origin: str,
+        server_code: str | None,
         tool_name: str,
-        tool_call_id: str,
-    ) -> None:
+        request_payload: dict[str, Any],
+        response_summary: dict[str, Any] | str,
+        status: str,
+        duration_ms: int,
+        risk_level: str,
+        mcp_call_id: str | None = None,
+        persisted_tool_call_id: str | None = None,
+    ) -> str | None:
+        safe_request = sanitize_for_persistence(request_payload)
+        safe_response = sanitize_for_persistence(response_summary)
+        response = (
+            safe_response
+            if isinstance(safe_response, str)
+            else json.dumps(safe_response, ensure_ascii=False)
+        )
+        if tool_origin == "mcp":
+            if not mcp_call_id or not persisted_tool_call_id:
+                # The MCP Server already owns the durable row. Missing metadata
+                # is an explicit unlinked condition, never a reason to guess.
+                return None
+            rows = self.database.execute(
+                """
+                update agent_tool_call
+                   set invocation_id = ?, runtime_tool_call_id = ?,
+                       response_summary = case
+                         when status = 'STARTED' then ? else response_summary end,
+                       status = case when status = 'STARTED' then ? else status end,
+                       duration_ms = case
+                         when status = 'STARTED' then ? else duration_ms end
+                 where id = ? and job_id = ? and mcp_call_id = ?
+                   and tool_origin = 'mcp' and persisted_by = 'mcp_server'
+                   and server_code = ? and tool_name = ?
+                   and (invocation_id is null or invocation_id = ?)
+                   and (runtime_tool_call_id is null or runtime_tool_call_id = ?)
+                returning id
+                """,
+                (
+                    invocation_id,
+                    runtime_tool_call_id,
+                    response,
+                    status,
+                    max(0, duration_ms),
+                    persisted_tool_call_id,
+                    job_id,
+                    mcp_call_id,
+                    server_code,
+                    tool_name,
+                    invocation_id,
+                    runtime_tool_call_id,
+                ),
+            )
+            if not rows:
+                raise NonRetryableExecutionError(
+                    "MCP Runtime metadata did not match its server-first Tool Call",
+                    safe_message="MCP 工具调用关联不一致",
+                    error_code="mcp_tool_call_link_mismatch",
+                )
+            return str(rows[0]["id"])
+
+        if server_code is not None or mcp_call_id is not None or persisted_tool_call_id is not None:
+            raise NonRetryableExecutionError(
+                "Non-MCP Runtime Tool Event carried MCP-only identity",
+                safe_message="Runtime 工具来源与关联信息不一致",
+                error_code="runtime_tool_origin_invalid",
+            )
+        tool_call_id = new_id("tool")
         rows = self.database.execute(
             """
-            update mcp_operation_audit
-               set agent_tool_call_id = ?
-             where job_id = ? and tool_identifier = ?
-               and agent_tool_call_id is null
-            returning audit_event_id
+            insert into agent_tool_call
+              (id, job_id, tool_name, request_payload, response_summary, status,
+               duration_ms, risk_level, audit_id, created_at, invocation_id,
+               runtime_tool_call_id, tool_origin, server_code, mcp_call_id,
+               persisted_by)
+            values (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, NULL, NULL, 'worker')
+            on conflict(job_id, invocation_id, runtime_tool_call_id)
+              where invocation_id is not null and runtime_tool_call_id is not null
+            do update set
+              response_summary = excluded.response_summary,
+              status = case
+                when agent_tool_call.status = 'STARTED' then excluded.status
+                else agent_tool_call.status
+              end,
+              duration_ms = case
+                when agent_tool_call.status = 'STARTED' then excluded.duration_ms
+                else agent_tool_call.duration_ms
+              end
+            returning id
             """,
-            (tool_call_id, job_id, tool_name),
-        )
-        audit_id = next(
             (
-                str(row["audit_event_id"])
-                for row in rows
-                if row.get("audit_event_id")
+                tool_call_id,
+                job_id,
+                tool_name,
+                json.dumps(safe_request, ensure_ascii=False),
+                response,
+                status,
+                max(0, duration_ms),
+                risk_level,
+                now_iso(),
+                invocation_id,
+                runtime_tool_call_id,
+                tool_origin,
             ),
-            "",
         )
-        if audit_id:
-            self.database.execute(
-                "update agent_tool_call set audit_id = ? where id = ?",
-                (audit_id, tool_call_id),
-            )
+        return str(rows[0]["id"])
 
     def complete_tool_call(
         self,
@@ -2422,7 +2519,9 @@ class AgentRepository:
         rows = self.database.execute(
             """
             select id, job_id, tool_name, request_payload, response_summary,
-                   status, duration_ms, risk_level, audit_id, created_at
+                   status, duration_ms, risk_level, audit_id, created_at,
+                   invocation_id, runtime_tool_call_id, tool_origin,
+                   server_code, mcp_call_id, persisted_by
             from agent_tool_call
             where job_id = ?
             order by created_at, id
@@ -2940,6 +3039,12 @@ class AgentRepository:
             "duration_ms": int(row["duration_ms"]),
             "risk_level": row["risk_level"],
             "audit_id": row.get("audit_id"),
+            "invocation_id": row.get("invocation_id"),
+            "runtime_tool_call_id": row.get("runtime_tool_call_id"),
+            "tool_origin": row.get("tool_origin") or "unknown",
+            "server_code": row.get("server_code"),
+            "mcp_call_id": row.get("mcp_call_id"),
+            "persisted_by": row.get("persisted_by") or "worker",
             "created_at": row["created_at"],
         }
 

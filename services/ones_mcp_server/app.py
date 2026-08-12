@@ -23,6 +23,7 @@ from starlette.types import Message, Receive, Scope, Send
 from app.bootstrap import Container, build_worker_container
 from app.modules.identity.application.principal_jwt import PrincipalJwks, PrincipalTokenVerifier
 from app.modules.identity.infrastructure.ones_identity_verifier import UrllibOnesIdentityVerifier
+from app.modules.mcp_audit import McpAuditCoordinator, McpAuditHandle
 from app.shared.config import OnesIdentitySettings, load_settings
 from app.shared.exceptions import AppError
 from services.ones_mcp_server.contracts import (
@@ -33,7 +34,6 @@ from services.ones_mcp_server.contracts import (
     validate_provider_target,
 )
 from services.ones_mcp_server.runtime import (
-    McpOperationAuditRepository,
     OnesMcpError,
     OnesPrincipalResolver,
     OnesProviderClient,
@@ -43,7 +43,7 @@ from services.ones_mcp_server.runtime import (
 
 logger = logging.getLogger(__name__)
 MAX_TOOL_RESPONSE_BYTES = 256 * 1024
-REQUIRED_ONES_SCHEMA_VERSION = 104
+REQUIRED_ONES_SCHEMA_VERSION = 105
 
 
 class _StreamableHttpApp:
@@ -181,8 +181,13 @@ def create_ones_server(service: OnesWorkItemSearchService) -> Server:
                 claims=claims,
                 arguments=params.arguments or {},
                 correlation_id=str(request.headers.get("x-correlation-id") or "")[:128],
+                invocation_id=_invocation_id(request),
             )
-            return _tool_result(result, is_error=False)
+            return _tool_result(
+                dict(result),
+                is_error=False,
+                meta=result.audit_handle.result_meta(),
+            )
         except AppError as exc:
             return _tool_result(
                 {
@@ -190,12 +195,14 @@ def create_ones_server(service: OnesWorkItemSearchService) -> Server:
                     "error_code": str(exc.error_code or "ones_mcp_denied"),
                 },
                 is_error=True,
+                meta=_error_meta(exc),
             )
-        except Exception:
+        except Exception as exc:
             logger.exception("ONES MCP call failed safely tool_name=%s", params.name)
             return _tool_result(
                 {"error": "ONES 查询暂时不可用", "error_code": "ones_mcp_unavailable"},
                 is_error=True,
+                meta=_error_meta(exc),
             )
 
     return Server(
@@ -243,6 +250,7 @@ def create_app(
                 raise ValueError("ONES MCP database schema is not current")
             database.execute("select id from external_identity_credential where 1 = 0")
             database.execute("select id from mcp_operation_audit where 1 = 0")
+            service.audit.assert_ready()
             if not 1 <= audit_retention_days <= 3650:
                 raise ValueError("MCP operation audit retention is invalid")
             return JSONResponse(
@@ -337,10 +345,10 @@ def service_from_container(runtime: Container) -> OnesWorkItemSearchService:
         provider,
         UrllibOnesIdentityVerifier(login_settings, environment=settings.environment),
         credentials,
-        McpOperationAuditRepository(
+        McpAuditCoordinator(
             runtime.database,
             max_payload_bytes=settings.ones_mcp.max_response_bytes,
-            platform_audit_service=runtime.audit_service,
+            audit_service=runtime.audit_service,
         ),
     )
 
@@ -416,7 +424,23 @@ def _bearer(request: Request) -> str:
     return token
 
 
-def _tool_result(payload: dict[str, Any], *, is_error: bool) -> types.CallToolResult:
+def _invocation_id(request: Request) -> str:
+    invocation_id = str(request.headers.get("x-invocation-id") or "")
+    if not invocation_id:
+        raise OnesMcpError(
+            "ONES MCP invocation context is missing",
+            safe_message="ONES MCP 请求缺少执行上下文",
+            error_code="ones_mcp_context_missing",
+        )
+    return invocation_id
+
+
+def _tool_result(
+    payload: dict[str, Any],
+    *,
+    is_error: bool,
+    meta: dict[str, str],
+) -> types.CallToolResult:
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     if len(encoded.encode("utf-8")) > MAX_TOOL_RESPONSE_BYTES:
         payload = {"error": "ONES 查询结果超限", "error_code": "ones_mcp_response_too_large"}
@@ -426,7 +450,13 @@ def _tool_result(payload: dict[str, Any], *, is_error: bool) -> types.CallToolRe
         content=[types.TextContent(type="text", text=encoded)],
         structured_content=payload,
         is_error=is_error,
+        meta=meta or None,
     )
+
+
+def _error_meta(exc: Exception) -> dict[str, str]:
+    handle = getattr(exc, "mcp_audit_handle", None)
+    return handle.result_meta() if isinstance(handle, McpAuditHandle) else {}
 
 
 def main() -> None:

@@ -34,8 +34,10 @@ class FailingClaudeClientWithEvents:
             safe_message="Claude timeout",
             tool_events=[
                 {
+                    "tool_call_id": "sdk-tool-retry-1",
+                    "tool_origin": "unknown",
                     "tool_name": "query_database",
-                    "request_payload": {"payload": '{"sql":"select 1"}', "truncated": False},
+                    "request_summary": {"payload": '{"sql":"select 1"}', "truncated": False},
                     "response_summary": {"error": "timeout"},
                     "status": "FAILED",
                     "duration_ms": 7,
@@ -53,8 +55,10 @@ class MaxTurnsClaudeClient:
             error_code="max_turns_exhausted",
             tool_events=[
                 {
+                    "tool_call_id": "sdk-tool-max-turns-1",
+                    "tool_origin": "unknown",
                     "tool_name": "query_database",
-                    "request_payload": {"payload": '{"sql":"select 1"}', "truncated": False},
+                    "request_summary": {"payload": '{"sql":"select 1"}', "truncated": False},
                     "response_summary": {"error": "schema missing"},
                     "status": "FAILED",
                     "duration_ms": 9,
@@ -70,8 +74,10 @@ class ToolEventClaudeClient:
             final_answer="real runtime answer",
             tool_events=[
                 {
+                    "tool_call_id": "sdk-tool-success-1",
+                    "tool_origin": "unknown",
                     "tool_name": "query_loki",
-                    "request_payload": {
+                    "request_summary": {
                         "payload": '{"service":"order-service"}',
                         "truncated": False,
                     },

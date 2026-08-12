@@ -171,7 +171,8 @@ export function createRuntimeRequestHandler(
         sendJson(response, 200, {
           runtime: "typescript-v1",
           runtime_version: "0.1.0",
-          protocol_version: "1.0",
+          protocol_version: "1.1",
+          supported_protocol_versions: ["1.0", "1.1"],
           sdk_version: EXPECTED_SDK_VERSION,
           cli_version: EXPECTED_CLI_VERSION
         });

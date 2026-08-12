@@ -50,7 +50,11 @@ const claudeRuntime = new ClaudeAgentRuntimeExecutor(
   config.onesMcpServerUrl
 );
 const runtimeExecutor = config.fakeProviderMode
-  ? new DeterministicFakeProviderRuntimeExecutor(modelBindings).execute
+  ? new DeterministicFakeProviderRuntimeExecutor(
+      modelBindings,
+      config.mcpServerUrl,
+      config.onesMcpServerUrl
+    ).execute
   : claudeRuntime.execute;
 const terminalLedger = new PostgresTerminalLedger(modelPool, config.ledgerTtlSeconds);
 
@@ -74,7 +78,8 @@ await once(server, "listening");
 logger.log("info", "runtime_started", {
   host: config.host,
   port: config.port,
-  protocol_version: "1.0",
+  protocol_version: "1.1",
+  supported_protocol_versions: ["1.0", "1.1"],
   sdk_version: "0.3.226",
   cli_version: "2.1.226"
 });

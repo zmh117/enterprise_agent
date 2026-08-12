@@ -1,6 +1,8 @@
 -- PostgreSQL-only, post-migration privileges for the TypeScript Agent Runtime.
 -- The Runtime cannot read or write Job, RBAC, audit, Delivery, Publication or
 -- general platform tables. The sole write boundary is its TTL terminal ledger.
+-- In particular it cannot read or mutate server-first agent_tool_call or
+-- mcp_operation_audit correlation facts, which stay inside the MCP/Worker DB boundary.
 
 REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM agent_runtime_reader;
 REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM agent_runtime_reader;

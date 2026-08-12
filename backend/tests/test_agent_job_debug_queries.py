@@ -272,6 +272,52 @@ def test_debug_queries_hide_existing_job_from_unrelated_user(suffix: str) -> Non
     runtime.database.close()
 
 
+def test_job_tool_call_api_projects_exact_runtime_and_mcp_identity() -> None:
+    runtime = _container()
+    creator = _create_user(runtime, "tool-call-projection-user")
+    job_id = _create_debug_job(
+        runtime=runtime,
+        creator_user_id=str(creator["id"]),
+        idempotency_key="tool-call-projection",
+    )
+    tool_call_id = runtime.agent_repository.add_tool_call(
+        job_id=job_id,
+        tool_name="get_er_context",
+        request_payload={"query": "order"},
+        response_summary={"count": 1},
+        status="SUCCEEDED",
+        duration_ms=4,
+        risk_level="low",
+        invocation_id=f"{job_id}.attempt-0",
+        runtime_tool_call_id="sdk-tool-use-projection",
+        tool_origin="mcp",
+        server_code="tool-mcp",
+        mcp_call_id="mcp-call-projection",
+        persisted_by="mcp_server",
+    )
+
+    with TestClient(create_app(_settings(), container_factory=lambda _: runtime)) as client:
+        response = client.get(
+            f"/api/agent/jobs/{job_id}/tool-calls",
+            headers=_headers("tool-call-projection-user"),
+        )
+
+    assert response.status_code == 200
+    tool_calls = response.json()["tool_calls"]
+    assert len(tool_calls) == 1
+    projected = tool_calls[0]
+    assert projected["id"] == tool_call_id
+    assert projected["request_payload"] == {"query": "order"}
+    assert projected["response_summary"] == {"count": 1}
+    assert projected["invocation_id"] == f"{job_id}.attempt-0"
+    assert projected["runtime_tool_call_id"] == "sdk-tool-use-projection"
+    assert projected["tool_origin"] == "mcp"
+    assert projected["server_code"] == "tool-mcp"
+    assert projected["mcp_call_id"] == "mcp-call-projection"
+    assert projected["persisted_by"] == "mcp_server"
+    runtime.database.close()
+
+
 def test_application_operator_can_read_attributed_job() -> None:
     runtime = _container()
     application = _active_application(runtime, "debug-operations-application")

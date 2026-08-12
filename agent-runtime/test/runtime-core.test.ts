@@ -15,10 +15,13 @@ import {
 } from "../src/config.js";
 import { DeterministicFakeProviderRuntimeExecutor } from "../src/fake-provider.js";
 import type {
-  AgentExecutionRequestV1,
+  AgentExecutionRequestV1
+} from "../src/generated/contracts.js";
+import type {
+  AgentExecutionRequest,
   RuntimeEvent,
   RuntimeProvenance
-} from "../src/generated/contracts.js";
+} from "../src/runtime-contracts.js";
 import { RuntimeGrantError, RuntimeGrantVerifier } from "../src/grant.js";
 import {
   InvocationConflictError,
@@ -57,7 +60,7 @@ function request(): AgentExecutionRequestV1 {
   return structuredClone(executionRequestFixture) as AgentExecutionRequestV1;
 }
 
-function provenance(value = request()): RuntimeProvenance {
+function provenance(value: AgentExecutionRequest = request()): RuntimeProvenance {
   return {
     runtime_kind: "typescript-v1",
     runtime_version: "0.1.0",
@@ -192,6 +195,90 @@ test("test-only fake provider validates binding and has deterministic retry sema
   assert.deepEqual(emitted, ["execution_started"]);
   assert.equal(resolutions, 2);
   assert.equal(JSON.stringify([retry, succeeded]).includes("binding-secret"), false);
+});
+
+test("test-only fake provider calls fixed MCP and returns exact service metadata", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: Array<{ url: string; headers: Headers; method: string }> = [];
+  globalThis.fetch = async (input, init) => {
+    requests.push({
+      url: String(input),
+      headers: new Headers(init?.headers),
+      method: String(init?.method ?? "GET")
+    });
+    const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
+    const payload =
+      body.method === "tools/call"
+        ? {
+            jsonrpc: "2.0",
+            id: 2,
+            result: {
+              isError: false,
+              content: [{ type: "text", text: "ok" }],
+              _meta: {
+                "enterprise-agent/mcp-call-id": "mcp-call-fake-ts",
+                "enterprise-agent/agent-tool-call-id": "agent-tool-call-fake-ts"
+              }
+            }
+          }
+        : { jsonrpc: "2.0", id: 1, result: { serverInfo: { name: "test" } } };
+    return new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  };
+  try {
+    const executor = new DeterministicFakeProviderRuntimeExecutor({
+      resolve: async (value) => ({
+        protocol: "anthropic_compatible",
+        baseUrl: "https://api.deepseek.com/anthropic",
+        model: "deepseek-chat",
+        defaultOpusModel: "deepseek-chat",
+        defaultSonnetModel: "deepseek-chat",
+        defaultHaikuModel: "deepseek-chat",
+        subagentModel: "deepseek-chat",
+        effortLevel: "max",
+        connectionRevisionId: value.model_connection.revision_id,
+        configHash: value.model_connection.config_hash,
+        apiKey: "fake-provider-binding-secret"
+      })
+    });
+    const value = structuredClone(request()) as unknown as AgentExecutionRequest;
+    value.protocol_version = "1.1";
+    value.prompt.user_question = "[smoke:mcp:ones-mcp] verify exact metadata";
+    const events: RuntimeEvent["payload"][] = [];
+    const result = await executor.execute(
+      value,
+      {
+        signal: new AbortController().signal,
+        emit: (eventType, payload) => {
+          if (eventType === "tool_event") events.push(payload);
+        }
+      },
+      { principalToken: "test-only-principal-token" }
+    );
+
+    assert.equal(result.status, "SUCCEEDED");
+    assert.equal(requests.length, 2);
+    assert.equal(requests.every((item) => item.url === "http://ones-mcp:9104/mcp"), true);
+    assert.equal(requests.every((item) => item.method === "POST"), true);
+    assert.equal(
+      requests.every(
+        (item) => item.headers.get("authorization") === "Bearer test-only-principal-token"
+      ),
+      true
+    );
+    assert.equal(events.length, 2);
+    assert.equal((events[0] as Record<string, unknown>).status, "STARTED");
+    assert.equal((events[1] as Record<string, unknown>).mcp_call_id, "mcp-call-fake-ts");
+    assert.equal(
+      (events[1] as Record<string, unknown>).persisted_tool_call_id,
+      "agent-tool-call-fake-ts"
+    );
+    assert.equal(JSON.stringify(events).includes("test-only-principal-token"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("structured logger redacts credentials recursively and truncates values", () => {

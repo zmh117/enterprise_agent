@@ -15,6 +15,7 @@ from app.modules.agent.infrastructure.generated_runtime_contracts import validat
 from app.modules.agent.infrastructure.runtime_protocol import (
     RuntimeProtocolError,
     validate_execution_request,
+    validate_runtime_contract,
 )
 from app.shared.config import Settings, load_settings
 from app.shared.database import Database
@@ -84,7 +85,8 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
         return {
             "runtime": PYTHON_RUNTIME_KIND,
             "runtime_version": PYTHON_RUNTIME_VERSION,
-            "protocol_version": PROTOCOL_VERSION,
+            "protocol_version": "1.1",
+            "supported_protocol_versions": "1.0,1.1",
             "sdk_version": runtime.executor.sdk_version,
             "cli_version": runtime.executor.cli_version,
         }
@@ -158,7 +160,7 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
             )
         payload = await request.json()
         try:
-            validate_contract("CancelRequest", payload)
+            validate_runtime_contract("CancelRequest", payload)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="Runtime 取消请求无效") from exc
         if (

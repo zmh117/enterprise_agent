@@ -28,13 +28,13 @@ from app.modules.identity.infrastructure.external_identity_credentials import (
 from app.main import create_app as create_control_plane_app
 from app.modules.job.infrastructure.repositories import now_iso
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
+from app.modules.mcp_audit import McpAuditCoordinator
 from app.shared.exceptions import AppError, NonRetryableExecutionError
 from backend.tests.helpers import container, prepare_debug_application_access
 from ones_mock.mock_ones_api import MockOnesSettings, create_app as create_mock_app
 from services.ones_mcp_server.app import create_app as create_mcp_app
 from services.ones_mcp_server.contracts import validate_provider_target
 from services.ones_mcp_server.runtime import (
-    McpOperationAuditRepository,
     OnesPrincipalResolver,
     OnesMcpError,
     OnesProviderClient,
@@ -195,10 +195,10 @@ def _fixture(*, initial_token: str | None = None) -> dict[str, Any]:
         PrincipalJwks.from_dict(signing_key.public_jwks()),
         audit_service=runtime.audit_service,
     )
-    audit = McpOperationAuditRepository(
+    audit = McpAuditCoordinator(
         runtime.database,
         max_payload_bytes=256 * 1024,
-        platform_audit_service=runtime.audit_service,
+        audit_service=runtime.audit_service,
     )
     login = _MockLoginVerifier()
     provider = OnesProviderClient(
@@ -263,10 +263,11 @@ def test_ones_mcp_mock_query_persists_complete_unmasked_business_audit() -> None
         "select * from mcp_operation_audit where correlation_id = ? order by created_at, id",
         ("ones-query-1",),
     )
-    assert len(rows) == 2
+    assert len(rows) == 3
     provider = next(row for row in rows if row["event_kind"] == "PROVIDER")
     tool = next(row for row in rows if row["event_kind"] == "TOOL")
-    assert json.loads(provider["provider_request_json"])["variables"] == {
+    authorization = next(row for row in rows if row["event_kind"] == "AUTHORIZATION")
+    assert json.loads(provider["business_request_json"])["variables"] == {
         "keyword": "traceability",
         "issue_type": "demand",
         "limit": 10,
@@ -274,37 +275,33 @@ def test_ones_mcp_mock_query_persists_complete_unmasked_business_audit() -> None
         "user_id": fixture["mock"].user_uuid,
     }
     assert (
-        json.loads(provider["provider_response_json"])["data"]["workItems"]["items"][0]["name"]
+        json.loads(provider["business_response_json"])["provider_response"]["data"]
+        ["workItems"]["items"][0]["name"]
         == result["items"][0]["name"]
     )
     assert json.loads(tool["tool_request_json"])["keyword"] == "traceability"
     assert json.loads(tool["tool_response_json"]) == result
     assert provider["provider_email"] == fixture["mock"].email
+    assert authorization["authorization_decision"] == "ALLOW"
     evidence = json.dumps(rows, ensure_ascii=False)
     assert fixture["mock"].password not in evidence
     assert fixture["mock"].token not in evidence
     assert fixture["token"] not in evidence
-    tool_call_id = fixture["runtime"].agent_repository.add_tool_call(
-        job_id=fixture["job"].id,
-        tool_name="ones_work_item_search",
-        request_payload={"keyword": "traceability"},
-        response_summary={"count": 1},
-        status="SUCCEEDED",
-        duration_ms=1,
-        risk_level="low",
+    tool_calls = fixture["runtime"].database.execute(
+        "select * from agent_tool_call where job_id = ?",
+        (fixture["job"].id,),
     )
-    fixture["runtime"].agent_repository.link_mcp_operation_audits(
-        job_id=fixture["job"].id,
-        tool_name="ones_work_item_search",
-        tool_call_id=tool_call_id,
-    )
+    assert len(tool_calls) == 1
+    tool_call_id = tool_calls[0]["id"]
+    assert tool_calls[0]["persisted_by"] == "mcp_server"
     linked = fixture["runtime"].database.execute(
         "select agent_tool_call_id, audit_event_id from mcp_operation_audit "
         "where correlation_id = ?",
         ("ones-query-1",),
     )
     assert {row["agent_tool_call_id"] for row in linked} == {tool_call_id}
-    assert all(row["audit_event_id"] for row in linked)
+    assert {row["mcp_call_id"] for row in rows} == {result.audit_handle.mcp_call_id}
+    assert tool["audit_event_id"]
 
 
 def test_ones_mcp_refreshes_stale_token_once_and_retries_mock_query() -> None:
@@ -332,6 +329,7 @@ def test_ones_mcp_refreshes_stale_token_once_and_retries_mock_query() -> None:
         ("CREDENTIAL", 0, "SUCCEEDED"),
         ("PROVIDER", 1, "SUCCEEDED"),
         ("TOOL", 0, "SUCCEEDED"),
+        ("AUTHORIZATION", 0, "SUCCEEDED"),
     }
 
 
@@ -348,7 +346,11 @@ def test_ones_mcp_v2_stateless_http_requires_bearer_and_supports_both_protocol_e
         "content-type": "application/json",
         "accept": "application/json, text/event-stream",
     }
-    auth_headers = {**base_headers, "authorization": f"Bearer {fixture['token']}"}
+    auth_headers = {
+        **base_headers,
+        "authorization": f"Bearer {fixture['token']}",
+        "x-invocation-id": f"{fixture['job'].id}.attempt-{fixture['job'].retry_count}",
+    }
     modern_meta = {
         "io.modelcontextprotocol/protocolVersion": "2026-07-28",
         "io.modelcontextprotocol/clientInfo": {"name": "runtime-test", "version": "2"},
@@ -797,8 +799,8 @@ def test_mcp_audit_detail_requires_audit_read_and_records_the_read() -> None:
     )
     runtime = fixture["runtime"]
     audit_row = runtime.database.execute_one(
-        "select id from mcp_operation_audit where correlation_id = ? "
-        "order by created_at, id limit 1",
+            "select id from mcp_operation_audit where correlation_id = ? "
+            "and event_kind = 'PROVIDER' order by created_at, id limit 1",
         ("ones-audit-read",),
     )
     assert audit_row is not None
@@ -822,6 +824,17 @@ def test_mcp_audit_detail_requires_audit_read_and_records_the_read() -> None:
             f"/api/admin/mcp-operation-audits/{audit_row['id']}",
             headers={"x-admin-user-id": "admin"},
         )
+        filtered = client.get(
+            "/api/admin/mcp-operation-audits",
+            params={
+                "job_id": fixture["job"].id,
+                "server_code": "ones-mcp",
+                "tool_identifier": "ones_work_item_search",
+                "event_kind": "PROVIDER",
+                "status": "SUCCEEDED",
+            },
+            headers={"x-admin-user-id": "admin"},
+        )
         read_audit = runtime.database.execute_one(
             "select actor_id from audit_event where event_type = 'mcp.audit.read' "
             "order by created_at desc limit 1"
@@ -833,6 +846,9 @@ def test_mcp_audit_detail_requires_audit_read_and_records_the_read() -> None:
         "traceability"
     )
     assert read_audit == {"actor_id": "user_local_admin"}
+    assert filtered.status_code == 200
+    assert len(filtered.json()["events"]) == 1
+    assert filtered.json()["events"][0]["id"] == audit_row["id"]
 
 
 def test_ones_mcp_fails_closed_when_required_business_audit_cannot_commit(
@@ -847,7 +863,7 @@ def test_ones_mcp_fails_closed_when_required_business_audit_cannot_commit(
             error_code="mcp_audit_unavailable",
         )
 
-    monkeypatch.setattr(fixture["service"].audit, "record", reject_audit)
+    monkeypatch.setattr(fixture["service"].audit, "begin", reject_audit)
 
     with pytest.raises(AppError) as raised:
         fixture["service"].search(
@@ -873,10 +889,10 @@ def test_mcp_audit_failure_rolls_back_platform_audit_and_logs_only_error_type(
         return original_execute(sql, params)
 
     before = database.execute_one(
-        "select count(*) as count from audit_event where event_type = 'mcp.operation'"
+        "select count(*) as count from audit_event where event_type = 'mcp.operation.started'"
     )
     assert before is not None
-    caplog.set_level("ERROR", logger="services.ones_mcp_server.runtime")
+    caplog.set_level("ERROR", logger="app.modules.mcp_audit.application")
     monkeypatch.setattr(database, "execute", fail_mcp_detail)
 
     with pytest.raises(AppError) as raised:
@@ -888,7 +904,7 @@ def test_mcp_audit_failure_rolls_back_platform_audit_and_logs_only_error_type(
 
     monkeypatch.setattr(database, "execute", original_execute)
     after = database.execute_one(
-        "select count(*) as count from audit_event where event_type = 'mcp.operation'"
+        "select count(*) as count from audit_event where event_type = 'mcp.operation.started'"
     )
     assert raised.value.error_code == "mcp_audit_unavailable"
     assert after == before
@@ -921,7 +937,7 @@ def test_ones_mcp_rejects_provider_auth_fields_before_business_audit() -> None:
             correlation_id="ones-query-secret-field",
         )
 
-    assert raised.value.error_code == "ones_provider_secret_violation"
+    assert raised.value.error_code == "mcp_audit_auth_material_forbidden"
     rows = fixture["runtime"].database.execute(
         "select provider_response_json from mcp_operation_audit where correlation_id = ?",
         ("ones-query-secret-field",),
@@ -945,7 +961,7 @@ def test_mcp_audit_retention_deletes_business_payload_and_invalid_config_is_unre
 
     deleted = fixture["service"].audit.purge_expired(retention_days=30)
 
-    assert deleted == 2
+    assert deleted == 1
     app = create_mcp_app(
         fixture["service"],
         database=fixture["runtime"].database,
@@ -960,7 +976,7 @@ def test_mcp_audit_retention_deletes_business_payload_and_invalid_config_is_unre
 
 def test_ones_mcp_readiness_requires_the_credential_and_audit_schema() -> None:
     fixture = _fixture()
-    fixture["runtime"].database.execute("delete from schema_migration where version = '104'")
+    fixture["runtime"].database.execute("delete from schema_migration where version = '105'")
     app = create_mcp_app(
         fixture["service"],
         database=fixture["runtime"].database,

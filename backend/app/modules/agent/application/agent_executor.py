@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import threading
 from collections.abc import Callable
 
@@ -266,44 +265,60 @@ class AgentExecutor:
         )
 
     def _persist_tool_events(self, job_id: str, tool_events: list[dict[str, object]]) -> None:
-        existing = {
-            _event_key(
-                {
-                    "tool_name": row["tool_name"],
-                    "request_payload": row["request_payload"],
-                    "response_summary": row["response_summary"],
-                    "status": row["status"],
-                }
-            )
-            for row in self.repository.list_tool_calls(job_id)
-        }
+        job = self.repository.get_job(job_id)
+        expected_invocation_id = f"{job.id}.attempt-{job.retry_count}"
+        published: set[tuple[str, str]] = set()
+        if self.mcp_tool_snapshot_service is not None:
+            verified = self.mcp_tool_snapshot_service.verify(job_id)
+            published = {
+                (str(item.get("server_code") or ""), str(item.get("tool_identifier") or ""))
+                for item in verified["snapshot"].get("tools") or []
+                if isinstance(item, dict)
+            }
         for event in tool_events:
-            if event.get("persisted_tool_call_id"):
+            invocation_id = str(event.get("invocation_id") or expected_invocation_id)
+            runtime_tool_call_id = str(event.get("tool_call_id") or "")
+            if not invocation_id or not runtime_tool_call_id:
                 continue
-            key = _event_key(event)
-            if key in existing:
-                continue
-            existing.add(key)
             tool_name = str(event.get("tool_name", "unknown"))
+            declared_origin = str(event.get("tool_origin") or "")
+            declared_server = str(event.get("server_code") or "")
+            if declared_origin in {"mcp", "sdk_builtin", "sdk_custom", "unknown"}:
+                tool_origin = declared_origin
+            elif (declared_server, tool_name) in published:
+                tool_origin = "mcp"
+            else:
+                tool_origin = "unknown"
+            server_code = declared_server if tool_origin == "mcp" else None
+            if tool_origin == "mcp" and (server_code, tool_name) not in published:
+                tool_origin = "unknown"
+                server_code = None
             duration = _int_value(event.get("duration_ms"))
-            audit_id_value = event.get("audit_id")
-            audit_id = audit_id_value if isinstance(audit_id_value, str) else None
-            tool_call_id = self.repository.add_tool_call(
+            response = _dict_value(event.get("response_summary"))
+            failure = event.get("failure")
+            if isinstance(failure, dict):
+                response = {**response, "failure": failure}
+            self.repository.upsert_runtime_tool_call(
                 job_id=job_id,
+                invocation_id=invocation_id,
+                runtime_tool_call_id=runtime_tool_call_id,
+                tool_origin=tool_origin,
+                server_code=server_code,
                 tool_name=tool_name,
-                request_payload=_dict_value(event.get("request_payload")),
-                response_summary=_dict_value(event.get("response_summary")),
+                request_payload=_dict_value(event.get("request_summary")),
+                response_summary=response,
                 status=str(event.get("status", "SUCCEEDED")),
                 duration_ms=duration,
                 risk_level=str(event.get("risk_level", "medium")),
-                audit_id=audit_id,
+                mcp_call_id=(
+                    str(event.get("mcp_call_id")) if event.get("mcp_call_id") else None
+                ),
+                persisted_tool_call_id=(
+                    str(event.get("persisted_tool_call_id"))
+                    if event.get("persisted_tool_call_id")
+                    else None
+                ),
             )
-            if str(event.get("server_code") or "") == "ones-mcp":
-                self.repository.link_mcp_operation_audits(
-                    job_id=job_id,
-                    tool_name=tool_name,
-                    tool_call_id=tool_call_id,
-                )
 
 
 def _dict_value(value: object) -> dict[str, object]:
@@ -316,20 +331,6 @@ def _int_value(value: object) -> int:
     if isinstance(value, str) and value.isdigit():
         return int(value)
     return 0
-
-
-def _event_key(event: dict[str, object]) -> str:
-    return json.dumps(
-        {
-            "tool_name": event.get("tool_name"),
-            "request_payload": event.get("request_payload"),
-            "response_summary": event.get("response_summary"),
-            "status": event.get("status"),
-        },
-        sort_keys=True,
-        ensure_ascii=False,
-        default=str,
-    )
 
 
 def _business_application_context(job: object) -> dict[str, str]:

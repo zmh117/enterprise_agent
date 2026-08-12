@@ -6,22 +6,20 @@ import type {
   SDKMessage
 } from "@anthropic-ai/claude-agent-sdk";
 
-import executionRequestFixture from "../contracts/v1/golden/execution-request.json" with { type: "json" };
+import executionRequestFixture from "../contracts/v1.1/golden/execution-request.json" with { type: "json" };
 import {
   ClaudeAgentRuntimeExecutor,
   isolatedSdkEnvironment,
   type ClaudeQuery,
   type InvocationWorkspaceFactory
 } from "../src/claude-runtime.js";
-import type {
-  AgentExecutionRequestV1,
-  RuntimeEvent
-} from "../src/generated/contracts.js";
+import type { AgentExecutionRequestV11 } from "../src/generated/contracts-v1_1.js";
+import type { RuntimeEvent } from "../src/runtime-contracts.js";
 import type { ExecutionEmitter } from "../src/invocation-registry.js";
 import type { ResolvedModelBinding } from "../src/model-binding.js";
 
-function request(): AgentExecutionRequestV1 {
-  const value = structuredClone(executionRequestFixture) as AgentExecutionRequestV1;
+function request(): AgentExecutionRequestV11 {
+  const value = structuredClone(executionRequestFixture) as AgentExecutionRequestV11;
   value.mcp_servers[0]!.server_code = "tool-mcp";
   return value;
 }
@@ -174,7 +172,7 @@ test("query adapter uses isolated settings and gates every MCP call through canU
 });
 
 test("ONES MCP receives the invocation-only Principal Token and tool-mcp never does", async () => {
-  const value = structuredClone(executionRequestFixture) as AgentExecutionRequestV1;
+  const value = structuredClone(executionRequestFixture) as AgentExecutionRequestV11;
   let captured: Options | undefined;
   const runtime = new ClaudeAgentRuntimeExecutor(
     { resolve: async () => binding() },
@@ -361,12 +359,76 @@ test("forged subject/resource/header inputs and built-in tools fail closed", asy
     ).length,
     2
   );
+  const denied = emitted.events
+    .filter((event) => event.eventType === "tool_event")
+    .map((event) => event.payload as any);
+  assert.equal(denied.find((event) => event.tool_call_id === "forged-tool-call")?.tool_origin, "mcp");
+  assert.equal(
+    denied.find((event) => event.tool_call_id === "builtin-tool-call")?.tool_origin,
+    "sdk_builtin"
+  );
+  assert.equal(
+    denied.find((event) => event.tool_call_id === "builtin-tool-call")?.server_code,
+    null
+  );
+});
+
+test("terminal MCP event extracts exact service-side ids from SDK tool_use_result metadata", async () => {
+  const value = request();
+  const runtime = new ClaudeAgentRuntimeExecutor(
+    { resolve: async () => binding() },
+    queryFrom(async function* (options) {
+      await options.canUseTool?.(
+        "mcp__tools__ones_work_item_search",
+        {},
+        {
+          signal: new AbortController().signal,
+          toolUseID: "tool-use-meta",
+          requestId: "permission-meta"
+        }
+      );
+      yield {
+        type: "user",
+        parent_tool_use_id: null,
+        tool_use_result: {
+          content: { business: "result" },
+          _meta: {
+            "enterprise-agent/mcp-call-id": "mcp-call-meta",
+            "enterprise-agent/agent-tool-call-id": "agent-tool-call-meta"
+          }
+        },
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tool-use-meta",
+              content: { business: "result" }
+            }
+          ]
+        }
+      } as unknown as SDKMessage;
+      yield successResult();
+    }),
+    workspace()
+  );
+  const emitted = emitter();
+
+  await runtime.execute(value, emitted.value);
+
+  const completed = emitted.events
+    .filter((event) => event.eventType === "tool_event")
+    .map((event) => event.payload as any)
+    .find((event) => event.status === "SUCCEEDED");
+  assert.equal(completed?.tool_call_id, "tool-use-meta");
+  assert.equal(completed?.mcp_call_id, "mcp-call-meta");
+  assert.equal(completed?.persisted_tool_call_id, "agent-tool-call-meta");
 });
 
 test("runtime classifies max turns, contradictory success, model failures and timeout", async () => {
   const cases: Array<{
     name: string;
-    mutate?: (value: AgentExecutionRequestV1) => void;
+    mutate?: (value: AgentExecutionRequestV11) => void;
     query: ClaudeQuery;
     code: string;
   }> = [

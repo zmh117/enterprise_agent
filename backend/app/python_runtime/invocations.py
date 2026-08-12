@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
-from app.modules.agent.infrastructure.generated_runtime_contracts import validate_contract
+from app.modules.agent.infrastructure.runtime_protocol import validate_runtime_contract
 from app.shared.database import Database
 
 from .sdk_executor import PythonExecutionOutcome
@@ -88,7 +88,7 @@ class PythonTerminalLedger:
                 raise ValueError("empty terminal ledger")
             events = tuple(dict(item) for item in raw_events)
             for event in events:
-                validate_contract("RuntimeEvent", event)
+                validate_runtime_contract("RuntimeEvent", event)
             if events[-1]["event_type"] != "terminal":
                 raise ValueError("terminal event missing")
         except (TypeError, ValueError) as exc:
@@ -148,7 +148,7 @@ class PythonTerminalLedger:
         try:
             for index, row in enumerate(rows, start=1):
                 event = json.loads(str(row["event_json"]))
-                validate_contract("RuntimeEvent", event)
+                validate_runtime_contract("RuntimeEvent", event)
                 if (
                     row["request_digest"] != request["request_digest"]
                     or int(row["sequence"]) != index
@@ -171,7 +171,7 @@ class PythonTerminalLedger:
         )
 
     def append(self, request: dict[str, Any], event: dict[str, Any]) -> None:
-        validate_contract("RuntimeEvent", event)
+        validate_runtime_contract("RuntimeEvent", event)
         if (
             event["event_type"] == "terminal"
             or event["invocation_id"] != request["invocation_id"]
@@ -216,7 +216,7 @@ class PythonTerminalLedger:
         if not events or events[-1]["event_type"] != "terminal":
             raise TerminalLedgerConflictError("Terminal event missing")
         for event in events:
-            validate_contract("RuntimeEvent", event)
+            validate_runtime_contract("RuntimeEvent", event)
         now = datetime.now(UTC)
         encoded = json.dumps(events, ensure_ascii=False, separators=(",", ":"))
         self.database.execute(
@@ -293,7 +293,7 @@ class RuntimeInvocation:
                 raise InvocationConflictError("Invocation already reached terminal")
             sequence = len(self._events) + 1
             event = {
-                "protocol_version": "1.0",
+                "protocol_version": self.request["protocol_version"],
                 "invocation_id": self.request["invocation_id"],
                 "request_digest": self.request["request_digest"],
                 "sequence": sequence,
@@ -301,7 +301,7 @@ class RuntimeInvocation:
                 "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
                 "payload": payload,
             }
-            validate_contract("RuntimeEvent", event)
+            validate_runtime_contract("RuntimeEvent", event)
             return event
 
     def commit_event(self, event: dict[str, Any]) -> None:
@@ -412,7 +412,7 @@ class PythonInvocationRegistry:
     def _fail_orphaned(self, invocation: RuntimeInvocation) -> None:
         request = invocation.request
         terminal = {
-            "protocol_version": "1.0",
+            "protocol_version": request["protocol_version"],
             "invocation_id": request["invocation_id"],
             "request_digest": request["request_digest"],
             "last_sequence": 1,
@@ -457,7 +457,7 @@ class PythonInvocationRegistry:
             self._persist_and_emit(invocation, "tool_event", dict(tool_event))
         last_sequence = len(invocation.events()) + 1
         terminal = {
-            "protocol_version": "1.0",
+            "protocol_version": request["protocol_version"],
             "invocation_id": request["invocation_id"],
             "request_digest": request["request_digest"],
             "last_sequence": last_sequence,
@@ -492,7 +492,7 @@ def _fallback_provenance(request: dict[str, Any]) -> dict[str, Any]:
     return {
         "runtime_kind": "python-v1",
         "runtime_version": "0.1.0",
-        "protocol_version": "1.0",
+        "protocol_version": request["protocol_version"],
         "sdk_version": "0.2.134",
         "cli_version": "2.1.226",
         "model_connection_revision_id": request["model_connection"]["revision_id"],

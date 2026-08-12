@@ -18,6 +18,7 @@ FORWARDED_HEADERS: Final = frozenset(
         "authorization",
         "content-type",
         "x-correlation-id",
+        "x-mcp-principal-token",
     }
 )
 

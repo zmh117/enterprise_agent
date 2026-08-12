@@ -12,7 +12,7 @@ services:
     ports: !reset []
     environment:
       APP_ENV: testing
-      SEED_LOCAL_CONFIG: "true"
+      SEED_LOCAL_CONFIG: "false"
 
   agent-worker:
     environment:
@@ -129,6 +129,9 @@ services:
       DUAL_RUNTIME_ACCEPTANCE_PHASE: ${DUAL_RUNTIME_ACCEPTANCE_PHASE:-}
       DUAL_RUNTIME_ACCEPTANCE_JOB_ID: ${DUAL_RUNTIME_ACCEPTANCE_JOB_ID:-}
       DUAL_RUNTIME_ACCEPTANCE_EXPECTED_STATUS: ${DUAL_RUNTIME_ACCEPTANCE_EXPECTED_STATUS:-}
+      ONES_MOCK_ACCEPTANCE_CONFIG: /run/acceptance/ones-mock.yaml
+    volumes:
+      - ./ones_mock/mock.yaml:/run/acceptance/ones-mock.yaml:ro
     secrets:
       - app_config_master_key
     depends_on:

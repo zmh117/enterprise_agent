@@ -81,7 +81,7 @@ def test_job_freezes_runtime_from_exact_agent_publication() -> None:
     assert job.agent_definition_id == "agent_typescript_diagnostic"
     assert job.agent_publication_id == publication["id"]
     assert job.agent_runtime_kind == "typescript-v1"
-    assert job.agent_runtime_protocol_version == "1.0"
+    assert job.agent_runtime_protocol_version == "1.1"
 
 
 def test_publication_runtime_must_match_definition() -> None:

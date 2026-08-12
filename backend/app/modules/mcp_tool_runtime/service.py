@@ -90,10 +90,12 @@ class ReadOnlyToolService:
         tool_name: str,
         arguments: dict[str, Any],
         record_tool_call: bool = True,
+        persisted_tool_call_id: str = "",
     ) -> ToolResult:
         started = time.monotonic()
         audit_id: str | None = None
-        persisted_tool_call_id = ""
+        managed_tool_call_id = ""
+        authorization_reached = False
         try:
             job = self.repository.get_job(job_id)
             expected_user_id = job.internal_user_id or job.requester_id
@@ -158,6 +160,7 @@ class ReadOnlyToolService:
                     tool_identifier=tool_name,
                     project_code=project_code,
                 )
+            authorization_reached = True
             self._assert_tool_policy(tool_name, arguments)
             audit_id = self.audit_service.record(
                 "tool.call.allowed",
@@ -167,40 +170,45 @@ class ReadOnlyToolService:
                 actor_id=user_id,
                 payload={"tool": tool_name, "arguments": arguments},
             )
-            persisted_tool_call_id = self.repository.add_tool_call(
-                job_id=job_id,
-                tool_name=tool_name,
-                request_payload=bounded_summary(
-                    arguments,
-                    self.limits.max_tool_response_chars,
-                ),
-                response_summary={"status": "STARTED"},
-                status="STARTED",
-                duration_ms=0,
-                risk_level=_risk_level(tool_name),
-                audit_id=audit_id,
-            )
+            if record_tool_call:
+                managed_tool_call_id = self.repository.add_tool_call(
+                    job_id=job_id,
+                    tool_name=tool_name,
+                    request_payload=bounded_summary(
+                        arguments,
+                        self.limits.max_tool_response_chars,
+                    ),
+                    response_summary={"status": "STARTED"},
+                    status="STARTED",
+                    duration_ms=0,
+                    risk_level=_risk_level(tool_name),
+                    audit_id=audit_id,
+                )
+            effective_tool_call_id = managed_tool_call_id or persisted_tool_call_id
             result = self._execute(
                 tool_name,
                 {**arguments, **scope},
                 job_id=job_id,
                 user_id=user_id,
                 project_code=project_code,
-                tool_call_id=persisted_tool_call_id,
+                tool_call_id=effective_tool_call_id,
             )
-            self.repository.complete_tool_call(
-                persisted_tool_call_id,
-                response_summary=bounded_summary(
-                    _storage_summary(result),
-                    self.limits.max_tool_response_chars,
-                ),
-                status="SUCCEEDED",
-                duration_ms=int((time.monotonic() - started) * 1000),
-            )
-            result.metadata.setdefault(
-                "_persisted_tool_call_id",
-                persisted_tool_call_id,
-            )
+            if managed_tool_call_id:
+                self.repository.complete_tool_call(
+                    managed_tool_call_id,
+                    response_summary=bounded_summary(
+                        _storage_summary(result),
+                        self.limits.max_tool_response_chars,
+                    ),
+                    status="SUCCEEDED",
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                )
+            if effective_tool_call_id:
+                result.metadata.setdefault(
+                    "_persisted_tool_call_id",
+                    effective_tool_call_id,
+                )
+            result.metadata.setdefault("_authorization_decision", "ALLOW")
             return result
         except Exception as exc:
             audit_id = self.audit_service.record(
@@ -211,9 +219,10 @@ class ReadOnlyToolService:
                 actor_id=user_id,
                 payload={"tool": tool_name, "arguments": arguments},
             )
-            if persisted_tool_call_id:
+            setattr(exc, "tool_authorization_reached", authorization_reached)
+            if managed_tool_call_id:
                 self.repository.complete_tool_call(
-                    persisted_tool_call_id,
+                    managed_tool_call_id,
                     response_summary={
                         "error": getattr(
                             exc,
@@ -227,7 +236,7 @@ class ReadOnlyToolService:
                 setattr(
                     exc,
                     "persisted_tool_call_id",
-                    persisted_tool_call_id,
+                    managed_tool_call_id,
                 )
             elif record_tool_call:
                 self.repository.add_tool_call(

@@ -127,6 +127,7 @@ class RealClaudeCodeAgentClient:
         prompt = request.context.user_question
         assistant_texts: list[str] = []
         parsed_tool_events: list[dict[str, Any]] = []
+        parsed_tool_calls: dict[str, dict[str, Any]] = {}
         final_answer = ""
 
         async def consume() -> None:
@@ -152,7 +153,9 @@ class RealClaudeCodeAgentClient:
                         ),
                     )
                 assistant_texts.extend(_extract_text_blocks(message))
-                parsed_tool_events.extend(_extract_tool_events(message, self.limits))
+                parsed_tool_events.extend(
+                    _extract_tool_events(message, self.limits, parsed_tool_calls)
+                )
                 result_text = _extract_result_text(message)
                 if result_text:
                     final_answer = result_text
@@ -530,18 +533,42 @@ def _extract_result_text(message: Any) -> str:
     return ""
 
 
-def _extract_tool_events(message: Any, limits: ExecutionSettings) -> list[dict[str, Any]]:
+def _extract_tool_events(
+    message: Any,
+    limits: ExecutionSettings,
+    calls: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    call_index = calls if calls is not None else {}
     events = []
+    metadata = _platform_tool_metadata(message)
     for block in _content_blocks(message):
         block_type = _value(block, "type")
         if block_type not in {"tool_use", "tool_result"}:
             continue
-        tool_name = str(_value(block, "name") or _value(block, "tool_name") or "unknown")
-        status = "SUCCEEDED" if block_type == "tool_result" else "STARTED"
-        request_payload = _value(block, "input") or {}
+        tool_call_id = str(
+            _value(block, "id") or _value(block, "tool_use_id") or ""
+        )
+        if not tool_call_id:
+            continue
+        if block_type == "tool_use":
+            tool_name = str(
+                _value(block, "name") or _value(block, "tool_name") or "unknown_tool"
+            )
+            request_payload = _value(block, "input") or {}
+            call_index[tool_call_id] = {
+                "tool_name": tool_name,
+                "request_payload": request_payload,
+            }
+            status = "STARTED"
+        else:
+            started = call_index.pop(tool_call_id, {})
+            tool_name = str(started.get("tool_name") or "unknown_tool")
+            request_payload = started.get("request_payload") or {}
+            status = "FAILED" if _value(block, "is_error") is True else "SUCCEEDED"
         response = _value(block, "content") or _value(block, "result") or {}
         events.append(
             {
+                "tool_call_id": tool_call_id,
                 "tool_name": tool_name,
                 "request_payload": _bounded_payload(
                     request_payload, limits.max_tool_response_chars
@@ -550,9 +577,36 @@ def _extract_tool_events(message: Any, limits: ExecutionSettings) -> list[dict[s
                 "status": status,
                 "duration_ms": 0,
                 "risk_level": _risk_level(tool_name),
+                "mcp_call_id": metadata["mcp_call_id"],
+                "persisted_tool_call_id": metadata["persisted_tool_call_id"],
             }
         )
     return events
+
+
+def _platform_tool_metadata(message: Any) -> dict[str, str | None]:
+    result = _value(message, "tool_use_result")
+    if not isinstance(result, dict):
+        return {"mcp_call_id": None, "persisted_tool_call_id": None}
+    metadata = result.get("_meta")
+    if not isinstance(metadata, dict):
+        return {"mcp_call_id": None, "persisted_tool_call_id": None}
+    return {
+        "mcp_call_id": _identifier_or_none(
+            metadata.get("enterprise-agent/mcp-call-id")
+        ),
+        "persisted_tool_call_id": _identifier_or_none(
+            metadata.get("enterprise-agent/agent-tool-call-id")
+        ),
+    }
+
+
+def _identifier_or_none(value: Any) -> str | None:
+    if not isinstance(value, str) or not 1 <= len(value) <= 128:
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]*", value):
+        return None
+    return value
 
 
 def _content_blocks(message: Any) -> list[Any]:
