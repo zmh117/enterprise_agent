@@ -2,17 +2,13 @@ import { spawnSync } from "node:child_process";
 import { access, readFile, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import pg from "pg";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = resolve(root, "..");
 const expected = {
-  runtime: "0.1.0",
-  protocol: "1.0",
-  sdk: "0.3.226",
-  cli: "2.1.226",
   nodeMajor: 22,
 };
 const staticOnly = process.argv.includes("--static");
@@ -30,30 +26,69 @@ async function json(path) {
 async function checkStaticContract() {
   const packageJson = await json(resolve(root, "package.json"));
   const lock = await json(resolve(root, "package-lock.json"));
-  const schema = await json(resolve(root, "contracts/v1/protocol.schema.json"));
+  const runtimeContracts = await import(
+    pathToFileURL(resolve(root, "dist/src/runtime-contracts.js")).href
+  );
+  const runtimeConfig = await import(
+    pathToFileURL(resolve(root, "dist/src/config.js")).href
+  );
   const sdkPackage = await json(
     resolve(root, "node_modules/@anthropic-ai/claude-agent-sdk/package.json")
   );
+  const sdkVersion = packageJson.dependencies?.["@anthropic-ai/claude-agent-sdk"];
   const lockedSdk =
     lock.packages?.["node_modules/@anthropic-ai/claude-agent-sdk"]?.version;
+  const supportedProtocols = runtimeContracts.SUPPORTED_PROTOCOL_VERSIONS;
+  const currentProtocol = runtimeContracts.CURRENT_PROTOCOL_VERSION;
+  Object.assign(expected, {
+    runtime: packageJson.version,
+    protocol: currentProtocol,
+    supportedProtocols,
+    sdk: sdkVersion,
+    cli: runtimeConfig.EXPECTED_CLI_VERSION,
+  });
   if (Number(process.versions.node.split(".")[0]) !== expected.nodeMajor) {
     fail("preflight_node_version_mismatch", `Node ${expected.nodeMajor} is required`);
   }
   if (
-    packageJson.version !== expected.runtime ||
-    packageJson.dependencies?.["@anthropic-ai/claude-agent-sdk"] !== expected.sdk ||
+    typeof packageJson.version !== "string" ||
+    lock.version !== packageJson.version ||
+    lock.packages?.[""]?.version !== packageJson.version ||
+    typeof sdkVersion !== "string" ||
+    !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(sdkVersion) ||
     sdkPackage.version !== expected.sdk ||
     lockedSdk !== expected.sdk
   ) {
     fail("preflight_sdk_version_mismatch", "Runtime or SDK version is not exactly pinned");
   }
-  const schemaText = JSON.stringify(schema);
-  const runtimeKinds = schema.$defs?.RuntimeKind?.enum;
-  if (!schemaText.includes(`"const":"${expected.protocol}"`) ||
+  if (
+    !Array.isArray(supportedProtocols) ||
+    supportedProtocols.length === 0 ||
+    supportedProtocols.at(-1) !== currentProtocol
+  ) {
+    fail("preflight_contract_version_mismatch", "Protocol schema version constants do not match");
+  }
+  for (const protocol of supportedProtocols) {
+    const directory = protocol === "1.0" ? "v1" : `v${protocol}`;
+    const schema = await json(
+      resolve(root, "dist", "contracts", directory, "protocol.schema.json")
+    );
+    const limits = await json(
+      resolve(root, "dist", "contracts", directory, "limits.json")
+    );
+    const schemaText = JSON.stringify(schema);
+    const runtimeKinds = schema.$defs?.RuntimeKind?.enum;
+    if (
+      !schemaText.includes(`"const":"${protocol}"`) ||
       !Array.isArray(runtimeKinds) ||
       !runtimeKinds.includes("python-v1") ||
-      !runtimeKinds.includes("typescript-v1")) {
-    fail("preflight_contract_version_mismatch", "Protocol schema version constants do not match");
+      !runtimeKinds.includes("typescript-v1") ||
+      limits.protocol_version !== protocol ||
+      !Number.isInteger(limits.max_request_bytes) ||
+      !Number.isInteger(limits.max_event_line_bytes)
+    ) {
+      fail("preflight_contract_version_mismatch", "Protocol schema version constants do not match");
+    }
   }
   if (staticOnly) {
     const compose = await readFile(resolve(repositoryRoot, "docker-compose.yml"), "utf8");

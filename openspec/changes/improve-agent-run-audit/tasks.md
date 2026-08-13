@@ -69,3 +69,5 @@
 - 2026-08-12：当前代码已完成 Runtime v1.2 白名单投影、migration `106`、Worker 幂等汇总、安全查询 API 和运行中心页面；未向 `agent_job` 添加统计列，也未引入 OpenTelemetry、Collector、Tempo 或 audit-ingestor。
 - 2026-08-12：本地验证包括 agent-runtime 41/41、frontend 101/101、backend 807 通过（29 跳过、2 subtests 通过）和独立 PostgreSQL 18 migration/约束集成 17/17；临时 PostgreSQL 容器已移除，现有 Compose 数据库未迁移、未修改。
 - 2026-08-12：任务 8.1–8.4 仍未执行；当前实现状态不能替代测试环境 expand migration、RabbitMQ/Worker/Delivery 全链路、页面现场验收和回滚演练证据。
+- 2026-08-13：修复 Python Runtime 镜像遗漏 v1.2 生成合同的发布阻断；生产镜像现在自动复制全部 `generated_runtime_contracts*.py` 并在构建时导入 `runtime_protocol`，TypeScript 镜像也在构建时导入合同与协议模块。同步为 TypeScript/Python Runtime 建立各自单一来源的受支持协议账本，增加逐版本 schema/limits 预检，修正 v1.2 limits 版本标识，并在 CI 中增加 Runtime 源码门禁与双生产镜像构建。
+- 2026-08-13：两套生产镜像已在无网络、只读文件系统下完成导入/静态预检，并仅重建双 Runtime 容器；Python/TypeScript `/ready` 均为 200，Compose 依赖服务恢复运行。尚未执行测试 Publication 的真实 Job、页面追溯和回滚演练，因此任务 8.1–8.4 继续保持未勾选。

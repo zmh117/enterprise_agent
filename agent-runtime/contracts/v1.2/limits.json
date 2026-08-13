@@ -1,5 +1,5 @@
 {
-  "protocol_version": "1.1",
+  "protocol_version": "1.2",
   "max_request_bytes": 524288,
   "max_event_line_bytes": 65536,
   "max_stream_bytes": 2097152,

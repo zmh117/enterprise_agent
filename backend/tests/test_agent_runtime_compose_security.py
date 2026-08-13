@@ -138,12 +138,23 @@ def test_worker_image_has_no_claude_sdk_or_cli_layer() -> None:
     assert "modules/job" not in python_runtime_section
     assert "modules/delivery" not in python_runtime_section
     assert "modules/message_bus" not in python_runtime_section
+    assert "generated_runtime_contracts*.py" in python_runtime_section
+    assert "import app.modules.agent.infrastructure.runtime_protocol" in python_runtime_section
 
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     base_dependencies = pyproject.split("[project.optional-dependencies]", 1)[0]
     assert "claude-agent-sdk" not in base_dependencies
     assert '"mcp' not in base_dependencies
     assert '"claude-agent-sdk==0.2.134"' in pyproject
+
+
+def test_ci_builds_and_checks_both_production_runtime_images() -> None:
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+    assert "agent-runtime:" in workflow
+    assert "npm run preflight:static" in workflow
+    assert "runtime-images:" in workflow
+    assert "docker compose build typescript-agent-runtime python-agent-runtime" in workflow
 
 
 def test_runtime_migrator_applies_and_verifies_service_grants_after_schema() -> None:

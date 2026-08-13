@@ -27,6 +27,9 @@ import {
 } from "./config.js";
 import {
   assertRuntimeContract,
+  CURRENT_PROTOCOL_VERSION,
+  isRuntimeProtocolVersion,
+  SUPPORTED_PROTOCOL_VERSIONS,
   type RuntimeProtocolVersion
 } from "./runtime-contracts.js";
 
@@ -178,8 +181,8 @@ export function createRuntimeRequestHandler(
         sendJson(response, 200, {
           runtime: "typescript-v1",
           runtime_version: "0.1.0",
-          protocol_version: "1.2",
-          supported_protocol_versions: ["1.0", "1.1", "1.2"],
+          protocol_version: CURRENT_PROTOCOL_VERSION,
+          supported_protocol_versions: SUPPORTED_PROTOCOL_VERSIONS,
           sdk_version: EXPECTED_SDK_VERSION,
           cli_version: EXPECTED_CLI_VERSION
         });
@@ -284,7 +287,7 @@ export function createRuntimeRequestHandler(
         }
         const payload = await readJsonBody(request);
         const cancelVersion = (payload as { protocol_version?: unknown }).protocol_version;
-        if (cancelVersion !== "1.0" && cancelVersion !== "1.1" && cancelVersion !== "1.2") {
+        if (!isRuntimeProtocolVersion(cancelVersion)) {
           throw new ProtocolBoundaryError(
             "runtime_protocol_unsupported",
             "cancel request protocol version is unsupported"

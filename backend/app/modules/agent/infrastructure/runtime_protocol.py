@@ -20,6 +20,13 @@ from app.modules.agent.infrastructure.generated_runtime_contracts_v1_2 import (
     validate_contract as validate_v12_contract,
 )
 
+CURRENT_RUNTIME_PROTOCOL_VERSION = "1.2"
+SUPPORTED_RUNTIME_PROTOCOL_VERSIONS = (
+    "1.0",
+    "1.1",
+    CURRENT_RUNTIME_PROTOCOL_VERSION,
+)
+
 
 class RuntimeProtocolError(ValueError):
     def __init__(self, code: str, message: str) -> None:
@@ -108,6 +115,6 @@ def validate_runtime_contract(
 def _protocol_version(payload: object) -> str:
     if isinstance(payload, dict):
         value = payload.get("protocol_version")
-        if value in {"1.0", "1.1", "1.2"}:
+        if value in SUPPORTED_RUNTIME_PROTOCOL_VERSIONS:
             return str(value)
     return "1.0"

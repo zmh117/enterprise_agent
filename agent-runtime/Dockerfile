@@ -26,12 +26,11 @@ RUN mkdir -p /tmp/agent-runtime \
 
 COPY --chown=node:node --from=build /opt/agent-runtime/package.json ./package.json
 COPY --chown=node:node package-lock.json ./package-lock.json
-COPY --chown=node:node contracts/v1/protocol.schema.json ./contracts/v1/protocol.schema.json
-COPY --chown=node:node contracts/v1.1/protocol.schema.json ./contracts/v1.1/protocol.schema.json
 COPY --chown=node:node scripts/preflight.mjs ./scripts/preflight.mjs
 COPY --chown=node:node scripts/entrypoint.sh ./scripts/entrypoint.sh
 COPY --chown=node:node --from=build /opt/agent-runtime/node_modules ./node_modules
 COPY --chown=node:node --from=build /opt/agent-runtime/dist ./dist
+RUN node --input-type=module -e "await import('./dist/src/runtime-contracts.js'); await import('./dist/src/protocol.js')"
 
 USER node
 EXPOSE 8090

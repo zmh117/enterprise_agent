@@ -15,6 +15,10 @@ import { PlatformSecretDecryptor } from "./platform-secret.js";
 import { RuntimeReadinessProbe } from "./readiness.js";
 import { createRuntimeServer } from "./server.js";
 import { PostgresTerminalLedger } from "./terminal-ledger.js";
+import {
+  CURRENT_PROTOCOL_VERSION,
+  SUPPORTED_PROTOCOL_VERSIONS
+} from "./runtime-contracts.js";
 
 const config = loadRuntimeConfig();
 const logger = new StructuredLogger(config.logLevel);
@@ -78,8 +82,8 @@ await once(server, "listening");
 logger.log("info", "runtime_started", {
   host: config.host,
   port: config.port,
-  protocol_version: "1.2",
-  supported_protocol_versions: ["1.0", "1.1", "1.2"],
+  protocol_version: CURRENT_PROTOCOL_VERSION,
+  supported_protocol_versions: SUPPORTED_PROTOCOL_VERSIONS,
   sdk_version: "0.3.226",
   cli_version: "2.1.226"
 });

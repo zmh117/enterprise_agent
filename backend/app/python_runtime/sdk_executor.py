@@ -17,6 +17,9 @@ from app.modules.agent.domain.runtime import (
     AgentRunRequest,
     McpRuntimeBinding,
 )
+from app.modules.agent.infrastructure.runtime_protocol import (
+    CURRENT_RUNTIME_PROTOCOL_VERSION,
+)
 from app.python_runtime.claude_agent_sdk_adapter import (
     RealClaudeCodeAgentClient,
     _append_cli_stderr,
@@ -35,7 +38,7 @@ class InvocationSecretContextPort(Protocol):
 
 PYTHON_RUNTIME_VERSION = "0.1.0"
 PYTHON_RUNTIME_KIND = "python-v1"
-PROTOCOL_VERSION = "1.2"
+PROTOCOL_VERSION = CURRENT_RUNTIME_PROTOCOL_VERSION
 MCP_CALL_ID_META_KEY = "enterprise-agent/mcp-call-id"
 AGENT_TOOL_CALL_ID_META_KEY = "enterprise-agent/agent-tool-call-id"
 SDK_BUILTIN_TOOLS = frozenset(

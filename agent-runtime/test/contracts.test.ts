@@ -10,6 +10,7 @@ import safeRuntimeFixture from "../contracts/v1/golden/safe-runtime-fixture.json
 import safeRuntimeFixtureV11 from "../contracts/v1.1/golden/safe-runtime-fixture.json" with { type: "json" };
 import safeRuntimeFixtureV12 from "../contracts/v1.2/golden/safe-runtime-fixture.json" with { type: "json" };
 import limits from "../contracts/v1/limits.json" with { type: "json" };
+import limitsV12 from "../contracts/v1.2/limits.json" with { type: "json" };
 import { assertContract, ContractValidationError } from "../src/generated/validators.js";
 import {
   assertContract as assertV11Contract,
@@ -24,6 +25,16 @@ import {
   ProtocolBoundaryError,
   validateExecutionRequest
 } from "../src/protocol.js";
+import {
+  CURRENT_PROTOCOL_VERSION,
+  SUPPORTED_PROTOCOL_VERSIONS
+} from "../src/runtime-contracts.js";
+
+test("Runtime protocol ledger identifies the current and supported versions", () => {
+  assert.equal(CURRENT_PROTOCOL_VERSION, "1.2");
+  assert.deepEqual(SUPPORTED_PROTOCOL_VERSIONS, ["1.0", "1.1", "1.2"]);
+  assert.equal(limitsV12.protocol_version, CURRENT_PROTOCOL_VERSION);
+});
 
 test("golden request has the same canonical digest and validates", () => {
   assert.equal(canonicalRequestDigest(executionRequest), executionRequest.request_digest);

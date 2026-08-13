@@ -42,7 +42,9 @@ import {
   type ContractName as ContractNameV12
 } from "./generated/validators-v1_2.js";
 
-export type RuntimeProtocolVersion = "1.0" | "1.1" | "1.2";
+export const CURRENT_PROTOCOL_VERSION = "1.2" as const;
+export const SUPPORTED_PROTOCOL_VERSIONS = ["1.0", "1.1", CURRENT_PROTOCOL_VERSION] as const;
+export type RuntimeProtocolVersion = (typeof SUPPORTED_PROTOCOL_VERSIONS)[number];
 export type AgentExecutionRequest = AgentExecutionRequestV1 | AgentExecutionRequestV11 | AgentExecutionRequestV12;
 export type RuntimeEvent = RuntimeEventV1 | RuntimeEventV11 | RuntimeEventV12;
 export type RuntimeFailure = RuntimeFailureV1 | RuntimeFailureV11 | RuntimeFailureV12;
@@ -51,6 +53,10 @@ export type TerminalResult = TerminalResultV1 | TerminalResultV11 | TerminalResu
 export type ToolEvent = ToolEventV1 | ToolEventV11 | ToolEventV12;
 export type Usage = UsageV1 | UsageV11 | UsageV12;
 export type { ApiRetry, ExecutionAccounting, ModelCall, RuntimeInitialization };
+
+export function isRuntimeProtocolVersion(value: unknown): value is RuntimeProtocolVersion {
+  return SUPPORTED_PROTOCOL_VERSIONS.some((version) => version === value);
+}
 
 export function assertRuntimeContract(
   name: ContractNameV1 | ContractNameV11 | ContractNameV12,

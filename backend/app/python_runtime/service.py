@@ -13,7 +13,9 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.modules.agent.infrastructure.generated_runtime_contracts import validate_contract
 from app.modules.agent.infrastructure.runtime_protocol import (
+    CURRENT_RUNTIME_PROTOCOL_VERSION,
     RuntimeProtocolError,
+    SUPPORTED_RUNTIME_PROTOCOL_VERSIONS,
     validate_execution_request,
     validate_runtime_contract,
 )
@@ -85,8 +87,10 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
         return {
             "runtime": PYTHON_RUNTIME_KIND,
             "runtime_version": PYTHON_RUNTIME_VERSION,
-            "protocol_version": "1.2",
-            "supported_protocol_versions": "1.0,1.1,1.2",
+            "protocol_version": CURRENT_RUNTIME_PROTOCOL_VERSION,
+            "supported_protocol_versions": ",".join(
+                SUPPORTED_RUNTIME_PROTOCOL_VERSIONS
+            ),
             "sdk_version": runtime.executor.sdk_version,
             "cli_version": runtime.executor.cli_version,
         }

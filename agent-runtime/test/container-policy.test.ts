@@ -10,6 +10,10 @@ test("production image is multi-stage, non-root and never installs at startup", 
   assert.match(dockerfile, /^USER node$/m);
   assert.match(dockerfile, /^ENTRYPOINT \["\.\/scripts\/entrypoint\.sh"\]$/m);
   assert.match(dockerfile, /^CMD \["node", "dist\/src\/main\.js"\]$/m);
+  assert.match(
+    dockerfile,
+    /await import\('\.\/dist\/src\/runtime-contracts\.js'\); await import\('\.\/dist\/src\/protocol\.js'\)/
+  );
   assert.doesNotMatch(dockerfile, /CMD .*npm (?:install|ci)/);
   assert.doesNotMatch(dockerfile, /claude-agent-sdk==|pip install|python -m pip/i);
 });
@@ -23,11 +27,19 @@ test("deployment preflight checks exact runtime versions, grants and secret perm
   assert.match(dockerfile, /COPY --chown=node:node package-lock\.json \.\/package-lock\.json/);
   assert.match(
     dockerfile,
-    /COPY --chown=node:node contracts\/v1\/protocol\.schema\.json \.\/contracts\/v1\/protocol\.schema\.json/
+    /COPY --chown=node:node scripts\/preflight\.mjs \.\/scripts\/preflight\.mjs/
   );
   assert.match(
-    dockerfile,
-    /COPY --chown=node:node scripts\/preflight\.mjs \.\/scripts\/preflight\.mjs/
+    preflight,
+    /SUPPORTED_PROTOCOL_VERSIONS/
+  );
+  assert.match(
+    preflight,
+    /CURRENT_PROTOCOL_VERSION/
+  );
+  assert.match(
+    preflight,
+    /dist["'], ["']contracts/
   );
   assert.match(preflight, /package-lock\.json/);
   assert.match(preflight, /--version/);

@@ -13,7 +13,11 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 
-from app.modules.agent.infrastructure.runtime_protocol import canonical_request_digest
+from app.modules.agent.infrastructure.runtime_protocol import (
+    CURRENT_RUNTIME_PROTOCOL_VERSION,
+    SUPPORTED_RUNTIME_PROTOCOL_VERSIONS,
+    canonical_request_digest,
+)
 from app.modules.agent.infrastructure.typescript_runtime_client import RuntimeGrantIssuer
 from app.modules.agent.domain.runtime import (
     AgentExecutionContext,
@@ -485,6 +489,11 @@ def test_python_runtime_model_probe_and_fixed_mcp_url_boundary(tmp_path: Path) -
     assert response.json()["success"] is True
     assert client.get("/health").json() == {"status": "ok"}
     assert client.get("/ready").status_code == 200
+    version = client.get("/version").json()
+    assert version["protocol_version"] == CURRENT_RUNTIME_PROTOCOL_VERSION
+    assert version["supported_protocol_versions"] == ",".join(
+        SUPPORTED_RUNTIME_PROTOCOL_VERSIONS
+    )
 
     try:
         PythonRuntimeSdkExecutor(
