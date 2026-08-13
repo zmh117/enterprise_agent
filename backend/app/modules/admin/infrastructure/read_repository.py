@@ -34,6 +34,11 @@ class AdminReadRepository:
                    j.business_application_route_decision_json,
                    j.execution_policy_json,
                    j.execution_policy_tool_call_count,
+                   (select count(*) from agent_tool_call tc
+                     where tc.job_id = j.id
+                       and tc.invocation_id =
+                         j.id || '.attempt-' || cast(j.retry_count as text))
+                     as observed_execution_policy_tool_call_count,
                    j.execution_policy_exhausted,
                    j.created_at, j.started_at, j.finished_at,
                    s.accounting_status as audit_accounting_status,
@@ -178,6 +183,11 @@ class AdminReadRepository:
                    j.business_application_route_decision_json,
                    j.execution_policy_json,
                    j.execution_policy_tool_call_count,
+                   (select count(*) from agent_tool_call tc
+                     where tc.job_id = j.id
+                       and tc.invocation_id =
+                         j.id || '.attempt-' || cast(j.retry_count as text))
+                     as observed_execution_policy_tool_call_count,
                    j.execution_policy_exhausted,
                    j.created_at, j.started_at, j.finished_at,
                    s.accounting_status as audit_accounting_status,
@@ -272,6 +282,11 @@ class AdminReadRepository:
                    j.business_application_route_decision_json,
                    j.execution_policy_json,
                    j.execution_policy_tool_call_count,
+                   (select count(*) from agent_tool_call tc
+                     where tc.job_id = j.id
+                       and tc.invocation_id =
+                         j.id || '.attempt-' || cast(j.retry_count as text))
+                     as observed_execution_policy_tool_call_count,
                    j.execution_policy_exhausted,
                    j.error_message, j.last_error_code,
                    j.created_at, j.started_at, j.finished_at,
@@ -389,7 +404,16 @@ class AdminReadRepository:
             item.pop("business_application_route_decision_json", {})
         )
         item["execution_policy"] = _json_object(item.pop("execution_policy_json", {}))
-        item["tool_call_count"] = int(item.pop("execution_policy_tool_call_count", 0) or 0)
+        persisted_tool_call_count = int(
+            item.pop("execution_policy_tool_call_count", 0) or 0
+        )
+        observed_tool_call_count = int(
+            item.pop("observed_execution_policy_tool_call_count", 0) or 0
+        )
+        item["tool_call_count"] = max(
+            persisted_tool_call_count,
+            observed_tool_call_count,
+        )
         item["execution_policy_exhausted"] = bool(item.get("execution_policy_exhausted") or False)
         item["correlation_id"] = str(
             item.get("correlation_id")

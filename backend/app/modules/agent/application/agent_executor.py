@@ -161,6 +161,7 @@ class AgentExecutor:
             title="Agent execution started",
             content="Read-only diagnostic runtime started.",
         )
+        attempt_invocation_id = f"{job.id}.attempt-{job.retry_count}"
         self.repository.record_execution_policy_usage(
             job.id,
             tool_call_count=0,
@@ -179,7 +180,7 @@ class AgentExecutor:
                 user_id=job.internal_user_id or job.requester_id,
                 project_code=job.project_code,
                 context=context,
-                invocation_id=f"{job.id}.attempt-{job.retry_count}",
+                invocation_id=attempt_invocation_id,
             )
             with self._active_lock:
                 self._active_requests[job.id] = run_request
@@ -197,9 +198,10 @@ class AgentExecutor:
                     result.runtime_provenance,
                 )
             self._persist_tool_events(job.id, result.tool_events)
-            self.repository.record_execution_policy_usage(
+            self._record_execution_policy_usage(
                 job.id,
-                tool_call_count=len(result.tool_events),
+                invocation_id=attempt_invocation_id,
+                tool_events=result.tool_events,
                 exhausted=False,
             )
             self.repository.add_step(
@@ -220,9 +222,10 @@ class AgentExecutor:
             safe_message = getattr(exc, "safe_message", str(exc))
             tool_events = getattr(exc, "tool_events", [])
             self._persist_tool_events(job.id, tool_events)
-            self.repository.record_execution_policy_usage(
+            self._record_execution_policy_usage(
                 job.id,
-                tool_call_count=len(tool_events),
+                invocation_id=attempt_invocation_id,
+                tool_events=tool_events,
                 exhausted=(
                     getattr(exc, "error_code", "") == "execution_policy_max_tool_calls_exhausted"
                 ),
@@ -243,6 +246,27 @@ class AgentExecutor:
             if isinstance(runtime_provenance, dict):
                 self.repository.record_runtime_provenance(job.id, runtime_provenance)
             raise
+
+    def _record_execution_policy_usage(
+        self,
+        job_id: str,
+        *,
+        invocation_id: str,
+        tool_events: list[dict[str, object]],
+        exhausted: bool,
+    ) -> None:
+        persisted_count = self.repository.count_tool_calls_for_invocation(
+            job_id,
+            invocation_id,
+        )
+        self.repository.record_execution_policy_usage(
+            job_id,
+            tool_call_count=max(
+                persisted_count,
+                _runtime_tool_attempt_count(tool_events),
+            ),
+            exhausted=exhausted,
+        )
 
     @operation_unit_of_work(lambda executor: executor.repository.database)
     def _persist_success(
@@ -332,6 +356,18 @@ class AgentExecutor:
 
 def _dict_value(value: object) -> dict[str, object]:
     return value if isinstance(value, dict) else {"payload": str(value)}
+
+
+def _runtime_tool_attempt_count(tool_events: list[dict[str, object]]) -> int:
+    stable_ids: set[str] = set()
+    identityless_attempts = 0
+    for event in tool_events:
+        tool_call_id = str(event.get("tool_call_id") or "").strip()
+        if tool_call_id:
+            stable_ids.add(tool_call_id)
+        else:
+            identityless_attempts += 1
+    return len(stable_ids) + identityless_attempts
 
 
 def _int_value(value: object) -> int:

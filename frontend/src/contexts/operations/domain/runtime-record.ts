@@ -194,7 +194,7 @@ const deliveryChunkSchema = z
     delivery_outbox_id: z.string().nullish(),
     replay_no: z.number().int().nonnegative().default(0),
     attempt_no: z.number().int().nonnegative(),
-    chunk_index: z.number().int().nonnegative(),
+    chunk_index: z.number().int().positive(),
     chunk_count: z.number().int().positive(),
     status: z.string(),
     payload_summary: z.record(z.string(), z.unknown()).default({}),

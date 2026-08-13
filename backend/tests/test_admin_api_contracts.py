@@ -402,6 +402,20 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
             },
         },
     )
+    container.agent_repository.add_tool_call(
+        job_id=job.id,
+        tool_name="ones_work_item_search",
+        request_payload={},
+        response_summary={"total": 1, "truncated": False},
+        status="SUCCEEDED",
+        duration_ms=4,
+        risk_level="low",
+        invocation_id=f"{job.id}.attempt-0",
+        tool_origin="mcp",
+        server_code="ones-mcp",
+        mcp_call_id="mcp-call-operations-projection",
+        persisted_by="mcp_server",
+    )
     delivery_id = container.result_delivery_service.enqueue_job_failure(
         job_id=job.id,
         reason="safe synthetic failure",
@@ -458,6 +472,8 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
     assert jobs.json()["items"][0]["business_application_publication_id"] == "publication-ops"
     assert jobs.json()["items"][0]["correlation_id"] == "correlation-ops"
     assert detail.json()["job"]["business_application_deployment_id"] == "deployment-ops"
+    assert detail.json()["job"]["tool_call_count"] == 1
+    assert jobs.json()["items"][0]["tool_call_count"] == 1
     delivery = detail.json()["deliveries"]
     assert delivery["events"][0]["id"] == delivery_id
     assert delivery["events"][0]["status"] == "PENDING"

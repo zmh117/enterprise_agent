@@ -207,7 +207,10 @@ describe("runtime provenance records", () => {
         session_ref: { id: "session-1" },
         steps: [],
         tool_calls: [],
-        execution_summary: executionSummary(),
+        execution_summary: executionSummary({
+          observed_model_turn_count: 2,
+          runtime_invocation_count: 1,
+        }),
         model_calls: {
           items: [modelCall()],
           limit: 50,
@@ -239,6 +242,44 @@ describe("runtime provenance records", () => {
     expect(screen.getByText("停止 end_turn")).toBeInTheDocument()
     expect(screen.getByText("SDK 观测 · 1.00 秒")).toBeInTheDocument()
     expect(screen.getByText("1 次 API 重试")).toBeInTheDocument()
+    expect(screen.getByText("模型轮次 / Runtime 调用")).toBeInTheDocument()
+    expect(screen.getByText("2 次 / 1 次")).toBeInTheDocument()
+  })
+
+  it("renders only whitelisted metadata from a structured tool summary", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      response({
+        job: job({ tool_call_count: 1 }),
+        session_ref: { id: "session-1" },
+        steps: [],
+        tool_calls: [
+          {
+            id: "tool-call-1",
+            tool_name: "ones_work_item_search",
+            status: "SUCCEEDED",
+            response_summary: {
+              items: [{ name: "must-not-render" }],
+              total: 1,
+              truncated: false,
+              untrusted_data: true,
+            },
+          },
+        ],
+        deliveries: { events: [], attempts: [], chunks: [] },
+        webhook_events: [],
+      })
+    )
+    renderRoute(
+      "/operations/jobs/job-1",
+      "/operations/jobs/:jobId",
+      <RuntimeJobDetailPage />
+    )
+
+    expect(
+      await screen.findByText("返回 1 项 · 未截断 · 含外部不受信任数据")
+    ).toBeInTheDocument()
+    expect(screen.queryByText("[object Object]")).not.toBeInTheDocument()
+    expect(screen.queryByText("must-not-render")).not.toBeInTheDocument()
   })
 
   it("loads the next model-call page without replacing prior rows", async () => {
@@ -483,6 +524,70 @@ describe("runtime provenance records", () => {
     expect(screen.getByText("投递待处理")).toBeInTheDocument()
     expect(screen.queryByText("Agent 已完成 · 已送达")).not.toBeInTheDocument()
     expect(screen.getByText("尚无投递尝试。")).toBeInTheDocument()
+  })
+
+  it("renders the one-based Delivery chunk position without incrementing it", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      response({
+        job: job(),
+        session_ref: { id: "session-1" },
+        steps: [],
+        tool_calls: [],
+        deliveries: {
+          events: [
+            deliveryEvent({
+              status: "SUCCEEDED",
+              attempt_count: 1,
+              terminal: true,
+              delivered: true,
+            }),
+          ],
+          attempts: [
+            {
+              id: "attempt-1",
+              job_id: "job-1",
+              delivery_outbox_id: "delivery-1",
+              replay_no: 0,
+              attempt_no: 1,
+              route_type: "dingtalk_private",
+              connector_id: "connector-dingtalk-stream-default",
+              target_summary: {},
+              correlation_id: "correlation-1",
+              status: "SUCCEEDED",
+              error_code: "",
+              error_message: null,
+              created_at: "2026-07-24T10:00:11+00:00",
+              finished_at: "2026-07-24T10:00:12+00:00",
+            },
+          ],
+          chunks: [
+            {
+              id: "chunk-1",
+              attempt_id: "attempt-1",
+              delivery_outbox_id: "delivery-1",
+              replay_no: 0,
+              attempt_no: 1,
+              chunk_index: 1,
+              chunk_count: 1,
+              status: "SUCCEEDED",
+              payload_summary: {},
+              error_message: null,
+              created_at: "2026-07-24T10:00:11+00:00",
+              sent_at: "2026-07-24T10:00:12+00:00",
+            },
+          ],
+        },
+        webhook_events: [],
+      })
+    )
+    renderRoute(
+      "/operations/jobs/job-1",
+      "/operations/jobs/:jobId",
+      <RuntimeJobDetailPage />
+    )
+
+    expect(await screen.findByText("分片 1/1 · 已送达")).toBeInTheDocument()
+    expect(screen.queryByText("分片 2/1 · 已送达")).not.toBeInTheDocument()
   })
 
   it("shows application-scoped conversation policy and job provenance", async () => {

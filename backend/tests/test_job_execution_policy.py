@@ -6,7 +6,7 @@ import json
 import pytest
 
 from app.modules.delivery.infrastructure.adapters import DeliveryAdapter
-from app.modules.agent.domain.runtime import ToolCallBudget
+from app.modules.agent.domain.runtime import AgentRunResult, ToolCallBudget
 from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
 from app.modules.job.application.legacy_runtime_purge_service import (
     LegacyRuntimePurgeService,
@@ -188,6 +188,88 @@ def test_tool_budget_counts_rejected_attempt() -> None:
     with pytest.raises(ExecutionPolicyExceeded):
         budget.consume()
     assert budget.attempted == 2
+
+
+def test_executor_counts_server_persisted_mcp_call_without_runtime_tool_event() -> None:
+    c = container()
+    job = c.create_agent_job_service.execute(
+        CreateAgentJobCommand(
+            idempotency_key="persisted-mcp-policy-usage",
+            external_conversation_id="conversation-persisted-mcp-policy-usage",
+            requester_id="local-user",
+            user_message="check",
+        )
+    )
+
+    class PersistingMcpClient:
+        def run(self, request: object) -> AgentRunResult:
+            invocation_id = str(getattr(request, "invocation_id"))
+            c.agent_repository.add_tool_call(
+                job_id=job.id,
+                tool_name="ones_work_item_search",
+                request_payload={},
+                response_summary={"total": 1, "truncated": False},
+                status="SUCCEEDED",
+                duration_ms=4,
+                risk_level="low",
+                invocation_id=invocation_id,
+                tool_origin="mcp",
+                server_code="ones-mcp",
+                mcp_call_id="mcp-call-policy-usage",
+                persisted_by="mcp_server",
+            )
+            return AgentRunResult(final_answer="safe final answer", tool_events=[])
+
+    c.agent_executor.claude_client = PersistingMcpClient()
+
+    c.agent_executor.execute(job.id)
+
+    persisted = c.agent_repository.get_job(job.id)
+    assert persisted.execution_policy_tool_call_count == 1
+    assert len(c.agent_repository.list_tool_calls(job.id)) == 1
+
+
+def test_executor_counts_runtime_tool_lifecycle_as_one_attempt() -> None:
+    c = container()
+    job = c.create_agent_job_service.execute(
+        CreateAgentJobCommand(
+            idempotency_key="runtime-tool-lifecycle-policy-usage",
+            external_conversation_id="conversation-runtime-tool-lifecycle-policy-usage",
+            requester_id="local-user",
+            user_message="check",
+        )
+    )
+    tool_events = [
+        {
+            "tool_call_id": "runtime-tool-call-1",
+            "tool_name": "governed_safe_tool",
+            "tool_origin": "sdk_custom",
+            "status": "STARTED",
+        },
+        {
+            "tool_call_id": "runtime-tool-call-1",
+            "tool_name": "governed_safe_tool",
+            "tool_origin": "sdk_custom",
+            "status": "SUCCEEDED",
+            "response_summary": {"available": True},
+        },
+    ]
+
+    class LifecycleClient:
+        def run(self, request: object) -> AgentRunResult:
+            del request
+            return AgentRunResult(
+                final_answer="safe final answer",
+                tool_events=tool_events,
+            )
+
+    c.agent_executor.claude_client = LifecycleClient()
+
+    c.agent_executor.execute(job.id)
+
+    persisted = c.agent_repository.get_job(job.id)
+    assert persisted.execution_policy_tool_call_count == 1
+    assert len(c.agent_repository.list_tool_calls(job.id)) == 1
 
 
 def test_executor_persists_attempt_usage_and_exhaustion_separately_from_context_tools() -> None:

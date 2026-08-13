@@ -355,8 +355,8 @@ function ExecutionAccountingPanel({ summary }: { summary: ExecutionSummary }) {
             value={formatCost(summary.estimated_cost_usd)}
           />
           <Metric
-            label="轮次 / Runtime"
-            value={`${summary.observed_model_turn_count} / ${summary.runtime_invocation_count}`}
+            label="模型轮次 / Runtime 调用"
+            value={`${summary.observed_model_turn_count} 次 / ${summary.runtime_invocation_count} 次`}
           />
         </dl>
         <p className="mt-4 text-xs text-muted-foreground">
@@ -601,7 +601,7 @@ function ExecutionEvidenceTimeline({
                 <TimelineItem
                   key={String(toolCall.id ?? index)}
                   label={`${String(toolCall.tool_name ?? "tool")} · ${String(toolCall.status ?? "")}`}
-                  value={String(toolCall.response_summary ?? "")}
+                  value={formatToolResponseSummary(toolCall.response_summary)}
                 />
               ))}
             </ol>
@@ -781,7 +781,7 @@ function AttemptTimeline({
                 {attemptChunks.map((chunk) => (
                   <li key={chunk.id}>
                     <Badge variant={deliveryBadgeVariant(chunk.status)}>
-                      分片 {chunk.chunk_index + 1}/{chunk.chunk_count} ·{" "}
+                      分片 {chunk.chunk_index}/{chunk.chunk_count} ·{" "}
                       {deliveryChunkStatusLabel(chunk.status)}
                     </Badge>
                   </li>
@@ -1095,6 +1095,53 @@ function formatDuration(value: number | null): string {
 
 function formatCounter(value: number | null): string {
   return value === null ? "未知" : value.toLocaleString()
+}
+
+function formatToolResponseSummary(value: unknown): string {
+  if (value === null || value === undefined || value === "") return ""
+
+  const summary = structuredSummary(value)
+  if (!summary) {
+    return typeof value === "string" ? value : "已记录结构化安全摘要"
+  }
+
+  const parts: string[] = []
+  const total = safeSummaryCount(summary.total)
+  if (total !== null) parts.push(`返回 ${total.toLocaleString()} 项`)
+
+  if (typeof summary.truncated === "boolean") {
+    parts.push(summary.truncated ? "已截断" : "未截断")
+  }
+  if (summary.untrusted_data === true) {
+    parts.push("含外部不受信任数据")
+  }
+  if (parts.length) return parts.join(" · ")
+
+  if (summary.is_error === true) return "工具返回错误"
+  if (summary.available === false) return "无可用安全摘要"
+  return "已记录结构化安全摘要"
+}
+
+function structuredSummary(value: unknown): Record<string, unknown> | null {
+  if (typeof value === "string") {
+    try {
+      const parsed: unknown = JSON.parse(value)
+      return isSummaryRecord(parsed) ? parsed : null
+    } catch {
+      return null
+    }
+  }
+  return isSummaryRecord(value) ? value : null
+}
+
+function isSummaryRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function safeSummaryCount(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : null
 }
 
 function formatCost(value: string | null): string {

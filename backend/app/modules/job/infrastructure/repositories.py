@@ -784,6 +784,17 @@ class AgentRepository:
             (max(int(tool_call_count), 0), int(exhausted), job_id),
         )
 
+    def count_tool_calls_for_invocation(self, job_id: str, invocation_id: str) -> int:
+        row = self.database.execute_one(
+            """
+            select count(*) as tool_call_count
+              from agent_tool_call
+             where job_id = ? and invocation_id = ?
+            """,
+            (job_id, invocation_id),
+        )
+        return int((row or {}).get("tool_call_count") or 0)
+
     def create_dispatch_event(
         self,
         *,
