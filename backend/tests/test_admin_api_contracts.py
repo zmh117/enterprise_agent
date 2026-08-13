@@ -348,6 +348,22 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
 ) -> None:
     settings = unified_settings()
     container = build_test_container(settings, migrate=True, seed=True)
+    container.database.execute(
+        """
+        insert into business_application
+          (id, code, name, description, project_code, owner_user_id, status,
+           revision, created_by, created_at, updated_at)
+        values (?, ?, ?, '', 'default', 'user_local_admin', 'enabled',
+                1, 'user_local_admin', ?, ?)
+        """,
+        (
+            "application-ops",
+            "operations-application",
+            "生产运维助手",
+            "2026-07-20T00:00:00+00:00",
+            "2026-07-20T00:00:00+00:00",
+        ),
+    )
     session = container.agent_repository.create_session(
         project_code="default",
         source_channel="dingding",
@@ -448,6 +464,17 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
         login(client)
         queue_response = client.get("/api/admin/queues")
         jobs = client.get("/api/admin/jobs")
+        jobs_by_names = client.get(
+            "/api/admin/jobs",
+            params={
+                "username": "ministra",
+                "application_name": "运维助手",
+            },
+        )
+        jobs_by_unknown_name = client.get(
+            "/api/admin/jobs",
+            params={"username": "missing-user"},
+        )
         summary = client.get("/api/admin/jobs/summary")
         delivery_metrics = client.get("/api/admin/deliveries/metrics")
         detail = client.get(f"/api/admin/jobs/{job.id}")
@@ -463,17 +490,24 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
         == summary.status_code
         == delivery_metrics.status_code
         == detail.status_code
+        == jobs_by_names.status_code
+        == jobs_by_unknown_name.status_code
         == 200
     )
     assert conversations.status_code == conversation.status_code == 200
     assert attachments.status_code == attachment_detail.status_code == 200
     assert jobs.json()["page"]["limit"] == 25
     assert jobs.json()["items"][0]["business_application_code"] == "operations-application"
+    assert jobs.json()["items"][0]["business_application_name"] == "生产运维助手"
+    assert jobs.json()["items"][0]["user_username"] == "admin"
+    assert jobs.json()["items"][0]["user_display_name"] == "Administrator"
     assert jobs.json()["items"][0]["business_application_publication_id"] == "publication-ops"
     assert jobs.json()["items"][0]["correlation_id"] == "correlation-ops"
     assert detail.json()["job"]["business_application_deployment_id"] == "deployment-ops"
     assert detail.json()["job"]["tool_call_count"] == 1
     assert jobs.json()["items"][0]["tool_call_count"] == 1
+    assert [item["id"] for item in jobs_by_names.json()["items"]] == [job.id]
+    assert jobs_by_unknown_name.json()["items"] == []
     delivery = detail.json()["deliveries"]
     assert delivery["events"][0]["id"] == delivery_id
     assert delivery["events"][0]["status"] == "PENDING"

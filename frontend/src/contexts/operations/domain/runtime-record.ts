@@ -72,6 +72,14 @@ export const runtimeJobSchema = z
       .string()
       .nullish()
       .transform((value) => value ?? ""),
+    user_username: z
+      .string()
+      .nullish()
+      .transform((value) => value ?? ""),
+    user_display_name: z
+      .string()
+      .nullish()
+      .transform((value) => value ?? ""),
     project_code: z.string().default(""),
     source_channel: z.string().default(""),
     source_connector_id: z.string().default(""),
@@ -92,6 +100,10 @@ export const runtimeJobSchema = z
       .nullish()
       .transform((value) => value ?? ""),
     business_application_code: z
+      .string()
+      .nullish()
+      .transform((value) => value ?? ""),
+    business_application_name: z
       .string()
       .nullish()
       .transform((value) => value ?? ""),

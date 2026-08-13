@@ -23,6 +23,9 @@ function job(overrides: Record<string, unknown> = {}) {
     id: "job-1",
     session_id: "session-1",
     status: "SUCCEEDED",
+    internal_user_id: "user-1",
+    user_username: "admin",
+    user_display_name: "Administrator",
     project_code: "default",
     source_channel: "dingding_stream",
     source_connector_id: "connector-dingtalk-stream-default",
@@ -30,6 +33,7 @@ function job(overrides: Record<string, unknown> = {}) {
     correlation_id: "correlation-1",
     business_application_id: "application-1",
     business_application_code: "diagnostic-app",
+    business_application_name: "生产诊断助手",
     business_application_publication_id: "publication-1",
     business_application_deployment_id: "deployment-1",
     business_application_route_id: "route-1",
@@ -191,13 +195,66 @@ describe("runtime provenance records", () => {
       })
     )
     renderRoute("/operations/jobs", "/operations/jobs", <RuntimeRecordsPage />)
-    expect(await screen.findByText("diagnostic-app")).toBeInTheDocument()
+    expect(
+      (await screen.findAllByText(/Administrator（@admin）/)).length
+    ).toBeGreaterThan(0)
+    expect(
+      screen.getByText("生产诊断助手（diagnostic-app）")
+    ).toBeInTheDocument()
     expect(
       screen.getByText("历史兼容任务（无业务应用归因）")
     ).toBeInTheDocument()
     expect(screen.getAllByText("legacy_unattributed").length).toBeGreaterThan(0)
     expect(screen.getAllByText(/总耗时 2.40 秒/).length).toBeGreaterThan(0)
     expect(screen.getAllByText("claude-safe-model").length).toBeGreaterThan(0)
+  })
+
+  it("filters jobs by local time, username and application name", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      response({
+        items: [],
+        page: { limit: 50, has_more: false, next_cursor: null },
+      })
+    )
+    renderRoute("/operations/jobs", "/operations/jobs", <RuntimeRecordsPage />)
+    await screen.findByText("当前时间窗口没有任务。")
+    const initialParams = new URL(
+      String(fetchMock.mock.calls[0]?.[0]),
+      "http://localhost"
+    ).searchParams
+    expect(
+      new Date(String(initialParams.get("end"))).getTime() -
+        new Date(String(initialParams.get("start"))).getTime()
+    ).toBe(24 * 60 * 60 * 1000)
+
+    fireEvent.change(screen.getByLabelText("开始时间"), {
+      target: { value: "2026-08-13T09:00" },
+    })
+    fireEvent.change(screen.getByLabelText("结束时间"), {
+      target: { value: "2026-08-13T10:00" },
+    })
+    fireEvent.change(screen.getByLabelText("用户名"), {
+      target: { value: "admin" },
+    })
+    fireEvent.change(screen.getByLabelText("应用名"), {
+      target: { value: "诊断助手" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "应用筛选" }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    const requestUrl = String(fetchMock.mock.calls.at(-1)?.[0])
+    const params = new URL(requestUrl, "http://localhost").searchParams
+    expect(params.get("username")).toBe("admin")
+    expect(params.get("application_name")).toBe("诊断助手")
+    expect(params.get("start")).toBe(
+      new Date("2026-08-13T09:00").toISOString()
+    )
+    expect(params.get("end")).toBe(
+      new Date("2026-08-13T10:00").toISOString()
+    )
+    expect(screen.queryByLabelText("用户安全标识")).not.toBeInTheDocument()
+    expect(screen.queryByLabelText("Agent")).not.toBeInTheDocument()
+    expect(screen.queryByLabelText("模型")).not.toBeInTheDocument()
   })
 
   it("shows immutable application provenance in job detail", async () => {
@@ -397,7 +454,9 @@ describe("runtime provenance records", () => {
         screen.getByText(new RegExp(`失败位置 ${failureLabel}`))
       ).toBeInTheDocument()
       expect(screen.getByText("Job 重试已耗尽", { exact: false })).toBeInTheDocument()
-      expect(screen.getByText("不可用")).toBeInTheDocument()
+      expect(
+        screen.getByText("不可用（SDK 未提供请求起点）")
+      ).toBeInTheDocument()
       expect(
         screen.getByText(`governed_safe_tool · ${toolStatus}`)
       ).toBeInTheDocument()

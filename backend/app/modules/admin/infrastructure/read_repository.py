@@ -18,15 +18,47 @@ class AdminReadRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
 
-    def jobs_in_window(self, start: str, end: str, *, limit: int = 500) -> list[dict[str, Any]]:
+    def jobs_in_window(
+        self,
+        start: str,
+        end: str,
+        *,
+        username: str = "",
+        application_name: str = "",
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        clauses = ["j.created_at >= ?", "j.created_at < ?"]
+        params: list[Any] = [start, end]
+        username_pattern = _contains_pattern(username)
+        if username_pattern:
+            clauses.append(
+                """
+                (lower(coalesce(u.username, '')) like ? escape '!'
+                 or lower(coalesce(u.display_name, '')) like ? escape '!')
+                """
+            )
+            params.extend((username_pattern, username_pattern))
+        application_pattern = _contains_pattern(application_name)
+        if application_pattern:
+            clauses.append(
+                """
+                (lower(coalesce(a.name, '')) like ? escape '!'
+                 or lower(coalesce(j.business_application_code, '')) like ? escape '!')
+                """
+            )
+            params.extend((application_pattern, application_pattern))
+        params.append(max(1, min(int(limit), 500)))
         rows = self.database.execute(
-            """
+            f"""
             select j.id, j.session_id, j.status, j.retry_count, j.max_retry_count,
                    j.internal_user_id, j.requester_id as user_id,
+                   u.username as user_username,
+                   u.display_name as user_display_name,
                    j.requester_id, j.project_code, j.source_channel,
                    j.source_connector_id, j.routing_context_json, j.error_message,
                    j.last_error_code,
                    j.business_application_id, j.business_application_code,
+                   a.name as business_application_name,
                    j.business_application_publication_id,
                    j.business_application_deployment_id,
                    j.business_application_route_id,
@@ -72,11 +104,13 @@ class AdminReadRepository:
             left join agent_definition d on d.id = j.agent_definition_id
             left join integration_connector c on c.id = j.source_connector_id
             left join agent_job_execution_summary s on s.job_id = j.id
-            where j.created_at >= ? and j.created_at < ?
+            left join app_user u on u.id = j.internal_user_id
+            left join business_application a on a.id = j.business_application_id
+            where {' and '.join(clauses)}
             order by j.created_at desc, j.id desc
             limit ?
             """,
-            (start, end, limit),
+            params,
         )
         return [self._job(row) for row in rows]
 
@@ -172,10 +206,13 @@ class AdminReadRepository:
             """
             select j.id, j.session_id, j.status, j.retry_count, j.max_retry_count,
                    j.internal_user_id, j.requester_id as user_id,
+                   u.username as user_username,
+                   u.display_name as user_display_name,
                    j.requester_id, j.project_code, j.source_channel,
                    j.source_connector_id, j.routing_context_json, j.error_message,
                    j.last_error_code,
                    j.business_application_id, j.business_application_code,
+                   a.name as business_application_name,
                    j.business_application_publication_id,
                    j.business_application_deployment_id,
                    j.business_application_route_id,
@@ -220,6 +257,8 @@ class AdminReadRepository:
             left join agent_definition d on d.id = j.agent_definition_id
             left join integration_connector c on c.id = j.source_connector_id
             left join agent_job_execution_summary s on s.job_id = j.id
+            left join app_user u on u.id = j.internal_user_id
+            left join business_application a on a.id = j.business_application_id
             where j.session_id = ? order by j.created_at, j.id limit ?
             """,
             (session_id, limit),
@@ -272,9 +311,12 @@ class AdminReadRepository:
             """
             select j.id, j.session_id, j.status, j.retry_count, j.max_retry_count,
                    j.internal_user_id, j.requester_id as user_id,
+                   u.username as user_username,
+                   u.display_name as user_display_name,
                    j.requester_id, j.project_code, j.source_channel,
                    j.source_connector_id, j.external_event_id, j.routing_context_json,
                    j.business_application_id, j.business_application_code,
+                   a.name as business_application_name,
                    j.business_application_publication_id,
                    j.business_application_deployment_id,
                    j.business_application_route_id,
@@ -320,6 +362,8 @@ class AdminReadRepository:
             left join agent_definition d on d.id = j.agent_definition_id
             left join integration_connector c on c.id = j.source_connector_id
             left join agent_job_execution_summary s on s.job_id = j.id
+            left join app_user u on u.id = j.internal_user_id
+            left join business_application a on a.id = j.business_application_id
             where j.id = ?
             """,
             (job_id,),
@@ -447,6 +491,14 @@ class AdminReadRepository:
         item["storage_configured"] = bool(bucket and key)
         item["text_preview"] = str(item.get("text_preview") or "")[:4000]
         return _safe_times(item)
+
+
+def _contains_pattern(value: str) -> str:
+    term = value.strip().lower()[:200]
+    if not term:
+        return ""
+    escaped = term.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+    return f"%{escaped}%"
 
 
 def _json_object(value: Any) -> dict[str, Any]:

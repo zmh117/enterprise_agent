@@ -26,18 +26,38 @@ import type {
   ModelCallPage,
   RuntimeJob,
 } from "@/contexts/operations/domain/runtime-record"
-import { listRuntimeJobModelCalls } from "@/contexts/operations/infrastructure/runtime-record-api"
+import {
+  listRuntimeJobModelCalls,
+  type RuntimeJobFilters,
+} from "@/contexts/operations/infrastructure/runtime-record-api"
 import { ApplicationState } from "@/contexts/applications/presentation/application-state"
 
+const RUNTIME_JOB_FILTER_FIELDS: Array<{
+  key: keyof RuntimeJobFilters
+  label: string
+  type: "datetime-local" | "text"
+  placeholder?: string
+}> = [
+  { key: "start", label: "开始时间", type: "datetime-local" },
+  { key: "end", label: "结束时间", type: "datetime-local" },
+  {
+    key: "username",
+    label: "用户名",
+    type: "text",
+    placeholder: "用户名或显示名称",
+  },
+  {
+    key: "applicationName",
+    label: "应用名",
+    type: "text",
+    placeholder: "应用名称或应用编码",
+  },
+]
+
 export function RuntimeRecordsPage() {
-  const [filters, setFilters] = useState({
-    userId: "",
-    agent: "",
-    model: "",
-    executionStatus: "",
-    deliveryStatus: "",
-    failureStage: "",
-  })
+  const [filters, setFilters] = useState<RuntimeJobFilters>(() =>
+    defaultRuntimeJobFilters()
+  )
   const [appliedFilters, setAppliedFilters] = useState(filters)
   const query = useRuntimeJobs(appliedFilters)
   return (
@@ -67,26 +87,21 @@ export function RuntimeRecordsPage() {
         </Button>
       </header>
       <form
-        className="grid gap-3 rounded-xl border p-4 sm:grid-cols-2 xl:grid-cols-6"
+        className="grid gap-3 rounded-xl border p-4 sm:grid-cols-2 xl:grid-cols-4"
         aria-label="运行记录筛选"
         onSubmit={(event) => {
           event.preventDefault()
           setAppliedFilters(filters)
         }}
       >
-        {[
-          ["userId", "用户安全标识"],
-          ["agent", "Agent"],
-          ["model", "模型"],
-          ["executionStatus", "执行状态"],
-          ["deliveryStatus", "Delivery 状态"],
-          ["failureStage", "失败位置"],
-        ].map(([key, label]) => (
+        {RUNTIME_JOB_FILTER_FIELDS.map(({ key, label, type, placeholder }) => (
           <label key={key} className="space-y-1 text-xs text-muted-foreground">
             {label}
             <Input
-              value={filters[key as keyof typeof filters]}
-              placeholder={label}
+              type={type}
+              step={type === "datetime-local" ? 1 : undefined}
+              value={filters[key] ?? ""}
+              placeholder={placeholder}
               onChange={(event) =>
                 setFilters((current) => ({
                   ...current,
@@ -96,25 +111,18 @@ export function RuntimeRecordsPage() {
             />
           </label>
         ))}
-        <div className="flex gap-2 sm:col-span-2 xl:col-span-6">
+        <div className="flex gap-2 sm:col-span-2 xl:col-span-4">
           <Button type="submit">应用筛选</Button>
           <Button
             type="button"
             variant="outline"
             onClick={() => {
-              const empty = {
-                userId: "",
-                agent: "",
-                model: "",
-                executionStatus: "",
-                deliveryStatus: "",
-                failureStage: "",
-              }
-              setFilters(empty)
-              setAppliedFilters(empty)
+              const defaults = defaultRuntimeJobFilters()
+              setFilters(defaults)
+              setAppliedFilters(defaults)
             }}
           >
-            清空
+            重置
           </Button>
         </div>
       </form>
@@ -158,14 +166,14 @@ function JobRow({ job }: { job: RuntimeJob }) {
           {job.id}
         </Link>
         <p className="mt-1 text-xs text-muted-foreground">
-          用户 {job.internal_user_id || "未知"} · {job.source_channel} ·{" "}
+          用户 {runtimeUserLabel(job)} · {job.source_channel} ·{" "}
           {formatDate(job.created_at)}
         </p>
       </div>
       <div className="min-w-0">
         <p className="font-medium">
           {attributed
-            ? job.business_application_code
+            ? runtimeApplicationLabel(job)
             : "历史兼容任务（无业务应用归因）"}
         </p>
         <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
@@ -449,7 +457,7 @@ function ModelCallsPanel({
                     <td className="py-3 pr-4">
                       {call.duration_source === "SDK_OBSERVED"
                         ? `SDK 观测 · ${formatDuration(call.duration_ms)}`
-                        : "不可用"}
+                        : "不可用（SDK 未提供请求起点）"}
                     </td>
                     <td className="py-3 pr-4 text-xs">
                       <p>
@@ -1008,6 +1016,38 @@ function sourceConnectorLabel(job: RuntimeJob): string {
   return job.source_connector_availability === "UNAVAILABLE_HISTORICAL"
     ? `${identity} · 不可用历史来源`
     : identity
+}
+
+function runtimeUserLabel(job: RuntimeJob): string {
+  const displayName = job.user_display_name.trim()
+  const username = job.user_username.trim()
+  if (displayName && username) return `${displayName}（@${username}）`
+  if (displayName) return displayName
+  if (username) return `@${username}`
+  if (job.internal_user_id) return `历史用户（${job.internal_user_id}）`
+  return "用户未知"
+}
+
+function runtimeApplicationLabel(job: RuntimeJob): string {
+  const name = job.business_application_name.trim()
+  const code = job.business_application_code.trim()
+  if (name && code && name !== code) return `${name}（${code}）`
+  return name || code || "历史应用"
+}
+
+function defaultRuntimeJobFilters(now = new Date()): RuntimeJobFilters {
+  const start = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+  return {
+    start: localDateTimeInput(start),
+    end: localDateTimeInput(now),
+    username: "",
+    applicationName: "",
+  }
+}
+
+function localDateTimeInput(value: Date): string {
+  const local = new Date(value.getTime() - value.getTimezoneOffset() * 60_000)
+  return local.toISOString().slice(0, 19)
 }
 
 function conversationModeLabel(mode: string): string {

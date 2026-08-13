@@ -270,6 +270,8 @@ def build_admin_router() -> APIRouter:
         end: str = "",
         status: str = "",
         user_id: str = "",
+        username: str = "",
+        application_name: str = "",
         agent: str = "",
         channel: str = "",
         project: str = "",
@@ -292,7 +294,12 @@ def build_admin_router() -> APIRouter:
             start_at, end_at = window.as_iso()
             values = [
                 item
-                for item in AdminReadRepository(c.database).jobs_in_window(start_at, end_at)
+                for item in AdminReadRepository(c.database).jobs_in_window(
+                    start_at,
+                    end_at,
+                    username=username,
+                    application_name=application_name,
+                )
                 if _scope(c, principal).permits(item)
                 and (not status or item["status"] in set(status.split(",")))
                 and (not user_id or user_id in {item.get("internal_user_id"), item.get("user_id")})
