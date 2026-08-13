@@ -101,6 +101,7 @@ test("v1.2 projects safe SDK model, retry, MCP initialization and ResultMessage 
     sdkObservabilityFixture.init,
     sdkObservabilityFixture.api_retry,
     sdkObservabilityFixture.assistant,
+    sdkObservabilityFixture.assistant,
     sdkObservabilityFixture.result_success
   ] as unknown as SDKMessage[];
   let tick = Date.parse("2026-08-12T00:00:00Z");

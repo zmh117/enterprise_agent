@@ -593,7 +593,14 @@ def test_python_sdk_projects_same_v12_observability_fixture_as_typescript() -> N
     )
 
     async def query(**_kwargs: Any) -> Any:
-        for name in ("status_requesting", "init", "api_retry", "assistant", "result_success"):
+        for name in (
+            "status_requesting",
+            "init",
+            "api_retry",
+            "assistant",
+            "assistant",
+            "result_success",
+        ):
             yield fixture[name]
 
     sdk = ClaudeSdk(

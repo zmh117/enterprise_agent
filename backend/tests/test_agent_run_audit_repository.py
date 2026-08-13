@@ -119,6 +119,53 @@ def test_conflicting_model_call_replay_is_rejected(tmp_path: Path) -> None:
         repository.record_runtime_event(job_id, conflict)
 
 
+def test_repeated_model_message_identity_projects_once_without_data_migration(
+    tmp_path: Path,
+) -> None:
+    database, job_id = _database(tmp_path)
+    repository = ExecutionAuditRepository(database)
+    events = _events()
+    for event in events[:3]:
+        repository.record_runtime_event(job_id, event)
+    duplicate = json.loads(json.dumps(events[2]))
+    duplicate["sequence"] = 4
+    duplicate["timestamp"] = "2026-08-12T00:00:02Z"
+    duplicate["payload"]["completed_at"] = "2026-08-12T00:00:02Z"
+    repository.record_runtime_event(job_id, duplicate)
+    duplicate["sequence"] = 5
+    duplicate["timestamp"] = "2026-08-12T00:00:03Z"
+    duplicate["payload"]["completed_at"] = "2026-08-12T00:00:03Z"
+    repository.record_runtime_event(job_id, duplicate)
+
+    summary = repository.rebuild_summary(job_id)
+
+    assert len(AgentRepository(database).list_runtime_events(job_id)) == 5
+    assert len(repository.list_model_calls(job_id)["items"]) == 1
+    assert summary["accounting_status"] == "PARTIAL"
+    assert summary["observed_model_turn_count"] == 1
+    assert summary["input_tokens"] == 120
+    assert summary["output_tokens"] == 32
+
+
+def test_repeated_model_message_identity_rejects_conflicting_measurements(
+    tmp_path: Path,
+) -> None:
+    database, job_id = _database(tmp_path)
+    repository = ExecutionAuditRepository(database)
+    events = _events()
+    for event in events[:3]:
+        repository.record_runtime_event(job_id, event)
+    conflict = json.loads(json.dumps(events[2]))
+    conflict["sequence"] = 4
+    conflict["payload"]["usage"]["output_tokens"] = 999
+
+    with pytest.raises(NonRetryableExecutionError, match="conflicts"):
+        repository.record_runtime_event(job_id, conflict)
+
+    assert len(AgentRepository(database).list_runtime_events(job_id)) == 3
+    assert len(repository.list_model_calls(job_id)["items"]) == 1
+
+
 def test_model_call_cursor_preserves_numeric_sequence_order(tmp_path: Path) -> None:
     database, job_id = _database(tmp_path)
     repository = ExecutionAuditRepository(database)
@@ -126,6 +173,7 @@ def test_model_call_cursor_preserves_numeric_sequence_order(tmp_path: Path) -> N
     for sequence in range(1, 11):
         event = json.loads(json.dumps(template))
         event["sequence"] = sequence
+        event["payload"]["model_call_id"] = f"model-call-{sequence}"
         if sequence not in {1, 10}:
             event["event_type"] = "tool_event"
             event["payload"] = {"tool_name": "safe-tool", "status": "SUCCEEDED"}

@@ -71,3 +71,4 @@
 - 2026-08-12：任务 8.1–8.4 仍未执行；当前实现状态不能替代测试环境 expand migration、RabbitMQ/Worker/Delivery 全链路、页面现场验收和回滚演练证据。
 - 2026-08-13：修复 Python Runtime 镜像遗漏 v1.2 生成合同的发布阻断；生产镜像现在自动复制全部 `generated_runtime_contracts*.py` 并在构建时导入 `runtime_protocol`，TypeScript 镜像也在构建时导入合同与协议模块。同步为 TypeScript/Python Runtime 建立各自单一来源的受支持协议账本，增加逐版本 schema/limits 预检，修正 v1.2 limits 版本标识，并在 CI 中增加 Runtime 源码门禁与双生产镜像构建。
 - 2026-08-13：两套生产镜像已在无网络、只读文件系统下完成导入/静态预检，并仅重建双 Runtime 容器；Python/TypeScript `/ready` 均为 200，Compose 依赖服务恢复运行。尚未执行测试 Publication 的真实 Job、页面追溯和回滚演练，因此任务 8.1–8.4 继续保持未勾选。
+- 2026-08-13：针对同一 SDK Assistant Message 被重复投影为模型轮次的问题，双 Runtime 现按稳定 `model_call_id` 在源头去重，Worker 再按同一 invocation 内的模型轮次身份做一致性校验并只生成一条 `agent_model_call` 投影；相同身份但统计冲突时事务拒绝。未增加 migration，未清理、回填或改写既有重复记录；相关后端 66/66、agent-runtime 42/42、lint、typecheck、合同漂移检查与 Python Ruff 均通过，三个受影响生产镜像已重建，双 Runtime healthy、Agent Worker 持续运行。尚未用新的真实 Job 产生外部模型费用或 Delivery 副作用，因此 8.1–8.4 状态不变。

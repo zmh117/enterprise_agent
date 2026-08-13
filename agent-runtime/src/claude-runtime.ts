@@ -118,6 +118,8 @@ interface NormalizedResult {
   accounting: ExecutionAccounting | undefined;
   failure?: RuntimeFailure;
   modelRequestStartedAt: number | undefined;
+  observedModelCallIds: Set<string>;
+  nextModelCallOrdinal: number;
 }
 
 function runtimeProvenance(
@@ -640,7 +642,9 @@ export class ClaudeAgentRuntimeExecutor {
       answer: "",
       usage: { input_tokens: 0, output_tokens: 0 },
       accounting: undefined,
-      modelRequestStartedAt: undefined
+      modelRequestStartedAt: undefined,
+      observedModelCallIds: new Set<string>(),
+      nextModelCallOrdinal: 1
     };
     emitter.emit("execution_started", provenance);
     try {
@@ -763,10 +767,16 @@ export class ClaudeAgentRuntimeExecutor {
       const messageFailure = classifyMessageError(message.error);
       if (messageFailure) normalized.failure = messageFailure;
       if (request.protocol_version === "1.2") {
+        const rawMessage = message.message as unknown as Record<string, unknown>;
+        const stableMessageId = identifierOrNull(rawMessage.id) ?? identifierOrNull(message.uuid);
+        if (stableMessageId && normalized.observedModelCallIds.has(stableMessageId)) {
+          normalized.modelRequestStartedAt = undefined;
+          return;
+        }
+        if (stableMessageId) normalized.observedModelCallIds.add(stableMessageId);
+        const messageId = stableMessageId ?? `model-call-${normalized.nextModelCallOrdinal++}`;
         const completedAt = this.now();
         const startedAt = normalized.modelRequestStartedAt;
-        const rawMessage = message.message as unknown as Record<string, unknown>;
-        const messageId = identifierOrNull(rawMessage.id) ?? identifierOrNull(message.uuid) ?? "model-call";
         emitter.emit("model_call", {
           model_call_id: messageId,
           provider_request_id:

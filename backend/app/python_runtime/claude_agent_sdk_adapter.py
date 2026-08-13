@@ -59,6 +59,8 @@ class _SdkAuditNormalizer:
         self.accounting: dict[str, Any] = _unavailable_accounting()
         self._request_started_at: float | None = None
         self._request_started_wall: str | None = None
+        self._observed_model_call_ids: set[str] = set()
+        self._next_model_call_ordinal = 1
 
     def consume(self, message: Any) -> None:
         message_type = _sdk_message_type(message)
@@ -123,9 +125,19 @@ class _SdkAuditNormalizer:
             completed_monotonic = time.monotonic()
             completed_wall = _utc_now()
             started = self._request_started_at
-            message_id = _identifier_or_none(
+            stable_message_id = _identifier_or_none(
                 _value(body, "id") or _value(body, "message_id") or _value(message, "uuid")
-            ) or "model-call"
+            )
+            if stable_message_id is not None:
+                if stable_message_id in self._observed_model_call_ids:
+                    self._request_started_at = None
+                    self._request_started_wall = None
+                    return
+                self._observed_model_call_ids.add(stable_message_id)
+                message_id = stable_message_id
+            else:
+                message_id = f"model-call-{self._next_model_call_ordinal}"
+                self._next_model_call_ordinal += 1
             error_code = _identifier_or_none(_value(message, "error"))
             self.events.append(
                 {

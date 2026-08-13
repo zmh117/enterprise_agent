@@ -37,11 +37,52 @@ class ExecutionAuditRepository:
     def _upsert_model_call(self, job_id: str, event: dict[str, Any]) -> None:
         payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
         usage = TokenUsage.from_payload(payload.get("usage"))
+        model_call_id = bounded_text(payload.get("model_call_id"), 128)
+        if not model_call_id:
+            raise NonRetryableExecutionError(
+                "Runtime model call identity is missing",
+                safe_message="模型轮次身份无效",
+                error_code="runtime_model_call_identity_invalid",
+            )
         identity = (
             job_id,
             str(event.get("invocation_id") or ""),
             int(event.get("sequence") or 0),
         )
+        previous_events = self._runtime_events.list_runtime_events(
+            job_id,
+            invocation_id=identity[1],
+        )
+        previous_same_calls = [
+            item
+            for item in previous_events
+            if item["event_type"] == "model_call"
+            and int(item["sequence"]) < identity[2]
+            and isinstance(item.get("payload"), dict)
+            and bounded_text(item["payload"].get("model_call_id"), 128)
+            == model_call_id
+        ]
+        if previous_same_calls:
+            signature = _model_call_signature(payload)
+            if any(
+                _model_call_signature(item["payload"]) != signature
+                for item in previous_same_calls
+            ):
+                raise NonRetryableExecutionError(
+                    "Runtime model call identity conflicts with an earlier event",
+                    safe_message="模型轮次与已保存记录冲突",
+                    error_code="runtime_model_call_conflict",
+                )
+            for previous in previous_same_calls:
+                projected = self.database.execute_one(
+                    """
+                    select id from agent_model_call
+                     where job_id = ? and invocation_id = ? and runtime_sequence = ?
+                    """,
+                    (job_id, identity[1], int(previous["sequence"])),
+                )
+                if projected is not None:
+                    return
         timestamp = now_iso()
         values: dict[str, Any] = {
             "id": "model_call_" + hashlib.sha256(
@@ -413,6 +454,21 @@ def _optional_nonnegative(value: object) -> int | None:
     except (TypeError, ValueError, OverflowError):
         return None
     return candidate if 0 <= candidate <= 9_223_372_036_854_775_807 else None
+
+
+def _model_call_signature(payload: dict[str, Any]) -> tuple[object, ...]:
+    usage = TokenUsage.from_payload(payload.get("usage"))
+    return (
+        bounded_text(payload.get("model_call_id"), 128),
+        bounded_text(payload.get("provider_request_id"), 200),
+        bounded_text(payload.get("provider_message_id"), 200),
+        bounded_text(payload.get("model_id"), 200),
+        str(payload.get("status") or "FAILED"),
+        *(getattr(usage, field) for field in TOKEN_FIELDS),
+        bounded_text(payload.get("stop_reason"), 128),
+        bounded_text(payload.get("error_code"), 128),
+        bounded_text(payload.get("error_summary"), 2048),
+    )
 
 
 def _sum_optional(items: list[dict[str, Any]], field: str) -> int | None:
