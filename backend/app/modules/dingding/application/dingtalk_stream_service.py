@@ -26,6 +26,15 @@ from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
 
 logger = logging.getLogger(__name__)
 
+MAX_QUOTED_MESSAGE_CHARS = 8_000
+
+
+@dataclass(frozen=True)
+class DingTalkQuotedMessage:
+    message_id: str
+    content: str
+    sender_display_name: str = ""
+
 
 @dataclass(frozen=True)
 class DingTalkStreamIncomingMessage:
@@ -47,6 +56,8 @@ class DingTalkStreamIncomingMessage:
     sender_corp_id: str = ""
     chatbot_corp_id: str = ""
     occurred_at: str = ""
+    original_message_id: str = ""
+    quoted_message: DingTalkQuotedMessage | None = None
 
 
 @dataclass(frozen=True)
@@ -144,6 +155,7 @@ class DingTalkStreamMessageService:
         correlation_id: str,
         connector_id: str | None = None,
         defer_rejection_notification: bool = False,
+        quoted_message: DingTalkQuotedMessage | None = None,
     ) -> DingTalkStreamHandleResult:
         source_connector_id = connector_id or self.default_source_connector_id
         self.audit_service.record(
@@ -162,7 +174,7 @@ class DingTalkStreamMessageService:
             sorted(payload.keys()),
         )
         try:
-            message = self.parse_message(payload)
+            message = self.parse_message(payload, quoted_message=quoted_message)
         except UnsupportedDingTalkStreamEvent as exc:
             self.audit_service.record(
                 "dingtalk.stream.ignored",
@@ -217,6 +229,27 @@ class DingTalkStreamMessageService:
 
         event: ChannelEvent | None = None
         try:
+            if message.original_message_id:
+                quote_resolved = message.quoted_message is not None
+                self.audit_service.record(
+                    (
+                        "dingtalk.stream.quote.resolved"
+                        if quote_resolved
+                        else "dingtalk.stream.quote.unavailable"
+                    ),
+                    status="SUCCEEDED" if quote_resolved else "SKIPPED",
+                    summary=(
+                        "DingTalk quoted message resolved"
+                        if quote_resolved
+                        else "DingTalk quoted message was unavailable"
+                    ),
+                    actor_id=message.user_id,
+                    payload={
+                        "connector_id": source_connector_id,
+                        "event_id": message.event_id,
+                        "original_message_id": message.original_message_id,
+                    },
+                )
             event = self.to_channel_event(
                 message=message,
                 payload=payload,
@@ -385,7 +418,12 @@ class DingTalkStreamMessageService:
             },
         )
 
-    def parse_message(self, payload: dict[str, Any]) -> DingTalkStreamIncomingMessage:
+    def parse_message(
+        self,
+        payload: dict[str, Any],
+        *,
+        quoted_message: DingTalkQuotedMessage | None = None,
+    ) -> DingTalkStreamIncomingMessage:
         content = (_text_content(payload) or "").strip()
         attachments = (
             _attachments(payload, credential_ttl_seconds=self.attachment_credential_ttl_seconds)
@@ -442,6 +480,11 @@ class DingTalkStreamMessageService:
         sender_corp_id = _first_text(payload, "senderCorpId", "sender_corp_id")
         chatbot_corp_id = _first_text(payload, "chatbotCorpId", "chatbot_corp_id")
         occurred_at = _first_text(payload, "createAt", "create_at", "timestamp")
+        original_message_id = _first_text(
+            payload,
+            "originalMsgId",
+            "original_message_id",
+        )
 
         if not conversation_id:
             raise RejectedDingTalkStreamMessage("DingTalk Stream payload missing conversation id")
@@ -471,6 +514,13 @@ class DingTalkStreamMessageService:
             sender_corp_id=sender_corp_id,
             chatbot_corp_id=chatbot_corp_id,
             occurred_at=occurred_at,
+            original_message_id=original_message_id,
+            quoted_message=(
+                quoted_message
+                if quoted_message is not None
+                and quoted_message.message_id == original_message_id
+                else None
+            ),
         )
         if rich_text_without_supported_content:
             raise RejectedDingTalkStreamMessage(
@@ -479,6 +529,39 @@ class DingTalkStreamMessageService:
                 error_code="unsupported_rich_text_content",
             )
         return message
+
+    def resolve_quoted_message(
+        self,
+        *,
+        current_payload: dict[str, Any],
+        original_payload: dict[str, Any],
+    ) -> DingTalkQuotedMessage | None:
+        original_message_id = _first_text(
+            current_payload,
+            "originalMsgId",
+            "original_message_id",
+        )
+        if not original_message_id:
+            return None
+        if _first_text(original_payload, "msgId", "msg_id") != original_message_id:
+            return None
+        current_conversation_id = _conversation_id(current_payload)
+        original_conversation_id = _conversation_id(original_payload)
+        if not current_conversation_id or current_conversation_id != original_conversation_id:
+            return None
+        content = (_text_content(original_payload) or "").strip()
+        if not content:
+            return None
+        return DingTalkQuotedMessage(
+            message_id=original_message_id,
+            content=content[:MAX_QUOTED_MESSAGE_CHARS],
+            sender_display_name=_first_text(
+                original_payload,
+                "senderNick",
+                "sender_nick",
+                "senderName",
+            )[:200],
+        )
 
     def to_channel_event(
         self,
@@ -573,7 +656,7 @@ class DingTalkStreamMessageService:
                 workshop=str(routing_payload.get("workshop") or self.default_workshop),
                 service=str(routing_payload.get("service") or self.default_service),
             ),
-            message=message.content,
+            message=_agent_input_message(message),
             attachments=message.attachments,
             raw_payload_summary=safe_payload_summary(payload),
             idempotency_key=f"dingding_stream:{source_connector_id}:{message.event_id}",
@@ -671,6 +754,33 @@ def _first_text(payload: dict[str, Any], *keys: str) -> str:
         if value is not None and str(value).strip():
             return str(value).strip()
     return ""
+
+
+def _conversation_id(payload: dict[str, Any]) -> str:
+    return _first_text(
+        payload,
+        "conversationId",
+        "conversation_id",
+        "openConversationId",
+        "open_conversation_id",
+        "conversationTitle",
+    )
+
+
+def _agent_input_message(message: DingTalkStreamIncomingMessage) -> str:
+    quoted = message.quoted_message
+    if quoted is None:
+        return message.content
+    sender = quoted.sender_display_name or "未知用户"
+    return (
+        "[钉钉引用消息，仅作为当前回复的上下文]\n"
+        f"发送者：{sender}\n"
+        f"{quoted.content}\n"
+        "[/钉钉引用消息]\n\n"
+        "[当前消息]\n"
+        f"{message.content}\n"
+        "[/当前消息]"
+    )
 
 
 def _dict_value(value: Any) -> dict[str, Any]:

@@ -43,6 +43,49 @@ test("submit reports compact UTF-8 JSON byte count", async () => {
   }
 });
 
+test("submit uses DingTalk msgId as the stable external event ID for quoted replies", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestBody: Record<string, unknown> | undefined;
+  globalThis.fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return new Response(
+      JSON.stringify({
+        acknowledged: true,
+        created: true,
+        event_id: "event-1",
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }
+    );
+  };
+  try {
+    const api = new ControlApi({
+      baseUrl: "http://control-api.test",
+      token: "runtime-token",
+    });
+    await api.submit("runtime-1", "lease-1", "connector-1", {
+      headers: { messageId: "header-message", eventId: "header-event" },
+      data: JSON.stringify({
+        msgId: "dingtalk-message",
+        originalMsgId: "quoted-message",
+        text: { content: "1" },
+      }),
+    });
+
+    assert.equal(requestBody?.external_event_id, "dingtalk-message");
+    assert.deepEqual(requestBody?.safe_summary, {
+      msgtype: "",
+      conversationType: "",
+      hasText: true,
+      hasQuote: true,
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("control API errors expose only a validated safe error code", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () =>

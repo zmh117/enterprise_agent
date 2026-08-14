@@ -11,10 +11,12 @@ from app.bootstrap import build_test_container
 from app.modules.channel.domain.channel_event import ReplyRoute
 from app.modules.channel.infrastructure.connector_registry import Connector
 from app.modules.dingding.application.dingtalk_stream_service import (
+    DingTalkQuotedMessage,
     DingTalkStreamHandleResult,
 )
 from app.modules.job.application.job_status_service import JobStatusService
 from app.modules.job.domain.job_status import JobStatus
+from app.modules.message_bus.application.message_publisher import ChannelEventMessage
 from app.shared.config import DingTalkSettings, Settings
 from app.shared.exceptions import NonRetryableExecutionError
 from app.workers.agent_job_worker import AgentJobWorker
@@ -132,6 +134,112 @@ class DingTalkStreamIngressTests(unittest.TestCase):
         self.assertEqual("received", result.status)
         job = c.agent_repository.get_job(result.job_id)
         self.assertEqual("搜索 ONES 全部的工作项", job.input_message)
+
+    def test_quoted_stream_message_sends_quote_and_current_reply_to_agent(self) -> None:
+        c = routed_container()
+        payload = stream_payload(
+            msg_id="reply-msg-1",
+            event_id="reply-event-1",
+            content="1",
+        )
+        payload["originalMsgId"] = "original-msg-1"
+
+        result = c.dingtalk_stream_message_service.handle_callback(
+            payload=payload,
+            correlation_id="corr-quoted-message-1",
+            quoted_message=DingTalkQuotedMessage(
+                message_id="original-msg-1",
+                content="查询 ONES 的 task，关键词 900",
+                sender_display_name="引用用户",
+            ),
+        )
+
+        self.assertTrue(result.accepted, result)
+        job = c.agent_repository.get_job(result.job_id)
+        self.assertEqual(
+            "[钉钉引用消息，仅作为当前回复的上下文]\n"
+            "发送者：引用用户\n"
+            "查询 ONES 的 task，关键词 900\n"
+            "[/钉钉引用消息]\n\n"
+            "[当前消息]\n"
+            "1\n"
+            "[/当前消息]",
+            job.input_message,
+        )
+
+    def test_quote_resolution_rejects_message_from_another_conversation(self) -> None:
+        c = routed_container()
+        current = stream_payload(
+            msg_id="reply-msg-2",
+            event_id="reply-event-2",
+            content="1",
+        )
+        current["originalMsgId"] = "original-msg-2"
+        original = stream_payload(
+            msg_id="original-msg-2",
+            event_id="original-event-2",
+            content="不应跨会话引用",
+        )
+        original["conversationId"] = "another-conversation"
+
+        quoted = c.dingtalk_stream_message_service.resolve_quoted_message(
+            current_payload=current,
+            original_payload=original,
+        )
+
+        self.assertIsNone(quoted)
+
+    def test_managed_dispatch_resolves_original_msg_id_before_job_creation(self) -> None:
+        c = routed_container()
+        connector_id = "connector-dingtalk-stream-default"
+        original_payload = stream_payload(
+            msg_id="original-msg-3",
+            event_id="original-event-3",
+            content="查询 ONES 的 task，关键词 900",
+        )
+        current_payload = stream_payload(
+            msg_id="reply-msg-3",
+            event_id="reply-event-3",
+            content="1",
+        )
+        current_payload["originalMsgId"] = "original-msg-3"
+        original_event, _ = c.managed_channel_repository.receive_event(
+            source_type="dingding_stream",
+            connector_id=connector_id,
+            external_event_id="original-msg-3",
+            correlation_id="corr-original-msg-3",
+            payload_hash="hash-original-msg-3",
+            request_bytes=512,
+            safe_summary={"msgtype": "text"},
+            normalized_event=original_payload,
+            reply_credential_ciphertext="",
+        )
+        current_event, _ = c.managed_channel_repository.receive_event(
+            source_type="dingding_stream",
+            connector_id=connector_id,
+            external_event_id="reply-msg-3",
+            correlation_id="corr-reply-msg-3",
+            payload_hash="hash-reply-msg-3",
+            request_bytes=512,
+            safe_summary={"msgtype": "text", "hasQuote": True},
+            normalized_event=current_payload,
+            reply_credential_ciphertext="",
+        )
+
+        c.channel_dispatch_service.handle(
+            ChannelEventMessage(
+                channel_event_id=str(current_event["id"]),
+                correlation_id="corr-reply-msg-3",
+            )
+        )
+
+        stored = c.managed_channel_repository.get_event(str(current_event["id"]))
+        self.assertTrue(stored["job_id"])
+        job = c.agent_repository.get_job(str(stored["job_id"]))
+        self.assertIn("查询 ONES 的 task，关键词 900", job.input_message)
+        self.assertIn("[当前消息]\n1\n[/当前消息]", job.input_message)
+        untouched = c.managed_channel_repository.get_event(str(original_event["id"]))
+        self.assertFalse(untouched.get("job_id"))
 
     def test_rich_text_without_text_is_rejected_instead_of_silently_ignored(self) -> None:
         c = routed_container()

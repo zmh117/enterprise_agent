@@ -10,6 +10,7 @@ from typing import Any, Never, Protocol
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.dingding.application.dingtalk_stream_service import (
+    DingTalkQuotedMessage,
     DingTalkStreamMessageService,
 )
 from app.modules.identity_discovery.application import DingTalkIdentityDiscoveryService
@@ -1123,12 +1124,14 @@ class ChannelDispatchService:
         ciphertext = str(event.get("reply_credential_ciphertext") or "")
         if ciphertext:
             payload["sessionWebhook"] = self.credential_cipher.decrypt(ciphertext)
+        quoted_message = self._resolve_quoted_message(event=event, payload=payload)
         try:
             result = self.stream_service.handle_callback(
                 payload=payload,
                 correlation_id=str(event["correlation_id"]),
                 connector_id=str(event["connector_id"]),
                 defer_rejection_notification=True,
+                quoted_message=quoted_message,
             )
         except AppError as exc:
             self.repository.mark_event_rejected(
@@ -1157,6 +1160,31 @@ class ChannelDispatchService:
                     error_summary=result.reason or result.ack_message,
                 )
             self.stream_service.notify_deferred_rejection(result)
+
+    def _resolve_quoted_message(
+        self,
+        *,
+        event: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> DingTalkQuotedMessage | None:
+        original_message_id = str(
+            payload.get("originalMsgId") or payload.get("original_message_id") or ""
+        ).strip()
+        if not original_message_id:
+            return None
+        original_event = self.repository.find_event_by_external_id(
+            source_type="dingding_stream",
+            connector_id=str(event["connector_id"]),
+            external_event_id=original_message_id,
+        )
+        if original_event is None or str(original_event["id"]) == str(event["id"]):
+            return None
+        if str(original_event.get("received_at") or "") > str(event.get("received_at") or ""):
+            return None
+        return self.stream_service.resolve_quoted_message(
+            current_payload=payload,
+            original_payload=dict(original_event["normalized_event"]),
+        )
 
 
 class UnavailableChannelCredentialCipher:

@@ -631,6 +631,23 @@ class ManagedChannelRepository:
         value["normalized_event"] = _json(value.pop("normalized_event_json", "{}"))
         return value
 
+    def find_event_by_external_id(
+        self,
+        *,
+        source_type: str,
+        connector_id: str,
+        external_event_id: str,
+    ) -> dict[str, Any] | None:
+        row = self.database.execute_one(
+            """
+            select id
+              from channel_ingress_event
+             where source_type = ? and connector_id = ? and external_event_id = ?
+            """,
+            (source_type, connector_id, external_event_id),
+        )
+        return self.get_event(str(row["id"])) if row is not None else None
+
     def claim_outbox(self, *, worker_id: str) -> dict[str, Any] | None:
         now = now_iso()
         rows = self.database.execute(

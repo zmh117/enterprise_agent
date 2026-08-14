@@ -77,8 +77,8 @@ export class ControlApi {
     const normalized = parsed as Record<string, unknown>;
     const encoded = JSON.stringify(normalized);
     const externalEventId =
-      String(envelope.headers.eventId ?? "") ||
-      String(normalized.eventId ?? normalized.msgId ?? envelope.headers.messageId);
+      String(normalized.msgId ?? "") ||
+      String(normalized.eventId ?? envelope.headers.eventId ?? envelope.headers.messageId);
     if (!externalEventId) throw new Error("DingTalk callback has no event ID");
     return this.request("/inbox", {
       method: "POST",
@@ -93,6 +93,7 @@ export class ControlApi {
           msgtype: normalized.msgtype ?? "",
           conversationType: normalized.conversationType ?? "",
           hasText: Boolean(normalized.text),
+          hasQuote: Boolean(normalized.originalMsgId),
         },
         payload_hash: createHash("sha256").update(encoded).digest("hex"),
         request_bytes: Buffer.byteLength(encoded),
