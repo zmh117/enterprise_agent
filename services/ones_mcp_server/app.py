@@ -6,7 +6,6 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from contextlib import suppress
-from dataclasses import replace
 from typing import Any, Awaitable, Callable
 
 import uvicorn
@@ -21,24 +20,16 @@ from starlette.routing import Route
 from starlette.types import Message, Receive, Scope, Send
 
 from app.bootstrap import Container, build_worker_container
-from app.modules.identity.application.principal_jwt import PrincipalJwks, PrincipalTokenVerifier
-from app.modules.identity.infrastructure.ones_identity_verifier import UrllibOnesIdentityVerifier
-from app.modules.mcp_audit import McpAuditCoordinator, McpAuditHandle
-from app.shared.config import OnesIdentitySettings, load_settings
+from app.modules.mcp_audit import McpAuditHandle
+from app.shared.config import load_settings
 from app.shared.exceptions import AppError
 from services.ones_mcp_server.contracts import (
     SERVER_CODE,
     SERVER_VERSION,
-    TOOL_IDENTIFIER,
-    TOOL_INPUT_SCHEMA,
-    validate_provider_target,
 )
-from services.ones_mcp_server.runtime import (
-    OnesMcpError,
-    OnesPrincipalResolver,
-    OnesProviderClient,
-    OnesWorkItemSearchService,
-)
+from services.ones_mcp_server.errors import OnesMcpError
+from services.ones_mcp_server.tools.registry import OnesToolRegistry
+from services.ones_mcp_server.tools.work_item_search import OnesWorkItemSearchService
 
 
 logger = logging.getLogger(__name__)
@@ -140,26 +131,27 @@ class OnesMcpSecurityMiddleware:
         await response(scope, receive, send)
 
 
-def create_ones_server(service: OnesWorkItemSearchService) -> Server:
+def create_ones_server(registry: OnesToolRegistry) -> Server:
     async def list_tools(
         context: ServerRequestContext,
         _params: types.PaginatedRequestParams | None,
     ) -> types.ListToolsResult:
         request = _request(context)
-        service.authenticate(_bearer(request))
+        registry.authenticate(_bearer(request))
         return types.ListToolsResult(
             tools=[
                 types.Tool(
-                    name=TOOL_IDENTIFIER,
-                    description="按关键字和类型查询当前用户默认 Team 的 ONES 工作项。",
-                    input_schema=TOOL_INPUT_SCHEMA,
+                    name=tool.tool_identifier,
+                    description=tool.description,
+                    input_schema=tool.input_schema,
                     annotations=types.ToolAnnotations(
-                        read_only_hint=True,
-                        destructive_hint=False,
-                        idempotent_hint=True,
-                        open_world_hint=False,
+                        read_only_hint=tool.read_only,
+                        destructive_hint=tool.destructive,
+                        idempotent_hint=tool.idempotent,
+                        open_world_hint=tool.open_world,
                     ),
                 )
+                for tool in registry.tools
             ]
         )
 
@@ -169,15 +161,10 @@ def create_ones_server(service: OnesWorkItemSearchService) -> Server:
     ) -> types.CallToolResult:
         request = _request(context)
         try:
-            claims = service.authenticate(_bearer(request))
-            if params.name != TOOL_IDENTIFIER:
-                raise OnesMcpError(
-                    "ONES MCP Tool is not published",
-                    safe_message="当前 ONES 工具未发布",
-                    error_code="ones_mcp_tool_denied",
-                )
+            claims = registry.authenticate(_bearer(request))
+            tool = registry.require(params.name)
             result = await asyncio.to_thread(
-                service.search,
+                tool.invoke,
                 claims=claims,
                 arguments=params.arguments or {},
                 correlation_id=str(request.headers.get("x-correlation-id") or "")[:128],
@@ -215,7 +202,7 @@ def create_ones_server(service: OnesWorkItemSearchService) -> Server:
 
 
 def create_app(
-    service: OnesWorkItemSearchService,
+    service: OnesWorkItemSearchService | OnesToolRegistry,
     *,
     database: Any,
     max_request_bytes: int,
@@ -227,7 +214,16 @@ def create_app(
         "127.0.0.1:9104",
     ),
 ) -> OnesMcpSecurityMiddleware:
-    server = create_ones_server(service)
+    registry = (
+        service
+        if isinstance(service, OnesToolRegistry)
+        else OnesToolRegistry(
+            authenticate=service.authenticate,
+            tools=(service,),
+            audit=service.audit,
+        )
+    )
+    server = create_ones_server(registry)
     manager = StreamableHTTPSessionManager(
         app=server,
         json_response=True,
@@ -250,7 +246,7 @@ def create_app(
                 raise ValueError("ONES MCP database schema is not current")
             database.execute("select id from external_identity_credential where 1 = 0")
             database.execute("select id from mcp_operation_audit where 1 = 0")
-            service.audit.assert_ready()
+            registry.audit.assert_ready()
             if not 1 <= audit_retention_days <= 3650:
                 raise ValueError("MCP operation audit retention is invalid")
             return JSONResponse(
@@ -280,7 +276,7 @@ def create_app(
         if 1 <= audit_retention_days <= 3650:
             retention_task = asyncio.create_task(
                 _retention_loop(
-                    service,
+                    registry,
                     retention_days=audit_retention_days,
                     platform_audit_service=platform_audit_service,
                 )
@@ -305,52 +301,15 @@ def create_app(
 
 
 def service_from_container(runtime: Container) -> OnesWorkItemSearchService:
-    settings = runtime.settings
-    credentials = runtime.external_identity_credential_repository
-    if credentials is None:
-        raise ValueError("ONES MCP requires the platform credential master key")
-    target = validate_provider_target(
-        settings.ones_mcp.provider_base_url,
-        allowed_hosts=settings.ones_mcp.provider_allowed_hosts,
-        app_env=settings.environment,
-        allow_insecure_local=settings.ones_mcp.allow_insecure_local,
-    )
-    verifier = PrincipalTokenVerifier(
-        PrincipalJwks.from_file(settings.principal_jwt.public_jwks_file),
-        audit_service=runtime.audit_service,
-    )
-    provider = OnesProviderClient(
-        target,
-        timeout_seconds=settings.ones_mcp.timeout_seconds,
-        max_response_bytes=settings.ones_mcp.max_response_bytes,
-    )
-    login_settings = replace(
-        settings.ones_identity,
-        base_url=target.base_url,
-        allowed_hosts=(target.host,),
-        timeout_seconds=settings.ones_mcp.timeout_seconds,
-        max_response_bytes=settings.ones_mcp.max_response_bytes,
-        allow_insecure_local=target.allow_insecure_local,
-    )
-    if not isinstance(login_settings, OnesIdentitySettings):
-        raise TypeError("ONES identity settings are invalid")
-    return OnesWorkItemSearchService(
-        OnesPrincipalResolver(
-            runtime.database,
-            verifier,
-            runtime.mcp_tool_snapshot_service,
-            runtime.business_authorization_service,
-            credentials,
-        ),
-        provider,
-        UrllibOnesIdentityVerifier(login_settings, environment=settings.environment),
-        credentials,
-        McpAuditCoordinator(
-            runtime.database,
-            max_payload_bytes=settings.ones_mcp.max_response_bytes,
-            audit_service=runtime.audit_service,
-        ),
-    )
+    from services.ones_mcp_server.bootstrap import build_work_item_search_service
+
+    return build_work_item_search_service(runtime)
+
+
+def registry_from_container(runtime: Container) -> OnesToolRegistry:
+    from services.ones_mcp_server.bootstrap import build_tool_registry
+
+    return build_tool_registry(runtime)
 
 
 def create_default_app() -> OnesMcpSecurityMiddleware:
@@ -361,7 +320,7 @@ def create_default_app() -> OnesMcpSecurityMiddleware:
         service_name=SERVER_CODE,
     )
     return create_app(
-        service_from_container(runtime),
+        registry_from_container(runtime),
         database=runtime.database,
         max_request_bytes=settings.ones_mcp.max_request_bytes,
         audit_retention_days=settings.ones_mcp.audit_retention_days,
@@ -370,7 +329,7 @@ def create_default_app() -> OnesMcpSecurityMiddleware:
 
 
 async def _retention_loop(
-    service: OnesWorkItemSearchService,
+    registry: OnesToolRegistry,
     *,
     retention_days: int,
     platform_audit_service: Any | None,
@@ -378,7 +337,7 @@ async def _retention_loop(
     while True:
         try:
             deleted = await asyncio.to_thread(
-                service.audit.purge_expired,
+                registry.audit.purge_expired,
                 retention_days=retention_days,
             )
             if platform_audit_service is not None:

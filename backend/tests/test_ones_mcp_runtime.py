@@ -33,13 +33,17 @@ from app.shared.exceptions import AppError, NonRetryableExecutionError
 from backend.tests.helpers import container, prepare_debug_application_access
 from ones_mock.mock_ones_api import MockOnesSettings, create_app as create_mock_app
 from services.ones_mcp_server.app import create_app as create_mcp_app
+from services.ones_mcp_server.auth.principal import OnesPrincipalResolver
 from services.ones_mcp_server.contracts import validate_provider_target
-from services.ones_mcp_server.runtime import (
-    OnesPrincipalResolver,
-    OnesMcpError,
-    OnesProviderClient,
-    OnesWorkItemSearchService,
+from services.ones_mcp_server.credentials.refresh import OnesCredentialRefreshService
+from services.ones_mcp_server.errors import OnesMcpError
+from services.ones_mcp_server.provider.graphql.client import OnesGraphqlClient
+from services.ones_mcp_server.provider.graphql.operation import GraphqlOperationRegistry
+from services.ones_mcp_server.provider.graphql.operations.work_item_search import (
+    WORK_ITEM_SEARCH_OPERATION,
 )
+from services.ones_mcp_server.provider.http_client import OnesProviderHttpClient
+from services.ones_mcp_server.tools.work_item_search import OnesWorkItemSearchService
 
 
 @dataclass
@@ -201,7 +205,7 @@ def _fixture(*, initial_token: str | None = None) -> dict[str, Any]:
         audit_service=runtime.audit_service,
     )
     login = _MockLoginVerifier()
-    provider = OnesProviderClient(
+    provider_http = OnesProviderHttpClient(
         validate_provider_target(
             "http://ones-mock:8001",
             allowed_hosts=("ones-mock",),
@@ -212,18 +216,29 @@ def _fixture(*, initial_token: str | None = None) -> dict[str, Any]:
         max_response_bytes=256 * 1024,
         open_response=_MockProviderTransport(),
     )
-    service = OnesWorkItemSearchService(
-        OnesPrincipalResolver(
-            runtime.database,
-            verifier,
-            runtime.mcp_tool_snapshot_service,
-            runtime.business_authorization_service,
-            credentials,
-        ),
-        provider,
+    graphql = OnesGraphqlClient(
+        provider_http,
+        GraphqlOperationRegistry((WORK_ITEM_SEARCH_OPERATION,)),
+    )
+    resolver = OnesPrincipalResolver(
+        runtime.database,
+        verifier,
+        runtime.mcp_tool_snapshot_service,
+        runtime.business_authorization_service,
+        credentials,
+    )
+    refresh = OnesCredentialRefreshService(
+        resolver,
         login,
         credentials,
         audit,
+    )
+    service = OnesWorkItemSearchService(
+        resolver,
+        graphql,
+        credentials,
+        audit,
+        refresh,
     )
     return {
         "runtime": runtime,
@@ -232,6 +247,7 @@ def _fixture(*, initial_token: str | None = None) -> dict[str, Any]:
         "token": token,
         "claims": service.authenticate(token),
         "service": service,
+        "provider_http": provider_http,
         "login": login,
         "mock": mock,
         "selection": selection,
@@ -523,7 +539,7 @@ def test_ones_mcp_classifies_provider_timeout_without_persisting_a_response() ->
     def time_out(*_args: Any, **_kwargs: Any) -> _ProviderResponse:
         raise TimeoutError("fixed test timeout")
 
-    fixture["service"].provider._open_response = time_out
+    fixture["provider_http"]._open_response = time_out
 
     with pytest.raises(AppError) as raised:
         fixture["service"].search(
@@ -925,7 +941,7 @@ def test_ones_mcp_rejects_provider_auth_fields_before_business_audit() -> None:
         },
         "token": "must-never-be-audited",
     }
-    fixture["service"].provider._open_response = lambda *_args: _ProviderResponse(
+    fixture["provider_http"]._open_response = lambda *_args: _ProviderResponse(
         200,
         json.dumps(response).encode("utf-8"),
     )
