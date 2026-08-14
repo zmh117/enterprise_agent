@@ -98,8 +98,12 @@ def test_api_server_alone_receives_fixed_ones_identity_provider_configuration() 
     expected = {
         "ONES_IDENTITY_INSTANCE_CODE": "${ONES_IDENTITY_INSTANCE_CODE:-default}",
         "ONES_IDENTITY_DISPLAY_NAME": "${ONES_IDENTITY_DISPLAY_NAME:-ONES}",
-        "ONES_IDENTITY_BASE_URL": ("${ONES_IDENTITY_BASE_URL:-http://ones-mock:19121}"),
-        "ONES_IDENTITY_ALLOWED_HOSTS": "${ONES_IDENTITY_ALLOWED_HOSTS:-ones-mock}",
+        "ONES_IDENTITY_BASE_URL": (
+            "${ONES_IDENTITY_BASE_URL:-http://host.docker.internal:19121}"
+        ),
+        "ONES_IDENTITY_ALLOWED_HOSTS": (
+            "${ONES_IDENTITY_ALLOWED_HOSTS:-host.docker.internal}"
+        ),
         "ONES_IDENTITY_TIMEOUT_SECONDS": "${ONES_IDENTITY_TIMEOUT_SECONDS:-5}",
         "ONES_IDENTITY_MAX_RESPONSE_BYTES": "${ONES_IDENTITY_MAX_RESPONSE_BYTES:-65536}",
         "ONES_IDENTITY_ALLOW_INSECURE_LOCAL": ("${ONES_IDENTITY_ALLOW_INSECURE_LOCAL:-true}"),

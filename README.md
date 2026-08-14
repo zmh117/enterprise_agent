@@ -36,12 +36,14 @@ cp .env.example .env
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 make check
+docker compose -f ones_mock/docker-compose.ones-mock.yml up --build -d
 docker compose up --build
 ```
 
-本地主 Compose 会同时启动内部 `ones-mock`，供 ONES 本人绑定、Token 刷新和
-`ones_work_item_search` 验收使用；该服务不发布宿主端口。生产部署必须显式覆盖为
-受信 HTTPS ONES Provider，`APP_ENV=production` 会拒绝仓库内 HTTP Mock 默认值。
+`ones-mock` 是独立的本地开发服务，通过宿主机 `127.0.0.1:19121` 发布；主 Compose
+不再定义该服务，容器通过 `http://host.docker.internal:19121` 访问它。该 Mock 用于
+ONES 本人绑定、Token 刷新和 `ones_work_item_search` 验收。生产部署必须显式覆盖为
+受信 HTTPS ONES Provider，`APP_ENV=production` 会拒绝 HTTP Mock 地址。
 
 查看服务状态：
 
@@ -56,7 +58,7 @@ Compose 的核心执行服务为：
 - `postgres`、`rabbitmq`
 - `agent-worker`
 - `python-agent-runtime`、`typescript-agent-runtime`
-- `tool-mcp`、`ones-mcp`、仅本地验收使用的内部 `ones-mock`
+- `tool-mcp`、`ones-mcp`（本地 Mock 由独立 Compose 启动）
 - 钉钉、Webhook、投递和附件 Worker
 
 ## 配置与 Secret

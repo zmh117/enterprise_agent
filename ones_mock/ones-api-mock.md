@@ -13,9 +13,9 @@ docker compose -f docker-compose.ones-mock.yml up --build -d
 docker compose -f docker-compose.ones-mock.yml ps
 ```
 
-独立启动时默认地址为 `http://127.0.0.1:19121`。主仓库直接执行
-`docker compose up -d` 时，Mock 不发布宿主端口，只允许主 Compose 内部通过
-`http://ones-mock:19121` 访问。
+独立启动后，宿主机地址为 `http://127.0.0.1:19121`。主 Compose 不再内置
+Mock；其中的 API 和 `ones-mcp` 容器通过
+`http://host.docker.internal:19121` 访问该独立服务。
 
 ## Mock 用户（见 mock.yaml）
 
@@ -61,8 +61,8 @@ curl -sS http://127.0.0.1:19121/project/api/project/auth/login \
 ```env
 ONES_IDENTITY_INSTANCE_CODE=default
 ONES_IDENTITY_DISPLAY_NAME=ONES
-ONES_IDENTITY_BASE_URL=http://ones-mock:19121
-ONES_IDENTITY_ALLOWED_HOSTS=ones-mock
+ONES_IDENTITY_BASE_URL=http://host.docker.internal:19121
+ONES_IDENTITY_ALLOWED_HOSTS=host.docker.internal
 ONES_IDENTITY_TIMEOUT_SECONDS=5
 ONES_IDENTITY_MAX_RESPONSE_BYTES=65536
 ONES_IDENTITY_ALLOW_INSECURE_LOCAL=true

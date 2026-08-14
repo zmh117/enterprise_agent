@@ -40,11 +40,10 @@ x-api-env: &api-env
   # Worker、Runtime 或 MCP，也不依赖已退役的 API Connection。
   ONES_IDENTITY_INSTANCE_CODE: ${ONES_IDENTITY_INSTANCE_CODE:-default}
   ONES_IDENTITY_DISPLAY_NAME: ${ONES_IDENTITY_DISPLAY_NAME:-ONES}
-  # Plain `docker compose up` is a local acceptance stack and binds against the
-  # repository-owned Mock. Production still rejects this HTTP target through
-  # APP_ENV=production and must explicitly provide an HTTPS Provider allowlist.
-  ONES_IDENTITY_BASE_URL: ${ONES_IDENTITY_BASE_URL:-http://ones-mock:19121}
-  ONES_IDENTITY_ALLOWED_HOSTS: ${ONES_IDENTITY_ALLOWED_HOSTS:-ones-mock}
+  # 本地 Mock 作为独立 Compose 服务发布到宿主机 19121 端口；主 Compose
+  # 通过 host.docker.internal 访问。生产仍必须覆盖为受信 HTTPS Provider。
+  ONES_IDENTITY_BASE_URL: ${ONES_IDENTITY_BASE_URL:-http://host.docker.internal:19121}
+  ONES_IDENTITY_ALLOWED_HOSTS: ${ONES_IDENTITY_ALLOWED_HOSTS:-host.docker.internal}
   ONES_IDENTITY_TIMEOUT_SECONDS: ${ONES_IDENTITY_TIMEOUT_SECONDS:-5}
   ONES_IDENTITY_MAX_RESPONSE_BYTES: ${ONES_IDENTITY_MAX_RESPONSE_BYTES:-65536}
   ONES_IDENTITY_ALLOW_INSECURE_LOCAL: ${ONES_IDENTITY_ALLOW_INSECURE_LOCAL:-true}
@@ -144,37 +143,6 @@ services:
       minio:
         condition: service_healthy
 
-  ones-mock:
-    build:
-      context: ./ones_mock
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    init: true
-    read_only: true
-    tmpfs:
-      - /tmp:size=16m,mode=1777,uid=10004,gid=10004
-    cap_drop: ["ALL"]
-    security_opt: ["no-new-privileges:true"]
-    expose:
-      - "19121"
-    healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:19121/health', timeout=2)"
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 5s
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 256M
-    networks:
-      - agent-runtime-control
-
   tool-mcp:
     build:
       context: .
@@ -232,8 +200,8 @@ services:
       APP_ENV: ${APP_ENV:-local}
       SEED_LOCAL_CONFIG: "false"
       PRINCIPAL_JWKS_FILE: /run/secrets/principal_jwks
-      ONES_MCP_PROVIDER_BASE_URL: ${ONES_MCP_PROVIDER_BASE_URL:-http://ones-mock:19121}
-      ONES_MCP_PROVIDER_ALLOWED_HOSTS: ${ONES_MCP_PROVIDER_ALLOWED_HOSTS:-ones-mock}
+      ONES_MCP_PROVIDER_BASE_URL: ${ONES_MCP_PROVIDER_BASE_URL:-http://host.docker.internal:19121}
+      ONES_MCP_PROVIDER_ALLOWED_HOSTS: ${ONES_MCP_PROVIDER_ALLOWED_HOSTS:-host.docker.internal}
       ONES_MCP_PROVIDER_ALLOW_INSECURE_LOCAL: ${ONES_MCP_PROVIDER_ALLOW_INSECURE_LOCAL:-true}
       ONES_MCP_PROVIDER_TIMEOUT_SECONDS: ${ONES_MCP_PROVIDER_TIMEOUT_SECONDS:-5}
       ONES_MCP_PROVIDER_MAX_RESPONSE_BYTES: ${ONES_MCP_PROVIDER_MAX_RESPONSE_BYTES:-262144}
@@ -249,8 +217,8 @@ services:
         condition: service_healthy
       migrator:
         condition: service_completed_successfully
-      ones-mock:
-        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test:
         - CMD
@@ -414,6 +382,8 @@ services:
         condition: service_healthy
       typescript-agent-runtime:
         condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test:
         - CMD

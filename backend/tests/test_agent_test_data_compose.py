@@ -89,6 +89,7 @@ class AgentTestDataLifecycleScriptTests(unittest.TestCase):
         self.assertIn("reset --yes", script)
         self.assertNotIn("down -v", script)
         self.assertIn("ones_mock/docker-compose.ones-mock.yml", script)
+        self.assertNotIn("-f docker-compose.yml", script)
         for volume in (
             "enterprise_agent_agent_test_mysql_data",
             "enterprise_agent_agent_test_sqlserver_data",

@@ -17,7 +17,7 @@
 #   - Oracle 不在本 profile 内
 #
 # 前置
-#   - 在仓库根目录执行（依赖 docker-compose.yml + ones_mock/docker-compose.ones-mock.yml）
+#   - 在仓库根目录执行（依赖独立的 ones_mock/docker-compose.ones-mock.yml）
 #   - 已安装 Docker Compose
 #   - ARM64 Mac：SQL Server 走 amd64 模拟，首次较慢，健康检查可能失败
 #
@@ -83,7 +83,7 @@ USAGE
 }
 
 compose() {
-  docker compose -f docker-compose.yml -f ones_mock/docker-compose.ones-mock.yml "$@"
+  docker compose -f ones_mock/docker-compose.ones-mock.yml "$@"
 }
 
 # ARM64 上 SQL Server 只能 amd64 模拟，提前提示，避免误以为脚本坏了

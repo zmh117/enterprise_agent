@@ -160,15 +160,16 @@ def test_compose_keeps_principal_keys_provider_config_and_runtime_urls_separated
     assert set(ones["secrets"]) == {"app_config_master_key", "principal_jwks"}
     assert ones["environment"]["PRINCIPAL_JWKS_FILE"] == ("/run/secrets/principal_jwks")
     assert ones["environment"]["ONES_MCP_PROVIDER_BASE_URL"] == (
-        "${ONES_MCP_PROVIDER_BASE_URL:-http://ones-mock:19121}"
+        "${ONES_MCP_PROVIDER_BASE_URL:-http://host.docker.internal:19121}"
     )
     assert ones["environment"]["ONES_MCP_PROVIDER_ALLOWED_HOSTS"] == (
-        "${ONES_MCP_PROVIDER_ALLOWED_HOSTS:-ones-mock}"
+        "${ONES_MCP_PROVIDER_ALLOWED_HOSTS:-host.docker.internal}"
     )
     assert ones["environment"]["ONES_MCP_PROVIDER_ALLOW_INSECURE_LOCAL"] == (
         "${ONES_MCP_PROVIDER_ALLOW_INSECURE_LOCAL:-true}"
     )
-    assert ones["depends_on"]["ones-mock"]["condition"] == "service_healthy"
+    assert "ones-mock" not in ones["depends_on"]
+    assert ones["extra_hosts"] == ["host.docker.internal:host-gateway"]
     assert not {
         "ONES_IDENTITY_BASE_URL",
         "ONES_IDENTITY_ALLOWED_HOSTS",
@@ -226,19 +227,22 @@ def test_secret_bootstrap_makes_container_principal_private_key_read_only(
     assert stat.S_IMODE(principal_private_key.stat().st_mode) == 0o400
 
 
-def test_compose_local_ones_mock_is_internal_and_not_host_published() -> None:
+def test_local_ones_mock_is_independent_and_host_published() -> None:
     compose = yaml.safe_load((REPOSITORY_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
-    mock = compose["services"]["ones-mock"]
+    assert "ones-mock" not in compose["services"]
+
+    mock_compose = yaml.safe_load(
+        (REPOSITORY_ROOT / "ones_mock/docker-compose.ones-mock.yml").read_text(encoding="utf-8")
+    )
+    mock = mock_compose["services"]["ones-mock"]
     assert mock["build"] == {
-        "context": "./ones_mock",
+        "context": ".",
         "dockerfile": "Dockerfile",
     }
     assert mock["read_only"] is True
     assert mock["cap_drop"] == ["ALL"]
     assert mock["security_opt"] == ["no-new-privileges:true"]
-    assert mock["networks"] == ["agent-runtime-control"]
-    assert mock["expose"] == ["19121"]
-    assert "ports" not in mock
+    assert mock["ports"] == ["127.0.0.1:19121:19121"]
 
     dockerfile = (REPOSITORY_ROOT / "ones_mock/Dockerfile").read_text(encoding="utf-8")
     assert "USER 10004:10004" in dockerfile
