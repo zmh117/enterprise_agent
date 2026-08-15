@@ -129,7 +129,8 @@ class FileAuthorizationService:
             select i.*, f.tenant_id, f.owner_type, f.owner_user_id,
                    f.owner_enterprise_id, f.owner_connector_id,
                    f.owner_conversation_id, f.status as file_status,
-                   v.status as version_status, v.content_deleted_at
+                   v.status as version_status, v.version_number, v.media_type,
+                   v.size_bytes, v.content_sha256, v.content_deleted_at
               from agent_job_file_snapshot_item i
               join managed_file f on f.id = i.file_id
               join managed_file_version v on v.id = i.version_id

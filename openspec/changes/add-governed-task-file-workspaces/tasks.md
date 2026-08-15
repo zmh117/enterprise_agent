@@ -61,6 +61,7 @@
 - [x] 7.4 为冻结后新版本产生、权限撤销、工作区到期、内容已删除和跨会话引用增加 Job/物化授权回归测试
 - [x] 7.5 保持既有 JPEG、PNG、WebP、DOCX、XLSX、PPTX 和 Markdown 附件兼容链路，并确保它们不会被错误宣称进入第一阶段任务工作区编辑能力
 - [x] 7.6 实现纯 TXT 附件消息静默暂存、同 Session 多文件累积、后续非空文字原子认领唯一 Job、导入竞态释放、一次性自动消费和跨 Session 隔离，并补齐 migration、Channel/File Worker/Manifest/管理端回归测试
+- [x] 7.7 使用下一条前向 migration 保存并回填原始附件 `source_received_at`，升级 Job File Manifest schema，并在 File MCP、Python/TypeScript Runtime 自动物化元数据中统一投影 `source_received_at`、`version_created_at` 和服务端 `observed_at`，覆盖最近一小时筛选、Agent 生成文件空来源时间、旧 Manifest 兼容及模糊 `created_at` 不再作为上传时间的回归测试
 
 ## 8. Runtime Job Sandbox 与受限文件工具
 

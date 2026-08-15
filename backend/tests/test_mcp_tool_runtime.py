@@ -450,6 +450,10 @@ def test_file_job_context_exposes_frozen_file_tools_and_sandbox_instructions() -
     assert "runtime_materialized_files" in restrictions
     assert "file_manifest" in restrictions
     assert "Read, Glob, Grep, Edit, and Write" in restrictions
+    assert "source_received_at" in restrictions
+    assert "observed_at" in restrictions
+    assert "version_created_at" in restrictions
+    assert "generic created_at" in restrictions
 
 
 def test_job_snapshot_does_not_freeze_routing_target_or_resolve_a_resource() -> None:

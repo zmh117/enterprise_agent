@@ -145,6 +145,7 @@ class FileWorkspaceRepository:
         owner: FileOwner,
         display_name: str,
         actor_id: str,
+        source_received_at: str | None = None,
     ) -> dict[str, Any]:
         timestamp = _now()
         owner_type, user_id, enterprise_id, connector_id, conversation_id = owner.database_values()
@@ -153,8 +154,8 @@ class FileWorkspaceRepository:
             insert into managed_file
               (id, tenant_id, owner_type, owner_user_id, owner_enterprise_id,
                owner_connector_id, owner_conversation_id, display_name, status,
-               created_by, created_at, updated_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?)
+               created_by, source_received_at, created_at, updated_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?)
             """,
             (
                 file_id,
@@ -166,6 +167,7 @@ class FileWorkspaceRepository:
                 conversation_id,
                 display_name,
                 actor_id,
+                source_received_at,
                 timestamp,
                 timestamp,
             ),
@@ -342,7 +344,7 @@ class FileWorkspaceRepository:
                   (id, job_id, workspace_id, tenant_id, principal_user_id,
                    business_application_publication_id, retention_period,
                    schema_version, manifest_hash, created_at)
-                values (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, 2, ?, ?)
                 """,
                 (
                     snapshot_id,
@@ -358,13 +360,24 @@ class FileWorkspaceRepository:
             )
             for ordinal, item in enumerate(items):
                 actions = [FileAction(str(action)).value for action in item.get("allowed_actions", [])]
+                source_received_at = (
+                    item.get("source_received_at")
+                    if "source_received_at" in item
+                    else self.get_file(str(item["file_id"])).get("source_received_at")
+                )
+                version_created_at = str(item.get("version_created_at") or "")
+                if not version_created_at:
+                    version_created_at = str(
+                        self.get_version(str(item["version_id"]))["created_at"]
+                    )
                 self.database.execute(
                     """
                     insert into agent_job_file_snapshot_item
                       (id, snapshot_id, ordinal, file_id, version_id, display_name,
                        source_kind, allowed_actions_json, auto_materialize,
-                       conflict_candidate, created_at)
-                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       conflict_candidate, source_received_at, version_created_at,
+                       created_at)
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         _id("file_snapshot_item"),
@@ -377,6 +390,8 @@ class FileWorkspaceRepository:
                         _json(actions),
                         int(bool(item.get("auto_materialize"))),
                         int(bool(item.get("conflict_candidate"))),
+                        source_received_at,
+                        version_created_at,
                         timestamp,
                     ),
                 )

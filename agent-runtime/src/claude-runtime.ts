@@ -174,12 +174,22 @@ interface RuntimeMaterializedManifestFile {
   readonly sandbox_entry_handle: string;
   readonly size_bytes: number;
   readonly sha256: string;
+  readonly source_received_at: string | null;
+  readonly version_created_at: string;
 }
 
 interface AutoMaterializeManifestItem {
   readonly fileId: string;
   readonly versionId: string;
   readonly displayName: string;
+  readonly sourceReceivedAt: string | null;
+  readonly versionCreatedAt: string;
+}
+
+function isUtcRfc3339(value: unknown): value is string {
+  return typeof value === "string" &&
+    (value.endsWith("Z") || value.endsWith("+00:00")) &&
+    !Number.isNaN(Date.parse(value));
 }
 
 function autoMaterializeManifestItems(
@@ -193,7 +203,13 @@ function autoMaterializeManifestItems(
     );
   }
   const value = manifest as Record<string, unknown>;
-  if (value.schema_version !== 1 || !Array.isArray(value.items) || value.items.length > 20) {
+  const schemaVersion = value.schema_version;
+  if (
+    (schemaVersion !== 1 && schemaVersion !== 2) ||
+    !Array.isArray(value.items) ||
+    value.items.length > 20 ||
+    (schemaVersion === 2 && !isUtcRfc3339(value.observed_at))
+  ) {
     throw new FileTransferBoundaryError(
       "file_manifest_runtime_invalid",
       "Runtime Job File Manifest is invalid"
@@ -209,6 +225,18 @@ function autoMaterializeManifestItems(
       );
     }
     const item = raw as Record<string, unknown>;
+    const sourceReceivedAt = item.source_received_at;
+    const versionCreatedAt = item.version_created_at;
+    if (
+      schemaVersion === 2 &&
+      ((sourceReceivedAt !== null && !isUtcRfc3339(sourceReceivedAt)) ||
+        !isUtcRfc3339(versionCreatedAt))
+    ) {
+      throw new FileTransferBoundaryError(
+        "file_manifest_runtime_invalid",
+        "Runtime Job File Manifest item time is invalid"
+      );
+    }
     if (item.auto_materialize !== true) continue;
     const fileId = identifierOrNull(item.file_id);
     const versionId = identifierOrNull(item.version_id);
@@ -231,7 +259,13 @@ function autoMaterializeManifestItems(
     const identity = `${fileId}\0${versionId}`;
     if (seen.has(identity)) continue;
     seen.add(identity);
-    projected.push({ fileId, versionId, displayName });
+    projected.push({
+      fileId,
+      versionId,
+      displayName,
+      sourceReceivedAt: typeof sourceReceivedAt === "string" ? sourceReceivedAt : null,
+      versionCreatedAt: typeof versionCreatedAt === "string" ? versionCreatedAt : ""
+    });
   }
   return projected;
 }
@@ -912,7 +946,9 @@ export class ClaudeAgentRuntimeExecutor {
             relative_path: materialized.relative_path,
             sandbox_entry_handle: materialized.sandbox_entry_handle,
             size_bytes: materialized.size_bytes,
-            sha256: materialized.sha256
+            sha256: materialized.sha256,
+            source_received_at: item.sourceReceivedAt,
+            version_created_at: item.versionCreatedAt
           });
         }
         options.systemPrompt = systemPrompt(request, materializedFiles);

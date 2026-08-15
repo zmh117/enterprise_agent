@@ -77,7 +77,7 @@ def test_workspace_expand_schema_enforces_active_owner_and_version_constraints()
         default_migrations_dir(),
         migrator_build="task-file-workspace-schema-test",
     ).run()
-    assert result.head == "109"
+    assert result.head == "110"
     tables = {
         str(row["name"])
         for row in database.execute("select name from sqlite_master where type = 'table'")
@@ -100,6 +100,20 @@ def test_workspace_expand_schema_enforces_active_owner_and_version_constraints()
         "file_domain_outbox",
         "message_attachment_file_binding",
     } <= tables
+    managed_file_columns = {
+        str(row["name"]) for row in database.execute("pragma table_info(managed_file)")
+    }
+    snapshot_item_columns = {
+        str(row["name"])
+        for row in database.execute("pragma table_info(agent_job_file_snapshot_item)")
+    }
+    assert "source_received_at" in managed_file_columns
+    assert {"source_received_at", "version_created_at"} <= snapshot_item_columns
+    snapshot_sql_row = database.execute_one(
+        "select sql from sqlite_master where type = 'table' and name = 'agent_job_file_snapshot'"
+    )
+    assert snapshot_sql_row is not None
+    assert "schema_version IN (1, 2)" in str(snapshot_sql_row["sql"])
     delivery_columns = {
         str(row["name"]) for row in database.execute("pragma table_info(delivery_outbox)")
     }
@@ -316,7 +330,7 @@ def test_attachment_retention_backfill_uses_360_days_and_only_marks_cleanup(
         migrator_build="attachment-retention-upgrade",
     ).run()
 
-    assert upgraded.applied == ("107", "108", "109")
+    assert upgraded.applied == ("107", "108", "109", "110")
     attachment = database.execute_one(
         """
         select retention_days, expires_at, object_key, status
@@ -341,3 +355,83 @@ def test_attachment_retention_backfill_uses_360_days_and_only_marks_cleanup(
         "reason": "RETENTION_EXPIRED",
         "status": "PENDING",
     }
+
+
+def test_source_received_time_backfill_uses_attachment_record_without_object_access(
+    tmp_path: Path,
+) -> None:
+    database = Database("sqlite:///:memory:")
+    through_109 = _catalog_through(tmp_path, 109)
+    Migrator(database, through_109, migrator_build="file-time-predecessor").run()
+    _insert_session(database)
+    database.execute(
+        """
+        insert into agent_job
+          (id, session_id, idempotency_key, status, created_at,
+           source_channel, source_connector_id, requester_id)
+        values ('job-file-time', 'session-workspace', 'job-file-time-key',
+                'SUCCEEDED', ?, 'dingding_stream', 'connector-a', 'user-a')
+        """,
+        (TIMESTAMP,),
+    )
+    database.execute(
+        """
+        insert into agent_message
+          (id, session_id, job_id, role, content, created_at, sequence_no)
+        values ('message-file-time', 'session-workspace', 'job-file-time',
+                'user', '', ?, 1)
+        """,
+        (TIMESTAMP,),
+    )
+    database.execute(
+        """
+        insert into message_attachment
+          (id, message_id, job_id, ordinal, media_type, file_name, status,
+           created_at, updated_at)
+        values ('attachment-file-time', 'message-file-time', 'job-file-time', 1,
+                'document', 'source.txt', 'READY', ?, ?)
+        """,
+        (TIMESTAMP, TIMESTAMP),
+    )
+    database.execute(
+        """
+        insert into managed_file
+          (id, tenant_id, owner_type, owner_user_id, display_name, status,
+           created_by, created_at, updated_at)
+        values ('file-time', 'tenant-a', 'PRIVATE_USER', 'user-a', 'source.txt',
+                'ACTIVE', 'file-worker', ?, ?)
+        """,
+        (TIMESTAMP, TIMESTAMP),
+    )
+    database.execute(
+        """
+        insert into managed_file_version
+          (id, file_id, version_number, version_kind, status, media_type,
+           encoding, size_bytes, content_sha256, object_key, source_kind,
+           created_by, created_at)
+        values ('version-file-time', 'file-time', 1, 'ATTACHMENT', 'AVAILABLE',
+                'text/plain', 'utf-8', 5, ?, 'opaque/version-file-time',
+                'MESSAGE_ATTACHMENT', 'file-worker', ?)
+        """,
+        ("a" * 64, TIMESTAMP),
+    )
+    database.execute(
+        """
+        insert into message_attachment_file_binding
+          (attachment_id, file_id, version_id, retention_expires_at, created_at)
+        values ('attachment-file-time', 'file-time', 'version-file-time',
+                '2027-08-14T00:00:00+00:00', ?)
+        """,
+        (TIMESTAMP,),
+    )
+
+    upgraded = Migrator(
+        database,
+        default_migrations_dir(),
+        migrator_build="file-time-upgrade",
+    ).run()
+
+    assert upgraded.applied == ("110",)
+    assert database.execute_one(
+        "select source_received_at from managed_file where id = 'file-time'"
+    ) == {"source_received_at": TIMESTAMP}

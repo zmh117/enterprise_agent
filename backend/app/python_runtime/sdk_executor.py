@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
 import importlib.metadata
 import json
 import os
@@ -109,6 +110,16 @@ def _contains_forbidden_tool_input(value: object, depth: int = 0) -> bool:
         or _contains_forbidden_tool_input(child, depth + 1)
         for key, child in value.items()
     )
+
+
+def _is_utc_rfc3339(value: object) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None and parsed.utcoffset() == timedelta(0)
 
 
 @dataclass(frozen=True)
@@ -262,9 +273,16 @@ class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
         if bridge is None:
             return context
         manifest = context.retrieved_context.get("file_manifest")
-        if not isinstance(manifest, dict) or manifest.get("schema_version") != 1:
+        schema_version = manifest.get("schema_version") if isinstance(manifest, dict) else None
+        if not isinstance(manifest, dict) or schema_version not in {1, 2}:
             raise NonRetryableExecutionError(
                 "Runtime Job File Manifest is missing or invalid",
+                safe_message="任务文件清单无效",
+                error_code="file_manifest_runtime_invalid",
+            )
+        if schema_version == 2 and not _is_utc_rfc3339(manifest.get("observed_at")):
+            raise NonRetryableExecutionError(
+                "Runtime Job File Manifest observation time is invalid",
                 safe_message="任务文件清单无效",
                 error_code="file_manifest_runtime_invalid",
             )
@@ -278,7 +296,24 @@ class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
         materialized: list[dict[str, Any]] = []
         seen: set[tuple[str, str]] = set()
         for item in items:
-            if not isinstance(item, dict) or not item.get("auto_materialize"):
+            if not isinstance(item, dict):
+                raise NonRetryableExecutionError(
+                    "Runtime Job File Manifest item is invalid",
+                    safe_message="任务文件清单无效",
+                    error_code="file_manifest_runtime_invalid",
+                )
+            source_received_at = item.get("source_received_at")
+            version_created_at = item.get("version_created_at")
+            if schema_version == 2 and (
+                (source_received_at is not None and not _is_utc_rfc3339(source_received_at))
+                or not _is_utc_rfc3339(version_created_at)
+            ):
+                raise NonRetryableExecutionError(
+                    "Runtime Job File Manifest item time is invalid",
+                    safe_message="任务文件清单无效",
+                    error_code="file_manifest_runtime_invalid",
+                )
+            if not item.get("auto_materialize"):
                 continue
             file_id = item.get("file_id")
             version_id = item.get("version_id")
@@ -323,6 +358,8 @@ class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
                     "sandbox_entry_handle": str(result["sandbox_entry_handle"]),
                     "size_bytes": int(result["size_bytes"]),
                     "sha256": str(result["sha256"]),
+                    "source_received_at": source_received_at,
+                    "version_created_at": str(version_created_at or ""),
                 }
             )
         return replace(

@@ -588,6 +588,7 @@ def test_file_worker_attachment_import_is_idempotent_and_builds_txt_lineage() ->
     assert "object_key" not in imported
     version = repository.get_version(str(imported["version_id"]))
     assert version["source_kind"] == "MESSAGE_ATTACHMENT"
+    assert repository.get_file(str(imported["file_id"]))["source_received_at"] == TIMESTAMP
     assert repository.database.execute_one(
         "select provider, source_type, source_id from file_external_reference where version_id = ?",
         (imported["version_id"],),

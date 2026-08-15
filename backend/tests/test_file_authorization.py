@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 
+from app.modules.file_workspace.application import FileWorkspaceApplicationService
 from app.modules.file_workspace.authorization import FileAuthorizationService
 from app.modules.file_workspace.domain import (
     FileAction,
@@ -91,6 +92,7 @@ def _create_file(
     owner: FileOwner,
     workspace_id: str,
     logical_name: str,
+    source_received_at: str | None = TIMESTAMP,
 ) -> None:
     repository.create_file(
         file_id=file_id,
@@ -98,6 +100,7 @@ def _create_file(
         owner=owner,
         display_name=logical_name,
         actor_id="user-a",
+        source_received_at=source_received_at,
     )
     repository.create_version(
         version_id=version_id,
@@ -198,6 +201,27 @@ def test_private_file_authorization_rechecks_job_publication_owner_and_manifest_
         action=FileAction.MATERIALIZE,
     )["version_id"] == "version-private"
     assert access.calls[-1]["stage"] == "file_principal_resolve"
+
+    application = FileWorkspaceApplicationService(repository, authorization)
+    listed = application.invoke(
+        context=context,
+        tool_identifier="task_workspace_list_files",
+        arguments={},
+    )
+    assert listed["items"][0]["source_received_at"] == TIMESTAMP
+    assert listed["items"][0]["version_created_at"]
+    assert listed["observed_at"].endswith("+00:00")
+    assert "created_at" not in listed["items"][0]
+
+    metadata = application.invoke(
+        context=context,
+        tool_identifier="file_get_metadata",
+        arguments={"file_id": "file-private", "version_id": "version-private"},
+    )
+    assert metadata["source_received_at"] == TIMESTAMP
+    assert metadata["version_created_at"] == listed["items"][0]["version_created_at"]
+    assert metadata["observed_at"].endswith("+00:00")
+    assert "created_at" not in metadata
 
     audit = FileMcpAudit(McpAuditCoordinator(database, max_payload_bytes=4096))
     audit_claims = {

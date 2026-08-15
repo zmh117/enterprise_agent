@@ -11,6 +11,7 @@
 - Business Application Publication 新增并冻结 `DAY`、`WEEK` 或 `MONTH` 任务工作区保留策略，默认 `WEEK`，按 Asia/Shanghai 自然周期计算，不因活动滚动延期。
 - 私聊工作区归当前内部用户；群聊工作区由同一受信群会话共享，但每次调用仍复核实际发送人的身份、应用访问和同群边界，不复制钉钉逐成员 ACL。
 - Agent Job 创建时冻结精确 Job 文件清单；本次消息附件自动物化，其他文件由 Agent 按需选择，文件访问权限在调用时实时复核。
+- 文件元数据明确区分平台收到原始聊天附件的 `source_received_at`、精确版本产生的 `version_created_at` 和本次查询边界 `observed_at`，使 Agent 能可靠判断“最近一小时上传”等相对时间请求；不得继续用含义模糊的 `created_at` 冒充上传时间。
 - **BREAKING**：允许 Claude Code Runtime 只在单 Job 沙盒内使用 `Read`、`Glob`、`Grep`、`Write` 和 `Edit`，替代当前“所有文件修改工具一律禁用”的规范；Bash、Web、沙盒外路径和其它开放执行能力仍保持拒绝。
 - 文件提交使用显式、两阶段、流式和严格幂等的提交协议；File Service 校验 Job、工作区、基础版本、类型、大小、哈希、编码和配额后才创建不可变版本，冲突不覆盖也不自动合并。
 - 钉钉中明确修改或生成文件默认提交并把成功的精确版本作为新钉盘文件交付回当前会话；提交、Job 和 Delivery 使用独立状态与重试语义。

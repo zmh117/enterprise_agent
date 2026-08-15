@@ -56,6 +56,7 @@ def _create_txt(
     version_number: int = 1,
     advance_from: str = "",
     link: bool = True,
+    source_received_at: str | None = None,
 ) -> None:
     owner = FileOwner(WorkspaceOwnerType.PRIVATE_USER, user_id="user-a")
     if version_number == 1:
@@ -65,6 +66,7 @@ def _create_txt(
             owner=owner,
             display_name="notes.txt",
             actor_id="user-a",
+            source_received_at=source_received_at,
         )
     repository.create_version(
         version_id=version_id,
@@ -129,24 +131,30 @@ def test_job_manifest_freezes_exact_version_and_later_job_sees_new_current() -> 
     assert first["items"][0]["version_id"] == "version-1"
     assert first["items"][0]["auto_materialize"] == 1
     assert first["items"][0]["source_kind"] == "EXPLICIT_REFERENCE"
+    assert first["schema_version"] == 2
+    assert first["items"][0]["source_received_at"] is None
+    assert first["items"][0]["version_created_at"]
     runtime_manifest = service.runtime_manifest("job-1")
     assert runtime_manifest == {
-        "schema_version": 1,
+        "schema_version": 2,
         "manifest_hash": first["manifest_hash"],
+        "observed_at": first["created_at"],
         "items": [
             {
                 "file_id": "file-notes",
                 "version_id": "version-1",
                 "display_name": "notes.txt",
                 "source_kind": "EXPLICIT_REFERENCE",
-                    "allowed_actions": [
-                        "READ_METADATA",
-                        "MATERIALIZE",
-                        "RETAIN",
-                        "DELIVER",
+                "allowed_actions": [
+                    "READ_METADATA",
+                    "MATERIALIZE",
+                    "RETAIN",
+                    "DELIVER",
                 ],
                 "auto_materialize": True,
                 "conflict_candidate": False,
+                "source_received_at": None,
+                "version_created_at": first["items"][0]["version_created_at"],
             }
         ],
     }
@@ -184,6 +192,50 @@ def test_job_manifest_freezes_exact_version_and_later_job_sees_new_current() -> 
     assert second["items"][0]["version_id"] == "version-2"
     assert second["items"][0]["auto_materialize"] == 0
     assert second["items"][0]["source_kind"] == "WORKSPACE"
+
+
+def test_job_manifest_freezes_attachment_receipt_time_separately_from_version_time() -> None:
+    repository, service = _service()
+    workspace = service.resolve_workspace(
+        tenant_id="tenant-a",
+        session_id="session-file",
+        requester_id="user-a",
+        conversation_type="direct",
+        enterprise_id="tenant-a",
+        connector_id="connector-a",
+        conversation_id="conversation-a",
+        sender_staff_id="staff-a",
+        publication_id="app-file-p1",
+        retention_period="WEEK",
+        attachments=(),
+        file_references=(),
+        requests_file_output=True,
+    )
+    assert workspace is not None
+    _create_txt(
+        repository,
+        workspace_id=str(workspace["id"]),
+        file_id="file-uploaded",
+        version_id="version-uploaded",
+        source_received_at=TIMESTAMP,
+    )
+    _insert_job(repository, job_id="job-uploaded", workspace_id=str(workspace["id"]))
+    service.register_request(
+        job_id="job-uploaded",
+        workspace=workspace,
+        requester_id="user-a",
+        publication_id="app-file-p1",
+        file_references=(),
+    )
+
+    snapshot = service.finalize("job-uploaded")
+    assert snapshot is not None
+    item = snapshot["items"][0]
+    assert item["source_received_at"] == TIMESTAMP
+    assert item["version_created_at"] != item["source_received_at"]
+    runtime = service.runtime_manifest("job-uploaded")
+    assert runtime["items"][0]["source_received_at"] == TIMESTAMP
+    assert runtime["items"][0]["version_created_at"] == item["version_created_at"]
 
 
 def test_manifest_rejects_cross_workspace_reference_without_snapshot_side_effect() -> None:

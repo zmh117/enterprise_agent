@@ -248,11 +248,18 @@ class JobFileManifestService:
                     "allowed_actions": actions,
                     "auto_materialize": bool(item.get("auto_materialize")),
                     "conflict_candidate": bool(item.get("conflict_candidate")),
+                    "source_received_at": (
+                        str(item.get("source_received_at"))
+                        if item.get("source_received_at")
+                        else None
+                    ),
+                    "version_created_at": str(item.get("version_created_at") or ""),
                 }
             )
         return {
             "schema_version": int(snapshot.get("schema_version") or 1),
             "manifest_hash": str(snapshot["manifest_hash"]),
+            "observed_at": str(snapshot.get("created_at") or ""),
             "items": projected,
         }
 
@@ -302,6 +309,8 @@ class JobFileManifestService:
             "allowed_actions": [str(value) for value in item["allowed_actions"]],
             "auto_materialize": bool(item.get("auto_materialize")),
             "conflict_candidate": bool(item.get("conflict_candidate")),
+            "source_received_at": item.get("source_received_at"),
+            "version_created_at": str(item["version_created_at"]),
         }
 
     def _manifest_items(
@@ -318,7 +327,8 @@ class JobFileManifestService:
                    f.owner_user_id, f.owner_enterprise_id, f.owner_connector_id,
                    f.owner_conversation_id, f.status as file_status,
                    v.status as version_status, v.media_type, v.encoding,
-                   v.size_bytes
+                   v.size_bytes, f.source_received_at,
+                   v.created_at as version_created_at
               from task_workspace_file wf
               join managed_file f on f.id = wf.file_id
               join managed_file_version v on v.id = wf.selected_version_id
@@ -368,7 +378,8 @@ class JobFileManifestService:
                    f.owner_user_id, f.owner_enterprise_id, f.owner_connector_id,
                    f.owner_conversation_id, f.status as file_status,
                    v.status as version_status, v.media_type, v.encoding,
-                   v.size_bytes
+                   v.size_bytes, f.source_received_at,
+                   v.created_at as version_created_at
               from message_attachment a
               left join message_attachment_file_binding b on b.attachment_id = a.id
               left join task_workspace_file wf
@@ -416,7 +427,8 @@ class JobFileManifestService:
                    f.owner_user_id, f.owner_enterprise_id, f.owner_connector_id,
                    f.owner_conversation_id, f.status as file_status,
                    v.status as version_status, v.media_type, v.encoding,
-                   v.size_bytes
+                   v.size_bytes, f.source_received_at,
+                   v.created_at as version_created_at
               from file_conflict_candidate c
               join task_workspace_file wf
                 on wf.workspace_id = ? and wf.file_id = c.file_id and wf.status = 'ACTIVE'
@@ -479,7 +491,8 @@ class JobFileManifestService:
                    f.owner_enterprise_id, f.owner_connector_id,
                    f.owner_conversation_id, f.status as file_status,
                    v.status as version_status, v.media_type, v.encoding,
-                   v.size_bytes,
+                   v.size_bytes, f.source_received_at,
+                   v.created_at as version_created_at,
                    case when c.candidate_version_id is null then 0 else 1 end
                      as conflict_candidate
               from task_workspace_file wf
@@ -514,6 +527,12 @@ class JobFileManifestService:
             ],
             "auto_materialize": auto_materialize,
             "conflict_candidate": conflict_candidate,
+            "source_received_at": (
+                str(row.get("source_received_at"))
+                if row.get("source_received_at")
+                else None
+            ),
+            "version_created_at": str(row["version_created_at"]),
         }
 
     @staticmethod

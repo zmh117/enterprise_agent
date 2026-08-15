@@ -115,6 +115,7 @@ def test_real_python_runtime_sdk_loop_uses_local_file_bridge_before_model_result
                 assert options["permission_mode"] == "default"
                 assert options["allowed_tools"] == []
                 assert "inputs/source-python.txt" in options["system_prompt"]
+                assert "2026-08-15T13:30:00+00:00" in options["system_prompt"]
                 assert SOURCE.decode() not in options["system_prompt"]
 
                 assert (
@@ -270,8 +271,9 @@ def test_real_python_runtime_sdk_loop_uses_local_file_bridge_before_model_result
         skills={},
         retrieved_context={
             "file_manifest": {
-                "schema_version": 1,
+                "schema_version": 2,
                 "manifest_hash": "c" * 64,
+                "observed_at": "2026-08-15T14:00:00+00:00",
                 "items": [
                     {
                         "file_id": "file-python-1",
@@ -286,6 +288,8 @@ def test_real_python_runtime_sdk_loop_uses_local_file_bridge_before_model_result
                         ],
                         "auto_materialize": True,
                         "conflict_candidate": False,
+                        "source_received_at": "2026-08-15T13:30:00+00:00",
+                        "version_created_at": "2026-08-15T13:30:03+00:00",
                     }
                 ],
             }

@@ -615,6 +615,7 @@ class GovernedFileStreamingService:
                 owner=self._owner(workspace),
                 display_name=display_name,
                 actor_id="file-worker",
+                source_received_at=str(attachment.get("created_at") or "") or None,
             )
             self.repository.create_version(
                 version_id=version_id,

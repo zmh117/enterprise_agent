@@ -367,6 +367,7 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
         "107_expand_task_file_workspaces.sql",
         "108_stage_attachment_only_messages.sql",
         "109_allow_file_service_mcp_publications.sql",
+        "110_expand_file_source_received_time.sql",
     ]
     session_columns = {str(row["name"]) for row in db.execute("pragma table_info(agent_session)")}
     assert {

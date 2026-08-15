@@ -194,6 +194,7 @@ def _tool_restrictions(allowed_tools: list[str], *, file_job: bool = False) -> l
             [
                 "Current-message and explicitly referenced TXT files are materialized by Runtime before model execution; read them from the runtime_materialized_files sandbox paths.",
                 "For other workspace candidates, use the exact File/Version IDs in file_manifest and file_prepare_materialization before reading.",
+                "For relative upload-time requests, compare source_received_at with the service-provided observed_at; do not treat version_created_at or a generic created_at as upload time.",
                 "Use only Read, Glob, Grep, Edit, and Write with safe relative TXT paths inside inputs, work, outputs, or tmp.",
                 "To persist an output, select one exact sandbox TXT and then use the frozen File MCP commit flow; never assume a local edit changed File Service state.",
             ]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any, Never
 
 import jsonschema
@@ -56,7 +57,7 @@ class FileWorkspaceApplicationService:
                 version_id=str(arguments["version_id"]),
                 action=FileAction.READ_METADATA,
             )
-            return self._metadata(item)
+            return {**self._metadata(item), "observed_at": _observed_at()}
         if tool_identifier == "file_prepare_materialization":
             if self.streaming is None:
                 self._deny("file_streaming_not_ready", "文件流式操作尚未就绪")
@@ -106,7 +107,9 @@ class FileWorkspaceApplicationService:
             select wf.id as cursor, wf.logical_name, wf.role,
                    f.id as file_id, f.status as file_status,
                    v.id as version_id, v.version_number, v.status as version_status,
-                   v.media_type, v.size_bytes, v.content_sha256, v.created_at
+                   v.media_type, v.size_bytes, v.content_sha256,
+                   f.source_received_at,
+                   v.created_at as version_created_at
               from task_workspace_file wf
               join managed_file f on f.id = wf.file_id
               join managed_file_version v on v.id = wf.selected_version_id
@@ -120,6 +123,7 @@ class FileWorkspaceApplicationService:
         return {
             "items": [self._metadata(row) for row in visible],
             "next_cursor": str(visible[-1]["cursor"]) if has_more and visible else "",
+            "observed_at": _observed_at(),
         }
 
     @staticmethod
@@ -135,7 +139,12 @@ class FileWorkspaceApplicationService:
             "media_type": str(row.get("media_type") or ""),
             "size_bytes": int(row.get("size_bytes") or 0),
             "content_sha256": str(row.get("content_sha256") or ""),
-            "created_at": str(row.get("created_at") or ""),
+            "source_received_at": (
+                str(row.get("source_received_at"))
+                if row.get("source_received_at")
+                else None
+            ),
+            "version_created_at": str(row.get("version_created_at") or ""),
         }
 
     @staticmethod
@@ -145,3 +154,7 @@ class FileWorkspaceApplicationService:
             safe_message=safe_message,
             error_code=code,
         )
+
+
+def _observed_at() -> str:
+    return datetime.now(UTC).isoformat()

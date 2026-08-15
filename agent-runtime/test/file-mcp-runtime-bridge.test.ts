@@ -88,8 +88,9 @@ test("real TypeScript Runtime SDK loop materializes and commits only through its
   request.limits.max_tool_calls = 8;
   request.prompt.retrieved_context = {
     file_manifest: {
-      schema_version: 1,
+      schema_version: 2,
       manifest_hash: "d".repeat(64),
+      observed_at: "2026-08-15T14:00:00+00:00",
       items: [
         {
           file_id: "file-1",
@@ -98,7 +99,9 @@ test("real TypeScript Runtime SDK loop materializes and commits only through its
           source_kind: "CURRENT_MESSAGE",
           allowed_actions: ["READ_METADATA", "MATERIALIZE", "EDIT", "COMMIT"],
           auto_materialize: true,
-          conflict_candidate: false
+          conflict_candidate: false,
+          source_received_at: "2026-08-15T13:30:00+00:00",
+          version_created_at: "2026-08-15T13:30:03+00:00"
         }
       ]
     }
@@ -205,6 +208,10 @@ test("real TypeScript Runtime SDK loop materializes and commits only through its
         assert.equal(options.permissionMode, "default");
         assert.equal(options.allowedTools?.length, 0);
         assert.equal(String(options.systemPrompt).includes("inputs/source-12345678.txt"), true);
+        assert.equal(
+          String(options.systemPrompt).includes("2026-08-15T13:30:00+00:00"),
+          true
+        );
         assert.equal(String(options.systemPrompt).includes(sourceBytes.toString("utf8")), false);
 
         assert.equal(

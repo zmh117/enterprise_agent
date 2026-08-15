@@ -185,6 +185,14 @@ Job 创建时建立不可变 File Manifest：
 
 Agent Worker必须把该Manifest以有界、无正文、无对象位置的Runtime上下文投影交给所选Runtime。Runtime在发起Claude SDK模型请求前主动调用本地File bridge物化所有`auto_materialize=true`项，并把已校验的安全相对路径、handle、大小与SHA-256加入系统上下文；物化失败时Job失败关闭，模型不得在缺少文件的情况下猜测内容。`auto_materialize=false`候选只暴露精确File/Version ID，由Agent按任务需要显式调用物化工具。
 
+Job File Manifest 与 File MCP 元数据必须使用明确时间语义：
+
+- `source_received_at` 是平台创建原始 `message_attachment` 记录的时间，代表平台可证明的聊天附件接收时间；它随稳定 File 身份保留，后续编辑产生新版本时不改变；Agent 生成且没有聊天附件来源的文件为 `null`。
+- `version_created_at` 是当前精确 File Version 的产生时间，不能冒充原始附件上传时间。
+- `observed_at` 是 Manifest 冻结或 File MCP 查询发生的服务端时间，为“最近一小时”等相对时间条件提供确定边界。
+
+以上时间统一输出带时区的 UTC RFC 3339 字符串。新的 Manifest schema 必须冻结前两项并把它们纳入 Manifest hash；旧 schema 在滚动升级期间可继续读取但不得虚构缺失时间。`task_workspace_list_files`、`file_get_metadata`、Runtime Manifest 和自动物化安全元数据使用相同字段名。相对上传时间筛选必须比较 `source_received_at` 与 `observed_at`，不得使用 File Worker 导入完成时间、版本创建时间、工作区加入时间或 Manifest 条目创建时间。历史附件只通过数据库中的 `message_attachment_file_binding` 与 `message_attachment.created_at` 回填稳定 File 的来源接收时间，不重新下载对象或访问 MinIO。
+
 该认领查询必须同时绑定 `session_id` 与 `task_workspace_id`。私聊 Session继续包含请求用户边界；群聊 Session继续包含企业、Connector、conversation与Publication隔离事实，因此跨私聊、跨群、跨租户或跨Publication附件不会被误认领。启用任务工作区的 Publication必须同时冻结附件能力与连续会话为开启，否则草稿保存失败。
 
 Agent 通过 Runtime 代码注册的本地 File MCP bridge 请求物化。该 bridge 只代理 Job 冻结的 File Service 工具，不接受模型提供的 Server URL；它先调用部署固定的远端 File MCP，再在 ToolResult 返回模型之前拦截隐藏的受控传输描述。Runtime 内部的 file-transfer coordinator 验证描述后，使用当前 Job 的 File Principal JWT 经内部流式接口把内容写入当前 Job 沙盒的安全相对路径。模型只能看到逻辑文件句柄、沙盒内安全相对路径、大小和摘要，不能看到传输描述、JWT 或文件字节。

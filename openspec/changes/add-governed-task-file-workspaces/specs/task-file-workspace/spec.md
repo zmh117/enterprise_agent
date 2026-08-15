@@ -90,6 +90,8 @@
 ### Requirement: Job 创建时冻结精确文件清单
 File Service MUST 在非空文字触发 Agent Job 时，按当前用户、租户、任务工作区和授权范围冻结 Job File Manifest，其中每个文件指向当时的精确版本。该文字 Job 原子认领的未消费附件、同一消息新上传附件和明确引用文件 SHALL 自动物化；其他文件只提供不含正文、凭据和对象位置的元数据，由 Agent 按需选择。清单冻结版本但不冻结授权，物化时 MUST 重新检查当前访问权。纯附件暂存事件 MUST NOT 单独生成 Manifest。
 
+Job File Manifest、File MCP 文件列表/元数据和 Runtime 自动物化元数据 MUST 明确区分：原始聊天附件进入平台的 `source_received_at`、精确版本产生的 `version_created_at` 以及 Manifest 冻结或查询发生的 `observed_at`。`source_received_at` MUST 取平台创建原始 `message_attachment` 记录的时间，并在后续版本中保持不变；无聊天附件来源的 Agent 生成文件 MUST 返回 `null`。所有非空时间 MUST 是带时区的 UTC RFC 3339。系统 MUST NOT 使用 File Worker 导入完成时间、版本创建时间、工作区加入时间、Manifest 条目创建时间或含义模糊的 `created_at` 回答“上传时间”。新的 Manifest schema MUST 把来源接收时间和版本创建时间冻结进不可变条目及其 hash；旧 schema 可兼容读取但不得虚构缺失时间。
+
 #### Scenario: 暂存附件已经完成导入
 - **WHEN** 后续非空文字创建 Job前，暂存附件已经形成可用精确版本
 - **THEN** 创建事务认领附件并立即把该版本冻结为自动物化项
@@ -108,6 +110,16 @@ File Service MUST 在非空文字触发 Agent Job 时，按当前用户、租户
 - **WHEN** 文件仍在 Job File Manifest 中但当前用户或应用访问已失效
 - **THEN** File Service 拒绝物化
 - **AND** 不把冻结清单解释为长期访问授权
+
+#### Scenario: 查询最近一小时上传的文件
+- **WHEN** 用户要求处理最近一小时上传的工作区文件
+- **THEN** Agent 使用 File Service 返回的 `observed_at` 作为边界，只选择 `source_received_at` 不早于该边界减一小时的文件
+- **AND** 不把后续编辑产生的新版本误判为新上传文件
+
+#### Scenario: Agent 生成文件没有上传时间
+- **WHEN** 工作区文件由 Agent 生成且没有聊天附件来源
+- **THEN** File Service 返回 `source_received_at=null` 和非空 `version_created_at`
+- **AND** Agent 不把该文件归入“最近上传的附件”集合
 
 ### Requirement: 每个 Agent Job 使用隔离临时沙盒
 Runtime MUST 为每个 Agent Job 创建独立 Job Sandbox，并只把当前 Job 已授权的精确版本物化到该目录。Claude Code Agent 只可在该沙盒内使用 `Read`、`Grep`、`Write` 和 `Edit`；Bash、Web、NotebookEdit、沙盒外路径、符号链接逃逸和其它开放执行能力 MUST 保持不可用。Job 成功、失败、取消或超时后 MUST 清理沙盒，Runtime 异常退出后 MUST 由恢复扫描清理无运行中 Job 归属的残留目录。

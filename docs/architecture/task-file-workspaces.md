@@ -46,6 +46,7 @@ File Service 是文件身份、不可变版本、当前版本、工作区引用�
 2. File Worker 正常下载并通过 File Service 导入附件；附件尚未被文字认领时只标记 `staged`。连续发送多个文件不会逐个触发回复。
 3. 第一条后续非空文字在同一事务中创建唯一 Agent Job并认领该 Session/Workspace下全部未消费附件。若导入未完成，Job保持 `WAITING_INPUT`，最后一个附件进入安全终态后只释放一次。
 4. Job File Manifest 冻结该 Job认领的附件、同消息附件、明确引用和其他工作区候选的精确版本；已认领附件不会被后续无关文字再次作为新上传自动消费。
+   Manifest schema v2 同时冻结 `source_received_at`（平台收到原始聊天附件）、`version_created_at`（精确版本产生时间）和 `observed_at`（清单冻结边界）。File MCP 文件列表与精确元数据使用相同字段；Agent 生成文件的 `source_received_at` 为空。判断“最近一小时上传”只比较 `source_received_at >= observed_at - 1小时`，不能使用 File Worker完成时间、版本时间或通用 `created_at`。
 5. Claude SDK 只连接 Runtime 代码注册的本地 `files` MCP。该 bridge 代理 Job 冻结的远端 File MCP 工具，并在 ToolResult 交回模型前拦截隐藏传输控制信息；Runtime 使用当前 Job File Principal JWT 从 File Service 流式物化精确版本到 Job 沙盒。完整字节、JWT、URL 和对象位置不进入模型或 MCP JSON。
 6. Claude Code Agent 仅能在沙盒内使用受限 `Read`、`Grep`、`Write`、`Edit`。分析请求不得提交修改；修改或生成请求可逐文件创建提交意图。
 7. 物化输入由 bridge 自动登记 sandbox entry；新生成文件必须显式调用 Runtime 自有的 `select_sandbox_output`，且只能选择 `work/` 或 `outputs/` 下经过路径、常规文件、符号链接、15 MiB 和 UTF-8 校验的单个 TXT。Runtime 不扫描沙盒，也不自动提交其它草稿。

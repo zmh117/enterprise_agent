@@ -138,8 +138,8 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "109"
-        assert result.applied == ("100", "101", "102", "103", "104", "105", "106", "107", "108", "109")
+        assert result.head == "110"
+        assert result.applied == ("100", "101", "102", "103", "104", "105", "106", "107", "108", "109", "110")
         assert database.execute_one(
             """
             select count(*)::int as count
@@ -150,7 +150,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
             """
         ) == {"count": 91}
         assert comments["table_count"] == 91
-        assert comments["column_count"] == 1122
+        assert comments["column_count"] == 1125
     finally:
         database.close()
 
@@ -168,10 +168,10 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "109"
-        assert result.applied == ("100", "101", "102", "103", "104", "105", "106", "107", "108", "109")
+        assert result.head == "110"
+        assert result.applied == ("100", "101", "102", "103", "104", "105", "106", "107", "108", "109", "110")
         assert comments["table_count"] == 91
-        assert comments["column_count"] == 1122
+        assert comments["column_count"] == 1125
         assert {
             "dingding_conversation_id",
             "dingding_user_id",
