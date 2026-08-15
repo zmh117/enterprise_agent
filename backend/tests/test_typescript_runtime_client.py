@@ -361,10 +361,15 @@ def test_worker_builds_exact_request_and_validates_ndjson_terminal() -> None:
 class _PrincipalTokenIssuer:
     def __init__(self) -> None:
         self.job_ids: list[str] = []
+        self.file_job_ids: list[str] = []
 
     def issue_for_job(self, *, job_id: str) -> str:
         self.job_ids.append(job_id)
         return "test-only-principal-token"
+
+    def issue_file_for_job(self, *, job_id: str) -> str:
+        self.file_job_ids.append(job_id)
+        return "test-only-file-principal-token"
 
 
 def test_worker_projects_principal_only_to_runtime_header_for_ones_mcp() -> None:
@@ -426,6 +431,42 @@ def test_worker_fails_closed_when_ones_mcp_has_no_principal_issuer() -> None:
         client.run(request)
 
     assert raised.value.error_code == "principal_token_issuer_unavailable"
+
+
+def test_worker_issues_a_separate_file_principal_for_file_mcp() -> None:
+    issuer = _PrincipalTokenIssuer()
+    client, _ = _client(
+        GoldenTransport(),
+        principal_token_issuer=issuer,
+    )
+    request = _request()
+    request = replace(
+        request,
+        context=replace(
+            request.context,
+            runtime_protocol_version="1.2",
+            allowed_tools=["file_prepare_materialization"],
+            mcp_bindings=(
+                McpRuntimeBinding(
+                    server_code="file-service",
+                    tool_name="file_prepare_materialization",
+                    required_scope=(
+                        "mcp:file-service:file_prepare_materialization:invoke"
+                    ),
+                    tool_schema_hash="d" * 64,
+                ),
+            ),
+        ),
+    )
+
+    execution_request = client._execution_request(request)
+    tokens = client._principal_tokens(request, execution_request)
+
+    assert tokens.ones == ""
+    assert tokens.files == "test-only-file-principal-token"
+    assert issuer.job_ids == []
+    assert issuer.file_job_ids == ["job-1"]
+    assert "test-only-file-principal-token" not in json.dumps(execution_request)
 
 
 def test_worker_maps_runtime_failure_and_preserves_prior_tool_events() -> None:

@@ -324,6 +324,43 @@ export const conversationDetailSchema = z
   })
   .passthrough()
 
+export const fileOperationsSchema = z.object({
+  file_service: z.object({
+    configured: z.boolean(),
+    ready: z.boolean(),
+    reason_code: z.string(),
+  }),
+  file_worker: z.object({
+    configured: z.boolean(),
+    ready: z.boolean(),
+    reason_code: z.string(),
+    attachment_queue: z.object({
+      availability: z.string(),
+      ready: z.number().int().nonnegative().nullable(),
+      unacked: z.number().int().nonnegative().nullable(),
+      consumers: z.number().int().nonnegative().nullable(),
+    }),
+  }),
+  backlog: z.object({
+    cleanup: z.number().int().nonnegative(),
+    staging: z.number().int().nonnegative(),
+    attachment: z.number().int().nonnegative(),
+    workspace: z.number().int().nonnegative(),
+    retained: z.number().int().nonnegative(),
+    conflict: z.number().int().nonnegative(),
+  }),
+  earliest_due: z.string(),
+  recent_cleanup: z
+    .object({
+      status: z.string(),
+      resource_type: z.string(),
+      reason: z.string(),
+      failure_code: z.string(),
+      updated_at: z.string(),
+    })
+    .nullable(),
+})
+
 export type RuntimeJob = z.infer<typeof runtimeJobSchema>
 export type ExecutionSummary = z.infer<typeof executionSummarySchema>
 export type ModelCall = z.infer<typeof modelCallSchema>
@@ -332,3 +369,4 @@ export type DeliveryEvent = z.infer<typeof deliveryEventSchema>
 export type DeliveryAttempt = z.infer<typeof deliveryAttemptSchema>
 export type DeliveryChunk = z.infer<typeof deliveryChunkSchema>
 export type JobDispatch = z.infer<typeof jobDispatchSchema>
+export type FileOperations = z.infer<typeof fileOperationsSchema>

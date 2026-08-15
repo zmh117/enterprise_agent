@@ -233,6 +233,7 @@ def activate_dingtalk_test_application(
     capabilities: tuple[str, ...] = (),
     additional_deliveries: tuple[dict[str, object], ...] = (),
     agent_publication_id: str = "agent_publication_default_v1",
+    task_file_features: dict[str, bool] | None = None,
 ) -> dict[str, object]:
     ensure_active_dingtalk_test_enterprise(container)
     mcp_tools = _ensure_agent_publication_mcp_tools(
@@ -297,6 +298,13 @@ def activate_dingtalk_test_application(
                 "max_turns": 12,
                 "timeout_seconds": 300,
                 "max_tool_calls": 30,
+            },
+            "task_file_features": task_file_features
+            or {
+                "workspace_enabled": False,
+                "file_mcp_enabled": False,
+                "runtime_file_edit_enabled": False,
+                "default_file_delivery_enabled": False,
             },
             "triggers": triggers,
             "deliveries": [

@@ -52,6 +52,8 @@ class RuntimeReason(StrEnum):
     WORKFLOW_STORED_ONLY = "workflow_stored_only"
     EXECUTION_POLICY_STORED_ONLY = "execution_policy_stored_only"
     RETENTION_POLICY_STORED_ONLY = "retention_policy_stored_only"
+    FILE_SERVICE_UNAVAILABLE = "file_service_unavailable"
+    FILE_WORKER_UNAVAILABLE = "file_worker_unavailable"
 
 
 @dataclass(frozen=True)
@@ -131,9 +133,13 @@ class RuntimeReadinessEvaluator:
         *,
         data_plane_enabled: bool,
         runtime_environment: str,
+        file_service_ready: bool = True,
+        file_worker_ready: bool = True,
     ) -> None:
         self.data_plane_enabled = data_plane_enabled
         self.runtime_environment = normalize_deployment_environment(runtime_environment)
+        self.file_service_ready = file_service_ready
+        self.file_worker_ready = file_worker_ready
 
     def evaluate(
         self,
@@ -284,6 +290,42 @@ class RuntimeReadinessEvaluator:
     ]:
         components = self._default_components()
         blockers: list[tuple[str, str]] = []
+        if self.file_service_ready:
+            components["file_service"] = RuntimeComponentStatus(
+                RuntimeComponentState.WIRED,
+                RuntimeReason.READY.value,
+                "File Service 文件事实与 File MCP 入口已就绪",
+            )
+        else:
+            components["file_service"] = RuntimeComponentStatus(
+                RuntimeComponentState.BLOCKED,
+                RuntimeReason.FILE_SERVICE_UNAVAILABLE.value,
+                "File Service 尚未通过就绪检查",
+            )
+            blockers.append(
+                (
+                    RuntimeReason.FILE_SERVICE_UNAVAILABLE.value,
+                    "任务文件能力依赖的 File Service 不可用",
+                )
+            )
+        if self.file_worker_ready:
+            components["file_worker"] = RuntimeComponentStatus(
+                RuntimeComponentState.WIRED,
+                RuntimeReason.READY.value,
+                "File Worker 附件导入与生命周期清理已就绪",
+            )
+        else:
+            components["file_worker"] = RuntimeComponentStatus(
+                RuntimeComponentState.BLOCKED,
+                RuntimeReason.FILE_WORKER_UNAVAILABLE.value,
+                "File Worker 尚未通过就绪检查",
+            )
+            blockers.append(
+                (
+                    RuntimeReason.FILE_WORKER_UNAVAILABLE.value,
+                    "任务文件能力依赖的 File Worker 不可用",
+                )
+            )
         agent = snapshot.get("agent") or {}
         if not agent.get("id") or not agent.get("config_hash"):
             components["agent_publication"] = RuntimeComponentStatus(
@@ -549,6 +591,24 @@ class RuntimeReadinessEvaluator:
             "execution_policy": ready,
             "workflow": ready,
             "capabilities": ready,
+            "file_service": (
+                ready
+                if self.file_service_ready
+                else RuntimeComponentStatus(
+                    RuntimeComponentState.BLOCKED,
+                    RuntimeReason.FILE_SERVICE_UNAVAILABLE.value,
+                    "File Service 尚未通过就绪检查",
+                )
+            ),
+            "file_worker": (
+                ready
+                if self.file_worker_ready
+                else RuntimeComponentStatus(
+                    RuntimeComponentState.BLOCKED,
+                    RuntimeReason.FILE_WORKER_UNAVAILABLE.value,
+                    "File Worker 尚未通过就绪检查",
+                )
+            ),
         }
 
     def _not_wired(
@@ -601,4 +661,6 @@ def _component_field(name: str) -> str:
         "execution_policy": "execution_policy",
         "workflow": "workflow_publication_id",
         "capabilities": "capabilities",
+        "file_service": "task_workspace_retention_period",
+        "file_worker": "task_workspace_retention_period",
     }.get(name, name)

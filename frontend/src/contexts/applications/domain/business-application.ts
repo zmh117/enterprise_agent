@@ -82,6 +82,13 @@ const mcpToolSelectionSchema = z
   })
   .passthrough()
 
+const taskFileFeaturesSchema = z.object({
+  workspace_enabled: z.boolean().default(false),
+  file_mcp_enabled: z.boolean().default(false),
+  runtime_file_edit_enabled: z.boolean().default(false),
+  default_file_delivery_enabled: z.boolean().default(false),
+})
+
 export const revisionSchema = z
   .object({
     id: z.string(),
@@ -90,6 +97,15 @@ export const revisionSchema = z
     status: z.string(),
     agent_publication_id: z.string().default(""),
     workflow_publication_id: z.string().default(""),
+    task_workspace_retention_period: z
+      .enum(["DAY", "WEEK", "MONTH"])
+      .default("WEEK"),
+    task_file_features: taskFileFeaturesSchema.default({
+      workspace_enabled: false,
+      file_mcp_enabled: false,
+      runtime_file_edit_enabled: false,
+      default_file_delivery_enabled: false,
+    }),
     session_policy: z.record(z.string(), z.unknown()).default({}),
     execution_policy: z.record(z.string(), z.unknown()).default({}),
     validation: validationSchema.default({ valid: false, errors: [] }),
@@ -113,6 +129,21 @@ export const publicationSchema = runtimeStateSchema
     published_by: z.string(),
     published_at: z.string(),
     snapshot: z.record(z.string(), z.unknown()).optional(),
+    task_workspace_retention_period: z
+      .enum(["DAY", "WEEK", "MONTH"])
+      .default("WEEK"),
+    task_workspace_retention_source: z
+      .enum(["publication_snapshot", "legacy_default"])
+      .default("legacy_default"),
+    task_file_features: taskFileFeaturesSchema.default({
+      workspace_enabled: false,
+      file_mcp_enabled: false,
+      runtime_file_edit_enabled: false,
+      default_file_delivery_enabled: false,
+    }),
+    task_file_features_source: z
+      .enum(["publication_snapshot", "legacy_default"])
+      .default("legacy_default"),
   })
   .passthrough()
 
@@ -142,6 +173,9 @@ export const applicationSummarySchema = runtimeStateSchema
     revision: z.number(),
     latest_publication_revision: z.number().nullable().optional(),
     active_environments: z.array(z.string()).default([]),
+    task_workspace_retention_period: z
+      .enum(["DAY", "WEEK", "MONTH"])
+      .default("WEEK"),
   })
   .passthrough()
 
@@ -170,6 +204,13 @@ export type SaveDraftInput = {
   expected_revision: number
   agent_publication_id: string
   workflow_publication_id: string
+  task_workspace_retention_period: "DAY" | "WEEK" | "MONTH"
+  task_file_features: {
+    workspace_enabled: boolean
+    file_mcp_enabled: boolean
+    runtime_file_edit_enabled: boolean
+    default_file_delivery_enabled: boolean
+  }
   session_policy: {
     conversation_mode: "channel"
     recent_message_limit: number

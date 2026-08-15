@@ -27,6 +27,7 @@ from app.shared.exceptions import AppError, NonRetryableExecutionError
 
 PRINCIPAL_ISSUER = "enterprise-agent-identity"
 PRINCIPAL_AUDIENCE = "ones-mcp"
+FILE_PRINCIPAL_AUDIENCE = "file-service"
 PRINCIPAL_AUTHORIZED_PARTY = "agent-runtime"
 ONES_SEARCH_TOOL = "ones_work_item_search"
 ONES_SEARCH_SCOPE = "mcp:ones-mcp:ones_work_item_search:invoke"
@@ -344,6 +345,142 @@ class PrincipalTokenIssuer:
                 error_code=error_code,
             ) from exc
 
+    def issue_file_for_job(self, *, job_id: str) -> str:
+        audit: dict[str, Any] = {
+            "kid": self.signing_key.kid,
+            "job_id": job_id,
+            "audience": FILE_PRINCIPAL_AUDIENCE,
+        }
+        try:
+            facts = self._job_facts(job_id)
+            if not facts.get("task_workspace_id") or not facts.get("workspace_tenant_id"):
+                raise PrincipalTokenError(
+                    "File Principal requires a Job-bound task workspace",
+                    safe_message="当前任务没有可用的文件工作区",
+                    error_code="file_principal_workspace_missing",
+                )
+            verified = self.snapshot_service.verify(job_id)
+            snapshot = verified.get("snapshot")
+            if not isinstance(snapshot, dict):
+                raise PrincipalTokenError(
+                    "File Principal MCP snapshot is invalid",
+                    safe_message="当前任务工具快照无效",
+                    error_code="principal_snapshot_invalid",
+                )
+            if (
+                str(snapshot.get("job_id") or "") != facts["id"]
+                or str(snapshot.get("agent_publication_id") or "")
+                != facts["agent_publication_id"]
+                or str(snapshot.get("application_publication_id") or "")
+                != facts["business_application_publication_id"]
+            ):
+                raise PrincipalTokenError(
+                    "File Principal snapshot provenance does not match Job",
+                    safe_message="当前任务工具快照与发布版本不一致",
+                    error_code="principal_snapshot_invalid",
+                )
+            file_tools = sorted(
+                {
+                    str(item.get("tool_identifier") or "")
+                    for item in snapshot.get("tools") or []
+                    if isinstance(item, dict)
+                    and item.get("server_code") == FILE_PRINCIPAL_AUDIENCE
+                    and item.get("tool_identifier")
+                }
+            )
+            if not file_tools:
+                raise PrincipalTokenError(
+                    "Frozen Job does not grant a File MCP Tool",
+                    safe_message="当前任务没有冻结文件工具权限",
+                    error_code="principal_scope_denied",
+                )
+            scopes = [
+                f"mcp:{FILE_PRINCIPAL_AUDIENCE}:{tool_identifier}:invoke"
+                for tool_identifier in file_tools
+            ]
+            for tool_identifier in file_tools:
+                self.business_authorization_service.require(
+                    user_id=facts["internal_user_id"],
+                    application_id=facts["business_application_id"],
+                    tool_identifier=tool_identifier,
+                    stage="file_principal_jwt_issue",
+                )
+            authorization_hash = str(verified.get("authorization_hash") or "")
+            if len(authorization_hash) != _AUTHORIZATION_HASH_LENGTH or any(
+                character not in "0123456789abcdef" for character in authorization_hash
+            ):
+                raise PrincipalTokenError(
+                    "File Principal authorization hash is invalid",
+                    safe_message="当前任务授权摘要无效",
+                    error_code="principal_snapshot_invalid",
+                )
+            issued_at = self._now()
+            jti = self._jti_factory()
+            if not jti or len(jti) > 128:
+                raise PrincipalTokenError(
+                    "Principal jti factory returned an invalid value",
+                    safe_message="平台身份凭证签发失败",
+                    error_code="principal_token_issue_failed",
+                )
+            token = self.signing_key.sign(
+                {
+                    "iss": PRINCIPAL_ISSUER,
+                    "sub": facts["internal_user_id"],
+                    "aud": FILE_PRINCIPAL_AUDIENCE,
+                    "azp": PRINCIPAL_AUTHORIZED_PARTY,
+                    "tenant_id": facts["workspace_tenant_id"],
+                    "job_id": job_id,
+                    "session_id": facts["session_id"],
+                    "agent_publication_id": facts["agent_publication_id"],
+                    "application_publication_id": facts[
+                        "business_application_publication_id"
+                    ],
+                    "scope": scopes,
+                    "authorization_hash": authorization_hash,
+                    "jti": jti,
+                    "iat": issued_at,
+                    "nbf": issued_at - 1,
+                    "exp": issued_at + self.ttl_seconds,
+                }
+            )
+            audit.update(
+                {
+                    "scope": scopes,
+                    "jti": jti,
+                    "issued_at": issued_at,
+                    "not_before": issued_at - 1,
+                    "expires_at": issued_at + self.ttl_seconds,
+                }
+            )
+            self.audit_service.record(
+                "principal.jwt.issued",
+                status="success",
+                summary="Principal JWT issued for frozen File MCP Tools",
+                job_id=job_id,
+                actor_id=facts["internal_user_id"],
+                payload=audit,
+            )
+            return token
+        except Exception as exc:
+            error_code = str(
+                getattr(exc, "error_code", "") or "file_principal_token_issue_denied"
+            )
+            audit["error_code"] = error_code
+            self.audit_service.record(
+                "principal.jwt.issue_denied",
+                status="denied",
+                summary="File Principal JWT issuance denied",
+                job_id=job_id or None,
+                payload=audit,
+            )
+            if isinstance(exc, AppError):
+                raise
+            raise PrincipalTokenError(
+                "File Principal JWT issuance failed",
+                safe_message="平台文件身份凭证签发失败",
+                error_code=error_code,
+            ) from exc
+
     def _job_facts(self, job_id: str) -> dict[str, str]:
         if not job_id:
             raise PrincipalTokenError(
@@ -357,11 +494,14 @@ class PrincipalTokenIssuer:
                    j.internal_user_id, j.business_application_id,
                    j.agent_publication_id,
                    j.business_application_publication_id,
+                   j.task_workspace_id,
+                   w.tenant_id as workspace_tenant_id,
                    u.status as user_status, u.account_type as user_account_type,
                    s.application_publication_id as session_application_publication_id
               from agent_job j
               join app_user u on u.id = j.internal_user_id
               join agent_session s on s.id = j.session_id
+              left join task_workspace w on w.id = j.task_workspace_id
              where j.id = ?
             """,
             (job_id,),

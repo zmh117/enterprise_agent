@@ -244,6 +244,14 @@ function OverviewTab({ application }: { application: BusinessApplication }) {
             ["状态", draft?.status ?? "无"],
             ["Agent", draft?.agent_publication_id || "未选择"],
             ["工作流", draft?.workflow_publication_id || "未选择"],
+            [
+              "工作区周期",
+              draft?.task_workspace_retention_period ?? "WEEK（新草稿默认）",
+            ],
+            [
+              "任务文件能力",
+              formatTaskFileFeatures(draft?.task_file_features),
+            ],
           ]}
         />
         <SummaryCard
@@ -391,6 +399,60 @@ function PolicyEditor({
         <CardTitle>会话与执行策略</CardTitle>
       </CardHeader>
       <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <Field label="任务工作区保留周期" htmlFor="policy-task-workspace-retention">
+          <select
+            id="policy-task-workspace-retention"
+            className={selectClass}
+            value={form.task_workspace_retention_period}
+            onChange={(event) =>
+              setForm({
+                ...form,
+                task_workspace_retention_period: event.target
+                  .value as SaveDraftInput["task_workspace_retention_period"],
+              })
+            }
+          >
+            <option value="DAY">当日（次日 00:00 到期）</option>
+            <option value="WEEK">当周（下周一 00:00 到期）</option>
+            <option value="MONTH">当月（下月一日 00:00 到期）</option>
+          </select>
+          <p className="text-xs leading-5 text-muted-foreground">
+            来源：当前草稿。按 Asia/Shanghai 自然周期固定到期，活动不会滚动延期；不影响聊天附件的 360 天保留。
+          </p>
+        </Field>
+        <div className="space-y-3 rounded-md border p-4 md:col-span-2 xl:col-span-2">
+          <div>
+            <p className="text-sm font-medium">任务文件灰度功能</p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              来源：当前草稿；发布后冻结到 Publication Revision。未启用的 Job 保持原行为。
+            </p>
+          </div>
+          {(
+            [
+              ["workspace_enabled", "任务工作区"],
+              ["file_mcp_enabled", "File MCP"],
+              ["runtime_file_edit_enabled", "Runtime Write/Edit"],
+              ["default_file_delivery_enabled", "默认文件交付"],
+            ] as const
+          ).map(([key, label]) => (
+            <label key={key} className="flex items-center gap-3 text-sm">
+              <Checkbox
+                checked={form.task_file_features[key]}
+                onCheckedChange={(checked) =>
+                  setForm({
+                    ...form,
+                    task_file_features: nextTaskFileFeatures(
+                      form.task_file_features,
+                      key,
+                      checked === true
+                    ),
+                  })
+                }
+              />
+              {label}
+            </label>
+          ))}
+        </div>
         <Field label="会话范围" htmlFor="policy-conversation">
           <select
             id="policy-conversation"
@@ -1038,6 +1100,11 @@ function ValidationTab({ application }: { application: BusinessApplication }) {
           ["触发器", String(revision?.triggers.length ?? 0)],
           ["投递", String(revision?.deliveries.length ?? 0)],
           ["MCP 工具", String(revision?.mcp_tools.length ?? 0)],
+          [
+            "工作区周期",
+            revision?.task_workspace_retention_period ?? "WEEK（兼容默认）",
+          ],
+          ["任务文件能力", formatTaskFileFeatures(revision?.task_file_features)],
         ]}
       />
     </div>
@@ -1159,6 +1226,26 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
                       <PublicationMetadata
                         label="结构版本"
                         value={`v${publication.schema_version}`}
+                      />
+                      <PublicationMetadata
+                        label="工作区周期"
+                        value={`${publication.task_workspace_retention_period} · ${
+                          publication.task_workspace_retention_source ===
+                          "legacy_default"
+                            ? "历史兼容默认"
+                            : "发布快照"
+                        }`}
+                      />
+                      <PublicationMetadata
+                        label="任务文件能力"
+                        value={`${formatTaskFileFeatures(
+                          publication.task_file_features
+                        )} · ${
+                          publication.task_file_features_source ===
+                          "legacy_default"
+                            ? "历史兼容默认"
+                            : "发布快照"
+                        }`}
                       />
                     </dl>
                   </div>
@@ -1343,6 +1430,14 @@ function draftToForm(application: BusinessApplication): SaveDraftInput {
     expected_revision: application.revision,
     agent_publication_id: draft?.agent_publication_id ?? "",
     workflow_publication_id: draft?.workflow_publication_id ?? "",
+    task_workspace_retention_period:
+      draft?.task_workspace_retention_period ?? "WEEK",
+    task_file_features: draft?.task_file_features ?? {
+      workspace_enabled: false,
+      file_mcp_enabled: false,
+      runtime_file_edit_enabled: false,
+      default_file_delivery_enabled: false,
+    },
     session_policy: {
       conversation_mode: "channel",
       recent_message_limit: Number(
@@ -1386,6 +1481,59 @@ function draftToForm(application: BusinessApplication): SaveDraftInput {
       })) ?? [],
     mcp_tools: draft?.mcp_tools.map((tool) => tool.tool_identifier) ?? [],
   }
+}
+
+function nextTaskFileFeatures(
+  current: SaveDraftInput["task_file_features"],
+  key: keyof SaveDraftInput["task_file_features"],
+  enabled: boolean
+): SaveDraftInput["task_file_features"] {
+  const next = { ...current, [key]: enabled }
+  if (enabled) {
+    if (key === "file_mcp_enabled") next.workspace_enabled = true
+    if (key === "runtime_file_edit_enabled") {
+      next.workspace_enabled = true
+      next.file_mcp_enabled = true
+    }
+    if (key === "default_file_delivery_enabled") {
+      next.workspace_enabled = true
+      next.file_mcp_enabled = true
+      next.runtime_file_edit_enabled = true
+    }
+  } else {
+    if (key === "workspace_enabled") {
+      next.file_mcp_enabled = false
+      next.runtime_file_edit_enabled = false
+      next.default_file_delivery_enabled = false
+    }
+    if (key === "file_mcp_enabled") {
+      next.runtime_file_edit_enabled = false
+      next.default_file_delivery_enabled = false
+    }
+    if (key === "runtime_file_edit_enabled") {
+      next.default_file_delivery_enabled = false
+    }
+  }
+  return next
+}
+
+function formatTaskFileFeatures(
+  features:
+    | SaveDraftInput["task_file_features"]
+    | null
+    | undefined
+): string {
+  if (!features) return "全部关闭（兼容默认）"
+  const labels = [
+    [features.workspace_enabled, "工作区"],
+    [features.file_mcp_enabled, "File MCP"],
+    [features.runtime_file_edit_enabled, "Write/Edit"],
+    [features.default_file_delivery_enabled, "默认交付"],
+  ] as const
+  const enabled = labels
+    .filter(([active]) => active)
+    .map(([, label]) => label)
+  return enabled.length ? enabled.join("、") : "全部关闭"
 }
 
 function changeTrigger(

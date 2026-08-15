@@ -18,10 +18,11 @@
 - [连续对话与多模态附件](architecture/continuous-multimodal-conversations.md)
 - [多应用、单 Worker 与双 Runtime 路由](architecture/multi-application-agent-worker-and-dingtalk-bot-routing.md)
 - [标准 MCP 工具服务](architecture/tool-mcp.md)
+- [受治理任务文件工作区](architecture/task-file-workspaces.md)
 - [统一身份、RBAC 与管理端](architecture/unified-identity-rbac-admin.md)
 - [Webhook Agent Trigger](architecture/webhook-agent-triggers.md)
 
-当前执行链是 `Channel -> Control Plane -> Worker -> Python/TypeScript Runtime -> tool-mcp -> Resource`。身份、RBAC、应用发布、资源发布、Secret、审计和 Job 历史仍由平台治理；旧 API Capability、Handler、API Connection、Resource Mapping 和 Internal API Platform 已退役。
+当前执行链是 `Channel -> Control Plane -> Worker -> Python/TypeScript Runtime -> MCP`。只读业务工具进入 `tool-mcp -> Resource`；任务文件进入 `File MCP（File Service 内）-> 受治理版本 -> MinIO`。身份、RBAC、应用发布、资源发布、Secret、审计和 Job 历史仍由平台治理；旧 API Capability、Handler、API Connection、Resource Mapping 和 Internal API Platform 已退役。
 
 ## 指南
 
@@ -41,10 +42,12 @@
 - [平台 Master Key](operations/platform-master-key.md)
 - [Master Key 紧急离线重加密](operations/emergency-master-key-reencryption.md)
 - [钉钉测试数据重建](operations/dingtalk-test-data-rebuild.md)
+- [Task File Workspace 切换与运行](operations/task-file-workspace-cutover.md)
 
 ## 验证与参考
 
 - [Compose PostgreSQL 18 / RabbitMQ 4 验收快照](verification/compose-postgres18-rabbitmq4-verification.md)
+- [Task File Workspace 合成验收证据](verification/task-file-workspace-synthetic-acceptance.md)
 - [ChatGPT 项目上下文](reference/chatgpt-context/README.md)
 - [当前有效 ADR](reference/decisions/README.md)
 - [文档移动清单](reference/document-inventory.md)

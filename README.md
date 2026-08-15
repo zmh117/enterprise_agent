@@ -6,10 +6,11 @@
 钉钉 / Webhook / Debug API
   -> FastAPI Control Plane
   -> PostgreSQL + RabbitMQ
+  -> file-worker -> file-service -> MinIO
   -> agent-worker
   -> Python Runtime 或 TypeScript Runtime
-  -> tool-mcp 或 ones-mcp
-  -> 已发布工具资源 / 当前用户加密 ONES 凭据
+  -> tool-mcp、ones-mcp 或 File MCP 接口
+  -> 已发布工具资源 / 当前用户加密 ONES 凭据 / 受治理文件版本
   -> Job / Tool Call / Delivery / Audit
 ```
 
@@ -22,6 +23,7 @@ ONES 本人身份绑定属于统一身份体系，独立于旧 API Platform。�
 - 两个独立 Agent Runtime：`python-v1` 与 `typescript-v1`。
 - 一个 Worker 负责调度，并按 Agent Publication 选择对应 Runtime。
 - 标准 MCP Server：`tool-mcp` 继续无个人认证；`ones-mcp` 使用 MCP Python SDK 2.0 无状态 Streamable HTTP，仅发布 `ones_work_item_search` 并验证短期 Principal JWT；第一阶段不提供 Cursor/stdio 旁路。
+- 任务文件：File Service 内置固定 File MCP 和内部流式 API，是唯一 MinIO 入口；第一阶段仅支持 UTF-8 TXT。逻辑工作区保存在 PostgreSQL/MinIO，物理 Job 沙盒位于 Runtime 容器 tmpfs 并在终态删除。
 - 只读工具：ER、业务流、数据库 schema/query、Redis、Loki。
 - 工具资源：Draft、技术验证、Publish、Disable、Archive；运行时只解析已发布 Revision。
 - 工具目标由 Agent 根据用户输入和发布 Skill 在每次 Tool Call 中显式提供，服务端实时复核角色、应用、数据范围和唯一资源。
@@ -49,7 +51,7 @@ ONES 本人绑定、Token 刷新和 `ones_work_item_search` 验收。生产部�
 
 ```bash
 docker compose ps
-docker compose logs migrator tool-mcp ones-mcp agent-worker
+docker compose logs migrator tool-mcp ones-mcp file-service file-worker agent-worker
 ```
 
 Compose 的核心执行服务为：
@@ -59,7 +61,8 @@ Compose 的核心执行服务为：
 - `agent-worker`
 - `python-agent-runtime`、`typescript-agent-runtime`
 - `tool-mcp`、`ones-mcp`（本地 Mock 由独立 Compose 启动）
-- 钉钉、Webhook、投递和附件 Worker
+- `file-service` 和替代旧附件消费者的 `file-worker`；无独立 `file-mcp`
+- 钉钉、Webhook 和独立投递 Worker
 
 ## 配置与 Secret
 
@@ -105,4 +108,6 @@ docker compose config --quiet
 - [Admin Web MVP](docs/architecture/admin-web-mvp.md)
 - [标准 MCP 工具服务](docs/architecture/tool-mcp.md)
 - [统一身份 ONES MCP](docs/architecture/identity-aware-ones-mcp.md)
+- [受治理任务文件工作区](docs/architecture/task-file-workspaces.md)
+- [任务文件切换与运行手册](docs/operations/task-file-workspace-cutover.md)
 - [数据库备份与恢复](docs/operations/compose-postgres18-rabbitmq4-upgrade.md)

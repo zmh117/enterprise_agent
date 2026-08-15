@@ -13,8 +13,10 @@ import threading
 import time
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from functools import lru_cache
 from urllib.parse import urlsplit
@@ -36,6 +38,7 @@ from app.shared.exceptions import (
     RetryableExecutionError,
     ToolPolicyError,
 )
+from app.python_runtime.job_sandbox import JobSandbox, JobSandboxManager
 
 if TYPE_CHECKING:
     from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
@@ -49,6 +52,8 @@ class ClaudeSdk:
     tool: Callable[..., Any]
     create_sdk_mcp_server: Callable[..., Any]
     tool_annotations: Any | None
+    permission_allow: Any | None = None
+    permission_deny: Any | None = None
 
 
 class _SdkAuditNormalizer:
@@ -337,6 +342,8 @@ class RealClaudeCodeAgentClient:
         sdk_loader: Callable[[], ClaudeSdk] | None = None,
         secret_resolver: Callable[[str], str] | None = None,
         agent_repository: AgentRepository | None = None,
+        sandbox_manager: JobSandboxManager | None = None,
+        cancellation_event: threading.Event | None = None,
     ) -> None:
         self.model = model
         del tool_registry
@@ -346,6 +353,14 @@ class RealClaudeCodeAgentClient:
         self.sdk_loader = sdk_loader or load_claude_agent_sdk
         self.secret_resolver = secret_resolver
         self.agent_repository = agent_repository
+        self.sandbox_manager = sandbox_manager or JobSandboxManager(
+            Path(tempfile.gettempdir()) / "enterprise-agent-python-runtime-sandboxes"
+        )
+        self._sandbox: ContextVar[JobSandbox | None] = ContextVar(
+            f"python_runtime_sandbox_{id(self)}",
+            default=None,
+        )
+        self.cancellation_event = cancellation_event
         self.last_runtime_events: list[dict[str, Any]] = []
         self.last_accounting: dict[str, Any] = _unavailable_accounting()
 
@@ -392,6 +407,20 @@ class RealClaudeCodeAgentClient:
         return result
 
     async def _run_async(
+        self,
+        request: AgentRunRequest,
+        binding: ModelRuntimeBinding,
+        api_key: str,
+    ) -> AgentRunResult:
+        sandbox = self.sandbox_manager.create(request.job_id)
+        token = self._sandbox.set(sandbox)
+        try:
+            return await self._run_in_sandbox_async(request, binding, api_key)
+        finally:
+            self._sandbox.reset(token)
+            sandbox.cleanup()
+
+    async def _run_in_sandbox_async(
         self,
         request: AgentRunRequest,
         binding: ModelRuntimeBinding,
@@ -447,9 +476,9 @@ class RealClaudeCodeAgentClient:
 
         try:
             with _temporary_claude_env(api_key, binding):
-                await asyncio.wait_for(
+                await self._consume_with_cancellation(
                     consume(),
-                    timeout=request.context.timeout_seconds,
+                    timeout_seconds=request.context.timeout_seconds,
                 )
         except asyncio.TimeoutError as exc:
             raise RetryableExecutionError(
@@ -472,6 +501,51 @@ class RealClaudeCodeAgentClient:
             final_answer=final_answer,
             tool_events=tool_events if tool_events else parsed_tool_events,
         )
+
+    async def _consume_with_cancellation(
+        self,
+        consume: Any,
+        *,
+        timeout_seconds: int,
+    ) -> None:
+        execution = asyncio.create_task(consume)
+        cancellation: asyncio.Task[None] | None = None
+        if self.cancellation_event is not None:
+
+            async def wait_for_cancellation() -> None:
+                while not self.cancellation_event.is_set():
+                    await asyncio.sleep(0.05)
+
+            cancellation = asyncio.create_task(wait_for_cancellation())
+        try:
+            watched = {execution, *([cancellation] if cancellation is not None else [])}
+            completed, _pending = await asyncio.wait(
+                watched,
+                timeout=timeout_seconds,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if execution in completed:
+                await execution
+                return
+            execution.cancel()
+            try:
+                await execution
+            except asyncio.CancelledError:
+                pass
+            if self.cancellation_event is not None and self.cancellation_event.is_set():
+                raise NonRetryableExecutionError(
+                    "Claude Agent SDK execution was cancelled",
+                    safe_message="Agent 执行已取消",
+                    error_code="runtime_cancelled",
+                )
+            raise asyncio.TimeoutError
+        finally:
+            if cancellation is not None:
+                cancellation.cancel()
+                try:
+                    await cancellation
+                except asyncio.CancelledError:
+                    pass
 
     def test_connection(
         self,
@@ -628,10 +702,19 @@ class RealClaudeCodeAgentClient:
         binding: ModelRuntimeBinding,
     ) -> Any:
         exact_tools = [f"mcp__tool_mcp__{tool_name}" for tool_name in context.allowed_tools]
+        sandbox = self._sandbox.get()
+        if sandbox is None:
+            raise NonRetryableExecutionError(
+                "Python Runtime Job Sandbox is unavailable",
+                safe_message="当前任务沙盒不可用",
+                error_code="runtime_sandbox_unavailable",
+            )
         return sdk.options(
             model=binding.model,
             system_prompt=_build_system_prompt(context),
             mcp_servers={"tool_mcp": server} if server is not None else {},
+            strict_mcp_config=True,
+            tools=[],
             allowed_tools=exact_tools,
             disallowed_tools=[
                 "Bash",
@@ -643,6 +726,9 @@ class RealClaudeCodeAgentClient:
             ],
             permission_mode="dontAsk",
             max_turns=context.max_turns,
+            cwd=sandbox.path,
+            setting_sources=[],
+            skills=[],
             stderr=lambda line: _append_cli_stderr(
                 cli_stderr,
                 line,
@@ -750,6 +836,8 @@ def load_claude_agent_sdk() -> ClaudeSdk:
         tool=sdk_module.tool,
         create_sdk_mcp_server=sdk_module.create_sdk_mcp_server,
         tool_annotations=getattr(sdk_module, "ToolAnnotations", None),
+        permission_allow=getattr(sdk_module, "PermissionResultAllow", None),
+        permission_deny=getattr(sdk_module, "PermissionResultDeny", None),
     )
 
 

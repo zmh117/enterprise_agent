@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 from dataclasses import replace
 from pathlib import Path
 
@@ -12,9 +13,11 @@ from app.main import create_app
 from app.modules.business_application.domain.policies import (
     canonical_json,
     normalize_routing_key,
+    publication_task_file_features,
     reject_dangerous_content,
     snapshot_hash,
     validate_execution_policy,
+    validate_task_file_features,
 )
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.mcp_tool_runtime.job_snapshot import JobMcpToolSnapshotService
@@ -121,6 +124,136 @@ def create_draft_publish(
     return application, revision, publication
 
 
+def test_workspace_retention_is_frozen_in_revision_publication_hash_and_audit() -> None:
+    container = build_test_container(control_plane_settings(), migrate=True, seed=True)
+    service = container.business_application_service
+    application = service.create(
+        actor_id="user_local_admin",
+        code="workspace-retention-policy",
+        name="Workspace Retention Policy",
+        description="safe",
+        project_code="default",
+        owner_user_id="user_local_admin",
+    )
+    assert application["draft"]["task_workspace_retention_period"] == "WEEK"
+    payload = draft_payload()
+    payload["task_workspace_retention_period"] = "MONTH"
+    revision = service.save_draft(
+        actor_id="user_local_admin",
+        code="workspace-retention-policy",
+        expected_revision=int(application["revision"]),
+        payload=payload,
+    )
+    assert revision["task_workspace_retention_period"] == "MONTH"
+    publication = service.publish(
+        actor_id="user_local_admin",
+        code="workspace-retention-policy",
+        revision_id=str(revision["id"]),
+    )
+    assert publication["schema_version"] == 3
+    assert publication["task_file_features"] == {
+        "default_file_delivery_enabled": False,
+        "file_mcp_enabled": False,
+        "runtime_file_edit_enabled": False,
+        "workspace_enabled": False,
+    }
+    assert publication["snapshot"]["task_workspace_retention_period"] == "MONTH"
+    assert publication["task_workspace_retention_source"] == "publication_snapshot"
+    assert snapshot_hash(publication["snapshot"]) == publication["config_hash"]
+
+    payload["task_workspace_retention_period"] = "DAY"
+    next_revision = service.save_draft(
+        actor_id="user_local_admin",
+        code="workspace-retention-policy",
+        expected_revision=int(revision["revision"]),
+        payload=payload,
+    )
+    assert next_revision["task_workspace_retention_period"] == "DAY"
+    frozen = container.business_application_repository.get_publication(
+        str(publication["id"])
+    )
+    assert frozen["task_workspace_retention_period"] == "MONTH"
+
+    audit = container.database.execute_one(
+        """
+        select payload_summary from audit_event
+         where event_type = 'business_application.published'
+         order by created_at desc limit 1
+        """
+    )
+    assert audit is not None
+    audit_envelope = json.loads(str(audit["payload_summary"]))
+    assert json.loads(str(audit_envelope["payload"]))[
+        "task_workspace_retention_period"
+    ] == "MONTH"
+
+
+def test_task_file_feature_flags_are_strict_frozen_and_legacy_default_off() -> None:
+    disabled, source = publication_task_file_features({"schema_version": 2})
+    assert disabled == {
+        "default_file_delivery_enabled": False,
+        "file_mcp_enabled": False,
+        "runtime_file_edit_enabled": False,
+        "workspace_enabled": False,
+    }
+    assert source == "legacy_default"
+    with pytest.raises(NonRetryableExecutionError):
+        validate_task_file_features({"workspace_enabled": "true"})
+    with pytest.raises(NonRetryableExecutionError):
+        validate_task_file_features({"unknown_enabled": True})
+    with pytest.raises(NonRetryableExecutionError):
+        validate_task_file_features({"file_mcp_enabled": True})
+
+    container = build_test_container(control_plane_settings(), migrate=True, seed=True)
+    service = container.business_application_service
+    application = service.create(
+        actor_id="user_local_admin",
+        code="task-file-feature-flags",
+        name="Task File Feature Flags",
+        description="safe",
+        project_code="default",
+        owner_user_id="user_local_admin",
+    )
+    payload = draft_payload()
+    payload["task_file_features"] = {
+        "workspace_enabled": True,
+        "file_mcp_enabled": True,
+        "runtime_file_edit_enabled": True,
+        "default_file_delivery_enabled": True,
+    }
+    revision = service.save_draft(
+        actor_id="user_local_admin",
+        code="task-file-feature-flags",
+        expected_revision=int(application["revision"]),
+        payload=payload,
+    )
+    publication = service.publish(
+        actor_id="user_local_admin",
+        code="task-file-feature-flags",
+        revision_id=str(revision["id"]),
+    )
+    payload["task_file_features"] = {
+        "workspace_enabled": False,
+        "file_mcp_enabled": False,
+        "runtime_file_edit_enabled": False,
+        "default_file_delivery_enabled": False,
+    }
+    service.save_draft(
+        actor_id="user_local_admin",
+        code="task-file-feature-flags",
+        expected_revision=int(revision["revision"]),
+        payload=payload,
+    )
+
+    frozen = container.business_application_repository.get_publication(
+        str(publication["id"])
+    )
+    assert all(frozen["task_file_features"].values())
+    assert frozen["task_file_features_source"] == "publication_snapshot"
+    assert frozen["snapshot"]["task_file_features"] == frozen["task_file_features"]
+    assert snapshot_hash(frozen["snapshot"]) == frozen["config_hash"]
+
+
 def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
     db = Database("sqlite:///:memory:")
     migrator = Migrator(
@@ -167,6 +300,7 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
         "104_add_identity_aware_ones_mcp.sql",
         "105_expand_unified_mcp_operation_audit.sql",
         "106_expand_agent_run_audit.sql",
+        "107_expand_task_file_workspaces.sql",
     ]
     session_columns = {str(row["name"]) for row in db.execute("pragma table_info(agent_session)")}
     assert {

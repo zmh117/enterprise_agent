@@ -46,9 +46,11 @@
 对象存储凭据仍由部署环境或 Secret 管理：
 
 ```dotenv
+# S3_* 只用于 MinIO/minio-init；file-worker 不接收这些变量。
 S3_ACCESS_KEY=enterprise_agent
-S3_SECRET_KEY=<local-secret>
+S3_SECRET_KEY=<local-infrastructure-secret>
 S3_BUCKET=agent-attachments
+FILE_STORAGE_BUCKET=agent-files
 ```
 
 启动附件profile和钉钉入口：
@@ -56,10 +58,10 @@ S3_BUCKET=agent-attachments
 ```bash
 docker compose --profile attachments --profile dingtalk-stream up -d --build
 docker compose --profile attachments ps
-docker compose --profile attachments logs --tail=100 attachment-worker
+docker compose --profile attachments logs --tail=100 file-worker file-service
 ```
 
-MinIO API 宿主机默认端口 **19000**，控制台 **19001**（容器内仍是 9000/9001；`S3_ENDPOINT_URL=http://minio:9000`）。若需改映射，设置 `MINIO_API_PORT` / `MINIO_CONSOLE_PORT`。bucket 由 `minio-init` 幂等创建并保持匿名访问关闭。
+MinIO API 宿主机默认端口 **19000**，控制台 **19001**（容器内仍是 9000/9001）。若需改映射，设置 `MINIO_API_PORT` / `MINIO_CONSOLE_PORT`。Bucket 由 `minio-init` 幂等创建并保持匿名访问关闭；只有 File Service 通过平台 Secret Reference 解析 MinIO 凭据，File Worker 不直连对象存储。
 
 ## 处理与恢复
 

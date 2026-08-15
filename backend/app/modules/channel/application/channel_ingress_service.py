@@ -104,6 +104,12 @@ class ChannelIngressService:
         publication = runtime.get("publication") or {}
         deployment = runtime.get("deployment") or {}
         route = runtime.get("route") or {}
+        external_identity = event.source.external_identity
+        enterprise_id = (
+            str(external_identity.dingtalk_enterprise_id or external_identity.tenant_code)
+            if external_identity is not None
+            else ""
+        )
         command = CreateAgentJobCommand(
             idempotency_key=event.effective_idempotency_key,
             requester_id=requester_id,
@@ -173,6 +179,18 @@ class ChannelIngressService:
             ),
             session_policy=dict(session_policy),
             application_execution_policy=dict(execution_policy),
+            tenant_id=enterprise_id,
+            enterprise_id=enterprise_id,
+            sender_staff_id=str(event.source.metadata.get("sender_staff_id") or ""),
+            task_workspace_retention_period=str(
+                snapshot.get("task_workspace_retention_period") or "WEEK"
+            ),
+            task_file_features={
+                str(key): bool(value)
+                for key, value in dict(snapshot.get("task_file_features") or {}).items()
+            },
+            file_references=event.file_references,
+            requests_file_output=event.requests_file_output,
         )
         job = self.create_job_service.execute(command)
         if resolution is not None and resolution.outcome == RouteResolutionOutcome.MATCHED:

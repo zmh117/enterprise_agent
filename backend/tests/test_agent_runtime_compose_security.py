@@ -61,12 +61,15 @@ def test_dual_runtimes_and_standard_mcp_are_hardened_and_secret_scoped() -> None
         "/tmp/python-agent-runtime/.claude"
     )
     assert python_runtime["tmpfs"] == [
-        "/tmp/python-agent-runtime:size=32m,mode=0700,uid=10002,gid=10002"
+        "/tmp/python-agent-runtime:size=${AGENT_RUNTIME_TMPFS_SIZE:-256m},mode=0700,uid=10002,gid=10002"
     ]
     for runtime in (python_runtime, typescript_runtime):
         assert "runtime_grant_public_key" in runtime["secrets"]
         assert "runtime_grant_private_key" not in runtime["secrets"]
         assert runtime["environment"]["MCP_TOOL_SERVER_URL"] == "http://tool-mcp:9103/mcp"
+        assert runtime["environment"]["FILE_MCP_SERVER_URL"] == (
+            "http://file-service:9105/mcp"
+        )
         assert runtime["environment"]["AGENT_RUNTIME_TEST_PROVIDER_MODE"] == (
             "${AGENT_RUNTIME_TEST_PROVIDER_MODE:-disabled}"
         )

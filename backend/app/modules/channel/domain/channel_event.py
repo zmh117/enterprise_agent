@@ -30,6 +30,14 @@ class ChannelAttachment:
 
 
 @dataclass(frozen=True)
+class ChannelFileReference:
+    """A trusted structured reference, never a file id parsed from message text."""
+
+    file_id: str
+    version_id: str
+
+
+@dataclass(frozen=True)
 class RoutingContext:
     project_code: str = "default"
     environment: str = ""
@@ -92,6 +100,8 @@ class ChannelEvent:
     routing: RoutingContext
     message: str = ""
     attachments: tuple[ChannelAttachment, ...] = ()
+    file_references: tuple[ChannelFileReference, ...] = ()
+    requests_file_output: bool = False
     raw_payload_summary: dict[str, Any] = field(default_factory=dict)
     idempotency_key: str = ""
     correlation_id: str | None = None

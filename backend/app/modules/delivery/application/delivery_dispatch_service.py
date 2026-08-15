@@ -9,10 +9,13 @@ import time
 
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.channel.domain.channel_event import ReplyRoute
+from app.modules.channel.infrastructure.connector_registry import Connector
 from app.modules.delivery.application.result_delivery_service import (
     ResultDeliveryService,
 )
 from app.modules.delivery.domain import DeliveryEvent, DeliveryStatus
+from app.modules.delivery.infrastructure.file_delivery_sender import FileDeliverySender
+from app.modules.file_workspace.delivery_service import FileVersionDeliveryService
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.shared.config import DeliverySettings
 from app.shared.exceptions import (
@@ -40,12 +43,16 @@ class DeliveryOutboxDispatcher:
         audit_service: AuditService,
         settings: DeliverySettings,
         worker_id: str = "",
+        file_delivery_sender: FileDeliverySender | None = None,
+        file_delivery_service: FileVersionDeliveryService | None = None,
     ) -> None:
         self.repository = repository
         self.delivery_service = delivery_service
         self.audit_service = audit_service
         self.settings = settings
         self.worker_id = worker_id or f"delivery-dispatcher-{os.getpid()}"
+        self.file_delivery_sender = file_delivery_sender
+        self.file_delivery_service = file_delivery_service
 
     def dispatch_pending(self, *, limit: int = 100) -> DeliveryDispatchResult:
         recovered, recovered_dead = self.repository.recover_stale_delivery_claims()
@@ -171,6 +178,13 @@ class DeliveryOutboxDispatcher:
                     "connector_id": route.connector_id,
                 },
             )
+        if str(event.delivery_binding.get("delivery_kind") or "") == "file_version":
+            return self._dispatch_file_version(
+                event=event,
+                attempt_id=attempt_id,
+                route=route,
+                connector=connector,
+            )
         adapter = self.delivery_service.adapters.get(route.type)
         if adapter is None:
             raise NonRetryableExecutionError(
@@ -271,6 +285,77 @@ class DeliveryOutboxDispatcher:
                 "delivery_id": event.id,
                 "attempt_id": attempt_id,
                 "chunk_count": len(chunks),
+            },
+        )
+        return DeliveryStatus.SUCCEEDED
+
+    def _dispatch_file_version(
+        self,
+        *,
+        event: DeliveryEvent,
+        attempt_id: str,
+        route: ReplyRoute,
+        connector: Connector | None,
+    ) -> DeliveryStatus:
+        if self.file_delivery_sender is None or self.file_delivery_service is None:
+            raise NonRetryableExecutionError(
+                "File Delivery adapter is not installed",
+                safe_message="文件交付适配器未安装",
+                error_code="file_delivery_adapter_not_installed",
+            )
+        binding = self.file_delivery_service.exact_binding(event.id)
+        if binding is None:
+            raise NonRetryableExecutionError(
+                "File Delivery binding is missing",
+                safe_message="文件交付绑定无效",
+                error_code="file_delivery_binding_invalid",
+            )
+        payload_hash = hashlib.sha256(
+            json.dumps(
+                {
+                    "delivery_id": event.id,
+                    "file_id": binding["file_id"],
+                    "version_id": binding["file_version_id"],
+                    "sha256": binding["file_content_sha256"],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        if not self.repository.has_successful_delivery_chunk(
+            delivery_id=event.id,
+            chunk_index=1,
+            payload_hash=payload_hash,
+        ):
+            self.file_delivery_sender.send(
+                delivery_id=event.id,
+                connector=connector,
+                route=route,
+                idempotency_key=event.event_key,
+            )
+            self._record_delivery_chunk(
+                event=event,
+                attempt_id=attempt_id,
+                chunk_index=1,
+                chunk_count=1,
+                payload_hash=payload_hash,
+                payload_summary={
+                    "file_count": 1,
+                    "version_id": str(binding["file_version_id"]),
+                },
+                status="SUCCEEDED",
+            )
+        self.repository.mark_delivery_succeeded(event=event, attempt_id=attempt_id)
+        self.file_delivery_service.retain_delivered_version(delivery_id=event.id)
+        self.audit_service.record(
+            "delivery.file.completed",
+            status="SUCCEEDED",
+            summary="Exact File Version Delivery completed",
+            job_id=event.job_id,
+            actor_id=self.worker_id,
+            payload={
+                "delivery_id": event.id,
+                "version_id": str(binding["file_version_id"]),
             },
         )
         return DeliveryStatus.SUCCEEDED

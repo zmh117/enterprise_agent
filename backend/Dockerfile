@@ -87,6 +87,7 @@ COPY backend/app/modules/delivery /app/backend/app/modules/delivery
 COPY backend/app/modules/dingding/__init__.py /app/backend/app/modules/dingding/
 COPY backend/app/modules/dingding/application /app/backend/app/modules/dingding/application
 COPY backend/app/modules/dingding/infrastructure /app/backend/app/modules/dingding/infrastructure
+COPY backend/app/modules/file_workspace /app/backend/app/modules/file_workspace
 COPY backend/app/modules/identity /app/backend/app/modules/identity
 COPY backend/app/modules/identity_discovery /app/backend/app/modules/identity_discovery
 COPY backend/app/modules/mcp_tool_runtime /app/backend/app/modules/mcp_tool_runtime
@@ -106,7 +107,7 @@ COPY backend/migrations /app/backend/migrations
 COPY backend/seeds /app/backend/seeds
 COPY agent-runtime/contracts /app/agent-runtime/contracts
 COPY .claude/skills /app/.claude/skills
-RUN python -c "import app.bootstrap; import app.workers.agent_job_worker; import app.workers.job_dispatch_worker; import app.workers.delivery_dispatch_worker; import app.workers.webhook_dispatch_worker; import app.workers.channel_dispatch_worker"
+RUN python -c "import app.bootstrap; import app.workers.agent_job_worker; import app.workers.job_dispatch_worker; import app.workers.delivery_dispatch_worker; import app.workers.webhook_dispatch_worker; import app.workers.channel_dispatch_worker; import app.workers.file_worker"
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-deps --no-build-isolation .
 CMD ["python", "-m", "app.workers.agent_job_worker"]
@@ -167,3 +168,14 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && python -c "import services.ones_mcp_server.app"
 USER 10003:10003
 CMD ["python", "-m", "services.ones_mcp_server"]
+
+FROM api-server AS file-service
+USER root
+COPY services /app/services
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -c "import subprocess, sys, tomllib; deps = tomllib.load(open('/app/pyproject.toml', 'rb'))['project']['optional-dependencies']['file-service']; subprocess.check_call([sys.executable, '-m', 'pip', 'install', *deps])" \
+    && groupadd --system --gid 10005 file-service \
+    && useradd --system --uid 10005 --gid 10005 --no-create-home file-service \
+    && python -c "import services.file_service.app"
+USER 10005:10005
+CMD ["python", "-m", "services.file_service"]

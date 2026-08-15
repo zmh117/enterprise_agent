@@ -11,6 +11,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from app.modules.identity.application.principal_jwt import (
+    FILE_PRINCIPAL_AUDIENCE,
     ONES_SEARCH_SCOPE,
     PRINCIPAL_AUDIENCE,
     PRINCIPAL_AUTHORIZED_PARTY,
@@ -258,13 +259,77 @@ def test_issuer_derives_bounded_claims_from_snapshot_and_current_application_gra
     assert token not in audit_text
     for forbidden in ("identity_id", "credential", "email", "password", "team", "token"):
         assert forbidden not in claims
-
     verifier = PrincipalTokenVerifier(
         PrincipalJwks.from_dict(signing_key.public_jwks()),
         now=lambda: NOW,
     )
     assert verifier.verify(token) == claims
 
+
+def test_issuer_creates_a_separate_audience_bound_file_principal() -> None:
+    snapshot = _Snapshot()
+    snapshot.value["snapshot"]["tools"] = [
+        {
+            "server_code": "file-service",
+            "tool_identifier": "file_prepare_materialization",
+            "schema_hash": "c" * 64,
+        },
+        {
+            "server_code": "file-service",
+            "tool_identifier": "file_create_commit_intent",
+            "schema_hash": "d" * 64,
+        },
+    ]
+    issuer, signing_key, audit, authorization = _issuer(
+        database=_Database(
+            task_workspace_id="workspace-1",
+            workspace_tenant_id="tenant-1",
+        ),
+        snapshot=snapshot,
+    )
+
+    token = issuer.issue_file_for_job(job_id="job-1")
+    claims = jwt.decode(token, options={"verify_signature": False})
+
+    assert jwt.get_unverified_header(token) == {
+        "alg": "EdDSA",
+        "kid": signing_key.kid,
+        "typ": "JWT",
+    }
+    assert claims["aud"] == FILE_PRINCIPAL_AUDIENCE
+    assert claims["tenant_id"] == "tenant-1"
+    assert claims["job_id"] == "job-1"
+    assert claims["scope"] == [
+        "mcp:file-service:file_create_commit_intent:invoke",
+        "mcp:file-service:file_prepare_materialization:invoke",
+    ]
+    assert {call["tool_identifier"] for call in authorization.calls} == {
+        "file_create_commit_intent",
+        "file_prepare_materialization",
+    }
+    assert all(call["stage"] == "file_principal_jwt_issue" for call in authorization.calls)
+    assert audit.events[-1]["summary"] == (
+        "Principal JWT issued for frozen File MCP Tools"
+    )
+    assert token not in json.dumps(audit.events)
+
+
+def test_file_principal_issuance_requires_a_job_bound_workspace() -> None:
+    snapshot = _Snapshot()
+    snapshot.value["snapshot"]["tools"] = [
+        {
+            "server_code": "file-service",
+            "tool_identifier": "task_workspace_get",
+            "schema_hash": "c" * 64,
+        }
+    ]
+    issuer, _signing_key, audit, _authorization = _issuer(snapshot=snapshot)
+
+    with pytest.raises(PrincipalTokenError) as captured:
+        issuer.issue_file_for_job(job_id="job-1")
+
+    assert captured.value.error_code == "file_principal_workspace_missing"
+    assert audit.events[-1]["event_type"] == "principal.jwt.issue_denied"
 
 @pytest.mark.parametrize(
     ("database", "mutate_snapshot", "denied", "error_code"),

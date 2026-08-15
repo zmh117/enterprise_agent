@@ -24,9 +24,11 @@ from app.modules.business_application.domain.policies import (
     validate_environment,
     validate_execution_policy,
     validate_session_policy,
+    validate_task_file_features,
+    validate_task_workspace_retention_period,
     validate_status,
     validate_trigger,
-    verify_snapshot,
+    verify_publication_snapshot,
 )
 from app.modules.business_application.domain.runtime import (
     RouteResolutionOutcome,
@@ -41,7 +43,7 @@ from app.modules.identity.application.authorization import AuthorizationEvaluato
 from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import NonRetryableExecutionError, NotFound
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 
 
 class BusinessApplicationService:
@@ -183,6 +185,12 @@ class BusinessApplicationService:
             )
         reject_dangerous_content(payload)
         session_policy = validate_session_policy(dict(payload.get("session_policy") or {}))
+        task_workspace_retention_period = validate_task_workspace_retention_period(
+            payload.get("task_workspace_retention_period")
+        )
+        task_file_features = validate_task_file_features(
+            payload.get("task_file_features")
+        )
         execution_policy = validate_execution_policy(dict(payload.get("execution_policy") or {}))
         triggers = [
             validate_trigger(dict(value), index)
@@ -199,6 +207,8 @@ class BusinessApplicationService:
         normalized = {
             "agent_publication_id": str(payload.get("agent_publication_id") or "").strip(),
             "workflow_publication_id": str(payload.get("workflow_publication_id") or "").strip(),
+            "task_workspace_retention_period": task_workspace_retention_period,
+            "task_file_features": task_file_features,
             "session_policy": session_policy,
             "execution_policy": execution_policy,
             "triggers": triggers,
@@ -212,6 +222,8 @@ class BusinessApplicationService:
             config_hash=snapshot_hash(normalized),
             agent_publication_id=str(normalized["agent_publication_id"]),
             workflow_publication_id=str(normalized["workflow_publication_id"]),
+            task_workspace_retention_period=task_workspace_retention_period,
+            task_file_features=task_file_features,
             session_policy=session_policy,
             execution_policy=execution_policy,
             triggers=triggers,
@@ -642,6 +654,12 @@ class BusinessApplicationService:
             "revision": int(revision["revision"]),
             "agent": component(components.get("agent")),
             "workflow": component(components.get("workflow")),
+            "task_workspace_retention_period": str(
+                revision.get("task_workspace_retention_period") or "WEEK"
+            ),
+            "task_file_features": validate_task_file_features(
+                revision.get("task_file_features")
+            ),
             "session_policy": revision["session_policy"],
             "execution_policy": revision["execution_policy"],
             "triggers": [
@@ -674,15 +692,13 @@ class BusinessApplicationService:
 
     def _verified_publication(self, publication_id: str) -> dict[str, Any]:
         publication = self.repository.get_publication(publication_id)
-        if int(publication["schema_version"]) != SCHEMA_VERSION:
+        if not verify_publication_snapshot(
+            dict(publication["snapshot"]),
+            schema_version=int(publication["schema_version"]),
+            expected_hash=str(publication["config_hash"]),
+        ):
             raise NonRetryableExecutionError(
-                "Unsupported Business Application publication schema",
-                safe_message="不支持此业务应用发布结构版本",
-                error_code="integrity_error",
-            )
-        if not verify_snapshot(publication["snapshot"], str(publication["config_hash"])):
-            raise NonRetryableExecutionError(
-                "Business Application publication hash mismatch",
+                "Business Application publication integrity check failed",
                 safe_message="业务应用发布版本完整性校验失败",
                 error_code="integrity_error",
             )
@@ -737,6 +753,12 @@ class BusinessApplicationService:
                 "revision_id": (revision or {}).get("id", ""),
                 "publication_id": (publication or {}).get("id", ""),
                 "config_hash": (publication or revision or {}).get("config_hash", ""),
+                "task_workspace_retention_period": (
+                    publication or revision or {}
+                ).get("task_workspace_retention_period", "WEEK"),
+                "task_file_features": (publication or revision or {}).get(
+                    "task_file_features", validate_task_file_features(None)
+                ),
                 "environment": environment,
                 "previous_publication_id": previous_publication_id,
                 **readiness.to_dict(),
@@ -775,6 +797,12 @@ class BusinessApplicationService:
             "revision": application["revision"],
             "latest_publication_revision": application.get("latest_publication_revision"),
             "active_environments": active_environments,
+            "task_workspace_retention_period": str(
+                application.get("task_workspace_retention_period")
+                or (application.get("draft") or {}).get(
+                    "task_workspace_retention_period", "WEEK"
+                )
+            ),
             **readiness.to_dict(),
         }
 
@@ -807,6 +835,17 @@ class BusinessApplicationService:
             "trigger_count": len(snapshot.get("triggers") or []),
             "delivery_count": len(snapshot.get("deliveries") or []),
             "mcp_tool_count": len(snapshot.get("mcp_tools") or []),
+            "task_workspace_retention_period": str(
+                snapshot.get("task_workspace_retention_period") or "WEEK"
+            ),
+            "task_file_features": validate_task_file_features(
+                snapshot.get("task_file_features")
+            ),
+            "task_workspace_retention_source": (
+                "publication_snapshot"
+                if "task_workspace_retention_period" in snapshot
+                else "legacy_default"
+            ),
             "runtime_readiness": self.runtime_evaluator.evaluate(
                 snapshot=snapshot,
                 deployment=None,
@@ -848,9 +887,10 @@ class BusinessApplicationService:
             None,
         )
         snapshot = dict(publication["snapshot"])
-        if int(publication.get("schema_version") or 0) != SCHEMA_VERSION or not verify_snapshot(
+        if not verify_publication_snapshot(
             snapshot,
-            str(publication.get("config_hash") or ""),
+            schema_version=int(publication.get("schema_version") or 0),
+            expected_hash=str(publication.get("config_hash") or ""),
         ):
             readiness = self.runtime_evaluator.blocked_integrity(
                 deployment_environment=str((deployment or {}).get("environment") or "")
@@ -1053,8 +1093,10 @@ class BusinessApplicationResolver:
 
     def _verified(self, publication_id: str) -> dict[str, Any]:
         publication = self.repository.get_publication(publication_id)
-        if int(publication["schema_version"]) != SCHEMA_VERSION or not verify_snapshot(
-            publication["snapshot"], str(publication["config_hash"])
+        if not verify_publication_snapshot(
+            dict(publication["snapshot"]),
+            schema_version=int(publication["schema_version"]),
+            expected_hash=str(publication["config_hash"]),
         ):
             raise self.configuration_error(
                 "Business Application publication integrity check failed"

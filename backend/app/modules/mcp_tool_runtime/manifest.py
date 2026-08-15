@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.modules.agent.infrastructure.tool_manifest import TOOL_DEFINITIONS
+from app.modules.file_workspace.contracts import FILE_TOOL_MANIFEST
 
 
 _RESOURCE_KINDS = {
@@ -76,6 +77,17 @@ MCP_TOOL_MANIFEST["ones_work_item_search"] = McpToolDefinition(
     resource_kind="",
     read_only=True,
 )
+
+for _identifier, _file_tool in FILE_TOOL_MANIFEST.items():
+    MCP_TOOL_MANIFEST[_identifier] = McpToolDefinition(
+        server_code="file-service",
+        identifier=_identifier,
+        description=_file_tool.description,
+        input_schema=dict(_file_tool.input_schema),
+        schema_hash=_file_tool.schema_hash,
+        resource_kind="file",
+        read_only=not _file_tool.mutating,
+    )
 
 
 def require_mcp_tool(identifier: str) -> McpToolDefinition:

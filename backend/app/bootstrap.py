@@ -33,8 +33,9 @@ from app.modules.attachments.credentials import AttachmentCredentialCipher
 from app.modules.attachments.dingtalk_downloader import DingTalkMediaDownloader
 from app.modules.attachments.domain import ObjectStorage
 from app.modules.attachments.extraction import SafeAttachmentExtractor
+from app.modules.attachments.file_service_client import FileServiceAttachmentImporter
 from app.modules.attachments.service import AttachmentProcessingService
-from app.modules.attachments.storage import InMemoryObjectStorage, S3ObjectStorage
+from app.modules.attachments.storage import InMemoryObjectStorage
 from app.modules.business_application.application import (
     BusinessApplicationResolver,
     BusinessApplicationService,
@@ -63,6 +64,14 @@ from app.modules.delivery.infrastructure.adapters import (
     HttpDeliveryAdapter,
     NoneDeliveryAdapter,
 )
+from app.modules.delivery.infrastructure.file_delivery_sender import (
+    DingTalkFileDeliverySender,
+    FileServiceDeliveryClient,
+)
+from app.modules.file_workspace.delivery_service import FileVersionDeliveryService
+from app.modules.file_workspace.manifest_service import JobFileManifestService
+from app.modules.file_workspace.repository import FileWorkspaceRepository
+from app.modules.file_workspace.workspace_service import TaskWorkspaceService
 from app.modules.dingding.application.dingding_message_service import DingTalkMessageService
 from app.modules.dingding.application.dingtalk_stream_service import (
     DingTalkStreamMessageService,
@@ -616,6 +625,11 @@ def _build_container(
     mcp_tool_snapshot_service = JobMcpToolSnapshotService(
         database,
     )
+    file_workspace_repository = FileWorkspaceRepository(database)
+    file_manifest_service = JobFileManifestService(
+        file_workspace_repository,
+        TaskWorkspaceService(file_workspace_repository),
+    )
     principal_token_issuer: PrincipalTokenIssuer | None = None
     if service_name == "agent-worker" and runtime_clients_override is None:
         principal_token_issuer = PrincipalTokenIssuer(
@@ -649,6 +663,7 @@ def _build_container(
         identity_repository=identity_repository,
         mcp_tool_snapshot_service=mcp_tool_snapshot_service,
         runtime_readiness_guard=agent_runtime_readiness_guard,
+        file_manifest_service=file_manifest_service,
     )
     job_dispatcher = JobDispatchOutboxDispatcher(
         repository=agent_repository,
@@ -898,21 +913,49 @@ def _build_container(
         settings=settings.delivery,
         business_authorization_service=business_authorization_service,
     )
+    file_version_delivery_service = FileVersionDeliveryService(
+        file_workspace_repository,
+        agent_repository,
+        settings.delivery,
+    )
+    file_delivery_sender = None
+    if service_name == "delivery-dispatch-worker":
+        file_delivery_sender = DingTalkFileDeliverySender(
+            file_service=FileServiceDeliveryClient(
+                base_url=settings.file_service.internal_base_url,
+                allowed_hosts=settings.file_service.internal_allowed_hosts,
+                principal_token_file=(
+                    settings.file_service.delivery_principal_token_file
+                ),
+                timeout_seconds=settings.file_service.internal_timeout_seconds,
+            ),
+            connector_registry=connector_registry,
+            timeout_seconds=settings.delivery.timeout_seconds,
+        )
     delivery_dispatcher = DeliveryOutboxDispatcher(
         repository=agent_repository,
         delivery_service=result_delivery_service,
         audit_service=audit_service,
         settings=settings.delivery,
         worker_id=f"{service_name}-delivery-dispatcher",
+        file_delivery_sender=file_delivery_sender,
+        file_delivery_service=file_version_delivery_service,
     )
-    object_storage: ObjectStorage = InMemoryObjectStorage(settings.object_storage.bucket)
-    if service_name == "attachment-worker" and message_bus is None:
-        s3_storage = S3ObjectStorage(settings.object_storage)
-        s3_storage.ensure_bucket()
-        object_storage = s3_storage
+    object_storage: ObjectStorage | None = InMemoryObjectStorage(
+        settings.object_storage.bucket
+    )
+    attachment_importer = None
+    if service_name == "file-worker" and message_bus is None:
+        object_storage = None
+        attachment_importer = FileServiceAttachmentImporter(
+            base_url=settings.file_service.internal_base_url,
+            allowed_hosts=settings.file_service.internal_allowed_hosts,
+            principal_token_file=settings.file_service.worker_principal_token_file,
+            timeout_seconds=settings.file_service.internal_timeout_seconds,
+        )
     attachment_service: AttachmentProcessingService | None = None
     if credential_cipher is not None and (
-        service_name == "attachment-worker" or message_bus is not None
+        service_name == "file-worker" or message_bus is not None
     ):
         attachment_service = AttachmentProcessingService(
             repository=agent_repository,
@@ -930,9 +973,11 @@ def _build_container(
                 timeout_seconds=settings.attachments.timeout_seconds,
             ),
             storage=object_storage,
+            importer=attachment_importer,
             extractor=SafeAttachmentExtractor(settings.attachments),
             settings=settings.attachments,
             delivery_service=result_delivery_service,
+            file_manifest_service=file_manifest_service,
         )
     agent_executor = AgentExecutor(
         repository=agent_repository,

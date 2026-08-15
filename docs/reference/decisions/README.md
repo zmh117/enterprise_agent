@@ -10,6 +10,7 @@
 - ADR-0039：钉钉应用访问来自路由命中与当前启用用户
 - ADR-0042：Job 冻结内部执行主体但不绕过实时撤权
 - ADR-0049：钉钉身份按企业建模
+- ADR-0050：File Service 是任务文件和 MinIO 的唯一事实入口
 
 ADR-0001—0024、0028—0030、0033—0038、0040—0041、0043—0048 所描述的 API Capability、Handler、API Connection、Resource Mapping、个人 API Token 或旧工具发布平台已经被 `retire-legacy-api-platform-for-mcp` 取代，仅作为历史记录，不得作为新实现依据。
 

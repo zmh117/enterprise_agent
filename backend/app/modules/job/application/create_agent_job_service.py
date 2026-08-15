@@ -12,8 +12,18 @@ from app.modules.agent_config.application import AgentConfigService
 from app.modules.authorization_center.application import BusinessAuthorizationService
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.attachments.credentials import AttachmentCredentialCipher
-from app.modules.channel.domain.channel_event import ChannelAttachment, ReplyRoute, RoutingContext
+from app.modules.channel.domain.channel_event import (
+    ChannelAttachment,
+    ChannelFileReference,
+    ReplyRoute,
+    RoutingContext,
+)
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
+from app.modules.file_workspace.manifest_service import (
+    JobFileManifestService,
+    is_explicit_txt_output_request,
+    is_task_txt_name,
+)
 from app.modules.job.domain.agent_job import AgentJob, AgentSession
 from app.modules.mcp_tool_runtime.job_snapshot import (
     JobMcpToolSnapshotService,
@@ -79,6 +89,13 @@ class CreateAgentJobCommand:
     session_policy: dict[str, Any] = field(default_factory=dict)
     application_execution_policy: dict[str, Any] = field(default_factory=dict)
     continue_session_id: str = ""
+    tenant_id: str = ""
+    enterprise_id: str = ""
+    sender_staff_id: str = ""
+    task_workspace_retention_period: str = "WEEK"
+    task_file_features: dict[str, bool] = field(default_factory=dict)
+    file_references: tuple[ChannelFileReference, ...] = ()
+    requests_file_output: bool = False
 
     @property
     def effective_requester_id(self) -> str:
@@ -135,6 +152,7 @@ class CreateAgentJobService:
         identity_repository: IdentityRepository | None = None,
         mcp_tool_snapshot_service: JobMcpToolSnapshotService | None = None,
         runtime_readiness_guard: AgentRuntimeReadinessGuard | None = None,
+        file_manifest_service: JobFileManifestService | None = None,
     ) -> None:
         self.repository = repository
         self.permission_service = permission_service
@@ -153,6 +171,7 @@ class CreateAgentJobService:
         self.identity_repository = identity_repository
         self.mcp_tool_snapshot_service = mcp_tool_snapshot_service
         self.runtime_readiness_guard = runtime_readiness_guard
+        self.file_manifest_service = file_manifest_service
 
     def execute(self, command: CreateAgentJobCommand) -> AgentJob:
         existing = self.repository.get_job_by_idempotency_key(command.idempotency_key)
@@ -458,6 +477,31 @@ class CreateAgentJobService:
                     session_policy=command.session_policy,
                 )
             )
+            file_workspace = (
+                self.file_manifest_service.resolve_workspace(
+                    tenant_id=command.tenant_id,
+                    session_id=session.id,
+                    requester_id=requester_id,
+                    conversation_type=command.conversation_type,
+                    enterprise_id=command.enterprise_id,
+                    connector_id=command.source_connector_id,
+                    conversation_id=external_conversation_id,
+                    sender_staff_id=command.sender_staff_id,
+                    publication_id=command.business_application_publication_id,
+                    retention_period=command.task_workspace_retention_period,
+                    attachments=command.attachments,
+                    file_references=command.file_references,
+                    requests_file_output=(
+                        command.requests_file_output
+                        or is_explicit_txt_output_request(command.user_message)
+                    ),
+                )
+                if (
+                    self.file_manifest_service is not None
+                    and bool(command.task_file_features.get("workspace_enabled"))
+                )
+                else None
+            )
             job = self.repository.create_job(
                 session_id=session.id,
                 idempotency_key=command.idempotency_key,
@@ -495,6 +539,11 @@ class CreateAgentJobService:
                 business_application_runtime_status=(command.business_application_runtime_status),
                 business_application_route_decision={
                     **command.business_application_route_decision,
+                    **(
+                        {"task_file_features": dict(command.task_file_features)}
+                        if command.task_file_features
+                        else {}
+                    ),
                     "authorization_snapshot": business_authorization_snapshot,
                     "runtime_authorization": runtime_authorization_snapshot,
                 },
@@ -502,6 +551,7 @@ class CreateAgentJobService:
                 model_runtime_provenance=model_runtime_provenance,
                 agent_runtime_kind=agent_runtime_kind,
                 agent_runtime_protocol_version=agent_runtime_protocol_version,
+                task_workspace_id=(str(file_workspace["id"]) if file_workspace else ""),
             )
             mcp_tool_snapshot: dict[str, Any] = {}
             if command.business_application_id and self.mcp_tool_snapshot_service is not None:
@@ -515,6 +565,14 @@ class CreateAgentJobService:
                     routing_context=command.effective_routing_context,
                     business_authorization=business_authorization_snapshot,
                     runtime_authorization=runtime_authorization_snapshot,
+                    allowed_server_codes=(
+                        None
+                        if bool(command.task_file_features.get("file_mcp_enabled"))
+                        else frozenset(
+                            server_code
+                            for server_code in {"tool-mcp", "ones-mcp"}
+                        )
+                    ),
                 )
             elif agent_publication_id and self.mcp_tool_snapshot_service is not None:
                 mcp_tool_snapshot = self.mcp_tool_snapshot_service.freeze_agent_only(
@@ -542,6 +600,23 @@ class CreateAgentJobService:
                     credential_expires_at=attachment.source_credential_expires_at,
                 )
                 attachment_ids.append(created.id)
+            file_manifest: dict[str, Any] = {}
+            if file_workspace is not None and bool(
+                command.task_file_features.get("file_mcp_enabled")
+            ):
+                assert self.file_manifest_service is not None
+                self.file_manifest_service.register_request(
+                    job_id=job.id,
+                    workspace=file_workspace,
+                    requester_id=requester_id,
+                    publication_id=command.business_application_publication_id,
+                    file_references=command.file_references,
+                )
+                if not any(
+                    is_task_txt_name(attachment.file_name)
+                    for attachment in command.attachments
+                ):
+                    file_manifest = self.file_manifest_service.finalize(job.id) or {}
             dispatch_event = self.repository.create_dispatch_event(
                 job_id=job.id,
                 job_idempotency_key=job.idempotency_key,
@@ -588,6 +663,12 @@ class CreateAgentJobService:
                     ),
                     "mcp_tool_snapshot_id": str(mcp_tool_snapshot.get("id") or ""),
                     "mcp_tool_snapshot_hash": str(mcp_tool_snapshot.get("snapshot_hash") or ""),
+                    "task_workspace_id": str(file_workspace.get("id") or "")
+                    if file_workspace
+                    else "",
+                    "file_manifest_id": str(file_manifest.get("id") or ""),
+                    "file_manifest_hash": str(file_manifest.get("manifest_hash") or ""),
+                    "sender_staff_id": command.sender_staff_id,
                 },
             )
             self.audit_service.record(
@@ -639,7 +720,12 @@ class CreateAgentJobService:
                     "attachment_source_missing", safe_message="缺少附件来源"
                 )
             size = int(attachment.declared_size or 0)
-            if size > self.attachment_settings.max_file_bytes:
+            max_file_bytes = (
+                15 * 1024 * 1024
+                if extension == ".txt"
+                else self.attachment_settings.max_file_bytes
+            )
+            if size > max_file_bytes:
                 raise NonRetryableExecutionError(
                     "attachment_size_exceeded", safe_message="附件过大"
                 )

@@ -112,7 +112,14 @@ class BusinessApplicationRepository:
             select a.*,
                    (select max(p.revision)
                       from business_application_publication p
-                     where p.application_id = a.id) as latest_publication_revision
+                     where p.application_id = a.id) as latest_publication_revision,
+                   coalesce(
+                     (select r.task_workspace_retention_period
+                        from business_application_revision r
+                       where r.application_id = a.id
+                       order by r.revision desc limit 1),
+                     'WEEK'
+                   ) as task_workspace_retention_period
               from business_application a
               {where}
              order by a.updated_at desc, a.code
@@ -195,6 +202,8 @@ class BusinessApplicationRepository:
         expected_revision: int,
         agent_publication_id: str,
         workflow_publication_id: str,
+        task_workspace_retention_period: str,
+        task_file_features: dict[str, bool],
         session_policy: dict[str, Any],
         execution_policy: dict[str, Any],
         triggers: list[dict[str, Any]],
@@ -226,10 +235,12 @@ class BusinessApplicationRepository:
                 """
                 insert into business_application_revision
                   (id, application_id, revision, status, agent_publication_id,
-                   workflow_publication_id, session_policy_json,
+                   workflow_publication_id, task_workspace_retention_period,
+                   task_file_features_json,
+                   session_policy_json,
                    execution_policy_json, validation_json, config_hash,
                    created_by, created_at, updated_at)
-                values (?, ?, ?, 'draft', ?, ?, ?, ?,
+                values (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?,
                         '{"valid":false,"errors":[]}', ?, ?, ?, ?)
                 """,
                 (
@@ -238,6 +249,8 @@ class BusinessApplicationRepository:
                     next_revision,
                     agent_publication_id or None,
                     workflow_publication_id or None,
+                    task_workspace_retention_period,
+                    json_text(task_file_features),
                     json_text(session_policy),
                     json_text(execution_policy),
                     config_hash,
@@ -367,16 +380,21 @@ class BusinessApplicationRepository:
                 """
                 insert into business_application_publication
                   (id, application_id, revision_id, revision, schema_version,
-                   snapshot_json, config_hash, published_by, published_at)
-                values (?, ?, ?, ?, 1, ?, ?, ?, ?)
+                   task_workspace_retention_period, snapshot_json, config_hash,
+                   task_file_features_json,
+                   published_by, published_at)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     publication_id,
                     application_id,
                     revision_id,
                     revision,
+                    int(snapshot["schema_version"]),
+                    str(snapshot["task_workspace_retention_period"]),
                     json_text(snapshot),
                     config_hash,
+                    json_text(snapshot["task_file_features"]),
                     actor_id,
                     timestamp,
                 ),
@@ -637,6 +655,15 @@ class BusinessApplicationRepository:
             value["draft"] = self.latest_revision(str(row["id"]))
             value["publications"] = self.list_publications(str(row["id"]))
             value["deployments"] = self.list_deployments(str(row["id"]))
+            value["task_workspace_retention_period"] = str(
+                (value["draft"] or {}).get(
+                    "task_workspace_retention_period", "WEEK"
+                )
+            )
+        else:
+            value["task_workspace_retention_period"] = str(
+                row.get("task_workspace_retention_period") or "WEEK"
+            )
         return value
 
     def _revision(self, row: dict[str, Any]) -> dict[str, Any]:
@@ -669,6 +696,18 @@ class BusinessApplicationRepository:
             "revision": int(row["revision"]),
             "agent_publication_id": str(row.get("agent_publication_id") or ""),
             "workflow_publication_id": str(row.get("workflow_publication_id") or ""),
+            "task_workspace_retention_period": str(
+                row.get("task_workspace_retention_period") or "WEEK"
+            ),
+            "task_file_features": json_value(
+                row.get("task_file_features_json"),
+                {
+                    "default_file_delivery_enabled": False,
+                    "file_mcp_enabled": False,
+                    "runtime_file_edit_enabled": False,
+                    "workspace_enabled": False,
+                },
+            ),
             "session_policy": json_value(row.get("session_policy_json"), {}),
             "execution_policy": json_value(row.get("execution_policy_json"), {}),
             "validation": json_value(row.get("validation_json"), {"valid": False, "errors": []}),
@@ -702,11 +741,34 @@ class BusinessApplicationRepository:
 
     @staticmethod
     def _publication(row: dict[str, Any]) -> dict[str, Any]:
+        snapshot = json_value(row.get("snapshot_json"), {})
+        source = (
+            "publication_snapshot"
+            if "task_workspace_retention_period" in snapshot
+            else "legacy_default"
+        )
+        feature_source = (
+            "publication_snapshot"
+            if "task_file_features" in snapshot
+            else "legacy_default"
+        )
+        task_file_features = snapshot.get("task_file_features") or {
+            "default_file_delivery_enabled": False,
+            "file_mcp_enabled": False,
+            "runtime_file_edit_enabled": False,
+            "workspace_enabled": False,
+        }
         return {
             **row,
             "revision": int(row["revision"]),
             "schema_version": int(row["schema_version"]),
-            "snapshot": json_value(row.get("snapshot_json"), {}),
+            "snapshot": snapshot,
+            "task_workspace_retention_period": str(
+                snapshot.get("task_workspace_retention_period") or "WEEK"
+            ),
+            "task_workspace_retention_source": source,
+            "task_file_features": task_file_features,
+            "task_file_features_source": feature_source,
         }
 
     @staticmethod

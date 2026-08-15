@@ -15,6 +15,19 @@ from app.shared.exceptions import NonRetryableExecutionError
 
 CODE_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$")
 ENVIRONMENTS = {"local"}
+TASK_WORKSPACE_RETENTION_PERIODS = {"DAY", "WEEK", "MONTH"}
+TASK_FILE_FEATURE_FIELDS = {
+    "workspace_enabled",
+    "file_mcp_enabled",
+    "runtime_file_edit_enabled",
+    "default_file_delivery_enabled",
+}
+DEFAULT_TASK_FILE_FEATURES = {
+    "workspace_enabled": False,
+    "file_mcp_enabled": False,
+    "runtime_file_edit_enabled": False,
+    "default_file_delivery_enabled": False,
+}
 SESSION_POLICY_FIELDS = {
     "conversation_mode",
     "recent_message_limit",
@@ -113,6 +126,100 @@ def validate_session_policy(value: dict[str, Any]) -> dict[str, Any]:
     if not 1 <= normalized["retention_days"] <= 3650:
         raise validation_error("session_policy.retention_days", "必须在 1 到 3650 之间")
     return normalized
+
+
+def validate_task_workspace_retention_period(value: object) -> str:
+    normalized = str(value or "WEEK").strip().upper()
+    if normalized not in TASK_WORKSPACE_RETENTION_PERIODS:
+        raise validation_error(
+            "task_workspace_retention_period",
+            "只允许 DAY、WEEK 或 MONTH",
+        )
+    return normalized
+
+
+def validate_task_file_features(value: object) -> dict[str, bool]:
+    if value is None:
+        return dict(DEFAULT_TASK_FILE_FEATURES)
+    if not isinstance(value, dict):
+        raise validation_error("task_file_features", "必须是功能开关对象")
+    _reject_unknown(value, TASK_FILE_FEATURE_FIELDS, "task_file_features")
+    normalized = {
+        key: bool(value.get(key, False))
+        for key in sorted(TASK_FILE_FEATURE_FIELDS)
+    }
+    if any(
+        key in value and not isinstance(value[key], bool)
+        for key in TASK_FILE_FEATURE_FIELDS
+    ):
+        raise validation_error("task_file_features", "功能开关必须是布尔值")
+    if normalized["file_mcp_enabled"] and not normalized["workspace_enabled"]:
+        raise validation_error(
+            "task_file_features.file_mcp_enabled", "启用 File MCP 前必须启用工作区"
+        )
+    if normalized["runtime_file_edit_enabled"] and not normalized["file_mcp_enabled"]:
+        raise validation_error(
+            "task_file_features.runtime_file_edit_enabled",
+            "启用 Runtime 文件编辑前必须启用 File MCP",
+        )
+    if (
+        normalized["default_file_delivery_enabled"]
+        and not normalized["runtime_file_edit_enabled"]
+    ):
+        raise validation_error(
+            "task_file_features.default_file_delivery_enabled",
+            "启用默认文件交付前必须启用 Runtime 文件编辑",
+        )
+    return normalized
+
+
+def publication_task_file_features(snapshot: dict[str, Any]) -> tuple[dict[str, bool], str]:
+    if "task_file_features" not in snapshot:
+        return dict(DEFAULT_TASK_FILE_FEATURES), "legacy_default"
+    return validate_task_file_features(snapshot.get("task_file_features")), "publication_snapshot"
+
+
+def publication_workspace_retention(snapshot: dict[str, Any]) -> tuple[str, str]:
+    """Resolve legacy policy without mutating the immutable snapshot or its hash."""
+    if "task_workspace_retention_period" not in snapshot:
+        return "WEEK", "legacy_default"
+    return (
+        validate_task_workspace_retention_period(
+            snapshot.get("task_workspace_retention_period")
+        ),
+        "publication_snapshot",
+    )
+
+
+def verify_publication_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    schema_version: int,
+    expected_hash: str,
+) -> bool:
+    if schema_version not in {1, 2, 3} or not verify_snapshot(snapshot, expected_hash):
+        return False
+    if schema_version == 1:
+        return True
+    if schema_version == 2:
+        return (
+            snapshot.get("schema_version") == 2
+            and snapshot.get("task_workspace_retention_period")
+            in TASK_WORKSPACE_RETENTION_PERIODS
+        )
+    try:
+        features_valid = (
+            validate_task_file_features(snapshot.get("task_file_features"))
+            == snapshot.get("task_file_features")
+        )
+    except NonRetryableExecutionError:
+        return False
+    return (
+        snapshot.get("schema_version") == 3
+        and snapshot.get("task_workspace_retention_period")
+        in TASK_WORKSPACE_RETENTION_PERIODS
+        and features_valid
+    )
 
 
 def validate_execution_policy(value: dict[str, Any]) -> dict[str, Any]:

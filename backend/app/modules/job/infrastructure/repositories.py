@@ -97,6 +97,7 @@ _JOB_COLUMN_NAMES = (
     "model_runtime_provenance_json",
     "agent_runtime_kind",
     "agent_runtime_protocol_version",
+    "task_workspace_id",
     "input_message_id",
 )
 _SESSION_COLUMNS_SQL = ", ".join(_SESSION_COLUMN_NAMES)
@@ -453,6 +454,7 @@ class AgentRepository:
         model_runtime_provenance: dict[str, Any] | None = None,
         agent_runtime_kind: str = "python-v1",
         agent_runtime_protocol_version: str = "1.0",
+        task_workspace_id: str = "",
     ) -> AgentJob:
         existing = self.get_job_by_idempotency_key(idempotency_key)
         if existing:
@@ -510,9 +512,9 @@ class AgentRepository:
                    business_application_runtime_status,
                    business_application_route_decision_json, execution_policy_json,
                    model_runtime_provenance_json, agent_runtime_kind,
-                   agent_runtime_protocol_version, input_message_id)
+                   agent_runtime_protocol_version, task_workspace_id, input_message_id)
                 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null)
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null)
                 on conflict(idempotency_key) do nothing
                 returning id
                 """,
@@ -555,6 +557,7 @@ class AgentRepository:
                     json.dumps(model_runtime_provenance or {}, ensure_ascii=False),
                     agent_runtime_kind,
                     agent_runtime_protocol_version,
+                    task_workspace_id or None,
                 ),
             )
             if inserted is None:
@@ -1331,7 +1334,7 @@ class AgentRepository:
 
     def increment_attachment_retry(self, attachment_id: str) -> int:
         row = self.database.execute_one(
-            f"""
+            """
             update message_attachment set retry_count = retry_count + 1, updated_at = ?
             where id = ? returning retry_count
             """,
@@ -1918,14 +1921,18 @@ class AgentRepository:
         attempt_id = new_id("delivery")
         idempotency_key = f"delivery.attempt:{event.id}:{event.replay_count}:{event.attempt_count}"
         timestamp = now_iso()
+        file_binding = self.database.execute_one(
+            "select file_id, file_version_id from delivery_outbox where id = ?",
+            (event.id,),
+        ) or {}
         self.database.execute(
             """
             insert into delivery_attempt
               (id, job_id, route_type, connector_id, target_summary,
                status, error_message, created_at, finished_at,
                delivery_outbox_id, replay_no, attempt_no, correlation_id,
-               idempotency_key, error_code)
-            values (?, ?, ?, ?, ?, 'RUNNING', null, ?, null, ?, ?, ?, ?, ?, '')
+               idempotency_key, error_code, file_id, file_version_id)
+            values (?, ?, ?, ?, ?, 'RUNNING', null, ?, null, ?, ?, ?, ?, ?, '', ?, ?)
             on conflict(idempotency_key) do nothing
             """,
             (
@@ -1944,10 +1951,12 @@ class AgentRepository:
                 event.attempt_count,
                 event.correlation_id,
                 idempotency_key,
+                str(file_binding.get("file_id") or ""),
+                str(file_binding.get("file_version_id") or ""),
             ),
         )
         row = self.database.execute_one(
-            f"""
+            """
             select * from delivery_attempt
              where idempotency_key = ?
             """,
@@ -1969,7 +1978,7 @@ class AgentRepository:
         payload_hash: str,
     ) -> bool:
         row = self.database.execute_one(
-            f"""
+            """
             select payload_hash
               from delivery_chunk
              where delivery_outbox_id = ?
@@ -3189,6 +3198,7 @@ class AgentRepository:
             ),
             agent_runtime_kind=row.get("agent_runtime_kind") or "python-v1",
             agent_runtime_protocol_version=(row.get("agent_runtime_protocol_version") or "1.0"),
+            task_workspace_id=str(row.get("task_workspace_id") or ""),
         )
 
     def _tool_call_from_row(self, row: dict[str, Any]) -> dict[str, Any]:

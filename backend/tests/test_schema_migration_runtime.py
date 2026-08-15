@@ -48,6 +48,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
         ("104", "104_add_identity_aware_ones_mcp.sql"),
         ("105", "105_expand_unified_mcp_operation_audit.sql"),
         ("106", "106_expand_agent_run_audit.sql"),
+        ("107", "107_expand_task_file_workspaces.sql"),
     ]
     assert all(len(item.checksum) == 64 for item in catalog)
     assert [item.version for item in deployable_migration_catalog(catalog)] == [
@@ -58,6 +59,7 @@ def test_repository_migration_catalog_has_unique_ordered_versions_and_checksums(
         "104",
         "105",
         "106",
+        "107",
     ]
 
     manifest = load_legacy_manifest(default_migrations_dir() / LEGACY_MANIFEST_FILENAME)
@@ -196,10 +198,10 @@ def test_one_shot_migrator_applies_fresh_database_and_is_idempotent() -> None:
     first = migrator.run()
     second = migrator.run()
 
-    assert first.head == "106"
+    assert first.head == "107"
     assert first.baselined == 0
-    assert first.applied == ("100", "101", "102", "103", "104", "105", "106")
-    assert second.head == "106"
+    assert first.applied == ("100", "101", "102", "103", "104", "105", "106", "107")
+    assert second.head == "107"
     assert second.baselined == 0
     assert second.applied == ()
     assert len(SchemaMigrationLedger(database).list_records()) == len(
@@ -217,9 +219,9 @@ def test_explicit_fresh_contract_remains_supported_after_release() -> None:
         include_schema_contract=True,
     ).run()
 
-    assert result.head == "106"
-    assert result.applied == ("100", "101", "102", "103", "104", "105", "106")
-    assert SchemaHeadValidator(database, default_migrations_dir()).require_current() == "106"
+    assert result.head == "107"
+    assert result.applied == ("100", "101", "102", "103", "104", "105", "106", "107")
+    assert SchemaHeadValidator(database, default_migrations_dir()).require_current() == "107"
     assert (
         Migrator(
             database,
@@ -289,7 +291,7 @@ def test_identity_aware_ones_mcp_migration_upgrades_103_and_enforces_schema(
         migrator_build="identity-aware-ones-repeat",
     ).run()
 
-    assert upgraded.applied == ("104", "105", "106")
+    assert upgraded.applied == ("104", "105", "106", "107")
     assert repeated.applied == ()
     assert database.execute_one(
         "select external_subject_id from user_external_identity where id = ?",
@@ -426,7 +428,7 @@ def test_unified_mcp_audit_migration_preserves_legacy_rows_without_guessing_link
         migrator_build="unified-audit-upgrade",
     ).run()
 
-    assert upgraded.applied == ("105", "106")
+    assert upgraded.applied == ("105", "106", "107")
     row = database.execute_one(
         "select * from mcp_operation_audit where id = 'legacy-ones-audit'"
     )
@@ -527,7 +529,7 @@ def test_existing_database_contract_requires_separate_approval(tmp_path: Path) -
         include_schema_contract=True,
     ).run()
 
-    assert result.applied == ("103", "104", "105", "106")
+    assert result.applied == ("103", "104", "105", "106", "107")
     assert "user_message" not in {
         row["name"] for row in database.execute("pragma table_info(agent_job)")
     }
@@ -844,8 +846,8 @@ def test_final_schema_comment_manifest_covers_every_owned_table_and_column() -> 
     assert owned_columns - column_comments.keys() == set()
     assert all(re.search(r"[\u3400-\u9fff]", table_comments[table]) for table in owned_tables)
     assert all(re.search(r"[\u3400-\u9fff]", column_comments[column]) for column in owned_columns)
-    assert len(owned_tables) == 91
-    assert len(owned_columns) == 1122
+    assert len(owned_tables) == 107
+    assert len(owned_columns) == 1331
     database.close()
 
 
@@ -1051,7 +1053,7 @@ def test_schema_head_validator_is_read_only_and_rejects_missing_ledger() -> None
 
     with pytest.raises(
         SchemaHeadError,
-        match="ledger is missing; expected head 106",
+        match="ledger is missing; expected head 107",
     ):
         SchemaHeadValidator(
             database,
@@ -1144,7 +1146,7 @@ def test_schema_head_validator_rejects_database_behind_code_head(
         ),
         lambda settings: build_worker_container(
             settings,
-            service_name="attachment-worker",
+            service_name="file-worker",
         ),
     ],
 )

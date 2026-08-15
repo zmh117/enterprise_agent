@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import inspect
 import json
@@ -9,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
+import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
@@ -37,6 +39,7 @@ from app.python_runtime.model_binding import (
     PythonModelBindingResolver,
     ResolvedPythonModelBinding,
 )
+from app.python_runtime.job_sandbox import JobSandboxManager
 from app.python_runtime.claude_agent_sdk_adapter import (
     ClaudeSdk,
     RealClaudeCodeAgentClient,
@@ -50,6 +53,7 @@ from app.python_runtime.sdk_executor import (
 )
 from app.python_runtime.service import PythonRuntimeDependencies, create_app
 from app.shared.database import Database, default_migrations_dir
+from app.shared.exceptions import NonRetryableExecutionError
 from app.shared.migrations import Migrator
 from app.shared.model_probe_envelope import (
     ModelProbeEnvelopeCipher,
@@ -281,6 +285,7 @@ def _dependencies(
         executor=cast(PythonRuntimeSdkExecutor, executor),
         model_probe_token="probe-token-" + "x" * 32,
         settings=settings,
+        sandbox_manager=JobSandboxManager(tmp_path / "runtime-sandboxes"),
     )
     return dependencies, private_key
 
@@ -560,7 +565,13 @@ def test_python_runtime_exposes_only_the_fixed_remote_tool_mcp_server() -> None:
     )
 
     server = client._build_mcp_server(request)
-    built = client._build_options(sdk, context, server, [], binding)
+    sandbox = client.sandbox_manager.create(request.job_id)
+    sandbox_token = client._sandbox.set(sandbox)
+    try:
+        built = client._build_options(sdk, context, server, [], binding)
+    finally:
+        client._sandbox.reset(sandbox_token)
+        sandbox.cleanup()
 
     assert built == captured
     assert captured["mcp_servers"] == {
@@ -578,10 +589,14 @@ def test_python_runtime_exposes_only_the_fixed_remote_tool_mcp_server() -> None:
             },
         }
     }
-    assert captured["allowed_tools"] == [
-        "mcp__tool_mcp__get_schema_directory",
-        "mcp__tool_mcp__query_database",
-    ]
+    assert captured["allowed_tools"] == []
+    assert asyncio.run(
+        captured["can_use_tool"](
+            "mcp__tool_mcp__query_database",
+            {"query": "select 1"},
+            object(),
+        )
+    )["behavior"] == "allow"
     assert "internal" not in captured["mcp_servers"]
 
 
@@ -789,14 +804,27 @@ def test_python_runtime_routes_principal_only_to_fixed_ones_mcp_server() -> None
     )
 
     server = client._build_mcp_server(request)
-    client._build_options(sdk, context, server, [], binding)
+    sandbox = client.sandbox_manager.create(request.job_id)
+    sandbox_token = client._sandbox.set(sandbox)
+    try:
+        client._build_options(sdk, context, server, [], binding)
+    finally:
+        client._sandbox.reset(sandbox_token)
+        sandbox.cleanup()
 
     assert set(captured["mcp_servers"]) == {"ones_mcp"}
     assert captured["mcp_servers"]["ones_mcp"]["url"] == ("http://ones-mcp:9104/mcp")
     assert captured["mcp_servers"]["ones_mcp"]["headers"]["Authorization"] == (
         f"Bearer {principal}"
     )
-    assert captured["allowed_tools"] == ["mcp__ones_mcp__ones_work_item_search"]
+    assert captured["allowed_tools"] == []
+    assert asyncio.run(
+        captured["can_use_tool"](
+            "mcp__ones_mcp__ones_work_item_search",
+            {"keyword": "traceability"},
+            object(),
+        )
+    )["behavior"] == "allow"
     assert principal not in repr(context)
 
     normalized = _normalize_tool_events(
@@ -813,6 +841,183 @@ def test_python_runtime_routes_principal_only_to_fixed_ones_mcp_server() -> None
     )
     assert normalized[0]["server_code"] == "ones-mcp"
     assert normalized[0]["tool_name"] == "ones_work_item_search"
+
+
+def test_python_runtime_file_job_uses_fixed_file_mcp_guarded_tools_and_finally_cleanup(
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    async def query(*, options: dict[str, Any], **_kwargs: Any) -> Any:
+        captured.update(options)
+        assert (
+            await options["can_use_tool"](
+                "Write",
+                {"file_path": "outputs/result.txt", "content": "result"},
+                object(),
+            )
+        )["behavior"] == "allow"
+        assert (
+            await options["can_use_tool"]("Bash", {"command": "pwd"}, object())
+        )["behavior"] == "deny"
+        assert (
+            await options["can_use_tool"](
+                "Read", {"file_path": "/etc/passwd"}, object()
+            )
+        )["behavior"] == "deny"
+        yield {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": "file job complete",
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        }
+
+    sdk = ClaudeSdk(
+        query=query,
+        options=lambda **kwargs: kwargs,
+        tool=cast(Any, None),
+        create_sdk_mcp_server=cast(Any, None),
+        tool_annotations=None,
+    )
+    binding = ModelRuntimeBinding(
+        protocol="anthropic_compatible",
+        base_url="https://api.deepseek.com/anthropic",
+        model="deepseek-chat",
+        default_opus_model="deepseek-chat",
+        default_sonnet_model="deepseek-chat",
+        default_haiku_model="deepseek-chat",
+        subagent_model="deepseek-chat",
+        effort_level="max",
+        secret_ref="secret://not-projected",
+    )
+    context = AgentExecutionContext(
+        system_role="task file agent",
+        safety_rules=["sandbox only"],
+        user_question="create a TXT result",
+        project_code="project-1",
+        allowed_tools=["file_create_commit_intent"],
+        tool_restrictions=["TXT only"],
+        skills={},
+        retrieved_context={},
+        conversation_summary="",
+        publication_id="agent-publication-1",
+        application_publication_id="application-publication-1",
+        model_runtime_binding=binding,
+        mcp_bindings=(
+            McpRuntimeBinding(
+                server_code="file-service",
+                tool_name="file_create_commit_intent",
+                required_scope=(
+                    "mcp:file-service:file_create_commit_intent:invoke"
+                ),
+                tool_schema_hash="d" * 64,
+            ),
+        ),
+        runtime_protocol_version="1.2",
+    )
+    file_principal = "file-principal-token-not-for-events"
+    client = RemoteMcpClaudeCodeAgentClient(
+        limits=build_settings().execution,
+        api_key="runtime-only-model-secret",
+        mcp_server_url="http://tool-mcp:9103/mcp",
+        file_mcp_server_url="http://file-service:9105/mcp",
+        file_principal_token=file_principal,
+        sandbox_manager=JobSandboxManager(tmp_path / "sandboxes"),
+    )
+    client.sdk_loader = lambda: sdk
+
+    result = client.run(
+        AgentRunRequest(
+            job_id="job-file-1",
+            user_id="app-user-1",
+            project_code="project-1",
+            invocation_id="invocation-file-1",
+            context=context,
+        )
+    )
+
+    assert result.final_answer == "file job complete"
+    assert captured["setting_sources"] == []
+    assert captured["allowed_tools"] == []
+    assert "Bash" in captured["disallowed_tools"]
+    assert "Write" not in captured["disallowed_tools"]
+    assert captured["mcp_servers"]["file_service"]["url"] == (
+        "http://file-service:9105/mcp"
+    )
+    assert captured["mcp_servers"]["file_service"]["headers"]["Authorization"] == (
+        f"Bearer {file_principal}"
+    )
+    sandbox_path = Path(captured["cwd"])
+    assert not sandbox_path.exists()
+    assert file_principal not in json.dumps(client.last_runtime_events)
+
+
+def test_python_runtime_cancellation_interrupts_sdk_and_cleans_sandbox(
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, Any] = {}
+    cancelled = threading.Event()
+
+    async def query(*, options: dict[str, Any], **_kwargs: Any) -> Any:
+        captured.update(options)
+        while True:
+            await asyncio.sleep(1)
+        yield  # pragma: no cover
+
+    sdk = ClaudeSdk(
+        query=query,
+        options=lambda **kwargs: kwargs,
+        tool=cast(Any, None),
+        create_sdk_mcp_server=cast(Any, None),
+        tool_annotations=None,
+    )
+    binding = ModelRuntimeBinding(
+        protocol="anthropic_compatible",
+        base_url="https://api.deepseek.com/anthropic",
+        model="deepseek-chat",
+        default_opus_model="deepseek-chat",
+        default_sonnet_model="deepseek-chat",
+        default_haiku_model="deepseek-chat",
+        subagent_model="deepseek-chat",
+        effort_level="max",
+        secret_ref="secret://not-projected",
+    )
+    client = RemoteMcpClaudeCodeAgentClient(
+        limits=build_settings().execution,
+        api_key="runtime-only-model-secret",
+        mcp_server_url="http://tool-mcp:9103/mcp",
+        sandbox_manager=JobSandboxManager(tmp_path / "sandboxes"),
+        cancellation_event=cancelled,
+    )
+    client.sdk_loader = lambda: sdk
+    timer = threading.Timer(0.1, cancelled.set)
+    timer.start()
+    try:
+        with pytest.raises(NonRetryableExecutionError) as captured_error:
+            client.run(
+                AgentRunRequest(
+                    job_id="job-cancel-1",
+                    user_id="app-user-1",
+                    project_code="project-1",
+                    context=AgentExecutionContext(
+                        system_role="safe agent",
+                        safety_rules=["no tools"],
+                        user_question="wait",
+                        project_code="project-1",
+                        allowed_tools=[],
+                        tool_restrictions=["no tools"],
+                        skills={},
+                        retrieved_context={},
+                        conversation_summary="",
+                        model_runtime_binding=binding,
+                    ),
+                )
+            )
+        assert captured_error.value.error_code == "runtime_cancelled"
+    finally:
+        timer.cancel()
+    assert not Path(captured["cwd"]).exists()
 
 
 def test_python_runtime_preserves_sdk_tool_use_id_meta_and_exact_origin() -> None:

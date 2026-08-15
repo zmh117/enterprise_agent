@@ -18,6 +18,9 @@ class InvocationSecretContextPort(Protocol):
     @property
     def principal_token(self) -> str: ...
 
+    @property
+    def file_principal_token(self) -> str: ...
+
 
 class PythonRuntimeExecutor(Protocol):
     def execute(
@@ -31,9 +34,10 @@ class PythonRuntimeExecutor(Protocol):
 @dataclass(frozen=True)
 class InvocationSecretContext:
     principal_token: str = ""
+    file_principal_token: str = ""
 
     def __repr__(self) -> str:
-        return "InvocationSecretContext(principal_token=<hidden>)"
+        return "InvocationSecretContext(principal_tokens=<hidden>)"
 
 
 class InvocationConflictError(RuntimeError):

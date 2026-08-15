@@ -26,7 +26,7 @@ docker compose stop api-server dingtalk-runtime admin-web
 # 按部署的 RabbitMQ 监控确认 normal/retry 队列已排空
 docker compose stop \
   agent-worker job-dispatch-worker delivery-dispatch-worker webhook-worker \
-  channel-dispatch-worker attachment-worker \
+  channel-dispatch-worker file-worker \
   python-agent-runtime typescript-agent-runtime tool-mcp
 ```
 
@@ -88,7 +88,7 @@ docker compose up --force-recreate migrator
 docker compose up -d \
   tool-mcp python-agent-runtime typescript-agent-runtime \
   api-server agent-worker job-dispatch-worker delivery-dispatch-worker \
-  webhook-worker channel-dispatch-worker attachment-worker dingtalk-runtime admin-web
+  webhook-worker channel-dispatch-worker file-worker dingtalk-runtime admin-web
 curl --noproxy '*' -fsS http://127.0.0.1:8000/api/ready
 ```
 

@@ -233,6 +233,10 @@ export function ApplicationsPage() {
                         : "无"
                     }
                   />
+                  <Definition
+                    label="工作区周期"
+                    value={application.task_workspace_retention_period}
+                  />
                 </dl>
                 <Link
                   className={buttonVariants({

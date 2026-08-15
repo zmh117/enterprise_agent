@@ -36,6 +36,25 @@ class AttachmentExtractor(Protocol):
     def extract(self, *, file_name: str, data: bytes) -> ExtractedContent: ...
 
 
+@dataclass(frozen=True)
+class AttachmentImportReceipt:
+    attachment_id: str
+    size_bytes: int
+    sha256: str
+    file_id: str = ""
+    version_id: str = ""
+
+
+class AttachmentImporter(Protocol):
+    def import_content(
+        self,
+        *,
+        attachment_id: str,
+        data: bytes,
+        content_type: str,
+    ) -> AttachmentImportReceipt: ...
+
+
 class ConversationCache(Protocol):
     def get(self, session_id: str) -> None: ...
 

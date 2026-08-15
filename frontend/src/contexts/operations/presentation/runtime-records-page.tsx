@@ -14,6 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Input } from "@/components/ui/input"
 import {
   useConversation,
+  useFileOperations,
   useRuntimeJob,
   useRuntimeJobs,
 } from "@/contexts/operations/application/runtime-record-queries"
@@ -24,6 +25,7 @@ import type {
   ExecutionSummary,
   ModelCall,
   ModelCallPage,
+  FileOperations,
   RuntimeJob,
 } from "@/contexts/operations/domain/runtime-record"
 import {
@@ -60,6 +62,7 @@ export function RuntimeRecordsPage() {
   )
   const [appliedFilters, setAppliedFilters] = useState(filters)
   const query = useRuntimeJobs(appliedFilters)
+  const fileOperations = useFileOperations()
   return (
     <div className="mx-auto w-full max-w-[1500px] space-y-5 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
       <header className="flex flex-wrap items-end justify-between gap-4">
@@ -86,6 +89,9 @@ export function RuntimeRecordsPage() {
           刷新
         </Button>
       </header>
+      {fileOperations.data ? (
+        <FileOperationsPanel value={fileOperations.data} />
+      ) : null}
       <form
         className="grid gap-3 rounded-xl border p-4 sm:grid-cols-2 xl:grid-cols-4"
         aria-label="运行记录筛选"
@@ -150,6 +156,48 @@ export function RuntimeRecordsPage() {
         </Card>
       ) : null}
     </div>
+  )
+}
+
+function FileOperationsPanel({ value }: { value: FileOperations }) {
+  const queue = value.file_worker.attachment_queue
+  const backlog = value.backlog
+  return (
+    <Card className="shadow-none">
+      <CardHeader>
+        <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+          文件工作区运行状态
+          <Badge variant={value.file_service.ready ? "secondary" : "destructive"}>
+            File Service {value.file_service.ready ? "就绪" : "不可用"}
+          </Badge>
+          <Badge variant={value.file_worker.ready ? "secondary" : "destructive"}>
+            File Worker {value.file_worker.ready ? "就绪" : "不可用"}
+          </Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
+        <Metric
+          label="附件队列"
+          value={`ready ${queue.ready ?? "-"} · unacked ${queue.unacked ?? "-"} · consumer ${queue.consumers ?? "-"}`}
+        />
+        <Metric
+          label="清理积压"
+          value={`总计 ${backlog.cleanup} · staging ${backlog.staging} · 附件 ${backlog.attachment}`}
+        />
+        <Metric
+          label="生命周期积压"
+          value={`工作区 ${backlog.workspace} · 保留 ${backlog.retained} · 冲突 ${backlog.conflict}`}
+        />
+        <Metric
+          label="最近清理结果"
+          value={
+            value.recent_cleanup
+              ? `${value.recent_cleanup.status} · ${formatDate(value.recent_cleanup.updated_at)}`
+              : "暂无记录"
+          }
+        />
+      </CardContent>
+    </Card>
   )
 }
 

@@ -7,7 +7,7 @@ from typing import Any, Never
 from app.modules.admin.application import AdminCapabilityService
 from app.modules.admin.domain import ADMIN_CAPABILITIES, ADMIN_CAPABILITY_BY_CODE
 from app.modules.audit.application.audit_service import AuditService
-from app.modules.business_application.domain.policies import verify_snapshot
+from app.modules.business_application.domain.policies import verify_publication_snapshot
 from app.modules.authorization_center.infrastructure.repository import (
     AuthorizationCenterRepository,
 )
@@ -925,8 +925,11 @@ class BusinessAuthorizationService:
             ) from exc
         if (
             not isinstance(snapshot, dict)
-            or int(publication.get("schema_version") or 0) != 1
-            or not verify_snapshot(snapshot, publication_config_hash)
+            or not verify_publication_snapshot(
+                snapshot,
+                schema_version=int(publication.get("schema_version") or 0),
+                expected_hash=publication_config_hash,
+            )
         ):
             raise PermissionDenied(
                 "Business Application publication integrity check failed",

@@ -21,13 +21,6 @@ x-runtime-env: &runtime-env
   TYPESCRIPT_AGENT_RUNTIME_URL: http://typescript-agent-runtime:8090
   TYPESCRIPT_AGENT_RUNTIME_ALLOWED_HOSTS: typescript-agent-runtime
   AGENT_RUNTIME_ALLOW_INSECURE_INTERNAL_HTTP: "true"
-  # 附件存储仍属于部署基础设施，不由业务配置数据库托管。
-  S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-http://minio:9000}
-  S3_ACCESS_KEY: ${S3_ACCESS_KEY:-enterprise_agent}
-  S3_SECRET_KEY: ${S3_SECRET_KEY:-enterprise_agent_change_me}
-  S3_BUCKET: ${S3_BUCKET:-agent-attachments}
-  S3_REGION: ${S3_REGION:-us-east-1}
-  S3_SECURE: ${S3_SECURE:-false}
 
 x-worker-env: &worker-env
   <<: *runtime-env
@@ -115,7 +108,7 @@ services:
       MINIO_ROOT_USER: ${S3_ACCESS_KEY:-enterprise_agent}
       MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-enterprise_agent_change_me}
     ports:
-      # 宿主机默认避开常见 9000 占用；容器内仍是 9000/9001，S3_ENDPOINT_URL 继续用 http://minio:9000
+      # 宿主机默认避开常见 9000 占用；容器内仍是 9000/9001。
       - "${MINIO_API_PORT:-19000}:9000"
       - "${MINIO_CONSOLE_PORT:-19001}:9001"
     volumes:
@@ -134,11 +127,14 @@ services:
       - >-
         mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" &&
         mc mb --ignore-existing "local/$${S3_BUCKET}" &&
-        mc anonymous set none "local/$${S3_BUCKET}"
+        mc anonymous set none "local/$${S3_BUCKET}" &&
+        mc mb --ignore-existing "local/$${FILE_STORAGE_BUCKET}" &&
+        mc anonymous set none "local/$${FILE_STORAGE_BUCKET}"
     environment:
       MINIO_ROOT_USER: ${S3_ACCESS_KEY:-enterprise_agent}
       MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-enterprise_agent_change_me}
       S3_BUCKET: ${S3_BUCKET:-agent-attachments}
+      FILE_STORAGE_BUCKET: ${FILE_STORAGE_BUCKET:-agent-files}
     depends_on:
       minio:
         condition: service_healthy
@@ -238,6 +234,67 @@ services:
       - agent-runtime-control
       - provider-egress
 
+  file-service:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: file-service
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777,uid=10005,gid=10005
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      <<: *database-env
+      APP_ENV: ${APP_ENV:-local}
+      SEED_LOCAL_CONFIG: "false"
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      PRINCIPAL_JWKS_FILE: /run/secrets/principal_jwks
+      FILE_SERVICE_PRINCIPAL_JWKS_FILE: /run/secrets/service_principal_jwks
+      FILE_STORAGE_ENDPOINT_URL: ${FILE_STORAGE_ENDPOINT_URL:-http://minio:9000}
+      FILE_STORAGE_BUCKET: ${FILE_STORAGE_BUCKET:-agent-files}
+      FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET: ${S3_BUCKET:-agent-attachments}
+      FILE_STORAGE_ACCESS_KEY_REF: ${FILE_STORAGE_ACCESS_KEY_REF:-secret://platform/minio-file-access-key}
+      FILE_STORAGE_SECRET_KEY_REF: ${FILE_STORAGE_SECRET_KEY_REF:-secret://platform/minio-file-secret-key}
+      FILE_STORAGE_REGION: ${FILE_STORAGE_REGION:-us-east-1}
+      FILE_STORAGE_SECURE: ${FILE_STORAGE_SECURE:-false}
+      FILE_JWKS_REFRESH_SECONDS: ${FILE_JWKS_REFRESH_SECONDS:-60}
+      FILE_MCP_MAX_REQUEST_BYTES: ${FILE_MCP_MAX_REQUEST_BYTES:-32768}
+    secrets:
+      - app_config_master_key
+      - principal_jwks
+      - service_principal_jwks
+    expose:
+      - "9105"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9105/ready', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768M
+    networks:
+      - default
+      - agent-runtime-control
+
   typescript-agent-runtime:
     build:
       context: ./agent-runtime
@@ -245,7 +302,7 @@ services:
     restart: unless-stopped
     read_only: true
     tmpfs:
-      - /tmp/agent-runtime:size=32m,mode=0700,uid=1000,gid=1000
+      - /tmp/agent-runtime:size=${AGENT_RUNTIME_TMPFS_SIZE:-256m},mode=0700,uid=1000,gid=1000
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
     environment:
@@ -260,9 +317,15 @@ services:
       DATABASE_URL: ${AGENT_RUNTIME_DATABASE_DSN:-postgresql://agent_runtime_reader:agent_runtime_reader_local@postgres:5432/enterprise_agent}
       APP_CONFIG_MASTER_KEY_FILE: /run/secrets/app_config_master_key
       MODEL_PROVIDER_ALLOWED_HOSTS: ${MODEL_PROVIDER_HOST_ALLOWLIST:-api.deepseek.com}
-      MCP_SERVER_ALLOWED_HOSTS: tool-mcp,ones-mcp
+      MCP_SERVER_ALLOWED_HOSTS: tool-mcp,ones-mcp,file-service
       MCP_TOOL_SERVER_URL: http://tool-mcp:9103/mcp
       ONES_MCP_SERVER_URL: http://ones-mcp:9104/mcp
+      FILE_MCP_SERVER_URL: http://file-service:9105/mcp
+      AGENT_RUNTIME_SANDBOX_ROOT: /tmp/agent-runtime/sandboxes
+      AGENT_RUNTIME_SANDBOX_CAPACITY_BYTES: ${AGENT_RUNTIME_SANDBOX_CAPACITY_BYTES:-234881024}
+      AGENT_RUNTIME_SANDBOX_MAX_FILES: ${AGENT_RUNTIME_SANDBOX_MAX_FILES:-40}
+      AGENT_RUNTIME_SANDBOX_MAX_FILE_BYTES: ${AGENT_RUNTIME_SANDBOX_MAX_FILE_BYTES:-15728640}
+      AGENT_RUNTIME_SANDBOX_CLEANUP_INTERVAL_SECONDS: ${AGENT_RUNTIME_SANDBOX_CLEANUP_INTERVAL_SECONDS:-300}
       AGENT_RUNTIME_TEST_PROVIDER_MODE: ${AGENT_RUNTIME_TEST_PROVIDER_MODE:-disabled}
     secrets:
       - app_config_master_key
@@ -275,6 +338,8 @@ services:
         condition: service_healthy
       migrator:
         condition: service_completed_successfully
+      file-service:
+        condition: service_healthy
       tool-mcp:
         condition: service_healthy
       ones-mcp:
@@ -306,7 +371,7 @@ services:
     restart: unless-stopped
     read_only: true
     tmpfs:
-      - /tmp/python-agent-runtime:size=32m,mode=0700,uid=10002,gid=10002
+      - /tmp/python-agent-runtime:size=${AGENT_RUNTIME_TMPFS_SIZE:-256m},mode=0700,uid=10002,gid=10002
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
     environment:
@@ -319,6 +384,12 @@ services:
       MODEL_PROBE_AUTH_TOKEN_FILE: /run/secrets/model_probe_auth_token
       MCP_TOOL_SERVER_URL: http://tool-mcp:9103/mcp
       ONES_MCP_SERVER_URL: http://ones-mcp:9104/mcp
+      FILE_MCP_SERVER_URL: http://file-service:9105/mcp
+      PYTHON_AGENT_RUNTIME_SANDBOX_ROOT: /tmp/python-agent-runtime/sandboxes
+      PYTHON_AGENT_RUNTIME_SANDBOX_CAPACITY_BYTES: ${AGENT_RUNTIME_SANDBOX_CAPACITY_BYTES:-234881024}
+      PYTHON_AGENT_RUNTIME_SANDBOX_MAX_FILES: ${AGENT_RUNTIME_SANDBOX_MAX_FILES:-40}
+      PYTHON_AGENT_RUNTIME_SANDBOX_MAX_FILE_BYTES: ${AGENT_RUNTIME_SANDBOX_MAX_FILE_BYTES:-15728640}
+      PYTHON_AGENT_RUNTIME_SANDBOX_CLEANUP_INTERVAL_SECONDS: ${AGENT_RUNTIME_SANDBOX_CLEANUP_INTERVAL_SECONDS:-300}
       PYTHON_AGENT_RUNTIME_CLI_VERSION: "2.1.226"
       PYTHON_AGENT_RUNTIME_LEDGER_TTL_SECONDS: ${PYTHON_AGENT_RUNTIME_LEDGER_TTL_SECONDS:-3600}
       AGENT_RUNTIME_TEST_PROVIDER_MODE: ${AGENT_RUNTIME_TEST_PROVIDER_MODE:-disabled}
@@ -336,6 +407,8 @@ services:
       tool-mcp:
         condition: service_healthy
       ones-mcp:
+        condition: service_healthy
+      file-service:
         condition: service_healthy
     healthcheck:
       test:
@@ -471,6 +544,8 @@ services:
         condition: service_healthy
       typescript-agent-runtime:
         condition: service_healthy
+      file-service:
+        condition: service_healthy
     networks:
       - default
       - agent-runtime-control
@@ -511,13 +586,19 @@ services:
     command: ["python", "-m", "app.workers.delivery_dispatch_worker"]
     environment:
       <<: *worker-env
+      FILE_SERVICE_INTERNAL_BASE_URL: http://file-service:9105
+      FILE_SERVICE_INTERNAL_ALLOWED_HOSTS: file-service
+      DELIVERY_WORKER_PRINCIPAL_TOKEN_FILE: /run/secrets/delivery_worker_principal_token
     secrets:
       - app_config_master_key
+      - delivery_worker_principal_token
     depends_on:
       postgres:
         condition: service_healthy
       migrator:
         condition: service_completed_successfully
+      file-service:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD
@@ -599,17 +680,20 @@ services:
       - default
       - agent-runtime-control
 
-  attachment-worker:
-    # profiles: ["attachments"]
+  file-worker:
     build:
       context: .
       dockerfile: backend/Dockerfile
       target: agent-worker
-    command: ["python", "-m", "app.workers.attachment_worker"]
+    command: ["python", "-m", "app.workers.file_worker"]
     environment:
       <<: *worker-env
+      FILE_SERVICE_INTERNAL_BASE_URL: http://file-service:9105
+      FILE_SERVICE_INTERNAL_ALLOWED_HOSTS: file-service
+      FILE_WORKER_PRINCIPAL_TOKEN_FILE: /run/secrets/file_worker_principal_token
     secrets:
       - app_config_master_key
+      - file_worker_principal_token
     depends_on:
       postgres:
         condition: service_healthy
@@ -617,10 +701,18 @@ services:
         condition: service_healthy
       migrator:
         condition: service_completed_successfully
-      minio:
+      file-service:
         condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import json,time; from pathlib import Path; h=Path('/tmp/file-worker.heartbeat'); s=Path('/tmp/file-worker.status.json'); v=json.loads(s.read_text()) if s.exists() else {}; ok=h.exists() and time.time()-h.stat().st_mtime < 120 and v.get('rabbitmq')=='ready' and v.get('file_service')=='ready'; raise SystemExit(0 if ok else 1)"
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
 
 secrets:
   app_config_master_key:
@@ -635,6 +727,12 @@ secrets:
     file: ${PRINCIPAL_JWT_PRIVATE_KEY_FILE:-${HOME}/.config/enterprise-agent/principal-jwt-private.pem}
   principal_jwks:
     file: ${PRINCIPAL_JWKS_FILE:-${HOME}/.config/enterprise-agent/principal-jwks.json}
+  service_principal_jwks:
+    file: ${SERVICE_PRINCIPAL_JWKS_FILE:-${HOME}/.config/enterprise-agent/service-principal-jwks.json}
+  file_worker_principal_token:
+    file: ${FILE_WORKER_PRINCIPAL_TOKEN_FILE:-${HOME}/.config/enterprise-agent/file-worker-principal.jwt}
+  delivery_worker_principal_token:
+    file: ${DELIVERY_WORKER_PRINCIPAL_TOKEN_FILE:-${HOME}/.config/enterprise-agent/delivery-worker-principal.jwt}
   model_probe_auth_token:
     file: ${MODEL_PROBE_AUTH_TOKEN_FILE:-${HOME}/.config/enterprise-agent/model-probe-auth-token}
 

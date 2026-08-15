@@ -36,6 +36,7 @@ IN_PROGRESS_RECOVERY_ATTEMPTS = 12
 IN_PROGRESS_RECOVERY_DELAY_SECONDS = 0.5
 STANDARD_TOOL_MCP_CODE = "tool-mcp"
 ONES_MCP_CODE = "ones-mcp"
+FILE_MCP_CODE = "file-service"
 
 
 def _runtime_event_count(value: object) -> int:
@@ -71,6 +72,14 @@ class RuntimeTransport(Protocol):
 
 class PrincipalTokenIssuerPort(Protocol):
     def issue_for_job(self, *, job_id: str) -> str: ...
+
+    def issue_file_for_job(self, *, job_id: str) -> str: ...
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimePrincipalTokens:
+    ones: str = ""
+    files: str = ""
 
 
 class UrlLibRuntimeTransport:
@@ -213,7 +222,11 @@ class RuntimeClientSettings:
     base_url: str
     allowed_runtime_hosts: tuple[str, ...]
     runtime_kind: str = "typescript-v1"
-    allowed_mcp_server_codes: tuple[str, ...] = (STANDARD_TOOL_MCP_CODE, ONES_MCP_CODE)
+    allowed_mcp_server_codes: tuple[str, ...] = (
+        STANDARD_TOOL_MCP_CODE,
+        ONES_MCP_CODE,
+        FILE_MCP_CODE,
+    )
     allow_insecure_internal_http: bool = False
 
     def execution_url(self) -> str:
@@ -331,9 +344,9 @@ class AgentRuntimeHttpClient:
     def run(self, run_request: AgentRunRequest) -> AgentRunResult:
         request = self._execution_request(run_request)
         grant = self.grant_issuer.issue(request)
-        principal_token = self._principal_token(run_request, request)
+        principal_tokens = self._principal_tokens(run_request, request)
         try:
-            return self._consume_stream(run_request, request, grant, principal_token)
+            return self._consume_stream(run_request, request, grant, principal_tokens)
         except RetryableExecutionError as exc:
             if getattr(exc, "error_code", "") not in {
                 "runtime_transport_error",
@@ -350,7 +363,7 @@ class AgentRuntimeHttpClient:
                     # Every recovery uses the exact same invocation and digest.
                     # Once a stream event was observed, no new Job attempt may
                     # start until this bounded recovery returns a terminal.
-                    return self._consume_stream(run_request, request, grant, principal_token)
+                    return self._consume_stream(run_request, request, grant, principal_tokens)
                 except RetryableExecutionError as candidate:
                     recovery_error = candidate
                     observed = max(
@@ -408,7 +421,7 @@ class AgentRuntimeHttpClient:
         run_request: AgentRunRequest,
         request: dict[str, Any],
         grant: str,
-        principal_token: str,
+        principal_tokens: RuntimePrincipalTokens,
     ) -> AgentRunResult:
         body = json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         headers = {
@@ -417,8 +430,10 @@ class AgentRuntimeHttpClient:
             "Accept": "application/x-ndjson",
             "X-Correlation-Id": f"job:{run_request.job_id}",
         }
-        if principal_token:
-            headers["X-MCP-Principal-Token"] = principal_token
+        if principal_tokens.ones:
+            headers["X-MCP-Principal-Token"] = principal_tokens.ones
+        if principal_tokens.files:
+            headers["X-File-Principal-Token"] = principal_tokens.files
         events: list[dict[str, Any]] = []
         tool_events: list[dict[str, Any]] = []
         total_bytes = 0
@@ -661,24 +676,38 @@ class AgentRuntimeHttpClient:
         request["request_digest"] = canonical_request_digest(request)
         return cast(dict[str, Any], validate_execution_request(request))
 
-    def _principal_token(
+    def _principal_tokens(
         self,
         run_request: AgentRunRequest,
         request: dict[str, Any],
-    ) -> str:
-        requires_principal = any(
-            str(server.get("server_code") or "") == ONES_MCP_CODE
+    ) -> RuntimePrincipalTokens:
+        server_codes = {
+            str(server.get("server_code") or "")
             for server in request.get("mcp_servers") or []
-        )
-        if not requires_principal:
-            return ""
+            if isinstance(server, dict)
+        }
+        requires_ones = ONES_MCP_CODE in server_codes
+        requires_files = FILE_MCP_CODE in server_codes
+        if not requires_ones and not requires_files:
+            return RuntimePrincipalTokens()
         if self.principal_token_issuer is None:
             raise NonRetryableExecutionError(
-                "ONES MCP requires a Principal Token issuer",
+                "Governed MCP requires a Principal Token issuer",
                 safe_message="当前 Job 缺少平台身份凭证签发服务",
                 error_code="principal_token_issuer_unavailable",
             )
-        return self.principal_token_issuer.issue_for_job(job_id=run_request.job_id)
+        return RuntimePrincipalTokens(
+            ones=(
+                self.principal_token_issuer.issue_for_job(job_id=run_request.job_id)
+                if requires_ones
+                else ""
+            ),
+            files=(
+                self.principal_token_issuer.issue_file_for_job(job_id=run_request.job_id)
+                if requires_files
+                else ""
+            ),
+        )
 
     @staticmethod
     def _runtime_bindings(run_request: AgentRunRequest) -> tuple[McpRuntimeBinding, ...]:

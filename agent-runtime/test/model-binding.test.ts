@@ -30,9 +30,11 @@ function runtimeConfig() {
     DATABASE_URL: "postgresql://runtime:secret@database/enterprise_agent",
     APP_CONFIG_MASTER_KEY_FILE: "/run/secrets/app-config-master-key",
     MODEL_PROVIDER_ALLOWED_HOSTS: "api.deepseek.com",
-    MCP_SERVER_ALLOWED_HOSTS: "tool-mcp,ones-mcp",
+    MCP_SERVER_ALLOWED_HOSTS: "tool-mcp,ones-mcp,file-service",
     MCP_TOOL_SERVER_URL: "http://tool-mcp:9103/mcp",
-    ONES_MCP_SERVER_URL: "http://ones-mcp:9104/mcp"
+    ONES_MCP_SERVER_URL: "http://ones-mcp:9104/mcp",
+    FILE_MCP_SERVER_URL: "http://file-service:9105/mcp",
+    AGENT_RUNTIME_SANDBOX_ROOT: "/tmp/enterprise-agent-runtime-sandboxes"
   });
 }
 

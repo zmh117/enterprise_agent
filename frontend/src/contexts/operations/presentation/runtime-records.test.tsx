@@ -219,7 +219,11 @@ describe("runtime provenance records", () => {
     renderRoute("/operations/jobs", "/operations/jobs", <RuntimeRecordsPage />)
     await screen.findByText("当前时间窗口没有任务。")
     const initialParams = new URL(
-      String(fetchMock.mock.calls[0]?.[0]),
+      String(
+        fetchMock.mock.calls.find(([url]) =>
+          String(url).startsWith("/api/admin/jobs?")
+        )?.[0]
+      ),
       "http://localhost"
     ).searchParams
     expect(
@@ -241,8 +245,18 @@ describe("runtime provenance records", () => {
     })
     fireEvent.click(screen.getByRole("button", { name: "应用筛选" }))
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
-    const requestUrl = String(fetchMock.mock.calls.at(-1)?.[0])
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(([url]) =>
+          String(url).startsWith("/api/admin/jobs?")
+        )
+      ).toHaveLength(2)
+    )
+    const requestUrl = String(
+      fetchMock.mock.calls
+        .filter(([url]) => String(url).startsWith("/api/admin/jobs?"))
+        .at(-1)?.[0]
+    )
     const params = new URL(requestUrl, "http://localhost").searchParams
     expect(params.get("username")).toBe("admin")
     expect(params.get("application_name")).toBe("诊断助手")

@@ -2,7 +2,10 @@ import { once } from "node:events";
 
 import { Pool } from "pg";
 
-import { ClaudeAgentRuntimeExecutor } from "./claude-runtime.js";
+import {
+  ClaudeAgentRuntimeExecutor,
+  JobSandboxWorkspaceFactory
+} from "./claude-runtime.js";
 import { loadRuntimeConfig, readRequiredSecretFile } from "./config.js";
 import { DeterministicFakeProviderRuntimeExecutor } from "./fake-provider.js";
 import { RuntimeGrantVerifier } from "./grant.js";
@@ -45,13 +48,44 @@ const modelBindings = new ModelBindingResolver(
   probeEnvelopeDecryptor
 );
 const modelProbe = new ModelConnectionProbe(modelBindings);
+const sandboxWorkspaces = new JobSandboxWorkspaceFactory(config.sandboxRoot, {
+  capacityBytes: config.sandboxCapacityBytes,
+  maxFiles: config.sandboxMaxFiles,
+  maxFileBytes: config.sandboxMaxFileBytes
+});
+const jobIsRunning = async (jobId: string): Promise<boolean> => {
+  const result = await modelPool.query(
+    "select 1 from agent_job where id = $1 and status = 'RUNNING' limit 1",
+    [jobId]
+  );
+  return result.rowCount === 1;
+};
+const cleanupResidualSandboxes = async (): Promise<void> => {
+  try {
+    const cleaned = await sandboxWorkspaces.cleanupResiduals(jobIsRunning);
+    if (cleaned.length > 0) {
+      logger.log("info", "runtime_sandbox_residuals_cleaned", {
+        cleaned_count: cleaned.length
+      });
+    }
+  } catch {
+    logger.log("warn", "runtime_sandbox_residual_scan_failed", {});
+  }
+};
+await cleanupResidualSandboxes();
+const sandboxCleanupTimer = setInterval(
+  () => void cleanupResidualSandboxes(),
+  config.sandboxCleanupIntervalSeconds * 1000
+);
+sandboxCleanupTimer.unref();
 const claudeRuntime = new ClaudeAgentRuntimeExecutor(
   modelBindings,
   undefined,
-  undefined,
+  sandboxWorkspaces,
   undefined,
   config.mcpServerUrl,
-  config.onesMcpServerUrl
+  config.onesMcpServerUrl,
+  config.fileMcpServerUrl
 );
 const runtimeExecutor = config.fakeProviderMode
   ? new DeterministicFakeProviderRuntimeExecutor(
@@ -91,6 +125,7 @@ logger.log("info", "runtime_started", {
 async function shutdown(signal: string): Promise<void> {
   logger.log("info", "runtime_stopping", { signal });
   server.close();
+  clearInterval(sandboxCleanupTimer);
   await once(server, "close");
   await modelPool.end();
   await readiness.close();

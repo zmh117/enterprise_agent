@@ -20,6 +20,8 @@ const componentLabels: Record<string, string> = {
   trigger_routing: "入口路由",
   agent_publication: "Agent 版本",
   session_policy: "会话策略",
+  file_service: "File Service",
+  file_worker: "File Worker",
   retention_policy: "数据保留策略",
   delivery: "结果投递",
   execution_policy: "执行策略",

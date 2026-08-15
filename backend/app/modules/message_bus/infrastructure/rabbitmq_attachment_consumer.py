@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from app.modules.message_bus.application.message_publisher import (
@@ -18,7 +19,12 @@ class RabbitMQAttachmentConsumer:
         self.rabbitmq_url = rabbitmq_url
         self.queue = queue
 
-    def consume_attachments(self, handler: AttachmentTaskHandler) -> None:
+    def consume_attachments(
+        self,
+        handler: AttachmentTaskHandler,
+        *,
+        on_ready: Callable[[], None] | None = None,
+    ) -> None:
         try:
             import pika
         except ModuleNotFoundError as exc:
@@ -37,6 +43,8 @@ class RabbitMQAttachmentConsumer:
             )
             channel.queue_declare(queue=self.queue.attachment_dead_queue, durable=True)
             channel.basic_qos(prefetch_count=1)
+            if on_ready is not None:
+                on_ready()
 
             def on_message(ch: Any, method: Any, properties: Any, body: bytes) -> None:
                 del properties

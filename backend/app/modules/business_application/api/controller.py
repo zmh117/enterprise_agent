@@ -76,6 +76,13 @@ class DeliveryResponse(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict)
 
 
+class TaskFileFeaturesResponse(StrictRequest):
+    workspace_enabled: bool = False
+    file_mcp_enabled: bool = False
+    runtime_file_edit_enabled: bool = False
+    default_file_delivery_enabled: bool = False
+
+
 class RevisionResponse(BaseModel):
     id: str
     application_id: str
@@ -83,6 +90,10 @@ class RevisionResponse(BaseModel):
     status: str
     agent_publication_id: str = ""
     workflow_publication_id: str = ""
+    task_workspace_retention_period: Literal["DAY", "WEEK", "MONTH"] = "WEEK"
+    task_file_features: TaskFileFeaturesResponse = Field(
+        default_factory=TaskFileFeaturesResponse
+    )
     session_policy: dict[str, Any] = Field(default_factory=dict)
     execution_policy: dict[str, Any] = Field(default_factory=dict)
     validation: ValidationResponse = Field(default_factory=ValidationResponse)
@@ -105,6 +116,16 @@ class PublicationResponse(RuntimeStateResponse):
     config_hash: str
     published_by: str
     published_at: str
+    task_workspace_retention_period: Literal["DAY", "WEEK", "MONTH"] = "WEEK"
+    task_workspace_retention_source: Literal[
+        "publication_snapshot", "legacy_default"
+    ] = "legacy_default"
+    task_file_features: TaskFileFeaturesResponse = Field(
+        default_factory=TaskFileFeaturesResponse
+    )
+    task_file_features_source: Literal[
+        "publication_snapshot", "legacy_default"
+    ] = "legacy_default"
 
 
 class DeploymentResponse(RuntimeStateResponse):
@@ -132,6 +153,7 @@ class ApplicationSummaryResponse(RuntimeStateResponse):
     revision: int
     latest_publication_revision: int | None = None
     active_environments: list[str] = Field(default_factory=list)
+    task_workspace_retention_period: Literal["DAY", "WEEK", "MONTH"] = "WEEK"
 
 
 class ApplicationResponse(ApplicationSummaryResponse):
@@ -260,6 +282,10 @@ class SaveDraftRequest(StrictRequest):
     expected_revision: int = Field(ge=1)
     agent_publication_id: str = Field(default="", max_length=200)
     workflow_publication_id: str = Field(default="", max_length=200)
+    task_workspace_retention_period: Literal["DAY", "WEEK", "MONTH"] = "WEEK"
+    task_file_features: TaskFileFeaturesResponse = Field(
+        default_factory=TaskFileFeaturesResponse
+    )
     session_policy: SessionPolicyRequest = Field(default_factory=SessionPolicyRequest)
     execution_policy: ExecutionPolicyRequest = Field(default_factory=ExecutionPolicyRequest)
     triggers: list[TriggerRequest] = Field(default_factory=list, max_length=20)

@@ -34,6 +34,7 @@ def test_compose_business_services_wait_for_one_shot_migrator() -> None:
 
     for service_name in (
         "tool-mcp",
+        "file-service",
         "typescript-agent-runtime",
         "python-agent-runtime",
         "api-server",
@@ -41,7 +42,7 @@ def test_compose_business_services_wait_for_one_shot_migrator() -> None:
         "job-dispatch-worker",
         "webhook-worker",
         "channel-dispatch-worker",
-        "attachment-worker",
+        "file-worker",
     ):
         assert services[service_name]["depends_on"]["migrator"] == {
             "condition": "service_completed_successfully"
@@ -53,6 +54,7 @@ def test_runtime_services_do_not_force_local_seed_replay() -> None:
     services = compose["services"]
     for service_name in (
         "tool-mcp",
+        "file-service",
         "typescript-agent-runtime",
         "python-agent-runtime",
         "api-server",
@@ -61,13 +63,13 @@ def test_runtime_services_do_not_force_local_seed_replay() -> None:
         "delivery-dispatch-worker",
         "webhook-worker",
         "channel-dispatch-worker",
-        "attachment-worker",
+        "file-worker",
     ):
         assert (
             services[service_name]
             .get("environment", {})
             .get("SEED_LOCAL_CONFIG", "${SEED_LOCAL_CONFIG:-false}")
-            == "${SEED_LOCAL_CONFIG:-false}"
+            in {"false", "${SEED_LOCAL_CONFIG:-false}"}
         )
 
 

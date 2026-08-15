@@ -29,6 +29,7 @@ class JobMcpToolSnapshotService:
         routing_context: dict[str, Any],
         business_authorization: dict[str, Any],
         runtime_authorization: dict[str, Any],
+        allowed_server_codes: frozenset[str] | None = None,
     ) -> dict[str, Any]:
         del requester_id, application_id, application_config_hash, business_authorization
         tools = self.database.execute(
@@ -47,6 +48,12 @@ class JobMcpToolSnapshotService:
             if value.get("source_role_codes")
         }
         tools = [row for row in tools if str(row["tool_identifier"]) in granted]
+        if allowed_server_codes is not None:
+            tools = [
+                row
+                for row in tools
+                if str(row.get("server_code") or "") in allowed_server_codes
+            ]
         return self._persist(
             job_id=job_id,
             application_publication_id=application_publication_id,

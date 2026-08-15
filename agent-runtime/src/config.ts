@@ -26,6 +26,12 @@ export interface RuntimeConfig {
   readonly mcpAllowedHosts: ReadonlySet<string>;
   readonly mcpServerUrl: string;
   readonly onesMcpServerUrl: string;
+  readonly fileMcpServerUrl: string;
+  readonly sandboxRoot: string;
+  readonly sandboxCapacityBytes: number;
+  readonly sandboxMaxFiles: number;
+  readonly sandboxMaxFileBytes: number;
+  readonly sandboxCleanupIntervalSeconds: number;
   readonly ledgerTtlSeconds: number;
   readonly cliVersion: typeof EXPECTED_CLI_VERSION;
   readonly fakeProviderMode: boolean;
@@ -38,6 +44,7 @@ const RUNTIME_ENV_PREFIXES = [
   "MODEL_PROBE_",
   "MCP_SERVER_",
   "ONES_MCP_",
+  "FILE_MCP_",
   "APP_CONFIG_"
 ];
 
@@ -55,7 +62,13 @@ const ALLOWED_ENV = new Set([
   "MODEL_PROVIDER_ALLOWED_HOSTS",
   "MCP_SERVER_ALLOWED_HOSTS",
   "MCP_TOOL_SERVER_URL",
-  "ONES_MCP_SERVER_URL"
+  "ONES_MCP_SERVER_URL",
+  "FILE_MCP_SERVER_URL",
+  "AGENT_RUNTIME_SANDBOX_ROOT",
+  "AGENT_RUNTIME_SANDBOX_CAPACITY_BYTES",
+  "AGENT_RUNTIME_SANDBOX_MAX_FILES",
+  "AGENT_RUNTIME_SANDBOX_MAX_FILE_BYTES",
+  "AGENT_RUNTIME_SANDBOX_CLEANUP_INTERVAL_SECONDS"
 ]);
 
 export class RuntimeConfigError extends Error {
@@ -210,10 +223,21 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     mcpAllowedHosts,
     "mcp"
   ).toString();
-  if (new URL(mcpServerUrl).hostname === new URL(onesMcpServerUrl).hostname) {
+  const fileMcpServerUrl = assertSafeRemoteUrl(
+    required(env, "FILE_MCP_SERVER_URL"),
+    mcpAllowedHosts,
+    "mcp"
+  ).toString();
+  if (
+    new Set([
+      new URL(mcpServerUrl).hostname,
+      new URL(onesMcpServerUrl).hostname,
+      new URL(fileMcpServerUrl).hostname
+    ]).size !== 3
+  ) {
     throw new RuntimeConfigError(
       "runtime_mcp_server_identity_conflict",
-      "tool-mcp and ones-mcp must use distinct fixed service hosts"
+      "governed MCP servers must use distinct fixed service hosts"
     );
   }
   const fakeProviderMode = env.AGENT_RUNTIME_TEST_PROVIDER_MODE?.trim() || "disabled";
@@ -232,6 +256,33 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
       "deterministic fake provider is restricted to APP_ENV=test/testing"
     );
   }
+  const sandboxRoot = required(env, "AGENT_RUNTIME_SANDBOX_ROOT");
+  if (!sandboxRoot.startsWith("/")) {
+    throw new RuntimeConfigError(
+      "runtime_sandbox_root_invalid",
+      "AGENT_RUNTIME_SANDBOX_ROOT must be absolute"
+    );
+  }
+  const sandboxMaxFileBytes = integer(
+    env,
+    "AGENT_RUNTIME_SANDBOX_MAX_FILE_BYTES",
+    15 * 1024 * 1024,
+    1,
+    15 * 1024 * 1024
+  );
+  const sandboxCapacityBytes = integer(
+    env,
+    "AGENT_RUNTIME_SANDBOX_CAPACITY_BYTES",
+    224 * 1024 * 1024,
+    64 * 1024 * 1024,
+    1024 * 1024 * 1024
+  );
+  if (sandboxCapacityBytes < sandboxMaxFileBytes) {
+    throw new RuntimeConfigError(
+      "runtime_sandbox_limits_invalid",
+      "sandbox capacity must cover one maximum TXT file"
+    );
+  }
   return {
     host: env.AGENT_RUNTIME_HOST?.trim() || "0.0.0.0",
     port: integer(env, "AGENT_RUNTIME_PORT", 8090, 1, 65535),
@@ -247,6 +298,18 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     mcpAllowedHosts,
     mcpServerUrl,
     onesMcpServerUrl,
+    fileMcpServerUrl,
+    sandboxRoot,
+    sandboxCapacityBytes,
+    sandboxMaxFiles: integer(env, "AGENT_RUNTIME_SANDBOX_MAX_FILES", 40, 1, 1000),
+    sandboxMaxFileBytes,
+    sandboxCleanupIntervalSeconds: integer(
+      env,
+      "AGENT_RUNTIME_SANDBOX_CLEANUP_INTERVAL_SECONDS",
+      300,
+      30,
+      3600
+    ),
     ledgerTtlSeconds: integer(
       env,
       "AGENT_RUNTIME_LEDGER_TTL_SECONDS",

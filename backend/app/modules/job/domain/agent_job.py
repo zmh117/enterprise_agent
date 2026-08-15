@@ -81,6 +81,7 @@ class AgentJob:
     model_runtime_provenance: dict[str, Any] | None = None
     agent_runtime_kind: str = "python-v1"
     agent_runtime_protocol_version: str = "1.0"
+    task_workspace_id: str = ""
 
 
 @dataclass(frozen=True)

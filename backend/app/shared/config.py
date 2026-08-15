@@ -83,6 +83,7 @@ class AttachmentSettings:
         ".pptx",
         ".md",
         ".markdown",
+        ".txt",
     )
     max_count: int = 10
     max_file_bytes: int = 25 * 1024 * 1024
@@ -94,7 +95,7 @@ class AttachmentSettings:
     max_spreadsheet_columns: int = 100
     max_slides: int = 300
     timeout_seconds: int = 60
-    retention_days: int = 180
+    retention_days: int = 360
     credential_ttl_seconds: int = 900
 
 
@@ -163,6 +164,31 @@ class OnesMcpSettings:
     max_request_bytes: int = 32 * 1024
     max_response_bytes: int = 256 * 1024
     audit_retention_days: int = 0
+
+
+@dataclass(frozen=True)
+class FileServiceSettings:
+    internal_base_url: str = "http://file-service:9105"
+    internal_allowed_hosts: tuple[str, ...] = ("file-service",)
+    worker_principal_token_file: str = ""
+    delivery_principal_token_file: str = ""
+    service_principal_jwks_file: str = ""
+    internal_timeout_seconds: int = 30
+    endpoint_url: str = "http://minio:9000"
+    bucket: str = "agent-files"
+    legacy_attachment_bucket: str = "agent-attachments"
+    access_key_ref: str = "secret://platform/minio-file-access-key"
+    secret_key_ref: str = "secret://platform/minio-file-secret-key"
+    region: str = "us-east-1"
+    secure: bool = False
+    max_mcp_request_bytes: int = 32 * 1024
+    jwks_refresh_seconds: int = 60
+
+    def __post_init__(self) -> None:
+        if not self.bucket or not self.legacy_attachment_bucket:
+            raise ValueError("File storage bucket names are required")
+        if self.bucket == self.legacy_attachment_bucket:
+            raise ValueError("Managed files and legacy attachments require distinct buckets")
 
 
 @dataclass(frozen=True)
@@ -266,6 +292,7 @@ class Settings:
     agent_runtime: AgentRuntimeSettings = field(default_factory=AgentRuntimeSettings)
     principal_jwt: PrincipalJwtSettings = field(default_factory=PrincipalJwtSettings)
     ones_mcp: OnesMcpSettings = field(default_factory=OnesMcpSettings)
+    file_service: FileServiceSettings = field(default_factory=FileServiceSettings)
     webhooks: WebhookSettings = field(default_factory=WebhookSettings)
     managed_channels: ManagedChannelSettings = field(default_factory=ManagedChannelSettings)
 
@@ -342,6 +369,45 @@ def load_settings() -> Settings:
                 os.getenv("ONES_MCP_PROVIDER_MAX_RESPONSE_BYTES", str(256 * 1024))
             ),
             audit_retention_days=int(os.getenv("MCP_OPERATION_AUDIT_RETENTION_DAYS", "0")),
+        ),
+        file_service=FileServiceSettings(
+            internal_base_url=os.getenv(
+                "FILE_SERVICE_INTERNAL_BASE_URL", "http://file-service:9105"
+            ),
+            internal_allowed_hosts=_csv_tuple(
+                os.getenv("FILE_SERVICE_INTERNAL_ALLOWED_HOSTS", "file-service")
+            ),
+            worker_principal_token_file=os.getenv(
+                "FILE_WORKER_PRINCIPAL_TOKEN_FILE", ""
+            ),
+            delivery_principal_token_file=os.getenv(
+                "DELIVERY_WORKER_PRINCIPAL_TOKEN_FILE", ""
+            ),
+            service_principal_jwks_file=os.getenv(
+                "FILE_SERVICE_PRINCIPAL_JWKS_FILE", ""
+            ),
+            internal_timeout_seconds=int(
+                os.getenv("FILE_SERVICE_INTERNAL_TIMEOUT_SECONDS", "30")
+            ),
+            endpoint_url=os.getenv("FILE_STORAGE_ENDPOINT_URL", "http://minio:9000"),
+            bucket=os.getenv("FILE_STORAGE_BUCKET", "agent-files"),
+            legacy_attachment_bucket=os.getenv(
+                "FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET", "agent-attachments"
+            ),
+            access_key_ref=os.getenv(
+                "FILE_STORAGE_ACCESS_KEY_REF",
+                "secret://platform/minio-file-access-key",
+            ),
+            secret_key_ref=os.getenv(
+                "FILE_STORAGE_SECRET_KEY_REF",
+                "secret://platform/minio-file-secret-key",
+            ),
+            region=os.getenv("FILE_STORAGE_REGION", "us-east-1"),
+            secure=_env_bool("FILE_STORAGE_SECURE"),
+            max_mcp_request_bytes=int(
+                os.getenv("FILE_MCP_MAX_REQUEST_BYTES", str(32 * 1024))
+            ),
+            jwks_refresh_seconds=int(os.getenv("FILE_JWKS_REFRESH_SECONDS", "60")),
         ),
         dingtalk=DingTalkSettings(
             secret=os.getenv("DINGTALK_SECRET", ""),
@@ -465,7 +531,7 @@ def load_settings() -> Settings:
             allowed_extensions=_csv_tuple(
                 os.getenv(
                     "ATTACHMENT_ALLOWED_EXTENSIONS",
-                    ".jpg,.jpeg,.png,.webp,.docx,.xlsx,.pptx,.md,.markdown",
+                    ".jpg,.jpeg,.png,.webp,.docx,.xlsx,.pptx,.md,.markdown,.txt",
                 )
             ),
             max_count=int(os.getenv("ATTACHMENT_MAX_COUNT", "10")),
@@ -482,7 +548,7 @@ def load_settings() -> Settings:
             max_spreadsheet_columns=int(os.getenv("ATTACHMENT_MAX_SPREADSHEET_COLUMNS", "100")),
             max_slides=int(os.getenv("ATTACHMENT_MAX_SLIDES", "300")),
             timeout_seconds=int(os.getenv("ATTACHMENT_TIMEOUT_SECONDS", "60")),
-            retention_days=int(os.getenv("ATTACHMENT_RETENTION_DAYS", "180")),
+            retention_days=int(os.getenv("ATTACHMENT_RETENTION_DAYS", "360")),
             credential_ttl_seconds=int(os.getenv("ATTACHMENT_CREDENTIAL_TTL_SECONDS", "900")),
         ),
         object_storage=ObjectStorageSettings(

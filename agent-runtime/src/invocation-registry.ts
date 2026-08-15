@@ -27,6 +27,7 @@ export interface ExecutionEmitter {
 
 export interface InvocationSecretContext {
   readonly principalToken?: string;
+  readonly filePrincipalToken?: string;
 }
 
 export interface TerminalDraft {

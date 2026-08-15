@@ -58,6 +58,7 @@ class DingTalkStreamIncomingMessage:
     occurred_at: str = ""
     original_message_id: str = ""
     quoted_message: DingTalkQuotedMessage | None = None
+    sender_staff_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -521,6 +522,7 @@ class DingTalkStreamMessageService:
                 and quoted_message.message_id == original_message_id
                 else None
             ),
+            sender_staff_id=staff_id,
         )
         if rich_text_without_supported_content:
             raise RejectedDingTalkStreamMessage(
@@ -629,6 +631,8 @@ class DingTalkStreamMessageService:
                     "robot_code": message.robot_code,
                     "session_webhook_expires": message.session_webhook_expired_time,
                     "conversation_type": message.conversation_type,
+                    "sender_staff_id": message.sender_staff_id,
+                    "dingtalk_enterprise_id": dingtalk_enterprise_id,
                     "bot_identity": bot_identity,
                     "source_ingress_event_id": str(payload.get("_source_ingress_event_id") or ""),
                     "received_at": str(payload.get("_received_at") or ""),

@@ -8,6 +8,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.modules.admin.application import AdminCapabilityService, PageWindow, TimeWindow
 from app.modules.admin.application.dashboard_service import DashboardQueryService
 from app.modules.admin.application.channel_provider_service import ChannelProviderService
+from app.modules.admin.application.file_operations_service import (
+    FileOperationsStatusService,
+)
 from app.modules.admin.application.scope import (
     AdminScope,
     strict_business_scope_summary,
@@ -262,6 +265,23 @@ def build_admin_router() -> APIRouter:
         require_action(request, resource_type="queue_status", resource_code="*", action="read")
         c = container(request)
         return RabbitMQQueueStatusAdapter(c.settings.rabbitmq_url, c.settings.queue).collect()
+
+    @router.get("/file-operations")
+    def file_operations(request: Request) -> dict[str, Any]:
+        require_action(
+            request,
+            resource_type="queue_status",
+            resource_code="*",
+            action="read",
+        )
+        c = container(request)
+        return FileOperationsStatusService(
+            c.database,
+            RabbitMQQueueStatusAdapter(c.settings.rabbitmq_url, c.settings.queue),
+            attachment_queue=c.settings.queue.attachment_queue,
+            file_service_base_url=c.settings.file_service.internal_base_url,
+            file_service_allowed_hosts=c.settings.file_service.internal_allowed_hosts,
+        ).query()
 
     @router.get("/jobs")
     def jobs(

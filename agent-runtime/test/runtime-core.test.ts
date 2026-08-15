@@ -8,6 +8,7 @@ import { test } from "node:test";
 import { SignJWT } from "jose";
 
 import executionRequestFixture from "../contracts/v1/golden/execution-request.json" with { type: "json" };
+import executionRequestFixtureV12 from "../contracts/v1.2/golden/execution-request.json" with { type: "json" };
 import {
   assertSafeRemoteUrl,
   loadRuntimeConfig,
@@ -23,6 +24,7 @@ import type {
   RuntimeProvenance
 } from "../src/runtime-contracts.js";
 import { RuntimeGrantError, RuntimeGrantVerifier } from "../src/grant.js";
+import { canonicalRequestDigest } from "../src/protocol.js";
 import {
   InvocationConflictError,
   InvocationRegistry,
@@ -50,9 +52,11 @@ function runtimeEnv(): NodeJS.ProcessEnv {
     DATABASE_URL: "postgresql://runtime:secret@database/enterprise_agent",
     APP_CONFIG_MASTER_KEY_FILE: "/run/secrets/app-config-master-key",
     MODEL_PROVIDER_ALLOWED_HOSTS: "api.anthropic.com,provider.internal",
-    MCP_SERVER_ALLOWED_HOSTS: "tool-mcp,ones-mcp",
+    MCP_SERVER_ALLOWED_HOSTS: "tool-mcp,ones-mcp,file-service",
     MCP_TOOL_SERVER_URL: "http://tool-mcp:9103/mcp",
-    ONES_MCP_SERVER_URL: "http://ones-mcp:9104/mcp"
+    ONES_MCP_SERVER_URL: "http://ones-mcp:9104/mcp",
+    FILE_MCP_SERVER_URL: "http://file-service:9105/mcp",
+    AGENT_RUNTIME_SANDBOX_ROOT: "/tmp/enterprise-agent-runtime-sandboxes"
   };
 }
 
@@ -64,7 +68,7 @@ function provenance(value: AgentExecutionRequest = request()): RuntimeProvenance
   return {
     runtime_kind: "typescript-v1",
     runtime_version: "0.1.0",
-    protocol_version: "1.0",
+    protocol_version: value.protocol_version,
     sdk_version: "0.3.226",
     cli_version: "2.1.226",
     model_connection_revision_id: value.model_connection.revision_id,
@@ -78,7 +82,7 @@ function keyPair(): ReturnType<typeof generateKeyPairSync> {
 
 async function grant(
   privateKey: ReturnType<typeof keyPair>["privateKey"],
-  value = request(),
+  value: AgentExecutionRequest = request(),
   overrides: Record<string, unknown> = {},
   expiresAt = NOW_SECONDS + value.limits.timeout_seconds
 ): Promise<string> {
@@ -550,7 +554,15 @@ class ReadyProbe implements ReadinessProbe {
 
   async check() {
     this.checks += 1;
-    return { ready: true, database: "ready" as const, master_key: "ready" as const };
+    return {
+      ready: true,
+      database: "ready" as const,
+      master_key: "ready" as const,
+      sandbox: "ready" as const,
+      sandbox_capacity_bytes: 224 * 1024 * 1024,
+      sandbox_max_file_bytes: 15 * 1024 * 1024,
+      sandbox_max_files: 40
+    };
   }
 
   async close(): Promise<void> {}
@@ -618,12 +630,20 @@ function memoryRequest(
 test("HTTP runtime exposes passive health/version/readiness and strict NDJSON terminal", async () => {
   const keys = keyPair();
   const verifier = new RuntimeGrantVerifier(keys.publicKey, () => NOW_SECONDS);
-  const executor: RuntimeExecutor = async (value, emitter) => {
+  const capturedSecrets: Array<Record<string, string | undefined>> = [];
+  const executor: RuntimeExecutor = async (value, emitter, secrets = {}) => {
+    capturedSecrets.push({ ...secrets });
     emitter.emit("execution_started", provenance(value));
     return {
       status: "SUCCEEDED",
       final_answer: "done",
-      usage: { input_tokens: 2, output_tokens: 1 },
+      usage: {
+        input_tokens: 2,
+        output_tokens: 1,
+        ...(value.protocol_version === "1.2"
+          ? { cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
+          : {})
+      },
       runtime_provenance: provenance(value)
     };
   };
@@ -684,6 +704,38 @@ test("HTTP runtime exposes passive health/version/readiness and strict NDJSON te
     ]
   );
   assert.equal(events.at(-1)?.payload.last_sequence, 2);
+  assert.deepEqual(capturedSecrets[0], {
+    principalToken: "test-only-principal-token"
+  });
+
+  const fileValue = structuredClone(executionRequestFixtureV12) as AgentExecutionRequest;
+  fileValue.invocation_id = "file-invocation-1";
+  fileValue.mcp_servers = [{
+    server_code: "file-service",
+    tools: [{
+      tool_name: "file_prepare_materialization",
+      required_scope: "mcp:file-service:file_prepare_materialization:invoke",
+      tool_schema_hash: "b".repeat(64)
+    }]
+  }];
+  fileValue.request_digest = canonicalRequestDigest(
+    fileValue as unknown as Record<string, unknown>
+  );
+  const fileGrant = await grant(keys.privateKey, fileValue, { jti: "grant-file-jti-1" });
+  const fileResponse = await dispatch(
+    "POST",
+    "/internal/v1/executions",
+    JSON.stringify(fileValue),
+    {
+      authorization: `Bearer ${fileGrant}`,
+      "content-type": "application/json",
+      "x-file-principal-token": "test-only-file-principal-token"
+    }
+  );
+  assert.equal(fileResponse.status, 200);
+  assert.deepEqual(capturedSecrets[1], {
+    filePrincipalToken: "test-only-file-principal-token"
+  });
 
   const cancelResponse = await dispatch(
     "POST",

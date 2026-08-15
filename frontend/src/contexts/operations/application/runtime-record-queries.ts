@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 
 import {
   getConversation,
+  getFileOperations,
   getRuntimeJob,
   listRuntimeJobs,
   type RuntimeJobFilters,
@@ -27,5 +28,13 @@ export function useConversation(sessionId: string) {
     queryKey: ["operations", "conversations", sessionId],
     queryFn: () => getConversation(sessionId),
     enabled: Boolean(sessionId),
+  })
+}
+
+export function useFileOperations() {
+  return useQuery({
+    queryKey: ["operations", "file-operations"],
+    queryFn: getFileOperations,
+    refetchInterval: 30_000,
   })
 }

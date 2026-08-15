@@ -25,6 +25,11 @@ from app.python_runtime.claude_agent_sdk_adapter import (
     _append_cli_stderr,
     _build_system_prompt,
 )
+from app.python_runtime.job_sandbox import (
+    ALLOWED_FILE_TOOLS,
+    JobSandboxError,
+    JobSandboxManager,
+)
 from app.shared.config import ExecutionSettings
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
 
@@ -34,6 +39,9 @@ from .model_binding import PythonModelBindingResolver
 class InvocationSecretContextPort(Protocol):
     @property
     def principal_token(self) -> str: ...
+
+    @property
+    def file_principal_token(self) -> str: ...
 
 
 PYTHON_RUNTIME_VERSION = "0.1.0"
@@ -62,6 +70,35 @@ SDK_BUILTIN_TOOLS = frozenset(
     }
 )
 PLATFORM_SDK_TOOLS: frozenset[str] = frozenset()
+FORBIDDEN_TOOL_INPUT_FIELDS = frozenset(
+    {
+        "authorization",
+        "headers",
+        "user_id",
+        "app_user_id",
+        "actor_id",
+        "subject",
+        "sub",
+        "credential",
+        "credential_id",
+        "resource_deployment_id",
+        "resource_revision_id",
+    }
+)
+
+
+def _contains_forbidden_tool_input(value: object, depth: int = 0) -> bool:
+    if depth >= 8:
+        return False
+    if isinstance(value, list):
+        return any(_contains_forbidden_tool_input(item, depth + 1) for item in value)
+    if not isinstance(value, dict):
+        return False
+    return any(
+        str(key).lower() in FORBIDDEN_TOOL_INPUT_FIELDS
+        or _contains_forbidden_tool_input(child, depth + 1)
+        for key, child in value.items()
+    )
 
 
 @dataclass(frozen=True)
@@ -87,6 +124,10 @@ class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
         mcp_server_url: str,
         ones_mcp_server_url: str = "http://ones-mcp:9104/mcp",
         principal_token: str = "",
+        file_mcp_server_url: str = "http://file-service:9105/mcp",
+        file_principal_token: str = "",
+        sandbox_manager: JobSandboxManager | None = None,
+        cancellation_event: threading.Event | None = None,
     ) -> None:
         super().__init__(
             model="",
@@ -94,10 +135,14 @@ class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
             limits=limits,
             api_key="",
             secret_resolver=lambda _ref: api_key,
+            sandbox_manager=sandbox_manager,
+            cancellation_event=cancellation_event,
         )
         self._mcp_server_url = mcp_server_url
         self._ones_mcp_server_url = ones_mcp_server_url
         self._principal_token = principal_token
+        self._file_mcp_server_url = file_mcp_server_url
+        self._file_principal_token = file_principal_token
 
     def _build_mcp_server(self, request: AgentRunRequest) -> dict[str, dict[str, Any]]:
         shared_headers = {
@@ -134,6 +179,21 @@ class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
                     "Authorization": f"Bearer {self._principal_token}",
                 },
             }
+        if "file-service" in server_codes:
+            if not self._file_principal_token:
+                raise NonRetryableExecutionError(
+                    "Python Runtime File MCP Principal Token is missing",
+                    safe_message="当前调用缺少平台文件身份凭证",
+                    error_code="runtime_file_principal_token_missing",
+                )
+            servers["file_service"] = {
+                "type": "http",
+                "url": self._file_mcp_server_url,
+                "headers": {
+                    **shared_headers,
+                    "Authorization": f"Bearer {self._file_principal_token}",
+                },
+            }
         return servers
 
     def _build_options(
@@ -146,25 +206,94 @@ class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
     ) -> Any:
         exact_tools = []
         for item in context.mcp_bindings:
-            alias = "ones_mcp" if item.server_code == "ones-mcp" else "tool_mcp"
+            alias = (
+                "ones_mcp"
+                if item.server_code == "ones-mcp"
+                else "file_service"
+                if item.server_code == "file-service"
+                else "tool_mcp"
+            )
             exact_tools.append(f"mcp__{alias}__{item.tool_name}")
         if not context.mcp_bindings:
             exact_tools = [f"mcp__tool_mcp__{name}" for name in context.allowed_tools]
+        exact_tool_set = frozenset(exact_tools)
+        file_job = any(
+            item.server_code == "file-service" for item in context.mcp_bindings
+        )
+        sandbox = self._sandbox.get()
+        if sandbox is None:
+            raise NonRetryableExecutionError(
+                "Python Runtime Job Sandbox is unavailable",
+                safe_message="当前任务沙盒不可用",
+                error_code="runtime_sandbox_unavailable",
+            )
+        attempted = 0
+
+        def allow(updated_input: dict[str, Any]) -> Any:
+            if sdk.permission_allow is not None:
+                return sdk.permission_allow(updated_input=updated_input)
+            return {"behavior": "allow", "updated_input": updated_input}
+
+        def deny() -> Any:
+            if sdk.permission_deny is not None:
+                return sdk.permission_deny(
+                    message="Tool is not authorized for this Job",
+                    interrupt=False,
+                )
+            return {
+                "behavior": "deny",
+                "message": "Tool is not authorized for this Job",
+                "interrupt": False,
+            }
+
+        async def can_use_tool(
+            tool_name: str,
+            tool_input: dict[str, Any],
+            _permission_context: Any,
+        ) -> Any:
+            nonlocal attempted
+            attempted += 1
+            if attempted > context.max_tool_calls:
+                return deny()
+            if tool_name in exact_tool_set:
+                return (
+                    deny()
+                    if _contains_forbidden_tool_input(tool_input)
+                    else allow(dict(tool_input))
+                )
+            if file_job and tool_name in ALLOWED_FILE_TOOLS:
+                try:
+                    return allow(sandbox.authorize_tool(tool_name, tool_input))
+                except JobSandboxError:
+                    return deny()
+            return deny()
+
         return sdk.options(
             model=binding.model,
             system_prompt=_build_system_prompt(context),
             mcp_servers=server,
-            allowed_tools=exact_tools,
+            strict_mcp_config=True,
+            tools=[],
+            allowed_tools=[],
             disallowed_tools=[
-                "Bash",
-                "Write",
-                "Edit",
-                "WebFetch",
-                "WebSearch",
-                "NotebookEdit",
+                tool
+                for tool in (
+                    "Bash",
+                    "Write",
+                    "Edit",
+                    "WebFetch",
+                    "WebSearch",
+                    "NotebookEdit",
+                    "Shell",
+                )
+                if not file_job or tool not in ALLOWED_FILE_TOOLS
             ],
             permission_mode="dontAsk",
             max_turns=context.max_turns,
+            cwd=sandbox.path,
+            setting_sources=[],
+            skills=[],
+            can_use_tool=can_use_tool,
             stderr=lambda line: _append_cli_stderr(
                 cli_stderr,
                 line,
@@ -181,9 +310,11 @@ class PythonRuntimeSdkExecutor:
         limits: ExecutionSettings,
         mcp_server_url: str,
         ones_mcp_server_url: str = "http://ones-mcp:9104/mcp",
+        file_mcp_server_url: str = "http://file-service:9105/mcp",
         sdk_version: str | None = None,
         cli_version: str | None = None,
         fake_provider_mode: bool = False,
+        sandbox_manager: JobSandboxManager | None = None,
     ) -> None:
         self._bindings = binding_resolver
         self._limits = limits
@@ -192,11 +323,16 @@ class PythonRuntimeSdkExecutor:
             ones_mcp_server_url,
             server_code="ones-mcp",
         )
+        self._file_mcp_server_url = _fixed_mcp_server_url(
+            file_mcp_server_url,
+            server_code="file-service",
+        )
         self._sdk_version: str = sdk_version or importlib.metadata.version("claude-agent-sdk")
         self._cli_version: str = (
             cli_version or os.getenv("PYTHON_AGENT_RUNTIME_CLI_VERSION", "2.1.226") or "2.1.226"
         )
         self._fake_provider_mode = fake_provider_mode
+        self._sandbox_manager = sandbox_manager
 
     @property
     def sdk_version(self) -> str:
@@ -233,6 +369,12 @@ class PythonRuntimeSdkExecutor:
             mcp_server_url=self._mcp_server_url,
             ones_mcp_server_url=self._ones_mcp_server_url,
             principal_token=(secret_context.principal_token if secret_context else ""),
+            file_mcp_server_url=self._file_mcp_server_url,
+            file_principal_token=(
+                secret_context.file_principal_token if secret_context else ""
+            ),
+            sandbox_manager=self._sandbox_manager,
+            cancellation_event=cancel_event,
         )
         try:
             result = client.run(run_request)
@@ -251,6 +393,8 @@ class PythonRuntimeSdkExecutor:
                 },
             )
         except NonRetryableExecutionError as exc:
+            if str(exc.error_code or "") == "runtime_cancelled":
+                return self._cancelled(provenance)
             return PythonExecutionOutcome(
                 status="FAILED",
                 usage={"input_tokens": 0, "output_tokens": 0},

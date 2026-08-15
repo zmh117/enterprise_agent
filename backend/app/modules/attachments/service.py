@@ -5,10 +5,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from app.modules.attachments.credentials import AttachmentCredentialCipher
-from app.modules.attachments.domain import AttachmentExtractor, MediaDownloader, ObjectStorage
+from app.modules.attachments.domain import (
+    AttachmentExtractor,
+    AttachmentImporter,
+    MediaDownloader,
+    ObjectStorage,
+)
 from app.modules.attachments.extraction import SafeAttachmentExtractor
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.delivery.application.result_delivery_service import ResultDeliveryService
+from app.modules.file_workspace.manifest_service import JobFileManifestService
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.modules.message_bus.application.message_publisher import MessagePublisher
@@ -29,10 +35,12 @@ class AttachmentProcessingService:
         audit_service: AuditService,
         credential_cipher: AttachmentCredentialCipher,
         downloader: MediaDownloader,
-        storage: ObjectStorage,
+        storage: ObjectStorage | None,
         extractor: AttachmentExtractor,
         settings: AttachmentSettings,
+        importer: AttachmentImporter | None = None,
         delivery_service: ResultDeliveryService | None = None,
+        file_manifest_service: JobFileManifestService | None = None,
     ) -> None:
         self.repository = repository
         self.publisher = publisher
@@ -40,9 +48,11 @@ class AttachmentProcessingService:
         self.credential_cipher = credential_cipher
         self.downloader = downloader
         self.storage = storage
+        self.importer = importer
         self.extractor = extractor
         self.settings = settings
         self.delivery_service = delivery_service
+        self.file_manifest_service = file_manifest_service
 
     def process(self, attachment_id: str, correlation_id: str) -> str:
         attachment = self.repository.get_attachment(attachment_id)
@@ -66,7 +76,15 @@ class AttachmentProcessingService:
                 download_code=credential,
                 max_bytes=self.settings.max_file_bytes,
             )
-            detected_mime = self.extractor.inspect(file_name=attachment.file_name, data=data)
+            task_txt = (
+                self.importer is not None
+                and Path(attachment.file_name).suffix.lower() == ".txt"
+            )
+            detected_mime = (
+                "text/plain"
+                if task_txt
+                else self.extractor.inspect(file_name=attachment.file_name, data=data)
+            )
             if detected_mime.startswith("image/"):
                 if not isinstance(self.extractor, SafeAttachmentExtractor):
                     raise NonRetryableExecutionError(
@@ -74,23 +92,59 @@ class AttachmentProcessingService:
                     )
                 data, detected_mime = self.extractor.normalize_image(data=data)
             digest = hashlib.sha256(data).hexdigest()
-            extension = Path(attachment.file_name).suffix.lower().lstrip(".") or "bin"
-            object_key = f"attachments/{attachment.id}/{digest}.{extension}"
-            stored = self.storage.put(
-                key=object_key,
-                data=data,
-                content_type=detected_mime,
-                sha256=digest,
-            )
-            if detected_mime.startswith("image/"):
+            object_bucket: str | None = None
+            object_key: str | None = None
+            if self.importer is not None:
+                imported = self.importer.import_content(
+                    attachment_id=attachment.id,
+                    data=data,
+                    content_type=detected_mime,
+                )
+                if imported.size_bytes != len(data) or imported.sha256 != digest:
+                    raise RetryableExecutionError(
+                        "File Service receipt does not match downloaded bytes",
+                        safe_message="附件导入回执不匹配",
+                        error_code="file_service_receipt_mismatch",
+                    )
+                stored_size = imported.size_bytes
+            else:
+                if self.storage is None:
+                    raise RetryableExecutionError(
+                        "Attachment storage boundary is unavailable",
+                        safe_message="附件导入服务暂时不可用",
+                        error_code="file_service_unavailable",
+                    )
+                extension = Path(attachment.file_name).suffix.lower().lstrip(".") or "bin"
+                legacy_object_key = f"attachments/{attachment.id}/{digest}.{extension}"
+                stored = self.storage.put(
+                    key=legacy_object_key,
+                    data=data,
+                    content_type=detected_mime,
+                    sha256=digest,
+                )
+                stored_size = stored.size_bytes
+                object_bucket = stored.bucket
+                object_key = stored.key
+            if task_txt:
+                self.repository.update_attachment(
+                    attachment_id,
+                    status="READY",
+                    detected_mime=detected_mime,
+                    size_bytes=stored_size,
+                    sha256=digest,
+                    object_bucket=object_bucket,
+                    object_key=object_key,
+                    clear_credential=True,
+                )
+            elif detected_mime.startswith("image/"):
                 self.repository.update_attachment(
                     attachment_id,
                     status="stored_not_interpreted",
                     detected_mime=detected_mime,
-                    size_bytes=stored.size_bytes,
+                    size_bytes=stored_size,
                     sha256=digest,
-                    object_bucket=stored.bucket,
-                    object_key=stored.key,
+                    object_bucket=object_bucket,
+                    object_key=object_key,
                     clear_credential=True,
                 )
             else:
@@ -98,10 +152,10 @@ class AttachmentProcessingService:
                     attachment_id,
                     status="EXTRACTING",
                     detected_mime=detected_mime,
-                    size_bytes=stored.size_bytes,
+                    size_bytes=stored_size,
                     sha256=digest,
-                    object_bucket=stored.bucket,
-                    object_key=stored.key,
+                    object_bucket=object_bucket,
+                    object_key=object_key,
                     clear_credential=True,
                 )
                 content = self.extractor.extract(file_name=attachment.file_name, data=data)
@@ -166,6 +220,23 @@ class AttachmentProcessingService:
         job = self.repository.get_job(job_id)
         if job.status != JobStatus.WAITING_INPUT:
             return job.status.value.lower()
+        if self.file_manifest_service is not None:
+            try:
+                self.file_manifest_service.finalize(job_id)
+            except NonRetryableExecutionError as exc:
+                self.repository.transition_job(
+                    job_id=job_id,
+                    target=JobStatus.FAILED,
+                    error_message=exc.safe_message,
+                )
+                if self.delivery_service is not None:
+                    self.delivery_service.enqueue_job_failure(
+                        job_id=job_id,
+                        reason=exc.safe_message,
+                        error_code=exc.error_code,
+                        correlation_id=correlation_id,
+                    )
+                return "failed"
         usable = bool((job.input_message or "").strip()) or any(
             item.status == "READY" for item in attachments
         )
@@ -188,6 +259,8 @@ class AttachmentProcessingService:
         return "failed"
 
     def report_orphan_objects(self) -> list[str]:
+        if self.storage is None:
+            return []
         referenced = {
             item.object_key
             for row in self.repository.database.execute("select job_id from agent_job")
@@ -197,6 +270,8 @@ class AttachmentProcessingService:
         return [key for key in self.storage.list_keys() if key not in referenced]
 
     def cleanup_expired(self) -> list[str]:
+        if self.storage is None:
+            return []
         deleted: list[str] = []
         for attachment in self.repository.list_expired_attachments(datetime.now(UTC).isoformat()):
             try:

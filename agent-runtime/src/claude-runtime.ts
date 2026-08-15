@@ -1,4 +1,3 @@
-import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -29,6 +28,12 @@ import type {
   TerminalDraft
 } from "./invocation-registry.js";
 import type { ResolvedModelBinding } from "./model-binding.js";
+import {
+  FILE_TOOLS,
+  JobSandboxError,
+  JobSandboxManager,
+  type JobSandboxLimits
+} from "./job-sandbox.js";
 
 const DANGEROUS_BUILTINS = [
   "Bash",
@@ -80,22 +85,35 @@ export type ClaudeQuery = typeof claudeQuery;
 
 export interface InvocationWorkspace {
   readonly path: string;
+  authorizeTool?(toolName: string, input: unknown): Promise<Record<string, unknown>>;
   cleanup(): Promise<void>;
 }
 
 export interface InvocationWorkspaceFactory {
-  create(): Promise<InvocationWorkspace>;
+  create(jobId: string): Promise<InvocationWorkspace>;
 }
 
-class TemporaryWorkspaceFactory implements InvocationWorkspaceFactory {
-  async create(): Promise<InvocationWorkspace> {
-    const path = await mkdtemp(join(tmpdir(), "enterprise-agent-runtime-"));
+export class JobSandboxWorkspaceFactory implements InvocationWorkspaceFactory {
+  private readonly manager: JobSandboxManager;
+
+  constructor(
+    root = join(tmpdir(), "enterprise-agent-runtime-sandboxes"),
+    limits?: JobSandboxLimits
+  ) {
+    this.manager = new JobSandboxManager(root, limits);
+  }
+
+  async create(jobId: string): Promise<InvocationWorkspace> {
+    const sandbox = await this.manager.create(jobId);
     return {
-      path,
-      cleanup: async () => {
-        await rm(path, { recursive: true, force: true });
-      }
+      path: sandbox.path,
+      authorizeTool: sandbox.authorizeTool.bind(sandbox),
+      cleanup: sandbox.cleanup.bind(sandbox)
     };
+  }
+
+  cleanupResiduals(isJobRunning: (jobId: string) => Promise<boolean>): Promise<string[]> {
+    return this.manager.cleanupResiduals(isJobRunning);
   }
 }
 
@@ -489,10 +507,11 @@ export class ClaudeAgentRuntimeExecutor {
   constructor(
     private readonly modelBindings: ModelBindingPort,
     private readonly query: ClaudeQuery = claudeQuery,
-    private readonly workspaces: InvocationWorkspaceFactory = new TemporaryWorkspaceFactory(),
+    private readonly workspaces: InvocationWorkspaceFactory = new JobSandboxWorkspaceFactory(),
     private readonly now: () => number = () => Date.now(),
     private readonly toolMcpServerUrl: string = "http://tool-mcp:9103/mcp",
-    private readonly onesMcpServerUrl: string = "http://ones-mcp:9104/mcp"
+    private readonly onesMcpServerUrl: string = "http://ones-mcp:9104/mcp",
+    private readonly fileMcpServerUrl: string = "http://file-service:9105/mcp"
   ) {
     this.execute = this.run.bind(this);
   }
@@ -504,7 +523,10 @@ export class ClaudeAgentRuntimeExecutor {
   ): Promise<TerminalDraft> {
     const binding = await this.modelBindings.resolve(request);
     const provenance = runtimeProvenance(request, binding);
-    const workspace = await this.workspaces.create();
+    const workspace = await this.workspaces.create(request.job_id);
+    const fileJob = request.mcp_servers.some(
+      (server) => server.server_code === "file-service"
+    );
     const abortController = new AbortController();
     const abortFromWorker = () => abortController.abort(emitter.signal.reason);
     emitter.signal.addEventListener("abort", abortFromWorker, { once: true });
@@ -523,13 +545,21 @@ export class ClaudeAgentRuntimeExecutor {
     >();
     const mcpServers: NonNullable<Options["mcpServers"]> = {};
     for (const server of request.mcp_servers) {
-      if (server.server_code !== "tool-mcp" && server.server_code !== "ones-mcp") {
+      if (
+        server.server_code !== "tool-mcp" &&
+        server.server_code !== "ones-mcp" &&
+        server.server_code !== "file-service"
+      ) {
         throw new Error(`Unsupported governed MCP server: ${server.server_code}`);
       }
       const isOnes = server.server_code === "ones-mcp";
-      const alias = isOnes ? "ones" : "tools";
+      const isFile = server.server_code === "file-service";
+      const alias = isOnes ? "ones" : isFile ? "files" : "tools";
       if (isOnes && !secrets.principalToken) {
         throw new Error("Principal Token is required for the fixed ONES MCP server");
+      }
+      if (isFile && !secrets.filePrincipalToken) {
+        throw new Error("File Principal Token is required for the fixed File MCP server");
       }
       const headers: Record<string, string> = {
         "X-Correlation-Id": `job:${request.job_id}`,
@@ -541,9 +571,14 @@ export class ClaudeAgentRuntimeExecutor {
         "X-Application-Publication-Id": request.application_publication_id
       };
       if (isOnes) headers.Authorization = `Bearer ${secrets.principalToken}`;
+      if (isFile) headers.Authorization = `Bearer ${secrets.filePrincipalToken}`;
       mcpServers[alias] = {
         type: "http",
-        url: isOnes ? this.onesMcpServerUrl : this.toolMcpServerUrl,
+        url: isOnes
+          ? this.onesMcpServerUrl
+          : isFile
+            ? this.fileMcpServerUrl
+            : this.toolMcpServerUrl,
         headers,
         timeout: Math.min(request.limits.timeout_seconds * 1000, 300_000),
         alwaysLoad: true
@@ -572,7 +607,9 @@ export class ClaudeAgentRuntimeExecutor {
       // canUseTool in current SDK releases, which would skip the per-Job input
       // and call-budget checks below.
       allowedTools: [],
-      disallowedTools: [...DANGEROUS_BUILTINS],
+      disallowedTools: DANGEROUS_BUILTINS.filter(
+        (tool) => !fileJob || !FILE_TOOLS.has(tool)
+      ),
       permissionMode: "dontAsk",
       persistSession: false,
       cwd: workspace.path,
@@ -585,6 +622,60 @@ export class ClaudeAgentRuntimeExecutor {
       canUseTool: async (toolName, input, permissionOptions): Promise<PermissionResult> => {
         const indexed = toolIndex.get(toolName);
         attemptedToolCalls += 1;
+        if (fileJob && FILE_TOOLS.has(toolName)) {
+          try {
+            if (!workspace.authorizeTool) {
+              throw new JobSandboxError(
+                "sandbox_authorizer_unavailable",
+                "Job Sandbox authorizer is unavailable"
+              );
+            }
+            if (attemptedToolCalls > request.limits.max_tool_calls) {
+              throw new JobSandboxError(
+                "runtime_max_tool_calls",
+                "Job tool call budget is exhausted"
+              );
+            }
+            const updatedInput = await workspace.authorizeTool(toolName, input);
+            emitToolEvent(request, emitter, {
+              toolCallId: permissionOptions.toolUseID,
+              origin: "sdk_builtin",
+              serverCode: null,
+              toolName,
+              status: "STARTED",
+              requestSummary: summary(updatedInput),
+              responseSummary: {},
+              durationMs: 0
+            });
+            return {
+              behavior: "allow",
+              updatedInput,
+              toolUseID: permissionOptions.toolUseID
+            };
+          } catch (error) {
+            emitToolEvent(request, emitter, {
+              toolCallId: permissionOptions.toolUseID,
+              origin: "sdk_builtin",
+              serverCode: null,
+              toolName,
+              status: "DENIED",
+              requestSummary: {},
+              responseSummary: {},
+              durationMs: 0,
+              failure: failure(
+                error instanceof JobSandboxError ? error.code : "runtime_tool_denied",
+                "NEVER",
+                "文件工具调用未获当前 Job 沙盒授权"
+              )
+            });
+            return {
+              behavior: "deny",
+              message: "File Tool is outside the current Job Sandbox",
+              interrupt: false,
+              toolUseID: permissionOptions.toolUseID
+            };
+          }
+        }
         if (
           !indexed ||
           !allowedTools.has(toolName) ||

@@ -8,6 +8,7 @@ import {
   InvocationConflictError,
   InvocationRegistry
 } from "./invocation-registry.js";
+import type { InvocationSecretContext } from "./invocation-registry.js";
 import type { StructuredLogger } from "./logger.js";
 import { ModelBindingError } from "./model-binding.js";
 import {
@@ -91,40 +92,53 @@ function bearerToken(request: IncomingMessage): string {
   return authorization.slice("Bearer ".length).trim();
 }
 
-function principalToken(
+function invocationSecrets(
   request: IncomingMessage,
   payload: { readonly mcp_servers: ReadonlyArray<{ readonly server_code: string }> }
-): string | undefined {
-  const header = request.headers["x-mcp-principal-token"];
-  const requiresPrincipal = payload.mcp_servers.some(
+): InvocationSecretContext {
+  const onesHeader = request.headers["x-mcp-principal-token"];
+  const fileHeader = request.headers["x-file-principal-token"];
+  const requiresOnes = payload.mcp_servers.some(
     (server) => server.server_code === "ones-mcp"
   );
-  if (Array.isArray(header)) {
+  const requiresFile = payload.mcp_servers.some(
+    (server) => server.server_code === "file-service"
+  );
+  if (Array.isArray(onesHeader) || Array.isArray(fileHeader)) {
     throw new RuntimeGrantError(
       "runtime_principal_token_invalid",
       "duplicate Principal Token headers are forbidden"
     );
   }
-  const token = typeof header === "string" ? header.trim() : "";
-  if (requiresPrincipal && !token) {
+  const onesToken = typeof onesHeader === "string" ? onesHeader.trim() : "";
+  const fileToken = typeof fileHeader === "string" ? fileHeader.trim() : "";
+  if ((requiresOnes && !onesToken) || (requiresFile && !fileToken)) {
     throw new RuntimeGrantError(
       "runtime_principal_token_missing",
-      "ONES MCP requires a Principal Token"
+      "governed MCP requires its audience-bound Principal Token"
     );
   }
-  if (!requiresPrincipal && token) {
+  if ((!requiresOnes && onesToken) || (!requiresFile && fileToken)) {
     throw new RuntimeGrantError(
       "runtime_principal_token_unexpected",
-      "Principal Token is forbidden without an ONES MCP binding"
+      "Principal Token is forbidden without its MCP binding"
     );
   }
-  if (token.length > 8192 || /[\r\n]/u.test(token)) {
+  if (
+    onesToken.length > 8192 ||
+    fileToken.length > 8192 ||
+    /[\r\n]/u.test(onesToken) ||
+    /[\r\n]/u.test(fileToken)
+  ) {
     throw new RuntimeGrantError(
       "runtime_principal_token_invalid",
       "Principal Token header is invalid"
     );
   }
-  return token || undefined;
+  return {
+    ...(onesToken ? { principalToken: onesToken } : {}),
+    ...(fileToken ? { filePrincipalToken: fileToken } : {})
+  };
 }
 
 function sendJson(response: ServerResponse, status: number, body: object): void {
@@ -204,10 +218,10 @@ export function createRuntimeRequestHandler(
           );
         }
         await grantVerifier.verify(bearerToken(request), payload);
-        const token = principalToken(request, payload);
+        const secrets = invocationSecrets(request, payload);
         const handle = await registry.acquire(
           payload,
-          token ? { principalToken: token } : {}
+          secrets
         );
         response.writeHead(200, {
           "content-type": "application/x-ndjson; charset=utf-8",

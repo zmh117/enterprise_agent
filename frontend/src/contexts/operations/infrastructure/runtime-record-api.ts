@@ -1,5 +1,6 @@
 import {
   conversationDetailSchema,
+  fileOperationsSchema,
   modelCallPageSchema,
   runtimeJobDetailSchema,
   runtimeJobPageSchema,
@@ -63,4 +64,8 @@ export async function getConversation(sessionId: string) {
       `/api/admin/conversations/${encodeURIComponent(sessionId)}`
     )
   )
+}
+
+export async function getFileOperations() {
+  return fileOperationsSchema.parse(await apiRequest("/api/admin/file-operations"))
 }

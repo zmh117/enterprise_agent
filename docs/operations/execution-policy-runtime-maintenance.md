@@ -27,13 +27,13 @@ RBAC、Agent、业务应用、Publication、Deployment、Connector、Webhook Tri
 2. 停止所有可能创建、消费或投递 Job 的进程：
 
    ```bash
-   docker compose stop api-server admin-web dingtalk-stream-ingress agent-worker webhook-worker attachment-worker
+   docker compose stop api-server admin-web dingtalk-stream-ingress agent-worker webhook-worker file-worker
    ```
 
 3. 用同一 commit 重建应用镜像，避免新旧版本并行：
 
    ```bash
-   docker compose build api-server agent-worker dingtalk-stream-ingress webhook-worker attachment-worker admin-web
+   docker compose build api-server agent-worker dingtalk-stream-ingress webhook-worker file-worker admin-web
    ```
 
 4. 先输出删除前计数和对象摘要，不执行删除：
@@ -71,7 +71,7 @@ RBAC、Agent、业务应用、Publication、Deployment、Connector、Webhook Tri
 8. 启动同一 commit 的服务并创建一个全新 local Job：
 
    ```bash
-   docker compose up -d api-server admin-web dingtalk-stream-ingress agent-worker webhook-worker attachment-worker
+   docker compose up -d api-server admin-web dingtalk-stream-ingress agent-worker webhook-worker file-worker
    ```
 
    在运行记录确认 Job 同时显示 `schema_version=1`、`requested`、`effective`、

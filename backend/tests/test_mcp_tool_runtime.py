@@ -8,6 +8,7 @@ import pytest
 
 from app.bootstrap import build_test_container
 from app.modules.job.domain.job_status import JobStatus
+from app.modules.file_workspace.contracts import FILE_TOOL_MANIFEST
 from app.modules.mcp_tool_runtime.contracts import FakeReadOnlyToolExecutor
 from app.modules.mcp_tool_runtime.direct_executor import DirectReadOnlyToolExecutor
 from app.modules.mcp_tool_runtime.job_snapshot import JobMcpToolSnapshotService
@@ -203,7 +204,12 @@ def test_code_owned_mcp_manifest_has_stable_unique_tool_contracts() -> None:
         assert definition.identifier == identifier
         assert definition.schema_hash == mcp_tool_schema_hash(definition.input_schema)
         assert len(definition.schema_hash) == 64
-        assert definition.read_only is True
+        if definition.server_code == "file-service":
+            assert definition.read_only is (
+                not FILE_TOOL_MANIFEST[identifier].mutating
+            )
+        else:
+            assert definition.read_only is True
         assert require_mcp_tool(identifier) is definition
 
 

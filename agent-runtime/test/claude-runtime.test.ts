@@ -270,6 +270,85 @@ test("query adapter uses isolated settings and gates every MCP call through canU
   );
 });
 
+test("file Job opens only sandbox-authorized file builtins and uses the fixed File MCP", async () => {
+  const value = requestV12();
+  value.mcp_servers = [{
+    server_code: "file-service",
+    tools: [{
+      tool_name: "file_prepare_materialization",
+      required_scope: "mcp:file-service:file_prepare_materialization:invoke",
+      tool_schema_hash: "a".repeat(64)
+    }]
+  }];
+  let captured: Options | undefined;
+  const workspaces: InvocationWorkspaceFactory & { cleaned: boolean } = {
+    cleaned: false,
+    async create(jobId) {
+      assert.equal(jobId, value.job_id);
+      return {
+        path: "/tmp/agent-runtime-file-job",
+        authorizeTool: async (toolName, input) => {
+          assert.equal(toolName, "Read");
+          assert.deepEqual(input, { file_path: "inputs/evidence.txt" });
+          return input as Record<string, unknown>;
+        },
+        cleanup: async () => {
+          this.cleaned = true;
+        }
+      };
+    }
+  };
+  const runtime = new ClaudeAgentRuntimeExecutor(
+    { resolve: async () => binding() },
+    queryFrom(async function* (options) {
+      captured = options;
+      const read = await options.canUseTool?.(
+        "Read",
+        { file_path: "inputs/evidence.txt" },
+        {
+          signal: new AbortController().signal,
+          toolUseID: "read-1",
+          requestId: "permission-read-1"
+        }
+      );
+      const bash = await options.canUseTool?.(
+        "Bash",
+        { command: "pwd" },
+        {
+          signal: new AbortController().signal,
+          toolUseID: "bash-1",
+          requestId: "permission-bash-1"
+        }
+      );
+      assert.equal(read?.behavior, "allow");
+      assert.equal(bash?.behavior, "deny");
+      yield successResult();
+    }),
+    workspaces,
+    undefined,
+    undefined,
+    undefined,
+    "http://file-service:9105/mcp"
+  );
+
+  const terminal = await runtime.execute(value, emitter().value, {
+    filePrincipalToken: "file-principal-not-for-events"
+  });
+
+  assert.equal(terminal.status, "SUCCEEDED");
+  assert.equal(workspaces.cleaned, true);
+  assert.deepEqual(captured?.settingSources, []);
+  assert.equal(captured?.cwd, "/tmp/agent-runtime-file-job");
+  assert.equal(captured?.disallowedTools?.includes("Bash"), true);
+  assert.equal(captured?.disallowedTools?.includes("Read"), false);
+  assert.equal(captured?.disallowedTools?.includes("Write"), false);
+  assert.equal((captured?.mcpServers?.files as any).url, "http://file-service:9105/mcp");
+  assert.equal(
+    (captured?.mcpServers?.files as any).headers.Authorization,
+    "Bearer file-principal-not-for-events"
+  );
+});
+
 test("ONES MCP receives the invocation-only Principal Token and tool-mcp never does", async () => {
   const value = structuredClone(executionRequestFixture) as AgentExecutionRequestV11;
   let captured: Options | undefined;
