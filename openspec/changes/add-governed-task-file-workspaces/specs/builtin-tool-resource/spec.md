@@ -22,6 +22,22 @@ File MCP Tool输入 MUST 使用封闭Schema，只允许必要的文件选择、�
 - **WHEN** File Tool参数包含Bucket、对象键或跨工作区File ID
 - **THEN** schema或授权校验在对象操作前拒绝
 
+### Requirement: 内部文件调用使用独立短时 Service Principal
+平台身份服务 MUST 使用独立于用户/Job Principal 的 Service Principal 签名密钥，为`file-worker`和Delivery Worker按需签发TTL不超过300秒的角色JWT。服务JWT MUST 绑定固定issuer、`aud=file-service-internal`、相同的`sub`/`azp`角色、完整固定scope集合、JTI与时间声明；File Service MUST 使用独立Service JWKS验签并确认当前接口所需scope属于该角色的完整集合。Worker MUST NOT持有服务签名私钥、另一角色bootstrap credential、预生成长期JWT或共享Internal API Token。
+
+#### Scenario: File Worker换取并使用短时JWT
+- **WHEN** File Worker以自己的角色bootstrap credential调用平台内部身份接口
+- **THEN** 身份服务签发同时包含附件导入和内容清理固定scope、TTL不超过300秒的Service Principal JWT
+- **AND** File Worker可在对应两个File Service接口使用该JWT并在到期前刷新
+
+#### Scenario: Delivery凭据被File Worker使用
+- **WHEN** File Worker使用Delivery Worker bootstrap credential或Delivery JWT调用附件导入
+- **THEN** 平台身份服务或File Service在文件内容操作前拒绝
+
+#### Scenario: Compose使用静态Service JWT文件
+- **WHEN** 部署配置要求挂载预先生成且不会持续刷新的Service JWT
+- **THEN** 部署契约测试失败且不得宣称服务身份已接线
+
 ### Requirement: File MCP 调用审计与统一 MCP Operation Audit 对齐
 每次File MCP Tool调用 MUST 记录统一operation、attempt和event链，包含Job、内部用户、Agent/Application Publication、Tool identifier/schema hash、Workspace、File/Version、授权判定、Commit或Delivery关联、状态、耗时及有界摘要。审计 MUST 排除文件正文、完整Prompt、Principal JWT、MinIO或钉钉凭据、对象键和上传授权材料。
 

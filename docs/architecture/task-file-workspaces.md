@@ -23,7 +23,7 @@ Agent Session
 
 ```text
 Channel -> RabbitMQ -> File Worker -> File Service -> MinIO
-Agent -> Runtime -> File MCP（File Service 内）-> File Service -> MinIO
+Agent -> Runtime 本地 File MCP Bridge -> File MCP（File Service 内）-> File Service -> MinIO
 Delivery Worker -> File Service -> DingTalk
 ```
 
@@ -34,7 +34,9 @@ File Service 是文件身份、不可变版本、当前版本、工作区引用�
 ## 身份与授权
 
 - Agent 使用平台签发的短时 Principal JWT，绑定内部用户、租户、Job、Session、Publication、授权 hash 和精确 Tool scope。
-- File Worker 和 Delivery Worker 使用各自短时服务 Principal JWT 文件；File Service 只取得验证它们的服务 JWKS，不共享静态内部 Token。
+- 平台 API 身份模块使用独立于用户/Job Principal 的 Ed25519 服务密钥环；File Service 只取得服务公开 JWKS。
+- File Worker 和 Delivery Worker 各自只持有角色隔离的 bootstrap credential，向固定内部身份端点按需换取并到期前刷新不超过 300 秒的服务 Principal JWT；不在宿主机保存静态服务 JWT，也不共享内部 Token。
+- `file-worker` 的固定 JWT 同时包含附件导入和内容清理 scope；`delivery-worker` 只包含精确版本交付读取 scope。File Service 校验完整角色 scope 集合后再校验当前端点所需 scope。
 - MinIO 原始凭据只由 File Service 通过 `secret://platform/` 解析，绝不进入 JWT、MCP 参数、日志、审计或模型上下文。
 - 私聊工作区属于当前内部用户；群聊工作区以企业、Connector 和 conversation ID 共享，不复制钉钉群成员 ACL。每次操作仍要求实际 sender 已绑定内部身份、拥有当前业务应用访问且来自同一群。
 
@@ -42,9 +44,10 @@ File Service 是文件身份、不可变版本、当前版本、工作区引用�
 
 1. Channel 创建文件型 Job 时解析或创建 ACTIVE 工作区并冻结保留周期。
 2. Job File Manifest 冻结本次消息附件、明确引用和其他工作区候选的精确版本；只包含有界元数据。
-3. Runtime 根据 Manifest 通过 File Service 流式物化文件到 Job 沙盒；完整字节不进入模型或 MCP JSON。
+3. Claude SDK 只连接 Runtime 代码注册的本地 `files` MCP。该 bridge 代理 Job 冻结的远端 File MCP 工具，并在 ToolResult 交回模型前拦截隐藏传输控制信息；Runtime 使用当前 Job File Principal JWT 从 File Service 流式物化精确版本到 Job 沙盒。完整字节、JWT、URL 和对象位置不进入模型或 MCP JSON。
 4. Claude Code Agent 仅能在沙盒内使用受限 `Read`、`Grep`、`Write`、`Edit`。分析请求不得提交修改；修改或生成请求可逐文件创建提交意图。
-5. Runtime 只上传显式选择的 sandbox entry。File Service 流式校验大小、UTF-8、摘要、配额和 base version，发布不可变版本。
+5. 物化输入由 bridge 自动登记 sandbox entry；新生成文件必须显式调用 Runtime 自有的 `select_sandbox_output`，且只能选择 `work/` 或 `outputs/` 下经过路径、常规文件、符号链接、15 MiB 和 UTF-8 校验的单个 TXT。Runtime 不扫描沙盒，也不自动提交其它草稿。
+6. File MCP 创建提交意图后，bridge 在结果交回模型前只上传该 handle 映射的精确文件。File Service 流式校验大小、UTF-8、摘要、配额和 base version，发布不可变版本。
 6. 并发基于过期 base version 的结果成为 Conflict Candidate，不推进当前版本；File Service 不自动合并文本。
 7. 默认文件交付开启时，成功精确版本创建固定 reply route 的 Delivery；“只保存到工作区”跳过。Delivery 失败只重试同一版本，不重跑 Agent、不回滚提交。
 

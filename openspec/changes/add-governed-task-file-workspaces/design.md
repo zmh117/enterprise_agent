@@ -152,11 +152,21 @@ JWT 不携带 MinIO Access Key、Secret Key、Bucket、对象键、预签名 URL
 
 `file-worker` 使用平台服务身份调用附件导入与清理接口，权限与用户 Agent scope 分离。该服务身份仍由平台身份边界签发和审计，不能退化为共享 Internal API Token。
 
+平台身份边界 MUST 使用独立于用户/Job Principal 的 Service Principal Key Ring。现有平台 API 中的身份模块持有该服务签名私钥，并通过固定内部身份接口按需签发 TTL 不超过 300 秒的 JWT；File Service 只读取对应公开 JWKS。`file-worker` 与 Delivery Worker 分别持有不同的、仅用于向平台身份接口换取短时 JWT 的 bootstrap credential，任何一个 Worker 都不得持有服务签名私钥、另一角色的 bootstrap credential 或预先生成的长期 JWT 文件。
+
+本地Compose还需要先把MinIO基础设施凭据建立为平台`encrypted_db` Secret，否则File Service会按默认拒绝保持unready。该首次启动动作由一次性Migrator完成：它只挂载Master Key与两个角色隔离的Docker Secret，不取得MinIO endpoint、Bucket或对象路径；缺失时创建、相同值时幂等保留、不同值时失败并要求显式轮换。长期运行的Worker、Runtime与Delivery不继承这些bootstrap Secret，生产可关闭此本地初始化。
+
+服务 JWT 使用固定信任域：`iss=enterprise-agent-service-identity`、`aud=file-service-internal`，并令 `sub` 与 `azp` 同为调用角色。`file-worker` Token 冻结附件导入与内容清理两个固定 scope；Delivery Worker Token 只冻结精确版本交付读取 scope。File Service 必须验证 Token 的完整角色 scope 集合并复核当前接口所需 scope 属于该集合，不能要求同一个 File Worker Token 在两个接口上分别等于互斥的单 scope，也不能接受集合外 scope。
+
+bootstrap credential 只用于平台身份接口认证，使用独立随机值、角色隔离挂载、常量时间比较和有界读取；不得作为 File Service Internal API Token。客户端按需缓存短时 JWT，并在到期前刷新；签发和拒绝写入不含 credential/JWT 的安全审计。Compose 启动前的密钥初始化只生成服务签名密钥、公开 JWKS 和两份角色 bootstrap credential，不生成静态 Service JWT。
+
 备选方案及否决理由：
 
 - JWT 直接携带 MinIO 临时凭据：扩大凭据暴露面并允许绕过治理。
 - 仅凭 `commit_id` 上传：commit id 是业务标识，不是认证凭据。
 - File Service 自签用户身份：会形成第二身份签发中心。
+- 把一次性生成的 Service JWT 作为 Compose Secret：JWT 最长 300 秒，启动后必然过期，无法形成稳定运行链路。
+- 向两个 Worker 挂载同一 bootstrap token 或服务签名私钥：扩大横向冒用与签名能力泄露面。
 
 ### 7. Job 创建时冻结 File Manifest，Runtime 按需物化精确版本
 
@@ -167,7 +177,7 @@ Job 创建时建立不可变 File Manifest：
 - 每项冻结精确 `file_id`、`version_id`、显示名、来源和允许动作；
 - 创建快照和实际物化时均重新检查授权、到期、删除和内容存在状态。
 
-Agent 通过 File MCP 请求物化。File Service 返回不含对象信息的受控传输描述；Runtime 内部的 file-transfer coordinator 验证描述后，将内容经内部流式接口写入当前 Job 沙盒的安全相对路径。模型只能看到逻辑文件句柄和沙盒内安全路径。
+Agent 通过 Runtime 代码注册的本地 File MCP bridge 请求物化。该 bridge 只代理 Job 冻结的 File Service 工具，不接受模型提供的 Server URL；它先调用部署固定的远端 File MCP，再在 ToolResult 返回模型之前拦截隐藏的受控传输描述。Runtime 内部的 file-transfer coordinator 验证描述后，使用当前 Job 的 File Principal JWT 经内部流式接口把内容写入当前 Job 沙盒的安全相对路径。模型只能看到逻辑文件句柄、沙盒内安全相对路径、大小和摘要，不能看到传输描述、JWT 或文件字节。
 
 下载哪些候选文件由 Agent 根据任务判断，但以下边界不可由模型改变：
 
@@ -185,9 +195,9 @@ Agent 通过 File MCP 请求物化。File Service 返回不含对象信息的受
 
 继续拒绝 `Bash`、`Shell`、`NotebookEdit`、`WebFetch`、`WebSearch`、任意 MCP、任意 URL 和沙盒外路径。容器根文件系统保持只读；仅挂载 Job 专属可写 tmpfs。沙盒容量必须配置为足以容纳最多 100 MiB 未保留工作区内容及提交暂存开销，并通过磁盘配额和进程级限制强制，而不是依靠提示词。
 
-Agent 只提交显式标记的输出，不自动扫描并提交沙盒全部改动。File MCP 提交工具接受逻辑 sandbox entry handle；Runtime 的 file-transfer coordinator 将该 handle 映射为已验证的本地文件并流式上传。远端 File Service 不接受模型提供的任意绝对路径。
+Agent 只提交显式标记的输出，不自动扫描并提交沙盒全部改动。Runtime 仅为文件 Job 代码注册 `select_sandbox_output`：它只接受当前沙盒下的安全相对 TXT 路径，校验常规文件、符号链接、大小和 UTF-8 后生成不透明 sandbox entry handle，不读取正文到模型上下文。物化输入已有由 Runtime 登记的 handle，不需要再次选择。File MCP 提交工具只接受该逻辑 handle；Runtime bridge 在远端提交意图返回模型前，将 handle 映射为已验证的精确本地文件并流式上传。远端 File Service 不接受模型提供的绝对路径。
 
-由于远程 MCP 不能直接读取 Runtime 本地文件，第一批实现任务必须先做一条 Runtime SDK 兼容性切片，验证 File MCP 工具结果触发受控下载、提交意图触发流式上传的桥接机制。若当前 SDK 不支持安全拦截，不得退化为把全文塞进 Tool JSON，而应在 Runtime 内增加代码注册的本地 transfer coordinator。
+由于远程 MCP 不能直接读取 Runtime 本地文件，Python 与 TypeScript Runtime 使用 Claude SDK 支持的进程内 MCP Server 作为预模型 bridge：模型调用的 `mcp__files__*` 先进入 Runtime 代码，再由 Runtime 使用标准 MCP Client 转发到部署固定的 File Service。测试必须驱动真实 Runtime executor/SDK 工具处理循环，证明 File MCP 工具结果会触发受控下载、提交意图会触发流式上传；仅手工调用 coordinator 的测试只能作为单元测试，不能作为 Runtime 接线或端到端完成证据。不得退化为在 Tool JSON 中放入文件全文，也不得在 SDK 消息消费后才处理传输描述。
 
 ### 9. 提交采用意图、staging、校验和不可变版本发布
 

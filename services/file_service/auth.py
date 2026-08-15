@@ -12,26 +12,23 @@ from app.modules.identity.application.principal_jwt import (
     MAX_PRINCIPAL_TOKEN_BYTES,
     PrincipalJwks,
 )
+from app.modules.identity.application.service_principal import (
+    DELIVERY_WORKER_AUTHORIZED_PARTY,
+    DELIVERY_WORKER_SCOPES,
+    FILE_SERVICE_INTERNAL_AUDIENCE,
+    FILE_WORKER_AUTHORIZED_PARTY,
+    FILE_WORKER_SCOPES,
+    SERVICE_PRINCIPAL_ISSUER,
+)
 from app.shared.exceptions import NonRetryableExecutionError
 
 
 FILE_PRINCIPAL_AUDIENCE = "file-service"
-FILE_SERVICE_AUDIENCE = "file-service-internal"
+FILE_SERVICE_AUDIENCE = FILE_SERVICE_INTERNAL_AUDIENCE
 PLATFORM_PRINCIPAL_ISSUER = "enterprise-agent-identity"
-FILE_WORKER_ISSUER = "enterprise-agent-service-identity"
+FILE_WORKER_ISSUER = SERVICE_PRINCIPAL_ISSUER
 AGENT_RUNTIME_AUTHORIZED_PARTY = "agent-runtime"
-FILE_WORKER_AUTHORIZED_PARTY = "file-worker"
-DELIVERY_WORKER_AUTHORIZED_PARTY = "delivery-worker"
 MAX_TOKEN_TTL_SECONDS = 5 * 60
-FILE_WORKER_SCOPES = frozenset(
-    {
-        "internal:file-service:attachment:import",
-        "internal:file-service:content:cleanup",
-    }
-)
-DELIVERY_WORKER_SCOPES = frozenset(
-    {"internal:file-service:delivery:read"}
-)
 
 
 class FilePrincipalError(NonRetryableExecutionError):
@@ -231,7 +228,7 @@ class FileWorkerPrincipalVerifier(FilePrincipalVerifier):
             audience=FILE_SERVICE_AUDIENCE,
             authorized_party=FILE_WORKER_AUTHORIZED_PARTY,
             allowed_claims=self._service_claims,
-            required_scopes=frozenset({required_scope}),
+            required_scopes=FILE_WORKER_SCOPES,
         )
         if claims["sub"] != FILE_WORKER_AUTHORIZED_PARTY:
             self._deny("file_worker_subject_invalid")
@@ -246,7 +243,7 @@ class FileWorkerPrincipalVerifier(FilePrincipalVerifier):
             audience=FILE_SERVICE_AUDIENCE,
             authorized_party=DELIVERY_WORKER_AUTHORIZED_PARTY,
             allowed_claims=self._service_claims,
-            required_scopes=frozenset({required_scope}),
+            required_scopes=DELIVERY_WORKER_SCOPES,
         )
         if claims["sub"] != DELIVERY_WORKER_AUTHORIZED_PARTY:
             self._deny("file_delivery_subject_invalid")

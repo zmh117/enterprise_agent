@@ -121,6 +121,7 @@ COPY backend/app/modules/agent/__init__.py /app/backend/app/modules/agent/
 COPY backend/app/modules/agent/domain /app/backend/app/modules/agent/domain
 COPY backend/app/modules/agent/infrastructure/__init__.py /app/backend/app/modules/agent/infrastructure/
 COPY backend/app/modules/agent/infrastructure/generated_runtime_contracts*.py backend/app/modules/agent/infrastructure/runtime_protocol.py backend/app/modules/agent/infrastructure/tool_manifest.py /app/backend/app/modules/agent/infrastructure/
+COPY backend/app/modules/file_workspace/contracts.py /app/backend/app/modules/file_workspace/contracts.py
 COPY backend/app/modules/model_connection/__init__.py /app/backend/app/modules/model_connection/
 COPY backend/app/modules/model_connection/domain /app/backend/app/modules/model_connection/domain
 COPY backend/app/modules/model_connection/infrastructure/__init__.py backend/app/modules/model_connection/infrastructure/repository.py /app/backend/app/modules/model_connection/infrastructure/
@@ -131,7 +132,7 @@ COPY backend/app/modules/platform_config/infrastructure/__init__.py backend/app/
 COPY agent-runtime/contracts /app/agent-runtime/contracts
 RUN groupadd --system --gid 10002 python-runtime \
     && useradd --system --uid 10002 --gid 10002 --no-create-home python-runtime \
-    && python -c "import app.python_runtime; import app.modules.agent.infrastructure.runtime_protocol; import claude_agent_sdk"
+    && python -c "import app.python_runtime; import app.python_runtime.file_mcp_bridge; import app.python_runtime.file_transfer_http; import app.modules.agent.infrastructure.runtime_protocol; import claude_agent_sdk"
 USER 10002:10002
 CMD ["python", "-m", "uvicorn", "app.python_runtime.service:create_app", "--factory", "--host", "0.0.0.0", "--port", "8091"]
 

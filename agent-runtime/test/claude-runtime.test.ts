@@ -20,6 +20,10 @@ import type { AgentExecutionRequestV12 } from "../src/generated/contracts-v1_2.j
 import type { RuntimeEvent } from "../src/runtime-contracts.js";
 import type { ExecutionEmitter } from "../src/invocation-registry.js";
 import type { ResolvedModelBinding } from "../src/model-binding.js";
+import type {
+  RuntimeFileBridgeFactory,
+  RuntimeFileBridgeOptions
+} from "../src/file-mcp-bridge.js";
 
 function request(): AgentExecutionRequestV11 {
   const value = structuredClone(executionRequestFixture) as AgentExecutionRequestV11;
@@ -281,6 +285,23 @@ test("file Job opens only sandbox-authorized file builtins and uses the fixed Fi
     }]
   }];
   let captured: Options | undefined;
+  let bridgeOptions: RuntimeFileBridgeOptions | undefined;
+  let bridgeClosed = false;
+  const fileBridgeFactory: RuntimeFileBridgeFactory = (options) => {
+    bridgeOptions = options;
+    return {
+      server: {
+        type: "sdk",
+        name: "enterprise-file-bridge",
+        instance: {} as never
+      },
+      localToolNames: [],
+      connect: async () => undefined,
+      close: async () => {
+        bridgeClosed = true;
+      }
+    };
+  };
   const workspaces: InvocationWorkspaceFactory & { cleaned: boolean } = {
     cleaned: false,
     async create(jobId) {
@@ -328,7 +349,8 @@ test("file Job opens only sandbox-authorized file builtins and uses the fixed Fi
     undefined,
     undefined,
     undefined,
-    "http://file-service:9105/mcp"
+    "http://file-service:9105/mcp",
+    fileBridgeFactory
   );
 
   const terminal = await runtime.execute(value, emitter().value, {
@@ -342,11 +364,14 @@ test("file Job opens only sandbox-authorized file builtins and uses the fixed Fi
   assert.equal(captured?.disallowedTools?.includes("Bash"), true);
   assert.equal(captured?.disallowedTools?.includes("Read"), false);
   assert.equal(captured?.disallowedTools?.includes("Write"), false);
-  assert.equal((captured?.mcpServers?.files as any).url, "http://file-service:9105/mcp");
+  assert.equal((captured?.mcpServers?.files as any).type, "sdk");
+  assert.equal((captured?.mcpServers?.files as any).name, "enterprise-file-bridge");
+  assert.equal(bridgeOptions?.mcpServerUrl, "http://file-service:9105/mcp");
   assert.equal(
-    (captured?.mcpServers?.files as any).headers.Authorization,
+    bridgeOptions?.headers.Authorization,
     "Bearer file-principal-not-for-events"
   );
+  assert.equal(bridgeClosed, true);
 });
 
 test("ONES MCP receives the invocation-only Principal Token and tool-mcp never does", async () => {

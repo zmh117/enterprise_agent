@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -242,6 +242,46 @@ test("File transfer rejects an explicitly registered symbolic link", async () =>
       (error: unknown) =>
         error instanceof FileTransferBoundaryError &&
         error.code === "file_transfer_symlink_denied"
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("File transfer selects only an explicit UTF-8 work or outputs TXT", async () => {
+  const root = await mkdtemp(join(tmpdir(), "file-transfer-select-"));
+  const coordinator = new FileTransferCoordinator({
+    download: unusedDownload,
+    upload: async () => ({ versionId: "unused", sizeBytes: 0, sha256: "0".repeat(64) })
+  });
+  const context = {
+    jobId: "job-select-1",
+    workspacePath: root,
+    principalToken: "principal",
+    signal: new AbortController().signal
+  };
+  try {
+    await mkdir(join(root, "outputs"), { recursive: true });
+    await mkdir(join(root, "inputs"), { recursive: true });
+    await writeFile(join(root, "outputs/result.txt"), "valid UTF-8", "utf8");
+    const selected = await coordinator.selectSandboxOutput("outputs/result.txt", context);
+    assert.equal(selected.action, "SELECTED");
+    assert.equal(selected.relative_path, "outputs/result.txt");
+    assert.match(selected.sandbox_entry_handle, /^sandbox-entry:/);
+
+    await writeFile(join(root, "outputs/invalid.txt"), Buffer.from([0xff, 0xfe]));
+    await assert.rejects(
+      coordinator.selectSandboxOutput("outputs/invalid.txt", context),
+      (error: unknown) =>
+        error instanceof FileTransferBoundaryError &&
+        error.code === "file_transfer_encoding_invalid"
+    );
+    await writeFile(join(root, "inputs/not-output.txt"), "valid", "utf8");
+    await assert.rejects(
+      coordinator.selectSandboxOutput("inputs/not-output.txt", context),
+      (error: unknown) =>
+        error instanceof FileTransferBoundaryError &&
+        error.code === "file_transfer_path_invalid"
     );
   } finally {
     await rm(root, { recursive: true, force: true });

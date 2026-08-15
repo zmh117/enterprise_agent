@@ -156,6 +156,28 @@ class PrincipalJwtSettings:
 
 
 @dataclass(frozen=True)
+class ServicePrincipalSettings:
+    enabled: bool = False
+    signing_private_key_file: str = ""
+    public_jwks_file: str = ""
+    file_worker_bootstrap_token_file: str = ""
+    delivery_worker_bootstrap_token_file: str = ""
+    identity_base_url: str = "http://api-server:8000"
+    identity_allowed_hosts: tuple[str, ...] = ("api-server",)
+    timeout_seconds: int = 5
+    ttl_seconds: int = 5 * 60
+    refresh_skew_seconds: int = 60
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.ttl_seconds <= 5 * 60:
+            raise ValueError("Service Principal TTL must be between 1 and 300 seconds")
+        if not 0 <= self.refresh_skew_seconds < self.ttl_seconds:
+            raise ValueError("Service Principal refresh skew must be below its TTL")
+        if not 1 <= self.timeout_seconds <= 120:
+            raise ValueError("Service identity timeout is invalid")
+
+
+@dataclass(frozen=True)
 class OnesMcpSettings:
     provider_base_url: str = ""
     provider_allowed_hosts: tuple[str, ...] = ()
@@ -170,9 +192,6 @@ class OnesMcpSettings:
 class FileServiceSettings:
     internal_base_url: str = "http://file-service:9105"
     internal_allowed_hosts: tuple[str, ...] = ("file-service",)
-    worker_principal_token_file: str = ""
-    delivery_principal_token_file: str = ""
-    service_principal_jwks_file: str = ""
     internal_timeout_seconds: int = 30
     endpoint_url: str = "http://minio:9000"
     bucket: str = "agent-files"
@@ -291,6 +310,9 @@ class Settings:
     ones_identity: OnesIdentitySettings = field(default_factory=OnesIdentitySettings)
     agent_runtime: AgentRuntimeSettings = field(default_factory=AgentRuntimeSettings)
     principal_jwt: PrincipalJwtSettings = field(default_factory=PrincipalJwtSettings)
+    service_principal: ServicePrincipalSettings = field(
+        default_factory=ServicePrincipalSettings
+    )
     ones_mcp: OnesMcpSettings = field(default_factory=OnesMcpSettings)
     file_service: FileServiceSettings = field(default_factory=FileServiceSettings)
     webhooks: WebhookSettings = field(default_factory=WebhookSettings)
@@ -359,6 +381,30 @@ def load_settings() -> Settings:
             public_jwks_file=os.getenv("PRINCIPAL_JWKS_FILE", ""),
             ttl_seconds=int(os.getenv("PRINCIPAL_JWT_TTL_SECONDS", "300")),
         ),
+        service_principal=ServicePrincipalSettings(
+            enabled=_env_bool("SERVICE_PRINCIPAL_ENABLED"),
+            signing_private_key_file=os.getenv(
+                "SERVICE_PRINCIPAL_PRIVATE_KEY_FILE", ""
+            ),
+            public_jwks_file=os.getenv("SERVICE_PRINCIPAL_JWKS_FILE", ""),
+            file_worker_bootstrap_token_file=os.getenv(
+                "FILE_WORKER_BOOTSTRAP_TOKEN_FILE", ""
+            ),
+            delivery_worker_bootstrap_token_file=os.getenv(
+                "DELIVERY_WORKER_BOOTSTRAP_TOKEN_FILE", ""
+            ),
+            identity_base_url=os.getenv(
+                "SERVICE_IDENTITY_INTERNAL_BASE_URL", "http://api-server:8000"
+            ),
+            identity_allowed_hosts=_csv_tuple(
+                os.getenv("SERVICE_IDENTITY_INTERNAL_ALLOWED_HOSTS", "api-server")
+            ),
+            timeout_seconds=int(os.getenv("SERVICE_IDENTITY_TIMEOUT_SECONDS", "5")),
+            ttl_seconds=int(os.getenv("SERVICE_PRINCIPAL_TTL_SECONDS", "300")),
+            refresh_skew_seconds=int(
+                os.getenv("SERVICE_PRINCIPAL_REFRESH_SKEW_SECONDS", "60")
+            ),
+        ),
         ones_mcp=OnesMcpSettings(
             provider_base_url=os.getenv("ONES_MCP_PROVIDER_BASE_URL", ""),
             provider_allowed_hosts=_csv_tuple(os.getenv("ONES_MCP_PROVIDER_ALLOWED_HOSTS", "")),
@@ -376,15 +422,6 @@ def load_settings() -> Settings:
             ),
             internal_allowed_hosts=_csv_tuple(
                 os.getenv("FILE_SERVICE_INTERNAL_ALLOWED_HOSTS", "file-service")
-            ),
-            worker_principal_token_file=os.getenv(
-                "FILE_WORKER_PRINCIPAL_TOKEN_FILE", ""
-            ),
-            delivery_principal_token_file=os.getenv(
-                "DELIVERY_WORKER_PRINCIPAL_TOKEN_FILE", ""
-            ),
-            service_principal_jwks_file=os.getenv(
-                "FILE_SERVICE_PRINCIPAL_JWKS_FILE", ""
             ),
             internal_timeout_seconds=int(
                 os.getenv("FILE_SERVICE_INTERNAL_TIMEOUT_SECONDS", "30")

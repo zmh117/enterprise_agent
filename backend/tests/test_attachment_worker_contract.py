@@ -23,6 +23,9 @@ from typing import Any
 
 import pytest
 
+from app.modules.agent.application.agent_context_builder import (
+    ATTACHMENT_ONLY_USER_QUESTION,
+)
 from app.modules.channel.domain.channel_event import ChannelAttachment
 from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
 from app.modules.job.domain.job_status import JobStatus
@@ -235,7 +238,12 @@ def test_attachment_source_idempotency_and_all_terminal_release_boundary() -> No
     assert runtime.attachment_service.process(tasks[0].attachment_id, "c-1") == "waiting"  # type: ignore[union-attr]
     assert runtime.agent_repository.get_job(job.id).status == JobStatus.WAITING_INPUT
     assert runtime.attachment_service.process(tasks[1].attachment_id, "c-2") == "released"  # type: ignore[union-attr]
-    assert runtime.agent_repository.get_job(job.id).status == JobStatus.PENDING
+    released_job = runtime.agent_repository.get_job(job.id)
+    assert released_job.status == JobStatus.PENDING
+    assert (
+        runtime.agent_executor.context_builder.build(released_job).user_question
+        == ATTACHMENT_ONLY_USER_QUESTION
+    )
 
 
 def test_attachment_retry_reuses_source_identity_and_keeps_job_waiting() -> None:

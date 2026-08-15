@@ -28,7 +28,14 @@ class ObjectStorage(Protocol):
 
 
 class MediaDownloader(Protocol):
-    def download(self, *, download_code: str, max_bytes: int) -> bytes: ...
+    def download(
+        self,
+        *,
+        download_code: str,
+        max_bytes: int,
+        connector_id: str = "",
+        robot_code: str = "",
+    ) -> bytes: ...
 
 
 class AttachmentExtractor(Protocol):

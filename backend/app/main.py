@@ -287,6 +287,7 @@ def create_app(
         build_auth_router,
         build_external_identity_router,
         build_identity_admin_router,
+        build_service_principal_router,
     )
     from app.modules.identity_discovery.api import build_identity_discovery_router
     from app.modules.job.api.agent_job_debug_controller import build_agent_job_debug_router
@@ -307,6 +308,7 @@ def create_app(
     app.include_router(build_workflow_router())
     app.include_router(build_public_webhook_router())
     app.include_router(build_runtime_control_router())
+    app.include_router(build_service_principal_router())
 
     management_surface_enabled = any(
         (

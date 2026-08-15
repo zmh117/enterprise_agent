@@ -17,6 +17,7 @@ from app.modules.business_application.domain.policies import (
     reject_dangerous_content,
     snapshot_hash,
     validate_execution_policy,
+    validate_task_file_attachment_dependency,
     validate_task_file_features,
 )
 from app.modules.job.domain.job_status import JobStatus
@@ -203,6 +204,22 @@ def test_task_file_feature_flags_are_strict_frozen_and_legacy_default_off() -> N
         validate_task_file_features({"unknown_enabled": True})
     with pytest.raises(NonRetryableExecutionError):
         validate_task_file_features({"file_mcp_enabled": True})
+    with pytest.raises(NonRetryableExecutionError) as dependency_error:
+        validate_task_file_attachment_dependency(
+            session_policy={"attachments_enabled": False},
+            task_file_features={
+                "workspace_enabled": True,
+                "file_mcp_enabled": True,
+                "runtime_file_edit_enabled": True,
+                "default_file_delivery_enabled": True,
+            },
+        )
+    assert dependency_error.value.field_errors == [
+        {
+            "field": "session_policy.attachments_enabled",
+            "message": "启用任务工作区前必须允许消息附件",
+        }
+    ]
 
     container = build_test_container(control_plane_settings(), migrate=True, seed=True)
     service = container.business_application_service
@@ -221,6 +238,7 @@ def test_task_file_feature_flags_are_strict_frozen_and_legacy_default_off() -> N
         "runtime_file_edit_enabled": True,
         "default_file_delivery_enabled": True,
     }
+    payload["session_policy"]["attachments_enabled"] = True
     revision = service.save_draft(
         actor_id="user_local_admin",
         code="task-file-feature-flags",

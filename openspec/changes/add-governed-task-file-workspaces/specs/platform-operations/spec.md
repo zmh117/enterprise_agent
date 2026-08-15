@@ -13,7 +13,7 @@
 - **THEN** 服务包含`file-service`和`file-worker`且不包含独立`file-mcp`或长期`attachment-worker`
 
 ### Requirement: MinIO凭据只注入File Service
-Compose、Secret usage和运行配置 MUST 只向`file-service`提供MinIO endpoint与`secret://platform/`凭据引用所需能力。`agent-worker`、Python/TypeScript Runtime、`file-worker`、Delivery Dispatcher和前端 MUST NOT挂载或解析MinIO Access Key、Secret Key或Session Token。File Service健康、错误和配置快照只能显示configured状态与脱敏endpoint摘要。
+Compose、Secret usage和运行配置 MUST 只向`file-service`提供MinIO endpoint与`secret://platform/`凭据引用所需能力。`agent-worker`、Python/TypeScript Runtime、`file-worker`、Delivery Dispatcher和前端 MUST NOT挂载或解析MinIO Access Key、Secret Key或Session Token。File Service健康、错误和配置快照只能显示configured状态与脱敏endpoint摘要。本地Compose首次启动 MAY 让一次性Migrator通过角色隔离的Docker Secret把MinIO凭据写入平台`encrypted_db` Secret，但该进程 MUST 不获得MinIO endpoint、Bucket或对象访问路径，已有Secret不同则失败并要求显式轮换；生产部署 MUST 可关闭此本地bootstrap。
 
 #### Scenario: File Worker环境被检查
 - **WHEN** 运维查看`file-worker`有效配置和容器挂载
@@ -22,6 +22,11 @@ Compose、Secret usage和运行配置 MUST 只向`file-service`提供MinIO endpo
 #### Scenario: MinIO Secret不可用
 - **WHEN** File Service引用的Secret缺失、禁用或无法解密
 - **THEN** File Service readiness失败且不回退到空值、旧env Secret或临时凭据
+
+#### Scenario: 本地首次启动初始化受治理Secret
+- **WHEN** 本地Compose显式启用文件存储Secret bootstrap且目标平台Secret尚不存在
+- **THEN** 一次性Migrator从只读Docker Secret创建加密版本后销毁自身运行态
+- **AND** 不向长期运行服务暴露bootstrap值，重复启动保留相同值，值不同则失败而不自动轮换
 
 ### Requirement: File Service与File Worker具有真实就绪和积压观测
 File Service readiness MUST 验证PostgreSQL schema、MinIO私有bucket访问、Principal JWKS、Manifest和内部流式接口依赖；File Worker readiness MUST 验证RabbitMQ队列契约、File Service内部API和清理调度可用性。平台运维视图 SHALL 展示附件、提交暂存、工作区过期和保留清理的安全积压计数与最近结果，不得仅以容器running声明可用。
@@ -34,6 +39,24 @@ File Service readiness MUST 验证PostgreSQL schema、MinIO私有bucket访问、
 - **WHEN** 到期内容因瞬时错误等待重试
 - **THEN** 运维状态显示有界积压、最早到期时间和安全错误分类
 - **AND** 不显示文件名、正文、对象键或凭据
+
+### Requirement: Compose完整配置Service Principal签发与刷新链路
+默认Compose MUST 让现有平台API身份模块挂载独立Service Principal签名私钥以及角色隔离的File Worker、Delivery Worker bootstrap credential，让File Service只挂载对应公开JWKS，并让每个Worker只挂载自己的bootstrap credential。部署 MUST 使用按需签发和到期前刷新，不得要求宿主机预先提供短时Service JWT文件。密钥初始化 MUST 幂等生成服务密钥/JWKS/bootstrap材料、拒绝不完整密钥组并保持私钥和bootstrap文件owner-only。
+
+#### Scenario: 新环境首次启动
+- **WHEN** 运维运行受控密钥初始化后启动默认Compose
+- **THEN** 所有Service Principal bind source均存在且容器可创建
+- **AND** File Worker和Delivery Worker能从平台身份接口取得可验证的角色JWT
+
+#### Scenario: 检查角色Secret挂载
+- **WHEN** 运维检查API、File Service、File Worker与Delivery Worker的Compose Secret
+- **THEN** API拥有服务签名私钥和两份bootstrap credential，File Service只有公开JWKS
+- **AND** 每个Worker只有自己的bootstrap credential且没有签名私钥、JWKS或另一角色Secret
+
+#### Scenario: 短时JWT到期
+- **WHEN** 已缓存Service JWT进入刷新窗口或过期
+- **THEN** Worker通过固定平台身份地址换取新JWT并继续调用
+- **AND** 不回退到静态JWT、共享Token或未认证内部请求
 
 ### Requirement: Job Sandbox容量和隔离配置必须可验证
 Python与TypeScript Runtime的临时文件系统配置 MUST 支持第一阶段15 MiB单文件与受控多文件物化，并对每个Job实施独立沙盒容量、文件数量、路径和生命周期限制。Compose MUST 不再使用无法容纳一个合法输入及安全处理开销的32 MiB无差别配置；实际容量必须由受控部署配置决定、在启动时校验并在健康状态中只显示非敏感上限。

@@ -224,3 +224,41 @@ def test_python_file_transfer_rejects_registered_symlink(tmp_path: Path) -> None
             context=context,
         )
     assert captured.value.code == "file_transfer_symlink_denied"
+
+
+def test_python_file_transfer_selects_only_explicit_utf8_output(tmp_path: Path) -> None:
+    port = _Port()
+    coordinator = FileTransferCoordinator(port)
+    context = FileTransferContext(
+        job_id="job-select-1",
+        workspace_path=tmp_path,
+        principal_token="principal",
+    )
+    (tmp_path / "outputs").mkdir()
+    (tmp_path / "inputs").mkdir()
+    (tmp_path / "outputs/result.txt").write_text("valid UTF-8", encoding="utf-8")
+
+    selected = coordinator.select_sandbox_output(
+        relative_path="outputs/result.txt",
+        context=context,
+    )
+
+    assert selected["action"] == "SELECTED"
+    assert selected["relative_path"] == "outputs/result.txt"
+    assert str(selected["sandbox_entry_handle"]).startswith("sandbox-entry:")
+
+    (tmp_path / "outputs/invalid.txt").write_bytes(b"\xff\xfe")
+    with pytest.raises(FileTransferBoundaryError) as invalid_encoding:
+        coordinator.select_sandbox_output(
+            relative_path="outputs/invalid.txt",
+            context=context,
+        )
+    assert invalid_encoding.value.code == "file_transfer_encoding_invalid"
+
+    (tmp_path / "inputs/not-output.txt").write_text("valid", encoding="utf-8")
+    with pytest.raises(FileTransferBoundaryError) as wrong_directory:
+        coordinator.select_sandbox_output(
+            relative_path="inputs/not-output.txt",
+            context=context,
+        )
+    assert wrong_directory.value.code == "file_transfer_path_invalid"

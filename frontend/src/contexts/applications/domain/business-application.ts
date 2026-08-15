@@ -215,6 +215,8 @@ export type SaveDraftInput = {
     conversation_mode: "channel"
     recent_message_limit: number
     retention_days: number
+    continuous_conversation_enabled: boolean
+    attachments_enabled: boolean
   }
   execution_policy: {
     max_turns: number

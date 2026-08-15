@@ -917,6 +917,22 @@ def test_python_runtime_file_job_uses_fixed_file_mcp_guarded_tools_and_finally_c
         runtime_protocol_version="1.2",
     )
     file_principal = "file-principal-token-not-for-events"
+    bridge_capture: dict[str, Any] = {}
+
+    class FakeFileBridge:
+        server = {"type": "sdk", "name": "enterprise-file-bridge"}
+        local_tool_names = ("select_sandbox_output",)
+
+        async def connect(self) -> None:
+            bridge_capture["connected"] = True
+
+        async def close(self) -> None:
+            bridge_capture["closed"] = True
+
+    def file_bridge_factory(**kwargs: Any) -> FakeFileBridge:
+        bridge_capture.update(kwargs)
+        return FakeFileBridge()
+
     client = RemoteMcpClaudeCodeAgentClient(
         limits=build_settings().execution,
         api_key="runtime-only-model-secret",
@@ -924,6 +940,7 @@ def test_python_runtime_file_job_uses_fixed_file_mcp_guarded_tools_and_finally_c
         file_mcp_server_url="http://file-service:9105/mcp",
         file_principal_token=file_principal,
         sandbox_manager=JobSandboxManager(tmp_path / "sandboxes"),
+        file_bridge_factory=file_bridge_factory,
     )
     client.sdk_loader = lambda: sdk
 
@@ -942,12 +959,13 @@ def test_python_runtime_file_job_uses_fixed_file_mcp_guarded_tools_and_finally_c
     assert captured["allowed_tools"] == []
     assert "Bash" in captured["disallowed_tools"]
     assert "Write" not in captured["disallowed_tools"]
-    assert captured["mcp_servers"]["file_service"]["url"] == (
-        "http://file-service:9105/mcp"
-    )
-    assert captured["mcp_servers"]["file_service"]["headers"]["Authorization"] == (
+    assert captured["mcp_servers"]["file_service"] == FakeFileBridge.server
+    assert bridge_capture["mcp_server_url"] == "http://file-service:9105/mcp"
+    assert bridge_capture["headers"]["Authorization"] == (
         f"Bearer {file_principal}"
     )
+    assert bridge_capture["connected"] is True
+    assert bridge_capture["closed"] is True
     sandbox_path = Path(captured["cwd"])
     assert not sandbox_path.exists()
     assert file_principal not in json.dumps(client.last_runtime_events)

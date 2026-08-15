@@ -314,7 +314,7 @@ def test_materialization_is_exact_version_job_bound_and_one_time() -> None:
 
     content, media_type = asyncio.run(download_once())
     assert content == b"source"
-    assert media_type == "text/plain; charset=utf-8"
+    assert media_type == "application/octet-stream"
     with pytest.raises(NonRetryableExecutionError) as error:
         asyncio.run(
             service.download_transfer(

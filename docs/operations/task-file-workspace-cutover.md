@@ -13,9 +13,17 @@
 ## 1. 部署前只读检查
 
 1. 验证 migration 精确到当前 catalog head，File Service 的用户 JWKS、服务 JWKS、互不相同的新文件私有 Bucket 与旧附件私有 Bucket，以及固定 Tool Manifest readiness 均通过。旧附件 Bucket 只用于 File Service 执行 360 天到期清理，不把对象入口重新开放给 Worker。
-2. 确认 File Worker 与 Delivery Worker 的短时 JWT 文件由平台身份服务轮换，角色分别是 `file-worker` 与 `delivery-worker`，每个 Token 有效期不超过 300 秒。
-3. 记录旧附件队列 `ready`、`unacked`、consumer 数、retry/dead 队列计数。切换前只能有一个附件消费者。
-4. dry-run 回填，按返回的 `next_cursor` 循环；任何 `status=blocked` 都停止：
+2. 初始化独立 Service Principal 密钥与两个角色 bootstrap credential；脚本幂等保留现有材料，发现不完整密钥对时失败关闭：
+
+```bash
+scripts/bootstrap_agent_runtime_secrets.sh "${HOME}/.config/enterprise-agent"
+```
+
+   API Server 独占服务签名私钥和两个 bootstrap credential，File Service 只取得公开 JWKS；File Worker 与 Delivery Worker 各自只取得本角色 bootstrap credential。Worker 按需向固定内部 API 换取并在到期前刷新不超过 300 秒的 JWT，不使用宿主机静态 JWT 文件。不得输出这些文件内容。
+3. 运行 `docker compose config --quiet`，确认不存在 `file-worker-principal.jwt`、`delivery-worker-principal.jwt` 或对应静态 JWT 环境变量；再确认 API、File Service 和两个 Worker 的角色隔离挂载。
+   本地首次启动还应设置 `FILE_STORAGE_SECRET_BOOTSTRAP_ENABLED=true`。一次性 Migrator 会把Compose中的MinIO基础设施凭据加密写入`minio-file-access-key`和`minio-file-secret-key`平台Secret；相同值幂等保留，已有值不同则停止并要求显式轮换。生产环境应预先配置受治理Secret并关闭此本地bootstrap。
+4. 记录旧附件队列 `ready`、`unacked`、consumer 数、retry/dead 队列计数。切换前只能有一个附件消费者。
+5. dry-run 回填，按返回的 `next_cursor` 循环；任何 `status=blocked` 都停止：
 
 ```bash
 python -m app.cli.backfill_task_file_attachments --batch-size 100
@@ -46,7 +54,7 @@ python -m app.cli.backfill_task_file_attachments --apply --batch-size 100
 - 页面和 API 不得出现文件名、正文、Bucket、对象键、Secret 或 JWT；
 - Runtime readiness 显示非敏感容量上限，并验证 tmpfs 可用空间至少 64 MiB；默认容器 tmpfs 256 MiB，单 Job 逻辑上限 224 MiB；
 - Publication 四项文件开关先保持全关，再按应用逐级启用；未命中 Job 保持原行为；
-- 至少观察附件重试、File Service 短暂不可用恢复、交付响应丢失重试和到期清理。
+- 至少观察附件重试、短时服务 JWT 到期前刷新、身份服务/File Service 短暂不可用恢复、交付响应丢失重试和到期清理。
 
 ## 4. 回滚
 
@@ -58,4 +66,4 @@ python -m app.cli.backfill_task_file_attachments --apply --batch-size 100
 
 ## Stop conditions
 
-任一条件立即停止：多个附件消费者；unacked 无法归零；File Service/JWKS/Bucket 未 ready；回填 `blocked`；消息幂等产生重复版本；Worker/Runtime/Delivery 获得 MinIO 凭据；审计或 UI 泄漏正文、对象位置或 Secret；没有经验证的回滚镜像和备份。
+任一条件立即停止：多个附件消费者；unacked 无法归零；Service Principal 材料不完整、角色挂载交叉或短时 JWT 无法签发/验签；File Service/JWKS/Bucket 未 ready；回填 `blocked`；消息幂等产生重复版本；Worker/Runtime/Delivery 获得 MinIO 凭据；审计或 UI 泄漏正文、对象位置、bootstrap credential 或 JWT；没有经验证的回滚镜像和备份。

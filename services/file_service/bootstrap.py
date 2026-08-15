@@ -120,7 +120,7 @@ def create_default_app() -> Any:
         refresh_seconds=settings.file_service.jwks_refresh_seconds,
     )
     service_jwks = CachedPrincipalJwks(
-        settings.file_service.service_principal_jwks_file,
+        settings.service_principal.public_jwks_file,
         refresh_seconds=settings.file_service.jwks_refresh_seconds,
     )
     verifier = FilePrincipalVerifier(jwks)

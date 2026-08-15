@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
+from typing import Any
+
 import pytest
 
 from app.modules.channel.domain.channel_event import ChannelFileReference
@@ -20,9 +23,7 @@ from backend.tests.test_file_workspace_repository import TIMESTAMP, _database
 
 def _service() -> tuple[FileWorkspaceRepository, JobFileManifestService]:
     repository = FileWorkspaceRepository(_database())
-    return repository, JobFileManifestService(
-        repository, TaskWorkspaceService(repository)
-    )
+    return repository, JobFileManifestService(repository, TaskWorkspaceService(repository))
 
 
 def _insert_job(
@@ -121,9 +122,7 @@ def test_job_manifest_freezes_exact_version_and_later_job_sees_new_current() -> 
         workspace=workspace,
         requester_id="user-a",
         publication_id="app-file-p1",
-        file_references=(
-            ChannelFileReference(file_id="file-notes", version_id="version-1"),
-        ),
+        file_references=(ChannelFileReference(file_id="file-notes", version_id="version-1"),),
     )
     first = service.finalize("job-1")
     assert first is not None
@@ -225,9 +224,12 @@ def test_manifest_rejects_cross_workspace_reference_without_snapshot_side_effect
     with pytest.raises(NonRetryableExecutionError) as error:
         service.finalize("job-cross")
     assert error.value.error_code == "file_reference_denied"
-    assert repository.database.execute_one(
-        "select id from agent_job_file_snapshot where job_id = 'job-cross'"
-    ) is None
+    assert (
+        repository.database.execute_one(
+            "select id from agent_job_file_snapshot where job_id = 'job-cross'"
+        )
+        is None
+    )
 
 
 def test_group_file_workspace_requires_actual_sender_staff_id() -> None:
@@ -249,3 +251,65 @@ def test_group_file_workspace_requires_actual_sender_staff_id() -> None:
             requests_file_output=True,
         )
     assert error.value.error_code == "file_group_sender_missing"
+
+
+def test_txt_suffix_is_bound_as_data_for_postgres_compatible_queries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository, service = _service()
+    database = repository.database
+    original_execute = database.execute
+    calls: list[tuple[str, tuple[Any, ...]]] = []
+
+    def recording_execute(
+        sql: str,
+        params: Iterable[Any] = (),
+    ) -> list[dict[str, Any]]:
+        values = tuple(params)
+        calls.append((sql, values))
+        return original_execute(sql, values)
+
+    monkeypatch.setattr(database, "execute", recording_execute)
+    assert service.has_pending_txt_attachments("job-bind-txt") is False
+
+    workspace = service.resolve_workspace(
+        tenant_id="tenant-a",
+        session_id="session-file",
+        requester_id="user-a",
+        conversation_type="direct",
+        enterprise_id="tenant-a",
+        connector_id="connector-a",
+        conversation_id="conversation-a",
+        sender_staff_id="staff-a",
+        publication_id="app-file-p1",
+        retention_period="WEEK",
+        attachments=(),
+        file_references=(),
+        requests_file_output=True,
+    )
+    assert workspace is not None
+    _insert_job(
+        repository,
+        job_id="job-bind-txt",
+        workspace_id=str(workspace["id"]),
+        session_id="session-file",
+    )
+    service.register_request(
+        job_id="job-bind-txt",
+        workspace=workspace,
+        requester_id="user-a",
+        publication_id="app-file-p1",
+        file_references=(),
+    )
+    assert service.finalize("job-bind-txt") is not None
+
+    txt_queries = [
+        (" ".join(sql.split()), params)
+        for sql, params in calls
+        if "lower(file_name)" in sql or "lower(a.file_name)" in sql
+    ]
+    assert len(txt_queries) == 2
+    for sql, params in txt_queries:
+        assert "like ?" in sql
+        assert "like '%" not in sql
+        assert "%.txt" in params

@@ -77,7 +77,6 @@ from app.modules.dingding.application.dingtalk_stream_service import (
     DingTalkStreamMessageService,
 )
 from app.modules.dingding.infrastructure.dingding_callback_client import DingTalkCallbackClient
-from app.modules.dingding.infrastructure.dingtalk_delivery_clients import DingTalkAccessTokenClient
 from app.modules.mcp_tool_runtime.service import ReadOnlyToolService
 from app.modules.mcp_tool_runtime.contracts import (
     FakeReadOnlyToolExecutor,
@@ -92,6 +91,8 @@ from app.modules.identity.application import (
     IdentityService,
     PrincipalSigningKey,
     PrincipalTokenIssuer,
+    ServicePrincipalTokenClient,
+    ServicePrincipalTokenIssuer,
 )
 from app.modules.identity.application.ones_identity_binding import (
     OnesIdentityBindingService,
@@ -228,6 +229,7 @@ class Container:
     runtime_control_service: RuntimeControlService
     channel_outbox_publisher: ChannelOutboxPublisher
     channel_dispatch_service: ChannelDispatchService
+    service_principal_token_issuer: ServicePrincipalTokenIssuer | None = None
 
 
 ContainerFactory = Callable[[Settings], Container]
@@ -643,6 +645,20 @@ def _build_container(
             audit_service,
             ttl_seconds=settings.principal_jwt.ttl_seconds,
         )
+    service_principal_token_issuer: ServicePrincipalTokenIssuer | None = None
+    if service_name == "api-server" and settings.service_principal.enabled:
+        service_principal_token_issuer = ServicePrincipalTokenIssuer.from_files(
+            signing_private_key_file=(settings.service_principal.signing_private_key_file),
+            file_worker_bootstrap_file=(
+                settings.service_principal.file_worker_bootstrap_token_file
+            ),
+            delivery_worker_bootstrap_file=(
+                settings.service_principal.delivery_worker_bootstrap_token_file
+            ),
+            audit_service=audit_service,
+            environment=settings.environment,
+            ttl_seconds=settings.service_principal.ttl_seconds,
+        )
     create_job_service = CreateAgentJobService(
         repository=agent_repository,
         permission_service=permission_service,
@@ -920,13 +936,22 @@ def _build_container(
     )
     file_delivery_sender = None
     if service_name == "delivery-dispatch-worker":
+        if not settings.service_principal.enabled:
+            raise RuntimeError("Delivery Worker Service Principal is disabled")
+        delivery_token_provider = ServicePrincipalTokenClient(
+            base_url=settings.service_principal.identity_base_url,
+            allowed_hosts=settings.service_principal.identity_allowed_hosts,
+            bootstrap_credential_file=(
+                settings.service_principal.delivery_worker_bootstrap_token_file
+            ),
+            timeout_seconds=settings.service_principal.timeout_seconds,
+            refresh_skew_seconds=settings.service_principal.refresh_skew_seconds,
+        )
         file_delivery_sender = DingTalkFileDeliverySender(
             file_service=FileServiceDeliveryClient(
                 base_url=settings.file_service.internal_base_url,
                 allowed_hosts=settings.file_service.internal_allowed_hosts,
-                principal_token_file=(
-                    settings.file_service.delivery_principal_token_file
-                ),
+                token_provider=delivery_token_provider,
                 timeout_seconds=settings.file_service.internal_timeout_seconds,
             ),
             connector_registry=connector_registry,
@@ -941,35 +966,47 @@ def _build_container(
         file_delivery_sender=file_delivery_sender,
         file_delivery_service=file_version_delivery_service,
     )
-    object_storage: ObjectStorage | None = InMemoryObjectStorage(
-        settings.object_storage.bucket
-    )
+    object_storage: ObjectStorage | None = InMemoryObjectStorage(settings.object_storage.bucket)
     attachment_importer = None
     if service_name == "file-worker" and message_bus is None:
+        if not settings.service_principal.enabled:
+            raise RuntimeError("File Worker Service Principal is disabled")
         object_storage = None
+        file_worker_token_provider = ServicePrincipalTokenClient(
+            base_url=settings.service_principal.identity_base_url,
+            allowed_hosts=settings.service_principal.identity_allowed_hosts,
+            bootstrap_credential_file=(settings.service_principal.file_worker_bootstrap_token_file),
+            timeout_seconds=settings.service_principal.timeout_seconds,
+            refresh_skew_seconds=settings.service_principal.refresh_skew_seconds,
+        )
         attachment_importer = FileServiceAttachmentImporter(
             base_url=settings.file_service.internal_base_url,
             allowed_hosts=settings.file_service.internal_allowed_hosts,
-            principal_token_file=settings.file_service.worker_principal_token_file,
+            token_provider=file_worker_token_provider,
             timeout_seconds=settings.file_service.internal_timeout_seconds,
         )
     attachment_service: AttachmentProcessingService | None = None
-    if credential_cipher is not None and (
-        service_name == "file-worker" or message_bus is not None
-    ):
+    if credential_cipher is not None and (service_name == "file-worker" or message_bus is not None):
+
+        def resolve_dingtalk_media_credentials(
+            connector_id: str,
+        ) -> tuple[str, str, str]:
+            connector = connector_registry.require_dingtalk_stream_ingress(connector_id)
+            return (
+                connector_registry.resolve_metadata_reference(connector, "client_id_ref")
+                or connector_registry.metadata_value(connector, "client_id"),
+                connector_registry.resolve_secret(connector),
+                connector_registry.metadata_value(connector, "default_robot_code"),
+            )
+
         attachment_service = AttachmentProcessingService(
             repository=agent_repository,
             publisher=publisher,
             audit_service=audit_service,
             credential_cipher=credential_cipher,
             downloader=DingTalkMediaDownloader(
-                token_client=DingTalkAccessTokenClient(
-                    client_id=settings.dingtalk.stream_client_id,
-                    client_secret=settings.dingtalk.stream_client_secret,
-                    timeout_seconds=settings.attachments.timeout_seconds,
-                ),
-                robot_code=settings.dingtalk.default_robot_code
-                or settings.dingtalk.stream_client_id,
+                credential_resolver=resolve_dingtalk_media_credentials,
+                robot_code=settings.dingtalk.default_robot_code,
                 timeout_seconds=settings.attachments.timeout_seconds,
             ),
             storage=object_storage,
@@ -1015,6 +1052,7 @@ def _build_container(
         ones_identity_binding_service=ones_identity_binding_service,
         external_identity_credential_repository=external_identity_credential_repository,
         principal_token_issuer=principal_token_issuer,
+        service_principal_token_issuer=service_principal_token_issuer,
         identity_discovery_repository=identity_discovery_repository,
         identity_discovery_service=identity_discovery_service,
         identity_admin_service=identity_admin_service,

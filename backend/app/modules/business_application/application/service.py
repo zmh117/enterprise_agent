@@ -24,6 +24,7 @@ from app.modules.business_application.domain.policies import (
     validate_environment,
     validate_execution_policy,
     validate_session_policy,
+    validate_task_file_attachment_dependency,
     validate_task_file_features,
     validate_task_workspace_retention_period,
     validate_status,
@@ -190,6 +191,10 @@ class BusinessApplicationService:
         )
         task_file_features = validate_task_file_features(
             payload.get("task_file_features")
+        )
+        validate_task_file_attachment_dependency(
+            session_policy=session_policy,
+            task_file_features=task_file_features,
         )
         execution_policy = validate_execution_policy(dict(payload.get("execution_policy") or {}))
         triggers = [

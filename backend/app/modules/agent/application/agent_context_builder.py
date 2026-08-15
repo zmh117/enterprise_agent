@@ -12,6 +12,11 @@ from app.modules.job.domain.execution_policy import JobExecutionPolicySnapshot
 from app.shared.exceptions import NonRetryableExecutionError
 
 
+ATTACHMENT_ONLY_USER_QUESTION = (
+    "请处理本次消息中已上传的文件；若没有更具体的文字要求，请先读取并总结文件内容。"
+)
+
+
 class AgentContextBuilder:
     def __init__(
         self,
@@ -80,7 +85,7 @@ class AgentContextBuilder:
                 "Do not modify code, databases, Redis, services, deployments, or files.",
                 "Every conclusion must cite evidence or state uncertainty.",
             ],
-            user_question=job.input_message,
+            user_question=(job.input_message.strip() or ATTACHMENT_ONLY_USER_QUESTION),
             project_code=job.project_code,
             allowed_tools=allowed_tools,
             tool_restrictions=_tool_restrictions(allowed_tools),

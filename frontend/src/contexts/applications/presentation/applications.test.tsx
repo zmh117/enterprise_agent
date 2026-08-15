@@ -247,6 +247,8 @@ describe("Business Application workbench", () => {
         conversation_mode: "actor",
         recent_message_limit: 20,
         retention_days: 30,
+        continuous_conversation_enabled: true,
+        attachments_enabled: false,
       },
       execution_policy: {},
       validation: { valid: false, errors: [] },
@@ -392,6 +394,14 @@ describe("Business Application workbench", () => {
       })
     ).toBeInTheDocument()
     expect(screen.queryByText("操作失败，请重试。")).not.toBeInTheDocument()
+    expect(screen.getByLabelText("连续会话")).toBeChecked()
+    const attachments = screen.getByLabelText("允许消息附件")
+    expect(attachments).not.toBeChecked()
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "任务工作区" })
+    )
+    expect(attachments).toBeChecked()
+    expect(attachments).toHaveAttribute("aria-disabled", "true")
     const mcpTool = await screen.findByLabelText(
       "选择 MCP Tool search_merge_requests"
     )
@@ -403,6 +413,8 @@ describe("Business Application workbench", () => {
       expect(savedBody).toMatchObject({
         session_policy: {
           conversation_mode: "channel",
+          continuous_conversation_enabled: true,
+          attachments_enabled: true,
         },
         mcp_tools: ["search_merge_requests"],
       })

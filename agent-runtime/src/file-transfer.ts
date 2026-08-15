@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { lstat, mkdir, open, rm } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
@@ -73,6 +73,14 @@ export type FileTransferResult =
       readonly size_bytes: number;
       readonly sha256: string;
     };
+
+export interface SelectedSandboxEntry {
+  readonly action: "SELECTED";
+  readonly sandbox_entry_handle: string;
+  readonly relative_path: string;
+  readonly size_bytes: number;
+  readonly sha256: string;
+}
 
 export class FileTransferBoundaryError extends Error {
   constructor(readonly code: string, message: string) {
@@ -269,6 +277,73 @@ export class FileTransferCoordinator {
   private readonly entries = new Map<string, { relativePath: string; absolutePath: string }>();
 
   constructor(private readonly port: FileTransferPort) {}
+
+  async selectSandboxOutput(
+    relativePath: string,
+    context: FileTransferContext,
+    maximumSizeBytes = 15 * 1024 * 1024
+  ): Promise<SelectedSandboxEntry> {
+    const safePath = safeRelativePath(relativePath);
+    const topLevel = safePath.split("/")[0];
+    if (topLevel !== "work" && topLevel !== "outputs") {
+      throw new FileTransferBoundaryError(
+        "file_transfer_path_invalid",
+        "only work or outputs TXT files can be selected"
+      );
+    }
+    const absolutePath = resolveSandboxPath(context.workspacePath, safePath);
+    await rejectSymlinks(context.workspacePath, absolutePath);
+    const state = await lstat(absolutePath);
+    if (!state.isFile()) {
+      throw new FileTransferBoundaryError(
+        "file_transfer_entry_invalid",
+        "sandbox entry must reference a regular file"
+      );
+    }
+    if (state.size > maximumSizeBytes) {
+      throw new FileTransferBoundaryError(
+        "file_transfer_size_mismatch",
+        "sandbox output exceeds the TXT size limit"
+      );
+    }
+    const digest = createHash("sha256");
+    const decoder = new TextDecoder("utf-8", { fatal: true });
+    let sizeBytes = 0;
+    try {
+      for await (const chunk of createReadStream(absolutePath)) {
+        if (context.signal.aborted) throw context.signal.reason;
+        const bytes = chunk as Buffer;
+        sizeBytes += bytes.byteLength;
+        if (sizeBytes > maximumSizeBytes) {
+          throw new FileTransferBoundaryError(
+            "file_transfer_size_mismatch",
+            "sandbox output exceeds the TXT size limit"
+          );
+        }
+        digest.update(bytes);
+        decoder.decode(bytes, { stream: true });
+      }
+      decoder.decode();
+    } catch (error) {
+      if (error instanceof FileTransferBoundaryError) throw error;
+      if (error instanceof TypeError) {
+        throw new FileTransferBoundaryError(
+          "file_transfer_encoding_invalid",
+          "sandbox output must be valid UTF-8"
+        );
+      }
+      throw error;
+    }
+    const handle = `sandbox-entry:${randomUUID()}`;
+    this.entries.set(handle, { relativePath: safePath, absolutePath });
+    return {
+      action: "SELECTED",
+      sandbox_entry_handle: handle,
+      relative_path: safePath,
+      size_bytes: sizeBytes,
+      sha256: digest.digest("hex")
+    };
+  }
 
   async registerSandboxEntry(
     sandboxEntryHandle: string,

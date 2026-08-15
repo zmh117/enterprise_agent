@@ -23,6 +23,7 @@
 - [x] 3.3 实现 Asia/Shanghai 自然日、自然周和自然月到期计算器，覆盖月末、年末和活动不滚动延期测试
 - [x] 3.4 在管理前端的草稿表单、详情、列表和发布预览中展示并编辑工作区策略，同时显示字段来源和准确自然周期语义
 - [x] 3.5 将 File Service/File Worker readiness 纳入发布预检和运行状态，依赖未接线时返回稳定非敏感 reason code
+- [x] 3.6 修复管理前端附件与连续会话策略字段丢失，并强制任务工作区依赖消息附件策略
 
 ## 4. File Service 骨架、身份与唯一对象入口
 
@@ -32,6 +33,8 @@
 - [x] 4.4 实现受限的 `file-worker` 服务 Principal 校验，将附件导入/清理 scope 与用户 Agent scope 分离并拒绝共享 Internal API Token
 - [x] 4.5 实现 MinIO 基础设施适配器，只在 File Service 内解析 `secret://platform/`，使用服务端生成的不透明对象键并禁止凭据、Bucket、对象键和预签名 URL 越层
 - [x] 4.6 增加配置、异常、日志、Tool 结果和审计脱敏测试，证明 JWT、MinIO Secret、钉钉凭据、对象键和文件正文不会被持久化或返回模型
+- [x] 4.7 在平台 API 身份模块实现独立 Service Principal Key Ring、角色 bootstrap 认证、固定 claim/scope 和不超过 300 秒的按需 JWT 签发与安全审计
+- [x] 4.8 为 File Worker 与 Delivery Worker 实现短时 JWT 缓存/到期前刷新，并让 File Service 按完整固定角色 scope 集合验证当前接口所需 scope
 
 ## 5. 文件、版本、工作区与配额核心
 
@@ -65,8 +68,8 @@
 - [x] 8.3 实现启动及周期残留扫描，只删除没有 RUNNING Job 归属的明确沙盒目录，并增加 Runtime 崩溃恢复测试
 - [x] 8.4 仅对冻结文件能力的 Job 开放沙盒内 `Read`、`Grep`、`Write`、`Edit`，继续拒绝 Bash、Shell、NotebookEdit、Web、任意 MCP 和其它开放执行能力
 - [x] 8.5 为两个 Runtime 实现真实路径、`..`、绝对路径、符号链接、特殊设备、文件数量和容量守卫，并在副作用前拒绝逃逸
-- [x] 8.6 实现 Runtime file-transfer coordinator，按 File Service 受控描述流式物化 Manifest 精确版本且不接受任意 URL 或直接访问 MinIO
-- [x] 8.7 实现显式 sandbox entry 选择和上传桥接，确保 Job 结束不会扫描或自动提交全部沙盒文件
+- [x] 8.6 将 Runtime file-transfer coordinator 接入 Python/TypeScript 真实 Claude SDK 工具循环，在 File MCP ToolResult 返回模型前拦截受控描述、流式物化 Manifest 精确版本，且不接受任意 URL 或直接访问 MinIO
+- [x] 8.7 实现仅文件 Job 可见的代码自有 `select_sandbox_output`，把一个经过路径、类型、符号链接、大小和 UTF-8 校验的精确本地 TXT 注册为不透明 sandbox entry；提交意图必须触发该精确 entry 的流式上传，Job 结束不得扫描或自动提交全部沙盒文件
 - [x] 8.8 增加 Python/TypeScript 等价性测试，覆盖按需下载、精确版本、Write/Edit、路径逃逸、配额、取消清理和字节不进入模型事件
 
 ## 9. 两阶段提交、幂等与并发冲突
@@ -107,15 +110,17 @@
 - [x] 12.5 实现 File Worker readiness 和运营指标，覆盖 RabbitMQ 契约、File Service 连接、附件/暂存/工作区/保留清理积压、最早到期时间和安全错误分类
 - [x] 12.6 更新平台运维 API 与前端，展示 File Service/File Worker 接线、积压和最近结果，不显示文件名、正文、对象键或 Secret
 - [x] 12.7 增加 Compose 配置和容器检查，证明默认服务清单、单附件消费者、MinIO Secret 唯一挂载和 docling-server 未部署
+- [x] 12.8 更新密钥初始化、Compose 和环境示例，使用独立服务私钥/JWKS与角色隔离 bootstrap credential，移除宿主机静态 Service JWT 文件要求并验证首次启动
 
 ## 13. 灰度迁移、验收与文档收口
 
 - [x] 13.1 编写附件关联与到期事实回填命令，支持 dry-run、分批、断点续跑和对账，不下载重复内容也不删除对象
 - [x] 13.2 编写单消费者切换运行手册：暂停 `attachment-worker`、核对 ready/unacked、启动 `file-worker`、验证幂等和必要时按顺序回滚
 - [x] 13.3 通过 Publication Revision 功能开关灰度工作区、File MCP、Runtime Write/Edit 和默认文件交付，未命中 Job 保持原行为
-- [x] 13.4 使用合成 TXT 和假凭据完成私聊真实链路验收：Channel ingress、File Worker、File Service、PostgreSQL、MinIO、RabbitMQ、Job、Runtime、Sandbox、File MCP、Commit、Delivery 和最终回复
+- [ ] 13.4 使用合成 TXT 和假凭据完成私聊真实链路验收：Channel ingress、File Worker、File Service、PostgreSQL、MinIO、RabbitMQ、Job、真实 Claude SDK Runtime 工具循环、Sandbox、File MCP、Commit、Delivery 和最终回复；不得以手工直接调用 transfer coordinator 代替 Runtime 接线证据
 - [x] 13.5 使用两个群成员完成群工作区连续编辑与并发冲突验收，证明实际 sender 审计、同群共享、跨群拒绝和只有一个当前版本
 - [x] 13.6 完成负向验收：Principal 拒绝、权限撤销、非法编码、15 MiB/20 文件/100 MiB 拒绝、路径逃逸、幂等重试、沙盒残留、staging 清理、交付重试和 Secret/正文不泄漏
 - [x] 13.7 更新 `CONTEXT.md`、相关 ADR、Compose/运维文档和管理员说明，明确自然周期、360 天独立保留、第一阶段 TXT、钉钉在线编辑不可感知和重新上传规则
 - [x] 13.8 在代码、migration、测试、运行证据和回滚窗口全部满足后执行 contract：移除旧 `attachment-worker` 服务及其 MinIO 直连路径，不删除消息附件业务身份
-- [x] 13.9 运行受影响的后端、前端、Runtime、MCP、Worker、migration、Compose 与端到端测试，并执行 `openspec validate add-governed-task-file-workspaces --strict`、未完成任务核对和 `git diff --check`
+- [ ] 13.9 运行受影响的后端、前端、Runtime、MCP、Worker、migration、Compose 与端到端测试，并执行 `openspec validate add-governed-task-file-workspaces --strict`、未完成任务核对和 `git diff --check`
+- [x] 13.10 使用新生成的假服务身份材料完成本地 Compose 创建、按需签发、角色隔离、刷新窗口和 File Service 验签验收，不记录或回显任何真实Secret/JWT

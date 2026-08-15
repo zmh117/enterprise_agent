@@ -58,6 +58,8 @@ class AttachmentProcessingService:
         attachment = self.repository.get_attachment(attachment_id)
         if attachment.status in TERMINAL_ATTACHMENT_STATUSES:
             return self._release_if_ready(attachment.job_id, correlation_id)
+        job = self.repository.get_job(attachment.job_id)
+        session = self.repository.get_session(job.session_id)
         secret = self.repository.get_attachment_secret(attachment_id)
         if _expired(secret.get("source_credential_expires_at")):
             self.repository.update_attachment(
@@ -75,10 +77,11 @@ class AttachmentProcessingService:
             data = self.downloader.download(
                 download_code=credential,
                 max_bytes=self.settings.max_file_bytes,
+                connector_id=job.source_connector_id,
+                robot_code=session.bot_identity,
             )
             task_txt = (
-                self.importer is not None
-                and Path(attachment.file_name).suffix.lower() == ".txt"
+                self.importer is not None and Path(attachment.file_name).suffix.lower() == ".txt"
             )
             detected_mime = (
                 "text/plain"

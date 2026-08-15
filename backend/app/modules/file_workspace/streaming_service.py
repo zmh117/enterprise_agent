@@ -295,7 +295,7 @@ class GovernedFileStreamingService:
             finally:
                 await asyncio.to_thread(stream.close)
 
-        return chunks(), "text/plain; charset=utf-8"
+        return chunks(), "application/octet-stream"
 
     async def download_delivery(
         self,

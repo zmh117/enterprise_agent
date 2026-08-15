@@ -19,10 +19,30 @@ Python与TypeScript Runtime MUST 为每次调用创建隔离Job Sandbox，以受
 ### Requirement: Runtime 通过受控文件桥完成物化和提交
 Runtime MUST 通过File Service受控流式接口下载Job File Manifest中的精确版本和上传显式选中的沙盒文件。File MCP只创建物化或提交意图并返回不透明标识，完整文件字节 MUST NOT 进入模型上下文、MCP JSON、Tool事件或审计。Runtime不得获得MinIO凭据、Bucket、对象键或可供模型使用的上传URL。
 
+Python与TypeScript Runtime MUST 使用代码注册的进程内File MCP bridge代理Job冻结的部署固定File Service工具，并在远端ToolResult交回模型前处理隐藏传输控制信息。bridge MUST 使用当前Job File Principal JWT和固定内部流式路径，不得接受模型提供的URL、Header、Token、绝对路径或对象位置；SDK消息返回后再处理的旁路不满足本要求。
+
 #### Scenario: Agent显式提交沙盒文件
 - **WHEN** Agent调用已冻结的文件提交工具并选择一个受控沙盒文件
 - **THEN** Runtime使用当前Job绑定流式上传内容到File Service
 - **AND** Tool事件只保留文件身份、版本、大小、哈希摘要和结果
+
+#### Scenario: Runtime在模型看到结果前物化文件
+- **WHEN** File Service为`file_prepare_materialization`返回合法隐藏传输控制信息
+- **THEN** Runtime bridge在该ToolResult返回模型前完成流式下载、大小与SHA-256校验和sandbox entry登记
+- **AND** 模型只收到安全相对路径、不透明handle、大小和摘要
+
+### Requirement: Runtime 显式选择单个沙盒输出
+仅当当前Job冻结`file_create_commit_intent`时，Runtime SHALL 注册代码自有的`select_sandbox_output`工具。该工具 MUST 只接受当前Job Sandbox中的安全相对`.txt`路径，在返回不透明sandbox entry handle前校验路径边界、常规文件、无符号链接、15 MiB上限和UTF-8；不得返回正文，不得扫描目录，也不得在Job结束时自动选择或提交其它文件。已物化输入继续使用其既有handle。
+
+#### Scenario: Agent选择新生成的TXT
+- **WHEN** Agent在`outputs/`或`work/`生成合法TXT并显式调用`select_sandbox_output`
+- **THEN** Runtime只为该精确文件创建本Job有效的不透明handle并返回安全元数据
+- **AND** 后续提交意图只能上传该handle映射的文件
+
+#### Scenario: Agent未选择其它草稿
+- **WHEN** Job沙盒中还存在未选择的其它文件并结束执行
+- **THEN** Runtime不扫描、不上传且不提交这些文件
+- **AND** finally清理整个Job Sandbox
 
 ### Requirement: 文件提交结果不扩展 Job 终态枚举
 系统 MUST 为每个File Commit Intent保存独立业务结果，部分提交冲突或拒绝不得回滚其它成功版本。Runtime能持久化最终回复并准确报告文件结果时，Job SHALL使用现有`SUCCEEDED`；系统 MUST NOT 新增`PARTIAL` Job状态。只有Runtime整体执行失败、超时或无法产生最终回复时才使用现有失败类终态。

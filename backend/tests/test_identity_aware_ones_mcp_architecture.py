@@ -220,10 +220,25 @@ def test_secret_bootstrap_makes_container_principal_private_key_read_only(
     principal_private_key = tmp_path / "principal-jwt-private.pem"
     assert stat.S_IMODE(principal_private_key.stat().st_mode) == 0o400
     assert stat.S_IMODE((tmp_path / "principal-jwks.json").stat().st_mode) == 0o644
+    service_private_key = tmp_path / "service-principal-private.pem"
+    service_jwks = tmp_path / "service-principal-jwks.json"
+    file_worker_bootstrap = tmp_path / "file-worker-bootstrap-token"
+    delivery_worker_bootstrap = tmp_path / "delivery-worker-bootstrap-token"
+    assert stat.S_IMODE(service_private_key.stat().st_mode) == 0o400
+    assert stat.S_IMODE(service_jwks.stat().st_mode) == 0o644
+    assert stat.S_IMODE(file_worker_bootstrap.stat().st_mode) == 0o400
+    assert stat.S_IMODE(delivery_worker_bootstrap.stat().st_mode) == 0o400
+    assert file_worker_bootstrap.read_bytes() != delivery_worker_bootstrap.read_bytes()
 
     loaded = principal_private_key.read_bytes()
+    service_loaded = service_private_key.read_bytes()
+    file_worker_loaded = file_worker_bootstrap.read_bytes()
+    delivery_worker_loaded = delivery_worker_bootstrap.read_bytes()
     subprocess.run([str(script), str(tmp_path)], check=True, capture_output=True, text=True)
     assert principal_private_key.read_bytes() == loaded
+    assert service_private_key.read_bytes() == service_loaded
+    assert file_worker_bootstrap.read_bytes() == file_worker_loaded
+    assert delivery_worker_bootstrap.read_bytes() == delivery_worker_loaded
     assert stat.S_IMODE(principal_private_key.stat().st_mode) == 0o400
 
 

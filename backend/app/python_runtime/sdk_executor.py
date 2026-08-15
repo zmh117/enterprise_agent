@@ -30,6 +30,13 @@ from app.python_runtime.job_sandbox import (
     JobSandboxError,
     JobSandboxManager,
 )
+from app.python_runtime.file_mcp_bridge import (
+    LOCAL_FILE_OUTPUT_TOOL,
+    PythonRuntimeFileBridge,
+    PythonRuntimeFileBridgeFactory,
+    create_python_runtime_file_bridge,
+)
+from app.python_runtime.file_transfer import FileTransferContext
 from app.shared.config import ExecutionSettings
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
 
@@ -114,7 +121,7 @@ class PythonExecutionOutcome:
 
 
 class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
-    """Python SDK adapter with two code-owned, deployment-fixed MCP servers."""
+    """Python SDK adapter with deployment-fixed MCP and a Runtime-local file bridge."""
 
     def __init__(
         self,
@@ -128,6 +135,9 @@ class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
         file_principal_token: str = "",
         sandbox_manager: JobSandboxManager | None = None,
         cancellation_event: threading.Event | None = None,
+        file_bridge_factory: PythonRuntimeFileBridgeFactory = (
+            create_python_runtime_file_bridge
+        ),
     ) -> None:
         super().__init__(
             model="",
@@ -143,17 +153,25 @@ class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
         self._principal_token = principal_token
         self._file_mcp_server_url = file_mcp_server_url
         self._file_principal_token = file_principal_token
+        self._file_bridge_factory = file_bridge_factory
+        self._file_bridge: PythonRuntimeFileBridge | None = None
 
-    def _build_mcp_server(self, request: AgentRunRequest) -> dict[str, dict[str, Any]]:
-        shared_headers = {
+    @staticmethod
+    def _shared_headers(request: AgentRunRequest) -> dict[str, str]:
+        return {
             "X-Correlation-Id": f"job:{request.job_id}",
             "X-Job-Id": request.job_id,
             "X-App-User-Id": request.user_id,
             "X-Project-Code": request.project_code,
             "X-Invocation-Id": request.invocation_id,
             "X-Agent-Publication-Id": request.context.publication_id,
-            "X-Application-Publication-Id": (request.context.application_publication_id),
+            "X-Application-Publication-Id": (
+                request.context.application_publication_id
+            ),
         }
+
+    def _build_mcp_server(self, request: AgentRunRequest) -> dict[str, dict[str, Any]]:
+        shared_headers = self._shared_headers(request)
         servers: dict[str, dict[str, Any]] = {}
         server_codes = {binding.server_code for binding in request.context.mcp_bindings} or (
             {"tool-mcp"} if request.context.allowed_tools else set()
@@ -186,15 +204,52 @@ class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
                     safe_message="当前调用缺少平台文件身份凭证",
                     error_code="runtime_file_principal_token_missing",
                 )
-            servers["file_service"] = {
-                "type": "http",
-                "url": self._file_mcp_server_url,
-                "headers": {
-                    **shared_headers,
-                    "Authorization": f"Bearer {self._file_principal_token}",
-                },
-            }
         return servers
+
+    async def _open_mcp_server(self, request: AgentRunRequest, sdk: Any) -> dict[str, Any]:
+        servers: dict[str, Any] = self._build_mcp_server(request)
+        file_bindings = tuple(
+            item.tool_name
+            for item in request.context.mcp_bindings
+            if item.server_code == "file-service"
+        )
+        if not file_bindings:
+            return servers
+        sandbox = self._sandbox.get()
+        if sandbox is None:
+            raise NonRetryableExecutionError(
+                "Python Runtime Job Sandbox is unavailable",
+                safe_message="当前任务沙盒不可用",
+                error_code="runtime_sandbox_unavailable",
+            )
+        bridge = self._file_bridge_factory(
+            sdk=sdk,
+            mcp_server_url=self._file_mcp_server_url,
+            headers={
+                **self._shared_headers(request),
+                "Authorization": f"Bearer {self._file_principal_token}",
+            },
+            frozen_tool_names=file_bindings,
+            context=FileTransferContext(
+                job_id=request.job_id,
+                workspace_path=sandbox.path,
+                principal_token=self._file_principal_token,
+            ),
+            timeout_seconds=float(request.context.timeout_seconds),
+        )
+        await bridge.connect()
+        self._file_bridge = bridge
+        servers["file_service"] = bridge.server
+        return servers
+
+    async def _close_mcp_server(self) -> None:
+        bridge = self._file_bridge
+        self._file_bridge = None
+        if bridge is not None:
+            try:
+                await bridge.close()
+            except Exception:
+                pass
 
     def _build_options(
         self,
@@ -216,6 +271,10 @@ class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
             exact_tools.append(f"mcp__{alias}__{item.tool_name}")
         if not context.mcp_bindings:
             exact_tools = [f"mcp__tool_mcp__{name}" for name in context.allowed_tools]
+        if self._file_bridge is not None and LOCAL_FILE_OUTPUT_TOOL in (
+            self._file_bridge.local_tool_names
+        ):
+            exact_tools.append(f"mcp__file_service__{LOCAL_FILE_OUTPUT_TOOL}")
         exact_tool_set = frozenset(exact_tools)
         file_job = any(
             item.server_code == "file-service" for item in context.mcp_bindings

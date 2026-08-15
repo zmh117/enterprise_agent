@@ -9,6 +9,12 @@ from .principal_jwt import (
     PrincipalTokenIssuer,
     PrincipalTokenVerifier,
 )
+from .service_principal import (
+    AccessTokenProvider,
+    ServicePrincipalTokenClient,
+    ServicePrincipalTokenError,
+    ServicePrincipalTokenIssuer,
+)
 
 __all__ = [
     "AuthService",
@@ -20,4 +26,8 @@ __all__ = [
     "PrincipalTokenError",
     "PrincipalTokenIssuer",
     "PrincipalTokenVerifier",
+    "AccessTokenProvider",
+    "ServicePrincipalTokenClient",
+    "ServicePrincipalTokenError",
+    "ServicePrincipalTokenIssuer",
 ]

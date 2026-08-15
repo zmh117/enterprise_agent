@@ -51,6 +51,14 @@ def test_minio_credentials_and_connections_stop_at_file_service_boundary() -> No
             direct_credential_services.add(name)
     assert direct_credential_services <= {"minio", "minio-init"}
 
+    migrator = services["migrator"]
+    assert {
+        "app_config_master_key",
+        "file_storage_bootstrap_access_key",
+        "file_storage_bootstrap_secret_key",
+    } <= set(migrator["secrets"])
+    assert "bootstrap_file_storage_secrets" in migrator["command"][-1]
+
     file_environment = services["file-service"]["environment"]
     assert file_environment["FILE_STORAGE_ACCESS_KEY_REF"].startswith(
         "${FILE_STORAGE_ACCESS_KEY_REF:-secret://platform/"
@@ -82,7 +90,7 @@ def test_minio_credentials_and_connections_stop_at_file_service_boundary() -> No
         assert "minio" not in service.get("depends_on", {}), name
 
 
-def test_worker_identity_files_are_role_separated_and_file_service_is_hardened() -> None:
+def test_worker_identity_bootstrap_is_role_separated_and_file_service_is_hardened() -> None:
     services = _compose()["services"]
     file_service = services["file-service"]
     file_worker = services["file-worker"]
@@ -96,12 +104,29 @@ def test_worker_identity_files_are_role_separated_and_file_service_is_hardened()
         "principal_jwks",
         "service_principal_jwks",
     }
-    assert "file_worker_principal_token" in file_worker["secrets"]
-    assert "delivery_worker_principal_token" not in file_worker["secrets"]
-    assert "delivery_worker_principal_token" in delivery_worker["secrets"]
-    assert "file_worker_principal_token" not in delivery_worker["secrets"]
+    assert "file_worker_bootstrap_token" in file_worker["secrets"]
+    assert "delivery_worker_bootstrap_token" not in file_worker["secrets"]
+    assert "delivery_worker_bootstrap_token" in delivery_worker["secrets"]
+    assert "file_worker_bootstrap_token" not in delivery_worker["secrets"]
     assert "principal_jwt_private_key" not in file_worker["secrets"]
     assert "principal_jwt_private_key" not in delivery_worker["secrets"]
+    assert "service_principal_private_key" not in file_worker["secrets"]
+    assert "service_principal_private_key" not in delivery_worker["secrets"]
+
+    api = services["api-server"]
+    assert {
+        "service_principal_private_key",
+        "file_worker_bootstrap_token",
+        "delivery_worker_bootstrap_token",
+    } <= set(api["secrets"])
+    assert file_worker["depends_on"]["api-server"]["condition"] == "service_healthy"
+    assert delivery_worker["depends_on"]["api-server"]["condition"] == "service_healthy"
+
+    compose_text = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "FILE_WORKER_PRINCIPAL_TOKEN_FILE" not in compose_text
+    assert "DELIVERY_WORKER_PRINCIPAL_TOKEN_FILE" not in compose_text
+    assert "file-worker-principal.jwt" not in compose_text
+    assert "delivery-worker-principal.jwt" not in compose_text
 
 
 def test_runtime_tmpfs_and_per_job_limits_are_explicitly_configured() -> None:

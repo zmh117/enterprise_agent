@@ -56,6 +56,16 @@ class ClaudeSdk:
     permission_deny: Any | None = None
 
 
+async def _streaming_user_prompt(content: str) -> AsyncIterator[dict[str, Any]]:
+    """Emit one SDK streaming input message so can_use_tool remains available."""
+    yield {
+        "type": "user",
+        "session_id": "",
+        "message": {"role": "user", "content": content},
+        "parent_tool_use_id": None,
+    }
+
+
 class _SdkAuditNormalizer:
     """Projects only bounded SDK metadata; never message content or raw payloads."""
 
@@ -109,15 +119,11 @@ class _SdkAuditNormalizer:
                     "event_type": "api_retry",
                     "payload": {
                         "attempt": _bounded_int(_value(source, "attempt"), 1, 32, 1),
-                        "max_retries": _bounded_int(
-                            _value(source, "max_retries"), 1, 32, 1
-                        ),
+                        "max_retries": _bounded_int(_value(source, "max_retries"), 1, 32, 1),
                         "retry_delay_ms": _bounded_int(
                             _value(source, "retry_delay_ms"), 0, 1_800_000, 0
                         ),
-                        "error_status": _http_status_or_none(
-                            _value(source, "error_status")
-                        ),
+                        "error_status": _http_status_or_none(_value(source, "error_status")),
                         "error_code": _bounded_identifier_text(
                             _value(source, "error") or "unknown", 128
                         ),
@@ -170,13 +176,9 @@ class _SdkAuditNormalizer:
                             "SDK_OBSERVED" if started is not None else "UNAVAILABLE"
                         ),
                         "usage": _nullable_usage(_value(body, "usage")),
-                        "stop_reason": _bounded_optional_text(
-                            _value(body, "stop_reason"), 128
-                        ),
+                        "stop_reason": _bounded_optional_text(_value(body, "stop_reason"), 128),
                         "error_code": error_code,
-                        "error_summary": (
-                            "模型响应失败" if error_code else None
-                        ),
+                        "error_summary": ("模型响应失败" if error_code else None),
                     },
                 }
             )
@@ -194,9 +196,7 @@ def _sdk_message_type(message: Any) -> str:
     name = message.__class__.__name__.lower()
     if name.endswith("message"):
         name = name.removesuffix("message")
-    return {"system": "system", "assistant": "assistant", "result": "result"}.get(
-        name, name
-    )
+    return {"system": "system", "assistant": "assistant", "result": "result"}.get(name, name)
 
 
 def _utc_now() -> str:
@@ -291,18 +291,18 @@ def _result_accounting(message: Any) -> dict[str, Any]:
             )
     raw_usage = _value(message, "usage")
     return {
-        "status": "COMPLETE" if models else "PARTIAL" if isinstance(raw_usage, dict) else "UNAVAILABLE",
+        "status": "COMPLETE"
+        if models
+        else "PARTIAL"
+        if isinstance(raw_usage, dict)
+        else "UNAVAILABLE",
         "duration_ms": _non_negative_or_none(_value(message, "duration_ms")),
         "duration_api_ms": _non_negative_or_none(_value(message, "duration_api_ms")),
         "num_turns": _non_negative_or_none(_value(message, "num_turns")),
         "usage": _nullable_usage(raw_usage),
         "model_usage": models,
-        "estimated_cost_usd": _non_negative_or_none(
-            _value(message, "total_cost_usd")
-        ),
-        "permission_denials_count": min(
-            len(_value(message, "permission_denials") or []), 1024
-        ),
+        "estimated_cost_usd": _non_negative_or_none(_value(message, "total_cost_usd")),
+        "permission_denials_count": min(len(_value(message, "permission_denials") or []), 1024),
     }
 
 
@@ -417,8 +417,11 @@ class RealClaudeCodeAgentClient:
         try:
             return await self._run_in_sandbox_async(request, binding, api_key)
         finally:
-            self._sandbox.reset(token)
-            sandbox.cleanup()
+            try:
+                await self._close_mcp_server()
+            finally:
+                self._sandbox.reset(token)
+                sandbox.cleanup()
 
     async def _run_in_sandbox_async(
         self,
@@ -428,10 +431,10 @@ class RealClaudeCodeAgentClient:
     ) -> AgentRunResult:
         sdk = self._load_sdk()
         tool_events: list[dict[str, Any]] = []
-        mcp_server = self._build_mcp_server(request)
+        mcp_server = await self._open_mcp_server(request, sdk)
         cli_stderr: list[str] = []
         options = self._build_options(sdk, request.context, mcp_server, cli_stderr, binding)
-        prompt = request.context.user_question
+        prompt = _streaming_user_prompt(request.context.user_question)
         assistant_texts: list[str] = []
         parsed_tool_events: list[dict[str, Any]] = []
         parsed_tool_calls: dict[str, dict[str, Any]] = {}
@@ -693,6 +696,13 @@ class RealClaudeCodeAgentClient:
             )
         return None
 
+    async def _open_mcp_server(self, request: AgentRunRequest, sdk: ClaudeSdk) -> Any:
+        del sdk
+        return self._build_mcp_server(request)
+
+    async def _close_mcp_server(self) -> None:
+        return None
+
     def _build_options(
         self,
         sdk: ClaudeSdk,
@@ -918,16 +928,12 @@ def _extract_tool_events(
         block_type = _value(block, "type")
         if block_type not in {"tool_use", "tool_result"}:
             continue
-        tool_call_id = str(
-            _value(block, "id") or _value(block, "tool_use_id") or ""
-        )
+        tool_call_id = str(_value(block, "id") or _value(block, "tool_use_id") or "")
         if not tool_call_id:
             continue
         if block_type == "tool_use":
-            tool_name = str(
-                _value(block, "name") or _value(block, "tool_name") or "unknown_tool"
-            )
-            request_payload = _value(block, "input") or {}
+            tool_name = str(_value(block, "name") or _value(block, "tool_name") or "unknown_tool")
+            request_payload = _safe_file_tool_request(tool_name, _value(block, "input") or {})
             call_index[tool_call_id] = {
                 "tool_name": tool_name,
                 "request_payload": request_payload,
@@ -938,7 +944,11 @@ def _extract_tool_events(
             tool_name = str(started.get("tool_name") or "unknown_tool")
             request_payload = started.get("request_payload") or {}
             status = "FAILED" if _value(block, "is_error") is True else "SUCCEEDED"
-        response = _value(block, "content") or _value(block, "result") or {}
+        response = (
+            {"file_tool_result": "omitted"}
+            if tool_name in {"Read", "Grep", "Write", "Edit"}
+            else _value(block, "content") or _value(block, "result") or {}
+        )
         events.append(
             {
                 "tool_call_id": tool_call_id,
@@ -957,6 +967,31 @@ def _extract_tool_events(
     return events
 
 
+def _safe_file_tool_request(tool_name: str, value: Any) -> Any:
+    if tool_name not in {"Read", "Grep", "Write", "Edit"} or not isinstance(value, dict):
+        return value
+    path = value.get("file_path", value.get("path"))
+    result: dict[str, Any] = {}
+    if isinstance(path, str):
+        result["relative_path"] = path[:240]
+    if tool_name == "Write" and isinstance(value.get("content"), str):
+        result["content_bytes"] = len(value["content"].encode("utf-8"))
+    if tool_name == "Edit":
+        if isinstance(value.get("old_string"), str):
+            result["old_string_bytes"] = len(value["old_string"].encode("utf-8"))
+        if isinstance(value.get("new_string"), str):
+            result["new_string_bytes"] = len(value["new_string"].encode("utf-8"))
+        if isinstance(value.get("replace_all"), bool):
+            result["replace_all"] = value["replace_all"]
+    if tool_name == "Read":
+        for field in ("offset", "limit"):
+            if isinstance(value.get(field), int) and not isinstance(value.get(field), bool):
+                result[field] = value[field]
+    if tool_name == "Grep" and isinstance(value.get("pattern"), str):
+        result["pattern_chars"] = len(value["pattern"])
+    return result
+
+
 def _platform_tool_metadata(message: Any) -> dict[str, str | None]:
     result = _value(message, "tool_use_result")
     if not isinstance(result, dict):
@@ -965,9 +1000,7 @@ def _platform_tool_metadata(message: Any) -> dict[str, str | None]:
     if not isinstance(metadata, dict):
         return {"mcp_call_id": None, "persisted_tool_call_id": None}
     return {
-        "mcp_call_id": _identifier_or_none(
-            metadata.get("enterprise-agent/mcp-call-id")
-        ),
+        "mcp_call_id": _identifier_or_none(metadata.get("enterprise-agent/mcp-call-id")),
         "persisted_tool_call_id": _identifier_or_none(
             metadata.get("enterprise-agent/agent-tool-call-id")
         ),

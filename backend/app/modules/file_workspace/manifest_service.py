@@ -221,10 +221,10 @@ class JobFileManifestService:
         row = self.repository.database.execute_one(
             """
             select count(*) as value from message_attachment
-             where job_id = ? and lower(file_name) like '%.txt'
+             where job_id = ? and lower(file_name) like ?
                and status not in ('READY', 'REJECTED', 'FAILED', 'stored_not_interpreted')
             """,
-            (job_id,),
+            (job_id, "%.txt"),
         )
         return bool(int((row or {}).get("value") or 0))
 
@@ -336,10 +336,10 @@ class JobFileManifestService:
                 on wf.workspace_id = ? and wf.file_id = b.file_id and wf.status = 'ACTIVE'
               left join managed_file f on f.id = b.file_id
               left join managed_file_version v on v.id = b.version_id
-             where a.job_id = ? and lower(a.file_name) like '%.txt'
+             where a.job_id = ? and lower(a.file_name) like ?
              order by a.ordinal
             """,
-            (workspace_id, job_id),
+            (workspace_id, job_id, "%.txt"),
         )
         for row in txt_attachments:
             status = str(row.get("attachment_status") or "")
@@ -398,10 +398,13 @@ class JobFileManifestService:
                     conflict_candidate=True,
                 )
         items = list(by_identity.values())
-        job = self.repository.database.execute_one(
-            "select business_application_route_decision_json from agent_job where id = ?",
-            (job_id,),
-        ) or {}
+        job = (
+            self.repository.database.execute_one(
+                "select business_application_route_decision_json from agent_job where id = ?",
+                (job_id,),
+            )
+            or {}
+        )
         try:
             route_decision = json.loads(
                 str(job.get("business_application_route_decision_json") or "{}")
@@ -409,9 +412,7 @@ class JobFileManifestService:
         except json.JSONDecodeError:
             route_decision = {}
         features = (
-            route_decision.get("task_file_features")
-            if isinstance(route_decision, dict)
-            else {}
+            route_decision.get("task_file_features") if isinstance(route_decision, dict) else {}
         )
         edit_enabled = bool(
             isinstance(features, dict) and features.get("runtime_file_edit_enabled")
@@ -433,7 +434,7 @@ class JobFileManifestService:
         return cast(
             dict[str, Any] | None,
             self.repository.database.execute_one(
-            """
+                """
             select wf.file_id, v.id as version_id, wf.logical_name as display_name,
                    f.tenant_id, f.owner_type, f.owner_user_id,
                    f.owner_enterprise_id, f.owner_connector_id,
@@ -451,7 +452,7 @@ class JobFileManifestService:
              where wf.workspace_id = ? and wf.file_id = ? and wf.status = 'ACTIVE'
                and (wf.selected_version_id = v.id or c.candidate_version_id = v.id)
             """,
-            (version_id, workspace_id, file_id),
+                (version_id, workspace_id, file_id),
             ),
         )
 
@@ -469,7 +470,8 @@ class JobFileManifestService:
             "display_name": str(row["display_name"]),
             "source_kind": source_kind.value,
             "allowed_actions": [
-                action.value for action in (CONFLICT_ACTIONS if conflict_candidate else REGULAR_ACTIONS)
+                action.value
+                for action in (CONFLICT_ACTIONS if conflict_candidate else REGULAR_ACTIONS)
             ],
             "auto_materialize": auto_materialize,
             "conflict_candidate": conflict_candidate,
@@ -479,8 +481,7 @@ class JobFileManifestService:
     def _eligible_txt(row: dict[str, Any]) -> bool:
         return (
             is_task_txt_name(str(row.get("display_name") or ""))
-            and str(row.get("media_type") or "").split(";", 1)[0].strip().lower()
-            == "text/plain"
+            and str(row.get("media_type") or "").split(";", 1)[0].strip().lower() == "text/plain"
             and str(row.get("encoding") or "").lower() == "utf-8"
             and 0 <= int(row.get("size_bytes") or 0) <= MAX_TXT_BYTES
             and str(row.get("file_status") or "") == "ACTIVE"
@@ -488,9 +489,7 @@ class JobFileManifestService:
         )
 
     @staticmethod
-    def _require_request_boundary(
-        request: dict[str, Any], workspace: dict[str, Any]
-    ) -> None:
+    def _require_request_boundary(request: dict[str, Any], workspace: dict[str, Any]) -> None:
         if (
             str(workspace.get("status")) != "ACTIVE"
             or str(request.get("tenant_id")) != str(workspace.get("tenant_id"))

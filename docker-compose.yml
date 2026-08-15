@@ -29,6 +29,11 @@ x-worker-env: &worker-env
 x-api-env: &api-env
   <<: *worker-env
   MODEL_PROBE_AUTH_TOKEN_FILE: /run/secrets/model_probe_auth_token
+  SERVICE_PRINCIPAL_ENABLED: "true"
+  SERVICE_PRINCIPAL_PRIVATE_KEY_FILE: /run/secrets/service_principal_private_key
+  FILE_WORKER_BOOTSTRAP_TOKEN_FILE: /run/secrets/file_worker_bootstrap_token
+  DELIVERY_WORKER_BOOTSTRAP_TOKEN_FILE: /run/secrets/delivery_worker_bootstrap_token
+  SERVICE_PRINCIPAL_TTL_SECONDS: ${SERVICE_PRINCIPAL_TTL_SECONDS:-300}
   # ONES 本人身份验证只由 API 发起；固定 Provider 配置不得下发给
   # Worker、Runtime 或 MCP，也不依赖已退役的 API Connection。
   ONES_IDENTITY_INSTANCE_CODE: ${ONES_IDENTITY_INSTANCE_CODE:-default}
@@ -78,10 +83,18 @@ services:
       MIGRATOR_BUILD: ${MIGRATOR_BUILD:-local-compose}
       INITIAL_ADMIN_PASSWORD_FILE: ${INITIAL_ADMIN_PASSWORD_FILE:-/run/secrets/initial_admin_password}
       AGENT_RUNTIME_DATABASE_PASSWORD: ${AGENT_RUNTIME_DATABASE_PASSWORD:-agent_runtime_reader_local}
+      APP_CONFIG_MASTER_KEY_FILE: /run/secrets/app_config_master_key
+      FILE_STORAGE_SECRET_BOOTSTRAP_ENABLED: ${FILE_STORAGE_SECRET_BOOTSTRAP_ENABLED:-false}
+      FILE_STORAGE_BOOTSTRAP_ACCESS_KEY_FILE: /run/secrets/file_storage_bootstrap_access_key
+      FILE_STORAGE_BOOTSTRAP_SECRET_KEY_FILE: /run/secrets/file_storage_bootstrap_secret_key
     command:
       - /bin/sh
       - -ec
-      - python -m app.cli.migrate && python -m app.cli.bootstrap_admin --non-interactive && python -m app.cli.bootstrap_agents && python -m app.cli.apply_agent_runtime_grants
+      - python -m app.cli.migrate && python -m app.cli.bootstrap_file_storage_secrets && python -m app.cli.bootstrap_admin --non-interactive && python -m app.cli.bootstrap_agents && python -m app.cli.apply_agent_runtime_grants
+    secrets:
+      - app_config_master_key
+      - file_storage_bootstrap_access_key
+      - file_storage_bootstrap_secret_key
     restart: "no"
     depends_on:
       postgres:
@@ -251,7 +264,7 @@ services:
       SEED_LOCAL_CONFIG: "false"
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       PRINCIPAL_JWKS_FILE: /run/secrets/principal_jwks
-      FILE_SERVICE_PRINCIPAL_JWKS_FILE: /run/secrets/service_principal_jwks
+      SERVICE_PRINCIPAL_JWKS_FILE: /run/secrets/service_principal_jwks
       FILE_STORAGE_ENDPOINT_URL: ${FILE_STORAGE_ENDPOINT_URL:-http://minio:9000}
       FILE_STORAGE_BUCKET: ${FILE_STORAGE_BUCKET:-agent-files}
       FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET: ${S3_BUCKET:-agent-attachments}
@@ -442,6 +455,9 @@ services:
       - dingtalk_runtime_auth_token
       - app_config_master_key
       - model_probe_auth_token
+      - service_principal_private_key
+      - file_worker_bootstrap_token
+      - delivery_worker_bootstrap_token
     ports:
       - "8000:8000"
     depends_on:
@@ -588,16 +604,23 @@ services:
       <<: *worker-env
       FILE_SERVICE_INTERNAL_BASE_URL: http://file-service:9105
       FILE_SERVICE_INTERNAL_ALLOWED_HOSTS: file-service
-      DELIVERY_WORKER_PRINCIPAL_TOKEN_FILE: /run/secrets/delivery_worker_principal_token
+      SERVICE_PRINCIPAL_ENABLED: "true"
+      SERVICE_IDENTITY_INTERNAL_BASE_URL: http://api-server:8000
+      SERVICE_IDENTITY_INTERNAL_ALLOWED_HOSTS: api-server
+      DELIVERY_WORKER_BOOTSTRAP_TOKEN_FILE: /run/secrets/delivery_worker_bootstrap_token
+      SERVICE_IDENTITY_TIMEOUT_SECONDS: ${SERVICE_IDENTITY_TIMEOUT_SECONDS:-5}
+      SERVICE_PRINCIPAL_REFRESH_SKEW_SECONDS: ${SERVICE_PRINCIPAL_REFRESH_SKEW_SECONDS:-60}
     secrets:
       - app_config_master_key
-      - delivery_worker_principal_token
+      - delivery_worker_bootstrap_token
     depends_on:
       postgres:
         condition: service_healthy
       migrator:
         condition: service_completed_successfully
       file-service:
+        condition: service_healthy
+      api-server:
         condition: service_healthy
     healthcheck:
       test:
@@ -690,10 +713,15 @@ services:
       <<: *worker-env
       FILE_SERVICE_INTERNAL_BASE_URL: http://file-service:9105
       FILE_SERVICE_INTERNAL_ALLOWED_HOSTS: file-service
-      FILE_WORKER_PRINCIPAL_TOKEN_FILE: /run/secrets/file_worker_principal_token
+      SERVICE_PRINCIPAL_ENABLED: "true"
+      SERVICE_IDENTITY_INTERNAL_BASE_URL: http://api-server:8000
+      SERVICE_IDENTITY_INTERNAL_ALLOWED_HOSTS: api-server
+      FILE_WORKER_BOOTSTRAP_TOKEN_FILE: /run/secrets/file_worker_bootstrap_token
+      SERVICE_IDENTITY_TIMEOUT_SECONDS: ${SERVICE_IDENTITY_TIMEOUT_SECONDS:-5}
+      SERVICE_PRINCIPAL_REFRESH_SKEW_SECONDS: ${SERVICE_PRINCIPAL_REFRESH_SKEW_SECONDS:-60}
     secrets:
       - app_config_master_key
-      - file_worker_principal_token
+      - file_worker_bootstrap_token
     depends_on:
       postgres:
         condition: service_healthy
@@ -702,6 +730,8 @@ services:
       migrator:
         condition: service_completed_successfully
       file-service:
+        condition: service_healthy
+      api-server:
         condition: service_healthy
     healthcheck:
       test:
@@ -729,16 +759,23 @@ secrets:
     file: ${PRINCIPAL_JWKS_FILE:-${HOME}/.config/enterprise-agent/principal-jwks.json}
   service_principal_jwks:
     file: ${SERVICE_PRINCIPAL_JWKS_FILE:-${HOME}/.config/enterprise-agent/service-principal-jwks.json}
-  file_worker_principal_token:
-    file: ${FILE_WORKER_PRINCIPAL_TOKEN_FILE:-${HOME}/.config/enterprise-agent/file-worker-principal.jwt}
-  delivery_worker_principal_token:
-    file: ${DELIVERY_WORKER_PRINCIPAL_TOKEN_FILE:-${HOME}/.config/enterprise-agent/delivery-worker-principal.jwt}
+  service_principal_private_key:
+    file: ${SERVICE_PRINCIPAL_PRIVATE_KEY_FILE:-${HOME}/.config/enterprise-agent/service-principal-private.pem}
+  file_worker_bootstrap_token:
+    file: ${FILE_WORKER_BOOTSTRAP_TOKEN_FILE:-${HOME}/.config/enterprise-agent/file-worker-bootstrap-token}
+  delivery_worker_bootstrap_token:
+    file: ${DELIVERY_WORKER_BOOTSTRAP_TOKEN_FILE:-${HOME}/.config/enterprise-agent/delivery-worker-bootstrap-token}
+  file_storage_bootstrap_access_key:
+    environment: S3_ACCESS_KEY
+  file_storage_bootstrap_secret_key:
+    environment: S3_SECRET_KEY
   model_probe_auth_token:
     file: ${MODEL_PROBE_AUTH_TOKEN_FILE:-${HOME}/.config/enterprise-agent/model-probe-auth-token}
 
 volumes:
   postgres18-data:
     name: enterprise_agent_postgres18_data
+    external: ${POSTGRES18_VOLUME_EXTERNAL:-false}
   rabbitmq4-data:
     name: enterprise_agent_rabbitmq4_data
   minio-data:

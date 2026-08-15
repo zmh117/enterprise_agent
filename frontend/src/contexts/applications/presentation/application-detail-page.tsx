@@ -438,16 +438,23 @@ function PolicyEditor({
             <label key={key} className="flex items-center gap-3 text-sm">
               <Checkbox
                 checked={form.task_file_features[key]}
-                onCheckedChange={(checked) =>
+                onCheckedChange={(checked) => {
+                  const taskFileFeatures = nextTaskFileFeatures(
+                    form.task_file_features,
+                    key,
+                    checked === true
+                  )
                   setForm({
                     ...form,
-                    task_file_features: nextTaskFileFeatures(
-                      form.task_file_features,
-                      key,
-                      checked === true
-                    ),
+                    task_file_features: taskFileFeatures,
+                    session_policy: taskFileFeatures.workspace_enabled
+                      ? {
+                          ...form.session_policy,
+                          attachments_enabled: true,
+                        }
+                      : form.session_policy,
                   })
-                }
+                }}
               />
               {label}
             </label>
@@ -501,6 +508,52 @@ function PolicyEditor({
             })
           }
         />
+        <div className="space-y-3 rounded-md border p-4 md:col-span-2 xl:col-span-3">
+          <p className="text-sm font-medium">会话能力</p>
+          <label className="flex items-start gap-3 text-sm">
+            <Checkbox
+              aria-label="连续会话"
+              checked={form.session_policy.continuous_conversation_enabled}
+              onCheckedChange={(checked) =>
+                setForm({
+                  ...form,
+                  session_policy: {
+                    ...form.session_policy,
+                    continuous_conversation_enabled: checked === true,
+                  },
+                })
+              }
+            />
+            <span>
+              连续会话
+              <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                允许同一渠道会话在后续消息中继续使用已保存的会话上下文。
+              </span>
+            </span>
+          </label>
+          <label className="flex items-start gap-3 text-sm">
+            <Checkbox
+              aria-label="允许消息附件"
+              checked={form.session_policy.attachments_enabled}
+              disabled={form.task_file_features.workspace_enabled}
+              onCheckedChange={(checked) =>
+                setForm({
+                  ...form,
+                  session_policy: {
+                    ...form.session_policy,
+                    attachments_enabled: checked === true,
+                  },
+                })
+              }
+            />
+            <span>
+              允许消息附件
+              <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                控制钉钉入站附件处理；任务工作区启用时此项必须开启，需先关闭任务工作区才能关闭。
+              </span>
+            </span>
+          </label>
+        </div>
         <NumberField
           id="policy-turns"
           label="最大轮次"
@@ -1426,24 +1479,31 @@ function EmptyBinding({ text }: { text: string }) {
 
 function draftToForm(application: BusinessApplication): SaveDraftInput {
   const draft = application.draft
+  const taskFileFeatures = draft?.task_file_features ?? {
+    workspace_enabled: false,
+    file_mcp_enabled: false,
+    runtime_file_edit_enabled: false,
+    default_file_delivery_enabled: false,
+  }
   return {
     expected_revision: application.revision,
     agent_publication_id: draft?.agent_publication_id ?? "",
     workflow_publication_id: draft?.workflow_publication_id ?? "",
     task_workspace_retention_period:
       draft?.task_workspace_retention_period ?? "WEEK",
-    task_file_features: draft?.task_file_features ?? {
-      workspace_enabled: false,
-      file_mcp_enabled: false,
-      runtime_file_edit_enabled: false,
-      default_file_delivery_enabled: false,
-    },
+    task_file_features: taskFileFeatures,
     session_policy: {
       conversation_mode: "channel",
       recent_message_limit: Number(
         draft?.session_policy.recent_message_limit ?? 20
       ),
       retention_days: Number(draft?.session_policy.retention_days ?? 30),
+      continuous_conversation_enabled: Boolean(
+        draft?.session_policy.continuous_conversation_enabled ?? false
+      ),
+      attachments_enabled:
+        taskFileFeatures.workspace_enabled ||
+        Boolean(draft?.session_policy.attachments_enabled ?? false),
     },
     execution_policy: {
       max_turns: Number(draft?.execution_policy.max_turns ?? 12),

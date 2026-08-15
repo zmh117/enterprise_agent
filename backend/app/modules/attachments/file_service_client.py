@@ -4,10 +4,10 @@ import hashlib
 import json
 import urllib.error
 import urllib.request
-from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 from app.modules.attachments.domain import AttachmentImportReceipt
+from app.modules.identity.application.service_principal import AccessTokenProvider
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
 
 
@@ -19,7 +19,7 @@ class FileServiceAttachmentImporter:
         *,
         base_url: str,
         allowed_hosts: tuple[str, ...],
-        principal_token_file: str,
+        token_provider: AccessTokenProvider,
         timeout_seconds: int = 30,
     ) -> None:
         parsed = urlsplit(base_url)
@@ -34,10 +34,10 @@ class FileServiceAttachmentImporter:
             or parsed.hostname not in allowed_hosts
         ):
             raise ValueError("File Service internal endpoint is invalid")
-        if not principal_token_file or not 1 <= timeout_seconds <= 120:
+        if not 1 <= timeout_seconds <= 120:
             raise ValueError("File Worker identity settings are invalid")
         self.base_url = base_url.rstrip("/")
-        self.principal_token_file = Path(principal_token_file)
+        self.token_provider = token_provider
         self.timeout_seconds = timeout_seconds
 
     def import_content(
@@ -151,7 +151,7 @@ class FileServiceAttachmentImporter:
         }
 
     def _token(self) -> str:
-        token = self.principal_token_file.read_text().strip()
+        token = self.token_provider.access_token()
         if not token or len(token.encode()) > 8192:
             raise NonRetryableExecutionError(
                 "File Worker Principal token is unavailable",

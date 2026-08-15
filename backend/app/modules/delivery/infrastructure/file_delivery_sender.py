@@ -8,7 +8,6 @@ import urllib.parse
 import urllib.request
 import uuid
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlsplit
 
@@ -19,6 +18,7 @@ from app.modules.dingding.infrastructure.dingtalk_delivery_clients import (
     JsonPostTransport,
     UrllibJsonPostTransport,
 )
+from app.modules.identity.application.service_principal import AccessTokenProvider
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
 
 
@@ -47,7 +47,7 @@ class FileServiceDeliveryClient:
         *,
         base_url: str,
         allowed_hosts: tuple[str, ...],
-        principal_token_file: str,
+        token_provider: AccessTokenProvider,
         timeout_seconds: int = 30,
     ) -> None:
         parsed = urlsplit(base_url)
@@ -62,14 +62,12 @@ class FileServiceDeliveryClient:
             or parsed.path not in {"", "/"}
         ):
             raise ValueError("File Service Delivery endpoint is invalid")
-        if not principal_token_file:
-            raise ValueError("Delivery Worker Principal token file is required")
         self.base_url = base_url.rstrip("/")
-        self.principal_token_file = Path(principal_token_file)
+        self.token_provider = token_provider
         self.timeout_seconds = timeout_seconds
 
     def get(self, delivery_id: str) -> DeliveryFileContent:
-        token = self.principal_token_file.read_text().strip()
+        token = self.token_provider.access_token()
         if not token or len(token.encode()) > 8192:
             raise NonRetryableExecutionError(
                 "Delivery Worker Principal token is unavailable",

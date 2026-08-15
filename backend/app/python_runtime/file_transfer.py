@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import codecs
 import hashlib
 import os
 import stat
+import uuid
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Iterable, Mapping, Protocol
@@ -11,9 +13,7 @@ from typing import Iterable, Mapping, Protocol
 FILE_TRANSFER_META_KEY = "enterprise-agent/file-transfer"
 FILE_TRANSFER_PROTOCOL = "enterprise-agent.file-transfer/v1"
 _MAX_RELATIVE_PATH_CHARS = 240
-_IDENTIFIER_CHARS = frozenset(
-    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-"
-)
+_IDENTIFIER_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-")
 
 
 class FileTransferBoundaryError(ValueError):
@@ -163,12 +163,8 @@ def parse_file_transfer_control(result: object) -> dict[str, object]:
                 control.get("sandbox_entry_handle"), "sandbox_entry_handle"
             ),
             "relative_path": _relative_txt_path(control.get("relative_path")),
-            "expected_size_bytes": _size(
-                control.get("expected_size_bytes"), "expected_size_bytes"
-            ),
-            "expected_sha256": _sha256(
-                control.get("expected_sha256"), "expected_sha256"
-            ),
+            "expected_size_bytes": _size(control.get("expected_size_bytes"), "expected_size_bytes"),
+            "expected_sha256": _sha256(control.get("expected_sha256"), "expected_sha256"),
         }
     if control.get("action") == "UPLOAD_COMMIT":
         _exact_keys(
@@ -229,6 +225,62 @@ class FileTransferCoordinator:
     def __init__(self, port: FileTransferPort) -> None:
         self._port = port
         self._entries: dict[str, tuple[str, Path]] = {}
+
+    def select_sandbox_output(
+        self,
+        *,
+        relative_path: str,
+        context: FileTransferContext,
+        maximum_size_bytes: int = 15 * 1024 * 1024,
+    ) -> dict[str, object]:
+        safe_path = _relative_txt_path(relative_path)
+        if PurePosixPath(safe_path).parts[0] not in {"work", "outputs"}:
+            raise FileTransferBoundaryError(
+                "file_transfer_path_invalid",
+                "only work or outputs TXT files can be selected",
+            )
+        target = _sandbox_path(context.workspace_path, safe_path)
+        _reject_symlinks(context.workspace_path, target)
+        state = target.lstat()
+        if not stat.S_ISREG(state.st_mode):
+            raise FileTransferBoundaryError(
+                "file_transfer_entry_invalid",
+                "sandbox entry must reference a regular file",
+            )
+        if state.st_size > maximum_size_bytes:
+            raise FileTransferBoundaryError(
+                "file_transfer_size_mismatch",
+                "sandbox output exceeds the TXT size limit",
+            )
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="strict")
+        digest = hashlib.sha256()
+        size_bytes = 0
+        try:
+            with target.open("rb") as source:
+                while chunk := source.read(64 * 1024):
+                    size_bytes += len(chunk)
+                    if size_bytes > maximum_size_bytes:
+                        raise FileTransferBoundaryError(
+                            "file_transfer_size_mismatch",
+                            "sandbox output exceeds the TXT size limit",
+                        )
+                    digest.update(chunk)
+                    decoder.decode(chunk, final=False)
+                decoder.decode(b"", final=True)
+        except UnicodeDecodeError as exc:
+            raise FileTransferBoundaryError(
+                "file_transfer_encoding_invalid",
+                "sandbox output must be valid UTF-8",
+            ) from exc
+        handle = f"sandbox-entry:{uuid.uuid4()}"
+        self._entries[handle] = (safe_path, target)
+        return {
+            "action": "SELECTED",
+            "sandbox_entry_handle": handle,
+            "relative_path": safe_path,
+            "size_bytes": size_bytes,
+            "sha256": digest.hexdigest(),
+        }
 
     def register_sandbox_entry(
         self,
@@ -307,10 +359,7 @@ class FileTransferCoordinator:
             target.unlink(missing_ok=True)
             raise
         actual_sha256 = digest.hexdigest()
-        if (
-            size_bytes != expected_size
-            or actual_sha256 != str(control["expected_sha256"])
-        ):
+        if size_bytes != expected_size or actual_sha256 != str(control["expected_sha256"]):
             target.unlink(missing_ok=True)
             raise FileTransferBoundaryError(
                 "file_transfer_integrity_mismatch",

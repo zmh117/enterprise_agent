@@ -34,6 +34,12 @@ import {
   JobSandboxManager,
   type JobSandboxLimits
 } from "./job-sandbox.js";
+import {
+  LOCAL_FILE_OUTPUT_TOOL,
+  createRuntimeFileBridge,
+  type RuntimeFileBridge,
+  type RuntimeFileBridgeFactory
+} from "./file-mcp-bridge.js";
 
 const DANGEROUS_BUILTINS = [
   "Bash",
@@ -118,7 +124,10 @@ export class JobSandboxWorkspaceFactory implements InvocationWorkspaceFactory {
 }
 
 interface ToolCallState {
-  readonly serverCode: AgentExecutionRequest["mcp_servers"][number]["server_code"];
+  readonly origin: ToolOrigin;
+  readonly serverCode:
+    | AgentExecutionRequest["mcp_servers"][number]["server_code"]
+    | null;
   readonly toolName: string;
   readonly startedAt: number;
 }
@@ -331,6 +340,36 @@ function summary(value: unknown): JsonSummary {
   return result;
 }
 
+function sandboxToolRequestSummary(
+  toolName: string,
+  input: Record<string, unknown>
+): JsonSummary {
+  const path = input.file_path ?? input.path;
+  const result: JsonSummary = {
+    ...(typeof path === "string" ? { relative_path: safeText(path, 240) } : {})
+  };
+  if (toolName === "Write" && typeof input.content === "string") {
+    result.content_bytes = Buffer.byteLength(input.content, "utf8");
+  }
+  if (toolName === "Edit") {
+    if (typeof input.old_string === "string") {
+      result.old_string_bytes = Buffer.byteLength(input.old_string, "utf8");
+    }
+    if (typeof input.new_string === "string") {
+      result.new_string_bytes = Buffer.byteLength(input.new_string, "utf8");
+    }
+    if (typeof input.replace_all === "boolean") result.replace_all = input.replace_all;
+  }
+  if (toolName === "Read") {
+    if (typeof input.offset === "number") result.offset = input.offset;
+    if (typeof input.limit === "number") result.limit = input.limit;
+  }
+  if (toolName === "Grep" && typeof input.pattern === "string") {
+    result.pattern_chars = input.pattern.length;
+  }
+  return result;
+}
+
 function usage(value: unknown): Usage {
   const candidate = (value ?? {}) as Record<string, unknown>;
   return {
@@ -431,6 +470,7 @@ function normalizeMcpStatus(status: unknown): "CONNECTED" | "FAILED" | "DISCONNE
 function normalizeServerCode(name: unknown): string | null {
   if (name === "tools") return "tool-mcp";
   if (name === "ones") return "ones-mcp";
+  if (name === "files" || name === "enterprise-file-bridge") return "file-service";
   return identifierOrNull(name);
 }
 
@@ -511,7 +551,8 @@ export class ClaudeAgentRuntimeExecutor {
     private readonly now: () => number = () => Date.now(),
     private readonly toolMcpServerUrl: string = "http://tool-mcp:9103/mcp",
     private readonly onesMcpServerUrl: string = "http://ones-mcp:9104/mcp",
-    private readonly fileMcpServerUrl: string = "http://file-service:9105/mcp"
+    private readonly fileMcpServerUrl: string = "http://file-service:9105/mcp",
+    private readonly fileBridgeFactory: RuntimeFileBridgeFactory = createRuntimeFileBridge
   ) {
     this.execute = this.run.bind(this);
   }
@@ -539,11 +580,15 @@ export class ClaudeAgentRuntimeExecutor {
     const toolIndex = new Map<
       string,
       {
-        serverCode: AgentExecutionRequest["mcp_servers"][number]["server_code"];
+        origin: ToolOrigin;
+        serverCode:
+          | AgentExecutionRequest["mcp_servers"][number]["server_code"]
+          | null;
         toolName: string;
       }
     >();
     const mcpServers: NonNullable<Options["mcpServers"]> = {};
+    let fileBridge: RuntimeFileBridge | undefined;
     for (const server of request.mcp_servers) {
       if (
         server.server_code !== "tool-mcp" &&
@@ -572,25 +617,49 @@ export class ClaudeAgentRuntimeExecutor {
       };
       if (isOnes) headers.Authorization = `Bearer ${secrets.principalToken}`;
       if (isFile) headers.Authorization = `Bearer ${secrets.filePrincipalToken}`;
-      mcpServers[alias] = {
-        type: "http",
-        url: isOnes
-          ? this.onesMcpServerUrl
-          : isFile
-            ? this.fileMcpServerUrl
-            : this.toolMcpServerUrl,
-        headers,
-        timeout: Math.min(request.limits.timeout_seconds * 1000, 300_000),
-        alwaysLoad: true
-      };
+      const timeoutMs = Math.min(request.limits.timeout_seconds * 1000, 300_000);
+      if (isFile) {
+        if (fileBridge) throw new Error("Duplicate governed File MCP server binding");
+        fileBridge = this.fileBridgeFactory({
+          mcpServerUrl: this.fileMcpServerUrl,
+          headers,
+          frozenToolNames: server.tools.map((tool) => tool.tool_name),
+          context: {
+            jobId: request.job_id,
+            workspacePath: workspace.path,
+            principalToken: secrets.filePrincipalToken!,
+            signal: abortController.signal
+          },
+          timeoutMs
+        });
+        mcpServers[alias] = fileBridge.server;
+      } else {
+        mcpServers[alias] = {
+          type: "http",
+          url: isOnes ? this.onesMcpServerUrl : this.toolMcpServerUrl,
+          headers,
+          timeout: timeoutMs,
+          alwaysLoad: true
+        };
+      }
       for (const tool of server.tools) {
         const fullName = `mcp__${alias}__${tool.tool_name}`;
         allowedTools.add(fullName);
         toolIndex.set(fullName, {
+          origin: "mcp",
           serverCode: server.server_code,
           toolName: tool.tool_name
         });
       }
+    }
+    if (fileBridge?.localToolNames.includes(LOCAL_FILE_OUTPUT_TOOL)) {
+      const fullName = `mcp__files__${LOCAL_FILE_OUTPUT_TOOL}`;
+      allowedTools.add(fullName);
+      toolIndex.set(fullName, {
+        origin: "sdk_custom",
+        serverCode: null,
+        toolName: LOCAL_FILE_OUTPUT_TOOL
+      });
     }
     const calls = new Map<string, ToolCallState>();
     let attemptedToolCalls = 0;
@@ -643,7 +712,7 @@ export class ClaudeAgentRuntimeExecutor {
               serverCode: null,
               toolName,
               status: "STARTED",
-              requestSummary: summary(updatedInput),
+              requestSummary: sandboxToolRequestSummary(toolName, updatedInput),
               responseSummary: {},
               durationMs: 0
             });
@@ -682,7 +751,7 @@ export class ClaudeAgentRuntimeExecutor {
           containsForbiddenToolInput(input) ||
           attemptedToolCalls > request.limits.max_tool_calls
         ) {
-          const origin = toolOrigin(toolName, indexed !== undefined);
+          const origin = indexed?.origin ?? toolOrigin(toolName, false);
           emitToolEvent(request, emitter, {
             toolCallId: permissionOptions.toolUseID,
             origin,
@@ -708,13 +777,14 @@ export class ClaudeAgentRuntimeExecutor {
           };
         }
         calls.set(permissionOptions.toolUseID, {
+          origin: indexed.origin,
           serverCode: indexed.serverCode,
           toolName: indexed.toolName,
           startedAt: this.now()
         });
         emitToolEvent(request, emitter, {
           toolCallId: permissionOptions.toolUseID,
-          origin: "mcp",
+          origin: indexed.origin,
           serverCode: indexed.serverCode,
           toolName: indexed.toolName,
           status: "STARTED",
@@ -739,6 +809,7 @@ export class ClaudeAgentRuntimeExecutor {
     };
     emitter.emit("execution_started", provenance);
     try {
+      await fileBridge?.connect();
       for await (const message of this.query({
         prompt: request.prompt.user_question,
         options
@@ -804,6 +875,7 @@ export class ClaudeAgentRuntimeExecutor {
     } finally {
       clearTimeout(timeout);
       emitter.signal.removeEventListener("abort", abortFromWorker);
+      await fileBridge?.close().catch(() => undefined);
       await workspace.cleanup();
     }
   }
@@ -908,7 +980,7 @@ export class ClaudeAgentRuntimeExecutor {
         const failed = block.is_error === true;
         emitToolEvent(request, emitter, {
           toolCallId: block.tool_use_id,
-          origin: "mcp",
+          origin: call.origin,
           serverCode: call.serverCode,
           mcpCallId: metadata.mcpCallId,
           persistedToolCallId: metadata.agentToolCallId,

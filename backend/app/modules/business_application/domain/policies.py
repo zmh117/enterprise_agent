@@ -173,6 +173,20 @@ def validate_task_file_features(value: object) -> dict[str, bool]:
     return normalized
 
 
+def validate_task_file_attachment_dependency(
+    *,
+    session_policy: dict[str, Any],
+    task_file_features: dict[str, bool],
+) -> None:
+    if task_file_features["workspace_enabled"] and not session_policy[
+        "attachments_enabled"
+    ]:
+        raise validation_error(
+            "session_policy.attachments_enabled",
+            "启用任务工作区前必须允许消息附件",
+        )
+
+
 def publication_task_file_features(snapshot: dict[str, Any]) -> tuple[dict[str, bool], str]:
     if "task_file_features" not in snapshot:
         return dict(DEFAULT_TASK_FILE_FEATURES), "legacy_default"
