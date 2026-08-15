@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
+from app.modules.business_application.domain.policies import required_file_mcp_tools
 from app.modules.job.infrastructure.repositories import now_iso
 from app.shared.database import Database
 from app.shared.exceptions import NonRetryableExecutionError
@@ -92,6 +93,59 @@ class ApplicationMcpToolCompositionService:
             }
             for index, identifier in enumerate(selected)
         ]
+
+    def file_feature_errors(
+        self,
+        *,
+        agent_publication_id: str,
+        task_file_features: dict[str, bool],
+        selected_tools: list[dict[str, Any]],
+    ) -> list[dict[str, str]]:
+        required = required_file_mcp_tools(task_file_features)
+        if not required:
+            return []
+        available = {
+            str(row["tool_identifier"])
+            for row in self.database.execute(
+                """
+                select tool_identifier
+                  from agent_publication_mcp_tool
+                 where agent_publication_id = ?
+                   and server_code = 'file-service'
+                """,
+                (agent_publication_id,),
+            )
+        }
+        missing_agent = sorted(required - available)
+        if missing_agent:
+            summary = "、".join(missing_agent)
+            return [
+                {
+                    "field": "agent_publication_id",
+                    "message": f"所选 Agent 发布版本缺少任务文件工具：{summary}",
+                },
+                {
+                    "field": "mcp_tools",
+                    "message": "请先发布包含所需 File MCP 工具的新 Agent 版本",
+                },
+            ]
+        selected = {
+            str(tool.get("tool_identifier") or "")
+            for tool in selected_tools
+            if str(tool.get("server_code") or "") == "file-service"
+        }
+        missing_application = sorted(required - selected)
+        if missing_application:
+            return [
+                {
+                    "field": "mcp_tools",
+                    "message": (
+                        "任务文件功能已启用，必须选择 File MCP 工具："
+                        + "、".join(missing_application)
+                    ),
+                }
+            ]
+        return []
 
     def persist_draft(
         self,

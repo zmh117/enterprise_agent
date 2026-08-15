@@ -30,7 +30,7 @@ x-api-env: &api-env
   <<: *worker-env
   MODEL_PROBE_AUTH_TOKEN_FILE: /run/secrets/model_probe_auth_token
   SERVICE_PRINCIPAL_ENABLED: "true"
-  SERVICE_PRINCIPAL_PRIVATE_KEY_FILE: /run/secrets/service_principal_private_key
+  PRINCIPAL_JWT_PRIVATE_KEY_FILE: /run/secrets/principal_jwt_private_key
   FILE_WORKER_BOOTSTRAP_TOKEN_FILE: /run/secrets/file_worker_bootstrap_token
   DELIVERY_WORKER_BOOTSTRAP_TOKEN_FILE: /run/secrets/delivery_worker_bootstrap_token
   SERVICE_PRINCIPAL_TTL_SECONDS: ${SERVICE_PRINCIPAL_TTL_SECONDS:-300}
@@ -264,7 +264,6 @@ services:
       SEED_LOCAL_CONFIG: "false"
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       PRINCIPAL_JWKS_FILE: /run/secrets/principal_jwks
-      SERVICE_PRINCIPAL_JWKS_FILE: /run/secrets/service_principal_jwks
       FILE_STORAGE_ENDPOINT_URL: ${FILE_STORAGE_ENDPOINT_URL:-http://minio:9000}
       FILE_STORAGE_BUCKET: ${FILE_STORAGE_BUCKET:-agent-files}
       FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET: ${S3_BUCKET:-agent-attachments}
@@ -277,7 +276,6 @@ services:
     secrets:
       - app_config_master_key
       - principal_jwks
-      - service_principal_jwks
     expose:
       - "9105"
     depends_on:
@@ -455,7 +453,7 @@ services:
       - dingtalk_runtime_auth_token
       - app_config_master_key
       - model_probe_auth_token
-      - service_principal_private_key
+      - principal_jwt_private_key
       - file_worker_bootstrap_token
       - delivery_worker_bootstrap_token
     ports:
@@ -757,10 +755,6 @@ secrets:
     file: ${PRINCIPAL_JWT_PRIVATE_KEY_FILE:-${HOME}/.config/enterprise-agent/principal-jwt-private.pem}
   principal_jwks:
     file: ${PRINCIPAL_JWKS_FILE:-${HOME}/.config/enterprise-agent/principal-jwks.json}
-  service_principal_jwks:
-    file: ${SERVICE_PRINCIPAL_JWKS_FILE:-${HOME}/.config/enterprise-agent/service-principal-jwks.json}
-  service_principal_private_key:
-    file: ${SERVICE_PRINCIPAL_PRIVATE_KEY_FILE:-${HOME}/.config/enterprise-agent/service-principal-private.pem}
   file_worker_bootstrap_token:
     file: ${FILE_WORKER_BOOTSTRAP_TOKEN_FILE:-${HOME}/.config/enterprise-agent/file-worker-bootstrap-token}
   delivery_worker_bootstrap_token:

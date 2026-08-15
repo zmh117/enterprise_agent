@@ -109,27 +109,13 @@ def test_real_python_runtime_sdk_loop_uses_local_file_bridge_before_model_result
         async with InMemoryTransport(instance) as streams:
             async with ClientSession(*streams) as session:
                 await session.initialize()
-                materialize_name = "mcp__file_service__file_prepare_materialization"
-                assert (
-                    _behavior(
-                        await options["can_use_tool"](
-                            materialize_name,
-                            {"file_id": "file-python-1", "version_id": "version-python-0"},
-                            object(),
-                        )
-                    )
-                    == "allow"
-                )
-                materialized = await session.call_tool(
-                    "file_prepare_materialization",
-                    {"file_id": "file-python-1", "version_id": "version-python-0"},
-                )
                 sandbox = Path(options["cwd"])
                 materialized_path = sandbox / "inputs/source-python.txt"
                 assert materialized_path.read_bytes() == SOURCE
-                serialized = materialized.model_dump_json(by_alias=True)
-                assert "enterprise-agent/file-transfer" not in serialized
-                assert SOURCE.decode() not in serialized
+                assert options["permission_mode"] == "default"
+                assert options["allowed_tools"] == []
+                assert "inputs/source-python.txt" in options["system_prompt"]
+                assert SOURCE.decode() not in options["system_prompt"]
 
                 assert (
                     _behavior(
@@ -197,7 +183,6 @@ def test_real_python_runtime_sdk_loop_uses_local_file_bridge_before_model_result
                 assert transfer.uploaded[1] == b"generated Python Runtime TXT"
 
                 for tool_use_id, name, result in (
-                    ("tool-python-materialize", materialize_name, materialized),
                     (
                         "tool-python-commit",
                         "mcp__file_service__file_create_commit_intent",
@@ -283,7 +268,28 @@ def test_real_python_runtime_sdk_loop_uses_local_file_bridge_before_model_result
         allowed_tools=[],
         tool_restrictions=["TXT only"],
         skills={},
-        retrieved_context={},
+        retrieved_context={
+            "file_manifest": {
+                "schema_version": 1,
+                "manifest_hash": "c" * 64,
+                "items": [
+                    {
+                        "file_id": "file-python-1",
+                        "version_id": "version-python-0",
+                        "display_name": "source-python.txt",
+                        "source_kind": "CURRENT_MESSAGE",
+                        "allowed_actions": [
+                            "READ_METADATA",
+                            "MATERIALIZE",
+                            "EDIT",
+                            "COMMIT",
+                        ],
+                        "auto_materialize": True,
+                        "conflict_candidate": False,
+                    }
+                ],
+            }
+        },
         conversation_summary="",
         publication_id="agent-publication-1",
         application_publication_id="application-publication-1",

@@ -34,7 +34,7 @@ File Service 是文件身份、不可变版本、当前版本、工作区引用�
 ## 身份与授权
 
 - Agent 使用平台签发的短时 Principal JWT，绑定内部用户、租户、Job、Session、Publication、授权 hash 和精确 Tool scope。
-- 平台 API 身份模块使用独立于用户/Job Principal 的 Ed25519 服务密钥环；File Service 只取得服务公开 JWKS。
+- 平台只维护一套 Ed25519 Principal 签名私钥和公开 JWKS；API 身份模块与 Agent Worker仅在签发对应Token时取得同一私钥，File Service、ONES MCP及后续MCP只取得同一公开JWKS。用户/Job与Service Principal仍按独立issuer、audience、authorized party、claims和scope验证策略失败关闭。
 - File Worker 和 Delivery Worker 各自只持有角色隔离的 bootstrap credential，向固定内部身份端点按需换取并到期前刷新不超过 300 秒的服务 Principal JWT；不在宿主机保存静态服务 JWT，也不共享内部 Token。
 - `file-worker` 的固定 JWT 同时包含附件导入和内容清理 scope；`delivery-worker` 只包含精确版本交付读取 scope。File Service 校验完整角色 scope 集合后再校验当前端点所需 scope。
 - MinIO 原始凭据只由 File Service 通过 `secret://platform/` 解析，绝不进入 JWT、MCP 参数、日志、审计或模型上下文。
@@ -42,14 +42,16 @@ File Service 是文件身份、不可变版本、当前版本、工作区引用�
 
 ## Job 文件链路
 
-1. Channel 创建文件型 Job 时解析或创建 ACTIVE 工作区并冻结保留周期。
-2. Job File Manifest 冻结本次消息附件、明确引用和其他工作区候选的精确版本；只包含有界元数据。
-3. Claude SDK 只连接 Runtime 代码注册的本地 `files` MCP。该 bridge 代理 Job 冻结的远端 File MCP 工具，并在 ToolResult 交回模型前拦截隐藏传输控制信息；Runtime 使用当前 Job File Principal JWT 从 File Service 流式物化精确版本到 Job 沙盒。完整字节、JWT、URL 和对象位置不进入模型或 MCP JSON。
-4. Claude Code Agent 仅能在沙盒内使用受限 `Read`、`Grep`、`Write`、`Edit`。分析请求不得提交修改；修改或生成请求可逐文件创建提交意图。
-5. 物化输入由 bridge 自动登记 sandbox entry；新生成文件必须显式调用 Runtime 自有的 `select_sandbox_output`，且只能选择 `work/` 或 `outputs/` 下经过路径、常规文件、符号链接、15 MiB 和 UTF-8 校验的单个 TXT。Runtime 不扫描沙盒，也不自动提交其它草稿。
-6. File MCP 创建提交意图后，bridge 在结果交回模型前只上传该 handle 映射的精确文件。File Service 流式校验大小、UTF-8、摘要、配额和 base version，发布不可变版本。
-6. 并发基于过期 base version 的结果成为 Conflict Candidate，不推进当前版本；File Service 不自动合并文本。
-7. 默认文件交付开启时，成功精确版本创建固定 reply route 的 Delivery；“只保存到工作区”跳过。Delivery 失败只重试同一版本，不重跑 Agent、不回滚提交。
+1. 只有附件、没有非空文字时，Channel 创建或复用 ACTIVE 工作区并把附件加入同一 Session 的未消费集合；不创建 Agent Job、Dispatch、Delivery、占位指令或用户回复。
+2. File Worker 正常下载并通过 File Service 导入附件；附件尚未被文字认领时只标记 `staged`。连续发送多个文件不会逐个触发回复。
+3. 第一条后续非空文字在同一事务中创建唯一 Agent Job并认领该 Session/Workspace下全部未消费附件。若导入未完成，Job保持 `WAITING_INPUT`，最后一个附件进入安全终态后只释放一次。
+4. Job File Manifest 冻结该 Job认领的附件、同消息附件、明确引用和其他工作区候选的精确版本；已认领附件不会被后续无关文字再次作为新上传自动消费。
+5. Claude SDK 只连接 Runtime 代码注册的本地 `files` MCP。该 bridge 代理 Job 冻结的远端 File MCP 工具，并在 ToolResult 交回模型前拦截隐藏传输控制信息；Runtime 使用当前 Job File Principal JWT 从 File Service 流式物化精确版本到 Job 沙盒。完整字节、JWT、URL 和对象位置不进入模型或 MCP JSON。
+6. Claude Code Agent 仅能在沙盒内使用受限 `Read`、`Grep`、`Write`、`Edit`。分析请求不得提交修改；修改或生成请求可逐文件创建提交意图。
+7. 物化输入由 bridge 自动登记 sandbox entry；新生成文件必须显式调用 Runtime 自有的 `select_sandbox_output`，且只能选择 `work/` 或 `outputs/` 下经过路径、常规文件、符号链接、15 MiB 和 UTF-8 校验的单个 TXT。Runtime 不扫描沙盒，也不自动提交其它草稿。
+8. File MCP 创建提交意图后，bridge 在结果交回模型前只上传该 handle 映射的精确文件。File Service 流式校验大小、UTF-8、摘要、配额和 base version，发布不可变版本。
+9. 并发基于过期 base version 的结果成为 Conflict Candidate，不推进当前版本；File Service 不自动合并文本。
+10. 默认文件交付开启时，成功精确版本创建固定 reply route 的 Delivery；“只保存到工作区”跳过。Delivery 失败只重试同一版本，不重跑 Agent、不回滚提交。
 
 ## 发布开关
 
@@ -59,6 +61,8 @@ Business Application Publication v3 冻结四个依赖有序的开关：
 2. `file_mcp_enabled`（依赖工作区）
 3. `runtime_file_edit_enabled`（依赖 File MCP）
 4. `default_file_delivery_enabled`（依赖 Runtime 编辑）
+
+启用任务工作区时，管理端同时强制开启消息附件和连续会话；后端也拒绝缺少任一依赖的草稿。这样纯附件与后续文字才能稳定落入同一个 Channel Session。
 
 旧 v1/v2 Publication 和未提供开关的 Job 稳定解释为全部关闭，保持原文字/附件行为。管理前端显示草稿值和发布快照来源。
 

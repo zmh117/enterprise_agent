@@ -119,17 +119,13 @@ def create_default_app() -> Any:
         settings.principal_jwt.public_jwks_file,
         refresh_seconds=settings.file_service.jwks_refresh_seconds,
     )
-    service_jwks = CachedPrincipalJwks(
-        settings.service_principal.public_jwks_file,
-        refresh_seconds=settings.file_service.jwks_refresh_seconds,
-    )
     verifier = FilePrincipalVerifier(jwks)
     principal = FilePrincipalResolver(
         verifier,
         runtime.mcp_tool_snapshot_service,
         authorization,
     )
-    service_verifier = FileWorkerPrincipalVerifier(service_jwks)
+    service_verifier = FileWorkerPrincipalVerifier(jwks)
     storage: MinioFileObjectStorage | _UnavailableStorage
     legacy_storage: MinioFileObjectStorage | None = None
     storage_readiness: _StorageReadiness | _UnavailableStorage
@@ -193,7 +189,6 @@ def create_default_app() -> Any:
         database=runtime.database,
         storage=storage_readiness,
         jwks=jwks,
-        service_jwks=service_jwks,
         audit=FileMcpAudit(
             McpAuditCoordinator(
                 runtime.database,

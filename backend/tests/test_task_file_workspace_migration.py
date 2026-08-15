@@ -77,7 +77,7 @@ def test_workspace_expand_schema_enforces_active_owner_and_version_constraints()
         default_migrations_dir(),
         migrator_build="task-file-workspace-schema-test",
     ).run()
-    assert result.head == "107"
+    assert result.head == "109"
     tables = {
         str(row["name"])
         for row in database.execute("select name from sqlite_master where type = 'table'")
@@ -101,8 +101,7 @@ def test_workspace_expand_schema_enforces_active_owner_and_version_constraints()
         "message_attachment_file_binding",
     } <= tables
     delivery_columns = {
-        str(row["name"])
-        for row in database.execute("pragma table_info(delivery_outbox)")
+        str(row["name"]) for row in database.execute("pragma table_info(delivery_outbox)")
     }
     assert {
         "delivery_kind",
@@ -317,7 +316,7 @@ def test_attachment_retention_backfill_uses_360_days_and_only_marks_cleanup(
         migrator_build="attachment-retention-upgrade",
     ).run()
 
-    assert upgraded.applied == ("107",)
+    assert upgraded.applied == ("107", "108", "109")
     attachment = database.execute_one(
         """
         select retention_days, expires_at, object_key, status

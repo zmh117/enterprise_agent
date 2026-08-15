@@ -38,6 +38,10 @@ test("TypeScript Job Sandbox maps one Job and cleans every terminal path", async
       pattern: "draft",
       path: "."
     })).path, ".");
+    assert.deepEqual(await sandbox.authorizeTool("Glob", {
+      pattern: "**/*.txt",
+      path: "."
+    }), { pattern: "**/*.txt", path: "." });
   } finally {
     await sandbox.cleanup();
     await assert.rejects(readFile(join(sandbox.path, SANDBOX_MARKER)));
@@ -64,6 +68,9 @@ test("TypeScript Job Sandbox rejects tools, escapes, links, special files and li
     await denied("Read", { file_path: "/etc/passwd" }, "sandbox_path_invalid");
     await denied("Read", { file_path: "../escape.txt" }, "sandbox_path_invalid");
     await denied("Read", { file_path: "inputs/file.pdf" }, "sandbox_file_type_denied");
+    await denied("Glob", { pattern: "../*.txt", path: "." }, "sandbox_tool_input_invalid");
+    await denied("Glob", { pattern: "**/*", path: "." }, "sandbox_tool_input_invalid");
+    await denied("Glob", { pattern: "**/*.txt", path: "/tmp" }, "sandbox_path_invalid");
 
     const outside = join(parent, "outside.txt");
     await writeFile(outside, "private", "utf8");

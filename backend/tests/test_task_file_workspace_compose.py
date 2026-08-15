@@ -102,7 +102,6 @@ def test_worker_identity_bootstrap_is_role_separated_and_file_service_is_hardene
     assert set(file_service["secrets"]) == {
         "app_config_master_key",
         "principal_jwks",
-        "service_principal_jwks",
     }
     assert "file_worker_bootstrap_token" in file_worker["secrets"]
     assert "delivery_worker_bootstrap_token" not in file_worker["secrets"]
@@ -110,12 +109,10 @@ def test_worker_identity_bootstrap_is_role_separated_and_file_service_is_hardene
     assert "file_worker_bootstrap_token" not in delivery_worker["secrets"]
     assert "principal_jwt_private_key" not in file_worker["secrets"]
     assert "principal_jwt_private_key" not in delivery_worker["secrets"]
-    assert "service_principal_private_key" not in file_worker["secrets"]
-    assert "service_principal_private_key" not in delivery_worker["secrets"]
 
     api = services["api-server"]
     assert {
-        "service_principal_private_key",
+        "principal_jwt_private_key",
         "file_worker_bootstrap_token",
         "delivery_worker_bootstrap_token",
     } <= set(api["secrets"])
@@ -127,6 +124,13 @@ def test_worker_identity_bootstrap_is_role_separated_and_file_service_is_hardene
     assert "DELIVERY_WORKER_PRINCIPAL_TOKEN_FILE" not in compose_text
     assert "file-worker-principal.jwt" not in compose_text
     assert "delivery-worker-principal.jwt" not in compose_text
+    assert "SERVICE_PRINCIPAL_PRIVATE_KEY_FILE" not in compose_text
+    assert "SERVICE_PRINCIPAL_JWKS_FILE" not in compose_text
+    assert "service_principal_private_key" not in compose_text
+    assert "service_principal_jwks" not in compose_text
+    env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+    assert "SERVICE_PRINCIPAL_PRIVATE_KEY_FILE" not in env_example
+    assert "SERVICE_PRINCIPAL_JWKS_FILE" not in env_example
 
 
 def test_runtime_tmpfs_and_per_job_limits_are_explicitly_configured() -> None:

@@ -129,6 +129,27 @@ def test_job_manifest_freezes_exact_version_and_later_job_sees_new_current() -> 
     assert first["items"][0]["version_id"] == "version-1"
     assert first["items"][0]["auto_materialize"] == 1
     assert first["items"][0]["source_kind"] == "EXPLICIT_REFERENCE"
+    runtime_manifest = service.runtime_manifest("job-1")
+    assert runtime_manifest == {
+        "schema_version": 1,
+        "manifest_hash": first["manifest_hash"],
+        "items": [
+            {
+                "file_id": "file-notes",
+                "version_id": "version-1",
+                "display_name": "notes.txt",
+                "source_kind": "EXPLICIT_REFERENCE",
+                    "allowed_actions": [
+                        "READ_METADATA",
+                        "MATERIALIZE",
+                        "RETAIN",
+                        "DELIVER",
+                ],
+                "auto_materialize": True,
+                "conflict_candidate": False,
+            }
+        ],
+    }
 
     _create_txt(
         repository,

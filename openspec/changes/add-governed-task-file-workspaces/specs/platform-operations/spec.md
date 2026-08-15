@@ -41,16 +41,16 @@ File Service readiness MUST 验证PostgreSQL schema、MinIO私有bucket访问、
 - **AND** 不显示文件名、正文、对象键或凭据
 
 ### Requirement: Compose完整配置Service Principal签发与刷新链路
-默认Compose MUST 让现有平台API身份模块挂载独立Service Principal签名私钥以及角色隔离的File Worker、Delivery Worker bootstrap credential，让File Service只挂载对应公开JWKS，并让每个Worker只挂载自己的bootstrap credential。部署 MUST 使用按需签发和到期前刷新，不得要求宿主机预先提供短时Service JWT文件。密钥初始化 MUST 幂等生成服务密钥/JWKS/bootstrap材料、拒绝不完整密钥组并保持私钥和bootstrap文件owner-only。
+默认Compose MUST 只维护一套平台Principal签名私钥和公开JWKS：现有平台API身份模块与Agent Worker只在需要签发对应Token时挂载同一私钥，File Service、ONES MCP及后续MCP只挂载同一公开`PRINCIPAL_JWKS`；不得声明或挂载第二套Service Principal私钥/JWKS。平台API还 MUST 挂载角色隔离的File Worker、Delivery Worker bootstrap credential，并让每个Worker只挂载自己的bootstrap credential。部署 MUST 使用按需签发和到期前刷新，不得要求宿主机预先提供短时Service JWT文件。密钥初始化 MUST 幂等生成统一Principal密钥/JWKS与bootstrap材料、拒绝不完整统一密钥组并保持私钥和bootstrap文件owner-only。
 
 #### Scenario: 新环境首次启动
 - **WHEN** 运维运行受控密钥初始化后启动默认Compose
-- **THEN** 所有Service Principal bind source均存在且容器可创建
+- **THEN** 统一Principal密钥/JWKS及所有Service Principal bootstrap bind source均存在且容器可创建
 - **AND** File Worker和Delivery Worker能从平台身份接口取得可验证的角色JWT
 
 #### Scenario: 检查角色Secret挂载
 - **WHEN** 运维检查API、File Service、File Worker与Delivery Worker的Compose Secret
-- **THEN** API拥有服务签名私钥和两份bootstrap credential，File Service只有公开JWKS
+- **THEN** API拥有统一Principal签名私钥和两份bootstrap credential，File Service只有统一公开JWKS
 - **AND** 每个Worker只有自己的bootstrap credential且没有签名私钥、JWKS或另一角色Secret
 
 #### Scenario: 短时JWT到期

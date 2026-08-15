@@ -22,8 +22,8 @@ File MCP Tool输入 MUST 使用封闭Schema，只允许必要的文件选择、�
 - **WHEN** File Tool参数包含Bucket、对象键或跨工作区File ID
 - **THEN** schema或授权校验在对象操作前拒绝
 
-### Requirement: 内部文件调用使用独立短时 Service Principal
-平台身份服务 MUST 使用独立于用户/Job Principal 的 Service Principal 签名密钥，为`file-worker`和Delivery Worker按需签发TTL不超过300秒的角色JWT。服务JWT MUST 绑定固定issuer、`aud=file-service-internal`、相同的`sub`/`azp`角色、完整固定scope集合、JTI与时间声明；File Service MUST 使用独立Service JWKS验签并确认当前接口所需scope属于该角色的完整集合。Worker MUST NOT持有服务签名私钥、另一角色bootstrap credential、预生成长期JWT或共享Internal API Token。
+### Requirement: 内部文件调用使用角色隔离的短时 Service Principal
+平台身份服务 MUST 使用统一的平台 Principal 签名私钥，为`file-worker`和Delivery Worker按需签发TTL不超过300秒的角色JWT；用户/Job Principal与Service Principal MUST 共享同一公开`PRINCIPAL_JWKS`，不得维护第二套Service Principal签名私钥或JWKS。服务JWT MUST 绑定独立固定issuer、`aud=file-service-internal`、相同的`sub`/`azp`角色、完整固定scope集合、JTI与时间声明；File Service MUST 在独立验证策略中校验这些claims，并确认当前接口所需scope属于该角色的完整集合。共享签名信任根不得使用户/Job Principal通过内部服务接口，也不得使Service Principal通过普通File MCP或其它用户MCP接口。Worker MUST NOT持有平台签名私钥、公开JWKS、另一角色bootstrap credential、预生成长期JWT或共享Internal API Token。
 
 #### Scenario: File Worker换取并使用短时JWT
 - **WHEN** File Worker以自己的角色bootstrap credential调用平台内部身份接口

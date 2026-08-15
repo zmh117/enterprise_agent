@@ -12,14 +12,14 @@
 
 ## 1. 部署前只读检查
 
-1. 验证 migration 精确到当前 catalog head，File Service 的用户 JWKS、服务 JWKS、互不相同的新文件私有 Bucket 与旧附件私有 Bucket，以及固定 Tool Manifest readiness 均通过。旧附件 Bucket 只用于 File Service 执行 360 天到期清理，不把对象入口重新开放给 Worker。
-2. 初始化独立 Service Principal 密钥与两个角色 bootstrap credential；脚本幂等保留现有材料，发现不完整密钥对时失败关闭：
+1. 验证 migration 精确到当前 catalog head，File Service 的统一 Principal JWKS、用户/Job 与服务身份验证策略、互不相同的新文件私有 Bucket 与旧附件私有 Bucket，以及固定 Tool Manifest readiness 均通过。旧附件 Bucket 只用于 File Service 执行 360 天到期清理，不把对象入口重新开放给 Worker。
+2. 初始化统一平台 Principal 密钥/JWKS 与两个角色 bootstrap credential；脚本幂等保留现有材料，发现不完整统一密钥对时失败关闭：
 
 ```bash
 scripts/bootstrap_agent_runtime_secrets.sh "${HOME}/.config/enterprise-agent"
 ```
 
-   API Server 独占服务签名私钥和两个 bootstrap credential，File Service 只取得公开 JWKS；File Worker 与 Delivery Worker 各自只取得本角色 bootstrap credential。Worker 按需向固定内部 API 换取并在到期前刷新不超过 300 秒的 JWT，不使用宿主机静态 JWT 文件。不得输出这些文件内容。
+   API Server 与 Agent Worker仅在签发对应Token时取得同一平台Principal签名私钥，File Service、ONES MCP及后续MCP只取得同一公开JWKS；File Worker与Delivery Worker各自只取得本角色bootstrap credential。Worker按需向固定内部API换取并在到期前刷新不超过300秒的JWT，不使用宿主机静态JWT文件。共享签名根不改变issuer、audience、authorized party与scope隔离，不得输出这些文件内容。
 3. 运行 `docker compose config --quiet`，确认不存在 `file-worker-principal.jwt`、`delivery-worker-principal.jwt` 或对应静态 JWT 环境变量；再确认 API、File Service 和两个 Worker 的角色隔离挂载。
    本地首次启动还应设置 `FILE_STORAGE_SECRET_BOOTSTRAP_ENABLED=true`。一次性 Migrator 会把Compose中的MinIO基础设施凭据加密写入`minio-file-access-key`和`minio-file-secret-key`平台Secret；相同值幂等保留，已有值不同则停止并要求显式轮换。生产环境应预先配置受治理Secret并关闭此本地bootstrap。
 4. 记录旧附件队列 `ready`、`unacked`、consumer 数、retry/dead 队列计数。切换前只能有一个附件消费者。

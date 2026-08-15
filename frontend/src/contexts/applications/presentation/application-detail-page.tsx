@@ -49,6 +49,15 @@ import {
 } from "@/contexts/applications/presentation/runtime-readiness"
 import { cn } from "@/lib/utils"
 
+const FILE_MCP_READ_TOOL_IDS = [
+  "task_workspace_get",
+  "task_workspace_list_files",
+  "file_get_metadata",
+  "file_prepare_materialization",
+] as const
+const FILE_MCP_EDIT_TOOL_IDS = ["file_create_commit_intent"] as const
+const FILE_MCP_DELIVERY_TOOL_IDS = ["file_deliver_version"] as const
+
 export function ApplicationDetailPage() {
   const code = useParams().code ?? ""
   const query = useApplication(code)
@@ -359,7 +368,7 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
         </CardContent>
       </Card>
 
-      <PolicyEditor form={form} setForm={setForm} />
+      <PolicyEditor form={form} setForm={setForm} catalog={catalog.data} />
       <BindingsEditor form={form} setForm={setForm} catalog={catalog.data} />
 
       <McpToolSelector form={form} setForm={setForm} catalog={catalog.data} />
@@ -389,10 +398,20 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
 function PolicyEditor({
   form,
   setForm,
+  catalog,
 }: {
   form: SaveDraftInput
   setForm: (value: SaveDraftInput) => void
+  catalog: Catalog
 }) {
+  const availableFileTools = new Set(
+    (catalog?.mcp_tools_by_agent_publication[form.agent_publication_id] ?? [])
+      .filter((tool) => tool.server_code === "file-service")
+      .map((tool) => tool.tool_identifier)
+  )
+  const missingRequiredFileTools = [...requiredFileMcpToolIds(form.task_file_features)].filter(
+    (identifier) => !availableFileTools.has(identifier)
+  )
   return (
     <Card className="shadow-none">
       <CardHeader>
@@ -447,10 +466,16 @@ function PolicyEditor({
                   setForm({
                     ...form,
                     task_file_features: taskFileFeatures,
+                    mcp_tools: selectRequiredFileMcpTools(
+                      form.mcp_tools,
+                      taskFileFeatures,
+                      availableFileTools
+                    ),
                     session_policy: taskFileFeatures.workspace_enabled
                       ? {
                           ...form.session_policy,
                           attachments_enabled: true,
+                          continuous_conversation_enabled: true,
                         }
                       : form.session_policy,
                   })
@@ -459,6 +484,12 @@ function PolicyEditor({
               {label}
             </label>
           ))}
+          {missingRequiredFileTools.length ? (
+            <p className="text-xs leading-5 text-destructive md:col-span-2 xl:col-span-2">
+              当前 Agent 发布版本缺少任务文件工具，请先在 Agent 管理中发布包含 File MCP
+              工具的新版本，再回到这里选择并发布业务应用。
+            </p>
+          ) : null}
         </div>
         <Field label="会话范围" htmlFor="policy-conversation">
           <select
@@ -514,6 +545,7 @@ function PolicyEditor({
             <Checkbox
               aria-label="连续会话"
               checked={form.session_policy.continuous_conversation_enabled}
+              disabled={form.task_file_features.workspace_enabled}
               onCheckedChange={(checked) =>
                 setForm({
                   ...form,
@@ -527,7 +559,7 @@ function PolicyEditor({
             <span>
               连续会话
               <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-                允许同一渠道会话在后续消息中继续使用已保存的会话上下文。
+                允许同一渠道会话在后续消息中继续使用已保存的会话上下文；任务工作区启用时必须开启。
               </span>
             </span>
           </label>
@@ -617,8 +649,10 @@ function McpToolSelector({
 }) {
   const envelope =
     catalog?.mcp_tools_by_agent_publication[form.agent_publication_id] ?? []
+  const requiredFileTools = requiredFileMcpToolIds(form.task_file_features)
 
   function toggle(identifier: string) {
+    if (requiredFileTools.has(identifier)) return
     setForm({
       ...form,
       mcp_tools: form.mcp_tools.includes(identifier)
@@ -651,6 +685,7 @@ function McpToolSelector({
                 <Checkbox
                   aria-label={`选择 MCP Tool ${tool.tool_identifier}`}
                   checked={form.mcp_tools.includes(tool.tool_identifier)}
+                  disabled={requiredFileTools.has(tool.tool_identifier)}
                   onCheckedChange={() => toggle(tool.tool_identifier)}
                 />
                 <span className="min-w-0 flex-1">
@@ -666,6 +701,11 @@ function McpToolSelector({
                   {tool.description ? (
                     <span className="mt-1 block text-xs leading-5 text-muted-foreground">
                       {tool.description}
+                    </span>
+                  ) : null}
+                  {requiredFileTools.has(tool.tool_identifier) ? (
+                    <span className="mt-1 block text-xs text-primary">
+                      当前任务文件功能必选
                     </span>
                   ) : null}
                 </span>
@@ -1575,6 +1615,33 @@ function nextTaskFileFeatures(
     }
   }
   return next
+}
+
+function requiredFileMcpToolIds(
+  features: SaveDraftInput["task_file_features"]
+): Set<string> {
+  const required = new Set<string>()
+  if (features.file_mcp_enabled) {
+    FILE_MCP_READ_TOOL_IDS.forEach((identifier) => required.add(identifier))
+  }
+  if (features.runtime_file_edit_enabled) {
+    FILE_MCP_EDIT_TOOL_IDS.forEach((identifier) => required.add(identifier))
+  }
+  if (features.default_file_delivery_enabled) {
+    FILE_MCP_DELIVERY_TOOL_IDS.forEach((identifier) => required.add(identifier))
+  }
+  return required
+}
+
+function selectRequiredFileMcpTools(
+  selected: string[],
+  features: SaveDraftInput["task_file_features"],
+  available: Set<string>
+): string[] {
+  const required = [...requiredFileMcpToolIds(features)].filter((identifier) =>
+    available.has(identifier)
+  )
+  return [...new Set([...selected, ...required])]
 }
 
 function formatTaskFileFeatures(

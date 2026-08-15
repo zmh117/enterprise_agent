@@ -72,6 +72,11 @@ class ConversationContextService:
             job.session_id,
             limit=recent_message_limit + self.settings.summary_trigger_messages,
         )
+        messages = [
+            message
+            for message in messages
+            if str(message.get("message_type") or "") != "attachment_intake"
+        ]
         summary = session.summary_text
         if len(messages) > self.settings.summary_trigger_messages:
             cutoff = len(messages) - recent_message_limit

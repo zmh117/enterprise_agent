@@ -217,6 +217,45 @@ class JobFileManifestService:
             self.repository.finalize_job_file_request(job_id)
             return cast(dict[str, Any], snapshot)
 
+    def runtime_manifest(self, job_id: str) -> dict[str, Any]:
+        """Project the immutable Job snapshot into the bounded Runtime contract."""
+
+        snapshot = self.repository.get_job_snapshot(job_id)
+        projected: list[dict[str, Any]] = []
+        for item in snapshot.get("items") or []:
+            try:
+                actions = json.loads(str(item.get("allowed_actions_json") or "[]"))
+            except json.JSONDecodeError as exc:
+                raise NonRetryableExecutionError(
+                    "Job File Manifest actions are invalid",
+                    safe_message="任务文件清单无效",
+                    error_code="file_manifest_invalid",
+                ) from exc
+            if not isinstance(actions, list) or any(
+                not isinstance(action, str) for action in actions
+            ):
+                raise NonRetryableExecutionError(
+                    "Job File Manifest actions are invalid",
+                    safe_message="任务文件清单无效",
+                    error_code="file_manifest_invalid",
+                )
+            projected.append(
+                {
+                    "file_id": str(item["file_id"]),
+                    "version_id": str(item["version_id"]),
+                    "display_name": str(item["display_name"]),
+                    "source_kind": str(item["source_kind"]),
+                    "allowed_actions": actions,
+                    "auto_materialize": bool(item.get("auto_materialize")),
+                    "conflict_candidate": bool(item.get("conflict_candidate")),
+                }
+            )
+        return {
+            "schema_version": int(snapshot.get("schema_version") or 1),
+            "manifest_hash": str(snapshot["manifest_hash"]),
+            "items": projected,
+        }
+
     def has_pending_txt_attachments(self, job_id: str) -> bool:
         row = self.repository.database.execute_one(
             """

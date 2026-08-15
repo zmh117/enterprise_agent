@@ -94,6 +94,8 @@ class MessageAttachment:
     file_name: str
     declared_mime: str
     status: str
+    task_workspace_id: str = ""
+    claimed_at: str | None = None
     detected_mime: str = ""
     declared_size: int | None = None
     size_bytes: int | None = None

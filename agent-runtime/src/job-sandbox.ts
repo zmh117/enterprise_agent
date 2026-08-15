@@ -14,7 +14,8 @@ export const SANDBOX_MARKER = ".enterprise-agent-sandbox.json";
 export const SANDBOX_CAPACITY_BYTES = 224 * 1024 * 1024;
 export const SANDBOX_FILE_BYTES = 15 * 1024 * 1024;
 export const SANDBOX_FILE_LIMIT = 40;
-export const FILE_TOOLS = new Set(["Read", "Grep", "Write", "Edit"]);
+export const FILE_TOOL_NAMES = ["Read", "Glob", "Grep", "Edit", "Write"] as const;
+export const FILE_TOOLS = new Set<string>(FILE_TOOL_NAMES);
 const TOP_LEVEL = new Set(["inputs", "work", "outputs", "tmp"]);
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
@@ -58,6 +59,7 @@ export class JobSandbox {
     const input = { ...rawInput };
     const expected: Record<string, Set<string>> = {
       Read: new Set(["file_path", "offset", "limit", "pages"]),
+      Glob: new Set(["pattern", "path"]),
       Grep: new Set([
         "pattern", "path", "glob", "output_mode", "-B", "-A", "-C", "-n",
         "-i", "type", "head_limit", "offset", "multiline"
@@ -68,16 +70,25 @@ export class JobSandbox {
     if (Object.keys(input).some((key) => !expected[toolName]?.has(key))) {
       deny("sandbox_tool_input_invalid", "tool input contains unknown fields");
     }
-    const pathField = toolName === "Grep" ? "path" : "file_path";
-    const rawPath = input[pathField] ?? (toolName === "Grep" ? "." : "");
-    const relativePath = safeRelativePath(rawPath, toolName === "Grep");
-    const target = resolveSandboxPath(this.path, relativePath, toolName === "Grep");
+    const directoryTool = toolName === "Glob" || toolName === "Grep";
+    const pathField = directoryTool ? "path" : "file_path";
+    const rawPath = input[pathField] ?? (directoryTool ? "." : "");
+    const relativePath = toolName === "Glob"
+      ? safeDirectoryPath(rawPath)
+      : safeRelativePath(rawPath, toolName === "Grep");
+    const target = resolveSandboxPath(this.path, relativePath, directoryTool);
     await rejectSymlinks(this.path, target);
     const current = await optionalStat(target);
-    if (toolName === "Read" || toolName === "Grep") {
+    if (toolName === "Read" || toolName === "Glob" || toolName === "Grep") {
       if (!current) deny("sandbox_entry_missing", "sandbox entry does not exist");
       if (toolName === "Read" && !current.isFile()) {
         deny("sandbox_entry_invalid", "Read requires a regular TXT file");
+      }
+      if (toolName === "Glob") {
+        if (!current.isDirectory()) {
+          deny("sandbox_entry_invalid", "Glob requires a regular directory");
+        }
+        authorizeGlobPattern(input.pattern);
       }
       if (toolName === "Grep") {
         if (!current.isFile() && !current.isDirectory()) {
@@ -221,6 +232,35 @@ function safeRelativePath(value: unknown, allowRoot: boolean): string {
     deny("sandbox_file_type_denied", "only TXT files are allowed");
   }
   return value;
+}
+
+function safeDirectoryPath(value: unknown): string {
+  if (typeof value !== "string" || value.length < 1 || value.length > 240 || value.includes("\\") || value.includes("\0")) {
+    deny("sandbox_path_invalid", "sandbox path is invalid");
+  }
+  if (value === ".") return value;
+  if (
+    posix.isAbsolute(value) ||
+    posix.normalize(value) !== value ||
+    value.split("/").some((part) => part === "." || part === "..") ||
+    !TOP_LEVEL.has(value.split("/")[0] ?? "")
+  ) deny("sandbox_path_invalid", "sandbox path escaped its Job boundary");
+  return value;
+}
+
+function authorizeGlobPattern(value: unknown): void {
+  if (
+    typeof value !== "string" ||
+    value.length < 1 ||
+    value.length > 1024 ||
+    value.includes("\\") ||
+    value.includes("\0") ||
+    posix.isAbsolute(value) ||
+    value.split("/").some((part) => part === "." || part === "..") ||
+    !value.toLowerCase().endsWith(".txt")
+  ) {
+    deny("sandbox_tool_input_invalid", "Glob pattern must be a relative TXT pattern");
+  }
 }
 
 function resolveSandboxPath(rootValue: string, pathValue: string, allowRoot: boolean): string {

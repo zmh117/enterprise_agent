@@ -57,9 +57,8 @@ class AttachmentProcessingService:
     def process(self, attachment_id: str, correlation_id: str) -> str:
         attachment = self.repository.get_attachment(attachment_id)
         if attachment.status in TERMINAL_ATTACHMENT_STATUSES:
-            return self._release_if_ready(attachment.job_id, correlation_id)
-        job = self.repository.get_job(attachment.job_id)
-        session = self.repository.get_session(job.session_id)
+            return self._release_attachment_if_ready(attachment_id, correlation_id)
+        context = self.repository.attachment_session_context(attachment_id)
         secret = self.repository.get_attachment_secret(attachment_id)
         if _expired(secret.get("source_credential_expires_at")):
             self.repository.update_attachment(
@@ -68,7 +67,7 @@ class AttachmentProcessingService:
                 failure_code="source_credential_expired",
                 clear_credential=True,
             )
-            return self._release_if_ready(attachment.job_id, correlation_id)
+            return self._release_attachment_if_ready(attachment_id, correlation_id)
         try:
             credential = self.credential_cipher.decrypt(
                 str(secret.get("source_credential_ciphertext") or "")
@@ -77,8 +76,8 @@ class AttachmentProcessingService:
             data = self.downloader.download(
                 download_code=credential,
                 max_bytes=self.settings.max_file_bytes,
-                connector_id=job.source_connector_id,
-                robot_code=session.bot_identity,
+                connector_id=str(context["source_connector_id"]),
+                robot_code=str(context["bot_identity"]),
             )
             task_txt = (
                 self.importer is not None and Path(attachment.file_name).suffix.lower() == ".txt"
@@ -174,7 +173,7 @@ class AttachmentProcessingService:
                 "attachment.processed",
                 status="SUCCEEDED",
                 summary="Attachment reached a safe terminal state",
-                job_id=attachment.job_id,
+                job_id=attachment.job_id or None,
                 payload={
                     "attachment_id": attachment_id,
                     "status": self.repository.get_attachment(attachment_id).status,
@@ -208,9 +207,15 @@ class AttachmentProcessingService:
                 "attachment.rejected",
                 status="FAILED",
                 summary="Attachment processing failed safely",
-                job_id=attachment.job_id,
+                job_id=attachment.job_id or None,
                 payload={"attachment_id": attachment_id, "failure_code": code},
             )
+        return self._release_attachment_if_ready(attachment_id, correlation_id)
+
+    def _release_attachment_if_ready(self, attachment_id: str, correlation_id: str) -> str:
+        attachment = self.repository.get_attachment(attachment_id)
+        if not attachment.job_id:
+            return "staged"
         return self._release_if_ready(attachment.job_id, correlation_id)
 
     @operation_unit_of_work(lambda service: service.repository.database)
@@ -265,10 +270,10 @@ class AttachmentProcessingService:
         if self.storage is None:
             return []
         referenced = {
-            item.object_key
-            for row in self.repository.database.execute("select job_id from agent_job")
-            for item in self.repository.list_attachments(str(row["job_id"]))
-            if item.object_key
+            str(row["object_key"])
+            for row in self.repository.database.execute(
+                "select object_key from message_attachment where object_key <> ''"
+            )
         }
         return [key for key in self.storage.list_keys() if key not in referenced]
 
@@ -287,7 +292,7 @@ class AttachmentProcessingService:
                 "attachment.deleted",
                 status="SUCCEEDED",
                 summary="Expired attachment object deleted",
-                job_id=attachment.job_id,
+                job_id=attachment.job_id or None,
                 payload={"attachment_id": attachment.id},
             )
         return deleted

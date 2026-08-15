@@ -648,7 +648,9 @@ def _build_container(
     service_principal_token_issuer: ServicePrincipalTokenIssuer | None = None
     if service_name == "api-server" and settings.service_principal.enabled:
         service_principal_token_issuer = ServicePrincipalTokenIssuer.from_files(
-            signing_private_key_file=(settings.service_principal.signing_private_key_file),
+            signing_private_key_file=(
+                settings.principal_jwt.signing_private_key_file
+            ),
             file_worker_bootstrap_file=(
                 settings.service_principal.file_worker_bootstrap_token_file
             ),
@@ -1027,6 +1029,7 @@ def _build_container(
                 agent_repository, settings.conversation
             ),
             agent_config_service=agent_config_service,
+            file_manifest_service=file_manifest_service,
         ),
         claude_client=claude_client,
         tool_registry=tool_registry,

@@ -865,6 +865,11 @@ def test_python_runtime_file_job_uses_fixed_file_mcp_guarded_tools_and_finally_c
                 "Read", {"file_path": "/etc/passwd"}, object()
             )
         )["behavior"] == "deny"
+        assert (
+            await options["can_use_tool"](
+                "Glob", {"pattern": "**/*.txt", "path": "."}, object()
+            )
+        )["behavior"] == "allow"
         yield {
             "type": "result",
             "subtype": "success",
@@ -899,7 +904,13 @@ def test_python_runtime_file_job_uses_fixed_file_mcp_guarded_tools_and_finally_c
         allowed_tools=["file_create_commit_intent"],
         tool_restrictions=["TXT only"],
         skills={},
-        retrieved_context={},
+        retrieved_context={
+            "file_manifest": {
+                "schema_version": 1,
+                "manifest_hash": "e" * 64,
+                "items": [],
+            }
+        },
         conversation_summary="",
         publication_id="agent-publication-1",
         application_publication_id="application-publication-1",
@@ -956,6 +967,7 @@ def test_python_runtime_file_job_uses_fixed_file_mcp_guarded_tools_and_finally_c
 
     assert result.final_answer == "file job complete"
     assert captured["setting_sources"] == []
+    assert captured["tools"] == ["Read", "Glob", "Grep", "Edit", "Write"]
     assert captured["allowed_tools"] == []
     assert "Bash" in captured["disallowed_tools"]
     assert "Write" not in captured["disallowed_tools"]

@@ -21,6 +21,13 @@ Runtime MUST 通过File Service受控流式接口下载Job File Manifest中的�
 
 Python与TypeScript Runtime MUST 使用代码注册的进程内File MCP bridge代理Job冻结的部署固定File Service工具，并在远端ToolResult交回模型前处理隐藏传输控制信息。bridge MUST 使用当前Job File Principal JWT和固定内部流式路径，不得接受模型提供的URL、Header、Token、绝对路径或对象位置；SDK消息返回后再处理的旁路不满足本要求。
 
+Agent Worker MUST 将有界且无正文的Job File Manifest投影交给Runtime。Runtime MUST 在模型请求前主动物化所有`auto_materialize=true`精确版本并向模型提供已校验的安全沙盒元数据；任何自动物化失败 MUST 使Job失败关闭。其余候选只能由Agent使用Manifest中的精确File/Version ID按需物化。
+
+#### Scenario: 当前消息附件在模型执行前已进入沙盒
+- **WHEN** Job File Manifest包含一个合法`auto_materialize=true`的当前消息TXT版本
+- **THEN** Runtime在首次模型请求前通过受控File bridge完成下载、大小和SHA-256校验及sandbox entry登记
+- **AND** 模型可直接从安全相对路径读取该文件而无需先发现File ID
+
 #### Scenario: Agent显式提交沙盒文件
 - **WHEN** Agent调用已冻结的文件提交工具并选择一个受控沙盒文件
 - **THEN** Runtime使用当前Job绑定流式上传内容到File Service
@@ -98,7 +105,7 @@ Python与TypeScript Runtime MUST 使用代码注册的进程内File MCP bridge�
 - **THEN** 部署预检失败且不启动兼容模式
 
 ### Requirement: Built-in mutating tools are disabled
-系统 SHALL 继续禁止SDK的Bash、NotebookEdit、WebFetch、WebSearch、Shell、部署、数据库写入和其它开放执行工具。只有启用任务文件工作区且Job冻结精确File MCP Tool时，Runtime MAY向Claude Code开放`Read`、`Grep`、`Write`和`Edit`，并 MUST 把目标限制到当前Job Sandbox、拒绝路径穿越与符号链接逃逸。文件系统修改只改变本地副本，必须经File Service显式提交才能形成文件版本。
+系统 SHALL 继续禁止SDK的Bash、NotebookEdit、WebFetch、WebSearch、Shell、部署、数据库写入和其它开放执行工具。只有启用任务文件工作区且Job冻结精确File MCP Tool时，Runtime MAY向Claude Code开放`Read`、`Glob`、`Grep`、`Write`和`Edit`，并 MUST 把目标限制到当前Job Sandbox、拒绝路径穿越与符号链接逃逸。`Glob`只能使用沙盒内相对TXT pattern，且必须拒绝绝对路径、`..`、符号链接、非TXT pattern和未知字段。文件系统修改只改变本地副本，必须经File Service显式提交才能形成文件版本。
 
 #### Scenario: Model attempts Bash or Web tool
 - **WHEN** SDK尝试调用Bash、WebFetch、WebSearch或NotebookEdit
@@ -113,16 +120,17 @@ Python与TypeScript Runtime MUST 使用代码注册的进程内File MCP bridge�
 - **WHEN** `Write`或`Edit`目标离开当前Job Sandbox或Job未冻结文件工具
 - **THEN** Runtime在副作用前拒绝
 
-#### Scenario: Only current MCP set is auto-approved
+#### Scenario: Only current MCP and sandbox set is exposed
 - **WHEN** Application Publication只选择一个MCP Tool
-- **THEN** 只有该Tool及其要求的受限本地文件工具可进入allowedTools和自动批准集合
+- **THEN** 只有该Tool可进入MCP可调用集合，且只有文件Job所需的五个受限本地文件工具可进入SDK `tools`可用集合
+- **AND** `allowedTools`/`allowed_tools`保持为空，所有调用仍经过`canUseTool`逐次校验
 
 #### Scenario: Application has no Tool
 - **WHEN** Application MCP Tool子集为空
 - **THEN** 不注册或批准任何平台Tool或本地文件修改工具
 
 ### Requirement: Runtime exposes only read-only tools
-系统 SHALL 默认只注册Job冻结的只读MCP Tool。仅当Business Application与Agent Publication都冻结支持的File MCP Tool且当前Job绑定有效任务工作区时，Runtime SHALL 额外注册部署固定File MCP Server及沙盒受限`Read`、`Grep`、`Write`和`Edit`；数据库更新、Redis删除、重启、部署、PR创建、任意Shell和沙盒外文件操作仍 MUST 被拒绝。
+系统 SHALL 默认只注册Job冻结的只读MCP Tool。仅当Business Application与Agent Publication都冻结支持的File MCP Tool且当前Job绑定有效任务工作区时，Runtime SHALL 额外注册部署固定File MCP Server及沙盒受限`Read`、`Glob`、`Grep`、`Write`和`Edit`；数据库更新、Redis删除、重启、部署、PR创建、任意Shell和沙盒外文件操作仍 MUST 被拒绝。
 
 #### Scenario: Diagnostic Job asks for a mutating tool
 - **WHEN** 普通诊断Job没有文件工具却请求代码修改、数据库更新、Redis删除、重启、部署或沙盒执行
@@ -134,7 +142,7 @@ Python与TypeScript Runtime MUST 使用代码注册的进程内File MCP bridge�
 - **AND** 不经过旧`ToolRegistry`动态实现或任意Server
 
 ### Requirement: Runtime必须隔离SDK配置和工具权限
-每次SDK调用 MUST 使用独立options、env和Job Sandbox，显式设置`settingSources: []`，仅注册请求固定的`tool-mcp`和/或File MCP Server，并以精确`allowedTools`和deny-by-default `canUseTool`限制Tool。Bash、NotebookEdit、WebFetch、WebSearch、Shell和开放文件修改能力 MUST 被禁用；文件Job的`Read`、`Grep`、`Write`与`Edit`必须经过当前沙盒路径守卫。
+每次SDK调用 MUST 使用独立options、env和Job Sandbox，显式设置`settingSources: []`，仅注册请求固定的`tool-mcp`和/或File MCP Server，并以精确的SDK `tools`可用集合、空`allowedTools`/`allowed_tools`、SDK `default` permission mode和deny-by-default `canUseTool`限制Tool。不得使用会在空自动批准集合下先行拒绝并跳过回调的`dontAsk`。Bash、NotebookEdit、WebFetch、WebSearch、Shell和开放文件修改能力 MUST 被禁用；文件Job的`Read`、`Glob`、`Grep`、`Write`与`Edit`必须经过当前沙盒路径守卫。
 
 #### Scenario: 模型调用允许的只读Tool
 - **WHEN** Job请求固定了合法只读MCP Server、Tool、schema hash和scope

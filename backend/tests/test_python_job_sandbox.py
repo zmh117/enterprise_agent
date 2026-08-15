@@ -52,6 +52,9 @@ def test_python_job_sandbox_maps_job_and_cleans_every_terminal_path(tmp_path: Pa
     assert sandbox.authorize_tool("Grep", {"pattern": "draft", "path": "."})[
         "path"
     ] == "."
+    assert sandbox.authorize_tool(
+        "Glob", {"pattern": "**/*.txt", "path": "."}
+    ) == {"pattern": "**/*.txt", "path": "."}
 
     sandbox.cleanup()
     assert not sandbox.path.exists()
@@ -64,6 +67,21 @@ def test_python_job_sandbox_maps_job_and_cleans_every_terminal_path(tmp_path: Pa
         ("Read", {"file_path": "/etc/passwd"}, "sandbox_path_invalid"),
         ("Read", {"file_path": "../escape.txt"}, "sandbox_path_invalid"),
         ("Read", {"file_path": "inputs/file.pdf"}, "sandbox_file_type_denied"),
+        (
+            "Glob",
+            {"pattern": "../*.txt", "path": "."},
+            "sandbox_tool_input_invalid",
+        ),
+        (
+            "Glob",
+            {"pattern": "**/*", "path": "."},
+            "sandbox_tool_input_invalid",
+        ),
+        (
+            "Glob",
+            {"pattern": "**/*.txt", "path": "/tmp"},
+            "sandbox_path_invalid",
+        ),
         (
             "Write",
             {"file_path": "work/file.txt", "content": "x", "mode": "append"},

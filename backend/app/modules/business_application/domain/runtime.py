@@ -5,6 +5,11 @@ from enum import StrEnum
 import hashlib
 from typing import Any
 
+from app.modules.business_application.domain.policies import (
+    required_file_mcp_tools,
+    validate_task_file_features,
+)
+
 
 class RuntimeStatus(StrEnum):
     NOT_WIRED = "not_wired"
@@ -54,6 +59,7 @@ class RuntimeReason(StrEnum):
     RETENTION_POLICY_STORED_ONLY = "retention_policy_stored_only"
     FILE_SERVICE_UNAVAILABLE = "file_service_unavailable"
     FILE_WORKER_UNAVAILABLE = "file_worker_unavailable"
+    FILE_MCP_TOOLS_MISSING = "file_mcp_tools_missing"
 
 
 @dataclass(frozen=True)
@@ -339,6 +345,36 @@ class RuntimeReadinessEvaluator:
                     "业务应用的 Agent 发布版本不可用",
                 )
             )
+
+        task_file_features = validate_task_file_features(snapshot.get("task_file_features"))
+        required_file_tools = required_file_mcp_tools(task_file_features)
+        if required_file_tools:
+            selected_file_tools = {
+                str(tool.get("tool_identifier") or "")
+                for tool in snapshot.get("mcp_tools") or []
+                if isinstance(tool, dict)
+                and str(tool.get("server_code") or "") == "file-service"
+            }
+            missing_file_tools = sorted(required_file_tools - selected_file_tools)
+            if missing_file_tools:
+                components["file_mcp_tools"] = RuntimeComponentStatus(
+                    RuntimeComponentState.BLOCKED,
+                    RuntimeReason.FILE_MCP_TOOLS_MISSING.value,
+                    "任务文件功能已启用，但发布版本未冻结所需 File MCP 工具",
+                    fields={"missing_tool_count": str(len(missing_file_tools))},
+                )
+                blockers.append(
+                    (
+                        RuntimeReason.FILE_MCP_TOOLS_MISSING.value,
+                        "任务文件功能缺少已发布的 File MCP 工具",
+                    )
+                )
+            else:
+                components["file_mcp_tools"] = RuntimeComponentStatus(
+                    RuntimeComponentState.WIRED,
+                    RuntimeReason.READY.value,
+                    "任务文件能力与 File MCP 工具快照一致",
+                )
 
         triggers = [
             dict(value)

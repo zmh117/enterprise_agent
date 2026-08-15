@@ -14,6 +14,7 @@ from app.modules.business_application.domain.policies import (
     canonical_json,
     normalize_routing_key,
     publication_task_file_features,
+    required_file_mcp_tools,
     reject_dangerous_content,
     snapshot_hash,
     validate_execution_policy,
@@ -170,9 +171,7 @@ def test_workspace_retention_is_frozen_in_revision_publication_hash_and_audit() 
         payload=payload,
     )
     assert next_revision["task_workspace_retention_period"] == "DAY"
-    frozen = container.business_application_repository.get_publication(
-        str(publication["id"])
-    )
+    frozen = container.business_application_repository.get_publication(str(publication["id"]))
     assert frozen["task_workspace_retention_period"] == "MONTH"
 
     audit = container.database.execute_one(
@@ -184,9 +183,7 @@ def test_workspace_retention_is_frozen_in_revision_publication_hash_and_audit() 
     )
     assert audit is not None
     audit_envelope = json.loads(str(audit["payload_summary"]))
-    assert json.loads(str(audit_envelope["payload"]))[
-        "task_workspace_retention_period"
-    ] == "MONTH"
+    assert json.loads(str(audit_envelope["payload"]))["task_workspace_retention_period"] == "MONTH"
 
 
 def test_task_file_feature_flags_are_strict_frozen_and_legacy_default_off() -> None:
@@ -220,6 +217,25 @@ def test_task_file_feature_flags_are_strict_frozen_and_legacy_default_off() -> N
             "message": "启用任务工作区前必须允许消息附件",
         }
     ]
+    with pytest.raises(NonRetryableExecutionError) as continuous_error:
+        validate_task_file_attachment_dependency(
+            session_policy={
+                "attachments_enabled": True,
+                "continuous_conversation_enabled": False,
+            },
+            task_file_features={
+                "workspace_enabled": True,
+                "file_mcp_enabled": True,
+                "runtime_file_edit_enabled": True,
+                "default_file_delivery_enabled": True,
+            },
+        )
+    assert continuous_error.value.field_errors == [
+        {
+            "field": "session_policy.continuous_conversation_enabled",
+            "message": "启用任务工作区前必须启用连续会话",
+        }
+    ]
 
     container = build_test_container(control_plane_settings(), migrate=True, seed=True)
     service = container.business_application_service
@@ -239,6 +255,38 @@ def test_task_file_feature_flags_are_strict_frozen_and_legacy_default_off() -> N
         "default_file_delivery_enabled": True,
     }
     payload["session_policy"]["attachments_enabled"] = True
+    payload["session_policy"]["continuous_conversation_enabled"] = True
+    with pytest.raises(NonRetryableExecutionError) as missing_file_tools:
+        service.save_draft(
+            actor_id="user_local_admin",
+            code="task-file-feature-flags",
+            expected_revision=int(application["revision"]),
+            payload=payload,
+        )
+    assert {error["field"] for error in missing_file_tools.value.field_errors} == {
+        "agent_publication_id",
+        "mcp_tools",
+    }
+
+    required_tools = sorted(required_file_mcp_tools(payload["task_file_features"]))
+    for selection_order, identifier in enumerate(required_tools, start=20):
+        definition = MCP_TOOL_MANIFEST[identifier]
+        container.database.execute(
+            """
+            insert into agent_publication_mcp_tool
+              (agent_publication_id, server_code, tool_identifier, schema_hash,
+               model_description, selection_order, created_at)
+            values ('agent_publication_default_v1', ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (
+                definition.server_code,
+                definition.identifier,
+                definition.schema_hash,
+                definition.description,
+                selection_order,
+            ),
+        )
+    payload["mcp_tools"] = required_tools
     revision = service.save_draft(
         actor_id="user_local_admin",
         code="task-file-feature-flags",
@@ -263,9 +311,7 @@ def test_task_file_feature_flags_are_strict_frozen_and_legacy_default_off() -> N
         payload=payload,
     )
 
-    frozen = container.business_application_repository.get_publication(
-        str(publication["id"])
-    )
+    frozen = container.business_application_repository.get_publication(str(publication["id"]))
     assert all(frozen["task_file_features"].values())
     assert frozen["task_file_features_source"] == "publication_snapshot"
     assert frozen["snapshot"]["task_file_features"] == frozen["task_file_features"]
@@ -319,6 +365,8 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
         "105_expand_unified_mcp_operation_audit.sql",
         "106_expand_agent_run_audit.sql",
         "107_expand_task_file_workspaces.sql",
+        "108_stage_attachment_only_messages.sql",
+        "109_allow_file_service_mcp_publications.sql",
     ]
     session_columns = {str(row["name"]) for row in db.execute("pragma table_info(agent_session)")}
     assert {

@@ -135,12 +135,13 @@ class _BusinessAuthorization:
 
 
 class _NoPrefetchToolRegistry:
-    def __init__(self) -> None:
+    def __init__(self, tools: list[str] | None = None) -> None:
         self.tool_service = self
         self.calls: list[dict[str, Any]] = []
+        self.tools = tools or ["get_schema_directory"]
 
     def available_tools(self) -> list[str]:
-        return ["get_schema_directory"]
+        return list(self.tools)
 
     def is_tool_visible_for_job(self, **_: Any) -> bool:
         return True
@@ -167,6 +168,26 @@ class _AgentConfigService:
             "config_hash": "agent-config-hash",
             "runtime_kind": self.runtime_kind,
             "snapshot": {"skills": [], "model_policy": {}},
+        }
+
+
+class _FileManifestService:
+    def runtime_manifest(self, job_id: str) -> dict[str, Any]:
+        assert job_id == "job-file-context"
+        return {
+            "schema_version": 1,
+            "manifest_hash": "f" * 64,
+            "items": [
+                {
+                    "file_id": "file-context-1",
+                    "version_id": "version-context-1",
+                    "display_name": "context.txt",
+                    "source_kind": "CURRENT_MESSAGE",
+                    "allowed_actions": ["READ_METADATA", "MATERIALIZE"],
+                    "auto_materialize": True,
+                    "conflict_candidate": False,
+                }
+            ],
         }
 
 
@@ -391,6 +412,44 @@ def test_greeting_context_does_not_prefetch_resources_or_disclose_unassigned_too
     assert "tool_not_assigned" not in serialized
     assert "get_er_context" not in serialized
     assert "get_business_flow_context" not in serialized
+
+
+def test_file_job_context_exposes_frozen_file_tools_and_sandbox_instructions() -> None:
+    registry = _NoPrefetchToolRegistry(["file_prepare_materialization"])
+    builder = AgentContextBuilder(
+        tool_registry=registry,  # type: ignore[arg-type]
+        skill_loader=_SkillLoader(),  # type: ignore[arg-type]
+        agent_config_service=_AgentConfigService("python-v1"),  # type: ignore[arg-type]
+        file_manifest_service=_FileManifestService(),  # type: ignore[arg-type]
+    )
+    job = SimpleNamespace(
+        id="job-file-context",
+        execution_policy=_EXECUTION_POLICY,
+        input_message="读取附件",
+        input_message_state="available",
+        project_code="default",
+        agent_publication_id="agent-publication-1",
+        agent_revision=1,
+        agent_config_hash="agent-config-hash",
+        agent_runtime_kind="python-v1",
+        agent_runtime_protocol_version="1.2",
+        business_application_publication_id="application-publication-1",
+        task_workspace_id="task-workspace-1",
+    )
+
+    context = builder.build(job)  # type: ignore[arg-type]
+
+    assert context.allowed_tools == ["file_prepare_materialization"]
+    assert context.retrieved_context["file_manifest"]["items"][0][
+        "version_id"
+    ] == "version-context-1"
+    assert "UTF-8 TXT files only inside the current Job Sandbox" in " ".join(
+        context.safety_rules
+    )
+    restrictions = " ".join(context.tool_restrictions)
+    assert "runtime_materialized_files" in restrictions
+    assert "file_manifest" in restrictions
+    assert "Read, Glob, Grep, Edit, and Write" in restrictions
 
 
 def test_job_snapshot_does_not_freeze_routing_target_or_resolve_a_resource() -> None:

@@ -10,6 +10,11 @@ from app.modules.identity.application import AuthorizationEvaluator
 from app.modules.job.infrastructure.repositories import ConfigurationRepository
 from app.modules.message_bus.application.message_publisher import AgentJobMessage
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
+from app.modules.business_application.domain.policies import (
+    required_file_mcp_tools,
+    validate_task_file_features,
+)
+from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.modules.permission.application.permission_service import PermissionService
 from app.shared.config import DingTalkSettings, Settings
 
@@ -216,6 +221,41 @@ def _ensure_agent_publication_mcp_tools(
         )
     }
     missing = sorted(set(requested) - published)
+    file_tools = [
+        identifier
+        for identifier in missing
+        if MCP_TOOL_MANIFEST[identifier].server_code == "file-service"
+    ]
+    if file_tools:
+        row = container.database.execute_one(
+            """
+            select coalesce(max(selection_order), -1) as maximum_order
+              from agent_publication_mcp_tool
+             where agent_publication_id = ?
+            """,
+            (agent_publication_id,),
+        )
+        next_order = int((row or {}).get("maximum_order") or -1) + 1
+        for offset, identifier in enumerate(file_tools):
+            definition = MCP_TOOL_MANIFEST[identifier]
+            container.database.execute(
+                """
+                insert into agent_publication_mcp_tool
+                  (agent_publication_id, server_code, tool_identifier, schema_hash,
+                   model_description, selection_order, created_at)
+                values (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (
+                    agent_publication_id,
+                    definition.server_code,
+                    definition.identifier,
+                    definition.schema_hash,
+                    definition.description,
+                    next_order + offset,
+                ),
+            )
+        published.update(file_tools)
+        missing = sorted(set(requested) - published)
     if missing:
         raise AssertionError(
             "Test Agent publication does not contain requested MCP Tools: " + ", ".join(missing)
@@ -236,9 +276,13 @@ def activate_dingtalk_test_application(
     task_file_features: dict[str, bool] | None = None,
 ) -> dict[str, object]:
     ensure_active_dingtalk_test_enterprise(container)
+    normalized_task_file_features = validate_task_file_features(task_file_features)
+    effective_capabilities = tuple(
+        sorted(set(capabilities) | set(required_file_mcp_tools(normalized_task_file_features)))
+    )
     mcp_tools = _ensure_agent_publication_mcp_tools(
         container,
-        capabilities,
+        effective_capabilities,
         agent_publication_id=agent_publication_id,
     )
     triggers: list[dict[str, object]] = [
@@ -299,13 +343,7 @@ def activate_dingtalk_test_application(
                 "timeout_seconds": 300,
                 "max_tool_calls": 30,
             },
-            "task_file_features": task_file_features
-            or {
-                "workspace_enabled": False,
-                "file_mcp_enabled": False,
-                "runtime_file_edit_enabled": False,
-                "default_file_delivery_enabled": False,
-            },
+            "task_file_features": normalized_task_file_features,
             "triggers": triggers,
             "deliveries": [
                 {

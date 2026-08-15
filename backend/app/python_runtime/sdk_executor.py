@@ -4,10 +4,11 @@ from concurrent.futures import ThreadPoolExecutor
 import importlib.metadata
 import json
 import os
+import re
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Protocol
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
@@ -27,6 +28,7 @@ from app.python_runtime.claude_agent_sdk_adapter import (
 )
 from app.python_runtime.job_sandbox import (
     ALLOWED_FILE_TOOLS,
+    FILE_TOOL_NAMES,
     JobSandboxError,
     JobSandboxManager,
 )
@@ -36,7 +38,7 @@ from app.python_runtime.file_mcp_bridge import (
     PythonRuntimeFileBridgeFactory,
     create_python_runtime_file_bridge,
 )
-from app.python_runtime.file_transfer import FileTransferContext
+from app.python_runtime.file_transfer import FileTransferBoundaryError, FileTransferContext
 from app.shared.config import ExecutionSettings
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
 
@@ -92,6 +94,7 @@ FORBIDDEN_TOOL_INPUT_FIELDS = frozenset(
         "resource_revision_id",
     }
 )
+_OPAQUE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
 
 def _contains_forbidden_tool_input(value: object, depth: int = 0) -> bool:
@@ -251,6 +254,85 @@ class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
             except Exception:
                 pass
 
+    async def _prepare_context(
+        self,
+        context: AgentExecutionContext,
+    ) -> AgentExecutionContext:
+        bridge = self._file_bridge
+        if bridge is None:
+            return context
+        manifest = context.retrieved_context.get("file_manifest")
+        if not isinstance(manifest, dict) or manifest.get("schema_version") != 1:
+            raise NonRetryableExecutionError(
+                "Runtime Job File Manifest is missing or invalid",
+                safe_message="任务文件清单无效",
+                error_code="file_manifest_runtime_invalid",
+            )
+        items = manifest.get("items")
+        if not isinstance(items, list) or len(items) > 20:
+            raise NonRetryableExecutionError(
+                "Runtime Job File Manifest items are invalid",
+                safe_message="任务文件清单无效",
+                error_code="file_manifest_runtime_invalid",
+            )
+        materialized: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        for item in items:
+            if not isinstance(item, dict) or not item.get("auto_materialize"):
+                continue
+            file_id = item.get("file_id")
+            version_id = item.get("version_id")
+            display_name = item.get("display_name")
+            actions = item.get("allowed_actions")
+            if (
+                not isinstance(file_id, str)
+                or _OPAQUE_IDENTIFIER.fullmatch(file_id) is None
+                or not isinstance(version_id, str)
+                or _OPAQUE_IDENTIFIER.fullmatch(version_id) is None
+                or not isinstance(display_name, str)
+                or not 1 <= len(display_name) <= 255
+                or not isinstance(actions, list)
+                or "MATERIALIZE" not in actions
+            ):
+                raise NonRetryableExecutionError(
+                    "Runtime Job File Manifest item is invalid",
+                    safe_message="任务文件清单无效",
+                    error_code="file_manifest_runtime_invalid",
+                )
+            identity = (file_id, version_id)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            try:
+                result = await bridge.materialize(
+                    file_id=file_id,
+                    version_id=version_id,
+                )
+            except FileTransferBoundaryError as exc:
+                raise NonRetryableExecutionError(
+                    f"Runtime automatic materialization failed: {exc.code}",
+                    safe_message="附件无法安全物化到任务沙盒",
+                    error_code="file_auto_materialization_failed",
+                ) from exc
+            materialized.append(
+                {
+                    "file_id": file_id,
+                    "version_id": version_id,
+                    "display_name": display_name,
+                    "relative_path": str(result["relative_path"]),
+                    "sandbox_entry_handle": str(result["sandbox_entry_handle"]),
+                    "size_bytes": int(result["size_bytes"]),
+                    "sha256": str(result["sha256"]),
+                }
+            )
+        return replace(
+            context,
+            retrieved_context={
+                **context.retrieved_context,
+                "runtime_materialized_files": materialized,
+            },
+        )
+
     def _build_options(
         self,
         sdk: Any,
@@ -332,7 +414,7 @@ class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
             system_prompt=_build_system_prompt(context),
             mcp_servers=server,
             strict_mcp_config=True,
-            tools=[],
+            tools=list(FILE_TOOL_NAMES) if file_job else [],
             allowed_tools=[],
             disallowed_tools=[
                 tool
@@ -347,7 +429,7 @@ class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
                 )
                 if not file_job or tool not in ALLOWED_FILE_TOOLS
             ],
-            permission_mode="dontAsk",
+            permission_mode="default",
             max_turns=context.max_turns,
             cwd=sandbox.path,
             setting_sources=[],
@@ -906,7 +988,7 @@ def _normalize_tool_events(
 ) -> tuple[dict[str, Any], ...]:
     published = {
         (
-            f"mcp__{'ones_mcp' if server['server_code'] == 'ones-mcp' else 'tool_mcp'}"
+            f"mcp__{'ones_mcp' if server['server_code'] == 'ones-mcp' else 'file_service' if server['server_code'] == 'file-service' else 'tool_mcp'}"
             f"__{tool['tool_name']}"
         ): (str(server["server_code"]), str(tool["tool_name"]))
         for server in request.get("mcp_servers") or []

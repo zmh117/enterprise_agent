@@ -24,7 +24,11 @@ from app.modules.identity.application.service_principal import (
     ServicePrincipalTokenIssuer,
 )
 from app.shared.exceptions import RetryableExecutionError
-from services.file_service.auth import FilePrincipalError, FileWorkerPrincipalVerifier
+from services.file_service.auth import (
+    FilePrincipalError,
+    FilePrincipalVerifier,
+    FileWorkerPrincipalVerifier,
+)
 
 
 class _Audit:
@@ -117,6 +121,61 @@ def test_file_worker_verifier_requires_full_fixed_role_scope_set() -> None:
     with pytest.raises(FilePrincipalError):
         verifier.verify_service(
             wrong_scope_token,
+            required_scope="internal:file-service:attachment:import",
+        )
+
+
+def test_shared_principal_jwks_does_not_blur_job_and_service_token_domains() -> None:
+    signing_key = _signing_key()
+    jwks = PrincipalJwks.from_dict(signing_key.public_jwks())
+    audit = _Audit()
+    service_issuer = ServicePrincipalTokenIssuer(
+        signing_key=signing_key,
+        bootstrap_credentials={
+            FILE_WORKER_AUTHORIZED_PARTY: "f" * 48,
+            DELIVERY_WORKER_AUTHORIZED_PARTY: "d" * 48,
+        },
+        audit_service=audit,  # type: ignore[arg-type]
+        now=lambda: 1_900_000_000,
+        jti_factory=lambda: "service-jti",
+    )
+    service_token = service_issuer.issue("f" * 48).access_token
+    file_principal_verifier = FilePrincipalVerifier(
+        jwks,
+        now=lambda: 1_900_000_001,
+    )
+    with pytest.raises(FilePrincipalError):
+        file_principal_verifier.verify(
+            service_token,
+            required_scopes=frozenset({"file:workspace:read"}),
+        )
+
+    job_token = signing_key.sign(
+        {
+            "iss": "enterprise-agent-identity",
+            "sub": "user-a",
+            "aud": "file-service",
+            "azp": "agent-runtime",
+            "tenant_id": "tenant-a",
+            "job_id": "job-a",
+            "session_id": "session-a",
+            "agent_publication_id": "agent-publication-a",
+            "application_publication_id": "application-publication-a",
+            "scope": ["file:workspace:read"],
+            "authorization_hash": "a" * 64,
+            "jti": "job-jti",
+            "iat": 1_900_000_000,
+            "nbf": 1_900_000_000,
+            "exp": 1_900_000_300,
+        }
+    )
+    service_verifier = FileWorkerPrincipalVerifier(
+        jwks,
+        now=lambda: 1_900_000_001,
+    )
+    with pytest.raises(FilePrincipalError):
+        service_verifier.verify_service(
+            job_token,
             required_scope="internal:file-service:attachment:import",
         )
 

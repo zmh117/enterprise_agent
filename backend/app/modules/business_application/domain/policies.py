@@ -28,6 +28,16 @@ DEFAULT_TASK_FILE_FEATURES = {
     "runtime_file_edit_enabled": False,
     "default_file_delivery_enabled": False,
 }
+FILE_MCP_READ_TOOLS = frozenset(
+    {
+        "task_workspace_get",
+        "task_workspace_list_files",
+        "file_get_metadata",
+        "file_prepare_materialization",
+    }
+)
+FILE_MCP_EDIT_TOOLS = frozenset({"file_create_commit_intent"})
+FILE_MCP_DELIVERY_TOOLS = frozenset({"file_deliver_version"})
 SESSION_POLICY_FIELDS = {
     "conversation_mode",
     "recent_message_limit",
@@ -144,14 +154,8 @@ def validate_task_file_features(value: object) -> dict[str, bool]:
     if not isinstance(value, dict):
         raise validation_error("task_file_features", "必须是功能开关对象")
     _reject_unknown(value, TASK_FILE_FEATURE_FIELDS, "task_file_features")
-    normalized = {
-        key: bool(value.get(key, False))
-        for key in sorted(TASK_FILE_FEATURE_FIELDS)
-    }
-    if any(
-        key in value and not isinstance(value[key], bool)
-        for key in TASK_FILE_FEATURE_FIELDS
-    ):
+    normalized = {key: bool(value.get(key, False)) for key in sorted(TASK_FILE_FEATURE_FIELDS)}
+    if any(key in value and not isinstance(value[key], bool) for key in TASK_FILE_FEATURE_FIELDS):
         raise validation_error("task_file_features", "功能开关必须是布尔值")
     if normalized["file_mcp_enabled"] and not normalized["workspace_enabled"]:
         raise validation_error(
@@ -162,10 +166,7 @@ def validate_task_file_features(value: object) -> dict[str, bool]:
             "task_file_features.runtime_file_edit_enabled",
             "启用 Runtime 文件编辑前必须启用 File MCP",
         )
-    if (
-        normalized["default_file_delivery_enabled"]
-        and not normalized["runtime_file_edit_enabled"]
-    ):
+    if normalized["default_file_delivery_enabled"] and not normalized["runtime_file_edit_enabled"]:
         raise validation_error(
             "task_file_features.default_file_delivery_enabled",
             "启用默认文件交付前必须启用 Runtime 文件编辑",
@@ -173,17 +174,34 @@ def validate_task_file_features(value: object) -> dict[str, bool]:
     return normalized
 
 
+def required_file_mcp_tools(task_file_features: dict[str, bool]) -> frozenset[str]:
+    required: set[str] = set()
+    if task_file_features.get("file_mcp_enabled"):
+        required.update(FILE_MCP_READ_TOOLS)
+    if task_file_features.get("runtime_file_edit_enabled"):
+        required.update(FILE_MCP_EDIT_TOOLS)
+    if task_file_features.get("default_file_delivery_enabled"):
+        required.update(FILE_MCP_DELIVERY_TOOLS)
+    return frozenset(required)
+
+
 def validate_task_file_attachment_dependency(
     *,
     session_policy: dict[str, Any],
     task_file_features: dict[str, bool],
 ) -> None:
-    if task_file_features["workspace_enabled"] and not session_policy[
-        "attachments_enabled"
-    ]:
+    if task_file_features["workspace_enabled"] and not session_policy["attachments_enabled"]:
         raise validation_error(
             "session_policy.attachments_enabled",
             "启用任务工作区前必须允许消息附件",
+        )
+    if (
+        task_file_features["workspace_enabled"]
+        and not session_policy["continuous_conversation_enabled"]
+    ):
+        raise validation_error(
+            "session_policy.continuous_conversation_enabled",
+            "启用任务工作区前必须启用连续会话",
         )
 
 
@@ -198,9 +216,7 @@ def publication_workspace_retention(snapshot: dict[str, Any]) -> tuple[str, str]
     if "task_workspace_retention_period" not in snapshot:
         return "WEEK", "legacy_default"
     return (
-        validate_task_workspace_retention_period(
-            snapshot.get("task_workspace_retention_period")
-        ),
+        validate_task_workspace_retention_period(snapshot.get("task_workspace_retention_period")),
         "publication_snapshot",
     )
 
@@ -218,20 +234,17 @@ def verify_publication_snapshot(
     if schema_version == 2:
         return (
             snapshot.get("schema_version") == 2
-            and snapshot.get("task_workspace_retention_period")
-            in TASK_WORKSPACE_RETENTION_PERIODS
+            and snapshot.get("task_workspace_retention_period") in TASK_WORKSPACE_RETENTION_PERIODS
         )
     try:
-        features_valid = (
-            validate_task_file_features(snapshot.get("task_file_features"))
-            == snapshot.get("task_file_features")
-        )
+        features_valid = validate_task_file_features(
+            snapshot.get("task_file_features")
+        ) == snapshot.get("task_file_features")
     except NonRetryableExecutionError:
         return False
     return (
         snapshot.get("schema_version") == 3
-        and snapshot.get("task_workspace_retention_period")
-        in TASK_WORKSPACE_RETENTION_PERIODS
+        and snapshot.get("task_workspace_retention_period") in TASK_WORKSPACE_RETENTION_PERIODS
         and features_valid
     )
 

@@ -308,6 +308,18 @@ describe("Business Application workbench", () => {
                 description: "只读查询合并请求",
                 resource_kind: "gitlab",
               },
+              ...[
+                "task_workspace_get",
+                "task_workspace_list_files",
+                "file_get_metadata",
+                "file_prepare_materialization",
+              ].map((tool_identifier) => ({
+                server_code: "file-service",
+                tool_identifier,
+                schema_hash: "b".repeat(64),
+                description: "受治理任务文件工具",
+                resource_kind: "file",
+              })),
             ],
             agent_publication_typescript_v1: [],
           },
@@ -394,7 +406,8 @@ describe("Business Application workbench", () => {
       })
     ).toBeInTheDocument()
     expect(screen.queryByText("操作失败，请重试。")).not.toBeInTheDocument()
-    expect(screen.getByLabelText("连续会话")).toBeChecked()
+    const continuousConversation = screen.getByLabelText("连续会话")
+    expect(continuousConversation).toBeChecked()
     const attachments = screen.getByLabelText("允许消息附件")
     expect(attachments).not.toBeChecked()
     fireEvent.click(
@@ -402,11 +415,19 @@ describe("Business Application workbench", () => {
     )
     expect(attachments).toBeChecked()
     expect(attachments).toHaveAttribute("aria-disabled", "true")
+    expect(continuousConversation).toBeChecked()
+    expect(continuousConversation).toHaveAttribute("aria-disabled", "true")
     const mcpTool = await screen.findByLabelText(
       "选择 MCP Tool search_merge_requests"
     )
     fireEvent.click(mcpTool)
     expect(mcpTool).toBeChecked()
+    fireEvent.click(screen.getByRole("checkbox", { name: "File MCP" }))
+    const requiredFileTool = screen.getByLabelText(
+      "选择 MCP Tool file_prepare_materialization"
+    )
+    expect(requiredFileTool).toBeChecked()
+    expect(requiredFileTool).toHaveAttribute("aria-disabled", "true")
     fireEvent.click(screen.getByRole("button", { name: "保存新草稿" }))
 
     await waitFor(() =>
@@ -416,7 +437,13 @@ describe("Business Application workbench", () => {
           continuous_conversation_enabled: true,
           attachments_enabled: true,
         },
-        mcp_tools: ["search_merge_requests"],
+        mcp_tools: expect.arrayContaining([
+          "search_merge_requests",
+          "task_workspace_get",
+          "task_workspace_list_files",
+          "file_get_metadata",
+          "file_prepare_materialization",
+        ]),
       })
     )
   })

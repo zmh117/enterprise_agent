@@ -88,7 +88,16 @@
 - **AND** 不调用 `docling-serve` 或声称已解析
 
 ### Requirement: Job 创建时冻结精确文件清单
-File Service MUST 在 Agent Job 创建时按当前用户、租户、任务工作区和授权范围冻结 Job File Manifest，其中每个文件指向当时的精确版本。本次消息新上传或明确引用的文件 SHALL 自动物化；其他文件只提供不含正文、凭据和对象位置的元数据，由 Agent 按需选择。清单冻结版本但不冻结授权，物化时 MUST 重新检查当前访问权。
+File Service MUST 在非空文字触发 Agent Job 时，按当前用户、租户、任务工作区和授权范围冻结 Job File Manifest，其中每个文件指向当时的精确版本。该文字 Job 原子认领的未消费附件、同一消息新上传附件和明确引用文件 SHALL 自动物化；其他文件只提供不含正文、凭据和对象位置的元数据，由 Agent 按需选择。清单冻结版本但不冻结授权，物化时 MUST 重新检查当前访问权。纯附件暂存事件 MUST NOT 单独生成 Manifest。
+
+#### Scenario: 暂存附件已经完成导入
+- **WHEN** 后续非空文字创建 Job前，暂存附件已经形成可用精确版本
+- **THEN** 创建事务认领附件并立即把该版本冻结为自动物化项
+
+#### Scenario: 暂存附件仍在导入
+- **WHEN** 后续非空文字创建 Job时，认领附件尚未全部进入安全终态
+- **THEN** 系统先冻结工作区与待处理集合并保持 Job等待
+- **AND** 全部终态后才完成不可变 Manifest并释放同一个 Job
 
 #### Scenario: 其他 Job 在执行期间提交新版本
 - **WHEN** 当前 Job 的清单冻结 V3 后另一个 Job 提交 V4

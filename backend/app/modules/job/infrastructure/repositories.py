@@ -102,9 +102,7 @@ _JOB_COLUMN_NAMES = (
 )
 _SESSION_COLUMNS_SQL = ", ".join(_SESSION_COLUMN_NAMES)
 _JOB_COLUMNS_SQL = ", ".join(_JOB_COLUMN_NAMES)
-_QUALIFIED_JOB_COLUMNS_SQL = ", ".join(
-    f"j.{column}" for column in _JOB_COLUMN_NAMES
-)
+_QUALIFIED_JOB_COLUMNS_SQL = ", ".join(f"j.{column}" for column in _JOB_COLUMN_NAMES)
 
 
 def now_iso() -> str:
@@ -175,9 +173,7 @@ def _safe_runtime_event_payload(event_type: str, value: object) -> dict[str, Any
         if isinstance(payload.get("accounting"), dict):
             safe["accounting"] = _safe_runtime_accounting(payload["accounting"])
         if isinstance(payload.get("runtime_provenance"), dict):
-            safe["runtime_provenance"] = sanitize_for_persistence(
-                payload["runtime_provenance"]
-            )
+            safe["runtime_provenance"] = sanitize_for_persistence(payload["runtime_provenance"])
         if isinstance(payload.get("failure"), dict):
             failure = payload["failure"]
             safe["failure"] = {
@@ -214,9 +210,7 @@ def _safe_runtime_accounting(value: dict[str, Any]) -> dict[str, Any]:
                 "canonical_model": str(item.get("canonical_model") or "")[:200],
                 "provider": str(item.get("provider") or "")[:100],
                 "usage": _runtime_token_usage(item.get("usage")),
-                "estimated_cost_usd": _optional_nonnegative_number(
-                    item.get("estimated_cost_usd")
-                ),
+                "estimated_cost_usd": _optional_nonnegative_number(item.get("estimated_cost_usd")),
             }
         )
     result["model_usage"] = result["model_usage"][:64]
@@ -620,7 +614,8 @@ class AgentRepository:
             not invocation_id
             or len(request_digest) != 64
             or sequence < 1
-            or event_type not in {
+            or event_type
+            not in {
                 "execution_started",
                 "runtime_initialized",
                 "model_call",
@@ -1288,7 +1283,8 @@ class AgentRepository:
         self,
         *,
         message_id: str,
-        job_id: str,
+        job_id: str | None,
+        task_workspace_id: str = "",
         ordinal: int,
         media_type: str,
         file_name: str,
@@ -1311,8 +1307,8 @@ class AgentRepository:
             insert into message_attachment
               (id, message_id, job_id, ordinal, media_type, file_name, declared_mime,
                declared_size, status, source_credential_ciphertext, source_credential_type,
-               source_credential_expires_at, created_at, updated_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?)
+               source_credential_expires_at, task_workspace_id, created_at, updated_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?, ?)
             """,
             (
                 attachment_id,
@@ -1326,6 +1322,7 @@ class AgentRepository:
                 credential_ciphertext,
                 credential_type,
                 credential_expires_at,
+                task_workspace_id or None,
                 timestamp,
                 timestamp,
             ),
@@ -1365,9 +1362,74 @@ class AgentRepository:
 
     def list_attachments(self, job_id: str) -> list[MessageAttachment]:
         rows = self.database.execute(
-            "select * from message_attachment where job_id = ? order by ordinal", (job_id,)
+            """
+            select a.*
+              from message_attachment a
+              join agent_message m on m.id = a.message_id
+             where a.job_id = ?
+             order by m.sequence_no, a.ordinal, a.id
+            """,
+            (job_id,),
         )
         return [self._attachment_from_row(row) for row in rows]
+
+    def attachment_session_context(self, attachment_id: str) -> dict[str, Any]:
+        row = self.database.execute_one(
+            """
+            select m.session_id, s.source_connector_id, s.bot_identity,
+                   s.source_channel, m.sender_id,
+                   coalesce(a.task_workspace_id, j.task_workspace_id) as task_workspace_id,
+                   coalesce(j.internal_user_id, m.sender_id, s.requester_id) as internal_user_id
+              from message_attachment a
+              join agent_message m on m.id = a.message_id
+              join agent_session s on s.id = m.session_id
+              left join agent_job j on j.id = a.job_id
+             where a.id = ?
+            """,
+            (attachment_id,),
+        )
+        if row is None:
+            raise NotFound(f"Message attachment not found: {attachment_id}")
+        return row
+
+    def list_staged_attachments(
+        self,
+        *,
+        session_id: str,
+        task_workspace_id: str,
+    ) -> list[MessageAttachment]:
+        rows = self.database.execute(
+            """
+            select a.*
+              from message_attachment a
+              join agent_message m on m.id = a.message_id
+             where m.session_id = ? and a.task_workspace_id = ? and a.job_id is null
+             order by m.sequence_no, a.ordinal, a.id
+            """,
+            (session_id, task_workspace_id),
+        )
+        return [self._attachment_from_row(row) for row in rows]
+
+    def claim_staged_attachments(
+        self,
+        *,
+        session_id: str,
+        task_workspace_id: str,
+        job_id: str,
+    ) -> list[MessageAttachment]:
+        timestamp = now_iso()
+        self.database.execute(
+            """
+            update message_attachment
+               set job_id = ?, claimed_at = ?, updated_at = ?
+             where job_id is null and task_workspace_id = ?
+               and message_id in (
+                 select id from agent_message where session_id = ?
+               )
+            """,
+            (job_id, timestamp, timestamp, task_workspace_id, session_id),
+        )
+        return self.list_attachments(job_id)
 
     def update_attachment(
         self,
@@ -1921,10 +1983,13 @@ class AgentRepository:
         attempt_id = new_id("delivery")
         idempotency_key = f"delivery.attempt:{event.id}:{event.replay_count}:{event.attempt_count}"
         timestamp = now_iso()
-        file_binding = self.database.execute_one(
-            "select file_id, file_version_id from delivery_outbox where id = ?",
-            (event.id,),
-        ) or {}
+        file_binding = (
+            self.database.execute_one(
+                "select file_id, file_version_id from delivery_outbox where id = ?",
+                (event.id,),
+            )
+            or {}
+        )
         self.database.execute(
             """
             insert into delivery_attempt
@@ -3048,7 +3113,7 @@ class AgentRepository:
         return MessageAttachment(
             id=str(row["id"]),
             message_id=str(row["message_id"]),
-            job_id=str(row["job_id"]),
+            job_id=str(row.get("job_id") or ""),
             ordinal=int(row["ordinal"]),
             media_type=str(row["media_type"]),
             file_name=str(row["file_name"]),
@@ -3062,6 +3127,8 @@ class AgentRepository:
             object_bucket=str(row.get("object_bucket") or ""),
             object_key=str(row.get("object_key") or ""),
             status=str(row["status"]),
+            task_workspace_id=str(row.get("task_workspace_id") or ""),
+            claimed_at=(str(row["claimed_at"]) if row.get("claimed_at") else None),
             failure_code=str(row.get("failure_code") or ""),
         )
 

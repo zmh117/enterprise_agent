@@ -11,6 +11,7 @@ from app.modules.channel.domain.channel_event import (
     RoutingContext,
 )
 from app.modules.identity.infrastructure import IdentityRepository
+from app.modules.job.domain.agent_job import AgentJob
 from app.modules.message_bus.application.message_publisher import (
     MessagePublisher,
     WebhookEventMessage,
@@ -185,6 +186,12 @@ class WebhookDispatcher:
                 webhook_trigger_publication_id=str(event["trigger_publication_id"]),
             )
             job = self.channel_ingress_service.accept(channel_event)
+            if not isinstance(job, AgentJob):
+                raise NonRetryableExecutionError(
+                    "Webhook ingress cannot stage channel attachments",
+                    safe_message="Webhook 输入不支持附件暂存",
+                    error_code="webhook_attachment_stage_invalid",
+                )
             self.event_repository.attach_job(event_id=str(event["id"]), job_id=job.id)
             self.audit_service.record(
                 "webhook.event.job_created",

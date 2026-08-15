@@ -38,6 +38,13 @@ class PythonRuntimeFileBridge(Protocol):
 
     async def connect(self) -> None: ...
 
+    async def materialize(
+        self,
+        *,
+        file_id: str,
+        version_id: str,
+    ) -> dict[str, Any]: ...
+
     async def close(self) -> None: ...
 
 
@@ -214,32 +221,14 @@ class ClaudePythonFileBridge:
                     )
                 if name not in self._frozen:
                     return _safe_error("file_tool_not_frozen")
-                session = self._session
-                if session is None:
-                    return _safe_error("file_service_unavailable")
-                remote = await session.call_tool(
-                    name,
-                    arguments,
-                    read_timeout_seconds=_session_timeout(self._timeout_seconds),
-                )
-                if not isinstance(remote, types.CallToolResult):
-                    return _safe_error("file_service_unavailable")
-                if _result_is_error(remote) or name not in {
-                    _MATERIALIZE_TOOL,
-                    _COMMIT_TOOL,
-                }:
+                remote, bridge_result = await self._forward_remote(name, arguments)
+                if _result_is_error(remote) or bridge_result is None:
                     return _call_tool_result(
                         content=list(remote.content),
                         structured_content=_result_structured_content(remote),
                         is_error=_result_is_error(remote),
                         meta=_safe_meta(remote),
                     )
-                envelope = remote.model_dump(by_alias=True, exclude_none=True)
-                bridge_result = await asyncio.to_thread(
-                    self._coordinator.process_mcp_control_result,
-                    envelope,
-                    self._context,
-                )
                 return _call_tool_result(
                     content=[
                         *remote.content,
@@ -301,6 +290,59 @@ class ClaudePythonFileBridge:
             "name": "enterprise-file-bridge",
             "instance": server,
         }
+
+    async def _forward_remote(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+    ) -> tuple[types.CallToolResult, dict[str, Any] | None]:
+        if name not in self._frozen:
+            raise FileTransferBoundaryError(
+                "file_tool_not_frozen",
+                "File Tool is not frozen for this Job",
+            )
+        session = self._session
+        if session is None:
+            raise FileTransferBoundaryError(
+                "file_service_unavailable",
+                "File Service is unavailable",
+            )
+        remote = await session.call_tool(
+            name,
+            arguments,
+            read_timeout_seconds=_session_timeout(self._timeout_seconds),
+        )
+        if not isinstance(remote, types.CallToolResult):
+            raise FileTransferBoundaryError(
+                "file_service_unavailable",
+                "File Service returned an unsupported result",
+            )
+        if _result_is_error(remote) or name not in {_MATERIALIZE_TOOL, _COMMIT_TOOL}:
+            return remote, None
+        envelope = remote.model_dump(by_alias=True, exclude_none=True)
+        bridge_result = await asyncio.to_thread(
+            self._coordinator.process_mcp_control_result,
+            envelope,
+            self._context,
+        )
+        return remote, dict(bridge_result)
+
+    async def materialize(
+        self,
+        *,
+        file_id: str,
+        version_id: str,
+    ) -> dict[str, Any]:
+        remote, bridge_result = await self._forward_remote(
+            _MATERIALIZE_TOOL,
+            {"file_id": file_id, "version_id": version_id},
+        )
+        if _result_is_error(remote) or bridge_result is None:
+            raise FileTransferBoundaryError(
+                "file_auto_materialization_denied",
+                "File Service rejected automatic materialization",
+            )
+        return bridge_result
 
     async def connect(self) -> None:
         if self._injected_session:

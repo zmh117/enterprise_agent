@@ -239,7 +239,7 @@ test("query adapter uses isolated settings and gates every MCP call through canU
   assert.deepEqual(captured?.tools, []);
   assert.deepEqual(captured?.skills, []);
   assert.equal(captured?.persistSession, false);
-  assert.equal(captured?.permissionMode, "dontAsk");
+  assert.equal(captured?.permissionMode, "default");
   assert.deepEqual(captured?.allowedTools, []);
   assert.deepEqual(captured?.disallowedTools, [
     "Bash",
@@ -284,6 +284,13 @@ test("file Job opens only sandbox-authorized file builtins and uses the fixed Fi
       tool_schema_hash: "a".repeat(64)
     }]
   }];
+  value.prompt.retrieved_context = {
+    file_manifest: {
+      schema_version: 1,
+      manifest_hash: "a".repeat(64),
+      items: []
+    }
+  };
   let captured: Options | undefined;
   let bridgeOptions: RuntimeFileBridgeOptions | undefined;
   let bridgeClosed = false;
@@ -297,6 +304,9 @@ test("file Job opens only sandbox-authorized file builtins and uses the fixed Fi
       },
       localToolNames: [],
       connect: async () => undefined,
+      materialize: async () => {
+        throw new Error("empty Manifest must not materialize a file");
+      },
       close: async () => {
         bridgeClosed = true;
       }
@@ -309,8 +319,7 @@ test("file Job opens only sandbox-authorized file builtins and uses the fixed Fi
       return {
         path: "/tmp/agent-runtime-file-job",
         authorizeTool: async (toolName, input) => {
-          assert.equal(toolName, "Read");
-          assert.deepEqual(input, { file_path: "inputs/evidence.txt" });
+          assert.equal(["Read", "Glob"].includes(toolName), true);
           return input as Record<string, unknown>;
         },
         cleanup: async () => {
@@ -341,7 +350,17 @@ test("file Job opens only sandbox-authorized file builtins and uses the fixed Fi
           requestId: "permission-bash-1"
         }
       );
+      const glob = await options.canUseTool?.(
+        "Glob",
+        { pattern: "**/*.txt", path: "." },
+        {
+          signal: new AbortController().signal,
+          toolUseID: "glob-1",
+          requestId: "permission-glob-1"
+        }
+      );
       assert.equal(read?.behavior, "allow");
+      assert.equal(glob?.behavior, "allow");
       assert.equal(bash?.behavior, "deny");
       yield successResult();
     }),
@@ -361,6 +380,9 @@ test("file Job opens only sandbox-authorized file builtins and uses the fixed Fi
   assert.equal(workspaces.cleaned, true);
   assert.deepEqual(captured?.settingSources, []);
   assert.equal(captured?.cwd, "/tmp/agent-runtime-file-job");
+  assert.deepEqual(captured?.tools, ["Read", "Glob", "Grep", "Edit", "Write"]);
+  assert.deepEqual(captured?.allowedTools, []);
+  assert.equal(captured?.permissionMode, "default");
   assert.equal(captured?.disallowedTools?.includes("Bash"), true);
   assert.equal(captured?.disallowedTools?.includes("Read"), false);
   assert.equal(captured?.disallowedTools?.includes("Write"), false);

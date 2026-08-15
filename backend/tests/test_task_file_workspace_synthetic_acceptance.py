@@ -21,6 +21,7 @@ from app.modules.file_workspace.streaming_service import GovernedFileStreamingSe
 from app.modules.file_workspace.streaming_service import INTERNAL_TRANSFER_META
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.modules.job.domain.job_status import JobStatus
+from app.modules.message_bus.application.message_publisher import ChannelEventMessage
 from app.python_runtime.file_transfer import (
     FileTransferContext,
     FileTransferCoordinator,
@@ -155,6 +156,23 @@ class _StreamingPort:
         )
 
 
+def _enable_in_process_attachment_import(
+    runtime: Any,
+) -> tuple[FileWorkspaceRepository, _Storage]:
+    file_repository = FileWorkspaceRepository(runtime.database)
+    storage = _Storage()
+    streaming = GovernedFileStreamingService(
+        file_repository,
+        FileAuthorizationService(runtime.database, _BusinessAccess()),
+        storage,
+        _MutablePrincipal(),
+        now=lambda: NOW,
+    )
+    runtime.attachment_service.importer = _InProcessAttachmentImporter(streaming)
+    runtime.attachment_service.storage = None
+    return file_repository, storage
+
+
 def test_synthetic_private_txt_crosses_channel_file_worker_sandbox_commit_and_delivery(
     tmp_path: Any,
 ) -> None:
@@ -173,9 +191,7 @@ def test_synthetic_private_txt_crosses_channel_file_worker_sandbox_commit_and_de
     runtime.attachment_service.importer = _InProcessAttachmentImporter(streaming)
     runtime.attachment_service.storage = None
     source = b"synthetic channel input\n"
-    runtime.attachment_service.downloader = FakeDownloader(
-        {"fixture-file-code": source}
-    )
+    runtime.attachment_service.downloader = FakeDownloader({"fixture-file-code": source})
     payload = load_fixture("file.json")
     payload["content"] = {
         "downloadCode": "fixture-file-code",
@@ -188,16 +204,27 @@ def test_synthetic_private_txt_crosses_channel_file_worker_sandbox_commit_and_de
         payload=payload,
         correlation_id="synthetic-file-acceptance",
     )
+    assert ingress.status == "attachments_staged"
+    assert ingress.job_id == ""
+    assert runtime.agent_repository.count_rows("agent_job") == 0
     queued = runtime.message_bus.attachments.popleft()
     processing = runtime.attachment_service.process(
         queued.attachment_id,
         queued.correlation_id,
     )
-    attachment_after_processing = runtime.agent_repository.get_attachment(
-        queued.attachment_id
+    attachment_after_processing = runtime.agent_repository.get_attachment(queued.attachment_id)
+    assert processing == "staged", attachment_after_processing.failure_code
+    text_payload = load_fixture("group_text.json")
+    text_payload["conversationId"] = payload["conversationId"]
+    text_payload["msgId"] = "synthetic-text-instruction"
+    text_payload["text"] = {"content": "读取刚才上传的文件并生成结果"}
+    triggered = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=text_payload,
+        correlation_id="synthetic-text-trigger",
     )
-    assert processing == "released", attachment_after_processing.failure_code
-    job = runtime.agent_repository.get_job(ingress.job_id)
+    assert triggered.status == "received"
+    job = runtime.agent_repository.get_job(triggered.job_id)
+    assert job.input_message == "读取刚才上传的文件并生成结果"
     assert job.task_workspace_id
     manifest = file_repository.get_job_snapshot(job.id)
     assert manifest is not None
@@ -206,9 +233,7 @@ def test_synthetic_private_txt_crosses_channel_file_worker_sandbox_commit_and_de
         (manifest["id"],),
     )
     assert item is not None
-    assert {"EDIT", "COMMIT"}.issubset(
-        set(json.loads(str(item["allowed_actions_json"])))
-    )
+    assert {"EDIT", "COMMIT"}.issubset(set(json.loads(str(item["allowed_actions_json"]))))
     file_id = str(item["file_id"])
     base_version_id = str(item["version_id"])
     runtime.database.execute(
@@ -279,9 +304,7 @@ def test_synthetic_private_txt_crosses_channel_file_worker_sandbox_commit_and_de
             _mcp_wire_result(commit), transfer_context
         )
         assert committed["action"] == "COMMITTED"
-        assert file_repository.get_file(file_id)["current_version_id"] == committed[
-            "version_id"
-        ]
+        assert file_repository.get_file(file_id)["current_version_id"] == committed["version_id"]
     finally:
         sandbox.cleanup()
     assert not sandbox.path.exists()
@@ -338,3 +361,210 @@ def test_synthetic_private_txt_crosses_channel_file_worker_sandbox_commit_and_de
     )
     assert source.decode().strip() not in safe_projection
     assert b"synthetic agent edited output" not in safe_projection.encode()
+
+
+def test_multiple_file_only_messages_stage_silently_then_one_text_claims_one_job() -> None:
+    runtime = multimodal_container(task_file_features=FEATURES)
+    file_repository, _storage = _enable_in_process_attachment_import(runtime)
+    sources = {
+        "code-1": b"first\n",
+        "code-2": b"second\n",
+        "code-3": b"third\n",
+    }
+    runtime.attachment_service.downloader = FakeDownloader(sources)
+
+    for ordinal in (1, 2, 3):
+        payload = load_fixture("file.json")
+        payload["msgId"] = f"staged-file-{ordinal}"
+        payload["content"] = {
+            "downloadCode": f"code-{ordinal}",
+            "fileName": f"input-{ordinal}.txt",
+            "fileSize": len(sources[f"code-{ordinal}"]),
+            "contentType": "text/plain",
+        }
+        accepted = runtime.dingtalk_stream_message_service.handle_callback(
+            payload=payload,
+            correlation_id=f"stage-{ordinal}",
+        )
+        assert accepted.status == "attachments_staged"
+        assert accepted.job_id == ""
+
+    assert runtime.agent_repository.count_rows("agent_job") == 0
+    assert runtime.agent_repository.count_rows("delivery_outbox") == 0
+    staged = runtime.database.execute(
+        "select id, job_id, task_workspace_id from message_attachment order by created_at, id"
+    )
+    assert len(staged) == 3
+    assert all(row["job_id"] is None for row in staged)
+    assert len({str(row["task_workspace_id"]) for row in staged}) == 1
+
+    text_payload = load_fixture("group_text.json")
+    text_payload["conversationId"] = "group-conversation-redacted"
+    text_payload["msgId"] = "claim-staged-files"
+    text_payload["text"] = {"content": "比较刚才三个文件，只回复一次"}
+    triggered = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=text_payload,
+        correlation_id="claim-staged-files",
+    )
+
+    assert triggered.status == "received"
+    assert runtime.agent_repository.count_rows("agent_job") == 1
+    job = runtime.agent_repository.get_job(triggered.job_id)
+    assert job.input_message == "比较刚才三个文件，只回复一次"
+    assert job.status == JobStatus.WAITING_INPUT
+    claimed = runtime.agent_repository.list_attachments(job.id)
+    assert [item.file_name for item in claimed] == [
+        "input-1.txt",
+        "input-2.txt",
+        "input-3.txt",
+    ]
+    assert all(item.claimed_at for item in claimed)
+
+    queued = list(runtime.message_bus.attachments)
+    runtime.message_bus.attachments.clear()
+    outcomes = [
+        runtime.attachment_service.process(item.attachment_id, item.correlation_id)
+        for item in queued
+    ]
+    assert outcomes == ["waiting", "waiting", "released"]
+    assert runtime.agent_repository.get_job(job.id).status == JobStatus.PENDING
+    manifest = file_repository.get_job_snapshot(job.id)
+    items = runtime.database.execute(
+        """
+        select display_name, auto_materialize
+          from agent_job_file_snapshot_item
+         where snapshot_id = ? order by ordinal
+        """,
+        (manifest["id"],),
+    )
+    assert [row["display_name"] for row in items] == [
+        "input-1.txt",
+        "input-2.txt",
+        "input-3.txt",
+    ]
+    assert all(bool(row["auto_materialize"]) for row in items)
+
+    text_payload["msgId"] = "later-unrelated-text"
+    text_payload["text"] = {"content": "继续说明结论"}
+    later = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=text_payload,
+        correlation_id="later-unrelated-text",
+    )
+    assert runtime.agent_repository.count_rows("agent_job") == 2
+    assert runtime.agent_repository.list_attachments(later.job_id) == []
+
+
+def test_text_job_does_not_wait_when_concurrent_attachment_claim_is_lost(
+    monkeypatch: Any,
+) -> None:
+    runtime = multimodal_container(task_file_features=FEATURES)
+    file_payload = load_fixture("file.json")
+    file_payload["msgId"] = "concurrent-claim-file"
+    file_payload["content"] = {
+        "downloadCode": "concurrent-code",
+        "fileName": "concurrent.txt",
+        "fileSize": 8,
+        "contentType": "text/plain",
+    }
+    staged = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=file_payload,
+        correlation_id="concurrent-claim-file",
+    )
+    assert staged.status == "attachments_staged"
+    monkeypatch.setattr(
+        runtime.agent_repository,
+        "claim_staged_attachments",
+        lambda **_arguments: [],
+    )
+
+    text_payload = load_fixture("group_text.json")
+    text_payload["conversationId"] = file_payload["conversationId"]
+    text_payload["msgId"] = "concurrent-claim-text"
+    text_payload["text"] = {"content": "处理此前文件"}
+    triggered = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=text_payload,
+        correlation_id="concurrent-claim-text",
+    )
+
+    job = runtime.agent_repository.get_job(triggered.job_id)
+    assert job.status == JobStatus.PENDING
+    assert runtime.agent_repository.list_attachments(job.id) == []
+
+
+def test_staged_attachments_are_claimed_only_by_the_same_channel_session() -> None:
+    runtime = multimodal_container(task_file_features=FEATURES)
+    file_payload = load_fixture("file.json")
+    file_payload["conversationId"] = "direct-conversation-redacted"
+    file_payload["conversationType"] = "1"
+    file_payload["msgId"] = "private-staged-file"
+    file_payload["content"] = {
+        "downloadCode": "private-code",
+        "fileName": "private.txt",
+        "fileSize": 8,
+        "contentType": "text/plain",
+    }
+    staged = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=file_payload,
+        correlation_id="private-staged-file",
+    )
+    assert staged.status == "attachments_staged"
+
+    group_text = load_fixture("group_text.json")
+    group_text["msgId"] = "other-session-text"
+    group_job_result = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=group_text,
+        correlation_id="other-session-text",
+    )
+    assert runtime.agent_repository.list_attachments(group_job_result.job_id) == []
+    attachment = runtime.database.execute_one(
+        "select job_id from message_attachment where file_name = 'private.txt'"
+    )
+    assert attachment == {"job_id": None}
+
+    private_text = load_fixture("direct_text.json")
+    private_text["msgId"] = "same-session-text"
+    private_text["text"] = {"content": "处理刚才的私聊文件"}
+    private_job_result = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=private_text,
+        correlation_id="same-session-text",
+    )
+    assert [
+        item.file_name
+        for item in runtime.agent_repository.list_attachments(private_job_result.job_id)
+    ] == ["private.txt"]
+
+
+def test_managed_channel_marks_file_only_ingress_as_staged_without_job() -> None:
+    runtime = multimodal_container(task_file_features=FEATURES)
+    payload = load_fixture("file.json")
+    payload["msgId"] = "managed-staged-file"
+    payload["content"] = {
+        "downloadCode": "managed-code",
+        "fileName": "managed.txt",
+        "fileSize": 8,
+        "contentType": "text/plain",
+    }
+    event, created = runtime.managed_channel_repository.receive_event(
+        source_type="dingding_stream",
+        connector_id="connector-dingtalk-stream-default",
+        external_event_id="managed-staged-file",
+        correlation_id="managed-staged-file",
+        payload_hash="safe-test-hash",
+        request_bytes=256,
+        safe_summary={"msgtype": "file"},
+        normalized_event=payload,
+        reply_credential_ciphertext="",
+    )
+    assert created is True
+
+    runtime.channel_dispatch_service.handle(
+        ChannelEventMessage(
+            channel_event_id=str(event["id"]),
+            correlation_id="managed-staged-file",
+        )
+    )
+
+    stored = runtime.managed_channel_repository.get_event(str(event["id"]))
+    assert stored["status"] == "ATTACHMENTS_STAGED"
+    assert stored["job_id"] is None
+    assert runtime.agent_repository.count_rows("agent_job") == 0

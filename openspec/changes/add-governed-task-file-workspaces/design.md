@@ -25,8 +25,9 @@
 - 由发布态 Business Application 冻结 DAY、WEEK、MONTH 自然周期保留策略，并允许前端修改草稿配置后重新发布。
 - 让 File Service 成为文件元数据、版本、对象、保留、配额、审计与提交的唯一治理入口。
 - 让 Agent 仅通过固定 File MCP 发现、物化、提交、保留和交付文件，且所有调用绑定 Principal、Job、Workspace 和精确版本。
-- 在 Runtime 沙盒中有限开放 `Read`、`Grep`、`Write`、`Edit`，同时继续拒绝 Bash、Shell、Web、任意 MCP、任意 URL 和任意对象键访问。
+- 在 Runtime 沙盒中有限开放 `Read`、`Glob`、`Grep`、`Write`、`Edit`，同时继续拒绝 Bash、Shell、Web、任意 MCP、任意 URL 和任意对象键访问。
 - 保持聊天附件默认 360 天保留，并将 `attachment-worker` 平滑替换为 `file-worker`。
+- 允许用户连续发送多个纯附件消息而不触发 Agent 回复；由第一条后续非空文字一次性认领并触发唯一 Job。
 - 对提交、并发冲突、清理和交付提供可重试、幂等且可审计的处理。
 
 ### Non-Goals
@@ -93,6 +94,7 @@ File MCP 不直接访问 MinIO，也不成为独立容器。File MCP Handler 调
 | `file_object_staging` | 上传中的临时对象、摘要、大小、创建时间和清理状态 |
 | `file_retention_fact` | 版本保留理由、保留截止时间和对应业务事件 |
 | `file_external_reference` | 钉钉消息附件或外部文件标识与内部精确版本的来源关联 |
+| `message_attachment` 扩展 | 允许 `job_id` 在纯附件暂存期为空，冻结 `task_workspace_id`，并在后续文字 Job 原子认领时记录 `claimed_at` |
 
 约束：
 
@@ -152,13 +154,13 @@ JWT 不携带 MinIO Access Key、Secret Key、Bucket、对象键、预签名 URL
 
 `file-worker` 使用平台服务身份调用附件导入与清理接口，权限与用户 Agent scope 分离。该服务身份仍由平台身份边界签发和审计，不能退化为共享 Internal API Token。
 
-平台身份边界 MUST 使用独立于用户/Job Principal 的 Service Principal Key Ring。现有平台 API 中的身份模块持有该服务签名私钥，并通过固定内部身份接口按需签发 TTL 不超过 300 秒的 JWT；File Service 只读取对应公开 JWKS。`file-worker` 与 Delivery Worker 分别持有不同的、仅用于向平台身份接口换取短时 JWT 的 bootstrap credential，任何一个 Worker 都不得持有服务签名私钥、另一角色的 bootstrap credential 或预先生成的长期 JWT 文件。
+平台身份边界只维护一套 Principal Key Ring。现有平台 API 身份模块与 Agent Worker在各自需要签发Service Principal和用户/Job Principal时使用同一平台签名私钥；File Service、ONES MCP及后续MCP读取同一公开`PRINCIPAL_JWKS`。Service Principal仍通过独立的`iss=enterprise-agent-service-identity`、`aud=file-service-internal`、角色`sub`/`azp`、固定scope和专用验证策略与用户/Job Principal隔离，共享签名信任根不得扩大任一Token类型的可接受接口。`file-worker` 与 Delivery Worker分别持有不同的、仅用于向平台身份接口换取短时JWT的bootstrap credential，任何一个Worker都不得持有平台签名私钥、公开JWKS、另一角色的bootstrap credential或预先生成的长期JWT文件。
 
 本地Compose还需要先把MinIO基础设施凭据建立为平台`encrypted_db` Secret，否则File Service会按默认拒绝保持unready。该首次启动动作由一次性Migrator完成：它只挂载Master Key与两个角色隔离的Docker Secret，不取得MinIO endpoint、Bucket或对象路径；缺失时创建、相同值时幂等保留、不同值时失败并要求显式轮换。长期运行的Worker、Runtime与Delivery不继承这些bootstrap Secret，生产可关闭此本地初始化。
 
 服务 JWT 使用固定信任域：`iss=enterprise-agent-service-identity`、`aud=file-service-internal`，并令 `sub` 与 `azp` 同为调用角色。`file-worker` Token 冻结附件导入与内容清理两个固定 scope；Delivery Worker Token 只冻结精确版本交付读取 scope。File Service 必须验证 Token 的完整角色 scope 集合并复核当前接口所需 scope 属于该集合，不能要求同一个 File Worker Token 在两个接口上分别等于互斥的单 scope，也不能接受集合外 scope。
 
-bootstrap credential 只用于平台身份接口认证，使用独立随机值、角色隔离挂载、常量时间比较和有界读取；不得作为 File Service Internal API Token。客户端按需缓存短时 JWT，并在到期前刷新；签发和拒绝写入不含 credential/JWT 的安全审计。Compose 启动前的密钥初始化只生成服务签名密钥、公开 JWKS 和两份角色 bootstrap credential，不生成静态 Service JWT。
+bootstrap credential 只用于平台身份接口认证，使用独立随机值、角色隔离挂载、常量时间比较和有界读取；不得作为 File Service Internal API Token。客户端按需缓存短时 JWT，并在到期前刷新；签发和拒绝写入不含 credential/JWT 的安全审计。Compose 启动前的密钥初始化只生成一套平台Principal签名密钥/公开JWKS和两份角色bootstrap credential，不生成第二套Service Principal密钥，也不生成静态Service JWT。
 
 备选方案及否决理由：
 
@@ -166,16 +168,24 @@ bootstrap credential 只用于平台身份接口认证，使用独立随机值�
 - 仅凭 `commit_id` 上传：commit id 是业务标识，不是认证凭据。
 - File Service 自签用户身份：会形成第二身份签发中心。
 - 把一次性生成的 Service JWT 作为 Compose Secret：JWT 最长 300 秒，启动后必然过期，无法形成稳定运行链路。
-- 向两个 Worker 挂载同一 bootstrap token 或服务签名私钥：扩大横向冒用与签名能力泄露面。
+- 向两个 Worker 挂载同一 bootstrap token 或平台签名私钥：扩大横向冒用与签名能力泄露面。
 
 ### 7. Job 创建时冻结 File Manifest，Runtime 按需物化精确版本
 
+纯附件 Channel 消息先在已验证的 Session 与活动工作区中形成未消费集合，不创建 Agent Job、Dispatch、Delivery、占位指令或用户回复。每个附件仍使用稳定 attachment ID进入原附件队列；File Worker完成下载和 File Service导入后，若 `job_id` 仍为空，只记录 `staged`，不尝试释放 Job。
+
+第一条后续非空文字在一个数据库事务中创建唯一 Job并认领该 Session/Workspace下全部未消费附件。若认领时仍有附件未完成，Job保持 `WAITING_INPUT`；最后一个附件进入安全终态时完成 Manifest并只释放一次。若附件已在文字到达前完成，则创建事务直接冻结 Manifest并使 Job进入 `PENDING`。`job_id` 从空变为该 Job即是一次性消费事实；后续文字不会再次把同一附件作为新上传自动物化，但对应版本继续作为工作区候选。
+
 Job 创建时建立不可变 File Manifest：
 
-- 当前消息附件和用户显式引用自动加入；
+- 当前文字 Job认领的暂存附件、同消息附件和用户显式引用自动加入；
 - 工作区其他文件由 Agent 根据任务选择，但只能从 Manifest 可见集合中选择；
 - 每项冻结精确 `file_id`、`version_id`、显示名、来源和允许动作；
 - 创建快照和实际物化时均重新检查授权、到期、删除和内容存在状态。
+
+Agent Worker必须把该Manifest以有界、无正文、无对象位置的Runtime上下文投影交给所选Runtime。Runtime在发起Claude SDK模型请求前主动调用本地File bridge物化所有`auto_materialize=true`项，并把已校验的安全相对路径、handle、大小与SHA-256加入系统上下文；物化失败时Job失败关闭，模型不得在缺少文件的情况下猜测内容。`auto_materialize=false`候选只暴露精确File/Version ID，由Agent按任务需要显式调用物化工具。
+
+该认领查询必须同时绑定 `session_id` 与 `task_workspace_id`。私聊 Session继续包含请求用户边界；群聊 Session继续包含企业、Connector、conversation与Publication隔离事实，因此跨私聊、跨群、跨租户或跨Publication附件不会被误认领。启用任务工作区的 Publication必须同时冻结附件能力与连续会话为开启，否则草稿保存失败。
 
 Agent 通过 Runtime 代码注册的本地 File MCP bridge 请求物化。该 bridge 只代理 Job 冻结的 File Service 工具，不接受模型提供的 Server URL；它先调用部署固定的远端 File MCP，再在 ToolResult 返回模型之前拦截隐藏的受控传输描述。Runtime 内部的 file-transfer coordinator 验证描述后，使用当前 Job 的 File Principal JWT 经内部流式接口把内容写入当前 Job 沙盒的安全相对路径。模型只能看到逻辑文件句柄、沙盒内安全相对路径、大小和摘要，不能看到传输描述、JWT 或文件字节。
 
@@ -186,12 +196,14 @@ Agent 通过 Runtime 代码注册的本地 File MCP bridge 请求物化。该 br
 - 单文件、工作区总量和沙盒容量均由平台强制；
 - Runtime 不接受 File MCP 返回的任意 URL，也不直接访问 MinIO。
 
-### 8. 受限开放 Write/Edit，并由 Runtime 文件桥接器提交
+### 8. 受限开放文件工具，并由 Runtime 文件桥接器提交
 
 仅当 Job Manifest 声明文件编辑能力时，Claude Code Agent 可在当前 Job 沙盒内使用：
 
-- `Read`、`Grep`；
+- `Read`、`Glob`、`Grep`；
 - 受路径、后缀、大小和配额约束的 `Write`、`Edit`。
+
+Runtime 仅在 Job 同时绑定有效 Task Workspace 且其不可变 Tool Snapshot 至少冻结一个 `file-service` Tool 时，把上述五个内建工具写入 Claude SDK 的 `tools` 可用集合。`allowedTools`/`allowed_tools` 必须保持为空，Claude SDK permission mode使用会把未预批准调用交给`canUseTool`的`default`模式，五个工具和所有 MCP Tool 均逐次经过deny-by-default回调；不得使用会在空自动批准集合下先行拒绝且跳过回调的`dontAsk`，也不得把“工具可见”误实现为“免校验自动批准”。`Glob` 只允许在当前沙盒的固定顶层目录中使用受限相对 TXT pattern，拒绝绝对路径、`..`、符号链接、非 TXT pattern 和未知字段。
 
 继续拒绝 `Bash`、`Shell`、`NotebookEdit`、`WebFetch`、`WebSearch`、任意 MCP、任意 URL 和沙盒外路径。容器根文件系统保持只读；仅挂载 Job 专属可写 tmpfs。沙盒容量必须配置为足以容纳最多 100 MiB 未保留工作区内容及提交暂存开销，并通过磁盘配额和进程级限制强制，而不是依靠提示词。
 
@@ -285,6 +297,7 @@ File Service 仅提供受控的版本读取能力，现有 Delivery Worker 负�
 2. 部署 `file-service`，先仅接收影子或测试流量；MinIO Secret 只配置给该容器。
 3. 为现有 `message_attachment` 增加到内部 file/version 的兼容关联，不删除旧列和旧读取路径。
 4. 增加 File MCP 固定工具清单、Principal JWT 校验、授权和审计。
+5. 使消息附件可在 Job 创建前绑定 Session/Workspace，并为 Channel ingress成功终态增加 `ATTACHMENTS_STAGED`。
 
 ### Phase 2: Worker 切换与 Runtime 启用
 

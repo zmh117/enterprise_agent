@@ -16,7 +16,8 @@ SANDBOX_SCHEMA_VERSION = 1
 SANDBOX_FILE_LIMIT = 40
 SANDBOX_CAPACITY_BYTES = 224 * 1024 * 1024
 SANDBOX_FILE_BYTES = 15 * 1024 * 1024
-ALLOWED_FILE_TOOLS = frozenset({"Read", "Grep", "Write", "Edit"})
+FILE_TOOL_NAMES = ("Read", "Glob", "Grep", "Edit", "Write")
+ALLOWED_FILE_TOOLS = frozenset(FILE_TOOL_NAMES)
 ALLOWED_TOP_LEVEL = frozenset({"inputs", "work", "outputs", "tmp"})
 
 
@@ -56,6 +57,7 @@ class JobSandbox:
         value = dict(raw_input)
         expected = {
             "Read": {"file_path", "offset", "limit", "pages"},
+            "Glob": {"pattern", "path"},
             "Grep": {
                 "pattern",
                 "path",
@@ -76,22 +78,31 @@ class JobSandbox:
         }[tool_name]
         if not set(value) <= expected:
             self._deny("sandbox_tool_input_invalid", "tool input contains unknown fields")
-        path_field = "path" if tool_name == "Grep" else "file_path"
-        raw_path = value.get(path_field, "." if tool_name == "Grep" else "")
-        relative = self._relative_path(raw_path, allow_root=tool_name == "Grep")
-        target = self._target(relative, allow_root=tool_name == "Grep")
+        directory_tool = tool_name in {"Glob", "Grep"}
+        path_field = "path" if directory_tool else "file_path"
+        raw_path = value.get(path_field, "." if directory_tool else "")
+        relative = (
+            self._directory_path(raw_path)
+            if tool_name == "Glob"
+            else self._relative_path(raw_path, allow_root=tool_name == "Grep")
+        )
+        target = self._target(relative, allow_root=directory_tool)
         self._reject_symlinks(target)
-        if tool_name in {"Read", "Grep"}:
+        if tool_name in {"Read", "Glob", "Grep"}:
             if not target.exists():
                 self._deny("sandbox_entry_missing", "sandbox entry does not exist")
             if tool_name == "Read" and not target.is_file():
                 self._deny("sandbox_entry_invalid", "Read requires a regular TXT file")
+            if tool_name == "Glob" and not target.is_dir():
+                self._deny("sandbox_entry_invalid", "Glob requires a regular directory")
             if tool_name == "Grep" and not (target.is_dir() or target.is_file()):
                 self._deny("sandbox_entry_invalid", "Grep requires a regular path")
             if tool_name == "Grep":
                 pattern = value.get("pattern")
                 if not isinstance(pattern, str) or not 1 <= len(pattern) <= 1024:
                     self._deny("sandbox_tool_input_invalid", "Grep pattern is invalid")
+            if tool_name == "Glob":
+                self._glob_pattern(value.get("pattern"))
         else:
             self._authorize_write(tool_name, target, value)
         value[path_field] = relative
@@ -158,6 +169,41 @@ class JobSandbox:
         if path.suffix.lower() != ".txt":
             self._deny("sandbox_file_type_denied", "only TXT files are allowed")
         return value
+
+    def _directory_path(self, value: object) -> str:
+        if not isinstance(value, str) or not 1 <= len(value) <= 240:
+            self._deny("sandbox_path_invalid", "sandbox path is invalid")
+        if "\\" in value or "\x00" in value:
+            self._deny("sandbox_path_invalid", "sandbox path is invalid")
+        if value == ".":
+            return value
+        path = PurePosixPath(value)
+        if (
+            path.is_absolute()
+            or str(path) != value
+            or "." in path.parts
+            or ".." in path.parts
+            or not path.parts
+            or path.parts[0] not in ALLOWED_TOP_LEVEL
+        ):
+            self._deny("sandbox_path_invalid", "sandbox path escaped its Job boundary")
+        return value
+
+    def _glob_pattern(self, value: object) -> None:
+        if (
+            not isinstance(value, str)
+            or not 1 <= len(value) <= 1024
+            or "\\" in value
+            or "\x00" in value
+            or PurePosixPath(value).is_absolute()
+            or "." in PurePosixPath(value).parts
+            or ".." in PurePosixPath(value).parts
+            or not value.lower().endswith(".txt")
+        ):
+            self._deny(
+                "sandbox_tool_input_invalid",
+                "Glob pattern must be a relative TXT pattern",
+            )
 
     def _target(self, relative: str, *, allow_root: bool) -> Path:
         root = self.path.resolve(strict=True)

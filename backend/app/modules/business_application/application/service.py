@@ -209,6 +209,18 @@ class BusinessApplicationService:
             agent_publication_id=str(payload.get("agent_publication_id") or "").strip(),
             raw_tools=payload.get("mcp_tools") or [],
         )
+        file_tool_errors = self.mcp_tool_composition_service.file_feature_errors(
+            agent_publication_id=str(payload.get("agent_publication_id") or "").strip(),
+            task_file_features=task_file_features,
+            selected_tools=mcp_tools,
+        )
+        if file_tool_errors:
+            raise NonRetryableExecutionError(
+                "Task file features require frozen File MCP Tools",
+                safe_message="任务文件功能缺少已发布的 File MCP 工具",
+                error_code="validation_failed",
+                field_errors=file_tool_errors,
+            )
         normalized = {
             "agent_publication_id": str(payload.get("agent_publication_id") or "").strip(),
             "workflow_publication_id": str(payload.get("workflow_publication_id") or "").strip(),
@@ -601,6 +613,15 @@ class BusinessApplicationService:
                 components["deliveries"].append(reference)
         if agent is None and not str(revision.get("agent_publication_id") or ""):
             errors.append({"field": "agent_publication_id", "message": "必须选择 Agent 发布版本"})
+        errors.extend(
+            self.mcp_tool_composition_service.file_feature_errors(
+                agent_publication_id=str(revision.get("agent_publication_id") or ""),
+                task_file_features=validate_task_file_features(
+                    revision.get("task_file_features")
+                ),
+                selected_tools=list(revision.get("mcp_tools") or []),
+            )
+        )
         return errors, components
 
     @staticmethod

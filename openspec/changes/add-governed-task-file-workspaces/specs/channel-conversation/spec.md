@@ -1,11 +1,27 @@
 ## ADDED Requirements
 
 ### Requirement: Channel 文件输入绑定任务工作区
-Channel ingress SHALL 在创建 Agent Job 时把本次消息新上传或明确引用的受支持 `.txt` 附件绑定到命中的任务工作区，并要求 File Service 在 Job File Manifest 中冻结对应精确版本。消息附件身份与任务工作区引用 MUST 分离，工作区过期不得提前删除仍在独立保留期内的原始附件。
+Channel ingress SHALL 把没有非空文字的受支持 `.txt` 消息作为附件暂存事件：解析真实身份和 Business Application Publication，创建或复用当前 Channel Session 与活动任务工作区，持久化并异步导入附件，但 MUST NOT 创建 Agent Job、Job Dispatch、Result Delivery、占位文字指令或用户回复。同一 Session 中连续到达的纯附件消息 SHALL 进入同一未消费附件集。第一条后续非空文字消息 MUST 在创建唯一 Agent Job 的事务中原子认领该集合；已经认领的附件 MUST NOT 被后续无关 Job 再次自动认领，但其文件版本可以继续作为工作区候选。消息附件身份与任务工作区引用 MUST 分离，工作区过期不得提前删除仍在独立保留期内的原始附件。
 
-#### Scenario: 私聊发送 TXT 文件
-- **WHEN** 已授权用户在钉钉私聊发送合法 `.txt` 并请求分析
-- **THEN** 系统创建或复用当前私聊任务工作区、导入消息附件并把精确版本加入 Job File Manifest
+#### Scenario: 连续发送多个纯附件消息
+- **WHEN** 已授权用户在同一钉钉会话依次发送三个合法 `.txt` 且都没有非空文字
+- **THEN** 系统创建或复用当前任务工作区并异步导入三个附件
+- **AND** 不创建 Agent Job、Job Dispatch、Result Delivery 或用户回复
+
+#### Scenario: 后续文字统一触发
+- **WHEN** 用户随后在同一 Session 发送非空文字指令
+- **THEN** 系统只创建一个 Agent Job并原子认领此前尚未消费的三个附件
+- **AND** Job File Manifest冻结每个可用附件的精确版本并根据该文字只回复一次
+
+#### Scenario: 文字先于附件导入完成
+- **WHEN** 后续文字到达时一个或多个已暂存附件仍在导入
+- **THEN** 系统创建同一个 `WAITING_INPUT` Job并绑定完整待处理集合
+- **AND** File Worker只在该集合全部进入安全终态后释放该 Job一次，不为单个附件创建额外 Job
+
+#### Scenario: 已消费附件不会再次自动认领
+- **WHEN** 已有文字 Job认领并处理暂存附件后，用户再发送无显式文件引用的普通文字
+- **THEN** 新 Job不再次把这些附件作为本次新上传文件自动物化
+- **AND** 文件仍可作为当前工作区的有界候选按需选择
 
 #### Scenario: 工作区先于附件到期
 - **WHEN** 任务工作区到期但关联消息附件仍在360天保留期内
@@ -24,7 +40,7 @@ Channel ingress SHALL 在创建 Agent Job 时把本次消息新上传或明确�
 - **AND** 不向其暴露工作区文件名或内容
 
 ### Requirement: File Worker 兼容现有附件队列
-系统 MUST 用 `file-worker` 替换 `attachment-worker` 服务名，同时继续消费现有附件队列和兼容在途消息。File Worker SHALL 使用短期来源凭证下载附件并通过 File Service 内部流式接口导入，MUST NOT 获得 MinIO 凭据或直接写对象存储；附件下载终态仍须清除来源凭证并按现有规则释放等待中的 Job。
+系统 MUST 用 `file-worker` 替换 `attachment-worker` 服务名，同时继续消费现有附件队列和兼容在途消息。File Worker SHALL 使用短期来源凭证下载附件并通过 File Service 内部流式接口导入，MUST NOT 获得 MinIO 凭据或直接写对象存储；附件下载终态仍须清除来源凭证。尚未被文字认领的纯附件只进入 `staged` 终态而不释放或创建 Job；已经绑定唯一 `WAITING_INPUT` Job 的附件集合全部进入安全终态后，File Worker才释放该 Job一次。
 
 #### Scenario: 切换时存在旧附件消息
 - **WHEN** 部署切换到 `file-worker` 时原附件队列仍有合法消息

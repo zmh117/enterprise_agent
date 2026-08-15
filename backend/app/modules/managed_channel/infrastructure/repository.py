@@ -743,6 +743,17 @@ class ManagedChannelRepository:
             (job_id, now_iso(), now_iso(), event_id),
         )
 
+    def mark_event_attachments_staged(self, event_id: str) -> None:
+        self.database.execute(
+            """
+            update channel_ingress_event
+               set status = 'ATTACHMENTS_STAGED', dispatched_at = ?, completed_at = ?
+             where id = ? and job_id is null
+               and status in ('ACCEPTED', 'DISPATCH_PENDING', 'DISPATCHING')
+            """,
+            (now_iso(), now_iso(), event_id),
+        )
+
     def mark_event_rejected(self, event_id: str, *, error_code: str, error_summary: str) -> None:
         self.database.execute(
             """

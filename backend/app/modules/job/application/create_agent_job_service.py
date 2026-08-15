@@ -46,6 +46,7 @@ ISOLATED_SESSION_SOURCE_CHANNELS = {
     "managed_webhook",
     "webhook",
 }
+TERMINAL_ATTACHMENT_STATUSES = {"READY", "REJECTED", "FAILED", "stored_not_interpreted"}
 
 
 @dataclass(frozen=True)
@@ -131,6 +132,14 @@ class CreateAgentJobCommand:
         ).to_dict()
 
 
+@dataclass(frozen=True)
+class StagedAttachmentIntake:
+    session_id: str
+    task_workspace_id: str
+    message_id: str
+    attachment_ids: tuple[str, ...]
+
+
 class CreateAgentJobService:
     def __init__(
         self,
@@ -172,6 +181,197 @@ class CreateAgentJobService:
         self.mcp_tool_snapshot_service = mcp_tool_snapshot_service
         self.runtime_readiness_guard = runtime_readiness_guard
         self.file_manifest_service = file_manifest_service
+
+    def stage_attachments(self, command: CreateAgentJobCommand) -> StagedAttachmentIntake:
+        """Persist a file-only channel event without manufacturing an Agent Job."""
+
+        self._assert_application_runtime_available(command)
+        if command.user_message.strip() or not command.attachments:
+            raise NonRetryableExecutionError(
+                "Attachment staging requires a file-only message",
+                safe_message="附件暂存请求无效",
+                error_code="attachment_stage_invalid",
+            )
+        if command.conversation_mode != "channel":
+            raise NonRetryableExecutionError(
+                "Attachment staging requires channel-isolated sessions",
+                safe_message="业务应用会话模式不支持附件暂存",
+                error_code="attachment_stage_session_mode_invalid",
+            )
+        if not command.business_application_id or not command.business_application_publication_id:
+            raise NonRetryableExecutionError(
+                "Attachment staging requires a frozen Business Application publication",
+                safe_message="业务应用发布信息不完整",
+                error_code="attachment_stage_publication_missing",
+            )
+        if not (
+            command.task_file_features.get("workspace_enabled")
+            and command.task_file_features.get("file_mcp_enabled")
+        ):
+            raise NonRetryableExecutionError(
+                "Attachment staging requires the governed workspace and File MCP",
+                safe_message="此业务应用未启用任务文件工作区",
+                error_code="attachment_stage_workspace_disabled",
+            )
+        if not all(is_task_txt_name(item.file_name) for item in command.attachments):
+            raise NonRetryableExecutionError(
+                "The first task-workspace phase accepts only TXT attachment intake",
+                safe_message="当前任务工作区只支持 TXT 文件",
+                error_code="file_workspace_type_unsupported",
+            )
+        attachments_enabled = (
+            self.attachment_settings.enabled
+            if command.attachments_enabled is None
+            else command.attachments_enabled
+        )
+        self._validate_attachments(command.attachments, enabled=attachments_enabled)
+        if self.credential_cipher is None:
+            raise NonRetryableExecutionError(
+                "Attachment credential encryption is unavailable",
+                safe_message="尚未配置附件处理能力",
+            )
+        continuous_enabled = (
+            self.continuous_enabled
+            if command.continuous_conversation_enabled is None
+            else command.continuous_conversation_enabled
+        )
+        if not continuous_enabled:
+            raise NonRetryableExecutionError(
+                "Attachment staging requires continuous channel conversation",
+                safe_message="请先启用连续会话再使用任务文件工作区",
+                error_code="attachment_stage_continuous_session_required",
+            )
+        requester_id = command.effective_requester_id
+        source_channel = command.effective_source_channel
+        external_conversation_id = command.effective_conversation_id
+        project_code = str(
+            command.effective_routing_context.get("project_code", command.project_code)
+            or command.project_code
+        )
+        reply_route = command.effective_reply_route
+        self._assert_connectors_allowed(command, reply_route)
+        execution_scope_hash = _execution_scope_hash(command.effective_routing_context)
+        if not execution_scope_hash or not external_conversation_id:
+            raise NonRetryableExecutionError(
+                "Attachment staging session isolation facts are incomplete",
+                safe_message="会话隔离上下文不完整",
+                error_code="session_isolation_incomplete",
+            )
+        session_key = _session_key(
+            source_channel=source_channel,
+            connector_id=command.source_connector_id,
+            project_code=project_code,
+            conversation_type=command.conversation_type,
+            conversation_id=external_conversation_id,
+            requester_id=requester_id,
+            bot_identity=command.bot_identity,
+            external_identity_id=command.external_identity_id,
+            business_application_id=command.business_application_id,
+            business_application_publication_id=command.business_application_publication_id,
+            execution_scope_hash=execution_scope_hash,
+            conversation_mode=command.conversation_mode,
+        )
+        attachment_ids: list[str] = []
+        with self.repository.database.unit_of_work():
+            session = self.repository.create_session(
+                project_code=project_code,
+                source_channel=source_channel,
+                source_connector_id=command.source_connector_id,
+                external_conversation_id=external_conversation_id,
+                requester_id=requester_id,
+                requester_display_name=command.requester_display_name,
+                routing_context=command.effective_routing_context,
+                reply_route=reply_route,
+                session_key=session_key,
+                conversation_type=command.conversation_type,
+                bot_identity=command.bot_identity,
+                external_identity_id=command.external_identity_id,
+                business_application_id=command.business_application_id,
+                business_application_code=command.business_application_code,
+                application_publication_id=command.business_application_publication_id,
+                execution_scope_hash=execution_scope_hash,
+                isolation_key_version=2,
+                conversation_mode=command.conversation_mode,
+                recent_message_limit=command.recent_message_limit,
+                session_policy=command.session_policy,
+            )
+            if self.file_manifest_service is None:
+                raise NonRetryableExecutionError(
+                    "Task file workspace service is unavailable",
+                    safe_message="任务文件工作区暂时不可用",
+                    error_code="file_workspace_unavailable",
+                )
+            workspace = self.file_manifest_service.resolve_workspace(
+                tenant_id=command.tenant_id,
+                session_id=session.id,
+                requester_id=requester_id,
+                conversation_type=command.conversation_type,
+                enterprise_id=command.enterprise_id,
+                connector_id=command.source_connector_id,
+                conversation_id=external_conversation_id,
+                sender_staff_id=command.sender_staff_id,
+                publication_id=command.business_application_publication_id,
+                retention_period=command.task_workspace_retention_period,
+                attachments=command.attachments,
+                file_references=(),
+                requests_file_output=False,
+            )
+            if workspace is None:
+                raise NonRetryableExecutionError(
+                    "Task file workspace could not be resolved for attachment intake",
+                    safe_message="无法创建任务文件工作区",
+                    error_code="file_workspace_unavailable",
+                )
+            message_id = self.repository.add_message(
+                session_id=session.id,
+                job_id=None,
+                role="user",
+                content="",
+                external_message_id=(command.external_message_id or command.external_event_id),
+                sender_id=requester_id,
+                sender_display_name=command.requester_display_name,
+                message_type="attachment_intake",
+                content_status="PENDING",
+                safe_metadata={"attachment_intake": True},
+            )
+            for ordinal, attachment in enumerate(command.attachments, start=1):
+                created = self.repository.add_attachment(
+                    message_id=message_id,
+                    job_id=None,
+                    task_workspace_id=str(workspace["id"]),
+                    ordinal=ordinal,
+                    media_type=attachment.media_type,
+                    file_name=attachment.file_name,
+                    declared_mime=attachment.declared_mime,
+                    declared_size=attachment.declared_size,
+                    credential_ciphertext=self.credential_cipher.encrypt(
+                        attachment.source_credential
+                    ),
+                    credential_type=attachment.source_credential_type,
+                    credential_expires_at=attachment.source_credential_expires_at,
+                )
+                attachment_ids.append(created.id)
+            self.audit_service.record(
+                "attachment.intake.staged",
+                status="SUCCEEDED",
+                summary="File-only channel message staged without an Agent job",
+                actor_id=requester_id,
+                payload={
+                    "session_id": session.id,
+                    "task_workspace_id": str(workspace["id"]),
+                    "attachment_count": len(attachment_ids),
+                    "external_event_id": command.external_event_id,
+                },
+            )
+        correlation_id = command.correlation_id or new_correlation_id()
+        for attachment_id in attachment_ids:
+            self.publisher.publish_attachment(attachment_id, correlation_id)
+        return StagedAttachmentIntake(
+            session_id=session.id,
+            task_workspace_id=str(workspace["id"]),
+            message_id=message_id,
+            attachment_ids=tuple(attachment_ids),
+        )
 
     def execute(self, command: CreateAgentJobCommand) -> AgentJob:
         existing = self.repository.get_job_by_idempotency_key(command.idempotency_key)
@@ -502,6 +702,15 @@ class CreateAgentJobService:
                 )
                 else None
             )
+            staged_attachments = (
+                self.repository.list_staged_attachments(
+                    session_id=session.id,
+                    task_workspace_id=str(file_workspace["id"]),
+                )
+                if file_workspace is not None
+                and bool(command.task_file_features.get("file_mcp_enabled"))
+                else []
+            )
             job = self.repository.create_job(
                 session_id=session.id,
                 idempotency_key=command.idempotency_key,
@@ -519,7 +728,9 @@ class CreateAgentJobService:
                 routing_context=command.effective_routing_context,
                 reply_route=reply_route,
                 initial_status=(
-                    JobStatus.WAITING_INPUT if command.attachments else JobStatus.PENDING
+                    JobStatus.WAITING_INPUT
+                    if command.attachments or staged_attachments
+                    else JobStatus.PENDING
                 ),
                 internal_user_id=requester_id,
                 external_identity_id=command.external_identity_id,
@@ -568,10 +779,7 @@ class CreateAgentJobService:
                     allowed_server_codes=(
                         None
                         if bool(command.task_file_features.get("file_mcp_enabled"))
-                        else frozenset(
-                            server_code
-                            for server_code in {"tool-mcp", "ones-mcp"}
-                        )
+                        else frozenset(server_code for server_code in {"tool-mcp", "ones-mcp"})
                     ),
                 )
             elif agent_publication_id and self.mcp_tool_snapshot_service is not None:
@@ -588,6 +796,7 @@ class CreateAgentJobService:
                 created = self.repository.add_attachment(
                     message_id=job.input_message_id,
                     job_id=job.id,
+                    task_workspace_id=(str(file_workspace["id"]) if file_workspace else ""),
                     ordinal=ordinal,
                     media_type=attachment.media_type,
                     file_name=attachment.file_name,
@@ -600,6 +809,23 @@ class CreateAgentJobService:
                     credential_expires_at=attachment.source_credential_expires_at,
                 )
                 attachment_ids.append(created.id)
+            if staged_attachments and file_workspace is not None:
+                claimed = self.repository.claim_staged_attachments(
+                    session_id=session.id,
+                    task_workspace_id=str(file_workspace["id"]),
+                    job_id=job.id,
+                )
+                self.audit_service.record(
+                    "attachment.intake.claimed",
+                    status="SUCCEEDED",
+                    summary="A text-triggered Agent job claimed staged attachments",
+                    job_id=job.id,
+                    actor_id=requester_id,
+                    payload={
+                        "attachment_count": len(claimed) - len(command.attachments),
+                        "task_workspace_id": str(file_workspace["id"]),
+                    },
+                )
             file_manifest: dict[str, Any] = {}
             if file_workspace is not None and bool(
                 command.task_file_features.get("file_mcp_enabled")
@@ -612,11 +838,17 @@ class CreateAgentJobService:
                     publication_id=command.business_application_publication_id,
                     file_references=command.file_references,
                 )
-                if not any(
-                    is_task_txt_name(attachment.file_name)
-                    for attachment in command.attachments
-                ):
+                if not self.file_manifest_service.has_pending_txt_attachments(job.id):
                     file_manifest = self.file_manifest_service.finalize(job.id) or {}
+            job_attachments = self.repository.list_attachments(job.id)
+            if (
+                job.status == JobStatus.WAITING_INPUT
+                and all(item.status in TERMINAL_ATTACHMENT_STATUSES for item in job_attachments)
+            ):
+                job = self.repository.transition_job(
+                    job_id=job.id,
+                    target=JobStatus.PENDING,
+                )
             dispatch_event = self.repository.create_dispatch_event(
                 job_id=job.id,
                 job_idempotency_key=job.idempotency_key,
@@ -721,9 +953,7 @@ class CreateAgentJobService:
                 )
             size = int(attachment.declared_size or 0)
             max_file_bytes = (
-                15 * 1024 * 1024
-                if extension == ".txt"
-                else self.attachment_settings.max_file_bytes
+                15 * 1024 * 1024 if extension == ".txt" else self.attachment_settings.max_file_bytes
             )
             if size > max_file_bytes:
                 raise NonRetryableExecutionError(
@@ -894,9 +1124,7 @@ def _execution_scope_hash(routing_context: dict[str, Any]) -> str:
 
 
 def _isolated_conversation_id(*, source_channel: str, idempotency_key: str) -> str:
-    digest = hashlib.sha256(
-        f"{source_channel}:{idempotency_key}".encode("utf-8")
-    ).hexdigest()
+    digest = hashlib.sha256(f"{source_channel}:{idempotency_key}".encode("utf-8")).hexdigest()
     return f"isolated:{source_channel}:{digest}"
 
 

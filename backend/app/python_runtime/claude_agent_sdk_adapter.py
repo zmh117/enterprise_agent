@@ -433,7 +433,8 @@ class RealClaudeCodeAgentClient:
         tool_events: list[dict[str, Any]] = []
         mcp_server = await self._open_mcp_server(request, sdk)
         cli_stderr: list[str] = []
-        options = self._build_options(sdk, request.context, mcp_server, cli_stderr, binding)
+        runtime_context = await self._prepare_context(request.context)
+        options = self._build_options(sdk, runtime_context, mcp_server, cli_stderr, binding)
         prompt = _streaming_user_prompt(request.context.user_question)
         assistant_texts: list[str] = []
         parsed_tool_events: list[dict[str, Any]] = []
@@ -703,6 +704,12 @@ class RealClaudeCodeAgentClient:
     async def _close_mcp_server(self) -> None:
         return None
 
+    async def _prepare_context(
+        self,
+        context: AgentExecutionContext,
+    ) -> AgentExecutionContext:
+        return context
+
     def _build_options(
         self,
         sdk: ClaudeSdk,
@@ -860,6 +867,8 @@ def _build_system_prompt(context: AgentExecutionContext) -> str:
         f"## Skill: {name}\n{body}" for name, body in sorted(context.skills.items())
     )
     retrieved_context = json.dumps(context.retrieved_context, ensure_ascii=False, default=str)
+    file_job = any(item.server_code == "file-service" for item in context.mcp_bindings)
+    sandbox_tools = ["Read", "Glob", "Grep", "Edit", "Write"] if file_job else []
     return "\n\n".join(
         [
             context.system_role,
@@ -876,13 +885,24 @@ def _build_system_prompt(context: AgentExecutionContext) -> str:
             "Safety rules:\n" + _numbered(context.safety_rules),
             "Tool restrictions:\n" + _numbered(context.tool_restrictions),
             "Available internal tools:\n" + _numbered(context.allowed_tools),
+            (
+                "Available local Job Sandbox tools (all calls remain permission-checked):\n"
+                + _numbered(sandbox_tools)
+                if sandbox_tools
+                else ""
+            ),
             "Report structure:\n"
             + _numbered(
                 [
                     "Conclusion with likely root cause.",
                     "Evidence summary citing tool results.",
                     "Uncertainty or limitations when evidence is incomplete.",
-                    "Suggested safe next actions only; do not suggest direct mutation by the Agent.",
+                    (
+                        "For file Jobs, modify only sandbox TXT files and persist only through an "
+                        "explicit File MCP commit; otherwise suggest safe next actions only."
+                        if file_job
+                        else "Suggested safe next actions only; do not suggest direct mutation by the Agent."
+                    ),
                 ]
             ),
             "Retrieved context:\n" + retrieved_context,

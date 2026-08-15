@@ -12,7 +12,8 @@ import * as z from "zod/v4";
 import {
   FileTransferBoundaryError,
   FileTransferCoordinator,
-  type FileTransferContext
+  type FileTransferContext,
+  type FileTransferResult
 } from "./file-transfer.js";
 import { HttpFileTransferPort, type RuntimeFetch } from "./file-transfer-http.js";
 
@@ -40,8 +41,14 @@ export interface RuntimeFileBridge {
   readonly server: McpSdkServerConfigWithInstance;
   readonly localToolNames: readonly string[];
   connect(): Promise<void>;
+  materialize(fileId: string, versionId: string): Promise<RuntimeMaterializedFile>;
   close(): Promise<void>;
 }
+
+export type RuntimeMaterializedFile = Extract<
+  FileTransferResult,
+  { readonly action: "MATERIALIZED" }
+>;
 
 export interface RuntimeFileBridgeOptions {
   readonly mcpServerUrl: string;
@@ -219,9 +226,11 @@ export class ClaudeRuntimeFileBridge implements RuntimeFileBridge {
   readonly localToolNames: readonly string[];
   private readonly coordinator: FileTransferCoordinator;
   private readonly remote: RemoteFileMcpClient;
+  private readonly frozenToolNames: ReadonlySet<string>;
 
   constructor(private readonly options: RuntimeFileBridgeOptions) {
     const frozen = [...new Set(options.frozenToolNames)];
+    this.frozenToolNames = new Set(frozen);
     this.remote =
       options.remoteClient ??
       new StandardRemoteFileMcpClient(
@@ -276,6 +285,40 @@ export class ClaudeRuntimeFileBridge implements RuntimeFileBridge {
 
   close(): Promise<void> {
     return this.remote.close();
+  }
+
+  async materialize(
+    fileId: string,
+    versionId: string
+  ): Promise<RuntimeMaterializedFile> {
+    if (!this.frozenToolNames.has(MATERIALIZE_TOOL)) {
+      throw new FileTransferBoundaryError(
+        "file_tool_not_frozen",
+        "File materialization Tool is not frozen for this Job"
+      );
+    }
+    const remote = await this.remote.callTool(
+      MATERIALIZE_TOOL,
+      { file_id: fileId, version_id: versionId },
+      this.options.context.signal
+    );
+    if (remote.isError === true) {
+      throw new FileTransferBoundaryError(
+        "file_auto_materialization_denied",
+        "File Service rejected automatic materialization"
+      );
+    }
+    const result = await this.coordinator.processMcpControlResult(
+      remote,
+      this.options.context
+    );
+    if (result.action !== "MATERIALIZED") {
+      throw new FileTransferBoundaryError(
+        "file_transfer_action_unsupported",
+        "Automatic materialization returned an unexpected transfer action"
+      );
+    }
+    return result;
   }
 
   private async forward(

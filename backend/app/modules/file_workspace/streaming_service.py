@@ -189,9 +189,8 @@ class GovernedFileStreamingService:
         elif user_intent is CommitUserIntent.MODIFY:
             self._deny("file_commit_target_required", "修改文件必须绑定基础版本")
         delivery_mode = CommitDeliveryMode(str(arguments["delivery_mode"]))
-        if (
-            delivery_mode is CommitDeliveryMode.DEFAULT
-            and not self._default_delivery_enabled(str(context.claims["job_id"]))
+        if delivery_mode is CommitDeliveryMode.DEFAULT and not self._default_delivery_enabled(
+            str(context.claims["job_id"])
         ):
             delivery_mode = CommitDeliveryMode.WORKSPACE_ONLY
         canonical = {
@@ -239,21 +238,19 @@ class GovernedFileStreamingService:
         }
 
     def _default_delivery_enabled(self, job_id: str) -> bool:
-        row = self.repository.database.execute_one(
-            "select business_application_route_decision_json from agent_job where id = ?",
-            (job_id,),
-        ) or {}
-        try:
-            route = json.loads(
-                str(row.get("business_application_route_decision_json") or "{}")
+        row = (
+            self.repository.database.execute_one(
+                "select business_application_route_decision_json from agent_job where id = ?",
+                (job_id,),
             )
+            or {}
+        )
+        try:
+            route = json.loads(str(row.get("business_application_route_decision_json") or "{}"))
         except json.JSONDecodeError:
             return False
         features = route.get("task_file_features") if isinstance(route, dict) else None
-        return bool(
-            isinstance(features, dict)
-            and features.get("default_file_delivery_enabled")
-        )
+        return bool(isinstance(features, dict) and features.get("default_file_delivery_enabled"))
 
     async def download_transfer(
         self, *, transfer_id: str, token: str
@@ -275,10 +272,9 @@ class GovernedFileStreamingService:
             action=FileAction.MATERIALIZE,
         )
         version = self.repository.require_content_available(str(transfer["version_id"]))
-        if (
-            int(version["size_bytes"]) != int(transfer["expected_size_bytes"])
-            or str(version["content_sha256"]) != str(transfer["expected_sha256"])
-        ):
+        if int(version["size_bytes"]) != int(transfer["expected_size_bytes"]) or str(
+            version["content_sha256"]
+        ) != str(transfer["expected_sha256"]):
             self._deny("file_transfer_integrity_mismatch", "文件完整性校验失败")
         stream = await asyncio.to_thread(
             self.storage.open_stream,
@@ -335,14 +331,11 @@ class GovernedFileStreamingService:
             for left, right in expected.items()
         ):
             self._deny("file_delivery_provenance_mismatch", "文件交付来源已变化")
-        version = self.repository.require_content_available(
-            str(binding["file_version_id"])
-        )
+        version = self.repository.require_content_available(str(binding["file_version_id"]))
         if (
             str(version["file_id"]) != str(binding["file_id"])
             or str(version["status"]) != "AVAILABLE"
-            or str(version["content_sha256"])
-            != str(binding["file_content_sha256"])
+            or str(version["content_sha256"]) != str(binding["file_content_sha256"])
         ):
             self._deny("file_delivery_version_invalid", "文件交付版本无效")
         try:
@@ -460,10 +453,16 @@ class GovernedFileStreamingService:
             self._deny("file_worker_principal_invalid", "文件工作身份无效")
         row = self.repository.database.execute_one(
             """
-            select a.*, j.task_workspace_id, j.internal_user_id,
-                   j.source_channel
+            select a.*,
+                   coalesce(a.task_workspace_id, j.task_workspace_id)
+                     as resolved_task_workspace_id,
+                   coalesce(j.internal_user_id, m.sender_id, s.requester_id) as internal_user_id,
+                   coalesce(j.source_channel, s.source_channel) as source_channel,
+                   m.session_id
               from message_attachment a
-              join agent_job j on j.id = a.job_id
+              join agent_message m on m.id = a.message_id
+              join agent_session s on s.id = m.session_id
+              left join agent_job j on j.id = a.job_id
              where a.id = ?
             """,
             (attachment_id,),
@@ -471,6 +470,14 @@ class GovernedFileStreamingService:
         if row is None:
             self._deny("file_attachment_not_found", "未找到聊天附件")
         assert row is not None
+        workspace_id = str(row.get("resolved_task_workspace_id") or "")
+        if workspace_id:
+            workspace = self.repository.get_workspace(workspace_id)
+            if str(workspace["session_id"]) != str(row["session_id"]):
+                self._deny(
+                    "file_workspace_boundary_mismatch",
+                    "附件与任务文件工作区边界不一致",
+                )
         is_txt = str(row["file_name"]).lower().endswith(".txt")
         with tempfile.TemporaryFile(mode="w+b") as content:
             if is_txt:
@@ -484,9 +491,7 @@ class GovernedFileStreamingService:
                 size_bytes = validated.size_bytes
                 content_sha256 = validated.content_sha256
             else:
-                size_bytes, content_sha256 = await self._copy_attachment_stream(
-                    body, content
-                )
+                size_bytes, content_sha256 = await self._copy_attachment_stream(body, content)
             existing_hash = str(row.get("sha256") or "")
             if existing_hash and str(row.get("object_key") or ""):
                 if existing_hash != content_sha256 or int(row.get("size_bytes") or 0) != size_bytes:
@@ -519,7 +524,7 @@ class GovernedFileStreamingService:
             )
             if is_txt:
                 self._publish_attachment_txt(
-                    attachment=row,
+                    attachment={**row, "task_workspace_id": workspace_id},
                     object_key=object_key,
                     size_bytes=size_bytes,
                     content_sha256=content_sha256,
@@ -527,14 +532,10 @@ class GovernedFileStreamingService:
             self._ensure_attachment_cleanup(attachment_id)
             return self._attachment_receipt(attachment_id)
         except Exception:
-            self._ensure_attachment_cleanup(
-                attachment_id, reason="ATTACHMENT_IMPORT_COMPENSATION"
-            )
+            self._ensure_attachment_cleanup(attachment_id, reason="ATTACHMENT_IMPORT_COMPENSATION")
             raise
 
-    async def run_maintenance(
-        self, *, service_claims: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def run_maintenance(self, *, service_claims: dict[str, Any]) -> dict[str, Any]:
         if str(service_claims.get("sub") or "") != "file-worker":
             self._deny("file_worker_principal_invalid", "文件工作身份无效")
         if self.lifecycle is None:
@@ -542,9 +543,7 @@ class GovernedFileStreamingService:
         assert self.lifecycle is not None
         return cast(dict[str, Any], await asyncio.to_thread(self.lifecycle.run_once))
 
-    async def maintenance_metrics(
-        self, *, service_claims: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def maintenance_metrics(self, *, service_claims: dict[str, Any]) -> dict[str, Any]:
         if str(service_claims.get("sub") or "") != "file-worker":
             self._deny("file_worker_principal_invalid", "文件工作身份无效")
         if self.lifecycle is None:
@@ -938,9 +937,7 @@ class GovernedFileStreamingService:
             "status": status.value,
         }
 
-    def _record_compensation(
-        self, *, intent: dict[str, Any], staging: dict[str, Any]
-    ) -> None:
+    def _record_compensation(self, *, intent: dict[str, Any], staging: dict[str, Any]) -> None:
         try:
             with self.repository.database.unit_of_work():
                 current = self.repository.get_commit_intent(str(intent["id"]))
@@ -971,9 +968,7 @@ class GovernedFileStreamingService:
     def _terminal_receipt(self, intent: dict[str, Any]) -> dict[str, Any] | None:
         status = str(intent["status"])
         version_id = str(
-            intent.get("result_version_id")
-            or intent.get("conflict_candidate_version_id")
-            or ""
+            intent.get("result_version_id") or intent.get("conflict_candidate_version_id") or ""
         )
         if status not in {"COMMITTED", "CONFLICT"} or not version_id:
             return None
@@ -1008,18 +1003,15 @@ class GovernedFileStreamingService:
         claims: dict[str, Any],
         context: FileAuthorizationContext,
     ) -> None:
-        if (
-            str(intent["job_id"]) != str(claims["job_id"])
-            or str(intent["workspace_id"]) != str(context.workspace["id"])
+        if str(intent["job_id"]) != str(claims["job_id"]) or str(intent["workspace_id"]) != str(
+            context.workspace["id"]
         ):
             GovernedFileStreamingService._deny(
                 "file_commit_binding_mismatch", "文件提交与当前任务不匹配"
             )
 
     @staticmethod
-    def _require_owner_boundary(
-        file_row: dict[str, Any], workspace: dict[str, Any]
-    ) -> None:
+    def _require_owner_boundary(file_row: dict[str, Any], workspace: dict[str, Any]) -> None:
         for field in (
             "tenant_id",
             "owner_type",

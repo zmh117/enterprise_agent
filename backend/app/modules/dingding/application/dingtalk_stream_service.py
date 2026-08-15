@@ -18,6 +18,7 @@ from app.modules.channel.domain.channel_event import (
 )
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.identity.domain import ExternalIdentityDescriptor
+from app.modules.job.domain.agent_job import AgentJob
 from app.modules.identity_discovery.application import (
     DingTalkIdentityDiscoveryService,
 )
@@ -257,7 +258,7 @@ class DingTalkStreamMessageService:
                 source_connector_id=source_connector_id,
                 correlation_id=correlation_id,
             )
-            job = self.channel_ingress_service.accept(event)
+            acceptance = self.channel_ingress_service.accept(event)
         except PermissionDenied as exc:
             logger.info(
                 "DingTalk Stream permission denied connector_id=%s actor_id=%s event_id=%s",
@@ -341,6 +342,33 @@ class DingTalkStreamMessageService:
                 ),
             )
 
+        if not isinstance(acceptance, AgentJob):
+            self.audit_service.record(
+                "dingtalk.stream.attachments_staged",
+                status="SUCCEEDED",
+                summary="DingTalk file-only message staged without an Agent job",
+                actor_id=message.user_id,
+                payload={
+                    "connector_id": source_connector_id,
+                    "event_id": message.event_id,
+                    "session_id": acceptance.session_id,
+                    "task_workspace_id": acceptance.task_workspace_id,
+                    "attachment_count": len(acceptance.attachment_ids),
+                },
+            )
+            logger.info(
+                "DingTalk Stream attachments staged connector_id=%s actor_id=%s event_id=%s",
+                source_connector_id,
+                message.user_id,
+                message.event_id,
+            )
+            return DingTalkStreamHandleResult(
+                accepted=True,
+                status="attachments_staged",
+                ack_status="OK",
+                ack_message="OK",
+            )
+        job = acceptance
         self.audit_service.record(
             "dingtalk.stream.ack",
             status="SUCCEEDED",
@@ -518,8 +546,7 @@ class DingTalkStreamMessageService:
             original_message_id=original_message_id,
             quoted_message=(
                 quoted_message
-                if quoted_message is not None
-                and quoted_message.message_id == original_message_id
+                if quoted_message is not None and quoted_message.message_id == original_message_id
                 else None
             ),
             sender_staff_id=staff_id,

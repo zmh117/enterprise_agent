@@ -158,8 +158,6 @@ class PrincipalJwtSettings:
 @dataclass(frozen=True)
 class ServicePrincipalSettings:
     enabled: bool = False
-    signing_private_key_file: str = ""
-    public_jwks_file: str = ""
     file_worker_bootstrap_token_file: str = ""
     delivery_worker_bootstrap_token_file: str = ""
     identity_base_url: str = "http://api-server:8000"
@@ -383,10 +381,6 @@ def load_settings() -> Settings:
         ),
         service_principal=ServicePrincipalSettings(
             enabled=_env_bool("SERVICE_PRINCIPAL_ENABLED"),
-            signing_private_key_file=os.getenv(
-                "SERVICE_PRINCIPAL_PRIVATE_KEY_FILE", ""
-            ),
-            public_jwks_file=os.getenv("SERVICE_PRINCIPAL_JWKS_FILE", ""),
             file_worker_bootstrap_token_file=os.getenv(
                 "FILE_WORKER_BOOTSTRAP_TOKEN_FILE", ""
             ),

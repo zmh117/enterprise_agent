@@ -86,6 +86,23 @@ test("real TypeScript Runtime SDK loop materializes and commits only through its
     }
   ];
   request.limits.max_tool_calls = 8;
+  request.prompt.retrieved_context = {
+    file_manifest: {
+      schema_version: 1,
+      manifest_hash: "d".repeat(64),
+      items: [
+        {
+          file_id: "file-1",
+          version_id: "version-1",
+          display_name: "source.txt",
+          source_kind: "CURRENT_MESSAGE",
+          allowed_actions: ["READ_METADATA", "MATERIALIZE", "EDIT", "COMMIT"],
+          auto_materialize: true,
+          conflict_candidate: false
+        }
+      ]
+    }
+  };
   const root = await mkdtemp(join(tmpdir(), "runtime-file-bridge-loop-"));
   const sandboxPath = join(root, "sandbox");
   await Promise.all(
@@ -181,34 +198,14 @@ test("real TypeScript Runtime SDK loop materializes and commits only through its
       const client = new Client({ name: "runtime-loop-test", version: "0.1.0" });
       await client.connect(clientTransport as never);
       try {
-        const materializeTool = "mcp__files__file_prepare_materialization";
-        const materializeUseId = "tool-use-materialize";
-        assert.equal(
-          (
-            await options.canUseTool?.(
-              materializeTool,
-              { file_id: "file-1", version_id: "version-1" },
-              {
-                signal: new AbortController().signal,
-                toolUseID: materializeUseId,
-                requestId: "permission-materialize"
-              }
-            )
-          )?.behavior,
-          "allow"
-        );
-        const materialized = await client.callTool({
-          name: "file_prepare_materialization",
-          arguments: { file_id: "file-1", version_id: "version-1" }
-        });
         assert.equal(
           await readFile(join(sandboxPath, "inputs/source-12345678.txt"), "utf8"),
           sourceBytes.toString("utf8")
         );
-        const serializedMaterialized = JSON.stringify(materialized);
-        assert.equal(serializedMaterialized.includes("enterprise-agent/file-transfer"), false);
-        assert.equal(serializedMaterialized.includes(sourceBytes.toString("utf8")), false);
-        yield toolResultMessage(materializeUseId, materialized);
+        assert.equal(options.permissionMode, "default");
+        assert.equal(options.allowedTools?.length, 0);
+        assert.equal(String(options.systemPrompt).includes("inputs/source-12345678.txt"), true);
+        assert.equal(String(options.systemPrompt).includes(sourceBytes.toString("utf8")), false);
 
         assert.equal(
           (

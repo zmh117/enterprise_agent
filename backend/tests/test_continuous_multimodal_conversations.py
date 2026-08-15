@@ -18,6 +18,10 @@ from app.modules.attachments.credentials import AttachmentCredentialCipher
 from app.modules.attachments.extraction import SafeAttachmentExtractor
 from app.modules.attachments.storage import InMemoryObjectStorage
 from app.modules.channel.domain.channel_event import ChannelAttachment
+from app.modules.business_application.domain.policies import (
+    required_file_mcp_tools,
+    validate_task_file_features,
+)
 from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.agent.application.conversation_context import ConversationContextService
@@ -113,7 +117,13 @@ def multimodal_container(*, task_file_features: dict[str, bool] | None = None) -
         seed=True,
         permission_service_factory=direct_job_permission_service_factory,
     )
-    tool_identifiers = ("get_er_context", "get_business_flow_context")
+    normalized_task_file_features = validate_task_file_features(task_file_features)
+    tool_identifiers = tuple(
+        sorted(
+            {"get_er_context", "get_business_flow_context"}
+            | set(required_file_mcp_tools(normalized_task_file_features))
+        )
+    )
     activate_dingtalk_test_application(
         container,
         code="multimodal-test-application",
@@ -121,7 +131,7 @@ def multimodal_container(*, task_file_features: dict[str, bool] | None = None) -
         group_conversation_ids=("group-conversation-redacted",),
         attachments_enabled=True,
         capabilities=tool_identifiers,
-        task_file_features=task_file_features,
+        task_file_features=normalized_task_file_features,
     )
     application = container.business_application_repository.get_by_code(
         "multimodal-test-application"

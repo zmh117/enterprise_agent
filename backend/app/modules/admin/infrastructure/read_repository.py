@@ -106,7 +106,7 @@ class AdminReadRepository:
             left join agent_job_execution_summary s on s.job_id = j.id
             left join app_user u on u.id = j.internal_user_id
             left join business_application a on a.id = j.business_application_id
-            where {' and '.join(clauses)}
+            where {" and ".join(clauses)}
             order by j.created_at desc, j.id desc
             limit ?
             """,
@@ -270,15 +270,20 @@ class AdminReadRepository:
     ) -> list[dict[str, Any]]:
         rows = self.database.execute(
             """
-            select a.id, a.message_id, a.job_id, j.session_id, j.internal_user_id,
-                   j.requester_id as user_id, j.requester_id,
-                   j.routing_context_json, a.media_type, a.file_name,
+            select a.id, a.message_id, a.job_id, m.session_id,
+                   coalesce(j.internal_user_id, m.sender_id, s.requester_id) as internal_user_id,
+                   coalesce(j.requester_id, m.sender_id, s.requester_id) as user_id,
+                   coalesce(j.requester_id, m.sender_id, s.requester_id) as requester_id,
+                   coalesce(j.routing_context_json, s.routing_context_json) as routing_context_json,
+                   a.media_type, a.file_name,
                    a.declared_mime, a.detected_mime, a.declared_size, a.size_bytes,
                    a.status, a.failure_code, a.retry_count, a.sha256,
                    a.object_bucket, a.object_key, a.created_at, a.updated_at,
                    c.char_count, c.truncated, substr(c.plain_text, 1, 4000) as text_preview
             from message_attachment a
-            join agent_job j on j.id = a.job_id
+            join agent_message m on m.id = a.message_id
+            join agent_session s on s.id = m.session_id
+            left join agent_job j on j.id = a.job_id
             left join attachment_content c on c.attachment_id = a.id
             where a.created_at >= ? and a.created_at < ?
             order by a.created_at desc, a.id desc limit ?
@@ -290,15 +295,20 @@ class AdminReadRepository:
     def attachment_detail(self, attachment_id: str) -> dict[str, Any] | None:
         rows = self.database.execute(
             """
-            select a.id, a.message_id, a.job_id, j.session_id, j.internal_user_id,
-                   j.requester_id as user_id, j.requester_id,
-                   j.routing_context_json, a.media_type, a.file_name,
+            select a.id, a.message_id, a.job_id, m.session_id,
+                   coalesce(j.internal_user_id, m.sender_id, s.requester_id) as internal_user_id,
+                   coalesce(j.requester_id, m.sender_id, s.requester_id) as user_id,
+                   coalesce(j.requester_id, m.sender_id, s.requester_id) as requester_id,
+                   coalesce(j.routing_context_json, s.routing_context_json) as routing_context_json,
+                   a.media_type, a.file_name,
                    a.declared_mime, a.detected_mime, a.declared_size, a.size_bytes,
                    a.status, a.failure_code, a.retry_count, a.sha256,
                    a.object_bucket, a.object_key, a.created_at, a.updated_at,
                    c.char_count, c.truncated, substr(c.plain_text, 1, 4000) as text_preview
             from message_attachment a
-            join agent_job j on j.id = a.job_id
+            join agent_message m on m.id = a.message_id
+            join agent_session s on s.id = m.session_id
+            left join agent_job j on j.id = a.job_id
             left join attachment_content c on c.attachment_id = a.id
             where a.id = ?
             """,
@@ -448,9 +458,7 @@ class AdminReadRepository:
             item.pop("business_application_route_decision_json", {})
         )
         item["execution_policy"] = _json_object(item.pop("execution_policy_json", {}))
-        persisted_tool_call_count = int(
-            item.pop("execution_policy_tool_call_count", 0) or 0
-        )
+        persisted_tool_call_count = int(item.pop("execution_policy_tool_call_count", 0) or 0)
         observed_tool_call_count = int(
             item.pop("observed_execution_policy_tool_call_count", 0) or 0
         )
@@ -526,17 +534,11 @@ def _execution_summary(item: dict[str, Any]) -> dict[str, Any]:
     estimated_cost = item.pop(f"{prefix}estimated_cost_usd", None)
     return {
         "accounting_status": accounting_status,
-        "observed_model_turn_count": int(
-            item.pop(f"{prefix}observed_model_turn_count", 0) or 0
-        ),
+        "observed_model_turn_count": int(item.pop(f"{prefix}observed_model_turn_count", 0) or 0),
         "api_retry_count": int(item.pop(f"{prefix}api_retry_count", 0) or 0),
-        "runtime_invocation_count": int(
-            item.pop(f"{prefix}runtime_invocation_count", 0) or 0
-        ),
+        "runtime_invocation_count": int(item.pop(f"{prefix}runtime_invocation_count", 0) or 0),
         **{
-            field: (
-                int(value) if value is not None else None
-            )
+            field: (int(value) if value is not None else None)
             for field in (
                 "total_duration_ms",
                 "total_api_duration_ms",
@@ -557,9 +559,7 @@ def _execution_summary(item: dict[str, Any]) -> dict[str, Any]:
         "failure_code": item.pop(f"{prefix}failure_code", None),
         "failure_summary": item.pop(f"{prefix}failure_summary", None),
         "retry_exhausted": bool(item.pop(f"{prefix}retry_exhausted", 0) or False),
-        "source_protocol_version": str(
-            item.pop(f"{prefix}source_protocol_version", "") or "1.0"
-        ),
+        "source_protocol_version": str(item.pop(f"{prefix}source_protocol_version", "") or "1.0"),
     }
 
 

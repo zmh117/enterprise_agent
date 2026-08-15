@@ -14,6 +14,7 @@ from app.modules.identity.application import IdentityService
 from app.modules.job.application.create_agent_job_service import (
     CreateAgentJobCommand,
     CreateAgentJobService,
+    StagedAttachmentIntake,
 )
 from app.modules.job.domain.agent_job import AgentJob
 from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
@@ -37,7 +38,7 @@ class ChannelIngressService:
         self.business_application_resolver = business_application_resolver
         self.runtime_environment = runtime_environment
 
-    def accept(self, event: ChannelEvent) -> AgentJob:
+    def accept(self, event: ChannelEvent) -> AgentJob | StagedAttachmentIntake:
         self.audit_service.record(
             "channel.received",
             status="SUCCEEDED",
@@ -192,6 +193,27 @@ class ChannelIngressService:
             file_references=event.file_references,
             requests_file_output=event.requests_file_output,
         )
+        if (
+            not event.message.strip()
+            and bool(event.attachments)
+            and bool(command.task_file_features.get("workspace_enabled"))
+            and bool(command.task_file_features.get("file_mcp_enabled"))
+        ):
+            intake = self.create_job_service.stage_attachments(command)
+            if resolution is not None and resolution.outcome == RouteResolutionOutcome.MATCHED:
+                self.audit_service.record(
+                    "business_application.route.attachments_staged",
+                    status="SUCCEEDED",
+                    summary="Business Application route staged attachments without an Agent job",
+                    actor_id=requester_id,
+                    payload={
+                        **self._safe_route_decision(event, resolution),
+                        "session_id": intake.session_id,
+                        "task_workspace_id": intake.task_workspace_id,
+                        "attachment_count": len(intake.attachment_ids),
+                    },
+                )
+            return intake
         job = self.create_job_service.execute(command)
         if resolution is not None and resolution.outcome == RouteResolutionOutcome.MATCHED:
             self.audit_service.record(

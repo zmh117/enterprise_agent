@@ -16,6 +16,7 @@ from app.modules.channel.domain.channel_event import (
     safe_payload_summary,
 )
 from app.modules.dingding.infrastructure.dingding_callback_client import DingTalkCallbackClient
+from app.modules.job.domain.agent_job import AgentJob
 from app.shared.exceptions import PermissionDenied
 
 
@@ -145,6 +146,8 @@ class DingTalkMessageService:
             job = self.channel_ingress_service.accept(event)
         except PermissionDenied as exc:
             return {"accepted": False, "status": "permission_denied", "message": exc.safe_message}
+        if not isinstance(job, AgentJob):
+            raise RuntimeError("Legacy DingTalk callback cannot stage attachments")
         return {
             "accepted": True,
             "status": "received",

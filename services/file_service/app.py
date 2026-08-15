@@ -253,7 +253,6 @@ def create_app(
     database: Any,
     storage: FileServiceReadiness,
     jwks: CachedPrincipalJwks,
-    service_jwks: CachedPrincipalJwks | None = None,
     audit: FileMcpAudit | None = None,
     max_request_bytes: int = 32 * 1024,
     allowed_hosts: tuple[str, ...] = (
@@ -290,7 +289,6 @@ def create_app(
             database.execute("select id from managed_file_version where 1 = 0")
             storage.assert_ready()
             jwks.current()
-            (service_jwks or jwks).current()
             if tuple(sorted(FILE_TOOL_MANIFEST)) != (
                 "file_create_commit_intent",
                 "file_deliver_version",
@@ -309,7 +307,6 @@ def create_app(
                     "schema": "ready",
                     "object_storage": "ready",
                     "principal_jwks": "ready",
-                    "service_principal_jwks": "ready",
                     "tool_manifest": "ready",
                     "streaming_api": "ready",
                 }

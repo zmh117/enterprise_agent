@@ -16,13 +16,10 @@ probe_token="$target_dir/model-probe-auth-token"
 principal_private_key="$target_dir/principal-jwt-private.pem"
 principal_public_der="$target_dir/principal-jwt-public.der"
 principal_jwks="$target_dir/principal-jwks.json"
-service_principal_private_key="$target_dir/service-principal-private.pem"
-service_principal_public_der="$target_dir/service-principal-public.der"
-service_principal_jwks="$target_dir/service-principal-jwks.json"
 file_worker_bootstrap_token="$target_dir/file-worker-bootstrap-token"
 delivery_worker_bootstrap_token="$target_dir/delivery-worker-bootstrap-token"
 
-for temporary_key in "$principal_public_der" "$service_principal_public_der"; do
+for temporary_key in "$principal_public_der"; do
   if [ -e "$temporary_key" ]; then
     echo "refusing to use stale temporary key material: $temporary_key" >&2
     exit 1
@@ -76,43 +73,6 @@ PY
   rm -f "$principal_public_der"
 fi
 
-if [ -e "$service_principal_private_key" ] || [ -e "$service_principal_jwks" ]; then
-  if [ ! -e "$service_principal_private_key" ] || [ ! -e "$service_principal_jwks" ]; then
-    echo "Service Principal key pair is incomplete; refusing to overwrite it" >&2
-    exit 1
-  fi
-else
-  openssl genpkey -algorithm ED25519 -out "$service_principal_private_key"
-  openssl pkey \
-    -in "$service_principal_private_key" \
-    -pubout \
-    -outform DER \
-    -out "$service_principal_public_der"
-  python3 - "$service_principal_public_der" "$service_principal_jwks" <<'PY'
-import base64
-import hashlib
-import json
-import pathlib
-import sys
-
-raw = pathlib.Path(sys.argv[1]).read_bytes()[-32:]
-encode = lambda value: base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
-core = {"crv": "Ed25519", "kty": "OKP", "x": encode(raw)}
-thumbprint = json.dumps(core, sort_keys=True, separators=(",", ":")).encode("ascii")
-jwk = {
-    **core,
-    "alg": "EdDSA",
-    "use": "sig",
-    "kid": encode(hashlib.sha256(thumbprint).digest()),
-}
-pathlib.Path(sys.argv[2]).write_text(
-    json.dumps({"keys": [jwk]}, sort_keys=True, separators=(",", ":")) + "\n",
-    encoding="utf-8",
-)
-PY
-  rm -f "$service_principal_public_der"
-fi
-
 if [ ! -e "$file_worker_bootstrap_token" ]; then
   openssl rand -base64 48 | tr -d '\n' > "$file_worker_bootstrap_token"
 fi
@@ -124,9 +84,8 @@ fi
 chmod 0600 "$private_key" "$public_key" "$probe_token"
 chmod 0400 \
   "$principal_private_key" \
-  "$service_principal_private_key" \
   "$file_worker_bootstrap_token" \
   "$delivery_worker_bootstrap_token"
-chmod 0644 "$principal_jwks" "$service_principal_jwks"
+chmod 0644 "$principal_jwks"
 
 echo "Agent Runtime secret files are complete in $target_dir"
