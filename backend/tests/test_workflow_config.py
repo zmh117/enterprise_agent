@@ -1,20 +1,35 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 
 from fastapi.testclient import TestClient
 
+from app.bootstrap import build_test_container
 from app.main import create_app
-from app.shared.config import Settings
-from backend.tests.helpers import container, test_settings as make_settings
+from app.shared.config import IdentitySettings, Settings
+from backend.tests.helpers import test_settings as make_settings
+
+
+def workflow_settings() -> Settings:
+    return replace(
+        make_settings(),
+        environment="test",
+        identity=IdentitySettings(
+            enabled=True,
+            web_admin_enabled=True,
+            test_identity_headers_enabled=True,
+            cookie_secure=False,
+        ),
+    )
 
 
 class WorkflowConfigTests(unittest.TestCase):
     def test_workflow_template_nodes_edges_and_publication(self) -> None:
-        settings = make_settings()
+        settings = workflow_settings()
 
         def factory(_: Settings):
-            return container()
+            return build_test_container(settings, migrate=True, seed=True)
 
         with TestClient(create_app(settings, container_factory=factory)) as client:
             headers = {"x-admin-user-id": "user_local_admin"}
@@ -87,10 +102,10 @@ class WorkflowConfigTests(unittest.TestCase):
             )
 
     def test_workflow_rejects_mutation_nodes_and_missing_edge_targets(self) -> None:
-        settings = make_settings()
+        settings = workflow_settings()
 
         def factory(_: Settings):
-            return container()
+            return build_test_container(settings, migrate=True, seed=True)
 
         with TestClient(create_app(settings, container_factory=factory)) as client:
             headers = {"x-admin-user-id": "user_local_admin"}

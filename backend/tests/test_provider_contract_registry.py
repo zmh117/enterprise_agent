@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -10,6 +12,7 @@ from app.modules.platform_config.application.validation import (
 from app.modules.platform_config.domain.provider_contracts import (
     ProviderContractRegistry,
 )
+from app.shared.config import IdentitySettings
 from backend.tests.helpers import container, test_settings as make_settings
 
 
@@ -228,8 +231,19 @@ def test_redis_tls_and_loki_auth_limits_are_strict_and_projectable() -> None:
 
 def test_provider_contract_api_is_metadata_only_and_marks_postgres_unavailable() -> None:
     runtime = container()
-    app = create_app(
+    settings = replace(
         make_settings(),
+        environment="test",
+        identity=IdentitySettings(
+            enabled=True,
+            web_admin_enabled=True,
+            test_identity_headers_enabled=True,
+            cookie_secure=False,
+        ),
+    )
+    runtime.settings = settings
+    app = create_app(
+        settings,
         container_factory=lambda _: runtime,
     )
     with TestClient(app) as client:

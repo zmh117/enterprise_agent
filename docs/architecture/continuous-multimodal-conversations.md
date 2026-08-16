@@ -53,6 +53,10 @@ S3_BUCKET=agent-attachments
 FILE_STORAGE_BUCKET=agent-files
 ```
 
+上述 MinIO 默认只用于 local/test/testing/development。非本地环境必须显式提供
+非空且不等于仓库占位值的 `S3_ACCESS_KEY` / `S3_SECRET_KEY`；配置加载和 Compose
+MinIO 入口都会在外部 I/O 前失败关闭。File Service 仍只接收平台 Secret Reference。
+
 启动附件profile和钉钉入口：
 
 ```bash

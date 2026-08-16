@@ -51,6 +51,13 @@ def test_minio_credentials_and_connections_stop_at_file_service_boundary() -> No
             direct_credential_services.add(name)
     assert direct_credential_services <= {"minio", "minio-init"}
 
+    for name in ("minio", "minio-init"):
+        service = services[name]
+        assert service["environment"]["APP_ENV"] == "${APP_ENV:-local}"
+        command = " ".join(service["command"])
+        assert "unsafe MinIO credentials for non-local APP_ENV" in command
+        assert "exit 1" in command
+
     migrator = services["migrator"]
     assert {
         "app_config_master_key",

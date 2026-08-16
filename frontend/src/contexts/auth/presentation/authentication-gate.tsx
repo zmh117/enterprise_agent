@@ -23,6 +23,7 @@ import {
   login,
   logout,
 } from "@/contexts/auth/infrastructure/auth-api"
+import { AUTHENTICATION_REQUIRED_EVENT } from "@/contexts/auth/application/auth-session-events"
 import { AuthenticatedUserProvider } from "@/contexts/auth/presentation/authenticated-user-context"
 import { ApiError } from "@/shared/api/api-client"
 
@@ -45,11 +46,23 @@ export function AuthenticationGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let active = true
-    void resolveAuthenticationState().then((nextState) => {
-      if (active) setState(nextState)
-    })
+    const refreshAuthentication = () => {
+      setState({ status: "checking" })
+      void resolveAuthenticationState().then((nextState) => {
+        if (active) setState(nextState)
+      })
+    }
+    refreshAuthentication()
+    window.addEventListener(
+      AUTHENTICATION_REQUIRED_EVENT,
+      refreshAuthentication
+    )
     return () => {
       active = false
+      window.removeEventListener(
+        AUTHENTICATION_REQUIRED_EVENT,
+        refreshAuthentication
+      )
     }
   }, [])
 

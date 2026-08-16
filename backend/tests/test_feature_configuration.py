@@ -142,6 +142,9 @@ def test_management_routes_are_absent_when_web_admin_is_disabled() -> None:
     with TestClient(create_app(settings, container_factory=lambda _: container)) as client:
         assert client.get("/api/health").status_code == 200
         assert client.get("/api/admin/users").status_code == 404
+        assert client.get("/api/platform/environments").status_code == 404
+        assert client.get("/api/agent/workflows").status_code == 404
+        assert client.get("/api/agent/jobs/_debug-options").status_code == 404
         assert (
             client.post(
                 "/api/auth/login",
@@ -209,3 +212,17 @@ def test_operator_templates_expose_only_three_top_level_feature_flags() -> None:
         "FEATURE_PERMISSION_SHADOW_MODE",
     ):
         assert f"{legacy}:" not in compose_text
+
+
+def test_compose_admin_web_requires_profile_and_enabled_feature_flag() -> None:
+    compose_text = Path("docker-compose.yml").read_text()
+    dockerfile_text = Path("frontend/Dockerfile").read_text()
+    guard_path = Path("frontend/docker-entrypoint.d/10-require-web-admin.sh")
+
+    assert 'profiles: ["admin"]' in compose_text
+    assert "FEATURE_WEB_ADMIN: ${FEATURE_WEB_ADMIN:-false}" in compose_text
+    assert "10-require-web-admin.sh" in dockerfile_text
+    assert guard_path.exists()
+    guard_text = guard_path.read_text()
+    assert '${FEATURE_WEB_ADMIN:-false}' in guard_text
+    assert "exit 1" in guard_text

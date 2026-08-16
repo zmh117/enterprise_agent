@@ -17,9 +17,11 @@ from app.modules.admin.application.scope import (
 )
 from app.modules.admin.infrastructure import (
     AdminConnectorRepository,
+    AdminJobQuery,
     AdminReadRepository,
     RabbitMQQueueStatusAdapter,
 )
+from app.shared.exceptions import NonRetryableExecutionError
 from app.modules.identity.api.dependencies import (
     container,
     current_principal,
@@ -312,40 +314,30 @@ def build_admin_router() -> APIRouter:
             window = TimeWindow.parse(start=start, end=end)
             page = PageWindow.parse(limit=limit, cursor=cursor)
             start_at, end_at = window.as_iso()
-            values = [
-                item
-                for item in AdminReadRepository(c.database).jobs_in_window(
-                    start_at,
-                    end_at,
+            cursor_created_at, cursor_id = _job_cursor(page.cursor)
+            values = AdminReadRepository(c.database).query_jobs(
+                AdminJobQuery(
+                    start=start_at,
+                    end=end_at,
+                    scope=_scope(c, principal),
                     username=username,
                     application_name=application_name,
+                    statuses=_csv_values(status),
+                    user_id=user_id.strip(),
+                    agent=agent.strip(),
+                    channel=channel.strip(),
+                    project=project.strip(),
+                    session_id=session_id.strip(),
+                    correlation_id=correlation_id.strip(),
+                    execution_statuses=_csv_values(execution_status),
+                    delivery_statuses=_csv_values(delivery_status),
+                    failure_stages=_csv_values(failure_stage),
+                    model=model.strip(),
+                    cursor_created_at=cursor_created_at,
+                    cursor_id=cursor_id,
+                    limit=page.limit,
                 )
-                if _scope(c, principal).permits(item)
-                and (not status or item["status"] in set(status.split(",")))
-                and (not user_id or user_id in {item.get("internal_user_id"), item.get("user_id")})
-                and (not agent or item.get("agent_code") == agent)
-                and (not channel or item.get("source_channel") == channel)
-                and (not project or item.get("project_code") == project)
-                and (not session_id or item.get("session_id") == session_id)
-                and (not correlation_id or item.get("correlation_id") == correlation_id)
-                and (
-                    not execution_status
-                    or item["execution_summary"]["execution_status"]
-                    in set(execution_status.split(","))
-                )
-                and (
-                    not delivery_status
-                    or item["execution_summary"]["delivery_status"]
-                    in set(delivery_status.split(","))
-                )
-                and (
-                    not failure_stage
-                    or item["execution_summary"]["display_failure_stage"]
-                    in set(failure_stage.split(","))
-                )
-                and (not model or model in item["execution_summary"]["models"])
-            ]
-            values = _after_cursor(values, page.cursor, "created_at")
+            )
             return _page(values, page, "created_at") | {
                 "window": {"start": start_at, "end": end_at}
             }
@@ -562,6 +554,31 @@ def _after_cursor(
         for item in items
         if (str(item.get(time_field) or ""), str(item.get("id") or "")) < (timestamp, identifier)
     ]
+
+
+def _job_cursor(cursor: str) -> tuple[str, str]:
+    if not cursor:
+        return "", ""
+    decoded = PageWindow.decode(cursor)
+    timestamp, separator, identifier = decoded.partition("|")
+    if not separator or not timestamp or not identifier:
+        raise NonRetryableExecutionError(
+            "Job pagination cursor is malformed",
+            safe_message="分页游标无效",
+            error_code="invalid_cursor",
+            field_errors=[{"field": "cursor", "message": "游标无效"}],
+        )
+    return timestamp, identifier
+
+
+def _csv_values(value: str) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            item.strip()[:100]
+            for item in value.split(",")
+            if item.strip()
+        )
+    )[:20]
 
 
 def _page(items: list[dict[str, Any]], page: PageWindow, time_field: str) -> dict[str, Any]:

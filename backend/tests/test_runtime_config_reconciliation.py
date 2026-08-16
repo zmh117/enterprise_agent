@@ -172,7 +172,8 @@ def test_sqlite_concurrent_reconciliation_counts_each_real_change_once(tmp_path)
 
 
 def test_definition_reads_report_missing_builtin_without_recreating_it() -> None:
-    runtime = container()
+    settings = unified_settings()
+    runtime = build_test_container(settings, migrate=True, seed=True)
     missing_key = "WEBHOOK_MAX_JSON_DEPTH"
     runtime.database.execute(
         "delete from platform_runtime_config_definition where key = ?",
@@ -180,9 +181,10 @@ def test_definition_reads_report_missing_builtin_without_recreating_it() -> None
     )
     before_revision = runtime.platform_config_service.repository.runtime_config_revision()
     before_audit = runtime.platform_config_service.repository.list_config_audit(limit=500)
-    app = create_app(runtime.settings, container_factory=lambda _: runtime)
+    app = create_app(settings, container_factory=lambda _: runtime)
 
     with TestClient(app) as client:
+        login(client)
         definitions_response = client.get("/api/platform/runtime-config/definitions")
         snapshot_response = client.get("/api/platform/runtime-config/snapshot")
         stored_after = (

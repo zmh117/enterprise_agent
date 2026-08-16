@@ -1,6 +1,7 @@
 import { createBrowserRouter } from "react-router-dom"
 import type { ReactNode } from "react"
 
+import { AppErrorFallback } from "@/app/errors/app-error-boundary"
 import { PlatformShell } from "@/app/shell/platform-shell"
 import { ApplicationDetailPage } from "@/contexts/applications/presentation/application-detail-page"
 import { ApplicationsPage } from "@/contexts/applications/presentation/applications-page"
@@ -31,6 +32,7 @@ function protectedPage(capability: string, page: ReactNode) {
 export const appRouter = createBrowserRouter([
   {
     element: <PlatformShell />,
+    errorElement: <AppErrorFallback />,
     children: [
       {
         path: "/",

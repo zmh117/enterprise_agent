@@ -22,7 +22,7 @@ class WorkflowService:
         self.repository = repository
         self.permission_service = permission_service
 
-    def require_admin(self, actor_id: str) -> None:
+    def require_action(self, actor_id: str, *, action: str) -> None:
         if not actor_id:
             raise PermissionDenied(
                 "Workflow config actor is required",
@@ -30,9 +30,9 @@ class WorkflowService:
             )
         self.permission_service.require_action(
             user_id=actor_id,
-            resource_type="platform_config",
+            resource_type="agent",
             resource_code="*",
-            action="manage",
+            action=action,
         )
 
     def list_templates(
@@ -45,7 +45,7 @@ class WorkflowService:
 
     @operation_unit_of_work(lambda service: service.repository.database)
     def upsert_template(self, payload: dict[str, Any], *, actor_id: str) -> dict[str, Any]:
-        self.require_admin(actor_id)
+        self.require_action(actor_id, action="edit")
         code = validate_code(str(payload.get("code") or ""))
         entry_node_key = str(payload.get("entry_node_key") or "")
         if entry_node_key:
@@ -76,7 +76,7 @@ class WorkflowService:
 
     @operation_unit_of_work(lambda service: service.repository.database)
     def set_template_status(self, code: str, status: str, *, actor_id: str) -> dict[str, Any]:
-        self.require_admin(actor_id)
+        self.require_action(actor_id, action="edit")
         return self.repository.set_template_status(
             validate_code(code),
             validate_workflow_status(status).value,
@@ -86,7 +86,7 @@ class WorkflowService:
     def upsert_node(
         self, template_code: str, payload: dict[str, Any], *, actor_id: str
     ) -> dict[str, Any]:
-        self.require_admin(actor_id)
+        self.require_action(actor_id, action="edit")
         node = normalize_node_payload(payload)
         entity = self.repository.upsert_node(template_code=validate_code(template_code), **node)
         self._validate_template_graph(template_code)
@@ -99,7 +99,7 @@ class WorkflowService:
     def upsert_edge(
         self, template_code: str, payload: dict[str, Any], *, actor_id: str
     ) -> dict[str, Any]:
-        self.require_admin(actor_id)
+        self.require_action(actor_id, action="edit")
         template_code = validate_code(template_code)
         source_node_key = validate_code(
             str(payload.get("source_node_key") or ""),
@@ -136,7 +136,7 @@ class WorkflowService:
 
     @operation_unit_of_work(lambda service: service.repository.database)
     def publish(self, template_code: str, *, actor_id: str) -> dict[str, Any]:
-        self.require_admin(actor_id)
+        self.require_action(actor_id, action="publish")
         template_code = validate_code(template_code)
         draft = self.repository.load_normalized_draft(template_code, lock=True)
         graph = publication_snapshot(

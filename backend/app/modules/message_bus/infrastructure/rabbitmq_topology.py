@@ -6,7 +6,8 @@ from app.shared.config import QueueSettings
 
 
 def declare_agent_job_topology(channel: Any, queue: QueueSettings) -> None:
-    """Declare only the current Outbox target queue."""
+    """Declare the Outbox target and explicit poison-message quarantine queue."""
+    channel.queue_declare(queue=queue.dead_queue, durable=True)
     channel.queue_declare(queue=queue.job_queue, durable=True)
 
 

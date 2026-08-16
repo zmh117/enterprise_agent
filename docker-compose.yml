@@ -116,8 +116,24 @@ services:
   minio:
     # profiles: ["attachments"]
     image: ${MINIO_IMAGE:-minio/minio:latest}
-    command: ["server", "/data", "--console-address", ":9001"]
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        case "$${APP_ENV:-local}" in
+          local|test|testing|development) ;;
+          *)
+            if [ -z "$${MINIO_ROOT_USER:-}" ] || [ -z "$${MINIO_ROOT_PASSWORD:-}" ] ||
+               [ "$${MINIO_ROOT_USER}" = "enterprise_agent" ] ||
+               [ "$${MINIO_ROOT_PASSWORD}" = "enterprise_agent_change_me" ] ||
+               [ "$${MINIO_ROOT_PASSWORD}" = "replace-with-a-strong-object-storage-secret" ]; then
+              echo "unsafe MinIO credentials for non-local APP_ENV" >&2
+              exit 1
+            fi
+            ;;
+        esac
+        exec minio server /data --console-address :9001
     environment:
+      APP_ENV: ${APP_ENV:-local}
       MINIO_ROOT_USER: ${S3_ACCESS_KEY:-enterprise_agent}
       MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-enterprise_agent_change_me}
     ports:
@@ -138,12 +154,25 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >-
+        case "$${APP_ENV:-local}" in
+          local|test|testing|development) ;;
+          *)
+            if [ -z "$${MINIO_ROOT_USER:-}" ] || [ -z "$${MINIO_ROOT_PASSWORD:-}" ] ||
+               [ "$${MINIO_ROOT_USER}" = "enterprise_agent" ] ||
+               [ "$${MINIO_ROOT_PASSWORD}" = "enterprise_agent_change_me" ] ||
+               [ "$${MINIO_ROOT_PASSWORD}" = "replace-with-a-strong-object-storage-secret" ]; then
+              echo "unsafe MinIO credentials for non-local APP_ENV" >&2;
+              exit 1;
+            fi
+            ;;
+        esac;
         mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" &&
         mc mb --ignore-existing "local/$${S3_BUCKET}" &&
         mc anonymous set none "local/$${S3_BUCKET}" &&
         mc mb --ignore-existing "local/$${FILE_STORAGE_BUCKET}" &&
         mc anonymous set none "local/$${FILE_STORAGE_BUCKET}"
     environment:
+      APP_ENV: ${APP_ENV:-local}
       MINIO_ROOT_USER: ${S3_ACCESS_KEY:-enterprise_agent}
       MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-enterprise_agent_change_me}
       S3_BUCKET: ${S3_BUCKET:-agent-attachments}
@@ -490,10 +519,12 @@ services:
   # deterministic provider behavior or starts the acceptance runner.
 
   admin-web:
-    # profiles: ["admin"]
+    profiles: ["admin"]
     build:
       context: .
       dockerfile: frontend/Dockerfile
+    environment:
+      FEATURE_WEB_ADMIN: ${FEATURE_WEB_ADMIN:-false}
     ports:
       - "${ADMIN_WEB_PORT:-8080}:80"
     depends_on:

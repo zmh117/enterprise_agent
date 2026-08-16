@@ -8,7 +8,6 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from app.bootstrap import Container
 from app.modules.identity.api.dependencies import (
     current_principal,
-    optional_legacy_actor,
     require_action,
     require_csrf,
 )
@@ -23,29 +22,18 @@ def _container(request: Request) -> Container:
 
 
 def _actor(request: Request) -> str:
-    c = _container(request)
-    if (
-        c.settings.feature_configuration.unified_identity_enabled
-        or c.settings.feature_configuration.web_admin_enabled
-    ):
-        principal = current_principal(request)
-        require_csrf(request, principal)
-        return principal.user_id
-    return optional_legacy_actor(request)
+    principal = current_principal(request)
+    require_csrf(request, principal)
+    return principal.user_id
 
 
 def _require_management_read(request: Request, *, resource_type: str) -> None:
-    c = _container(request)
-    if (
-        c.settings.feature_configuration.unified_identity_enabled
-        or c.settings.feature_configuration.web_admin_enabled
-    ):
-        require_action(
-            request,
-            resource_type=resource_type,
-            resource_code="*",
-            action="read",
-        )
+    require_action(
+        request,
+        resource_type=resource_type,
+        resource_code="*",
+        action="read",
+    )
 
 
 def _correlation_id(request: Request) -> str:
@@ -76,6 +64,7 @@ def build_platform_config_router() -> APIRouter:
         request: Request,
         include_disabled: bool = Query(default=True),
     ) -> dict[str, Any]:
+        _require_management_read(request, resource_type="platform_config")
         service = _container(request).platform_config_service
         return {"environments": service.list_environments(include_disabled=include_disabled)}
 
@@ -105,6 +94,7 @@ def build_platform_config_router() -> APIRouter:
         environment_code: str | None = None,
         include_disabled: bool = Query(default=True),
     ) -> dict[str, Any]:
+        _require_management_read(request, resource_type="platform_config")
         service = _container(request).platform_config_service
         return {
             "bases": service.list_bases(
@@ -140,6 +130,7 @@ def build_platform_config_router() -> APIRouter:
         base_code: str | None = None,
         include_disabled: bool = Query(default=True),
     ) -> dict[str, Any]:
+        _require_management_read(request, resource_type="platform_config")
         service = _container(request).platform_config_service
         return {
             "workshops": service.list_workshops(

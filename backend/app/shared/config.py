@@ -13,6 +13,18 @@ from app.shared.feature_configuration import (
 
 logger = logging.getLogger(__name__)
 
+LOCAL_OBJECT_STORAGE_ENVIRONMENTS = frozenset(
+    {"local", "test", "testing", "development"}
+)
+DEFAULT_OBJECT_STORAGE_ACCESS_KEY = "enterprise_agent"
+DEFAULT_OBJECT_STORAGE_SECRET_KEY = "enterprise_agent_change_me"
+UNSAFE_OBJECT_STORAGE_SECRET_KEYS = frozenset(
+    {
+        DEFAULT_OBJECT_STORAGE_SECRET_KEY,
+        "replace-with-a-strong-object-storage-secret",
+    }
+)
+
 
 @dataclass(frozen=True)
 class QueueSettings:
@@ -102,8 +114,8 @@ class AttachmentSettings:
 @dataclass(frozen=True)
 class ObjectStorageSettings:
     endpoint_url: str = "http://minio:9000"
-    access_key: str = "enterprise_agent"
-    secret_key: str = "enterprise_agent_change_me"
+    access_key: str = DEFAULT_OBJECT_STORAGE_ACCESS_KEY
+    secret_key: str = DEFAULT_OBJECT_STORAGE_SECRET_KEY
     bucket: str = "agent-attachments"
     region: str = "us-east-1"
     secure: bool = False
@@ -328,7 +340,7 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return value.lower() in {"1", "true", "yes", "on"}
 
 
-def load_settings() -> Settings:
+def load_settings(*, validate_object_storage: bool = True) -> Settings:
     environment = os.getenv("APP_ENV", "local")
     features = resolve_feature_configuration(environment, os.environ)
     for diagnostic in features.diagnostics:
@@ -338,7 +350,7 @@ def load_settings() -> Settings:
             ",".join(diagnostic.keys),
             "0.3.0",
         )
-    return Settings(
+    settings = Settings(
         database_dsn=os.getenv("DATABASE_DSN", "sqlite:///./enterprise_agent.db"),
         rabbitmq_url=os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"),
         app_config_master_key_file=os.getenv(
@@ -584,8 +596,8 @@ def load_settings() -> Settings:
         ),
         object_storage=ObjectStorageSettings(
             endpoint_url=os.getenv("S3_ENDPOINT_URL", "http://minio:9000"),
-            access_key=os.getenv("S3_ACCESS_KEY", "enterprise_agent"),
-            secret_key=os.getenv("S3_SECRET_KEY", "enterprise_agent_change_me"),
+            access_key=os.getenv("S3_ACCESS_KEY", DEFAULT_OBJECT_STORAGE_ACCESS_KEY),
+            secret_key=os.getenv("S3_SECRET_KEY", DEFAULT_OBJECT_STORAGE_SECRET_KEY),
             bucket=os.getenv("S3_BUCKET", "agent-attachments"),
             region=os.getenv("S3_REGION", "us-east-1"),
             secure=_env_bool("S3_SECURE"),
@@ -639,6 +651,25 @@ def load_settings() -> Settings:
             ),
         ),
     )
+    if validate_object_storage:
+        _validate_object_storage_credentials(settings)
+    return settings
+
+
+def _validate_object_storage_credentials(settings: Settings) -> None:
+    if settings.environment.strip().lower() in LOCAL_OBJECT_STORAGE_ENVIRONMENTS:
+        return
+    access_key = settings.object_storage.access_key.strip()
+    secret_key = settings.object_storage.secret_key.strip()
+    if (
+        not access_key
+        or not secret_key
+        or access_key == DEFAULT_OBJECT_STORAGE_ACCESS_KEY
+        or secret_key in UNSAFE_OBJECT_STORAGE_SECRET_KEYS
+    ):
+        raise ValueError(
+            "object_storage_credentials_required_for_non_local_environment"
+        )
 
 
 def synchronize_feature_configuration(settings: Settings) -> Settings:

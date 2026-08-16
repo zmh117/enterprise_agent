@@ -103,7 +103,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    settings = load_settings()
+    # Initial identity bootstrap does not construct or contact object storage.
+    settings = load_settings(validate_object_storage=False)
     database = Database(settings.database_dsn)
     try:
         SchemaHeadValidator(database, default_migrations_dir()).require_current()

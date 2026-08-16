@@ -45,9 +45,12 @@ pnpm build
 容器验证：
 
 ```bash
-docker compose build admin-web
-docker compose up -d postgres rabbitmq api-server admin-web
+FEATURE_WEB_ADMIN=true docker compose --profile admin up -d --build \
+  postgres rabbitmq api-server admin-web
 ```
+
+`admin-web` 同时受 `admin` profile 与 `FEATURE_WEB_ADMIN=true` 约束；默认
+Compose 不启动或映射管理 Web，显式点名但关闭 feature flag 时镜像入口也会拒绝启动。
 
 ## MVP 权限与安全边界
 

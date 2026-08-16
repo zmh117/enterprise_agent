@@ -303,21 +303,15 @@ def create_app(
     )
 
     app.include_router(build_dingding_router())
-    app.include_router(build_agent_job_debug_router())
-    app.include_router(build_platform_config_router())
-    app.include_router(build_workflow_router())
     app.include_router(build_public_webhook_router())
     app.include_router(build_runtime_control_router())
     app.include_router(build_service_principal_router())
 
-    management_surface_enabled = any(
-        (
-            settings.feature_configuration.web_admin_enabled,
-            settings.feature_configuration.unified_identity_enabled,
-            settings.feature_configuration.business_application_control_plane_enabled,
-        )
-    )
+    management_surface_enabled = settings.feature_configuration.web_admin_enabled
     if management_surface_enabled:
+        app.include_router(build_agent_job_debug_router())
+        app.include_router(build_platform_config_router())
+        app.include_router(build_workflow_router())
         app.include_router(build_business_application_router())
         app.include_router(build_authorization_center_router())
         app.include_router(build_admin_router())

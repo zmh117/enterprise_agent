@@ -25,8 +25,8 @@ SEED_LOCAL_CONFIG=false
 
 ```http
 POST /api/platform/secrets
-x-admin-user-id: local-user
 content-type: application/json
+x-csrf-token: <与当前 Web Session 绑定的 CSRF 值>
 
 {
   "code": "deepseek_api_key",
@@ -34,6 +34,10 @@ content-type: application/json
   "purpose": "claude-runtime"
 }
 ```
+
+该请求必须携带受信 Web Session Cookie；服务端 actor 只取自 Session principal。
+`x-admin-user-id` / `x-agent-user-id` 不再是生产身份来源，测试 Header 仅能在
+local/test/testing 且显式启用测试 adapter 时使用。
 
 后端只在请求处理内短暂接触明文，然后用 AES-GCM 加密到 `platform_secret_version`。响应只返回 `secret_ref`、版本和脱敏摘要，不返回明文。
 

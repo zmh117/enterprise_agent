@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,8 +15,28 @@ from app.modules.platform_config.application.validation import (
     validate_secret_ref,
 )
 from app.modules.platform_config.infrastructure.repository import now_iso
+from app.shared.config import IdentitySettings, Settings
 from app.shared.exceptions import NonRetryableExecutionError
 from backend.tests.helpers import container, test_settings as make_settings
+
+
+def _api_settings() -> Settings:
+    return replace(
+        make_settings(),
+        environment="test",
+        identity=IdentitySettings(
+            enabled=True,
+            web_admin_enabled=True,
+            test_identity_headers_enabled=True,
+            cookie_secure=False,
+        ),
+    )
+
+
+def _api_app(runtime):
+    settings = _api_settings()
+    runtime.settings = settings
+    return create_app(settings, container_factory=lambda _: runtime)
 
 
 def _container():
@@ -154,7 +175,7 @@ def test_secret_api_audit_and_logs_never_echo_plaintext_or_crypto_material(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     runtime = _container()
-    app = create_app(make_settings(), container_factory=lambda _: runtime)
+    app = _api_app(runtime)
     plaintext = "q7Z-secret-9283-with-x9Vp"
 
     with caplog.at_level(logging.DEBUG), TestClient(app) as client:
@@ -167,8 +188,9 @@ def test_secret_api_audit_and_logs_never_echo_plaintext_or_crypto_material(
             },
             headers={"x-admin-user-id": "user_local_admin"},
         )
-        listed = client.get("/api/platform/secrets")
-        fetched = client.get("/api/platform/secrets/leak_canary")
+        headers = {"x-admin-user-id": "user_local_admin"}
+        listed = client.get("/api/platform/secrets", headers=headers)
+        fetched = client.get("/api/platform/secrets/leak_canary", headers=headers)
         stored = runtime.database.execute_one(
             """
             select ciphertext, nonce, key_id
@@ -201,7 +223,7 @@ def test_secret_api_audit_and_logs_never_echo_plaintext_or_crypto_material(
 
 def test_secret_plaintext_cannot_be_copied_to_public_metadata() -> None:
     runtime = _container()
-    app = create_app(make_settings(), container_factory=lambda _: runtime)
+    app = _api_app(runtime)
     plaintext = "metadata-canary-sensitive-value"
 
     with TestClient(app) as client:
@@ -337,14 +359,18 @@ def test_secret_usage_api_returns_only_dependency_metadata() -> None:
             timestamp,
         ),
     )
-    app = create_app(make_settings(), container_factory=lambda _: runtime)
+    app = _api_app(runtime)
 
     with TestClient(app) as client:
-        response = client.get("/api/platform/secrets/usage_secret/usage")
+        headers = {"x-admin-user-id": "user_local_admin"}
+        response = client.get(
+            "/api/platform/secrets/usage_secret/usage",
+            headers=headers,
+        )
         duplicate = client.post(
             "/api/platform/secrets",
             json={"code": "usage_secret", "value": "must-not-rotate"},
-            headers={"x-admin-user-id": "user_local_admin"},
+            headers=headers,
         )
         usage = response.json()["usage"]
         version_count = runtime.database.execute_one(

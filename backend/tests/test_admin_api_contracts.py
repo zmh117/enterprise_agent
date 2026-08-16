@@ -10,7 +10,7 @@ from app.main import create_app
 from app.modules.admin.application.contracts import PageWindow, TimeWindow
 from app.modules.admin.application.dashboard_service import DashboardQueryService
 from app.modules.admin.application.scope import AdminScope
-from app.modules.admin.infrastructure import AdminReadRepository
+from app.modules.admin.infrastructure import AdminJobQuery, AdminReadRepository
 from app.modules.job.application.create_agent_job_service import _execution_scope_hash
 from app.modules.job.domain.job_status import JobStatus
 from app.shared.exceptions import NonRetryableExecutionError
@@ -530,3 +530,188 @@ def test_operations_browser_is_bounded_read_only_and_secret_safe(
     assert routes["/api/admin/queues"].keys() == {"get"}
     assert not any(word in path for path in routes for word in ("purge", "replay"))
     assert (len(container.message_bus.attachments) if container.message_bus else 0) == before_queue
+
+
+def test_job_query_filters_before_limit_and_uses_stable_keyset_pages() -> None:
+    settings = unified_settings()
+    runtime = build_test_container(settings, migrate=True, seed=True)
+    noise_user = runtime.identity_repository.create_user(
+        username="job-query-noise",
+        display_name="Job Query Noise",
+    )
+    target_user = runtime.identity_repository.create_user(
+        username="job-query-target",
+        display_name="Job Query Target",
+    )
+    session = runtime.agent_repository.create_session(
+        project_code="default",
+        source_channel="debug_api",
+        source_connector_id="connector-debug-api",
+        external_conversation_id="job-query-pushdown",
+        requester_id=str(target_user["id"]),
+        routing_context={"project_code": "default", "environment": "local"},
+        session_key="job-query-pushdown",
+    )
+    current = datetime.now(timezone.utc)
+    noise_created_at = (current - timedelta(minutes=5)).isoformat()
+    target_created_at = (current - timedelta(hours=1)).isoformat()
+    insert_sql = """
+        insert into agent_job
+          (id, session_id, idempotency_key, project_code, status,
+           retry_count, max_retry_count, source_channel, source_connector_id,
+           requester_id, internal_user_id, routing_context_json,
+           reply_route_json, created_at)
+        values (?, ?, ?, 'default', 'PENDING', 0, 3, 'debug_api',
+                'connector-debug-api', ?, ?, ?, '{"type":"none"}', ?)
+    """
+    with runtime.database.unit_of_work():
+        for ordinal in range(500):
+            runtime.database.execute(
+                insert_sql,
+                (
+                    f"job-query-noise-{ordinal:04d}",
+                    session.id,
+                    f"job-query-noise-{ordinal:04d}",
+                    str(noise_user["id"]),
+                    str(noise_user["id"]),
+                    '{"project_code":"default","environment":"local"}',
+                    noise_created_at,
+                ),
+            )
+        for ordinal in range(5):
+            runtime.database.execute(
+                insert_sql,
+                (
+                    f"job-query-target-{ordinal:04d}",
+                    session.id,
+                    f"job-query-target-{ordinal:04d}",
+                    str(target_user["id"]),
+                    str(target_user["id"]),
+                    '{"project_code":"default","environment":"local"}',
+                    target_created_at,
+                ),
+            )
+
+    with TestClient(create_app(settings, container_factory=lambda _: runtime)) as client:
+        login(client)
+        cursor = ""
+        observed: list[str] = []
+        while True:
+            response = client.get(
+                "/api/admin/jobs",
+                params={
+                    "user_id": str(target_user["id"]),
+                    "limit": 2,
+                    "cursor": cursor,
+                },
+            )
+            assert response.status_code == 200, response.text
+            body = response.json()
+            observed.extend(str(item["id"]) for item in body["items"])
+            if not body["page"]["has_more"]:
+                break
+            cursor = str(body["page"]["next_cursor"])
+
+    assert observed == [f"job-query-target-{ordinal:04d}" for ordinal in range(4, -1, -1)]
+    assert len(observed) == len(set(observed)) == 5
+
+
+def test_job_repository_applies_scope_and_execution_filters_in_sqlite() -> None:
+    settings = unified_settings()
+    runtime = build_test_container(settings, migrate=True, seed=True)
+    target_user = runtime.identity_repository.create_user(
+        username="job-sql-target",
+        display_name="Job SQL Target",
+    )
+    viewer = runtime.identity_repository.create_user(
+        username="job-sql-viewer",
+        display_name="Job SQL Viewer",
+    )
+    session = runtime.agent_repository.create_session(
+        project_code="project-sql",
+        source_channel="debug_api",
+        source_connector_id="connector-debug-api",
+        external_conversation_id="job-sql-filter",
+        requester_id=str(target_user["id"]),
+        routing_context={
+            "project_code": "project-sql",
+            "environment": "prod",
+            "base": "base-a",
+        },
+        session_key="job-sql-filter",
+    )
+    job = runtime.agent_repository.create_job(
+        session_id=session.id,
+        idempotency_key="job-sql-filter",
+        internal_user_id=str(target_user["id"]),
+        project_code="project-sql",
+        source_channel="debug_api",
+        source_connector_id="connector-debug-api",
+        requester_id=str(target_user["id"]),
+        input_message="query filter fixture",
+        max_retry_count=3,
+        initial_status=JobStatus.FAILED,
+        routing_context={
+            "project_code": "project-sql",
+            "environment": "prod",
+            "base": "base-a",
+        },
+        business_application_code="sql-filter-app",
+        business_application_route_decision={"correlation_id": "sql-filter-correlation"},
+        execution_policy=execution_policy_snapshot(),
+        reply_route={"type": "none"},
+    )
+    timestamp = datetime.now(timezone.utc).isoformat()
+    runtime.database.execute(
+        """
+        insert into agent_job_execution_summary
+          (job_id, accounting_status, model_usage_json, execution_status,
+           execution_failure_stage, source_protocol_version, created_at, updated_at)
+        values (?, 'COMPLETE', ?, 'FAILED', 'MODEL_API', '1.2', ?, ?)
+        """,
+        (
+            job.id,
+            '[{"model_id":"model-sql-filter"}]',
+            timestamp,
+            timestamp,
+        ),
+    )
+    scope = AdminScope(
+        {
+            "mode": "restricted",
+            "grants": [
+                {
+                    "effect": "allow",
+                    "environment": "prod",
+                    "base": "base-a",
+                    "workshop": "*",
+                }
+            ],
+        },
+        str(viewer["id"]),
+    )
+    start = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    end = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
+
+    items = AdminReadRepository(runtime.database).query_jobs(
+        AdminJobQuery(
+            start=start,
+            end=end,
+            scope=scope,
+            statuses=("FAILED",),
+            user_id=str(target_user["id"]),
+            application_name="sql-filter-app",
+            agent="default-diagnostic-agent",
+            channel="debug_api",
+            project="project-sql",
+            session_id=session.id,
+            correlation_id="sql-filter-correlation",
+            execution_statuses=("FAILED",),
+            delivery_statuses=("NOT_REQUESTED",),
+            failure_stages=("MODEL_API",),
+            model="model-sql-filter",
+            limit=2,
+        )
+    )
+
+    assert [item["id"] for item in items] == [job.id]

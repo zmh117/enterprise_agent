@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 import os
 from pathlib import Path
 import threading
@@ -10,7 +11,9 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from app.bootstrap import build_worker_container
+from app.bootstrap import build_test_container, build_worker_container
+from app.modules.admin.application.scope import AdminScope
+from app.modules.admin.infrastructure import AdminJobQuery, AdminReadRepository
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.channel.domain.channel_event import ReplyRoute
 from app.modules.delivery.application.delivery_dispatch_service import (
@@ -50,6 +53,7 @@ from app.shared.schema_baseline import (
     load_legacy_manifest,
     postgres_comment_snapshot,
 )
+from backend.tests.helpers import test_settings as make_test_settings
 
 
 POSTGRES_DSN = os.getenv("MIGRATION_POSTGRES_DSN", "")
@@ -58,6 +62,96 @@ pytestmark = pytest.mark.skipif(
     not POSTGRES_DSN,
     reason="set MIGRATION_POSTGRES_DSN to run PostgreSQL Migrator integration",
 )
+
+
+def test_postgres_admin_job_query_uses_json_filters_and_keyset_limit(
+    postgres_database_dsn: str,
+) -> None:
+    settings = replace(make_test_settings(), database_dsn=postgres_database_dsn)
+    runtime = build_test_container(settings, migrate=True, seed=True)
+    try:
+        session = runtime.agent_repository.create_session(
+            project_code="postgres-query",
+            source_channel="debug_api",
+            source_connector_id="connector-debug-api",
+            external_conversation_id="postgres-admin-query",
+            requester_id="user_local_admin",
+            routing_context={"environment": "prod", "base": "postgres-base"},
+            session_key="postgres-admin-query",
+        )
+        job = runtime.agent_repository.create_job(
+            session_id=session.id,
+            idempotency_key="postgres-admin-query",
+            internal_user_id="user_local_admin",
+            project_code="postgres-query",
+            source_channel="debug_api",
+            source_connector_id="connector-debug-api",
+            requester_id="user_local_admin",
+            input_message="postgres query fixture",
+            max_retry_count=3,
+            routing_context={"environment": "prod", "base": "postgres-base"},
+            business_application_route_decision={
+                "correlation_id": "postgres-admin-query"
+            },
+            execution_policy={
+                "schema_version": 1,
+                "requested": {
+                    "max_turns": 12,
+                    "timeout_seconds": 300,
+                    "max_tool_calls": 30,
+                },
+                "effective": {
+                    "max_turns": 12,
+                    "timeout_seconds": 300,
+                    "max_tool_calls": 30,
+                },
+                "sources": {"source_kind": "runtime_default"},
+            },
+            reply_route={"type": "none"},
+        )
+        runtime.database.execute(
+            """
+            insert into agent_job_execution_summary
+              (job_id, accounting_status, model_usage_json, execution_status,
+               source_protocol_version, created_at, updated_at)
+            values (?, 'COMPLETE', ?, 'SUCCEEDED', '1.2', ?, ?)
+            """,
+            (
+                job.id,
+                '[{"model_id":"postgres-query-model"}]',
+                "2026-08-16T00:00:00+00:00",
+                "2026-08-16T00:00:00+00:00",
+            ),
+        )
+
+        items = AdminReadRepository(runtime.database).query_jobs(
+            AdminJobQuery(
+                start="2000-01-01T00:00:00+00:00",
+                end="2100-01-01T00:00:00+00:00",
+                scope=AdminScope(
+                    {
+                        "mode": "restricted",
+                        "grants": [
+                            {
+                                "effect": "allow",
+                                "environment": "prod",
+                                "base": "postgres-base",
+                                "workshop": "*",
+                            }
+                        ],
+                    },
+                    "postgres-query-viewer",
+                ),
+                correlation_id="postgres-admin-query",
+                execution_statuses=("SUCCEEDED",),
+                model="postgres-query-model",
+                limit=1,
+            )
+        )
+
+        assert [item["id"] for item in items] == [job.id]
+    finally:
+        runtime.database.close()
 
 
 @pytest.fixture

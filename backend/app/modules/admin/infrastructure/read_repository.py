@@ -2,14 +2,39 @@ from __future__ import annotations
 
 import json
 import hashlib
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from app.modules.admin.application.scope import AdminScope
 from app.modules.job.infrastructure.repositories import (
     AgentRepository,
     source_connector_projection,
 )
 from app.shared.database import Database
+
+
+@dataclass(frozen=True)
+class AdminJobQuery:
+    start: str
+    end: str
+    scope: AdminScope
+    username: str = ""
+    application_name: str = ""
+    statuses: tuple[str, ...] = ()
+    user_id: str = ""
+    agent: str = ""
+    channel: str = ""
+    project: str = ""
+    session_id: str = ""
+    correlation_id: str = ""
+    execution_statuses: tuple[str, ...] = ()
+    delivery_statuses: tuple[str, ...] = ()
+    failure_stages: tuple[str, ...] = ()
+    model: str = ""
+    cursor_created_at: str = ""
+    cursor_id: str = ""
+    limit: int = 25
 
 
 class AdminReadRepository:
@@ -27,9 +52,35 @@ class AdminReadRepository:
         application_name: str = "",
         limit: int = 500,
     ) -> list[dict[str, Any]]:
+        return self._query_jobs(
+            AdminJobQuery(
+                start=start,
+                end=end,
+                scope=AdminScope({"mode": "global", "grants": []}, ""),
+                username=username,
+                application_name=application_name,
+                limit=limit,
+            ),
+            include_extra=False,
+        )
+
+    def query_jobs(self, query: AdminJobQuery) -> list[dict[str, Any]]:
+        return self._query_jobs(query, include_extra=True)
+
+    def _query_jobs(
+        self,
+        query: AdminJobQuery,
+        *,
+        include_extra: bool,
+    ) -> list[dict[str, Any]]:
         clauses = ["j.created_at >= ?", "j.created_at < ?"]
-        params: list[Any] = [start, end]
-        username_pattern = _contains_pattern(username)
+        params: list[Any] = [query.start, query.end]
+        scope_clause, scope_params = _job_scope_clause(self.database, query.scope)
+        if scope_clause:
+            clauses.append(scope_clause)
+            params.extend(scope_params)
+
+        username_pattern = _contains_pattern(query.username)
         if username_pattern:
             clauses.append(
                 """
@@ -38,7 +89,7 @@ class AdminReadRepository:
                 """
             )
             params.extend((username_pattern, username_pattern))
-        application_pattern = _contains_pattern(application_name)
+        application_pattern = _contains_pattern(query.application_name)
         if application_pattern:
             clauses.append(
                 """
@@ -47,7 +98,78 @@ class AdminReadRepository:
                 """
             )
             params.extend((application_pattern, application_pattern))
-        params.append(max(1, min(int(limit), 500)))
+
+        _append_in_filter(clauses, params, "j.status", query.statuses)
+        if query.user_id:
+            clauses.append("(j.internal_user_id = ? or j.requester_id = ?)")
+            params.extend((query.user_id, query.user_id))
+        if query.agent:
+            clauses.append("coalesce(d.code, 'default-diagnostic-agent') = ?")
+            params.append(query.agent)
+        if query.channel:
+            clauses.append("j.source_channel = ?")
+            params.append(query.channel)
+        if query.project:
+            clauses.append("j.project_code = ?")
+            params.append(query.project)
+        if query.session_id:
+            clauses.append("j.session_id = ?")
+            params.append(query.session_id)
+
+        route_correlation = _json_text_expression(
+            self.database,
+            "j.business_application_route_decision_json",
+            "correlation_id",
+        )
+        webhook_correlation = (
+            "(select w.correlation_id from webhook_event w where w.job_id = j.id "
+            "order by w.received_at desc limit 1)"
+        )
+        if query.correlation_id:
+            clauses.append(
+                f"coalesce(nullif({webhook_correlation}, ''), {route_correlation}, '') = ?"
+            )
+            params.append(query.correlation_id)
+
+        _append_in_filter(
+            clauses,
+            params,
+            "coalesce(s.execution_status, 'UNKNOWN')",
+            query.execution_statuses,
+        )
+        delivery_status = (
+            "coalesce((select o.status from delivery_outbox o where o.job_id = j.id "
+            "order by o.created_at desc, o.id desc limit 1), 'NOT_REQUESTED')"
+        )
+        _append_in_filter(
+            clauses,
+            params,
+            delivery_status,
+            query.delivery_statuses,
+        )
+        display_failure_stage = (
+            "case when coalesce(s.execution_status, 'UNKNOWN') = 'SUCCEEDED' "
+            f"and {delivery_status} in ('FAILED', 'DEAD') then 'DELIVERY' "
+            "else s.execution_failure_stage end"
+        )
+        _append_in_filter(
+            clauses,
+            params,
+            display_failure_stage,
+            query.failure_stages,
+        )
+        if query.model:
+            clauses.append(_model_usage_clause(self.database))
+            params.append(query.model)
+
+        if query.cursor_created_at or query.cursor_id:
+            clauses.append("(j.created_at < ? or (j.created_at = ? and j.id < ?))")
+            params.extend(
+                (query.cursor_created_at, query.cursor_created_at, query.cursor_id)
+            )
+
+        bounded_limit = max(1, min(int(query.limit), 1000))
+        params.append(bounded_limit + (1 if include_extra else 0))
         rows = self.database.execute(
             f"""
             select j.id, j.session_id, j.status, j.retry_count, j.max_retry_count,
@@ -99,7 +221,7 @@ class AdminReadRepository:
                    c.enabled as source_connector_enabled,
                    c.deleted as source_connector_deleted,
                    c.metadata as source_connector_metadata,
-                   (select w.correlation_id from webhook_event w where w.job_id = j.id order by w.received_at desc limit 1) as correlation_id
+                   {webhook_correlation} as correlation_id
             from agent_job j
             left join agent_definition d on d.id = j.agent_definition_id
             left join integration_connector c on c.id = j.source_connector_id
@@ -507,6 +629,89 @@ def _contains_pattern(value: str) -> str:
         return ""
     escaped = term.replace("!", "!!").replace("%", "!%").replace("_", "!_")
     return f"%{escaped}%"
+
+
+def _append_in_filter(
+    clauses: list[str],
+    params: list[Any],
+    expression: str,
+    values: tuple[str, ...],
+) -> None:
+    if not values:
+        return
+    clauses.append(f"{expression} in ({', '.join('?' for _ in values)})")
+    params.extend(values)
+
+
+def _job_scope_clause(database: Database, scope: AdminScope) -> tuple[str, list[Any]]:
+    if scope.global_access:
+        return "", []
+
+    owner_clause = (
+        "coalesce(nullif(j.internal_user_id, ''), nullif(j.requester_id, ''), '') = ?"
+    )
+    owner_params: list[Any] = [scope.user_id]
+    allow_matches: list[tuple[str, list[Any]]] = []
+    deny_matches: list[tuple[str, list[Any]]] = []
+    for grant in scope.grants:
+        match_clauses: list[str] = []
+        match_params: list[Any] = []
+        for field in ("environment", "base", "workshop"):
+            expected = str(grant.get(field) or "*")
+            if expected == "*":
+                continue
+            expression = _json_text_expression(
+                database,
+                "j.routing_context_json",
+                field,
+            )
+            match_clauses.append(f"coalesce({expression}, '') = ?")
+            match_params.append(expected)
+        match = f"({' and '.join(match_clauses)})" if match_clauses else "(1 = 1)"
+        target = (
+            deny_matches
+            if str(grant.get("effect") or "allow").lower() == "deny"
+            else allow_matches
+        )
+        target.append((match, match_params))
+
+    if not allow_matches:
+        return f"({owner_clause})", owner_params
+
+    allow_sql = " or ".join(match for match, _ in allow_matches)
+    allow_params = [value for _, values in allow_matches for value in values]
+    if not deny_matches:
+        return f"({owner_clause} or ({allow_sql}))", owner_params + allow_params
+
+    deny_sql = " or ".join(match for match, _ in deny_matches)
+    deny_params = [value for _, values in deny_matches for value in values]
+    return (
+        f"({owner_clause} or (({allow_sql}) and not ({deny_sql})))",
+        owner_params + allow_params + deny_params,
+    )
+
+
+def _json_text_expression(database: Database, column: str, key: str) -> str:
+    if database.engine == "sqlite":
+        return (
+            "json_extract(case when json_valid("
+            f"{column}) then {column} else '{{}}' end, '$.{key}')"
+        )
+    return f"(coalesce(nullif({column}, ''), '{{}}')::jsonb ->> '{key}')"
+
+
+def _model_usage_clause(database: Database) -> str:
+    if database.engine == "sqlite":
+        return (
+            "exists (select 1 from json_each(case when json_valid(s.model_usage_json) "
+            "then s.model_usage_json else '[]' end) model_usage "
+            "where json_extract(model_usage.value, '$.model_id') = ?)"
+        )
+    return (
+        "exists (select 1 from jsonb_array_elements("
+        "coalesce(nullif(s.model_usage_json, ''), '[]')::jsonb) model_usage "
+        "where model_usage ->> 'model_id' = ?)"
+    )
 
 
 def _json_object(value: Any) -> dict[str, Any]:

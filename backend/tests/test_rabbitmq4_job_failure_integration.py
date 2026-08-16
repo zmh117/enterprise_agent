@@ -94,7 +94,7 @@ class RabbitMQ4JobFailureIntegrationTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         if hasattr(self, "channel"):
-            for queue_name in (self.queue.job_queue,):
+            for queue_name in (self.queue.job_queue, self.queue.dead_queue):
                 self.channel.queue_delete(queue=queue_name)
             self.connection.close()
         if hasattr(self, "container"):

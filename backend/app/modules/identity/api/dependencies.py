@@ -53,18 +53,6 @@ def current_principal(request: Request) -> AuthenticatedPrincipal:
     raise HTTPException(status_code=401, detail="请先登录")
 
 
-def optional_legacy_actor(request: Request) -> str:
-    c = container(request)
-    if (
-        c.settings.feature_configuration.unified_identity_enabled
-        or c.settings.feature_configuration.web_admin_enabled
-    ):
-        return current_principal(request).user_id
-    return (
-        request.headers.get("x-admin-user-id") or request.headers.get("x-agent-user-id") or ""
-    ).strip()
-
-
 def require_csrf(request: Request, principal: AuthenticatedPrincipal) -> None:
     c = container(request)
     if principal.auth_source == "test-header":
