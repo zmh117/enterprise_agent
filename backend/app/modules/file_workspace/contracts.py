@@ -167,7 +167,7 @@ FILE_TOOL_MANIFEST: Mapping[str, FileToolDefinition] = MappingProxyType(
         ),
         "file_create_commit_intent": _tool(
             "file_create_commit_intent",
-            "为显式选中的沙盒 TXT 创建提交意图，不在 MCP JSON 中传输文件正文。",
+            "为显式选中的沙盒 TXT 创建提交意图；Runtime流式上传后返回精确file_id/version_id，DEFAULT还返回交付回执，PENDING仅表示已排队；不在MCP JSON中传输正文。",
             _COMMIT_SCHEMA,
             operation="file.commit.prepare",
             mutating=True,
@@ -181,7 +181,7 @@ FILE_TOOL_MANIFEST: Mapping[str, FileToolDefinition] = MappingProxyType(
         ),
         "file_deliver_version": _tool(
             "file_deliver_version",
-            "把已授权精确版本交付到当前 Job 冻结的 reply route。",
+            "把已授权的既有或WORKSPACE_ONLY精确版本交付到冻结reply route；DEFAULT提交已经自动排队时不要重复调用，PENDING仅表示已排队。",
             dict(_FILE_VERSION_SCHEMA),
             operation="file.version.deliver",
             mutating=True,

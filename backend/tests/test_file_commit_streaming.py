@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import sqlite3
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
@@ -278,6 +279,9 @@ def test_commit_is_two_phase_strictly_idempotent_and_publishes_safe_outbox() -> 
     )
     assert repeated == first
     assert first["status"] == "COMMITTED"
+    assert first["file_id"]
+    assert first["delivery_id"] == ""
+    assert first["delivery_status"] == "NOT_REQUESTED"
     version = repository.get_version(str(first["version_id"]))
     assert version["status"] == "AVAILABLE"
     staging = repository.database.execute_one(
@@ -303,6 +307,69 @@ def test_commit_is_two_phase_strictly_idempotent_and_publishes_safe_outbox() -> 
             )
         )
     assert error.value.error_code == "file_commit_idempotency_conflict"
+
+
+def test_duplicate_logical_name_is_rejected_before_commit_intent_or_staging() -> None:
+    repository, service, context, storage = _fixture()
+    before_objects = dict(storage.objects)
+
+    with pytest.raises(NonRetryableExecutionError) as error:
+        service.prepare_commit(
+            context=context,
+            arguments={
+                "sandbox_entry_handle": "duplicate-output",
+                "display_name": "source.txt",
+                "user_intent": "GENERATE",
+                "delivery_mode": "WORKSPACE_ONLY",
+            },
+        )
+
+    assert error.value.error_code == "file_logical_name_conflict"
+    assert storage.objects == before_objects
+    assert repository.database.execute_one(
+        "select count(*) as value from file_commit_intent"
+    ) == {"value": 0}
+    assert repository.database.execute_one(
+        "select count(*) as value from file_object_staging"
+    ) == {"value": 0}
+
+
+def test_duplicate_logical_name_publish_race_uses_stable_error_and_compensation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository, service, context, _storage = _fixture()
+    commit_id = _new_intent(service, context, handle="race-output")
+
+    def lose_name_race(**_: Any) -> dict[str, Any]:
+        raise sqlite3.IntegrityError(
+            "UNIQUE constraint failed: task_workspace_file.workspace_id, "
+            "task_workspace_file.logical_name"
+        )
+
+    monkeypatch.setattr(repository, "link_workspace_file", lose_name_race)
+    with pytest.raises(NonRetryableExecutionError) as error:
+        asyncio.run(
+            service.upload_commit(
+                commit_id=commit_id,
+                token="file-principal-token",
+                body=_body(b"race output\n"),
+            )
+        )
+
+    assert error.value.error_code == "file_logical_name_conflict"
+    intent = repository.get_commit_intent_by_commit_id(commit_id)
+    assert intent["status"] == "REJECTED"
+    assert intent["failure_code"] == "file_logical_name_conflict"
+    assert repository.database.execute_one(
+        "select count(*) as value from managed_file where display_name = 'race-output.txt'"
+    ) == {"value": 0}
+    assert repository.database.execute_one(
+        "select status, failure_code from file_object_staging where commit_intent_id = ?",
+        (intent["id"],),
+    ) == {
+        "status": "CLEANUP_PENDING",
+        "failure_code": "file_logical_name_conflict",
+    }
 
 
 def test_materialization_is_exact_version_job_bound_and_one_time() -> None:

@@ -135,8 +135,17 @@ class HttpFileTransferPort(FileTransferPort):
                 "File Service transfer failed",
             ) from exc
         if response.status_code < 200 or response.status_code >= 300:
+            error_code = ""
+            try:
+                denied = response.json()
+                candidate = denied.get("error_code") if isinstance(denied, dict) else None
+                if isinstance(candidate, str) and candidate.startswith("file_"):
+                    _identifier(candidate, "error_code")
+                    error_code = candidate
+            except (ValueError, json.JSONDecodeError):
+                error_code = ""
             raise FileTransferBoundaryError(
-                "file_service_unavailable",
+                error_code or "file_service_unavailable",
                 f"File Service transfer failed with status {response.status_code}",
             )
         if len(response.content) > _MAX_RECEIPT_BYTES:
@@ -156,25 +165,51 @@ class HttpFileTransferPort(FileTransferPort):
                 "file_transfer_receipt_invalid",
                 "File Service upload receipt was invalid",
             )
+        file_id = value.get("file_id")
         version_id = value.get("version_id")
         size_bytes = value.get("size_bytes")
         sha256 = value.get("sha256")
+        status = value.get("status")
+        delivery_id = value.get("delivery_id")
+        delivery_status = value.get("delivery_status")
         if (
-            not isinstance(version_id, str)
+            not isinstance(file_id, str)
+            or not isinstance(version_id, str)
             or not isinstance(size_bytes, int)
             or isinstance(size_bytes, bool)
             or size_bytes < 0
             or not isinstance(sha256, str)
             or len(sha256) != 64
             or any(character not in "0123456789abcdef" for character in sha256)
+            or status not in {"COMMITTED", "CONFLICT"}
+            or not isinstance(delivery_id, str)
+            or delivery_status
+            not in {
+                "NOT_REQUESTED",
+                "PENDING",
+                "RUNNING",
+                "RETRY_WAIT",
+                "SUCCEEDED",
+                "FAILED",
+                "DEAD",
+                "SKIPPED",
+            }
+            or bool(delivery_id) == (delivery_status == "NOT_REQUESTED")
         ):
             raise FileTransferBoundaryError(
                 "file_transfer_receipt_invalid",
                 "File Service upload receipt was invalid",
             )
+        _identifier(file_id, "file_id")
         _identifier(version_id, "version_id")
+        if delivery_id:
+            _identifier(delivery_id, "delivery_id")
         return FileUploadReceipt(
+            file_id=file_id,
             version_id=version_id,
             size_bytes=size_bytes,
             sha256=sha256,
+            status=status,
+            delivery_id=delivery_id,
+            delivery_status=delivery_status,
         )

@@ -11,6 +11,8 @@ import pytest
 from app.modules.delivery.application.delivery_dispatch_service import (
     DeliveryOutboxDispatcher,
 )
+from app.modules.delivery.application.report_chunker import ReportChunker
+from app.modules.delivery.application.result_delivery_service import ResultDeliveryService
 from app.modules.channel.infrastructure.connector_registry import Connector
 from app.modules.agent.application.agent_result_service import AgentResultService
 from app.modules.file_workspace.application import FileWorkspaceApplicationService
@@ -101,6 +103,23 @@ class _AlwaysTimeoutSender:
         )
 
 
+class _AlwaysTerminalSender:
+    def send(self, **_: Any) -> None:
+        raise NonRetryableExecutionError(
+            "simulated terminal provider rejection",
+            safe_message="文件交付配置无效",
+            error_code="file_delivery_terminal",
+        )
+
+
+class _CaptureTextAdapter:
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
+    def send(self, **arguments: Any) -> None:
+        self.messages.append(str(arguments["text"]))
+
+
 class _CaptureFileSender:
     def __init__(self) -> None:
         self.connector_ids: list[str] = []
@@ -162,10 +181,21 @@ def test_exact_file_delivery_retries_without_agent_rerun_or_duplicate_file() -> 
         """
     )
     assert event is not None
+    assert committed["file_id"] == event["file_id"]
+    assert committed["delivery_id"] == event["id"]
+    assert committed["delivery_status"] == "PENDING"
     assert event["file_version_id"] == committed["version_id"]
     assert event["file_content_sha256"] == committed["sha256"]
     assert event["session_id"] == "session-file"
     assert event["principal_user_id"] == "user-a"
+    repeated = asyncio.run(
+        streaming.upload_commit(
+            commit_id=commit_id,
+            token="file-principal-token",
+            body=_body(b"deliver this exact version\n"),
+        )
+    )
+    assert repeated == committed
 
     workspace_only = streaming.prepare_commit(
         context=context,
@@ -442,3 +472,157 @@ def test_workspace_expiry_waits_for_file_delivery_then_cleans_after_terminal_fai
     result = lifecycle.run_once()
     assert result["workspaces_expired"] == 1
     assert repository.get_workspace("workspace-a")["status"] == "CLEANED"
+
+
+@pytest.mark.parametrize(
+    ("sender", "expected_status"),
+    [
+        (_AlwaysTerminalSender(), "FAILED"),
+        (_AlwaysTimeoutSender(), "DEAD"),
+    ],
+)
+def test_terminal_file_delivery_failure_enqueues_one_non_recursive_notice(
+    sender: object,
+    expected_status: str,
+) -> None:
+    repository, streaming, context, _storage = _fixture()
+    _enable_file_delivery(repository)
+    repository.database.execute(
+        "update agent_job set reply_route_json = ? where id = 'job-file'",
+        (json.dumps({"type": "test_text", "target": {}}),),
+    )
+    agent_repository = AgentRepository(repository.database)
+    file_delivery = FileVersionDeliveryService(
+        repository, agent_repository, DeliverySettings()
+    )
+    streaming.delivery_intents = file_delivery
+    committed = asyncio.run(
+        streaming.upload_commit(
+            commit_id=_new_intent(streaming, context, handle=f"notice-{expected_status}"),
+            token="file-principal-token",
+            body=_body(b"keep the committed file\n"),
+        )
+    )
+    original_id = str(committed["delivery_id"])
+    repository.database.execute(
+        "update agent_job set status = 'SUCCEEDED' where id = 'job-file'"
+    )
+    if expected_status == "DEAD":
+        repository.database.execute(
+            "update delivery_outbox set max_attempts = 1 where id = ?",
+            (original_id,),
+        )
+    text_adapter = _CaptureTextAdapter()
+    delivery_runtime = ResultDeliveryService(
+        repository=agent_repository,
+        audit_service=_Audit(),  # type: ignore[arg-type]
+        connector_registry=_ConnectorRegistry(),  # type: ignore[arg-type]
+        adapters={"test_text": text_adapter},  # type: ignore[dict-item]
+        chunker=ReportChunker(4000),
+        settings=DeliverySettings(),
+        business_authorization_service=_Authorization(),  # type: ignore[arg-type]
+    )
+    dispatcher = DeliveryOutboxDispatcher(
+        repository=agent_repository,
+        delivery_service=delivery_runtime,
+        audit_service=_Audit(),  # type: ignore[arg-type]
+        settings=DeliverySettings(),
+        worker_id="delivery-worker",
+        file_delivery_sender=sender,  # type: ignore[arg-type]
+        file_delivery_service=file_delivery,
+    )
+
+    failed = dispatcher.dispatch_pending(limit=1)
+    assert getattr(failed, "failed" if expected_status == "FAILED" else "dead") == 1
+    assert agent_repository.get_delivery_event(original_id).status.value == expected_status
+    notices = repository.database.execute(
+        """
+        select d.id, d.status, a.content
+          from delivery_outbox d
+          join agent_artifact a on a.id = d.result_artifact_id
+         where a.artifact_type = 'file_delivery_failure_notification'
+        """
+    )
+    assert len(notices) == 1
+    assert notices[0]["status"] == "PENDING"
+    assert "文件已保存到工作区" in str(notices[0]["content"])
+
+    assert dispatcher.dispatch_pending(limit=10).succeeded == 1
+    assert len(text_adapter.messages) == 1
+    assert "回发失败" in text_adapter.messages[0]
+    dispatcher.dispatch_pending(limit=10)
+    assert repository.database.execute_one(
+        """
+        select count(*) as value from agent_artifact
+         where artifact_type = 'file_delivery_failure_notification'
+        """
+    ) == {"value": 1}
+    assert len(text_adapter.messages) == 1
+    assert agent_repository.get_job("job-file").status.value == "SUCCEEDED"
+    assert repository.get_version(str(committed["version_id"]))["status"] == "AVAILABLE"
+
+
+def test_dispatcher_reconciles_crash_gap_for_terminal_file_delivery_notice() -> None:
+    repository, streaming, context, _storage = _fixture()
+    _enable_file_delivery(repository)
+    repository.database.execute(
+        "update agent_job set reply_route_json = ? where id = 'job-file'",
+        (json.dumps({"type": "test_text", "target": {}}),),
+    )
+    agent_repository = AgentRepository(repository.database)
+    file_delivery = FileVersionDeliveryService(
+        repository, agent_repository, DeliverySettings()
+    )
+    streaming.delivery_intents = file_delivery
+    committed = asyncio.run(
+        streaming.upload_commit(
+            commit_id=_new_intent(streaming, context, handle="crash-gap"),
+            token="file-principal-token",
+            body=_body(b"crash gap file\n"),
+        )
+    )
+    repository.database.execute(
+        "update agent_job set status = 'SUCCEEDED' where id = 'job-file'"
+    )
+    source_delivery_id = str(committed["delivery_id"])
+    repository.database.execute(
+        """
+        update delivery_outbox
+           set status = 'FAILED', last_error_code = 'synthetic_terminal',
+               finished_at = ?, updated_at = ?
+         where id = ?
+        """,
+        (NOW.isoformat(), NOW.isoformat(), source_delivery_id),
+    )
+    agent_repository.ensure_artifact(
+        artifact_id=f"artifact_file_delivery_failure_{source_delivery_id}",
+        job_id="job-file",
+        artifact_type="file_delivery_failure_notification",
+        name=f"file-delivery-failure-{source_delivery_id}.txt",
+        content=(
+            "文件已保存到工作区，但回发失败。"
+            "你可以稍后要求我重新发送该文件。"
+        ),
+    )
+    text_adapter = _CaptureTextAdapter()
+    delivery_runtime = ResultDeliveryService(
+        repository=agent_repository,
+        audit_service=_Audit(),  # type: ignore[arg-type]
+        connector_registry=_ConnectorRegistry(),  # type: ignore[arg-type]
+        adapters={"test_text": text_adapter},  # type: ignore[dict-item]
+        chunker=ReportChunker(4000),
+        settings=DeliverySettings(),
+        business_authorization_service=_Authorization(),  # type: ignore[arg-type]
+    )
+    dispatcher = DeliveryOutboxDispatcher(
+        repository=agent_repository,
+        delivery_service=delivery_runtime,
+        audit_service=_Audit(),  # type: ignore[arg-type]
+        settings=DeliverySettings(),
+        file_delivery_service=file_delivery,
+    )
+
+    result = dispatcher.dispatch_pending(limit=10)
+    assert result.failure_notices_enqueued == 1
+    assert result.succeeded == 1
+    assert len(text_adapter.messages) == 1

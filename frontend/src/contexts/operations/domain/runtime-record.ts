@@ -348,8 +348,11 @@ export const fileOperationsSchema = z.object({
     workspace: z.number().int().nonnegative(),
     retained: z.number().int().nonnegative(),
     conflict: z.number().int().nonnegative(),
+    domain_outbox: z.number().int().nonnegative(),
   }),
   earliest_due: z.string(),
+  domain_outbox_earliest_created_at: z.string(),
+  domain_outbox_failure_code: z.string(),
   recent_cleanup: z
     .object({
       status: z.string(),

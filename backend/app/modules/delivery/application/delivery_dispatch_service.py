@@ -32,6 +32,7 @@ class DeliveryDispatchResult:
     failed: int = 0
     dead: int = 0
     recovered: int = 0
+    failure_notices_enqueued: int = 0
 
 
 class DeliveryOutboxDispatcher:
@@ -56,6 +57,9 @@ class DeliveryOutboxDispatcher:
 
     def dispatch_pending(self, *, limit: int = 100) -> DeliveryDispatchResult:
         recovered, recovered_dead = self.repository.recover_stale_delivery_claims()
+        failure_notices_enqueued = self._reconcile_file_delivery_failure_notices(
+            limit=limit
+        )
         succeeded = skipped = retrying = failed = dead = 0
         for _ in range(min(max(1, int(limit)), 1000)):
             event = self.repository.claim_delivery_event(
@@ -99,6 +103,15 @@ class DeliveryOutboxDispatcher:
                         "outbox_status": state.status.value,
                     },
                 )
+                if (
+                    state.status in {DeliveryStatus.FAILED, DeliveryStatus.DEAD}
+                    and str(event.delivery_binding.get("delivery_kind") or "")
+                    == "file_version"
+                    and self._enqueue_file_delivery_failure_notice(
+                        event=state,
+                    )
+                ):
+                    failure_notices_enqueued += 1
                 continue
             if outcome == DeliveryStatus.SKIPPED:
                 skipped += 1
@@ -111,7 +124,53 @@ class DeliveryOutboxDispatcher:
             failed=failed,
             dead=dead + recovered_dead,
             recovered=recovered,
+            failure_notices_enqueued=failure_notices_enqueued,
         )
+
+    def _reconcile_file_delivery_failure_notices(self, *, limit: int) -> int:
+        try:
+            return self.delivery_service.reconcile_terminal_file_delivery_failures(
+                limit=limit
+            )
+        except Exception as exc:
+            self.audit_service.record(
+                "delivery.file.failure_notice_reconcile_failed",
+                status="FAILED",
+                summary="Terminal File Delivery notice reconciliation failed safely",
+                actor_id=self.worker_id,
+                payload={"error_code": _safe_error_code(exc)},
+            )
+            return 0
+
+    def _enqueue_file_delivery_failure_notice(self, *, event: DeliveryEvent) -> bool:
+        try:
+            self.delivery_service.enqueue_file_delivery_failure(
+                source_delivery_id=event.id,
+                job_id=event.job_id,
+                error_code=event.last_error_code or "file_delivery_failed",
+            )
+        except Exception as exc:
+            self.audit_service.record(
+                "delivery.file.failure_notice_enqueue_failed",
+                status="FAILED",
+                summary="Terminal File Delivery notice enqueue failed safely",
+                job_id=event.job_id,
+                actor_id=self.worker_id,
+                payload={
+                    "delivery_id": event.id,
+                    "error_code": _safe_error_code(exc),
+                },
+            )
+            return False
+        self.audit_service.record(
+            "delivery.file.failure_notice_enqueued",
+            status="PENDING",
+            summary="Terminal File Delivery failure notice persisted",
+            job_id=event.job_id,
+            actor_id=self.worker_id,
+            payload={"delivery_id": event.id},
+        )
+        return True
 
     def _dispatch_claimed(
         self,

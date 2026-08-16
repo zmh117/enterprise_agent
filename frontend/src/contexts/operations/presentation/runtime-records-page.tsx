@@ -186,7 +186,7 @@ function FileOperationsPanel({ value }: { value: FileOperations }) {
         />
         <Metric
           label="生命周期积压"
-          value={`工作区 ${backlog.workspace} · 保留 ${backlog.retained} · 冲突 ${backlog.conflict}`}
+          value={`工作区 ${backlog.workspace} · 保留 ${backlog.retained} · 冲突 ${backlog.conflict} · 事件 ${backlog.domain_outbox}`}
         />
         <Metric
           label="最近清理结果"

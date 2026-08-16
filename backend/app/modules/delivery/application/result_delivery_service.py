@@ -12,6 +12,7 @@ from app.modules.delivery.application.report_chunker import ReportChunker
 from app.modules.delivery.infrastructure.adapters import DeliveryAdapter
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.shared.config import DeliverySettings
+from app.shared.database import operation_unit_of_work
 
 
 class ResultDeliveryService:
@@ -92,6 +93,68 @@ class ResultDeliveryService:
             failure_error_code=safe_error_code,
         )
 
+    @operation_unit_of_work(lambda service: service.repository.database)
+    def enqueue_file_delivery_failure(
+        self,
+        *,
+        source_delivery_id: str,
+        job_id: str,
+        error_code: str,
+    ) -> str:
+        safe_error_code = _safe_error_code(error_code)
+        artifact_id = f"artifact_file_delivery_failure_{source_delivery_id}"
+        content = (
+            "文件已保存到工作区，但回发失败。"
+            "你可以稍后要求我重新发送该文件。"
+        )
+        self.repository.ensure_artifact(
+            artifact_id=artifact_id,
+            job_id=job_id,
+            artifact_type="file_delivery_failure_notification",
+            name=f"file-delivery-failure-{source_delivery_id}.txt",
+            content=content,
+        )
+        job = self.repository.get_job(job_id)
+        return self._enqueue(
+            job_id=job_id,
+            artifact_id=artifact_id,
+            correlation_id=str(
+                (job.business_application_route_decision or {}).get(
+                    "correlation_id", ""
+                )
+            ),
+            delivery_kind="file_delivery_failure",
+            title="文件回发失败",
+            failure_error_code=safe_error_code,
+            source_delivery_id=source_delivery_id,
+        )
+
+    def reconcile_terminal_file_delivery_failures(self, *, limit: int = 100) -> int:
+        rows = self.repository.database.execute(
+            """
+            select d.id, d.job_id, d.last_error_code
+              from delivery_outbox d
+             where d.delivery_kind = 'FILE_VERSION'
+               and d.status in ('FAILED', 'DEAD')
+               and not exists (
+                 select 1 from delivery_outbox notice
+                  where notice.job_id = d.job_id
+                    and notice.result_artifact_id =
+                      'artifact_file_delivery_failure_' || d.id
+               )
+             order by d.finished_at, d.created_at, d.id
+             limit ?
+            """,
+            (min(max(1, int(limit)), 1000),),
+        )
+        for row in rows:
+            self.enqueue_file_delivery_failure(
+                source_delivery_id=str(row["id"]),
+                job_id=str(row["job_id"]),
+                error_code=str(row.get("last_error_code") or "file_delivery_failed"),
+            )
+        return len(rows)
+
     def _enqueue(
         self,
         *,
@@ -101,6 +164,7 @@ class ResultDeliveryService:
         delivery_kind: str,
         title: str,
         failure_error_code: str = "",
+        source_delivery_id: str = "",
     ) -> str:
         job = self.repository.get_job(job_id)
         route = ReplyRoute.from_dict(job.reply_route)
@@ -124,6 +188,7 @@ class ResultDeliveryService:
                 "route_hash": hashlib.sha256(canonical_route.encode("utf-8")).hexdigest(),
                 "route_source": "agent_job.reply_route_json",
                 "failure_error_code": failure_error_code,
+                "source_delivery_id": source_delivery_id,
             },
             target_summary=_target_summary(route, None),
             correlation_id=correlation_id,
@@ -140,6 +205,7 @@ class ResultDeliveryService:
                 "delivery_kind": delivery_kind,
                 "route_type": route.type,
                 "connector_id": route.connector_id,
+                "source_delivery_id": source_delivery_id,
                 **_runtime_context(job),
             },
         )

@@ -1627,6 +1627,39 @@ class AgentRepository:
         )
         return artifact_id
 
+    def ensure_artifact(
+        self,
+        *,
+        artifact_id: str,
+        job_id: str,
+        artifact_type: str,
+        name: str,
+        content: str,
+    ) -> str:
+        """Create a deterministic artifact once and reject identity rebinding."""
+        self.database.execute(
+            """
+            insert into agent_artifact
+              (id, job_id, artifact_type, name, content, file_path, created_at)
+            values (?, ?, ?, ?, ?, null, ?)
+            on conflict(id) do nothing
+            """,
+            (artifact_id, job_id, artifact_type, name, content, now_iso()),
+        )
+        artifact = self.get_artifact(artifact_id)
+        if (
+            str(artifact["job_id"]) != job_id
+            or str(artifact["artifact_type"]) != artifact_type
+            or str(artifact["name"]) != name
+            or str(artifact["content"]) != content
+        ):
+            raise NonRetryableExecutionError(
+                "Deterministic Delivery artifact identity was rebound",
+                safe_message="投递通知幂等身份冲突",
+                error_code="delivery_artifact_idempotency_conflict",
+            )
+        return artifact_id
+
     def get_artifact(self, artifact_id: str) -> dict[str, Any]:
         row = self.database.execute_one(
             """

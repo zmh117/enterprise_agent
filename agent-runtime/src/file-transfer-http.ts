@@ -162,18 +162,61 @@ export class HttpFileTransferPort implements FileTransferPort {
       if (request.signal.aborted) throw request.signal.reason;
       throw safeNetworkFailure();
     }
-    if (!response.ok) throw safeNetworkFailure(response.status);
+    if (!response.ok) {
+      let errorCode = "";
+      try {
+        const denied = await boundedJson(response);
+        if (
+          typeof denied.error_code === "string" &&
+          denied.error_code.startsWith("file_") &&
+          IDENTIFIER.test(denied.error_code)
+        ) {
+          errorCode = denied.error_code;
+        }
+      } catch {
+        errorCode = "";
+      }
+      if (errorCode) {
+        throw new FileTransferBoundaryError(
+          errorCode,
+          `File Service transfer failed with status ${response.status}`
+        );
+      }
+      throw safeNetworkFailure(response.status);
+    }
     const value = await boundedJson(response);
+    const fileId = value.file_id;
     const versionId = value.version_id;
     const sizeBytes = value.size_bytes;
     const sha256 = value.sha256;
+    const status = value.status;
+    const deliveryId = value.delivery_id;
+    const deliveryStatus = value.delivery_status;
+    const deliveryStatuses = [
+      "NOT_REQUESTED",
+      "PENDING",
+      "RUNNING",
+      "RETRY_WAIT",
+      "SUCCEEDED",
+      "FAILED",
+      "DEAD",
+      "SKIPPED"
+    ] as const;
     if (
+      typeof fileId !== "string" ||
+      !IDENTIFIER.test(fileId) ||
       typeof versionId !== "string" ||
       !IDENTIFIER.test(versionId) ||
       !Number.isSafeInteger(sizeBytes) ||
       Number(sizeBytes) < 0 ||
       typeof sha256 !== "string" ||
-      !SHA256.test(sha256)
+      !SHA256.test(sha256) ||
+      (status !== "COMMITTED" && status !== "CONFLICT") ||
+      typeof deliveryId !== "string" ||
+      typeof deliveryStatus !== "string" ||
+      !deliveryStatuses.includes(deliveryStatus as (typeof deliveryStatuses)[number]) ||
+      Boolean(deliveryId) === (deliveryStatus === "NOT_REQUESTED") ||
+      (deliveryId !== "" && !IDENTIFIER.test(deliveryId))
     ) {
       throw new FileTransferBoundaryError(
         "file_transfer_receipt_invalid",
@@ -181,9 +224,13 @@ export class HttpFileTransferPort implements FileTransferPort {
       );
     }
     return {
+      fileId,
       versionId,
       sizeBytes: Number(sizeBytes),
-      sha256
+      sha256,
+      status,
+      deliveryId,
+      deliveryStatus: deliveryStatus as FileUploadReceipt["deliveryStatus"]
     };
   }
 }

@@ -35,9 +35,21 @@ export interface FileTransferContext {
 }
 
 export interface FileUploadReceipt {
+  readonly fileId: string;
   readonly versionId: string;
   readonly sizeBytes: number;
   readonly sha256: string;
+  readonly status: "COMMITTED" | "CONFLICT";
+  readonly deliveryId: string;
+  readonly deliveryStatus:
+    | "NOT_REQUESTED"
+    | "PENDING"
+    | "RUNNING"
+    | "RETRY_WAIT"
+    | "SUCCEEDED"
+    | "FAILED"
+    | "DEAD"
+    | "SKIPPED";
 }
 
 export interface FileTransferPort {
@@ -69,9 +81,13 @@ export type FileTransferResult =
       readonly action: "COMMITTED";
       readonly sandbox_entry_handle: string;
       readonly commit_id: string;
+      readonly file_id: string;
       readonly version_id: string;
       readonly size_bytes: number;
       readonly sha256: string;
+      readonly status: "COMMITTED" | "CONFLICT";
+      readonly delivery_id: string;
+      readonly delivery_status: FileUploadReceipt["deliveryStatus"];
     };
 
 export interface SelectedSandboxEntry {
@@ -487,7 +503,21 @@ export class FileTransferCoordinator {
       receipt.sizeBytes !== sizeBytes ||
       receipt.sha256 !== actualSha256 ||
       !SHA256.test(receipt.sha256) ||
-      !IDENTIFIER.test(receipt.versionId)
+      !IDENTIFIER.test(receipt.fileId) ||
+      !IDENTIFIER.test(receipt.versionId) ||
+      !["COMMITTED", "CONFLICT"].includes(receipt.status) ||
+      ![
+        "NOT_REQUESTED",
+        "PENDING",
+        "RUNNING",
+        "RETRY_WAIT",
+        "SUCCEEDED",
+        "FAILED",
+        "DEAD",
+        "SKIPPED"
+      ].includes(receipt.deliveryStatus) ||
+      Boolean(receipt.deliveryId) === (receipt.deliveryStatus === "NOT_REQUESTED") ||
+      (receipt.deliveryId !== "" && !IDENTIFIER.test(receipt.deliveryId))
     ) {
       throw new FileTransferBoundaryError(
         "file_transfer_receipt_mismatch",
@@ -498,9 +528,13 @@ export class FileTransferCoordinator {
       action: "COMMITTED",
       sandbox_entry_handle: control.sandbox_entry_handle,
       commit_id: control.commit_id,
+      file_id: receipt.fileId,
       version_id: receipt.versionId,
       size_bytes: sizeBytes,
-      sha256: actualSha256
+      sha256: actualSha256,
+      status: receipt.status,
+      delivery_id: receipt.deliveryId,
+      delivery_status: receipt.deliveryStatus
     };
   }
 }

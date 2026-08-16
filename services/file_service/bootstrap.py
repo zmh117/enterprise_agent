@@ -9,6 +9,10 @@ from app.modules.file_workspace.authorization import FileAuthorizationService
 from app.modules.file_workspace.repository import FileWorkspaceRepository
 from app.modules.file_workspace.lifecycle_service import FileLifecycleService
 from app.modules.file_workspace.delivery_service import FileVersionDeliveryService
+from app.modules.file_workspace.domain_outbox import (
+    AuditFileDomainEventSink,
+    FileDomainOutboxPublisher,
+)
 from app.modules.file_workspace.storage import (
     FileObjectStorageSettings,
     MinioFileObjectStorage,
@@ -168,6 +172,10 @@ def create_default_app() -> Any:
                 storage,
                 legacy_attachment_storage=legacy_storage,
                 legacy_attachment_bucket=settings.file_service.legacy_attachment_bucket,
+                domain_outbox=FileDomainOutboxPublisher(
+                    repository,
+                    AuditFileDomainEventSink(runtime.audit_service),
+                ),
             ),
             delivery_intents=FileVersionDeliveryService(
                 repository,

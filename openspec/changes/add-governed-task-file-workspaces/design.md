@@ -236,6 +236,10 @@ Agent 只提交显式标记的输出，不自动扫描并提交沙盒全部改�
 
 提交幂等键是 `commit_id`。同一个 `commit_id` 只有在目标、base version、元数据摘要和内容摘要全部一致时返回同一 `version_id`；任何不一致都拒绝，不能覆盖旧结果。
 
+新建文件的显示名也是工作区内的受治理身份。File Service 在创建 Commit Intent 前检查活动逻辑名；若同名文件已经存在，返回稳定的 `file_logical_name_conflict`，要求 Agent 先列出文件并以明确的 `file_id/base_version_id` 修改现有版本，不得静默覆盖、自动改名或先上传再以通用错误失败。事务发布时仍保留同一错误映射，以关闭并发竞态窗口。
+
+成功 Commit 的流式上传回执必须返回精确 `file_id`、`version_id`、内容摘要和提交状态。若该 Intent 使用默认交付，回执还返回幂等 `delivery_id` 与当前 `delivery_status`；`PENDING` 仅表示 Delivery Outbox 已排队，不表示钉钉已收到文件。相同 Commit ID 的恢复调用返回同一组文件与交付身份，Runtime 将这份回执直接呈现给模型，避免再次猜测 File ID 或重复调用显式交付工具。
+
 ### 10. 并发冲突不自动合并
 
 修改已有文件时，File Service 比较 `base_version_id` 与当前版本：
@@ -270,6 +274,10 @@ File Service 仅提供受控的版本读取能力，现有 Delivery Worker 负�
 - 幂等键和交付尝试。
 
 交付失败独立重试相同版本，不重新运行 Agent，也不自动改为最新版本。交付失败不回滚已成功提交的内部版本。
+
+默认或显式文件交付进入 `PENDING` 时，模型只能说明“已排队”，不得宣称已经回发。文件本身到达即构成成功信号；若 `FILE_VERSION` Delivery 在非重试错误或重试耗尽后进入 `FAILED/DEAD`，Dispatcher 为原 Delivery 创建一个确定身份、最多一次的安全文字通知，说明文件仍保存在工作区但渠道回发失败，可稍后要求重新发送。该通知使用原 Job 的冻结 reply route，自身失败不得再次生成通知，也不得改变 Commit、File Version 或 Job 终态；Dispatcher 周期性补偿终态文件交付与通知创建之间的崩溃窗口。
+
+附件导入和文件版本事务写入的 `file_domain_outbox` 不是永久账本。`file-worker` 触发的 File Service 维护周期通过行锁领取附件导入、版本提交和冲突事件，将只含逻辑标识、大小和摘要的固定事件投影到统一安全事件审计，再标记 `PUBLISHED`；失败保留为可重试 `FAILED` 并暴露积压、最早事件和安全失败码。当前阶段没有文件领域消息消费者，因此不向 RabbitMQ 建立无人消费的新队列；将来出现明确消费者时可替换事件 sink，而不改变事务 Outbox。
 
 ### 13. 第一阶段限制由服务端和 Runtime 双重强制
 

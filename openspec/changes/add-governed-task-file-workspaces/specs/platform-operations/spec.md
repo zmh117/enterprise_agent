@@ -29,7 +29,7 @@ Compose、Secret usage和运行配置 MUST 只向`file-service`提供MinIO endpo
 - **AND** 不向长期运行服务暴露bootstrap值，重复启动保留相同值，值不同则失败而不自动轮换
 
 ### Requirement: File Service与File Worker具有真实就绪和积压观测
-File Service readiness MUST 验证PostgreSQL schema、MinIO私有bucket访问、Principal JWKS、Manifest和内部流式接口依赖；File Worker readiness MUST 验证RabbitMQ队列契约、File Service内部API和清理调度可用性。平台运维视图 SHALL 展示附件、提交暂存、工作区过期和保留清理的安全积压计数与最近结果，不得仅以容器running声明可用。
+File Service readiness MUST 验证PostgreSQL schema、MinIO私有bucket访问、Principal JWKS、Manifest和内部流式接口依赖；File Worker readiness MUST 验证RabbitMQ队列契约、File Service内部API和清理调度可用性。平台运维视图 SHALL 展示附件、提交暂存、工作区过期、保留清理和 File Domain Outbox 的安全积压计数与最近结果，不得仅以容器running声明可用。
 
 #### Scenario: MinIO进程可达但bucket无权限
 - **WHEN** File Service能连接MinIO endpoint但无法读取或写入受控bucket
@@ -39,6 +39,16 @@ File Service readiness MUST 验证PostgreSQL schema、MinIO私有bucket访问、
 - **WHEN** 到期内容因瞬时错误等待重试
 - **THEN** 运维状态显示有界积压、最早到期时间和安全错误分类
 - **AND** 不显示文件名、正文、对象键或凭据
+
+#### Scenario: File Domain Outbox存在待发布事件
+- **WHEN** 附件导入或文件版本事务已提交领域事件但维护发布尚未完成
+- **THEN** File Worker维护链路将安全事件投影到统一审计并把Outbox标记为`PUBLISHED`
+- **AND** 运维状态显示待发布数量、最早事件时间和安全失败码，不显示文件名、正文、对象键或凭据
+
+#### Scenario: 历史Outbox积压升级后恢复
+- **WHEN** 升级前已有长期`PENDING`文件领域事件
+- **THEN** 下一次维护周期按确定顺序幂等发布并清空积压
+- **AND** 不创建无人消费的RabbitMQ队列或重复文件版本
 
 ### Requirement: Compose完整配置Service Principal签发与刷新链路
 默认Compose MUST 只维护一套平台Principal签名私钥和公开JWKS：现有平台API身份模块与Agent Worker只在需要签发对应Token时挂载同一私钥，File Service、ONES MCP及后续MCP只挂载同一公开`PRINCIPAL_JWKS`；不得声明或挂载第二套Service Principal私钥/JWKS。平台API还 MUST 挂载角色隔离的File Worker、Delivery Worker bootstrap credential，并让每个Worker只挂载自己的bootstrap credential。部署 MUST 使用按需签发和到期前刷新，不得要求宿主机预先提供短时Service JWT文件。密钥初始化 MUST 幂等生成统一Principal密钥/JWKS与bootstrap材料、拒绝不完整统一密钥组并保持私钥和bootstrap文件owner-only。

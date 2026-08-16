@@ -188,9 +188,23 @@ class GovernedFileStreamingService:
             )
         elif user_intent is CommitUserIntent.MODIFY:
             self._deny("file_commit_target_required", "修改文件必须绑定基础版本")
+        display_name = str(arguments["display_name"])
+        occupied = self.repository.database.execute_one(
+            """
+            select file_id from task_workspace_file
+             where workspace_id = ? and logical_name = ? and status = 'ACTIVE'
+            """,
+            (context.workspace["id"], display_name),
+        )
+        if occupied is not None and str(occupied["file_id"]) != str(target_file_id or ""):
+            self._deny(
+                "file_logical_name_conflict",
+                "工作区已有同名文件，请先列出文件并明确修改现有版本",
+            )
         delivery_mode = CommitDeliveryMode(str(arguments["delivery_mode"]))
-        if delivery_mode is CommitDeliveryMode.DEFAULT and not self._default_delivery_enabled(
-            str(context.claims["job_id"])
+        if delivery_mode is CommitDeliveryMode.DEFAULT and (
+            self.delivery_intents is None
+            or not self._default_delivery_enabled(str(context.claims["job_id"]))
         ):
             delivery_mode = CommitDeliveryMode.WORKSPACE_ONLY
         canonical = {
@@ -200,7 +214,7 @@ class GovernedFileStreamingService:
             "target_file_id": target_file_id or "",
             "base_version_id": base_version_id or "",
             "sandbox_entry_handle": str(arguments["sandbox_entry_handle"]),
-            "display_name": str(arguments["display_name"]),
+            "display_name": display_name,
             "user_intent": user_intent.value,
             "delivery_mode": delivery_mode.value,
         }
@@ -496,12 +510,26 @@ class GovernedFileStreamingService:
                     raise
         try:
             return self._publish(intent_id=str(intent["id"]), staging_id=str(staging["id"]))
-        except Exception:
+        except Exception as exc:
             latest = self.repository.get_commit_intent(str(intent["id"]))
             terminal = self._terminal_receipt(latest)
             if terminal is not None:
                 return terminal
-            self._record_compensation(intent=latest, staging=staging)
+            logical_name_conflict = self._is_logical_name_conflict(exc)
+            self._record_compensation(
+                intent=latest,
+                staging=staging,
+                failure_code=(
+                    "file_logical_name_conflict"
+                    if logical_name_conflict
+                    else "file_commit_publish_failed"
+                ),
+            )
+            if logical_name_conflict:
+                self._deny(
+                    "file_logical_name_conflict",
+                    "工作区已有同名文件，请先列出文件并明确修改现有版本",
+                )
             raise
 
     async def import_attachment(
@@ -974,6 +1002,7 @@ class GovernedFileStreamingService:
             aggregate_type="managed_file_version",
             aggregate_id=version_id,
             payload={
+                "file_id": str(self.repository.get_version(version_id)["file_id"]),
                 "version_id": version_id,
                 "job_id": str(intent["job_id"]),
                 "workspace_id": str(intent["workspace_id"]),
@@ -982,26 +1011,15 @@ class GovernedFileStreamingService:
                 "content_sha256": str(intent["content_sha256"]),
             },
         )
-        if (
-            status is CommitIntentStatus.COMMITTED
-            and str(intent["delivery_mode"]) == CommitDeliveryMode.DEFAULT.value
-            and self.delivery_intents is not None
-        ):
-            file_id = str(self.repository.get_version(version_id)["file_id"])
-            self.delivery_intents.enqueue(
-                job_id=str(intent["job_id"]),
-                file_id=file_id,
-                version_id=version_id,
-                display_name=str(intent["display_name"]),
-            )
-        return {
-            "version_id": version_id,
-            "size_bytes": int(intent["size_bytes"]),
-            "sha256": str(intent["content_sha256"]),
-            "status": status.value,
-        }
+        return self._commit_receipt(intent, version_id=version_id, status=status.value)
 
-    def _record_compensation(self, *, intent: dict[str, Any], staging: dict[str, Any]) -> None:
+    def _record_compensation(
+        self,
+        *,
+        intent: dict[str, Any],
+        staging: dict[str, Any],
+        failure_code: str = "file_commit_publish_failed",
+    ) -> None:
         try:
             with self.repository.database.unit_of_work():
                 current = self.repository.get_commit_intent(str(intent["id"]))
@@ -1010,7 +1028,7 @@ class GovernedFileStreamingService:
                 self.repository.update_staging(
                     staging_id=str(staging["id"]),
                     status=StagingStatus.CLEANUP_PENDING,
-                    failure_code="file_commit_publish_failed",
+                    failure_code=failure_code,
                 )
                 self.repository.enqueue_cleanup(
                     resource_type=CleanupResourceType.STAGING_OBJECT,
@@ -1022,7 +1040,7 @@ class GovernedFileStreamingService:
                     self.repository.transition_commit_intent(
                         str(current["id"]),
                         CommitIntentStatus.REJECTED,
-                        failure_code="file_commit_publish_failed",
+                        failure_code=failure_code,
                     )
         except Exception:
             # Never hide the original upload/publish failure. A periodic staging
@@ -1036,12 +1054,58 @@ class GovernedFileStreamingService:
         )
         if status not in {"COMMITTED", "CONFLICT"} or not version_id:
             return None
+        return self._commit_receipt(intent, version_id=version_id, status=status)
+
+    def _commit_receipt(
+        self,
+        intent: dict[str, Any],
+        *,
+        version_id: str,
+        status: str,
+    ) -> dict[str, Any]:
+        version = self.repository.get_version(version_id)
+        file_id = str(version["file_id"])
+        delivery_id = ""
+        delivery_status = "NOT_REQUESTED"
+        if (
+            status == CommitIntentStatus.COMMITTED.value
+            and str(intent["delivery_mode"]) == CommitDeliveryMode.DEFAULT.value
+            and self.delivery_intents is not None
+        ):
+            delivery = self.delivery_intents.enqueue(
+                job_id=str(intent["job_id"]),
+                file_id=file_id,
+                version_id=version_id,
+                display_name=str(intent["display_name"]),
+            )
+            delivery_id = str(delivery["delivery_id"])
+            delivery_status = str(delivery["status"])
         return {
+            "file_id": file_id,
             "version_id": version_id,
             "size_bytes": int(intent["size_bytes"]),
             "sha256": str(intent["content_sha256"]),
             "status": status,
+            "delivery_id": delivery_id,
+            "delivery_status": delivery_status,
         }
+
+    @staticmethod
+    def _is_logical_name_conflict(exc: Exception) -> bool:
+        constraint_name = str(
+            getattr(getattr(exc, "diag", None), "constraint_name", "") or ""
+        )
+        if constraint_name == "uq_task_workspace_file_active_name":
+            return True
+        detail = str(exc).lower()
+        return (
+            "uq_task_workspace_file_active_name" in detail
+            or (
+                "unique" in detail
+                and "task_workspace_file.workspace_id" in detail
+                and "task_workspace_file.logical_name" in detail
+            )
+        )
 
     def _lock(self, table: str, identity: str) -> None:
         if table not in {"task_workspace", "managed_file"}:

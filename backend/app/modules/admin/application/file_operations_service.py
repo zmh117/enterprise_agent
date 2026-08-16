@@ -74,6 +74,10 @@ class FileOperationsStatusService:
             },
             "backlog": metrics["backlog"],
             "earliest_due": metrics["earliest_due"],
+            "domain_outbox_earliest_created_at": metrics[
+                "domain_outbox_earliest_created_at"
+            ],
+            "domain_outbox_failure_code": metrics["domain_outbox_failure_code"],
             "recent_cleanup": metrics["recent_cleanup"],
         }
 
@@ -97,6 +101,24 @@ class FileOperationsStatusService:
         conflicts = self.database.execute_one(
             "select count(*) as value from file_conflict_candidate where status = 'OPEN'"
         ) or {}
+        domain_outbox = self.database.execute_one(
+            """
+            select
+              sum(case when status in ('PENDING', 'FAILED') then 1 else 0 end)
+                as backlog,
+              min(case when status in ('PENDING', 'FAILED') then created_at end)
+                as earliest_created_at
+              from file_domain_outbox
+            """
+        ) or {}
+        domain_outbox_failure = self.database.execute_one(
+            """
+            select failure_code from file_domain_outbox
+             where status = 'FAILED'
+             order by updated_at desc, id desc
+             limit 1
+            """
+        ) or {}
         recent = self.database.execute_one(
             """
             select status, resource_type, reason,
@@ -113,8 +135,15 @@ class FileOperationsStatusService:
                 "workspace": int(workspaces.get("value") or 0),
                 "retained": int(retained.get("value") or 0),
                 "conflict": int(conflicts.get("value") or 0),
+                "domain_outbox": int(domain_outbox.get("backlog") or 0),
             },
             "earliest_due": str(counts.get("earliest_due") or ""),
+            "domain_outbox_earliest_created_at": str(
+                domain_outbox.get("earliest_created_at") or ""
+            ),
+            "domain_outbox_failure_code": str(
+                domain_outbox_failure.get("failure_code") or ""
+            ),
             "recent_cleanup": (
                 {
                     "status": str(recent.get("status") or ""),

@@ -93,6 +93,21 @@ Agent Worker MUST 将有界且无正文的Job File Manifest投影交给Runtime�
 - **THEN** Delivery进入自身重试状态且Job与当前版本保持不变
 - **AND** 重试仍发送同一内容哈希的精确版本
 
+#### Scenario: 文件交付已排队但尚未完成
+- **WHEN** Commit 或显式交付回执的 `delivery_status` 为 `PENDING`
+- **THEN** Agent 只能说明精确文件交付已排队，不得宣称文件已经发送或到达
+- **AND** 文件实际到达作为成功信号，不额外发送成功通知
+
+#### Scenario: 文件交付最终失败
+- **WHEN** `FILE_VERSION` Delivery 因非重试错误进入 `FAILED` 或重试耗尽进入 `DEAD`
+- **THEN** 系统沿原 Job 冻结 reply route 幂等创建最多一次安全文字通知，说明文件仍保存于工作区但回发失败
+- **AND** 不回滚版本、不重跑 Agent、不改变 Job 终态，且通知自身失败不递归创建新通知
+
+#### Scenario: 终态与通知创建之间发生崩溃
+- **WHEN** 文件 Delivery 已持久化为 `FAILED/DEAD` 但进程在创建通知前退出
+- **THEN** 后续 Dispatcher 扫描补建同一个确定身份的通知 Delivery
+- **AND** 并发或重复扫描不会创建多条用户通知
+
 ## MODIFIED Requirements
 
 ### Requirement: Read-only tools are exposed only through the deployment-fixed standard MCP server

@@ -25,6 +25,12 @@ class _Database:
             return {"value": 4}
         if "from file_conflict_candidate" in normalized:
             return {"value": 2}
+        if "from file_domain_outbox" in normalized:
+            return {
+                "backlog": 9,
+                "earliest_created_at": "2026-08-14T23:00:00+00:00",
+                "failure_code": "file_domain_outbox_runtimeerror",
+            }
         if "order by updated_at desc" in normalized:
             return {
                 "status": "RETRY",
@@ -80,7 +86,10 @@ def test_file_operations_projection_is_safe_bounded_and_worker_aware() -> None:
         "workspace": 1,
         "retained": 4,
         "conflict": 2,
+        "domain_outbox": 9,
     }
+    assert status["domain_outbox_earliest_created_at"] == "2026-08-14T23:00:00+00:00"
+    assert status["domain_outbox_failure_code"] == "file_domain_outbox_runtimeerror"
     serialized = json.dumps(status)
     for forbidden in (
         "display_name",

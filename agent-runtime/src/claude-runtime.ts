@@ -298,6 +298,9 @@ function systemPrompt(
     fileJob
       ? `Runtime materialized files (safe sandbox metadata, no content):\n${JSON.stringify(materializedFiles)}`
       : "",
+    fileJob
+      ? "File Delivery semantics: a commit receipt with delivery_status=PENDING means the exact delivery is queued, not sent. Do not call file_deliver_version again for a DEFAULT commit. Claim delivery success only after terminal evidence; the delivered file itself is the normal success signal."
+      : "",
     `Conversation summary:\n${request.prompt.conversation_summary}`,
     "Report a conclusion, bounded evidence, uncertainty, and safe next actions. Do not expose secrets, tokens, connection details, private reasoning, raw SDK messages, or raw Tool payloads."
   ]

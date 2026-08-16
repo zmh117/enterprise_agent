@@ -184,9 +184,13 @@ test("real TypeScript Runtime SDK loop materializes and commits only through its
     const body = Buffer.concat(chunks);
     uploaded.push(body);
     return Response.json({
+      file_id: `file-${uploaded.length}`,
       version_id: `version-${uploaded.length}`,
       size_bytes: body.byteLength,
-      sha256: digest(body)
+      sha256: digest(body),
+      status: "COMMITTED",
+      delivery_id: uploaded.length === 2 ? "delivery-2" : "",
+      delivery_status: uploaded.length === 2 ? "PENDING" : "NOT_REQUESTED"
     });
   };
   const fileBridgeFactory: RuntimeFileBridgeFactory = (options) =>

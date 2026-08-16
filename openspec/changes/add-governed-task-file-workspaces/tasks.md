@@ -86,6 +86,8 @@
 - [x] 9.5 实现 base version 乐观并发；失败内容形成受生命周期约束的 Conflict Candidate，且不得推进当前指针或成为 Retained File
 - [x] 9.6 让后续 Job 可同时冻结最新版本与冲突候选，由 Agent 显式合并并以最新版本重新提交，File Service 不执行自动文本合并
 - [x] 9.7 为提交响应丢失、重复上传、哈希变化、数据库回滚、对象写入失败、三个文件部分冲突和成功版本不回滚补充事务与集成测试
+- [x] 9.8 在上传前拒绝活动逻辑名冲突并把发布竞态映射为稳定 `file_logical_name_conflict`，证明不产生 staging/版本或通用失败
+- [x] 9.9 让成功与幂等恢复 Commit 回执返回精确 File、Version 及默认 Delivery 身份和当前状态，并由 Python/TypeScript Runtime 文件桥完整校验和投影
 
 ## 10. File Worker 替换、附件导入与生命周期清理
 
@@ -106,6 +108,7 @@
 - [x] 11.5 保持现有 Job 终态枚举；Runtime 正常回复时将多文件成功/冲突/拒绝逐项写入结果且 Job 为 `SUCCEEDED`，不新增 `PARTIAL`
 - [x] 11.6 增加交付超时、响应丢失、重复投递、工作区到期暂缓、最终失败后清理和跨会话目标拒绝测试
 - [x] 11.7 修复钉钉Stream会话已提交文件无法回发：冻结私聊发送人/群openConversationId/robotCode，令精确FILE_VERSION Delivery专用复用来源Stream Connector调用私聊或群机器人OpenAPI，并实现当前Job已提交版本的幂等`file_deliver_version`
+- [x] 11.8 明确 `PENDING` 仅为排队状态，并为终态失败文件 Delivery 创建可崩溃恢复、最多一次且不递归的原路安全通知
 
 ## 12. Compose、凭据隔离与运行观测
 
@@ -117,6 +120,7 @@
 - [x] 12.6 更新平台运维 API 与前端，展示 File Service/File Worker 接线、积压和最近结果，不显示文件名、正文、对象键或 Secret
 - [x] 12.7 增加 Compose 配置和容器检查，证明默认服务清单、单附件消费者、MinIO Secret 唯一挂载和 docling-server 未部署
 - [x] 12.8 更新密钥初始化、Compose和环境示例，只维护统一Principal私钥/JWKS与角色隔离bootstrap credential，删除独立Service Principal密钥配置和宿主机静态Service JWT文件要求并验证首次启动
+- [x] 12.9 由 File Worker 维护链路发布并终结 File Domain Outbox，清理历史积压并在后端、管理 API 和前端展示安全积压与最近失败
 
 ## 13. 灰度迁移、验收与文档收口
 

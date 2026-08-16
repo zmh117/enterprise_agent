@@ -70,9 +70,13 @@ test("File MCP materialize and commit controls trigger local streaming without J
       for await (const chunk of request.content) uploads.push(Buffer.from(chunk));
       const value = Buffer.concat(uploads);
       return {
+        fileId: "file-2",
         versionId: "version-2",
         sizeBytes: value.byteLength,
-        sha256: createHash("sha256").update(value).digest("hex")
+        sha256: createHash("sha256").update(value).digest("hex"),
+        status: "COMMITTED",
+        deliveryId: "delivery-2",
+        deliveryStatus: "PENDING"
       };
     }
   };
@@ -102,7 +106,10 @@ test("File MCP materialize and commit controls trigger local streaming without J
     const committed = await coordinator.processMcpControlResult(uploadControl(), context);
     assert.equal(Buffer.concat(uploads).toString("utf8"), "edited result");
     assert.equal(committed.action, "COMMITTED");
+    assert.equal(committed.file_id, "file-2");
     assert.equal(committed.version_id, "version-2");
+    assert.equal(committed.delivery_id, "delivery-2");
+    assert.equal(committed.delivery_status, "PENDING");
 
     const serializedControlAndEvents = JSON.stringify({
       materialize: materializeControl(),
@@ -188,9 +195,13 @@ test("File transfer uploads only an explicitly registered sandbox entry", async 
       for await (const chunk of request.content) uploads.push(Buffer.from(chunk));
       const value = Buffer.concat(uploads);
       return {
+        fileId: "file-2",
         versionId: "version-2",
         sizeBytes: value.byteLength,
-        sha256: createHash("sha256").update(value).digest("hex")
+        sha256: createHash("sha256").update(value).digest("hex"),
+        status: "COMMITTED",
+        deliveryId: "",
+        deliveryStatus: "NOT_REQUESTED"
       };
     }
   };
@@ -252,7 +263,15 @@ test("File transfer selects only an explicit UTF-8 work or outputs TXT", async (
   const root = await mkdtemp(join(tmpdir(), "file-transfer-select-"));
   const coordinator = new FileTransferCoordinator({
     download: unusedDownload,
-    upload: async () => ({ versionId: "unused", sizeBytes: 0, sha256: "0".repeat(64) })
+    upload: async () => ({
+      fileId: "unused-file",
+      versionId: "unused",
+      sizeBytes: 0,
+      sha256: "0".repeat(64),
+      status: "COMMITTED",
+      deliveryId: "",
+      deliveryStatus: "NOT_REQUESTED"
+    })
   });
   const context = {
     jobId: "job-select-1",

@@ -29,9 +29,13 @@ def test_python_runtime_http_transfer_port_streams_fixed_internal_paths() -> Non
         return httpx.Response(
             200,
             json={
+                "file_id": "file-http-1",
                 "version_id": "version-http-1",
                 "size_bytes": len(body),
                 "sha256": hashlib.sha256(body).hexdigest(),
+                "status": "COMMITTED",
+                "delivery_id": "delivery-http-1",
+                "delivery_status": "PENDING",
             },
         )
 
@@ -67,5 +71,8 @@ def test_python_runtime_http_transfer_port_streams_fixed_internal_paths() -> Non
 
     assert downloaded == b"downloaded TXT"
     assert uploaded == [b"uploaded TXT"]
+    assert receipt.file_id == "file-http-1"
     assert receipt.version_id == "version-http-1"
     assert receipt.size_bytes == len(b"uploaded TXT")
+    assert receipt.delivery_id == "delivery-http-1"
+    assert receipt.delivery_status == "PENDING"

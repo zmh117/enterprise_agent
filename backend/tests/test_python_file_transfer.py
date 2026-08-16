@@ -83,9 +83,13 @@ class _Port:
         assert principal_token == "principal-token-not-for-json"
         self.uploaded = b"".join(content)
         return FileUploadReceipt(
+            file_id="file-2",
             version_id="version-2",
             size_bytes=len(self.uploaded),
             sha256=hashlib.sha256(self.uploaded).hexdigest(),
+            status="COMMITTED",
+            delivery_id="delivery-2",
+            delivery_status="PENDING",
         )
 
 
@@ -114,7 +118,10 @@ def test_python_file_transfer_matches_typescript_control_and_safe_result(
     committed = coordinator.process_mcp_control_result(_upload_control(), context)
     assert port.uploaded == b"edited result"
     assert committed["action"] == "COMMITTED"
+    assert committed["file_id"] == "file-2"
     assert committed["version_id"] == "version-2"
+    assert committed["delivery_id"] == "delivery-2"
+    assert committed["delivery_status"] == "PENDING"
 
     serialized = json.dumps(
         {

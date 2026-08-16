@@ -899,7 +899,9 @@ def _build_system_prompt(context: AgentExecutionContext) -> str:
                     "Uncertainty or limitations when evidence is incomplete.",
                     (
                         "For file Jobs, modify only sandbox TXT files and persist only through an "
-                        "explicit File MCP commit; otherwise suggest safe next actions only."
+                        "explicit File MCP commit. A DEFAULT commit already creates its exact "
+                        "Delivery; delivery_status=PENDING means queued, not sent, so do not call "
+                        "file_deliver_version again or claim success without terminal evidence."
                         if file_job
                         else "Suggested safe next actions only; do not suggest direct mutation by the Agent."
                     ),

@@ -146,6 +146,11 @@ Agent MUST 为每个需要持久化的沙盒文件显式创建 File Commit Inten
 - **THEN** 该请求授权 Agent 创建一次对应文件提交意图，无需二次确认
 - **AND** Runtime 流式上传所选沙盒文件
 
+#### Scenario: 新文件逻辑名已经存在
+- **WHEN** Agent 未提供 `file_id/base_version_id` 且请求的新文件显示名已被当前工作区活动文件占用
+- **THEN** File Service 在创建 Commit Intent 和上传字节前返回 `file_logical_name_conflict`
+- **AND** 不创建 staging 对象、文件版本、自动改名或覆盖现有文件
+
 ### Requirement: 提交暂存、校验和终结保持原子可恢复
 File Service MUST 在流式接收时计算内容哈希并执行类型、15 MiB 大小和 UTF-8校验，在终结前重新校验 Job、工作区、文件归属、基础版本和配额。暂存对象只有在对象完整且文件版本元数据事务成功后才能成为可见文件版本；失败或超时暂存不得进入文件列表或当前指针，并 MUST 由 `file-worker` 可重试清理。
 
@@ -170,6 +175,16 @@ File Service MUST 在流式接收时计算内容哈希并执行类型、15 MiB �
 #### Scenario: Commit ID 被复用于不同内容
 - **WHEN** 调用者以同一 Commit ID 上传不同哈希内容
 - **THEN** File Service 拒绝并记录不含文件正文的安全冲突审计
+
+#### Scenario: 默认交付提交返回精确恢复回执
+- **WHEN** 默认交付的新文件版本提交成功，或 Runtime 以同一 Commit ID 恢复成功结果
+- **THEN** 回执返回同一 `file_id`、`version_id`、内容摘要、`delivery_id` 和当前 `delivery_status`
+- **AND** `PENDING` 只表示交付已排队，Runtime 不需要列出工作区或再次调用显式交付来推断身份
+
+#### Scenario: 同名检查后发生并发竞态
+- **WHEN** 两个请求通过前置检查后竞争同一工作区逻辑名
+- **THEN** 最多一个请求创建活动文件，另一个在发布事务中仍返回 `file_logical_name_conflict`
+- **AND** 失败请求的 staging 进入可重试清理且不返回通用发布失败
 
 ### Requirement: 版本冲突由 Claude Code 显式处理
 File Service MUST NOT 对 `.txt` 或后续 Office 类型自动合并，也不得覆盖当前版本。已上传但因并发产生冲突的结果只能成为按工作区生命周期管理的 Conflict Candidate，不得成为当前版本或 Retained File。用户继续处理时，后续新 Job SHALL 同时物化最新版本和冲突候选，由 Claude Code 根据用户指令生成合并结果，并以最新版本为基础重新显式提交。

@@ -4,7 +4,7 @@ import json
 import uuid
 from collections.abc import Iterable
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 
 from app.modules.file_workspace.domain import (
     CLEANUP_TRANSITIONS,
@@ -110,12 +110,9 @@ class FileWorkspaceRepository:
         return self._required("task_workspace", workspace_id, "未找到任务工作区")
 
     def get_active_workspace(self, session_id: str) -> dict[str, Any] | None:
-        return cast(
-            dict[str, Any] | None,
-            self.database.execute_one(
-                "select * from task_workspace where session_id = ? and status = 'ACTIVE'",
-                (session_id,),
-            ),
+        return self.database.execute_one(
+            "select * from task_workspace where session_id = ? and status = 'ACTIVE'",
+            (session_id,),
         )
 
     def transition_workspace(
@@ -471,7 +468,7 @@ class FileWorkspaceRepository:
                 error_code="file_request_invalid",
             )
         row["explicit_references"] = references
-        return cast(dict[str, Any], row)
+        return row
 
     def finalize_job_file_request(self, job_id: str) -> dict[str, Any]:
         timestamp = _now()
@@ -499,7 +496,7 @@ class FileWorkspaceRepository:
             "select * from agent_job_file_snapshot_item where snapshot_id = ? order by ordinal",
             (row["id"],),
         )
-        return cast(dict[str, Any], row)
+        return row
 
     def create_commit_intent(
         self,
@@ -554,7 +551,7 @@ class FileWorkspaceRepository:
         )
         if row is None:
             raise NotFound("文件提交意图不存在", safe_message="未找到文件提交意图")
-        return cast(dict[str, Any], row)
+        return row
 
     def begin_commit_upload(
         self,
@@ -689,12 +686,9 @@ class FileWorkspaceRepository:
         return self._required("file_object_staging", staging_id, "未找到暂存对象")
 
     def get_staging_for_intent(self, intent_id: str) -> dict[str, Any] | None:
-        return cast(
-            dict[str, Any] | None,
-            self.database.execute_one(
-                "select * from file_object_staging where commit_intent_id = ?",
-                (intent_id,),
-            ),
+        return self.database.execute_one(
+            "select * from file_object_staging where commit_intent_id = ?",
+            (intent_id,),
         )
 
     def get_staging(self, staging_id: str) -> dict[str, Any]:
@@ -904,7 +898,109 @@ class FileWorkspaceRepository:
         )
         if row is None:
             raise RuntimeError("File Outbox insert failed")
-        return cast(dict[str, Any], row)
+        return row
+
+    def claim_domain_outbox(self, *, worker_id: str) -> dict[str, Any] | None:
+        """Claim one event inside the caller's Unit of Work.
+
+        Publication currently targets the database-backed unified audit sink,
+        so the row lock can cover projection and terminal state atomically.
+        """
+        if self.database.current_unit_of_work is None:
+            raise RuntimeError("File Domain Outbox claim requires a Unit of Work")
+        timestamp = _now()
+        if self.database.engine == "postgres":
+            rows = self.database.execute(
+                """
+                with candidate as (
+                  select id from file_domain_outbox
+                   where status in ('PENDING', 'FAILED')
+                   order by created_at, id
+                   for update skip locked
+                   limit 1
+                )
+                update file_domain_outbox
+                   set attempt_count = attempt_count + 1,
+                       failure_code = '', updated_at = ?
+                 where id = (select id from candidate)
+                returning *
+                """,
+                (timestamp,),
+            )
+        else:
+            rows = self.database.execute(
+                """
+                update file_domain_outbox
+                   set attempt_count = attempt_count + 1,
+                       failure_code = '', updated_at = ?
+                 where id = (
+                   select id from file_domain_outbox
+                    where status in ('PENDING', 'FAILED')
+                    order by created_at, id limit 1
+                 )
+                   and status in ('PENDING', 'FAILED')
+                returning *
+                """,
+                (timestamp,),
+            )
+        return rows[0] if rows else None
+
+    def mark_domain_outbox_published(self, outbox_id: str) -> None:
+        timestamp = _now()
+        changed = self.database.execute(
+            """
+            update file_domain_outbox
+               set status = 'PUBLISHED', published_at = ?, failure_code = '',
+                   updated_at = ?
+             where id = ? and status in ('PENDING', 'FAILED')
+            returning id
+            """,
+            (timestamp, timestamp, outbox_id),
+        )
+        if not changed:
+            self._state_conflict()
+
+    def mark_domain_outbox_failed(self, outbox_id: str, *, failure_code: str) -> None:
+        timestamp = _now()
+        changed = self.database.execute(
+            """
+            update file_domain_outbox
+               set status = 'FAILED', attempt_count = attempt_count + 1,
+                   failure_code = ?, updated_at = ?
+             where id = ? and status in ('PENDING', 'FAILED')
+            returning id
+            """,
+            (failure_code[:128], timestamp, outbox_id),
+        )
+        if not changed:
+            self._state_conflict()
+
+    def domain_outbox_metrics(self) -> dict[str, int | str]:
+        row = self.database.execute_one(
+            """
+            select
+              sum(case when status in ('PENDING', 'FAILED') then 1 else 0 end)
+                as backlog,
+              min(case when status in ('PENDING', 'FAILED') then created_at end)
+                as earliest_created_at
+              from file_domain_outbox
+            """
+        ) or {}
+        failure = self.database.execute_one(
+            """
+            select failure_code from file_domain_outbox
+             where status = 'FAILED'
+             order by updated_at desc, id desc
+             limit 1
+            """
+        ) or {}
+        return {
+            "domain_outbox_backlog": int(row.get("backlog") or 0),
+            "domain_outbox_earliest_created_at": str(
+                row.get("earliest_created_at") or ""
+            ),
+            "domain_outbox_failure_code": str(failure.get("failure_code") or ""),
+        }
 
     def record_conflict(
         self,
@@ -1077,7 +1173,7 @@ class FileWorkspaceRepository:
         row = self.database.execute_one(f"select * from {table} where id = ?", (identity,))
         if row is None:
             raise NotFound(f"File resource not found: {table}", safe_message=safe_message)
-        return cast(dict[str, Any], row)
+        return row
 
     @staticmethod
     def _state_conflict() -> None:

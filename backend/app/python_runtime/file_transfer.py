@@ -31,9 +31,13 @@ class FileTransferContext:
 
 @dataclass(frozen=True)
 class FileUploadReceipt:
+    file_id: str
     version_id: str
     size_bytes: int
     sha256: str
+    status: str
+    delivery_id: str
+    delivery_status: str
 
 
 class FileTransferPort(Protocol):
@@ -422,12 +426,41 @@ class FileTransferCoordinator:
                 "upload receipt did not match the local sandbox entry",
             )
         _identifier(receipt.version_id, "version_id")
+        _identifier(receipt.file_id, "file_id")
         _sha256(receipt.sha256, "sha256")
+        if receipt.status not in {"COMMITTED", "CONFLICT"}:
+            raise FileTransferBoundaryError(
+                "file_transfer_receipt_invalid",
+                "upload receipt contained an invalid commit status",
+            )
+        valid_delivery_statuses = {
+            "NOT_REQUESTED",
+            "PENDING",
+            "RUNNING",
+            "RETRY_WAIT",
+            "SUCCEEDED",
+            "FAILED",
+            "DEAD",
+            "SKIPPED",
+        }
+        if receipt.delivery_status not in valid_delivery_statuses or bool(
+            receipt.delivery_id
+        ) == (receipt.delivery_status == "NOT_REQUESTED"):
+            raise FileTransferBoundaryError(
+                "file_transfer_receipt_invalid",
+                "upload receipt contained an invalid Delivery binding",
+            )
+        if receipt.delivery_id:
+            _identifier(receipt.delivery_id, "delivery_id")
         return {
             "action": "COMMITTED",
             "sandbox_entry_handle": handle,
             "commit_id": str(control["commit_id"]),
+            "file_id": receipt.file_id,
             "version_id": receipt.version_id,
             "size_bytes": size_bytes,
             "sha256": actual_sha256,
+            "status": receipt.status,
+            "delivery_id": receipt.delivery_id,
+            "delivery_status": receipt.delivery_status,
         }

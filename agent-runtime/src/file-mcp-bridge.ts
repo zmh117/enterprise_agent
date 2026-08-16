@@ -190,7 +190,7 @@ function toolDefinition(
       }
     },
     file_create_commit_intent: {
-      description: "Commit one explicitly selected sandbox TXT through File Service.",
+      description: "Commit one selected sandbox TXT. The upload receipt returns exact file/version identity; DEFAULT also returns a Delivery receipt where PENDING means queued only.",
       shape: {
         sandbox_entry_handle: opaque(),
         file_id: opaque().optional(),
@@ -205,7 +205,7 @@ function toolDefinition(
       shape: { file_id: opaque(), version_id: opaque() }
     },
     file_deliver_version: {
-      description: "Deliver an authorized exact file version to the frozen reply route.",
+      description: "Deliver an authorized existing or WORKSPACE_ONLY exact version. Do not repeat a DEFAULT commit delivery; PENDING means queued only.",
       shape: { file_id: opaque(), version_id: opaque() }
     }
   } as const;

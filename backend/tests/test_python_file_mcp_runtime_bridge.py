@@ -81,9 +81,13 @@ class _TransferPort:
         body = b"".join(content)
         self.uploaded.append(body)
         return FileUploadReceipt(
+            file_id=f"file-python-{len(self.uploaded)}",
             version_id=f"version-python-{len(self.uploaded)}",
             size_bytes=len(body),
             sha256=hashlib.sha256(body).hexdigest(),
+            status="COMMITTED",
+            delivery_id="",
+            delivery_status="NOT_REQUESTED",
         )
 
 

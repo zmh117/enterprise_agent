@@ -150,9 +150,13 @@ class _StreamingPort:
             )
         )
         return FileUploadReceipt(
+            file_id=str(result["file_id"]),
             version_id=str(result["version_id"]),
             size_bytes=int(result["size_bytes"]),
             sha256=str(result["sha256"]),
+            status=str(result["status"]),
+            delivery_id=str(result["delivery_id"]),
+            delivery_status=str(result["delivery_status"]),
         )
 
 

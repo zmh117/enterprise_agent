@@ -9,6 +9,7 @@ from app.modules.file_workspace.domain import (
     StagingStatus,
     WorkspaceStatus,
 )
+from app.modules.file_workspace.domain_outbox import FileDomainOutboxPublisher
 from app.modules.file_workspace.repository import FileWorkspaceRepository
 
 
@@ -36,6 +37,7 @@ class FileLifecycleService:
         legacy_attachment_bucket: str = "",
         now: Callable[[], datetime] = _now,
         batch_size: int = 100,
+        domain_outbox: FileDomainOutboxPublisher | None = None,
     ) -> None:
         if not 1 <= batch_size <= 1000:
             raise ValueError("File lifecycle batch size is invalid")
@@ -45,6 +47,7 @@ class FileLifecycleService:
         self.legacy_attachment_bucket = legacy_attachment_bucket
         self.now = now
         self.batch_size = batch_size
+        self.domain_outbox = domain_outbox
 
     def run_once(self, *, worker_id: str = "file-worker") -> dict[str, int | str]:
         timestamp = self.now().isoformat()
@@ -55,6 +58,11 @@ class FileLifecycleService:
         )
         unknown, missing = self._reconcile_objects()
         cleaned = self._finish_workspaces()
+        outbox = (
+            self.domain_outbox.publish_pending(limit=self.batch_size)
+            if self.domain_outbox is not None
+            else None
+        )
         return {
             "status": "SUCCEEDED",
             "workspaces_expired": expired,
@@ -66,6 +74,8 @@ class FileLifecycleService:
             "cleanup_dead": dead,
             "unknown_orphan_objects": unknown,
             "missing_referenced_objects": missing,
+            "domain_outbox_published": outbox.published if outbox is not None else 0,
+            "domain_outbox_failed": outbox.failed if outbox is not None else 0,
         }
 
     def metrics(self) -> dict[str, int | str]:
@@ -102,6 +112,7 @@ class FileLifecycleService:
             "expired_retention_backlog": int(retained.get("value") or 0),
             "conflict_candidate_backlog": int(conflicts.get("value") or 0),
             "earliest_due": str(counts.get("earliest_due") or ""),
+            **self.repository.domain_outbox_metrics(),
         }
 
     def _expire_workspaces(self, timestamp: str) -> tuple[int, int]:
