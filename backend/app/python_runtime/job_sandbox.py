@@ -150,6 +150,7 @@ class JobSandbox:
         return count, size_bytes
 
     def _relative_path(self, value: object, *, allow_root: bool) -> str:
+        value = self._sdk_relative_path(value, allow_root=allow_root)
         if not isinstance(value, str) or not 1 <= len(value) <= 240:
             self._deny("sandbox_path_invalid", "sandbox path is invalid")
         if "\\" in value or "\x00" in value:
@@ -171,6 +172,7 @@ class JobSandbox:
         return value
 
     def _directory_path(self, value: object) -> str:
+        value = self._sdk_relative_path(value, allow_root=True)
         if not isinstance(value, str) or not 1 <= len(value) <= 240:
             self._deny("sandbox_path_invalid", "sandbox path is invalid")
         if "\\" in value or "\x00" in value:
@@ -188,6 +190,35 @@ class JobSandbox:
         ):
             self._deny("sandbox_path_invalid", "sandbox path escaped its Job boundary")
         return value
+
+    def _sdk_relative_path(self, value: object, *, allow_root: bool) -> object:
+        """Normalize an SDK-resolved in-sandbox absolute path back to its contract path.
+
+        Claude Code resolves built-in file tool paths against ``cwd`` before it
+        asks ``can_use_tool``. The model contract remains relative-only, while
+        this callback boundary accepts only the exact random Job Sandbox root.
+        """
+        if not isinstance(value, str) or not PurePosixPath(value).is_absolute():
+            return value
+        if (
+            not 1 <= len(value) <= 4096
+            or "\\" in value
+            or "\x00" in value
+            or str(PurePosixPath(value)) != value
+            or "." in PurePosixPath(value).parts
+            or ".." in PurePosixPath(value).parts
+        ):
+            self._deny("sandbox_path_invalid", "sandbox path is invalid")
+        root = PurePosixPath(self.path.resolve(strict=True).as_posix())
+        try:
+            relative = PurePosixPath(value).relative_to(root)
+        except ValueError:
+            self._deny("sandbox_path_invalid", "sandbox path escaped its Job boundary")
+        if not relative.parts:
+            if allow_root:
+                return "."
+            self._deny("sandbox_path_invalid", "sandbox path escaped its Job boundary")
+        return relative.as_posix()
 
     def _glob_pattern(self, value: object) -> None:
         if (

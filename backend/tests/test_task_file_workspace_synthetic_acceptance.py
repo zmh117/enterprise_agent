@@ -40,8 +40,8 @@ from backend.tests.test_file_version_delivery import (
     _Authorization as _DeliveryAuthorization,
 )
 from backend.tests.test_file_version_delivery import (
-    _ConnectorRegistry,
     _ResponseLostSender,
+    _StreamFileConnectorRegistry,
 )
 
 
@@ -322,7 +322,7 @@ def test_synthetic_private_txt_crosses_channel_file_worker_sandbox_commit_and_de
             "DeliveryRuntime",
             (),
             {
-                "connector_registry": _ConnectorRegistry(),
+                "connector_registry": _StreamFileConnectorRegistry(),
                 "business_authorization_service": _DeliveryAuthorization(),
             },
         )(),

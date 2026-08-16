@@ -33,7 +33,7 @@ class FileVersionDeliveryService:
         file_id: str,
         version_id: str,
         display_name: str,
-    ) -> str:
+    ) -> dict[str, str]:
         version = self.repository.require_content_available(version_id)
         if str(version["file_id"]) != file_id or str(version["status"]) != "AVAILABLE":
             raise NonRetryableExecutionError(
@@ -132,7 +132,17 @@ class FileVersionDeliveryService:
                     safe_message="文件交付幂等绑定冲突",
                     error_code="file_delivery_idempotency_conflict",
                 )
-            return event.id
+            binding = self.exact_binding(event.id)
+            if binding is None:
+                raise NonRetryableExecutionError(
+                    "File Delivery binding disappeared after enqueue",
+                    safe_message="文件交付绑定无效",
+                    error_code="file_delivery_binding_invalid",
+                )
+            return {
+                "delivery_id": event.id,
+                "status": str(binding["status"]),
+            }
 
     def exact_binding(self, delivery_id: str) -> dict[str, Any] | None:
         return self.repository.database.execute_one(

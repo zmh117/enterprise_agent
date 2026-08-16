@@ -75,6 +75,7 @@
 - [x] 8.8 增加 Python/TypeScript 等价性测试，覆盖按需下载、精确版本、Read/Glob/Grep/Write/Edit、路径逃逸、配额、取消清理和字节不进入模型事件
 - [x] 8.9 在Business Application保存、发布和运行时就绪链路校验任务文件功能开关与Agent/Application File MCP Tool快照一致，拒绝“功能已开但工具未冻结”的假就绪配置
 - [x] 8.10 将有界Job File Manifest投影交给两个Runtime，在首次模型请求前自动物化当前消息/显式引用项，并用SDK `default` permission mode保证空自动批准集合下所有内建与MCP调用仍进入`canUseTool`
+- [x] 8.11 修复Claude Code CLI在`canUseTool`前将相对文件路径解析为绝对路径导致Python Runtime拒绝`Write/Edit`的问题，在Python与TypeScript沙盒守卫中只接受精确位于当前随机Job Sandbox内的SDK解析路径并还原为相对路径，增加真实Python CLI写入和跨Runtime路径逃逸回归
 
 ## 9. 两阶段提交、幂等与并发冲突
 
@@ -104,6 +105,7 @@
 - [x] 11.4 实现交付失败独立重试同一版本、提交不回滚、Agent 不重跑和成功交付创建独立 360 天 Retained File 事实
 - [x] 11.5 保持现有 Job 终态枚举；Runtime 正常回复时将多文件成功/冲突/拒绝逐项写入结果且 Job 为 `SUCCEEDED`，不新增 `PARTIAL`
 - [x] 11.6 增加交付超时、响应丢失、重复投递、工作区到期暂缓、最终失败后清理和跨会话目标拒绝测试
+- [x] 11.7 修复钉钉Stream会话已提交文件无法回发：冻结私聊发送人/群openConversationId/robotCode，令精确FILE_VERSION Delivery专用复用来源Stream Connector调用私聊或群机器人OpenAPI，并实现当前Job已提交版本的幂等`file_deliver_version`
 
 ## 12. Compose、凭据隔离与运行观测
 

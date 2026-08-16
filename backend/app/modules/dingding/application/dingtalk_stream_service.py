@@ -702,16 +702,18 @@ class DingTalkStreamMessageService:
     ) -> ReplyRoute:
         delivery_target = _dict_value(delivery_payload.get("target"))
         mention_target = _reply_mention_target(message)
+        file_delivery_target = _file_delivery_target(
+            message,
+            default_open_conversation_id=self.default_open_conversation_id,
+            default_robot_code=self.default_robot_code,
+        )
         if delivery_payload.get("type"):
             return ReplyRoute(
                 type=str(delivery_payload.get("type")),
                 connector_id=str(delivery_payload.get("connector_id") or ""),
                 target={
                     "conversation_id": message.conversation_id,
-                    "open_conversation_id": (
-                        message.open_conversation_id or self.default_open_conversation_id
-                    ),
-                    "robot_code": message.robot_code or self.default_robot_code,
+                    **file_delivery_target,
                     **delivery_target,
                     **mention_target,
                 },
@@ -725,6 +727,7 @@ class DingTalkStreamMessageService:
                     "conversation_id": message.conversation_id,
                     "session_webhook": message.session_webhook,
                     "session_webhook_expired_time": message.session_webhook_expired_time,
+                    **file_delivery_target,
                     **mention_target,
                 },
                 options=_dict_value(delivery_payload.get("options")),
@@ -734,10 +737,7 @@ class DingTalkStreamMessageService:
             connector_id=self.default_delivery_connector_id,
             target={
                 "conversation_id": message.conversation_id,
-                "open_conversation_id": (
-                    message.open_conversation_id or self.default_open_conversation_id
-                ),
-                "robot_code": message.robot_code or self.default_robot_code,
+                **file_delivery_target,
                 **delivery_target,
                 **mention_target,
             },
@@ -822,6 +822,26 @@ def _reply_mention_target(message: DingTalkStreamIncomingMessage) -> dict[str, l
     if message.conversation_type != "group":
         return {}
     return {"at_user_ids": [message.user_id]}
+
+
+def _file_delivery_target(
+    message: DingTalkStreamIncomingMessage,
+    *,
+    default_open_conversation_id: str,
+    default_robot_code: str,
+) -> dict[str, str]:
+    target = {
+        "conversation_type": message.conversation_type,
+        "open_conversation_id": (
+            message.open_conversation_id
+            or (message.conversation_id if message.conversation_type == "group" else "")
+            or default_open_conversation_id
+        ),
+        "robot_code": message.robot_code or default_robot_code,
+    }
+    if message.conversation_type == "direct":
+        target["recipient_user_id"] = message.sender_staff_id or message.user_id
+    return target
 
 
 def _attachments(

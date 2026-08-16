@@ -11,7 +11,9 @@ import pytest
 from app.modules.delivery.application.delivery_dispatch_service import (
     DeliveryOutboxDispatcher,
 )
+from app.modules.channel.infrastructure.connector_registry import Connector
 from app.modules.agent.application.agent_result_service import AgentResultService
+from app.modules.file_workspace.application import FileWorkspaceApplicationService
 from app.modules.file_workspace.delivery_service import FileVersionDeliveryService
 from app.modules.file_workspace.lifecycle_service import FileLifecycleService
 from app.modules.job.infrastructure.repositories import AgentRepository
@@ -28,6 +30,27 @@ class _Authorization:
 class _ConnectorRegistry:
     def require_delivery(self, connector_id: str) -> object:
         raise AssertionError(connector_id)
+
+
+class _StreamFileConnectorRegistry(_ConnectorRegistry):
+    def __init__(self) -> None:
+        self.requested: list[str] = []
+
+    def require_dingtalk_stream_file_delivery(self, connector_id: str) -> Connector:
+        self.requested.append(connector_id)
+        return Connector(
+            id=connector_id,
+            connector_type="dingtalk_enterprise_stream",
+            name="stream-file",
+            base_url="",
+            enabled=True,
+            allow_ingress=True,
+            allow_delivery=False,
+            secret_ref="secret://platform/test",
+            endpoint_ref="",
+            host_allowlist=(),
+            metadata={},
+        )
 
 
 class _Audit:
@@ -76,6 +99,14 @@ class _AlwaysTimeoutSender:
             safe_message="文件交付超时",
             error_code="file_delivery_timeout",
         )
+
+
+class _CaptureFileSender:
+    def __init__(self) -> None:
+        self.connector_ids: list[str] = []
+
+    def send(self, **arguments: Any) -> None:
+        self.connector_ids.append(str(arguments["connector"].id))
 
 
 def _enable_file_delivery(repository: Any) -> None:
@@ -214,6 +245,118 @@ def test_exact_file_delivery_retries_without_agent_rerun_or_duplicate_file() -> 
         "COMMITTED",
     ]
     assert "PARTIAL" not in json.dumps(result_payload)
+
+
+def test_explicit_delivery_accepts_exact_version_committed_by_current_job() -> None:
+    repository, streaming, context, _storage = _fixture()
+    _enable_file_delivery(repository)
+    delivery = FileVersionDeliveryService(
+        repository, AgentRepository(repository.database), DeliverySettings()
+    )
+    committed = asyncio.run(
+        streaming.upload_commit(
+            commit_id=_new_intent(streaming, context, handle="explicit-output"),
+            token="file-principal-token",
+            body=_body(b"explicit delivery\n"),
+        )
+    )
+    version = repository.get_version(str(committed["version_id"]))
+    streaming.delivery_intents = delivery
+    application = FileWorkspaceApplicationService(
+        repository,
+        streaming.authorization,
+        streaming,
+    )
+
+    first = application.invoke(
+        context=context,
+        tool_identifier="file_deliver_version",
+        arguments={
+            "file_id": str(version["file_id"]),
+            "version_id": str(version["id"]),
+        },
+    )
+    repeated = application.invoke(
+        context=context,
+        tool_identifier="file_deliver_version",
+        arguments={
+            "file_id": str(version["file_id"]),
+            "version_id": str(version["id"]),
+        },
+    )
+
+    assert first["delivery_status"] == "PENDING"
+    assert repeated == first
+    assert repository.database.execute_one(
+        "select count(*) as value from delivery_outbox where delivery_kind = 'FILE_VERSION'"
+    ) == {"value": 1}
+
+
+def test_stream_session_file_delivery_uses_originating_stream_connector() -> None:
+    repository, streaming, context, _storage = _fixture()
+    repository.database.execute(
+        """
+        update agent_job
+           set reply_route_json = ?, business_application_route_decision_json = ?
+         where id = 'job-file'
+        """,
+        (
+            json.dumps(
+                {
+                    "type": "dingtalk_stream_session_webhook",
+                    "connector_id": "",
+                    "target": {
+                        "conversation_id": "conversation-a",
+                        "conversation_type": "direct",
+                        "recipient_user_id": "staff-a",
+                        "robot_code": "robot-a",
+                        "session_webhook": "https://example.invalid/session",
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "task_file_features": {
+                        "default_file_delivery_enabled": True,
+                    }
+                }
+            ),
+        ),
+    )
+    agent_repository = AgentRepository(repository.database)
+    delivery = FileVersionDeliveryService(
+        repository, agent_repository, DeliverySettings()
+    )
+    streaming.delivery_intents = delivery
+    asyncio.run(
+        streaming.upload_commit(
+            commit_id=_new_intent(streaming, context, handle="stream-output"),
+            token="file-principal-token",
+            body=_body(b"stream delivery\n"),
+        )
+    )
+    repository.database.execute(
+        "update agent_job set status = 'SUCCEEDED' where id = 'job-file'"
+    )
+    connector_registry = _StreamFileConnectorRegistry()
+    sender = _CaptureFileSender()
+    dispatcher = DeliveryOutboxDispatcher(
+        repository=agent_repository,
+        delivery_service=SimpleNamespace(
+            connector_registry=connector_registry,
+            business_authorization_service=_Authorization(),
+            adapters={},
+        ),  # type: ignore[arg-type]
+        audit_service=_Audit(),  # type: ignore[arg-type]
+        settings=DeliverySettings(),
+        worker_id="delivery-worker",
+        file_delivery_sender=sender,
+        file_delivery_service=delivery,
+    )
+
+    assert dispatcher.dispatch_pending(limit=1).succeeded == 1
+    assert connector_registry.requested == ["connector-a"]
+    assert sender.connector_ids == ["connector-a"]
 
 
 def test_delivery_provenance_rejects_cross_session_mutation() -> None:

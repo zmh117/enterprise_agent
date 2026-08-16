@@ -11,7 +11,16 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
-from claude_agent_sdk import ClaudeAgentOptions, UserMessage, query
+from claude_agent_sdk import (
+    ClaudeAgentOptions,
+    PermissionResultAllow,
+    UserMessage,
+    create_sdk_mcp_server,
+    query,
+)
+
+from app.python_runtime.claude_agent_sdk_adapter import _streaming_user_prompt
+from app.python_runtime.job_sandbox import JobSandboxManager
 
 
 MCP_CALL_ID = "mcp_contract_probe"
@@ -218,6 +227,56 @@ class _ModelHandler(_QuietHandler):
         }
 
 
+class _BuiltinWriteModelHandler(_ModelHandler):
+    tool_name = "Write"
+
+    @classmethod
+    def _tool_events(
+        cls, request: dict[str, Any]
+    ) -> list[tuple[str, dict[str, Any]]]:
+        tool_input = {
+            "file_path": "outputs/runtime-write.txt",
+            "content": "written by the real Claude CLI",
+        }
+        return [
+            ("message_start", cls._message_start(request, "message-runtime-write")),
+            (
+                "content_block_start",
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {
+                        "type": "tool_use",
+                        "id": "tool-use-runtime-write",
+                        "name": cls.tool_name,
+                        "input": {},
+                    },
+                },
+            ),
+            (
+                "content_block_delta",
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {
+                        "type": "input_json_delta",
+                        "partial_json": json.dumps(tool_input),
+                    },
+                },
+            ),
+            ("content_block_stop", {"type": "content_block_stop", "index": 0}),
+            (
+                "message_delta",
+                {
+                    "type": "message_delta",
+                    "delta": {"stop_reason": "tool_use", "stop_sequence": None},
+                    "usage": {"output_tokens": 1},
+                },
+            ),
+            ("message_stop", {"type": "message_stop"}),
+        ]
+
+
 class _LocalHttpServer:
     def __init__(self, handler: type[BaseHTTPRequestHandler]) -> None:
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -282,6 +341,86 @@ def test_python_claude_agent_sdk_preserves_remote_mcp_result_meta() -> None:
 
     assert len(user_messages) == 1
     _assert_fidelity(user_messages[0].tool_use_result, _ModelHandler.requests)
+
+
+def test_python_claude_cli_executes_permission_checked_builtin_write(
+    tmp_path: Path,
+) -> None:
+    _BuiltinWriteModelHandler.requests = []
+    sandbox = JobSandboxManager(tmp_path / "sandboxes").create("job-runtime-write")
+    permission_calls: list[str] = []
+
+    async def can_use_tool(
+        tool_name: str,
+        tool_input: dict[str, Any],
+        _context: Any,
+    ) -> PermissionResultAllow:
+        permission_calls.append(tool_name)
+        return PermissionResultAllow(
+            updated_input=sandbox.authorize_tool(tool_name, tool_input)
+        )
+
+    with _LocalHttpServer(_BuiltinWriteModelHandler) as model:
+
+        async def collect() -> None:
+            async for _message in query(
+                prompt=_streaming_user_prompt("Create the requested TXT output."),
+                options=ClaudeAgentOptions(
+                    model="contract-model",
+                    max_turns=2,
+                    permission_mode="default",
+                    tools=["Read", "Glob", "Grep", "Edit", "Write"],
+                    allowed_tools=[],
+                    disallowed_tools=[
+                        "Bash",
+                        "WebFetch",
+                        "WebSearch",
+                        "NotebookEdit",
+                        "Shell",
+                    ],
+                    can_use_tool=can_use_tool,
+                    mcp_servers={
+                        "files": create_sdk_mcp_server(
+                            name="runtime-write-probe",
+                            version="1.0.0",
+                            tools=[],
+                        )
+                    },
+                    cwd=sandbox.path,
+                    setting_sources=[],
+                    skills=[],
+                    env={
+                        "ANTHROPIC_BASE_URL": model.url,
+                        "ANTHROPIC_API_KEY": "contract-test-key",
+                        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+                    },
+                ),
+            ):
+                pass
+
+        asyncio.run(collect())
+
+    model_tools = {
+        str(tool.get("name"))
+        for request in _BuiltinWriteModelHandler.requests
+        for tool in request.get("tools", [])
+        if isinstance(tool, dict)
+    }
+    assert {"Read", "Glob", "Grep", "Edit", "Write"} <= model_tools
+    tool_results = [
+        block
+        for request in _BuiltinWriteModelHandler.requests
+        for message in request.get("messages", [])
+        if isinstance(message, dict) and message.get("role") == "user"
+        for block in message.get("content", [])
+        if isinstance(block, dict) and block.get("type") == "tool_result"
+    ]
+    assert permission_calls == ["Write"], tool_results
+    output = sandbox.path / "outputs/runtime-write.txt"
+    assert output.exists(), tool_results
+    assert output.read_text(encoding="utf-8") == (
+        "written by the real Claude CLI"
+    )
 
 
 def test_typescript_claude_agent_sdk_preserves_remote_mcp_result_meta() -> None:

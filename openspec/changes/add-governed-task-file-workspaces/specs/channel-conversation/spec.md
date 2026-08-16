@@ -27,6 +27,19 @@ Channel ingress SHALL 把没有非空文字的受支持 `.txt` 消息作为附�
 - **WHEN** 任务工作区到期但关联消息附件仍在360天保留期内
 - **THEN** 系统删除工作区临时内容并保留消息附件及其消息来源关系
 
+### Requirement: Stream 入站冻结同会话文件交付事实
+钉钉 Stream 入站在普通回复使用 `sessionWebhook` 时，MUST 同时从受信回调冻结会话类型、来源 Stream Connector、`robotCode`，并按私聊冻结实际 `senderStaffId`、按群聊冻结 `openConversationId`，供同一 Job 的精确文件版本交付使用。文件交付不得从模型参数获取这些事实，也不得因为复用来源应用凭据而把 Stream Connector 开放为通用 Delivery Connector。
+
+#### Scenario: 私聊生成文件
+- **WHEN** 私聊 Stream 消息触发的 Job 成功提交一个新 TXT
+- **THEN** 文件 Delivery 使用冻结的实际发送人和来源 Stream 应用调用私聊机器人文件消息接口
+- **AND** 普通文字最终回复仍使用原 `sessionWebhook`
+
+#### Scenario: 群聊生成文件
+- **WHEN** 群聊 Stream 消息触发的 Job 成功提交一个新 TXT
+- **THEN** 文件 Delivery 使用冻结的 `openConversationId`、`robotCode` 和来源 Stream 应用调用群机器人文件消息接口
+- **AND** 不把文件发送到默认群或其它 Connector
+
 ### Requirement: 群聊工作区使用实际发送人和群会话双边界
 钉钉群聊的任务工作区 MUST 使用受信企业、Connector 和规范化 conversation ID 作为共享会话边界，并在每条消息创建 Job 前使用实际 `senderStaffId` 解析内部用户和业务应用访问。群成员可共同编辑同群工作区文件，但系统 MUST NOT 保存群成员清单、复制钉钉逐成员 ACL、共享个人外部凭据或允许跨群文件访问。
 

@@ -172,11 +172,27 @@ class DingTalkFileDeliverySender:
             or self.connector_registry.metadata_value(connector, "file_upload_url")
             or "https://oapi.dingtalk.com/media/upload"
         )
-        send_url = (
-            self.connector_registry.resolve_metadata_reference(connector, "send_url_ref")
-            or self.connector_registry.metadata_value(connector, "send_url")
-            or "https://api.dingtalk.com/v1.0/robot/groupMessages/send"
-        )
+        conversation_type = str(route.target.get("conversation_type") or "")
+        if conversation_type not in {"direct", "group"}:
+            raise NonRetryableExecutionError(
+                "DingTalk File Delivery conversation type is missing",
+                safe_message="钉钉文件交付会话类型无效",
+                error_code="file_delivery_target_invalid",
+            )
+        if conversation_type == "direct":
+            send_url = (
+                self.connector_registry.resolve_metadata_reference(
+                    connector, "direct_send_url_ref"
+                )
+                or self.connector_registry.metadata_value(connector, "direct_send_url")
+                or "https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend"
+            )
+        else:
+            send_url = (
+                self.connector_registry.resolve_metadata_reference(connector, "send_url_ref")
+                or self.connector_registry.metadata_value(connector, "send_url")
+                or "https://api.dingtalk.com/v1.0/robot/groupMessages/send"
+            )
         self.connector_registry.assert_host_allowed(connector, upload_url)
         self.connector_registry.assert_host_allowed(connector, send_url)
         token_client = DingTalkAccessTokenClient(
@@ -202,24 +218,34 @@ class DingTalkFileDeliverySender:
         robot_code = str(
             route.target.get("robot_code")
             or self.connector_registry.metadata_value(connector, "default_robot_code")
+            or client_id
         )
-        if not open_conversation_id or not robot_code:
+        recipient_user_id = str(route.target.get("recipient_user_id") or "")
+        if (
+            not robot_code
+            or (conversation_type == "group" and not open_conversation_id)
+            or (conversation_type == "direct" and not recipient_user_id)
+        ):
             raise NonRetryableExecutionError(
                 "DingTalk File Delivery target is incomplete",
                 safe_message="钉钉文件交付目标未配置",
                 error_code="file_delivery_target_invalid",
             )
+        payload: dict[str, object] = {
+            "robotCode": robot_code,
+            "msgKey": "sampleFile",
+            "msgParam": json.dumps(
+                {"mediaId": media_id, "fileName": content.display_name},
+                ensure_ascii=False,
+            ),
+        }
+        if conversation_type == "group":
+            payload["openConversationId"] = open_conversation_id
+        else:
+            payload["userIds"] = [recipient_user_id]
         response = self.transport.post_json(
             send_url,
-            {
-                "robotCode": robot_code,
-                "openConversationId": open_conversation_id,
-                "msgKey": "sampleFile",
-                "msgParam": json.dumps(
-                    {"mediaId": media_id, "fileName": content.display_name},
-                    ensure_ascii=False,
-                ),
-            },
+            payload,
             {
                 "x-acs-dingtalk-access-token": token,
                 "x-acs-dingtalk-request-id": idempotency_key,

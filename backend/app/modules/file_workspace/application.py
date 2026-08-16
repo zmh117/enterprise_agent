@@ -70,6 +70,14 @@ class FileWorkspaceApplicationService:
                 self._deny("file_streaming_not_ready", "文件流式操作尚未就绪")
             assert self.streaming is not None
             return self.streaming.prepare_commit(context=context, arguments=arguments)
+        if tool_identifier == "file_deliver_version":
+            if self.streaming is None:
+                self._deny("file_streaming_not_ready", "文件流式操作尚未就绪")
+            assert self.streaming is not None
+            return self.streaming.deliver_version(
+                context=context,
+                arguments=arguments,
+            )
         self._deny("file_tool_not_ready", "文件操作尚未就绪")
 
     def _workspace(self, context: FileAuthorizationContext) -> dict[str, Any]:

@@ -103,6 +103,15 @@ class ConnectorRegistry:
             )
         return connector
 
+    def require_dingtalk_stream_file_delivery(self, connector_id: str) -> Connector:
+        """Resolve the originating Stream app for exact same-conversation files.
+
+        This does not turn a Stream connector into a general Delivery
+        connector. The caller must already hold a frozen FILE_VERSION
+        Delivery bound to the originating Job and reply route.
+        """
+        return self.require_dingtalk_stream_ingress(connector_id)
+
     def resolve_secret(self, connector: Connector) -> str:
         return self.resolve_reference(connector.secret_ref)
 

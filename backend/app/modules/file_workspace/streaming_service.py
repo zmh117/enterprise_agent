@@ -37,7 +37,7 @@ from app.modules.file_workspace.repository import FileWorkspaceRepository
 from app.modules.file_workspace.lifecycle_service import FileLifecycleService
 from app.modules.file_workspace.storage import InternalStoredObject
 from app.modules.file_workspace.txt_validation import TxtStreamValidator
-from app.shared.exceptions import NonRetryableExecutionError
+from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
 
 
 TRANSFER_TTL = timedelta(minutes=5)
@@ -76,7 +76,7 @@ class FileDeliveryIntentPort(Protocol):
         file_id: str,
         version_id: str,
         display_name: str,
-    ) -> str: ...
+    ) -> dict[str, str]: ...
 
 
 def _utc_now() -> datetime:
@@ -236,6 +236,69 @@ class GovernedFileStreamingService:
                 }
             },
         }
+
+    def deliver_version(
+        self,
+        *,
+        context: FileAuthorizationContext,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        if self.delivery_intents is None:
+            self._deny("file_delivery_not_ready", "文件交付尚未就绪")
+        assert self.delivery_intents is not None
+        file_id = str(arguments["file_id"])
+        version_id = str(arguments["version_id"])
+        display_name = self._require_deliverable_version(
+            context=context,
+            file_id=file_id,
+            version_id=version_id,
+        )
+        receipt = self.delivery_intents.enqueue(
+            job_id=str(context.claims["job_id"]),
+            file_id=file_id,
+            version_id=version_id,
+            display_name=display_name,
+        )
+        return {
+            "delivery_id": str(receipt["delivery_id"]),
+            "file_id": file_id,
+            "version_id": version_id,
+            "delivery_status": str(receipt["status"]),
+        }
+
+    def _require_deliverable_version(
+        self,
+        *,
+        context: FileAuthorizationContext,
+        file_id: str,
+        version_id: str,
+    ) -> str:
+        try:
+            item = self.authorization.require_manifest_action(
+                context,
+                file_id=file_id,
+                version_id=version_id,
+                action=FileAction.DELIVER,
+            )
+            return str(item.get("display_name") or "result.txt")
+        except PermissionDenied as manifest_denial:
+            committed = self.repository.database.execute_one(
+                """
+                select display_name
+                  from file_commit_intent
+                 where job_id = ? and workspace_id = ?
+                   and status = 'COMMITTED' and result_version_id = ?
+                """,
+                (context.claims["job_id"], context.workspace["id"], version_id),
+            )
+            if committed is None:
+                raise manifest_denial
+        version = self.repository.require_content_available(version_id)
+        if str(version["file_id"]) != file_id or str(version["status"]) != "AVAILABLE":
+            self._deny("file_delivery_version_invalid", "文件交付版本无效")
+        file_row = self.repository.get_file(file_id)
+        self._require_owner_boundary(file_row, context.workspace)
+        return str(committed["display_name"])
 
     def _default_delivery_enabled(self, job_id: str) -> bool:
         row = (

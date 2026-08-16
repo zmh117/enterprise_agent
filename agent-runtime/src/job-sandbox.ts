@@ -74,8 +74,8 @@ export class JobSandbox {
     const pathField = directoryTool ? "path" : "file_path";
     const rawPath = input[pathField] ?? (directoryTool ? "." : "");
     const relativePath = toolName === "Glob"
-      ? safeDirectoryPath(rawPath)
-      : safeRelativePath(rawPath, toolName === "Grep");
+      ? safeDirectoryPath(rawPath, this.path)
+      : safeRelativePath(rawPath, toolName === "Grep", this.path);
     const target = resolveSandboxPath(this.path, relativePath, directoryTool);
     await rejectSymlinks(this.path, target);
     const current = await optionalStat(target);
@@ -217,7 +217,8 @@ function assertIdentifier(value: string): void {
   if (!IDENTIFIER.test(value)) deny("sandbox_job_id_invalid", "Job id is invalid");
 }
 
-function safeRelativePath(value: unknown, allowRoot: boolean): string {
+function safeRelativePath(value: unknown, allowRoot: boolean, rootValue: string): string {
+  value = sdkRelativePath(value, allowRoot, rootValue);
   if (typeof value !== "string" || value.length < 1 || value.length > 240 || value.includes("\\") || value.includes("\0")) {
     deny("sandbox_path_invalid", "sandbox path is invalid");
   }
@@ -234,7 +235,8 @@ function safeRelativePath(value: unknown, allowRoot: boolean): string {
   return value;
 }
 
-function safeDirectoryPath(value: unknown): string {
+function safeDirectoryPath(value: unknown, rootValue: string): string {
+  value = sdkRelativePath(value, true, rootValue);
   if (typeof value !== "string" || value.length < 1 || value.length > 240 || value.includes("\\") || value.includes("\0")) {
     deny("sandbox_path_invalid", "sandbox path is invalid");
   }
@@ -246,6 +248,32 @@ function safeDirectoryPath(value: unknown): string {
     !TOP_LEVEL.has(value.split("/")[0] ?? "")
   ) deny("sandbox_path_invalid", "sandbox path escaped its Job boundary");
   return value;
+}
+
+function sdkRelativePath(
+  value: unknown,
+  allowRoot: boolean,
+  rootValue: string
+): unknown {
+  if (typeof value !== "string" || !posix.isAbsolute(value)) return value;
+  if (
+    value.length < 1 ||
+    value.length > 4096 ||
+    value.includes("\\") ||
+    value.includes("\0") ||
+    posix.normalize(value) !== value ||
+    value.split("/").some((part) => part === "." || part === "..")
+  ) deny("sandbox_path_invalid", "sandbox path is invalid");
+  const root = resolve(rootValue).split(sep).join("/");
+  const relativePath = posix.relative(root, value);
+  if (relativePath === "") {
+    if (allowRoot) return ".";
+    deny("sandbox_path_invalid", "sandbox path escaped its Job boundary");
+  }
+  if (posix.isAbsolute(relativePath) || relativePath === ".." || relativePath.startsWith("../")) {
+    deny("sandbox_path_invalid", "sandbox path escaped its Job boundary");
+  }
+  return relativePath;
 }
 
 function authorizeGlobPattern(value: unknown): void {

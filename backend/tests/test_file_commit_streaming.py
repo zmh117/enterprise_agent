@@ -30,7 +30,7 @@ from app.modules.file_workspace.streaming_service import (
     GovernedFileStreamingService,
 )
 from app.modules.file_workspace.workspace_service import TaskWorkspaceService
-from app.shared.exceptions import NonRetryableExecutionError
+from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
 from backend.tests.test_file_workspace_repository import EXPIRES_AT, TIMESTAMP, _database
 
 
@@ -108,8 +108,14 @@ class _Authorization:
             """,
             (context.manifest["id"], file_id, version_id),
         )
-        assert row is not None
-        assert action.value in json.loads(str(row["allowed_actions_json"]))
+        if row is None or action.value not in json.loads(
+            str(row.get("allowed_actions_json") or "[]")
+        ):
+            raise PermissionDenied(
+                "File manifest action denied",
+                safe_message="当前任务无权访问该文件",
+                error_code="file_manifest_item_denied",
+            )
         return row
 
 

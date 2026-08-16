@@ -157,6 +157,9 @@ class DeliveryOutboxDispatcher:
 
         self._require_delivery_authorization(job, event, artifact)
         connector = None
+        file_version_delivery = (
+            str(event.delivery_binding.get("delivery_kind") or "") == "file_version"
+        )
         if route.connector_id:
             connector = self.delivery_service.connector_registry.require_delivery(
                 route.connector_id
@@ -178,7 +181,29 @@ class DeliveryOutboxDispatcher:
                     "connector_id": route.connector_id,
                 },
             )
-        if str(event.delivery_binding.get("delivery_kind") or "") == "file_version":
+        elif file_version_delivery and route.type == "dingtalk_stream_session_webhook":
+            connector = (
+                self.delivery_service.connector_registry
+                .require_dingtalk_stream_file_delivery(
+                    str(getattr(job, "source_connector_id", "") or "")
+                )
+            )
+            self.audit_service.record(
+                "delivery.connector_authorized",
+                status="SUCCEEDED",
+                summary=(
+                    "Originating DingTalk Stream connector authorized for exact file delivery"
+                ),
+                job_id=event.job_id,
+                actor_id=self.worker_id,
+                payload={
+                    "delivery_id": event.id,
+                    "route_type": route.type,
+                    "connector_id": connector.id,
+                    "connector_use": "same_conversation_file_version",
+                },
+            )
+        if file_version_delivery:
             return self._dispatch_file_version(
                 event=event,
                 attempt_id=attempt_id,

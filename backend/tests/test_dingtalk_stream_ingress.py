@@ -102,6 +102,10 @@ class DingTalkStreamIngressTests(unittest.TestCase):
             "https://oapi.dingtalk.com/robot/sendBySession",
             job.reply_route["target"]["session_webhook"],
         )
+        self.assertEqual("direct", job.reply_route["target"]["conversation_type"])
+        self.assertEqual("open-cid-1", job.reply_route["target"]["open_conversation_id"])
+        self.assertEqual("robot-code-1", job.reply_route["target"]["robot_code"])
+        self.assertEqual("local-user", job.reply_route["target"]["recipient_user_id"])
         self.assertNotIn("at_user_ids", job.reply_route["target"])
 
     def test_rich_text_stream_message_creates_job_with_ordered_text(self) -> None:

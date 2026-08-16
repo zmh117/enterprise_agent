@@ -62,6 +62,10 @@ Agent Worker MUST 将有界且无正文的Job File Manifest投影交给Runtime�
 ### Requirement: 钉钉文件结果按精确版本创建独立交付
 钉钉用户明确要求修改或生成文件时，成功提交的精确File Version SHALL 默认创建回当前reply route的文件交付意图，用户明确要求只保存到工作区时除外。第一阶段交付 MUST 创建新的钉盘文件并记录新外部引用、精确Version ID和输入来源血缘，不得覆盖输入原件、交付冲突候选或跨会话发送。
 
+当原 reply route 为钉钉 Stream `sessionWebhook` 时，普通文字回复 SHALL 继续使用该 Webhook；精确文件版本交付 MUST 使用入站冻结的会话类型和来源 Stream Connector应用凭据调用钉钉机器人OpenAPI，私聊目标为冻结的实际发送人，群聊目标为冻结的`openConversationId`。该专用途径 MUST 只处理与原Job、原会话、原Connector绑定的`FILE_VERSION` Delivery，不得授予Stream Connector通用结果投递能力。
+
+`file_deliver_version` SHALL 接受当前Manifest中具有`DELIVER`动作的精确版本，或当前RUNNING Job自身`COMMITTED`提交意图产生的精确版本。对后者，File Service MUST 复核Commit、Job、Workspace、Version、文件归属和内容可用性；不得要求把新输出补写进不可变输入Manifest，也不得仅凭模型提供的File/Version ID授权。
+
 #### Scenario: 群聊生成TXT结果
 - **WHEN** 群聊Job按用户请求成功提交一个新TXT版本
 - **THEN** 系统为当前群reply route创建该精确版本的新钉盘文件交付
@@ -70,6 +74,16 @@ Agent Worker MUST 将有界且无正文的Job File Manifest投影交给Runtime�
 #### Scenario: 用户要求只保存
 - **WHEN** 用户明确要求结果只保存在任务工作区
 - **THEN** 系统提交版本但不创建文件交付意图
+
+#### Scenario: 私聊 Stream 文件与文字使用不同受控通道
+- **WHEN** 私聊 Job 正常回复文字并成功提交默认交付的新 TXT 版本
+- **THEN** 文字结果通过冻结的 `sessionWebhook` 发送
+- **AND** 文件版本通过来源 Stream 应用的私聊机器人 OpenAPI发送给冻结的实际发送人
+
+#### Scenario: 当前Job显式交付刚提交的新版本
+- **WHEN** Agent对当前Job刚成功提交且不在输入Manifest中的精确版本调用`file_deliver_version`
+- **THEN** File Service以提交意图来源证明授权并幂等返回同一Delivery状态
+- **AND** 不返回“文件操作尚未就绪”或扩大Manifest
 
 ### Requirement: 文件版本提交与文件交付使用独立状态机
 文件版本通过校验并提交后 MUST 保持当前版本，即使随后钉钉文件交付失败。Delivery重试 MUST 固定同一个File Version和交付意图，不得重跑Agent、生成另一份内容、回滚版本或改变已`SUCCEEDED`的Job。工作区到期时存在非终态交付 SHALL 只暂缓该精确内容清理；成功交付使该版本成为Retained File，最终失败后若工作区已到期则立即清理临时内容。
@@ -107,6 +121,8 @@ Agent Worker MUST 将有界且无正文的Job File Manifest投影交给Runtime�
 ### Requirement: Built-in mutating tools are disabled
 系统 SHALL 继续禁止SDK的Bash、NotebookEdit、WebFetch、WebSearch、Shell、部署、数据库写入和其它开放执行工具。只有启用任务文件工作区且Job冻结精确File MCP Tool时，Runtime MAY向Claude Code开放`Read`、`Glob`、`Grep`、`Write`和`Edit`，并 MUST 把目标限制到当前Job Sandbox、拒绝路径穿越与符号链接逃逸。`Glob`只能使用沙盒内相对TXT pattern，且必须拒绝绝对路径、`..`、符号链接、非TXT pattern和未知字段。文件系统修改只改变本地副本，必须经File Service显式提交才能形成文件版本。
 
+模型可见路径和模型提交的路径 MUST 保持为安全相对路径。若Claude Code CLI在进入`canUseTool`前把该相对路径解析为基于`cwd`的绝对路径，Runtime MAY 只在该绝对路径词法上属于本次随机Job Sandbox根、规范化后仍位于允许顶层且通过符号链接与常规文件检查时，把它还原为相对路径继续授权；沙盒外绝对路径、相邻前缀路径和模型可见绝对路径能力 MUST 继续拒绝。
+
 #### Scenario: Model attempts Bash or Web tool
 - **WHEN** SDK尝试调用Bash、WebFetch、WebSearch或NotebookEdit
 - **THEN** 该工具不可用或调用被拒绝
@@ -115,6 +131,11 @@ Agent Worker MUST 将有界且无正文的Job File Manifest投影交给Runtime�
 - **WHEN** 已授权文件Job调用`Write`或`Edit`且规范化目标位于当前Job Sandbox
 - **THEN** Runtime允许本地文件操作并保留有界工具结果
 - **AND** 不直接写MinIO或创建文件版本
+
+#### Scenario: SDK在权限回调前解析相对路径
+- **WHEN** 模型调用`Write`使用安全相对TXT路径且Claude Code CLI向`canUseTool`提供基于当前`cwd`解析的绝对路径
+- **THEN** Runtime验证该路径精确属于本次Job Sandbox并将其还原为允许顶层下的相对路径后批准
+- **AND** 真实CLI测试证明`canUseTool`被调用且文件实际写入本次沙盒
 
 #### Scenario: Model edits outside the Job Sandbox
 - **WHEN** `Write`或`Edit`目标离开当前Job Sandbox或Job未冻结文件工具

@@ -55,6 +55,29 @@ def test_python_job_sandbox_maps_job_and_cleans_every_terminal_path(tmp_path: Pa
     assert sandbox.authorize_tool(
         "Glob", {"pattern": "**/*.txt", "path": "."}
     ) == {"pattern": "**/*.txt", "path": "."}
+    assert sandbox.authorize_tool(
+        "Write",
+        {
+            "file_path": str(sandbox.path / "outputs/sdk-normalized.txt"),
+            "content": "normalized",
+        },
+    ) == {"file_path": "outputs/sdk-normalized.txt", "content": "normalized"}
+    assert sandbox.authorize_tool(
+        "Edit",
+        {
+            "file_path": str(sandbox.path / "work/sdk-normalized.txt"),
+            "old_string": "before",
+            "new_string": "after",
+        },
+    ) == {
+        "file_path": "work/sdk-normalized.txt",
+        "old_string": "before",
+        "new_string": "after",
+    }
+    assert sandbox.authorize_tool(
+        "Glob",
+        {"pattern": "**/*.txt", "path": str(sandbox.path)},
+    ) == {"pattern": "**/*.txt", "path": "."}
 
     sandbox.cleanup()
     assert not sandbox.path.exists()
@@ -65,6 +88,11 @@ def test_python_job_sandbox_maps_job_and_cleans_every_terminal_path(tmp_path: Pa
     [
         ("Bash", {"command": "pwd"}, "sandbox_tool_denied"),
         ("Read", {"file_path": "/etc/passwd"}, "sandbox_path_invalid"),
+        (
+            "Write",
+            {"file_path": "/tmp/other-sandbox/output.txt", "content": "x"},
+            "sandbox_path_invalid",
+        ),
         ("Read", {"file_path": "../escape.txt"}, "sandbox_path_invalid"),
         ("Read", {"file_path": "inputs/file.pdf"}, "sandbox_file_type_denied"),
         (

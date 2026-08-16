@@ -213,6 +213,8 @@ Agent 通过 Runtime 代码注册的本地 File MCP bridge 请求物化。该 br
 
 Runtime 仅在 Job 同时绑定有效 Task Workspace 且其不可变 Tool Snapshot 至少冻结一个 `file-service` Tool 时，把上述五个内建工具写入 Claude SDK 的 `tools` 可用集合。`allowedTools`/`allowed_tools` 必须保持为空，Claude SDK permission mode使用会把未预批准调用交给`canUseTool`的`default`模式，五个工具和所有 MCP Tool 均逐次经过deny-by-default回调；不得使用会在空自动批准集合下先行拒绝且跳过回调的`dontAsk`，也不得把“工具可见”误实现为“免校验自动批准”。`Glob` 只允许在当前沙盒的固定顶层目录中使用受限相对 TXT pattern，拒绝绝对路径、`..`、符号链接、非 TXT pattern 和未知字段。
 
+Claude Code CLI 会在模型提交相对路径后、调用 `canUseTool` 前把内建文件工具的目标解析为基于 `cwd` 的绝对路径。Runtime 路径守卫因此必须把“模型输入契约”和“SDK 回调输入”分开处理：模型及系统上下文仍只获得相对路径；回调只接受词法上位于本次随机 Job Sandbox 根内的 SDK 解析绝对路径，重新规范化为允许顶层下的相对路径后再批准。任一沙盒外绝对路径、相邻前缀目录、`.`/`..`、符号链接或特殊文件仍在副作用前拒绝。真实 CLI 回归测试必须驱动 `Write` 权限请求并验证文件确实落在当前沙盒，不能只手工调用路径守卫。
+
 继续拒绝 `Bash`、`Shell`、`NotebookEdit`、`WebFetch`、`WebSearch`、任意 MCP、任意 URL 和沙盒外路径。容器根文件系统保持只读；仅挂载 Job 专属可写 tmpfs。沙盒容量必须配置为足以容纳最多 100 MiB 未保留工作区内容及提交暂存开销，并通过磁盘配额和进程级限制强制，而不是依靠提示词。
 
 Agent 只提交显式标记的输出，不自动扫描并提交沙盒全部改动。Runtime 仅为文件 Job 代码注册 `select_sandbox_output`：它只接受当前沙盒下的安全相对 TXT 路径，校验常规文件、符号链接、大小和 UTF-8 后生成不透明 sandbox entry handle，不读取正文到模型上下文。物化输入已有由 Runtime 登记的 handle，不需要再次选择。File MCP 提交工具只接受该逻辑 handle；Runtime bridge 在远端提交意图返回模型前，将 handle 映射为已验证的精确本地文件并流式上传。远端 File Service 不接受模型提供的绝对路径。
@@ -255,6 +257,10 @@ Agent 只提交显式标记的输出，不自动扫描并提交沙盒全部改�
 ### 12. 钉钉交付复用现有 Delivery 状态机并固定精确版本
 
 钉钉会话中的修改或生成请求，默认将每个成功提交的精确 `version_id` 作为新钉钉文件交付到同一会话；不覆盖输入文件。
+
+Stream 入站的普通文字回复继续优先使用短时 `sessionWebhook`，但文件消息不得假设该文字 Webhook 具备文件上传能力。入站必须把受信的会话类型、私聊实际发送人、群 `openConversationId`、`robotCode` 和来源 Stream Connector 一并冻结。`FILE_VERSION` Delivery 可在严格绑定原 Job、原会话和精确版本后，专用复用来源 Stream 应用凭据调用钉钉机器人 OpenAPI：私聊使用 `oToMessages/batchSend`，群聊使用 `groupMessages/send`；这不得把 Stream Connector 扩大成通用 Delivery Connector，也不得改变普通文字的 sessionWebhook 路由。
+
+`file_deliver_version` 可交付 Manifest 中具有 `DELIVER` 动作的精确版本，也可交付由当前 RUNNING Job 自己成功提交的精确版本。后者必须通过 `file_commit_intent.job_id/workspace_id/result_version_id`、文件归属与内容可用性证明，不得把新版本补写进不可变输入 Manifest或允许任意工作区文件越层。
 
 File Service 仅提供受控的版本读取能力，现有 Delivery Worker 负责渠道发送。Outbox/Delivery 记录必须冻结：
 
