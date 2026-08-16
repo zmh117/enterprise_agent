@@ -28,6 +28,7 @@ from app.modules.job.domain.agent_job import AgentJob, AgentSession
 from app.modules.mcp_tool_runtime.job_snapshot import (
     JobMcpToolSnapshotService,
 )
+from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.modules.job.domain.execution_policy import EffectiveExecutionPolicyResolver
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.repositories import AgentRepository
@@ -766,6 +767,10 @@ class CreateAgentJobService:
             )
             mcp_tool_snapshot: dict[str, Any] = {}
             if command.business_application_id and self.mcp_tool_snapshot_service is not None:
+                file_server_enabled_for_job = bool(
+                    file_workspace is not None
+                    and command.task_file_features.get("file_mcp_enabled")
+                )
                 mcp_tool_snapshot = self.mcp_tool_snapshot_service.freeze(
                     job_id=job.id,
                     requester_id=requester_id,
@@ -778,8 +783,12 @@ class CreateAgentJobService:
                     runtime_authorization=runtime_authorization_snapshot,
                     allowed_server_codes=(
                         None
-                        if bool(command.task_file_features.get("file_mcp_enabled"))
-                        else frozenset(server_code for server_code in {"tool-mcp", "ones-mcp"})
+                        if file_server_enabled_for_job
+                        else frozenset(
+                            definition.server_code
+                            for definition in MCP_TOOL_MANIFEST.values()
+                            if definition.server_code != "file-service"
+                        )
                     ),
                 )
             elif agent_publication_id and self.mcp_tool_snapshot_service is not None:

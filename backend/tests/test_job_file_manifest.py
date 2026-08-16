@@ -14,7 +14,10 @@ from app.modules.file_workspace.domain import (
     WorkspaceFileRole,
     WorkspaceOwnerType,
 )
-from app.modules.file_workspace.manifest_service import JobFileManifestService
+from app.modules.file_workspace.manifest_service import (
+    JobFileManifestService,
+    is_explicit_txt_output_request,
+)
 from app.modules.file_workspace.repository import FileWorkspaceRepository
 from app.modules.file_workspace.workspace_service import TaskWorkspaceService
 from app.shared.exceptions import NonRetryableExecutionError
@@ -24,6 +27,31 @@ from backend.tests.test_file_workspace_repository import TIMESTAMP, _database
 def _service() -> tuple[FileWorkspaceRepository, JobFileManifestService]:
     repository = FileWorkspaceRepository(_database())
     return repository, JobFileManifestService(repository, TaskWorkspaceService(repository))
+
+
+@pytest.mark.parametrize(
+    "message",
+    (
+        "画一个天安门的txt文件",
+        "请绘制字符画并保存为 天安门.txt",
+        "制作一个 TXT 文档给我",
+        "export the result as a txt file",
+    ),
+)
+def test_explicit_txt_output_request_recognizes_generation_phrases(message: str) -> None:
+    assert is_explicit_txt_output_request(message) is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    (
+        "解释一下 TXT 文件格式",
+        "分析这个文本文件",
+        "普通文字问题",
+    ),
+)
+def test_explicit_txt_output_request_rejects_non_output_questions(message: str) -> None:
+    assert is_explicit_txt_output_request(message) is False
 
 
 def _insert_job(

@@ -105,6 +105,19 @@ class _InProcessAttachmentImporter:
         )
 
 
+class _RecordingMcpSnapshotService:
+    def __init__(self, delegate: Any) -> None:
+        self.delegate = delegate
+        self.allowed_server_codes: frozenset[str] | None = None
+
+    def freeze(self, **kwargs: Any) -> dict[str, Any]:
+        self.allowed_server_codes = kwargs.get("allowed_server_codes")
+        return self.delegate.freeze(**kwargs)
+
+    def verify(self, job_id: str) -> dict[str, Any]:
+        return self.delegate.verify(job_id)
+
+
 class _StreamingPort:
     def __init__(self, service: GovernedFileStreamingService) -> None:
         self.service = service
@@ -175,6 +188,65 @@ def _enable_in_process_attachment_import(
     runtime.attachment_service.importer = _InProcessAttachmentImporter(streaming)
     runtime.attachment_service.storage = None
     return file_repository, storage
+
+
+def test_unsupported_picture_then_plain_text_does_not_freeze_file_mcp_tools() -> None:
+    runtime = multimodal_container(task_file_features=FEATURES)
+    snapshot_service = _RecordingMcpSnapshotService(runtime.mcp_tool_snapshot_service)
+    runtime.create_agent_job_service.mcp_tool_snapshot_service = snapshot_service
+
+    picture = load_fixture("picture.json")
+    picture["msgId"] = "unsupported-picture-before-plain-text"
+    rejected = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=picture,
+        correlation_id="unsupported-picture-before-plain-text",
+    )
+    assert rejected.accepted is False
+    assert rejected.error_code == "file_workspace_type_unsupported"
+
+    payload = load_fixture("direct_text.json")
+    payload["msgId"] = "plain-text-with-file-enabled-publication"
+    payload["text"] = {"content": "只回答这个普通文字问题"}
+
+    accepted = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=payload,
+        correlation_id="plain-text-without-workspace",
+    )
+
+    job = runtime.agent_repository.get_job(accepted.job_id)
+    assert job.task_workspace_id == ""
+    assert job.business_application_route_decision["task_file_features"][
+        "file_mcp_enabled"
+    ] is True
+    assert snapshot_service.allowed_server_codes is not None
+    assert "file-service" not in snapshot_service.allowed_server_codes
+    frozen = snapshot_service.verify(job.id)
+    server_codes = {
+        str(item["server_code"])
+        for item in frozen["snapshot"]["tools"]
+    }
+    assert "file-service" not in server_codes
+
+
+def test_draw_txt_request_creates_workspace_and_freezes_file_tools() -> None:
+    runtime = multimodal_container(task_file_features=FEATURES)
+    snapshot_service = _RecordingMcpSnapshotService(runtime.mcp_tool_snapshot_service)
+    runtime.create_agent_job_service.mcp_tool_snapshot_service = snapshot_service
+    payload = load_fixture("direct_text.json")
+    payload["msgId"] = "draw-txt-output-request"
+    payload["text"] = {"content": "画一个天安门的txt文件"}
+
+    accepted = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=payload,
+        correlation_id="draw-txt-output-request",
+    )
+
+    job = runtime.agent_repository.get_job(accepted.job_id)
+    assert job.task_workspace_id
+    assert snapshot_service.allowed_server_codes is None
+    manifest = FileWorkspaceRepository(runtime.database).get_job_snapshot(job.id)
+    assert manifest is not None
+    assert manifest["items"] == []
 
 
 def test_synthetic_private_txt_crosses_channel_file_worker_sandbox_commit_and_delivery(

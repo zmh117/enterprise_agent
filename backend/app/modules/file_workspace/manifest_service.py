@@ -34,6 +34,31 @@ CONFLICT_ACTIONS = (
     FileAction.EDIT,
     FileAction.COMMIT,
 )
+TXT_OUTPUT_FORMAT_MARKERS = ("txt", "文本文件", "文本文档")
+TXT_OUTPUT_ACTION_MARKERS = (
+    "生成",
+    "创建",
+    "新建",
+    "修改",
+    "编辑",
+    "保存",
+    "写入",
+    "制作",
+    "绘制",
+    "画",
+    "输出",
+    "导出",
+    "做",
+    "generate",
+    "create",
+    "edit",
+    "save",
+    "write",
+    "make",
+    "draw",
+    "render",
+    "export",
+)
 
 
 def is_task_txt_name(value: str) -> bool:
@@ -43,26 +68,10 @@ def is_task_txt_name(value: str) -> bool:
 def is_explicit_txt_output_request(message: str) -> bool:
     """Conservative first-phase signal; callers can pass an explicit flag."""
 
-    normalized = " ".join(message.lower().split())
-    if ".txt" not in normalized and "txt文件" not in normalized and "文本文件" not in normalized:
+    normalized = "".join(message.lower().split())
+    if not any(marker in normalized for marker in TXT_OUTPUT_FORMAT_MARKERS):
         return False
-    return any(
-        token in normalized
-        for token in (
-            "生成",
-            "创建",
-            "新建",
-            "修改",
-            "编辑",
-            "保存",
-            "写入",
-            "generate",
-            "create",
-            "edit",
-            "save",
-            "write",
-        )
-    )
+    return any(marker in normalized for marker in TXT_OUTPUT_ACTION_MARKERS)
 
 
 class JobFileManifestService:

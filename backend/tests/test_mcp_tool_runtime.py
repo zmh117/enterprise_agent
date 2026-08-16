@@ -456,6 +456,40 @@ def test_file_job_context_exposes_frozen_file_tools_and_sandbox_instructions() -
     assert "generic created_at" in restrictions
 
 
+def test_context_filters_stale_file_tools_when_job_has_no_workspace() -> None:
+    registry = _NoPrefetchToolRegistry(
+        ["get_schema_directory", "file_prepare_materialization"]
+    )
+    builder = AgentContextBuilder(
+        tool_registry=registry,  # type: ignore[arg-type]
+        skill_loader=_SkillLoader(),  # type: ignore[arg-type]
+        agent_config_service=_AgentConfigService("typescript-v1"),  # type: ignore[arg-type]
+    )
+    job = SimpleNamespace(
+        id="job-stale-file-snapshot-without-workspace",
+        execution_policy=_EXECUTION_POLICY,
+        input_message="普通文字问题",
+        input_message_state="available",
+        project_code="default",
+        agent_publication_id="agent-publication-1",
+        agent_revision=1,
+        agent_config_hash="agent-config-hash",
+        agent_runtime_kind="typescript-v1",
+        agent_runtime_protocol_version="1.2",
+        business_application_publication_id="application-publication-1",
+        task_workspace_id="",
+    )
+
+    context = builder.build(job)  # type: ignore[arg-type]
+
+    assert context.allowed_tools == ["get_schema_directory"]
+    assert "file_manifest" not in context.retrieved_context
+    assert all(
+        MCP_TOOL_MANIFEST[tool_name].server_code != "file-service"
+        for tool_name in context.allowed_tools
+    )
+
+
 def test_job_snapshot_does_not_freeze_routing_target_or_resolve_a_resource() -> None:
     runtime = container()
     try:

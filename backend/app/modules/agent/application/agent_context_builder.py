@@ -168,13 +168,21 @@ class AgentContextBuilder:
     def _allowed_tools(self, job: AgentJob, publication: dict[str, Any]) -> list[str]:
         if not publication:
             return []
-        return [
+        visible = [
             tool_name
             for tool_name in self.tool_registry.available_tools()
             if self.tool_registry.tool_service.is_tool_visible_for_job(
                 job_id=job.id,
                 tool_name=tool_name,
             )
+        ]
+        if getattr(job, "task_workspace_id", ""):
+            return visible
+        return [
+            tool_name
+            for tool_name in visible
+            if (definition := MCP_TOOL_MANIFEST.get(tool_name)) is None
+            or definition.server_code != "file-service"
         ]
 
 
