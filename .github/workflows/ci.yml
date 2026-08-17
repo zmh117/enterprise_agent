@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [master]
+    branches: [mcp_new, master]
 
 jobs:
   backend:
@@ -38,12 +38,29 @@ jobs:
       - run: npm run check:contracts
       - run: npm run preflight:static
 
-  runtime-images:
+  dingtalk-runtime:
     runs-on: ubuntu-latest
-    needs: [backend, agent-runtime]
+    defaults:
+      run:
+        working-directory: dingtalk-runtime
     steps:
       - uses: actions/checkout@v4
-      - run: docker compose build typescript-agent-runtime python-agent-runtime
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dingtalk-runtime/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+
+  runtime-images:
+    runs-on: ubuntu-latest
+    needs: [backend, agent-runtime, dingtalk-runtime]
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose build typescript-agent-runtime python-agent-runtime dingtalk-runtime
 
   admin-web:
     runs-on: ubuntu-latest
