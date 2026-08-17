@@ -1128,11 +1128,11 @@ Agent Runtime 和 Internal API Platform MUST 在构建和执行 Tool Call 时校
 <!-- Reconciled from mcp_new capability: `real-tools-runtime` -->
 
 ### Requirement: Real-tools 必须通过标准 MCP Tool Runtime 执行
-真实工具验收 SHALL 启动 PostgreSQL、RabbitMQ、`tool-mcp`、两个 Agent Runtime、Worker 与所需工具资源；MUST NOT 启动 Internal API Platform 或配置 `INTERNAL_API_*`。
+真实工具验收 SHALL 启动 PostgreSQL、RabbitMQ、`tool-mcp`、`python-agent-runtime`、Worker 与所需工具资源；MUST NOT 启动 TypeScript Agent Runtime、Internal API Platform 或配置 `INTERNAL_API_*`。
 
 #### Scenario: 真实数据库工具链
-- **WHEN** Python 或 TypeScript Agent Job 对已授权目标调用数据库只读 Tool
-- **THEN** 请求沿 `Runtime -> tool-mcp -> Resource` 完成并记录精确审计
+- **WHEN** Python Agent Job 对已授权目标调用数据库只读 Tool
+- **THEN** 请求沿 `python-agent-runtime -> tool-mcp -> Resource` 完成并记录精确审计
 
 ### Requirement: Real-tools 验收必须覆盖拒绝和恢复
 验收 MUST 覆盖未授权 Tool、数据范围越界、资源零命中、多命中、Secret 不可用、只读策略拒绝以及配置恢复后的成功调用。
@@ -1261,20 +1261,20 @@ Redis Resource 连接测试 MUST 只验证受治理连接字段、Secret、认�
 
 <!-- Reconciled from mcp_new capability: `standard-mcp-tool-runtime` -->
 
-### Requirement: 双 Runtime 只使用固定标准 MCP Tool Server
-系统 SHALL 由部署固定的`tool-mcp`使用官方MCP SDK向Python与TypeScript Runtime提供现有只读工具，并由部署固定的`file-service` File MCP接口提供任务文件工具。Runtime MUST 只连接Job与Publication冻结且部署注册的私网Server地址，不得接受Agent、Application、用户或模型提供MCP Server URL。两个Server MUST 使用代码拥有的稳定Tool identifier和等价跨Runtime语义，不得互相代理或回退。
+### Requirement: Python Runtime只使用固定标准MCP Tool Server
+系统 SHALL 由部署固定的 `tool-mcp` 使用官方 MCP SDK 向 Python Runtime 提供现有只读工具，并由部署固定的 `file-service` File MCP 接口提供任务文件工具。Runtime MUST 只连接 Job 与 Publication 冻结且部署注册的私网 Server 地址，不得接受 Agent、Application、用户或模型提供 MCP Server URL。两个 Server MUST 使用代码拥有的稳定 Tool identifier，不得互相代理或回退。
 
-#### Scenario: 两个 Runtime 调用同一只读工具
-- **WHEN** Python与TypeScript Runtime分别执行冻结了同一只读Tool的Job
-- **THEN** 两端通过`tool-mcp`使用同一schema和等价执行语义
+#### Scenario: Python Runtime调用只读工具
+- **WHEN** Python Runtime 执行冻结了合法只读 Tool 的 Job
+- **THEN** Runtime 通过 `tool-mcp` 使用冻结 schema 和受治理执行语义
 
-#### Scenario: 两个 Runtime 调用同一文件工具
-- **WHEN** Python与TypeScript Runtime分别执行冻结了同一File Tool的Job
-- **THEN** 两端通过`file-service`使用同一schema、Principal JWT契约和等价执行语义
+#### Scenario: Python Runtime调用文件工具
+- **WHEN** Python Runtime 执行冻结了合法 File Tool 的 Job
+- **THEN** Runtime 通过 `file-service` 使用冻结 schema、Principal JWT 和任务工作区边界
 
-#### Scenario: payload 提供自定义 Server
-- **WHEN** 请求或模型输出包含自定义MCP URL、Server code或transport
-- **THEN** Runtime和对应MCP服务必须在连接或调用前拒绝
+#### Scenario: payload提供自定义Server
+- **WHEN** 请求或模型输出包含自定义 MCP URL、Server code 或 transport
+- **THEN** Runtime 和对应 MCP 服务必须在连接或调用前拒绝
 
 ### Requirement: MCP Tool 实现必须由代码 Manifest 拥有
 系统 MUST 从代码Manifest注册稳定Tool identifier、server code、描述、输入Schema、操作语义、风险等级、资源类型和实现函数；现有`tool-mcp`只可注册只读资源Tool，File Service只可注册固定任务文件Tool。数据库和管理API MUST NOT创建或覆盖URL、SQL、Shell、脚本、模板、对象键规则或任意可执行实现。
