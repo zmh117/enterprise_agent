@@ -121,7 +121,8 @@ COPY backend/app/modules/agent/__init__.py /app/backend/app/modules/agent/
 COPY backend/app/modules/agent/domain /app/backend/app/modules/agent/domain
 COPY backend/app/modules/agent/infrastructure/__init__.py /app/backend/app/modules/agent/infrastructure/
 COPY backend/app/modules/agent/infrastructure/generated_runtime_contracts*.py backend/app/modules/agent/infrastructure/runtime_protocol.py backend/app/modules/agent/infrastructure/tool_manifest.py /app/backend/app/modules/agent/infrastructure/
-COPY backend/app/modules/file_workspace/contracts.py /app/backend/app/modules/file_workspace/contracts.py
+# Keep this as a narrow namespace-package whitelist. Its __init__.py imports the repository layer.
+COPY backend/app/modules/file_workspace/contracts.py backend/app/modules/file_workspace/domain.py backend/app/modules/file_workspace/text_format_policy.py /app/backend/app/modules/file_workspace/
 COPY backend/app/modules/model_connection/__init__.py /app/backend/app/modules/model_connection/
 COPY backend/app/modules/model_connection/domain /app/backend/app/modules/model_connection/domain
 COPY backend/app/modules/model_connection/infrastructure/__init__.py backend/app/modules/model_connection/infrastructure/repository.py /app/backend/app/modules/model_connection/infrastructure/

@@ -146,6 +146,10 @@ def test_worker_image_has_no_claude_sdk_or_cli_layer() -> None:
     assert "modules/delivery" not in python_runtime_section
     assert "modules/message_bus" not in python_runtime_section
     assert "generated_runtime_contracts*.py" in python_runtime_section
+    assert "backend/app/modules/file_workspace/__init__.py" not in python_runtime_section
+    assert "backend/app/modules/file_workspace/contracts.py" in python_runtime_section
+    assert "backend/app/modules/file_workspace/domain.py" in python_runtime_section
+    assert "backend/app/modules/file_workspace/text_format_policy.py" in python_runtime_section
     assert "import app.modules.agent.infrastructure.runtime_protocol" in python_runtime_section
 
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
