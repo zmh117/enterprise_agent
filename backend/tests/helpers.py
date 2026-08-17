@@ -681,6 +681,9 @@ def prepare_debug_application_access(
     user_id: str = "user_local_admin",
     capabilities: tuple[str, ...] = (),
     additional_deliveries: tuple[dict[str, object], ...] = (),
+    attachments_enabled: bool = False,
+    task_file_features: dict[str, bool] | None = None,
+    file_format_policy_version: str = "text-v1",
 ) -> dict[str, str]:
     timestamp = datetime.now(UTC).isoformat()
     environment_id = f"environment-{application_code}"
@@ -708,6 +711,9 @@ def prepare_debug_application_access(
         robot_code=f"robot-{application_code}",
         capabilities=capabilities,
         additional_deliveries=additional_deliveries,
+        attachments_enabled=attachments_enabled,
+        task_file_features=task_file_features,
+        file_format_policy_version=file_format_policy_version,
     )
     application = container.business_application_repository.get_by_code(application_code)
     role = container.authorization_center_service.create_role(

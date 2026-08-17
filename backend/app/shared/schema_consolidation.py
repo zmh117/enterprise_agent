@@ -9,11 +9,7 @@ import re
 from typing import Any
 
 from app.shared.database import Database
-from app.shared.migrations import (
-    MigrationDefinitionError,
-    SchemaMigrationLedger,
-    load_migration_catalog,
-)
+from app.shared.migrations import load_migration_catalog
 from app.shared.schema_baseline import LEGACY_MANIFEST_FILENAME, load_legacy_manifest
 from app.shared.schema_fact_sources import load_fact_source_manifest
 from app.modules.platform_config.application.validation import (
@@ -76,9 +72,7 @@ def require_write_authorization(
             "Consolidation evidence must be stored outside the repository"
         )
     if not resolved_evidence.is_dir():
-        raise SchemaConsolidationError(
-            "Operator-supplied evidence directory does not exist"
-        )
+        raise SchemaConsolidationError("Operator-supplied evidence directory does not exist")
     return ConsolidationWriteAuthorization(
         phase=phase,
         expected_head=expected_head,
@@ -378,7 +372,9 @@ class SchemaConsolidationPreflight:
             )
         )
         return {
-            "job_count": _count(self.database.execute_one("select count(*) as count from agent_job")),
+            "job_count": _count(
+                self.database.execute_one("select count(*) as count from agent_job")
+            ),
             "blocking_count": blocking_count,
             "blocking_ids": _safe_ids(rows),
         }
@@ -446,9 +442,7 @@ class SchemaConsolidationPreflight:
     def _workflow_summary(self) -> dict[str, Any]:
         if not self._has_column("agent_workflow_template", "graph_json"):
             template_count = _count(
-                self.database.execute_one(
-                    "select count(*) as count from agent_workflow_template"
-                )
+                self.database.execute_one("select count(*) as count from agent_workflow_template")
             )
             return {
                 "template_count": template_count,
@@ -577,9 +571,7 @@ class SchemaConsolidationPreflight:
                 "select count(*) as count from job_dispatch_cutover_quarantine"
             ),
         }
-        return {
-            name: _count(self.database.execute_one(query)) for name, query in queries.items()
-        }
+        return {name: _count(self.database.execute_one(query)) for name, query in queries.items()}
 
 
 class SessionJobMessageBackfill:
@@ -674,9 +666,7 @@ class SessionJobMessageBackfill:
         for row in rows:
             source_channel = str(row.get("source_channel") or row.get("source") or "")
             conversation_id = str(
-                row.get("external_conversation_id")
-                or row.get("dingding_conversation_id")
-                or ""
+                row.get("external_conversation_id") or row.get("dingding_conversation_id") or ""
             )
             requester_id = str(row.get("requester_id") or row.get("dingding_user_id") or "")
             missing_identity = not all(
@@ -934,9 +924,7 @@ class WorkflowGraphBackfill:
             with self.database.unit_of_work():
                 applied_count = sum(1 for plan in plans if self._apply_template(plan))
                 self._save_checkpoint(
-                    high_water=(
-                        str(plans[-1]["template_id"]) if plans else after_id
-                    ),
+                    high_water=(str(plans[-1]["template_id"]) if plans else after_id),
                     scanned=len(plans),
                     updated=applied_count,
                 )
@@ -984,7 +972,7 @@ class WorkflowGraphBackfill:
                 classification = "equivalent"
             else:
                 classification = "divergent"
-        plan = {
+        plan: dict[str, Any] = {
             "template_id": template_id,
             "entry_node_key": str(row.get("entry_node_key") or ""),
             "classification": classification,
@@ -1038,8 +1026,7 @@ class WorkflowGraphBackfill:
                 for row in node_rows
             ],
             edges=[
-                {**row, "condition": _json_object(row["condition_json"]) or {}}
-                for row in edge_rows
+                {**row, "condition": _json_object(row["condition_json"]) or {}} for row in edge_rows
             ],
         )
 
@@ -1052,9 +1039,7 @@ class WorkflowGraphBackfill:
         template_id = str(plan["template_id"])
         normalized = self._normalized_graph(template_id)
         if normalized["nodes"] or normalized["edges"]:
-            raise SchemaConsolidationError(
-                "Workflow normalized graph changed during backfill"
-            )
+            raise SchemaConsolidationError("Workflow normalized graph changed during backfill")
         for node in nodes:
             self.database.execute(
                 """

@@ -193,10 +193,15 @@ def _sdk_message_type(message: Any) -> str:
     explicit = _value(message, "type")
     if isinstance(explicit, str):
         return explicit
-    name = message.__class__.__name__.lower()
+    name = type(message).__name__.lower()
     if name.endswith("message"):
         name = name.removesuffix("message")
-    return {"system": "system", "assistant": "assistant", "result": "result"}.get(name, name)
+    aliases: dict[str, str] = {
+        "system": "system",
+        "assistant": "assistant",
+        "result": "result",
+    }
+    return aliases.get(name, name)
 
 
 def _utc_now() -> str:
@@ -517,10 +522,11 @@ class RealClaudeCodeAgentClient:
     ) -> None:
         execution = asyncio.create_task(consume)
         cancellation: asyncio.Task[None] | None = None
-        if self.cancellation_event is not None:
+        cancellation_event = self.cancellation_event
+        if cancellation_event is not None:
 
             async def wait_for_cancellation() -> None:
-                while not self.cancellation_event.is_set():
+                while not cancellation_event.is_set():
                     await asyncio.sleep(0.05)
 
             cancellation = asyncio.create_task(wait_for_cancellation())

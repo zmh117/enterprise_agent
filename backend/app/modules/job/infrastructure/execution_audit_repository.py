@@ -6,7 +6,7 @@ import json
 from binascii import Error as BinasciiError
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, cast
 
 from app.modules.job.domain.execution_audit import (
     AccountingStatus,
@@ -35,7 +35,7 @@ class ExecutionAuditRepository:
                 self._upsert_model_call(job_id, event)
 
     def _upsert_model_call(self, job_id: str, event: dict[str, Any]) -> None:
-        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        payload = _dict_payload(event.get("payload"))
         usage = TokenUsage.from_payload(payload.get("usage"))
         model_call_id = bounded_text(payload.get("model_call_id"), 128)
         if not model_call_id:
@@ -59,14 +59,12 @@ class ExecutionAuditRepository:
             if item["event_type"] == "model_call"
             and int(item["sequence"]) < identity[2]
             and isinstance(item.get("payload"), dict)
-            and bounded_text(item["payload"].get("model_call_id"), 128)
-            == model_call_id
+            and bounded_text(item["payload"].get("model_call_id"), 128) == model_call_id
         ]
         if previous_same_calls:
             signature = _model_call_signature(payload)
             if any(
-                _model_call_signature(item["payload"]) != signature
-                for item in previous_same_calls
+                _model_call_signature(item["payload"]) != signature for item in previous_same_calls
             ):
                 raise NonRetryableExecutionError(
                     "Runtime model call identity conflicts with an earlier event",
@@ -85,9 +83,10 @@ class ExecutionAuditRepository:
                     return
         timestamp = now_iso()
         values: dict[str, Any] = {
-            "id": "model_call_" + hashlib.sha256(
-                f"{identity[0]}:{identity[1]}:{identity[2]}".encode()
-            ).hexdigest()[:32],
+            "id": "model_call_"
+            + hashlib.sha256(f"{identity[0]}:{identity[1]}:{identity[2]}".encode()).hexdigest()[
+                :32
+            ],
             "job_id": job_id,
             "invocation_id": identity[1],
             "request_digest": str(event.get("request_digest") or ""),
@@ -179,7 +178,11 @@ class ExecutionAuditRepository:
                 "observed_model_turn_count": len(model_rows),
                 "api_retry_count": sum(event["event_type"] == "api_retry" for event in events),
                 "runtime_invocation_count": len(
-                    {str(event["invocation_id"]) for event in events if event["event_type"] == "terminal"}
+                    {
+                        str(event["invocation_id"])
+                        for event in events
+                        if event["event_type"] == "terminal"
+                    }
                 ),
                 "execution_status": execution_status.value,
                 "execution_failure_stage": failure_stage.value if failure_stage else None,
@@ -275,12 +278,15 @@ class ExecutionAuditRepository:
                 int(last["runtime_sequence"]),
                 str(last["id"]),
             )
-        return {"items": items, "limit": bounded_limit, "has_more": has_more, "next_cursor": next_cursor}
+        return {
+            "items": items,
+            "limit": bounded_limit,
+            "has_more": has_more,
+            "next_cursor": next_cursor,
+        }
 
 
-def _encode_model_call_cursor(
-    invocation_id: str, runtime_sequence: int, model_call_id: str
-) -> str:
+def _encode_model_call_cursor(invocation_id: str, runtime_sequence: int, model_call_id: str) -> str:
     payload = json.dumps(
         {
             "invocation_id": invocation_id,
@@ -348,7 +354,9 @@ def _aggregate_accounting(
             "accounting_status": AccountingStatus.PARTIAL.value,
             "total_duration_ms": None,
             "total_api_duration_ms": _sum_values([row.get("duration_ms") for row in model_rows]),
-            **{field: _sum_values([row.get(field) for row in model_rows]) for field in TOKEN_FIELDS},
+            **{
+                field: _sum_values([row.get(field) for row in model_rows]) for field in TOKEN_FIELDS
+            },
             "model_usage_json": "[]",
             "estimated_cost_usd": None,
         }
@@ -387,7 +395,9 @@ def _aggregate_model_usage(accounting: list[dict[str, Any]]) -> list[dict[str, A
             for field, value in usage.as_dict().items():
                 if value is not None:
                     current["usage"][field] += value
-            current["estimated_cost_usd"] += _decimal(model.get("estimated_cost_usd")) or Decimal("0")
+            current["estimated_cost_usd"] += _decimal(model.get("estimated_cost_usd")) or Decimal(
+                "0"
+            )
     result = []
     for key in sorted(aggregate):
         item = aggregate[key]
@@ -400,26 +410,37 @@ def _classify_failure(
     events: list[dict[str, Any]],
 ) -> tuple[ExecutionFailureStage | None, str | None, str | None]:
     for event in reversed(events):
-        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        payload = _dict_payload(event.get("payload"))
         if event["event_type"] == "tool_event" and payload.get("status") in {"DENIED", "FAILED"}:
             stage = (
                 ExecutionFailureStage.TOOL_PERMISSION
                 if payload.get("status") == "DENIED"
                 else ExecutionFailureStage.TOOL_EXECUTION
             )
-            return stage, bounded_text(payload.get("error_code"), 128), bounded_text(payload.get("response_summary"), 2048)
+            return (
+                stage,
+                bounded_text(payload.get("error_code"), 128),
+                bounded_text(payload.get("response_summary"), 2048),
+            )
         if event["event_type"] == "model_call" and payload.get("status") == "FAILED":
-            return ExecutionFailureStage.MODEL_API, bounded_text(payload.get("error_code"), 128), bounded_text(payload.get("error_summary"), 2048)
+            return (
+                ExecutionFailureStage.MODEL_API,
+                bounded_text(payload.get("error_code"), 128),
+                bounded_text(payload.get("error_summary"), 2048),
+            )
         if event["event_type"] == "runtime_initialized" and any(
             isinstance(server, dict) and server.get("status") == "FAILED"
             for server in payload.get("mcp_servers") or []
         ):
             return ExecutionFailureStage.MCP_CONNECTION, "runtime_mcp_connection_failed", None
         if event["event_type"] == "terminal" and payload.get("status") != "SUCCEEDED":
-            failure = payload.get("failure") if isinstance(payload.get("failure"), dict) else {}
+            failure = _dict_payload(payload.get("failure"))
             code = bounded_text(failure.get("code"), 128)
             summary = bounded_text(failure.get("safe_message"), 2048)
-            if code and (code.startswith("runtime_protocol") or code in {"runtime_event_invalid", "runtime_terminal_missing"}):
+            if code and (
+                code.startswith("runtime_protocol")
+                or code in {"runtime_event_invalid", "runtime_terminal_missing"}
+            ):
                 return ExecutionFailureStage.RUNTIME_PROTOCOL, code, summary
             if code in {
                 "runtime_transport_error",
@@ -450,10 +471,16 @@ def _execution_status(value: str) -> ExecutionStatus:
 
 def _optional_nonnegative(value: object) -> int | None:
     try:
-        candidate = int(value) if value is not None and not isinstance(value, bool) else -1
+        candidate = (
+            int(cast(Any, value)) if value is not None and not isinstance(value, bool) else -1
+        )
     except (TypeError, ValueError, OverflowError):
         return None
     return candidate if 0 <= candidate <= 9_223_372_036_854_775_807 else None
+
+
+def _dict_payload(value: object) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
 
 
 def _model_call_signature(payload: dict[str, Any]) -> tuple[object, ...]:
@@ -499,7 +526,9 @@ def _sum_decimal(items: list[dict[str, Any]], field: str) -> str | None:
 
 def _decimal_text(value: object) -> str | None:
     candidate = _decimal(value)
-    return f"{candidate.quantize(Decimal('0.000000000001')):.12f}" if candidate is not None else None
+    return (
+        f"{candidate.quantize(Decimal('0.000000000001')):.12f}" if candidate is not None else None
+    )
 
 
 def _json_list(value: object) -> list[dict[str, Any]]:

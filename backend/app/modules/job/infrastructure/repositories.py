@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from app.modules.delivery.domain import DeliveryEvent, DeliveryStatus
 from app.modules.job.domain.agent_job import AgentJob, AgentSession, MessageAttachment
@@ -185,7 +185,8 @@ def _safe_runtime_event_payload(event_type: str, value: object) -> dict[str, Any
     if event_type == "assistant_text":
         text = str(payload.get("text") or "")
         return {"content_status": "OMITTED", "character_count": len(text)}
-    return sanitize_for_persistence(payload)
+    sanitized = sanitize_for_persistence(payload)
+    return dict(sanitized) if isinstance(sanitized, dict) else {}
 
 
 def _safe_runtime_accounting(value: dict[str, Any]) -> dict[str, Any]:
@@ -234,7 +235,7 @@ def _optional_nonnegative_integer(value: object) -> int | None:
     if value is None or isinstance(value, bool):
         return None
     try:
-        candidate = int(value)
+        candidate = int(cast(Any, value))
     except (TypeError, ValueError, OverflowError):
         return None
     return candidate if 0 <= candidate <= 9_223_372_036_854_775_807 else None
@@ -244,7 +245,7 @@ def _optional_nonnegative_number(value: object) -> float | None:
     if value is None or isinstance(value, bool):
         return None
     try:
-        candidate = float(value)
+        candidate = float(cast(Any, value))
     except (TypeError, ValueError, OverflowError):
         return None
     return candidate if 0 <= candidate < float("inf") else None

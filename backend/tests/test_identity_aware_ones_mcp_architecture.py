@@ -31,7 +31,6 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 def _production_sources() -> str:
     roots = (
         REPOSITORY_ROOT / "backend/app",
-        REPOSITORY_ROOT / "agent-runtime/src",
         REPOSITORY_ROOT / "services",
     )
     sources: list[str] = []

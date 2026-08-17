@@ -655,6 +655,28 @@ class PythonRuntimeSdkExecutor:
                 principal_token="",
                 call_count=1,
             )
+        if "[smoke:mcp:file-service]" in question:
+            file_principal_token = secret_context.file_principal_token if secret_context else ""
+            if not file_principal_token:
+                return PythonExecutionOutcome(
+                    status="FAILED",
+                    usage={"input_tokens": 0, "output_tokens": 0},
+                    runtime_provenance=provenance,
+                    failure={
+                        "code": "runtime_file_principal_token_missing",
+                        "retry_class": "CONFIGURATION",
+                        "safe_message": "当前文件调用缺少平台身份凭证",
+                    },
+                )
+            return self._execute_fake_mcp(
+                request,
+                provenance,
+                server_code="file-service",
+                tool_name="task_workspace_get",
+                arguments={},
+                principal_token=file_principal_token,
+                call_count=1,
+            )
         if "[smoke:mcp:ones-mcp" in question:
             principal_token = secret_context.principal_token if secret_context else ""
             if not principal_token:
@@ -740,7 +762,11 @@ class PythonRuntimeSdkExecutor:
                     "safe_message": "确定性 MCP 验收缺少冻结工具绑定",
                 },
             )
-        alias = "ones_mcp" if server_code == "ones-mcp" else "tool_mcp"
+        alias = {
+            "file-service": "file_service",
+            "ones-mcp": "ones_mcp",
+            "tool-mcp": "tool_mcp",
+        }[server_code]
         full_tool_name = f"mcp__{alias}__{tool_name}"
         calls = [
             {
@@ -847,6 +873,9 @@ class PythonRuntimeSdkExecutor:
         if server_code == "ones-mcp":
             headers["Authorization"] = f"Bearer {principal_token}"
             url = self._ones_mcp_server_url
+        elif server_code == "file-service":
+            headers["Authorization"] = f"Bearer {principal_token}"
+            url = self._file_mcp_server_url
         else:
             headers.update(
                 {

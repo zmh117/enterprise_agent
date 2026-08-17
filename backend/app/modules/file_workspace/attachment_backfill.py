@@ -121,7 +121,10 @@ class AttachmentFileBackfill:
             blocking_attachment_ids=tuple(blockers[:20]),
             next_cursor=str(batch[-1]["id"]) if batch else cursor,
             has_more=has_more,
-            **counters,
+            expiry_updates=counters["expiry_updates"],
+            binding_inserts=counters["binding_inserts"],
+            binding_column_repairs=counters["binding_column_repairs"],
+            cleanup_fact_inserts=counters["cleanup_fact_inserts"],
         )
         return report.to_dict()
 
@@ -153,9 +156,7 @@ class AttachmentFileBackfill:
             "update_expiry": not str(row.get("expires_at") or ""),
             "insert_binding": bool(effective_file and effective_version and not binding_file),
             "repair_columns": bool(
-                binding_file
-                and binding_version
-                and (not column_file or not column_version)
+                binding_file and binding_version and (not column_file or not column_version)
             ),
             "insert_cleanup": not bool(row.get("cleanup_exists")),
             "file_id": effective_file,

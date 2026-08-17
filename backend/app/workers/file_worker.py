@@ -52,7 +52,7 @@ def main() -> None:
     def maintain() -> None:
         while True:
             try:
-                result = importer.run_maintenance()  # type: ignore[attr-defined]
+                result = importer.run_maintenance()
                 publish_status(
                     **{
                         **result,

@@ -216,7 +216,7 @@ class Container:
     delivery_dispatcher: DeliveryOutboxDispatcher
     agent_executor: AgentExecutor
     retry_service: JobRetryService
-    object_storage: ObjectStorage
+    object_storage: ObjectStorage | None
     attachment_service: AttachmentProcessingService | None
     webhook_trigger_repository: WebhookTriggerRepository
     webhook_event_repository: WebhookEventRepository

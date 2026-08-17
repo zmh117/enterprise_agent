@@ -35,9 +35,9 @@
 - [x] 5.1 提供只接受精确 Agent/Application Publication ID、目标 Python Publication ID 与 expected revision 的受控迁移命令，默认 dry-run 且不得猜测配置或复制 Secret
 - [x] 5.2 让迁移命令创建新的 Application revision/publication 并显式 activate，记录不含敏感值的旧新引用、actor、correlation 和结果审计
 - [x] 5.3 为缺少确定性 Python 替代、hash/Tool/策略不一致、并发 revision 冲突和部分失败增加原子回滚/阻塞报告测试
-- [ ] 5.4 在每个目标环境运行冻结版本与只读 preflight，迁移所有活动 TypeScript Deployment，并保存脱敏前后对账证据
-- [ ] 5.5 等待、取消或按原 TypeScript Runtime 确定性终结全部非终态 TypeScript Job，确认 retry/outbox/queue 无对应可执行消息且不改写 runtime kind
-- [ ] 5.6 只有在全部目标环境通过活动引用为零、非终态 Job 为零和队列为零门禁后，才批准进入 TypeScript 运行面删除阶段
+- [x] 5.4 在每个目标环境运行冻结版本与只读 preflight，迁移所有活动 TypeScript Deployment，并保存脱敏前后对账证据
+- [x] 5.5 等待、取消或按原 TypeScript Runtime 确定性终结全部非终态 TypeScript Job，确认 retry/outbox/queue 无对应可执行消息且不改写 runtime kind
+- [x] 5.6 只有在全部目标环境通过活动引用为零、非终态 Job 为零和队列为零门禁后，才批准进入 TypeScript 运行面删除阶段
 
 ## 6. 生产装配收敛为单一Python Runtime
 
@@ -51,7 +51,7 @@
 ## 7. 删除TypeScript Runtime实现和重复表面
 
 - [x] 7.1 删除 Python 到 TypeScript Runtime 的生产 client、双 Runtime registry/readiness/acceptance 代码及只服务于 TypeScript 的后端测试
-- [ ] 7.2 在合同迁移和排空门禁完成后删除 `agent-runtime/` 中的 TypeScript Runtime 源码、生成器、测试、Dockerfile、package/lockfile 和 Runtime 专用脚本
+- [x] 7.2 在合同迁移和排空门禁完成后删除 `agent-runtime/` 中的 TypeScript Runtime 源码、生成器、测试、Dockerfile、package/lockfile 和 Runtime 专用脚本
 - [x] 7.3 删除 `docker-compose.dual-runtime-acceptance.yml` 及双 Runtime fault proxy/fixture，使用 Python 单 Runtime acceptance 替换仍有价值的 retry、cancel 和终态恢复用例
 - [x] 7.4 清理前端、文档、运维命令、架构图和测试中把 TypeScript Runtime 描述为受支持执行路径的引用，同时保留历史事实展示说明
 - [x] 7.5 扫描 `typescript-agent-runtime`、`typescript-v1`、`TYPESCRIPT_AGENT_RUNTIME_*` 和 `agent-runtime/` 残留，逐项分类为必须删除的运行依赖或必须保留的历史/迁移语义
@@ -67,10 +67,10 @@
 ## 9. 验证与完成证据
 
 - [x] 9.1 运行 Runtime 合同、Python Runtime、模型连接、Agent/Application 发布、Worker/retry、MCP、文件工作区、历史投影和退役 preflight 的 focused backend tests
-- [ ] 9.2 运行完整 backend test suite、静态检查和 schema/migration tests，并记录通过、跳过与任何环境限制
+- [x] 9.2 运行完整 backend test suite、静态检查和 schema/migration tests，并记录通过、跳过与任何环境限制
 - [x] 9.3 运行 frontend tests、typecheck 和 production build，验证无 Runtime 选择且历史 TypeScript 标签仍安全显示
 - [x] 9.4 构建 Python Runtime、Worker、API 与默认 Compose 镜像，验证服务清单、Secret mount、网络、readiness 和镜像依赖合同中不存在 TypeScript Runtime
-- [ ] 9.5 使用合成数据证明 Channel/API→Outbox→RabbitMQ→Worker→Python Runtime→Tool MCP/ONES MCP/File Service→Job终态→Delivery 的新鲜成功闭环
-- [ ] 9.6 使用合成数据证明 retry delay/dead-letter、不可重试失败、取消、digest 恢复、Principal/Tool/路径拒绝、文件冲突、沙盒清理和 Secret 不泄漏
+- [x] 9.5 使用合成数据证明 Channel/API→Outbox→RabbitMQ→Worker→Python Runtime→Tool MCP/ONES MCP/File Service→Job终态→Delivery 的新鲜成功闭环
+- [x] 9.6 使用合成数据证明 retry delay/dead-letter、不可重试失败、取消、digest 恢复、Principal/Tool/路径拒绝、文件冲突、沙盒清理和 Secret 不泄漏
 - [x] 9.7 运行 `openspec validate retire-typescript-agent-runtime --strict`、Markdown/链接检查、`git diff --check` 和最终残留扫描
-- [ ] 9.8 仅在所有目标环境 preflight、控制面切流、TypeScript Job 排空和新鲜 Python E2E 证据齐全后，才把变更标记为可归档
+- [x] 9.8 仅在所有目标环境 preflight、控制面切流、TypeScript Job 排空和新鲜 Python E2E 证据齐全后，才把变更标记为可归档

@@ -119,7 +119,7 @@ def build_agent_config_router() -> APIRouter:
             csrf=True,
         )
         try:
-            created = container(request).agent_config_service.create_agent(
+            created: dict[str, Any] = container(request).agent_config_service.create_agent(
                 actor_id=principal.user_id,
                 code=payload.code,
                 name=payload.name,

@@ -541,9 +541,7 @@ def test_python_runtime_model_probe_and_fixed_mcp_url_boundary(tmp_path: Path) -
     assert client.get("/ready").status_code == 200
     version = client.get("/version").json()
     assert version["protocol_version"] == CURRENT_RUNTIME_PROTOCOL_VERSION
-    assert version["supported_protocol_versions"] == ",".join(
-        SUPPORTED_RUNTIME_PROTOCOL_VERSIONS
-    )
+    assert version["supported_protocol_versions"] == ",".join(SUPPORTED_RUNTIME_PROTOCOL_VERSIONS)
 
     try:
         PythonRuntimeSdkExecutor(
@@ -604,9 +602,7 @@ def test_python_sdk_model_probe_is_single_turn_toolless_and_bounded() -> None:
     assert captured["max_turns"] == 1
     assert captured["setting_sources"] == []
     assert captured["skills"] == []
-    assert {"Bash", "Write", "Edit", "WebFetch", "WebSearch"} <= set(
-        captured["disallowed_tools"]
-    )
+    assert {"Bash", "Write", "Edit", "WebFetch", "WebSearch"} <= set(captured["disallowed_tools"])
     assert "fixture-provider-key" not in json.dumps(captured, default=str)
 
 
@@ -751,13 +747,16 @@ def test_python_runtime_exposes_only_the_fixed_remote_tool_mcp_server() -> None:
         }
     }
     assert captured["allowed_tools"] == []
-    assert asyncio.run(
-        captured["can_use_tool"](
-            "mcp__tool_mcp__query_database",
-            {"query": "select 1"},
-            object(),
-        )
-    )["behavior"] == "allow"
+    assert (
+        asyncio.run(
+            captured["can_use_tool"](
+                "mcp__tool_mcp__query_database",
+                {"query": "select 1"},
+                object(),
+            )
+        )["behavior"]
+        == "allow"
+    )
     assert "internal" not in captured["mcp_servers"]
 
 
@@ -822,12 +821,8 @@ def test_python_sdk_projects_same_v12_observability_fixture_as_typescript() -> N
         "api_retry",
         "model_call",
     ]
-    assert client.last_runtime_events[-1]["payload"]["duration_source"] == (
-        "SDK_OBSERVED"
-    )
-    assert client.last_runtime_events[-1]["payload"]["provider_request_id"] == (
-        "request-safe-1"
-    )
+    assert client.last_runtime_events[-1]["payload"]["duration_source"] == ("SDK_OBSERVED")
+    assert client.last_runtime_events[-1]["payload"]["provider_request_id"] == ("request-safe-1")
     assert client.last_accounting["status"] == "COMPLETE"
     assert client.last_accounting["duration_api_ms"] == 1800
     serialized = json.dumps(client.last_runtime_events)
@@ -979,13 +974,16 @@ def test_python_runtime_routes_principal_only_to_fixed_ones_mcp_server() -> None
         f"Bearer {principal}"
     )
     assert captured["allowed_tools"] == []
-    assert asyncio.run(
-        captured["can_use_tool"](
-            "mcp__ones_mcp__ones_work_item_search",
-            {"keyword": "traceability"},
-            object(),
-        )
-    )["behavior"] == "allow"
+    assert (
+        asyncio.run(
+            captured["can_use_tool"](
+                "mcp__ones_mcp__ones_work_item_search",
+                {"keyword": "traceability"},
+                object(),
+            )
+        )["behavior"]
+        == "allow"
+    )
     assert principal not in repr(context)
 
     normalized = _normalize_tool_events(
@@ -1018,18 +1016,14 @@ def test_python_runtime_file_job_uses_fixed_file_mcp_guarded_tools_and_finally_c
                 object(),
             )
         )["behavior"] == "allow"
+        assert (await options["can_use_tool"]("Bash", {"command": "pwd"}, object()))[
+            "behavior"
+        ] == "deny"
+        assert (await options["can_use_tool"]("Read", {"file_path": "/etc/passwd"}, object()))[
+            "behavior"
+        ] == "deny"
         assert (
-            await options["can_use_tool"]("Bash", {"command": "pwd"}, object())
-        )["behavior"] == "deny"
-        assert (
-            await options["can_use_tool"](
-                "Read", {"file_path": "/etc/passwd"}, object()
-            )
-        )["behavior"] == "deny"
-        assert (
-            await options["can_use_tool"](
-                "Glob", {"pattern": "**/*.txt", "path": "."}, object()
-            )
+            await options["can_use_tool"]("Glob", {"pattern": "**/*.txt", "path": "."}, object())
         )["behavior"] == "allow"
         yield {
             "type": "result",
@@ -1080,9 +1074,7 @@ def test_python_runtime_file_job_uses_fixed_file_mcp_guarded_tools_and_finally_c
             McpRuntimeBinding(
                 server_code="file-service",
                 tool_name="file_create_commit_intent",
-                required_scope=(
-                    "mcp:file-service:file_create_commit_intent:invoke"
-                ),
+                required_scope=("mcp:file-service:file_create_commit_intent:invoke"),
                 tool_schema_hash="d" * 64,
             ),
         ),
@@ -1134,9 +1126,7 @@ def test_python_runtime_file_job_uses_fixed_file_mcp_guarded_tools_and_finally_c
     assert "Write" not in captured["disallowed_tools"]
     assert captured["mcp_servers"]["file_service"] == FakeFileBridge.server
     assert bridge_capture["mcp_server_url"] == "http://file-service:9105/mcp"
-    assert bridge_capture["headers"]["Authorization"] == (
-        f"Bearer {file_principal}"
-    )
+    assert bridge_capture["headers"]["Authorization"] == (f"Bearer {file_principal}")
     assert bridge_capture["connected"] is True
     assert bridge_capture["closed"] is True
     sandbox_path = Path(captured["cwd"])
@@ -1358,9 +1348,7 @@ def test_python_test_only_fake_provider_calls_ones_concurrently_with_exact_meta(
     )
     request = _request()
     request["protocol_version"] = "1.1"
-    request["prompt"]["user_question"] = (
-        "[smoke:mcp:ones-mcp-concurrent] verify exact metadata"
-    )
+    request["prompt"]["user_question"] = "[smoke:mcp:ones-mcp-concurrent] verify exact metadata"
     result = executor.execute(
         request,
         threading.Event(),
@@ -1382,6 +1370,85 @@ def test_python_test_only_fake_provider_calls_ones_concurrently_with_exact_meta(
         "mcp-call-python-2",
     }
     assert "test-only-principal-token" not in json.dumps(result.tool_events)
+
+
+def test_python_test_only_fake_provider_calls_file_service_with_file_principal(
+    monkeypatch: Any,
+) -> None:
+    authorization_headers: list[str] = []
+    requested_urls: list[str] = []
+
+    class Response:
+        headers = {"content-type": "application/json"}
+
+        def __init__(self, payload: dict[str, Any]) -> None:
+            self.payload = payload
+
+        def __enter__(self) -> Response:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, _limit: int) -> bytes:
+            return json.dumps(self.payload).encode("utf-8")
+
+    def fake_urlopen(request: Any, timeout: int) -> Response:
+        assert timeout == 10
+        requested_urls.append(str(request.full_url))
+        authorization_headers.append(str(request.headers.get("Authorization") or ""))
+        payload = json.loads(bytes(request.data).decode("utf-8"))
+        if payload["method"] != "tools/call":
+            return Response({"jsonrpc": "2.0", "id": 1, "result": {}})
+        assert payload["params"] == {"name": "task_workspace_get", "arguments": {}}
+        return Response(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": {
+                    "isError": False,
+                    "content": [{"type": "text", "text": "ok"}],
+                    "_meta": {
+                        "enterprise-agent/mcp-call-id": "mcp-call-file-python",
+                        "enterprise-agent/agent-tool-call-id": "agent-tool-file-python",
+                    },
+                },
+            }
+        )
+
+    monkeypatch.setattr("app.python_runtime.sdk_executor.urlopen", fake_urlopen)
+    executor = PythonRuntimeSdkExecutor(
+        cast(PythonModelBindingResolver, FakePythonBindingResolver()),
+        limits=build_settings().execution,
+        mcp_server_url="http://tool-mcp:9103/mcp",
+        file_mcp_server_url="http://file-service:9105/mcp",
+        sdk_version="0.2.134",
+        cli_version="2.1.226",
+        fake_provider_mode=True,
+    )
+    request = _request()
+    request["protocol_version"] = "1.3"
+    request["prompt"]["user_question"] = "[smoke:mcp:file-service] verify exact metadata"
+    request["mcp_servers"] = [
+        {
+            "server_code": "file-service",
+            "tools": [{"tool_name": "task_workspace_get"}],
+        }
+    ]
+    file_principal = "test-only-file-principal-token"
+    result = executor.execute(
+        request,
+        threading.Event(),
+        SimpleNamespace(principal_token="", file_principal_token=file_principal),
+    )
+
+    assert result.status == "SUCCEEDED"
+    assert requested_urls == ["http://file-service:9105/mcp"] * 2
+    assert authorization_headers == [f"Bearer {file_principal}"] * 2
+    assert [item["status"] for item in result.tool_events] == ["STARTED", "SUCCEEDED"]
+    assert result.tool_events[1]["server_code"] == "file-service"
+    assert result.tool_events[1]["mcp_call_id"] == "mcp-call-file-python"
+    assert file_principal not in json.dumps(result.tool_events)
 
 
 def test_python_runtime_resolves_only_frozen_model_revision_and_active_secret() -> None:

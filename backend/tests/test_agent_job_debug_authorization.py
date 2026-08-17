@@ -190,6 +190,57 @@ def test_debug_create_uses_authenticated_internal_user() -> None:
         assert runtime.agent_repository.count_rows("agent_job") == before_denied
 
 
+def test_debug_create_projects_frozen_task_file_policy_into_job() -> None:
+    runtime = _container()
+    task_file_features = {
+        "workspace_enabled": True,
+        "file_mcp_enabled": True,
+        "runtime_file_edit_enabled": False,
+        "default_file_delivery_enabled": False,
+    }
+    selection = prepare_debug_application_access(
+        runtime,
+        application_code="debug-file-application",
+        role_code="debug-file-role",
+        capabilities=(
+            "task_workspace_get",
+            "task_workspace_list_files",
+            "file_get_metadata",
+            "file_prepare_materialization",
+        ),
+        attachments_enabled=True,
+        task_file_features=task_file_features,
+        file_format_policy_version="text-v2",
+    )
+
+    job, _ = runtime.debug_job_access_service.create_job(
+        user_id=ADMIN_ID,
+        display_name="Administrator",
+        message="请创建 TXT 文件并检查任务工作区",
+        application_id=selection["application_id"],
+        execution_scope_id=selection["execution_scope_id"],
+        idempotency_key="debug-file-policy",
+        correlation_id="debug-file-policy",
+        environment="local",
+    )
+
+    assert job.task_workspace_id
+    assert job.agent_runtime_protocol_version == "1.3"
+    assert job.business_application_route_decision["task_file_features"] == (task_file_features)
+    assert job.business_application_route_decision["file_format_policy_version"] == ("text-v2")
+    frozen_tools = runtime.mcp_tool_snapshot_service.verify(job.id)
+    assert {
+        item["tool_identifier"]
+        for item in frozen_tools["snapshot"]["tools"]
+        if item["server_code"] == "file-service"
+    } == {
+        "task_workspace_get",
+        "task_workspace_list_files",
+        "file_get_metadata",
+        "file_prepare_materialization",
+    }
+
+
 def test_debug_create_requires_agent_debug_execute_capability() -> None:
     runtime = _container()
     runtime.identity_repository.create_user(

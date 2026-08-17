@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import subprocess
 import threading
 from contextlib import ExitStack
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -421,52 +419,3 @@ def test_python_claude_cli_executes_permission_checked_builtin_write(
     assert output.read_text(encoding="utf-8") == (
         "written by the real Claude CLI"
     )
-
-
-def test_typescript_claude_agent_sdk_preserves_remote_mcp_result_meta() -> None:
-    repository_root = Path(__file__).resolve().parents[2]
-    runtime_root = repository_root / "agent-runtime"
-    package = json.loads(
-        (runtime_root / "node_modules/@anthropic-ai/claude-agent-sdk/package.json").read_text()
-    )
-    assert package["version"] == "0.3.226"
-    _ModelHandler.requests = []
-    with ExitStack() as stack:
-        mcp = stack.enter_context(_LocalHttpServer(_McpHandler))
-        model = stack.enter_context(_LocalHttpServer(_ModelHandler))
-        script = f"""
-import {{ query }} from '@anthropic-ai/claude-agent-sdk';
-const messages = [];
-for await (const message of query({{
-  prompt: 'Call the contract probe once.',
-  options: {{
-    model: 'contract-model',
-    maxTurns: 2,
-    permissionMode: 'bypassPermissions',
-    allowedTools: ['{_ModelHandler.tool_name}'],
-    mcpServers: {{ audit: {{ type: 'http', url: '{mcp.url}/mcp' }} }},
-    env: {{
-      ...process.env,
-      ANTHROPIC_BASE_URL: '{model.url}',
-      ANTHROPIC_API_KEY: 'contract-test-key',
-      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
-    }}
-  }}
-}})) {{
-  if (message.type === 'user') messages.push(message);
-}}
-console.log(JSON.stringify(messages));
-"""
-        completed = subprocess.run(
-            ["node", "--input-type=module", "-e", script],
-            cwd=runtime_root,
-            env=os.environ.copy(),
-            capture_output=True,
-            check=True,
-            text=True,
-            timeout=30,
-        )
-
-    user_messages = json.loads(completed.stdout)
-    assert len(user_messages) == 1
-    _assert_fidelity(user_messages[0]["tool_use_result"], _ModelHandler.requests)

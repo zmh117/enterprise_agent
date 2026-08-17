@@ -499,7 +499,7 @@ def _tool_result(
         content=[types.TextContent(type="text", text=encoded)],
         structured_content=safe,
         is_error=is_error,
-        meta=meta or None,
+        _meta=meta or None,
     )
 
 

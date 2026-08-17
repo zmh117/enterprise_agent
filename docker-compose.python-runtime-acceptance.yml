@@ -1,0 +1,82 @@
+services:
+  postgres:
+    ports: !reset []
+
+  rabbitmq:
+    ports: !reset []
+
+  minio:
+    ports: !reset []
+
+  api-server:
+    ports: !reset []
+    environment:
+      APP_ENV: testing
+      SEED_LOCAL_CONFIG: "false"
+      FEATURE_WEB_ADMIN: "true"
+      FEATURE_PUBLISHED_AGENT_RUNTIME: "true"
+      FEATURE_TEST_IDENTITY_HEADERS: "true"
+
+  agent-worker:
+    environment:
+      APP_ENV: testing
+      AGENT_MAX_RETRY_COUNT: "1"
+      AGENT_RETRY_DELAY_SECONDS: "1"
+
+  python-agent-runtime:
+    environment:
+      APP_ENV: testing
+      AGENT_RUNTIME_TEST_PROVIDER_MODE: deterministic
+
+  admin-web:
+    ports: !reset []
+
+  python-runtime-compose-acceptance:
+    profiles: ["python-runtime-acceptance"]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: api-server
+    command: ["python", "-m", "app.acceptance.python_runtime_composition"]
+    restart: "no"
+    environment:
+      DATABASE_DSN: postgresql://enterprise_agent:enterprise_agent@postgres:5432/enterprise_agent
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      APP_CONFIG_MASTER_KEY_FILE: /run/secrets/app_config_master_key
+      PYTHON_AGENT_RUNTIME_URL: http://python-agent-runtime:8091
+      PYTHON_AGENT_RUNTIME_ALLOWED_HOSTS: python-agent-runtime
+      AGENT_RUNTIME_ALLOW_INSECURE_INTERNAL_HTTP: "true"
+      MODEL_PROVIDER_HOST_ALLOWLIST: api.deepseek.com
+      APP_ENV: testing
+      SEED_LOCAL_CONFIG: "true"
+      FEATURE_PUBLISHED_AGENT_RUNTIME: "true"
+      AGENT_RUNTIME_TEST_PROVIDER_MODE: deterministic
+      AGENT_MAX_RETRY_COUNT: "1"
+      AGENT_RETRY_DELAY_SECONDS: "1"
+      ONES_MOCK_ACCEPTANCE_CONFIG: /run/acceptance/ones-mock.yaml
+      PYTHON_RUNTIME_ACCEPTANCE_API_BASE_URL: http://api-server:8000
+    volumes:
+      - ./ones_mock/mock.yaml:/run/acceptance/ones-mock.yaml:ro
+    secrets:
+      - app_config_master_key
+    depends_on:
+      api-server:
+        condition: service_healthy
+      agent-worker:
+        condition: service_started
+      job-dispatch-worker:
+        condition: service_healthy
+      delivery-dispatch-worker:
+        condition: service_healthy
+    networks:
+      - default
+      - agent-runtime-control
+
+volumes:
+  postgres18-data:
+    name: enterprise_agent_python_runtime_acceptance_postgres18_data
+    external: false
+  rabbitmq4-data:
+    name: enterprise_agent_python_runtime_acceptance_rabbitmq4_data
+  minio-data:
+    name: enterprise_agent_python_runtime_acceptance_minio_data

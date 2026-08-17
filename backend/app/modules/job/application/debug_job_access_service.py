@@ -7,7 +7,12 @@ from typing import Any
 
 from app.modules.authorization_center import AuthorizationCenterRepository
 from app.modules.business_application.application.service import SCHEMA_VERSION
-from app.modules.business_application.domain.policies import verify_snapshot
+from app.modules.business_application.domain.policies import (
+    publication_file_format_policy,
+    publication_task_file_features,
+    publication_workspace_retention,
+    verify_snapshot,
+)
 from app.modules.identity.application import AuthorizationEvaluator
 from app.modules.identity.infrastructure import IdentityRepository
 from app.modules.job.application.create_agent_job_service import (
@@ -153,6 +158,11 @@ class DebugJobAccessService:
         reply_route = selection["reply_route"]
         agent = dict(snapshot["agent"])
         session_policy = dict(snapshot.get("session_policy") or {})
+        task_file_features, _task_file_features_source = publication_task_file_features(snapshot)
+        task_workspace_retention_period, _retention_source = publication_workspace_retention(
+            snapshot
+        )
+        file_format_policy_version, _file_policy_source = publication_file_format_policy(snapshot)
         effective_session_policy = {
             **session_policy,
             "continuous_conversation_enabled": False,
@@ -244,6 +254,10 @@ class DebugJobAccessService:
             ),
             session_policy=effective_session_policy,
             application_execution_policy=dict(snapshot.get("execution_policy") or {}),
+            tenant_id=f"debug:{application['id']}",
+            task_workspace_retention_period=task_workspace_retention_period,
+            file_format_policy_version=file_format_policy_version,
+            task_file_features=task_file_features,
             continue_session_id=continue_session_id,
         )
         return self.create_job_service.execute(command), scoped_idempotency_key

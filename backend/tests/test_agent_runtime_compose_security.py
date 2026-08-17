@@ -8,6 +8,16 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 
 
+class _ComposeLoader(yaml.SafeLoader):
+    pass
+
+
+_ComposeLoader.add_constructor(
+    "!reset",
+    lambda loader, node: loader.construct_sequence(node),
+)
+
+
 def test_agent_runtime_grants_are_narrow_and_isolate_business_tables() -> None:
     grants = (ROOT / "backend/maintenance/agent_runtime_grants.sql").read_text(encoding="utf-8")
     normalized = " ".join(grants.lower().split())
@@ -179,3 +189,35 @@ def test_async_job_creation_workers_can_reach_only_python_agent_runtime() -> Non
         assert set(service["networks"]) == {"default", "agent-runtime-control"}
         assert service["depends_on"]["python-agent-runtime"] == {"condition": "service_healthy"}
         assert "typescript-agent-runtime" not in service["depends_on"]
+
+
+def test_python_runtime_acceptance_overlay_is_isolated_and_test_only() -> None:
+    overlay = yaml.load(
+        (ROOT / "docker-compose.python-runtime-acceptance.yml").read_text(encoding="utf-8"),
+        Loader=_ComposeLoader,
+    )
+    services = overlay["services"]
+
+    assert "typescript-agent-runtime" not in services
+    assert services["python-agent-runtime"]["environment"] == {
+        "APP_ENV": "testing",
+        "AGENT_RUNTIME_TEST_PROVIDER_MODE": "deterministic",
+    }
+    api_environment = services["api-server"]["environment"]
+    assert api_environment["APP_ENV"] == "testing"
+    assert api_environment["FEATURE_TEST_IDENTITY_HEADERS"] == "true"
+    runner = services["python-runtime-compose-acceptance"]
+    assert runner["profiles"] == ["python-runtime-acceptance"]
+    assert runner["restart"] == "no"
+    assert runner["environment"]["PYTHON_RUNTIME_ACCEPTANCE_API_BASE_URL"] == (
+        "http://api-server:8000"
+    )
+    assert runner["depends_on"]["agent-worker"] == {"condition": "service_started"}
+
+    assert services["postgres"]["ports"] == []
+    assert services["rabbitmq"]["ports"] == []
+    assert services["minio"]["ports"] == []
+    assert services["api-server"]["ports"] == []
+    for volume_name, volume in overlay["volumes"].items():
+        assert volume["name"].startswith("enterprise_agent_python_runtime_acceptance_"), volume_name
+        assert volume.get("external", False) is False
