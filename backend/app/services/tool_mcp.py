@@ -100,7 +100,7 @@ class JobToolService:
         if (
             job.status != JobStatus.RUNNING
             or job.agent_runtime_kind not in SUPPORTED_RUNTIMES
-            or job.agent_runtime_protocol_version not in {"1.0", "1.1", "1.2"}
+            or job.agent_runtime_protocol_version not in {"1.0", "1.1", "1.2", "1.3"}
         ):
             raise ToolMcpError("tool_mcp_job_invalid", "当前 Job 不允许调用工具")
         return job
@@ -174,9 +174,7 @@ class JobToolService:
                     event_kind="RESOURCE",
                     status="SUCCEEDED",
                     resource_code=str(result.metadata.get("resource_code") or ""),
-                    resource_revision_id=str(
-                        result.metadata.get("resource_revision_id") or ""
-                    ),
+                    resource_revision_id=str(result.metadata.get("resource_revision_id") or ""),
                     resource_placement=str(result.metadata.get("placement") or ""),
                     business_request=_resource_target(arguments),
                     business_response={"resolved": True},
@@ -512,8 +510,7 @@ def _error_meta(exc: Exception) -> dict[str, str]:
 
 def _error_code(exc: Exception) -> str:
     return str(
-        getattr(exc, "error_code", getattr(exc, "code", "tool_mcp_failed"))
-        or "tool_mcp_failed"
+        getattr(exc, "error_code", getattr(exc, "code", "tool_mcp_failed")) or "tool_mcp_failed"
     )[:128]
 
 
@@ -539,7 +536,9 @@ def _resource_target(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _risk_level(tool_name: str) -> str:
-    return "medium" if tool_name.startswith("query_redis") or tool_name == "query_database" else "low"
+    return (
+        "medium" if tool_name.startswith("query_redis") or tool_name == "query_database" else "low"
+    )
 
 
 def _encoded(value: Any) -> bytes:

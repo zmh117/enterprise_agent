@@ -34,27 +34,31 @@ def test_python_job_sandbox_maps_job_and_cleans_every_terminal_path(tmp_path: Pa
     }
     marker = json.loads((sandbox.path / SANDBOX_MARKER).read_text(encoding="utf-8"))
     assert marker == {"job_id": "job-1", "schema_version": 1}
-    assert sandbox.authorize_tool(
-        "Write", {"file_path": "work/draft.txt", "content": "draft"}
-    ) == {"file_path": "work/draft.txt", "content": "draft"}
+    assert sandbox.authorize_tool("Write", {"file_path": "work/draft.txt", "content": "draft"}) == {
+        "file_path": "work/draft.txt",
+        "content": "draft",
+    }
     (sandbox.path / "work/draft.txt").write_text("draft", encoding="utf-8")
-    assert sandbox.authorize_tool(
-        "Edit",
-        {
-            "file_path": "work/draft.txt",
-            "old_string": "draft",
-            "new_string": "final",
-        },
-    )["file_path"] == "work/draft.txt"
-    assert sandbox.authorize_tool("Read", {"file_path": "work/draft.txt"})[
-        "file_path"
-    ] == "work/draft.txt"
-    assert sandbox.authorize_tool("Grep", {"pattern": "draft", "path": "."})[
-        "path"
-    ] == "."
-    assert sandbox.authorize_tool(
-        "Glob", {"pattern": "**/*.txt", "path": "."}
-    ) == {"pattern": "**/*.txt", "path": "."}
+    assert (
+        sandbox.authorize_tool(
+            "Edit",
+            {
+                "file_path": "work/draft.txt",
+                "old_string": "draft",
+                "new_string": "final",
+            },
+        )["file_path"]
+        == "work/draft.txt"
+    )
+    assert (
+        sandbox.authorize_tool("Read", {"file_path": "work/draft.txt"})["file_path"]
+        == "work/draft.txt"
+    )
+    assert sandbox.authorize_tool("Grep", {"pattern": "draft", "path": "."})["path"] == "."
+    assert sandbox.authorize_tool("Glob", {"pattern": "**/*.txt", "path": "."}) == {
+        "pattern": "**/*.txt",
+        "path": ".",
+    }
     assert sandbox.authorize_tool(
         "Write",
         {
@@ -159,14 +163,10 @@ def test_python_job_sandbox_rejects_symlinks_special_files_and_limits(
 
         (sandbox.path / "work/one.txt").write_text("12345678", encoding="utf-8")
         with pytest.raises(JobSandboxError) as captured:
-            sandbox.authorize_tool(
-                "Write", {"file_path": "work/two.txt", "content": "x"}
-            )
+            sandbox.authorize_tool("Write", {"file_path": "work/two.txt", "content": "x"})
         assert captured.value.code == "sandbox_file_count_exceeded"
         with pytest.raises(JobSandboxError) as captured:
-            sandbox.authorize_tool(
-                "Write", {"file_path": "work/one.txt", "content": "123456789"}
-            )
+            sandbox.authorize_tool("Write", {"file_path": "work/one.txt", "content": "123456789"})
         assert captured.value.code == "sandbox_file_limit_exceeded"
     finally:
         sandbox.cleanup()
@@ -192,3 +192,36 @@ def test_python_job_sandbox_residual_cleanup_is_marker_and_job_state_bound(
     assert unmarked.exists()
     assert malformed.exists()
     running.cleanup()
+
+
+def test_python_text_v2_sandbox_allows_markdown_write_and_denies_log_mutation(
+    tmp_path: Path,
+) -> None:
+    sandbox = _manager(tmp_path).create(
+        "job-text-v2",
+        file_format_policy_version="text-v2",
+    )
+    try:
+        (sandbox.path / "inputs/service.log").write_text("line\n", encoding="utf-8")
+        assert (
+            sandbox.authorize_tool("Read", {"file_path": "inputs/service.log"})["file_path"]
+            == "inputs/service.log"
+        )
+        assert (
+            sandbox.authorize_tool(
+                "Write", {"file_path": "outputs/report.md", "content": "# report"}
+            )["file_path"]
+            == "outputs/report.md"
+        )
+        with pytest.raises(JobSandboxError) as readonly:
+            sandbox.authorize_tool(
+                "Edit",
+                {
+                    "file_path": "inputs/service.log",
+                    "old_string": "line",
+                    "new_string": "changed",
+                },
+            )
+        assert readonly.value.code == "sandbox_file_read_only"
+    finally:
+        sandbox.cleanup()

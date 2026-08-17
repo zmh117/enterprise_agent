@@ -57,11 +57,7 @@ FORBIDDEN_INPUT_FIELDS = {
 
 def _property_names(value: object) -> set[str]:
     if isinstance(value, dict):
-        return set(value) | {
-            name
-            for child in value.values()
-            for name in _property_names(child)
-        }
+        return set(value) | {name for child in value.values() for name in _property_names(child)}
     if isinstance(value, list):
         return {name for child in value for name in _property_names(child)}
     return set()
@@ -110,6 +106,9 @@ def test_file_commit_schema_distinguishes_new_file_and_existing_version() -> Non
         "delivery_mode": "DEFAULT",
     }
     _validate(schema, base)
+    _validate(schema, {**base, "display_name": "result.md"})
+    with pytest.raises(jsonschema.ValidationError):
+        _validate(schema, {**base, "display_name": "result.log"})
     _validate(
         schema,
         {
@@ -124,12 +123,25 @@ def test_file_commit_schema_distinguishes_new_file_and_existing_version() -> Non
     with pytest.raises(jsonschema.ValidationError):
         _validate(schema, {**base, "url": "https://example.invalid"})
 
+    materialize = FILE_TOOL_MANIFEST["file_prepare_materialization"].input_schema
+    for name in ("source.txt", "trace.log", "notes.md"):
+        _validate(
+            materialize,
+            {"file_id": "file-1", "version_id": "version-1", "preferred_name": name},
+        )
+    with pytest.raises(jsonschema.ValidationError):
+        _validate(
+            materialize,
+            {
+                "file_id": "file-1",
+                "version_id": "version-1",
+                "preferred_name": "notes.markdown",
+            },
+        )
+
 
 def test_internal_streaming_api_is_fixed_private_and_never_carries_credentials_in_paths() -> None:
-    assert {
-        (endpoint.method, endpoint.path_template)
-        for endpoint in INTERNAL_STREAMING_API
-    } == {
+    assert {(endpoint.method, endpoint.path_template) for endpoint in INTERNAL_STREAMING_API} == {
         ("GET", "/internal/v1/file-transfers/{transfer_id}/content"),
         ("PUT", "/internal/v1/file-commits/{commit_id}/content"),
         ("POST", "/internal/v1/attachments/{attachment_id}/content"),
@@ -187,4 +199,7 @@ def test_file_transfer_protocol_and_stable_errors_are_cross_runtime_safe() -> No
         "file_transfer_receipt_mismatch",
     }
     assert expected_runtime_errors <= set(FILE_ERROR_CATALOG)
-    assert all(error.safe_message and "secret" not in error.safe_message.lower() for error in FILE_ERROR_CATALOG.values())
+    assert all(
+        error.safe_message and "secret" not in error.safe_message.lower()
+        for error in FILE_ERROR_CATALOG.values()
+    )

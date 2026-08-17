@@ -90,9 +90,7 @@ def test_postgres_admin_job_query_uses_json_filters_and_keyset_limit(
             input_message="postgres query fixture",
             max_retry_count=3,
             routing_context={"environment": "prod", "base": "postgres-base"},
-            business_application_route_decision={
-                "correlation_id": "postgres-admin-query"
-            },
+            business_application_route_decision={"correlation_id": "postgres-admin-query"},
             execution_policy={
                 "schema_version": 1,
                 "requested": {
@@ -232,8 +230,21 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "110"
-        assert result.applied == ("100", "101", "102", "103", "104", "105", "106", "107", "108", "109", "110")
+        assert result.head == "111"
+        assert result.applied == (
+            "100",
+            "101",
+            "102",
+            "103",
+            "104",
+            "105",
+            "106",
+            "107",
+            "108",
+            "109",
+            "110",
+            "111",
+        )
         assert database.execute_one(
             """
             select count(*)::int as count
@@ -262,8 +273,21 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "110"
-        assert result.applied == ("100", "101", "102", "103", "104", "105", "106", "107", "108", "109", "110")
+        assert result.head == "111"
+        assert result.applied == (
+            "100",
+            "101",
+            "102",
+            "103",
+            "104",
+            "105",
+            "106",
+            "107",
+            "108",
+            "109",
+            "110",
+            "111",
+        )
         assert comments["table_count"] == 91
         assert comments["column_count"] == 1125
         assert {
@@ -459,13 +483,11 @@ def test_postgres_agent_run_audit_precision_constraints_and_cascade(
         serialized = str(AgentRepository(database).list_runtime_events("postgres-audit-job"))
         assert "must-not-enter-audit-event" not in serialized
 
-        database.execute(
-            "delete from agent_runtime_event where job_id = 'postgres-audit-job'"
-        )
+        database.execute("delete from agent_runtime_event where job_id = 'postgres-audit-job'")
         database.execute("delete from agent_job where id = 'postgres-audit-job'")
-        assert database.execute_one(
-            "select count(*)::int as count from agent_model_call"
-        ) == {"count": 0}
+        assert database.execute_one("select count(*)::int as count from agent_model_call") == {
+            "count": 0
+        }
         assert database.execute_one(
             "select count(*)::int as count from agent_job_execution_summary"
         ) == {"count": 0}
@@ -998,9 +1020,7 @@ def test_postgres_concurrent_same_name_mcp_calls_keep_exact_links(
         for handle in handles:
             linked = [row for row in rows if row["mcp_call_id"] == handle.mcp_call_id]
             assert {row["event_kind"] for row in linked} == {"TOOL", "AUTHORIZATION"}
-            assert {row["agent_tool_call_id"] for row in linked} == {
-                handle.agent_tool_call_id
-            }
+            assert {row["agent_tool_call_id"] for row in linked} == {handle.agent_tool_call_id}
             assert {row["status"] for row in linked} == {"SUCCEEDED"}
     finally:
         database.close()

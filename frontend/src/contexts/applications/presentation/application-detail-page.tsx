@@ -261,6 +261,10 @@ function OverviewTab({ application }: { application: BusinessApplication }) {
               "任务文件能力",
               formatTaskFileFeatures(draft?.task_file_features),
             ],
+            [
+              "文件格式策略",
+              formatFileFormatPolicy(draft?.file_format_policy_version),
+            ],
           ]}
         />
         <SummaryCard
@@ -412,6 +416,12 @@ function PolicyEditor({
   const missingRequiredFileTools = [...requiredFileMcpToolIds(form.task_file_features)].filter(
     (identifier) => !availableFileTools.has(identifier)
   )
+  const selectedAgent = catalog?.agents.find(
+    (item) => item.id === form.agent_publication_id
+  )
+  const textV2RuntimeCompatible =
+    selectedAgent?.runtime_protocol_versions.includes("1.3") === true
+  const textV2Cutover = catalog?.text_v2_cutover_preflight
   return (
     <Card className="shadow-none">
       <CardHeader>
@@ -438,6 +448,60 @@ function PolicyEditor({
           <p className="text-xs leading-5 text-muted-foreground">
             来源：当前草稿。按 Asia/Shanghai 自然周期固定到期，活动不会滚动延期；不影响聊天附件的 360 天保留。
           </p>
+        </Field>
+        <Field label="文件格式策略" htmlFor="policy-file-format">
+          <select
+            id="policy-file-format"
+            className={selectClass}
+            value={form.file_format_policy_version}
+            onChange={(event) => {
+              const policy = event.target
+                .value as SaveDraftInput["file_format_policy_version"]
+              const taskFileFeatures =
+                policy === "text-v2"
+                  ? {
+                      ...form.task_file_features,
+                      workspace_enabled: true,
+                      file_mcp_enabled: true,
+                    }
+                  : form.task_file_features
+              setForm({
+                ...form,
+                file_format_policy_version: policy,
+                task_file_features: taskFileFeatures,
+                mcp_tools: selectRequiredFileMcpTools(
+                  form.mcp_tools,
+                  taskFileFeatures,
+                  availableFileTools
+                ),
+                session_policy:
+                  policy === "text-v2"
+                    ? {
+                        ...form.session_policy,
+                        attachments_enabled: true,
+                        continuous_conversation_enabled: true,
+                      }
+                    : form.session_policy,
+              })
+            }}
+          >
+            <option value="text-v1">text-v1 · TXT 全能力</option>
+            <option value="text-v2">text-v2 · TXT/Markdown 全能力，LOG 只读</option>
+          </select>
+          <p className="text-xs leading-5 text-muted-foreground">
+            代码注册的固定矩阵，发布后冻结；Markdown 始终按不可信纯文本处理，不在管理端渲染。
+          </p>
+          {form.file_format_policy_version === "text-v2" && !textV2RuntimeCompatible ? (
+            <p className="text-xs leading-5 text-destructive">
+              所选 Agent 发布版本未声明支持 Runtime protocol v1.3，不能发布 text-v2。
+            </p>
+          ) : null}
+          {form.file_format_policy_version === "text-v2" && textV2Cutover?.ready === false ? (
+            <p className="text-xs leading-5 text-destructive">
+              切换预检发现 {textV2Cutover.blocking_job_count} 个仍引用旧 File MCP Schema
+              的活动或待重试 Job；排空或隔离前不能发布或激活 text-v2。
+            </p>
+          ) : null}
         </Field>
         <div className="space-y-3 rounded-md border p-4 md:col-span-2 xl:col-span-2">
           <div>
@@ -1198,6 +1262,7 @@ function ValidationTab({ application }: { application: BusinessApplication }) {
             revision?.task_workspace_retention_period ?? "WEEK（兼容默认）",
           ],
           ["任务文件能力", formatTaskFileFeatures(revision?.task_file_features)],
+          ["文件格式策略", formatFileFormatPolicy(revision?.file_format_policy_version)],
         ]}
       />
     </div>
@@ -1339,6 +1404,24 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
                             ? "历史兼容默认"
                             : "发布快照"
                         }`}
+                      />
+                      <PublicationMetadata
+                        label="文件格式策略"
+                        value={`${formatFileFormatPolicy(
+                          publication.file_format_policy_version
+                        )} · ${
+                          publication.file_format_policy_source === "legacy_default"
+                            ? "历史兼容默认"
+                            : "发布快照"
+                        }`}
+                      />
+                      <PublicationMetadata
+                        label="格式兼容状态"
+                        value={
+                          publication.file_format_compatibility.status === "READY"
+                            ? `就绪 · Runtime ${publication.file_format_compatibility.required_runtime_protocol}`
+                            : "不兼容 · Runtime 或 File MCP Schema 已漂移"
+                        }
                       />
                     </dl>
                   </div>
@@ -1531,6 +1614,8 @@ function draftToForm(application: BusinessApplication): SaveDraftInput {
     workflow_publication_id: draft?.workflow_publication_id ?? "",
     task_workspace_retention_period:
       draft?.task_workspace_retention_period ?? "WEEK",
+    file_format_policy_version:
+      draft?.file_format_policy_version ?? "text-v1",
     task_file_features: taskFileFeatures,
     session_policy: {
       conversation_mode: "channel",
@@ -1661,6 +1746,14 @@ function formatTaskFileFeatures(
     .filter(([active]) => active)
     .map(([, label]) => label)
   return enabled.length ? enabled.join("、") : "全部关闭"
+}
+
+function formatFileFormatPolicy(
+  policy: "text-v1" | "text-v2" | null | undefined
+): string {
+  return policy === "text-v2"
+    ? "text-v2（TXT/Markdown 全能力，LOG 只读）"
+    : "text-v1（TXT 全能力）"
 }
 
 function changeTrigger(

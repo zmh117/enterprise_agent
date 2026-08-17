@@ -77,7 +77,7 @@ def test_workspace_expand_schema_enforces_active_owner_and_version_constraints()
         default_migrations_dir(),
         migrator_build="task-file-workspace-schema-test",
     ).run()
-    assert result.head == "110"
+    assert result.head == "111"
     tables = {
         str(row["name"])
         for row in database.execute("select name from sqlite_master where type = 'table'")
@@ -113,7 +113,7 @@ def test_workspace_expand_schema_enforces_active_owner_and_version_constraints()
         "select sql from sqlite_master where type = 'table' and name = 'agent_job_file_snapshot'"
     )
     assert snapshot_sql_row is not None
-    assert "schema_version IN (1, 2)" in str(snapshot_sql_row["sql"])
+    assert "schema_version IN (1, 2, 3)" in str(snapshot_sql_row["sql"])
     delivery_columns = {
         str(row["name"]) for row in database.execute("pragma table_info(delivery_outbox)")
     }
@@ -330,7 +330,7 @@ def test_attachment_retention_backfill_uses_360_days_and_only_marks_cleanup(
         migrator_build="attachment-retention-upgrade",
     ).run()
 
-    assert upgraded.applied == ("107", "108", "109", "110")
+    assert upgraded.applied == ("107", "108", "109", "110", "111")
     attachment = database.execute_one(
         """
         select retention_days, expires_at, object_key, status
@@ -431,7 +431,7 @@ def test_source_received_time_backfill_uses_attachment_record_without_object_acc
         migrator_build="file-time-upgrade",
     ).run()
 
-    assert upgraded.applied == ("110",)
+    assert upgraded.applied == ("110", "111")
     assert database.execute_one(
         "select source_received_at from managed_file where id = 'file-time'"
     ) == {"source_received_at": TIMESTAMP}

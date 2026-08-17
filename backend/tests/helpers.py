@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 from datetime import UTC, datetime
 
 from app.bootstrap import Container, build_test_container
@@ -12,6 +13,7 @@ from app.modules.message_bus.application.message_publisher import AgentJobMessag
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
 from app.modules.business_application.domain.policies import (
     required_file_mcp_tools,
+    snapshot_hash,
     validate_task_file_features,
 )
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
@@ -274,6 +276,7 @@ def activate_dingtalk_test_application(
     additional_deliveries: tuple[dict[str, object], ...] = (),
     agent_publication_id: str = "agent_publication_default_v1",
     task_file_features: dict[str, bool] | None = None,
+    file_format_policy_version: str = "text-v1",
 ) -> dict[str, object]:
     ensure_active_dingtalk_test_enterprise(container)
     normalized_task_file_features = validate_task_file_features(task_file_features)
@@ -285,6 +288,33 @@ def activate_dingtalk_test_application(
         effective_capabilities,
         agent_publication_id=agent_publication_id,
     )
+    if file_format_policy_version == "text-v2":
+        publication_row = container.database.execute_one(
+            "select snapshot_json from agent_publication where id = ?",
+            (agent_publication_id,),
+        )
+        if publication_row is None:
+            raise AssertionError("Test Agent publication is missing")
+        snapshot = json.loads(str(publication_row["snapshot_json"]))
+        runtime_kind_row = container.database.execute_one(
+            "select runtime_kind from agent_publication where id = ?",
+            (agent_publication_id,),
+        )
+        assert runtime_kind_row is not None
+        snapshot["runtime_kind"] = str(runtime_kind_row["runtime_kind"])
+        snapshot["supported_runtime_protocol_versions"] = ["1.2", "1.3"]
+        container.database.execute(
+            """
+            update agent_publication
+               set schema_version = 3, snapshot_json = ?, config_hash = ?
+             where id = ?
+            """,
+            (
+                json.dumps(snapshot, ensure_ascii=False, sort_keys=True),
+                snapshot_hash(snapshot),
+                agent_publication_id,
+            ),
+        )
     triggers: list[dict[str, object]] = [
         {
             "trigger_type": "dingtalk_private",
@@ -344,6 +374,7 @@ def activate_dingtalk_test_application(
                 "max_tool_calls": 30,
             },
             "task_file_features": normalized_task_file_features,
+            "file_format_policy_version": file_format_policy_version,
             "triggers": triggers,
             "deliveries": [
                 {

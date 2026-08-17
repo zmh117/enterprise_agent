@@ -2,6 +2,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { lstat, mkdir, open, rm } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
+import {
+  type FileFormatPolicyVersion,
+  MAX_TEXT_BYTES,
+  type TextFormatCode,
+  textFormatForName
+} from "./text-format-policy.js";
 
 const FILE_TRANSFER_META_KEY = "enterprise-agent/file-transfer";
 const FILE_TRANSFER_PROTOCOL = "enterprise-agent.file-transfer/v1";
@@ -16,6 +22,7 @@ type MaterializeControl = {
   readonly relative_path: string;
   readonly expected_size_bytes: number;
   readonly expected_sha256: string;
+  readonly format_code: TextFormatCode;
 };
 
 type UploadCommitControl = {
@@ -23,6 +30,7 @@ type UploadCommitControl = {
   readonly action: "UPLOAD_COMMIT";
   readonly commit_id: string;
   readonly sandbox_entry_handle: string;
+  readonly format_code: "TXT" | "MARKDOWN";
 };
 
 export type FileTransferControl = MaterializeControl | UploadCommitControl;
@@ -32,6 +40,7 @@ export interface FileTransferContext {
   readonly workspacePath: string;
   readonly principalToken: string;
   readonly signal: AbortSignal;
+  readonly fileFormatPolicyVersion?: FileFormatPolicyVersion;
 }
 
 export interface FileUploadReceipt {
@@ -76,6 +85,7 @@ export type FileTransferResult =
       readonly relative_path: string;
       readonly size_bytes: number;
       readonly sha256: string;
+      readonly format_code: TextFormatCode;
     }
   | {
       readonly action: "COMMITTED";
@@ -96,6 +106,7 @@ export interface SelectedSandboxEntry {
   readonly relative_path: string;
   readonly size_bytes: number;
   readonly sha256: string;
+  readonly format_code: "TXT" | "MARKDOWN";
 }
 
 export class FileTransferBoundaryError extends Error {
@@ -136,19 +147,22 @@ function identifier(value: unknown, field: string): string {
   return value;
 }
 
-function safeRelativePath(value: unknown): string {
+function safeRelativePath(
+  value: unknown,
+  policyVersion: FileFormatPolicyVersion,
+  writable: boolean
+): { path: string; formatCode: TextFormatCode } {
   if (
     typeof value !== "string" ||
     value.length === 0 ||
     value.length > 240 ||
     value.includes("\\") ||
     value.includes("\0") ||
-    value.startsWith("/") ||
-    !value.toLowerCase().endsWith(".txt")
+    value.startsWith("/")
   ) {
     throw new FileTransferBoundaryError(
       "file_transfer_path_invalid",
-      "relative_path must be a bounded TXT path"
+      "relative_path must be a bounded text path"
     );
   }
   const normalized = relative(".", value);
@@ -164,7 +178,22 @@ function safeRelativePath(value: unknown): string {
       "relative_path must remain inside the Job Sandbox"
     );
   }
-  return value;
+  let definition: ReturnType<typeof textFormatForName>;
+  try {
+    definition = textFormatForName(value.slice(value.lastIndexOf("/") + 1), policyVersion);
+  } catch {
+    throw new FileTransferBoundaryError(
+      "file_transfer_path_invalid",
+      "relative_path format is not allowed"
+    );
+  }
+  if (writable && !definition.writable) {
+    throw new FileTransferBoundaryError(
+      "file_format_read_only",
+      "selected file format is read-only"
+    );
+  }
+  return { path: value, formatCode: definition.code };
 }
 
 async function rejectSymlinks(workspacePath: string, target: string): Promise<void> {
@@ -229,7 +258,7 @@ export function parseFileTransferControl(result: unknown): FileTransferControl {
     );
   }
   if (control.action === "MATERIALIZE") {
-    assertExactKeys(control, [
+    const keys = [
       "protocol",
       "action",
       "transfer_id",
@@ -237,7 +266,27 @@ export function parseFileTransferControl(result: unknown): FileTransferControl {
       "relative_path",
       "expected_size_bytes",
       "expected_sha256"
-    ]);
+    ];
+    if ("format_code" in control) keys.push("format_code");
+    assertExactKeys(control, keys);
+    const formatCode = control.format_code ?? "TXT";
+    if (!(["TXT", "LOG", "MARKDOWN"] as unknown[]).includes(formatCode)) {
+      throw new FileTransferBoundaryError(
+        "file_transfer_control_invalid",
+        "format_code is invalid"
+      );
+    }
+    const relativePath = safeRelativePath(
+      control.relative_path,
+      "text-v2",
+      false
+    );
+    if (relativePath.formatCode !== formatCode) {
+      throw new FileTransferBoundaryError(
+        "file_transfer_control_invalid",
+        "format_code does not match relative_path"
+      );
+    }
     return {
       protocol: FILE_TRANSFER_PROTOCOL,
       action: "MATERIALIZE",
@@ -246,21 +295,37 @@ export function parseFileTransferControl(result: unknown): FileTransferControl {
         control.sandbox_entry_handle,
         "sandbox_entry_handle"
       ),
-      relative_path: safeRelativePath(control.relative_path),
-      expected_size_bytes: nonNegativeInteger(
-        control.expected_size_bytes,
-        "expected_size_bytes"
-      ),
+      relative_path: relativePath.path,
+      format_code: formatCode as TextFormatCode,
+      expected_size_bytes: (() => {
+        const size = nonNegativeInteger(control.expected_size_bytes, "expected_size_bytes");
+        if (size > MAX_TEXT_BYTES) {
+          throw new FileTransferBoundaryError(
+            "file_transfer_size_mismatch",
+            "text file exceeds the transfer size limit"
+          );
+        }
+        return size;
+      })(),
       expected_sha256: sha256(control.expected_sha256, "expected_sha256")
     };
   }
   if (control.action === "UPLOAD_COMMIT") {
-    assertExactKeys(control, [
+    const keys = [
       "protocol",
       "action",
       "commit_id",
       "sandbox_entry_handle"
-    ]);
+    ];
+    if ("format_code" in control) keys.push("format_code");
+    assertExactKeys(control, keys);
+    const formatCode = control.format_code ?? "TXT";
+    if (formatCode !== "TXT" && formatCode !== "MARKDOWN") {
+      throw new FileTransferBoundaryError(
+        "file_transfer_control_invalid",
+        "commit format_code is invalid"
+      );
+    }
     return {
       protocol: FILE_TRANSFER_PROTOCOL,
       action: "UPLOAD_COMMIT",
@@ -268,7 +333,8 @@ export function parseFileTransferControl(result: unknown): FileTransferControl {
       sandbox_entry_handle: identifier(
         control.sandbox_entry_handle,
         "sandbox_entry_handle"
-      )
+      ),
+      format_code: formatCode
     };
   }
   throw new FileTransferBoundaryError(
@@ -290,21 +356,30 @@ function resolveSandboxPath(workspacePath: string, relativePath: string): string
 }
 
 export class FileTransferCoordinator {
-  private readonly entries = new Map<string, { relativePath: string; absolutePath: string }>();
+  private readonly entries = new Map<string, {
+    relativePath: string;
+    absolutePath: string;
+    formatCode: TextFormatCode;
+  }>();
 
   constructor(private readonly port: FileTransferPort) {}
 
   async selectSandboxOutput(
     relativePath: string,
     context: FileTransferContext,
-    maximumSizeBytes = 15 * 1024 * 1024
+    maximumSizeBytes = MAX_TEXT_BYTES
   ): Promise<SelectedSandboxEntry> {
-    const safePath = safeRelativePath(relativePath);
+    const selected = safeRelativePath(
+      relativePath,
+      context.fileFormatPolicyVersion ?? "text-v1",
+      true
+    );
+    const safePath = selected.path;
     const topLevel = safePath.split("/")[0];
     if (topLevel !== "work" && topLevel !== "outputs") {
       throw new FileTransferBoundaryError(
         "file_transfer_path_invalid",
-        "only work or outputs TXT files can be selected"
+        "only work or outputs text files can be selected"
       );
     }
     const absolutePath = resolveSandboxPath(context.workspacePath, safePath);
@@ -319,12 +394,13 @@ export class FileTransferCoordinator {
     if (state.size > maximumSizeBytes) {
       throw new FileTransferBoundaryError(
         "file_transfer_size_mismatch",
-        "sandbox output exceeds the TXT size limit"
+        "sandbox output exceeds the text size limit"
       );
     }
     const digest = createHash("sha256");
     const decoder = new TextDecoder("utf-8", { fatal: true });
     let sizeBytes = 0;
+    const prefix: number[] = [];
     try {
       for await (const chunk of createReadStream(absolutePath)) {
         if (context.signal.aborted) throw context.signal.reason;
@@ -333,13 +409,26 @@ export class FileTransferCoordinator {
         if (sizeBytes > maximumSizeBytes) {
           throw new FileTransferBoundaryError(
             "file_transfer_size_mismatch",
-            "sandbox output exceeds the TXT size limit"
+            "sandbox output exceeds the text size limit"
           );
         }
         digest.update(bytes);
-        decoder.decode(bytes, { stream: true });
+        for (const value of bytes.subarray(0, Math.max(0, 3 - prefix.length))) {
+          prefix.push(value);
+        }
+        if (decoder.decode(bytes, { stream: true }).includes("\0")) {
+          throw new FileTransferBoundaryError(
+            "file_transfer_type_invalid",
+            "sandbox output contains binary content"
+          );
+        }
       }
-      decoder.decode();
+      if (decoder.decode().includes("\0")) {
+        throw new FileTransferBoundaryError(
+          "file_transfer_type_invalid",
+          "sandbox output contains binary content"
+        );
+      }
     } catch (error) {
       if (error instanceof FileTransferBoundaryError) throw error;
       if (error instanceof TypeError) {
@@ -350,14 +439,25 @@ export class FileTransferCoordinator {
       }
       throw error;
     }
+    if (prefix[0] === 0xef && prefix[1] === 0xbb && prefix[2] === 0xbf) {
+      throw new FileTransferBoundaryError(
+        "file_output_bom_forbidden",
+        "sandbox output must use UTF-8 without BOM"
+      );
+    }
     const handle = `sandbox-entry:${randomUUID()}`;
-    this.entries.set(handle, { relativePath: safePath, absolutePath });
+    this.entries.set(handle, {
+      relativePath: safePath,
+      absolutePath,
+      formatCode: selected.formatCode
+    });
     return {
       action: "SELECTED",
       sandbox_entry_handle: handle,
       relative_path: safePath,
       size_bytes: sizeBytes,
-      sha256: digest.digest("hex")
+      sha256: digest.digest("hex"),
+      format_code: selected.formatCode as "TXT" | "MARKDOWN"
     };
   }
 
@@ -372,7 +472,12 @@ export class FileTransferCoordinator {
         "sandbox entry handle is invalid or already bound"
       );
     }
-    const safePath = safeRelativePath(relativePath);
+    const selected = safeRelativePath(
+      relativePath,
+      context.fileFormatPolicyVersion ?? "text-v1",
+      false
+    );
+    const safePath = selected.path;
     const absolutePath = resolveSandboxPath(context.workspacePath, safePath);
     await rejectSymlinks(context.workspacePath, absolutePath);
     const state = await lstat(absolutePath);
@@ -382,7 +487,11 @@ export class FileTransferCoordinator {
         "sandbox entry must reference a regular file"
       );
     }
-    this.entries.set(sandboxEntryHandle, { relativePath: safePath, absolutePath });
+    this.entries.set(sandboxEntryHandle, {
+      relativePath: safePath,
+      absolutePath,
+      formatCode: selected.formatCode
+    });
   }
 
   async processMcpControlResult(
@@ -399,6 +508,17 @@ export class FileTransferCoordinator {
     control: MaterializeControl,
     context: FileTransferContext
   ): Promise<FileTransferResult> {
+    const selected = safeRelativePath(
+      control.relative_path,
+      context.fileFormatPolicyVersion ?? "text-v1",
+      false
+    );
+    if (selected.formatCode !== control.format_code) {
+      throw new FileTransferBoundaryError(
+        "file_transfer_control_invalid",
+        "materialization format does not match the Job policy"
+      );
+    }
     const absolutePath = resolveSandboxPath(context.workspacePath, control.relative_path);
     if (this.entries.has(control.sandbox_entry_handle)) {
       throw new FileTransferBoundaryError(
@@ -410,6 +530,7 @@ export class FileTransferCoordinator {
     await mkdir(dirname(absolutePath), { recursive: true, mode: 0o700 });
     const file = await open(absolutePath, "wx", 0o600);
     const digest = createHash("sha256");
+    const decoder = new TextDecoder("utf-8", { fatal: true });
     let sizeBytes = 0;
     try {
       for await (const chunk of this.port.download({
@@ -427,11 +548,29 @@ export class FileTransferCoordinator {
           );
         }
         digest.update(chunk);
+        if (decoder.decode(chunk, { stream: true }).includes("\0")) {
+          throw new FileTransferBoundaryError(
+            "file_transfer_type_invalid",
+            "download contains binary content"
+          );
+        }
         await file.write(chunk);
+      }
+      if (decoder.decode().includes("\0")) {
+        throw new FileTransferBoundaryError(
+          "file_transfer_type_invalid",
+          "download contains binary content"
+        );
       }
     } catch (error) {
       await file.close();
       await rm(absolutePath, { force: true });
+      if (error instanceof TypeError) {
+        throw new FileTransferBoundaryError(
+          "file_transfer_encoding_invalid",
+          "download must be valid UTF-8"
+        );
+      }
       throw error;
     }
     await file.close();
@@ -448,14 +587,16 @@ export class FileTransferCoordinator {
     }
     this.entries.set(control.sandbox_entry_handle, {
       relativePath: control.relative_path,
-      absolutePath
+      absolutePath,
+      formatCode: control.format_code
     });
     return {
       action: "MATERIALIZED",
       sandbox_entry_handle: control.sandbox_entry_handle,
       relative_path: control.relative_path,
       size_bytes: sizeBytes,
-      sha256: actualSha256
+      sha256: actualSha256,
+      format_code: control.format_code
     };
   }
 
@@ -470,6 +611,12 @@ export class FileTransferCoordinator {
         "sandbox entry handle is not materialized"
       );
     }
+    if (entry.formatCode !== control.format_code) {
+      throw new FileTransferBoundaryError(
+        "file_transfer_handle_conflict",
+        "sandbox entry handle format does not match commit intent"
+      );
+    }
     await rejectSymlinks(context.workspacePath, entry.absolutePath);
     const fileState = await lstat(entry.absolutePath);
     if (!fileState.isFile()) {
@@ -478,28 +625,89 @@ export class FileTransferCoordinator {
         "sandbox entry must reference a regular file"
       );
     }
-    const digest = createHash("sha256");
+    const validatedDigest = createHash("sha256");
+    const decoder = new TextDecoder("utf-8", { fatal: true });
+    let validatedSizeBytes = 0;
+    const prefix: number[] = [];
+    try {
+      for await (const chunk of createReadStream(entry.absolutePath)) {
+        if (context.signal.aborted) throw context.signal.reason;
+        const bytes = chunk as Buffer;
+        validatedSizeBytes += bytes.byteLength;
+        if (validatedSizeBytes > MAX_TEXT_BYTES) {
+          throw new FileTransferBoundaryError(
+            "file_transfer_size_mismatch",
+            "sandbox output exceeds the text size limit"
+          );
+        }
+        for (const value of bytes.subarray(0, Math.max(0, 3 - prefix.length))) {
+          prefix.push(value);
+        }
+        if (decoder.decode(bytes, { stream: true }).includes("\0")) {
+          throw new FileTransferBoundaryError(
+            "file_transfer_type_invalid",
+            "sandbox output contains binary content"
+          );
+        }
+        validatedDigest.update(bytes);
+      }
+      if (decoder.decode().includes("\0")) {
+        throw new FileTransferBoundaryError(
+          "file_transfer_type_invalid",
+          "sandbox output contains binary content"
+        );
+      }
+      if (prefix[0] === 0xef && prefix[1] === 0xbb && prefix[2] === 0xbf) {
+        throw new FileTransferBoundaryError(
+          "file_output_bom_forbidden",
+          "sandbox output must use UTF-8 without BOM"
+        );
+      }
+    } catch (error) {
+      if (error instanceof FileTransferBoundaryError) throw error;
+      if (error instanceof TypeError) {
+        throw new FileTransferBoundaryError(
+          "file_transfer_encoding_invalid",
+          "sandbox output must be valid UTF-8"
+        );
+      }
+      throw error;
+    }
+    const expectedSha256 = validatedDigest.digest("hex");
+    const uploadDigest = createHash("sha256");
     let sizeBytes = 0;
-    const source = createReadStream(entry.absolutePath);
     const content = (async function* (): AsyncGenerator<Uint8Array> {
-      for await (const chunk of source) {
+      for await (const chunk of createReadStream(entry.absolutePath)) {
         if (context.signal.aborted) throw context.signal.reason;
         const bytes = chunk as Buffer;
         sizeBytes += bytes.byteLength;
-        digest.update(bytes);
+        uploadDigest.update(bytes);
         yield bytes;
       }
     })();
-    const receipt = await this.port.upload({
-      commitId: control.commit_id,
-      jobId: context.jobId,
-      principalToken: context.principalToken,
-      content,
-      signal: context.signal
-    });
-    const actualSha256 = digest.digest("hex");
+    let receipt: FileUploadReceipt;
+    try {
+      receipt = await this.port.upload({
+        commitId: control.commit_id,
+        jobId: context.jobId,
+        principalToken: context.principalToken,
+        content,
+        signal: context.signal
+      });
+    } catch (error) {
+      if (error instanceof TypeError) {
+        throw new FileTransferBoundaryError(
+          "file_transfer_encoding_invalid",
+          "sandbox output must be valid UTF-8"
+        );
+      }
+      throw error;
+    }
+    const actualSha256 = uploadDigest.digest("hex");
     if (
-      sizeBytes !== fileState.size ||
+      validatedSizeBytes !== fileState.size ||
+      sizeBytes !== validatedSizeBytes ||
+      actualSha256 !== expectedSha256 ||
       receipt.sizeBytes !== sizeBytes ||
       receipt.sha256 !== actualSha256 ||
       !SHA256.test(receipt.sha256) ||

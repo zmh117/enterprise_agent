@@ -1379,11 +1379,19 @@ class AgentRepository:
             select m.session_id, s.source_connector_id, s.bot_identity,
                    s.source_channel, m.sender_id,
                    coalesce(a.task_workspace_id, j.task_workspace_id) as task_workspace_id,
-                   coalesce(j.internal_user_id, m.sender_id, s.requester_id) as internal_user_id
+                   coalesce(j.internal_user_id, m.sender_id, s.requester_id) as internal_user_id,
+                   coalesce(fr.file_format_policy_version,
+                            bap.file_format_policy_version,
+                            'text-v1') as file_format_policy_version
               from message_attachment a
               join agent_message m on m.id = a.message_id
               join agent_session s on s.id = m.session_id
               left join agent_job j on j.id = a.job_id
+              left join agent_job_file_request fr on fr.job_id = j.id
+              left join task_workspace tw
+                on tw.id = coalesce(a.task_workspace_id, j.task_workspace_id)
+              left join business_application_publication bap
+                on bap.id = tw.business_application_publication_id
              where a.id = ?
             """,
             (attachment_id,),

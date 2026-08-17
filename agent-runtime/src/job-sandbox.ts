@@ -9,6 +9,12 @@ import {
   writeFile
 } from "node:fs/promises";
 import { dirname, join, posix, relative, resolve, sep } from "node:path";
+import {
+  type FileFormatPolicyVersion,
+  textFormatForName
+} from "./text-format-policy.js";
+
+export type { FileFormatPolicyVersion } from "./text-format-policy.js";
 
 export const SANDBOX_MARKER = ".enterprise-agent-sandbox.json";
 export const SANDBOX_CAPACITY_BYTES = 224 * 1024 * 1024;
@@ -31,7 +37,6 @@ export interface JobSandboxLimits {
   readonly maxFiles: number;
   readonly maxFileBytes: number;
 }
-
 const DEFAULT_LIMITS: JobSandboxLimits = {
   capacityBytes: SANDBOX_CAPACITY_BYTES,
   maxFiles: SANDBOX_FILE_LIMIT,
@@ -42,7 +47,8 @@ export class JobSandbox {
   constructor(
     readonly jobId: string,
     readonly path: string,
-    readonly limits: JobSandboxLimits
+    readonly limits: JobSandboxLimits,
+    readonly fileFormatPolicyVersion: FileFormatPolicyVersion = "text-v1"
   ) {}
 
   async cleanup(): Promise<void> {
@@ -75,20 +81,26 @@ export class JobSandbox {
     const rawPath = input[pathField] ?? (directoryTool ? "." : "");
     const relativePath = toolName === "Glob"
       ? safeDirectoryPath(rawPath, this.path)
-      : safeRelativePath(rawPath, toolName === "Grep", this.path);
+      : safeRelativePath(
+          rawPath,
+          toolName === "Grep",
+          this.path,
+          this.fileFormatPolicyVersion,
+          toolName === "Write" || toolName === "Edit"
+        );
     const target = resolveSandboxPath(this.path, relativePath, directoryTool);
     await rejectSymlinks(this.path, target);
     const current = await optionalStat(target);
     if (toolName === "Read" || toolName === "Glob" || toolName === "Grep") {
       if (!current) deny("sandbox_entry_missing", "sandbox entry does not exist");
       if (toolName === "Read" && !current.isFile()) {
-        deny("sandbox_entry_invalid", "Read requires a regular TXT file");
+        deny("sandbox_entry_invalid", "Read requires a regular text file");
       }
       if (toolName === "Glob") {
         if (!current.isDirectory()) {
           deny("sandbox_entry_invalid", "Glob requires a regular directory");
         }
-        authorizeGlobPattern(input.pattern);
+        authorizeGlobPattern(input.pattern, this.fileFormatPolicyVersion);
       }
       if (toolName === "Grep") {
         if (!current.isFile() && !current.isDirectory()) {
@@ -139,7 +151,7 @@ export class JobSandbox {
     }
     const incoming = Buffer.byteLength(content, "utf8");
     if (incoming > this.limits.maxFileBytes) {
-      deny("sandbox_file_limit_exceeded", "TXT file exceeds the sandbox limit");
+      deny("sandbox_file_limit_exceeded", "text file exceeds the sandbox limit");
     }
     const usage = await this.usage();
     const previous = Number(current?.size ?? 0);
@@ -167,7 +179,10 @@ export class JobSandboxManager {
     }
   }
 
-  async create(jobId: string): Promise<JobSandbox> {
+  async create(
+    jobId: string,
+    fileFormatPolicyVersion: FileFormatPolicyVersion = "text-v1"
+  ): Promise<JobSandbox> {
     assertIdentifier(jobId);
     await mkdir(this.root, { recursive: true, mode: 0o700 });
     const digest = createHash("sha256").update(jobId).digest("hex").slice(0, 24);
@@ -179,7 +194,7 @@ export class JobSandboxManager {
       JSON.stringify({ job_id: jobId, schema_version: 1 }),
       { encoding: "utf8", mode: 0o600, flag: "wx" }
     );
-    return new JobSandbox(jobId, path, this.limits);
+    return new JobSandbox(jobId, path, this.limits, fileFormatPolicyVersion);
   }
 
   async cleanupResiduals(isJobRunning: (jobId: string) => Promise<boolean>): Promise<string[]> {
@@ -217,7 +232,13 @@ function assertIdentifier(value: string): void {
   if (!IDENTIFIER.test(value)) deny("sandbox_job_id_invalid", "Job id is invalid");
 }
 
-function safeRelativePath(value: unknown, allowRoot: boolean, rootValue: string): string {
+function safeRelativePath(
+  value: unknown,
+  allowRoot: boolean,
+  rootValue: string,
+  policyVersion: FileFormatPolicyVersion,
+  write: boolean
+): string {
   value = sdkRelativePath(value, allowRoot, rootValue);
   if (typeof value !== "string" || value.length < 1 || value.length > 240 || value.includes("\\") || value.includes("\0")) {
     deny("sandbox_path_invalid", "sandbox path is invalid");
@@ -229,8 +250,14 @@ function safeRelativePath(value: unknown, allowRoot: boolean, rootValue: string)
     value.split("/").some((part) => part === "." || part === "..") ||
     !TOP_LEVEL.has(value.split("/")[0] ?? "")
   ) deny("sandbox_path_invalid", "sandbox path escaped its Job boundary");
-  if (posix.extname(value).toLowerCase() !== ".txt") {
-    deny("sandbox_file_type_denied", "only TXT files are allowed");
+  let definition: ReturnType<typeof textFormatForName>;
+  try {
+    definition = textFormatForName(posix.basename(value), policyVersion);
+  } catch {
+    deny("sandbox_file_type_denied", "file format is not allowed");
+  }
+  if (write && !definition.writable) {
+    deny("sandbox_file_read_only", "this file format is read-only");
   }
   return value;
 }
@@ -276,7 +303,10 @@ function sdkRelativePath(
   return relativePath;
 }
 
-function authorizeGlobPattern(value: unknown): void {
+function authorizeGlobPattern(
+  value: unknown,
+  policyVersion: FileFormatPolicyVersion
+): void {
   if (
     typeof value !== "string" ||
     value.length < 1 ||
@@ -284,10 +314,17 @@ function authorizeGlobPattern(value: unknown): void {
     value.includes("\\") ||
     value.includes("\0") ||
     posix.isAbsolute(value) ||
-    value.split("/").some((part) => part === "." || part === "..") ||
-    !value.toLowerCase().endsWith(".txt")
+    value.split("/").some((part) => part === "." || part === "..")
   ) {
-    deny("sandbox_tool_input_invalid", "Glob pattern must be a relative TXT pattern");
+    deny("sandbox_tool_input_invalid", "Glob pattern must be a safe relative pattern");
+  }
+  const allowed = policyVersion === "text-v2" ? [".txt", ".log", ".md"] : [".txt"];
+  const lowered = value.toLowerCase();
+  if (
+    !allowed.some((extension) => lowered.endsWith(extension)) &&
+    !allowed.some((extension) => lowered.includes(`${extension.slice(1)}}`))
+  ) {
+    deny("sandbox_tool_input_invalid", "Glob pattern must target an allowed text format");
   }
 }
 

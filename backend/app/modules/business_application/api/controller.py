@@ -91,9 +91,8 @@ class RevisionResponse(BaseModel):
     agent_publication_id: str = ""
     workflow_publication_id: str = ""
     task_workspace_retention_period: Literal["DAY", "WEEK", "MONTH"] = "WEEK"
-    task_file_features: TaskFileFeaturesResponse = Field(
-        default_factory=TaskFileFeaturesResponse
-    )
+    file_format_policy_version: Literal["text-v1", "text-v2"] = "text-v1"
+    task_file_features: TaskFileFeaturesResponse = Field(default_factory=TaskFileFeaturesResponse)
     session_policy: dict[str, Any] = Field(default_factory=dict)
     execution_policy: dict[str, Any] = Field(default_factory=dict)
     validation: ValidationResponse = Field(default_factory=ValidationResponse)
@@ -117,15 +116,13 @@ class PublicationResponse(RuntimeStateResponse):
     published_by: str
     published_at: str
     task_workspace_retention_period: Literal["DAY", "WEEK", "MONTH"] = "WEEK"
-    task_workspace_retention_source: Literal[
-        "publication_snapshot", "legacy_default"
-    ] = "legacy_default"
-    task_file_features: TaskFileFeaturesResponse = Field(
-        default_factory=TaskFileFeaturesResponse
+    task_workspace_retention_source: Literal["publication_snapshot", "legacy_default"] = (
+        "legacy_default"
     )
-    task_file_features_source: Literal[
-        "publication_snapshot", "legacy_default"
-    ] = "legacy_default"
+    file_format_policy_version: Literal["text-v1", "text-v2"] = "text-v1"
+    file_format_policy_source: Literal["publication_snapshot", "legacy_default"] = "legacy_default"
+    task_file_features: TaskFileFeaturesResponse = Field(default_factory=TaskFileFeaturesResponse)
+    task_file_features_source: Literal["publication_snapshot", "legacy_default"] = "legacy_default"
 
 
 class DeploymentResponse(RuntimeStateResponse):
@@ -154,6 +151,7 @@ class ApplicationSummaryResponse(RuntimeStateResponse):
     latest_publication_revision: int | None = None
     active_environments: list[str] = Field(default_factory=list)
     task_workspace_retention_period: Literal["DAY", "WEEK", "MONTH"] = "WEEK"
+    file_format_policy_version: Literal["text-v1", "text-v2"] = "text-v1"
 
 
 class ApplicationResponse(ApplicationSummaryResponse):
@@ -194,6 +192,7 @@ class ComponentReferenceResponse(BaseModel):
     status: str
     config_hash: str
     runtime_kind: Literal["python-v1", "typescript-v1"] | None = None
+    runtime_protocol_versions: list[Literal["1.0", "1.1", "1.2", "1.3"]] | None = None
     direction: str = ""
     component_type: str = ""
 
@@ -283,9 +282,8 @@ class SaveDraftRequest(StrictRequest):
     agent_publication_id: str = Field(default="", max_length=200)
     workflow_publication_id: str = Field(default="", max_length=200)
     task_workspace_retention_period: Literal["DAY", "WEEK", "MONTH"] = "WEEK"
-    task_file_features: TaskFileFeaturesResponse = Field(
-        default_factory=TaskFileFeaturesResponse
-    )
+    file_format_policy_version: Literal["text-v1", "text-v2"] = "text-v1"
+    task_file_features: TaskFileFeaturesResponse = Field(default_factory=TaskFileFeaturesResponse)
     session_policy: SessionPolicyRequest = Field(default_factory=SessionPolicyRequest)
     execution_policy: ExecutionPolicyRequest = Field(default_factory=ExecutionPolicyRequest)
     triggers: list[TriggerRequest] = Field(default_factory=list, max_length=20)

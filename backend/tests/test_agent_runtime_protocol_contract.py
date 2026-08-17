@@ -22,6 +22,7 @@ from app.modules.agent.infrastructure.runtime_protocol import (
 CONTRACT_ROOT = Path(__file__).parents[2] / "agent-runtime" / "contracts" / "v1"
 CONTRACT_ROOT_V11 = Path(__file__).parents[2] / "agent-runtime" / "contracts" / "v1.1"
 CONTRACT_ROOT_V12 = Path(__file__).parents[2] / "agent-runtime" / "contracts" / "v1.2"
+CONTRACT_ROOT_V13 = Path(__file__).parents[2] / "agent-runtime" / "contracts" / "v1.3"
 
 
 def _request() -> dict[str, Any]:
@@ -40,9 +41,7 @@ def test_python_accepts_typescript_golden_request_and_digest() -> None:
 def test_worker_dual_reads_v1_and_v11_while_schemas_remain_strict() -> None:
     request_v1 = _request()
     request_v11 = json.loads(
-        (CONTRACT_ROOT_V11 / "golden" / "execution-request.json").read_text(
-            encoding="utf-8"
-        )
+        (CONTRACT_ROOT_V11 / "golden" / "execution-request.json").read_text(encoding="utf-8")
     )
 
     assert validate_execution_request(request_v1) == request_v1
@@ -55,14 +54,10 @@ def test_worker_dual_reads_v1_and_v11_while_schemas_remain_strict() -> None:
 
 def test_worker_reads_v12_observability_events_and_keeps_older_minors() -> None:
     request_v12 = json.loads(
-        (CONTRACT_ROOT_V12 / "golden" / "execution-request.json").read_text(
-            encoding="utf-8"
-        )
+        (CONTRACT_ROOT_V12 / "golden" / "execution-request.json").read_text(encoding="utf-8")
     )
     fixture = json.loads(
-        (CONTRACT_ROOT_V12 / "golden" / "safe-runtime-fixture.json").read_text(
-            encoding="utf-8"
-        )
+        (CONTRACT_ROOT_V12 / "golden" / "safe-runtime-fixture.json").read_text(encoding="utf-8")
     )
 
     assert validate_execution_request(request_v12) == request_v12
@@ -75,11 +70,49 @@ def test_worker_reads_v12_observability_events_and_keeps_older_minors() -> None:
         validate_runtime_contract("RuntimeEvent", fixture[name], protocol_version="1.2")
 
 
+def test_worker_reads_v13_file_policy_and_rejects_log_action_expansion() -> None:
+    request = json.loads(
+        (CONTRACT_ROOT_V13 / "golden" / "execution-request.json").read_text(encoding="utf-8")
+    )
+    request["file_context"]["file_manifest"] = {
+        "schema_version": 3,
+        "file_format_policy_version": "text-v2",
+        "manifest_hash": "a" * 64,
+        "observed_at": "2026-08-17T00:00:00Z",
+        "items": [
+            {
+                "file_id": "file-log-1",
+                "version_id": "version-log-1",
+                "display_name": "service.log",
+                "format_code": "LOG",
+                "source_kind": "CURRENT_MESSAGE",
+                "allowed_actions": [
+                    "READ_METADATA",
+                    "MATERIALIZE",
+                    "RETAIN",
+                    "DELIVER",
+                ],
+                "auto_materialize": True,
+                "conflict_candidate": False,
+                "source_received_at": "2026-08-17T00:00:00Z",
+                "version_created_at": "2026-08-17T00:00:00Z",
+            }
+        ],
+    }
+    request["request_digest"] = canonical_request_digest(request)
+    assert validate_execution_request(request) == request
+
+    forged = copy.deepcopy(request)
+    forged["file_context"]["file_manifest"]["items"][0]["allowed_actions"].append("EDIT")
+    forged["request_digest"] = canonical_request_digest(forged)
+    with pytest.raises(RuntimeProtocolError) as invalid:
+        validate_execution_request(forged)
+    assert invalid.value.code == "runtime_file_actions_invalid"
+
+
 def test_worker_v11_accepts_exact_origins_and_old_worker_rejects_new_event() -> None:
     fixture = json.loads(
-        (CONTRACT_ROOT_V11 / "golden" / "safe-runtime-fixture.json").read_text(
-            encoding="utf-8"
-        )
+        (CONTRACT_ROOT_V11 / "golden" / "safe-runtime-fixture.json").read_text(encoding="utf-8")
     )
     event = fixture["tool_event"]
 

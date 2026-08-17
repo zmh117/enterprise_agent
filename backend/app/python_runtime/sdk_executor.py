@@ -149,9 +149,7 @@ class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
         file_principal_token: str = "",
         sandbox_manager: JobSandboxManager | None = None,
         cancellation_event: threading.Event | None = None,
-        file_bridge_factory: PythonRuntimeFileBridgeFactory = (
-            create_python_runtime_file_bridge
-        ),
+        file_bridge_factory: PythonRuntimeFileBridgeFactory = (create_python_runtime_file_bridge),
     ) -> None:
         super().__init__(
             model="",
@@ -179,9 +177,7 @@ class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
             "X-Project-Code": request.project_code,
             "X-Invocation-Id": request.invocation_id,
             "X-Agent-Publication-Id": request.context.publication_id,
-            "X-Application-Publication-Id": (
-                request.context.application_publication_id
-            ),
+            "X-Application-Publication-Id": (request.context.application_publication_id),
         }
 
     def _build_mcp_server(self, request: AgentRunRequest) -> dict[str, dict[str, Any]]:
@@ -248,6 +244,7 @@ class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
                 job_id=request.job_id,
                 workspace_path=sandbox.path,
                 principal_token=self._file_principal_token,
+                file_format_policy_version=request.context.file_format_policy_version,
             ),
             timeout_seconds=float(request.context.timeout_seconds),
         )
@@ -274,13 +271,13 @@ class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
             return context
         manifest = context.retrieved_context.get("file_manifest")
         schema_version = manifest.get("schema_version") if isinstance(manifest, dict) else None
-        if not isinstance(manifest, dict) or schema_version not in {1, 2}:
+        if not isinstance(manifest, dict) or schema_version not in {1, 2, 3}:
             raise NonRetryableExecutionError(
                 "Runtime Job File Manifest is missing or invalid",
                 safe_message="任务文件清单无效",
                 error_code="file_manifest_runtime_invalid",
             )
-        if schema_version == 2 and not _is_utc_rfc3339(manifest.get("observed_at")):
+        if schema_version in {2, 3} and not _is_utc_rfc3339(manifest.get("observed_at")):
             raise NonRetryableExecutionError(
                 "Runtime Job File Manifest observation time is invalid",
                 safe_message="任务文件清单无效",
@@ -304,7 +301,7 @@ class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
                 )
             source_received_at = item.get("source_received_at")
             version_created_at = item.get("version_created_at")
-            if schema_version == 2 and (
+            if schema_version in {2, 3} and (
                 (source_received_at is not None and not _is_utc_rfc3339(source_received_at))
                 or not _is_utc_rfc3339(version_created_at)
             ):
@@ -319,6 +316,7 @@ class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
             version_id = item.get("version_id")
             display_name = item.get("display_name")
             actions = item.get("allowed_actions")
+            format_code = item.get("format_code", "TXT")
             if (
                 not isinstance(file_id, str)
                 or _OPAQUE_IDENTIFIER.fullmatch(file_id) is None
@@ -328,6 +326,7 @@ class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
                 or not 1 <= len(display_name) <= 255
                 or not isinstance(actions, list)
                 or "MATERIALIZE" not in actions
+                or format_code not in {"TXT", "LOG", "MARKDOWN"}
             ):
                 raise NonRetryableExecutionError(
                     "Runtime Job File Manifest item is invalid",
@@ -354,6 +353,8 @@ class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
                     "file_id": file_id,
                     "version_id": version_id,
                     "display_name": display_name,
+                    "format_code": str(format_code),
+                    "allowed_actions": list(actions),
                     "relative_path": str(result["relative_path"]),
                     "sandbox_entry_handle": str(result["sandbox_entry_handle"]),
                     "size_bytes": int(result["size_bytes"]),
@@ -395,9 +396,7 @@ class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
         ):
             exact_tools.append(f"mcp__file_service__{LOCAL_FILE_OUTPUT_TOOL}")
         exact_tool_set = frozenset(exact_tools)
-        file_job = any(
-            item.server_code == "file-service" for item in context.mcp_bindings
-        )
+        file_job = any(item.server_code == "file-service" for item in context.mcp_bindings)
         sandbox = self._sandbox.get()
         if sandbox is None:
             raise NonRetryableExecutionError(
@@ -548,9 +547,7 @@ class PythonRuntimeSdkExecutor:
             ones_mcp_server_url=self._ones_mcp_server_url,
             principal_token=(secret_context.principal_token if secret_context else ""),
             file_mcp_server_url=self._file_mcp_server_url,
-            file_principal_token=(
-                secret_context.file_principal_token if secret_context else ""
-            ),
+            file_principal_token=(secret_context.file_principal_token if secret_context else ""),
             sandbox_manager=self._sandbox_manager,
             cancellation_event=cancel_event,
         )
@@ -786,6 +783,7 @@ class PythonRuntimeSdkExecutor:
                 "persisted_tool_call_id": result["agent_tool_call_id"],
             }
 
+        completed_events: tuple[dict[str, Any], ...]
         try:
             if call_count == 1:
                 completed_events = (invoke(calls[0]),)
@@ -856,9 +854,7 @@ class PythonRuntimeSdkExecutor:
                     "X-App-User-Id": str(request["app_user_id"]),
                     "X-Project-Code": str(request["project_code"]),
                     "X-Agent-Publication-Id": str(request["agent_publication_id"]),
-                    "X-Application-Publication-Id": str(
-                        request["application_publication_id"]
-                    ),
+                    "X-Application-Publication-Id": str(request["application_publication_id"]),
                 }
             )
             url = self._mcp_server_url
@@ -1009,6 +1005,9 @@ def _agent_request(request: dict[str, Any], binding: Any) -> AgentRunRequest:
         mcp_bindings=tools,
         runtime_kind=PYTHON_RUNTIME_KIND,
         runtime_protocol_version=str(request["protocol_version"]),
+        file_format_policy_version=str(
+            (request.get("file_context") or {}).get("file_format_policy_version", "text-v1")
+        ),
     )
     return AgentRunRequest(
         job_id=str(request["job_id"]),
@@ -1073,7 +1072,7 @@ def _normalize_tool_events(
             "response_summary": {"available": bool(event.get("response_summary"))},
             "duration_ms": max(0, int(event.get("duration_ms") or 0)),
         }
-        if protocol_version in {"1.1", "1.2"}:
+        if protocol_version in {"1.1", "1.2", "1.3"}:
             item.update(
                 {
                     "tool_origin": tool_origin,

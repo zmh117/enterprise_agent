@@ -13,6 +13,7 @@ class ComponentReference:
     status: str
     config_hash: str
     runtime_kind: str | None = None
+    runtime_protocol_versions: tuple[str, ...] = ()
     direction: str = ""
     component_type: str = ""
 

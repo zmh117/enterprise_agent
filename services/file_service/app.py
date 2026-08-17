@@ -38,7 +38,7 @@ from services.file_service.principal import FilePrincipalResolver
 
 logger = logging.getLogger(__name__)
 SERVER_VERSION = "0.1.0"
-REQUIRED_SCHEMA_VERSION = 107
+REQUIRED_SCHEMA_VERSION = 111
 MAX_TOOL_RESPONSE_BYTES = 256 * 1024
 
 
@@ -71,13 +71,9 @@ class FileStreamingOperations(Protocol):
         body: AsyncIterator[bytes],
     ) -> dict[str, Any]: ...
 
-    async def run_maintenance(
-        self, *, service_claims: dict[str, Any]
-    ) -> dict[str, Any]: ...
+    async def run_maintenance(self, *, service_claims: dict[str, Any]) -> dict[str, Any]: ...
 
-    async def maintenance_metrics(
-        self, *, service_claims: dict[str, Any]
-    ) -> dict[str, Any]: ...
+    async def maintenance_metrics(self, *, service_claims: dict[str, Any]) -> dict[str, Any]: ...
 
 
 class FileServiceReadiness(Protocol):
@@ -108,14 +104,14 @@ class FileServiceSecurityMiddleware:
             return
         headers = _headers(scope)
         if _bearer_values(headers) is None:
-            await JSONResponse(
-                {"error": "file_mcp_authentication_failed"}, status_code=401
-            )(scope, receive, send)
+            await JSONResponse({"error": "file_mcp_authentication_failed"}, status_code=401)(
+                scope, receive, send
+            )
             return
         if headers.get("origin"):
-            await JSONResponse(
-                {"error": "file_mcp_origin_forbidden"}, status_code=403
-            )(scope, receive, send)
+            await JSONResponse({"error": "file_mcp_origin_forbidden"}, status_code=403)(
+                scope, receive, send
+            )
             return
         body = bytearray()
         while True:
@@ -124,9 +120,9 @@ class FileServiceSecurityMiddleware:
                 return
             body.extend(message.get("body") or b"")
             if len(body) > self.max_request_bytes:
-                await JSONResponse(
-                    {"error": "file_mcp_request_too_large"}, status_code=413
-                )(scope, receive, send)
+                await JSONResponse({"error": "file_mcp_request_too_large"}, status_code=413)(
+                    scope, receive, send
+                )
                 return
             if not message.get("more_body", False):
                 break
@@ -205,9 +201,7 @@ def create_file_server(
                     result={**result, "status": "SUCCEEDED"},
                     duration_ms=int((time.monotonic() - started) * 1000),
                 )
-            result_meta: dict[str, Any] = (
-                dict(handle.result_meta()) if handle is not None else {}
-            )
+            result_meta: dict[str, Any] = dict(handle.result_meta()) if handle is not None else {}
             if isinstance(transfer_meta, dict):
                 result_meta.update(transfer_meta)
             return _tool_result(
@@ -351,9 +345,7 @@ def create_app(
             result = await streaming.import_attachment(
                 attachment_id=request.path_params["attachment_id"],
                 service_claims=claims,
-                media_type=str(
-                    request.headers.get("content-type") or "application/octet-stream"
-                ),
+                media_type=str(request.headers.get("content-type") or "application/octet-stream"),
                 body=request.stream(),
             )
             return JSONResponse(_safe_result(result))
@@ -394,13 +386,14 @@ def create_app(
             )
             return StreamingResponse(
                 stream,
-                media_type="text/plain; charset=utf-8",
+                media_type=str(metadata["media_type"]),
                 headers={
                     "X-File-Name-B64": base64.urlsafe_b64encode(
                         str(metadata["display_name"]).encode("utf-8")
                     ).decode("ascii"),
                     "X-File-Size": str(metadata["size_bytes"]),
                     "X-File-SHA256": str(metadata["sha256"]),
+                    "X-File-Format": str(metadata["format_code"]),
                 },
             )
         except AppError as exc:
@@ -455,9 +448,7 @@ def create_app(
 def _headers(scope: Scope) -> dict[str, list[str]]:
     headers: dict[str, list[str]] = {}
     for key, value in scope.get("headers") or []:
-        headers.setdefault(key.decode("latin-1").lower(), []).append(
-            value.decode("latin-1")
-        )
+        headers.setdefault(key.decode("latin-1").lower(), []).append(value.decode("latin-1"))
     return headers
 
 
@@ -472,9 +463,7 @@ def _bearer_values(headers: dict[str, list[str]]) -> str | None:
 
 
 def _bearer(request: Request) -> str:
-    token = _bearer_values(
-        {"authorization": request.headers.getlist("authorization")}
-    )
+    token = _bearer_values({"authorization": request.headers.getlist("authorization")})
     if token is None:
         raise FilePrincipalError(
             "File Service bearer token is missing",

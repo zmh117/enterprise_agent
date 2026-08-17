@@ -32,6 +32,9 @@ const componentReferenceSchema = z.object({
     (value) => (value === "" || value === null ? undefined : value),
     z.enum(["python-v1", "typescript-v1"]).optional()
   ),
+  runtime_protocol_versions: z
+    .array(z.enum(["1.0", "1.1", "1.2", "1.3"]))
+    .default([]),
   direction: z.string(),
   component_type: z.string(),
 })
@@ -54,6 +57,21 @@ export const catalogSchema = z.object({
       )
     )
     .default({}),
+  text_v2_cutover_preflight: z
+    .object({
+      ready: z.boolean(),
+      blocking_job_count: z.number().int().nonnegative(),
+      blocking_jobs: z.array(
+        z.object({
+          job_id: z.string(),
+          status: z.string(),
+          retry_count: z.number().int().nonnegative(),
+          reason: z.string(),
+          tool_identifiers: z.array(z.string()).optional(),
+        })
+      ),
+    })
+    .default({ ready: true, blocking_job_count: 0, blocking_jobs: [] }),
 })
 
 export async function listApplications() {

@@ -186,6 +186,7 @@ class ChannelIngressService:
             task_workspace_retention_period=str(
                 snapshot.get("task_workspace_retention_period") or "WEEK"
             ),
+            file_format_policy_version=str(snapshot.get("file_format_policy_version") or "text-v1"),
             task_file_features={
                 str(key): bool(value)
                 for key, value in dict(snapshot.get("task_file_features") or {}).items()

@@ -22,6 +22,8 @@ _PAYLOAD_KEYS = {
     "status",
     "size_bytes",
     "content_sha256",
+    "format_code",
+    "file_format_policy_version",
 }
 
 

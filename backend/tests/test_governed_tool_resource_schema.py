@@ -54,7 +54,7 @@ def test_governed_resource_schema_has_stable_revision_records_without_legacy_map
         migrator_build="resource-schema-test",
     ).run()
 
-    assert result.head == "110"
+    assert result.head == "111"
     tables = {
         row["name"]
         for row in database.execute("select name from sqlite_master where type = 'table'")

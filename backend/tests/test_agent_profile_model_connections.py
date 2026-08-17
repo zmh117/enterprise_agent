@@ -347,6 +347,11 @@ def test_agent_publication_pins_connection_and_job_records_safe_provenance() -> 
         agent_code=AGENT_CODE,
         revision_id=str(draft["id"]),
     )
+    assert publication["schema_version"] == 3
+    assert publication["snapshot"]["supported_runtime_protocol_versions"] == [
+        "1.2",
+        "1.3",
+    ]
     assert publication["snapshot"]["model_connection"]["revision_id"] == connection_revision["id"]
     assert "credential" not in publication["snapshot"]["model_connection"]
 

@@ -16,12 +16,39 @@ from app.modules.file_workspace.domain import (
 )
 from app.modules.file_workspace.manifest_service import (
     JobFileManifestService,
+    is_explicit_text_output_request,
     is_explicit_txt_output_request,
 )
 from app.modules.file_workspace.repository import FileWorkspaceRepository
 from app.modules.file_workspace.workspace_service import TaskWorkspaceService
 from app.shared.exceptions import NonRetryableExecutionError
 from backend.tests.test_file_workspace_repository import TIMESTAMP, _database
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "请创建一份 Markdown 文件并保存为 report.md",
+        "edit the .md document and export it",
+    ],
+)
+def test_text_v2_requires_explicit_markdown_file_output_intent(message: str) -> None:
+    assert is_explicit_text_output_request(message, policy_version="text-v2") is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "解释一下 Markdown 的语法",
+        "请用 Markdown 排版回复，不要创建文件",
+        "分析 service.log 里可能的问题",
+        "讨论是否应该生成 Markdown 页面",
+    ],
+)
+def test_text_v2_does_not_create_workspace_for_discussion_or_log_analysis(
+    message: str,
+) -> None:
+    assert is_explicit_text_output_request(message, policy_version="text-v2") is False
 
 
 def _service() -> tuple[FileWorkspaceRepository, JobFileManifestService]:
@@ -159,12 +186,13 @@ def test_job_manifest_freezes_exact_version_and_later_job_sees_new_current() -> 
     assert first["items"][0]["version_id"] == "version-1"
     assert first["items"][0]["auto_materialize"] == 1
     assert first["items"][0]["source_kind"] == "EXPLICIT_REFERENCE"
-    assert first["schema_version"] == 2
+    assert first["schema_version"] == 3
     assert first["items"][0]["source_received_at"] is None
     assert first["items"][0]["version_created_at"]
     runtime_manifest = service.runtime_manifest("job-1")
     assert runtime_manifest == {
-        "schema_version": 2,
+        "schema_version": 3,
+        "file_format_policy_version": "text-v1",
         "manifest_hash": first["manifest_hash"],
         "observed_at": first["created_at"],
         "items": [
@@ -172,6 +200,7 @@ def test_job_manifest_freezes_exact_version_and_later_job_sees_new_current() -> 
                 "file_id": "file-notes",
                 "version_id": "version-1",
                 "display_name": "notes.txt",
+                "format_code": "TXT",
                 "source_kind": "EXPLICIT_REFERENCE",
                 "allowed_actions": [
                     "READ_METADATA",
@@ -354,7 +383,7 @@ def test_group_file_workspace_requires_actual_sender_staff_id() -> None:
     assert error.value.error_code == "file_group_sender_missing"
 
 
-def test_txt_suffix_is_bound_as_data_for_postgres_compatible_queries(
+def test_attachment_queries_do_not_embed_or_bind_txt_only_suffix_filters(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repository, service = _service()
@@ -404,13 +433,12 @@ def test_txt_suffix_is_bound_as_data_for_postgres_compatible_queries(
     )
     assert service.finalize("job-bind-txt") is not None
 
-    txt_queries = [
-        (" ".join(sql.split()), params)
-        for sql, params in calls
-        if "lower(file_name)" in sql or "lower(a.file_name)" in sql
+    attachment_queries = [
+        (" ".join(sql.split()), params) for sql, params in calls if "message_attachment" in sql
     ]
-    assert len(txt_queries) == 2
-    for sql, params in txt_queries:
-        assert "like ?" in sql
-        assert "like '%" not in sql
-        assert "%.txt" in params
+    assert len(attachment_queries) == 2
+    for sql, params in attachment_queries:
+        assert "lower(file_name)" not in sql
+        assert "lower(a.file_name)" not in sql
+        assert "%.txt" not in sql
+        assert "%.txt" not in params

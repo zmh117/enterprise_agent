@@ -96,6 +96,8 @@ def test_file_domain_outbox_is_published_once_by_maintenance() -> None:
     assert len(sink.events) == 1
     assert sink.events[0]["aggregate_id"] == committed["version_id"]
     assert sink.events[0]["payload"]["file_id"] == committed["file_id"]
+    assert sink.events[0]["payload"]["format_code"] == "TXT"
+    assert sink.events[0]["payload"]["file_format_policy_version"] == "text-v1"
     assert repository.database.execute_one(
         "select status, attempt_count from file_domain_outbox"
     ) == {"status": "PUBLISHED", "attempt_count": 1}

@@ -23,7 +23,9 @@ const COMMIT_TOOL = "file_create_commit_intent";
 const MCP_CALL_ID_META_KEY = "enterprise-agent/mcp-call-id";
 const AGENT_TOOL_CALL_ID_META_KEY = "enterprise-agent/agent-tool-call-id";
 const OPAQUE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-const DISPLAY_NAME = /^[^/\\\0]+\.txt$/;
+const DISPLAY_NAME_TEXT_V1 = /^[^/\\\0]+\.txt$/i;
+const DISPLAY_NAME_TEXT_V2 = /^[^/\\\0]+\.(?:txt|log|md)$/i;
+const WRITABLE_DISPLAY_NAME_TEXT_V2 = /^[^/\\\0]+\.(?:txt|md)$/i;
 
 type RemoteToolResult = CallToolResult & Record<string, unknown>;
 
@@ -161,10 +163,20 @@ function modelResult(
 
 function toolDefinition(
   name: string,
-  handler: (argumentsValue: Record<string, unknown>) => Promise<CallToolResult>
+  handler: (argumentsValue: Record<string, unknown>) => Promise<CallToolResult>,
+  fileFormatPolicyVersion: "text-v1" | "text-v2"
 ) {
   const opaque = () => z.string().regex(OPAQUE).max(128);
-  const displayName = () => z.string().min(1).max(255).regex(DISPLAY_NAME);
+  const readableDisplayName = () =>
+    z.string().min(1).max(255).regex(
+      fileFormatPolicyVersion === "text-v2" ? DISPLAY_NAME_TEXT_V2 : DISPLAY_NAME_TEXT_V1
+    );
+  const writableDisplayName = () =>
+    z.string().min(1).max(255).regex(
+      fileFormatPolicyVersion === "text-v2"
+        ? WRITABLE_DISPLAY_NAME_TEXT_V2
+        : DISPLAY_NAME_TEXT_V1
+    );
   const definitions = {
     task_workspace_get: {
       description: "Read the current Job-bound task workspace summary.",
@@ -182,20 +194,20 @@ function toolDefinition(
       shape: { file_id: opaque(), version_id: opaque() }
     },
     file_prepare_materialization: {
-      description: "Materialize an exact Job Manifest TXT into the current Job Sandbox.",
+      description: "Materialize an exact authorized text version into the current Job Sandbox.",
       shape: {
         file_id: opaque(),
         version_id: opaque(),
-        preferred_name: displayName().optional()
+        preferred_name: readableDisplayName().optional()
       }
     },
     file_create_commit_intent: {
-      description: "Commit one selected sandbox TXT. The upload receipt returns exact file/version identity; DEFAULT also returns a Delivery receipt where PENDING means queued only.",
+      description: "Commit one selected writable sandbox text file. LOG is read-only. The upload receipt returns exact file/version identity; DEFAULT also returns a Delivery receipt where PENDING means queued only.",
       shape: {
         sandbox_entry_handle: opaque(),
         file_id: opaque().optional(),
         base_version_id: opaque().optional(),
-        display_name: displayName(),
+        display_name: writableDisplayName(),
         user_intent: z.enum(["MODIFY", "GENERATE", "SAVE"]),
         delivery_mode: z.enum(["DEFAULT", "WORKSPACE_ONLY"])
       }
@@ -243,14 +255,18 @@ export class ClaudeRuntimeFileBridge implements RuntimeFileBridge {
       new HttpFileTransferPort(options.mcpServerUrl, options.runtimeFetch)
     );
     const tools: Array<SdkMcpToolDefinition<any>> = frozen.map((name) =>
-      toolDefinition(name, (argumentsValue) => this.forward(name, argumentsValue))
+      toolDefinition(
+        name,
+        (argumentsValue) => this.forward(name, argumentsValue),
+        options.context.fileFormatPolicyVersion ?? "text-v1"
+      )
     );
     const localToolNames: string[] = [];
     if (frozen.includes(COMMIT_TOOL)) {
       tools.push(
         tool(
           LOCAL_FILE_OUTPUT_TOOL,
-          "Select one existing work/ or outputs/ TXT as the exact file for a later commit intent. Returns metadata and an opaque handle, never file content.",
+          "Select one existing writable work/ or outputs/ text file as the exact file for a later commit intent. LOG is read-only. Returns metadata and an opaque handle, never file content.",
           { relative_path: z.string().min(1).max(240) },
           async ({ relative_path }) => {
             const selected = await this.coordinator.selectSandboxOutput(

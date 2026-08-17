@@ -21,6 +21,7 @@ from app.modules.file_workspace.streaming_service import GovernedFileStreamingSe
 from app.modules.file_workspace.streaming_service import INTERNAL_TRANSFER_META
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.modules.job.domain.job_status import JobStatus
+from app.modules.job.api.agent_job_debug_controller import _file_workspace_evidence
 from app.modules.message_bus.application.message_publisher import ChannelEventMessage
 from app.python_runtime.file_transfer import (
     FileTransferContext,
@@ -215,16 +216,11 @@ def test_unsupported_picture_then_plain_text_does_not_freeze_file_mcp_tools() ->
 
     job = runtime.agent_repository.get_job(accepted.job_id)
     assert job.task_workspace_id == ""
-    assert job.business_application_route_decision["task_file_features"][
-        "file_mcp_enabled"
-    ] is True
+    assert job.business_application_route_decision["task_file_features"]["file_mcp_enabled"] is True
     assert snapshot_service.allowed_server_codes is not None
     assert "file-service" not in snapshot_service.allowed_server_codes
     frozen = snapshot_service.verify(job.id)
-    server_codes = {
-        str(item["server_code"])
-        for item in frozen["snapshot"]["tools"]
-    }
+    server_codes = {str(item["server_code"]) for item in frozen["snapshot"]["tools"]}
     assert "file-service" not in server_codes
 
 
@@ -247,6 +243,141 @@ def test_draw_txt_request_creates_workspace_and_freezes_file_tools() -> None:
     manifest = FileWorkspaceRepository(runtime.database).get_job_snapshot(job.id)
     assert manifest is not None
     assert manifest["items"] == []
+
+
+def test_text_v2_mixed_txt_log_markdown_attachments_freeze_one_manifest() -> None:
+    runtime = multimodal_container(
+        task_file_features=FEATURES,
+        file_format_policy_version="text-v2",
+    )
+    file_repository, _storage = _enable_in_process_attachment_import(runtime)
+    contents = {
+        "txt-code": b"plain text\n",
+        "log-code": b"service log\n",
+        "md-code": b"# untrusted markdown\n",
+    }
+    runtime.attachment_service.downloader = FakeDownloader(contents)
+    fixtures = (
+        ("mixed-text-v2-txt", "txt-code", "input.txt", "text/plain"),
+        ("mixed-text-v2-log", "log-code", "service.log", "application/octet-stream"),
+        ("mixed-text-v2-md", "md-code", "report.md", "text/markdown"),
+    )
+    conversation_id = "group-conversation-redacted"
+    for message_id, download_code, file_name, media_type in fixtures:
+        payload = load_fixture("file.json")
+        payload["conversationId"] = conversation_id
+        payload["msgId"] = message_id
+        payload["content"] = {
+            "downloadCode": download_code,
+            "fileName": file_name,
+            "fileSize": len(contents[download_code]),
+            "contentType": media_type,
+        }
+        staged = runtime.dingtalk_stream_message_service.handle_callback(
+            payload=payload,
+            correlation_id=message_id,
+        )
+        assert staged.status == "attachments_staged", (
+            staged.reason,
+            staged.error_code,
+        )
+        queued = runtime.message_bus.attachments.popleft()
+        assert (
+            runtime.attachment_service.process(
+                queued.attachment_id,
+                queued.correlation_id,
+            )
+            == "staged"
+        )
+
+    instruction = load_fixture("group_text.json")
+    instruction["conversationId"] = conversation_id
+    instruction["msgId"] = "mixed-text-v2-instruction"
+    instruction["text"] = {"content": "读取刚才发送的三个文件并总结"}
+    accepted = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=instruction,
+        correlation_id="mixed-text-v2-instruction",
+    )
+    job = runtime.agent_repository.get_job(accepted.job_id)
+    assert job.agent_runtime_protocol_version == "1.3"
+    manifest_service = runtime.agent_executor.context_builder.file_manifest_service
+    assert manifest_service is not None
+    manifest = manifest_service.runtime_manifest(job.id)
+    assert manifest is not None
+    assert manifest["schema_version"] == 3
+    assert manifest["file_format_policy_version"] == "text-v2"
+    by_format = {item["format_code"]: item for item in manifest["items"]}
+    assert set(by_format) == {"TXT", "LOG", "MARKDOWN"}
+    assert "EDIT" not in by_format["LOG"]["allowed_actions"]
+    assert "COMMIT" not in by_format["LOG"]["allowed_actions"]
+    assert {"EDIT", "COMMIT"}.issubset(by_format["MARKDOWN"]["allowed_actions"])
+    evidence = _file_workspace_evidence(
+        runtime,
+        job_id=job.id,
+        route_decision=dict(job.business_application_route_decision or {}),
+    )
+    assert evidence["file_format_policy_version"] == "text-v2"
+    assert evidence["policy_source"] == "job_file_manifest"
+    assert {item["format_code"] for item in evidence["formats"]} == {
+        "TXT",
+        "LOG",
+        "MARKDOWN",
+    }
+
+
+def test_text_v1_publication_rejects_log_before_workspace_or_job_creation() -> None:
+    runtime = multimodal_container(task_file_features=FEATURES)
+    payload = load_fixture("file.json")
+    payload["msgId"] = "text-v1-log-denied"
+    payload["content"] = {
+        "downloadCode": "log-code",
+        "fileName": "service.log",
+        "fileSize": 12,
+        "contentType": "text/plain",
+    }
+
+    rejected = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=payload,
+        correlation_id="text-v1-log-denied",
+    )
+
+    assert rejected.accepted is False
+    assert rejected.error_code == "file_workspace_type_unsupported"
+    assert runtime.agent_repository.count_rows("agent_job") == 0
+    assert runtime.agent_repository.count_rows("task_workspace") == 0
+
+
+def test_text_v2_binary_log_fails_without_managed_version_or_object() -> None:
+    runtime = multimodal_container(
+        task_file_features=FEATURES,
+        file_format_policy_version="text-v2",
+    )
+    file_repository, storage = _enable_in_process_attachment_import(runtime)
+    runtime.attachment_service.downloader = FakeDownloader({"binary-log": b"line\x00binary\n"})
+    payload = load_fixture("file.json")
+    payload["msgId"] = "binary-log-denied"
+    payload["content"] = {
+        "downloadCode": "binary-log",
+        "fileName": "service.log",
+        "fileSize": 12,
+        "contentType": "application/octet-stream",
+    }
+    staged = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=payload,
+        correlation_id="binary-log-denied",
+    )
+    queued = runtime.message_bus.attachments.popleft()
+
+    assert staged.status == "attachments_staged"
+    assert runtime.attachment_service.process(
+        queued.attachment_id,
+        queued.correlation_id,
+    ) == "staged"
+    assert runtime.agent_repository.get_attachment(queued.attachment_id).status == "REJECTED"
+    assert file_repository.database.execute_one(
+        "select count(*) as value from managed_file_version"
+    ) == {"value": 0}
+    assert storage.objects == {}
 
 
 def test_synthetic_private_txt_crosses_channel_file_worker_sandbox_commit_and_delivery(

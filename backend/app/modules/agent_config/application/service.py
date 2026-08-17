@@ -18,6 +18,7 @@ from app.shared.exceptions import NotFound, NonRetryableExecutionError
 
 DEFAULT_AGENT_CODE = "default-diagnostic-agent"
 SUPPORTED_RUNTIME_KINDS = frozenset({"python-v1", "typescript-v1"})
+SUPPORTED_RUNTIME_PROTOCOL_VERSIONS = ("1.2", "1.3")
 AGENT_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 PROJECT_CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 FORBIDDEN_CONFIG_KEYS = {
@@ -414,6 +415,9 @@ class AgentConfigService:
                     error_code="agent_runtime_kind_unsupported",
                 )
             snapshot["runtime_kind"] = runtime_kind
+            snapshot["supported_runtime_protocol_versions"] = list(
+                SUPPORTED_RUNTIME_PROTOCOL_VERSIONS
+            )
             tool_ids = list(snapshot.pop("mcp_tool_ids", []) or [])
             mcp_tool_envelope = [
                 {
@@ -546,7 +550,7 @@ class AgentConfigService:
 
     def _verified_publication(self, publication: dict[str, Any]) -> dict[str, Any]:
         schema_version = int(publication.get("schema_version") or 0)
-        if schema_version not in {1, 2}:
+        if schema_version not in {1, 2, 3}:
             raise NonRetryableExecutionError(
                 "Unsupported Agent publication schema",
                 safe_message="不支持此 Agent 配置结构版本",
@@ -583,6 +587,14 @@ class AgentConfigService:
                 "Agent publication snapshot runtime mismatch",
                 safe_message="Agent Runtime 发布快照完整性校验失败",
                 error_code="agent_publication_runtime_mismatch",
+            )
+        if schema_version == 3 and snapshot.get("supported_runtime_protocol_versions") != list(
+            SUPPORTED_RUNTIME_PROTOCOL_VERSIONS
+        ):
+            raise NonRetryableExecutionError(
+                "Agent publication Runtime protocol support is invalid",
+                safe_message="Agent Runtime 协议发布事实完整性校验失败",
+                error_code="agent_publication_runtime_protocol_mismatch",
             )
         if "mcp_tool_envelope" in snapshot:
             envelope = snapshot.get("mcp_tool_envelope")

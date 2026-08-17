@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 from typing import Any
 from unittest.mock import patch
@@ -11,7 +13,9 @@ from app.modules.channel.infrastructure.connector_registry import Connector
 from app.modules.delivery.infrastructure.file_delivery_sender import (
     DeliveryFileContent,
     DingTalkFileDeliverySender,
+    FileServiceDeliveryClient,
 )
+from app.shared.exceptions import RetryableExecutionError
 
 
 class _FileService:
@@ -22,6 +26,8 @@ class _FileService:
             content=b"result\n",
             size_bytes=7,
             sha256="2e1cfa82b035c26cbd3cd0309f709f41d03c9c89ad9b60f77bc7b11d82c0a3aa",
+            format_code="TXT",
+            media_type="text/plain",
         )
 
 
@@ -64,6 +70,32 @@ class _Transport:
 class _Sender(DingTalkFileDeliverySender):
     def _upload(self, **_arguments: Any) -> str:
         return "media-a"
+
+
+class _TokenProvider:
+    def access_token(self) -> str:
+        return "bounded-test-token"
+
+
+class _FileResponse:
+    def __init__(self, *, name: str, content: bytes, format_code: str, media_type: str) -> None:
+        self.content = content
+        self.headers = {
+            "X-File-Size": str(len(content)),
+            "X-File-SHA256": hashlib.sha256(content).hexdigest(),
+            "X-File-Name-B64": base64.urlsafe_b64encode(name.encode()).decode(),
+            "X-File-Format": format_code,
+            "Content-Type": media_type,
+        }
+
+    def __enter__(self) -> _FileResponse:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def read(self, _limit: int) -> bytes:
+        return self.content
 
 
 def _connector() -> Connector:
@@ -120,8 +152,7 @@ def test_dingtalk_file_sender_routes_private_and_group_stream_results(
         transport=transport,
     )
     with patch(
-        "app.modules.delivery.infrastructure.file_delivery_sender."
-        "DingTalkAccessTokenClient"
+        "app.modules.delivery.infrastructure.file_delivery_sender.DingTalkAccessTokenClient"
     ) as token_client:
         token_client.return_value.access_token.return_value = "access-token"
         sender.send(
@@ -145,3 +176,61 @@ def test_dingtalk_file_sender_routes_private_and_group_stream_results(
         "mediaId": "media-a",
         "fileName": "result.txt",
     }
+
+
+@pytest.mark.parametrize(
+    ("name", "content", "format_code", "media_type"),
+    [
+        ("result.txt", b"text\n", "TXT", "text/plain"),
+        ("service.log", b"log\n", "LOG", "text/plain"),
+        ("report.md", b"# report\n", "MARKDOWN", "text/markdown"),
+    ],
+)
+def test_file_service_delivery_client_preserves_exact_text_format_metadata(
+    name: str,
+    content: bytes,
+    format_code: str,
+    media_type: str,
+) -> None:
+    client = FileServiceDeliveryClient(
+        base_url="http://file-service:8000",
+        allowed_hosts=("file-service",),
+        token_provider=_TokenProvider(),  # type: ignore[arg-type]
+    )
+    response = _FileResponse(
+        name=name,
+        content=content,
+        format_code=format_code,
+        media_type=media_type,
+    )
+    with patch(
+        "app.modules.delivery.infrastructure.file_delivery_sender.urllib.request.urlopen",
+        return_value=response,
+    ):
+        result = client.get("delivery-a")
+
+    assert result.display_name == name
+    assert result.content == content
+    assert result.format_code == format_code
+    assert result.media_type == media_type
+
+
+def test_file_service_delivery_client_rejects_format_extension_mime_drift() -> None:
+    client = FileServiceDeliveryClient(
+        base_url="http://file-service:8000",
+        allowed_hosts=("file-service",),
+        token_provider=_TokenProvider(),  # type: ignore[arg-type]
+    )
+    response = _FileResponse(
+        name="service.log",
+        content=b"log\n",
+        format_code="LOG",
+        media_type="application/octet-stream",
+    )
+    with patch(
+        "app.modules.delivery.infrastructure.file_delivery_sender.urllib.request.urlopen",
+        return_value=response,
+    ):
+        with pytest.raises(RetryableExecutionError) as caught:
+            client.get("delivery-a")
+    assert caught.value.error_code == "file_delivery_integrity_mismatch"

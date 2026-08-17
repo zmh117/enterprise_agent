@@ -10,6 +10,14 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable, Mapping, Never
 
+from app.modules.file_workspace.text_format_policy import (
+    FileFormatPolicyVersion,
+    get_text_format_policy,
+    normalize_file_format_policy_version,
+    text_format_for_name,
+)
+from app.shared.exceptions import NonRetryableExecutionError
+
 
 SANDBOX_MARKER = ".enterprise-agent-sandbox.json"
 SANDBOX_SCHEMA_VERSION = 1
@@ -47,6 +55,7 @@ class JobSandbox:
     job_id: str
     path: Path
     limits: JobSandboxLimits
+    file_format_policy_version: FileFormatPolicyVersion = FileFormatPolicyVersion.TEXT_V1
 
     def cleanup(self) -> None:
         shutil.rmtree(self.path, ignore_errors=True)
@@ -84,7 +93,11 @@ class JobSandbox:
         relative = (
             self._directory_path(raw_path)
             if tool_name == "Glob"
-            else self._relative_path(raw_path, allow_root=tool_name == "Grep")
+            else self._relative_path(
+                raw_path,
+                allow_root=tool_name == "Grep",
+                write=tool_name in {"Write", "Edit"},
+            )
         )
         target = self._target(relative, allow_root=directory_tool)
         self._reject_symlinks(target)
@@ -92,7 +105,7 @@ class JobSandbox:
             if not target.exists():
                 self._deny("sandbox_entry_missing", "sandbox entry does not exist")
             if tool_name == "Read" and not target.is_file():
-                self._deny("sandbox_entry_invalid", "Read requires a regular TXT file")
+                self._deny("sandbox_entry_invalid", "Read requires a regular text file")
             if tool_name == "Glob" and not target.is_dir():
                 self._deny("sandbox_entry_invalid", "Glob requires a regular directory")
             if tool_name == "Grep" and not (target.is_dir() or target.is_file()):
@@ -108,9 +121,7 @@ class JobSandbox:
         value[path_field] = relative
         return value
 
-    def _authorize_write(
-        self, tool_name: str, target: Path, value: Mapping[str, object]
-    ) -> None:
+    def _authorize_write(self, tool_name: str, target: Path, value: Mapping[str, object]) -> None:
         if target.exists() and not target.is_file():
             self._deny("sandbox_entry_invalid", "write target must be a regular file")
         content = value.get("content") if tool_name == "Write" else value.get("new_string")
@@ -118,7 +129,7 @@ class JobSandbox:
             self._deny("sandbox_tool_input_invalid", "write content must be text")
         incoming = len(content.encode("utf-8"))
         if incoming > self.limits.max_file_bytes:
-            self._deny("sandbox_file_limit_exceeded", "TXT file exceeds the sandbox limit")
+            self._deny("sandbox_file_limit_exceeded", "text file exceeds the sandbox limit")
         file_count, total_bytes = self.usage()
         previous = target.stat().st_size if target.exists() else 0
         if not target.exists() and file_count >= self.limits.max_files:
@@ -149,7 +160,7 @@ class JobSandbox:
                 size_bytes += state.st_size
         return count, size_bytes
 
-    def _relative_path(self, value: object, *, allow_root: bool) -> str:
+    def _relative_path(self, value: object, *, allow_root: bool, write: bool = False) -> str:
         value = self._sdk_relative_path(value, allow_root=allow_root)
         if not isinstance(value, str) or not 1 <= len(value) <= 240:
             self._deny("sandbox_path_invalid", "sandbox path is invalid")
@@ -167,8 +178,15 @@ class JobSandbox:
             or path.parts[0] not in ALLOWED_TOP_LEVEL
         ):
             self._deny("sandbox_path_invalid", "sandbox path escaped its Job boundary")
-        if path.suffix.lower() != ".txt":
-            self._deny("sandbox_file_type_denied", "only TXT files are allowed")
+        try:
+            definition = text_format_for_name(
+                path.name,
+                policy_version=self.file_format_policy_version,
+            )
+        except NonRetryableExecutionError:
+            self._deny("sandbox_file_type_denied", "file format is not allowed")
+        if write and not definition.writable:
+            self._deny("sandbox_file_read_only", "this file format is read-only")
         return value
 
     def _directory_path(self, value: object) -> str:
@@ -229,11 +247,22 @@ class JobSandbox:
             or PurePosixPath(value).is_absolute()
             or "." in PurePosixPath(value).parts
             or ".." in PurePosixPath(value).parts
-            or not value.lower().endswith(".txt")
         ):
             self._deny(
                 "sandbox_tool_input_invalid",
-                "Glob pattern must be a relative TXT pattern",
+                "Glob pattern must be a safe relative pattern",
+            )
+        allowed = tuple(
+            definition.extension
+            for definition in get_text_format_policy(self.file_format_policy_version).formats
+        )
+        lowered = value.lower()
+        if not lowered.endswith(allowed) and not any(
+            f"{extension[1:]}}}" in lowered for extension in allowed
+        ):
+            self._deny(
+                "sandbox_tool_input_invalid",
+                "Glob pattern must target an allowed text format",
             )
 
     def _target(self, relative: str, *, allow_root: bool) -> Path:
@@ -277,7 +306,12 @@ class JobSandboxManager:
         self.root = root
         self.limits = limits or JobSandboxLimits()
 
-    def create(self, job_id: str) -> JobSandbox:
+    def create(
+        self,
+        job_id: str,
+        *,
+        file_format_policy_version: object = FileFormatPolicyVersion.TEXT_V1,
+    ) -> JobSandbox:
         self._identifier(job_id)
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         digest = hashlib.sha256(job_id.encode("utf-8")).hexdigest()[:24]
@@ -294,7 +328,14 @@ class JobSandboxManager:
             encoding="utf-8",
         )
         os.chmod(path / SANDBOX_MARKER, 0o600)
-        return JobSandbox(job_id=job_id, path=path, limits=self.limits)
+        return JobSandbox(
+            job_id=job_id,
+            path=path,
+            limits=self.limits,
+            file_format_policy_version=normalize_file_format_policy_version(
+                file_format_policy_version
+            ),
+        )
 
     def cleanup_residuals(self, is_job_running: Callable[[str], bool]) -> list[str]:
         if not self.root.exists():
@@ -328,8 +369,8 @@ class JobSandboxManager:
 
     @staticmethod
     def _identifier(value: str) -> None:
-        if (
-            not 1 <= len(value) <= 128
-            or any(character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-" for character in value)
+        if not 1 <= len(value) <= 128 or any(
+            character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-"
+            for character in value
         ):
             raise JobSandboxError("sandbox_job_id_invalid", "Job id is invalid")

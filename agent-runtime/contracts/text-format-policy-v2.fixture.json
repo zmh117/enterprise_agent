@@ -1,0 +1,175 @@
+{
+  "schema_version": 1,
+  "metadata_cases": [
+    {
+      "id": "v1-txt",
+      "policy_version": "text-v1",
+      "display_name": "input.txt",
+      "media_type": "text/plain; charset=utf-8",
+      "expected_format": "TXT",
+      "canonical_media_type": "text/plain"
+    },
+    {
+      "id": "v1-log-denied",
+      "policy_version": "text-v1",
+      "display_name": "service.log",
+      "media_type": "text/plain",
+      "expected_error": "file_type_unsupported"
+    },
+    {
+      "id": "v2-log-generic-mime",
+      "policy_version": "text-v2",
+      "display_name": "service.log",
+      "media_type": "application/octet-stream",
+      "expected_format": "LOG",
+      "canonical_media_type": "text/plain"
+    },
+    {
+      "id": "v2-markdown",
+      "policy_version": "text-v2",
+      "display_name": "report.md",
+      "media_type": "text/markdown",
+      "expected_format": "MARKDOWN",
+      "canonical_media_type": "text/markdown"
+    },
+    {
+      "id": "markdown-long-extension-denied",
+      "policy_version": "text-v2",
+      "display_name": "report.markdown",
+      "media_type": "text/markdown",
+      "expected_error": "file_type_unsupported"
+    },
+    {
+      "id": "markdown-mime-mismatch",
+      "policy_version": "text-v2",
+      "display_name": "report.md",
+      "media_type": "application/octet-stream",
+      "expected_error": "file_mime_invalid"
+    },
+    {
+      "id": "log-agent-output-denied",
+      "policy_version": "text-v2",
+      "display_name": "service.log",
+      "media_type": "text/plain",
+      "agent_output": true,
+      "expected_error": "file_format_read_only"
+    }
+  ],
+  "action_cases": [
+    {
+      "id": "log-read",
+      "policy_version": "text-v2",
+      "format_code": "LOG",
+      "action": "MATERIALIZE",
+      "expected_format": "LOG"
+    },
+    {
+      "id": "log-edit-denied",
+      "policy_version": "text-v2",
+      "format_code": "LOG",
+      "action": "EDIT",
+      "expected_error": "file_format_read_only"
+    },
+    {
+      "id": "markdown-commit",
+      "policy_version": "text-v2",
+      "format_code": "MARKDOWN",
+      "action": "COMMIT",
+      "expected_format": "MARKDOWN"
+    },
+    {
+      "id": "v1-markdown-denied",
+      "policy_version": "text-v1",
+      "format_code": "MARKDOWN",
+      "action": "MATERIALIZE",
+      "expected_error": "file_format_policy_denied"
+    }
+  ],
+  "content_cases": [
+    {
+      "id": "utf8-input",
+      "bytes_base64": "aGVsbG8K",
+      "agent_output": false,
+      "had_utf8_bom": false
+    },
+    {
+      "id": "utf8-bom-input",
+      "bytes_base64": "77u/YQ==",
+      "agent_output": false,
+      "had_utf8_bom": true
+    },
+    {
+      "id": "utf8-bom-output-denied",
+      "bytes_base64": "77u/YQ==",
+      "agent_output": true,
+      "expected_error": "file_output_bom_forbidden"
+    },
+    {
+      "id": "nul-denied",
+      "bytes_base64": "YQBi",
+      "agent_output": false,
+      "expected_error": "file_type_invalid"
+    },
+    {
+      "id": "invalid-utf8-denied",
+      "bytes_base64": "/w==",
+      "agent_output": false,
+      "expected_error": "file_encoding_invalid"
+    },
+    {
+      "id": "size-denied",
+      "bytes_base64": "aGVsbG8K",
+      "agent_output": false,
+      "max_bytes": 4,
+      "expected_error": "file_too_large"
+    }
+  ],
+  "sandbox_cases": [
+    {
+      "id": "markdown-write",
+      "policy_version": "text-v2",
+      "tool": "Write",
+      "path": "outputs/report.md",
+      "expected_path": "outputs/report.md"
+    },
+    {
+      "id": "log-read",
+      "policy_version": "text-v2",
+      "tool": "Read",
+      "path": "inputs/service.log",
+      "existing_file": true,
+      "expected_path": "inputs/service.log"
+    },
+    {
+      "id": "log-write-denied",
+      "policy_version": "text-v2",
+      "tool": "Write",
+      "path": "outputs/service.log",
+      "expected_error": "sandbox_file_read_only"
+    },
+    {
+      "id": "path-escape-denied",
+      "policy_version": "text-v2",
+      "tool": "Read",
+      "path": "../escape.txt",
+      "expected_error": "sandbox_path_invalid"
+    },
+    {
+      "id": "symlink-denied",
+      "policy_version": "text-v2",
+      "tool": "Read",
+      "path": "inputs/link.txt",
+      "symlink": true,
+      "expected_error": "sandbox_symlink_denied"
+    },
+    {
+      "id": "oversize-write-denied",
+      "policy_version": "text-v2",
+      "tool": "Write",
+      "path": "outputs/large.md",
+      "content_size": 9,
+      "max_file_bytes": 8,
+      "expected_error": "sandbox_file_limit_exceeded"
+    }
+  ]
+}

@@ -100,6 +100,7 @@ export const revisionSchema = z
     task_workspace_retention_period: z
       .enum(["DAY", "WEEK", "MONTH"])
       .default("WEEK"),
+    file_format_policy_version: z.enum(["text-v1", "text-v2"]).default("text-v1"),
     task_file_features: taskFileFeaturesSchema.default({
       workspace_enabled: false,
       file_mcp_enabled: false,
@@ -135,6 +136,23 @@ export const publicationSchema = runtimeStateSchema
     task_workspace_retention_source: z
       .enum(["publication_snapshot", "legacy_default"])
       .default("legacy_default"),
+    file_format_policy_version: z.enum(["text-v1", "text-v2"]).default("text-v1"),
+    file_format_policy_source: z
+      .enum(["publication_snapshot", "legacy_default"])
+      .default("legacy_default"),
+    file_format_compatibility: z
+      .object({
+        status: z.enum(["READY", "INCOMPATIBLE"]),
+        required_runtime_protocol: z.string(),
+        runtime_protocol_compatible: z.boolean(),
+        file_mcp_schema_compatible: z.boolean(),
+      })
+      .default({
+        status: "READY",
+        required_runtime_protocol: "1.2-or-earlier",
+        runtime_protocol_compatible: true,
+        file_mcp_schema_compatible: true,
+      }),
     task_file_features: taskFileFeaturesSchema.default({
       workspace_enabled: false,
       file_mcp_enabled: false,
@@ -176,6 +194,7 @@ export const applicationSummarySchema = runtimeStateSchema
     task_workspace_retention_period: z
       .enum(["DAY", "WEEK", "MONTH"])
       .default("WEEK"),
+    file_format_policy_version: z.enum(["text-v1", "text-v2"]).default("text-v1"),
   })
   .passthrough()
 
@@ -205,6 +224,7 @@ export type SaveDraftInput = {
   agent_publication_id: string
   workflow_publication_id: string
   task_workspace_retention_period: "DAY" | "WEEK" | "MONTH"
+  file_format_policy_version: "text-v1" | "text-v2"
   task_file_features: {
     workspace_enabled: boolean
     file_mcp_enabled: boolean

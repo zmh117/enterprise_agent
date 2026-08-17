@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
@@ -36,7 +37,91 @@ class ApplicationMcpToolCompositionService:
                 for row in rows
                 if str(row["tool_identifier"]) in MCP_TOOL_MANIFEST
             ]
-        return {"mcp_tools_by_agent_publication": values}
+        return {
+            "mcp_tools_by_agent_publication": values,
+            "text_v2_cutover_preflight": self.text_v2_cutover_preflight(),
+        }
+
+    def text_v2_cutover_preflight(self) -> dict[str, Any]:
+        """Report active Jobs whose frozen File MCP contract predates this build.
+
+        Publication snapshots and in-flight Job snapshots deliberately remain immutable.
+        A new text-v2 publication may only be enabled after those Jobs have reached a
+        terminal state or have been isolated outside the active queue.
+        """
+
+        rows = self.database.execute(
+            """
+            select job.id as job_id, job.status, job.retry_count,
+                   snapshot.snapshot_json
+              from agent_job job
+              join agent_job_mcp_tool_snapshot snapshot on snapshot.job_id = job.id
+             where job.status in ('WAITING_INPUT', 'PENDING', 'RUNNING', 'RETRY_WAIT')
+             order by job.created_at, job.id
+            """
+        )
+        blockers: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                snapshot = json.loads(str(row.get("snapshot_json") or "{}"))
+            except (TypeError, ValueError):
+                blockers.append(
+                    {
+                        "job_id": str(row["job_id"]),
+                        "status": str(row["status"]),
+                        "retry_count": int(row.get("retry_count") or 0),
+                        "reason": "invalid_snapshot",
+                    }
+                )
+                continue
+            tools = snapshot.get("tools") if isinstance(snapshot, dict) else None
+            if not isinstance(tools, list):
+                continue
+            stale_identifiers: list[str] = []
+            for tool in tools:
+                if (
+                    not isinstance(tool, dict)
+                    or str(tool.get("server_code") or "") != "file-service"
+                ):
+                    continue
+                identifier = str(tool.get("tool_identifier") or "")
+                definition = MCP_TOOL_MANIFEST.get(identifier)
+                if (
+                    definition is None
+                    or str(tool.get("schema_hash") or "") != definition.schema_hash
+                ):
+                    stale_identifiers.append(identifier or "unknown-file-tool")
+            if stale_identifiers:
+                blockers.append(
+                    {
+                        "job_id": str(row["job_id"]),
+                        "status": str(row["status"]),
+                        "retry_count": int(row.get("retry_count") or 0),
+                        "reason": "stale_file_mcp_schema",
+                        "tool_identifiers": sorted(set(stale_identifiers)),
+                    }
+                )
+        return {
+            "ready": not blockers,
+            "blocking_job_count": len(blockers),
+            "blocking_jobs": blockers,
+        }
+
+    def text_v2_cutover_errors(self) -> list[dict[str, str]]:
+        preflight = self.text_v2_cutover_preflight()
+        if preflight["ready"]:
+            return []
+        sample = "、".join(str(item["job_id"]) for item in preflight["blocking_jobs"][:3])
+        suffix = f"（例如 {sample}）" if sample else ""
+        return [
+            {
+                "field": "file_format_policy_version",
+                "message": (
+                    "仍有引用旧 File MCP Schema 的活动或待重试 Job，"
+                    f"请先排空或隔离后再启用 text-v2{suffix}"
+                ),
+            }
+        ]
 
     def prepare(
         self,

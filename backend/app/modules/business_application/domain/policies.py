@@ -11,11 +11,16 @@ from app.modules.business_application.domain.models import (
     DeliveryType,
     TriggerType,
 )
+from app.modules.file_workspace.text_format_policy import (
+    FileFormatPolicyVersion,
+    normalize_file_format_policy_version,
+)
 from app.shared.exceptions import NonRetryableExecutionError
 
 CODE_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$")
 ENVIRONMENTS = {"local"}
 TASK_WORKSPACE_RETENTION_PERIODS = {"DAY", "WEEK", "MONTH"}
+FILE_FORMAT_POLICY_VERSIONS = {item.value for item in FileFormatPolicyVersion}
 TASK_FILE_FEATURE_FIELDS = {
     "workspace_enabled",
     "file_mcp_enabled",
@@ -148,6 +153,16 @@ def validate_task_workspace_retention_period(value: object) -> str:
     return normalized
 
 
+def validate_file_format_policy_version(value: object) -> str:
+    try:
+        return normalize_file_format_policy_version(value).value
+    except NonRetryableExecutionError as exc:
+        raise validation_error(
+            "file_format_policy_version",
+            "只允许 text-v1 或 text-v2",
+        ) from exc
+
+
 def validate_task_file_features(value: object) -> dict[str, bool]:
     if value is None:
         return dict(DEFAULT_TASK_FILE_FEATURES)
@@ -221,13 +236,23 @@ def publication_workspace_retention(snapshot: dict[str, Any]) -> tuple[str, str]
     )
 
 
+def publication_file_format_policy(snapshot: dict[str, Any]) -> tuple[str, str]:
+    """Resolve immutable legacy publications without rewriting their hash."""
+    if "file_format_policy_version" not in snapshot:
+        return FileFormatPolicyVersion.TEXT_V1.value, "legacy_default"
+    return (
+        validate_file_format_policy_version(snapshot.get("file_format_policy_version")),
+        "publication_snapshot",
+    )
+
+
 def verify_publication_snapshot(
     snapshot: dict[str, Any],
     *,
     schema_version: int,
     expected_hash: str,
 ) -> bool:
-    if schema_version not in {1, 2, 3} or not verify_snapshot(snapshot, expected_hash):
+    if schema_version not in {1, 2, 3, 4} or not verify_snapshot(snapshot, expected_hash):
         return False
     if schema_version == 1:
         return True
@@ -242,9 +267,16 @@ def verify_publication_snapshot(
         ) == snapshot.get("task_file_features")
     except NonRetryableExecutionError:
         return False
+    if schema_version == 3:
+        return (
+            snapshot.get("schema_version") == 3
+            and snapshot.get("task_workspace_retention_period") in TASK_WORKSPACE_RETENTION_PERIODS
+            and features_valid
+        )
     return (
-        snapshot.get("schema_version") == 3
+        snapshot.get("schema_version") == 4
         and snapshot.get("task_workspace_retention_period") in TASK_WORKSPACE_RETENTION_PERIODS
+        and snapshot.get("file_format_policy_version") in FILE_FORMAT_POLICY_VERSIONS
         and features_valid
     )
 

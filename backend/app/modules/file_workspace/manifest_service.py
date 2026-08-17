@@ -3,8 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from pathlib import Path
-from typing import Any, cast
+from typing import Any, Never
 
 from app.modules.channel.domain.channel_event import ChannelFileReference
 from app.modules.file_workspace.domain import (
@@ -15,19 +14,18 @@ from app.modules.file_workspace.domain import (
     WorkspaceOwnerType,
 )
 from app.modules.file_workspace.repository import FileWorkspaceRepository
+from app.modules.file_workspace.text_format_policy import (
+    MAX_TEXT_BYTES,
+    FileFormatPolicyVersion,
+    TextFormatCode,
+    get_text_format_policy,
+    normalize_file_format_policy_version,
+    text_format_for_name,
+)
 from app.modules.file_workspace.workspace_service import TaskWorkspaceService
 from app.shared.exceptions import NonRetryableExecutionError
 
 
-MAX_TXT_BYTES = 15 * 1024 * 1024
-REGULAR_ACTIONS = (
-    FileAction.READ_METADATA,
-    FileAction.MATERIALIZE,
-    FileAction.EDIT,
-    FileAction.COMMIT,
-    FileAction.RETAIN,
-    FileAction.DELIVER,
-)
 CONFLICT_ACTIONS = (
     FileAction.READ_METADATA,
     FileAction.MATERIALIZE,
@@ -35,6 +33,15 @@ CONFLICT_ACTIONS = (
     FileAction.COMMIT,
 )
 TXT_OUTPUT_FORMAT_MARKERS = ("txt", "文本文件", "文本文档")
+MARKDOWN_OUTPUT_FORMAT_MARKERS = (
+    ".md",
+    "md文件",
+    "md文档",
+    "markdown文件",
+    "markdown文档",
+    "markdownfile",
+    "markdowndocument",
+)
 TXT_OUTPUT_ACTION_MARKERS = (
     "生成",
     "创建",
@@ -56,20 +63,40 @@ TXT_OUTPUT_ACTION_MARKERS = (
     "write",
     "make",
     "draw",
-    "render",
     "export",
 )
 
 
+def is_task_text_name(value: str, *, policy_version: object) -> bool:
+    try:
+        text_format_for_name(value, policy_version=policy_version)
+    except NonRetryableExecutionError:
+        return False
+    return True
+
+
 def is_task_txt_name(value: str) -> bool:
-    return Path(value).suffix.lower() == ".txt"
+    """Legacy text-v1 compatibility helper; new callers pass a policy."""
+    return is_task_text_name(value, policy_version=FileFormatPolicyVersion.TEXT_V1)
 
 
 def is_explicit_txt_output_request(message: str) -> bool:
-    """Conservative first-phase signal; callers can pass an explicit flag."""
+    """Legacy text-v1 compatibility helper."""
+
+    return is_explicit_text_output_request(
+        message,
+        policy_version=FileFormatPolicyVersion.TEXT_V1,
+    )
+
+
+def is_explicit_text_output_request(message: str, *, policy_version: object) -> bool:
+    """Conservative format+action signal for pre-creating a workspace."""
 
     normalized = "".join(message.lower().split())
-    if not any(marker in normalized for marker in TXT_OUTPUT_FORMAT_MARKERS):
+    format_markers = list(TXT_OUTPUT_FORMAT_MARKERS)
+    if normalize_file_format_policy_version(policy_version) is FileFormatPolicyVersion.TEXT_V2:
+        format_markers.extend(MARKDOWN_OUTPUT_FORMAT_MARKERS)
+    if not any(marker in normalized for marker in format_markers):
         return False
     return any(marker in normalized for marker in TXT_OUTPUT_ACTION_MARKERS)
 
@@ -101,12 +128,18 @@ class JobFileManifestService:
         attachments: tuple[object, ...],
         file_references: tuple[ChannelFileReference, ...],
         requests_file_output: bool,
+        file_format_policy_version: object = FileFormatPolicyVersion.TEXT_V1,
     ) -> dict[str, Any] | None:
-        has_txt_input = any(
-            is_task_txt_name(str(getattr(item, "file_name", ""))) for item in attachments
+        policy_version = normalize_file_format_policy_version(file_format_policy_version)
+        has_text_input = any(
+            is_task_text_name(
+                str(getattr(item, "file_name", "")),
+                policy_version=policy_version,
+            )
+            for item in attachments
         ) or bool(file_references)
         active = self.repository.get_active_workspace(session_id)
-        if active is None and not (has_txt_input or requests_file_output):
+        if active is None and not (has_text_input or requests_file_output):
             return None
         if not all((tenant_id, publication_id, requester_id)):
             raise NonRetryableExecutionError(
@@ -137,7 +170,7 @@ class JobFileManifestService:
             publication_id=publication_id,
             retention_period=period,
             actor_id=requester_id,
-            has_file_input=has_txt_input,
+            has_file_input=has_text_input,
             requests_file_output=requests_file_output,
         )
         if workspace is None:
@@ -160,7 +193,7 @@ class JobFileManifestService:
                 safe_message="当前任务工作区与会话身份不匹配",
                 error_code="file_workspace_boundary_mismatch",
             )
-        return cast(dict[str, Any], workspace)
+        return workspace
 
     def register_request(
         self,
@@ -170,20 +203,20 @@ class JobFileManifestService:
         requester_id: str,
         publication_id: str,
         file_references: tuple[ChannelFileReference, ...],
+        file_format_policy_version: object = FileFormatPolicyVersion.TEXT_V1,
     ) -> dict[str, Any]:
-        return cast(
-            dict[str, Any],
-            self.repository.register_job_file_request(
-                job_id=job_id,
-                workspace_id=str(workspace["id"]),
-                tenant_id=str(workspace["tenant_id"]),
-                principal_user_id=requester_id,
-                publication_id=publication_id,
-                retention_period=RetentionPeriod(str(workspace["retention_period"])),
-                explicit_references=(
-                    {"file_id": item.file_id, "version_id": item.version_id}
-                    for item in file_references
-                ),
+        return self.repository.register_job_file_request(
+            job_id=job_id,
+            workspace_id=str(workspace["id"]),
+            tenant_id=str(workspace["tenant_id"]),
+            principal_user_id=requester_id,
+            publication_id=publication_id,
+            retention_period=RetentionPeriod(str(workspace["retention_period"])),
+            file_format_policy_version=normalize_file_format_policy_version(
+                file_format_policy_version
+            ).value,
+            explicit_references=(
+                {"file_id": item.file_id, "version_id": item.version_id} for item in file_references
             ),
         )
 
@@ -192,7 +225,7 @@ class JobFileManifestService:
             "select id from agent_job_file_snapshot where job_id = ?", (job_id,)
         )
         if existing is not None:
-            return cast(dict[str, Any], self.repository.get_job_snapshot(job_id))
+            return self.repository.get_job_snapshot(job_id)
         request = self.repository.database.execute_one(
             "select job_id from agent_job_file_request where job_id = ?", (job_id,)
         )
@@ -204,9 +237,16 @@ class JobFileManifestService:
             self._require_request_boundary(pending, workspace)
             items = self._manifest_items(job_id, pending, workspace)
             canonical = [self._canonical_item(item) for item in items]
+            policy_version = normalize_file_format_policy_version(
+                pending.get("file_format_policy_version")
+            ).value
             manifest_hash = hashlib.sha256(
                 json.dumps(
-                    canonical,
+                    {
+                        "schema_version": 3,
+                        "file_format_policy_version": policy_version,
+                        "items": canonical,
+                    },
                     ensure_ascii=True,
                     sort_keys=True,
                     separators=(",", ":"),
@@ -220,16 +260,20 @@ class JobFileManifestService:
                 principal_user_id=str(pending["principal_user_id"]),
                 publication_id=str(pending["business_application_publication_id"]),
                 retention_period=RetentionPeriod(str(pending["retention_period"])),
+                file_format_policy_version=policy_version,
                 manifest_hash=manifest_hash,
                 items=canonical,
             )
             self.repository.finalize_job_file_request(job_id)
-            return cast(dict[str, Any], snapshot)
+            return snapshot
 
     def runtime_manifest(self, job_id: str) -> dict[str, Any]:
         """Project the immutable Job snapshot into the bounded Runtime contract."""
 
         snapshot = self.repository.get_job_snapshot(job_id)
+        policy_version = normalize_file_format_policy_version(
+            snapshot.get("file_format_policy_version")
+        )
         projected: list[dict[str, Any]] = []
         for item in snapshot.get("items") or []:
             try:
@@ -248,11 +292,29 @@ class JobFileManifestService:
                     safe_message="任务文件清单无效",
                     error_code="file_manifest_invalid",
                 )
+            definition = get_text_format_policy(policy_version).by_code(
+                str(item.get("format_code") or "TXT")
+            )
+            try:
+                frozen_actions = {FileAction(action) for action in actions}
+            except ValueError as exc:
+                raise NonRetryableExecutionError(
+                    "Job File Manifest action is unknown",
+                    safe_message="任务文件清单无效",
+                    error_code="file_manifest_actions_invalid",
+                ) from exc
+            if not frozen_actions.issubset(definition.actions):
+                raise NonRetryableExecutionError(
+                    "Job File Manifest actions exceed the frozen format policy",
+                    safe_message="任务文件清单无效",
+                    error_code="file_manifest_actions_invalid",
+                )
             projected.append(
                 {
                     "file_id": str(item["file_id"]),
                     "version_id": str(item["version_id"]),
                     "display_name": str(item["display_name"]),
+                    "format_code": definition.code.value,
                     "source_kind": str(item["source_kind"]),
                     "allowed_actions": actions,
                     "auto_materialize": bool(item.get("auto_materialize")),
@@ -265,23 +327,70 @@ class JobFileManifestService:
                     "version_created_at": str(item.get("version_created_at") or ""),
                 }
             )
+        canonical = [self._canonical_item(item) for item in projected]
+        if int(snapshot.get("schema_version") or 1) >= 3:
+            hash_value: object = {
+                "schema_version": 3,
+                "file_format_policy_version": policy_version.value,
+                "items": canonical,
+            }
+        else:
+            for item in canonical:
+                item.pop("format_code", None)
+            hash_value = canonical
+        actual_hash = hashlib.sha256(
+            json.dumps(
+                hash_value,
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        if actual_hash != str(snapshot.get("manifest_hash") or ""):
+            raise NonRetryableExecutionError(
+                "Job File Manifest hash does not match",
+                safe_message="任务文件清单无效",
+                error_code="file_manifest_invalid",
+            )
         return {
             "schema_version": int(snapshot.get("schema_version") or 1),
+            "file_format_policy_version": policy_version.value,
             "manifest_hash": str(snapshot["manifest_hash"]),
             "observed_at": str(snapshot.get("created_at") or ""),
             "items": projected,
         }
 
-    def has_pending_txt_attachments(self, job_id: str) -> bool:
-        row = self.repository.database.execute_one(
-            """
-            select count(*) as value from message_attachment
-             where job_id = ? and lower(file_name) like ?
-               and status not in ('READY', 'REJECTED', 'FAILED', 'stored_not_interpreted')
-            """,
-            (job_id, "%.txt"),
+    def has_pending_text_attachments(self, job_id: str) -> bool:
+        request = (
+            self.repository.database.execute_one(
+                "select file_format_policy_version from agent_job_file_request where job_id = ?",
+                (job_id,),
+            )
+            or {}
         )
-        return bool(int((row or {}).get("value") or 0))
+        policy_version = normalize_file_format_policy_version(
+            request.get("file_format_policy_version")
+        )
+        rows = self.repository.database.execute(
+            """
+            select file_name, status from message_attachment
+             where job_id = ?
+            """,
+            (job_id,),
+        )
+        return any(
+            is_task_text_name(
+                str(row.get("file_name") or ""),
+                policy_version=policy_version,
+            )
+            and str(row.get("status") or "")
+            not in {"READY", "REJECTED", "FAILED", "stored_not_interpreted"}
+            for row in rows
+        )
+
+    def has_pending_txt_attachments(self, job_id: str) -> bool:
+        """Compatibility alias; behavior follows the request's frozen policy."""
+        return self.has_pending_text_attachments(job_id)
 
     @staticmethod
     def _owner(
@@ -314,6 +423,7 @@ class JobFileManifestService:
             "file_id": str(item["file_id"]),
             "version_id": str(item["version_id"]),
             "display_name": str(item["display_name"]),
+            "format_code": str(item.get("format_code") or "TXT"),
             "source_kind": str(item["source_kind"]),
             "allowed_actions": [str(value) for value in item["allowed_actions"]],
             "auto_materialize": bool(item.get("auto_materialize")),
@@ -329,13 +439,18 @@ class JobFileManifestService:
         workspace: dict[str, Any],
     ) -> list[dict[str, Any]]:
         workspace_id = str(workspace["id"])
+        policy_version = normalize_file_format_policy_version(
+            request.get("file_format_policy_version")
+        )
         regular = self.repository.database.execute(
             """
             select wf.file_id, wf.selected_version_id as version_id,
                    wf.logical_name as display_name, f.tenant_id, f.owner_type,
                    f.owner_user_id, f.owner_enterprise_id, f.owner_connector_id,
                    f.owner_conversation_id, f.status as file_status,
-                   v.status as version_status, v.media_type, v.encoding,
+                   f.format_code as file_format_code,
+                   v.status as version_status, v.format_code as version_format_code,
+                   v.media_type, v.encoding,
                    v.size_bytes, f.source_received_at,
                    v.created_at as version_created_at
               from task_workspace_file wf
@@ -349,44 +464,49 @@ class JobFileManifestService:
         by_identity: dict[tuple[str, str], dict[str, Any]] = {}
         for row in regular:
             self._require_file_boundary(row, workspace)
-            if not self._eligible_txt(row):
+            if not self._eligible_text(row, policy_version=policy_version):
                 continue
             by_identity[(str(row["file_id"]), str(row["version_id"]))] = self._item(
                 row,
                 source_kind=SnapshotSourceKind.WORKSPACE,
                 auto_materialize=False,
+                policy_version=policy_version,
             )
 
         explicit = request.get("explicit_references") or []
         for reference in explicit:
             if not isinstance(reference, dict):
                 self._invalid_reference()
-            row = self._reference_row(
+            reference_row = self._reference_row(
                 workspace_id=workspace_id,
                 file_id=str(reference.get("file_id") or ""),
                 version_id=str(reference.get("version_id") or ""),
             )
-            if row is None:
+            if reference_row is None:
                 self._invalid_reference()
-            assert row is not None
-            self._require_file_boundary(row, workspace)
-            if not self._eligible_txt(row):
+            self._require_file_boundary(reference_row, workspace)
+            if not self._eligible_text(reference_row, policy_version=policy_version):
                 self._invalid_reference()
-            by_identity[(str(row["file_id"]), str(row["version_id"]))] = self._item(
-                row,
-                source_kind=SnapshotSourceKind.EXPLICIT_REFERENCE,
-                auto_materialize=True,
-                conflict_candidate=bool(row.get("conflict_candidate")),
+            by_identity[(str(reference_row["file_id"]), str(reference_row["version_id"]))] = (
+                self._item(
+                    reference_row,
+                    source_kind=SnapshotSourceKind.EXPLICIT_REFERENCE,
+                    auto_materialize=True,
+                    conflict_candidate=bool(reference_row.get("conflict_candidate")),
+                    policy_version=policy_version,
+                )
             )
 
-        txt_attachments = self.repository.database.execute(
+        text_attachments = self.repository.database.execute(
             """
             select a.id as attachment_id, a.status as attachment_status,
                    a.file_name as attachment_name, b.file_id, b.version_id,
                    wf.logical_name as display_name, f.tenant_id, f.owner_type,
                    f.owner_user_id, f.owner_enterprise_id, f.owner_connector_id,
                    f.owner_conversation_id, f.status as file_status,
-                   v.status as version_status, v.media_type, v.encoding,
+                   f.format_code as file_format_code,
+                   v.status as version_status, v.format_code as version_format_code,
+                   v.media_type, v.encoding,
                    v.size_bytes, f.source_received_at,
                    v.created_at as version_created_at
               from message_attachment a
@@ -395,12 +515,17 @@ class JobFileManifestService:
                 on wf.workspace_id = ? and wf.file_id = b.file_id and wf.status = 'ACTIVE'
               left join managed_file f on f.id = b.file_id
               left join managed_file_version v on v.id = b.version_id
-             where a.job_id = ? and lower(a.file_name) like ?
+             where a.job_id = ?
              order by a.ordinal
             """,
-            (workspace_id, job_id, "%.txt"),
+            (workspace_id, job_id),
         )
-        for row in txt_attachments:
+        for row in text_attachments:
+            if not is_task_text_name(
+                str(row.get("attachment_name") or ""),
+                policy_version=policy_version,
+            ):
+                continue
             status = str(row.get("attachment_status") or "")
             if status not in {"READY", "REJECTED", "FAILED", "stored_not_interpreted"}:
                 raise NonRetryableExecutionError(
@@ -417,7 +542,7 @@ class JobFileManifestService:
                     error_code="file_attachment_not_imported",
                 )
             self._require_file_boundary(row, workspace)
-            if not self._eligible_txt(row):
+            if not self._eligible_text(row, policy_version=policy_version):
                 raise NonRetryableExecutionError(
                     "Imported task TXT attachment is invalid",
                     safe_message="文本附件不符合任务工作区要求",
@@ -427,6 +552,7 @@ class JobFileManifestService:
                 row,
                 source_kind=SnapshotSourceKind.CURRENT_MESSAGE,
                 auto_materialize=True,
+                policy_version=policy_version,
             )
 
         conflicts = self.repository.database.execute(
@@ -435,7 +561,9 @@ class JobFileManifestService:
                    wf.logical_name as display_name, f.tenant_id, f.owner_type,
                    f.owner_user_id, f.owner_enterprise_id, f.owner_connector_id,
                    f.owner_conversation_id, f.status as file_status,
-                   v.status as version_status, v.media_type, v.encoding,
+                   f.format_code as file_format_code,
+                   v.status as version_status, v.format_code as version_format_code,
+                   v.media_type, v.encoding,
                    v.size_bytes, f.source_received_at,
                    v.created_at as version_created_at
               from file_conflict_candidate c
@@ -450,12 +578,13 @@ class JobFileManifestService:
         )
         for row in conflicts:
             self._require_file_boundary(row, workspace)
-            if self._eligible_txt(row):
+            if self._eligible_text(row, policy_version=policy_version):
                 by_identity[(str(row["file_id"]), str(row["version_id"]))] = self._item(
                     row,
                     source_kind=SnapshotSourceKind.CONFLICT,
                     auto_materialize=False,
                     conflict_candidate=True,
+                    policy_version=policy_version,
                 )
         items = list(by_identity.values())
         job = (
@@ -491,15 +620,15 @@ class JobFileManifestService:
     ) -> dict[str, Any] | None:
         if not file_id or not version_id:
             return None
-        return cast(
-            dict[str, Any] | None,
-            self.repository.database.execute_one(
-                """
+        return self.repository.database.execute_one(
+            """
             select wf.file_id, v.id as version_id, wf.logical_name as display_name,
                    f.tenant_id, f.owner_type, f.owner_user_id,
                    f.owner_enterprise_id, f.owner_connector_id,
                    f.owner_conversation_id, f.status as file_status,
-                   v.status as version_status, v.media_type, v.encoding,
+                   f.format_code as file_format_code,
+                   v.status as version_status, v.format_code as version_format_code,
+                   v.media_type, v.encoding,
                    v.size_bytes, f.source_received_at,
                    v.created_at as version_created_at,
                    case when c.candidate_version_id is null then 0 else 1 end
@@ -513,8 +642,7 @@ class JobFileManifestService:
              where wf.workspace_id = ? and wf.file_id = ? and wf.status = 'ACTIVE'
                and (wf.selected_version_id = v.id or c.candidate_version_id = v.id)
             """,
-                (version_id, workspace_id, file_id),
-            ),
+            (version_id, workspace_id, file_id),
         )
 
     @staticmethod
@@ -524,33 +652,44 @@ class JobFileManifestService:
         source_kind: SnapshotSourceKind,
         auto_materialize: bool,
         conflict_candidate: bool = False,
+        policy_version: object = FileFormatPolicyVersion.TEXT_V1,
     ) -> dict[str, Any]:
+        format_code = TextFormatCode(str(row.get("file_format_code") or "TXT"))
+        definition = get_text_format_policy(policy_version).by_code(format_code)
+        allowed = definition.actions
+        if conflict_candidate:
+            allowed = allowed.intersection(CONFLICT_ACTIONS)
         return {
             "file_id": str(row["file_id"]),
             "version_id": str(row["version_id"]),
             "display_name": str(row["display_name"]),
+            "format_code": format_code.value,
             "source_kind": source_kind.value,
-            "allowed_actions": [
-                action.value
-                for action in (CONFLICT_ACTIONS if conflict_candidate else REGULAR_ACTIONS)
-            ],
+            "allowed_actions": [action.value for action in FileAction if action in allowed],
             "auto_materialize": auto_materialize,
             "conflict_candidate": conflict_candidate,
             "source_received_at": (
-                str(row.get("source_received_at"))
-                if row.get("source_received_at")
-                else None
+                str(row.get("source_received_at")) if row.get("source_received_at") else None
             ),
             "version_created_at": str(row["version_created_at"]),
         }
 
     @staticmethod
-    def _eligible_txt(row: dict[str, Any]) -> bool:
+    def _eligible_text(row: dict[str, Any], *, policy_version: object) -> bool:
+        try:
+            definition = text_format_for_name(
+                str(row.get("display_name") or ""),
+                policy_version=policy_version,
+            )
+        except NonRetryableExecutionError:
+            return False
         return (
-            is_task_txt_name(str(row.get("display_name") or ""))
-            and str(row.get("media_type") or "").split(";", 1)[0].strip().lower() == "text/plain"
+            str(row.get("file_format_code") or "TXT") == definition.code.value
+            and str(row.get("version_format_code") or "TXT") == definition.code.value
+            and str(row.get("media_type") or "").split(";", 1)[0].strip().lower()
+            == definition.canonical_media_type
             and str(row.get("encoding") or "").lower() == "utf-8"
-            and 0 <= int(row.get("size_bytes") or 0) <= MAX_TXT_BYTES
+            and 0 <= int(row.get("size_bytes") or 0) <= MAX_TEXT_BYTES
             and str(row.get("file_status") or "") == "ACTIVE"
             and str(row.get("version_status") or "") in {"AVAILABLE", "CONFLICT"}
         )
@@ -588,7 +727,7 @@ class JobFileManifestService:
             )
 
     @staticmethod
-    def _invalid_reference() -> None:
+    def _invalid_reference() -> Never:
         raise NonRetryableExecutionError(
             "Explicit file reference is not available in this workspace",
             safe_message="当前任务无权引用该文件",

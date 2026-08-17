@@ -291,6 +291,31 @@ export const runtimeJobDetailSchema = z
     mcp_operation_links: z
       .array(z.record(z.string(), z.string()))
       .default([]),
+    file_workspace: z
+      .object({
+        enabled: z.boolean(),
+        manifest_schema_version: z.number().int().nullable(),
+        file_format_policy_version: z.enum(["text-v1", "text-v2"]),
+        policy_source: z.enum([
+          "job_file_manifest",
+          "job_route_decision",
+          "legacy_default",
+        ]),
+        formats: z.array(
+          z.object({
+            format_code: z.enum(["TXT", "LOG", "MARKDOWN"]),
+            file_count: z.number().int().nonnegative(),
+            allowed_actions: z.array(z.string()),
+          })
+        ),
+      })
+      .default({
+        enabled: false,
+        manifest_schema_version: null,
+        file_format_policy_version: "text-v1",
+        policy_source: "legacy_default",
+        formats: [],
+      }),
     deliveries: deliveryTimelineSchema,
     webhook_events: z.array(z.record(z.string(), z.unknown())).default([]),
   })

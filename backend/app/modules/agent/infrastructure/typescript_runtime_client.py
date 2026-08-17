@@ -287,7 +287,7 @@ def probe_runtime_readiness(settings: RuntimeClientSettings) -> dict[str, Any]:
         readiness = get(base_url, "/ready", accepted_statuses={200, 503})
         identity_ready = (
             version.get("runtime") == settings.runtime_kind
-            and version.get("protocol_version") in {"1.0", "1.1", "1.2"}
+            and version.get("protocol_version") in {"1.0", "1.1", "1.2", "1.3"}
             and isinstance(version.get("runtime_version"), str)
         )
         dependency_ready = (
@@ -513,8 +513,7 @@ class AgentRuntimeHttpClient:
                 runtime_events=[
                     event
                     for event in events
-                    if event["event_type"]
-                    in {"runtime_initialized", "model_call", "api_retry"}
+                    if event["event_type"] in {"runtime_initialized", "model_call", "api_retry"}
                 ],
                 execution_accounting=dict(terminal.get("accounting") or {}),
             )
@@ -534,8 +533,7 @@ class AgentRuntimeHttpClient:
                 "runtime_events": [
                     event
                     for event in events
-                    if event["event_type"]
-                    in {"runtime_initialized", "model_call", "api_retry"}
+                    if event["event_type"] in {"runtime_initialized", "model_call", "api_retry"}
                 ],
                 "execution_accounting": dict(terminal.get("accounting") or {}),
             },
@@ -628,7 +626,7 @@ class AgentRuntimeHttpClient:
                 }
             )
         protocol_version = str(context.runtime_protocol_version or "1.0")
-        if protocol_version not in {"1.0", "1.1", "1.2"}:
+        if protocol_version not in {"1.0", "1.1", "1.2", "1.3"}:
             raise NonRetryableExecutionError(
                 "Job runtime protocol version is unsupported",
                 safe_message="当前 Job Runtime 协议版本不受支持",
@@ -673,6 +671,12 @@ class AgentRuntimeHttpClient:
             },
             "mcp_servers": mcp_servers,
         }
+        if protocol_version == "1.3":
+            manifest = context.retrieved_context.get("file_manifest")
+            request["file_context"] = {
+                "file_format_policy_version": context.file_format_policy_version,
+                "file_manifest": manifest if isinstance(manifest, dict) else None,
+            }
         request["request_digest"] = canonical_request_digest(request)
         return cast(dict[str, Any], validate_execution_request(request))
 

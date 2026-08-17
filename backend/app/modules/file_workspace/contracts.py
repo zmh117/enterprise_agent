@@ -19,11 +19,17 @@ _OPAQUE_ID = {
     "maxLength": 128,
     "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
 }
-_DISPLAY_NAME = {
+_MATERIALIZE_DISPLAY_NAME = {
     "type": "string",
     "minLength": 1,
     "maxLength": 255,
-    "pattern": r"^[^/\\\x00]+\.txt$",
+    "pattern": r"^[^/\\\x00]+\.(?:txt|log|md)$",
+}
+_COMMIT_DISPLAY_NAME = {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": 255,
+    "pattern": r"^[^/\\\x00]+\.(?:txt|md)$",
 }
 
 
@@ -97,7 +103,7 @@ _MATERIALIZE_SCHEMA: dict[str, Any] = {
     "properties": {
         "file_id": dict(_OPAQUE_ID),
         "version_id": dict(_OPAQUE_ID),
-        "preferred_name": dict(_DISPLAY_NAME),
+        "preferred_name": dict(_MATERIALIZE_DISPLAY_NAME),
     },
 }
 
@@ -114,7 +120,7 @@ _COMMIT_SCHEMA: dict[str, Any] = {
         "sandbox_entry_handle": dict(_OPAQUE_ID),
         "file_id": dict(_OPAQUE_ID),
         "base_version_id": dict(_OPAQUE_ID),
-        "display_name": dict(_DISPLAY_NAME),
+        "display_name": dict(_COMMIT_DISPLAY_NAME),
         "user_intent": {"type": "string", "enum": ["MODIFY", "GENERATE", "SAVE"]},
         "delivery_mode": {
             "type": "string",
@@ -160,14 +166,14 @@ FILE_TOOL_MANIFEST: Mapping[str, FileToolDefinition] = MappingProxyType(
         ),
         "file_prepare_materialization": _tool(
             "file_prepare_materialization",
-            "为 Manifest 中的精确版本创建一次受控物化意图，字节由 Runtime 文件桥传输。",
+            "为 Manifest 中获授权的 TXT、只读 LOG 或 Markdown 精确版本创建一次受控物化意图；字节由 Runtime 文件桥传输。",
             _MATERIALIZE_SCHEMA,
             operation="file.materialization.prepare",
             mutating=False,
         ),
         "file_create_commit_intent": _tool(
             "file_create_commit_intent",
-            "为显式选中的沙盒 TXT 创建提交意图；Runtime流式上传后返回精确file_id/version_id，DEFAULT还返回交付回执，PENDING仅表示已排队；不在MCP JSON中传输正文。",
+            "为显式选中的沙盒 TXT 或 Markdown 创建提交意图；LOG 永远只读；Runtime流式上传后返回精确file_id/version_id，DEFAULT还返回交付回执，PENDING仅表示已排队；不在MCP JSON中传输正文。",
             _COMMIT_SCHEMA,
             operation="file.commit.prepare",
             mutating=True,
@@ -284,18 +290,23 @@ FILE_ERROR_CATALOG: Mapping[str, FileErrorDefinition] = MappingProxyType(
         "file_content_unavailable": FileErrorDefinition(
             "NEVER", "文件内容已不可用，请重新发送文件"
         ),
-        "file_type_unsupported": FileErrorDefinition("NEVER", "第一阶段只支持 UTF-8 TXT"),
-        "file_encoding_invalid": FileErrorDefinition("NEVER", "TXT 必须使用 UTF-8 编码"),
-        "file_size_exceeded": FileErrorDefinition("NEVER", "TXT 文件超过 15 MiB"),
+        "file_type_unsupported": FileErrorDefinition("NEVER", "当前文件格式策略不支持此文件"),
+        "file_format_policy_unknown": FileErrorDefinition(
+            "CONFIGURATION", "文件格式策略版本不受支持"
+        ),
+        "file_format_unknown": FileErrorDefinition("CONFIGURATION", "文件格式不受支持"),
+        "file_format_mismatch": FileErrorDefinition("NEVER", "文件格式与冻结元数据不一致"),
+        "file_format_read_only": FileErrorDefinition("NEVER", "此文件格式只允许读取和发送"),
+        "file_mime_invalid": FileErrorDefinition("NEVER", "文件扩展名与 MIME 类型不一致"),
+        "file_encoding_invalid": FileErrorDefinition("NEVER", "文件必须使用 UTF-8 编码"),
+        "file_size_exceeded": FileErrorDefinition("NEVER", "文本文件超过 15 MiB"),
         "file_count_quota_exceeded": FileErrorDefinition("NEVER", "工作区文件数量已达上限"),
         "file_workspace_quota_exceeded": FileErrorDefinition("NEVER", "工作区临时容量已达上限"),
         "file_transfer_control_invalid": FileErrorDefinition("NEVER", "文件传输控制信息无效"),
         "file_transfer_protocol_unsupported": FileErrorDefinition(
             "CONFIGURATION", "文件传输协议不受支持"
         ),
-        "file_transfer_action_unsupported": FileErrorDefinition(
-            "NEVER", "文件传输动作不受支持"
-        ),
+        "file_transfer_action_unsupported": FileErrorDefinition("NEVER", "文件传输动作不受支持"),
         "file_transfer_path_invalid": FileErrorDefinition("NEVER", "沙盒文件路径无效"),
         "file_transfer_handle_conflict": FileErrorDefinition("NEVER", "沙盒文件句柄冲突"),
         "file_transfer_handle_unknown": FileErrorDefinition("NEVER", "沙盒文件句柄不存在"),

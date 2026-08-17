@@ -29,6 +29,7 @@
 - [Agent 模型连接](guides/agent-profile-model-connections.md)
 - [Agent 测试数据](guides/agent-test-data.md)
 - [平台配置 API](guides/platform-config-api.md)
+- [任务工作区 TXT/LOG/Markdown 使用说明](guides/task-file-text-formats.md)
 - [Web 管理多钉钉 Runtime](guides/web-managed-multi-dingtalk-runtime.md)
 - [Web Secret 与环境配置](guides/web-managed-secrets-and-env-config.md)
 

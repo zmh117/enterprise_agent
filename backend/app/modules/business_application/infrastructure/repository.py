@@ -203,6 +203,7 @@ class BusinessApplicationRepository:
         agent_publication_id: str,
         workflow_publication_id: str,
         task_workspace_retention_period: str,
+        file_format_policy_version: str,
         task_file_features: dict[str, bool],
         session_policy: dict[str, Any],
         execution_policy: dict[str, Any],
@@ -236,11 +237,12 @@ class BusinessApplicationRepository:
                 insert into business_application_revision
                   (id, application_id, revision, status, agent_publication_id,
                    workflow_publication_id, task_workspace_retention_period,
+                   file_format_policy_version,
                    task_file_features_json,
                    session_policy_json,
                    execution_policy_json, validation_json, config_hash,
                    created_by, created_at, updated_at)
-                values (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?,
+                values (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?,
                         '{"valid":false,"errors":[]}', ?, ?, ?, ?)
                 """,
                 (
@@ -250,6 +252,7 @@ class BusinessApplicationRepository:
                     agent_publication_id or None,
                     workflow_publication_id or None,
                     task_workspace_retention_period,
+                    file_format_policy_version,
                     json_text(task_file_features),
                     json_text(session_policy),
                     json_text(execution_policy),
@@ -380,10 +383,11 @@ class BusinessApplicationRepository:
                 """
                 insert into business_application_publication
                   (id, application_id, revision_id, revision, schema_version,
-                   task_workspace_retention_period, snapshot_json, config_hash,
+                   task_workspace_retention_period, file_format_policy_version,
+                   snapshot_json, config_hash,
                    task_file_features_json,
                    published_by, published_at)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     publication_id,
@@ -392,6 +396,7 @@ class BusinessApplicationRepository:
                     revision,
                     int(snapshot["schema_version"]),
                     str(snapshot["task_workspace_retention_period"]),
+                    str(snapshot["file_format_policy_version"]),
                     json_text(snapshot),
                     config_hash,
                     json_text(snapshot["task_file_features"]),
@@ -656,13 +661,17 @@ class BusinessApplicationRepository:
             value["publications"] = self.list_publications(str(row["id"]))
             value["deployments"] = self.list_deployments(str(row["id"]))
             value["task_workspace_retention_period"] = str(
-                (value["draft"] or {}).get(
-                    "task_workspace_retention_period", "WEEK"
-                )
+                (value["draft"] or {}).get("task_workspace_retention_period", "WEEK")
+            )
+            value["file_format_policy_version"] = str(
+                (value["draft"] or {}).get("file_format_policy_version", "text-v1")
             )
         else:
             value["task_workspace_retention_period"] = str(
                 row.get("task_workspace_retention_period") or "WEEK"
+            )
+            value["file_format_policy_version"] = str(
+                row.get("file_format_policy_version") or "text-v1"
             )
         return value
 
@@ -699,6 +708,7 @@ class BusinessApplicationRepository:
             "task_workspace_retention_period": str(
                 row.get("task_workspace_retention_period") or "WEEK"
             ),
+            "file_format_policy_version": str(row.get("file_format_policy_version") or "text-v1"),
             "task_file_features": json_value(
                 row.get("task_file_features_json"),
                 {
@@ -748,9 +758,10 @@ class BusinessApplicationRepository:
             else "legacy_default"
         )
         feature_source = (
-            "publication_snapshot"
-            if "task_file_features" in snapshot
-            else "legacy_default"
+            "publication_snapshot" if "task_file_features" in snapshot else "legacy_default"
+        )
+        policy_source = (
+            "publication_snapshot" if "file_format_policy_version" in snapshot else "legacy_default"
         )
         task_file_features = snapshot.get("task_file_features") or {
             "default_file_delivery_enabled": False,
@@ -767,6 +778,10 @@ class BusinessApplicationRepository:
                 snapshot.get("task_workspace_retention_period") or "WEEK"
             ),
             "task_workspace_retention_source": source,
+            "file_format_policy_version": str(
+                snapshot.get("file_format_policy_version") or "text-v1"
+            ),
+            "file_format_policy_source": policy_source,
             "task_file_features": task_file_features,
             "task_file_features_source": feature_source,
         }

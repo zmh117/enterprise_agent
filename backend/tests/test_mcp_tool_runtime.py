@@ -167,7 +167,11 @@ class _AgentConfigService:
             "revision": 1,
             "config_hash": "agent-config-hash",
             "runtime_kind": self.runtime_kind,
-            "snapshot": {"skills": [], "model_policy": {}},
+            "snapshot": {
+                "skills": [],
+                "model_policy": {},
+                "supported_runtime_protocol_versions": ["1.0", "1.1", "1.2", "1.3"],
+            },
         }
 
 
@@ -188,6 +192,18 @@ class _FileManifestService:
                     "conflict_candidate": False,
                 }
             ],
+        }
+
+
+class _TextV2FileManifestService:
+    def runtime_manifest(self, job_id: str) -> dict[str, Any]:
+        assert job_id == "job-file-context-v2"
+        return {
+            "schema_version": 3,
+            "file_format_policy_version": "text-v2",
+            "manifest_hash": "e" * 64,
+            "observed_at": "2026-08-17T00:00:00Z",
+            "items": [],
         }
 
 
@@ -454,6 +470,40 @@ def test_file_job_context_exposes_frozen_file_tools_and_sandbox_instructions() -
     assert "observed_at" in restrictions
     assert "version_created_at" in restrictions
     assert "generic created_at" in restrictions
+
+
+def test_text_v2_context_exposes_log_read_only_and_markdown_output_rules() -> None:
+    builder = AgentContextBuilder(
+        tool_registry=_NoPrefetchToolRegistry(["file_prepare_materialization"]),  # type: ignore[arg-type]
+        skill_loader=_SkillLoader(),  # type: ignore[arg-type]
+        agent_config_service=_AgentConfigService("python-v1"),  # type: ignore[arg-type]
+        file_manifest_service=_TextV2FileManifestService(),  # type: ignore[arg-type]
+    )
+    job = SimpleNamespace(
+        id="job-file-context-v2",
+        execution_policy=_EXECUTION_POLICY,
+        input_message="读取日志并生成 Markdown 报告",
+        input_message_state="available",
+        project_code="default",
+        agent_publication_id="agent-publication-1",
+        agent_revision=1,
+        agent_config_hash="agent-config-hash",
+        agent_runtime_kind="python-v1",
+        agent_runtime_protocol_version="1.3",
+        business_application_publication_id="application-publication-v2",
+        business_application_route_decision={
+            "file_format_policy_version": "text-v2"
+        },
+        task_workspace_id="task-workspace-v2",
+    )
+
+    context = builder.build(job)  # type: ignore[arg-type]
+
+    assert context.file_format_policy_version == "text-v2"
+    combined = " ".join([*context.safety_rules, *context.tool_restrictions])
+    assert "TXT/LOG/Markdown" in combined
+    assert "LOG is read-only" in combined
+    assert "TXT/Markdown" in combined
 
 
 def test_context_filters_stale_file_tools_when_job_has_no_workspace() -> None:

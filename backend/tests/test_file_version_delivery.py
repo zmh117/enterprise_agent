@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -16,7 +17,17 @@ from app.modules.delivery.application.result_delivery_service import ResultDeliv
 from app.modules.channel.infrastructure.connector_registry import Connector
 from app.modules.agent.application.agent_result_service import AgentResultService
 from app.modules.file_workspace.application import FileWorkspaceApplicationService
+from app.modules.file_workspace.authorization import FileAuthorizationContext
 from app.modules.file_workspace.delivery_service import FileVersionDeliveryService
+from app.modules.file_workspace.domain import (
+    FileAction,
+    FileSourceKind,
+    FileOwner,
+    FileVersionKind,
+    FileVersionStatus,
+    WorkspaceOwnerType,
+    WorkspaceFileRole,
+)
 from app.modules.file_workspace.lifecycle_service import FileLifecycleService
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.shared.config import DeliverySettings
@@ -317,6 +328,157 @@ def test_explicit_delivery_accepts_exact_version_committed_by_current_job() -> N
 
     assert first["delivery_status"] == "PENDING"
     assert repeated == first
+    assert repository.database.execute_one(
+        "select count(*) as value from delivery_outbox where delivery_kind = 'FILE_VERSION'"
+    ) == {"value": 1}
+
+
+def test_text_v2_log_delivery_uses_existing_exact_version_without_commit() -> None:
+    repository, streaming, context, storage = _fixture(
+        file_format_policy_version="text-v2"
+    )
+    _enable_file_delivery(repository)
+    log_content = b"immutable diagnostic log\n"
+    object_key = storage.new_object_key(kind="attachment")
+    storage.objects[object_key] = log_content
+    repository.create_file(
+        file_id="file-log",
+        tenant_id="tenant-a",
+        owner=FileOwner(WorkspaceOwnerType.PRIVATE_USER, user_id="user-a"),
+        display_name="service.log",
+        actor_id="file-worker",
+        format_code="LOG",
+    )
+    repository.create_version(
+        version_id="version-log-1",
+        file_id="file-log",
+        version_number=1,
+        version_kind=FileVersionKind.ATTACHMENT,
+        status=FileVersionStatus.AVAILABLE,
+        media_type="text/plain",
+        encoding="utf-8",
+        size_bytes=len(log_content),
+        content_sha256=hashlib.sha256(log_content).hexdigest(),
+        object_key=object_key,
+        source_kind=FileSourceKind.MESSAGE_ATTACHMENT,
+        actor_id="file-worker",
+        format_code="LOG",
+        advance_current_from="",
+    )
+    repository.link_workspace_file(
+        workspace_id="workspace-a",
+        file_id="file-log",
+        version_id="version-log-1",
+        logical_name="service.log",
+        role=WorkspaceFileRole.INPUT,
+    )
+    repository.database.execute(
+        """
+        insert into agent_job_file_snapshot_item
+          (id, snapshot_id, ordinal, file_id, version_id, display_name,
+           format_code, source_kind, allowed_actions_json, auto_materialize,
+           conflict_candidate, version_created_at, created_at)
+        values ('snapshot-log-item', 'snapshot-file', 1, 'file-log',
+                'version-log-1', 'service.log', 'LOG', 'WORKSPACE', ?, 0, 0, ?, ?)
+        """,
+        (
+            json.dumps(
+                [
+                    FileAction.READ_METADATA.value,
+                    FileAction.MATERIALIZE.value,
+                    FileAction.RETAIN.value,
+                    FileAction.DELIVER.value,
+                ]
+            ),
+            NOW.isoformat(),
+            NOW.isoformat(),
+        ),
+    )
+    refreshed = FileAuthorizationContext(
+        context.claims,
+        context.job,
+        context.workspace,
+        repository.get_job_snapshot("job-file"),
+    )
+    delivery = FileVersionDeliveryService(
+        repository,
+        AgentRepository(repository.database),
+        DeliverySettings(),
+    )
+    streaming.delivery_intents = delivery
+    before_versions = repository.database.execute_one(
+        "select count(*) as value from managed_file_version"
+    )
+
+    first = streaming.deliver_version(
+        context=refreshed,
+        arguments={"file_id": "file-log", "version_id": "version-log-1"},
+    )
+    repeated = streaming.deliver_version(
+        context=refreshed,
+        arguments={"file_id": "file-log", "version_id": "version-log-1"},
+    )
+
+    assert repeated == first
+    assert delivery.exact_binding(first["delivery_id"])["file_version_id"] == (
+        "version-log-1"
+    )
+    assert repository.database.execute_one(
+        "select count(*) as value from managed_file_version"
+    ) == before_versions
+    assert repository.database.execute_one(
+        "select count(*) as value from file_commit_intent"
+    ) == {"value": 0}
+
+
+def test_text_v2_markdown_default_delivery_and_workspace_only_remain_distinct() -> None:
+    repository, streaming, context, _storage = _fixture(
+        file_format_policy_version="text-v2"
+    )
+    _enable_file_delivery(repository)
+    streaming.delivery_intents = FileVersionDeliveryService(
+        repository,
+        AgentRepository(repository.database),
+        DeliverySettings(),
+    )
+    delivered = asyncio.run(
+        streaming.upload_commit(
+            commit_id=_new_intent(
+                streaming,
+                context,
+                handle="markdown-delivered",
+                display_name="report.md",
+            ),
+            token="file-principal-token",
+            body=_body(b"# delivered\n"),
+        )
+    )
+    workspace_only = streaming.prepare_commit(
+        context=context,
+        arguments={
+            "sandbox_entry_handle": "markdown-workspace-only",
+            "display_name": "notes.md",
+            "user_intent": "GENERATE",
+            "delivery_mode": "WORKSPACE_ONLY",
+        },
+    )
+    workspace_only_commit = str(
+        workspace_only["__file_transfer_meta"]["enterprise-agent/file-transfer"][
+            "commit_id"
+        ]
+    )
+    retained = asyncio.run(
+        streaming.upload_commit(
+            commit_id=workspace_only_commit,
+            token="file-principal-token",
+            body=_body(b"# retained\n"),
+        )
+    )
+
+    assert delivered["format_code"] == "MARKDOWN"
+    assert delivered["delivery_status"] == "PENDING"
+    assert retained["format_code"] == "MARKDOWN"
+    assert retained["delivery_status"] == "NOT_REQUESTED"
     assert repository.database.execute_one(
         "select count(*) as value from delivery_outbox where delivery_kind = 'FILE_VERSION'"
     ) == {"value": 1}

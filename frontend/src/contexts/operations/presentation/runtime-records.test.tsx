@@ -288,6 +288,24 @@ describe("runtime provenance records", () => {
           has_more: false,
           next_cursor: null,
         },
+        file_workspace: {
+          enabled: true,
+          manifest_schema_version: 3,
+          file_format_policy_version: "text-v2",
+          policy_source: "job_file_manifest",
+          formats: [
+            {
+              format_code: "LOG",
+              file_count: 1,
+              allowed_actions: ["MATERIALIZE", "DELIVER"],
+            },
+            {
+              format_code: "MARKDOWN",
+              file_count: 1,
+              allowed_actions: ["MATERIALIZE", "EDIT", "COMMIT", "DELIVER"],
+            },
+          ],
+        },
         deliveries: { events: [], attempts: [], chunks: [] },
         webhook_events: [],
       })
@@ -315,6 +333,10 @@ describe("runtime provenance records", () => {
     expect(screen.getByText("1 次 API 重试")).toBeInTheDocument()
     expect(screen.getByText("模型轮次 / Runtime 调用")).toBeInTheDocument()
     expect(screen.getByText("2 次 / 1 次")).toBeInTheDocument()
+    expect(screen.getByText("text-v2")).toBeInTheDocument()
+    expect(screen.getByText(/Manifest v3/)).toBeInTheDocument()
+    expect(screen.getByText("只读并发送既有精确版本")).toBeInTheDocument()
+    expect(screen.getByText(/不渲染正文/)).toBeInTheDocument()
   })
 
   it("renders only whitelisted metadata from a structured tool summary", async () => {

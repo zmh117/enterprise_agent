@@ -18,11 +18,13 @@ from app.modules.business_application.domain.policies import (
     canonical_json,
     normalize_routing_key,
     reject_dangerous_content,
+    required_file_mcp_tools,
     snapshot_hash,
     validate_code,
     validate_delivery,
     validate_environment,
     validate_execution_policy,
+    validate_file_format_policy_version,
     validate_session_policy,
     validate_task_file_attachment_dependency,
     validate_task_file_features,
@@ -41,10 +43,11 @@ from app.modules.business_application.domain.runtime import (
 )
 from app.modules.business_application.infrastructure import BusinessApplicationRepository
 from app.modules.identity.application.authorization import AuthorizationEvaluator
+from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import NonRetryableExecutionError, NotFound
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class BusinessApplicationService:
@@ -189,9 +192,10 @@ class BusinessApplicationService:
         task_workspace_retention_period = validate_task_workspace_retention_period(
             payload.get("task_workspace_retention_period")
         )
-        task_file_features = validate_task_file_features(
-            payload.get("task_file_features")
+        file_format_policy_version = validate_file_format_policy_version(
+            payload.get("file_format_policy_version")
         )
+        task_file_features = validate_task_file_features(payload.get("task_file_features"))
         validate_task_file_attachment_dependency(
             session_policy=session_policy,
             task_file_features=task_file_features,
@@ -221,10 +225,27 @@ class BusinessApplicationService:
                 error_code="validation_failed",
                 field_errors=file_tool_errors,
             )
+        compatibility_errors = self._file_policy_compatibility_errors(
+            file_format_policy_version=file_format_policy_version,
+            task_file_features=task_file_features,
+            agent=(
+                self.agent_reader.resolve(str(payload.get("agent_publication_id") or "").strip())
+                if str(payload.get("agent_publication_id") or "").strip()
+                else None
+            ),
+        )
+        if compatibility_errors:
+            raise NonRetryableExecutionError(
+                "File format policy is incompatible with the selected publication",
+                safe_message="文件格式策略与 Agent Runtime 发布版本不兼容",
+                error_code="validation_failed",
+                field_errors=compatibility_errors,
+            )
         normalized = {
             "agent_publication_id": str(payload.get("agent_publication_id") or "").strip(),
             "workflow_publication_id": str(payload.get("workflow_publication_id") or "").strip(),
             "task_workspace_retention_period": task_workspace_retention_period,
+            "file_format_policy_version": file_format_policy_version,
             "task_file_features": task_file_features,
             "session_policy": session_policy,
             "execution_policy": execution_policy,
@@ -240,6 +261,7 @@ class BusinessApplicationService:
             agent_publication_id=str(normalized["agent_publication_id"]),
             workflow_publication_id=str(normalized["workflow_publication_id"]),
             task_workspace_retention_period=task_workspace_retention_period,
+            file_format_policy_version=file_format_policy_version,
             task_file_features=task_file_features,
             session_policy=session_policy,
             execution_policy=execution_policy,
@@ -390,6 +412,20 @@ class BusinessApplicationService:
                 "Business Application publication not found",
                 safe_message="未找到业务应用发布版本",
             )
+        if (
+            validate_file_format_policy_version(
+                publication["snapshot"].get("file_format_policy_version")
+            )
+            == "text-v2"
+        ):
+            cutover_errors = self.mcp_tool_composition_service.text_v2_cutover_errors()
+            if cutover_errors:
+                raise NonRetryableExecutionError(
+                    "text-v2 cutover preflight found active legacy File MCP Jobs",
+                    safe_message="text-v2 切换预检未通过",
+                    error_code="validation_failed",
+                    field_errors=cutover_errors,
+                )
         if self.runtime_readiness_guard is not None:
             agent = dict(publication["snapshot"].get("agent") or {})
             runtime_kind = str(agent.get("runtime_kind") or "")
@@ -530,7 +566,9 @@ class BusinessApplicationService:
         project_code = str(application["project_code"])
 
         def reference(item: ComponentReference) -> dict[str, Any]:
-            return {key: value for key, value in vars(item).items() if value is not None}
+            return {
+                key: value for key, value in vars(item).items() if value is not None and value != ()
+            }
 
         agents = [reference(item) for item in self.agent_reader.catalog(project_code)]
         mcp_tool_catalog = self.mcp_tool_composition_service.management_catalog(
@@ -616,13 +654,58 @@ class BusinessApplicationService:
         errors.extend(
             self.mcp_tool_composition_service.file_feature_errors(
                 agent_publication_id=str(revision.get("agent_publication_id") or ""),
-                task_file_features=validate_task_file_features(
-                    revision.get("task_file_features")
-                ),
+                task_file_features=validate_task_file_features(revision.get("task_file_features")),
                 selected_tools=list(revision.get("mcp_tools") or []),
             )
         )
+        errors.extend(
+            self._file_policy_compatibility_errors(
+                file_format_policy_version=validate_file_format_policy_version(
+                    revision.get("file_format_policy_version")
+                ),
+                task_file_features=validate_task_file_features(revision.get("task_file_features")),
+                agent=agent,
+            )
+        )
+        if (
+            validate_file_format_policy_version(revision.get("file_format_policy_version"))
+            == "text-v2"
+        ):
+            errors.extend(self.mcp_tool_composition_service.text_v2_cutover_errors())
         return errors, components
+
+    @staticmethod
+    def _file_policy_compatibility_errors(
+        *,
+        file_format_policy_version: str,
+        task_file_features: dict[str, bool],
+        agent: ComponentReference | None,
+    ) -> list[dict[str, str]]:
+        if file_format_policy_version != "text-v2":
+            return []
+        errors: list[dict[str, str]] = []
+        if not task_file_features.get("workspace_enabled"):
+            errors.append(
+                {
+                    "field": "file_format_policy_version",
+                    "message": "text-v2 只能用于已启用的任务工作区",
+                }
+            )
+        if not task_file_features.get("file_mcp_enabled"):
+            errors.append(
+                {
+                    "field": "task_file_features.file_mcp_enabled",
+                    "message": "text-v2 必须启用 File MCP 并冻结精确 Tool schema",
+                }
+            )
+        if agent is None or "1.3" not in agent.runtime_protocol_versions:
+            errors.append(
+                {
+                    "field": "agent_publication_id",
+                    "message": "所选 Agent 发布版本未声明支持 Runtime protocol v1.3",
+                }
+            )
+        return errors
 
     @staticmethod
     def _resolve_component(
@@ -665,6 +748,11 @@ class BusinessApplicationService:
                 "project_code": value.project_code,
                 "config_hash": value.config_hash,
                 **({"runtime_kind": value.runtime_kind} if value.runtime_kind else {}),
+                **(
+                    {"runtime_protocol_versions": list(value.runtime_protocol_versions)}
+                    if value.runtime_protocol_versions
+                    else {}
+                ),
             }
 
         snapshot = {
@@ -683,9 +771,10 @@ class BusinessApplicationService:
             "task_workspace_retention_period": str(
                 revision.get("task_workspace_retention_period") or "WEEK"
             ),
-            "task_file_features": validate_task_file_features(
-                revision.get("task_file_features")
+            "file_format_policy_version": validate_file_format_policy_version(
+                revision.get("file_format_policy_version")
             ),
+            "task_file_features": validate_task_file_features(revision.get("task_file_features")),
             "session_policy": revision["session_policy"],
             "execution_policy": revision["execution_policy"],
             "triggers": [
@@ -779,9 +868,12 @@ class BusinessApplicationService:
                 "revision_id": (revision or {}).get("id", ""),
                 "publication_id": (publication or {}).get("id", ""),
                 "config_hash": (publication or revision or {}).get("config_hash", ""),
-                "task_workspace_retention_period": (
-                    publication or revision or {}
-                ).get("task_workspace_retention_period", "WEEK"),
+                "task_workspace_retention_period": (publication or revision or {}).get(
+                    "task_workspace_retention_period", "WEEK"
+                ),
+                "file_format_policy_version": (publication or revision or {}).get(
+                    "file_format_policy_version", "text-v1"
+                ),
                 "task_file_features": (publication or revision or {}).get(
                     "task_file_features", validate_task_file_features(None)
                 ),
@@ -825,9 +917,11 @@ class BusinessApplicationService:
             "active_environments": active_environments,
             "task_workspace_retention_period": str(
                 application.get("task_workspace_retention_period")
-                or (application.get("draft") or {}).get(
-                    "task_workspace_retention_period", "WEEK"
-                )
+                or (application.get("draft") or {}).get("task_workspace_retention_period", "WEEK")
+            ),
+            "file_format_policy_version": validate_file_format_policy_version(
+                application.get("file_format_policy_version")
+                or (application.get("draft") or {}).get("file_format_policy_version")
             ),
             **readiness.to_dict(),
         }
@@ -852,6 +946,9 @@ class BusinessApplicationService:
         }
 
     def _snapshot_summary(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        file_format_policy_version = validate_file_format_policy_version(
+            snapshot.get("file_format_policy_version")
+        )
         return {
             "schema_version": snapshot.get("schema_version"),
             "application": snapshot.get("application"),
@@ -864,8 +961,16 @@ class BusinessApplicationService:
             "task_workspace_retention_period": str(
                 snapshot.get("task_workspace_retention_period") or "WEEK"
             ),
-            "task_file_features": validate_task_file_features(
-                snapshot.get("task_file_features")
+            "file_format_policy_version": file_format_policy_version,
+            "file_format_policy_source": (
+                "publication_snapshot"
+                if "file_format_policy_version" in snapshot
+                else "legacy_default"
+            ),
+            "task_file_features": validate_task_file_features(snapshot.get("task_file_features")),
+            "file_format_compatibility": self._file_format_compatibility(
+                snapshot,
+                policy_version=file_format_policy_version,
             ),
             "task_workspace_retention_source": (
                 "publication_snapshot"
@@ -876,6 +981,45 @@ class BusinessApplicationService:
                 snapshot=snapshot,
                 deployment=None,
             ).to_dict(),
+        }
+
+    @staticmethod
+    def _file_format_compatibility(
+        snapshot: dict[str, Any], *, policy_version: str
+    ) -> dict[str, Any]:
+        if policy_version == "text-v1":
+            return {
+                "status": "READY",
+                "required_runtime_protocol": "1.2-or-earlier",
+                "runtime_protocol_compatible": True,
+                "file_mcp_schema_compatible": True,
+            }
+        agent_value = snapshot.get("agent")
+        agent = agent_value if isinstance(agent_value, dict) else {}
+        protocols = {
+            str(value) for value in agent.get("runtime_protocol_versions") or []
+        }
+        features = validate_task_file_features(snapshot.get("task_file_features"))
+        required_tools = required_file_mcp_tools(features)
+        selected_tools = {
+            str(item.get("tool_identifier") or ""): str(item.get("schema_hash") or "")
+            for item in snapshot.get("mcp_tools") or []
+            if isinstance(item, dict)
+            and str(item.get("server_code") or "") == "file-service"
+        }
+        schema_compatible = bool(required_tools) and all(
+            identifier in MCP_TOOL_MANIFEST
+            and selected_tools.get(identifier) == MCP_TOOL_MANIFEST[identifier].schema_hash
+            for identifier in required_tools
+        )
+        runtime_compatible = "1.3" in protocols
+        return {
+            "status": (
+                "READY" if runtime_compatible and schema_compatible else "INCOMPATIBLE"
+            ),
+            "required_runtime_protocol": "1.3",
+            "runtime_protocol_compatible": runtime_compatible,
+            "file_mcp_schema_compatible": schema_compatible,
         }
 
     def _deployment_with_readiness(self, deployment: dict[str, Any]) -> dict[str, Any]:
@@ -926,9 +1070,13 @@ class BusinessApplicationService:
                 snapshot=snapshot,
                 deployment=deployment,
             )
+        snapshot_summary = self._snapshot_summary(snapshot)
         return {
             **publication,
-            "snapshot": self._snapshot_summary(snapshot),
+            "snapshot": snapshot_summary,
+            "file_format_compatibility": snapshot_summary[
+                "file_format_compatibility"
+            ],
             **readiness.to_dict(),
         }
 

@@ -98,7 +98,8 @@ test("File MCP materialize and commit controls trigger local streaming without J
       sandbox_entry_handle: "entry-1",
       relative_path: "inputs/evidence.txt",
       size_bytes: CONTENT.byteLength,
-      sha256: CONTENT_SHA256
+      sha256: CONTENT_SHA256,
+      format_code: "TXT"
     });
 
     await writeFile(join(root, "inputs/evidence.txt"), Buffer.from("edited result", "utf8"));
@@ -301,6 +302,77 @@ test("File transfer selects only an explicit UTF-8 work or outputs TXT", async (
       (error: unknown) =>
         error instanceof FileTransferBoundaryError &&
         error.code === "file_transfer_path_invalid"
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("text-v2 selects Markdown but keeps LOG read-only", async () => {
+  const root = await mkdtemp(join(tmpdir(), "file-transfer-text-v2-"));
+  const coordinator = new FileTransferCoordinator({
+    download: unusedDownload,
+    upload: async () => ({
+      fileId: "unused-file",
+      versionId: "unused-version",
+      sizeBytes: 0,
+      sha256: "0".repeat(64),
+      status: "COMMITTED",
+      deliveryId: "",
+      deliveryStatus: "NOT_REQUESTED"
+    })
+  });
+  const context = {
+    jobId: "job-text-v2",
+    workspacePath: root,
+    principalToken: "principal",
+    signal: new AbortController().signal,
+    fileFormatPolicyVersion: "text-v2" as const
+  };
+  try {
+    await mkdir(join(root, "outputs"), { recursive: true });
+    await writeFile(join(root, "outputs/report.md"), "# report\n", "utf8");
+    await writeFile(join(root, "outputs/service.log"), "readonly\n", "utf8");
+    const markdown = await coordinator.selectSandboxOutput("outputs/report.md", context);
+    assert.equal(markdown.format_code, "MARKDOWN");
+    await assert.rejects(
+      coordinator.selectSandboxOutput("outputs/service.log", context),
+      (error: unknown) =>
+        error instanceof FileTransferBoundaryError && error.code === "file_format_read_only"
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("text output selection rejects BOM and NUL content", async () => {
+  const root = await mkdtemp(join(tmpdir(), "file-transfer-text-invalid-"));
+  const coordinator = new FileTransferCoordinator({
+    download: unusedDownload,
+    upload: async () => {
+      throw new Error("not used");
+    }
+  });
+  const context = {
+    jobId: "job-invalid-text",
+    workspacePath: root,
+    principalToken: "principal",
+    signal: new AbortController().signal,
+    fileFormatPolicyVersion: "text-v2" as const
+  };
+  try {
+    await mkdir(join(root, "outputs"), { recursive: true });
+    await writeFile(join(root, "outputs/bom.md"), Buffer.from([0xef, 0xbb, 0xbf, 0x23]));
+    await writeFile(join(root, "outputs/nul.txt"), Buffer.from("a\0b", "utf8"));
+    await assert.rejects(
+      coordinator.selectSandboxOutput("outputs/bom.md", context),
+      (error: unknown) =>
+        error instanceof FileTransferBoundaryError && error.code === "file_output_bom_forbidden"
+    );
+    await assert.rejects(
+      coordinator.selectSandboxOutput("outputs/nul.txt", context),
+      (error: unknown) =>
+        error instanceof FileTransferBoundaryError && error.code === "file_transfer_type_invalid"
     );
   } finally {
     await rm(root, { recursive: true, force: true });

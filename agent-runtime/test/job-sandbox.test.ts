@@ -145,3 +145,35 @@ test("TypeScript residual cleanup removes only marked terminal Job sandboxes", a
     await rm(parent, { recursive: true, force: true });
   }
 });
+
+test("text-v2 sandbox allows Markdown writes and LOG reads but denies LOG mutation", async () => {
+  const parent = await root();
+  const manager = new JobSandboxManager(join(parent, "sandboxes"));
+  const sandbox = await manager.create("job-text-v2", "text-v2");
+  try {
+    await writeFile(join(sandbox.path, "inputs/service.log"), "line\n", "utf8");
+    assert.equal(
+      (await sandbox.authorizeTool("Read", { file_path: "inputs/service.log" })).file_path,
+      "inputs/service.log"
+    );
+    assert.equal(
+      (await sandbox.authorizeTool("Write", {
+        file_path: "outputs/report.md",
+        content: "# report"
+      })).file_path,
+      "outputs/report.md"
+    );
+    await assert.rejects(
+      sandbox.authorizeTool("Edit", {
+        file_path: "inputs/service.log",
+        old_string: "line",
+        new_string: "changed"
+      }),
+      (error: unknown) =>
+        error instanceof JobSandboxError && error.code === "sandbox_file_read_only"
+    );
+  } finally {
+    await sandbox.cleanup();
+    await rm(parent, { recursive: true, force: true });
+  }
+});

@@ -39,17 +39,18 @@ def _materialize_control(relative_path: str = "inputs/evidence.txt") -> dict[str
     }
 
 
-def _upload_control() -> dict[str, object]:
+def _upload_control(format_code: str | None = None) -> dict[str, object]:
+    descriptor: dict[str, object] = {
+        "protocol": FILE_TRANSFER_PROTOCOL,
+        "action": "UPLOAD_COMMIT",
+        "commit_id": "commit-1",
+        "sandbox_entry_handle": "entry-1",
+    }
+    if format_code is not None:
+        descriptor["format_code"] = format_code
     return {
         "content": [{"type": "text", "text": "Commit intent accepted"}],
-        "_meta": {
-            FILE_TRANSFER_META_KEY: {
-                "protocol": FILE_TRANSFER_PROTOCOL,
-                "action": "UPLOAD_COMMIT",
-                "commit_id": "commit-1",
-                "sandbox_entry_handle": "entry-1",
-            }
-        },
+        "_meta": {FILE_TRANSFER_META_KEY: descriptor},
     }
 
 
@@ -110,6 +111,7 @@ def test_python_file_transfer_matches_typescript_control_and_safe_result(
         "action": "MATERIALIZED",
         "sandbox_entry_handle": "entry-1",
         "relative_path": "inputs/evidence.txt",
+        "format_code": "TXT",
         "size_bytes": len(CONTENT),
         "sha256": CONTENT_SHA256,
     }
@@ -269,3 +271,68 @@ def test_python_file_transfer_selects_only_explicit_utf8_output(tmp_path: Path) 
             context=context,
         )
     assert wrong_directory.value.code == "file_transfer_path_invalid"
+
+
+def test_python_text_v2_selects_markdown_and_keeps_log_read_only(tmp_path: Path) -> None:
+    coordinator = FileTransferCoordinator(_Port())
+    context = FileTransferContext(
+        job_id="job-text-v2",
+        workspace_path=tmp_path,
+        principal_token="principal",
+        file_format_policy_version="text-v2",
+    )
+    (tmp_path / "outputs").mkdir()
+    (tmp_path / "outputs/report.md").write_text("# report\n", encoding="utf-8")
+    (tmp_path / "outputs/service.log").write_text("readonly\n", encoding="utf-8")
+
+    selected = coordinator.select_sandbox_output(
+        relative_path="outputs/report.md",
+        context=context,
+    )
+    assert selected["format_code"] == "MARKDOWN"
+    with pytest.raises(FileTransferBoundaryError) as readonly:
+        coordinator.select_sandbox_output(
+            relative_path="outputs/service.log",
+            context=context,
+        )
+    assert readonly.value.code == "file_format_read_only"
+
+
+@pytest.mark.parametrize(
+    ("content", "code"),
+    [
+        (b"\xef\xbb\xbf# report", "file_output_bom_forbidden"),
+        (b"a\x00b", "file_transfer_type_invalid"),
+        (b"\xff\xfe", "file_transfer_encoding_invalid"),
+    ],
+)
+def test_python_upload_revalidates_markdown_before_streaming(
+    tmp_path: Path,
+    content: bytes,
+    code: str,
+) -> None:
+    port = _Port()
+    coordinator = FileTransferCoordinator(port)
+    context = FileTransferContext(
+        job_id="job-text-v2",
+        workspace_path=tmp_path,
+        principal_token="principal-token-not-for-json",
+        file_format_policy_version="text-v2",
+    )
+    (tmp_path / "outputs").mkdir()
+    target = tmp_path / "outputs/report.md"
+    target.write_text("valid", encoding="utf-8")
+    coordinator.register_sandbox_entry(
+        sandbox_entry_handle="entry-1",
+        relative_path="outputs/report.md",
+        context=context,
+    )
+    target.write_bytes(content)
+
+    with pytest.raises(FileTransferBoundaryError) as rejected:
+        coordinator.process_mcp_control_result(
+            _upload_control("MARKDOWN"),
+            context,
+        )
+    assert rejected.value.code == code
+    assert port.uploaded == b""

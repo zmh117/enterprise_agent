@@ -257,7 +257,8 @@ export class PostgresTerminalLedger implements TerminalLedger {
         if (
           protocolVersion !== "1.0" &&
           protocolVersion !== "1.1" &&
-          protocolVersion !== "1.2"
+          protocolVersion !== "1.2" &&
+          protocolVersion !== "1.3"
         ) {
           throw new TerminalLedgerConflictError();
         }

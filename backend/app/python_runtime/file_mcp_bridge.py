@@ -170,9 +170,9 @@ class ClaudePythonFileBridge:
                         {
                             "name": LOCAL_FILE_OUTPUT_TOOL,
                             "description": (
-                                "Select one existing work/ or outputs/ TXT as the exact file "
-                                "for a later commit intent. Returns metadata and an opaque "
-                                "handle, never file content."
+                                "Select one existing writable work/ or outputs/ text file as "
+                                "the exact file for a later commit intent. LOG is read-only. "
+                                "Returns metadata and an opaque handle, never file content."
                             ),
                             "inputSchema": {
                                 "type": "object",

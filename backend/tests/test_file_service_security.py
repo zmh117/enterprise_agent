@@ -91,9 +91,7 @@ def test_file_principal_verifies_exact_audience_party_time_tenant_and_scopes() -
     ):
         invalid = {**_job_claims(scopes), **mutation}
         with pytest.raises(FilePrincipalError):
-            verifier.verify(
-                signing.sign(invalid), required_scopes=frozenset(scopes)
-            )
+            verifier.verify(signing.sign(invalid), required_scopes=frozenset(scopes))
 
 
 def test_file_worker_principal_is_separate_from_user_agent_and_shared_tokens() -> None:
@@ -112,9 +110,10 @@ def test_file_worker_principal_is_separate_from_user_agent_and_shared_tokens() -
         "nbf": NOW - 1,
         "exp": NOW + 60,
     }
-    assert verifier.verify_service(
-        signing.sign(service_claims), required_scope=scope
-    )["sub"] == "file-worker"
+    assert (
+        verifier.verify_service(signing.sign(service_claims), required_scope=scope)["sub"]
+        == "file-worker"
+    )
 
     with pytest.raises(FilePrincipalError):
         verifier.verify_service(
@@ -160,14 +159,10 @@ def test_file_principal_resolver_rejects_schema_authorization_and_scope_drift() 
     verifier = FilePrincipalVerifier(jwks, now=lambda: NOW)
     resolver = FilePrincipalResolver(
         verifier,
-        _Snapshot(
-            schema_hash=FILE_TOOL_MANIFEST["task_workspace_get"].schema_hash
-        ),
+        _Snapshot(schema_hash=FILE_TOOL_MANIFEST["task_workspace_get"].schema_hash),
         _Authorization(),  # type: ignore[arg-type]
     )
-    claims, authorization, visible = resolver.authenticate(
-        signing.sign(_job_claims([scope]))
-    )
+    claims, authorization, visible = resolver.authenticate(signing.sign(_job_claims([scope])))
     assert claims["authorization_hash"] == "a" * 64
     assert authorization == {"authorized": True}
     assert visible == ("task_workspace_get",)
@@ -267,7 +262,7 @@ def test_file_service_requires_distinct_managed_and_legacy_private_buckets() -> 
 class _Database:
     def execute_one(self, query: str) -> dict[str, Any]:
         if "schema_migration" in query:
-            return {"version": "110"}
+            return {"version": "111"}
         return {"ready": 1}
 
     def execute(self, query: str) -> list[dict[str, Any]]:

@@ -472,6 +472,13 @@ def test_job_evidence_returns_safe_paginated_model_calls_without_runtime_json() 
     assert evidence.status_code == model_calls.status_code == next_page.status_code == 200
     assert hidden.status_code == 404
     assert evidence.json()["execution_summary"]["accounting_status"] == "PARTIAL"
+    assert evidence.json()["file_workspace"] == {
+        "enabled": False,
+        "manifest_schema_version": None,
+        "file_format_policy_version": "text-v1",
+        "policy_source": "job_route_decision",
+        "formats": [],
+    }
     projected = model_calls.json()["items"][0]
     assert projected["provider_request_id"] == "request-safe-1"
     assert projected["duration_source"] == "UNAVAILABLE"

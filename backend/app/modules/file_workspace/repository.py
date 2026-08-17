@@ -64,9 +64,7 @@ class FileWorkspaceRepository:
         actor_id: str,
     ) -> dict[str, Any]:
         timestamp = _now()
-        owner_type, user_id, enterprise_id, connector_id, conversation_id = (
-            owner.database_values()
-        )
+        owner_type, user_id, enterprise_id, connector_id, conversation_id = owner.database_values()
         try:
             self.database.execute(
                 """
@@ -122,7 +120,11 @@ class FileWorkspaceRepository:
         current = WorkspaceStatus(str(row["status"]))
         ensure_transition(current=current, target=target, transitions=WORKSPACE_TRANSITIONS)
         timestamp = at or _now()
-        closed_at = timestamp if target in {WorkspaceStatus.CLOSED, WorkspaceStatus.EXPIRED} else row["closed_at"]
+        closed_at = (
+            timestamp
+            if target in {WorkspaceStatus.CLOSED, WorkspaceStatus.EXPIRED}
+            else row["closed_at"]
+        )
         changed = self.database.execute(
             """
             update task_workspace set status = ?, closed_at = ?, updated_at = ?
@@ -143,6 +145,7 @@ class FileWorkspaceRepository:
         display_name: str,
         actor_id: str,
         source_received_at: str | None = None,
+        format_code: str = "TXT",
     ) -> dict[str, Any]:
         timestamp = _now()
         owner_type, user_id, enterprise_id, connector_id, conversation_id = owner.database_values()
@@ -151,8 +154,8 @@ class FileWorkspaceRepository:
             insert into managed_file
               (id, tenant_id, owner_type, owner_user_id, owner_enterprise_id,
                owner_connector_id, owner_conversation_id, display_name, status,
-               created_by, source_received_at, created_at, updated_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?)
+               format_code, created_by, source_received_at, created_at, updated_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?)
             """,
             (
                 file_id,
@@ -163,6 +166,7 @@ class FileWorkspaceRepository:
                 connector_id,
                 conversation_id,
                 display_name,
+                format_code,
                 actor_id,
                 source_received_at,
                 timestamp,
@@ -229,6 +233,7 @@ class FileWorkspaceRepository:
         object_key: str,
         source_kind: FileSourceKind,
         actor_id: str,
+        format_code: str = "TXT",
         parent_version_id: str | None = None,
         base_version_id: str | None = None,
         source_reference_digest: str = "",
@@ -241,9 +246,9 @@ class FileWorkspaceRepository:
                 insert into managed_file_version
                   (id, file_id, version_number, parent_version_id, base_version_id,
                    version_kind, status, media_type, encoding, size_bytes,
-                   content_sha256, object_key, source_kind, source_reference_digest,
+                   format_code, content_sha256, object_key, source_kind, source_reference_digest,
                    created_by, created_at)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     version_id,
@@ -256,6 +261,7 @@ class FileWorkspaceRepository:
                     media_type,
                     encoding,
                     size_bytes,
+                    format_code,
                     content_sha256,
                     object_key,
                     source_kind.value,
@@ -294,7 +300,16 @@ class FileWorkspaceRepository:
                role, status, created_at, updated_at)
             values (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
             """,
-            (link_id, workspace_id, file_id, version_id, logical_name, role.value, timestamp, timestamp),
+            (
+                link_id,
+                workspace_id,
+                file_id,
+                version_id,
+                logical_name,
+                role.value,
+                timestamp,
+                timestamp,
+            ),
         )
         return self._required("task_workspace_file", link_id, "未找到工作区文件")
 
@@ -316,7 +331,16 @@ class FileWorkspaceRepository:
                source_digest, created_at)
             values (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (reference_id, file_id, version_id, provider, source_type, source_id, source_digest, _now()),
+            (
+                reference_id,
+                file_id,
+                version_id,
+                provider,
+                source_type,
+                source_id,
+                source_digest,
+                _now(),
+            ),
         )
         return self._required("file_external_reference", reference_id, "未找到文件来源")
 
@@ -332,6 +356,7 @@ class FileWorkspaceRepository:
         retention_period: RetentionPeriod,
         manifest_hash: str,
         items: Iterable[dict[str, Any]],
+        file_format_policy_version: str = "text-v1",
     ) -> dict[str, Any]:
         timestamp = _now()
         with self.database.unit_of_work():
@@ -340,8 +365,8 @@ class FileWorkspaceRepository:
                 insert into agent_job_file_snapshot
                   (id, job_id, workspace_id, tenant_id, principal_user_id,
                    business_application_publication_id, retention_period,
-                   schema_version, manifest_hash, created_at)
-                values (?, ?, ?, ?, ?, ?, ?, 2, ?, ?)
+                   schema_version, file_format_policy_version, manifest_hash, created_at)
+                values (?, ?, ?, ?, ?, ?, ?, 3, ?, ?, ?)
                 """,
                 (
                     snapshot_id,
@@ -351,12 +376,15 @@ class FileWorkspaceRepository:
                     principal_user_id,
                     publication_id,
                     retention_period.value,
+                    file_format_policy_version,
                     manifest_hash,
                     timestamp,
                 ),
             )
             for ordinal, item in enumerate(items):
-                actions = [FileAction(str(action)).value for action in item.get("allowed_actions", [])]
+                actions = [
+                    FileAction(str(action)).value for action in item.get("allowed_actions", [])
+                ]
                 source_received_at = (
                     item.get("source_received_at")
                     if "source_received_at" in item
@@ -371,10 +399,10 @@ class FileWorkspaceRepository:
                     """
                     insert into agent_job_file_snapshot_item
                       (id, snapshot_id, ordinal, file_id, version_id, display_name,
-                       source_kind, allowed_actions_json, auto_materialize,
+                       format_code, source_kind, allowed_actions_json, auto_materialize,
                        conflict_candidate, source_received_at, version_created_at,
                        created_at)
-                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         _id("file_snapshot_item"),
@@ -383,6 +411,7 @@ class FileWorkspaceRepository:
                         str(item["file_id"]),
                         str(item["version_id"]),
                         str(item["display_name"]),
+                        str(item.get("format_code") or "TXT"),
                         SnapshotSourceKind(str(item["source_kind"])).value,
                         _json(actions),
                         int(bool(item.get("auto_materialize"))),
@@ -404,6 +433,7 @@ class FileWorkspaceRepository:
         publication_id: str,
         retention_period: RetentionPeriod,
         explicit_references: Iterable[dict[str, str]],
+        file_format_policy_version: str = "text-v1",
     ) -> dict[str, Any]:
         timestamp = _now()
         references = [
@@ -415,8 +445,8 @@ class FileWorkspaceRepository:
             insert into agent_job_file_request
               (job_id, workspace_id, tenant_id, principal_user_id,
                business_application_publication_id, retention_period,
-               explicit_references_json, status, created_at)
-            values (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
+               file_format_policy_version, explicit_references_json, status, created_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
             on conflict(job_id) do nothing
             """,
             (
@@ -426,6 +456,7 @@ class FileWorkspaceRepository:
                 principal_user_id,
                 publication_id,
                 retention_period.value,
+                file_format_policy_version,
                 _json(references),
                 timestamp,
             ),
@@ -437,6 +468,7 @@ class FileWorkspaceRepository:
             "principal_user_id": principal_user_id,
             "business_application_publication_id": publication_id,
             "retention_period": retention_period.value,
+            "file_format_policy_version": file_format_policy_version,
             "explicit_references_json": _json(references),
         }
         if any(str(request.get(key) or "") != value for key, value in expected.items()):
@@ -513,6 +545,8 @@ class FileWorkspaceRepository:
         expires_at: str,
         target_file_id: str | None = None,
         base_version_id: str | None = None,
+        file_format_policy_version: str = "text-v1",
+        format_code: str = "TXT",
     ) -> dict[str, Any]:
         timestamp = _now()
         self.database.execute(
@@ -520,8 +554,9 @@ class FileWorkspaceRepository:
             insert into file_commit_intent
               (id, commit_id, job_id, workspace_id, target_file_id,
                base_version_id, sandbox_entry_handle, display_name, user_intent,
-               delivery_mode, metadata_hash, status, expires_at, created_at, updated_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'INTENT', ?, ?, ?)
+               delivery_mode, file_format_policy_version, format_code,
+               metadata_hash, status, expires_at, created_at, updated_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'INTENT', ?, ?, ?)
             """,
             (
                 intent_id,
@@ -534,6 +569,8 @@ class FileWorkspaceRepository:
                 display_name,
                 user_intent.value,
                 delivery_mode.value,
+                file_format_policy_version,
+                format_code,
                 metadata_hash,
                 expires_at,
                 timestamp,
@@ -582,8 +619,7 @@ class FileWorkspaceRepository:
                 current_hash = str(row.get("content_sha256") or "")
                 current_size = row.get("size_bytes")
                 if current_hash and (
-                    current_hash != content_sha256
-                    or int(current_size or 0) != size_bytes
+                    current_hash != content_sha256 or int(current_size or 0) != size_bytes
                 ):
                     raise NonRetryableExecutionError(
                         "Commit ID is bound to different content",
@@ -597,9 +633,7 @@ class FileWorkspaceRepository:
                     raise NonRetryableExecutionError(
                         "File Commit Intent is terminal",
                         safe_message="文件提交意图已失效",
-                        error_code=str(
-                            row.get("failure_code") or "file_commit_expired"
-                        ),
+                        error_code=str(row.get("failure_code") or "file_commit_expired"),
                     )
                 else:
                     if status == "INTENT":
@@ -649,7 +683,11 @@ class FileWorkspaceRepository:
         current = CommitIntentStatus(str(row["status"]))
         ensure_transition(current=current, target=target, transitions=COMMIT_TRANSITIONS)
         timestamp = _now()
-        finished_at = timestamp if target not in {CommitIntentStatus.INTENT, CommitIntentStatus.UPLOADING} else None
+        finished_at = (
+            timestamp
+            if target not in {CommitIntentStatus.INTENT, CommitIntentStatus.UPLOADING}
+            else None
+        )
         changed = self.database.execute(
             """
             update file_commit_intent
@@ -681,7 +719,14 @@ class FileWorkspaceRepository:
               (id, commit_intent_id, object_key, status, created_at, updated_at)
             values (?, ?, ?, ?, ?, ?)
             """,
-            (staging_id, intent_id, object_key, StagingStatus.UPLOADING.value, timestamp, timestamp),
+            (
+                staging_id,
+                intent_id,
+                object_key,
+                StagingStatus.UPLOADING.value,
+                timestamp,
+                timestamp,
+            ),
         )
         return self._required("file_object_staging", staging_id, "未找到暂存对象")
 
@@ -703,9 +748,7 @@ class FileWorkspaceRepository:
         content_sha256: str | None = None,
         failure_code: str = "",
     ) -> dict[str, Any]:
-        current_row = self._required(
-            "file_object_staging", staging_id, "未找到暂存对象"
-        )
+        current_row = self._required("file_object_staging", staging_id, "未找到暂存对象")
         current = StagingStatus(str(current_row["status"]))
         if current is status:
             return current_row
@@ -729,7 +772,9 @@ class FileWorkspaceRepository:
                 return current_row
             self._state_conflict()
         timestamp = _now()
-        completed_at = timestamp if status in {StagingStatus.COMPLETE, StagingStatus.PUBLISHED} else None
+        completed_at = (
+            timestamp if status in {StagingStatus.COMPLETE, StagingStatus.PUBLISHED} else None
+        )
         deleted_at = timestamp if status is StagingStatus.DELETED else None
         changed = self.database.execute(
             """
@@ -754,9 +799,7 @@ class FileWorkspaceRepository:
             ),
         )
         if not changed:
-            latest = self._required(
-                "file_object_staging", staging_id, "未找到暂存对象"
-            )
+            latest = self._required("file_object_staging", staging_id, "未找到暂存对象")
             if str(latest["status"]) == StagingStatus.PUBLISHED.value:
                 return latest
             self._state_conflict()
@@ -775,6 +818,7 @@ class FileWorkspaceRepository:
         expected_size_bytes: int,
         expected_sha256: str,
         expires_at: str,
+        format_code: str = "TXT",
     ) -> dict[str, Any]:
         row_id = _id("file_transfer")
         self.database.execute(
@@ -782,8 +826,8 @@ class FileWorkspaceRepository:
             insert into file_materialization_transfer
               (id, transfer_id, job_id, workspace_id, file_id, version_id,
                sandbox_entry_handle, relative_path, expected_size_bytes,
-               expected_sha256, status, expires_at, created_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'READY', ?, ?)
+               expected_sha256, format_code, status, expires_at, created_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'READY', ?, ?)
             """,
             (
                 row_id,
@@ -796,6 +840,7 @@ class FileWorkspaceRepository:
                 relative_path,
                 expected_size_bytes,
                 expected_sha256,
+                format_code,
                 expires_at,
                 _now(),
             ),
@@ -839,7 +884,9 @@ class FileWorkspaceRepository:
                     safe_message="文件传输已使用",
                     error_code="file_transfer_consumed",
                 )
-            return self._required("file_materialization_transfer", str(row["id"]), "未找到文件物化传输")
+            return self._required(
+                "file_materialization_transfer", str(row["id"]), "未找到文件物化传输"
+            )
 
     def update_workspace_file_version(
         self,
@@ -976,8 +1023,9 @@ class FileWorkspaceRepository:
             self._state_conflict()
 
     def domain_outbox_metrics(self) -> dict[str, int | str]:
-        row = self.database.execute_one(
-            """
+        row = (
+            self.database.execute_one(
+                """
             select
               sum(case when status in ('PENDING', 'FAILED') then 1 else 0 end)
                 as backlog,
@@ -985,20 +1033,23 @@ class FileWorkspaceRepository:
                 as earliest_created_at
               from file_domain_outbox
             """
-        ) or {}
-        failure = self.database.execute_one(
-            """
+            )
+            or {}
+        )
+        failure = (
+            self.database.execute_one(
+                """
             select failure_code from file_domain_outbox
              where status = 'FAILED'
              order by updated_at desc, id desc
              limit 1
             """
-        ) or {}
+            )
+            or {}
+        )
         return {
             "domain_outbox_backlog": int(row.get("backlog") or 0),
-            "domain_outbox_earliest_created_at": str(
-                row.get("earliest_created_at") or ""
-            ),
+            "domain_outbox_earliest_created_at": str(row.get("earliest_created_at") or ""),
             "domain_outbox_failure_code": str(failure.get("failure_code") or ""),
         }
 
@@ -1050,7 +1101,16 @@ class FileWorkspaceRepository:
                expires_at, created_at)
             values (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (retention_id, version_id, reason.value, source_id, retention_days, starts_at, expires_at, _now()),
+            (
+                retention_id,
+                version_id,
+                reason.value,
+                source_id,
+                retention_days,
+                starts_at,
+                expires_at,
+                _now(),
+            ),
         )
         return self._required("file_retention_fact", retention_id, "未找到文件保留事实")
 
@@ -1071,14 +1131,25 @@ class FileWorkspaceRepository:
                next_attempt_at, created_at, updated_at)
             values (?, ?, ?, ?, 'PENDING', ?, ?, ?, ?)
             """,
-            (cleanup_id, resource_type.value, resource_id, reason, due_at, due_at, timestamp, timestamp),
+            (
+                cleanup_id,
+                resource_type.value,
+                resource_id,
+                reason,
+                due_at,
+                due_at,
+                timestamp,
+                timestamp,
+            ),
         )
         return self._required("file_cleanup_fact", cleanup_id, "未找到文件清理事实")
 
     def claim_cleanup(self, cleanup_id: str, *, worker_id: str, now: str) -> dict[str, Any]:
         row = self._required("file_cleanup_fact", cleanup_id, "未找到文件清理事实")
         current = CleanupStatus(str(row["status"]))
-        ensure_transition(current=current, target=CleanupStatus.CLAIMED, transitions=CLEANUP_TRANSITIONS)
+        ensure_transition(
+            current=current, target=CleanupStatus.CLAIMED, transitions=CLEANUP_TRANSITIONS
+        )
         changed = self.database.execute(
             """
             update file_cleanup_fact

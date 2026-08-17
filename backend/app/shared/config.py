@@ -13,9 +13,7 @@ from app.shared.feature_configuration import (
 
 logger = logging.getLogger(__name__)
 
-LOCAL_OBJECT_STORAGE_ENVIRONMENTS = frozenset(
-    {"local", "test", "testing", "development"}
-)
+LOCAL_OBJECT_STORAGE_ENVIRONMENTS = frozenset({"local", "test", "testing", "development"})
 DEFAULT_OBJECT_STORAGE_ACCESS_KEY = "enterprise_agent"
 DEFAULT_OBJECT_STORAGE_SECRET_KEY = "enterprise_agent_change_me"
 UNSAFE_OBJECT_STORAGE_SECRET_KEYS = frozenset(
@@ -96,6 +94,7 @@ class AttachmentSettings:
         ".md",
         ".markdown",
         ".txt",
+        ".log",
     )
     max_count: int = 10
     max_file_bytes: int = 25 * 1024 * 1024
@@ -320,9 +319,7 @@ class Settings:
     ones_identity: OnesIdentitySettings = field(default_factory=OnesIdentitySettings)
     agent_runtime: AgentRuntimeSettings = field(default_factory=AgentRuntimeSettings)
     principal_jwt: PrincipalJwtSettings = field(default_factory=PrincipalJwtSettings)
-    service_principal: ServicePrincipalSettings = field(
-        default_factory=ServicePrincipalSettings
-    )
+    service_principal: ServicePrincipalSettings = field(default_factory=ServicePrincipalSettings)
     ones_mcp: OnesMcpSettings = field(default_factory=OnesMcpSettings)
     file_service: FileServiceSettings = field(default_factory=FileServiceSettings)
     webhooks: WebhookSettings = field(default_factory=WebhookSettings)
@@ -393,9 +390,7 @@ def load_settings(*, validate_object_storage: bool = True) -> Settings:
         ),
         service_principal=ServicePrincipalSettings(
             enabled=_env_bool("SERVICE_PRINCIPAL_ENABLED"),
-            file_worker_bootstrap_token_file=os.getenv(
-                "FILE_WORKER_BOOTSTRAP_TOKEN_FILE", ""
-            ),
+            file_worker_bootstrap_token_file=os.getenv("FILE_WORKER_BOOTSTRAP_TOKEN_FILE", ""),
             delivery_worker_bootstrap_token_file=os.getenv(
                 "DELIVERY_WORKER_BOOTSTRAP_TOKEN_FILE", ""
             ),
@@ -407,9 +402,7 @@ def load_settings(*, validate_object_storage: bool = True) -> Settings:
             ),
             timeout_seconds=int(os.getenv("SERVICE_IDENTITY_TIMEOUT_SECONDS", "5")),
             ttl_seconds=int(os.getenv("SERVICE_PRINCIPAL_TTL_SECONDS", "300")),
-            refresh_skew_seconds=int(
-                os.getenv("SERVICE_PRINCIPAL_REFRESH_SKEW_SECONDS", "60")
-            ),
+            refresh_skew_seconds=int(os.getenv("SERVICE_PRINCIPAL_REFRESH_SKEW_SECONDS", "60")),
         ),
         ones_mcp=OnesMcpSettings(
             provider_base_url=os.getenv("ONES_MCP_PROVIDER_BASE_URL", ""),
@@ -429,9 +422,7 @@ def load_settings(*, validate_object_storage: bool = True) -> Settings:
             internal_allowed_hosts=_csv_tuple(
                 os.getenv("FILE_SERVICE_INTERNAL_ALLOWED_HOSTS", "file-service")
             ),
-            internal_timeout_seconds=int(
-                os.getenv("FILE_SERVICE_INTERNAL_TIMEOUT_SECONDS", "30")
-            ),
+            internal_timeout_seconds=int(os.getenv("FILE_SERVICE_INTERNAL_TIMEOUT_SECONDS", "30")),
             endpoint_url=os.getenv("FILE_STORAGE_ENDPOINT_URL", "http://minio:9000"),
             bucket=os.getenv("FILE_STORAGE_BUCKET", "agent-files"),
             legacy_attachment_bucket=os.getenv(
@@ -447,9 +438,7 @@ def load_settings(*, validate_object_storage: bool = True) -> Settings:
             ),
             region=os.getenv("FILE_STORAGE_REGION", "us-east-1"),
             secure=_env_bool("FILE_STORAGE_SECURE"),
-            max_mcp_request_bytes=int(
-                os.getenv("FILE_MCP_MAX_REQUEST_BYTES", str(32 * 1024))
-            ),
+            max_mcp_request_bytes=int(os.getenv("FILE_MCP_MAX_REQUEST_BYTES", str(32 * 1024))),
             jwks_refresh_seconds=int(os.getenv("FILE_JWKS_REFRESH_SECONDS", "60")),
         ),
         dingtalk=DingTalkSettings(
@@ -574,7 +563,7 @@ def load_settings(*, validate_object_storage: bool = True) -> Settings:
             allowed_extensions=_csv_tuple(
                 os.getenv(
                     "ATTACHMENT_ALLOWED_EXTENSIONS",
-                    ".jpg,.jpeg,.png,.webp,.docx,.xlsx,.pptx,.md,.markdown,.txt",
+                    ".jpg,.jpeg,.png,.webp,.docx,.xlsx,.pptx,.md,.markdown,.txt,.log",
                 )
             ),
             max_count=int(os.getenv("ATTACHMENT_MAX_COUNT", "10")),
@@ -667,9 +656,7 @@ def _validate_object_storage_credentials(settings: Settings) -> None:
         or access_key == DEFAULT_OBJECT_STORAGE_ACCESS_KEY
         or secret_key in UNSAFE_OBJECT_STORAGE_SECRET_KEYS
     ):
-        raise ValueError(
-            "object_storage_credentials_required_for_non_local_environment"
-        )
+        raise ValueError("object_storage_credentials_required_for_non_local_environment")
 
 
 def synchronize_feature_configuration(settings: Settings) -> Settings:

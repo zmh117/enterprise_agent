@@ -163,13 +163,17 @@ export class DeterministicFakeProviderRuntimeExecutor {
     principalToken: string | undefined,
     callCount: number
   ): Promise<TerminalDraft> {
-    if (request.protocol_version !== "1.1" && request.protocol_version !== "1.2") {
+    if (
+      request.protocol_version !== "1.1" &&
+      request.protocol_version !== "1.2" &&
+      request.protocol_version !== "1.3"
+    ) {
       return {
         status: "FAILED",
         failure: failure(
           "runtime_fake_mcp_protocol_unsupported",
           "CONFIGURATION",
-          "确定性 MCP 验收只支持 Runtime v1.1/v1.2"
+          "确定性 MCP 验收只支持 Runtime v1.1/v1.2/v1.3"
         ),
         usage: { input_tokens: 0, output_tokens: 0 },
         runtime_provenance: runtimeProvenance

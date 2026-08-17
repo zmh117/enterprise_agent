@@ -66,7 +66,7 @@ class _Storage:
         internal_object_key: str | None = None,
     ) -> InternalStoredObject:
         assert kind in {"staging", "attachment"}
-        assert content_type == "text/plain"
+        assert content_type in {"text/plain", "text/markdown"}
         if self.fail_put:
             raise OSError("simulated object write failure")
         key = internal_object_key or self.new_object_key(kind=kind)
@@ -135,13 +135,19 @@ class _Principal:
         return self.context.claims, self.context, (tool_identifier,)
 
 
-def _fixture() -> tuple[
+def _fixture(
+    *, file_format_policy_version: str = "text-v1"
+) -> tuple[
     FileWorkspaceRepository,
     GovernedFileStreamingService,
     FileAuthorizationContext,
     _Storage,
 ]:
     repository = FileWorkspaceRepository(_database())
+    repository.database.execute(
+        "update business_application_publication set file_format_policy_version = ? where id = ?",
+        (file_format_policy_version, "app-file-p1"),
+    )
     owner = FileOwner(WorkspaceOwnerType.PRIVATE_USER, user_id="user-a")
     workspace = repository.create_workspace(
         workspace_id="workspace-a",
@@ -208,6 +214,7 @@ def _fixture() -> tuple[
         publication_id="app-file-p1",
         retention_period=RetentionPeriod.WEEK,
         manifest_hash="a" * 64,
+        file_format_policy_version=file_format_policy_version,
         items=[
             {
                 "file_id": "file-source",
@@ -245,12 +252,13 @@ def _new_intent(
     context: FileAuthorizationContext,
     *,
     handle: str = "sandbox-output",
+    display_name: str | None = None,
 ) -> str:
     prepared = service.prepare_commit(
         context=context,
         arguments={
             "sandbox_entry_handle": handle,
-            "display_name": f"{handle}.txt",
+            "display_name": display_name or f"{handle}.txt",
             "user_intent": "GENERATE",
             "delivery_mode": "DEFAULT",
         },
@@ -258,6 +266,57 @@ def _new_intent(
     control = prepared.pop(INTERNAL_TRANSFER_META)[FILE_TRANSFER_META_KEY]
     assert control["sandbox_entry_handle"] == handle
     return str(control["commit_id"])
+
+
+def test_text_v2_markdown_commit_is_exact_and_log_commit_fails_before_upload() -> None:
+    repository, service, context, storage = _fixture(file_format_policy_version="text-v2")
+    with pytest.raises(NonRetryableExecutionError) as readonly:
+        service.prepare_commit(
+            context=context,
+            arguments={
+                "sandbox_entry_handle": "log-output",
+                "display_name": "service.log",
+                "user_intent": "GENERATE",
+                "delivery_mode": "WORKSPACE_ONLY",
+            },
+        )
+    assert readonly.value.error_code == "file_format_read_only"
+    assert (
+        repository.database.execute_one(
+            "select id from file_commit_intent where sandbox_entry_handle = ?",
+            ("log-output",),
+        )
+        is None
+    )
+
+    commit_id = _new_intent(
+        service,
+        context,
+        handle="markdown-output",
+        display_name="report.md",
+    )
+    first = asyncio.run(
+        service.upload_commit(
+            commit_id=commit_id,
+            token="file-principal-token",
+            body=_body(b"# report\n<script>not rendered</script>\n"),
+        )
+    )
+    repeated = asyncio.run(
+        service.upload_commit(
+            commit_id=commit_id,
+            token="file-principal-token",
+            body=_body(b"# report\n<script>not rendered</script>\n"),
+        )
+    )
+    assert repeated == first
+    assert first["format_code"] == "MARKDOWN"
+    version = repository.get_version(str(first["version_id"]))
+    assert version["format_code"] == "MARKDOWN"
+    assert version["media_type"] == "text/markdown"
+    assert storage.objects[str(version["object_key"])] == (
+        b"# report\n<script>not rendered</script>\n"
+    )
 
 
 def test_commit_is_two_phase_strictly_idempotent_and_publishes_safe_outbox() -> None:
@@ -326,12 +385,12 @@ def test_duplicate_logical_name_is_rejected_before_commit_intent_or_staging() ->
 
     assert error.value.error_code == "file_logical_name_conflict"
     assert storage.objects == before_objects
-    assert repository.database.execute_one(
-        "select count(*) as value from file_commit_intent"
-    ) == {"value": 0}
-    assert repository.database.execute_one(
-        "select count(*) as value from file_object_staging"
-    ) == {"value": 0}
+    assert repository.database.execute_one("select count(*) as value from file_commit_intent") == {
+        "value": 0
+    }
+    assert repository.database.execute_one("select count(*) as value from file_object_staging") == {
+        "value": 0
+    }
 
 
 def test_duplicate_logical_name_publish_race_uses_stable_error_and_compensation(
@@ -379,6 +438,7 @@ def test_materialization_is_exact_version_job_bound_and_one_time() -> None:
         arguments={"file_id": "file-source", "version_id": "version-source-1"},
     )
     control = prepared[INTERNAL_TRANSFER_META][FILE_TRANSFER_META_KEY]
+
     async def download_once() -> tuple[bytes, str]:
         stream, media_type = await service.download_transfer(
             transfer_id=str(control["transfer_id"]), token="file-principal-token"
@@ -411,9 +471,7 @@ def test_stale_base_creates_conflict_without_advancing_current() -> None:
             "delivery_mode": "DEFAULT",
         },
     )
-    commit_id = str(
-        prepared[INTERNAL_TRANSFER_META][FILE_TRANSFER_META_KEY]["commit_id"]
-    )
+    commit_id = str(prepared[INTERNAL_TRANSFER_META][FILE_TRANSFER_META_KEY]["commit_id"])
     concurrent_key = storage.new_object_key(kind="staging")
     storage.objects[concurrent_key] = b"concurrent"
     repository.create_version(
@@ -472,9 +530,7 @@ def test_stale_base_creates_conflict_without_advancing_current() -> None:
         """,
         (TIMESTAMP,),
     )
-    manifest_service = JobFileManifestService(
-        repository, TaskWorkspaceService(repository)
-    )
+    manifest_service = JobFileManifestService(repository, TaskWorkspaceService(repository))
     workspace = repository.get_workspace("workspace-a")
     manifest_service.register_request(
         job_id="job-after-conflict",
@@ -510,9 +566,9 @@ def test_object_and_database_failures_leave_retryable_cleanup_facts(
                 body=_body(b"will fail\n"),
             )
         )
-    assert repository.database.execute_one(
-        "select count(*) as value from file_cleanup_fact"
-    ) == {"value": 1}
+    assert repository.database.execute_one("select count(*) as value from file_cleanup_fact") == {
+        "value": 1
+    }
 
     storage.fail_put = False
     database_failure_commit = _new_intent(service, context, handle="database-failure")
@@ -535,16 +591,14 @@ def test_object_and_database_failures_leave_retryable_cleanup_facts(
         "select count(*) as value from managed_file_version where content_sha256 = ?",
         (intent["content_sha256"],),
     ) == {"value": 0}
-    assert repository.database.execute_one(
-        "select count(*) as value from file_cleanup_fact"
-    ) == {"value": 2}
+    assert repository.database.execute_one("select count(*) as value from file_cleanup_fact") == {
+        "value": 2
+    }
 
 
 def test_three_file_partial_conflict_never_rolls_back_successful_versions() -> None:
     repository, service, context, storage = _fixture()
-    successful = [
-        _new_intent(service, context, handle=f"output-{index}") for index in range(2)
-    ]
+    successful = [_new_intent(service, context, handle=f"output-{index}") for index in range(2)]
     stale = service.prepare_commit(
         context=context,
         arguments={
@@ -556,9 +610,7 @@ def test_three_file_partial_conflict_never_rolls_back_successful_versions() -> N
             "delivery_mode": "WORKSPACE_ONLY",
         },
     )
-    stale_commit = str(
-        stale[INTERNAL_TRANSFER_META][FILE_TRANSFER_META_KEY]["commit_id"]
-    )
+    stale_commit = str(stale[INTERNAL_TRANSFER_META][FILE_TRANSFER_META_KEY]["commit_id"])
     concurrent_key = storage.new_object_key(kind="staging")
     storage.objects[concurrent_key] = b"new current"
     repository.create_version(
@@ -614,9 +666,7 @@ def test_three_file_partial_conflict_never_rolls_back_successful_versions() -> N
     ) == {"value": 2}
     for result in results[:2]:
         assert repository.get_version(str(result["version_id"]))["status"] == "AVAILABLE"
-    assert repository.get_file("file-source")["current_version_id"] == (
-        "version-source-concurrent"
-    )
+    assert repository.get_file("file-source")["current_version_id"] == ("version-source-concurrent")
 
 
 def test_file_worker_attachment_import_is_idempotent_and_builds_txt_lineage() -> None:

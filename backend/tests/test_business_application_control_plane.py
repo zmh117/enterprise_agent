@@ -13,6 +13,7 @@ from app.main import create_app
 from app.modules.business_application.domain.policies import (
     canonical_json,
     normalize_routing_key,
+    publication_file_format_policy,
     publication_task_file_features,
     required_file_mcp_tools,
     reject_dangerous_content,
@@ -126,6 +127,76 @@ def create_draft_publish(
     return application, revision, publication
 
 
+def _insert_stale_file_mcp_job(container: object, *, status: JobStatus) -> str:
+    repository = container.agent_repository
+    session = repository.create_session(
+        project_code="default",
+        source_channel="dingtalk",
+        source_connector_id="connector-dingtalk-stream-default",
+        external_conversation_id="cutover-preflight-conversation",
+        requester_id="user_local_admin",
+        session_key=f"cutover-preflight:{status.value}",
+    )
+    job = repository.create_job(
+        session_id=session.id,
+        idempotency_key=f"cutover-preflight:{status.value}",
+        project_code="default",
+        source_channel="dingtalk",
+        source_connector_id="connector-dingtalk-stream-default",
+        requester_id="user_local_admin",
+        input_message="safe",
+        max_retry_count=3,
+        initial_status=status,
+        agent_publication_id="agent_publication_default_v1",
+        execution_policy={
+            "schema_version": 1,
+            "requested": {
+                "max_turns": 12,
+                "timeout_seconds": 300,
+                "max_tool_calls": 30,
+            },
+            "effective": {
+                "max_turns": 12,
+                "timeout_seconds": 300,
+                "max_tool_calls": 30,
+            },
+            "sources": {"source_kind": "runtime_default"},
+        },
+    )
+    identifier = "task_workspace_materialize"
+    snapshot = {
+        "schema_version": 1,
+        "job_id": job.id,
+        "application_publication_id": "",
+        "agent_publication_id": "agent_publication_default_v1",
+        "tools": [
+            {
+                "server_code": "file-service",
+                "tool_identifier": identifier,
+                "schema_hash": "0" * 64,
+                "resource_kind": "file",
+            }
+        ],
+    }
+    container.database.execute(
+        """
+        insert into agent_job_mcp_tool_snapshot
+          (id, job_id, application_publication_id, agent_publication_id,
+           schema_version, snapshot_json, snapshot_hash, authorization_hash, created_at)
+        values (?, ?, null, ?, 1, ?, ?, ?, CURRENT_TIMESTAMP)
+        """,
+        (
+            f"job_mcp_tools_{job.id}",
+            job.id,
+            "agent_publication_default_v1",
+            json.dumps(snapshot, ensure_ascii=False, sort_keys=True),
+            JobMcpToolSnapshotService._hash(snapshot),
+            "0" * 64,
+        ),
+    )
+    return job.id
+
+
 def test_workspace_retention_is_frozen_in_revision_publication_hash_and_audit() -> None:
     container = build_test_container(control_plane_settings(), migrate=True, seed=True)
     service = container.business_application_service
@@ -152,7 +223,9 @@ def test_workspace_retention_is_frozen_in_revision_publication_hash_and_audit() 
         code="workspace-retention-policy",
         revision_id=str(revision["id"]),
     )
-    assert publication["schema_version"] == 3
+    assert publication["schema_version"] == 4
+    assert publication["file_format_policy_version"] == "text-v1"
+    assert publication["file_format_policy_source"] == "publication_snapshot"
     assert publication["task_file_features"] == {
         "default_file_delivery_enabled": False,
         "file_mcp_enabled": False,
@@ -184,6 +257,168 @@ def test_workspace_retention_is_frozen_in_revision_publication_hash_and_audit() 
     assert audit is not None
     audit_envelope = json.loads(str(audit["payload_summary"]))
     assert json.loads(str(audit_envelope["payload"]))["task_workspace_retention_period"] == "MONTH"
+
+
+def test_file_format_policy_is_frozen_and_legacy_publications_remain_text_v1() -> None:
+    assert publication_file_format_policy({"schema_version": 3}) == (
+        "text-v1",
+        "legacy_default",
+    )
+    container = build_test_container(control_plane_settings(), migrate=True, seed=True)
+    service = container.business_application_service
+    application = service.create(
+        actor_id="user_local_admin",
+        code="file-format-policy",
+        name="File Format Policy",
+        description="safe",
+        project_code="default",
+        owner_user_id="user_local_admin",
+    )
+    payload = draft_payload()
+    payload["file_format_policy_version"] = "text-v2"
+    with pytest.raises(NonRetryableExecutionError) as incompatible:
+        service.save_draft(
+            actor_id="user_local_admin",
+            code="file-format-policy",
+            expected_revision=int(application["revision"]),
+            payload=payload,
+        )
+    assert {item["field"] for item in incompatible.value.field_errors} == {
+        "file_format_policy_version",
+        "task_file_features.file_mcp_enabled",
+        "agent_publication_id",
+    }
+
+    agent_row = container.database.execute_one(
+        "select snapshot_json from agent_publication where id = ?",
+        ("agent_publication_default_v1",),
+    )
+    assert agent_row is not None
+    agent_snapshot = json.loads(str(agent_row["snapshot_json"]))
+    agent_snapshot["runtime_kind"] = "python-v1"
+    agent_snapshot["supported_runtime_protocol_versions"] = ["1.2", "1.3"]
+    container.database.execute(
+        """
+        update agent_publication
+           set schema_version = 3, snapshot_json = ?, config_hash = ?
+         where id = ?
+        """,
+        (
+            json.dumps(agent_snapshot, ensure_ascii=False, sort_keys=True),
+            snapshot_hash(agent_snapshot),
+            "agent_publication_default_v1",
+        ),
+    )
+    payload["task_file_features"] = {
+        "workspace_enabled": True,
+        "file_mcp_enabled": True,
+        "runtime_file_edit_enabled": True,
+        "default_file_delivery_enabled": True,
+    }
+    payload["session_policy"]["attachments_enabled"] = True
+    payload["session_policy"]["continuous_conversation_enabled"] = True
+    required_tools = sorted(required_file_mcp_tools(payload["task_file_features"]))
+    for selection_order, identifier in enumerate(required_tools, start=30):
+        definition = MCP_TOOL_MANIFEST[identifier]
+        container.database.execute(
+            """
+            insert into agent_publication_mcp_tool
+              (agent_publication_id, server_code, tool_identifier, schema_hash,
+               model_description, selection_order, created_at)
+            values ('agent_publication_default_v1', ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (
+                definition.server_code,
+                definition.identifier,
+                definition.schema_hash,
+                definition.description,
+                selection_order,
+            ),
+        )
+    payload["mcp_tools"] = required_tools
+    revision = service.save_draft(
+        actor_id="user_local_admin",
+        code="file-format-policy",
+        expected_revision=int(application["revision"]),
+        payload=payload,
+    )
+    assert revision["file_format_policy_version"] == "text-v2"
+    publication = service.publish(
+        actor_id="user_local_admin",
+        code="file-format-policy",
+        revision_id=str(revision["id"]),
+    )
+    assert publication["schema_version"] == 4
+    assert publication["snapshot"]["file_format_policy_version"] == "text-v2"
+    assert publication["file_format_policy_version"] == "text-v2"
+    assert publication["file_format_policy_source"] == "publication_snapshot"
+    publication_summary = next(
+        item
+        for item in service.detail(
+            actor_id="user_local_admin", code="file-format-policy"
+        )["publications"]
+        if item["id"] == publication["id"]
+    )
+    assert publication_summary["file_format_compatibility"] == {
+        "status": "READY",
+        "required_runtime_protocol": "1.3",
+        "runtime_protocol_compatible": True,
+        "file_mcp_schema_compatible": True,
+    }
+    assert snapshot_hash(publication["snapshot"]) == publication["config_hash"]
+
+    blocker_job_id = _insert_stale_file_mcp_job(container, status=JobStatus.RETRY_WAIT)
+    preflight = service.mcp_tool_composition_service.text_v2_cutover_preflight()
+    assert preflight == {
+        "ready": False,
+        "blocking_job_count": 1,
+        "blocking_jobs": [
+            {
+                "job_id": blocker_job_id,
+                "status": "RETRY_WAIT",
+                "retry_count": 0,
+                "reason": "stale_file_mcp_schema",
+                "tool_identifiers": ["task_workspace_materialize"],
+            }
+        ],
+    }
+    with pytest.raises(NonRetryableExecutionError) as blocked:
+        service.publish(
+            actor_id="user_local_admin",
+            code="file-format-policy",
+            revision_id=str(revision["id"]),
+        )
+    assert blocked.value.field_errors[0]["field"] == "file_format_policy_version"
+    with pytest.raises(NonRetryableExecutionError) as activation_blocked:
+        service.activate(
+            actor_id="user_local_admin",
+            code="file-format-policy",
+            environment="local",
+            publication_id=str(publication["id"]),
+            expected_revision=0,
+        )
+    assert activation_blocked.value.safe_message == "text-v2 切换预检未通过"
+    container.database.execute(
+        "update agent_job set status = 'FAILED' where id = ?",
+        (blocker_job_id,),
+    )
+    assert service.mcp_tool_composition_service.text_v2_cutover_preflight()["ready"] is True
+
+    payload["file_format_policy_version"] = "text-v1"
+    rollback_revision = service.save_draft(
+        actor_id="user_local_admin",
+        code="file-format-policy",
+        expected_revision=int(revision["revision"]),
+        payload=payload,
+    )
+    rollback_publication = service.publish(
+        actor_id="user_local_admin",
+        code="file-format-policy",
+        revision_id=str(rollback_revision["id"]),
+    )
+    assert rollback_publication["file_format_policy_version"] == "text-v1"
+    frozen = container.business_application_repository.get_publication(str(publication["id"]))
+    assert frozen["file_format_policy_version"] == "text-v2"
 
 
 def test_task_file_feature_flags_are_strict_frozen_and_legacy_default_off() -> None:
@@ -368,6 +603,7 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
         "108_stage_attachment_only_messages.sql",
         "109_allow_file_service_mcp_publications.sql",
         "110_expand_file_source_received_time.sql",
+        "111_expand_text_file_format_policy.sql",
     ]
     session_columns = {str(row["name"]) for row in db.execute("pragma table_info(agent_session)")}
     assert {
@@ -1058,7 +1294,7 @@ def test_ones_tool_preserves_server_through_agent_application_and_job_snapshot()
     assert drift.value.error_code == "mcp_tool_schema_drift"
 
 
-def test_catalog_http_contract_only_exposes_runtime_kind_for_agents() -> None:
+def test_catalog_http_contract_exposes_runtime_compatibility_only_for_agents() -> None:
     settings = control_plane_settings()
     container = build_test_container(settings, migrate=True, seed=True)
     container.business_application_service.create(
@@ -1081,9 +1317,11 @@ def test_catalog_http_contract_only_exposes_runtime_kind_for_agents() -> None:
         "python-v1",
         "typescript-v1",
     }
+    assert all(item["runtime_protocol_versions"] for item in catalog["agents"])
     assert catalog["connectors"]
     assert catalog["mcp_tools_by_agent_publication"]
     assert all("runtime_kind" not in item for item in catalog["connectors"])
+    assert all("runtime_protocol_versions" not in item for item in catalog["connectors"])
     assert all(
         "runtime_kind" not in item
         for tools in catalog["mcp_tools_by_agent_publication"].values()

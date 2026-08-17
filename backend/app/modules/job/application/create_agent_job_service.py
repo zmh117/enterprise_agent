@@ -21,8 +21,13 @@ from app.modules.channel.domain.channel_event import (
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.file_workspace.manifest_service import (
     JobFileManifestService,
-    is_explicit_txt_output_request,
-    is_task_txt_name,
+    is_explicit_text_output_request,
+    is_task_text_name,
+)
+from app.modules.file_workspace.text_format_policy import (
+    FileFormatPolicyVersion,
+    normalize_file_format_policy_version,
+    policy_runtime_protocol_version,
 )
 from app.modules.job.domain.agent_job import AgentJob, AgentSession
 from app.modules.mcp_tool_runtime.job_snapshot import (
@@ -95,6 +100,7 @@ class CreateAgentJobCommand:
     enterprise_id: str = ""
     sender_staff_id: str = ""
     task_workspace_retention_period: str = "WEEK"
+    file_format_policy_version: str = "text-v1"
     task_file_features: dict[str, bool] = field(default_factory=dict)
     file_references: tuple[ChannelFileReference, ...] = ()
     requests_file_output: bool = False
@@ -214,10 +220,14 @@ class CreateAgentJobService:
                 safe_message="此业务应用未启用任务文件工作区",
                 error_code="attachment_stage_workspace_disabled",
             )
-        if not all(is_task_txt_name(item.file_name) for item in command.attachments):
+        policy_version = normalize_file_format_policy_version(command.file_format_policy_version)
+        if not all(
+            is_task_text_name(item.file_name, policy_version=policy_version)
+            for item in command.attachments
+        ):
             raise NonRetryableExecutionError(
-                "The first task-workspace phase accepts only TXT attachment intake",
-                safe_message="当前任务工作区只支持 TXT 文件",
+                "Attachment format is outside the frozen task-workspace policy",
+                safe_message="当前任务工作区不支持此文本格式",
                 error_code="file_workspace_type_unsupported",
             )
         attachments_enabled = (
@@ -225,7 +235,11 @@ class CreateAgentJobService:
             if command.attachments_enabled is None
             else command.attachments_enabled
         )
-        self._validate_attachments(command.attachments, enabled=attachments_enabled)
+        self._validate_attachments(
+            command.attachments,
+            enabled=attachments_enabled,
+            file_format_policy_version=policy_version,
+        )
         if self.credential_cipher is None:
             raise NonRetryableExecutionError(
                 "Attachment credential encryption is unavailable",
@@ -316,6 +330,7 @@ class CreateAgentJobService:
                 attachments=command.attachments,
                 file_references=(),
                 requests_file_output=False,
+                file_format_policy_version=policy_version,
             )
             if workspace is None:
                 raise NonRetryableExecutionError(
@@ -392,9 +407,11 @@ class CreateAgentJobService:
             if command.attachments_enabled is None
             else command.attachments_enabled
         )
+        policy_version = normalize_file_format_policy_version(command.file_format_policy_version)
         self._validate_attachments(
             command.attachments,
             enabled=attachments_enabled,
+            file_format_policy_version=policy_version,
         )
         requester_id = command.effective_requester_id
         source_channel = command.effective_source_channel
@@ -522,10 +539,21 @@ class CreateAgentJobService:
                     safe_message="固定的 Agent Runtime 配置无效",
                     error_code="agent_runtime_kind_unsupported",
                 )
-            agent_runtime_protocol_version = "1.2"
+            agent_runtime_protocol_version = policy_runtime_protocol_version(policy_version)
+            agent_snapshot = dict(publication.get("snapshot") or {})
+            supported_protocols = tuple(
+                str(item) for item in agent_snapshot.get("supported_runtime_protocol_versions", [])
+            )
+            if not supported_protocols:
+                supported_protocols = ("1.0", "1.1", "1.2")
+            if agent_runtime_protocol_version not in supported_protocols:
+                raise NonRetryableExecutionError(
+                    "Pinned Agent publication does not support the required Runtime protocol",
+                    safe_message="固定的 Agent 发布版本不支持文件策略所需 Runtime 协议",
+                    error_code="agent_runtime_protocol_unsupported",
+                )
             if self.runtime_readiness_guard is not None:
                 self.runtime_readiness_guard.require_ready(agent_runtime_kind)
-            agent_snapshot = dict(publication.get("snapshot") or {})
             model_connection = agent_snapshot.get("model_connection") or {}
             model_config = model_connection.get("config") or {}
             model_runtime_provenance = (
@@ -694,8 +722,12 @@ class CreateAgentJobService:
                     file_references=command.file_references,
                     requests_file_output=(
                         command.requests_file_output
-                        or is_explicit_txt_output_request(command.user_message)
+                        or is_explicit_text_output_request(
+                            command.user_message,
+                            policy_version=command.file_format_policy_version,
+                        )
                     ),
+                    file_format_policy_version=command.file_format_policy_version,
                 )
                 if (
                     self.file_manifest_service is not None
@@ -756,6 +788,9 @@ class CreateAgentJobService:
                         if command.task_file_features
                         else {}
                     ),
+                    "file_format_policy_version": normalize_file_format_policy_version(
+                        command.file_format_policy_version
+                    ).value,
                     "authorization_snapshot": business_authorization_snapshot,
                     "runtime_authorization": runtime_authorization_snapshot,
                 },
@@ -846,13 +881,13 @@ class CreateAgentJobService:
                     requester_id=requester_id,
                     publication_id=command.business_application_publication_id,
                     file_references=command.file_references,
+                    file_format_policy_version=command.file_format_policy_version,
                 )
-                if not self.file_manifest_service.has_pending_txt_attachments(job.id):
+                if not self.file_manifest_service.has_pending_text_attachments(job.id):
                     file_manifest = self.file_manifest_service.finalize(job.id) or {}
             job_attachments = self.repository.list_attachments(job.id)
-            if (
-                job.status == JobStatus.WAITING_INPUT
-                and all(item.status in TERMINAL_ATTACHMENT_STATUSES for item in job_attachments)
+            if job.status == JobStatus.WAITING_INPUT and all(
+                item.status in TERMINAL_ATTACHMENT_STATUSES for item in job_attachments
             ):
                 job = self.repository.transition_job(
                     job_id=job.id,
@@ -939,6 +974,7 @@ class CreateAgentJobService:
         attachments: tuple[ChannelAttachment, ...],
         *,
         enabled: bool,
+        file_format_policy_version: object = FileFormatPolicyVersion.TEXT_V1,
     ) -> None:
         if attachments and not enabled:
             raise NonRetryableExecutionError(
@@ -961,8 +997,12 @@ class CreateAgentJobService:
                     "attachment_source_missing", safe_message="缺少附件来源"
                 )
             size = int(attachment.declared_size or 0)
+            is_workspace_text = is_task_text_name(
+                attachment.file_name,
+                policy_version=file_format_policy_version,
+            )
             max_file_bytes = (
-                15 * 1024 * 1024 if extension == ".txt" else self.attachment_settings.max_file_bytes
+                15 * 1024 * 1024 if is_workspace_text else self.attachment_settings.max_file_bytes
             )
             if size > max_file_bytes:
                 raise NonRetryableExecutionError(

@@ -85,7 +85,11 @@ class FailOnSecondEncryption:
         return f"encrypted:{plaintext}"
 
 
-def multimodal_container(*, task_file_features: dict[str, bool] | None = None) -> object:
+def multimodal_container(
+    *,
+    task_file_features: dict[str, bool] | None = None,
+    file_format_policy_version: str = "text-v1",
+) -> object:
     settings = Settings(
         database_dsn="sqlite:///:memory:",
         app_config_master_key="multimodal-test-master-key",
@@ -132,6 +136,7 @@ def multimodal_container(*, task_file_features: dict[str, bool] | None = None) -
         attachments_enabled=True,
         capabilities=tool_identifiers,
         task_file_features=normalized_task_file_features,
+        file_format_policy_version=file_format_policy_version,
     )
     application = container.business_application_repository.get_by_code(
         "multimodal-test-application"

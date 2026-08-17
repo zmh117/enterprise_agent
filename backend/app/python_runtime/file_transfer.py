@@ -9,6 +9,15 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Iterable, Mapping, Protocol
 
+from app.modules.file_workspace.text_format_policy import (
+    FileFormatPolicyVersion,
+    MAX_TEXT_BYTES,
+    TextFormatCode,
+    TextFormatDefinition,
+    text_format_for_name,
+)
+from app.shared.exceptions import NonRetryableExecutionError
+
 
 FILE_TRANSFER_META_KEY = "enterprise-agent/file-transfer"
 FILE_TRANSFER_PROTOCOL = "enterprise-agent.file-transfer/v1"
@@ -27,6 +36,7 @@ class FileTransferContext:
     job_id: str
     workspace_path: Path
     principal_token: str
+    file_format_policy_version: str = "text-v1"
 
 
 @dataclass(frozen=True)
@@ -87,17 +97,21 @@ def _identifier(value: object, field: str) -> str:
     return value
 
 
-def _relative_txt_path(value: object) -> str:
+def _relative_text_path(
+    value: object,
+    *,
+    policy_version: object,
+    writable: bool,
+) -> tuple[str, TextFormatDefinition]:
     if (
         not isinstance(value, str)
         or not 1 <= len(value) <= _MAX_RELATIVE_PATH_CHARS
         or "\\" in value
         or "\x00" in value
-        or not value.lower().endswith(".txt")
     ):
         raise FileTransferBoundaryError(
             "file_transfer_path_invalid",
-            "relative_path must be a bounded TXT path",
+            "relative_path must be a bounded text path",
         )
     path = PurePosixPath(value)
     if (
@@ -112,7 +126,22 @@ def _relative_txt_path(value: object) -> str:
             "file_transfer_path_invalid",
             "relative_path must remain inside the Job Sandbox",
         )
-    return value
+    try:
+        definition = text_format_for_name(
+            path.name,
+            policy_version=policy_version,
+        )
+    except NonRetryableExecutionError as exc:
+        raise FileTransferBoundaryError(
+            "file_transfer_path_invalid",
+            "relative_path format is not allowed",
+        ) from exc
+    if writable and not definition.writable:
+        raise FileTransferBoundaryError(
+            "file_format_read_only",
+            "selected file format is read-only",
+        )
+    return value, definition
 
 
 def _size(value: object, field: str) -> int:
@@ -122,6 +151,16 @@ def _size(value: object, field: str) -> int:
             f"{field} must be a non-negative integer",
         )
     return value
+
+
+def _bounded_text_size(value: object, field: str) -> int:
+    size = _size(value, field)
+    if size > MAX_TEXT_BYTES:
+        raise FileTransferBoundaryError(
+            "file_transfer_size_mismatch",
+            "text file exceeds the transfer size limit",
+        )
+    return size
 
 
 def _sha256(value: object, field: str) -> str:
@@ -147,18 +186,32 @@ def parse_file_transfer_control(result: object) -> dict[str, object]:
             "unsupported file transfer protocol",
         )
     if control.get("action") == "MATERIALIZE":
-        _exact_keys(
-            control,
-            {
-                "protocol",
-                "action",
-                "transfer_id",
-                "sandbox_entry_handle",
-                "relative_path",
-                "expected_size_bytes",
-                "expected_sha256",
-            },
+        expected = {
+            "protocol",
+            "action",
+            "transfer_id",
+            "sandbox_entry_handle",
+            "relative_path",
+            "expected_size_bytes",
+            "expected_sha256",
+        }
+        if "format_code" in control:
+            expected.add("format_code")
+        _exact_keys(control, expected)
+        format_code = str(control.get("format_code") or "TXT")
+        if format_code not in {item.value for item in TextFormatCode}:
+            raise FileTransferBoundaryError(
+                "file_transfer_control_invalid", "format_code is invalid"
+            )
+        relative_path, definition = _relative_text_path(
+            control.get("relative_path"),
+            policy_version=FileFormatPolicyVersion.TEXT_V2,
+            writable=False,
         )
+        if definition.code.value != format_code:
+            raise FileTransferBoundaryError(
+                "file_transfer_control_invalid", "format_code does not match relative_path"
+            )
         return {
             "protocol": FILE_TRANSFER_PROTOCOL,
             "action": "MATERIALIZE",
@@ -166,15 +219,23 @@ def parse_file_transfer_control(result: object) -> dict[str, object]:
             "sandbox_entry_handle": _identifier(
                 control.get("sandbox_entry_handle"), "sandbox_entry_handle"
             ),
-            "relative_path": _relative_txt_path(control.get("relative_path")),
-            "expected_size_bytes": _size(control.get("expected_size_bytes"), "expected_size_bytes"),
+            "relative_path": relative_path,
+            "format_code": format_code,
+            "expected_size_bytes": _bounded_text_size(
+                control.get("expected_size_bytes"), "expected_size_bytes"
+            ),
             "expected_sha256": _sha256(control.get("expected_sha256"), "expected_sha256"),
         }
     if control.get("action") == "UPLOAD_COMMIT":
-        _exact_keys(
-            control,
-            {"protocol", "action", "commit_id", "sandbox_entry_handle"},
-        )
+        expected = {"protocol", "action", "commit_id", "sandbox_entry_handle"}
+        if "format_code" in control:
+            expected.add("format_code")
+        _exact_keys(control, expected)
+        format_code = str(control.get("format_code") or "TXT")
+        if format_code not in {TextFormatCode.TXT.value, TextFormatCode.MARKDOWN.value}:
+            raise FileTransferBoundaryError(
+                "file_transfer_control_invalid", "commit format_code is invalid"
+            )
         return {
             "protocol": FILE_TRANSFER_PROTOCOL,
             "action": "UPLOAD_COMMIT",
@@ -182,6 +243,7 @@ def parse_file_transfer_control(result: object) -> dict[str, object]:
             "sandbox_entry_handle": _identifier(
                 control.get("sandbox_entry_handle"), "sandbox_entry_handle"
             ),
+            "format_code": format_code,
         }
     raise FileTransferBoundaryError(
         "file_transfer_action_unsupported",
@@ -225,10 +287,50 @@ def _reject_symlinks(workspace: Path, target: Path) -> None:
                 )
 
 
+def _validate_agent_output(target: Path) -> tuple[int, str]:
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="strict")
+    digest = hashlib.sha256()
+    size_bytes = 0
+    prefix = bytearray()
+    try:
+        with target.open("rb") as source:
+            while chunk := source.read(64 * 1024):
+                size_bytes += len(chunk)
+                if size_bytes > MAX_TEXT_BYTES:
+                    raise FileTransferBoundaryError(
+                        "file_transfer_size_mismatch",
+                        "sandbox output exceeds the text size limit",
+                    )
+                if len(prefix) < 3:
+                    prefix.extend(chunk[: 3 - len(prefix)])
+                if "\x00" in decoder.decode(chunk, final=False):
+                    raise FileTransferBoundaryError(
+                        "file_transfer_type_invalid",
+                        "sandbox output contains binary content",
+                    )
+                digest.update(chunk)
+            if "\x00" in decoder.decode(b"", final=True):
+                raise FileTransferBoundaryError(
+                    "file_transfer_type_invalid",
+                    "sandbox output contains binary content",
+                )
+    except UnicodeDecodeError as exc:
+        raise FileTransferBoundaryError(
+            "file_transfer_encoding_invalid",
+            "sandbox output must be valid UTF-8",
+        ) from exc
+    if bytes(prefix[:3]) == codecs.BOM_UTF8:
+        raise FileTransferBoundaryError(
+            "file_output_bom_forbidden",
+            "sandbox output must use UTF-8 without BOM",
+        )
+    return size_bytes, digest.hexdigest()
+
+
 class FileTransferCoordinator:
     def __init__(self, port: FileTransferPort) -> None:
         self._port = port
-        self._entries: dict[str, tuple[str, Path]] = {}
+        self._entries: dict[str, tuple[str, Path, TextFormatCode]] = {}
 
     def select_sandbox_output(
         self,
@@ -237,11 +339,15 @@ class FileTransferCoordinator:
         context: FileTransferContext,
         maximum_size_bytes: int = 15 * 1024 * 1024,
     ) -> dict[str, object]:
-        safe_path = _relative_txt_path(relative_path)
+        safe_path, definition = _relative_text_path(
+            relative_path,
+            policy_version=context.file_format_policy_version,
+            writable=True,
+        )
         if PurePosixPath(safe_path).parts[0] not in {"work", "outputs"}:
             raise FileTransferBoundaryError(
                 "file_transfer_path_invalid",
-                "only work or outputs TXT files can be selected",
+                "only work or outputs text files can be selected",
             )
         target = _sandbox_path(context.workspace_path, safe_path)
         _reject_symlinks(context.workspace_path, target)
@@ -254,36 +360,55 @@ class FileTransferCoordinator:
         if state.st_size > maximum_size_bytes:
             raise FileTransferBoundaryError(
                 "file_transfer_size_mismatch",
-                "sandbox output exceeds the TXT size limit",
+                "sandbox output exceeds the text size limit",
             )
         decoder = codecs.getincrementaldecoder("utf-8")(errors="strict")
         digest = hashlib.sha256()
         size_bytes = 0
         try:
+            prefix = bytearray()
             with target.open("rb") as source:
                 while chunk := source.read(64 * 1024):
                     size_bytes += len(chunk)
                     if size_bytes > maximum_size_bytes:
                         raise FileTransferBoundaryError(
                             "file_transfer_size_mismatch",
-                            "sandbox output exceeds the TXT size limit",
+                            "sandbox output exceeds the text size limit",
                         )
                     digest.update(chunk)
-                    decoder.decode(chunk, final=False)
-                decoder.decode(b"", final=True)
+                    if len(prefix) < 3:
+                        prefix.extend(chunk[: 3 - len(prefix)])
+                    decoded = decoder.decode(chunk, final=False)
+                    if "\x00" in decoded:
+                        raise FileTransferBoundaryError(
+                            "file_transfer_type_invalid",
+                            "sandbox output contains binary content",
+                        )
+                tail = decoder.decode(b"", final=True)
+                if "\x00" in tail:
+                    raise FileTransferBoundaryError(
+                        "file_transfer_type_invalid",
+                        "sandbox output contains binary content",
+                    )
         except UnicodeDecodeError as exc:
             raise FileTransferBoundaryError(
                 "file_transfer_encoding_invalid",
                 "sandbox output must be valid UTF-8",
             ) from exc
+        if bytes(prefix[:3]) == codecs.BOM_UTF8:
+            raise FileTransferBoundaryError(
+                "file_output_bom_forbidden",
+                "sandbox output must use UTF-8 without BOM",
+            )
         handle = f"sandbox-entry:{uuid.uuid4()}"
-        self._entries[handle] = (safe_path, target)
+        self._entries[handle] = (safe_path, target, definition.code)
         return {
             "action": "SELECTED",
             "sandbox_entry_handle": handle,
             "relative_path": safe_path,
             "size_bytes": size_bytes,
             "sha256": digest.hexdigest(),
+            "format_code": definition.code.value,
         }
 
     def register_sandbox_entry(
@@ -299,7 +424,11 @@ class FileTransferCoordinator:
                 "file_transfer_handle_conflict",
                 "sandbox entry handle is already bound",
             )
-        safe_path = _relative_txt_path(relative_path)
+        safe_path, definition = _relative_text_path(
+            relative_path,
+            policy_version=context.file_format_policy_version,
+            writable=False,
+        )
         target = _sandbox_path(context.workspace_path, safe_path)
         _reject_symlinks(context.workspace_path, target)
         state = target.lstat()
@@ -308,7 +437,7 @@ class FileTransferCoordinator:
                 "file_transfer_entry_invalid",
                 "sandbox entry must reference a regular file",
             )
-        self._entries[handle] = (safe_path, target)
+        self._entries[handle] = (safe_path, target, definition.code)
 
     def process_mcp_control_result(
         self,
@@ -332,12 +461,23 @@ class FileTransferCoordinator:
                 "sandbox entry handle is already bound",
             )
         relative_path = str(control["relative_path"])
+        _safe_path, definition = _relative_text_path(
+            relative_path,
+            policy_version=context.file_format_policy_version,
+            writable=False,
+        )
+        if definition.code.value != str(control.get("format_code") or "TXT"):
+            raise FileTransferBoundaryError(
+                "file_transfer_control_invalid",
+                "materialization format does not match the Job policy",
+            )
         target = _sandbox_path(context.workspace_path, relative_path)
         _reject_symlinks(context.workspace_path, target)
         target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         digest = hashlib.sha256()
         size_bytes = 0
-        expected_size = _size(control["expected_size_bytes"], "expected_size_bytes")
+        expected_size = _bounded_text_size(control["expected_size_bytes"], "expected_size_bytes")
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="strict")
         try:
             with target.open("xb") as output:
                 os.chmod(target, 0o600)
@@ -358,7 +498,24 @@ class FileTransferCoordinator:
                             "download exceeded the expected size",
                         )
                     digest.update(chunk)
+                    decoded = decoder.decode(chunk, final=False)
+                    if "\x00" in decoded:
+                        raise FileTransferBoundaryError(
+                            "file_transfer_type_invalid",
+                            "download contains binary content",
+                        )
                     output.write(chunk)
+                if "\x00" in decoder.decode(b"", final=True):
+                    raise FileTransferBoundaryError(
+                        "file_transfer_type_invalid",
+                        "download contains binary content",
+                    )
+        except UnicodeDecodeError as exc:
+            target.unlink(missing_ok=True)
+            raise FileTransferBoundaryError(
+                "file_transfer_encoding_invalid",
+                "download must be valid UTF-8",
+            ) from exc
         except Exception:
             target.unlink(missing_ok=True)
             raise
@@ -369,13 +526,14 @@ class FileTransferCoordinator:
                 "file_transfer_integrity_mismatch",
                 "download did not match the frozen file version",
             )
-        self._entries[handle] = (relative_path, target)
+        self._entries[handle] = (relative_path, target, definition.code)
         return {
             "action": "MATERIALIZED",
             "sandbox_entry_handle": handle,
             "relative_path": relative_path,
             "size_bytes": size_bytes,
             "sha256": actual_sha256,
+            "format_code": definition.code.value,
         }
 
     def _upload(
@@ -390,7 +548,12 @@ class FileTransferCoordinator:
                 "file_transfer_handle_unknown",
                 "sandbox entry handle is not materialized",
             )
-        _relative_path, target = entry
+        _relative_path, target, format_code = entry
+        if format_code.value != str(control.get("format_code") or "TXT"):
+            raise FileTransferBoundaryError(
+                "file_transfer_handle_conflict",
+                "sandbox entry handle format does not match commit intent",
+            )
         _reject_symlinks(context.workspace_path, target)
         state = target.lstat()
         if not stat.S_ISREG(state.st_mode):
@@ -398,6 +561,7 @@ class FileTransferCoordinator:
                 "file_transfer_entry_invalid",
                 "sandbox entry must reference a regular file",
             )
+        validated_size, validated_sha256 = _validate_agent_output(target)
         digest = hashlib.sha256()
         size_bytes = 0
 
@@ -417,7 +581,9 @@ class FileTransferCoordinator:
         )
         actual_sha256 = digest.hexdigest()
         if (
-            size_bytes != state.st_size
+            validated_size != state.st_size
+            or size_bytes != validated_size
+            or actual_sha256 != validated_sha256
             or receipt.size_bytes != size_bytes
             or receipt.sha256 != actual_sha256
         ):
@@ -443,9 +609,9 @@ class FileTransferCoordinator:
             "DEAD",
             "SKIPPED",
         }
-        if receipt.delivery_status not in valid_delivery_statuses or bool(
-            receipt.delivery_id
-        ) == (receipt.delivery_status == "NOT_REQUESTED"):
+        if receipt.delivery_status not in valid_delivery_statuses or bool(receipt.delivery_id) == (
+            receipt.delivery_status == "NOT_REQUESTED"
+        ):
             raise FileTransferBoundaryError(
                 "file_transfer_receipt_invalid",
                 "upload receipt contained an invalid Delivery binding",

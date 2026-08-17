@@ -53,17 +53,19 @@ python -m app.cli.backfill_task_file_attachments --apply --batch-size 100
 - 平台运维页显示 File Service/File Worker 接线、单消费者、ready/unacked、附件/暂存/工作区/保留/冲突积压、最早到期和最近清理结果；
 - 页面和 API 不得出现文件名、正文、Bucket、对象键、Secret 或 JWT；
 - Runtime readiness 显示非敏感容量上限，并验证 tmpfs 可用空间至少 64 MiB；默认容器 tmpfs 256 MiB，单 Job 逻辑上限 224 MiB；
-- Publication 四项文件开关先保持全关，再按应用逐级启用；未命中 Job 保持原行为；
+- Publication 四项文件开关先保持全关，格式策略保持 `text-v1`。管理目录中的 `text_v2_cutover_preflight.ready` 必须为 `true`；若列出引用旧 File MCP schema hash 的 `WAITING_INPUT/PENDING/RUNNING/RETRY_WAIT` Job，必须先排空或在受控队列外隔离，禁止发布或激活 `text-v2`；
+- 发布一个声明 Runtime protocol v1.3 且包含当前精确 File MCP schema hash 的 Agent Publication，再按应用发布/激活 `text-v2`。不得修改旧 Publication 或旧 Job Snapshot；
+- 用合成 `.txt`、通用 MIME `.log` 和 `.md` 验证混合纯附件认领、Manifest v3、两个 Runtime、Markdown 提交与精确版本交付；确认 LOG 的 Write/Edit/Commit/改名绕过均在副作用前失败，`.markdown` 仍走旧附件兼容链而不进入工作区；
 - 至少观察附件重试、短时服务 JWT 到期前刷新、身份服务/File Service 短暂不可用恢复、交付响应丢失重试和到期清理。
 
 ## 4. 回滚
 
-1. 先关闭 Business Application 的四项文件开关并发布/激活新 Revision，阻止新文件 Job 进入新能力。
+1. 先发布并激活新的 `text-v1` Business Application Revision（可按需要关闭四项文件开关），阻止新的 `text-v2` Job；不得让旧 Runtime 接管已经冻结为 `text-v2` 的 Job。
 2. 停止 `file-worker`，等待 consumer 数为 0 且 `unacked=0`。
 3. 若仍在允许回滚的兼容窗口，恢复已验证的旧 `attachment-worker` 镜像，并确认 consumer 数精确为 1；不得让两个 Worker 并行。
-4. File Service 已创建的不可变版本、Retained File、Delivery 和清理事实不得删除或回退；继续按生命周期治理。
+4. File Service 已创建的 Markdown 不可变版本、Retained File、LOG精确版本引用、Delivery 和清理事实不得删除或回退；继续按生命周期治理并允许有权用户只读交付历史版本。
 5. 不回退 migration，不删除 ledger，不手工改对象键。若 contract 已移除旧入口，则只能发布 forward fix，不能恢复直连 MinIO 的旧 Worker。
 
 ## Stop conditions
 
-任一条件立即停止：多个附件消费者；unacked 无法归零；Service Principal 材料不完整、角色挂载交叉或短时 JWT 无法签发/验签；File Service/JWKS/Bucket 未 ready；回填 `blocked`；消息幂等产生重复版本；Worker/Runtime/Delivery 获得 MinIO 凭据；审计或 UI 泄漏正文、对象位置、bootstrap credential 或 JWT；没有经验证的回滚镜像和备份。
+任一条件立即停止：多个附件消费者；unacked 无法归零；`text_v2_cutover_preflight` 存在 blocker；Agent Runtime 未声明 v1.3 或 File MCP hash 漂移；Service Principal 材料不完整、角色挂载交叉或短时 JWT 无法签发/验签；File Service/JWKS/Bucket 未 ready；回填 `blocked`；消息幂等产生重复版本；LOG 产生 Commit Intent/新版本；Worker/Runtime/Delivery 获得 MinIO 凭据；审计或 UI 泄漏正文、对象位置、bootstrap credential 或 JWT；没有经验证的回滚镜像和备份。

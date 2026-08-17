@@ -21,7 +21,7 @@ class AgentPublicationAdapter:
         definition_runtime_kind = str(definition.get("runtime_kind") or "")
         snapshot = publication.get("snapshot") or {}
         integrity_valid = (
-            schema_version in {1, 2}
+            schema_version in {1, 2, 3}
             and runtime_kind in {"python-v1", "typescript-v1"}
             and definition_runtime_kind == runtime_kind
             and snapshot_hash(snapshot) == str(publication.get("config_hash") or "")
@@ -31,7 +31,14 @@ class AgentPublicationAdapter:
                     and runtime_kind == "python-v1"
                     and snapshot.get("runtime_kind") in {None, "python-v1"}
                 )
-                or (schema_version == 2 and snapshot.get("runtime_kind") == runtime_kind)
+                or (
+                    schema_version in {2, 3}
+                    and snapshot.get("runtime_kind") == runtime_kind
+                    and (
+                        schema_version == 2
+                        or snapshot.get("supported_runtime_protocol_versions") == ["1.2", "1.3"]
+                    )
+                )
             )
         )
         if not integrity_valid:
@@ -52,6 +59,11 @@ class AgentPublicationAdapter:
             ),
             config_hash=str(publication["config_hash"]),
             runtime_kind=runtime_kind,
+            runtime_protocol_versions=(
+                tuple(str(item) for item in snapshot.get("supported_runtime_protocol_versions", []))
+                if schema_version == 3
+                else ("1.0", "1.1", "1.2")
+            ),
             component_type="agent_publication",
         )
 

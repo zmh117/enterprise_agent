@@ -116,7 +116,7 @@ class InvocationRecord {
       ...(draft.final_answer === undefined ? {} : { final_answer: draft.final_answer }),
       ...(draft.failure === undefined ? {} : { failure: draft.failure }),
       usage: draft.usage,
-      ...(this.request.protocol_version === "1.2"
+      ...(this.request.protocol_version === "1.2" || this.request.protocol_version === "1.3"
         ? {
             accounting:
               draft.accounting ?? {

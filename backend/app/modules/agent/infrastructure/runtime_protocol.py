@@ -19,11 +19,17 @@ from app.modules.agent.infrastructure.generated_runtime_contracts_v1_2 import (
     CONTRACT_SCHEMA_PATH as CONTRACT_SCHEMA_PATH_V12,
     validate_contract as validate_v12_contract,
 )
+from app.modules.agent.infrastructure.generated_runtime_contracts_v1_3 import (
+    AgentExecutionRequestV13,
+    CONTRACT_SCHEMA_PATH as CONTRACT_SCHEMA_PATH_V13,
+    validate_contract as validate_v13_contract,
+)
 
-CURRENT_RUNTIME_PROTOCOL_VERSION = "1.2"
+CURRENT_RUNTIME_PROTOCOL_VERSION = "1.3"
 SUPPORTED_RUNTIME_PROTOCOL_VERSIONS = (
     "1.0",
     "1.1",
+    "1.2",
     CURRENT_RUNTIME_PROTOCOL_VERSION,
 )
 
@@ -50,12 +56,18 @@ def validate_execution_request(
     payload: object,
     *,
     encoded_bytes: int | None = None,
-) -> AgentExecutionRequestV1 | AgentExecutionRequestV11 | AgentExecutionRequestV12:
+) -> (
+    AgentExecutionRequestV1
+    | AgentExecutionRequestV11
+    | AgentExecutionRequestV12
+    | AgentExecutionRequestV13
+):
     protocol_version = _protocol_version(payload)
     contract_path = {
         "1.0": CONTRACT_SCHEMA_PATH,
         "1.1": CONTRACT_SCHEMA_PATH_V11,
         "1.2": CONTRACT_SCHEMA_PATH_V12,
+        "1.3": CONTRACT_SCHEMA_PATH_V13,
     }[protocol_version]
     limits_path = contract_path.with_name("limits.json")
     limits = json.loads(limits_path.read_text(encoding="utf-8"))
@@ -72,6 +84,7 @@ def validate_execution_request(
             "1.0": "AgentExecutionRequestV1",
             "1.1": "AgentExecutionRequestV11",
             "1.2": "AgentExecutionRequestV12",
+            "1.3": "AgentExecutionRequestV13",
         }[protocol_version]
         validate_runtime_contract(
             request_contract,
@@ -81,6 +94,8 @@ def validate_execution_request(
     except ValueError as exc:
         raise RuntimeProtocolError("runtime_request_invalid", str(exc)) from exc
     assert isinstance(payload, dict)
+    if protocol_version == "1.3":
+        _validate_file_context(payload)
     actual = canonical_request_digest(payload)
     if actual != payload["request_digest"]:
         raise RuntimeProtocolError(
@@ -88,7 +103,10 @@ def validate_execution_request(
             "request digest does not match the canonical request body",
         )
     return cast(
-        AgentExecutionRequestV1 | AgentExecutionRequestV11 | AgentExecutionRequestV12,
+        AgentExecutionRequestV1
+        | AgentExecutionRequestV11
+        | AgentExecutionRequestV12
+        | AgentExecutionRequestV13,
         payload,
     )
 
@@ -100,6 +118,9 @@ def validate_runtime_contract(
     protocol_version: str | None = None,
 ) -> None:
     version = protocol_version or _protocol_version(payload)
+    if version == "1.3":
+        validate_v13_contract(definition_name, payload)
+        return
     if version == "1.2":
         validate_v12_contract(definition_name, payload)
         return
@@ -118,3 +139,56 @@ def _protocol_version(payload: object) -> str:
         if value in SUPPORTED_RUNTIME_PROTOCOL_VERSIONS:
             return str(value)
     return "1.0"
+
+
+def _validate_file_context(payload: dict[str, Any]) -> None:
+    context = payload.get("file_context")
+    if not isinstance(context, dict):
+        raise RuntimeProtocolError(
+            "runtime_file_context_invalid",
+            "runtime v1.3 requires a frozen file context",
+        )
+    manifest = context.get("file_manifest")
+    if manifest is None:
+        return
+    if not isinstance(manifest, dict) or manifest.get("file_format_policy_version") != context.get(
+        "file_format_policy_version"
+    ):
+        raise RuntimeProtocolError(
+            "runtime_file_policy_mismatch",
+            "file manifest policy does not match the request",
+        )
+    matrix = {
+        "TXT": {"READ_METADATA", "MATERIALIZE", "EDIT", "COMMIT", "RETAIN", "DELIVER"},
+        "LOG": {"READ_METADATA", "MATERIALIZE", "RETAIN", "DELIVER"},
+        "MARKDOWN": {
+            "READ_METADATA",
+            "MATERIALIZE",
+            "EDIT",
+            "COMMIT",
+            "RETAIN",
+            "DELIVER",
+        },
+    }
+    suffixes = {"TXT": ".txt", "LOG": ".log", "MARKDOWN": ".md"}
+    identities: set[tuple[str, str]] = set()
+    for item in manifest.get("items") or []:
+        assert isinstance(item, dict)
+        format_code = str(item["format_code"])
+        identity = (str(item["file_id"]), str(item["version_id"]))
+        if identity in identities:
+            raise RuntimeProtocolError(
+                "runtime_file_manifest_duplicate",
+                "file manifest contains a duplicate exact version",
+            )
+        identities.add(identity)
+        if not str(item["display_name"]).lower().endswith(suffixes[format_code]):
+            raise RuntimeProtocolError(
+                "runtime_file_format_mismatch",
+                "file manifest name does not match its format",
+            )
+        if not set(item["allowed_actions"]).issubset(matrix[format_code]):
+            raise RuntimeProtocolError(
+                "runtime_file_actions_invalid",
+                "file manifest actions exceed the frozen format policy",
+            )

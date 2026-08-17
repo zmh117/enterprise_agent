@@ -28,6 +28,8 @@ class DeliveryFileContent:
     content: bytes
     size_bytes: int
     sha256: str
+    format_code: str
+    media_type: str
 
 
 class FileDeliverySender(Protocol):
@@ -84,6 +86,8 @@ class FileServiceDeliveryClient:
                 size_bytes = int(response.headers["X-File-Size"])
                 sha256 = str(response.headers["X-File-SHA256"])
                 encoded_name = str(response.headers["X-File-Name-B64"])
+                format_code = str(response.headers["X-File-Format"])
+                media_type = str(response.headers["Content-Type"]).split(";", 1)[0].lower()
                 display_name = base64.b64decode(
                     encoded_name.encode("ascii"), altchars=b"-_", validate=True
                 ).decode("utf-8")
@@ -108,17 +112,31 @@ class FileServiceDeliveryClient:
                 safe_message="文件交付服务暂时不可用",
                 error_code="file_service_unavailable",
             ) from exc
+        expected = {
+            "TXT": (".txt", "text/plain"),
+            "LOG": (".log", "text/plain"),
+            "MARKDOWN": (".md", "text/markdown"),
+        }.get(format_code)
         if (
             len(content) != size_bytes
             or hashlib.sha256(content).hexdigest() != sha256
-            or not display_name.lower().endswith(".txt")
+            or expected is None
+            or not display_name.lower().endswith(expected[0])
+            or media_type != expected[1]
         ):
             raise RetryableExecutionError(
                 "File Delivery content receipt mismatch",
                 safe_message="文件交付内容校验失败",
                 error_code="file_delivery_integrity_mismatch",
             )
-        return DeliveryFileContent(display_name, content, size_bytes, sha256)
+        return DeliveryFileContent(
+            display_name,
+            content,
+            size_bytes,
+            sha256,
+            format_code,
+            media_type,
+        )
 
 
 class DingTalkFileDeliverySender:
@@ -152,7 +170,7 @@ class DingTalkFileDeliverySender:
                 error_code="file_delivery_route_unsupported",
             )
         content = self.file_service.get(delivery_id)
-        if any(character in content.display_name for character in ('\r', '\n', '"')):
+        if any(character in content.display_name for character in ("\r", "\n", '"')):
             raise NonRetryableExecutionError(
                 "DingTalk File Delivery name is unsafe",
                 safe_message="文件交付名称无效",
@@ -181,9 +199,7 @@ class DingTalkFileDeliverySender:
             )
         if conversation_type == "direct":
             send_url = (
-                self.connector_registry.resolve_metadata_reference(
-                    connector, "direct_send_url_ref"
-                )
+                self.connector_registry.resolve_metadata_reference(connector, "direct_send_url_ref")
                 or self.connector_registry.metadata_value(connector, "direct_send_url")
                 or "https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend"
             )
@@ -211,9 +227,7 @@ class DingTalkFileDeliverySender:
         open_conversation_id = str(
             route.target.get("open_conversation_id")
             or route.target.get("conversation_id")
-            or self.connector_registry.metadata_value(
-                connector, "default_open_conversation_id"
-            )
+            or self.connector_registry.metadata_value(connector, "default_open_conversation_id")
         )
         robot_code = str(
             route.target.get("robot_code")
@@ -272,13 +286,15 @@ class DingTalkFileDeliverySender:
             f'Content-Disposition: form-data; name="media"; filename="{content.display_name}"'
         )
         body = (
-            f"--{boundary}\r\n{disposition}\r\n"
-            "Content-Type: text/plain\r\n\r\n"
-        ).encode() + content.content + f"\r\n--{boundary}--\r\n".encode()
+            (
+                f"--{boundary}\r\n{disposition}\r\nContent-Type: {content.media_type}\r\n\r\n"
+            ).encode()
+            + content.content
+            + f"\r\n--{boundary}--\r\n".encode()
+        )
         separator = "&" if "?" in upload_url else "?"
-        endpoint = (
-            f"{upload_url}{separator}"
-            + urllib.parse.urlencode({"access_token": access_token, "type": "file"})
+        endpoint = f"{upload_url}{separator}" + urllib.parse.urlencode(
+            {"access_token": access_token, "type": "file"}
         )
         request = urllib.request.Request(
             endpoint,

@@ -15,6 +15,7 @@ from app.modules.attachments.extraction import SafeAttachmentExtractor
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.delivery.application.result_delivery_service import ResultDeliveryService
 from app.modules.file_workspace.manifest_service import JobFileManifestService
+from app.modules.file_workspace.text_format_policy import get_text_format_policy
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.modules.message_bus.application.message_publisher import MessagePublisher
@@ -79,14 +80,29 @@ class AttachmentProcessingService:
                 connector_id=str(context["source_connector_id"]),
                 robot_code=str(context["bot_identity"]),
             )
-            task_txt = (
-                self.importer is not None and Path(attachment.file_name).suffix.lower() == ".txt"
+            suffix = Path(attachment.file_name).suffix.lower()
+            policy = get_text_format_policy(context.get("file_format_policy_version"))
+            text_definition = next(
+                (item for item in policy.formats if item.extension == suffix),
+                None,
             )
-            detected_mime = (
-                "text/plain"
-                if task_txt
-                else self.extractor.inspect(file_name=attachment.file_name, data=data)
+            task_text = (
+                self.importer is not None
+                and bool(context.get("task_workspace_id"))
+                and text_definition is not None
             )
+            if task_text:
+                fallback_mime = {
+                    ".txt": "text/plain",
+                    ".log": "application/octet-stream",
+                    ".md": "text/markdown",
+                }[suffix]
+                detected_mime = attachment.declared_mime or fallback_mime
+            else:
+                detected_mime = self.extractor.inspect(
+                    file_name=attachment.file_name,
+                    data=data,
+                )
             if detected_mime.startswith("image/"):
                 if not isinstance(self.extractor, SafeAttachmentExtractor):
                     raise NonRetryableExecutionError(
@@ -96,7 +112,8 @@ class AttachmentProcessingService:
             digest = hashlib.sha256(data).hexdigest()
             object_bucket: str | None = None
             object_key: str | None = None
-            if self.importer is not None:
+            if task_text:
+                assert self.importer is not None
                 imported = self.importer.import_content(
                     attachment_id=attachment.id,
                     data=data,
@@ -127,7 +144,7 @@ class AttachmentProcessingService:
                 stored_size = stored.size_bytes
                 object_bucket = stored.bucket
                 object_key = stored.key
-            if task_txt:
+            if task_text:
                 self.repository.update_attachment(
                     attachment_id,
                     status="READY",
