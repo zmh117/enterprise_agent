@@ -132,8 +132,8 @@ services:
         exec minio server /data --console-address :9001
     environment:
       APP_ENV: ${APP_ENV:-local}
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-enterprise_agent}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-enterprise_agent_change_me}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-enterprise_agent}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-enterprise_agent_change_me}
     ports:
       # 宿主机默认避开常见 9000 占用；容器内仍是 9000/9001。
       - "${MINIO_API_PORT:-19000}:9000"
@@ -165,15 +165,15 @@ services:
             ;;
         esac;
         mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" &&
-        mc mb --ignore-existing "local/$${S3_BUCKET}" &&
-        mc anonymous set none "local/$${S3_BUCKET}" &&
+        mc mb --ignore-existing "local/$${FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET}" &&
+        mc anonymous set none "local/$${FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET}" &&
         mc mb --ignore-existing "local/$${FILE_STORAGE_BUCKET}" &&
         mc anonymous set none "local/$${FILE_STORAGE_BUCKET}"
     environment:
       APP_ENV: ${APP_ENV:-local}
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-enterprise_agent}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-enterprise_agent_change_me}
-      S3_BUCKET: ${S3_BUCKET:-agent-attachments}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-enterprise_agent}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-enterprise_agent_change_me}
+      FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET: ${FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET:-agent-attachments}
       FILE_STORAGE_BUCKET: ${FILE_STORAGE_BUCKET:-agent-files}
     depends_on:
       minio:
@@ -293,7 +293,7 @@ services:
       PRINCIPAL_JWKS_FILE: /run/secrets/principal_jwks
       FILE_STORAGE_ENDPOINT_URL: ${FILE_STORAGE_ENDPOINT_URL:-http://minio:9000}
       FILE_STORAGE_BUCKET: ${FILE_STORAGE_BUCKET:-agent-files}
-      FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET: ${S3_BUCKET:-agent-attachments}
+      FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET: ${FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET:-agent-attachments}
       FILE_STORAGE_ACCESS_KEY_REF: ${FILE_STORAGE_ACCESS_KEY_REF:-secret://platform/minio-file-access-key}
       FILE_STORAGE_SECRET_KEY_REF: ${FILE_STORAGE_SECRET_KEY_REF:-secret://platform/minio-file-secret-key}
       FILE_STORAGE_REGION: ${FILE_STORAGE_REGION:-us-east-1}
@@ -711,9 +711,9 @@ secrets:
   delivery_worker_bootstrap_token:
     file: ${DELIVERY_WORKER_BOOTSTRAP_TOKEN_FILE:-${HOME}/.config/enterprise-agent/delivery-worker-bootstrap-token}
   file_storage_bootstrap_access_key:
-    environment: S3_ACCESS_KEY
+    environment: MINIO_ROOT_USER
   file_storage_bootstrap_secret_key:
-    environment: S3_SECRET_KEY
+    environment: MINIO_ROOT_PASSWORD
   model_probe_auth_token:
     file: ${MODEL_PROBE_AUTH_TOKEN_FILE:-${HOME}/.config/enterprise-agent/model-probe-auth-token}
 

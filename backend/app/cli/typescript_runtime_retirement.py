@@ -173,7 +173,7 @@ def run_migration(*, settings: Settings, args: argparse.Namespace) -> dict[str, 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    settings = load_settings(validate_object_storage=False)
+    settings = load_settings()
     if args.action == "migrate":
         report = run_migration(settings=settings, args=args)
     else:

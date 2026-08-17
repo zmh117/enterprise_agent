@@ -941,7 +941,9 @@ def _build_container(
         file_delivery_sender=file_delivery_sender,
         file_delivery_service=file_version_delivery_service,
     )
-    object_storage: ObjectStorage | None = InMemoryObjectStorage(settings.object_storage.bucket)
+    object_storage: ObjectStorage | None = InMemoryObjectStorage(
+        settings.file_service.legacy_attachment_bucket
+    )
     attachment_importer = None
     if service_name == "file-worker" and message_bus is None:
         if not settings.service_principal.enabled:

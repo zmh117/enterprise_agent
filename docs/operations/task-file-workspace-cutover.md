@@ -21,7 +21,7 @@ scripts/bootstrap_agent_runtime_secrets.sh "${HOME}/.config/enterprise-agent"
 
    API Server 与 Agent Worker仅在签发对应Token时取得同一平台Principal签名私钥，File Service、ONES MCP及后续MCP只取得同一公开JWKS；File Worker与Delivery Worker各自只取得本角色bootstrap credential。Worker按需向固定内部API换取并在到期前刷新不超过300秒的JWT，不使用宿主机静态JWT文件。共享签名根不改变issuer、audience、authorized party与scope隔离，不得输出这些文件内容。
 3. 运行 `docker compose config --quiet`，确认不存在 `file-worker-principal.jwt`、`delivery-worker-principal.jwt` 或对应静态 JWT 环境变量；再确认 API、File Service 和两个 Worker 的角色隔离挂载。
-   本地首次启动还应设置 `FILE_STORAGE_SECRET_BOOTSTRAP_ENABLED=true`。一次性 Migrator 会把Compose中的MinIO基础设施凭据加密写入`minio-file-access-key`和`minio-file-secret-key`平台Secret；相同值幂等保留，已有值不同则停止并要求显式轮换。生产环境应预先配置受治理Secret并关闭此本地bootstrap。
+   本地首次启动还应设置 `FILE_STORAGE_SECRET_BOOTSTRAP_ENABLED=true`。一次性 Migrator 会把Compose中的`MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`加密写入`minio-file-access-key`和`minio-file-secret-key`平台Secret；相同值幂等保留，已有值不同则停止并要求显式轮换。生产环境应预先配置受治理Secret并关闭此本地bootstrap。
 4. 记录旧附件队列 `ready`、`unacked`、consumer 数、retry/dead 队列计数。切换前只能有一个附件消费者。
 5. dry-run 回填，按返回的 `next_cursor` 循环；任何 `status=blocked` 都停止：
 

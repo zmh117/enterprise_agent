@@ -13,16 +13,6 @@ from app.shared.feature_configuration import (
 
 logger = logging.getLogger(__name__)
 
-LOCAL_OBJECT_STORAGE_ENVIRONMENTS = frozenset({"local", "test", "testing", "development"})
-DEFAULT_OBJECT_STORAGE_ACCESS_KEY = "enterprise_agent"
-DEFAULT_OBJECT_STORAGE_SECRET_KEY = "enterprise_agent_change_me"
-UNSAFE_OBJECT_STORAGE_SECRET_KEYS = frozenset(
-    {
-        DEFAULT_OBJECT_STORAGE_SECRET_KEY,
-        "replace-with-a-strong-object-storage-secret",
-    }
-)
-
 
 @dataclass(frozen=True)
 class QueueSettings:
@@ -108,16 +98,6 @@ class AttachmentSettings:
     timeout_seconds: int = 60
     retention_days: int = 360
     credential_ttl_seconds: int = 900
-
-
-@dataclass(frozen=True)
-class ObjectStorageSettings:
-    endpoint_url: str = "http://minio:9000"
-    access_key: str = DEFAULT_OBJECT_STORAGE_ACCESS_KEY
-    secret_key: str = DEFAULT_OBJECT_STORAGE_SECRET_KEY
-    bucket: str = "agent-attachments"
-    region: str = "us-east-1"
-    secure: bool = False
 
 
 @dataclass(frozen=True)
@@ -313,7 +293,6 @@ class Settings:
     delivery: DeliverySettings = field(default_factory=DeliverySettings)
     conversation: ConversationSettings = field(default_factory=ConversationSettings)
     attachments: AttachmentSettings = field(default_factory=AttachmentSettings)
-    object_storage: ObjectStorageSettings = field(default_factory=ObjectStorageSettings)
     identity: IdentitySettings = field(default_factory=IdentitySettings)
     ones_identity: OnesIdentitySettings = field(default_factory=OnesIdentitySettings)
     agent_runtime: AgentRuntimeSettings = field(default_factory=AgentRuntimeSettings)
@@ -336,7 +315,7 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return value.lower() in {"1", "true", "yes", "on"}
 
 
-def load_settings(*, validate_object_storage: bool = True) -> Settings:
+def load_settings() -> Settings:
     environment = os.getenv("APP_ENV", "local")
     features = resolve_feature_configuration(environment, os.environ)
     for diagnostic in features.diagnostics:
@@ -586,14 +565,6 @@ def load_settings(*, validate_object_storage: bool = True) -> Settings:
             retention_days=int(os.getenv("ATTACHMENT_RETENTION_DAYS", "360")),
             credential_ttl_seconds=int(os.getenv("ATTACHMENT_CREDENTIAL_TTL_SECONDS", "900")),
         ),
-        object_storage=ObjectStorageSettings(
-            endpoint_url=os.getenv("S3_ENDPOINT_URL", "http://minio:9000"),
-            access_key=os.getenv("S3_ACCESS_KEY", DEFAULT_OBJECT_STORAGE_ACCESS_KEY),
-            secret_key=os.getenv("S3_SECRET_KEY", DEFAULT_OBJECT_STORAGE_SECRET_KEY),
-            bucket=os.getenv("S3_BUCKET", "agent-attachments"),
-            region=os.getenv("S3_REGION", "us-east-1"),
-            secure=_env_bool("S3_SECURE"),
-        ),
         identity=IdentitySettings(
             enabled=features.unified_identity_enabled,
             web_admin_enabled=features.web_admin_enabled,
@@ -643,23 +614,7 @@ def load_settings(*, validate_object_storage: bool = True) -> Settings:
             ),
         ),
     )
-    if validate_object_storage:
-        _validate_object_storage_credentials(settings)
     return settings
-
-
-def _validate_object_storage_credentials(settings: Settings) -> None:
-    if settings.environment.strip().lower() in LOCAL_OBJECT_STORAGE_ENVIRONMENTS:
-        return
-    access_key = settings.object_storage.access_key.strip()
-    secret_key = settings.object_storage.secret_key.strip()
-    if (
-        not access_key
-        or not secret_key
-        or access_key == DEFAULT_OBJECT_STORAGE_ACCESS_KEY
-        or secret_key in UNSAFE_OBJECT_STORAGE_SECRET_KEYS
-    ):
-        raise ValueError("object_storage_credentials_required_for_non_local_environment")
 
 
 def synchronize_feature_configuration(settings: Settings) -> Settings:

@@ -1,11 +1,8 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Any
 
 from app.modules.attachments.domain import StoredObject
-from app.shared.config import ObjectStorageSettings
-from app.shared.database import assert_external_io_allowed
 from app.shared.exceptions import NonRetryableExecutionError
 
 
@@ -37,65 +34,3 @@ class InMemoryObjectStorage:
 
     def list_keys(self) -> list[str]:
         return sorted(self.objects)
-
-
-class S3ObjectStorage:
-    def __init__(self, settings: ObjectStorageSettings, client: Any | None = None) -> None:
-        if client is None:
-            try:
-                import boto3
-            except ModuleNotFoundError as exc:
-                raise RuntimeError("boto3 is required for S3 object storage") from exc
-            client = boto3.client(
-                "s3",
-                endpoint_url=settings.endpoint_url,
-                aws_access_key_id=settings.access_key,
-                aws_secret_access_key=settings.secret_key,
-                region_name=settings.region,
-                use_ssl=settings.secure,
-            )
-        self.client = client
-        self.bucket = settings.bucket
-
-    def ensure_bucket(self) -> None:
-        assert_external_io_allowed("object_storage.ensure_bucket")
-        try:
-            self.client.head_bucket(Bucket=self.bucket)
-        except Exception:
-            self.client.create_bucket(Bucket=self.bucket)
-
-    def put(self, *, key: str, data: bytes, content_type: str, sha256: str) -> StoredObject:
-        assert_external_io_allowed("object_storage.put")
-        try:
-            head = self.client.head_object(Bucket=self.bucket, Key=key)
-        except Exception:
-            head = None
-        if head:
-            metadata = head.get("Metadata") or {}
-            if metadata.get("sha256") != sha256:
-                raise NonRetryableExecutionError(
-                    "Object key collision", safe_message="附件对象冲突"
-                )
-            return StoredObject(self.bucket, key, int(head.get("ContentLength") or 0), sha256)
-        self.client.put_object(
-            Bucket=self.bucket,
-            Key=key,
-            Body=data,
-            ContentType=content_type,
-            Metadata={"sha256": sha256},
-        )
-        return StoredObject(self.bucket, key, len(data), sha256)
-
-    def get(self, *, key: str) -> bytes:
-        assert_external_io_allowed("object_storage.get")
-        body = self.client.get_object(Bucket=self.bucket, Key=key)["Body"]
-        return bytes(body.read())
-
-    def delete(self, *, key: str) -> None:
-        assert_external_io_allowed("object_storage.delete")
-        self.client.delete_object(Bucket=self.bucket, Key=key)
-
-    def list_keys(self) -> list[str]:
-        assert_external_io_allowed("object_storage.list")
-        response = self.client.list_objects_v2(Bucket=self.bucket)
-        return sorted(str(item["Key"]) for item in response.get("Contents") or [])

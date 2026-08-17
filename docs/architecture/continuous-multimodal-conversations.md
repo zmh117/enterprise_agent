@@ -43,19 +43,22 @@
 }
 ```
 
-对象存储凭据仍由部署环境或 Secret 管理：
+Compose 内的 MinIO 基础设施凭据与 File Service 配置分离：
 
 ```dotenv
-# S3_* 只用于 MinIO/minio-init；file-worker 不接收这些变量。
-S3_ACCESS_KEY=enterprise_agent
-S3_SECRET_KEY=<local-infrastructure-secret>
-S3_BUCKET=agent-attachments
+MINIO_ROOT_USER=enterprise_agent
+MINIO_ROOT_PASSWORD=<local-infrastructure-secret>
+FILE_STORAGE_ENDPOINT_URL=http://minio:9000
 FILE_STORAGE_BUCKET=agent-files
+FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET=agent-attachments
+FILE_STORAGE_ACCESS_KEY_REF=secret://platform/minio-file-access-key
+FILE_STORAGE_SECRET_KEY_REF=secret://platform/minio-file-secret-key
 ```
 
 上述 MinIO 默认只用于 local/test/testing/development。非本地环境必须显式提供
-非空且不等于仓库占位值的 `S3_ACCESS_KEY` / `S3_SECRET_KEY`；配置加载和 Compose
-MinIO 入口都会在外部 I/O 前失败关闭。File Service 仍只接收平台 Secret Reference。
+非空且不等于仓库占位值的 `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`，Compose
+MinIO 入口会在外部 I/O 前失败关闭。应用不再加载旧 `S3_*` 配置；File Service
+只通过平台 Secret Reference 解析对象存储凭据。
 
 启动附件profile和钉钉入口：
 

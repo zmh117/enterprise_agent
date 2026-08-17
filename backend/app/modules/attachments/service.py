@@ -112,7 +112,7 @@ class AttachmentProcessingService:
             digest = hashlib.sha256(data).hexdigest()
             object_bucket: str | None = None
             object_key: str | None = None
-            if task_text:
+            if self.importer is not None:
                 assert self.importer is not None
                 imported = self.importer.import_content(
                     attachment_id=attachment.id,
