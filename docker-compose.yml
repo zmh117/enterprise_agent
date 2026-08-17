@@ -18,8 +18,6 @@ x-runtime-env: &runtime-env
   MODEL_PROVIDER_HOST_ALLOWLIST: ${MODEL_PROVIDER_HOST_ALLOWLIST:-api.deepseek.com}
   PYTHON_AGENT_RUNTIME_URL: http://python-agent-runtime:8091
   PYTHON_AGENT_RUNTIME_ALLOWED_HOSTS: python-agent-runtime
-  TYPESCRIPT_AGENT_RUNTIME_URL: http://typescript-agent-runtime:8090
-  TYPESCRIPT_AGENT_RUNTIME_ALLOWED_HOSTS: typescript-agent-runtime
   AGENT_RUNTIME_ALLOW_INSECURE_INTERNAL_HTTP: "true"
 
 x-worker-env: &worker-env
@@ -335,74 +333,6 @@ services:
       - default
       - agent-runtime-control
 
-  typescript-agent-runtime:
-    build:
-      context: ./agent-runtime
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    read_only: true
-    tmpfs:
-      - /tmp/agent-runtime:size=${AGENT_RUNTIME_TMPFS_SIZE:-256m},mode=0700,uid=1000,gid=1000
-    cap_drop: ["ALL"]
-    security_opt: ["no-new-privileges:true"]
-    environment:
-      APP_ENV: ${APP_ENV:-local}
-      AGENT_RUNTIME_HOST: 0.0.0.0
-      AGENT_RUNTIME_PORT: "8090"
-      AGENT_RUNTIME_LOG_LEVEL: ${AGENT_RUNTIME_LOG_LEVEL:-info}
-      AGENT_RUNTIME_LEDGER_TTL_SECONDS: ${AGENT_RUNTIME_LEDGER_TTL_SECONDS:-3600}
-      AGENT_RUNTIME_CLI_VERSION: "2.1.226"
-      RUNTIME_GRANT_PUBLIC_KEY_FILE: /run/secrets/runtime_grant_public_key
-      MODEL_PROBE_AUTH_TOKEN_FILE: /run/secrets/model_probe_auth_token
-      DATABASE_URL: ${AGENT_RUNTIME_DATABASE_DSN:-postgresql://agent_runtime_reader:agent_runtime_reader_local@postgres:5432/enterprise_agent}
-      APP_CONFIG_MASTER_KEY_FILE: /run/secrets/app_config_master_key
-      MODEL_PROVIDER_ALLOWED_HOSTS: ${MODEL_PROVIDER_HOST_ALLOWLIST:-api.deepseek.com}
-      MCP_SERVER_ALLOWED_HOSTS: tool-mcp,ones-mcp,file-service
-      MCP_TOOL_SERVER_URL: http://tool-mcp:9103/mcp
-      ONES_MCP_SERVER_URL: http://ones-mcp:9104/mcp
-      FILE_MCP_SERVER_URL: http://file-service:9105/mcp
-      AGENT_RUNTIME_SANDBOX_ROOT: /tmp/agent-runtime/sandboxes
-      AGENT_RUNTIME_SANDBOX_CAPACITY_BYTES: ${AGENT_RUNTIME_SANDBOX_CAPACITY_BYTES:-234881024}
-      AGENT_RUNTIME_SANDBOX_MAX_FILES: ${AGENT_RUNTIME_SANDBOX_MAX_FILES:-40}
-      AGENT_RUNTIME_SANDBOX_MAX_FILE_BYTES: ${AGENT_RUNTIME_SANDBOX_MAX_FILE_BYTES:-15728640}
-      AGENT_RUNTIME_SANDBOX_CLEANUP_INTERVAL_SECONDS: ${AGENT_RUNTIME_SANDBOX_CLEANUP_INTERVAL_SECONDS:-300}
-      AGENT_RUNTIME_TEST_PROVIDER_MODE: ${AGENT_RUNTIME_TEST_PROVIDER_MODE:-disabled}
-    secrets:
-      - app_config_master_key
-      - runtime_grant_public_key
-      - model_probe_auth_token
-    expose:
-      - "8090"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      migrator:
-        condition: service_completed_successfully
-      file-service:
-        condition: service_healthy
-      tool-mcp:
-        condition: service_healthy
-      ones-mcp:
-        condition: service_healthy
-    healthcheck:
-      test:
-        - CMD
-        - node
-        - -e
-        - "fetch('http://127.0.0.1:8090/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 15s
-    deploy:
-      resources:
-        limits:
-          cpus: "2.0"
-          memory: 1G
-    networks:
-      - agent-runtime-control
-      - provider-egress
-
   python-agent-runtime:
     build:
       context: .
@@ -496,8 +426,6 @@ services:
         condition: service_completed_successfully
       python-agent-runtime:
         condition: service_healthy
-      typescript-agent-runtime:
-        condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -514,9 +442,7 @@ services:
       - default
       - agent-runtime-control
 
-  # Isolated test-only orchestration lives in
-  # docker-compose.dual-runtime-acceptance.yml so normal Compose never enables
-  # deterministic provider behavior or starts the acceptance runner.
+  # Deterministic provider behavior remains disabled in normal Compose.
 
   admin-web:
     # profiles: ["admin"]
@@ -586,8 +512,6 @@ services:
       ones-mcp:
         condition: service_healthy
       python-agent-runtime:
-        condition: service_healthy
-      typescript-agent-runtime:
         condition: service_healthy
       file-service:
         condition: service_healthy
@@ -681,8 +605,6 @@ services:
         condition: service_completed_successfully
       python-agent-runtime:
         condition: service_healthy
-      typescript-agent-runtime:
-        condition: service_healthy
     healthcheck:
       test:
         - CMD
@@ -715,8 +637,6 @@ services:
       migrator:
         condition: service_completed_successfully
       python-agent-runtime:
-        condition: service_healthy
-      typescript-agent-runtime:
         condition: service_healthy
     healthcheck:
       test:

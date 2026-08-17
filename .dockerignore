@@ -25,9 +25,9 @@ frontend/dist/
 !dingtalk-runtime/**
 dingtalk-runtime/node_modules/
 dingtalk-runtime/dist/
-!agent-runtime/
-!agent-runtime/contracts/
-!agent-runtime/contracts/**
+!contracts/
+!contracts/agent-runtime/
+!contracts/agent-runtime/**
 !.claude/
 !.claude/skills/
 !.claude/skills/**

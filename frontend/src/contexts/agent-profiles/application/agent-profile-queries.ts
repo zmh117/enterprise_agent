@@ -5,7 +5,6 @@ import type {
   AgentCreateInput,
   CredentialSource,
   ModelConnectionConfig,
-  RuntimeKind,
 } from "@/contexts/agent-profiles/domain/agent-profile"
 import {
   configureModelConnection,
@@ -83,7 +82,6 @@ type CredentialInput = {
 }
 
 type DraftConnectionInput = CredentialInput & {
-  runtime_kind: RuntimeKind
   config: Omit<ModelConnectionConfig, "schema_version">
   timeout_seconds?: number
 }
@@ -105,13 +103,8 @@ export function useTestDraftConnection() {
 
 export function useTestSavedConnection() {
   return useMutation({
-    mutationFn: (input: {
-      revisionId: string
-      runtimeKind: RuntimeKind
-      timeoutSeconds?: number
-    }) =>
+    mutationFn: (input: { revisionId: string; timeoutSeconds?: number }) =>
       testSavedModelConnection(DEFAULT_CONNECTION_CODE, input.revisionId, {
-        runtime_kind: input.runtimeKind,
         timeout_seconds: input.timeoutSeconds,
       }),
   })

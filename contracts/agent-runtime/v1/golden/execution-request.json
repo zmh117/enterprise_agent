@@ -1,0 +1,43 @@
+{
+  "protocol_version": "1.0",
+  "runtime_kind": "typescript-v1",
+  "invocation_id": "invocation-1",
+  "request_digest": "649bdc1a2038ebf12f219e80df8091fff6836711dc5246290b0921db68a12939",
+  "job_id": "job-1",
+  "app_user_id": "app-user-1",
+  "project_code": "project-1",
+  "agent_publication_id": "agent-publication-1",
+  "application_publication_id": "application-publication-1",
+  "model_connection": {
+    "revision_id": "model-connection-revision-1",
+    "config_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "prompt": {
+    "system_role": "只读项目诊断 Agent",
+    "safety_rules": ["readonly"],
+    "business_instructions": "",
+    "tool_restrictions": ["bounded"],
+    "user_question": "查询失败的工作项",
+    "conversation_summary": "none",
+    "retrieved_context": {},
+    "skills": {},
+    "mcp_unavailable_notices": []
+  },
+  "limits": {
+    "timeout_seconds": 120,
+    "max_turns": 12,
+    "max_tool_calls": 30
+  },
+  "mcp_servers": [
+    {
+      "server_code": "ones-mcp",
+      "tools": [
+        {
+          "tool_name": "ones_work_item_search",
+          "required_scope": "mcp:ones-mcp:ones_work_item_search:invoke",
+          "tool_schema_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      ]
+    }
+  ]
+}

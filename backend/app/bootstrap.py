@@ -16,7 +16,7 @@ from app.modules.agent.infrastructure.routed_runtime_client import (
 )
 from app.modules.agent.infrastructure.runtime_readiness import AgentRuntimeReadinessGuard
 from app.modules.agent.infrastructure.skill_loader import SkillLoader
-from app.modules.agent.infrastructure.typescript_runtime_client import (
+from app.modules.agent.infrastructure.runtime_http_client import (
     AgentRuntimeHttpClient,
     RuntimeClientSettings,
     RuntimeGrantIssuer,
@@ -391,11 +391,6 @@ def _runtime_model_probes_for_service(
             settings.agent_runtime.python_base_url,
             settings.agent_runtime.python_allowed_hosts,
         ),
-        (
-            "typescript-v1",
-            settings.agent_runtime.typescript_base_url,
-            settings.agent_runtime.typescript_allowed_hosts,
-        ),
     )
     return {
         runtime_kind: RuntimeModelProbeClient(
@@ -648,9 +643,7 @@ def _build_container(
     service_principal_token_issuer: ServicePrincipalTokenIssuer | None = None
     if service_name == "api-server" and settings.service_principal.enabled:
         service_principal_token_issuer = ServicePrincipalTokenIssuer.from_files(
-            signing_private_key_file=(
-                settings.principal_jwt.signing_private_key_file
-            ),
+            signing_private_key_file=(settings.principal_jwt.signing_private_key_file),
             file_worker_bootstrap_file=(
                 settings.service_principal.file_worker_bootstrap_token_file
             ),
@@ -870,11 +863,6 @@ def _build_container(
                 settings.agent_runtime.python_base_url,
                 settings.agent_runtime.python_allowed_hosts,
             ),
-            (
-                "typescript-v1",
-                settings.agent_runtime.typescript_base_url,
-                settings.agent_runtime.typescript_allowed_hosts,
-            ),
         )
         for runtime_kind, base_url, allowed_hosts in configured_runtimes:
             if not base_url:
@@ -894,10 +882,7 @@ def _build_container(
             )
     else:
         stub_runtime = StubAgentRuntimeClient()
-        runtime_clients = {
-            "python-v1": stub_runtime,
-            "typescript-v1": stub_runtime,
-        }
+        runtime_clients = {"python-v1": stub_runtime}
     claude_client = RuntimeClientRegistry(
         runtime_clients,
     )

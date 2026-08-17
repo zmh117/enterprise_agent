@@ -95,7 +95,7 @@ export const modelSavedTestResultSchema = z.object({
   provider_host: z.string(),
   model: z.string(),
   duration_ms: z.number(),
-  runtime: runtimeKindSchema,
+  runtime: z.literal("python-v1"),
   runtime_version: z.string(),
   sdk_version: z.string(),
 })
@@ -167,6 +167,10 @@ export const agentDetailSchema = z.object({
   definition: agentDefinitionSchema,
   draft: agentRevisionSchema.nullable(),
   current_publication: agentPublicationSchema.nullable(),
+  management_mode: z
+    .enum(["editable", "read_only_retired"])
+    .default("editable"),
+  retirement_status: z.enum(["supported", "retired"]).default("supported"),
   permissions: z
     .object({
       can_edit_profile: z.boolean(),
@@ -217,7 +221,10 @@ export const agentSummarySchema = z.object({
   status: z.string(),
   revision: z.number(),
   runtime_kind: z.enum(["python-v1", "typescript-v1"]).default("python-v1"),
-  management_mode: z.enum(["editable", "read_only"]),
+  management_mode: z
+    .enum(["editable", "read_only_retired"])
+    .default("editable"),
+  retirement_status: z.enum(["supported", "retired"]).default("supported"),
   current_publication: z
     .object({
       id: z.string(),
@@ -256,5 +263,4 @@ export type AgentCreateInput = {
   name: string
   description: string
   project_code: string
-  runtime_kind: RuntimeKind
 }

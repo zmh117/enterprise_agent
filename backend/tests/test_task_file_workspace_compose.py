@@ -73,9 +73,7 @@ def test_minio_credentials_and_connections_stop_at_file_service_boundary() -> No
     assert file_environment["FILE_STORAGE_SECRET_KEY_REF"].startswith(
         "${FILE_STORAGE_SECRET_KEY_REF:-secret://platform/"
     )
-    assert file_environment["FILE_STORAGE_BUCKET"] == (
-        "${FILE_STORAGE_BUCKET:-agent-files}"
-    )
+    assert file_environment["FILE_STORAGE_BUCKET"] == ("${FILE_STORAGE_BUCKET:-agent-files}")
     assert file_environment["FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET"] == (
         "${S3_BUCKET:-agent-attachments}"
     )
@@ -84,7 +82,6 @@ def test_minio_credentials_and_connections_stop_at_file_service_boundary() -> No
 
     for name in (
         "agent-worker",
-        "typescript-agent-runtime",
         "python-agent-runtime",
         "file-worker",
         "delivery-dispatch-worker",
@@ -142,19 +139,15 @@ def test_worker_identity_bootstrap_is_role_separated_and_file_service_is_hardene
 
 def test_runtime_tmpfs_and_per_job_limits_are_explicitly_configured() -> None:
     services = _compose()["services"]
-    for name, prefix in (
-        ("typescript-agent-runtime", "AGENT_RUNTIME"),
-        ("python-agent-runtime", "PYTHON_AGENT_RUNTIME"),
-    ):
-        service = services[name]
-        assert "${AGENT_RUNTIME_TMPFS_SIZE:-256m}" in service["tmpfs"][0]
-        environment = service["environment"]
-        assert environment[f"{prefix}_SANDBOX_CAPACITY_BYTES"] == (
-            "${AGENT_RUNTIME_SANDBOX_CAPACITY_BYTES:-234881024}"
-        )
-        assert environment[f"{prefix}_SANDBOX_MAX_FILE_BYTES"] == (
-            "${AGENT_RUNTIME_SANDBOX_MAX_FILE_BYTES:-15728640}"
-        )
+    service = services["python-agent-runtime"]
+    assert "${AGENT_RUNTIME_TMPFS_SIZE:-256m}" in service["tmpfs"][0]
+    environment = service["environment"]
+    assert environment["PYTHON_AGENT_RUNTIME_SANDBOX_CAPACITY_BYTES"] == (
+        "${AGENT_RUNTIME_SANDBOX_CAPACITY_BYTES:-234881024}"
+    )
+    assert environment["PYTHON_AGENT_RUNTIME_SANDBOX_MAX_FILE_BYTES"] == (
+        "${AGENT_RUNTIME_SANDBOX_MAX_FILE_BYTES:-15728640}"
+    )
 
 
 def test_backend_image_contains_file_service_and_file_worker_targets() -> None:

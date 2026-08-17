@@ -46,15 +46,22 @@ def request(runtime_kind: str, protocol: str = "1.0") -> AgentRunRequest:
     )
 
 
-def test_registry_routes_only_by_frozen_runtime_kind_without_fallback() -> None:
+def test_registry_routes_only_python_and_never_falls_back_for_retired_jobs() -> None:
     python = RecordingRuntimeClient("python")
-    typescript = RecordingRuntimeClient("typescript")
-    registry = RuntimeClientRegistry({"python-v1": python, "typescript-v1": typescript})
+    registry = RuntimeClientRegistry({"python-v1": python})
 
     assert registry.run(request("python-v1")).final_answer == "python"
-    assert registry.run(request("typescript-v1")).final_answer == "typescript"
     assert len(python.requests) == 1
-    assert len(typescript.requests) == 1
+    for _attempt in range(2):
+        with pytest.raises(NonRetryableExecutionError) as retired:
+            registry.run(request("typescript-v1"))
+        assert retired.value.error_code == "typescript_agent_runtime_retired"
+    assert len(python.requests) == 1
+
+    with pytest.raises(ValueError, match="retired TypeScript Runtime"):
+        RuntimeClientRegistry(
+            {"python-v1": python, "typescript-v1": RecordingRuntimeClient("typescript")}
+        )
 
 
 def test_registry_rejects_unknown_unconfigured_and_protocol_conflicts() -> None:
@@ -62,7 +69,7 @@ def test_registry_rejects_unknown_unconfigured_and_protocol_conflicts() -> None:
 
     expected = [
         (request("ruby-v1"), "agent_runtime_kind_unsupported"),
-        (request("typescript-v1"), "agent_runtime_unconfigured"),
+        (request("typescript-v1"), "typescript_agent_runtime_retired"),
         (request("python-v1", "2.0"), "agent_runtime_protocol_unsupported"),
     ]
     for value, code in expected:

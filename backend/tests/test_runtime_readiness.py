@@ -37,7 +37,7 @@ def test_ready_checks_schema_database_rabbit_token_and_master_key(
         assert ready["core"] == {
             "database": True,
             "schema": True,
-                "schema_head": "111",
+            "schema_head": "111",
             "rabbitmq": True,
             "master_key": True,
             "runtime_assembly": True,
@@ -55,7 +55,7 @@ def test_ready_checks_schema_database_rabbit_token_and_master_key(
                     "model_invoked": False,
                     "mcp_invoked": False,
                 }
-                for runtime_kind in ("python-v1", "typescript-v1")
+                for runtime_kind in ("python-v1",)
             },
         }
         assert ready["tool_mcp"] == {
@@ -67,8 +67,9 @@ def test_ready_checks_schema_database_rabbit_token_and_master_key(
         assert ready["mcp_invoked"] is False
         assert ready["runtime_selection"] == {
             "default_runtime": "python-v1",
-            "supported_runtimes": ["python-v1", "typescript-v1"],
-            "protocol_version": "1.0",
+            "supported_runtimes": ["python-v1"],
+            "protocol_version": "1.3",
+            "retired_configuration_keys": [],
         }
         assert ready["runtime_config"] == {
             "source": runtime.settings.runtime_config_source,
@@ -114,8 +115,6 @@ def test_unavailable_runtime_is_reported_without_disabling_management_api(monkey
             agent_runtime=AgentRuntimeSettings(
                 python_base_url="http://python-agent-runtime:8091",
                 python_allowed_hosts=("python-agent-runtime",),
-                typescript_base_url="http://typescript-agent-runtime:8090",
-                typescript_allowed_hosts=("typescript-agent-runtime",),
                 allow_insecure_internal_http=True,
             ),
         )
@@ -127,6 +126,31 @@ def test_unavailable_runtime_is_reported_without_disabling_management_api(monkey
         assert status["core"]["agent_runtimes"]["python-v1"]["master_key"] == "unavailable"
         assert status["claude_invoked"] is False
         assert status["mcp_invoked"] is False
+    finally:
+        runtime.database.close()
+
+
+def test_retired_typescript_configuration_fails_runtime_assembly_closed(
+    monkeypatch,
+) -> None:
+    runtime = container()
+    try:
+        monkeypatch.setattr(main, "_check_rabbitmq", lambda _url: True)
+        settings = replace(
+            runtime.settings,
+            agent_runtime=replace(
+                runtime.settings.agent_runtime,
+                retired_configuration_keys=("TYPESCRIPT_AGENT_RUNTIME_URL",),
+            ),
+        )
+
+        status = main._build_readiness(settings, database=runtime.database)
+
+        assert status["status"] == "not_ready"
+        assert status["core"]["runtime_assembly"] is False
+        assert status["runtime_selection"]["retired_configuration_keys"] == [
+            "TYPESCRIPT_AGENT_RUNTIME_URL"
+        ]
     finally:
         runtime.database.close()
 

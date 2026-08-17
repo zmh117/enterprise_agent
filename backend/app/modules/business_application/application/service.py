@@ -48,6 +48,35 @@ from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import NonRetryableExecutionError, NotFound
 
 SCHEMA_VERSION = 4
+WRITABLE_AGENT_RUNTIME_KIND = "python-v1"
+
+
+class _RetirementMigrationDryRunRollback(Exception):
+    def __init__(self, report: dict[str, Any]) -> None:
+        super().__init__("rollback validated TypeScript Runtime retirement dry-run")
+        self.report = report
+
+
+def _require_python_runtime_kind(runtime_kind: str) -> None:
+    if runtime_kind == WRITABLE_AGENT_RUNTIME_KIND:
+        return
+    if runtime_kind == "typescript-v1":
+        raise NonRetryableExecutionError(
+            "TypeScript Agent Runtime Business Application references are retired",
+            safe_message=(
+                "TypeScript Agent Runtime 已退役；请创建引用 Python Publication 的新版本"
+            ),
+            error_code="typescript_agent_runtime_retired",
+        )
+    raise NonRetryableExecutionError(
+        "Business Application Agent Runtime is unsupported",
+        safe_message="业务应用引用的 Agent Runtime 无效",
+        error_code="agent_runtime_kind_unsupported",
+    )
+
+
+def _require_python_agent_publication(agent: ComponentReference) -> None:
+    _require_python_runtime_kind(str(agent.runtime_kind or ""))
 
 
 class BusinessApplicationService:
@@ -209,12 +238,24 @@ class BusinessApplicationService:
             validate_delivery(dict(value), index)
             for index, value in enumerate(payload.get("deliveries") or [])
         ]
+        agent_publication_id = str(payload.get("agent_publication_id") or "").strip()
+        if not agent_publication_id:
+            raise NonRetryableExecutionError(
+                "Business Application requires an Agent Publication",
+                safe_message="必须选择 Agent 发布版本",
+                error_code="validation_failed",
+                field_errors=[
+                    {"field": "agent_publication_id", "message": "必须选择 Agent 发布版本"}
+                ],
+            )
+        selected_agent = self.agent_reader.resolve(agent_publication_id)
+        _require_python_agent_publication(selected_agent)
         mcp_tools = self.mcp_tool_composition_service.prepare(
-            agent_publication_id=str(payload.get("agent_publication_id") or "").strip(),
+            agent_publication_id=agent_publication_id,
             raw_tools=payload.get("mcp_tools") or [],
         )
         file_tool_errors = self.mcp_tool_composition_service.file_feature_errors(
-            agent_publication_id=str(payload.get("agent_publication_id") or "").strip(),
+            agent_publication_id=agent_publication_id,
             task_file_features=task_file_features,
             selected_tools=mcp_tools,
         )
@@ -228,11 +269,7 @@ class BusinessApplicationService:
         compatibility_errors = self._file_policy_compatibility_errors(
             file_format_policy_version=file_format_policy_version,
             task_file_features=task_file_features,
-            agent=(
-                self.agent_reader.resolve(str(payload.get("agent_publication_id") or "").strip())
-                if str(payload.get("agent_publication_id") or "").strip()
-                else None
-            ),
+            agent=selected_agent,
         )
         if compatibility_errors:
             raise NonRetryableExecutionError(
@@ -242,7 +279,7 @@ class BusinessApplicationService:
                 field_errors=compatibility_errors,
             )
         normalized = {
-            "agent_publication_id": str(payload.get("agent_publication_id") or "").strip(),
+            "agent_publication_id": agent_publication_id,
             "workflow_publication_id": str(payload.get("workflow_publication_id") or "").strip(),
             "task_workspace_retention_period": task_workspace_retention_period,
             "file_format_policy_version": file_format_policy_version,
@@ -353,6 +390,9 @@ class BusinessApplicationService:
                 "Business Application revision not found",
                 safe_message="未找到业务应用修订版本",
             )
+        _require_python_agent_publication(
+            self.agent_reader.resolve(str(revision["agent_publication_id"]))
+        )
         errors, components = self._validate_revision(application, revision)
         self.repository.set_validation(str(revision["id"]), valid=not errors, errors=errors)
         if errors:
@@ -412,6 +452,7 @@ class BusinessApplicationService:
                 "Business Application publication not found",
                 safe_message="未找到业务应用发布版本",
             )
+        self._require_python_application_publication(publication)
         if (
             validate_file_format_policy_version(
                 publication["snapshot"].get("file_format_policy_version")
@@ -440,6 +481,288 @@ class BusinessApplicationService:
             expected_revision=expected_revision,
         )
 
+    def migrate_retired_typescript_publication(
+        self,
+        *,
+        actor_id: str,
+        source_application_publication_id: str,
+        source_agent_publication_id: str,
+        target_python_agent_publication_id: str,
+        environment: str,
+        expected_application_revision: int,
+        expected_deployment_revision: int,
+        correlation_id: str,
+        apply: bool = False,
+    ) -> dict[str, Any]:
+        """Create and activate a new Python-backed Application publication.
+
+        The source publications and both optimistic-lock revisions are exact
+        operator inputs. Dry-run executes the same transactional path and then
+        rolls it back, so compatibility checks cannot drift from apply mode.
+        """
+
+        context = self._retirement_migration_context(
+            source_application_publication_id=source_application_publication_id,
+            source_agent_publication_id=source_agent_publication_id,
+            target_python_agent_publication_id=target_python_agent_publication_id,
+            environment=environment,
+            expected_application_revision=expected_application_revision,
+            expected_deployment_revision=expected_deployment_revision,
+        )
+        target_runtime_kind = str(context["target_agent"].runtime_kind or "")
+        if self.runtime_readiness_guard is not None:
+            self.runtime_readiness_guard.require_ready(target_runtime_kind)
+        if (
+            validate_file_format_policy_version(
+                context["source_publication"]["snapshot"].get("file_format_policy_version")
+            )
+            == "text-v2"
+        ):
+            cutover_errors = self.mcp_tool_composition_service.text_v2_cutover_errors()
+            if cutover_errors:
+                raise NonRetryableExecutionError(
+                    "text-v2 cutover preflight found active legacy File MCP Jobs",
+                    safe_message="text-v2 切换预检未通过",
+                    error_code="validation_failed",
+                    field_errors=cutover_errors,
+                )
+        try:
+            return self._migrate_retired_typescript_publication(
+                actor_id=actor_id,
+                source_application_publication_id=source_application_publication_id,
+                source_agent_publication_id=source_agent_publication_id,
+                target_python_agent_publication_id=target_python_agent_publication_id,
+                environment=environment,
+                expected_application_revision=expected_application_revision,
+                expected_deployment_revision=expected_deployment_revision,
+                correlation_id=correlation_id,
+                apply=apply,
+            )
+        except _RetirementMigrationDryRunRollback as rollback:
+            return rollback.report
+
+    @operation_unit_of_work(lambda service: service.repository.database)
+    def _migrate_retired_typescript_publication(
+        self,
+        *,
+        actor_id: str,
+        source_application_publication_id: str,
+        source_agent_publication_id: str,
+        target_python_agent_publication_id: str,
+        environment: str,
+        expected_application_revision: int,
+        expected_deployment_revision: int,
+        correlation_id: str,
+        apply: bool,
+    ) -> dict[str, Any]:
+        context = self._retirement_migration_context(
+            source_application_publication_id=source_application_publication_id,
+            source_agent_publication_id=source_agent_publication_id,
+            target_python_agent_publication_id=target_python_agent_publication_id,
+            environment=environment,
+            expected_application_revision=expected_application_revision,
+            expected_deployment_revision=expected_deployment_revision,
+        )
+        application = context["application"]
+        source_publication = context["source_publication"]
+        source_snapshot = dict(source_publication["snapshot"])
+        target_agent = context["target_agent"]
+        payload = self._retirement_migration_payload(
+            source_snapshot=source_snapshot,
+            target_agent_publication_id=target_agent.id,
+        )
+        revision = self.save_draft(
+            actor_id=actor_id,
+            code=str(application["code"]),
+            expected_revision=expected_application_revision,
+            payload=payload,
+        )
+        publication = self._publish(
+            actor_id=actor_id,
+            code=str(application["code"]),
+            revision_id=str(revision["id"]),
+        )
+        deployment = self._activate_in_unit_of_work(
+            actor_id=actor_id,
+            code=str(application["code"]),
+            environment=environment,
+            publication_id=str(publication["id"]),
+            expected_revision=expected_deployment_revision,
+        )
+        report = {
+            "status": "migrated" if apply else "ready",
+            "write_performed": apply,
+            "application": {
+                "id": application["id"],
+                "code": application["code"],
+                "environment": validate_environment(environment),
+            },
+            "source": {
+                "application_publication_id": source_application_publication_id,
+                "application_revision": source_publication["revision"],
+                "application_config_hash": source_publication["config_hash"],
+                "agent_publication_id": source_agent_publication_id,
+                "runtime_kind": "typescript-v1",
+            },
+            "target": {
+                "agent_publication_id": target_python_agent_publication_id,
+                "agent_revision": target_agent.revision,
+                "agent_config_hash": target_agent.config_hash,
+                "runtime_kind": "python-v1",
+                "application_revision": revision["revision"],
+                "application_config_hash": revision["config_hash"],
+                "application_publication_id": str(publication["id"]) if apply else "",
+                "application_publication_hash": publication["config_hash"],
+                "deployment_revision": deployment["revision"],
+            },
+            "correlation_id": correlation_id,
+            "sensitive_values_exposed": False,
+        }
+        if not apply:
+            raise _RetirementMigrationDryRunRollback(report)
+        self.audit_service.record(
+            "typescript_runtime.application_migrated",
+            status="SUCCEEDED",
+            summary="Business Application migrated from retired TypeScript Runtime",
+            actor_id=actor_id,
+            payload={
+                "application_id": application["id"],
+                "application_code": application["code"],
+                "environment": validate_environment(environment),
+                "source_application_publication_id": source_application_publication_id,
+                "source_agent_publication_id": source_agent_publication_id,
+                "target_agent_publication_id": target_python_agent_publication_id,
+                "target_application_publication_id": publication["id"],
+                "target_application_config_hash": publication["config_hash"],
+                "expected_application_revision": expected_application_revision,
+                "expected_deployment_revision": expected_deployment_revision,
+                "correlation_id": correlation_id,
+                "result": "migrated",
+            },
+        )
+        return report
+
+    def _retirement_migration_context(
+        self,
+        *,
+        source_application_publication_id: str,
+        source_agent_publication_id: str,
+        target_python_agent_publication_id: str,
+        environment: str,
+        expected_application_revision: int,
+        expected_deployment_revision: int,
+    ) -> dict[str, Any]:
+        normalized_environment = validate_environment(environment)
+        source_publication = self._verified_publication(source_application_publication_id)
+        application = self.repository.get_by_id(str(source_publication["application_id"]))
+        if int(application["revision"]) != expected_application_revision:
+            raise self.repository.revision_conflict(int(application["revision"]))
+        source_revision = self.repository.get_revision(str(source_publication["revision_id"]))
+        source_snapshot = dict(source_publication["snapshot"])
+        source_snapshot_agent = dict(source_snapshot.get("agent") or {})
+        source_snapshot_application = dict(source_snapshot.get("application") or {})
+        if (
+            str(source_revision.get("agent_publication_id") or "") != source_agent_publication_id
+            or str(source_snapshot_agent.get("id") or "") != source_agent_publication_id
+        ):
+            raise NonRetryableExecutionError(
+                "Source Application publication does not reference the exact Agent publication",
+                safe_message="源应用发布版本与源 Agent 发布版本不匹配",
+                error_code="retirement_migration_source_reference_mismatch",
+            )
+        if str(source_snapshot_application.get("id") or "") != str(application["id"]):
+            raise NonRetryableExecutionError(
+                "Source Application publication ownership is inconsistent",
+                safe_message="源应用发布版本归属不一致",
+                error_code="retirement_migration_source_integrity_error",
+            )
+        source_agent = self.agent_reader.resolve(source_agent_publication_id)
+        if str(source_agent.runtime_kind or "") != "typescript-v1":
+            raise NonRetryableExecutionError(
+                "Source Agent publication is not a retired TypeScript publication",
+                safe_message="源 Agent 发布版本不是已退役的 TypeScript 版本",
+                error_code="retirement_migration_source_runtime_mismatch",
+            )
+        target_agent = self.agent_reader.resolve(target_python_agent_publication_id)
+        _require_python_agent_publication(target_agent)
+        if source_agent.id == target_agent.id:
+            raise NonRetryableExecutionError(
+                "Source and target Agent publications must differ",
+                safe_message="源和目标 Agent 发布版本不能相同",
+                error_code="retirement_migration_target_invalid",
+            )
+        deployment = self.repository.get_deployment(str(application["id"]), normalized_environment)
+        if (
+            deployment is None
+            or not bool(deployment["active"])
+            or str(deployment["publication_id"]) != source_application_publication_id
+        ):
+            raise NonRetryableExecutionError(
+                "Active deployment does not reference the exact source publication",
+                safe_message="活动部署与指定的源应用发布版本不匹配",
+                error_code="retirement_migration_deployment_mismatch",
+            )
+        if int(deployment["revision"]) != expected_deployment_revision:
+            raise self.repository.revision_conflict(int(deployment["revision"]))
+        return {
+            "application": application,
+            "source_publication": source_publication,
+            "source_agent": source_agent,
+            "target_agent": target_agent,
+            "deployment": deployment,
+        }
+
+    @staticmethod
+    def _retirement_migration_payload(
+        *,
+        source_snapshot: dict[str, Any],
+        target_agent_publication_id: str,
+    ) -> dict[str, Any]:
+        workflow = dict(source_snapshot.get("workflow") or {})
+        return {
+            "agent_publication_id": target_agent_publication_id,
+            "workflow_publication_id": str(workflow.get("id") or ""),
+            "task_workspace_retention_period": source_snapshot.get(
+                "task_workspace_retention_period"
+            ),
+            "file_format_policy_version": source_snapshot.get("file_format_policy_version"),
+            "task_file_features": dict(source_snapshot.get("task_file_features") or {}),
+            "session_policy": dict(source_snapshot.get("session_policy") or {}),
+            "execution_policy": dict(source_snapshot.get("execution_policy") or {}),
+            "triggers": [
+                {
+                    key: value
+                    for key, value in dict(trigger).items()
+                    if key
+                    in {
+                        "trigger_type",
+                        "connector_id",
+                        "routing_key",
+                        "actor_policy",
+                        "service_account_user_id",
+                        "enabled",
+                        "config",
+                    }
+                }
+                for trigger in source_snapshot.get("triggers") or []
+            ],
+            "deliveries": [
+                {
+                    key: value
+                    for key, value in dict(delivery).items()
+                    if key
+                    in {
+                        "delivery_type",
+                        "connector_id",
+                        "enabled",
+                        "config",
+                    }
+                }
+                for delivery in source_snapshot.get("deliveries") or []
+            ],
+            "mcp_tools": list(source_snapshot.get("mcp_tools") or []),
+        }
+
     @operation_unit_of_work(lambda service: service.repository.database)
     def _activate_in_unit_of_work(
         self,
@@ -466,6 +789,7 @@ class BusinessApplicationService:
                 "Business Application publication not found",
                 safe_message="未找到业务应用发布版本",
             )
+        self._require_python_application_publication(publication)
         activation_errors = self.runtime_evaluator.activation_errors(dict(publication["snapshot"]))
         if (
             self.runtime_evaluator.data_plane_enabled
@@ -570,7 +894,11 @@ class BusinessApplicationService:
                 key: value for key, value in vars(item).items() if value is not None and value != ()
             }
 
-        agents = [reference(item) for item in self.agent_reader.catalog(project_code)]
+        agents = [
+            reference(item)
+            for item in self.agent_reader.catalog(project_code)
+            if item.runtime_kind == WRITABLE_AGENT_RUNTIME_KIND
+        ]
         mcp_tool_catalog = self.mcp_tool_composition_service.management_catalog(
             agent_publication_ids=[str(item["id"]) for item in agents],
         )
@@ -596,6 +924,13 @@ class BusinessApplicationService:
         if agent:
             components["agent"] = agent
             self._validate_component_scope(errors, application, agent, "agent_publication_id")
+            if agent.runtime_kind != WRITABLE_AGENT_RUNTIME_KIND:
+                errors.append(
+                    {
+                        "field": "agent_publication_id",
+                        "message": "TypeScript Agent Runtime 已退役，请选择 Python Publication",
+                    }
+                )
         workflow_id = str(revision.get("workflow_publication_id") or "")
         if workflow_id:
             workflow = self._resolve_component(
@@ -819,6 +1154,16 @@ class BusinessApplicationService:
             )
         return publication
 
+    def _require_python_application_publication(
+        self,
+        publication: dict[str, Any],
+    ) -> None:
+        agent = dict(publication["snapshot"].get("agent") or {})
+        runtime_kind = str(agent.get("runtime_kind") or "")
+        if not runtime_kind and agent.get("id"):
+            runtime_kind = str(self.agent_reader.resolve(str(agent["id"])).runtime_kind or "")
+        _require_python_runtime_kind(runtime_kind)
+
     @staticmethod
     def _validate_metadata(name: str, description: str, owner_user_id: str) -> None:
         if not name.strip() or len(name.strip()) > 200:
@@ -981,6 +1326,11 @@ class BusinessApplicationService:
                 snapshot=snapshot,
                 deployment=None,
             ).to_dict(),
+            "retirement_status": (
+                "retired"
+                if str((snapshot.get("agent") or {}).get("runtime_kind") or "") == "typescript-v1"
+                else "supported"
+            ),
         }
 
     @staticmethod
@@ -996,16 +1346,13 @@ class BusinessApplicationService:
             }
         agent_value = snapshot.get("agent")
         agent = agent_value if isinstance(agent_value, dict) else {}
-        protocols = {
-            str(value) for value in agent.get("runtime_protocol_versions") or []
-        }
+        protocols = {str(value) for value in agent.get("runtime_protocol_versions") or []}
         features = validate_task_file_features(snapshot.get("task_file_features"))
         required_tools = required_file_mcp_tools(features)
         selected_tools = {
             str(item.get("tool_identifier") or ""): str(item.get("schema_hash") or "")
             for item in snapshot.get("mcp_tools") or []
-            if isinstance(item, dict)
-            and str(item.get("server_code") or "") == "file-service"
+            if isinstance(item, dict) and str(item.get("server_code") or "") == "file-service"
         }
         schema_compatible = bool(required_tools) and all(
             identifier in MCP_TOOL_MANIFEST
@@ -1014,9 +1361,7 @@ class BusinessApplicationService:
         )
         runtime_compatible = "1.3" in protocols
         return {
-            "status": (
-                "READY" if runtime_compatible and schema_compatible else "INCOMPATIBLE"
-            ),
+            "status": ("READY" if runtime_compatible and schema_compatible else "INCOMPATIBLE"),
             "required_runtime_protocol": "1.3",
             "runtime_protocol_compatible": runtime_compatible,
             "file_mcp_schema_compatible": schema_compatible,
@@ -1074,9 +1419,8 @@ class BusinessApplicationService:
         return {
             **publication,
             "snapshot": snapshot_summary,
-            "file_format_compatibility": snapshot_summary[
-                "file_format_compatibility"
-            ],
+            "retirement_status": snapshot_summary["retirement_status"],
+            "file_format_compatibility": snapshot_summary["file_format_compatibility"],
             **readiness.to_dict(),
         }
 

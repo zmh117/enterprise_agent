@@ -4,7 +4,8 @@ import unittest
 
 from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
 from app.modules.job.domain.job_status import JobStatus
-from app.modules.agent.domain.runtime import AgentRunResult
+from app.modules.agent.domain.runtime import AgentExecutionContext, AgentRunResult
+from app.modules.agent.infrastructure.routed_runtime_client import RuntimeClientRegistry
 from app.shared.exceptions import DiagnosticLoopExhausted, RetryableExecutionError
 from app.workers.agent_job_worker import AgentJobWorker
 from backend.tests.helpers import (
@@ -87,6 +88,32 @@ class ToolEventClaudeClient:
                     "risk_level": "low",
                 }
             ],
+        )
+
+
+class RecordingPythonRuntimeClient:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def run(self, request: object) -> AgentRunResult:
+        self.calls += 1
+        return AgentRunResult(final_answer="must not run")
+
+
+class RetiredRuntimeContextBuilder:
+    def build(self, job: object) -> AgentExecutionContext:
+        return AgentExecutionContext(
+            system_role="Historical retired Runtime Job",
+            safety_rules=[],
+            user_question="synthetic retired Runtime message",
+            project_code="default",
+            allowed_tools=[],
+            tool_restrictions=[],
+            skills={},
+            retrieved_context={},
+            conversation_summary="",
+            runtime_kind="typescript-v1",
+            runtime_protocol_version="1.2",
         )
 
 
@@ -246,6 +273,51 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
         dispatch_pending_deliveries(c)
         self.assertEqual(JobStatus.SUCCEEDED, c.agent_repository.get_job(job.id).status)
         self.assertEqual(1, len(c.result_delivery_service.sent_messages))
+
+    def test_worker_terminalizes_retired_runtime_message_without_python_fallback(self) -> None:
+        c = _runtime_container()
+        job = c.create_agent_job_service.execute(
+            CreateAgentJobCommand(
+                idempotency_key="retired-runtime-worker-message",
+                external_conversation_id="retired-runtime-worker",
+                requester_id="local-user",
+                user_message="synthetic retired Runtime message",
+                project_code="default",
+            )
+        )
+        c.database.execute(
+            "update agent_job set agent_runtime_kind = 'typescript-v1', "
+            "agent_runtime_protocol_version = '1.2' where id = ?",
+            (job.id,),
+        )
+        python = RecordingPythonRuntimeClient()
+        c.agent_executor.claude_client = RuntimeClientRegistry({"python-v1": python})
+        c.agent_executor.context_builder = RetiredRuntimeContextBuilder()  # type: ignore[assignment]
+        message = persisted_agent_job_message(c, job.id)
+        worker = AgentJobWorker(c.settings, container=c)
+
+        worker.handle(message)
+        terminal = c.agent_repository.get_job(job.id)
+        delivery_count = c.database.execute_one(
+            "select count(*) as count from delivery_outbox where job_id = ?",
+            (job.id,),
+        )
+        worker.handle(message)
+
+        self.assertEqual(JobStatus.FAILED, terminal.status)
+        self.assertEqual("typescript_agent_runtime_retired", terminal.last_error_code)
+        self.assertEqual(0, python.calls)
+        self.assertIsNotNone(delivery_count)
+        self.assertEqual(1, int(delivery_count["count"]))
+        self.assertEqual(
+            1,
+            int(
+                c.database.execute_one(
+                    "select count(*) as count from delivery_outbox where job_id = ?",
+                    (job.id,),
+                )["count"]
+            ),
+        )
 
 
 if __name__ == "__main__":

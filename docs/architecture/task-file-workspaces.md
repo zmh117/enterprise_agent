@@ -27,7 +27,7 @@ Agent -> Runtime 本地 File MCP Bridge -> File MCP（File Service 内）-> File
 Delivery Worker -> File Service -> DingTalk
 ```
 
-File Service 是文件身份、不可变版本、当前版本、工作区引用、Job File Manifest、提交暂存、配额、生命周期、授权和审计的唯一入口，也是唯一持有 MinIO endpoint 与平台 Secret Reference 解析能力的业务容器。File Worker、Agent Worker、Python/TypeScript Runtime、Delivery Worker 和前端都没有 MinIO 凭据，也不能提交 Bucket、对象键、URL 或本地路径。
+File Service 是文件身份、不可变版本、当前版本、工作区引用、Job File Manifest、提交暂存、配额、生命周期、授权和审计的唯一入口，也是唯一持有 MinIO endpoint 与平台 Secret Reference 解析能力的业务容器。File Worker、Agent Worker、Python Runtime、Delivery Worker 和前端都没有 MinIO 凭据，也不能提交 Bucket、对象键、URL 或本地路径。
 
 部署拓扑净新增一个 `file-service`；`file-worker` 替换旧 `attachment-worker` 并继续消费原附件队列；现有 Delivery Worker 保持独立。File MCP 是 File Service 的 Streamable HTTP 接口，不另起容器。
 

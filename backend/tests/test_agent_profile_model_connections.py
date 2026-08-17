@@ -114,6 +114,23 @@ def fake_secret(label: str) -> str:
     return hashlib.sha256(f"runtime-generated-test-value:{label}".encode()).hexdigest()
 
 
+class SuccessfulPythonDraftProbe:
+    def probe_draft(
+        self,
+        *,
+        binding: ModelRuntimeBinding,
+        api_key: str,
+        timeout_seconds: int,
+    ) -> dict[str, Any]:
+        del api_key, timeout_seconds
+        return {
+            "runtime_kind": "python-v1",
+            "success": True,
+            "provider_host": binding.provider_host,
+            "model": binding.model,
+        }
+
+
 def ready_connection(c):
     connection = c.model_connection_service.get(DEFAULT_MODEL_CONNECTION_CODE)
     return c.model_connection_service.save_revision(
@@ -175,8 +192,8 @@ def test_admin_api_configures_connection_atomically_and_removes_legacy_routes() 
     c.model_connection_service.model_discoverer = lambda models_url, api_key, timeout_seconds: [
         {"id": "deepseek-v4-flash"}
     ]
-    c.model_connection_service.tester = lambda binding, api_key, timeout_seconds: {
-        "detail": "连接成功"
+    c.model_connection_service.runtime_probes = {
+        "python-v1": SuccessfulPythonDraftProbe()
     }
     app = create_app(settings, container_factory=lambda _: c)
     with TestClient(app) as client:
@@ -620,6 +637,10 @@ def test_saved_connection_probe_rejects_redirect_before_invoking_sdk() -> None:
         invoked = True
         return {"detail": "not expected"}
 
+    class Probe:
+        def probe(self, **kwargs: Any) -> dict[str, Any]:
+            return tester(**kwargs)
+
     def reject_redirect(*args: Any, **kwargs: Any) -> None:
         del args, kwargs
         raise NonRetryableExecutionError(
@@ -628,7 +649,7 @@ def test_saved_connection_probe_rejects_redirect_before_invoking_sdk() -> None:
             error_code="model_connection_redirect_rejected",
         )
 
-    c.model_connection_service.tester = tester
+    c.model_connection_service.runtime_probes = {"python-v1": Probe()}
     c.model_connection_service.redirect_checker = reject_redirect
     with pytest.raises(NonRetryableExecutionError) as rejected:
         c.model_connection_service.test_saved_revision(
@@ -639,7 +660,7 @@ def test_saved_connection_probe_rejects_redirect_before_invoking_sdk() -> None:
     assert invoked is False
 
 
-def test_saved_connection_probe_delegates_fixed_revision_to_typescript_runtime() -> None:
+def test_saved_connection_probe_delegates_fixed_revision_to_python_runtime() -> None:
     c = container()
     revision = ready_connection(c)
     observed: dict[str, Any] = {}
@@ -655,11 +676,11 @@ def test_saved_connection_probe_delegates_fixed_revision_to_typescript_runtime()
                 "provider_host": "api.deepseek.com",
                 "model": "deepseek-v4-flash",
                 "runtime_version": "0.1.0",
-                "sdk_version": "0.3.226",
+                "sdk_version": "0.2.134",
                 "duration_ms": 12,
             }
 
-    c.model_connection_service.runtime_probe = Probe()
+    c.model_connection_service.runtime_probes = {"python-v1": Probe()}
     c.model_connection_service.redirect_checker = lambda *_args, **_kwargs: None
     c.model_connection_service.secret_provider.resolve = lambda _ref: pytest.fail(
         "Python must not resolve or forward the model API key for a saved Runtime probe"
@@ -681,14 +702,14 @@ def test_saved_connection_probe_delegates_fixed_revision_to_typescript_runtime()
         "provider_host": "api.deepseek.com",
         "model": "deepseek-v4-flash",
         "duration_ms": 12,
-        "runtime": "typescript-v1",
+        "runtime": "python-v1",
         "runtime_version": "0.1.0",
-        "sdk_version": "0.3.226",
+        "sdk_version": "0.2.134",
     }
     assert "secret" not in json.dumps(result).lower()
 
 
-def test_saved_connection_probe_selects_requested_runtime() -> None:
+def test_saved_connection_probe_rejects_retired_typescript_runtime() -> None:
     c = container()
     revision = ready_connection(c)
     observed: list[str] = []
@@ -708,22 +729,58 @@ def test_saved_connection_probe_selects_requested_runtime() -> None:
                 "duration_ms": 7,
             }
 
-    c.model_connection_service.runtime_probes = {
-        runtime_kind: Probe(runtime_kind) for runtime_kind in ("python-v1", "typescript-v1")
-    }
+    c.model_connection_service.runtime_probes = {"python-v1": Probe("python-v1")}
     c.model_connection_service.redirect_checker = lambda *_args, **_kwargs: None
 
-    result = c.model_connection_service.test_saved_revision(
-        actor_id=ADMIN_ID,
-        revision_id=str(revision["id"]),
-        runtime_kind="python-v1",
-    )
+    with pytest.raises(NonRetryableExecutionError) as retired:
+        c.model_connection_service.test_saved_revision(
+            actor_id=ADMIN_ID,
+            revision_id=str(revision["id"]),
+            runtime_kind="typescript-v1",
+        )
 
-    assert observed == ["python-v1"]
-    assert result["runtime"] == "python-v1"
+    assert observed == []
+    assert retired.value.error_code == "typescript_agent_runtime_retired"
 
 
-def test_admin_api_exposes_saved_revision_typescript_probe() -> None:
+@pytest.mark.parametrize(
+    "drift",
+    [
+        {"connection_revision_id": "revision-drift"},
+        {"provider_host": "attacker.invalid"},
+        {"model": "model-drift"},
+    ],
+)
+def test_saved_python_probe_rejects_revision_host_or_model_drift(
+    drift: dict[str, str],
+) -> None:
+    c = container()
+    revision = ready_connection(c)
+
+    class Probe:
+        def probe(self, **kwargs: Any) -> dict[str, Any]:
+            return {
+                "runtime_kind": "python-v1",
+                "success": True,
+                "connection_revision_id": kwargs["revision_id"],
+                "provider_host": "api.deepseek.com",
+                "model": "deepseek-v4-flash",
+                **drift,
+            }
+
+    c.model_connection_service.runtime_probes = {"python-v1": Probe()}
+    c.model_connection_service.redirect_checker = lambda *_args, **_kwargs: None
+
+    with pytest.raises(NonRetryableExecutionError) as rejected:
+        c.model_connection_service.test_saved_revision(
+            actor_id=ADMIN_ID,
+            revision_id=str(revision["id"]),
+        )
+
+    assert rejected.value.error_code == "model_connection_test_invalid_response"
+
+
+def test_admin_api_returns_stable_error_for_retired_typescript_probe() -> None:
     settings, c = web_container()
     revision = ready_connection(c)
 
@@ -743,7 +800,7 @@ def test_admin_api_exposes_saved_revision_typescript_probe() -> None:
                 "duration_ms": 9,
             }
 
-    c.model_connection_service.runtime_probe = Probe()
+    c.model_connection_service.runtime_probes = {"python-v1": Probe()}
     c.model_connection_service.redirect_checker = lambda *_args, **_kwargs: None
     app = create_app(settings, container_factory=lambda _: c)
     with TestClient(app) as client:
@@ -760,9 +817,8 @@ def test_admin_api_exposes_saved_revision_typescript_probe() -> None:
             json={"runtime_kind": "typescript-v1", "timeout_seconds": 12},
         )
 
-    assert response.status_code == 200
-    assert response.json()["result"]["runtime"] == "typescript-v1"
-    assert response.json()["result"]["sdk_version"] == "0.3.226"
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "typescript_agent_runtime_retired"
 
 
 def test_concurrent_jobs_do_not_leak_process_environment_between_connections() -> None:

@@ -17,4 +17,4 @@ ADR-0001—0024、0028—0030、0033—0038、0040—0041、0043—0048 所描�
 
 退役 ADR 已移动到 [旧 API Platform 历史区](../../archive/legacy-api-platform/README.md)。
 
-当前工具运行边界以标准 MCP 为准：`Worker -> Python/TypeScript Runtime -> tool-mcp -> Resource`。ONES 身份绑定独立于 MCP 和旧 API Platform，不保存用于业务调用的长期 Token。
+当前工具运行边界以标准 MCP 为准：`Worker -> Python Runtime -> tool-mcp -> Resource`。历史 TypeScript Agent Runtime 事实只读保留。ONES 身份绑定独立于 MCP 和旧 API Platform，不保存用于业务调用的长期 Token。

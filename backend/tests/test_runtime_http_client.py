@@ -17,10 +17,10 @@ from app.modules.agent.domain.runtime import (
     AgentRunRequest,
     McpRuntimeBinding,
 )
-from app.modules.agent.infrastructure.typescript_runtime_client import (
+from app.modules.agent.infrastructure.runtime_http_client import (
+    AgentRuntimeHttpClient,
     RuntimeClientSettings,
     RuntimeGrantIssuer,
-    TypeScriptAgentRuntimeClient,
     probe_runtime_readiness,
 )
 from app.modules.model_connection.domain import (
@@ -58,7 +58,7 @@ def test_passive_runtime_readiness_calls_only_version_and_ready(
         if request.full_url.endswith("/version"):
             return _PassiveResponse(
                 {
-                    "runtime": "typescript-v1",
+                    "runtime": "python-v1",
                     "runtime_version": "0.1.0",
                     "protocol_version": "1.0",
                     "sdk_version": "0.3.226",
@@ -93,7 +93,7 @@ def test_passive_runtime_readiness_preserves_degraded_dependency_status(
         if request.full_url.endswith("/version"):
             return _PassiveResponse(
                 {
-                    "runtime": "typescript-v1",
+                    "runtime": "python-v1",
                     "runtime_version": "0.1.0",
                     "protocol_version": "1.0",
                     "sdk_version": "0.3.226",
@@ -179,7 +179,7 @@ def _context() -> AgentExecutionContext:
                 tool_schema_hash="b" * 64,
             ),
         ),
-        runtime_kind="typescript-v1",
+        runtime_kind="python-v1",
     )
 
 
@@ -195,7 +195,7 @@ def _request() -> AgentRunRequest:
 
 def _provenance(request: dict[str, Any]) -> dict[str, Any]:
     return {
-        "runtime_kind": "typescript-v1",
+        "runtime_kind": "python-v1",
         "runtime_version": "0.1.0",
         "protocol_version": "1.0",
         "sdk_version": "0.3.226",
@@ -304,7 +304,7 @@ def _client(
     private_pem, public_pem = _private_key()
     captured_events = events if events is not None else []
     return (
-        TypeScriptAgentRuntimeClient(
+        AgentRuntimeHttpClient(
             settings=RuntimeClientSettings(
                 base_url="http://agent-runtime:8090",
                 allowed_runtime_hosts=("agent-runtime",),
@@ -327,7 +327,7 @@ def test_worker_builds_exact_request_and_validates_ndjson_terminal() -> None:
     result = client.run(_request())
 
     assert result.final_answer == "final answer"
-    assert result.runtime_provenance["runtime_kind"] == "typescript-v1"
+    assert result.runtime_provenance["runtime_kind"] == "python-v1"
     assert len(result.tool_events) == 1
     assert [event["sequence"] for event in persisted_events] == [1, 2, 3]
     runtime_claims = jwt.decode(
@@ -339,13 +339,13 @@ def test_worker_builds_exact_request_and_validates_ndjson_terminal() -> None:
         options={"verify_exp": False, "verify_iat": False, "verify_nbf": False},
     )
     assert runtime_claims["azp"] == "agent-worker"
-    assert runtime_claims["runtime_kind"] == "typescript-v1"
+    assert runtime_claims["runtime_kind"] == "python-v1"
     assert runtime_claims["job_id"] == "job-1"
     assert runtime_claims["request_digest"] == transport.request["request_digest"]
     assert runtime_claims["application_publication_id"] == "application-publication-1"
     assert runtime_claims["exp"] - runtime_claims["iat"] == 180
     assert "secret_ref" not in json.dumps(transport.request)
-    assert transport.request["runtime_kind"] == "typescript-v1"
+    assert transport.request["runtime_kind"] == "python-v1"
     assert transport.request["mcp_servers"][0]["server_code"] == "tool-mcp"
     assert transport.request["mcp_servers"][0]["tools"] == [
         {
@@ -450,9 +450,7 @@ def test_worker_issues_a_separate_file_principal_for_file_mcp() -> None:
                 McpRuntimeBinding(
                     server_code="file-service",
                     tool_name="file_prepare_materialization",
-                    required_scope=(
-                        "mcp:file-service:file_prepare_materialization:invoke"
-                    ),
+                    required_scope=("mcp:file-service:file_prepare_materialization:invoke"),
                     tool_schema_hash="d" * 64,
                 ),
             ),
@@ -549,7 +547,7 @@ def test_observed_stream_never_advances_to_a_new_attempt_when_recovery_fails(
     persisted_events: list[dict[str, Any]] = []
     client, _ = _client(transport, events=persisted_events)
     monkeypatch.setattr(
-        "app.modules.agent.infrastructure.typescript_runtime_client.time.sleep",
+        "app.modules.agent.infrastructure.runtime_http_client.time.sleep",
         lambda _seconds: None,
     )
 

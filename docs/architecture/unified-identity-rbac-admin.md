@@ -2,7 +2,7 @@
 
 该能力把 Web 管理员和钉钉用户统一映射为内部 `app_user`。权限只授予内部用户或角色；钉钉 `senderStaffId` 只有在受治理企业和受信应用消息共同确认后才是外部身份键，不能直接充当授权主体。
 
-Web 分别治理 Python 与 TypeScript Agent；数据库、服务和运行时使用多 Agent 的 definition、draft revision、immutable publication 模型。新 job 在创建时固定 publication ID、runtime kind、revision 和 hash，后续发布或回滚不会改变已经创建的 job。
+Web 只治理 Python Agent，并把历史 TypeScript Agent 标记为已退役、只读；数据库和服务继续使用多 Agent 的 definition、draft revision、immutable publication 模型。新 Job 在创建时固定 publication ID、`python-v1` runtime kind、revision 和 hash，后续发布或回滚不会改变已经创建的 Job。
 
 ## 功能开关与启动
 

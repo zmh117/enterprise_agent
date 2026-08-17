@@ -46,7 +46,7 @@ def _database(tmp_path: Path) -> tuple[Database, str]:
 
 def _events() -> list[dict[str, object]]:
     fixture = json.loads(
-        Path("agent-runtime/contracts/v1.2/golden/safe-runtime-fixture.json").read_text(
+        Path("contracts/agent-runtime/v1.2/golden/safe-runtime-fixture.json").read_text(
             encoding="utf-8"
         )
     )

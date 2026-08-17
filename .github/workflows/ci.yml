@@ -19,25 +19,6 @@ jobs:
       - run: .venv/bin/python scripts/check_markdown_links.py
       - run: .venv/bin/pytest backend/tests
 
-  agent-runtime:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: agent-runtime
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: agent-runtime/package-lock.json
-      - run: npm ci --no-audit --no-fund
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run check:contracts
-      - run: npm run preflight:static
-
   dingtalk-runtime:
     runs-on: ubuntu-latest
     defaults:
@@ -57,10 +38,10 @@ jobs:
 
   runtime-images:
     runs-on: ubuntu-latest
-    needs: [backend, agent-runtime, dingtalk-runtime]
+    needs: [backend, dingtalk-runtime]
     steps:
       - uses: actions/checkout@v4
-      - run: docker compose build typescript-agent-runtime python-agent-runtime dingtalk-runtime
+      - run: docker compose build api-server agent-worker python-agent-runtime dingtalk-runtime
 
   admin-web:
     runs-on: ubuntu-latest

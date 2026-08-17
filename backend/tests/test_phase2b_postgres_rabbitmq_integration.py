@@ -145,7 +145,6 @@ def test_committed_job_survives_dispatch_and_duplicate_event_executes_once(
         seed=True,
         runtime_clients={
             "python-v1": counting_client,
-            "typescript-v1": counting_client,
         },
     )
     container.settings = replace(container.settings, queue=queue)

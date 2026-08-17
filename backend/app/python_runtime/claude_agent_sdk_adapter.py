@@ -609,7 +609,7 @@ class RealClaudeCodeAgentClient:
                         error_result = _result_error_details(message)
                         if error_result is not None:
                             raise RetryableExecutionError(
-                                error_result[0],
+                                "Model provider rejected connection probe",
                                 safe_message="模型提供方拒绝了连接测试",
                                 error_code="model_connection_provider_rejected",
                             )

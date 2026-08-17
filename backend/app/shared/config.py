@@ -152,8 +152,7 @@ class OnesIdentitySettings:
 class AgentRuntimeSettings:
     python_base_url: str = ""
     python_allowed_hosts: tuple[str, ...] = ()
-    typescript_base_url: str = ""
-    typescript_allowed_hosts: tuple[str, ...] = ()
+    retired_configuration_keys: tuple[str, ...] = ()
     grant_private_key_file: str = ""
     model_probe_auth_token_file: str = ""
     allow_insecure_internal_http: bool = False
@@ -375,9 +374,13 @@ def load_settings(*, validate_object_storage: bool = True) -> Settings:
         agent_runtime=AgentRuntimeSettings(
             python_base_url=os.getenv("PYTHON_AGENT_RUNTIME_URL", ""),
             python_allowed_hosts=_csv_tuple(os.getenv("PYTHON_AGENT_RUNTIME_ALLOWED_HOSTS", "")),
-            typescript_base_url=os.getenv("TYPESCRIPT_AGENT_RUNTIME_URL", ""),
-            typescript_allowed_hosts=_csv_tuple(
-                os.getenv("TYPESCRIPT_AGENT_RUNTIME_ALLOWED_HOSTS", "")
+            retired_configuration_keys=tuple(
+                key
+                for key in (
+                    "TYPESCRIPT_AGENT_RUNTIME_URL",
+                    "TYPESCRIPT_AGENT_RUNTIME_ALLOWED_HOSTS",
+                )
+                if os.getenv(key, "").strip()
             ),
             grant_private_key_file=os.getenv("RUNTIME_GRANT_PRIVATE_KEY_FILE", ""),
             model_probe_auth_token_file=os.getenv("MODEL_PROBE_AUTH_TOKEN_FILE", ""),

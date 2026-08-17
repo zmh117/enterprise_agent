@@ -1,34 +1,172 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from app.modules.agent.infrastructure.generated_runtime_contracts import validate_contract
+from app.modules.agent.infrastructure.generated_runtime_contracts import (
+    CONTRACT_SCHEMA_SHA256,
+    validate_contract,
+)
 from app.modules.agent.infrastructure.generated_runtime_contracts_v1_1 import (
+    CONTRACT_SCHEMA_SHA256 as CONTRACT_SCHEMA_SHA256_V11,
     validate_contract as validate_v11_contract,
+)
+from app.modules.agent.infrastructure.generated_runtime_contracts_v1_2 import (
+    CONTRACT_SCHEMA_SHA256 as CONTRACT_SCHEMA_SHA256_V12,
+)
+from app.modules.agent.infrastructure.generated_runtime_contracts_v1_3 import (
+    CONTRACT_SCHEMA_SHA256 as CONTRACT_SCHEMA_SHA256_V13,
 )
 from app.modules.agent.infrastructure.runtime_protocol import (
     RuntimeProtocolError,
+    SUPPORTED_RUNTIME_PROTOCOL_VERSIONS,
     canonical_request_digest,
     validate_execution_request,
     validate_runtime_contract,
 )
 
 
-CONTRACT_ROOT = Path(__file__).parents[2] / "agent-runtime" / "contracts" / "v1"
-CONTRACT_ROOT_V11 = Path(__file__).parents[2] / "agent-runtime" / "contracts" / "v1.1"
-CONTRACT_ROOT_V12 = Path(__file__).parents[2] / "agent-runtime" / "contracts" / "v1.2"
-CONTRACT_ROOT_V13 = Path(__file__).parents[2] / "agent-runtime" / "contracts" / "v1.3"
+CONTRACT_ROOT = Path(__file__).parents[2] / "contracts" / "agent-runtime" / "v1"
+CONTRACT_ROOT_V11 = Path(__file__).parents[2] / "contracts" / "agent-runtime" / "v1.1"
+CONTRACT_ROOT_V12 = Path(__file__).parents[2] / "contracts" / "agent-runtime" / "v1.2"
+CONTRACT_ROOT_V13 = Path(__file__).parents[2] / "contracts" / "agent-runtime" / "v1.3"
+CONTRACT_VERSIONS = {
+    "1.0": (CONTRACT_ROOT, CONTRACT_SCHEMA_SHA256),
+    "1.1": (CONTRACT_ROOT_V11, CONTRACT_SCHEMA_SHA256_V11),
+    "1.2": (CONTRACT_ROOT_V12, CONTRACT_SCHEMA_SHA256_V12),
+    "1.3": (CONTRACT_ROOT_V13, CONTRACT_SCHEMA_SHA256_V13),
+}
 
 
 def _request() -> dict[str, Any]:
     return json.loads(
         (CONTRACT_ROOT / "golden" / "execution-request.json").read_text(encoding="utf-8")
     )
+
+
+def test_repository_contract_fact_source_is_complete_and_hashes_match() -> None:
+    assert tuple(CONTRACT_VERSIONS) == SUPPORTED_RUNTIME_PROTOCOL_VERSIONS
+    baseline_errors: dict[str, str] | None = None
+
+    for protocol_version, (root, expected_schema_hash) in CONTRACT_VERSIONS.items():
+        required_files = {
+            root / "protocol.schema.json",
+            root / "limits.json",
+            root / "errors.json",
+            root / "golden" / "execution-request.json",
+            root / "golden" / "platform-secret-python.json",
+            root / "golden" / "safe-runtime-fixture.json",
+        }
+        assert all(path.is_file() for path in required_files)
+
+        schema_bytes = (root / "protocol.schema.json").read_bytes()
+        assert hashlib.sha256(schema_bytes).hexdigest() == expected_schema_hash
+
+        errors = json.loads((root / "errors.json").read_text(encoding="utf-8"))
+        assert errors["protocol_version"] == protocol_version
+        error_classes = {
+            str(item["code"]): str(item["retry_class"]) for item in errors["errors"]
+        }
+        if baseline_errors is None:
+            baseline_errors = error_classes
+        else:
+            assert baseline_errors.items() <= error_classes.items()
+
+        request = json.loads(
+            (root / "golden" / "execution-request.json").read_text(encoding="utf-8")
+        )
+        assert request["protocol_version"] == protocol_version
+        assert canonical_request_digest(request) == request["request_digest"]
+        assert validate_execution_request(request) == request
+
+        historical = json.loads(
+            (root / "golden" / "safe-runtime-fixture.json").read_text(encoding="utf-8")
+        )
+        validate_runtime_contract(
+            "ToolEvent",
+            historical["tool_event"],
+            protocol_version=protocol_version,
+        )
+        validate_runtime_contract(
+            "RuntimeFailure",
+            historical["failure"],
+            protocol_version=protocol_version,
+        )
+
+
+@pytest.mark.parametrize("protocol_version", SUPPORTED_RUNTIME_PROTOCOL_VERSIONS)
+def test_python_contract_covers_full_lifecycle_for_every_supported_version(
+    protocol_version: str,
+) -> None:
+    root, _schema_hash = CONTRACT_VERSIONS[protocol_version]
+    request = json.loads(
+        (root / "golden" / "execution-request.json").read_text(encoding="utf-8")
+    )
+    fixture = json.loads(
+        (root / "golden" / "safe-runtime-fixture.json").read_text(encoding="utf-8")
+    )
+    base_event = {
+        "protocol_version": protocol_version,
+        "invocation_id": request["invocation_id"],
+        "request_digest": request["request_digest"],
+        "timestamp": "2026-08-17T00:00:00Z",
+    }
+    accepted = {
+        **base_event,
+        "sequence": 1,
+        "event_type": "execution_started",
+        "payload": fixture["runtime_provenance"],
+    }
+    tool = {
+        **base_event,
+        "sequence": 2,
+        "event_type": "tool_event",
+        "payload": fixture["tool_event"],
+    }
+    validate_runtime_contract("RuntimeEvent", accepted, protocol_version=protocol_version)
+    validate_runtime_contract("RuntimeEvent", tool, protocol_version=protocol_version)
+
+    common_terminal = {
+        "protocol_version": protocol_version,
+        "invocation_id": request["invocation_id"],
+        "request_digest": request["request_digest"],
+        "last_sequence": 3,
+        "usage": fixture["usage"],
+        "runtime_provenance": fixture["runtime_provenance"],
+        **({"accounting": fixture["accounting"]} if protocol_version >= "1.2" else {}),
+    }
+    failures = {
+        "FAILED": fixture["failure"],
+        "CANCELLED": {
+            "code": "runtime_cancelled",
+            "retry_class": "NEVER",
+            "safe_message": "Agent execution cancelled",
+        },
+        "TIMEOUT": {
+            "code": "runtime_timeout",
+            "retry_class": "TRANSIENT",
+            "safe_message": "Agent execution timed out",
+        },
+    }
+    succeeded = {**common_terminal, "status": "SUCCEEDED", "final_answer": "fixture result"}
+    validate_runtime_contract("TerminalResult", succeeded, protocol_version=protocol_version)
+    for status, failure in failures.items():
+        terminal_status = "FAILED" if status == "TIMEOUT" else status
+        terminal = {**common_terminal, "status": terminal_status, "failure": failure}
+        validate_runtime_contract("TerminalResult", terminal, protocol_version=protocol_version)
+
+    cancel = {
+        "protocol_version": protocol_version,
+        "invocation_id": request["invocation_id"],
+        "request_digest": request["request_digest"],
+        "reason": "WORKER_TIMEOUT",
+    }
+    validate_runtime_contract("CancelRequest", cancel, protocol_version=protocol_version)
 
 
 def test_python_accepts_typescript_golden_request_and_digest() -> None:

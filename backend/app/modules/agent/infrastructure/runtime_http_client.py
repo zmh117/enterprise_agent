@@ -221,7 +221,7 @@ class RuntimeGrantIssuer:
 class RuntimeClientSettings:
     base_url: str
     allowed_runtime_hosts: tuple[str, ...]
-    runtime_kind: str = "typescript-v1"
+    runtime_kind: str = "python-v1"
     allowed_mcp_server_codes: tuple[str, ...] = (
         STANDARD_TOOL_MCP_CODE,
         ONES_MCP_CODE,
@@ -747,7 +747,3 @@ class AgentRuntimeHttpClient:
             tool_events=tool_events,
             error_code="runtime_protocol_error",
         )
-
-
-# Compatibility for callers not yet renamed; implementation is runtime-neutral.
-TypeScriptAgentRuntimeClient = AgentRuntimeHttpClient

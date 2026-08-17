@@ -239,7 +239,8 @@ describe("Agent Profile management", () => {
             status: "enabled",
             revision: 1,
             runtime_kind: "typescript-v1",
-            management_mode: "editable",
+            management_mode: "read_only_retired",
+            retirement_status: "retired",
             current_publication: null,
             model_connection_status: "legacy_global_connection",
             active_application_count: 0,
@@ -265,7 +266,7 @@ describe("Agent Profile management", () => {
     expect(await screen.findByText("默认诊断 Agent")).toBeInTheDocument()
     expect(screen.getByText("TypeScript 诊断 Agent")).toBeInTheDocument()
     expect(screen.getByText("Python Runtime")).toBeInTheDocument()
-    expect(screen.getByText("TypeScript Runtime")).toBeInTheDocument()
+    expect(screen.getByText("TypeScript Runtime（已退役）")).toBeInTheDocument()
     expect(screen.getByText("r3")).toBeInTheDocument()
     expect(screen.getByText("引用版本已删除，请重新配置")).toBeInTheDocument()
     expect(
@@ -336,14 +337,12 @@ describe("Agent Profile management", () => {
     })
   })
 
-  it("allows choosing the TypeScript Runtime when creating an Agent", async () => {
+  it("fixes new Agents to Python Runtime without a TypeScript selector", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation((input, init) => {
         if (String(input) === "/api/admin/agents" && init?.method === "POST") {
-          return response(
-            createdAgentPayload("typescript-operations-agent", "typescript-v1")
-          )
+          return response(createdAgentPayload("operations-agent", "python-v1"))
         }
         return response({
           agents: [],
@@ -371,20 +370,17 @@ describe("Agent Profile management", () => {
     await screen.findByText("还没有 Agent")
     fireEvent.click(screen.getAllByRole("button", { name: "新建 Agent" })[0])
     fireEvent.change(screen.getByRole("textbox", { name: "Agent 编码" }), {
-      target: { value: "typescript-operations-agent" },
+      target: { value: "operations-agent" },
     })
     fireEvent.change(screen.getByRole("textbox", { name: "名称" }), {
-      target: { value: "TypeScript 运维 Agent" },
+      target: { value: "运维 Agent" },
     })
-    fireEvent.click(screen.getByRole("combobox", { name: "Runtime" }))
-    const typescriptOption = await screen.findByRole("option", {
-      name: "TypeScript Runtime",
-    })
-    fireEvent.pointerDown(typescriptOption, {
-      pointerType: "mouse",
-      button: 0,
-    })
-    fireEvent.click(typescriptOption)
+    expect(screen.getByRole("textbox", { name: "Runtime" })).toHaveValue(
+      "Python Runtime"
+    )
+    expect(
+      screen.queryByRole("option", { name: /TypeScript Runtime/ })
+    ).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "创建 Agent" }))
 
     await waitFor(() =>
@@ -398,7 +394,7 @@ describe("Agent Profile management", () => {
         String(input) === "/api/admin/agents" && init?.method === "POST"
     )
     expect(JSON.parse(String(createCall?.[1]?.body)).runtime_kind).toBe(
-      "typescript-v1"
+      "python-v1"
     )
   })
 
@@ -470,26 +466,12 @@ describe("Agent Profile management", () => {
     expect(code).toHaveValue("duplicate-agent")
   })
 
-  it("loads and saves the exact TypeScript Agent selected by the route", async () => {
+  it("loads a historical TypeScript Agent as retired and read-only", async () => {
     const payload = agentPayload().agent
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation((input) => {
         const url = String(input)
-        if (url.endsWith("/revisions/model_revision_1/test")) {
-          return response({
-            result: {
-              success: true,
-              connection_revision_id: "model_revision_1",
-              provider_host: "api.deepseek.com",
-              model: "deepseek-v4-flash",
-              duration_ms: 41,
-              runtime: "typescript-v1",
-              runtime_version: "0.1.0",
-              sdk_version: "0.3.226",
-            },
-          })
-        }
         if (url.includes("/model-connections/")) {
           return response({ connection: modelConnection })
         }
@@ -506,6 +488,8 @@ describe("Agent Profile management", () => {
               name: "TypeScript 诊断 Agent",
               runtime_kind: "typescript-v1",
             },
+            management_mode: "read_only_retired",
+            retirement_status: "retired",
           },
         })
       })
@@ -535,42 +519,31 @@ describe("Agent Profile management", () => {
     )
 
     expect(await screen.findByText("TypeScript 诊断 Agent")).toBeInTheDocument()
-    expect(screen.getByText("TypeScript Runtime")).toBeInTheDocument()
+    expect(screen.getByText("TypeScript Runtime（已退役）")).toBeInTheDocument()
+    expect(
+      screen.getByText(/TypeScript Agent Runtime 已退役/)
+    ).toBeInTheDocument()
     expect(fetchSpy).toHaveBeenCalledWith(
       "/api/admin/agents/typescript-diagnostic-agent",
       expect.any(Object)
     )
 
+    expect(screen.getByRole("textbox", { name: "业务角色" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "保存草稿" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "发布 Agent" })).toBeDisabled()
     fireEvent.click(screen.getByRole("tab", { name: "模型连接" }))
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "通过 TypeScript Runtime 测试当前连接",
-      })
-    )
     expect(
-      await screen.findByText(
-        "连接成功 · api.deepseek.com · deepseek-v4-flash · 41ms"
+      screen.getByRole("button", {
+        name: "通过 Python Runtime 测试当前连接",
+      })
+    ).toBeDisabled()
+    expect(
+      fetchSpy.mock.calls.some(
+        ([input, init]) =>
+          String(input).includes("typescript-diagnostic-agent") &&
+          ["PUT", "POST"].includes(String(init?.method))
       )
-    ).toBeInTheDocument()
-    const savedTestCall = fetchSpy.mock.calls.find(([input]) =>
-      String(input).endsWith("/revisions/model_revision_1/test")
-    )
-    expect(JSON.parse(String(savedTestCall?.[1]?.body))).toEqual({
-      runtime_kind: "typescript-v1",
-      timeout_seconds: 15,
-    })
-
-    fireEvent.click(screen.getByRole("tab", { name: "Agent 配置" }))
-    fireEvent.change(screen.getByRole("textbox", { name: "业务角色" }), {
-      target: { value: "TypeScript 诊断助手" },
-    })
-    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }))
-    await waitFor(() =>
-      expect(fetchSpy).toHaveBeenCalledWith(
-        "/api/admin/agents/typescript-diagnostic-agent/draft",
-        expect.objectContaining({ method: "PUT" })
-      )
-    )
+    ).toBe(false)
   })
 
   it("shows the saved model connection without exposing a raw credential", async () => {
@@ -780,7 +753,6 @@ describe("Agent Profile management", () => {
       String(input).endsWith("/revisions/model_revision_1/test")
     )
     expect(JSON.parse(String(savedTestCall?.[1]?.body))).toEqual({
-      runtime_kind: "python-v1",
       timeout_seconds: 15,
     })
 
@@ -1014,8 +986,8 @@ describe("Agent Profile management", () => {
     const draftTestCall = fetchSpy.mock.calls.find(([input]) =>
       String(input).endsWith("/test-draft")
     )
-    expect(JSON.parse(String(draftTestCall?.[1]?.body)).runtime_kind).toBe(
-      "python-v1"
+    expect(JSON.parse(String(draftTestCall?.[1]?.body))).not.toHaveProperty(
+      "runtime_kind"
     )
     fireEvent.click(screen.getByRole("button", { name: "验证并原子保存" }))
     await waitFor(() => expect(keyInput).toHaveValue(""))
@@ -1032,8 +1004,10 @@ describe("Agent Profile management", () => {
       expect.objectContaining({
         expected_revision: 0,
         api_key: plaintext,
-        runtime_kind: "python-v1",
       })
+    )
+    expect(JSON.parse(String(configureCall?.[1]?.body))).not.toHaveProperty(
+      "runtime_kind"
     )
   })
 
@@ -1163,8 +1137,10 @@ describe("Agent Profile management", () => {
         expected_revision: 1,
         credential_source: "existing",
         api_key: "",
-        runtime_kind: "python-v1",
       })
+    )
+    expect(JSON.parse(String(configureCall?.[1]?.body))).not.toHaveProperty(
+      "runtime_kind"
     )
     expect(
       fetchSpy.mock.calls.some(([input]) =>

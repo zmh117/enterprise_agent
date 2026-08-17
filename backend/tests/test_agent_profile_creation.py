@@ -73,7 +73,7 @@ def test_duplicate_agent_code_is_a_stable_conflict_without_orphan_rows() -> None
     with pytest.raises(NonRetryableExecutionError) as rejected:
         runtime.agent_config_service.create_agent(
             actor_id="user_local_admin",
-            **_creation_payload(code="duplicate-agent", runtime_kind="typescript-v1"),
+            **_creation_payload(code="duplicate-agent"),
         )
 
     assert rejected.value.error_code == "agent_code_conflict"
@@ -89,7 +89,7 @@ def test_concurrent_agent_code_creation_has_one_winner_and_no_orphan() -> None:
     runtime = build_test_container(make_test_settings(), migrate=True, seed=True)
     barrier = Barrier(2)
 
-    def create(runtime_kind: str) -> str:
+    def create(_attempt: int) -> str:
         barrier.wait(timeout=5)
         for _ in range(20):
             try:
@@ -97,7 +97,6 @@ def test_concurrent_agent_code_creation_has_one_winner_and_no_orphan() -> None:
                     actor_id="user_local_admin",
                     **_creation_payload(
                         code="concurrent-agent",
-                        runtime_kind=runtime_kind,
                     ),
                 )
                 return "created"
@@ -110,7 +109,7 @@ def test_concurrent_agent_code_creation_has_one_winner_and_no_orphan() -> None:
         return "sqlite_lock_retry_exhausted"
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        results = list(executor.map(create, ("python-v1", "typescript-v1")))
+        results = list(executor.map(create, (1, 2)))
 
     assert sorted(results) == ["agent_code_conflict", "created"]
     definition = runtime.agent_config_service.repository.get_definition("concurrent-agent")
@@ -134,33 +133,23 @@ def test_builtin_agent_bootstrap_is_idempotent_and_preserves_existing_state() ->
 
     first = bootstrapper.ensure_builtin_agents(model="claude-sonnet-4-20250514")
     python = runtime.agent_config_service.repository.get_definition("default-diagnostic-agent")
-    typescript = runtime.agent_config_service.repository.get_definition(
-        "typescript-diagnostic-agent"
-    )
     runtime.database.execute(
         "update agent_definition set name = '自定义名称' where id = ?",
         (python["id"],),
     )
     second = bootstrapper.ensure_builtin_agents(model="another-model")
 
-    assert first["created"] == [
-        "default-diagnostic-agent",
-        "typescript-diagnostic-agent",
-    ]
+    assert first["created"] == ["default-diagnostic-agent"]
     assert python["runtime_kind"] == "python-v1"
-    assert typescript["runtime_kind"] == "typescript-v1"
     assert second["created"] == []
     assert second["drafts_created"] == []
-    assert second["preserved"] == [
-        "default-diagnostic-agent",
-        "typescript-diagnostic-agent",
-    ]
+    assert second["preserved"] == ["default-diagnostic-agent"]
     assert (
         runtime.agent_config_service.repository.get_definition("default-diagnostic-agent")["name"]
         == "自定义名称"
     )
-    assert len(runtime.database.execute("select id from agent_definition")) == 2
-    assert len(runtime.database.execute("select id from agent_revision")) == 2
+    assert len(runtime.database.execute("select id from agent_definition")) == 1
+    assert len(runtime.database.execute("select id from agent_revision")) == 1
     assert runtime.database.execute("select id from agent_publication") == []
 
 
@@ -182,7 +171,7 @@ def test_builtin_agent_bootstrap_fails_closed_on_runtime_drift() -> None:
     assert rejected.value.error_code == "agent_runtime_kind_mismatch"
 
 
-def test_agent_creation_api_reports_permission_and_supports_both_runtimes() -> None:
+def test_agent_creation_api_reports_permission_and_retires_typescript_runtime() -> None:
     settings = unified_settings()
     runtime = build_test_container(settings, migrate=True, seed=True)
     app = create_app(settings, container_factory=lambda _: runtime)
@@ -203,14 +192,18 @@ def test_agent_creation_api_reports_permission_and_supports_both_runtimes() -> N
                 runtime_kind="typescript-v1",
             ),
         )
+        typescript_missing = (
+            runtime.agent_config_service.repository.find_definition("api-typescript-agent") is None
+        )
 
     assert listed.status_code == 200
     assert listed.json()["permissions"] == {"can_create": True}
-    assert python.status_code == typescript.status_code == 200
+    assert python.status_code == 200
+    assert typescript.status_code == 400
     assert python.json()["definition"]["runtime_kind"] == "python-v1"
-    assert typescript.json()["definition"]["runtime_kind"] == "typescript-v1"
+    assert typescript.json()["detail"]["code"] == "typescript_agent_runtime_retired"
     assert python.json()["draft"]["revision"] == 1
-    assert typescript.json()["draft"]["revision"] == 1
+    assert typescript_missing
 
 
 def test_agent_creation_api_rejects_conflict_runtime_and_platform_fields() -> None:

@@ -79,7 +79,7 @@ def test_retired_mcp_and_api_platform_architecture_cannot_return() -> None:
 
 def test_runtime_protocol_has_no_caller_controlled_mcp_target_or_credential() -> None:
     schema = json.loads(
-        (REPOSITORY_ROOT / "agent-runtime/contracts/v1/protocol.schema.json").read_text(
+        (REPOSITORY_ROOT / "contracts/agent-runtime/v1/protocol.schema.json").read_text(
             encoding="utf-8"
         )
     )
@@ -195,23 +195,21 @@ def test_compose_keeps_principal_keys_provider_config_and_runtime_urls_separated
         if service_name not in {"agent-worker", "api-server"}:
             assert "principal_jwt_private_key" not in service.get("secrets", [])
 
-    for runtime_name in ("typescript-agent-runtime", "python-agent-runtime"):
-        runtime = services[runtime_name]
-        assert runtime["environment"]["ONES_MCP_SERVER_URL"] == ("http://ones-mcp:9104/mcp")
-        assert runtime["depends_on"]["ones-mcp"]["condition"] == "service_healthy"
-        assert not {
-            "PRINCIPAL_JWT_PRIVATE_KEY_FILE",
-            "PRINCIPAL_JWKS_FILE",
-            "ONES_MCP_PROVIDER_BASE_URL",
-            "ONES_MCP_PROVIDER_ALLOWED_HOSTS",
-        }.intersection(runtime["environment"])
+    assert "typescript-agent-runtime" not in services
+    runtime = services["python-agent-runtime"]
+    assert runtime["environment"]["ONES_MCP_SERVER_URL"] == ("http://ones-mcp:9104/mcp")
+    assert runtime["depends_on"]["ones-mcp"]["condition"] == "service_healthy"
+    assert not {
+        "PRINCIPAL_JWT_PRIVATE_KEY_FILE",
+        "PRINCIPAL_JWKS_FILE",
+        "ONES_MCP_PROVIDER_BASE_URL",
+        "ONES_MCP_PROVIDER_ALLOWED_HOSTS",
+    }.intersection(runtime["environment"])
 
     dockerfile = (REPOSITORY_ROOT / "backend/Dockerfile").read_text(encoding="utf-8")
     assert "FROM api-server AS ones-mcp" in dockerfile
     assert 'USER 10003:10003\nCMD ["python", "-m", "services.ones_mcp_server"]' in dockerfile
-    project = tomllib.loads(
-        (REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    )
+    project = tomllib.loads((REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert project["project"]["optional-dependencies"]["ones-mcp"] == ["mcp==2.0.0"]
     assert project["project"]["optional-dependencies"]["tool-mcp"] == ["mcp==2.0.0"]
 

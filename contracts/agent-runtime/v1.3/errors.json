@@ -1,0 +1,112 @@
+{
+  "protocol_version": "1.3",
+  "errors": [
+    {
+      "code": "runtime_request_invalid",
+      "retry_class": "NEVER"
+    },
+    {
+      "code": "runtime_protocol_unsupported",
+      "retry_class": "NEVER"
+    },
+    {
+      "code": "runtime_request_digest_mismatch",
+      "retry_class": "NEVER"
+    },
+    {
+      "code": "runtime_request_too_large",
+      "retry_class": "NEVER"
+    },
+    {
+      "code": "runtime_grant_invalid",
+      "retry_class": "NEVER"
+    },
+    {
+      "code": "runtime_grant_expired",
+      "retry_class": "NEVER"
+    },
+    {
+      "code": "runtime_invocation_conflict",
+      "retry_class": "NEVER"
+    },
+    {
+      "code": "runtime_cancelled",
+      "retry_class": "NEVER"
+    },
+    {
+      "code": "runtime_timeout",
+      "retry_class": "TRANSIENT"
+    },
+    {
+      "code": "runtime_max_turns",
+      "retry_class": "NEVER"
+    },
+    {
+      "code": "runtime_max_tool_calls",
+      "retry_class": "NEVER"
+    },
+    {
+      "code": "runtime_model_authentication",
+      "retry_class": "CONFIGURATION"
+    },
+    {
+      "code": "runtime_model_rate_limited",
+      "retry_class": "TRANSIENT"
+    },
+    {
+      "code": "runtime_model_unavailable",
+      "retry_class": "TRANSIENT"
+    },
+    {
+      "code": "runtime_transport_error",
+      "retry_class": "TRANSIENT"
+    },
+    {
+      "code": "runtime_cli_decode_error",
+      "retry_class": "TRANSIENT"
+    },
+    {
+      "code": "runtime_inconsistent_result",
+      "retry_class": "TRANSIENT"
+    },
+    {
+      "code": "runtime_mcp_connection_failed",
+      "retry_class": "TRANSIENT"
+    },
+    {
+      "code": "runtime_model_api_error",
+      "retry_class": "TRANSIENT"
+    },
+    {
+      "code": "runtime_tool_permission_denied",
+      "retry_class": "NEVER"
+    },
+    {
+      "code": "runtime_protocol_invalid",
+      "retry_class": "NEVER"
+    },
+    {
+      "code": "runtime_tool_denied",
+      "retry_class": "NEVER"
+    },
+    {
+      "code": "runtime_internal_error",
+      "retry_class": "TRANSIENT"
+    }
+  ],
+  "sensitive_field_denylist": [
+    "authorization",
+    "access_token",
+    "api_key",
+    "secret",
+    "secret_ref",
+    "password",
+    "cookie",
+    "set-cookie",
+    "connection_string",
+    "database_url",
+    "private_reasoning",
+    "thinking",
+    "raw_sdk_message"
+  ]
+}

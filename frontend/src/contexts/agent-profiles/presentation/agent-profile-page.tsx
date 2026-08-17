@@ -17,13 +17,6 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
@@ -47,7 +40,6 @@ import type {
   AgentDetail,
   CredentialSource,
   ModelConnectionConfig,
-  RuntimeKind,
 } from "@/contexts/agent-profiles/domain/agent-profile"
 import { ApiError } from "@/shared/api/api-client"
 
@@ -77,7 +69,7 @@ export function AgentProfilesPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Agent 配置</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            分别管理 Python 与 TypeScript Agent；Runtime 类型创建后不可修改。
+            新建 Agent 统一使用 Python Runtime；历史 TypeScript Agent 仅供查看。
           </p>
         </div>
         {canCreate ? (
@@ -103,7 +95,7 @@ export function AgentProfilesPage() {
               <p className="font-semibold">还没有 Agent</p>
               <p className="mt-1 text-sm text-muted-foreground">
                 {canCreate
-                  ? "新建一个 Agent，并选择 Python 或 TypeScript Runtime。"
+                  ? "新建一个使用 Python Runtime 的 Agent。"
                   : "当前没有可查看的 Agent，请联系平台管理员。"}
               </p>
             </div>
@@ -171,13 +163,11 @@ function CreateAgentPanel({ onCancel }: { onCancel: () => void }) {
     name: string
     description: string
     project_code: string
-    runtime_kind: RuntimeKind
   }>({
     code: "",
     name: "",
     description: "",
     project_code: "default",
-    runtime_kind: "python-v1",
   })
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -236,29 +226,12 @@ function CreateAgentPanel({ onCancel }: { onCancel: () => void }) {
               />
             </Field>
             <Field label="Runtime" htmlFor="create-agent-runtime">
-              <Select
-                value={form.runtime_kind}
-                onValueChange={(value) =>
-                  setForm({
-                    ...form,
-                    runtime_kind: String(value) as RuntimeKind,
-                  })
-                }
-              >
-                <SelectTrigger
-                  id="create-agent-runtime"
-                  aria-label="Runtime"
-                  className="w-full"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="python-v1">Python Runtime</SelectItem>
-                  <SelectItem value="typescript-v1">
-                    TypeScript Runtime
-                  </SelectItem>
-                </SelectContent>
-              </Select>
+              <Input
+                id="create-agent-runtime"
+                value="Python Runtime"
+                readOnly
+                aria-readonly="true"
+              />
             </Field>
           </div>
           <Field label="说明" htmlFor="create-agent-description">
@@ -359,6 +332,7 @@ function Workspace({
     connection.current_revision?.config.model ??
     agent.draft?.config.model_policy.model ??
     ""
+  const retired = agent.management_mode === "read_only_retired"
   return (
     <main className="mx-auto flex w-full max-w-[1500px] flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -398,9 +372,9 @@ function Workspace({
 
       <Card className="border-amber-300/70 bg-amber-50/40 shadow-none dark:bg-amber-950/10">
         <CardContent className="py-4 text-sm text-muted-foreground">
-          发布 Agent 配置只会生成新的 Agent
-          发布版本，不会自动切换任何业务应用。已激活应用仍使用它自己固定的 Agent
-          发布版本，需进入应用详情手动更新并重新发布。
+          {retired
+            ? "TypeScript Agent Runtime 已退役。此 Agent 及历史发布版本仅供查看，不能保存草稿、发布、回退、测试连接或重新激活。"
+            : "发布 Agent 配置只会生成新的 Agent 发布版本，不会自动切换任何业务应用。已激活应用仍使用它自己固定的 Agent 发布版本，需进入应用详情手动更新并重新发布。"}
         </CardContent>
       </Card>
 
@@ -416,16 +390,19 @@ function Workspace({
         <TabsContent value="connection">
           <ConnectionForm
             connection={connection}
-            runtimeKind={agent.definition.runtime_kind}
-            canManageCredential={agent.permissions.can_manage_credential}
-            canTestConnection={agent.permissions.can_test_connection}
+            canManageCredential={
+              agent.permissions.can_manage_credential && !retired
+            }
+            canTestConnection={
+              agent.permissions.can_test_connection && !retired
+            }
           />
         </TabsContent>
         <TabsContent value="publications">
           <PublicationHistory
             agentCode={agent.definition.code}
             currentId={agent.definition.current_publication_id ?? ""}
-            canPublish={agent.permissions.can_publish}
+            canPublish={agent.permissions.can_publish && !retired}
           />
         </TabsContent>
       </Tabs>
@@ -438,12 +415,10 @@ type ConnectionWizardPhase =
 
 function ConnectionForm({
   connection,
-  runtimeKind,
   canManageCredential,
   canTestConnection,
 }: {
   connection: NonNullable<ReturnType<typeof useModelConnection>["data"]>
-  runtimeKind: RuntimeKind
   canManageCredential: boolean
   canTestConnection: boolean
 }) {
@@ -608,7 +583,6 @@ function ConnectionForm({
     try {
       const result = await testSaved.mutateAsync({
         revisionId: current.id,
-        runtimeKind,
         timeoutSeconds: 15,
       })
       setSavedTestResult(result)
@@ -632,7 +606,6 @@ function ConnectionForm({
     try {
       const result = await testDraft.mutateAsync({
         ...credentialInput(),
-        runtime_kind: runtimeKind,
         config: form,
         timeout_seconds: 15,
       })
@@ -656,7 +629,6 @@ function ConnectionForm({
       const revision = await configure.mutateAsync({
         expected_revision: connection.revision,
         ...credentialInput(),
-        runtime_kind: runtimeKind,
         config: form,
         timeout_seconds: 15,
       })
@@ -911,7 +883,7 @@ function ConnectionForm({
               </p>
               <p className="text-xs text-muted-foreground">
                 {savedTestResult
-                  ? `已由 ${runtimeKindLabel(runtimeKind)} 验证当前已保存的连接版本 r${current?.revision ?? connection.revision}，无需重复保存。`
+                  ? `已由 Python Runtime 验证当前已保存的连接版本 r${current?.revision ?? connection.revision}，无需重复保存。`
                   : "最终保存会在服务端重新发现模型并再次执行最小 SDK 测试。"}
               </p>
             </section>
@@ -972,7 +944,7 @@ function ConnectionForm({
                 ) : (
                   <FlaskConicalIcon />
                 )}
-                通过 {runtimeKindLabel(runtimeKind)} 测试当前连接
+                通过 Python Runtime 测试当前连接
               </Button>
             ) : null}
             {!allowed ? (
@@ -1061,6 +1033,8 @@ function ProfileForm({
   const validate = useValidateAgentDraft(agent.definition.code)
   const publish = usePublishAgentDraft(agent.definition.code)
   const draftDirty = JSON.stringify(form) !== JSON.stringify(persistedForm)
+  const writable =
+    agent.management_mode === "editable" && agent.permissions.can_edit_profile
 
   function toggleList(field: "mcp_tool_ids" | "skills", value: string) {
     setForm((current) => ({
@@ -1113,7 +1087,7 @@ function ProfileForm({
         </CardHeader>
         <CardContent className="space-y-5">
           <fieldset
-            disabled={!agent.permissions.can_edit_profile}
+            disabled={!writable}
             className="space-y-5 disabled:opacity-70"
           >
             <div className="grid gap-4 md:grid-cols-2">
@@ -1242,11 +1216,7 @@ function ProfileForm({
             <Button
               type="button"
               onClick={() => void saveDraft()}
-              disabled={
-                save.isPending ||
-                !currentConnection ||
-                !agent.permissions.can_edit_profile
-              }
+              disabled={save.isPending || !currentConnection || !writable}
             >
               {save.isPending ? (
                 <LoaderCircleIcon className="animate-spin" />
@@ -1263,7 +1233,7 @@ function ProfileForm({
                 draftPublished ||
                 draftDirty ||
                 validate.isPending ||
-                !agent.permissions.can_edit_profile
+                !writable
               }
               onClick={() => agent.draft && validate.mutate(agent.draft.id)}
             >
@@ -1279,7 +1249,8 @@ function ProfileForm({
                 !agent.draft.validation.valid ||
                 draftDirty ||
                 publish.isPending ||
-                !agent.permissions.can_publish
+                !agent.permissions.can_publish ||
+                !writable
               }
               onClick={() => agent.draft && publish.mutate(agent.draft.id)}
             >
@@ -1417,7 +1388,12 @@ function PublicationHistory({
               </div>
               <Button
                 variant="outline"
-                disabled={current || rollback.isPending || !canPublish}
+                disabled={
+                  current ||
+                  rollback.isPending ||
+                  !canPublish ||
+                  publication.runtime_kind === "typescript-v1"
+                }
                 onClick={() => rollback.mutate(publication.id)}
               >
                 <RotateCcwIcon />
@@ -1434,7 +1410,7 @@ function PublicationHistory({
 
 function runtimeKindLabel(runtimeKind: "python-v1" | "typescript-v1") {
   return runtimeKind === "typescript-v1"
-    ? "TypeScript Runtime"
+    ? "TypeScript Runtime（已退役）"
     : "Python Runtime"
 }
 

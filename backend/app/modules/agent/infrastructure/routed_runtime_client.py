@@ -7,7 +7,7 @@ from app.modules.agent.domain.runtime import AgentRunRequest, AgentRunResult
 from app.shared.exceptions import NonRetryableExecutionError
 
 SUPPORTED_RUNTIME_PROTOCOLS = frozenset({"1.0", "1.1", "1.2", "1.3"})
-SUPPORTED_RUNTIME_KINDS = frozenset({"python-v1", "typescript-v1"})
+SUPPORTED_RUNTIME_KINDS = frozenset({"python-v1"})
 
 
 class AgentRuntimeClient(Protocol):
@@ -25,6 +25,8 @@ class RuntimeClientRegistry:
     """
 
     def __init__(self, clients: Mapping[str, AgentRuntimeClient]) -> None:
+        if "typescript-v1" in clients:
+            raise ValueError("retired TypeScript Runtime client registration is forbidden")
         unknown = set(clients) - SUPPORTED_RUNTIME_KINDS
         if unknown:
             raise ValueError(f"unsupported Runtime client registrations: {sorted(unknown)}")
@@ -33,6 +35,12 @@ class RuntimeClientRegistry:
     def _resolve(self, request: AgentRunRequest) -> AgentRuntimeClient:
         runtime_kind = request.context.runtime_kind
         protocol_version = request.context.runtime_protocol_version
+        if runtime_kind == "typescript-v1":
+            raise NonRetryableExecutionError(
+                "Job references the retired TypeScript Agent Runtime",
+                safe_message="Job 固定的 TypeScript Agent Runtime 已退役",
+                error_code="typescript_agent_runtime_retired",
+            )
         if runtime_kind not in SUPPORTED_RUNTIME_KINDS:
             raise NonRetryableExecutionError(
                 "Job contains an unsupported Agent Runtime kind",

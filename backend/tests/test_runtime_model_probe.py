@@ -79,14 +79,14 @@ def test_runtime_probe_sends_only_fixed_binding_and_accepts_safe_contract(
         return FakeResponse(
             {
                 "protocol_version": "1.0",
-                "runtime_kind": "typescript-v1",
+                "runtime_kind": "python-v1",
                 "probe_id": payload["probe_id"],
                 "success": True,
                 "connection_revision_id": "revision-1",
                 "provider_host": "api.deepseek.com",
                 "model": "deepseek-chat",
                 "runtime_version": "0.1.0",
-                "sdk_version": "0.3.226",
+                "sdk_version": "0.2.134",
                 "duration_ms": 8,
             }
         )
@@ -122,21 +122,21 @@ def test_draft_runtime_probe_uses_short_lived_encrypted_one_use_envelope(
         observed.update({"url": request.full_url, "payload": payload, "timeout": timeout})
         decrypted = ModelProbeEnvelopeCipher(_master_key()).decrypt(
             payload,
-            expected_runtime_kind="typescript-v1",
+            expected_runtime_kind="python-v1",
         )
         assert decrypted.config["model"] == "deepseek-chat"
         assert decrypted.api_key == "fixture-draft-key"
         return FakeResponse(
             {
                 "protocol_version": "1.0",
-                "runtime_kind": "typescript-v1",
+                "runtime_kind": "python-v1",
                 "probe_id": payload["probe_id"],
                 "success": True,
                 "connection_revision_id": f"draft-{payload['probe_id']}",
                 "provider_host": "api.deepseek.com",
                 "model": "deepseek-chat",
                 "runtime_version": "0.1.0",
-                "sdk_version": "0.3.226",
+                "sdk_version": "0.2.134",
                 "duration_ms": 8,
             }
         )
@@ -207,6 +207,22 @@ def test_runtime_probe_rejects_urls_outside_deployment_boundary(
         )
 
 
+def test_runtime_probe_rejects_retired_typescript_runtime_kind(tmp_path: Path) -> None:
+    token = tmp_path / "probe-token"
+    token.write_text("x" * 32, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Only the Python Agent Runtime"):
+        RuntimeModelProbeClient(
+            RuntimeModelProbeSettings(
+                base_url="http://typescript-agent-runtime:8090",
+                allowed_hosts=("typescript-agent-runtime",),
+                auth_token_file=str(token),
+                allow_insecure_internal_http=True,
+                runtime_kind="typescript-v1",
+            )
+        )
+
+
 def test_runtime_probe_maps_http_failure_without_exposing_response(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -241,8 +257,6 @@ def test_only_api_service_receives_model_probe_bearer_token(tmp_path: Path) -> N
         agent_runtime=AgentRuntimeSettings(
             python_base_url="http://python-agent-runtime:8091",
             python_allowed_hosts=("python-agent-runtime",),
-            typescript_base_url="http://typescript-agent-runtime:9102",
-            typescript_allowed_hosts=("typescript-agent-runtime",),
             model_probe_auth_token_file=str(token),
             allow_insecure_internal_http=True,
         ),
@@ -250,9 +264,8 @@ def test_only_api_service_receives_model_probe_bearer_token(tmp_path: Path) -> N
 
     assert _runtime_model_probe_for_service(settings, "api-server") is not None
     probes = _runtime_model_probes_for_service(settings, "api-server")
-    assert set(probes) == {"python-v1", "typescript-v1"}
+    assert set(probes) == {"python-v1"}
     assert probes["python-v1"].endpoint.startswith("http://python-agent-runtime:8091/")
-    assert probes["typescript-v1"].endpoint.startswith("http://typescript-agent-runtime:9102/")
     assert _runtime_model_probe_for_service(settings, "agent-worker") is None
     assert _runtime_model_probe_for_service(settings, "tool-mcp") is None
     assert _runtime_model_probes_for_service(settings, "agent-worker") == {}

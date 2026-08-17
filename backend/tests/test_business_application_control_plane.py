@@ -354,9 +354,9 @@ def test_file_format_policy_is_frozen_and_legacy_publications_remain_text_v1() -
     assert publication["file_format_policy_source"] == "publication_snapshot"
     publication_summary = next(
         item
-        for item in service.detail(
-            actor_id="user_local_admin", code="file-format-policy"
-        )["publications"]
+        for item in service.detail(actor_id="user_local_admin", code="file-format-policy")[
+            "publications"
+        ]
         if item["id"] == publication["id"]
     )
     assert publication_summary["file_format_compatibility"] == {
@@ -1077,7 +1077,7 @@ def test_mcp_tool_catalog_lists_manifest_tools_and_enforces_agent_binding() -> N
     )
     catalog_agents = {(item["code"], item["runtime_kind"]) for item in catalog["agents"]}
     assert ("default-diagnostic-agent", "python-v1") in catalog_agents
-    assert ("typescript-diagnostic-agent", "typescript-v1") in catalog_agents
+    assert all(runtime_kind == "python-v1" for _, runtime_kind in catalog_agents)
     python_tools = {
         item["tool_identifier"]
         for item in catalog["mcp_tools_by_agent_publication"]["agent_publication_default_v1"]
@@ -1313,10 +1313,7 @@ def test_catalog_http_contract_exposes_runtime_compatibility_only_for_agents() -
 
     assert response.status_code == 200
     catalog = response.json()
-    assert {item["runtime_kind"] for item in catalog["agents"]} == {
-        "python-v1",
-        "typescript-v1",
-    }
+    assert {item["runtime_kind"] for item in catalog["agents"]} == {"python-v1"}
     assert all(item["runtime_protocol_versions"] for item in catalog["agents"])
     assert catalog["connectors"]
     assert catalog["mcp_tools_by_agent_publication"]
@@ -1344,9 +1341,9 @@ def test_application_agent_reference_fails_closed_on_runtime_or_hash_tampering()
         actor_id="user_local_admin",
         code="agent-runtime-integrity-test",
     )
-    typescript = next(item for item in catalog["agents"] if item["runtime_kind"] == "typescript-v1")
+    python = next(item for item in catalog["agents"] if item["runtime_kind"] == "python-v1")
     payload = draft_payload()
-    payload["agent_publication_id"] = typescript["id"]
+    payload["agent_publication_id"] = python["id"]
     revision = service.save_draft(
         actor_id="user_local_admin",
         code="agent-runtime-integrity-test",
@@ -1356,7 +1353,7 @@ def test_application_agent_reference_fails_closed_on_runtime_or_hash_tampering()
 
     container.database.execute(
         "update agent_publication set config_hash = 'tampered' where id = ?",
-        (typescript["id"],),
+        (python["id"],),
     )
     validated = service.validate(
         actor_id="user_local_admin",

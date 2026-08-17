@@ -35,7 +35,6 @@ def test_compose_business_services_wait_for_one_shot_migrator() -> None:
     for service_name in (
         "tool-mcp",
         "file-service",
-        "typescript-agent-runtime",
         "python-agent-runtime",
         "api-server",
         "agent-worker",
@@ -55,7 +54,6 @@ def test_runtime_services_do_not_force_local_seed_replay() -> None:
     for service_name in (
         "tool-mcp",
         "file-service",
-        "typescript-agent-runtime",
         "python-agent-runtime",
         "api-server",
         "agent-worker",
@@ -65,12 +63,9 @@ def test_runtime_services_do_not_force_local_seed_replay() -> None:
         "channel-dispatch-worker",
         "file-worker",
     ):
-        assert (
-            services[service_name]
-            .get("environment", {})
-            .get("SEED_LOCAL_CONFIG", "${SEED_LOCAL_CONFIG:-false}")
-            in {"false", "${SEED_LOCAL_CONFIG:-false}"}
-        )
+        assert services[service_name].get("environment", {}).get(
+            "SEED_LOCAL_CONFIG", "${SEED_LOCAL_CONFIG:-false}"
+        ) in {"false", "${SEED_LOCAL_CONFIG:-false}"}
 
 
 def test_local_seed_is_additive_for_control_plane_connectors() -> None:

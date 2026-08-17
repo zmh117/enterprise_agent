@@ -26,7 +26,7 @@ from app.python_runtime.job_sandbox import (
 
 
 SHARED_FIXTURE = (
-    Path(__file__).parents[2] / "agent-runtime" / "contracts" / "text-format-policy-v2.fixture.json"
+    Path(__file__).parents[2] / "contracts" / "agent-runtime" / "text-format-policy-v2.fixture.json"
 )
 
 

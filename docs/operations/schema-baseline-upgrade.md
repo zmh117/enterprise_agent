@@ -27,7 +27,7 @@ docker compose stop api-server dingtalk-runtime admin-web
 docker compose stop \
   agent-worker job-dispatch-worker delivery-dispatch-worker webhook-worker \
   channel-dispatch-worker file-worker \
-  python-agent-runtime typescript-agent-runtime tool-mcp
+  python-agent-runtime tool-mcp
 ```
 
 保持 PostgreSQL 运行，使用基础设施脚本创建逻辑备份：
@@ -86,7 +86,7 @@ docker compose run --rm --no-deps migrator \
 ```bash
 docker compose up --force-recreate migrator
 docker compose up -d \
-  tool-mcp python-agent-runtime typescript-agent-runtime \
+  tool-mcp python-agent-runtime \
   api-server agent-worker job-dispatch-worker delivery-dispatch-worker \
   webhook-worker channel-dispatch-worker file-worker dingtalk-runtime admin-web
 curl --noproxy '*' -fsS http://127.0.0.1:8000/api/ready

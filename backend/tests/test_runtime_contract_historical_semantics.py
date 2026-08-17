@@ -7,13 +7,15 @@ from app.modules.agent.infrastructure.generated_runtime_contracts import validat
 from app.modules.agent.infrastructure.runtime_protocol import canonical_request_digest
 
 
-GOLDEN = Path("agent-runtime/contracts/v1/golden")
+GOLDEN = Path("contracts/agent-runtime/v1/golden")
 
 
-def test_both_runtime_kinds_share_execution_event_and_terminal_semantics() -> None:
+def test_python_and_historical_typescript_facts_keep_contract_semantics() -> None:
     base_request = json.loads((GOLDEN / "execution-request.json").read_text(encoding="utf-8"))
     safe = json.loads((GOLDEN / "safe-runtime-fixture.json").read_text(encoding="utf-8"))
 
+    # TypeScript remains a read-only historical enum value so persisted events
+    # stay verifiable after the implementation is removed.
     for runtime_kind, sdk_version in (
         ("python-v1", "0.2.134"),
         ("typescript-v1", "0.3.226"),

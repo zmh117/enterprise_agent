@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import inspect
 import json
@@ -20,7 +21,7 @@ from app.modules.agent.infrastructure.runtime_protocol import (
     SUPPORTED_RUNTIME_PROTOCOL_VERSIONS,
     canonical_request_digest,
 )
-from app.modules.agent.infrastructure.typescript_runtime_client import RuntimeGrantIssuer
+from app.modules.agent.infrastructure.runtime_http_client import RuntimeGrantIssuer
 from app.modules.agent.domain.runtime import (
     AgentExecutionContext,
     AgentRunRequest,
@@ -53,7 +54,7 @@ from app.python_runtime.sdk_executor import (
 )
 from app.python_runtime.service import PythonRuntimeDependencies, create_app
 from app.shared.database import Database, default_migrations_dir
-from app.shared.exceptions import NonRetryableExecutionError
+from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
 from app.shared.migrations import Migrator
 from app.shared.model_probe_envelope import (
     ModelProbeEnvelopeCipher,
@@ -131,7 +132,7 @@ class FakePythonExecutor:
                         },
                     },
                 )
-                if request["protocol_version"] == "1.2"
+                if request["protocol_version"] in {"1.2", "1.3"}
                 else ()
             ),
             accounting=(
@@ -150,7 +151,7 @@ class FakePythonExecutor:
                     "estimated_cost_usd": 0.001,
                     "permission_denials_count": 0,
                 }
-                if request["protocol_version"] == "1.2"
+                if request["protocol_version"] in {"1.2", "1.3"}
                 else None
             ),
             tool_events=(
@@ -163,7 +164,7 @@ class FakePythonExecutor:
                             "mcp_call_id": None,
                             "persisted_tool_call_id": None,
                         }
-                        if request["protocol_version"] == "1.2"
+                        if request["protocol_version"] != "1.0"
                         else {}
                     ),
                     "tool_name": "ones_work_item_search",
@@ -239,7 +240,7 @@ def _keys() -> tuple[bytes, bytes]:
 
 
 def _request() -> dict[str, Any]:
-    path = Path("agent-runtime/contracts/v1/golden/execution-request.json")
+    path = Path("contracts/agent-runtime/v1/golden/execution-request.json")
     request = json.loads(path.read_text(encoding="utf-8"))
     request["runtime_kind"] = "python-v1"
     request["request_digest"] = canonical_request_digest(request)
@@ -247,7 +248,17 @@ def _request() -> dict[str, Any]:
 
 
 def _request_v12() -> dict[str, Any]:
-    path = Path("agent-runtime/contracts/v1.2/golden/execution-request.json")
+    path = Path("contracts/agent-runtime/v1.2/golden/execution-request.json")
+    request = json.loads(path.read_text(encoding="utf-8"))
+    request["runtime_kind"] = "python-v1"
+    request["mcp_servers"] = []
+    request["request_digest"] = canonical_request_digest(request)
+    return request
+
+
+def _request_for_version(protocol_version: str) -> dict[str, Any]:
+    folder = "v1" if protocol_version == "1.0" else f"v{protocol_version}"
+    path = Path(f"contracts/agent-runtime/{folder}/golden/execution-request.json")
     request = json.loads(path.read_text(encoding="utf-8"))
     request["runtime_kind"] = "python-v1"
     request["mcp_servers"] = []
@@ -335,6 +346,40 @@ def test_python_runtime_http_contract_replays_one_terminal_without_tokens(
     )
     assert terminal.status_code == 200
     assert terminal.json()["status"] == "SUCCEEDED"
+
+
+@pytest.mark.parametrize("protocol_version", SUPPORTED_RUNTIME_PROTOCOL_VERSIONS)
+def test_python_runtime_accepts_replays_and_rejects_digest_conflict_for_all_versions(
+    tmp_path: Path,
+    protocol_version: str,
+) -> None:
+    executor = FakePythonExecutor()
+    dependencies, private_key = _dependencies(tmp_path, executor)
+    client = TestClient(create_app(dependencies))
+    request = _request_for_version(protocol_version)
+    headers = {"Authorization": f"Bearer {_token(private_key, request)}"}
+
+    first = client.post("/internal/v1/executions", json=request, headers=headers)
+    replay = client.post("/internal/v1/executions", json=request, headers=headers)
+
+    assert first.status_code == 200
+    assert replay.text == first.text
+    events = [json.loads(line) for line in first.text.strip().splitlines()]
+    assert events[0]["event_type"] == "execution_started"
+    assert events[-1]["event_type"] == "terminal"
+    assert events[-1]["payload"]["status"] == "SUCCEEDED"
+    assert len(executor.requests) == 1
+
+    conflicting = copy.deepcopy(request)
+    conflicting["prompt"]["user_question"] = "conflicting request"
+    conflicting["request_digest"] = canonical_request_digest(conflicting)
+    conflict = client.post(
+        "/internal/v1/executions",
+        json=conflicting,
+        headers={"Authorization": f"Bearer {_token(private_key, conflicting)}"},
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["code"] == "runtime_invocation_conflict"
 
 
 def test_python_runtime_v12_streams_observability_before_accounting_terminal(
@@ -513,6 +558,122 @@ def test_python_runtime_model_probe_and_fixed_mcp_url_boundary(tmp_path: Path) -
         raise AssertionError("arbitrary MCP URL was accepted")
 
 
+def test_python_sdk_model_probe_is_single_turn_toolless_and_bounded() -> None:
+    captured: dict[str, Any] = {}
+
+    def options(**kwargs: Any) -> dict[str, Any]:
+        captured.update(kwargs)
+        return kwargs
+
+    async def query(*, prompt: str, options: dict[str, Any]):
+        assert prompt == "Reply OK."
+        assert options == captured
+        yield {"type": "result", "result": "OK"}
+
+    sdk = ClaudeSdk(
+        query=query,
+        options=options,
+        tool=cast(Any, None),
+        create_sdk_mcp_server=cast(Any, None),
+        tool_annotations=None,
+    )
+    binding = ModelRuntimeBinding(
+        protocol="anthropic_compatible",
+        base_url="https://api.deepseek.com/anthropic",
+        model="deepseek-chat",
+        default_opus_model="deepseek-chat",
+        default_sonnet_model="deepseek-chat",
+        default_haiku_model="deepseek-chat",
+        subagent_model="deepseek-chat",
+        effort_level="max",
+    )
+    client = RealClaudeCodeAgentClient(
+        model="deepseek-chat",
+        tool_registry=cast(Any, object()),
+        limits=build_settings().execution,
+        api_key="",
+        sdk_loader=lambda: sdk,
+    )
+
+    result = client.test_connection(binding, "fixture-provider-key", 3)
+
+    assert result == {"detail": "连接成功"}
+    assert captured["mcp_servers"] == {}
+    assert captured["tools"] == []
+    assert captured["allowed_tools"] == []
+    assert captured["max_turns"] == 1
+    assert captured["setting_sources"] == []
+    assert captured["skills"] == []
+    assert {"Bash", "Write", "Edit", "WebFetch", "WebSearch"} <= set(
+        captured["disallowed_tools"]
+    )
+    assert "fixture-provider-key" not in json.dumps(captured, default=str)
+
+
+def test_python_sdk_model_probe_redacts_provider_error_and_times_out() -> None:
+    binding = ModelRuntimeBinding(
+        protocol="anthropic_compatible",
+        base_url="https://api.deepseek.com/anthropic",
+        model="deepseek-chat",
+        default_opus_model="deepseek-chat",
+        default_sonnet_model="deepseek-chat",
+        default_haiku_model="deepseek-chat",
+        subagent_model="deepseek-chat",
+        effort_level="max",
+    )
+
+    async def rejected_query(**_kwargs: Any):
+        yield {
+            "type": "result",
+            "is_error": True,
+            "subtype": "provider_error",
+            "errors": ["credential-must-not-appear"],
+            "result": "",
+        }
+
+    rejected_sdk = ClaudeSdk(
+        query=rejected_query,
+        options=lambda **kwargs: kwargs,
+        tool=cast(Any, None),
+        create_sdk_mcp_server=cast(Any, None),
+        tool_annotations=None,
+    )
+    rejected_client = RealClaudeCodeAgentClient(
+        model="deepseek-chat",
+        tool_registry=cast(Any, object()),
+        limits=build_settings().execution,
+        api_key="",
+        sdk_loader=lambda: rejected_sdk,
+    )
+    with pytest.raises(RetryableExecutionError) as rejected:
+        rejected_client.test_connection(binding, "fixture-provider-key", 3)
+    assert rejected.value.error_code == "model_connection_provider_rejected"
+    assert "credential-must-not-appear" not in str(rejected.value)
+    assert "credential-must-not-appear" not in rejected.value.safe_message
+
+    async def slow_query(**_kwargs: Any):
+        await asyncio.sleep(0.05)
+        yield {"type": "result", "result": "OK"}
+
+    timeout_sdk = ClaudeSdk(
+        query=slow_query,
+        options=lambda **kwargs: kwargs,
+        tool=cast(Any, None),
+        create_sdk_mcp_server=cast(Any, None),
+        tool_annotations=None,
+    )
+    timeout_client = RealClaudeCodeAgentClient(
+        model="deepseek-chat",
+        tool_registry=cast(Any, object()),
+        limits=build_settings().execution,
+        api_key="",
+        sdk_loader=lambda: timeout_sdk,
+    )
+    with pytest.raises(RetryableExecutionError) as timed_out:
+        timeout_client.test_connection(binding, "fixture-provider-key", 0.001)
+    assert timed_out.value.error_code == "model_connection_test_timeout"
+
+
 def test_python_runtime_exposes_only_the_fixed_remote_tool_mcp_server() -> None:
     context = AgentExecutionContext(
         system_role="readonly diagnostic agent",
@@ -602,7 +763,7 @@ def test_python_runtime_exposes_only_the_fixed_remote_tool_mcp_server() -> None:
 
 def test_python_sdk_projects_same_v12_observability_fixture_as_typescript() -> None:
     fixture = json.loads(
-        Path("agent-runtime/contracts/v1.2/golden/sdk-observability-fixture.json").read_text(
+        Path("contracts/agent-runtime/v1.2/golden/sdk-observability-fixture.json").read_text(
             encoding="utf-8"
         )
     )
@@ -675,7 +836,7 @@ def test_python_sdk_projects_same_v12_observability_fixture_as_typescript() -> N
 
 def test_python_sdk_keeps_unknown_accounting_and_omits_raw_content() -> None:
     fixture = json.loads(
-        Path("agent-runtime/contracts/v1.2/golden/sdk-observability-fixture.json").read_text(
+        Path("contracts/agent-runtime/v1.2/golden/sdk-observability-fixture.json").read_text(
             encoding="utf-8"
         )
     )

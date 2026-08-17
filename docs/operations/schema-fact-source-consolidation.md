@@ -143,7 +143,7 @@ python -m app.cli.migrate --include-schema-contract --build "$MIGRATOR_BUILD"
 - `.venv/bin/pytest -q backend/tests`：`702 passed, 27 skipped, 2 subtests passed`；跳过项依赖未提供的 PostgreSQL DSN 或外部运行条件，唯一 warning 为既有 Starlette/httpx deprecation。
 - `npm test`（`frontend/`）：12 个 test files、84 项通过。
 - `npm run build`（`frontend/`）：TypeScript 与 Vite build 通过；仅有既有的单 chunk 超过 500 kB 提示。
-- `npm test`（`agent-runtime/`）：31 项通过。
+- 退役前快照中的 `npm test`（当时的 `agent-runtime/`）：31 项通过；该结果仅是 2026-08-12 历史证据，不代表 TypeScript Agent Runtime 仍是当前受支持执行路径。
 - SQLite 已覆盖默认 fresh head `102`、显式 fresh contract `103`、exact-head/precondition failure、整批回填中断回滚、幂等和 contract 后普通启动。
 - PostgreSQL migration/comment integration test 已更新为分别验证默认 `102`（1002 columns）与显式 `103`（995 columns），但本次没有 `MIGRATION_POSTGRES_DSN`，因此仍是 `Deployment-gated`，不能宣称现场通过。
 - 本次未启动 Compose、未连接真实数据库、未执行 RabbitMQ 全链路，也未写入任何目标环境。

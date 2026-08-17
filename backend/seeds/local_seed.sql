@@ -96,40 +96,6 @@ VALUES
    'python-v1', 'active', 'user_local_admin', CURRENT_TIMESTAMP)
 ON CONFLICT(id) DO NOTHING;
 
-INSERT INTO agent_definition
-  (id, code, name, description, project_code, status, current_publication_id,
-   classification, runtime_kind, revision, created_by, created_at, updated_at)
-VALUES
-  ('agent_typescript_diagnostic', 'typescript-diagnostic-agent',
-   'TypeScript 诊断 Agent',
-   'Enterprise internal read-only diagnostic Agent using TypeScript Runtime',
-   'default', 'enabled', 'agent_publication_typescript_v1',
-   'internal_diagnostic', 'typescript-v1', 1, 'user_local_admin',
-   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-ON CONFLICT(id) DO NOTHING;
-
-INSERT INTO agent_revision
-  (id, agent_id, revision, status, config_json, config_hash, validation_json,
-   created_by, created_at, updated_at)
-VALUES
-  ('agent_revision_typescript_v1', 'agent_typescript_diagnostic', 1, 'published',
-   '{"business_instructions":"Use evidence from approved MCP tools and state uncertainty when evidence is incomplete.","business_role":"Enterprise internal read-only diagnostic Agent (TypeScript)","channels":{"delivery":[],"ingress":[]},"execution":{"max_turns":12,"timeout_seconds":300},"mcp_tool_ids":["diagnose_loki_label_values","diagnose_loki_labels","diagnose_loki_probe","get_business_flow_context","get_er_context","get_schema_directory","query_database","query_loki","query_redis_get","query_redis_scan"],"model_policy":{"model":"claude-sonnet-4-20250514"},"routing":{"project_code":"default"},"skills":[]}',
-   '70e476bdf1f18af56af4dee2214c8bb48e9d946333aee7dea1e05c38aca61d62',
-   '{"valid":true,"errors":[]}', 'user_local_admin', CURRENT_TIMESTAMP,
-   CURRENT_TIMESTAMP)
-ON CONFLICT(id) DO NOTHING;
-
-INSERT INTO agent_publication
-  (id, agent_id, revision_id, revision, schema_version, snapshot_json, config_hash,
-   runtime_kind, status, published_by, published_at)
-VALUES
-  ('agent_publication_typescript_v1', 'agent_typescript_diagnostic',
-   'agent_revision_typescript_v1', 1, 2,
-   '{"business_instructions":"Use evidence from approved MCP tools and state uncertainty when evidence is incomplete.","business_role":"Enterprise internal read-only diagnostic Agent (TypeScript)","channels":{"delivery":[],"ingress":[]},"execution":{"max_turns":12,"timeout_seconds":300},"mcp_tool_envelope":[{"schema_hash":"dbdd1fb7009090387f2479f3e71ab691b67be3ea7fe76345e76c2468610b2796","server_code":"tool-mcp","tool_identifier":"diagnose_loki_label_values"},{"schema_hash":"3fdb9c6cd548513b660a2995cbc5273878e896843aec6c9c6e9b6c1f40d71a27","server_code":"tool-mcp","tool_identifier":"diagnose_loki_labels"},{"schema_hash":"f4f6881d4884b3111e905525c05dbc7f5fd0fb209f7dd3c5163a5d88b999bce1","server_code":"tool-mcp","tool_identifier":"diagnose_loki_probe"},{"schema_hash":"10798ac8d2df2a3150d204e10be2e4fb12cc89650fb68e3a6d3b4b38e1914e26","server_code":"tool-mcp","tool_identifier":"get_business_flow_context"},{"schema_hash":"10798ac8d2df2a3150d204e10be2e4fb12cc89650fb68e3a6d3b4b38e1914e26","server_code":"tool-mcp","tool_identifier":"get_er_context"},{"schema_hash":"7502f1b28fc46291047e9c9d5bc6ba910363596af55aed85a163ea3dc105a1ca","server_code":"tool-mcp","tool_identifier":"get_schema_directory"},{"schema_hash":"9b2fdee7c913e746f58b8149305990f5601044ad7c30b08bc7d4b017d53f6113","server_code":"tool-mcp","tool_identifier":"query_database"},{"schema_hash":"ccec059febb575082e7addfd5b8cc87d5e4e442794b0239e98a73d2897f57108","server_code":"tool-mcp","tool_identifier":"query_loki"},{"schema_hash":"e29e540aeb8e2c982ed7181963deea60f1af7b82f1434a9fd6e1dfdab77c8e50","server_code":"tool-mcp","tool_identifier":"query_redis_get"},{"schema_hash":"f617799ffcb621770965e8bf02042e71ebfc80ba814c05a2b94a4ad0e15d0770","server_code":"tool-mcp","tool_identifier":"query_redis_scan"}],"model_policy":{"model":"claude-sonnet-4-20250514"},"routing":{"project_code":"default"},"runtime_kind":"typescript-v1","skills":[]}',
-   '6b589c94249d813ae5821bb6bfbc4367fde0424631a9a7b6354f82889cadb7dc',
-   'typescript-v1', 'active', 'user_local_admin', CURRENT_TIMESTAMP)
-ON CONFLICT(id) DO NOTHING;
-
 INSERT INTO agent_publication_mcp_tool
   (agent_publication_id, server_code, tool_identifier, schema_hash,
    model_description, selection_order, created_at)
@@ -143,17 +109,7 @@ VALUES
   ('agent_publication_default_v1', 'tool-mcp', 'query_database', '9b2fdee7c913e746f58b8149305990f5601044ad7c30b08bc7d4b017d53f6113', '', 6, CURRENT_TIMESTAMP),
   ('agent_publication_default_v1', 'tool-mcp', 'query_loki', 'ccec059febb575082e7addfd5b8cc87d5e4e442794b0239e98a73d2897f57108', '', 7, CURRENT_TIMESTAMP),
   ('agent_publication_default_v1', 'tool-mcp', 'query_redis_get', 'e29e540aeb8e2c982ed7181963deea60f1af7b82f1434a9fd6e1dfdab77c8e50', '', 8, CURRENT_TIMESTAMP),
-  ('agent_publication_default_v1', 'tool-mcp', 'query_redis_scan', 'f617799ffcb621770965e8bf02042e71ebfc80ba814c05a2b94a4ad0e15d0770', '', 9, CURRENT_TIMESTAMP),
-  ('agent_publication_typescript_v1', 'tool-mcp', 'diagnose_loki_label_values', 'dbdd1fb7009090387f2479f3e71ab691b67be3ea7fe76345e76c2468610b2796', '', 0, CURRENT_TIMESTAMP),
-  ('agent_publication_typescript_v1', 'tool-mcp', 'diagnose_loki_labels', '3fdb9c6cd548513b660a2995cbc5273878e896843aec6c9c6e9b6c1f40d71a27', '', 1, CURRENT_TIMESTAMP),
-  ('agent_publication_typescript_v1', 'tool-mcp', 'diagnose_loki_probe', 'f4f6881d4884b3111e905525c05dbc7f5fd0fb209f7dd3c5163a5d88b999bce1', '', 2, CURRENT_TIMESTAMP),
-  ('agent_publication_typescript_v1', 'tool-mcp', 'get_business_flow_context', '10798ac8d2df2a3150d204e10be2e4fb12cc89650fb68e3a6d3b4b38e1914e26', '', 3, CURRENT_TIMESTAMP),
-  ('agent_publication_typescript_v1', 'tool-mcp', 'get_er_context', '10798ac8d2df2a3150d204e10be2e4fb12cc89650fb68e3a6d3b4b38e1914e26', '', 4, CURRENT_TIMESTAMP),
-  ('agent_publication_typescript_v1', 'tool-mcp', 'get_schema_directory', '7502f1b28fc46291047e9c9d5bc6ba910363596af55aed85a163ea3dc105a1ca', '', 5, CURRENT_TIMESTAMP),
-  ('agent_publication_typescript_v1', 'tool-mcp', 'query_database', '9b2fdee7c913e746f58b8149305990f5601044ad7c30b08bc7d4b017d53f6113', '', 6, CURRENT_TIMESTAMP),
-  ('agent_publication_typescript_v1', 'tool-mcp', 'query_loki', 'ccec059febb575082e7addfd5b8cc87d5e4e442794b0239e98a73d2897f57108', '', 7, CURRENT_TIMESTAMP),
-  ('agent_publication_typescript_v1', 'tool-mcp', 'query_redis_get', 'e29e540aeb8e2c982ed7181963deea60f1af7b82f1434a9fd6e1dfdab77c8e50', '', 8, CURRENT_TIMESTAMP),
-  ('agent_publication_typescript_v1', 'tool-mcp', 'query_redis_scan', 'f617799ffcb621770965e8bf02042e71ebfc80ba814c05a2b94a4ad0e15d0770', '', 9, CURRENT_TIMESTAMP)
+  ('agent_publication_default_v1', 'tool-mcp', 'query_redis_scan', 'f617799ffcb621770965e8bf02042e71ebfc80ba814c05a2b94a4ad0e15d0770', '', 9, CURRENT_TIMESTAMP)
 ON CONFLICT(agent_publication_id, tool_identifier) DO NOTHING;
 
 INSERT INTO agent_channel_binding

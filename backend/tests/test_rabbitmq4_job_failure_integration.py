@@ -83,7 +83,6 @@ class RabbitMQ4JobFailureIntegrationTests(unittest.TestCase):
             seed=False,
             runtime_clients={
                 "python-v1": initial_client,
-                "typescript-v1": initial_client,
             },
         )
         # DB runtime overlay can tune retry settings, but test queue names must stay isolated.

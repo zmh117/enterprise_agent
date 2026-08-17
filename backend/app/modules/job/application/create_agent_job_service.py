@@ -533,7 +533,13 @@ class CreateAgentJobService:
             agent_revision = int(publication["revision"])
             agent_config_hash = str(publication["config_hash"])
             agent_runtime_kind = str(publication.get("runtime_kind") or "")
-            if agent_runtime_kind not in {"python-v1", "typescript-v1"}:
+            if agent_runtime_kind == "typescript-v1":
+                raise NonRetryableExecutionError(
+                    "TypeScript Agent Runtime publications cannot create new Jobs",
+                    safe_message=("TypeScript Agent Runtime 已退役；请先迁移到 Python Publication"),
+                    error_code="typescript_agent_runtime_retired",
+                )
+            if agent_runtime_kind != "python-v1":
                 raise NonRetryableExecutionError(
                     "Pinned Agent publication runtime is unsupported",
                     safe_message="固定的 Agent Runtime 配置无效",

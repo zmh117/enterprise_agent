@@ -2,13 +2,13 @@
 
 ## 结论
 
-- 单个 Runtime 容器的 Job Sandbox 默认容量：256 MiB。
+- Python Runtime 容器的 Job Sandbox 默认容量：256 MiB。
 - Runtime readiness 的容量下限：64 MiB；低于该值必须拒绝就绪。
 - 第一阶段单文件上限：15 MiB。
 - 工作区未保留内容配额：100 MiB。
 - 最大建模工作集：224 MiB，默认容量保留 32 MiB 安全余量。
 
-这些是每个 Runtime 容器的容量边界，不代表允许单个 Agent 无界使用全部空间。后续实现仍须执行每 Job 文件数、逻辑字节和路径配额。
+这是 Python Runtime 容器的容量边界，不代表允许单个 Agent 无界使用全部空间。实现仍须执行每 Job 文件数、逻辑字节和路径配额。
 
 ## 建模方法
 
@@ -36,4 +36,4 @@
 .venv/bin/python scripts/benchmark_file_workspace_sandbox.py
 ```
 
-脚本只生成有效 UTF-8 合成文本，输出 JSON 中的逻辑大小、实际分配大小和耗时；临时文件在每个场景完成后立即删除。部署配置后续使用统一的受控容量配置，并由 Python 与 TypeScript Runtime readiness 校验不低于 64 MiB。
+脚本只生成有效 UTF-8 合成文本，输出 JSON 中的逻辑大小、实际分配大小和耗时；临时文件在每个场景完成后立即删除。部署配置使用统一的受控容量配置，并由 Python Runtime readiness 校验不低于 64 MiB。

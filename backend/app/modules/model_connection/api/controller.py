@@ -49,7 +49,7 @@ class DiscoverModelsRequest(CredentialProbeRequest):
 
 
 class TestDraftRequest(CredentialProbeRequest):
-    runtime_kind: Literal["python-v1", "typescript-v1"] = "typescript-v1"
+    runtime_kind: Literal["python-v1", "typescript-v1"] = "python-v1"
     config: ModelConnectionConfigRequest
 
 
@@ -92,7 +92,7 @@ class ModelDraftTestResponse(StrictResponse):
 
 
 class ModelSavedTestRequest(StrictRequest):
-    runtime_kind: Literal["python-v1", "typescript-v1"] = "typescript-v1"
+    runtime_kind: Literal["python-v1", "typescript-v1"] = "python-v1"
     timeout_seconds: int = Field(default=15, ge=3, le=20)
 
 
@@ -102,7 +102,7 @@ class ModelSavedTestResultResponse(StrictResponse):
     provider_host: str
     model: str
     duration_ms: int
-    runtime: Literal["python-v1", "typescript-v1"]
+    runtime: Literal["python-v1"]
     runtime_version: str
     sdk_version: str
 

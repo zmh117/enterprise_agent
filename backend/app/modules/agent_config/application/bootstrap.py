@@ -29,13 +29,6 @@ BUILTIN_AGENTS = (
         description="Enterprise internal read-only diagnostic Agent",
         runtime_kind="python-v1",
     ),
-    BuiltinAgent(
-        id="agent_typescript_diagnostic",
-        code="typescript-diagnostic-agent",
-        name="TypeScript 诊断 Agent",
-        description="Enterprise internal read-only diagnostic Agent using TypeScript Runtime",
-        runtime_kind="typescript-v1",
-    ),
 )
 
 

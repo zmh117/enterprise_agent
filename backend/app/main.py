@@ -3,7 +3,10 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from app.bootstrap import Container, ContainerFactory, build_api_container
-from app.modules.agent.infrastructure.typescript_runtime_client import (
+from app.modules.agent.infrastructure.runtime_protocol import (
+    CURRENT_RUNTIME_PROTOCOL_VERSION,
+)
+from app.modules.agent.infrastructure.runtime_http_client import (
     RuntimeClientSettings,
     probe_runtime_readiness,
 )
@@ -48,12 +51,14 @@ def _build_readiness(
     rabbitmq_ready = _check_rabbitmq(settings.rabbitmq_url)
     master_key_ready = bool(settings.app_config_master_key)
     agent_runtimes = _check_agent_runtimes(settings)
+    runtime_assembly_ready = not settings.agent_runtime.retired_configuration_keys
     core_ready = all(
         (
             database_ready,
             schema_ready,
             rabbitmq_ready,
             master_key_ready,
+            runtime_assembly_ready,
         )
     )
     result = {
@@ -64,7 +69,7 @@ def _build_readiness(
             "schema_head": schema_head,
             "rabbitmq": rabbitmq_ready,
             "master_key": master_key_ready,
-            "runtime_assembly": True,
+            "runtime_assembly": runtime_assembly_ready,
             "agent_runtimes": agent_runtimes,
         },
         "tool_mcp": {
@@ -76,8 +81,9 @@ def _build_readiness(
         "mcp_invoked": False,
         "runtime_selection": {
             "default_runtime": "python-v1",
-            "supported_runtimes": ["python-v1", "typescript-v1"],
-            "protocol_version": "1.0",
+            "supported_runtimes": ["python-v1"],
+            "protocol_version": CURRENT_RUNTIME_PROTOCOL_VERSION,
+            "retired_configuration_keys": list(settings.agent_runtime.retired_configuration_keys),
         },
         **_runtime_config_status(settings),
     }
@@ -105,11 +111,6 @@ def _check_agent_runtimes(settings: Settings) -> dict[str, dict[str, Any]]:
             "python-v1",
             settings.agent_runtime.python_base_url,
             settings.agent_runtime.python_allowed_hosts,
-        ),
-        (
-            "typescript-v1",
-            settings.agent_runtime.typescript_base_url,
-            settings.agent_runtime.typescript_allowed_hosts,
         ),
     )
     return {

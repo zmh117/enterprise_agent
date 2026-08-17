@@ -25,7 +25,7 @@ class RuntimeModelProbeSettings:
     auth_token_file: str
     master_key: str = ""
     allow_insecure_internal_http: bool = False
-    runtime_kind: str = "typescript-v1"
+    runtime_kind: str = "python-v1"
 
     def endpoint(self) -> str:
         normalized = self.base_url.strip().rstrip("/")
@@ -56,8 +56,8 @@ class RuntimeModelProbeClient:
     def __init__(self, settings: RuntimeModelProbeSettings) -> None:
         self.endpoint = settings.endpoint()
         self.draft_endpoint = f"{self.endpoint}/draft"
-        if settings.runtime_kind not in {"python-v1", "typescript-v1"}:
-            raise ValueError("Agent Runtime model probe kind is unsupported")
+        if settings.runtime_kind != "python-v1":
+            raise ValueError("Only the Python Agent Runtime may execute model probes")
         self.runtime_kind = settings.runtime_kind
         token_path = Path(settings.auth_token_file.strip())
         if not token_path.is_absolute():

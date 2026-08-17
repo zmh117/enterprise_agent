@@ -5,8 +5,9 @@ import { fileURLToPath } from "node:url";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const runtimeRoot = resolve(scriptDir, "..");
-const sourceRoot = resolve(runtimeRoot, "contracts/v1.2");
-const targetRoot = resolve(runtimeRoot, "contracts/v1.3");
+const repositoryRoot = resolve(runtimeRoot, "..");
+const sourceRoot = resolve(repositoryRoot, "contracts/agent-runtime/v1.2");
+const targetRoot = resolve(repositoryRoot, "contracts/agent-runtime/v1.3");
 const checkOnly = process.argv.includes("--check");
 
 function upgrade(value) {

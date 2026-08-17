@@ -401,18 +401,16 @@ describe("Business Application workbench", () => {
       })
     ).toBeInTheDocument()
     expect(
-      await within(agentSelector).findByRole("option", {
-        name: "typescript-diagnostic-agent · r1 · TypeScript Runtime",
+      within(agentSelector).queryByRole("option", {
+        name: /typescript-diagnostic-agent/,
       })
-    ).toBeInTheDocument()
+    ).not.toBeInTheDocument()
     expect(screen.queryByText("操作失败，请重试。")).not.toBeInTheDocument()
     const continuousConversation = screen.getByLabelText("连续会话")
     expect(continuousConversation).toBeChecked()
     const attachments = screen.getByLabelText("允许消息附件")
     expect(attachments).not.toBeChecked()
-    fireEvent.click(
-      screen.getByRole("checkbox", { name: "任务工作区" })
-    )
+    fireEvent.click(screen.getByRole("checkbox", { name: "任务工作区" }))
     expect(attachments).toBeChecked()
     expect(attachments).toHaveAttribute("aria-disabled", "true")
     expect(continuousConversation).toBeChecked()

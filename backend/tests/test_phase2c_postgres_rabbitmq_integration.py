@@ -168,7 +168,6 @@ def test_rabbitmq_recovery_then_dead_delivery_replay_does_not_rerun_agent(
         seed=True,
         runtime_clients={
             "python-v1": client,
-            "typescript-v1": client,
         },
     )
     runtime.settings = replace(

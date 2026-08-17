@@ -18,6 +18,7 @@ from app.shared.exceptions import NotFound, NonRetryableExecutionError
 
 DEFAULT_AGENT_CODE = "default-diagnostic-agent"
 SUPPORTED_RUNTIME_KINDS = frozenset({"python-v1", "typescript-v1"})
+WRITABLE_RUNTIME_KIND = "python-v1"
 SUPPORTED_RUNTIME_PROTOCOL_VERSIONS = ("1.2", "1.3")
 AGENT_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 PROJECT_CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -80,6 +81,7 @@ class AgentConfigService:
 
     def get(self, agent_code: str = DEFAULT_AGENT_CODE) -> dict[str, Any]:
         definition = self.repository.get_definition(agent_code)
+        retired = _is_retired_typescript_definition(definition)
         latest = self.repository.latest_revision(str(definition["id"]))
         current = None
         if definition.get("current_publication_id"):
@@ -89,7 +91,8 @@ class AgentConfigService:
             "draft": latest,
             "current_publication": current,
             "catalog": self.catalog(),
-            "management_mode": "editable",
+            "management_mode": "read_only_retired" if retired else "editable",
+            "retirement_status": "retired" if retired else "supported",
             "model_connections": (
                 self.model_connection_service.list_connections()
                 if self.model_connection_service is not None
@@ -100,6 +103,7 @@ class AgentConfigService:
     def list_agents(self) -> list[dict[str, Any]]:
         values: list[dict[str, Any]] = []
         for definition in self.repository.list_definitions():
+            retired = _is_retired_typescript_definition(definition)
             publication = None
             if definition.get("current_publication_id"):
                 publication = self.repository.get_publication(
@@ -131,7 +135,8 @@ class AgentConfigService:
             values.append(
                 {
                     **definition,
-                    "management_mode": "editable",
+                    "management_mode": "read_only_retired" if retired else "editable",
+                    "retirement_status": "retired" if retired else "supported",
                     "current_publication": (
                         {
                             "id": publication["id"],
@@ -185,6 +190,7 @@ class AgentConfigService:
             resource_code="*",
             action="edit",
         )
+        _require_writable_runtime_kind(runtime_kind)
         normalized = _normalize_definition_fields(
             code=code,
             name=name,
@@ -295,6 +301,7 @@ class AgentConfigService:
             action="edit",
         )
         definition = self.repository.get_definition(agent_code)
+        _require_writable_definition(definition)
         raw_errors = self._validate_shape(config)
         if raw_errors:
             raise NonRetryableExecutionError(
@@ -336,6 +343,7 @@ class AgentConfigService:
             action="edit",
         )
         definition = self.repository.get_definition(agent_code)
+        _require_writable_definition(definition)
         revision = self.repository.get_revision(revision_id)
         if str(revision["agent_id"]) != str(definition["id"]):
             raise NonRetryableExecutionError(
@@ -375,6 +383,7 @@ class AgentConfigService:
             action="publish",
         )
         definition = self.repository.get_definition(agent_code)
+        _require_writable_definition(definition)
         revision = self.repository.get_revision(revision_id)
         if str(revision["agent_id"]) != str(definition["id"]):
             raise NonRetryableExecutionError(
@@ -504,6 +513,8 @@ class AgentConfigService:
 
     def rollback(self, *, actor_id: str, agent_code: str, publication_id: str) -> dict[str, Any]:
         selected = self.publication(publication_id)
+        if str(selected.get("runtime_kind") or "") != WRITABLE_RUNTIME_KIND:
+            _raise_typescript_runtime_retired()
         model_connection = (selected.get("snapshot") or {}).get("model_connection") or {}
         if model_connection and self.model_connection_service is not None:
             self.model_connection_service.runtime_binding(
@@ -524,6 +535,7 @@ class AgentConfigService:
             action="publish",
         )
         definition = self.repository.get_definition(agent_code)
+        _require_writable_definition(definition)
         publication = self.repository.set_current_publication(
             agent_id=str(definition["id"]), publication_id=publication_id
         )
@@ -875,11 +887,11 @@ def _normalize_definition_fields(
                 "message": "项目编码格式无效",
             }
         )
-    if runtime_kind not in SUPPORTED_RUNTIME_KINDS:
+    if runtime_kind != WRITABLE_RUNTIME_KIND:
         field_errors.append(
             {
                 "field": "runtime_kind",
-                "message": "仅支持 python-v1 或 typescript-v1",
+                "message": "新 Agent 仅支持 python-v1",
             }
         )
     if field_errors:
@@ -896,6 +908,34 @@ def _normalize_definition_fields(
         "project_code": normalized_project_code,
         "runtime_kind": runtime_kind,
     }
+
+
+def _is_retired_typescript_definition(definition: dict[str, Any]) -> bool:
+    return str(definition.get("runtime_kind") or "") == "typescript-v1"
+
+
+def _require_writable_runtime_kind(runtime_kind: str) -> None:
+    if runtime_kind == WRITABLE_RUNTIME_KIND:
+        return
+    if runtime_kind == "typescript-v1":
+        _raise_typescript_runtime_retired()
+    raise NonRetryableExecutionError(
+        "Agent Definition runtime is unsupported",
+        safe_message="Agent Runtime 配置无效",
+        error_code="agent_runtime_kind_unsupported",
+    )
+
+
+def _require_writable_definition(definition: dict[str, Any]) -> None:
+    _require_writable_runtime_kind(str(definition.get("runtime_kind") or ""))
+
+
+def _raise_typescript_runtime_retired() -> None:
+    raise NonRetryableExecutionError(
+        "TypeScript Agent Runtime is retired for new control-plane writes",
+        safe_message="TypeScript Agent Runtime 已退役；历史记录仅供查看，请迁移到 Python Runtime",
+        error_code="typescript_agent_runtime_retired",
+    )
 
 
 def agent_config_hash(config: dict[str, Any]) -> str:

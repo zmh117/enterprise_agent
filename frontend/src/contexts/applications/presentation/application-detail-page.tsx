@@ -257,10 +257,7 @@ function OverviewTab({ application }: { application: BusinessApplication }) {
               "工作区周期",
               draft?.task_workspace_retention_period ?? "WEEK（新草稿默认）",
             ],
-            [
-              "任务文件能力",
-              formatTaskFileFeatures(draft?.task_file_features),
-            ],
+            ["任务文件能力", formatTaskFileFeatures(draft?.task_file_features)],
             [
               "文件格式策略",
               formatFileFormatPolicy(draft?.file_format_policy_version),
@@ -332,12 +329,14 @@ function CompositionTab({ application }: { application: BusinessApplication }) {
               }
             >
               <option value="">请选择已发布 Agent</option>
-              {catalog.data?.agents.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.code} · r{item.revision} ·{" "}
-                  {applicationRuntimeLabel(item.runtime_kind)}
-                </option>
-              ))}
+              {catalog.data?.agents
+                .filter((item) => item.runtime_kind === "python-v1")
+                .map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.code} · r{item.revision} ·{" "}
+                    {applicationRuntimeLabel(item.runtime_kind)}
+                  </option>
+                ))}
             </select>
           </Field>
           <Field label="工作流发布版本（可选）" htmlFor="draft-workflow">
@@ -413,9 +412,9 @@ function PolicyEditor({
       .filter((tool) => tool.server_code === "file-service")
       .map((tool) => tool.tool_identifier)
   )
-  const missingRequiredFileTools = [...requiredFileMcpToolIds(form.task_file_features)].filter(
-    (identifier) => !availableFileTools.has(identifier)
-  )
+  const missingRequiredFileTools = [
+    ...requiredFileMcpToolIds(form.task_file_features),
+  ].filter((identifier) => !availableFileTools.has(identifier))
   const selectedAgent = catalog?.agents.find(
     (item) => item.id === form.agent_publication_id
   )
@@ -428,7 +427,10 @@ function PolicyEditor({
         <CardTitle>会话与执行策略</CardTitle>
       </CardHeader>
       <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <Field label="任务工作区保留周期" htmlFor="policy-task-workspace-retention">
+        <Field
+          label="任务工作区保留周期"
+          htmlFor="policy-task-workspace-retention"
+        >
           <select
             id="policy-task-workspace-retention"
             className={selectClass}
@@ -446,7 +448,8 @@ function PolicyEditor({
             <option value="MONTH">当月（下月一日 00:00 到期）</option>
           </select>
           <p className="text-xs leading-5 text-muted-foreground">
-            来源：当前草稿。按 Asia/Shanghai 自然周期固定到期，活动不会滚动延期；不影响聊天附件的 360 天保留。
+            来源：当前草稿。按 Asia/Shanghai
+            自然周期固定到期，活动不会滚动延期；不影响聊天附件的 360 天保留。
           </p>
         </Field>
         <Field label="文件格式策略" htmlFor="policy-file-format">
@@ -486,20 +489,27 @@ function PolicyEditor({
             }}
           >
             <option value="text-v1">text-v1 · TXT 全能力</option>
-            <option value="text-v2">text-v2 · TXT/Markdown 全能力，LOG 只读</option>
+            <option value="text-v2">
+              text-v2 · TXT/Markdown 全能力，LOG 只读
+            </option>
           </select>
           <p className="text-xs leading-5 text-muted-foreground">
-            代码注册的固定矩阵，发布后冻结；Markdown 始终按不可信纯文本处理，不在管理端渲染。
+            代码注册的固定矩阵，发布后冻结；Markdown
+            始终按不可信纯文本处理，不在管理端渲染。
           </p>
-          {form.file_format_policy_version === "text-v2" && !textV2RuntimeCompatible ? (
+          {form.file_format_policy_version === "text-v2" &&
+          !textV2RuntimeCompatible ? (
             <p className="text-xs leading-5 text-destructive">
-              所选 Agent 发布版本未声明支持 Runtime protocol v1.3，不能发布 text-v2。
+              所选 Agent 发布版本未声明支持 Runtime protocol v1.3，不能发布
+              text-v2。
             </p>
           ) : null}
-          {form.file_format_policy_version === "text-v2" && textV2Cutover?.ready === false ? (
+          {form.file_format_policy_version === "text-v2" &&
+          textV2Cutover?.ready === false ? (
             <p className="text-xs leading-5 text-destructive">
-              切换预检发现 {textV2Cutover.blocking_job_count} 个仍引用旧 File MCP Schema
-              的活动或待重试 Job；排空或隔离前不能发布或激活 text-v2。
+              切换预检发现 {textV2Cutover.blocking_job_count} 个仍引用旧 File
+              MCP Schema 的活动或待重试 Job；排空或隔离前不能发布或激活
+              text-v2。
             </p>
           ) : null}
         </Field>
@@ -507,7 +517,8 @@ function PolicyEditor({
           <div>
             <p className="text-sm font-medium">任务文件灰度功能</p>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              来源：当前草稿；发布后冻结到 Publication Revision。未启用的 Job 保持原行为。
+              来源：当前草稿；发布后冻结到 Publication Revision。未启用的 Job
+              保持原行为。
             </p>
           </div>
           {(
@@ -550,8 +561,8 @@ function PolicyEditor({
           ))}
           {missingRequiredFileTools.length ? (
             <p className="text-xs leading-5 text-destructive md:col-span-2 xl:col-span-2">
-              当前 Agent 发布版本缺少任务文件工具，请先在 Agent 管理中发布包含 File MCP
-              工具的新版本，再回到这里选择并发布业务应用。
+              当前 Agent 发布版本缺少任务文件工具，请先在 Agent 管理中发布包含
+              File MCP 工具的新版本，再回到这里选择并发布业务应用。
             </p>
           ) : null}
         </div>
@@ -1261,8 +1272,14 @@ function ValidationTab({ application }: { application: BusinessApplication }) {
             "工作区周期",
             revision?.task_workspace_retention_period ?? "WEEK（兼容默认）",
           ],
-          ["任务文件能力", formatTaskFileFeatures(revision?.task_file_features)],
-          ["文件格式策略", formatFileFormatPolicy(revision?.file_format_policy_version)],
+          [
+            "任务文件能力",
+            formatTaskFileFeatures(revision?.task_file_features),
+          ],
+          [
+            "文件格式策略",
+            formatFileFormatPolicy(revision?.file_format_policy_version),
+          ],
         ]}
       />
     </div>
@@ -1362,6 +1379,11 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
                       <Badge variant="outline" className="shrink-0">
                         r{publication.revision}
                       </Badge>
+                      {publication.retirement_status === "retired" ? (
+                        <Badge variant="secondary" className="shrink-0">
+                          TypeScript Runtime 已退役 · 只读
+                        </Badge>
+                      ) : null}
                       <span className="min-w-0 font-mono text-sm leading-5 font-medium break-all">
                         {publication.id}
                       </span>
@@ -1410,7 +1432,8 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
                         value={`${formatFileFormatPolicy(
                           publication.file_format_policy_version
                         )} · ${
-                          publication.file_format_policy_source === "legacy_default"
+                          publication.file_format_policy_source ===
+                          "legacy_default"
                             ? "历史兼容默认"
                             : "发布快照"
                         }`}
@@ -1418,7 +1441,8 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
                       <PublicationMetadata
                         label="格式兼容状态"
                         value={
-                          publication.file_format_compatibility.status === "READY"
+                          publication.file_format_compatibility.status ===
+                          "READY"
                             ? `就绪 · Runtime ${publication.file_format_compatibility.required_runtime_protocol}`
                             : "不兼容 · Runtime 或 File MCP Schema 已漂移"
                         }
@@ -1430,12 +1454,16 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
                     variant="outline"
                     className="w-full sm:w-auto"
                     disabled={
-                      application.status !== "enabled" || activate.isPending
+                      application.status !== "enabled" ||
+                      activate.isPending ||
+                      publication.retirement_status === "retired"
                     }
                     title={
-                      application.status === "enabled"
-                        ? `激活到 ${environment}`
-                        : "应用停用或归档时不能激活"
+                      publication.retirement_status === "retired"
+                        ? "历史 TypeScript Application Publication 不能重新激活"
+                        : application.status === "enabled"
+                          ? `激活到 ${environment}`
+                          : "应用停用或归档时不能激活"
                     }
                     onClick={() => {
                       const action =
@@ -1614,8 +1642,7 @@ function draftToForm(application: BusinessApplication): SaveDraftInput {
     workflow_publication_id: draft?.workflow_publication_id ?? "",
     task_workspace_retention_period:
       draft?.task_workspace_retention_period ?? "WEEK",
-    file_format_policy_version:
-      draft?.file_format_policy_version ?? "text-v1",
+    file_format_policy_version: draft?.file_format_policy_version ?? "text-v1",
     task_file_features: taskFileFeatures,
     session_policy: {
       conversation_mode: "channel",
@@ -1730,10 +1757,7 @@ function selectRequiredFileMcpTools(
 }
 
 function formatTaskFileFeatures(
-  features:
-    | SaveDraftInput["task_file_features"]
-    | null
-    | undefined
+  features: SaveDraftInput["task_file_features"] | null | undefined
 ): string {
   if (!features) return "全部关闭（兼容默认）"
   const labels = [
@@ -1742,9 +1766,7 @@ function formatTaskFileFeatures(
     [features.runtime_file_edit_enabled, "Write/Edit"],
     [features.default_file_delivery_enabled, "默认交付"],
   ] as const
-  const enabled = labels
-    .filter(([active]) => active)
-    .map(([, label]) => label)
+  const enabled = labels.filter(([active]) => active).map(([, label]) => label)
   return enabled.length ? enabled.join("、") : "全部关闭"
 }
 
@@ -1795,7 +1817,7 @@ function formatDate(value: string): string {
 }
 
 function applicationRuntimeLabel(runtimeKind?: "python-v1" | "typescript-v1") {
-  if (runtimeKind === "typescript-v1") return "TypeScript Runtime"
+  if (runtimeKind === "typescript-v1") return "TypeScript Runtime（已退役）"
   if (runtimeKind === "python-v1") return "Python Runtime"
   return "Runtime 未标注"
 }

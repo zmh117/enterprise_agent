@@ -16,13 +16,13 @@
 - [Admin Web MVP](architecture/admin-web-mvp.md)
 - [业务应用控制面](architecture/business-application-control-plane.md)
 - [连续对话与多模态附件](architecture/continuous-multimodal-conversations.md)
-- [多应用、单 Worker 与双 Runtime 路由](architecture/multi-application-agent-worker-and-dingtalk-bot-routing.md)
+- [多应用与共享 Agent Worker 路由](architecture/multi-application-agent-worker-and-dingtalk-bot-routing.md)
 - [标准 MCP 工具服务](architecture/tool-mcp.md)
 - [受治理任务文件工作区](architecture/task-file-workspaces.md)
 - [统一身份、RBAC 与管理端](architecture/unified-identity-rbac-admin.md)
 - [Webhook Agent Trigger](architecture/webhook-agent-triggers.md)
 
-当前执行链是 `Channel -> Control Plane -> Worker -> Python/TypeScript Runtime -> MCP`。只读业务工具进入 `tool-mcp -> Resource`；任务文件进入 `File MCP（File Service 内）-> 受治理版本 -> MinIO`。身份、RBAC、应用发布、资源发布、Secret、审计和 Job 历史仍由平台治理；旧 API Capability、Handler、API Connection、Resource Mapping 和 Internal API Platform 已退役。
+当前执行链是 `Channel -> Control Plane -> Worker -> Python Runtime -> MCP`。历史 `typescript-v1` Definition、Publication、Job 和审计保持只读，不再是可执行路径。只读业务工具进入 `tool-mcp -> Resource`；任务文件进入 `File MCP（File Service 内）-> 受治理版本 -> MinIO`。身份、RBAC、应用发布、资源发布、Secret、审计和 Job 历史仍由平台治理；旧 API Capability、Handler、API Connection、Resource Mapping 和 Internal API Platform 已退役。
 
 ## 指南
 
@@ -44,6 +44,7 @@
 - [Master Key 紧急离线重加密](operations/emergency-master-key-reencryption.md)
 - [钉钉测试数据重建](operations/dingtalk-test-data-rebuild.md)
 - [Task File Workspace 切换与运行](operations/task-file-workspace-cutover.md)
+- [TypeScript Agent Runtime 分阶段退役](operations/typescript-agent-runtime-retirement.md)
 
 ## 验证与参考
 

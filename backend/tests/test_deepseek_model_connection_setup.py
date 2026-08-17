@@ -5,6 +5,7 @@ import socket
 import urllib.error
 import urllib.request
 from dataclasses import replace
+from typing import Any, Callable
 
 import pytest
 from fastapi.testclient import TestClient
@@ -72,14 +73,40 @@ def secret_value(label: str) -> str:
     return f"sk-test-{label}-" + "x" * 40
 
 
+class PythonRuntimeProbe:
+    def __init__(
+        self,
+        draft_handler: Callable[[Any, str, int], dict[str, Any]] | None = None,
+    ) -> None:
+        self.draft_handler = draft_handler
+
+    def probe_draft(
+        self,
+        *,
+        binding: Any,
+        api_key: str,
+        timeout_seconds: int,
+    ) -> dict[str, Any]:
+        result = (
+            self.draft_handler(binding, api_key, timeout_seconds)
+            if self.draft_handler is not None
+            else {}
+        )
+        return {
+            "runtime_kind": "python-v1",
+            "success": True,
+            "provider_host": binding.provider_host,
+            "model": binding.model,
+            **result,
+        }
+
+
 def install_successful_probes(c, *models: str) -> None:
     available = models or (MODEL,)
     c.model_connection_service.model_discoverer = lambda models_url, api_key, timeout_seconds: [
         {"id": model_id} for model_id in available
     ]
-    c.model_connection_service.tester = lambda binding, api_key, timeout_seconds: {
-        "detail": "连接成功"
-    }
+    c.model_connection_service.runtime_probes = {"python-v1": PythonRuntimeProbe()}
 
 
 def table_counts(c) -> dict[str, int]:
@@ -244,7 +271,9 @@ def test_discover_and_test_draft_are_non_persistent_and_normalize_inheritance() 
         return {"detail": secret_value("provider-output")}
 
     c.model_connection_service.model_discoverer = discover
-    c.model_connection_service.tester = tester
+    c.model_connection_service.runtime_probes = {
+        "python-v1": PythonRuntimeProbe(tester)
+    }
     try:
         discovered = c.model_connection_service.discover_models(
             actor_id=ADMIN_ID,
@@ -327,7 +356,9 @@ def test_draft_test_projects_sdk_failures_without_persistence(
             error_code=error_code,
         )
 
-    c.model_connection_service.tester = failed_tester
+    c.model_connection_service.runtime_probes = {
+        "python-v1": PythonRuntimeProbe(failed_tester)
+    }
     try:
         with pytest.raises(NonRetryableExecutionError) as rejected:
             c.model_connection_service.test_draft(
@@ -546,7 +577,9 @@ def test_configure_rechecks_revision_after_external_test_without_partial_secret(
         )
         return {"detail": "连接成功"}
 
-    c.model_connection_service.tester = concurrent_update
+    c.model_connection_service.runtime_probes = {
+        "python-v1": PythonRuntimeProbe(concurrent_update)
+    }
     before_secrets = table_counts(c)
     try:
         with pytest.raises(NonRetryableExecutionError) as conflict:

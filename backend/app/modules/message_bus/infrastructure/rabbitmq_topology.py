@@ -56,6 +56,34 @@ def inspect_agent_job_topology(rabbitmq_url: str, queue: QueueSettings) -> dict[
         connection.close()
 
 
+def inspect_agent_job_topology_read_only(
+    rabbitmq_url: str,
+    queue: QueueSettings,
+) -> dict[str, object]:
+    """Inspect queue counts without declaring, binding, consuming, or publishing."""
+    try:
+        import pika
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("pika is required for RabbitMQ topology checks") from exc
+
+    connection = pika.BlockingConnection(pika.URLParameters(rabbitmq_url))
+    try:
+        return {
+            label: {
+                "name": name,
+                **_passive_queue_summary(connection.channel(), name),
+            }
+            for label, name in (
+                ("job_queue", queue.job_queue),
+                ("retry_queue", queue.retry_queue),
+                ("dead_queue", queue.dead_queue),
+                ("legacy_retry_queue", queue.legacy_retry_queue),
+            )
+        }
+    finally:
+        connection.close()
+
+
 def _queue_summary(channel: Any, name: str) -> dict[str, object]:
     method = channel.queue_declare(queue=name, durable=True, passive=True).method
     return {

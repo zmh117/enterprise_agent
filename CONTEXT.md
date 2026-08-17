@@ -18,7 +18,7 @@
 
 **Agent Definition / Revision / Publication**
 
-Agent 的稳定身份、追加式草稿和不可变发布。Definition 创建后固定 `python-v1` 或 `typescript-v1`；Publication 冻结模型连接、指令、Skill、执行策略、Runtime kind 和 MCP Tool Envelope。
+Agent 的稳定身份、追加式草稿和不可变发布。新 Definition 固定 `python-v1`；Publication 冻结模型连接、指令、Skill、执行策略、Runtime kind 和 MCP Tool Envelope。退役前的 `typescript-v1` Definition/Publication 保留原值，只能用于历史查询和审计。
 
 **Business Application Publication**
 

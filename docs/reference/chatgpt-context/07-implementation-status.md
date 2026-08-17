@@ -1,6 +1,6 @@
 # 07 实现状态
 
-当前代码具备双 Runtime、标准 `tool-mcp`、MCP Manifest/Envelope、应用显式 Tool 子集、动态 Tool Call 目标、工具资源与 Secret、统一身份/RBAC、渠道和 Job/Delivery 历史。
+当前代码以 Python 作为唯一 Agent Runtime，具备标准 `tool-mcp`、MCP Manifest/Envelope、应用显式 Tool 子集、动态 Tool Call 目标、工具资源与 Secret、统一身份/RBAC、渠道和 Job/Delivery 历史。历史 `typescript-v1` 记录保持原值并只读展示。
 
 旧 API Capability、Handler、Connection、Resource Mapping、Tool Release 控制面和 Internal API Platform 已从活动实现移除。ONES 身份绑定被保留为独立统一身份能力，不依赖旧业务调用凭据。
 

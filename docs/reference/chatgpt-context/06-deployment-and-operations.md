@@ -1,6 +1,6 @@
 # 06 部署与运维
 
-默认 Compose 核心服务：PostgreSQL、RabbitMQ、Migrator、API、Admin Web、Worker、Python Runtime、TypeScript Runtime、`tool-mcp` 及渠道/交付 Worker。
+默认 Compose 核心服务：PostgreSQL、RabbitMQ、Migrator、API、Admin Web、Worker、Python Runtime、`tool-mcp` 及渠道/交付 Worker；不再构建或启动 TypeScript Agent Runtime。
 
 运维原则：
 

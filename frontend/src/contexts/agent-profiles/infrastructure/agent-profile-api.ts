@@ -15,7 +15,6 @@ import {
   type AgentCreateInput,
   type CredentialSource,
   type ModelConnectionConfig,
-  type RuntimeKind,
 } from "@/contexts/agent-profiles/domain/agent-profile"
 import { apiRequest } from "@/shared/api/api-client"
 
@@ -25,7 +24,10 @@ export async function listAgentProfiles() {
 
 export async function createAgentProfile(input: AgentCreateInput) {
   return agentCreationResultSchema.parse(
-    await apiRequest("/api/admin/agents", { method: "POST", body: input })
+    await apiRequest("/api/admin/agents", {
+      method: "POST",
+      body: { ...input, runtime_kind: "python-v1" },
+    })
   )
 }
 
@@ -52,7 +54,6 @@ type CredentialInput = {
 }
 
 type DraftConnectionInput = CredentialInput & {
-  runtime_kind: RuntimeKind
   config: Omit<ModelConnectionConfig, "schema_version">
   timeout_seconds?: number
 }
@@ -88,7 +89,7 @@ export async function testDraftModelConnection(
 export async function testSavedModelConnection(
   code: string,
   revisionId: string,
-  input: { runtime_kind: RuntimeKind; timeout_seconds?: number }
+  input: { timeout_seconds?: number }
 ) {
   return z
     .object({ result: modelSavedTestResultSchema })

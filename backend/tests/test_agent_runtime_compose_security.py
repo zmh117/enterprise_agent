@@ -33,27 +33,23 @@ def test_agent_runtime_grants_are_narrow_and_isolate_business_tables() -> None:
     assert "update on agent_runtime_invocation_event" not in normalized
 
 
-def test_dual_runtimes_and_standard_mcp_are_hardened_and_secret_scoped() -> None:
+def test_python_runtime_and_standard_mcp_are_hardened_and_secret_scoped() -> None:
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
     services = compose["services"]
 
-    typescript_runtime = services["typescript-agent-runtime"]
     python_runtime = services["python-agent-runtime"]
     tool_mcp = services["tool-mcp"]
-    for service in (python_runtime, typescript_runtime, tool_mcp):
+    assert "typescript-agent-runtime" not in services
+    for service in (python_runtime, tool_mcp):
         assert service["read_only"] is True
         assert service["cap_drop"] == ["ALL"]
         assert service["security_opt"] == ["no-new-privileges:true"]
         assert service["tmpfs"]
         assert "agent-runtime-control" in service["networks"]
 
-    assert typescript_runtime["environment"]["DATABASE_URL"].startswith(
-        "${AGENT_RUNTIME_DATABASE_DSN:-postgresql://agent_runtime_reader:"
-    )
     assert python_runtime["environment"]["DATABASE_DSN"].startswith(
         "${AGENT_RUNTIME_DATABASE_DSN:-postgresql://agent_runtime_reader:"
     )
-    assert typescript_runtime["environment"]["AGENT_RUNTIME_CLI_VERSION"] == "2.1.226"
     assert python_runtime["environment"]["PYTHON_AGENT_RUNTIME_CLI_VERSION"] == "2.1.226"
     assert python_runtime["environment"]["HOME"] == "/tmp/python-agent-runtime"
     assert python_runtime["environment"]["TMPDIR"] == "/tmp/python-agent-runtime"
@@ -63,18 +59,14 @@ def test_dual_runtimes_and_standard_mcp_are_hardened_and_secret_scoped() -> None
     assert python_runtime["tmpfs"] == [
         "/tmp/python-agent-runtime:size=${AGENT_RUNTIME_TMPFS_SIZE:-256m},mode=0700,uid=10002,gid=10002"
     ]
-    for runtime in (python_runtime, typescript_runtime):
-        assert "runtime_grant_public_key" in runtime["secrets"]
-        assert "runtime_grant_private_key" not in runtime["secrets"]
-        assert runtime["environment"]["MCP_TOOL_SERVER_URL"] == "http://tool-mcp:9103/mcp"
-        assert runtime["environment"]["FILE_MCP_SERVER_URL"] == (
-            "http://file-service:9105/mcp"
-        )
-        assert runtime["environment"]["AGENT_RUNTIME_TEST_PROVIDER_MODE"] == (
-            "${AGENT_RUNTIME_TEST_PROVIDER_MODE:-disabled}"
-        )
-        assert "ports" not in runtime
-    assert typescript_runtime["environment"]["APP_ENV"] == "${APP_ENV:-local}"
+    assert "runtime_grant_public_key" in python_runtime["secrets"]
+    assert "runtime_grant_private_key" not in python_runtime["secrets"]
+    assert python_runtime["environment"]["MCP_TOOL_SERVER_URL"] == ("http://tool-mcp:9103/mcp")
+    assert python_runtime["environment"]["FILE_MCP_SERVER_URL"] == ("http://file-service:9105/mcp")
+    assert python_runtime["environment"]["AGENT_RUNTIME_TEST_PROVIDER_MODE"] == (
+        "${AGENT_RUNTIME_TEST_PROVIDER_MODE:-disabled}"
+    )
+    assert "ports" not in python_runtime
     assert "ports" not in tool_mcp
     assert not any(
         "runtime_grant" in str(item).lower() or "mcp_signing" in str(item).lower()
@@ -101,12 +93,8 @@ def test_api_server_alone_receives_fixed_ones_identity_provider_configuration() 
     expected = {
         "ONES_IDENTITY_INSTANCE_CODE": "${ONES_IDENTITY_INSTANCE_CODE:-default}",
         "ONES_IDENTITY_DISPLAY_NAME": "${ONES_IDENTITY_DISPLAY_NAME:-ONES}",
-        "ONES_IDENTITY_BASE_URL": (
-            "${ONES_IDENTITY_BASE_URL:-http://host.docker.internal:19121}"
-        ),
-        "ONES_IDENTITY_ALLOWED_HOSTS": (
-            "${ONES_IDENTITY_ALLOWED_HOSTS:-host.docker.internal}"
-        ),
+        "ONES_IDENTITY_BASE_URL": ("${ONES_IDENTITY_BASE_URL:-http://host.docker.internal:19121}"),
+        "ONES_IDENTITY_ALLOWED_HOSTS": ("${ONES_IDENTITY_ALLOWED_HOSTS:-host.docker.internal}"),
         "ONES_IDENTITY_TIMEOUT_SECONDS": "${ONES_IDENTITY_TIMEOUT_SECONDS:-5}",
         "ONES_IDENTITY_MAX_RESPONSE_BYTES": "${ONES_IDENTITY_MAX_RESPONSE_BYTES:-65536}",
         "ONES_IDENTITY_ALLOW_INSECURE_LOCAL": ("${ONES_IDENTITY_ALLOW_INSECURE_LOCAL:-true}"),
@@ -159,13 +147,16 @@ def test_worker_image_has_no_claude_sdk_or_cli_layer() -> None:
     assert '"claude-agent-sdk==0.2.134"' in pyproject
 
 
-def test_ci_builds_and_checks_both_production_runtime_images() -> None:
+def test_ci_builds_python_single_runtime_deployment_images() -> None:
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
-    assert "agent-runtime:" in workflow
-    assert "npm run preflight:static" in workflow
+    assert "agent-runtime:" not in workflow
     assert "runtime-images:" in workflow
-    assert "docker compose build typescript-agent-runtime python-agent-runtime" in workflow
+    assert (
+        "docker compose build api-server agent-worker python-agent-runtime dingtalk-runtime"
+        in workflow
+    )
+    assert "typescript-agent-runtime" not in workflow
 
 
 def test_runtime_migrator_applies_and_verifies_service_grants_after_schema() -> None:
@@ -179,12 +170,12 @@ def test_runtime_migrator_applies_and_verifies_service_grants_after_schema() -> 
     )
 
 
-def test_async_job_creation_workers_can_reach_both_agent_runtimes() -> None:
+def test_async_job_creation_workers_can_reach_only_python_agent_runtime() -> None:
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
     services = compose["services"]
 
     for service_name in ("channel-dispatch-worker", "webhook-worker"):
         service = services[service_name]
         assert set(service["networks"]) == {"default", "agent-runtime-control"}
-        for runtime_name in ("python-agent-runtime", "typescript-agent-runtime"):
-            assert service["depends_on"][runtime_name] == {"condition": "service_healthy"}
+        assert service["depends_on"]["python-agent-runtime"] == {"condition": "service_healthy"}
+        assert "typescript-agent-runtime" not in service["depends_on"]

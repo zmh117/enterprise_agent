@@ -100,7 +100,9 @@ export const revisionSchema = z
     task_workspace_retention_period: z
       .enum(["DAY", "WEEK", "MONTH"])
       .default("WEEK"),
-    file_format_policy_version: z.enum(["text-v1", "text-v2"]).default("text-v1"),
+    file_format_policy_version: z
+      .enum(["text-v1", "text-v2"])
+      .default("text-v1"),
     task_file_features: taskFileFeaturesSchema.default({
       workspace_enabled: false,
       file_mcp_enabled: false,
@@ -129,6 +131,7 @@ export const publicationSchema = runtimeStateSchema
     config_hash: z.string(),
     published_by: z.string(),
     published_at: z.string(),
+    retirement_status: z.enum(["supported", "retired"]).default("supported"),
     snapshot: z.record(z.string(), z.unknown()).optional(),
     task_workspace_retention_period: z
       .enum(["DAY", "WEEK", "MONTH"])
@@ -136,7 +139,9 @@ export const publicationSchema = runtimeStateSchema
     task_workspace_retention_source: z
       .enum(["publication_snapshot", "legacy_default"])
       .default("legacy_default"),
-    file_format_policy_version: z.enum(["text-v1", "text-v2"]).default("text-v1"),
+    file_format_policy_version: z
+      .enum(["text-v1", "text-v2"])
+      .default("text-v1"),
     file_format_policy_source: z
       .enum(["publication_snapshot", "legacy_default"])
       .default("legacy_default"),
@@ -194,7 +199,9 @@ export const applicationSummarySchema = runtimeStateSchema
     task_workspace_retention_period: z
       .enum(["DAY", "WEEK", "MONTH"])
       .default("WEEK"),
-    file_format_policy_version: z.enum(["text-v1", "text-v2"]).default("text-v1"),
+    file_format_policy_version: z
+      .enum(["text-v1", "text-v2"])
+      .default("text-v1"),
   })
   .passthrough()
 

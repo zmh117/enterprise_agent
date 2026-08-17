@@ -41,7 +41,7 @@ from app.shared.secret_redaction import sanitize_for_persistence
 logger = logging.getLogger(__name__)
 SERVER_CODE = "tool-mcp"
 SERVER_VERSION = "1.0.0"
-SUPPORTED_RUNTIMES = frozenset({"python-v1", "typescript-v1"})
+SUPPORTED_RUNTIMES = frozenset({"python-v1"})
 MAX_RESPONSE_BYTES = 512 * 1024
 
 

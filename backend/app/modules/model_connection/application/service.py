@@ -52,6 +52,7 @@ STABLE_PROBE_ERROR_CODES = frozenset(
         "model_connection_probe_envelope_invalid",
         "model_connection_credential_unavailable",
         "model_connection_rotation_required",
+        "typescript_agent_runtime_retired",
         "revision_conflict",
         "credential_ownership_conflict",
         "validation_failed",
@@ -70,15 +71,6 @@ CONFIG_FIELDS = frozenset(
         "effort_level",
     }
 )
-
-
-class ModelConnectionTester(Protocol):
-    def __call__(
-        self,
-        binding: ModelRuntimeBinding,
-        api_key: str,
-        timeout_seconds: int,
-    ) -> dict[str, Any]: ...
 
 
 class RuntimeModelProbe(Protocol):
@@ -153,8 +145,6 @@ class ModelConnectionService:
         *,
         allowed_hosts: set[str] | frozenset[str] | None = None,
         dns_resolver: Callable[..., list[tuple[Any, ...]]] | None = None,
-        tester: ModelConnectionTester | None = None,
-        runtime_probe: RuntimeModelProbe | None = None,
         runtime_probes: Mapping[str, RuntimeModelProbe] | None = None,
         model_discoverer: ModelDiscoverer | None = None,
         redirect_checker: Callable[[str, int], None] | None = None,
@@ -170,10 +160,6 @@ class ModelConnectionService:
             if str(item).strip()
         )
         self.dns_resolver = dns_resolver or socket.getaddrinfo
-        self.tester = tester
-        # ``runtime_probe`` remains as the legacy TypeScript default for
-        # callers that have not migrated to explicit Runtime selection.
-        self.runtime_probe = runtime_probe
         self.runtime_probes = dict(runtime_probes or {})
         self.model_discoverer = model_discoverer or _fetch_deepseek_models
         self.redirect_checker = redirect_checker or _assert_provider_does_not_redirect
@@ -256,7 +242,7 @@ class ModelConnectionService:
         config: dict[str, Any],
         api_key: str = "",
         timeout_seconds: int = 15,
-        runtime_kind: str = "typescript-v1",
+        runtime_kind: str = "python-v1",
     ) -> dict[str, Any]:
         self._require_agent_editor(actor_id)
         self._require_secret_admin(actor_id)
@@ -323,7 +309,7 @@ class ModelConnectionService:
         config: dict[str, Any],
         api_key: str = "",
         timeout_seconds: int = 15,
-        runtime_kind: str = "typescript-v1",
+        runtime_kind: str = "python-v1",
     ) -> dict[str, Any]:
         self._require_agent_editor(actor_id)
         self._require_secret_admin(actor_id)
@@ -609,7 +595,7 @@ class ModelConnectionService:
         *,
         actor_id: str,
         revision_id: str,
-        runtime_kind: str = "typescript-v1",
+        runtime_kind: str = "python-v1",
         timeout_seconds: int = 15,
     ) -> dict[str, Any]:
         self._require_agent_editor(actor_id)
@@ -620,15 +606,8 @@ class ModelConnectionService:
             binding = self.runtime_binding(revision_id)
             self.validate_base_url(binding.base_url, validate_dns=True)
             self.redirect_checker(binding.base_url, max(3, min(timeout_seconds, 10)))
-            if runtime_kind not in {"python-v1", "typescript-v1"}:
-                raise NonRetryableExecutionError(
-                    f"Unsupported model probe Runtime: {runtime_kind}",
-                    safe_message="模型连接测试 Runtime 类型无效",
-                    error_code="model_connection_test_runtime_invalid",
-                )
+            _require_python_probe_runtime(runtime_kind)
             runtime_probe = self.runtime_probes.get(runtime_kind)
-            if runtime_probe is None and runtime_kind == "typescript-v1":
-                runtime_probe = self.runtime_probe
             if runtime_probe is None:
                 raise NonRetryableExecutionError(
                     f"{runtime_kind} model probe is unavailable",
@@ -650,6 +629,15 @@ class ModelConnectionService:
             if str(outcome.get("connection_revision_id") or "") != revision_id:
                 raise NonRetryableExecutionError(
                     "Runtime model probe revision mismatch",
+                    safe_message="模型连接测试响应无效",
+                    error_code="model_connection_test_invalid_response",
+                )
+            if (
+                str(outcome.get("provider_host") or "") != binding.provider_host
+                or str(outcome.get("model") or "") != binding.model
+            ):
+                raise NonRetryableExecutionError(
+                    "Runtime model probe binding mismatch",
                     safe_message="模型连接测试响应无效",
                     error_code="model_connection_test_invalid_response",
                 )
@@ -1039,16 +1027,9 @@ class ModelConnectionService:
         *,
         runtime_kind: str,
     ) -> None:
-        if runtime_kind not in {"python-v1", "typescript-v1"}:
-            raise NonRetryableExecutionError(
-                f"Unsupported model probe Runtime: {runtime_kind}",
-                safe_message="模型连接测试 Runtime 类型无效",
-                error_code="model_connection_test_runtime_invalid",
-            )
+        _require_python_probe_runtime(runtime_kind)
         runtime_probe = self.runtime_probes.get(runtime_kind)
-        if runtime_probe is None and runtime_kind == "typescript-v1":
-            runtime_probe = self.runtime_probe
-        if runtime_probe is None and self.tester is None:
+        if runtime_probe is None:
             raise NonRetryableExecutionError(
                 "Model connection tester is unavailable",
                 safe_message="模型连接测试运行时不可用",
@@ -1056,38 +1037,34 @@ class ModelConnectionService:
             )
         try:
             timeout = max(3, min(int(timeout_seconds), 20))
-            if runtime_probe is not None:
-                outcome = runtime_probe.probe_draft(
-                    binding=binding,
-                    api_key=api_key,
-                    timeout_seconds=timeout,
+            outcome = runtime_probe.probe_draft(
+                binding=binding,
+                api_key=api_key,
+                timeout_seconds=timeout,
+            )
+            if str(outcome.get("runtime_kind") or "") != runtime_kind:
+                raise NonRetryableExecutionError(
+                    "Draft Runtime model probe kind mismatch",
+                    safe_message="模型连接测试响应无效",
+                    error_code="model_connection_test_invalid_response",
                 )
-                if str(outcome.get("runtime_kind") or "") != runtime_kind:
-                    raise NonRetryableExecutionError(
-                        "Draft Runtime model probe kind mismatch",
-                        safe_message="模型连接测试响应无效",
-                        error_code="model_connection_test_invalid_response",
-                    )
-                if not bool(outcome.get("success")):
-                    failure = outcome.get("failure")
-                    safe_failure = failure if isinstance(failure, dict) else {}
-                    raise NonRetryableExecutionError(
-                        f"{runtime_kind} draft model probe failed",
-                        safe_message=str(safe_failure.get("safe_message") or "模型连接测试失败"),
-                        error_code=str(safe_failure.get("code") or "model_connection_test_failed"),
-                    )
-                if (
-                    str(outcome.get("provider_host") or "") != binding.provider_host
-                    or str(outcome.get("model") or "") != binding.model
-                ):
-                    raise NonRetryableExecutionError(
-                        "Draft Runtime model probe binding mismatch",
-                        safe_message="模型连接测试响应无效",
-                        error_code="model_connection_test_invalid_response",
-                    )
-            else:
-                assert self.tester is not None
-                self.tester(binding, api_key, timeout)
+            if not bool(outcome.get("success")):
+                failure = outcome.get("failure")
+                safe_failure = failure if isinstance(failure, dict) else {}
+                raise NonRetryableExecutionError(
+                    f"{runtime_kind} draft model probe failed",
+                    safe_message=str(safe_failure.get("safe_message") or "模型连接测试失败"),
+                    error_code=str(safe_failure.get("code") or "model_connection_test_failed"),
+                )
+            if (
+                str(outcome.get("provider_host") or "") != binding.provider_host
+                or str(outcome.get("model") or "") != binding.model
+            ):
+                raise NonRetryableExecutionError(
+                    "Draft Runtime model probe binding mismatch",
+                    safe_message="模型连接测试响应无效",
+                    error_code="model_connection_test_invalid_response",
+                )
         except NonRetryableExecutionError as exc:
             code = str(exc.error_code or "")
             if code in STABLE_PROBE_ERROR_CODES:
@@ -1400,6 +1377,22 @@ def _model_discovery_error() -> NonRetryableExecutionError:
     )
 
 
+def _require_python_probe_runtime(runtime_kind: str) -> None:
+    if runtime_kind == "python-v1":
+        return
+    if runtime_kind == "typescript-v1":
+        raise NonRetryableExecutionError(
+            "TypeScript Agent Runtime model probes are retired",
+            safe_message="TypeScript Agent Runtime 已退役，请使用 Python Runtime 重新检测",
+            error_code="typescript_agent_runtime_retired",
+        )
+    raise NonRetryableExecutionError(
+        f"Unsupported model probe Runtime: {runtime_kind}",
+        safe_message="模型连接测试 Runtime 类型无效",
+        error_code="model_connection_test_runtime_invalid",
+    )
+
+
 def _stable_probe_error_code(exc: Exception) -> str:
     code = str(getattr(exc, "error_code", "") or "")
     if code in STABLE_PROBE_ERROR_CODES:
@@ -1420,6 +1413,9 @@ def _safe_probe_error(exc: Exception) -> NonRetryableExecutionError:
         "model_connection_test_timeout": "模型连接测试超时",
         "model_connection_test_failed": "模型连接测试失败，请检查模型和 Credential",
         "model_connection_test_unavailable": "模型连接测试运行时不可用",
+        "typescript_agent_runtime_retired": (
+            "TypeScript Agent Runtime 已退役，请使用 Python Runtime 重新检测"
+        ),
     }
     return NonRetryableExecutionError(
         "Model connection probe failed",

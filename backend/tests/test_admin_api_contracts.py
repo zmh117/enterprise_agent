@@ -14,6 +14,7 @@ from app.modules.admin.infrastructure import AdminJobQuery, AdminReadRepository
 from app.modules.job.application.create_agent_job_service import _execution_scope_hash
 from app.modules.job.domain.job_status import JobStatus
 from app.shared.exceptions import NonRetryableExecutionError
+from backend.tests.helpers import ensure_historical_typescript_agent
 from backend.tests.test_unified_identity_rbac import csrf_headers, login, unified_settings
 
 
@@ -241,6 +242,7 @@ def test_dashboard_api_is_authorized_bounded_and_does_not_probe_resources(
 def test_agent_skill_and_channel_catalogs_support_editable_agents() -> None:
     settings = unified_settings()
     container = build_test_container(settings, migrate=True, seed=True)
+    ensure_historical_typescript_agent(container)
     container.database.execute(
         """
         insert into agent_definition
@@ -260,7 +262,9 @@ def test_agent_skill_and_channel_catalogs_support_editable_agents() -> None:
         connectors = client.get("/api/admin/connectors")
 
     assert agents.status_code == skills.status_code == 200
-    assert all(agent["management_mode"] == "editable" for agent in agents.json()["agents"])
+    agents_by_code = {agent["code"]: agent for agent in agents.json()["agents"]}
+    assert agents_by_code["default-diagnostic-agent"]["management_mode"] == "editable"
+    assert agents_by_code["typescript-diagnostic-agent"]["management_mode"] == ("read_only_retired")
     assert all("content" not in item for item in skills.json()["skills"])
     email = next(item for item in channel_providers.json()["providers"] if item["code"] == "email")
     assert email["available"] is False
