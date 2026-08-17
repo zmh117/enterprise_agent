@@ -2,7 +2,6 @@
 
 ## Purpose
 定义内置只读工具、资源版本、业务拓扑、数据库、Redis 和 Loki 的治理、发布、绑定与执行边界，确保模型不能绕过受管资源和只读策略。
-
 ## Requirements
 
 <!-- Reconciled from mcp_new capability: `base-scoped-redis-loki` -->
@@ -118,7 +117,6 @@ The system SHALL constrain Loki queries using the exact Environment and optional
 - **WHEN** a Job target is `sanjiu-test1/guanlan/GL001`
 - **THEN** the effective Loki selector remains the frozen Environment/Base Policy and does not add `GL001`, replica or placement conditions automatically
 
-
 <!-- Reconciled from mcp_new capability: `built-in-readonly-tool-governance` -->
 
 ### Requirement: 内置只读工具实现必须来自代码 Manifest
@@ -149,7 +147,6 @@ The system SHALL constrain Loki queries using the exact Environment and optional
 #### Scenario: 管理员查看工具目录
 - **WHEN** 管理员具有工具目录读取权限
 - **THEN** 页面显示代码 Manifest 和可用性，不显示已删除的 Handler/Release/Evidence 控件
-
 
 <!-- Reconciled from mcp_new capability: `governed-tool-resource-management` -->
 
@@ -215,7 +212,6 @@ Draft 可以删除；Published Revision MUST NOT 被原地修改或通过普通 
 - **WHEN** apply 再次展示 operation ID、备份引用和精确资源清单并得到明确确认
 - **THEN** 系统在单个受控事务中清理资源，不修改应用或创建 blocked 映射状态
 
-
 <!-- Reconciled from mcp_new capability: `loki-diagnostics` -->
 
 ### Requirement: Loki diagnostics shall expose bounded label discovery
@@ -263,7 +259,6 @@ Loki 诊断 endpoint SHALL 使用与真实 `query_loki` 相同的 environment/ba
 - **WHEN** Loki upstream 返回 tenant/auth 相关错误
 - **THEN** 平台 SHALL 返回安全错误摘要和 retryable 分类
 - **AND** 响应 MUST NOT 暴露认证 token 或 secret
-
 
 <!-- Reconciled from mcp_new capability: `loki-scope-selector-policy` -->
 
@@ -417,7 +412,6 @@ Loki Resource 管理界面 SHALL 只把 Draft 或 Published Revision 引用该 R
 - **WHEN** 健康探测因连接、认证或超时失败
 - **THEN** 系统标记安全的上游健康错误，与“成功但为空”区分，并且不泄露 Secret
 
-
 <!-- Reconciled from mcp_new capability: `multi-dialect-database-gateway` -->
 
 ### Requirement: Database gateway supports MySQL, SQL Server, and Oracle
@@ -540,7 +534,6 @@ Oracle 目标 MUST 为 11.2.0.4 单实例，使用 `host`、`port` 以及 `servi
 - **WHEN** 仅单元测试或测试替身通过
 - **THEN** Oracle Draft 不得进入 PUBLISHED，状态必须明确为等待真实连接验证
 
-
 <!-- Reconciled from mcp_new capability: `multi-dialect-schema-inspection` -->
 
 ### Requirement: SchemaInspectorFactory 必须按数据库引擎选择 inspector
@@ -591,7 +584,6 @@ SQL Server schema inspector SHALL 从 SQL Server 系统目录读取目标 databa
 - **WHEN** 用户请求 schema 预览
 - **THEN** inspector 只查询系统目录元数据，不执行针对业务表的样例数据查询
 
-
 <!-- Reconciled from mcp_new capability: `oracle-instant-client-runtime` -->
 
 ### Requirement: Internal API Platform image bundles Oracle Instant Client
@@ -604,7 +596,6 @@ SQL Server schema inspector SHALL 从 SQL Server 系统目录读取目标 databa
 #### Scenario: 未提供 thick client
 - **WHEN** Oracle Resource 要求 thick 模式但镜像没有客户端
 - **THEN** 资源验证和 Tool Call 失败关闭且不回退到不兼容模式
-
 
 <!-- Reconciled from mcp_new capability: `platform-access-control` -->
 
@@ -722,7 +713,6 @@ The system SHALL audit access-control decisions (allow/deny) with the resolved t
 - **WHEN** 用户可访问 GL001 但没有目标稳定 Tool Identifier 的使用权限
 - **THEN** 模型不获得该工具，直接调用也被拒绝
 
-
 <!-- Reconciled from mcp_new capability: `readonly-tool-platform` -->
 
 ### Requirement: Tool calls go through internal API platform
@@ -827,19 +817,25 @@ The system SHALL constrain Loki queries by the exact Resource Revision, tenant a
 - **THEN** Internal API Platform MUST 暴露配置错误，不得静默回退到 YAML
 
 ### Requirement: Tool platform resolves secrets only in infrastructure layer
-系统 SHALL 仅在 Internal API Platform infrastructure adapter 建立 DB、Redis、Loki 外部连接时解析 `secret://platform/<code>`。Agent、模型、Tool Service、Job、Resource Revision、审计和响应 MUST NOT 接收或保存原始 Secret。
+系统 SHALL 仅在拥有外部连接的基础设施适配器中解析`secret://platform/<code>`。Internal API Platform只在建立DB、Redis、Loki连接时解析对应Secret；File Service只在其MinIO存储适配器中解析MinIO Secret。Agent、模型、Runtime、File Worker、MCP Tool参数与响应、Job、Resource Revision、审计和业务领域服务 MUST NOT 接收或保存原始Secret。
 
 #### Scenario: Database tool uses platform secret ref
-- **WHEN** 已发布数据库 revision 的 `password_ref` 为 `secret://platform/order_db_password`
-- **THEN** infrastructure adapter 在创建受限连接前解析该 Secret，其他层只看见 reference 和 configured 状态
+- **WHEN** 已发布数据库revision的`password_ref`为`secret://platform/order_db_password`
+- **THEN** Internal API Platform基础设施适配器在创建受限连接前解析该Secret
+- **AND** 其他层只看见reference和configured状态
+
+#### Scenario: File Service uses MinIO secret ref
+- **WHEN** File Service配置引用有效平台MinIO Secret
+- **THEN** 只有MinIO基础设施适配器获得解密值
+- **AND** File MCP、Runtime和File Worker看不到原始凭据
 
 #### Scenario: Secret value appears in tool result
-- **WHEN** 上游结果或异常意外包含 credential
+- **WHEN** 上游结果或异常意外包含credential
 - **THEN** 平台必须在返回、持久化或发送给模型前脱敏
 
 #### Scenario: Unsupported provider reference appears
-- **WHEN** 运行时快照包含新的 `env:`、`vault:` 或 `kms:` 引用
-- **THEN** 快照装载必须失败并保留 Last Known Good，不得尝试回退解析
+- **WHEN** 运行时快照包含新的`env:`、`vault:`或`kms:`引用
+- **THEN** 快照装载必须失败并保留Last Known Good，不得尝试回退解析
 
 ### Requirement: DB-backed resource bindings preserve read-only guardrails
 系统 SHALL 确保从 Job Execution Snapshot 加载的精确 DB、Redis、Loki Resource Revision 及策略 Revision 继续执行只读、安全、限流、脱敏和审计策略；运行时不得重新查询 latest Resource 或以名称、默认值、最近父级和第一候选回退。
@@ -1129,7 +1125,6 @@ Agent Runtime 和 Internal API Platform MUST 在构建和执行 Tool Call 时校
 - **WHEN** 工具名称和版本字符串相同但 Implementation Digest 不同
 - **THEN** 运行时拒绝调用并记录 DRIFTED，不自动使用当前实现
 
-
 <!-- Reconciled from mcp_new capability: `real-tools-runtime` -->
 
 ### Requirement: Real-tools 必须通过标准 MCP Tool Runtime 执行
@@ -1145,7 +1140,6 @@ Agent Runtime 和 Internal API Platform MUST 在构建和执行 Tool Call 时校
 #### Scenario: 歧义资源修复
 - **WHEN** 两个资源导致调用被拒绝，管理员停用冲突 revision 后重试新 Job
 - **THEN** 新调用唯一解析并成功，旧失败历史保持不变
-
 
 <!-- Reconciled from mcp_new capability: `workshop-resource-partition-policy` -->
 
@@ -1265,41 +1259,52 @@ Redis Resource 连接测试 MUST 只验证受治理连接字段、Secret、认�
 - **WHEN** cloud Mapping 引用 GL001 Policy A 而 edge Mapping 引用 GL001 Policy B
 - **THEN** Application Publish 拒绝并指出同一逻辑 Workshop 的策略不一致
 
-
 <!-- Reconciled from mcp_new capability: `standard-mcp-tool-runtime` -->
 
 ### Requirement: 双 Runtime 只使用固定标准 MCP Tool Server
-系统 SHALL 由单一 `tool-mcp` 服务使用官方 MCP SDK 向 Python 与 TypeScript Runtime 提供工具；Runtime MUST 只连接部署固定的私网地址和 `server_code=tool-mcp`，不得接受 Agent、Application、用户或模型提供的 MCP Server URL。
+系统 SHALL 由部署固定的`tool-mcp`使用官方MCP SDK向Python与TypeScript Runtime提供现有只读工具，并由部署固定的`file-service` File MCP接口提供任务文件工具。Runtime MUST 只连接Job与Publication冻结且部署注册的私网Server地址，不得接受Agent、Application、用户或模型提供MCP Server URL。两个Server MUST 使用代码拥有的稳定Tool identifier和等价跨Runtime语义，不得互相代理或回退。
 
-#### Scenario: 两个 Runtime 调用同一工具
-- **WHEN** Python 与 TypeScript Runtime 分别执行冻结了同一 Tool 的 Job
-- **THEN** 两端必须使用同一 MCP Tool schema 和等价执行语义
+#### Scenario: 两个 Runtime 调用同一只读工具
+- **WHEN** Python与TypeScript Runtime分别执行冻结了同一只读Tool的Job
+- **THEN** 两端通过`tool-mcp`使用同一schema和等价执行语义
+
+#### Scenario: 两个 Runtime 调用同一文件工具
+- **WHEN** Python与TypeScript Runtime分别执行冻结了同一File Tool的Job
+- **THEN** 两端通过`file-service`使用同一schema、Principal JWT契约和等价执行语义
 
 #### Scenario: payload 提供自定义 Server
-- **WHEN** 请求或模型输出包含自定义 MCP URL、Server code 或 transport
-- **THEN** Runtime 和 `tool-mcp` 必须在连接或调用前拒绝
+- **WHEN** 请求或模型输出包含自定义MCP URL、Server code或transport
+- **THEN** Runtime和对应MCP服务必须在连接或调用前拒绝
 
 ### Requirement: MCP Tool 实现必须由代码 Manifest 拥有
-系统 MUST 从代码 Manifest 注册稳定 Tool identifier、描述、输入 Schema、只读标记、资源类型和实现函数；数据库和管理 API MUST NOT 创建或覆盖 URL、SQL、Shell、脚本、模板或任意可执行实现。
+系统 MUST 从代码Manifest注册稳定Tool identifier、server code、描述、输入Schema、操作语义、风险等级、资源类型和实现函数；现有`tool-mcp`只可注册只读资源Tool，File Service只可注册固定任务文件Tool。数据库和管理API MUST NOT创建或覆盖URL、SQL、Shell、脚本、模板、对象键规则或任意可执行实现。
 
 #### Scenario: 部署合法 Manifest
-- **WHEN** `tool-mcp` 启动并加载无冲突的代码 Manifest
-- **THEN** MCP `tools/list` 只返回当前 Job 冻结且授权的 Manifest 子集
+- **WHEN** `tool-mcp`和`file-service`启动并加载无冲突的代码Manifest
+- **THEN** 各自`tools/list`只返回当前Job冻结、schema匹配且授权的Manifest子集
+
+#### Scenario: 文件Tool伪装为通用执行器
+- **WHEN** File Tool schema接受任意路径、Bucket、对象键、Shell、URL或脚本
+- **THEN** Manifest验证拒绝启动或发布
 
 #### Scenario: 管理端提交动态实现
-- **WHEN** 管理端尝试创建任意 MCP/HTTP/SQL/Shell/脚本实现
+- **WHEN** 管理端尝试创建任意MCP、HTTP、SQL、Shell、脚本或模板实现
 - **THEN** 系统拒绝且不持久化该内容
 
 ### Requirement: MCP 调用必须绑定有效 Job
-每个 MCP 调用 MUST 携带非敏感 Job 标识；`tool-mcp` MUST 重新读取 Job，并要求状态为 RUNNING、Runtime/protocol 合法、Tool 存在于 Job 冻结集合且 schema hash 一致。
+每个MCP调用 MUST 绑定有效RUNNING Job和Job冻结的精确Tool/schema hash。`tool-mcp`继续接受非敏感Job标识并重新读取Job；File Service MUST 从已验证Principal JWT解析Job并重新读取用户、Session、Publication、Workspace和scope。任一Server均 MUST 在上游连接、文件元数据读取或对象操作前拒绝不存在、非RUNNING、Runtime/protocol不合法、Tool未冻结或schema漂移的调用。
 
-#### Scenario: 合法 Job 调用冻结工具
-- **WHEN** RUNNING Job 调用其冻结的精确 Tool
-- **THEN** `tool-mcp` 进入资源、权限和只读策略校验
+#### Scenario: 合法 Job 调用冻结只读工具
+- **WHEN** RUNNING Job调用其冻结的精确只读Tool
+- **THEN** `tool-mcp`进入资源、权限和只读策略校验
+
+#### Scenario: 合法 Job 调用冻结文件工具
+- **WHEN** RUNNING Job以有效Principal调用其冻结的精确File Tool
+- **THEN** File Service进入任务工作区、文件和操作授权校验
 
 #### Scenario: Job 或 Tool 不匹配
-- **WHEN** Job 不存在、非 RUNNING、Tool 未冻结或 schema hash 漂移
-- **THEN** 调用在连接上游前失败关闭
+- **WHEN** Job不存在、非RUNNING、Tool未冻结或schema hash漂移
+- **THEN** 调用在连接上游或读取文件内容前失败关闭
 
 ### Requirement: 工具资源必须按调用目标唯一解析
 `tool-mcp` SHALL 使用 Agent 在当前 Tool Call 中提供的 `environment`、可选 `base`/`workshop`/`placement`、Tool 资源类型和当前可用 Published Resource Revision 解析资源；调用目标 MUST 先通过当前角色数据范围校验。匹配结果 MUST 恰好为一个，不得按顺序、默认值、最近父级或最新版本猜测；Job Snapshot 或 Routing Context 中的历史目标字段 MUST NOT 覆盖调用参数。
@@ -1336,15 +1341,20 @@ Redis Resource 连接测试 MUST 只验证受治理连接字段、Secret、认�
 - **THEN** 执行器必须在目标执行前拒绝
 
 ### Requirement: MCP Transport 不新增认证和治理层
-`tool-mcp` MUST 不签发或验证 Bearer Token/JWT，不挂载 Runtime Grant，不拥有 signing key，不新增 MCP 专用 RBAC、授权表或 Resource Mapping；业务权限由 Job、角色、应用和工具实现复核。
+现有`tool-mcp` MUST 不签发或验证Bearer Token/JWT，不挂载Runtime Grant、不拥有signing key，也不新增MCP专用RBAC、授权表或Resource Mapping；携带Authorization的`tool-mcp`请求继续拒绝。File MCP MUST 复用平台统一Principal JWT签发与验证、Job、角色、Business Application和Tool授权事实，不得自建用户、角色、JWT issuer、凭据表或替代授权模型。
 
-#### Scenario: Runtime 调用 MCP
-- **WHEN** Runtime 发起工具调用
-- **THEN** 请求不包含 Runtime Grant、模型 Key、Internal API Token 或 MCP access token
+#### Scenario: Runtime 调用只读 MCP
+- **WHEN** Runtime向`tool-mcp`发起工具调用
+- **THEN** 请求不包含Runtime Grant、模型Key、Internal API Token或MCP access token
 
-#### Scenario: 请求携带 Authorization
-- **WHEN** MCP HTTP 请求携带 Authorization header
-- **THEN** 服务拒绝该请求，避免形成未定义凭据协议
+#### Scenario: tool-mcp 请求携带 Authorization
+- **WHEN** `tool-mcp` HTTP请求携带Authorization header
+- **THEN** 服务拒绝该请求以维持现有非认证传输边界
+
+#### Scenario: Runtime 调用 File MCP
+- **WHEN** Runtime向File Service发起文件工具调用
+- **THEN** 请求只携带平台Principal JWT并由File Service复核现有统一授权事实
+- **AND** File Service不创建独立RBAC或签发Token
 
 ### Requirement: 工具调用审计必须精确且不含 Secret
 系统 SHALL 记录 Job、Agent/Application Publication、Tool identifier/schema hash、业务目标、实际 placement、Resource Revision、权限判定、correlation id、耗时与有界结果摘要；MUST NOT 记录连接密码、Token、完整 Prompt 或无界上游响应。
@@ -1359,3 +1369,49 @@ Redis Resource 连接测试 MUST 只验证受治理连接字段、Secret、认�
 #### Scenario: 残留扫描命中旧链路
 - **WHEN** 代码、Compose、env 示例或活动规格包含旧运行组件或配置
 - **THEN** 验收失败直到残留被删除
+
+### Requirement: File MCP 使用平台短时 Principal JWT
+File Service的MCP接口 MUST 只接受平台身份服务签发、TTL不超过300秒且绑定内部用户、租户、RUNNING Job、Session、Agent Publication、Business Application Publication、授权快照和精确File Tool scope的Principal JWT。File Service MUST 使用平台JWKS验证签名、issuer、audience、authorized party、时间、JTI与全部绑定事实，并重新读取当前Job和任务工作区；JWT MUST NOT包含MinIO凭据、对象位置、钉钉凭据或其它下游Secret。
+
+#### Scenario: 合法文件主体调用
+- **WHEN** Runtime携带当前RUNNING Job的有效Principal JWT调用已冻结File Tool
+- **THEN** File Service验证全部绑定事实并继续文件授权
+
+#### Scenario: JWT与Job不匹配
+- **WHEN** JWT的用户、Job、Session、Publication、scope或授权hash与当前事实不一致
+- **THEN** File Service在读取文件元数据或MinIO前拒绝
+
+#### Scenario: Agent把凭据放入JWT声明
+- **WHEN** Token或请求包含MinIO Access Key、Secret Key、Session Token或对象键
+- **THEN** 签发或验证流程拒绝且不记录原值
+
+### Requirement: File MCP 参数不声明平台身份和对象位置
+File MCP Tool输入 MUST 使用封闭Schema，只允许必要的文件选择、精确版本、沙盒文件句柄和用户业务意图。模型 MUST NOT声明用户、租户、任务工作区、reply route、Bucket、对象键、上传URL、Credential Reference或MCP Server地址；File Service必须从已验证Principal与Job解析这些事实。
+
+#### Scenario: 模型提交任意对象键
+- **WHEN** File Tool参数包含Bucket、对象键或跨工作区File ID
+- **THEN** schema或授权校验在对象操作前拒绝
+
+### Requirement: 内部文件调用使用角色隔离的短时 Service Principal
+平台身份服务 MUST 使用统一的平台 Principal 签名私钥，为`file-worker`和Delivery Worker按需签发TTL不超过300秒的角色JWT；用户/Job Principal与Service Principal MUST 共享同一公开`PRINCIPAL_JWKS`，不得维护第二套Service Principal签名私钥或JWKS。服务JWT MUST 绑定独立固定issuer、`aud=file-service-internal`、相同的`sub`/`azp`角色、完整固定scope集合、JTI与时间声明；File Service MUST 在独立验证策略中校验这些claims，并确认当前接口所需scope属于该角色的完整集合。共享签名信任根不得使用户/Job Principal通过内部服务接口，也不得使Service Principal通过普通File MCP或其它用户MCP接口。Worker MUST NOT持有平台签名私钥、公开JWKS、另一角色bootstrap credential、预生成长期JWT或共享Internal API Token。
+
+#### Scenario: File Worker换取并使用短时JWT
+- **WHEN** File Worker以自己的角色bootstrap credential调用平台内部身份接口
+- **THEN** 身份服务签发同时包含附件导入和内容清理固定scope、TTL不超过300秒的Service Principal JWT
+- **AND** File Worker可在对应两个File Service接口使用该JWT并在到期前刷新
+
+#### Scenario: Delivery凭据被File Worker使用
+- **WHEN** File Worker使用Delivery Worker bootstrap credential或Delivery JWT调用附件导入
+- **THEN** 平台身份服务或File Service在文件内容操作前拒绝
+
+#### Scenario: Compose使用静态Service JWT文件
+- **WHEN** 部署配置要求挂载预先生成且不会持续刷新的Service JWT
+- **THEN** 部署契约测试失败且不得宣称服务身份已接线
+
+### Requirement: File MCP 调用审计与统一 MCP Operation Audit 对齐
+每次File MCP Tool调用 MUST 记录统一operation、attempt和event链，包含Job、内部用户、Agent/Application Publication、Tool identifier/schema hash、Workspace、File/Version、授权判定、Commit或Delivery关联、状态、耗时及有界摘要。审计 MUST 排除文件正文、完整Prompt、Principal JWT、MinIO或钉钉凭据、对象键和上传授权材料。
+
+#### Scenario: 文件提交发生版本冲突
+- **WHEN** File Tool完成暂存但基础版本不再是当前版本
+- **THEN** 审计关联同一operation和提交意图并记录安全冲突结果
+- **AND** 不保存文件正文或Secret

@@ -7,7 +7,7 @@
 
 ## Canonical Specs
 
-- 当前已接受规范的唯一 canonical baseline 是以下 8 个文件：
+- 当前已接受规范的唯一 canonical baseline 是以下 9 个文件：
   - `openspec/specs/identity-access/spec.md`
   - `openspec/specs/agent-model/spec.md`
   - `openspec/specs/business-application/spec.md`
@@ -16,6 +16,7 @@
   - `openspec/specs/builtin-tool-resource/spec.md`
   - `openspec/specs/governed-api-capability/spec.md`
   - `openspec/specs/platform-operations/spec.md`
+  - `openspec/specs/task-file-workspace/spec.md`
 - 一般规格、设计、实现、评审和诊断任务默认只读取与请求领域相关的 canonical spec，不得递归加载全部规格。
 - `openspec/changes/<name>/` 仅在用户明确指定该 active change，或正在执行 propose、apply、sync、archive 工作流时读取；其 delta 必须相对于 canonical baseline 解释。
 - `openspec/changes/archive/` 仅在用户明确要求历史、审计或追溯时读取。Archive、proposal、design、tasks、evidence 和迁移快照都是非规范历史证据，不得覆盖 canonical Requirement。

@@ -127,7 +127,7 @@
 - [x] 13.1 编写附件关联与到期事实回填命令，支持 dry-run、分批、断点续跑和对账，不下载重复内容也不删除对象
 - [x] 13.2 编写单消费者切换运行手册：暂停 `attachment-worker`、核对 ready/unacked、启动 `file-worker`、验证幂等和必要时按顺序回滚
 - [x] 13.3 通过 Publication Revision 功能开关灰度工作区、File MCP、Runtime Write/Edit 和默认文件交付，未命中 Job 保持原行为
-- [ ] 13.4 使用合成 TXT 和假凭据完成私聊真实链路验收：Channel ingress、File Worker、File Service、PostgreSQL、MinIO、RabbitMQ、Job、真实 Claude SDK Runtime 工具循环、Sandbox、File MCP、Commit、Delivery 和最终回复；不得以手工直接调用 transfer coordinator 代替 Runtime 接线证据
+- [x] 13.4 使用合成 TXT 和假凭据完成私聊真实链路验收：Channel ingress、File Worker、File Service、PostgreSQL、MinIO、RabbitMQ、Job、真实 Claude SDK Runtime 工具循环、Sandbox、File MCP、Commit、Delivery 和最终回复；不得以手工直接调用 transfer coordinator 代替 Runtime 接线证据
 - [x] 13.5 使用两个群成员完成群工作区连续编辑与并发冲突验收，证明实际 sender 审计、同群共享、跨群拒绝和只有一个当前版本
 - [x] 13.6 完成负向验收：Principal 拒绝、权限撤销、非法编码、15 MiB/20 文件/100 MiB 拒绝、路径逃逸、幂等重试、沙盒残留、staging 清理、交付重试和 Secret/正文不泄漏
 - [x] 13.7 更新 `CONTEXT.md`、相关 ADR、Compose/运维文档和管理员说明，明确自然周期、360 天独立保留、第一阶段 TXT、钉钉在线编辑不可感知和重新上传规则
