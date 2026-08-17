@@ -519,7 +519,7 @@ services:
   # deterministic provider behavior or starts the acceptance runner.
 
   admin-web:
-    profiles: ["admin"]
+    # profiles: ["admin"]
     build:
       context: .
       dockerfile: frontend/Dockerfile
