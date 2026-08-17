@@ -41,17 +41,14 @@ from app.python_runtime.model_binding import (
     ResolvedPythonModelBinding,
 )
 from app.python_runtime.job_sandbox import JobSandboxManager
-from app.python_runtime.claude_agent_sdk_adapter import (
-    ClaudeSdk,
-    RealClaudeCodeAgentClient,
-    _extract_tool_events,
-)
-from app.python_runtime.sdk_executor import (
+from app.python_runtime.claude_client import ClaudeSdk, ClaudeSdkClient
+from app.python_runtime.mcp_config import FixedMcpClaudeSdkClient
+from app.python_runtime.sdk_event_normalizer import extract_tool_events
+from app.python_runtime.executor import (
     PythonExecutionOutcome,
-    PythonRuntimeSdkExecutor,
-    RemoteMcpClaudeCodeAgentClient,
-    _normalize_tool_events,
+    PythonRuntimeExecutor,
 )
+from app.python_runtime.tool_policy import normalize_tool_events
 from app.python_runtime.service import PythonRuntimeDependencies, create_app
 from app.shared.database import Database, default_migrations_dir
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
@@ -293,7 +290,7 @@ def _dependencies(
         database=database,
         registry=PythonInvocationRegistry(executor, PythonTerminalLedger(database)),
         grant_verifier=RuntimeGrantVerifier(public_key),
-        executor=cast(PythonRuntimeSdkExecutor, executor),
+        executor=cast(PythonRuntimeExecutor, executor),
         model_probe_token="probe-token-" + "x" * 32,
         settings=settings,
         sandbox_manager=JobSandboxManager(tmp_path / "runtime-sandboxes"),
@@ -544,7 +541,7 @@ def test_python_runtime_model_probe_and_fixed_mcp_url_boundary(tmp_path: Path) -
     assert version["supported_protocol_versions"] == ",".join(SUPPORTED_RUNTIME_PROTOCOL_VERSIONS)
 
     try:
-        PythonRuntimeSdkExecutor(
+        PythonRuntimeExecutor(
             cast(Any, None),
             limits=build_settings().execution,
             mcp_server_url="https://attacker.example/mcp",
@@ -585,9 +582,8 @@ def test_python_sdk_model_probe_is_single_turn_toolless_and_bounded() -> None:
         subagent_model="deepseek-chat",
         effort_level="max",
     )
-    client = RealClaudeCodeAgentClient(
+    client = ClaudeSdkClient(
         model="deepseek-chat",
-        tool_registry=cast(Any, object()),
         limits=build_settings().execution,
         api_key="",
         sdk_loader=lambda: sdk,
@@ -634,9 +630,8 @@ def test_python_sdk_model_probe_redacts_provider_error_and_times_out() -> None:
         create_sdk_mcp_server=cast(Any, None),
         tool_annotations=None,
     )
-    rejected_client = RealClaudeCodeAgentClient(
+    rejected_client = ClaudeSdkClient(
         model="deepseek-chat",
-        tool_registry=cast(Any, object()),
         limits=build_settings().execution,
         api_key="",
         sdk_loader=lambda: rejected_sdk,
@@ -658,9 +653,8 @@ def test_python_sdk_model_probe_redacts_provider_error_and_times_out() -> None:
         create_sdk_mcp_server=cast(Any, None),
         tool_annotations=None,
     )
-    timeout_client = RealClaudeCodeAgentClient(
+    timeout_client = ClaudeSdkClient(
         model="deepseek-chat",
-        tool_registry=cast(Any, object()),
         limits=build_settings().execution,
         api_key="",
         sdk_loader=lambda: timeout_sdk,
@@ -691,7 +685,7 @@ def test_python_runtime_exposes_only_the_fixed_remote_tool_mcp_server() -> None:
         invocation_id="invocation-1",
         context=context,
     )
-    client = RemoteMcpClaudeCodeAgentClient(
+    client = FixedMcpClaudeSdkClient(
         limits=build_settings().execution,
         api_key="runtime-only-model-secret",
         mcp_server_url="http://tool-mcp:9103/mcp",
@@ -797,9 +791,8 @@ def test_python_sdk_projects_same_v12_observability_fixture_as_typescript() -> N
         conversation_summary="",
         runtime_protocol_version="1.2",
     )
-    client = RealClaudeCodeAgentClient(
+    client = ClaudeSdkClient(
         model="claude-safe-model",
-        tool_registry=cast(Any, None),
         limits=build_settings().execution,
         api_key="runtime-model-key-value",
         sdk_loader=lambda: sdk,
@@ -856,9 +849,8 @@ def test_python_sdk_keeps_unknown_accounting_and_omits_raw_content() -> None:
         create_sdk_mcp_server=cast(Any, None),
         tool_annotations=None,
     )
-    client = RealClaudeCodeAgentClient(
+    client = ClaudeSdkClient(
         model="claude-safe-model",
-        tool_registry=cast(Any, None),
         limits=build_settings().execution,
         api_key="runtime-model-key-value",
         sdk_loader=lambda: sdk,
@@ -927,7 +919,7 @@ def test_python_runtime_routes_principal_only_to_fixed_ones_mcp_server() -> None
         context=context,
     )
     principal = "test-only-principal-token"
-    client = RemoteMcpClaudeCodeAgentClient(
+    client = FixedMcpClaudeSdkClient(
         limits=build_settings().execution,
         api_key="runtime-only-model-secret",
         mcp_server_url="http://tool-mcp:9103/mcp",
@@ -986,7 +978,7 @@ def test_python_runtime_routes_principal_only_to_fixed_ones_mcp_server() -> None
     )
     assert principal not in repr(context)
 
-    normalized = _normalize_tool_events(
+    normalized = normalize_tool_events(
         [
             {
                 "tool_call_id": "python-tool-use-1",
@@ -1097,7 +1089,7 @@ def test_python_runtime_file_job_uses_fixed_file_mcp_guarded_tools_and_finally_c
         bridge_capture.update(kwargs)
         return FakeFileBridge()
 
-    client = RemoteMcpClaudeCodeAgentClient(
+    client = FixedMcpClaudeSdkClient(
         limits=build_settings().execution,
         api_key="runtime-only-model-secret",
         mcp_server_url="http://tool-mcp:9103/mcp",
@@ -1164,7 +1156,7 @@ def test_python_runtime_cancellation_interrupts_sdk_and_cleans_sandbox(
         effort_level="max",
         secret_ref="secret://not-projected",
     )
-    client = RemoteMcpClaudeCodeAgentClient(
+    client = FixedMcpClaudeSdkClient(
         limits=build_settings().execution,
         api_key="runtime-only-model-secret",
         mcp_server_url="http://tool-mcp:9103/mcp",
@@ -1204,7 +1196,7 @@ def test_python_runtime_cancellation_interrupts_sdk_and_cleans_sandbox(
 def test_python_runtime_preserves_sdk_tool_use_id_meta_and_exact_origin() -> None:
     calls: dict[str, dict[str, Any]] = {}
     limits = build_settings().execution
-    started = _extract_tool_events(
+    started = extract_tool_events(
         {
             "content": [
                 {
@@ -1218,7 +1210,7 @@ def test_python_runtime_preserves_sdk_tool_use_id_meta_and_exact_origin() -> Non
         limits,
         calls,
     )
-    completed = _extract_tool_events(
+    completed = extract_tool_events(
         {
             "content": [
                 {
@@ -1240,7 +1232,7 @@ def test_python_runtime_preserves_sdk_tool_use_id_meta_and_exact_origin() -> Non
     request = _request()
     request["protocol_version"] = "1.1"
 
-    normalized = _normalize_tool_events([*started, *completed], request)
+    normalized = normalize_tool_events([*started, *completed], request)
 
     assert [event["tool_call_id"] for event in normalized] == [
         "sdk-tool-use-1",
@@ -1251,7 +1243,7 @@ def test_python_runtime_preserves_sdk_tool_use_id_meta_and_exact_origin() -> Non
     assert normalized[1]["mcp_call_id"] == "mcp-call-python"
     assert normalized[1]["persisted_tool_call_id"] == "agent-tool-call-python"
 
-    classified = _normalize_tool_events(
+    classified = normalize_tool_events(
         [
             {"tool_call_id": "builtin-1", "tool_name": "Bash", "status": "DENIED"},
             {"tool_call_id": "unknown-1", "tool_name": "mystery", "status": "DENIED"},
@@ -1266,7 +1258,7 @@ def test_python_runtime_preserves_sdk_tool_use_id_meta_and_exact_origin() -> Non
 
 def test_python_test_only_fake_provider_resolves_binding_and_retries_once() -> None:
     resolver = FakePythonBindingResolver()
-    executor = PythonRuntimeSdkExecutor(
+    executor = PythonRuntimeExecutor(
         cast(PythonModelBindingResolver, resolver),
         limits=build_settings().execution,
         mcp_server_url="http://tool-mcp:9103/mcp",
@@ -1337,8 +1329,8 @@ def test_python_test_only_fake_provider_calls_ones_concurrently_with_exact_meta(
             }
         )
 
-    monkeypatch.setattr("app.python_runtime.sdk_executor.urlopen", fake_urlopen)
-    executor = PythonRuntimeSdkExecutor(
+    monkeypatch.setattr("app.python_runtime.executor.urlopen", fake_urlopen)
+    executor = PythonRuntimeExecutor(
         cast(PythonModelBindingResolver, FakePythonBindingResolver()),
         limits=build_settings().execution,
         mcp_server_url="http://tool-mcp:9103/mcp",
@@ -1416,8 +1408,8 @@ def test_python_test_only_fake_provider_calls_file_service_with_file_principal(
             }
         )
 
-    monkeypatch.setattr("app.python_runtime.sdk_executor.urlopen", fake_urlopen)
-    executor = PythonRuntimeSdkExecutor(
+    monkeypatch.setattr("app.python_runtime.executor.urlopen", fake_urlopen)
+    executor = PythonRuntimeExecutor(
         cast(PythonModelBindingResolver, FakePythonBindingResolver()),
         limits=build_settings().execution,
         mcp_server_url="http://tool-mcp:9103/mcp",

@@ -11,7 +11,7 @@ from typing import Any, Protocol
 from app.modules.agent.infrastructure.runtime_protocol import validate_runtime_contract
 from app.shared.database import Database
 
-from .sdk_executor import PythonExecutionOutcome
+from .executor import PythonExecutionOutcome
 
 
 class InvocationSecretContextPort(Protocol):

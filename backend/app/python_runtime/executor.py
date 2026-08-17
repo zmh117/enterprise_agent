@@ -1,17 +1,14 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
 import importlib.metadata
 import json
 import os
-import re
 import threading
 import time
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any, Protocol
-from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from app.modules.agent.domain.runtime import (
@@ -22,24 +19,12 @@ from app.modules.agent.domain.runtime import (
 from app.modules.agent.infrastructure.runtime_protocol import (
     CURRENT_RUNTIME_PROTOCOL_VERSION,
 )
-from app.python_runtime.claude_agent_sdk_adapter import (
-    RealClaudeCodeAgentClient,
-    _append_cli_stderr,
-    _build_system_prompt,
+from app.python_runtime.job_sandbox import JobSandboxManager
+from app.python_runtime.mcp_config import (
+    FixedMcpClaudeSdkClient,
+    fixed_mcp_server_url,
 )
-from app.python_runtime.job_sandbox import (
-    ALLOWED_FILE_TOOLS,
-    FILE_TOOL_NAMES,
-    JobSandboxError,
-    JobSandboxManager,
-)
-from app.python_runtime.file_mcp_bridge import (
-    LOCAL_FILE_OUTPUT_TOOL,
-    PythonRuntimeFileBridge,
-    PythonRuntimeFileBridgeFactory,
-    create_python_runtime_file_bridge,
-)
-from app.python_runtime.file_transfer import FileTransferBoundaryError, FileTransferContext
+from app.python_runtime.tool_policy import normalize_tool_events
 from app.shared.config import ExecutionSettings
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
 
@@ -59,67 +44,10 @@ PYTHON_RUNTIME_KIND = "python-v1"
 PROTOCOL_VERSION = CURRENT_RUNTIME_PROTOCOL_VERSION
 MCP_CALL_ID_META_KEY = "enterprise-agent/mcp-call-id"
 AGENT_TOOL_CALL_ID_META_KEY = "enterprise-agent/agent-tool-call-id"
-SDK_BUILTIN_TOOLS = frozenset(
-    {
-        "Agent",
-        "Task",
-        "Bash",
-        "Read",
-        "Glob",
-        "Grep",
-        "LS",
-        "Write",
-        "Edit",
-        "NotebookEdit",
-        "WebFetch",
-        "WebSearch",
-        "TodoRead",
-        "TodoWrite",
-        "AskUserQuestion",
-        "Skill",
-    }
-)
-PLATFORM_SDK_TOOLS: frozenset[str] = frozenset()
-FORBIDDEN_TOOL_INPUT_FIELDS = frozenset(
-    {
-        "authorization",
-        "headers",
-        "user_id",
-        "app_user_id",
-        "actor_id",
-        "subject",
-        "sub",
-        "credential",
-        "credential_id",
-        "resource_deployment_id",
-        "resource_revision_id",
-    }
-)
-_OPAQUE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
 
-def _contains_forbidden_tool_input(value: object, depth: int = 0) -> bool:
-    if depth >= 8:
-        return False
-    if isinstance(value, list):
-        return any(_contains_forbidden_tool_input(item, depth + 1) for item in value)
-    if not isinstance(value, dict):
-        return False
-    return any(
-        str(key).lower() in FORBIDDEN_TOOL_INPUT_FIELDS
-        or _contains_forbidden_tool_input(child, depth + 1)
-        for key, child in value.items()
-    )
 
 
-def _is_utc_rfc3339(value: object) -> bool:
-    if not isinstance(value, str) or not value:
-        return False
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return False
-    return parsed.tzinfo is not None and parsed.utcoffset() == timedelta(0)
 
 
 @dataclass(frozen=True)
@@ -134,352 +62,9 @@ class PythonExecutionOutcome:
     failure: dict[str, str] | None = None
 
 
-class RemoteMcpClaudeCodeAgentClient(RealClaudeCodeAgentClient):
-    """Python SDK adapter with deployment-fixed MCP and a Runtime-local file bridge."""
-
-    def __init__(
-        self,
-        *,
-        limits: ExecutionSettings,
-        api_key: str,
-        mcp_server_url: str,
-        ones_mcp_server_url: str = "http://ones-mcp:9104/mcp",
-        principal_token: str = "",
-        file_mcp_server_url: str = "http://file-service:9105/mcp",
-        file_principal_token: str = "",
-        sandbox_manager: JobSandboxManager | None = None,
-        cancellation_event: threading.Event | None = None,
-        file_bridge_factory: PythonRuntimeFileBridgeFactory = (create_python_runtime_file_bridge),
-    ) -> None:
-        super().__init__(
-            model="",
-            tool_registry=None,  # type: ignore[arg-type]
-            limits=limits,
-            api_key="",
-            secret_resolver=lambda _ref: api_key,
-            sandbox_manager=sandbox_manager,
-            cancellation_event=cancellation_event,
-        )
-        self._mcp_server_url = mcp_server_url
-        self._ones_mcp_server_url = ones_mcp_server_url
-        self._principal_token = principal_token
-        self._file_mcp_server_url = file_mcp_server_url
-        self._file_principal_token = file_principal_token
-        self._file_bridge_factory = file_bridge_factory
-        self._file_bridge: PythonRuntimeFileBridge | None = None
-
-    @staticmethod
-    def _shared_headers(request: AgentRunRequest) -> dict[str, str]:
-        return {
-            "X-Correlation-Id": f"job:{request.job_id}",
-            "X-Job-Id": request.job_id,
-            "X-App-User-Id": request.user_id,
-            "X-Project-Code": request.project_code,
-            "X-Invocation-Id": request.invocation_id,
-            "X-Agent-Publication-Id": request.context.publication_id,
-            "X-Application-Publication-Id": (request.context.application_publication_id),
-        }
-
-    def _build_mcp_server(self, request: AgentRunRequest) -> dict[str, dict[str, Any]]:
-        shared_headers = self._shared_headers(request)
-        servers: dict[str, dict[str, Any]] = {}
-        server_codes = {binding.server_code for binding in request.context.mcp_bindings} or (
-            {"tool-mcp"} if request.context.allowed_tools else set()
-        )
-        if "tool-mcp" in server_codes:
-            servers["tool_mcp"] = {
-                "type": "http",
-                "url": self._mcp_server_url,
-                "headers": dict(shared_headers),
-            }
-        if "ones-mcp" in server_codes:
-            if not self._principal_token:
-                raise NonRetryableExecutionError(
-                    "Python Runtime ONES MCP Principal Token is missing",
-                    safe_message="当前调用缺少平台身份凭证",
-                    error_code="runtime_principal_token_missing",
-                )
-            servers["ones_mcp"] = {
-                "type": "http",
-                "url": self._ones_mcp_server_url,
-                "headers": {
-                    **shared_headers,
-                    "Authorization": f"Bearer {self._principal_token}",
-                },
-            }
-        if "file-service" in server_codes:
-            if not self._file_principal_token:
-                raise NonRetryableExecutionError(
-                    "Python Runtime File MCP Principal Token is missing",
-                    safe_message="当前调用缺少平台文件身份凭证",
-                    error_code="runtime_file_principal_token_missing",
-                )
-        return servers
-
-    async def _open_mcp_server(self, request: AgentRunRequest, sdk: Any) -> dict[str, Any]:
-        servers: dict[str, Any] = self._build_mcp_server(request)
-        file_bindings = tuple(
-            item.tool_name
-            for item in request.context.mcp_bindings
-            if item.server_code == "file-service"
-        )
-        if not file_bindings:
-            return servers
-        sandbox = self._sandbox.get()
-        if sandbox is None:
-            raise NonRetryableExecutionError(
-                "Python Runtime Job Sandbox is unavailable",
-                safe_message="当前任务沙盒不可用",
-                error_code="runtime_sandbox_unavailable",
-            )
-        bridge = self._file_bridge_factory(
-            sdk=sdk,
-            mcp_server_url=self._file_mcp_server_url,
-            headers={
-                **self._shared_headers(request),
-                "Authorization": f"Bearer {self._file_principal_token}",
-            },
-            frozen_tool_names=file_bindings,
-            context=FileTransferContext(
-                job_id=request.job_id,
-                workspace_path=sandbox.path,
-                principal_token=self._file_principal_token,
-                file_format_policy_version=request.context.file_format_policy_version,
-            ),
-            timeout_seconds=float(request.context.timeout_seconds),
-        )
-        await bridge.connect()
-        self._file_bridge = bridge
-        servers["file_service"] = bridge.server
-        return servers
-
-    async def _close_mcp_server(self) -> None:
-        bridge = self._file_bridge
-        self._file_bridge = None
-        if bridge is not None:
-            try:
-                await bridge.close()
-            except Exception:
-                pass
-
-    async def _prepare_context(
-        self,
-        context: AgentExecutionContext,
-    ) -> AgentExecutionContext:
-        bridge = self._file_bridge
-        if bridge is None:
-            return context
-        manifest = context.retrieved_context.get("file_manifest")
-        schema_version = manifest.get("schema_version") if isinstance(manifest, dict) else None
-        if not isinstance(manifest, dict) or schema_version not in {1, 2, 3}:
-            raise NonRetryableExecutionError(
-                "Runtime Job File Manifest is missing or invalid",
-                safe_message="任务文件清单无效",
-                error_code="file_manifest_runtime_invalid",
-            )
-        if schema_version in {2, 3} and not _is_utc_rfc3339(manifest.get("observed_at")):
-            raise NonRetryableExecutionError(
-                "Runtime Job File Manifest observation time is invalid",
-                safe_message="任务文件清单无效",
-                error_code="file_manifest_runtime_invalid",
-            )
-        items = manifest.get("items")
-        if not isinstance(items, list) or len(items) > 20:
-            raise NonRetryableExecutionError(
-                "Runtime Job File Manifest items are invalid",
-                safe_message="任务文件清单无效",
-                error_code="file_manifest_runtime_invalid",
-            )
-        materialized: list[dict[str, Any]] = []
-        seen: set[tuple[str, str]] = set()
-        for item in items:
-            if not isinstance(item, dict):
-                raise NonRetryableExecutionError(
-                    "Runtime Job File Manifest item is invalid",
-                    safe_message="任务文件清单无效",
-                    error_code="file_manifest_runtime_invalid",
-                )
-            source_received_at = item.get("source_received_at")
-            version_created_at = item.get("version_created_at")
-            if schema_version in {2, 3} and (
-                (source_received_at is not None and not _is_utc_rfc3339(source_received_at))
-                or not _is_utc_rfc3339(version_created_at)
-            ):
-                raise NonRetryableExecutionError(
-                    "Runtime Job File Manifest item time is invalid",
-                    safe_message="任务文件清单无效",
-                    error_code="file_manifest_runtime_invalid",
-                )
-            if not item.get("auto_materialize"):
-                continue
-            file_id = item.get("file_id")
-            version_id = item.get("version_id")
-            display_name = item.get("display_name")
-            actions = item.get("allowed_actions")
-            format_code = item.get("format_code", "TXT")
-            if (
-                not isinstance(file_id, str)
-                or _OPAQUE_IDENTIFIER.fullmatch(file_id) is None
-                or not isinstance(version_id, str)
-                or _OPAQUE_IDENTIFIER.fullmatch(version_id) is None
-                or not isinstance(display_name, str)
-                or not 1 <= len(display_name) <= 255
-                or not isinstance(actions, list)
-                or "MATERIALIZE" not in actions
-                or format_code not in {"TXT", "LOG", "MARKDOWN"}
-            ):
-                raise NonRetryableExecutionError(
-                    "Runtime Job File Manifest item is invalid",
-                    safe_message="任务文件清单无效",
-                    error_code="file_manifest_runtime_invalid",
-                )
-            identity = (file_id, version_id)
-            if identity in seen:
-                continue
-            seen.add(identity)
-            try:
-                result = await bridge.materialize(
-                    file_id=file_id,
-                    version_id=version_id,
-                )
-            except FileTransferBoundaryError as exc:
-                raise NonRetryableExecutionError(
-                    f"Runtime automatic materialization failed: {exc.code}",
-                    safe_message="附件无法安全物化到任务沙盒",
-                    error_code="file_auto_materialization_failed",
-                ) from exc
-            materialized.append(
-                {
-                    "file_id": file_id,
-                    "version_id": version_id,
-                    "display_name": display_name,
-                    "format_code": str(format_code),
-                    "allowed_actions": list(actions),
-                    "relative_path": str(result["relative_path"]),
-                    "sandbox_entry_handle": str(result["sandbox_entry_handle"]),
-                    "size_bytes": int(result["size_bytes"]),
-                    "sha256": str(result["sha256"]),
-                    "source_received_at": source_received_at,
-                    "version_created_at": str(version_created_at or ""),
-                }
-            )
-        return replace(
-            context,
-            retrieved_context={
-                **context.retrieved_context,
-                "runtime_materialized_files": materialized,
-            },
-        )
-
-    def _build_options(
-        self,
-        sdk: Any,
-        context: AgentExecutionContext,
-        server: Any,
-        cli_stderr: list[str],
-        binding: Any,
-    ) -> Any:
-        exact_tools = []
-        for item in context.mcp_bindings:
-            alias = (
-                "ones_mcp"
-                if item.server_code == "ones-mcp"
-                else "file_service"
-                if item.server_code == "file-service"
-                else "tool_mcp"
-            )
-            exact_tools.append(f"mcp__{alias}__{item.tool_name}")
-        if not context.mcp_bindings:
-            exact_tools = [f"mcp__tool_mcp__{name}" for name in context.allowed_tools]
-        if self._file_bridge is not None and LOCAL_FILE_OUTPUT_TOOL in (
-            self._file_bridge.local_tool_names
-        ):
-            exact_tools.append(f"mcp__file_service__{LOCAL_FILE_OUTPUT_TOOL}")
-        exact_tool_set = frozenset(exact_tools)
-        file_job = any(item.server_code == "file-service" for item in context.mcp_bindings)
-        sandbox = self._sandbox.get()
-        if sandbox is None:
-            raise NonRetryableExecutionError(
-                "Python Runtime Job Sandbox is unavailable",
-                safe_message="当前任务沙盒不可用",
-                error_code="runtime_sandbox_unavailable",
-            )
-        attempted = 0
-
-        def allow(updated_input: dict[str, Any]) -> Any:
-            if sdk.permission_allow is not None:
-                return sdk.permission_allow(updated_input=updated_input)
-            return {"behavior": "allow", "updated_input": updated_input}
-
-        def deny() -> Any:
-            if sdk.permission_deny is not None:
-                return sdk.permission_deny(
-                    message="Tool is not authorized for this Job",
-                    interrupt=False,
-                )
-            return {
-                "behavior": "deny",
-                "message": "Tool is not authorized for this Job",
-                "interrupt": False,
-            }
-
-        async def can_use_tool(
-            tool_name: str,
-            tool_input: dict[str, Any],
-            _permission_context: Any,
-        ) -> Any:
-            nonlocal attempted
-            attempted += 1
-            if attempted > context.max_tool_calls:
-                return deny()
-            if tool_name in exact_tool_set:
-                return (
-                    deny()
-                    if _contains_forbidden_tool_input(tool_input)
-                    else allow(dict(tool_input))
-                )
-            if file_job and tool_name in ALLOWED_FILE_TOOLS:
-                try:
-                    return allow(sandbox.authorize_tool(tool_name, tool_input))
-                except JobSandboxError:
-                    return deny()
-            return deny()
-
-        return sdk.options(
-            model=binding.model,
-            system_prompt=_build_system_prompt(context),
-            mcp_servers=server,
-            strict_mcp_config=True,
-            tools=list(FILE_TOOL_NAMES) if file_job else [],
-            allowed_tools=[],
-            disallowed_tools=[
-                tool
-                for tool in (
-                    "Bash",
-                    "Write",
-                    "Edit",
-                    "WebFetch",
-                    "WebSearch",
-                    "NotebookEdit",
-                    "Shell",
-                )
-                if not file_job or tool not in ALLOWED_FILE_TOOLS
-            ],
-            permission_mode="default",
-            max_turns=context.max_turns,
-            cwd=sandbox.path,
-            setting_sources=[],
-            skills=[],
-            can_use_tool=can_use_tool,
-            stderr=lambda line: _append_cli_stderr(
-                cli_stderr,
-                line,
-                self.limits.max_tool_response_chars,
-            ),
-        )
 
 
-class PythonRuntimeSdkExecutor:
+class PythonRuntimeExecutor:
     def __init__(
         self,
         binding_resolver: PythonModelBindingResolver,
@@ -495,12 +80,12 @@ class PythonRuntimeSdkExecutor:
     ) -> None:
         self._bindings = binding_resolver
         self._limits = limits
-        self._mcp_server_url = _fixed_mcp_server_url(mcp_server_url)
-        self._ones_mcp_server_url = _fixed_mcp_server_url(
+        self._mcp_server_url = fixed_mcp_server_url(mcp_server_url)
+        self._ones_mcp_server_url = fixed_mcp_server_url(
             ones_mcp_server_url,
             server_code="ones-mcp",
         )
-        self._file_mcp_server_url = _fixed_mcp_server_url(
+        self._file_mcp_server_url = fixed_mcp_server_url(
             file_mcp_server_url,
             server_code="file-service",
         )
@@ -540,7 +125,7 @@ class PythonRuntimeSdkExecutor:
                 secret_context,
             )
         run_request = _agent_request(request, resolved.binding)
-        client = RemoteMcpClaudeCodeAgentClient(
+        client = FixedMcpClaudeSdkClient(
             limits=self._limits,
             api_key=resolved.api_key,
             mcp_server_url=self._mcp_server_url,
@@ -560,7 +145,7 @@ class PythonRuntimeSdkExecutor:
                 runtime_provenance=provenance,
                 runtime_events=tuple(client.last_runtime_events),
                 accounting=dict(client.last_accounting),
-                tool_events=_normalize_tool_events(exc.tool_events, request),
+                tool_events=normalize_tool_events(exc.tool_events, request),
                 failure={
                     "code": str(exc.error_code or "runtime_transport_error"),
                     "retry_class": "TRANSIENT",
@@ -576,7 +161,7 @@ class PythonRuntimeSdkExecutor:
                 runtime_provenance=provenance,
                 runtime_events=tuple(client.last_runtime_events),
                 accounting=dict(client.last_accounting),
-                tool_events=_normalize_tool_events(exc.tool_events, request),
+                tool_events=normalize_tool_events(exc.tool_events, request),
                 failure={
                     "code": str(exc.error_code or "runtime_configuration_error"),
                     "retry_class": "CONFIGURATION",
@@ -592,7 +177,7 @@ class PythonRuntimeSdkExecutor:
             runtime_provenance=provenance,
             runtime_events=tuple(client.last_runtime_events),
             accounting=dict(client.last_accounting),
-            tool_events=_normalize_tool_events(result.tool_events, request),
+            tool_events=normalize_tool_events(result.tool_events, request),
         )
 
     def probe(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -607,7 +192,7 @@ class PythonRuntimeSdkExecutor:
 
     def _probe_resolved(self, request: dict[str, Any], resolved: Any) -> dict[str, Any]:
         if not self._fake_provider_mode:
-            client = RemoteMcpClaudeCodeAgentClient(
+            client = FixedMcpClaudeSdkClient(
                 limits=self._limits,
                 api_key=resolved.api_key,
                 mcp_server_url=self._mcp_server_url,
@@ -833,7 +418,7 @@ class PythonRuntimeSdkExecutor:
                 status="FAILED",
                 usage={"input_tokens": 0, "output_tokens": 0},
                 runtime_provenance=provenance,
-                tool_events=_normalize_tool_events(
+                tool_events=normalize_tool_events(
                     [*started_events, *failed_events],
                     request,
                 ),
@@ -848,7 +433,7 @@ class PythonRuntimeSdkExecutor:
             final_answer=f"Python Runtime {server_code} MCP smoke completed.",
             usage={"input_tokens": 1, "output_tokens": 1},
             runtime_provenance=provenance,
-            tool_events=_normalize_tool_events(
+            tool_events=normalize_tool_events(
                 [*started_events, *completed_events],
                 request,
             ),
@@ -982,20 +567,6 @@ class PythonRuntimeSdkExecutor:
         )
 
 
-def _fixed_mcp_server_url(raw: str, *, server_code: str = "tool-mcp") -> str:
-    parsed = urlsplit(raw.strip())
-    host = (parsed.hostname or "").lower()
-    if (
-        parsed.scheme not in {"http", "https"}
-        or host not in {server_code, "localhost", "127.0.0.1", "::1"}
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.query
-        or parsed.fragment
-        or parsed.path.rstrip("/") != "/mcp"
-    ):
-        raise ValueError("MCP Tool Server URL is outside the fixed deployment boundary")
-    return raw.strip().rstrip("/")
 
 
 def _agent_request(request: dict[str, Any], binding: Any) -> AgentRunRequest:
@@ -1045,83 +616,3 @@ def _agent_request(request: dict[str, Any], binding: Any) -> AgentRunRequest:
         context=context,
         invocation_id=str(request["invocation_id"]),
     )
-
-
-def _normalize_tool_events(
-    events: list[dict[str, Any]],
-    request: dict[str, Any],
-) -> tuple[dict[str, Any], ...]:
-    published = {
-        (
-            f"mcp__{'ones_mcp' if server['server_code'] == 'ones-mcp' else 'file_service' if server['server_code'] == 'file-service' else 'tool_mcp'}"
-            f"__{tool['tool_name']}"
-        ): (str(server["server_code"]), str(tool["tool_name"]))
-        for server in request.get("mcp_servers") or []
-        for tool in server.get("tools") or []
-    }
-    normalized: list[dict[str, Any]] = []
-    for event in events[:128]:
-        full_tool_name = str(event.get("tool_name") or "unknown_tool")
-        published_tool = published.get(full_tool_name)
-        if published_tool:
-            tool_origin = "mcp"
-            server_code: str | None = published_tool[0]
-            tool_name = published_tool[1]
-        elif full_tool_name in SDK_BUILTIN_TOOLS:
-            tool_origin = "sdk_builtin"
-            server_code = None
-            tool_name = full_tool_name
-        elif full_tool_name in PLATFORM_SDK_TOOLS:
-            tool_origin = "sdk_custom"
-            server_code = None
-            tool_name = full_tool_name
-        else:
-            tool_origin = "unknown"
-            server_code = None
-            tool_name = full_tool_name
-        protocol_version = str(request.get("protocol_version") or "1.0")
-        if protocol_version == "1.0" and tool_origin != "mcp":
-            continue
-        tool_call_id = str(event.get("tool_call_id") or "")
-        if not tool_call_id:
-            continue
-        raw_status = str(event.get("status") or "FAILED").upper()
-        status = {
-            "REJECTED": "DENIED",
-            "STARTED": "STARTED",
-            "SUCCEEDED": "SUCCEEDED",
-            "FAILED": "FAILED",
-        }.get(raw_status, "FAILED")
-        item: dict[str, Any] = {
-            "tool_call_id": tool_call_id,
-            "server_code": server_code,
-            "tool_name": tool_name,
-            "status": status,
-            "request_summary": {"available": bool(event.get("request_payload"))},
-            "response_summary": {"available": bool(event.get("response_summary"))},
-            "duration_ms": max(0, int(event.get("duration_ms") or 0)),
-        }
-        if protocol_version in {"1.1", "1.2", "1.3"}:
-            item.update(
-                {
-                    "tool_origin": tool_origin,
-                    "mcp_call_id": (
-                        str(event["mcp_call_id"])
-                        if tool_origin == "mcp" and event.get("mcp_call_id")
-                        else None
-                    ),
-                    "persisted_tool_call_id": (
-                        str(event["persisted_tool_call_id"])
-                        if tool_origin == "mcp" and event.get("persisted_tool_call_id")
-                        else None
-                    ),
-                }
-            )
-        if status in {"FAILED", "DENIED"}:
-            item["failure"] = {
-                "code": str(event.get("error_code") or "runtime_tool_failed"),
-                "retry_class": "NEVER" if status == "DENIED" else "TRANSIENT",
-                "safe_message": "工具调用未获授权" if status == "DENIED" else "工具调用失败",
-            }
-        normalized.append(item)
-    return tuple(normalized)

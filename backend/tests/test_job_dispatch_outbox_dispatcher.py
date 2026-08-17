@@ -118,7 +118,7 @@ def test_duplicate_messages_concurrently_claim_and_execute_job_only_once() -> No
         assert runtime.message_bus is not None
         message = runtime.message_bus.jobs.popleft()
         client = _BlockingAgentClient()
-        runtime.agent_executor.claude_client = client  # type: ignore[assignment]
+        runtime.agent_executor.runtime_client = client  # type: ignore[assignment]
         worker = AgentJobWorker(runtime.settings, container=runtime)
 
         with ThreadPoolExecutor(max_workers=2) as executor:

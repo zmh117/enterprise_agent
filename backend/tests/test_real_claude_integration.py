@@ -6,8 +6,8 @@ from dataclasses import replace
 import pytest
 
 from app.modules.agent.domain.runtime import AgentExecutionContext, AgentRunRequest
-from app.python_runtime.claude_agent_sdk_adapter import (
-    RealClaudeCodeAgentClient,
+from app.python_runtime.claude_client import (
+    ClaudeSdkClient,
     is_claude_cli_available,
 )
 from backend.tests.helpers import container
@@ -59,9 +59,8 @@ def _run_real_smoke(*, model: str, api_key: str, base_url: str, idempotency_key:
             project_code="default",
         )
     )
-    client = RealClaudeCodeAgentClient(
+    client = ClaudeSdkClient(
         model=model or c.settings.claude_model,
-        tool_registry=c.agent_executor.tool_registry,
         limits=replace(c.settings.execution, timeout_seconds=60, max_turns=2),
         api_key=api_key,
         base_url=base_url,

@@ -14,9 +14,9 @@ from fastapi.testclient import TestClient
 from app.bootstrap import build_test_container
 from app.main import create_app
 from app.modules.agent.domain.runtime import AgentExecutionContext, AgentRunRequest
-from app.python_runtime.claude_agent_sdk_adapter import (
+from app.python_runtime.claude_client import (
     ClaudeSdk,
-    RealClaudeCodeAgentClient,
+    ClaudeSdkClient,
 )
 from app.modules.job.application.create_agent_job_service import (
     CreateAgentJobCommand,
@@ -856,9 +856,8 @@ def test_concurrent_jobs_do_not_leak_process_environment_between_connections() -
         create_sdk_mcp_server=lambda name, tools: {"name": name, "tools": tools},
         tool_annotations=None,
     )
-    client = RealClaudeCodeAgentClient(
+    client = ClaudeSdkClient(
         model="legacy",
-        tool_registry=object(),  # no tools are assigned in this isolation test
         limits=ExecutionSettings(timeout_seconds=5),
         api_key="",
         sdk_loader=lambda: sdk,

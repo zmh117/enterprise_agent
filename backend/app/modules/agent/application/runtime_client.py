@@ -1,36 +1,27 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Protocol
 
 from app.modules.agent.domain.runtime import AgentRunRequest, AgentRunResult
 from app.shared.exceptions import NonRetryableExecutionError
 
 SUPPORTED_RUNTIME_PROTOCOLS = frozenset({"1.0", "1.1", "1.2", "1.3"})
-SUPPORTED_RUNTIME_KINDS = frozenset({"python-v1"})
+SUPPORTED_RUNTIME_KIND = "python-v1"
 
 
 class AgentRuntimeClient(Protocol):
+    """Application-owned port for the deployment-fixed Agent Runtime."""
+
     def run(self, request: AgentRunRequest) -> AgentRunResult: ...
 
     def cancel(self, request: AgentRunRequest, reason: str) -> dict[str, object]: ...
 
 
-class RuntimeClientRegistry:
-    """Resolve an immutable Job runtime kind to a deployment-owned client.
+class GuardedAgentRuntimeClient:
+    """Fail closed before delegating to the single configured Python Runtime."""
 
-    Runtime URLs live inside the registered clients. Agent, Application and
-    execution request data can select only a supported runtime kind and can
-    never provide or override a URL.
-    """
-
-    def __init__(self, clients: Mapping[str, AgentRuntimeClient]) -> None:
-        if "typescript-v1" in clients:
-            raise ValueError("retired TypeScript Runtime client registration is forbidden")
-        unknown = set(clients) - SUPPORTED_RUNTIME_KINDS
-        if unknown:
-            raise ValueError(f"unsupported Runtime client registrations: {sorted(unknown)}")
-        self._clients = dict(clients)
+    def __init__(self, delegate: AgentRuntimeClient | None) -> None:
+        self._delegate = delegate
 
     def _resolve(self, request: AgentRunRequest) -> AgentRuntimeClient:
         runtime_kind = request.context.runtime_kind
@@ -41,7 +32,7 @@ class RuntimeClientRegistry:
                 safe_message="Job 固定的 TypeScript Agent Runtime 已退役",
                 error_code="typescript_agent_runtime_retired",
             )
-        if runtime_kind not in SUPPORTED_RUNTIME_KINDS:
+        if runtime_kind != SUPPORTED_RUNTIME_KIND:
             raise NonRetryableExecutionError(
                 "Job contains an unsupported Agent Runtime kind",
                 safe_message="Job 固定的 Agent Runtime 不受支持",
@@ -53,14 +44,13 @@ class RuntimeClientRegistry:
                 safe_message="Job 固定的 Agent Runtime 协议不受支持",
                 error_code="agent_runtime_protocol_unsupported",
             )
-        client = self._clients.get(runtime_kind)
-        if client is None:
+        if self._delegate is None:
             raise NonRetryableExecutionError(
                 f"{runtime_kind} Agent Runtime is not configured",
                 safe_message="所选 Agent Runtime 尚未配置",
                 error_code="agent_runtime_unconfigured",
             )
-        return client
+        return self._delegate
 
     def run(self, request: AgentRunRequest) -> AgentRunResult:
         return self._resolve(request).run(request)
@@ -75,7 +65,3 @@ class RuntimeClientRegistry:
             )
         result = cancel(request, reason)
         return dict(result) if isinstance(result, dict) else {}
-
-
-# Transitional import compatibility. New assembly code uses RuntimeClientRegistry.
-RoutedAgentRuntimeClient = RuntimeClientRegistry

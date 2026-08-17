@@ -275,7 +275,7 @@ class AgentRetryAndFailureDeliveryTests(unittest.TestCase):
     def test_first_failure_then_success_reuses_same_job(self) -> None:
         c = container()
         client = _FailOnceClient()
-        c.agent_executor.claude_client = client  # type: ignore[assignment]
+        c.agent_executor.runtime_client = client  # type: ignore[assignment]
         job = self._create_job(c, "fail-once")
         publish_pending_agent_jobs(c)
         message = c.message_bus.jobs.popleft()
@@ -304,7 +304,7 @@ class AgentRetryAndFailureDeliveryTests(unittest.TestCase):
         adapter = _CaptureAdapter()
         c.result_delivery_service.adapters["test_capture"] = adapter
         client = _AlwaysFailClient()
-        c.agent_executor.claude_client = client  # type: ignore[assignment]
+        c.agent_executor.runtime_client = client  # type: ignore[assignment]
         job = self._create_job(
             c,
             "always-fails",

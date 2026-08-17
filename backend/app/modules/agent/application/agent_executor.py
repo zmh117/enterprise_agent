@@ -5,9 +5,9 @@ from collections.abc import Callable
 
 from app.modules.agent.application.agent_context_builder import AgentContextBuilder
 from app.modules.agent.application.agent_result_service import AgentResultService
+from app.modules.agent.application.runtime_client import AgentRuntimeClient
 from app.modules.agent.domain.runtime import AgentRunRequest
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
-from app.modules.agent.infrastructure.routed_runtime_client import AgentRuntimeClient
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.authorization_center.application import BusinessAuthorizationService
 from app.modules.delivery.application.result_delivery_service import ResultDeliveryService
@@ -33,7 +33,7 @@ class AgentExecutor:
         audit_service: AuditService,
         status_service: JobStatusService,
         context_builder: AgentContextBuilder,
-        claude_client: AgentRuntimeClient,
+        runtime_client: AgentRuntimeClient,
         tool_registry: ToolRegistry,
         result_service: AgentResultService,
         delivery_service: ResultDeliveryService,
@@ -46,7 +46,7 @@ class AgentExecutor:
         self.audit_service = audit_service
         self.status_service = status_service
         self.context_builder = context_builder
-        self.claude_client = claude_client
+        self.runtime_client = runtime_client
         self.tool_registry = tool_registry
         self.result_service = result_service
         self.delivery_service = delivery_service
@@ -64,7 +64,7 @@ class AgentExecutor:
             request = self._active_requests.get(job_id)
         if request is None:
             return False
-        self.claude_client.cancel(request, reason)
+        self.runtime_client.cancel(request, reason)
         return True
 
     def execute(
@@ -185,7 +185,7 @@ class AgentExecutor:
             with self._active_lock:
                 self._active_requests[job.id] = run_request
             try:
-                result = self.claude_client.run(run_request)
+                result = self.runtime_client.run(run_request)
             finally:
                 with self._active_lock:
                     if self._active_requests.get(job.id) is run_request:

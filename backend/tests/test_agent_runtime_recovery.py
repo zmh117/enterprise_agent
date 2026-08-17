@@ -120,7 +120,7 @@ def test_redelivered_running_job_reuses_same_runtime_and_invocation() -> None:
     )
     assert runtime.agent_repository.claim_job(job.id, "worker-before-crash") is not None
     client = RecordingRuntimeClient()
-    runtime.agent_executor.claude_client = client  # type: ignore[assignment]
+    runtime.agent_executor.runtime_client = client  # type: ignore[assignment]
     message = replace(persisted_agent_job_message(runtime, job.id), redelivered=True)
 
     AgentJobWorker(runtime.settings, container=runtime).handle(message)
@@ -143,7 +143,7 @@ def test_job_cancel_and_worker_shutdown_target_the_same_frozen_invocation() -> N
         )
     )
     client = BlockingRuntimeClient()
-    runtime.agent_executor.claude_client = client  # type: ignore[assignment]
+    runtime.agent_executor.runtime_client = client  # type: ignore[assignment]
     errors: list[BaseException] = []
 
     def execute_first() -> None:
@@ -170,7 +170,7 @@ def test_job_cancel_and_worker_shutdown_target_the_same_frozen_invocation() -> N
         )
     )
     shutdown_client = BlockingRuntimeClient()
-    runtime.agent_executor.claude_client = shutdown_client  # type: ignore[assignment]
+    runtime.agent_executor.runtime_client = shutdown_client  # type: ignore[assignment]
     worker = AgentJobWorker(runtime.settings, container=runtime)
     worker_thread = threading.Thread(
         target=worker.handle,

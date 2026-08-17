@@ -166,9 +166,7 @@ def test_rabbitmq_recovery_then_dead_delivery_replay_does_not_rerun_agent(
     runtime = build_worker_container(
         settings,
         seed=True,
-        runtime_clients={
-            "python-v1": client,
-        },
+        runtime_client=client,
     )
     runtime.settings = replace(
         runtime.settings,

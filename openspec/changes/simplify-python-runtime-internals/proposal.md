@@ -19,7 +19,7 @@ TypeScript Runtime 退役后，生产执行已经收敛为独立 Python Runtime�
 
 ### Modified Capabilities
 
-无。本变更只重构已由 `execution-delivery` canonical spec 约束的内部实现，不改变规范级行为。
+- `execution-delivery`：补充 Python Runtime 内部职责必须静态组装、依赖方向明确且重构前后行为等价的要求；不改变现有执行、协议或安全语义。
 
 ## Impact
 

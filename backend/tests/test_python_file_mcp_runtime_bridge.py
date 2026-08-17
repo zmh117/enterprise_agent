@@ -14,11 +14,11 @@ from app.modules.agent.domain.runtime import (
     McpRuntimeBinding,
 )
 from app.modules.model_connection.domain import ModelRuntimeBinding
-from app.python_runtime.claude_agent_sdk_adapter import ClaudeSdk, load_claude_agent_sdk
+from app.python_runtime.claude_client import ClaudeSdk, load_claude_agent_sdk
 from app.python_runtime.file_mcp_bridge import ClaudePythonFileBridge
 from app.python_runtime.file_transfer import FileUploadReceipt
 from app.python_runtime.job_sandbox import JobSandboxManager
-from app.python_runtime.sdk_executor import RemoteMcpClaudeCodeAgentClient
+from app.python_runtime.mcp_config import FixedMcpClaudeSdkClient
 from backend.tests.helpers import test_settings as build_settings
 
 
@@ -320,7 +320,7 @@ def test_real_python_runtime_sdk_loop_uses_local_file_bridge_before_model_result
         runtime_protocol_version="1.2",
     )
     principal = "test-only-python-file-principal"
-    client = RemoteMcpClaudeCodeAgentClient(
+    client = FixedMcpClaudeSdkClient(
         limits=build_settings().execution,
         api_key="test-only-model-secret",
         mcp_server_url="http://tool-mcp:9103/mcp",

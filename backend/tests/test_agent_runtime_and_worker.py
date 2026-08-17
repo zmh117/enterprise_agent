@@ -5,7 +5,7 @@ import unittest
 from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.agent.domain.runtime import AgentExecutionContext, AgentRunResult
-from app.modules.agent.infrastructure.routed_runtime_client import RuntimeClientRegistry
+from app.modules.agent.application.runtime_client import GuardedAgentRuntimeClient
 from app.shared.exceptions import DiagnosticLoopExhausted, RetryableExecutionError
 from app.workers.agent_job_worker import AgentJobWorker
 from backend.tests.helpers import (
@@ -153,7 +153,7 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
                 project_code="default",
             )
         )
-        c.agent_executor.claude_client = FailingClaudeClient()  # type: ignore[assignment]
+        c.agent_executor.runtime_client = FailingClaudeClient()  # type: ignore[assignment]
 
         message = persisted_agent_job_message(c, job.id)
         try:
@@ -182,7 +182,7 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
                 project_code="default",
             )
         )
-        c.agent_executor.claude_client = FailingClaudeClientWithEvents()  # type: ignore[assignment]
+        c.agent_executor.runtime_client = FailingClaudeClientWithEvents()  # type: ignore[assignment]
         message = persisted_agent_job_message(c, job.id)
 
         try:
@@ -210,7 +210,7 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
                 project_code="default",
             )
         )
-        c.agent_executor.claude_client = MaxTurnsClaudeClient()  # type: ignore[assignment]
+        c.agent_executor.runtime_client = MaxTurnsClaudeClient()  # type: ignore[assignment]
         message = persisted_agent_job_message(c, job.id)
 
         try:
@@ -240,7 +240,7 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
                 project_code="default",
             )
         )
-        c.agent_executor.claude_client = ToolEventClaudeClient()  # type: ignore[assignment]
+        c.agent_executor.runtime_client = ToolEventClaudeClient()  # type: ignore[assignment]
 
         c.agent_executor.execute(job.id)
         tool_calls = c.agent_repository.list_tool_calls(job.id)
@@ -291,7 +291,7 @@ class AgentRuntimeAndWorkerTests(unittest.TestCase):
             (job.id,),
         )
         python = RecordingPythonRuntimeClient()
-        c.agent_executor.claude_client = RuntimeClientRegistry({"python-v1": python})
+        c.agent_executor.runtime_client = GuardedAgentRuntimeClient(python)
         c.agent_executor.context_builder = RetiredRuntimeContextBuilder()  # type: ignore[assignment]
         message = persisted_agent_job_message(c, job.id)
         worker = AgentJobWorker(c.settings, container=c)

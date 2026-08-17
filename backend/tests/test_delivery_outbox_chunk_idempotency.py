@@ -46,7 +46,7 @@ def test_chunk_retry_skips_recorded_success_and_duplicate_event_is_idempotent() 
     runtime = container()
     try:
         runtime.result_delivery_service.chunker.max_chars = 200
-        runtime.agent_executor.claude_client = _LongResultClient()  # type: ignore[assignment]
+        runtime.agent_executor.runtime_client = _LongResultClient()  # type: ignore[assignment]
         adapter = _FailSecondChunkOnceAdapter()
         runtime.result_delivery_service.adapters["test_chunked"] = adapter
         job = runtime.create_agent_job_service.execute(

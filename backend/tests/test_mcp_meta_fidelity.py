@@ -17,7 +17,7 @@ from claude_agent_sdk import (
     query,
 )
 
-from app.python_runtime.claude_agent_sdk_adapter import _streaming_user_prompt
+from app.python_runtime.claude_client import streaming_user_prompt
 from app.python_runtime.job_sandbox import JobSandboxManager
 
 
@@ -362,7 +362,7 @@ def test_python_claude_cli_executes_permission_checked_builtin_write(
 
         async def collect() -> None:
             async for _message in query(
-                prompt=_streaming_user_prompt("Create the requested TXT output."),
+                prompt=streaming_user_prompt("Create the requested TXT output."),
                 options=ClaudeAgentOptions(
                     model="contract-model",
                     max_turns=2,

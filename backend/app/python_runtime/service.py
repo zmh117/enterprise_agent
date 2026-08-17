@@ -37,11 +37,11 @@ from .invocations import (
 )
 from .model_binding import PythonModelBindingResolver
 from .job_sandbox import JobSandboxLimits, JobSandboxManager
-from .sdk_executor import (
+from .executor import (
     PROTOCOL_VERSION,
     PYTHON_RUNTIME_KIND,
     PYTHON_RUNTIME_VERSION,
-    PythonRuntimeSdkExecutor,
+    PythonRuntimeExecutor,
 )
 
 
@@ -50,7 +50,7 @@ class PythonRuntimeDependencies:
     database: Database
     registry: PythonInvocationRegistry
     grant_verifier: RuntimeGrantVerifier
-    executor: PythonRuntimeSdkExecutor
+    executor: PythonRuntimeExecutor
     model_probe_token: str
     settings: Settings
     sandbox_manager: JobSandboxManager | None = None
@@ -395,7 +395,7 @@ def _default_dependencies() -> PythonRuntimeDependencies:
     )
     if sandbox_manager.limits.capacity_bytes < 64 * 1024 * 1024:
         raise ValueError("Python Runtime sandbox capacity must be at least 64 MiB")
-    executor = PythonRuntimeSdkExecutor(
+    executor = PythonRuntimeExecutor(
         binding_resolver,
         limits=settings.execution,
         mcp_server_url=os.getenv("MCP_TOOL_SERVER_URL", "http://tool-mcp:9103/mcp"),

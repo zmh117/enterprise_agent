@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import pytest
 
+from app.modules.agent.application.runtime_client import GuardedAgentRuntimeClient
 from app.modules.agent.domain.runtime import (
     AgentExecutionContext,
     AgentRunRequest,
     AgentRunResult,
 )
-from app.modules.agent.infrastructure.routed_runtime_client import RuntimeClientRegistry
 from app.shared.exceptions import NonRetryableExecutionError
 
 
@@ -23,6 +23,11 @@ class RecordingRuntimeClient:
     def cancel(self, request: AgentRunRequest, reason: str) -> dict[str, object]:
         self.requests.append(request)
         return {"status": "cancelled", "reason": reason}
+
+
+class RunOnlyRuntimeClient:
+    def run(self, request: AgentRunRequest) -> AgentRunResult:
+        return AgentRunResult(final_answer=request.job_id)
 
 
 def request(runtime_kind: str, protocol: str = "1.0") -> AgentRunRequest:
@@ -46,26 +51,21 @@ def request(runtime_kind: str, protocol: str = "1.0") -> AgentRunRequest:
     )
 
 
-def test_registry_routes_only_python_and_never_falls_back_for_retired_jobs() -> None:
+def test_guard_delegates_only_python_and_never_falls_back_for_retired_jobs() -> None:
     python = RecordingRuntimeClient("python")
-    registry = RuntimeClientRegistry({"python-v1": python})
+    client = GuardedAgentRuntimeClient(python)
 
-    assert registry.run(request("python-v1")).final_answer == "python"
+    assert client.run(request("python-v1")).final_answer == "python"
     assert len(python.requests) == 1
     for _attempt in range(2):
         with pytest.raises(NonRetryableExecutionError) as retired:
-            registry.run(request("typescript-v1"))
+            client.run(request("typescript-v1"))
         assert retired.value.error_code == "typescript_agent_runtime_retired"
     assert len(python.requests) == 1
 
-    with pytest.raises(ValueError, match="retired TypeScript Runtime"):
-        RuntimeClientRegistry(
-            {"python-v1": python, "typescript-v1": RecordingRuntimeClient("typescript")}
-        )
 
-
-def test_registry_rejects_unknown_unconfigured_and_protocol_conflicts() -> None:
-    registry = RuntimeClientRegistry({"python-v1": RecordingRuntimeClient("python")})
+def test_guard_rejects_unknown_unconfigured_and_protocol_conflicts() -> None:
+    client = GuardedAgentRuntimeClient(RecordingRuntimeClient("python"))
 
     expected = [
         (request("ruby-v1"), "agent_runtime_kind_unsupported"),
@@ -74,8 +74,18 @@ def test_registry_rejects_unknown_unconfigured_and_protocol_conflicts() -> None:
     ]
     for value, code in expected:
         with pytest.raises(NonRetryableExecutionError) as raised:
-            registry.run(value)
+            client.run(value)
         assert raised.value.error_code == code
 
-    with pytest.raises(ValueError):
-        RuntimeClientRegistry({"runtime-from-request-url": RecordingRuntimeClient("bad")})
+    with pytest.raises(NonRetryableExecutionError) as unconfigured:
+        GuardedAgentRuntimeClient(None).run(request("python-v1"))
+    assert unconfigured.value.error_code == "agent_runtime_unconfigured"
+
+
+def test_guard_preserves_cancel_capability_error() -> None:
+    client = GuardedAgentRuntimeClient(RunOnlyRuntimeClient())  # type: ignore[arg-type]
+
+    with pytest.raises(NonRetryableExecutionError) as raised:
+        client.cancel(request("python-v1"), "JOB_CANCELLED")
+
+    assert raised.value.error_code == "agent_runtime_cancel_unavailable"

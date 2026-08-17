@@ -166,7 +166,7 @@ def test_confirm_then_crash_before_outbox_commit_republishes_but_executes_once(
         assert recovered.published == 1
         assert len(runtime.message_bus.jobs) == 2
         client = _CountingAgentClient()
-        runtime.agent_executor.claude_client = client  # type: ignore[assignment]
+        runtime.agent_executor.runtime_client = client  # type: ignore[assignment]
         worker = AgentJobWorker(runtime.settings, container=runtime)
         runtime.message_bus.consume_agent_jobs(worker.handle)
 

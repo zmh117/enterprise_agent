@@ -81,9 +81,7 @@ class RabbitMQ4JobFailureIntegrationTests(unittest.TestCase):
         self.container = build_worker_container(
             settings,
             seed=False,
-            runtime_clients={
-                "python-v1": initial_client,
-            },
+            runtime_client=initial_client,
         )
         # DB runtime overlay can tune retry settings, but test queue names must stay isolated.
         self.container.settings = replace(self.container.settings, queue=self.queue)
@@ -129,7 +127,7 @@ class RabbitMQ4JobFailureIntegrationTests(unittest.TestCase):
         worker = AgentJobWorker(self.container.settings, container=self.container)
 
         retry_message = self._create_and_take_job_message("retry")
-        self.container.agent_executor.claude_client = _FailingClaudeClient(  # type: ignore[assignment]
+        self.container.agent_executor.runtime_client = _FailingClaudeClient(  # type: ignore[assignment]
             retryable=True
         )
         worker.handle(retry_message)
@@ -146,7 +144,7 @@ class RabbitMQ4JobFailureIntegrationTests(unittest.TestCase):
         self.assertIn("job.failure.retry", [row["event_type"] for row in retry_audit])
 
         dead_message = self._create_and_take_job_message("dead")
-        self.container.agent_executor.claude_client = _FailingClaudeClient(  # type: ignore[assignment]
+        self.container.agent_executor.runtime_client = _FailingClaudeClient(  # type: ignore[assignment]
             retryable=False
         )
         worker.handle(dead_message)

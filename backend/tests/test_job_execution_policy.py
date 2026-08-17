@@ -173,7 +173,7 @@ def test_worker_rejects_missing_policy_before_context_tools_or_model() -> None:
             raise AssertionError("model must not be called")
 
     client = RecordingClient()
-    c.agent_executor.claude_client = client
+    c.agent_executor.runtime_client = client
     with pytest.raises(NonRetryableExecutionError) as raised:
         c.agent_executor.execute(job.id)
 
@@ -220,7 +220,7 @@ def test_executor_counts_server_persisted_mcp_call_without_runtime_tool_event() 
             )
             return AgentRunResult(final_answer="safe final answer", tool_events=[])
 
-    c.agent_executor.claude_client = PersistingMcpClient()
+    c.agent_executor.runtime_client = PersistingMcpClient()
 
     c.agent_executor.execute(job.id)
 
@@ -263,7 +263,7 @@ def test_executor_counts_runtime_tool_lifecycle_as_one_attempt() -> None:
                 tool_events=tool_events,
             )
 
-    c.agent_executor.claude_client = LifecycleClient()
+    c.agent_executor.runtime_client = LifecycleClient()
 
     c.agent_executor.execute(job.id)
 
@@ -311,7 +311,7 @@ def test_executor_persists_attempt_usage_and_exhaustion_separately_from_context_
                 tool_events=tool_events,
             )
 
-    c.agent_executor.claude_client = ExhaustingClient()
+    c.agent_executor.runtime_client = ExhaustingClient()
     with pytest.raises(ExecutionPolicyExceeded):
         c.agent_executor.execute(job.id)
 
@@ -362,7 +362,7 @@ def test_worker_delivers_safe_non_retryable_tool_budget_failure_once() -> None:
                 tool_events=tool_events,
             )
 
-    c.agent_executor.claude_client = ExhaustingClient()
+    c.agent_executor.runtime_client = ExhaustingClient()
     worker = AgentJobWorker(c.settings, container=c)
     message = persisted_agent_job_message(c, job.id)
 

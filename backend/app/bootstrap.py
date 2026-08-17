@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
 import os
 import time
@@ -8,12 +8,12 @@ from app.modules.agent.application.agent_context_builder import AgentContextBuil
 from app.modules.agent.application.conversation_context import ConversationContextService
 from app.modules.agent.application.agent_executor import AgentExecutor
 from app.modules.agent.application.agent_result_service import AgentResultService
+from app.modules.agent.application.runtime_client import (
+    AgentRuntimeClient,
+    GuardedAgentRuntimeClient,
+)
 from app.modules.agent.infrastructure.stub_runtime_client import StubAgentRuntimeClient
 from app.modules.agent.infrastructure.mcp_tool_registry import ToolRegistry
-from app.modules.agent.infrastructure.routed_runtime_client import (
-    AgentRuntimeClient,
-    RuntimeClientRegistry,
-)
 from app.modules.agent.infrastructure.runtime_readiness import AgentRuntimeReadinessGuard
 from app.modules.agent.infrastructure.skill_loader import SkillLoader
 from app.modules.agent.infrastructure.runtime_http_client import (
@@ -258,7 +258,7 @@ def build_worker_container(
     *,
     seed: bool = False,
     service_name: str = "agent-worker",
-    runtime_clients: Mapping[str, AgentRuntimeClient] | None = None,
+    runtime_client: AgentRuntimeClient | None = None,
 ) -> Container:
     settings = load_settings_with_db_overlay(settings, service_name=service_name)
     publisher = RabbitMQPublisher(settings.rabbitmq_url, settings.queue)
@@ -278,7 +278,7 @@ def build_worker_container(
         message_bus=None,
         seed=seed,
         use_real_claude=settings.feature_configuration.real_claude_enabled,
-        runtime_clients_override=runtime_clients,
+        runtime_client_override=runtime_client,
     )
 
 
@@ -436,7 +436,7 @@ def _build_container(
     seed: bool,
     use_real_claude: bool,
     permission_service_factory: PermissionServiceFactory | None = None,
-    runtime_clients_override: Mapping[str, AgentRuntimeClient] | None = None,
+    runtime_client_override: AgentRuntimeClient | None = None,
 ) -> Container:
     database = database or Database(settings.database_dsn)
     if seed:
@@ -628,7 +628,7 @@ def _build_container(
         TaskWorkspaceService(file_workspace_repository),
     )
     principal_token_issuer: PrincipalTokenIssuer | None = None
-    if service_name == "agent-worker" and runtime_clients_override is None:
+    if service_name == "agent-worker" and runtime_client_override is None:
         principal_token_issuer = PrincipalTokenIssuer(
             database,
             mcp_tool_snapshot_service,
@@ -852,26 +852,17 @@ def _build_container(
         mcp_tool_snapshot_service=mcp_tool_snapshot_service,
     )
     tool_registry = ToolRegistry(tool_service)
-    runtime_clients: dict[str, AgentRuntimeClient] = {}
-    if service_name == "agent-worker" and runtime_clients_override is not None:
-        runtime_clients = dict(runtime_clients_override)
+    runtime_delegate: AgentRuntimeClient | None = None
+    if service_name == "agent-worker" and runtime_client_override is not None:
+        runtime_delegate = runtime_client_override
     elif service_name == "agent-worker":
         grant_issuer = RuntimeGrantIssuer.from_file(settings.agent_runtime.grant_private_key_file)
-        configured_runtimes = (
-            (
-                "python-v1",
-                settings.agent_runtime.python_base_url,
-                settings.agent_runtime.python_allowed_hosts,
-            ),
-        )
-        for runtime_kind, base_url, allowed_hosts in configured_runtimes:
-            if not base_url:
-                continue
-            runtime_clients[runtime_kind] = AgentRuntimeHttpClient(
+        if settings.agent_runtime.python_base_url:
+            runtime_delegate = AgentRuntimeHttpClient(
                 settings=RuntimeClientSettings(
-                    base_url=base_url,
-                    allowed_runtime_hosts=allowed_hosts,
-                    runtime_kind=runtime_kind,
+                    base_url=settings.agent_runtime.python_base_url,
+                    allowed_runtime_hosts=settings.agent_runtime.python_allowed_hosts,
+                    runtime_kind="python-v1",
                     allow_insecure_internal_http=(
                         settings.agent_runtime.allow_insecure_internal_http
                     ),
@@ -881,11 +872,8 @@ def _build_container(
                 principal_token_issuer=principal_token_issuer,
             )
     else:
-        stub_runtime = StubAgentRuntimeClient()
-        runtime_clients = {"python-v1": stub_runtime}
-    claude_client = RuntimeClientRegistry(
-        runtime_clients,
-    )
+        runtime_delegate = StubAgentRuntimeClient()
+    runtime_client = GuardedAgentRuntimeClient(runtime_delegate)
     dingtalk_conversation_adapter = DingTalkConversationDeliveryAdapter(
         fallback_callback_url=settings.dingtalk.callback_url,
         host_allowlist=settings.dingtalk.callback_host_allowlist,
@@ -1016,7 +1004,7 @@ def _build_container(
             agent_config_service=agent_config_service,
             file_manifest_service=file_manifest_service,
         ),
-        claude_client=claude_client,
+        runtime_client=runtime_client,
         tool_registry=tool_registry,
         result_service=AgentResultService(agent_repository),
         delivery_service=result_delivery_service,

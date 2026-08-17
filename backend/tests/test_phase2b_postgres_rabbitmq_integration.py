@@ -143,9 +143,7 @@ def test_committed_job_survives_dispatch_and_duplicate_event_executes_once(
     container = build_worker_container(
         settings,
         seed=True,
-        runtime_clients={
-            "python-v1": counting_client,
-        },
+        runtime_client=counting_client,
     )
     container.settings = replace(container.settings, queue=queue)
     container.agent_executor.context_builder = _StaticContextBuilder()  # type: ignore[assignment]
