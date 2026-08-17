@@ -92,6 +92,7 @@ _FORBIDDEN_AUTH_KEYS = frozenset(
         "nonce",
         "principal_jwt",
         "principal_token",
+        "x_file_principal_token",
         "credential_value",
     }
 )
@@ -355,8 +356,7 @@ class McpAuditCoordinator:
             "tool_identifier",
         )
         if any(
-            getattr(handle.context, field) != getattr(context, field)
-            for field in immutable_fields
+            getattr(handle.context, field) != getattr(context, field) for field in immutable_fields
         ):
             conflict = McpAuditError(
                 "MCP audit context enrichment changed an immutable identity",
@@ -443,9 +443,7 @@ class McpAuditCoordinator:
         response: _SerializedBusinessPayload = values["response"]
         event_id = new_id("mcp_audit")
         timestamp = now_iso()
-        digest = hashlib.sha256(
-            f"{request.digest}:{response.digest}".encode("ascii")
-        ).hexdigest()
+        digest = hashlib.sha256(f"{request.digest}:{response.digest}".encode("ascii")).hexdigest()
         self._insert_audit_row(
             {
                 **self._context_values(context),
@@ -487,9 +485,7 @@ class McpAuditCoordinator:
                 "audit_event_id": None,
                 "agent_tool_call_id": handle.agent_tool_call_id,
                 "created_at": timestamp,
-                "completed_at": timestamp
-                if values["status"] in _TERMINAL_STATUSES
-                else None,
+                "completed_at": timestamp if values["status"] in _TERMINAL_STATUSES else None,
             }
         )
         return event_id
@@ -736,7 +732,11 @@ class McpAuditCoordinator:
         if isinstance(value, dict):
             for key, child in value.items():
                 normalized = str(key).strip().lower().replace("-", "_")
-                if normalized in _FORBIDDEN_AUTH_KEYS or normalized.endswith("_password"):
+                if (
+                    normalized in _FORBIDDEN_AUTH_KEYS
+                    or normalized.startswith("x_mcp_principal_token_")
+                    or normalized.endswith("_password")
+                ):
                     raise McpAuditError(
                         "Authentication material appeared in MCP business evidence",
                         safe_message="MCP 业务数据包含禁止保存的认证材料",

@@ -94,9 +94,7 @@ def test_coordinator_creates_and_completes_one_exact_fact_tree() -> None:
     assert tool_rows[0]["tool_origin"] == "mcp"
     assert tool_rows[0]["status"] == "SUCCEEDED"
     assert {row["event_kind"] for row in audit_rows} == {"TOOL", "AUTHORIZATION"}
-    assert {row["agent_tool_call_id"] for row in audit_rows} == {
-        handle.agent_tool_call_id
-    }
+    assert {row["agent_tool_call_id"] for row in audit_rows} == {handle.agent_tool_call_id}
     child = next(row for row in audit_rows if row["id"] == authorization_id)
     assert child["parent_audit_id"] == handle.root_audit_id
     assert handle.result_meta() == {
@@ -112,10 +110,13 @@ def test_coordinator_rejects_auth_material_before_writing() -> None:
         coordinator.begin(context, business_request={"authorization": "forbidden"})
 
     assert denied.value.error_code == "mcp_audit_auth_material_forbidden"
-    assert runtime.database.execute_one(
-        "select id from agent_tool_call where job_id = ?",
-        (job.id,),
-    ) is None
+    assert (
+        runtime.database.execute_one(
+            "select id from agent_tool_call where job_id = ?",
+            (job.id,),
+        )
+        is None
+    )
 
     handle = coordinator.begin(context, business_request={"query": "allowed"})
     with pytest.raises(McpAuditError) as child_denied:
@@ -126,6 +127,15 @@ def test_coordinator_rejects_auth_material_before_writing() -> None:
             business_response={"access_token": "forbidden"},
         )
     assert getattr(child_denied.value, "mcp_audit_handle") == handle
+
+    for header_name in (
+        "X-MCP-Principal-Token-Ones-Mcp",
+        "X-MCP-Principal-Token-Test-Business-Mcp",
+        "X-File-Principal-Token",
+    ):
+        with pytest.raises(McpAuditError) as header_denied:
+            coordinator.begin(context, business_request={header_name: "forbidden"})
+        assert header_denied.value.error_code == "mcp_audit_auth_material_forbidden"
 
 
 def test_coordinator_bounds_payload_and_retention_preserves_agent_tool_fact() -> None:
@@ -158,10 +168,13 @@ def test_coordinator_bounds_payload_and_retention_preserves_agent_tool_fact() ->
         (handle.mcp_call_id,),
     )
     assert coordinator.purge_expired(retention_days=1, batch_size=10) == 1
-    assert runtime.database.execute_one(
-        "select id from agent_tool_call where id = ?",
-        (handle.agent_tool_call_id,),
-    ) is not None
+    assert (
+        runtime.database.execute_one(
+            "select id from agent_tool_call where id = ?",
+            (handle.agent_tool_call_id,),
+        )
+        is not None
+    )
 
 
 def test_worker_upserts_sdk_started_and_terminal_by_runtime_identity() -> None:
@@ -198,10 +211,13 @@ def test_worker_upserts_sdk_started_and_terminal_by_runtime_identity() -> None:
     assert len(rows) == 1
     assert rows[0]["status"] == "SUCCEEDED"
     assert rows[0]["server_code"] is None
-    assert runtime.database.execute_one(
-        "select id from mcp_operation_audit where agent_tool_call_id = ?",
-        (started_id,),
-    ) is None
+    assert (
+        runtime.database.execute_one(
+            "select id from mcp_operation_audit where agent_tool_call_id = ?",
+            (started_id,),
+        )
+        is None
+    )
 
 
 def test_worker_updates_only_the_exact_server_first_mcp_row() -> None:

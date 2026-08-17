@@ -8,6 +8,8 @@ from app.modules.job.infrastructure.repositories import new_id, now_iso
 from app.shared.database import Database
 from app.shared.exceptions import ToolPolicyError
 
+from app.shared.mcp_server_policy import require_mcp_server_policy
+
 from .manifest import MCP_TOOL_MANIFEST
 
 
@@ -50,9 +52,7 @@ class JobMcpToolSnapshotService:
         tools = [row for row in tools if str(row["tool_identifier"]) in granted]
         if allowed_server_codes is not None:
             tools = [
-                row
-                for row in tools
-                if str(row.get("server_code") or "") in allowed_server_codes
+                row for row in tools if str(row.get("server_code") or "") in allowed_server_codes
             ]
         return self._persist(
             job_id=job_id,
@@ -111,8 +111,30 @@ class JobMcpToolSnapshotService:
                 safe_message="Job MCP 工具快照完整性校验失败",
                 error_code="mcp_tool_snapshot_integrity_failed",
             )
-        for tool in snapshot.get("tools") or []:
-            definition = MCP_TOOL_MANIFEST.get(str(tool.get("tool_identifier") or ""))
+        raw_tools = snapshot.get("tools")
+        if not isinstance(raw_tools, list):
+            raise ToolPolicyError(
+                "Job MCP Tool Snapshot tools are invalid",
+                safe_message="Job MCP 工具快照无效",
+                error_code="mcp_tool_snapshot_integrity_failed",
+            )
+        seen_identifiers: set[str] = set()
+        for tool in raw_tools:
+            if not isinstance(tool, dict):
+                raise ToolPolicyError(
+                    "Job MCP Tool Snapshot entry is invalid",
+                    safe_message="Job MCP 工具快照无效",
+                    error_code="mcp_tool_snapshot_integrity_failed",
+                )
+            identifier = str(tool.get("tool_identifier") or "")
+            if not identifier or identifier in seen_identifiers:
+                raise ToolPolicyError(
+                    "Job MCP Tool Snapshot contains a duplicate Tool",
+                    safe_message="Job MCP 工具快照包含重复工具",
+                    error_code="mcp_tool_snapshot_duplicate",
+                )
+            seen_identifiers.add(identifier)
+            definition = MCP_TOOL_MANIFEST.get(identifier)
             if (
                 definition is None
                 or definition.server_code != str(tool.get("server_code") or "")
@@ -123,6 +145,14 @@ class JobMcpToolSnapshotService:
                     safe_message="MCP 工具服务或 Schema 已变化，请重新发布 Agent 和应用",
                     error_code="mcp_tool_schema_drift",
                 )
+            try:
+                require_mcp_server_policy(definition.server_code)
+            except ValueError as exc:
+                raise ToolPolicyError(
+                    "Job MCP Tool server policy is missing",
+                    safe_message="MCP 工具服务鉴权策略无效",
+                    error_code="mcp_tool_server_policy_invalid",
+                ) from exc
         return {
             "id": str(row["id"]),
             "job_id": job_id,
@@ -183,11 +213,23 @@ class JobMcpToolSnapshotService:
         if existing is not None:
             return self.verify(job_id)
         normalized_tools = []
+        seen_identifiers: set[str] = set()
         for row in tools:
             identifier = str(row["tool_identifier"])
+            if not identifier or identifier in seen_identifiers:
+                raise ToolPolicyError(
+                    "Publication MCP Tool is duplicated",
+                    safe_message="发布版本包含重复 MCP 工具",
+                    error_code="mcp_tool_snapshot_duplicate",
+                )
+            seen_identifiers.add(identifier)
             definition = MCP_TOOL_MANIFEST.get(identifier)
             if definition is None:
-                continue
+                raise ToolPolicyError(
+                    "Publication MCP Tool is not in the code manifest",
+                    safe_message="发布版本中的 MCP 工具已失效，请重新发布",
+                    error_code="mcp_tool_schema_drift",
+                )
             schema_hash = str(row.get("schema_hash") or definition.schema_hash)
             server_code = str(row.get("server_code") or "")
             if schema_hash != definition.schema_hash or server_code != definition.server_code:
@@ -196,6 +238,14 @@ class JobMcpToolSnapshotService:
                     safe_message="发布版本中的 MCP 工具服务或 Schema 已失效，请重新发布",
                     error_code="mcp_tool_schema_drift",
                 )
+            try:
+                require_mcp_server_policy(server_code)
+            except ValueError as exc:
+                raise ToolPolicyError(
+                    "Publication MCP Tool server policy is missing",
+                    safe_message="发布版本中的 MCP 工具鉴权策略无效",
+                    error_code="mcp_tool_server_policy_invalid",
+                ) from exc
             normalized_tools.append(
                 {
                     "server_code": definition.server_code,

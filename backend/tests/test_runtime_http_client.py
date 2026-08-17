@@ -21,13 +21,20 @@ from app.modules.agent.infrastructure.runtime_http_client import (
     AgentRuntimeHttpClient,
     RuntimeClientSettings,
     RuntimeGrantIssuer,
+    RuntimePrincipalTokens,
     probe_runtime_readiness,
 )
+from app.shared.mcp_server_policy import ONES_MCP_SERVER_CODE
 from app.modules.model_connection.domain import (
     ANTHROPIC_COMPATIBLE_PROTOCOL,
     ModelRuntimeBinding,
 )
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
+from backend.tests.business_mcp_fixtures import (
+    TEST_BUSINESS_SERVER_CODE,
+    TEST_BUSINESS_TOOL_IDENTIFIER,
+    business_mcp_test_policies,
+)
 
 
 class _PassiveResponse:
@@ -197,7 +204,7 @@ def _provenance(request: dict[str, Any]) -> dict[str, Any]:
     return {
         "runtime_kind": "python-v1",
         "runtime_version": "0.1.0",
-        "protocol_version": "1.0",
+        "protocol_version": request["protocol_version"],
         "sdk_version": "0.3.226",
         "cli_version": "2.1.226",
         "model_connection_revision_id": request["model_connection"]["revision_id"],
@@ -226,7 +233,7 @@ class GoldenTransport:
         provenance = _provenance(self.request)
         events = [
             {
-                "protocol_version": "1.0",
+                "protocol_version": self.request["protocol_version"],
                 "invocation_id": self.request["invocation_id"],
                 "request_digest": self.request["request_digest"],
                 "sequence": 1,
@@ -235,7 +242,7 @@ class GoldenTransport:
                 "payload": provenance,
             },
             {
-                "protocol_version": "1.0",
+                "protocol_version": self.request["protocol_version"],
                 "invocation_id": self.request["invocation_id"],
                 "request_digest": self.request["request_digest"],
                 "sequence": 2,
@@ -249,18 +256,54 @@ class GoldenTransport:
                     "request_summary": {"project_code": "project-1"},
                     "response_summary": {"count": 1},
                     "duration_ms": 10,
+                    **(
+                        {
+                            "tool_origin": "mcp",
+                            "mcp_call_id": "mcp-call-1",
+                            "persisted_tool_call_id": "agent-tool-call-1",
+                        }
+                        if self.request["protocol_version"] != "1.0"
+                        else {}
+                    ),
                 },
             },
         ]
         terminal: dict[str, Any] = {
-            "protocol_version": "1.0",
+            "protocol_version": self.request["protocol_version"],
             "invocation_id": self.request["invocation_id"],
             "request_digest": self.request["request_digest"],
             "last_sequence": 3,
             "status": self.terminal_status,
-            "usage": {"input_tokens": 10, "output_tokens": 4},
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 4,
+                **(
+                    {
+                        "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0,
+                    }
+                    if self.request["protocol_version"] in {"1.2", "1.3"}
+                    else {}
+                ),
+            },
             "runtime_provenance": provenance,
         }
+        if self.request["protocol_version"] in {"1.2", "1.3"}:
+            terminal["accounting"] = {
+                "status": "COMPLETE",
+                "duration_ms": 20,
+                "duration_api_ms": 10,
+                "num_turns": 1,
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 4,
+                    "cache_read_input_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                },
+                "model_usage": [],
+                "estimated_cost_usd": 0.001,
+                "permission_denials_count": 0,
+            }
         if self.terminal_status == "SUCCEEDED":
             terminal["final_answer"] = "final answer"
         else:
@@ -271,7 +314,7 @@ class GoldenTransport:
             }
         events.append(
             {
-                "protocol_version": "1.0",
+                "protocol_version": self.request["protocol_version"],
                 "invocation_id": self.request["invocation_id"],
                 "request_digest": self.request["request_digest"],
                 "sequence": 3,
@@ -300,6 +343,8 @@ def _client(
     *,
     events: list[dict[str, Any]] | None = None,
     principal_token_issuer: Any | None = None,
+    server_policies: Any | None = None,
+    allowed_mcp_server_codes: tuple[str, ...] | None = None,
 ):
     private_pem, public_pem = _private_key()
     captured_events = events if events is not None else []
@@ -308,10 +353,16 @@ def _client(
             settings=RuntimeClientSettings(
                 base_url="http://agent-runtime:8090",
                 allowed_runtime_hosts=("agent-runtime",),
+                **(
+                    {"allowed_mcp_server_codes": allowed_mcp_server_codes}
+                    if allowed_mcp_server_codes is not None
+                    else {}
+                ),
                 allow_insecure_internal_http=True,
             ),
             grant_issuer=RuntimeGrantIssuer(private_pem, now=lambda: 1_800_000_000),
             principal_token_issuer=principal_token_issuer,
+            server_policies=server_policies,
             transport=transport,
             event_sink=lambda _job_id, event: captured_events.append(event),
         ),
@@ -359,17 +410,31 @@ def test_worker_builds_exact_request_and_validates_ndjson_terminal() -> None:
 
 
 class _PrincipalTokenIssuer:
-    def __init__(self) -> None:
-        self.job_ids: list[str] = []
+    def __init__(self, *, business_tokens: dict[str, str] | None = None) -> None:
+        self.business_tokens = business_tokens or {
+            ONES_MCP_SERVER_CODE: "test-only-principal-token"
+        }
+        self.business_calls: list[tuple[str, str]] = []
         self.file_job_ids: list[str] = []
 
-    def issue_for_job(self, *, job_id: str) -> str:
-        self.job_ids.append(job_id)
-        return "test-only-principal-token"
+    def issue_business_mcp_for_job(self, *, job_id: str, server_code: str) -> str:
+        self.business_calls.append((job_id, server_code))
+        return self.business_tokens[server_code]
 
     def issue_file_for_job(self, *, job_id: str) -> str:
         self.file_job_ids.append(job_id)
         return "test-only-file-principal-token"
+
+
+def test_runtime_principal_token_mapping_is_readonly_and_hidden() -> None:
+    tokens = RuntimePrincipalTokens(
+        business={ONES_MCP_SERVER_CODE: "must-not-appear"},
+        files="file-must-not-appear",
+    )
+
+    assert repr(tokens) == "RuntimePrincipalTokens(business=<hidden>, files=<hidden>)"
+    with pytest.raises(TypeError):
+        tokens.business[ONES_MCP_SERVER_CODE] = "reused"  # type: ignore[index]
 
 
 def test_worker_projects_principal_only_to_runtime_header_for_ones_mcp() -> None:
@@ -401,8 +466,9 @@ def test_worker_projects_principal_only_to_runtime_header_for_ones_mcp() -> None
     result = client.run(request)
 
     assert result.final_answer == "final answer"
-    assert issuer.job_ids == ["job-1"]
-    assert transport.headers["X-MCP-Principal-Token"] == "test-only-principal-token"
+    assert issuer.business_calls == [("job-1", ONES_MCP_SERVER_CODE)]
+    assert transport.headers["X-MCP-Principal-Token-Ones-Mcp"] == ("test-only-principal-token")
+    assert "X-MCP-Principal-Token" not in transport.headers
     assert transport.request["mcp_servers"][0]["server_code"] == "ones-mcp"
     persisted = json.dumps([transport.request, captured_events])
     assert "test-only-principal-token" not in persisted
@@ -460,11 +526,136 @@ def test_worker_issues_a_separate_file_principal_for_file_mcp() -> None:
     execution_request = client._execution_request(request)
     tokens = client._principal_tokens(request, execution_request)
 
-    assert tokens.ones == ""
+    assert dict(tokens.business) == {}
     assert tokens.files == "test-only-file-principal-token"
-    assert issuer.job_ids == []
+    assert issuer.business_calls == []
     assert issuer.file_job_ids == ["job-1"]
     assert "test-only-file-principal-token" not in json.dumps(execution_request)
+
+
+def test_worker_projects_two_business_principals_to_distinct_runtime_headers() -> None:
+    policies = business_mcp_test_policies()
+    issuer = _PrincipalTokenIssuer(
+        business_tokens={
+            ONES_MCP_SERVER_CODE: "test-only-ones-principal-token",
+            TEST_BUSINESS_SERVER_CODE: "test-only-second-principal-token",
+        }
+    )
+    transport = GoldenTransport()
+    captured_events: list[dict[str, Any]] = []
+    client, _ = _client(
+        transport,
+        events=captured_events,
+        principal_token_issuer=issuer,
+        server_policies=policies,
+        allowed_mcp_server_codes=tuple(policies),
+    )
+    request = replace(
+        _request(),
+        context=replace(
+            _request().context,
+            runtime_protocol_version="1.1",
+            allowed_tools=["ones_work_item_search", TEST_BUSINESS_TOOL_IDENTIFIER],
+            mcp_bindings=(
+                McpRuntimeBinding(
+                    server_code=ONES_MCP_SERVER_CODE,
+                    tool_name="ones_work_item_search",
+                    required_scope="mcp:ones-mcp:ones_work_item_search:invoke",
+                    tool_schema_hash="c" * 64,
+                ),
+                McpRuntimeBinding(
+                    server_code=TEST_BUSINESS_SERVER_CODE,
+                    tool_name=TEST_BUSINESS_TOOL_IDENTIFIER,
+                    required_scope=("mcp:test-business-mcp:test_business_lookup:invoke"),
+                    tool_schema_hash="d" * 64,
+                ),
+            ),
+        ),
+    )
+
+    result = client.run(request)
+    execution_request = transport.request
+
+    assert result.final_answer == "final answer"
+    assert issuer.business_calls == [
+        ("job-1", ONES_MCP_SERVER_CODE),
+        ("job-1", TEST_BUSINESS_SERVER_CODE),
+    ]
+    assert transport.headers["X-MCP-Principal-Token-Ones-Mcp"] == ("test-only-ones-principal-token")
+    assert transport.headers["X-MCP-Principal-Token-Test-Business-Mcp"] == (
+        "test-only-second-principal-token"
+    )
+    serialized = json.dumps([execution_request, captured_events], sort_keys=True)
+    assert "test-only-ones-principal-token" not in serialized
+    assert "test-only-second-principal-token" not in serialized
+
+
+def test_worker_projects_business_and_file_principals_to_separate_headers() -> None:
+    issuer = _PrincipalTokenIssuer()
+    transport = GoldenTransport()
+    client, _ = _client(transport, principal_token_issuer=issuer)
+    request = replace(
+        _request(),
+        context=replace(
+            _request().context,
+            runtime_protocol_version="1.2",
+            allowed_tools=["ones_work_item_search", "file_prepare_materialization"],
+            mcp_bindings=(
+                McpRuntimeBinding(
+                    server_code=ONES_MCP_SERVER_CODE,
+                    tool_name="ones_work_item_search",
+                    required_scope="mcp:ones-mcp:ones_work_item_search:invoke",
+                    tool_schema_hash="c" * 64,
+                ),
+                McpRuntimeBinding(
+                    server_code="file-service",
+                    tool_name="file_prepare_materialization",
+                    required_scope=("mcp:file-service:file_prepare_materialization:invoke"),
+                    tool_schema_hash="d" * 64,
+                ),
+            ),
+        ),
+    )
+
+    result = client.run(request)
+
+    assert result.final_answer == "final answer"
+    assert issuer.business_calls == [("job-1", ONES_MCP_SERVER_CODE)]
+    assert issuer.file_job_ids == ["job-1"]
+    assert transport.headers["X-MCP-Principal-Token-Ones-Mcp"] == ("test-only-principal-token")
+    assert transport.headers["X-File-Principal-Token"] == ("test-only-file-principal-token")
+    serialized = json.dumps(transport.request)
+    assert "test-only-principal-token" not in serialized
+    assert "test-only-file-principal-token" not in serialized
+
+
+@pytest.mark.parametrize(
+    "token",
+    ["", "x" * 8193, "invalid\rprincipal", "invalid\nprincipal", "非ascii"],
+)
+def test_worker_rejects_invalid_business_principal_before_transport(token: str) -> None:
+    issuer = _PrincipalTokenIssuer(business_tokens={ONES_MCP_SERVER_CODE: token})
+    client, _ = _client(GoldenTransport(), principal_token_issuer=issuer)
+    request = replace(
+        _request(),
+        context=replace(
+            _request().context,
+            allowed_tools=["ones_work_item_search"],
+            mcp_bindings=(
+                McpRuntimeBinding(
+                    server_code=ONES_MCP_SERVER_CODE,
+                    tool_name="ones_work_item_search",
+                    required_scope="mcp:ones-mcp:ones_work_item_search:invoke",
+                    tool_schema_hash="c" * 64,
+                ),
+            ),
+        ),
+    )
+
+    with pytest.raises(NonRetryableExecutionError) as rejected:
+        client.run(request)
+
+    assert rejected.value.error_code == "principal_token_invalid"
 
 
 def test_worker_maps_runtime_failure_and_preserves_prior_tool_events() -> None:
@@ -501,9 +692,11 @@ class RecoverTerminalTransport(GoldenTransport):
         super().__init__()
         self.calls = 0
         self.digests: list[str] = []
+        self.header_sets: list[dict[str, str]] = []
 
     def stream(self, **kwargs: Any) -> Iterator[bytes]:
         self.calls += 1
+        self.header_sets.append(dict(kwargs["headers"]))
         lines = list(super().stream(**kwargs))
         self.digests.append(self.request["request_digest"])
         yield from (lines[:-1] if self.calls == 1 else lines)
@@ -511,13 +704,35 @@ class RecoverTerminalTransport(GoldenTransport):
 
 def test_worker_reconnects_once_with_same_invocation_to_recover_terminal() -> None:
     transport = RecoverTerminalTransport()
-    client, _ = _client(transport)
+    issuer = _PrincipalTokenIssuer()
+    client, _ = _client(transport, principal_token_issuer=issuer)
+    request = replace(
+        _request(),
+        context=replace(
+            _request().context,
+            allowed_tools=["ones_work_item_search"],
+            mcp_bindings=(
+                McpRuntimeBinding(
+                    server_code=ONES_MCP_SERVER_CODE,
+                    tool_name="ones_work_item_search",
+                    required_scope="mcp:ones-mcp:ones_work_item_search:invoke",
+                    tool_schema_hash="c" * 64,
+                ),
+            ),
+        ),
+    )
 
-    result = client.run(_request())
+    result = client.run(request)
 
     assert result.final_answer == "final answer"
     assert transport.calls == 2
     assert len(set(transport.digests)) == 1
+    assert issuer.business_calls == [("job-1", ONES_MCP_SERVER_CODE)]
+    assert len(transport.header_sets) == 2
+    assert transport.header_sets[0] == transport.header_sets[1]
+    assert transport.header_sets[0]["X-MCP-Principal-Token-Ones-Mcp"] == (
+        "test-only-principal-token"
+    )
 
 
 class InterruptedInProgressTransport(GoldenTransport):

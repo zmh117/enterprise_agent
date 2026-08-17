@@ -28,6 +28,7 @@ from app.modules.identity.infrastructure.external_identity_credentials import (
 from app.main import create_app as create_control_plane_app
 from app.modules.job.infrastructure.repositories import now_iso
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
+from app.shared.mcp_server_policy import ONES_MCP_SERVER_CODE
 from app.modules.mcp_audit import McpAuditCoordinator
 from app.shared.exceptions import AppError, NonRetryableExecutionError
 from backend.tests.helpers import container, prepare_debug_application_access
@@ -194,9 +195,13 @@ def _fixture(*, initial_token: str | None = None) -> dict[str, Any]:
         signing_key,
         runtime.audit_service,
     )
-    token = issuer.issue_for_job(job_id=claimed.id)
+    token = issuer.issue_business_mcp_for_job(
+        job_id=claimed.id,
+        server_code=ONES_MCP_SERVER_CODE,
+    )
     verifier = PrincipalTokenVerifier(
         PrincipalJwks.from_dict(signing_key.public_jwks()),
+        expected_audience=ONES_MCP_SERVER_CODE,
         audit_service=runtime.audit_service,
     )
     audit = McpAuditCoordinator(
@@ -291,8 +296,9 @@ def test_ones_mcp_mock_query_persists_complete_unmasked_business_audit() -> None
         "user_id": fixture["mock"].user_uuid,
     }
     assert (
-        json.loads(provider["business_response_json"])["provider_response"]["data"]
-        ["workItems"]["items"][0]["name"]
+        json.loads(provider["business_response_json"])["provider_response"]["data"]["workItems"][
+            "items"
+        ][0]["name"]
         == result["items"][0]["name"]
     )
     assert json.loads(tool["tool_request_json"])["keyword"] == "traceability"
@@ -815,8 +821,8 @@ def test_mcp_audit_detail_requires_audit_read_and_records_the_read() -> None:
     )
     runtime = fixture["runtime"]
     audit_row = runtime.database.execute_one(
-            "select id from mcp_operation_audit where correlation_id = ? "
-            "and event_kind = 'PROVIDER' order by created_at, id limit 1",
+        "select id from mcp_operation_audit where correlation_id = ? "
+        "and event_kind = 'PROVIDER' order by created_at, id limit 1",
         ("ones-audit-read",),
     )
     assert audit_row is not None

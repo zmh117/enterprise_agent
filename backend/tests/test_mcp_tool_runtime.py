@@ -642,3 +642,58 @@ def test_job_snapshot_fails_closed_on_schema_drift() -> None:
         assert drift.value.error_code == "mcp_tool_schema_drift"
     finally:
         runtime.database.close()
+
+
+def test_job_snapshot_fails_closed_on_duplicate_tool_binding() -> None:
+    runtime = container()
+    try:
+        session = runtime.agent_repository.create_session(
+            project_code="default",
+            source_channel="debug_api",
+            source_connector_id="connector-debug-api",
+            external_conversation_id="mcp-duplicate-conversation",
+            requester_id="local-user",
+        )
+        job = runtime.agent_repository.create_job(
+            session_id=session.id,
+            idempotency_key="mcp-duplicate-job",
+            project_code="default",
+            source_channel="debug_api",
+            source_connector_id="connector-debug-api",
+            requester_id="local-user",
+            input_message="hello",
+            max_retry_count=0,
+            agent_publication_id="agent_publication_default_v1",
+            execution_policy=_EXECUTION_POLICY,
+        )
+        frozen = runtime.mcp_tool_snapshot_service.freeze_agent_only(
+            job_id=job.id,
+            requester_id="local-user",
+            agent_publication_id="agent_publication_default_v1",
+            routing_context={},
+            business_authorization={},
+            runtime_authorization={},
+        )
+        snapshot = dict(frozen["snapshot"])
+        snapshot["tools"] = [
+            dict(frozen["snapshot"]["tools"][0]),
+            dict(frozen["snapshot"]["tools"][0]),
+        ]
+        runtime.database.execute(
+            """
+            update agent_job_mcp_tool_snapshot
+               set snapshot_json = ?, snapshot_hash = ?
+             where job_id = ?
+            """,
+            (
+                JobMcpToolSnapshotService._json_text(snapshot),
+                JobMcpToolSnapshotService._hash(snapshot),
+                job.id,
+            ),
+        )
+
+        with pytest.raises(ToolPolicyError) as duplicate:
+            runtime.mcp_tool_snapshot_service.verify(job.id)
+        assert duplicate.value.error_code == "mcp_tool_snapshot_duplicate"
+    finally:
+        runtime.database.close()

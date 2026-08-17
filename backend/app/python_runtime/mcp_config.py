@@ -2,12 +2,25 @@ from __future__ import annotations
 
 import re
 import threading
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime, timedelta
+from types import MappingProxyType
 from typing import Any
 from urllib.parse import urlsplit
 
 from app.modules.agent.domain.runtime import AgentExecutionContext, AgentRunRequest
+from app.shared.mcp_server_policy import (
+    FILE_MCP_SERVER_CODE,
+    MCP_SERVER_POLICIES,
+    ONES_MCP_SERVER_CODE,
+    TOOL_MCP_SERVER_CODE,
+    McpServerAuthMode,
+    McpServerPolicy,
+    mcp_sdk_server_alias,
+    require_mcp_server_policy,
+    validate_mcp_server_policies,
+)
 from app.python_runtime.claude_client import (
     ClaudeSdkClient,
     build_system_prompt,
@@ -53,10 +66,11 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
         limits: ExecutionSettings,
         api_key: str,
         mcp_server_url: str,
-        ones_mcp_server_url: str = "http://ones-mcp:9104/mcp",
-        principal_token: str = "",
+        business_mcp_server_urls: Mapping[str, str] | None = None,
+        mcp_principal_tokens: Mapping[str, str] | None = None,
         file_mcp_server_url: str = "http://file-service:9105/mcp",
         file_principal_token: str = "",
+        server_policies: Mapping[str, McpServerPolicy] | None = None,
         sandbox_manager: JobSandboxManager | None = None,
         cancellation_event: threading.Event | None = None,
         file_bridge_factory: PythonRuntimeFileBridgeFactory = (create_python_runtime_file_bridge),
@@ -70,8 +84,37 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             cancellation_event=cancellation_event,
         )
         self._mcp_server_url = mcp_server_url
-        self._ones_mcp_server_url = ones_mcp_server_url
-        self._principal_token = principal_token
+        self._server_policies = MappingProxyType(
+            dict(MCP_SERVER_POLICIES if server_policies is None else server_policies)
+        )
+        validate_mcp_server_policies(self._server_policies)
+        raw_business_urls = (
+            {ONES_MCP_SERVER_CODE: "http://ones-mcp:9104/mcp"}
+            if business_mcp_server_urls is None
+            else dict(business_mcp_server_urls)
+        )
+        for server_code in raw_business_urls:
+            policy = require_mcp_server_policy(
+                server_code,
+                policies=self._server_policies,
+            )
+            if policy.auth_mode is not McpServerAuthMode.BUSINESS_PRINCIPAL_JWT:
+                raise ValueError("Business MCP URL configured for a non-business Server")
+        self._business_mcp_server_urls = MappingProxyType(
+            {
+                server_code: fixed_mcp_server_url(url, server_code=server_code)
+                for server_code, url in raw_business_urls.items()
+            }
+        )
+        raw_principal_tokens = dict(mcp_principal_tokens or {})
+        for server_code in raw_principal_tokens:
+            policy = require_mcp_server_policy(
+                server_code,
+                policies=self._server_policies,
+            )
+            if policy.auth_mode is not McpServerAuthMode.BUSINESS_PRINCIPAL_JWT:
+                raise ValueError("Business Principal Token configured for a non-business Server")
+        self._mcp_principal_tokens = MappingProxyType(raw_principal_tokens)
         self._file_mcp_server_url = file_mcp_server_url
         self._file_principal_token = file_principal_token
         self._file_bridge_factory = file_bridge_factory
@@ -93,36 +136,71 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
         shared_headers = self._shared_headers(request)
         servers: dict[str, dict[str, Any]] = {}
         server_codes = {binding.server_code for binding in request.context.mcp_bindings} or (
-            {"tool-mcp"} if request.context.allowed_tools else set()
+            {TOOL_MCP_SERVER_CODE} if request.context.allowed_tools else set()
         )
-        if "tool-mcp" in server_codes:
-            servers["tool_mcp"] = {
-                "type": "http",
-                "url": self._mcp_server_url,
-                "headers": dict(shared_headers),
-            }
-        if "ones-mcp" in server_codes:
-            if not self._principal_token:
-                raise NonRetryableExecutionError(
-                    "Python Runtime ONES MCP Principal Token is missing",
-                    safe_message="当前调用缺少平台身份凭证",
-                    error_code="runtime_principal_token_missing",
+        for server_code in sorted(server_codes):
+            try:
+                policy = require_mcp_server_policy(
+                    server_code,
+                    policies=self._server_policies,
                 )
-            servers["ones_mcp"] = {
-                "type": "http",
-                "url": self._ones_mcp_server_url,
-                "headers": {
-                    **shared_headers,
-                    "Authorization": f"Bearer {self._principal_token}",
-                },
-            }
-        if "file-service" in server_codes:
-            if not self._file_principal_token:
+            except ValueError as exc:
                 raise NonRetryableExecutionError(
-                    "Python Runtime File MCP Principal Token is missing",
-                    safe_message="当前调用缺少平台文件身份凭证",
-                    error_code="runtime_file_principal_token_missing",
-                )
+                    "Python Runtime MCP Server policy is unavailable",
+                    safe_message="当前任务的 MCP Server 策略不可用",
+                    error_code="runtime_mcp_server_policy_invalid",
+                ) from exc
+            alias = mcp_sdk_server_alias(server_code, policies=self._server_policies)
+            if policy.auth_mode is McpServerAuthMode.JOB_CONTEXT:
+                if server_code != TOOL_MCP_SERVER_CODE:
+                    raise NonRetryableExecutionError(
+                        "Python Runtime Job-context MCP Server is unsupported",
+                        safe_message="当前任务的 MCP Server 策略不可用",
+                        error_code="runtime_mcp_server_policy_invalid",
+                    )
+                servers[alias] = {
+                    "type": "http",
+                    "url": self._mcp_server_url,
+                    "headers": dict(shared_headers),
+                }
+                continue
+            if policy.auth_mode is McpServerAuthMode.BUSINESS_PRINCIPAL_JWT:
+                token = self._mcp_principal_tokens.get(server_code, "")
+                url = self._business_mcp_server_urls.get(server_code, "")
+                if not token or not url:
+                    raise NonRetryableExecutionError(
+                        "Python Runtime Business MCP configuration is missing",
+                        safe_message="当前调用缺少平台身份凭证或固定服务配置",
+                        error_code="runtime_principal_token_missing",
+                    )
+                servers[alias] = {
+                    "type": "http",
+                    "url": url,
+                    "headers": {
+                        **shared_headers,
+                        "Authorization": f"Bearer {token}",
+                    },
+                }
+                continue
+            if policy.auth_mode is McpServerAuthMode.FILE_PRINCIPAL_JWT:
+                if server_code != FILE_MCP_SERVER_CODE:
+                    raise NonRetryableExecutionError(
+                        "Python Runtime File Principal MCP Server is unsupported",
+                        safe_message="当前任务的 MCP Server 策略不可用",
+                        error_code="runtime_mcp_server_policy_invalid",
+                    )
+                if not self._file_principal_token:
+                    raise NonRetryableExecutionError(
+                        "Python Runtime File MCP Principal Token is missing",
+                        safe_message="当前调用缺少平台文件身份凭证",
+                        error_code="runtime_file_principal_token_missing",
+                    )
+                continue
+            raise NonRetryableExecutionError(
+                "Python Runtime MCP Server authentication mode is unsupported",
+                safe_message="当前任务的 MCP Server 策略不可用",
+                error_code="runtime_mcp_server_policy_invalid",
+            )
         return servers
 
     async def _open_mcp_server(self, request: AgentRunRequest, sdk: Any) -> dict[str, Any]:
@@ -130,7 +208,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
         file_bindings = tuple(
             item.tool_name
             for item in request.context.mcp_bindings
-            if item.server_code == "file-service"
+            if item.server_code == FILE_MCP_SERVER_CODE
         )
         if not file_bindings:
             return servers
@@ -159,7 +237,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
         )
         await bridge.connect()
         self._file_bridge = bridge
-        servers["file_service"] = bridge.server
+        servers[mcp_sdk_server_alias(FILE_MCP_SERVER_CODE)] = bridge.server
         return servers
 
     async def _close_mcp_server(self) -> None:
@@ -290,12 +368,9 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
     ) -> Any:
         exact_tools = []
         for item in context.mcp_bindings:
-            alias = (
-                "ones_mcp"
-                if item.server_code == "ones-mcp"
-                else "file_service"
-                if item.server_code == "file-service"
-                else "tool_mcp"
+            alias = mcp_sdk_server_alias(
+                item.server_code,
+                policies=self._server_policies,
             )
             exact_tools.append(f"mcp__{alias}__{item.tool_name}")
         if not context.mcp_bindings:
@@ -305,7 +380,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
         ):
             exact_tools.append(f"mcp__file_service__{LOCAL_FILE_OUTPUT_TOOL}")
         exact_tool_set = frozenset(exact_tools)
-        file_job = any(item.server_code == "file-service" for item in context.mcp_bindings)
+        file_job = any(item.server_code == FILE_MCP_SERVER_CODE for item in context.mcp_bindings)
         sandbox = self._sandbox.get()
         if sandbox is None:
             raise NonRetryableExecutionError(
@@ -343,9 +418,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
                 return deny()
             if tool_name in exact_tool_set:
                 return (
-                    deny()
-                    if contains_forbidden_tool_input(tool_input)
-                    else allow(dict(tool_input))
+                    deny() if contains_forbidden_tool_input(tool_input) else allow(dict(tool_input))
                 )
             if file_job and tool_name in ALLOWED_FILE_TOOLS:
                 try:

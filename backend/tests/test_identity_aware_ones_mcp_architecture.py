@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import stat
 from pathlib import Path
 import subprocess
@@ -77,23 +78,61 @@ def test_retired_mcp_and_api_platform_architecture_cannot_return() -> None:
 
 
 def test_runtime_protocol_has_no_caller_controlled_mcp_target_or_credential() -> None:
-    schema = json.loads(
-        (REPOSITORY_ROOT / "contracts/agent-runtime/v1/protocol.schema.json").read_text(
-            encoding="utf-8"
+    schemas = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in sorted(
+            (REPOSITORY_ROOT / "contracts/agent-runtime").glob("v*/protocol.schema.json")
         )
+    ]
+    for schema in schemas:
+        property_names = _walk_property_names(schema)
+        assert property_names.isdisjoint(
+            {
+                "mcp_server_url",
+                "server_url",
+                "base_url",
+                "authorization",
+                "auth_mode",
+                "principal_jwt",
+                "principal_token",
+                "principal_header",
+                "provider_token",
+            }
+        )
+
+
+def test_business_mcp_auth_policy_has_no_dynamic_registry_or_plugin_scan() -> None:
+    production = _production_sources().lower()
+    for forbidden in (
+        "register_mcp_server",
+        "discover_mcp_server",
+        "scan_mcp_plugin",
+        "issue_dingtalk_for_job",
+        "issue_ones_for_job",
+    ):
+        assert forbidden not in production
+
+
+def test_business_principal_migration_has_no_dedicated_issuer_or_single_slot() -> None:
+    production_paths = (
+        REPOSITORY_ROOT / "backend/app/modules/identity/application/principal_jwt.py",
+        REPOSITORY_ROOT / "backend/app/modules/agent/infrastructure/runtime_http_client.py",
+        REPOSITORY_ROOT / "backend/app/python_runtime/invocations.py",
+        REPOSITORY_ROOT / "backend/app/python_runtime/executor.py",
+        REPOSITORY_ROOT / "backend/app/python_runtime/mcp_config.py",
+        REPOSITORY_ROOT / "backend/app/python_runtime/service.py",
     )
-    property_names = _walk_property_names(schema)
-    assert property_names.isdisjoint(
-        {
-            "mcp_server_url",
-            "server_url",
-            "base_url",
-            "authorization",
-            "principal_jwt",
-            "principal_token",
-            "provider_token",
-        }
-    )
+    sources = "\n".join(path.read_text(encoding="utf-8") for path in production_paths)
+
+    assert ".issue_for_job(" not in sources
+    assert set(re.findall(r"def issue_([a-z0-9_]+)_for_job\(", sources)) == {
+        "business_mcp",
+        "file",
+    }
+    assert '"X-MCP-Principal-Token"' not in sources
+    assert '"x-mcp-principal-token"' not in sources
+    assert re.search(r"self\._principal_token(?!s)", sources) is None
+    assert "def principal_token(" not in sources
 
 
 def test_first_phase_ones_contract_is_single_fixed_readonly_tool() -> None:

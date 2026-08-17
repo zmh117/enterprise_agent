@@ -3,10 +3,19 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 
 from app.modules.agent.infrastructure.tool_manifest import TOOL_DEFINITIONS
 from app.modules.file_workspace.contracts import FILE_TOOL_MANIFEST
+from app.shared.mcp_server_policy import (
+    FILE_MCP_SERVER_CODE,
+    MCP_SERVER_POLICIES,
+    ONES_MCP_SERVER_CODE,
+    TOOL_MCP_SERVER_CODE,
+    McpServerPolicy,
+    require_mcp_server_policy,
+    validate_mcp_server_policies,
+)
 
 
 _RESOURCE_KINDS = {
@@ -44,7 +53,7 @@ def mcp_tool_schema_hash(input_schema: dict[str, Any]) -> str:
 
 MCP_TOOL_MANIFEST: dict[str, McpToolDefinition] = {
     identifier: McpToolDefinition(
-        server_code="tool-mcp",
+        server_code=TOOL_MCP_SERVER_CODE,
         identifier=identifier,
         description=str(value["description"]),
         input_schema=dict(value["schema"]),
@@ -66,7 +75,7 @@ _ONES_WORK_ITEM_SEARCH_SCHEMA: dict[str, Any] = {
 }
 
 MCP_TOOL_MANIFEST["ones_work_item_search"] = McpToolDefinition(
-    server_code="ones-mcp",
+    server_code=ONES_MCP_SERVER_CODE,
     identifier="ones_work_item_search",
     description=(
         "按关键词和工作项类型查询当前平台用户有权访问的 ONES 工作项；"
@@ -80,7 +89,7 @@ MCP_TOOL_MANIFEST["ones_work_item_search"] = McpToolDefinition(
 
 for _identifier, _file_tool in FILE_TOOL_MANIFEST.items():
     MCP_TOOL_MANIFEST[_identifier] = McpToolDefinition(
-        server_code="file-service",
+        server_code=FILE_MCP_SERVER_CODE,
         identifier=_identifier,
         description=_file_tool.description,
         input_schema=dict(_file_tool.input_schema),
@@ -95,3 +104,21 @@ def require_mcp_tool(identifier: str) -> McpToolDefinition:
         return MCP_TOOL_MANIFEST[identifier]
     except KeyError as exc:
         raise KeyError(f"Unknown MCP tool: {identifier}") from exc
+
+
+def validate_mcp_tool_manifest(
+    manifest: Mapping[str, McpToolDefinition] | None = None,
+    *,
+    policies: Mapping[str, McpServerPolicy] | None = None,
+) -> None:
+    selected_manifest = MCP_TOOL_MANIFEST if manifest is None else manifest
+    selected_policies = MCP_SERVER_POLICIES if policies is None else policies
+    validate_mcp_server_policies(selected_policies)
+    for identifier, definition in selected_manifest.items():
+        if identifier != definition.identifier:
+            raise ValueError("MCP Tool Manifest identifier is inconsistent")
+        require_mcp_server_policy(definition.server_code, policies=selected_policies)
+
+
+validate_mcp_server_policies()
+validate_mcp_tool_manifest()

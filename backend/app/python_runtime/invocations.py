@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import threading
 import uuid
-from collections.abc import Iterator
-from dataclasses import dataclass
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from types import MappingProxyType
 from typing import Any, Protocol
 
 from app.modules.agent.infrastructure.runtime_protocol import validate_runtime_contract
@@ -16,7 +17,7 @@ from .executor import PythonExecutionOutcome
 
 class InvocationSecretContextPort(Protocol):
     @property
-    def principal_token(self) -> str: ...
+    def mcp_principal_tokens(self) -> Mapping[str, str]: ...
 
     @property
     def file_principal_token(self) -> str: ...
@@ -33,8 +34,15 @@ class PythonRuntimeExecutor(Protocol):
 
 @dataclass(frozen=True)
 class InvocationSecretContext:
-    principal_token: str = ""
+    mcp_principal_tokens: Mapping[str, str] = field(default_factory=dict, repr=False)
     file_principal_token: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "mcp_principal_tokens",
+            MappingProxyType(dict(self.mcp_principal_tokens)),
+        )
 
     def __repr__(self) -> str:
         return "InvocationSecretContext(principal_tokens=<hidden>)"

@@ -7,7 +7,9 @@ import os
 import threading
 import time
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, Protocol
 from urllib.request import Request, urlopen
 
@@ -18,6 +20,17 @@ from app.modules.agent.domain.runtime import (
 )
 from app.modules.agent.infrastructure.runtime_protocol import (
     CURRENT_RUNTIME_PROTOCOL_VERSION,
+)
+from app.shared.mcp_server_policy import (
+    FILE_MCP_SERVER_CODE,
+    MCP_SERVER_POLICIES,
+    ONES_MCP_SERVER_CODE,
+    TOOL_MCP_SERVER_CODE,
+    McpServerAuthMode,
+    McpServerPolicy,
+    mcp_sdk_server_alias,
+    require_mcp_server_policy,
+    validate_mcp_server_policies,
 )
 from app.python_runtime.job_sandbox import JobSandboxManager
 from app.python_runtime.mcp_config import (
@@ -33,7 +46,7 @@ from .model_binding import PythonModelBindingResolver
 
 class InvocationSecretContextPort(Protocol):
     @property
-    def principal_token(self) -> str: ...
+    def mcp_principal_tokens(self) -> Mapping[str, str]: ...
 
     @property
     def file_principal_token(self) -> str: ...
@@ -44,10 +57,6 @@ PYTHON_RUNTIME_KIND = "python-v1"
 PROTOCOL_VERSION = CURRENT_RUNTIME_PROTOCOL_VERSION
 MCP_CALL_ID_META_KEY = "enterprise-agent/mcp-call-id"
 AGENT_TOOL_CALL_ID_META_KEY = "enterprise-agent/agent-tool-call-id"
-
-
-
-
 
 
 @dataclass(frozen=True)
@@ -62,8 +71,6 @@ class PythonExecutionOutcome:
     failure: dict[str, str] | None = None
 
 
-
-
 class PythonRuntimeExecutor:
     def __init__(
         self,
@@ -71,8 +78,9 @@ class PythonRuntimeExecutor:
         *,
         limits: ExecutionSettings,
         mcp_server_url: str,
-        ones_mcp_server_url: str = "http://ones-mcp:9104/mcp",
+        business_mcp_server_urls: Mapping[str, str] | None = None,
         file_mcp_server_url: str = "http://file-service:9105/mcp",
+        server_policies: Mapping[str, McpServerPolicy] | None = None,
         sdk_version: str | None = None,
         cli_version: str | None = None,
         fake_provider_mode: bool = False,
@@ -81,9 +89,27 @@ class PythonRuntimeExecutor:
         self._bindings = binding_resolver
         self._limits = limits
         self._mcp_server_url = fixed_mcp_server_url(mcp_server_url)
-        self._ones_mcp_server_url = fixed_mcp_server_url(
-            ones_mcp_server_url,
-            server_code="ones-mcp",
+        self._server_policies = MappingProxyType(
+            dict(MCP_SERVER_POLICIES if server_policies is None else server_policies)
+        )
+        validate_mcp_server_policies(self._server_policies)
+        raw_business_urls = (
+            {ONES_MCP_SERVER_CODE: "http://ones-mcp:9104/mcp"}
+            if business_mcp_server_urls is None
+            else dict(business_mcp_server_urls)
+        )
+        for server_code in raw_business_urls:
+            policy = require_mcp_server_policy(
+                server_code,
+                policies=self._server_policies,
+            )
+            if policy.auth_mode is not McpServerAuthMode.BUSINESS_PRINCIPAL_JWT:
+                raise ValueError("Business MCP URL configured for a non-business Server")
+        self._business_mcp_server_urls = MappingProxyType(
+            {
+                server_code: fixed_mcp_server_url(url, server_code=server_code)
+                for server_code, url in raw_business_urls.items()
+            }
         )
         self._file_mcp_server_url = fixed_mcp_server_url(
             file_mcp_server_url,
@@ -129,10 +155,11 @@ class PythonRuntimeExecutor:
             limits=self._limits,
             api_key=resolved.api_key,
             mcp_server_url=self._mcp_server_url,
-            ones_mcp_server_url=self._ones_mcp_server_url,
-            principal_token=(secret_context.principal_token if secret_context else ""),
+            business_mcp_server_urls=self._business_mcp_server_urls,
+            mcp_principal_tokens=(secret_context.mcp_principal_tokens if secret_context else {}),
             file_mcp_server_url=self._file_mcp_server_url,
             file_principal_token=(secret_context.file_principal_token if secret_context else ""),
+            server_policies=self._server_policies,
             sandbox_manager=self._sandbox_manager,
             cancellation_event=cancel_event,
         )
@@ -145,7 +172,11 @@ class PythonRuntimeExecutor:
                 runtime_provenance=provenance,
                 runtime_events=tuple(client.last_runtime_events),
                 accounting=dict(client.last_accounting),
-                tool_events=normalize_tool_events(exc.tool_events, request),
+                tool_events=normalize_tool_events(
+                    exc.tool_events,
+                    request,
+                    server_policies=self._server_policies,
+                ),
                 failure={
                     "code": str(exc.error_code or "runtime_transport_error"),
                     "retry_class": "TRANSIENT",
@@ -161,7 +192,11 @@ class PythonRuntimeExecutor:
                 runtime_provenance=provenance,
                 runtime_events=tuple(client.last_runtime_events),
                 accounting=dict(client.last_accounting),
-                tool_events=normalize_tool_events(exc.tool_events, request),
+                tool_events=normalize_tool_events(
+                    exc.tool_events,
+                    request,
+                    server_policies=self._server_policies,
+                ),
                 failure={
                     "code": str(exc.error_code or "runtime_configuration_error"),
                     "retry_class": "CONFIGURATION",
@@ -177,7 +212,11 @@ class PythonRuntimeExecutor:
             runtime_provenance=provenance,
             runtime_events=tuple(client.last_runtime_events),
             accounting=dict(client.last_accounting),
-            tool_events=normalize_tool_events(result.tool_events, request),
+            tool_events=normalize_tool_events(
+                result.tool_events,
+                request,
+                server_policies=self._server_policies,
+            ),
         )
 
     def probe(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -196,7 +235,8 @@ class PythonRuntimeExecutor:
                 limits=self._limits,
                 api_key=resolved.api_key,
                 mcp_server_url=self._mcp_server_url,
-                ones_mcp_server_url=self._ones_mcp_server_url,
+                business_mcp_server_urls=self._business_mcp_server_urls,
+                server_policies=self._server_policies,
             )
             client.test_connection(
                 resolved.binding,
@@ -237,7 +277,7 @@ class PythonRuntimeExecutor:
                 server_code="tool-mcp",
                 tool_name="get_er_context",
                 arguments={"query": "enterprise agent acceptance"},
-                principal_token="",
+                bearer_token="",
                 call_count=1,
             )
         if "[smoke:mcp:file-service]" in question:
@@ -259,12 +299,21 @@ class PythonRuntimeExecutor:
                 server_code="file-service",
                 tool_name="task_workspace_get",
                 arguments={},
-                principal_token=file_principal_token,
+                bearer_token=file_principal_token,
                 call_count=1,
             )
-        if "[smoke:mcp:ones-mcp" in question:
-            principal_token = secret_context.principal_token if secret_context else ""
-            if not principal_token:
+        business_server_code = next(
+            (
+                server_code
+                for server_code in sorted(self._business_mcp_server_urls)
+                if f"[smoke:mcp:{server_code}" in question
+            ),
+            "",
+        )
+        if business_server_code:
+            mcp_principal_tokens = secret_context.mcp_principal_tokens if secret_context else {}
+            bearer_token = mcp_principal_tokens.get(business_server_code, "")
+            if not bearer_token:
                 return PythonExecutionOutcome(
                     status="FAILED",
                     usage={"input_tokens": 0, "output_tokens": 0},
@@ -278,11 +327,21 @@ class PythonRuntimeExecutor:
             return self._execute_fake_mcp(
                 request,
                 provenance,
-                server_code="ones-mcp",
-                tool_name="ones_work_item_search",
-                arguments={"keyword": "traceability", "issue_type": "demand", "limit": 5},
-                principal_token=principal_token,
-                call_count=(2 if "[smoke:mcp:ones-mcp-concurrent]" in question else 1),
+                server_code=business_server_code,
+                tool_name=(
+                    "ones_work_item_search"
+                    if business_server_code == ONES_MCP_SERVER_CODE
+                    else self._first_frozen_tool(request, business_server_code)
+                ),
+                arguments=(
+                    {"keyword": "traceability", "issue_type": "demand", "limit": 5}
+                    if business_server_code == ONES_MCP_SERVER_CODE
+                    else {}
+                ),
+                bearer_token=bearer_token,
+                call_count=(
+                    2 if f"[smoke:mcp:{business_server_code}-concurrent]" in question else 1
+                ),
             )
         if "[smoke:retry-once]" in question and str(request["invocation_id"]).endswith(
             ".attempt-0"
@@ -323,7 +382,7 @@ class PythonRuntimeExecutor:
         server_code: str,
         tool_name: str,
         arguments: dict[str, Any],
-        principal_token: str,
+        bearer_token: str,
         call_count: int,
     ) -> PythonExecutionOutcome:
         binding = next(
@@ -347,11 +406,7 @@ class PythonRuntimeExecutor:
                     "safe_message": "确定性 MCP 验收缺少冻结工具绑定",
                 },
             )
-        alias = {
-            "file-service": "file_service",
-            "ones-mcp": "ones_mcp",
-            "tool-mcp": "tool_mcp",
-        }[server_code]
+        alias = mcp_sdk_server_alias(server_code, policies=self._server_policies)
         full_tool_name = f"mcp__{alias}__{tool_name}"
         calls = [
             {
@@ -380,7 +435,7 @@ class PythonRuntimeExecutor:
                 server_code=server_code,
                 tool_name=tool_name,
                 arguments=arguments,
-                principal_token=principal_token,
+                bearer_token=bearer_token,
                 correlation_id=str(call["correlation_id"]),
             )
             return {
@@ -421,6 +476,7 @@ class PythonRuntimeExecutor:
                 tool_events=normalize_tool_events(
                     [*started_events, *failed_events],
                     request,
+                    server_policies=self._server_policies,
                 ),
                 failure={
                     "code": "runtime_fake_mcp_failed",
@@ -436,6 +492,7 @@ class PythonRuntimeExecutor:
             tool_events=normalize_tool_events(
                 [*started_events, *completed_events],
                 request,
+                server_policies=self._server_policies,
             ),
         )
 
@@ -446,7 +503,7 @@ class PythonRuntimeExecutor:
         server_code: str,
         tool_name: str,
         arguments: dict[str, Any],
-        principal_token: str,
+        bearer_token: str,
         correlation_id: str,
     ) -> dict[str, str]:
         headers = {
@@ -455,13 +512,20 @@ class PythonRuntimeExecutor:
             "X-Invocation-Id": str(request["invocation_id"]),
             "X-Correlation-Id": correlation_id,
         }
-        if server_code == "ones-mcp":
-            headers["Authorization"] = f"Bearer {principal_token}"
-            url = self._ones_mcp_server_url
-        elif server_code == "file-service":
-            headers["Authorization"] = f"Bearer {principal_token}"
+        policy = require_mcp_server_policy(server_code, policies=self._server_policies)
+        if policy.auth_mode is McpServerAuthMode.BUSINESS_PRINCIPAL_JWT:
+            url = self._business_mcp_server_urls.get(server_code, "")
+            if not url or not bearer_token:
+                raise RuntimeError("deterministic Business MCP configuration is missing")
+            headers["Authorization"] = f"Bearer {bearer_token}"
+        elif policy.auth_mode is McpServerAuthMode.FILE_PRINCIPAL_JWT:
+            if server_code != FILE_MCP_SERVER_CODE or not bearer_token:
+                raise RuntimeError("deterministic File MCP configuration is missing")
+            headers["Authorization"] = f"Bearer {bearer_token}"
             url = self._file_mcp_server_url
-        else:
+        elif policy.auth_mode is McpServerAuthMode.JOB_CONTEXT:
+            if server_code != TOOL_MCP_SERVER_CODE:
+                raise RuntimeError("deterministic Job-context MCP configuration is invalid")
             headers.update(
                 {
                     "X-Job-Id": str(request["job_id"]),
@@ -472,6 +536,8 @@ class PythonRuntimeExecutor:
                 }
             )
             url = self._mcp_server_url
+        else:
+            raise RuntimeError("deterministic MCP authentication mode is unsupported")
         self._fake_mcp_post(
             url,
             headers,
@@ -509,6 +575,20 @@ class PythonRuntimeExecutor:
             "mcp_call_id": mcp_call_id,
             "agent_tool_call_id": agent_tool_call_id,
         }
+
+    @staticmethod
+    def _first_frozen_tool(request: dict[str, Any], server_code: str) -> str:
+        tools = next(
+            (
+                server.get("tools")
+                for server in request.get("mcp_servers") or []
+                if server.get("server_code") == server_code
+            ),
+            None,
+        )
+        if not isinstance(tools, list) or not tools:
+            return ""
+        return str(tools[0].get("tool_name") or "")
 
     @staticmethod
     def _fake_mcp_post(
@@ -565,8 +645,6 @@ class PythonRuntimeExecutor:
                 "safe_message": "Agent 执行已取消",
             },
         )
-
-
 
 
 def _agent_request(request: dict[str, Any], binding: Any) -> AgentRunRequest:

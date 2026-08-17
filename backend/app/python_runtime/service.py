@@ -7,8 +7,9 @@ import os
 import shutil
 import threading
 import time
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,20 @@ from app.modules.agent.infrastructure.runtime_protocol import (
     SUPPORTED_RUNTIME_PROTOCOL_VERSIONS,
     validate_execution_request,
     validate_runtime_contract,
+)
+from app.shared.mcp_server_policy import (
+    BUSINESS_PRINCIPAL_HEADER_PREFIX,
+    FILE_MCP_SERVER_CODE,
+    MAX_BUSINESS_PRINCIPAL_HEADER_BYTES,
+    MAX_BUSINESS_PRINCIPAL_SERVERS,
+    MAX_MCP_PRINCIPAL_TOKEN_BYTES,
+    MCP_SERVER_POLICIES,
+    ONES_MCP_SERVER_CODE,
+    McpServerAuthMode,
+    McpServerPolicy,
+    business_principal_server_code_from_header,
+    require_mcp_server_policy,
+    validate_mcp_server_policies,
 )
 from app.shared.config import Settings, load_settings
 from app.shared.database import Database
@@ -54,6 +69,9 @@ class PythonRuntimeDependencies:
     model_probe_token: str
     settings: Settings
     sandbox_manager: JobSandboxManager | None = None
+    server_policies: Mapping[str, McpServerPolicy] = field(
+        default_factory=lambda: MCP_SERVER_POLICIES
+    )
 
 
 def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI:
@@ -156,9 +174,7 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
             "runtime": PYTHON_RUNTIME_KIND,
             "runtime_version": PYTHON_RUNTIME_VERSION,
             "protocol_version": CURRENT_RUNTIME_PROTOCOL_VERSION,
-            "supported_protocol_versions": ",".join(
-                SUPPORTED_RUNTIME_PROTOCOL_VERSIONS
-            ),
+            "supported_protocol_versions": ",".join(SUPPORTED_RUNTIME_PROTOCOL_VERSIONS),
             "sdk_version": runtime.executor.sdk_version,
             "cli_version": runtime.executor.cli_version,
         }
@@ -185,10 +201,7 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
             try:
                 runtime.sandbox_manager.root.mkdir(parents=True, exist_ok=True, mode=0o700)
                 available = shutil.disk_usage(runtime.sandbox_manager.root).free
-                if (
-                    limits.capacity_bytes >= 64 * 1024 * 1024
-                    and available >= 64 * 1024 * 1024
-                ):
+                if limits.capacity_bytes >= 64 * 1024 * 1024 and available >= 64 * 1024 * 1024:
                     sandbox_status = "ready"
             except OSError:
                 sandbox_status = "unavailable"
@@ -232,7 +245,11 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
         runtime.grant_verifier.verify(_bearer(authorization), validated)
         invocation = runtime.registry.acquire(
             validated,
-            _principal_secret_context(request, validated),
+            _principal_secret_context(
+                request,
+                validated,
+                server_policies=runtime.server_policies,
+            ),
         )
 
         def stream() -> Any:
@@ -399,10 +416,12 @@ def _default_dependencies() -> PythonRuntimeDependencies:
         binding_resolver,
         limits=settings.execution,
         mcp_server_url=os.getenv("MCP_TOOL_SERVER_URL", "http://tool-mcp:9103/mcp"),
-        ones_mcp_server_url=os.getenv(
-            "ONES_MCP_SERVER_URL",
-            "http://ones-mcp:9104/mcp",
-        ),
+        business_mcp_server_urls={
+            ONES_MCP_SERVER_CODE: os.getenv(
+                "ONES_MCP_SERVER_URL",
+                "http://ones-mcp:9104/mcp",
+            )
+        },
         file_mcp_server_url=os.getenv(
             "FILE_MCP_SERVER_URL",
             "http://file-service:9105/mcp",
@@ -438,52 +457,102 @@ def _bearer(authorization: str) -> str:
 def _principal_secret_context(
     request: Request,
     payload: dict[str, Any],
+    *,
+    server_policies: Mapping[str, McpServerPolicy] | None = None,
 ) -> InvocationSecretContext:
-    values = request.headers.getlist("x-mcp-principal-token")
-    file_values = request.headers.getlist("x-file-principal-token")
-    requires_principal = any(
-        str(server.get("server_code") or "") == "ones-mcp"
-        for server in payload.get("mcp_servers") or []
-        if isinstance(server, dict)
-    )
-    requires_file_principal = any(
-        str(server.get("server_code") or "") == "file-service"
-        for server in payload.get("mcp_servers") or []
-        if isinstance(server, dict)
-    )
-    if len(values) > 1 or len(file_values) > 1:
-        raise HTTPException(
-            status_code=401,
-            detail={"code": "runtime_principal_token_invalid", "message": "平台身份凭证无效"},
-        )
-    token = values[0].strip() if values else ""
-    file_token = file_values[0].strip() if file_values else ""
-    if (requires_principal and not token) or (requires_file_principal and not file_token):
-        raise HTTPException(
-            status_code=401,
-            detail={"code": "runtime_principal_token_missing", "message": "缺少平台身份凭证"},
-        )
-    if (not requires_principal and token) or (not requires_file_principal and file_token):
-        raise HTTPException(
-            status_code=401,
-            detail={"code": "runtime_principal_token_unexpected", "message": "平台身份凭证无效"},
-        )
-    if (
-        len(token) > 8192
-        or len(file_token) > 8192
-        or "\r" in token
-        or "\n" in token
-        or "\r" in file_token
-        or "\n" in file_token
-    ):
-        raise HTTPException(
-            status_code=401,
-            detail={"code": "runtime_principal_token_invalid", "message": "平台身份凭证无效"},
-        )
+    selected_policies = MCP_SERVER_POLICIES if server_policies is None else server_policies
+    validate_mcp_server_policies(selected_policies)
+    required_business: set[str] = set()
+    requires_file_principal = False
+    try:
+        for server in payload.get("mcp_servers") or []:
+            if not isinstance(server, dict):
+                raise ValueError("MCP Server binding is invalid")
+            server_code = str(server.get("server_code") or "")
+            policy = require_mcp_server_policy(
+                server_code,
+                policies=selected_policies,
+            )
+            if policy.auth_mode is McpServerAuthMode.BUSINESS_PRINCIPAL_JWT:
+                required_business.add(server_code)
+            elif policy.auth_mode is McpServerAuthMode.FILE_PRINCIPAL_JWT:
+                if server_code != FILE_MCP_SERVER_CODE:
+                    raise ValueError("File Principal policy is ambiguous")
+                requires_file_principal = True
+    except ValueError as exc:
+        raise _principal_http_error("runtime_principal_token_invalid") from exc
+    if len(required_business) > MAX_BUSINESS_PRINCIPAL_SERVERS:
+        raise _principal_http_error("runtime_principal_token_invalid")
+
+    business_tokens: dict[str, str] = {}
+    file_values: list[bytes] = []
+    business_header_bytes = 0
+    header_prefix = BUSINESS_PRINCIPAL_HEADER_PREFIX.removesuffix("-").encode("ascii")
+    for raw_name, raw_value in request.headers.raw:
+        name = raw_name.lower()
+        if name == b"x-file-principal-token":
+            file_values.append(raw_value)
+            continue
+        if not name.startswith(header_prefix):
+            continue
+        try:
+            header_name = name.decode("ascii")
+            server_code = business_principal_server_code_from_header(
+                header_name,
+                policies=selected_policies,
+            )
+            token = _validated_runtime_principal_token(raw_value)
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise _principal_http_error("runtime_principal_token_invalid") from exc
+        if server_code in business_tokens:
+            raise _principal_http_error("runtime_principal_token_invalid")
+        business_tokens[server_code] = token
+        business_header_bytes += len(raw_name) + len(raw_value)
+
+    if len(business_tokens) > MAX_BUSINESS_PRINCIPAL_SERVERS:
+        raise _principal_http_error("runtime_principal_token_invalid")
+    received_business = set(business_tokens)
+    if required_business - received_business:
+        raise _principal_http_error("runtime_principal_token_missing")
+    if received_business - required_business:
+        raise _principal_http_error("runtime_principal_token_unexpected")
+    if len(file_values) > 1:
+        raise _principal_http_error("runtime_principal_token_invalid")
+    if requires_file_principal and not file_values:
+        raise _principal_http_error("runtime_principal_token_missing")
+    if file_values and not requires_file_principal:
+        raise _principal_http_error("runtime_principal_token_unexpected")
+    try:
+        file_token = _validated_runtime_principal_token(file_values[0]) if file_values else ""
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise _principal_http_error("runtime_principal_token_invalid") from exc
+    if file_values:
+        business_header_bytes += len(b"x-file-principal-token") + len(file_values[0])
+    if business_header_bytes > MAX_BUSINESS_PRINCIPAL_HEADER_BYTES:
+        raise _principal_http_error("runtime_principal_token_invalid")
     return InvocationSecretContext(
-        principal_token=token,
+        mcp_principal_tokens=business_tokens,
         file_principal_token=file_token,
     )
+
+
+def _validated_runtime_principal_token(raw_value: bytes) -> str:
+    if (
+        not raw_value
+        or len(raw_value) > MAX_MCP_PRINCIPAL_TOKEN_BYTES
+        or b"\r" in raw_value
+        or b"\n" in raw_value
+    ):
+        raise ValueError("Runtime Principal Token is invalid")
+    token = raw_value.decode("ascii").strip()
+    if not token:
+        raise ValueError("Runtime Principal Token is empty")
+    return token
+
+
+def _principal_http_error(code: str) -> HTTPException:
+    message = "缺少平台身份凭证" if code.endswith("_missing") else "平台身份凭证无效"
+    return HTTPException(status_code=401, detail={"code": code, "message": message})
 
 
 def _constant_token(expected: str, provided: str) -> bool:

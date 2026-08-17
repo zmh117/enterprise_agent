@@ -111,6 +111,11 @@ def compact_error_detail(detail: str, max_chars: int = 500) -> str:
 
 def redact_sensitive_text(text: str) -> str:
     patterns = (
+        (
+            r"(?i)(x-(?:mcp-principal-token-[a-z0-9-]+|file-principal-token)"
+            r"[\"']?\s*[:=]\s*[\"']?)[^\s,;\"']+",
+            r"\1<redacted>",
+        ),
         (r"(?i)(authorization\s*[:=]\s*bearer\s+)[^\s,;]+", r"\1<redacted>"),
         (r"(?i)(x-api-key\s*[:=]\s*)[^\s,;]+", r"\1<redacted>"),
         (r"(?i)(anthropic_api_key\s*[:=]\s*)[^\s,;]+", r"\1<redacted>"),

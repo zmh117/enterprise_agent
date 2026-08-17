@@ -4,10 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from app.modules.identity.application.principal_jwt import (
-    ONES_SEARCH_SCOPE,
-    PrincipalTokenVerifier,
-)
+from app.modules.identity.application.principal_jwt import PrincipalTokenVerifier
 from app.modules.identity.infrastructure.external_identity_credentials import (
     ExternalIdentityCredentialRepository,
     ResolvedExternalCredential,
@@ -16,7 +13,7 @@ from app.modules.mcp_audit import McpAuditContext
 from app.modules.mcp_tool_runtime.job_snapshot import JobMcpToolSnapshotService
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.database import Database
-from services.ones_mcp_server.contracts import SERVER_CODE, TOOL_IDENTIFIER
+from services.ones_mcp_server.contracts import REQUIRED_SCOPE, SERVER_CODE, TOOL_IDENTIFIER
 from services.ones_mcp_server.errors import OnesMcpError
 
 
@@ -70,11 +67,12 @@ class OnesPrincipalResolver:
         self,
         token: str,
         *,
-        required_scope: str = ONES_SEARCH_SCOPE,
+        required_scope: str = REQUIRED_SCOPE,
     ) -> dict[str, Any]:
         return self.verifier.verify_for_running_job(
             token,
             self.database,
+            self.snapshot_service,
             required_scope=required_scope,
         )
 

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
+
+from app.shared.mcp_server_policy import McpServerPolicy, mcp_sdk_server_alias
 
 
 SDK_BUILTIN_TOOLS = frozenset(
@@ -58,12 +61,17 @@ def contains_forbidden_tool_input(value: object, depth: int = 0) -> bool:
 def normalize_tool_events(
     events: list[dict[str, Any]],
     request: dict[str, Any],
+    *,
+    server_policies: Mapping[str, McpServerPolicy] | None = None,
 ) -> tuple[dict[str, Any], ...]:
     published = {
         (
-            f"mcp__{'ones_mcp' if server['server_code'] == 'ones-mcp' else 'file_service' if server['server_code'] == 'file-service' else 'tool_mcp'}"
+            f"mcp__{mcp_sdk_server_alias(str(server['server_code']), policies=server_policies)}"
             f"__{tool['tool_name']}"
-        ): (str(server["server_code"]), str(tool["tool_name"]))
+        ): (
+            str(server["server_code"]),
+            str(tool["tool_name"]),
+        )
         for server in request.get("mcp_servers") or []
         for tool in server.get("tools") or []
     }
@@ -133,4 +141,3 @@ def normalize_tool_events(
             }
         normalized.append(item)
     return tuple(normalized)
-

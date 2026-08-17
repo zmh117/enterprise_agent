@@ -8,6 +8,7 @@ from app.modules.identity.infrastructure.ones_identity_verifier import UrllibOne
 from app.modules.mcp_audit import McpAuditCoordinator
 from app.shared.config import OnesIdentitySettings
 from services.ones_mcp_server.auth.principal import OnesPrincipalResolver
+from services.ones_mcp_server.contracts import SERVER_CODE
 from services.ones_mcp_server.credentials.refresh import OnesCredentialRefreshService
 from services.ones_mcp_server.provider.graphql.client import OnesGraphqlClient
 from services.ones_mcp_server.provider.graphql.operation import GraphqlOperationRegistry
@@ -33,6 +34,7 @@ def build_work_item_search_service(runtime: Container) -> OnesWorkItemSearchServ
     )
     verifier = PrincipalTokenVerifier(
         PrincipalJwks.from_file(settings.principal_jwt.public_jwks_file),
+        expected_audience=SERVER_CODE,
         audit_service=runtime.audit_service,
     )
     resolver = OnesPrincipalResolver(

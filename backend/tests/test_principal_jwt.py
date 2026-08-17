@@ -12,8 +12,6 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from app.modules.identity.application.principal_jwt import (
     FILE_PRINCIPAL_AUDIENCE,
-    ONES_SEARCH_SCOPE,
-    PRINCIPAL_AUDIENCE,
     PRINCIPAL_AUTHORIZED_PARTY,
     PRINCIPAL_ISSUER,
     PrincipalJwks,
@@ -23,10 +21,27 @@ from app.modules.identity.application.principal_jwt import (
     PrincipalTokenVerifier,
     write_public_jwks_file,
 )
+from app.modules.mcp_tool_runtime.manifest import (
+    MCP_TOOL_MANIFEST,
+    McpToolDefinition,
+)
+from app.shared.mcp_server_policy import (
+    ONES_MCP_SERVER_CODE,
+    McpServerPolicy,
+    mcp_invoke_scope,
+)
 from app.shared.exceptions import PermissionDenied
+from backend.tests.business_mcp_fixtures import (
+    TEST_BUSINESS_SERVER_CODE,
+    TEST_BUSINESS_SECOND_TOOL_IDENTIFIER,
+    TEST_BUSINESS_TOOL_IDENTIFIER,
+    business_mcp_test_manifest,
+    business_mcp_test_policies,
+)
 
 
 NOW = 1_786_400_000
+ONES_SEARCH_SCOPE = mcp_invoke_scope(ONES_MCP_SERVER_CODE, "ones_work_item_search")
 
 
 def _key() -> tuple[PrincipalSigningKey, bytes]:
@@ -100,7 +115,7 @@ class _Snapshot:
                     {
                         "server_code": "ones-mcp",
                         "tool_identifier": "ones_work_item_search",
-                        "schema_hash": "b" * 64,
+                        "schema_hash": MCP_TOOL_MANIFEST["ones_work_item_search"].schema_hash,
                     }
                 ],
             },
@@ -133,6 +148,8 @@ def _issuer(
     snapshot: _Snapshot | None = None,
     authorization: _BusinessAuthorization | None = None,
     audit: _Audit | None = None,
+    server_policies: dict[str, McpServerPolicy] | None = None,
+    tool_manifest: dict[str, McpToolDefinition] | None = None,
 ) -> tuple[PrincipalTokenIssuer, PrincipalSigningKey, _Audit, _BusinessAuthorization]:
     signing_key, _ = _key()
     audit = audit or _Audit()
@@ -145,6 +162,8 @@ def _issuer(
         audit,  # type: ignore[arg-type]
         now=lambda: NOW,
         jti_factory=lambda: "principal-jti-1",
+        server_policies=server_policies,
+        tool_manifest=tool_manifest,
     )
     return issuer, signing_key, audit, authorization
 
@@ -153,7 +172,7 @@ def _claims() -> dict[str, Any]:
     return {
         "iss": PRINCIPAL_ISSUER,
         "sub": "user-1",
-        "aud": PRINCIPAL_AUDIENCE,
+        "aud": ONES_MCP_SERVER_CODE,
         "azp": PRINCIPAL_AUTHORIZED_PARTY,
         "job_id": "job-1",
         "session_id": "session-1",
@@ -239,7 +258,10 @@ def test_jwks_rejects_private_wrong_fingerprint_duplicate_and_non_ed25519() -> N
 
 def test_issuer_derives_bounded_claims_from_snapshot_and_current_application_grant() -> None:
     issuer, signing_key, audit, authorization = _issuer()
-    token = issuer.issue_for_job(job_id="job-1")
+    token = issuer.issue_business_mcp_for_job(
+        job_id="job-1",
+        server_code=ONES_MCP_SERVER_CODE,
+    )
     claims = jwt.decode(token, options={"verify_signature": False})
     header = jwt.get_unverified_header(token)
 
@@ -251,7 +273,7 @@ def test_issuer_derives_bounded_claims_from_snapshot_and_current_application_gra
             "user_id": "user-1",
             "application_id": "application-1",
             "tool_identifier": "ones_work_item_search",
-            "stage": "principal_jwt_issue",
+            "stage": "business_principal_jwt_issue",
         }
     ]
     assert audit.events[-1]["event_type"] == "principal.jwt.issued"
@@ -261,9 +283,135 @@ def test_issuer_derives_bounded_claims_from_snapshot_and_current_application_gra
         assert forbidden not in claims
     verifier = PrincipalTokenVerifier(
         PrincipalJwks.from_dict(signing_key.public_jwks()),
+        expected_audience=ONES_MCP_SERVER_CODE,
         now=lambda: NOW,
     )
-    assert verifier.verify(token) == claims
+    assert verifier.verify(token, required_scope=ONES_SEARCH_SCOPE) == claims
+
+
+def test_issuer_and_verifier_isolate_two_business_server_audiences_and_scopes() -> None:
+    policies = business_mcp_test_policies()
+    manifest = business_mcp_test_manifest()
+    snapshot = _Snapshot()
+    snapshot.value["snapshot"]["tools"].extend(
+        [
+            {
+                "server_code": TEST_BUSINESS_SERVER_CODE,
+                "tool_identifier": identifier,
+                "schema_hash": manifest[identifier].schema_hash,
+            }
+            for identifier in (
+                TEST_BUSINESS_TOOL_IDENTIFIER,
+                TEST_BUSINESS_SECOND_TOOL_IDENTIFIER,
+            )
+        ]
+    )
+    issuer, signing_key, audit, authorization = _issuer(
+        snapshot=snapshot,
+        server_policies=policies,
+        tool_manifest=manifest,
+    )
+
+    ones_token = issuer.issue_business_mcp_for_job(
+        job_id="job-1",
+        server_code=ONES_MCP_SERVER_CODE,
+    )
+    second_token = issuer.issue_business_mcp_for_job(
+        job_id="job-1",
+        server_code=TEST_BUSINESS_SERVER_CODE,
+    )
+    ones_claims = jwt.decode(ones_token, options={"verify_signature": False})
+    second_claims = jwt.decode(second_token, options={"verify_signature": False})
+
+    assert ones_claims["aud"] == ONES_MCP_SERVER_CODE
+    assert ones_claims["scope"] == [ONES_SEARCH_SCOPE]
+    expected_second_scopes = [
+        mcp_invoke_scope(TEST_BUSINESS_SERVER_CODE, identifier)
+        for identifier in sorted(
+            [TEST_BUSINESS_TOOL_IDENTIFIER, TEST_BUSINESS_SECOND_TOOL_IDENTIFIER]
+        )
+    ]
+    assert second_claims["aud"] == TEST_BUSINESS_SERVER_CODE
+    assert second_claims["scope"] == expected_second_scopes
+    assert {call["tool_identifier"] for call in authorization.calls} == {
+        "ones_work_item_search",
+        TEST_BUSINESS_TOOL_IDENTIFIER,
+        TEST_BUSINESS_SECOND_TOOL_IDENTIFIER,
+    }
+    assert all(call["stage"] == "business_principal_jwt_issue" for call in authorization.calls)
+    assert ones_token not in json.dumps(audit.events)
+    assert second_token not in json.dumps(audit.events)
+
+    second_verifier = PrincipalTokenVerifier(
+        PrincipalJwks.from_dict(signing_key.public_jwks()),
+        expected_audience=TEST_BUSINESS_SERVER_CODE,
+        now=lambda: NOW,
+        server_policies=policies,
+        tool_manifest=manifest,
+    )
+    assert (
+        second_verifier.verify_for_running_job(  # type: ignore[arg-type]
+            second_token,
+            _Database(),
+            snapshot,
+            required_scope=expected_second_scopes[0],
+        )
+        == second_claims
+    )
+
+    ones_verifier = PrincipalTokenVerifier(
+        PrincipalJwks.from_dict(signing_key.public_jwks()),
+        expected_audience=ONES_MCP_SERVER_CODE,
+        now=lambda: NOW,
+        server_policies=policies,
+        tool_manifest=manifest,
+    )
+    with pytest.raises(PrincipalTokenError) as crossed:
+        ones_verifier.verify(second_token, required_scope=ONES_SEARCH_SCOPE)
+    assert crossed.value.error_code == "principal_token_audience_invalid"
+
+
+@pytest.mark.parametrize(
+    "server_code",
+    ["tool-mcp", "file-service", "unknown-mcp", "ONES-MCP", ""],
+)
+def test_business_issuer_rejects_non_business_or_unsafe_server(server_code: str) -> None:
+    issuer, _signing_key, audit, authorization = _issuer()
+
+    with pytest.raises(PrincipalTokenError) as rejected:
+        issuer.issue_business_mcp_for_job(job_id="job-1", server_code=server_code)
+
+    assert rejected.value.error_code == "principal_server_denied"
+    assert authorization.calls == []
+    assert audit.events[-1]["event_type"] == "principal.jwt.issue_denied"
+    assert len(str(audit.events[-1]["payload"]["audience"])) <= 63
+
+
+@pytest.mark.parametrize("mutation", ["empty", "duplicate", "schema-drift"])
+def test_business_issuer_rejects_invalid_server_tool_set(mutation: str) -> None:
+    snapshot = _Snapshot()
+    tool = dict(snapshot.value["snapshot"]["tools"][0])
+    if mutation == "empty":
+        snapshot.value["snapshot"]["tools"] = []
+        expected_code = "principal_scope_denied"
+    elif mutation == "duplicate":
+        snapshot.value["snapshot"]["tools"] = [tool, dict(tool)]
+        expected_code = "principal_snapshot_invalid"
+    else:
+        tool["schema_hash"] = "0" * 64
+        snapshot.value["snapshot"]["tools"] = [tool]
+        expected_code = "principal_snapshot_invalid"
+    issuer, _signing_key, audit, authorization = _issuer(snapshot=snapshot)
+
+    with pytest.raises(PrincipalTokenError) as rejected:
+        issuer.issue_business_mcp_for_job(
+            job_id="job-1",
+            server_code=ONES_MCP_SERVER_CODE,
+        )
+
+    assert rejected.value.error_code == expected_code
+    assert authorization.calls == []
+    assert audit.events[-1]["event_type"] == "principal.jwt.issue_denied"
 
 
 def test_issuer_creates_a_separate_audience_bound_file_principal() -> None:
@@ -308,9 +456,7 @@ def test_issuer_creates_a_separate_audience_bound_file_principal() -> None:
         "file_prepare_materialization",
     }
     assert all(call["stage"] == "file_principal_jwt_issue" for call in authorization.calls)
-    assert audit.events[-1]["summary"] == (
-        "Principal JWT issued for frozen File MCP Tools"
-    )
+    assert audit.events[-1]["summary"] == ("Principal JWT issued for frozen File MCP Tools")
     assert token not in json.dumps(audit.events)
 
 
@@ -330,6 +476,7 @@ def test_file_principal_issuance_requires_a_job_bound_workspace() -> None:
 
     assert captured.value.error_code == "file_principal_workspace_missing"
     assert audit.events[-1]["event_type"] == "principal.jwt.issue_denied"
+
 
 @pytest.mark.parametrize(
     ("database", "mutate_snapshot", "denied", "error_code"),
@@ -365,7 +512,10 @@ def test_issuer_fails_closed_and_audits_denial(
     )
 
     with pytest.raises((PrincipalTokenError, PermissionDenied)) as rejected:
-        issuer.issue_for_job(job_id="job-1")
+        issuer.issue_business_mcp_for_job(
+            job_id="job-1",
+            server_code=ONES_MCP_SERVER_CODE,
+        )
     assert rejected.value.error_code == error_code
     assert audit.events[-1]["event_type"] == "principal.jwt.issue_denied"
     assert audit.events[-1]["payload"]["error_code"] == error_code
@@ -377,6 +527,7 @@ def test_verifier_rejects_forgery_hs256_none_unknown_kid_and_expanded_claims() -
     audit = _Audit()
     verifier = PrincipalTokenVerifier(
         PrincipalJwks.from_dict(active.public_jwks()),
+        expected_audience=ONES_MCP_SERVER_CODE,
         audit_service=audit,  # type: ignore[arg-type]
         now=lambda: NOW,
         leeway_seconds=0,
@@ -447,7 +598,7 @@ def test_verifier_rejects_forgery_hs256_none_unknown_kid_and_expanded_claims() -
 
     for token, error_code in invalid:
         with pytest.raises(PrincipalTokenError) as rejected:
-            verifier.verify(token)
+            verifier.verify(token, required_scope=ONES_SEARCH_SCOPE)
         assert rejected.value.error_code == error_code
 
     assert len(audit.events) == len(invalid)
@@ -459,13 +610,26 @@ def test_verifier_rejects_forgery_hs256_none_unknown_kid_and_expanded_claims() -
 
 def test_verifier_rechecks_running_job_user_and_user_status() -> None:
     issuer, signing_key, audit, _ = _issuer()
-    token = issuer.issue_for_job(job_id="job-1")
+    token = issuer.issue_business_mcp_for_job(
+        job_id="job-1",
+        server_code=ONES_MCP_SERVER_CODE,
+    )
     verifier = PrincipalTokenVerifier(
         PrincipalJwks.from_dict(signing_key.public_jwks()),
+        expected_audience=ONES_MCP_SERVER_CODE,
         audit_service=audit,  # type: ignore[arg-type]
         now=lambda: NOW,
     )
-    assert verifier.verify_for_running_job(token, _Database()) == _claims()  # type: ignore[arg-type]
+    snapshot = _Snapshot()
+    assert (
+        verifier.verify_for_running_job(  # type: ignore[arg-type]
+            token,
+            _Database(),
+            snapshot,
+            required_scope=ONES_SEARCH_SCOPE,
+        )
+        == _claims()
+    )
 
     for database in (
         _Database(internal_user_id="user-2"),
@@ -473,9 +637,83 @@ def test_verifier_rechecks_running_job_user_and_user_status() -> None:
         _Database(user_status="disabled"),
     ):
         with pytest.raises(PrincipalTokenError) as rejected:
-            verifier.verify_for_running_job(token, database)  # type: ignore[arg-type]
+            verifier.verify_for_running_job(  # type: ignore[arg-type]
+                token,
+                database,
+                snapshot,
+                required_scope=ONES_SEARCH_SCOPE,
+            )
         assert rejected.value.error_code == "principal_job_user_mismatch"
 
     assert [event["event_type"] for event in audit.events].count(
         "principal.jwt.validation_denied"
     ) == 3
+
+
+def test_verifier_requires_complete_server_scope_and_current_authorization_hash() -> None:
+    policies = business_mcp_test_policies()
+    manifest = business_mcp_test_manifest()
+    snapshot = _Snapshot()
+    snapshot.value["snapshot"]["tools"] = [
+        {
+            "server_code": TEST_BUSINESS_SERVER_CODE,
+            "tool_identifier": identifier,
+            "schema_hash": manifest[identifier].schema_hash,
+        }
+        for identifier in (
+            TEST_BUSINESS_TOOL_IDENTIFIER,
+            TEST_BUSINESS_SECOND_TOOL_IDENTIFIER,
+        )
+    ]
+    issuer, signing_key, audit, _authorization = _issuer(
+        snapshot=snapshot,
+        server_policies=policies,
+        tool_manifest=manifest,
+    )
+    token = issuer.issue_business_mcp_for_job(
+        job_id="job-1",
+        server_code=TEST_BUSINESS_SERVER_CODE,
+    )
+    verifier = PrincipalTokenVerifier(
+        PrincipalJwks.from_dict(signing_key.public_jwks()),
+        expected_audience=TEST_BUSINESS_SERVER_CODE,
+        audit_service=audit,  # type: ignore[arg-type]
+        now=lambda: NOW,
+        server_policies=policies,
+        tool_manifest=manifest,
+    )
+    required_scope = mcp_invoke_scope(
+        TEST_BUSINESS_SERVER_CODE,
+        TEST_BUSINESS_TOOL_IDENTIFIER,
+    )
+
+    snapshot.value["snapshot"]["tools"] = snapshot.value["snapshot"]["tools"][:1]
+    with pytest.raises(PrincipalTokenError) as scope_mismatch:
+        verifier.verify_for_running_job(  # type: ignore[arg-type]
+            token,
+            _Database(),
+            snapshot,
+            required_scope=required_scope,
+        )
+    assert scope_mismatch.value.error_code == "principal_token_scope_invalid"
+
+    snapshot.value["snapshot"]["tools"] = [
+        {
+            "server_code": TEST_BUSINESS_SERVER_CODE,
+            "tool_identifier": identifier,
+            "schema_hash": manifest[identifier].schema_hash,
+        }
+        for identifier in (
+            TEST_BUSINESS_TOOL_IDENTIFIER,
+            TEST_BUSINESS_SECOND_TOOL_IDENTIFIER,
+        )
+    ]
+    snapshot.value["authorization_hash"] = "f" * 64
+    with pytest.raises(PrincipalTokenError) as authorization_mismatch:
+        verifier.verify_for_running_job(  # type: ignore[arg-type]
+            token,
+            _Database(),
+            snapshot,
+            required_scope=required_scope,
+        )
+    assert authorization_mismatch.value.error_code == "principal_token_scope_invalid"

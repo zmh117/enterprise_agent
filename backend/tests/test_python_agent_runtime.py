@@ -14,7 +14,9 @@ from typing import Any, cast
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from starlette.requests import Request as StarletteRequest
 
 from app.modules.agent.infrastructure.runtime_protocol import (
     CURRENT_RUNTIME_PROTOCOL_VERSION,
@@ -22,6 +24,7 @@ from app.modules.agent.infrastructure.runtime_protocol import (
     canonical_request_digest,
 )
 from app.modules.agent.infrastructure.runtime_http_client import RuntimeGrantIssuer
+from app.modules.mcp_tool_runtime import ONES_MCP_SERVER_CODE
 from app.modules.agent.domain.runtime import (
     AgentExecutionContext,
     AgentRunRequest,
@@ -48,8 +51,13 @@ from app.python_runtime.executor import (
     PythonExecutionOutcome,
     PythonRuntimeExecutor,
 )
+from app.python_runtime.error_mapper import redact_sensitive_text as redact_runtime_error
 from app.python_runtime.tool_policy import normalize_tool_events
-from app.python_runtime.service import PythonRuntimeDependencies, create_app
+from app.python_runtime.service import (
+    PythonRuntimeDependencies,
+    _principal_secret_context,
+    create_app,
+)
 from app.shared.database import Database, default_migrations_dir
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
 from app.shared.migrations import Migrator
@@ -59,6 +67,11 @@ from app.shared.model_probe_envelope import (
 )
 from backend.tests.helpers import test_settings as build_settings
 from backend.tests.helpers import container
+from backend.tests.business_mcp_fixtures import (
+    TEST_BUSINESS_SERVER_CODE,
+    TEST_BUSINESS_TOOL_IDENTIFIER,
+    business_mcp_test_policies,
+)
 
 
 class FakePythonExecutor:
@@ -67,7 +80,7 @@ class FakePythonExecutor:
 
     def __init__(self, *, block_until_cancelled: bool = False) -> None:
         self.requests: list[dict[str, Any]] = []
-        self.principal_tokens: list[str] = []
+        self.mcp_principal_tokens: list[dict[str, str]] = []
         self.started = threading.Event()
         self.block_until_cancelled = block_until_cancelled
 
@@ -78,7 +91,7 @@ class FakePythonExecutor:
         secret_context: Any,
     ) -> PythonExecutionOutcome:
         self.requests.append(request)
-        self.principal_tokens.append(str(secret_context.principal_token))
+        self.mcp_principal_tokens.append(dict(secret_context.mcp_principal_tokens))
         self.started.set()
         if self.block_until_cancelled:
             cancel_event.wait(timeout=2)
@@ -308,7 +321,7 @@ def test_python_runtime_http_contract_replays_one_terminal_without_tokens(
     principal = "test-only-python-principal-token"
     headers = {
         "Authorization": f"Bearer {_token(private_key, request)}",
-        "X-MCP-Principal-Token": principal,
+        "X-MCP-Principal-Token-Ones-Mcp": principal,
     }
 
     first = client.post("/internal/v1/executions", json=request, headers=headers)
@@ -327,7 +340,7 @@ def test_python_runtime_http_contract_replays_one_terminal_without_tokens(
     assert first_events[-1]["payload"]["status"] == "SUCCEEDED"
     assert first_events[-1]["payload"]["final_answer"] == "python final answer"
     assert len(executor.requests) == 1
-    assert executor.principal_tokens == [principal]
+    assert executor.mcp_principal_tokens == [{ONES_MCP_SERVER_CODE: principal}]
     serialized = json.dumps(executor.requests)
     assert "access_token" not in serialized
     assert "Authorization" not in serialized
@@ -431,6 +444,182 @@ def test_python_runtime_rejects_missing_ones_principal_before_execution(
     assert response.status_code == 401
     assert response.json()["detail"]["code"] == "runtime_principal_token_missing"
     assert executor.requests == []
+
+
+def _raw_header_request(headers: list[tuple[bytes, bytes]]) -> StarletteRequest:
+    return StarletteRequest({"type": "http", "headers": headers})
+
+
+def test_python_runtime_parses_exact_dual_business_principal_header_set() -> None:
+    payload = _request()
+    payload["mcp_servers"] = [
+        *payload["mcp_servers"],
+        {
+            "server_code": TEST_BUSINESS_SERVER_CODE,
+            "tools": [{"tool_name": TEST_BUSINESS_TOOL_IDENTIFIER}],
+        },
+    ]
+    context = _principal_secret_context(
+        _raw_header_request(
+            [
+                (b"x-mcp-principal-token-ones-mcp", b"ones-audience-token"),
+                (
+                    b"x-mcp-principal-token-test-business-mcp",
+                    b"second-audience-token",
+                ),
+            ]
+        ),
+        payload,
+        server_policies=business_mcp_test_policies(),
+    )
+
+    assert dict(context.mcp_principal_tokens) == {
+        ONES_MCP_SERVER_CODE: "ones-audience-token",
+        TEST_BUSINESS_SERVER_CODE: "second-audience-token",
+    }
+    assert "ones-audience-token" not in repr(context)
+    with pytest.raises(TypeError):
+        cast(dict[str, str], context.mcp_principal_tokens)[ONES_MCP_SERVER_CODE] = "reused"
+
+
+def test_python_runtime_http_keeps_dual_business_tokens_out_of_request_and_ledger(
+    tmp_path: Path,
+) -> None:
+    executor = FakePythonExecutor()
+    dependencies, private_key = _dependencies(tmp_path, executor)
+    dependencies.server_policies = business_mcp_test_policies()
+    request = json.loads(
+        Path("contracts/agent-runtime/v1.1/golden/execution-request.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    request["runtime_kind"] = "python-v1"
+    request["mcp_servers"].append(
+        {
+            "server_code": TEST_BUSINESS_SERVER_CODE,
+            "tools": [
+                {
+                    "tool_name": TEST_BUSINESS_TOOL_IDENTIFIER,
+                    "required_scope": (
+                        f"mcp:{TEST_BUSINESS_SERVER_CODE}:{TEST_BUSINESS_TOOL_IDENTIFIER}:invoke"
+                    ),
+                    "tool_schema_hash": "d" * 64,
+                }
+            ],
+        }
+    )
+    request["request_digest"] = canonical_request_digest(request)
+    ones_token = "ones-runtime-only-token"
+    second_token = "second-runtime-only-token"
+
+    response = TestClient(create_app(dependencies)).post(
+        "/internal/v1/executions",
+        json=request,
+        headers={
+            "Authorization": f"Bearer {_token(private_key, request)}",
+            "X-MCP-Principal-Token-Ones-Mcp": ones_token,
+            "X-MCP-Principal-Token-Test-Business-Mcp": second_token,
+        },
+    )
+
+    assert response.status_code == 200
+    assert executor.mcp_principal_tokens == [
+        {
+            ONES_MCP_SERVER_CODE: ones_token,
+            TEST_BUSINESS_SERVER_CODE: second_token,
+        }
+    ]
+    serialized_request = json.dumps(executor.requests)
+    serialized_ledger = json.dumps(
+        dependencies.database.execute("select * from agent_runtime_terminal_ledger")
+    )
+    assert ones_token not in serialized_request + serialized_ledger + response.text
+    assert second_token not in serialized_request + serialized_ledger + response.text
+
+
+@pytest.mark.parametrize(
+    ("headers", "expected_code"),
+    [
+        (
+            [(b"x-mcp-principal-token", b"legacy-single-slot")],
+            "runtime_principal_token_invalid",
+        ),
+        (
+            [
+                (b"x-mcp-principal-token-ones-mcp", b"first"),
+                (b"x-mcp-principal-token-ones-mcp", b"duplicate"),
+            ],
+            "runtime_principal_token_invalid",
+        ),
+        (
+            [(b"x-mcp-principal-token-ones_mcp", b"illegal-name")],
+            "runtime_principal_token_invalid",
+        ),
+        (
+            [(b"x-mcp-principal-token-ones-mcp", b"")],
+            "runtime_principal_token_invalid",
+        ),
+        (
+            [(b"x-mcp-principal-token-ones-mcp", b"a" * 8193)],
+            "runtime_principal_token_invalid",
+        ),
+        (
+            [(b"x-mcp-principal-token-ones-mcp", b"line-one\r\nline-two")],
+            "runtime_principal_token_invalid",
+        ),
+    ],
+)
+def test_python_runtime_rejects_invalid_business_principal_headers(
+    headers: list[tuple[bytes, bytes]],
+    expected_code: str,
+) -> None:
+    with pytest.raises(HTTPException) as captured:
+        _principal_secret_context(_raw_header_request(headers), _request())
+
+    assert captured.value.status_code == 401
+    assert cast(dict[str, str], captured.value.detail)["code"] == expected_code
+    assert not any(
+        value and value.decode("ascii", errors="ignore") in str(captured.value.detail)
+        for _, value in headers
+    )
+
+
+def test_python_runtime_rejects_known_extra_business_principal_header() -> None:
+    with pytest.raises(HTTPException) as captured:
+        _principal_secret_context(
+            _raw_header_request(
+                [
+                    (b"x-mcp-principal-token-ones-mcp", b"ones-token"),
+                    (
+                        b"x-mcp-principal-token-test-business-mcp",
+                        b"extra-token",
+                    ),
+                ]
+            ),
+            _request(),
+            server_policies=business_mcp_test_policies(),
+        )
+
+    assert captured.value.status_code == 401
+    assert cast(dict[str, str], captured.value.detail)["code"] == (
+        "runtime_principal_token_unexpected"
+    )
+
+
+def test_python_runtime_error_redaction_covers_per_server_and_file_headers() -> None:
+    business_token = "business-token-must-not-survive"
+    file_token = "file-token-must-not-survive"
+    redacted = redact_runtime_error(
+        "{'X-MCP-Principal-Token-Ones-Mcp': '"
+        + business_token
+        + "', 'X-File-Principal-Token': '"
+        + file_token
+        + "'}"
+    )
+
+    assert business_token not in redacted
+    assert file_token not in redacted
+    assert redacted.count("<redacted>") == 2
 
 
 def test_python_runtime_cancel_wins_once_and_ledger_recovers_after_restart(
@@ -923,8 +1112,8 @@ def test_python_runtime_routes_principal_only_to_fixed_ones_mcp_server() -> None
         limits=build_settings().execution,
         api_key="runtime-only-model-secret",
         mcp_server_url="http://tool-mcp:9103/mcp",
-        ones_mcp_server_url="http://ones-mcp:9104/mcp",
-        principal_token=principal,
+        business_mcp_server_urls={ONES_MCP_SERVER_CODE: "http://ones-mcp:9104/mcp"},
+        mcp_principal_tokens={ONES_MCP_SERVER_CODE: principal},
     )
     captured: dict[str, Any] = {}
 
@@ -992,6 +1181,72 @@ def test_python_runtime_routes_principal_only_to_fixed_ones_mcp_server() -> None
     )
     assert normalized[0]["server_code"] == "ones-mcp"
     assert normalized[0]["tool_name"] == "ones_work_item_search"
+
+
+def test_python_runtime_builds_isolated_sdk_config_for_two_business_servers() -> None:
+    context = AgentExecutionContext(
+        system_role="readonly business agent",
+        safety_rules=["readonly"],
+        user_question="query two fixed business systems",
+        project_code="project-1",
+        allowed_tools=["ones_work_item_search", TEST_BUSINESS_TOOL_IDENTIFIER],
+        tool_restrictions=["bounded"],
+        skills={},
+        retrieved_context={},
+        conversation_summary="",
+        publication_id="agent-publication-1",
+        application_publication_id="application-publication-1",
+        mcp_bindings=(
+            McpRuntimeBinding(
+                server_code=ONES_MCP_SERVER_CODE,
+                tool_name="ones_work_item_search",
+                required_scope="mcp:ones-mcp:ones_work_item_search:invoke",
+                tool_schema_hash="c" * 64,
+            ),
+            McpRuntimeBinding(
+                server_code=TEST_BUSINESS_SERVER_CODE,
+                tool_name=TEST_BUSINESS_TOOL_IDENTIFIER,
+                required_scope=(
+                    f"mcp:{TEST_BUSINESS_SERVER_CODE}:{TEST_BUSINESS_TOOL_IDENTIFIER}:invoke"
+                ),
+                tool_schema_hash="d" * 64,
+            ),
+        ),
+        runtime_protocol_version="1.1",
+    )
+    request = AgentRunRequest(
+        job_id="job-dual-business",
+        user_id="app-user-1",
+        project_code="project-1",
+        invocation_id="invocation-dual-business",
+        context=context,
+    )
+    tokens = {
+        ONES_MCP_SERVER_CODE: "ones-audience-token",
+        TEST_BUSINESS_SERVER_CODE: "second-audience-token",
+    }
+    client = FixedMcpClaudeSdkClient(
+        limits=build_settings().execution,
+        api_key="runtime-only-model-secret",
+        mcp_server_url="http://tool-mcp:9103/mcp",
+        business_mcp_server_urls={
+            ONES_MCP_SERVER_CODE: "http://ones-mcp:9104/mcp",
+            TEST_BUSINESS_SERVER_CODE: "http://test-business-mcp:9200/mcp",
+        },
+        mcp_principal_tokens=tokens,
+        server_policies=business_mcp_test_policies(),
+    )
+
+    servers = client._build_mcp_server(request)
+
+    assert set(servers) == {"ones_mcp", "test_business_mcp"}
+    assert servers["ones_mcp"]["headers"]["Authorization"] == ("Bearer ones-audience-token")
+    assert servers["test_business_mcp"]["headers"]["Authorization"] == (
+        "Bearer second-audience-token"
+    )
+    assert "second-audience-token" not in json.dumps(servers["ones_mcp"])
+    assert "ones-audience-token" not in json.dumps(servers["test_business_mcp"])
+    assert "audience-token" not in repr(client)
 
 
 def test_python_runtime_file_job_uses_fixed_file_mcp_guarded_tools_and_finally_cleanup(
@@ -1344,7 +1599,10 @@ def test_python_test_only_fake_provider_calls_ones_concurrently_with_exact_meta(
     result = executor.execute(
         request,
         threading.Event(),
-        SimpleNamespace(principal_token="test-only-principal-token"),
+        SimpleNamespace(
+            mcp_principal_tokens={ONES_MCP_SERVER_CODE: "test-only-principal-token"},
+            file_principal_token="",
+        ),
     )
 
     assert result.status == "SUCCEEDED"
@@ -1362,6 +1620,101 @@ def test_python_test_only_fake_provider_calls_ones_concurrently_with_exact_meta(
         "mcp-call-python-2",
     }
     assert "test-only-principal-token" not in json.dumps(result.tool_events)
+
+
+def test_python_test_only_fake_provider_isolates_second_business_server_token(
+    monkeypatch: Any,
+) -> None:
+    authorization_headers: list[str] = []
+    requested_urls: list[str] = []
+    tool_calls = 0
+
+    class Response:
+        headers = {"content-type": "application/json"}
+
+        def __init__(self, payload: dict[str, Any]) -> None:
+            self.payload = payload
+
+        def __enter__(self) -> Response:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, _limit: int) -> bytes:
+            return json.dumps(self.payload).encode("utf-8")
+
+    def fake_urlopen(request: Any, timeout: int) -> Response:
+        nonlocal tool_calls
+        assert timeout == 10
+        requested_urls.append(str(request.full_url))
+        authorization_headers.append(str(request.headers.get("Authorization") or ""))
+        payload = json.loads(bytes(request.data).decode("utf-8"))
+        if payload["method"] != "tools/call":
+            return Response({"jsonrpc": "2.0", "id": 1, "result": {}})
+        tool_calls += 1
+        assert payload["params"] == {
+            "name": TEST_BUSINESS_TOOL_IDENTIFIER,
+            "arguments": {},
+        }
+        return Response(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": {
+                    "isError": False,
+                    "content": [{"type": "text", "text": "ok"}],
+                    "_meta": {
+                        "enterprise-agent/mcp-call-id": f"mcp-call-second-{tool_calls}",
+                        "enterprise-agent/agent-tool-call-id": (f"agent-tool-second-{tool_calls}"),
+                    },
+                },
+            }
+        )
+
+    monkeypatch.setattr("app.python_runtime.executor.urlopen", fake_urlopen)
+    executor = PythonRuntimeExecutor(
+        cast(PythonModelBindingResolver, FakePythonBindingResolver()),
+        limits=build_settings().execution,
+        mcp_server_url="http://tool-mcp:9103/mcp",
+        business_mcp_server_urls={
+            ONES_MCP_SERVER_CODE: "http://ones-mcp:9104/mcp",
+            TEST_BUSINESS_SERVER_CODE: "http://test-business-mcp:9200/mcp",
+        },
+        server_policies=business_mcp_test_policies(),
+        sdk_version="0.2.134",
+        cli_version="2.1.226",
+        fake_provider_mode=True,
+    )
+    request = _request()
+    request["protocol_version"] = "1.1"
+    request["mcp_servers"] = [
+        {
+            "server_code": TEST_BUSINESS_SERVER_CODE,
+            "tools": [{"tool_name": TEST_BUSINESS_TOOL_IDENTIFIER}],
+        }
+    ]
+    request["prompt"]["user_question"] = (
+        f"[smoke:mcp:{TEST_BUSINESS_SERVER_CODE}-concurrent] verify isolation"
+    )
+    result = executor.execute(
+        request,
+        threading.Event(),
+        SimpleNamespace(
+            mcp_principal_tokens={
+                ONES_MCP_SERVER_CODE: "wrong-audience-token",
+                TEST_BUSINESS_SERVER_CODE: "second-audience-token",
+            },
+            file_principal_token="",
+        ),
+    )
+
+    assert result.status == "SUCCEEDED"
+    assert tool_calls == 2
+    assert requested_urls == ["http://test-business-mcp:9200/mcp"] * 4
+    assert authorization_headers == ["Bearer second-audience-token"] * 4
+    assert "wrong-audience-token" not in json.dumps(result.tool_events)
+    assert "second-audience-token" not in json.dumps(result.tool_events)
 
 
 def test_python_test_only_fake_provider_calls_file_service_with_file_principal(
@@ -1431,7 +1784,7 @@ def test_python_test_only_fake_provider_calls_file_service_with_file_principal(
     result = executor.execute(
         request,
         threading.Event(),
-        SimpleNamespace(principal_token="", file_principal_token=file_principal),
+        SimpleNamespace(mcp_principal_tokens={}, file_principal_token=file_principal),
     )
 
     assert result.status == "SUCCEEDED"

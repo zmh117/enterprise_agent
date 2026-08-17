@@ -21,16 +21,22 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.mcp_tool_runtime.job_snapshot import JobMcpToolSnapshotService
+from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST, McpToolDefinition
+from app.shared.mcp_server_policy import (
+    FILE_MCP_SERVER_CODE,
+    MCP_SERVER_POLICIES,
+    McpServerPolicy,
+    mcp_invoke_scope,
+    require_business_principal_server,
+    validate_mcp_server_policies,
+)
 from app.shared.database import Database
 from app.shared.exceptions import AppError, NonRetryableExecutionError
 
 
 PRINCIPAL_ISSUER = "enterprise-agent-identity"
-PRINCIPAL_AUDIENCE = "ones-mcp"
-FILE_PRINCIPAL_AUDIENCE = "file-service"
+FILE_PRINCIPAL_AUDIENCE = FILE_MCP_SERVER_CODE
 PRINCIPAL_AUTHORIZED_PARTY = "agent-runtime"
-ONES_SEARCH_TOOL = "ones_work_item_search"
-ONES_SEARCH_SCOPE = "mcp:ones-mcp:ones_work_item_search:invoke"
 MAX_PRINCIPAL_TTL_SECONDS = 5 * 60
 MAX_PRINCIPAL_TOKEN_BYTES = 8 * 1024
 _AUTHORIZATION_HASH_LENGTH = 64
@@ -256,6 +262,8 @@ class PrincipalTokenIssuer:
         ttl_seconds: int = MAX_PRINCIPAL_TTL_SECONDS,
         now: Callable[[], int] | None = None,
         jti_factory: Callable[[], str] | None = None,
+        server_policies: Mapping[str, McpServerPolicy] | None = None,
+        tool_manifest: Mapping[str, McpToolDefinition] | None = None,
     ) -> None:
         if not 1 <= ttl_seconds <= MAX_PRINCIPAL_TTL_SECONDS:
             raise ValueError("Principal JWT TTL must be between 1 and 300 seconds")
@@ -267,24 +275,46 @@ class PrincipalTokenIssuer:
         self.ttl_seconds = ttl_seconds
         self._now = now or (lambda: int(time.time()))
         self._jti_factory = jti_factory or (lambda: uuid.uuid4().hex)
+        self._server_policies = (
+            MCP_SERVER_POLICIES if server_policies is None else dict(server_policies)
+        )
+        validate_mcp_server_policies(self._server_policies)
+        self._tool_manifest = MCP_TOOL_MANIFEST if tool_manifest is None else dict(tool_manifest)
 
-    def issue_for_job(self, *, job_id: str) -> str:
+    def issue_business_mcp_for_job(self, *, job_id: str, server_code: str) -> str:
         audit: dict[str, Any] = {
             "kid": self.signing_key.kid,
             "job_id": job_id,
-            "audience": PRINCIPAL_AUDIENCE,
-            "scope": [ONES_SEARCH_SCOPE],
+            "audience": server_code if 0 < len(server_code) <= 63 else "",
         }
         try:
+            try:
+                require_business_principal_server(
+                    server_code,
+                    policies=self._server_policies,
+                )
+            except ValueError as exc:
+                raise PrincipalTokenError(
+                    "Principal JWT requires a fixed Business MCP server",
+                    safe_message="当前 MCP 服务不能签发平台身份凭证",
+                    error_code="principal_server_denied",
+                ) from exc
             facts = self._job_facts(job_id)
-            snapshot = self.snapshot_service.verify(job_id)
-            self._validate_snapshot(facts, snapshot)
-            self.business_authorization_service.require(
-                user_id=facts["internal_user_id"],
-                application_id=facts["business_application_id"],
-                tool_identifier=ONES_SEARCH_TOOL,
-                stage="principal_jwt_issue",
+            verified = self.snapshot_service.verify(job_id)
+            tool_identifiers, authorization_hash = self._business_tools(
+                facts,
+                verified,
+                server_code=server_code,
             )
+            scopes = [mcp_invoke_scope(server_code, identifier) for identifier in tool_identifiers]
+            audit["scope"] = scopes
+            for tool_identifier in tool_identifiers:
+                self.business_authorization_service.require(
+                    user_id=facts["internal_user_id"],
+                    application_id=facts["business_application_id"],
+                    tool_identifier=tool_identifier,
+                    stage="business_principal_jwt_issue",
+                )
             issued_at = self._now()
             jti = self._jti_factory()
             if not jti or len(jti) > 128:
@@ -296,14 +326,14 @@ class PrincipalTokenIssuer:
             claims: dict[str, Any] = {
                 "iss": PRINCIPAL_ISSUER,
                 "sub": facts["internal_user_id"],
-                "aud": PRINCIPAL_AUDIENCE,
+                "aud": server_code,
                 "azp": PRINCIPAL_AUTHORIZED_PARTY,
                 "job_id": job_id,
                 "session_id": facts["session_id"],
                 "agent_publication_id": facts["agent_publication_id"],
                 "application_publication_id": facts["business_application_publication_id"],
-                "scope": [ONES_SEARCH_SCOPE],
-                "authorization_hash": snapshot["authorization_hash"],
+                "scope": scopes,
+                "authorization_hash": authorization_hash,
                 "jti": jti,
                 "iat": issued_at,
                 "nbf": issued_at - 1,
@@ -321,7 +351,7 @@ class PrincipalTokenIssuer:
             self.audit_service.record(
                 "principal.jwt.issued",
                 status="success",
-                summary="Principal JWT issued for frozen ONES MCP Tool",
+                summary="Principal JWT issued for frozen Business MCP Tools",
                 job_id=job_id,
                 actor_id=facts["internal_user_id"],
                 payload=audit,
@@ -369,8 +399,7 @@ class PrincipalTokenIssuer:
                 )
             if (
                 str(snapshot.get("job_id") or "") != facts["id"]
-                or str(snapshot.get("agent_publication_id") or "")
-                != facts["agent_publication_id"]
+                or str(snapshot.get("agent_publication_id") or "") != facts["agent_publication_id"]
                 or str(snapshot.get("application_publication_id") or "")
                 != facts["business_application_publication_id"]
             ):
@@ -432,9 +461,7 @@ class PrincipalTokenIssuer:
                     "job_id": job_id,
                     "session_id": facts["session_id"],
                     "agent_publication_id": facts["agent_publication_id"],
-                    "application_publication_id": facts[
-                        "business_application_publication_id"
-                    ],
+                    "application_publication_id": facts["business_application_publication_id"],
                     "scope": scopes,
                     "authorization_hash": authorization_hash,
                     "jti": jti,
@@ -462,9 +489,7 @@ class PrincipalTokenIssuer:
             )
             return token
         except Exception as exc:
-            error_code = str(
-                getattr(exc, "error_code", "") or "file_principal_token_issue_denied"
-            )
+            error_code = str(getattr(exc, "error_code", "") or "file_principal_token_issue_denied")
             audit["error_code"] = error_code
             self.audit_service.record(
                 "principal.jwt.issue_denied",
@@ -550,8 +575,13 @@ class PrincipalTokenIssuer:
             )
         return facts
 
-    @staticmethod
-    def _validate_snapshot(facts: Mapping[str, str], verified: Mapping[str, Any]) -> None:
+    def _business_tools(
+        self,
+        facts: Mapping[str, str],
+        verified: Mapping[str, Any],
+        *,
+        server_code: str,
+    ) -> tuple[list[str], str]:
         snapshot = verified.get("snapshot")
         if not isinstance(snapshot, dict):
             raise PrincipalTokenError(
@@ -570,17 +600,50 @@ class PrincipalTokenIssuer:
                 safe_message="当前任务工具快照与发布版本不一致",
                 error_code="principal_snapshot_invalid",
             )
-        matches = [
-            item
-            for item in snapshot.get("tools") or []
-            if isinstance(item, dict)
-            and item.get("server_code") == PRINCIPAL_AUDIENCE
-            and item.get("tool_identifier") == ONES_SEARCH_TOOL
-        ]
-        if len(matches) != 1:
+        tools = snapshot.get("tools")
+        if not isinstance(tools, list):
             raise PrincipalTokenError(
-                "Frozen Job does not grant the ONES query Tool exactly once",
-                safe_message="当前任务没有冻结 ONES 查询权限",
+                "Principal MCP snapshot tools are invalid",
+                safe_message="当前任务工具快照无效",
+                error_code="principal_snapshot_invalid",
+            )
+        identifiers: list[str] = []
+        seen: set[str] = set()
+        for item in tools:
+            if not isinstance(item, dict) or str(item.get("server_code") or "") != server_code:
+                continue
+            identifier = str(item.get("tool_identifier") or "")
+            definition = self._tool_manifest.get(identifier)
+            if (
+                not identifier
+                or identifier in seen
+                or definition is None
+                or definition.server_code != server_code
+                or definition.schema_hash != str(item.get("schema_hash") or "")
+            ):
+                raise PrincipalTokenError(
+                    "Frozen Business MCP Tool is duplicated or has drifted",
+                    safe_message="当前任务业务工具快照无效",
+                    error_code="principal_snapshot_invalid",
+                )
+            try:
+                require_business_principal_server(
+                    definition.server_code,
+                    policies=self._server_policies,
+                )
+            except ValueError as exc:
+                raise PrincipalTokenError(
+                    "Frozen Tool does not belong to a Business Principal MCP server",
+                    safe_message="当前任务业务工具鉴权策略无效",
+                    error_code="principal_server_denied",
+                ) from exc
+            seen.add(identifier)
+            identifiers.append(identifier)
+        identifiers.sort()
+        if not identifiers:
+            raise PrincipalTokenError(
+                "Frozen Job does not grant a Business MCP Tool for this server",
+                safe_message="当前任务没有冻结对应业务工具权限",
                 error_code="principal_scope_denied",
             )
         authorization_hash = str(verified.get("authorization_hash") or "")
@@ -592,6 +655,7 @@ class PrincipalTokenIssuer:
                 safe_message="当前任务授权摘要无效",
                 error_code="principal_snapshot_invalid",
             )
+        return identifiers, authorization_hash
 
 
 class PrincipalTokenVerifier:
@@ -599,22 +663,36 @@ class PrincipalTokenVerifier:
         self,
         jwks: PrincipalJwks,
         *,
+        expected_audience: str,
         audit_service: AuditService | None = None,
         now: Callable[[], int] | None = None,
         leeway_seconds: int = 5,
+        server_policies: Mapping[str, McpServerPolicy] | None = None,
+        tool_manifest: Mapping[str, McpToolDefinition] | None = None,
     ) -> None:
         if not 0 <= leeway_seconds <= 30:
             raise ValueError("Principal JWT leeway is invalid")
+        selected_policies = (
+            MCP_SERVER_POLICIES if server_policies is None else dict(server_policies)
+        )
+        validate_mcp_server_policies(selected_policies)
+        require_business_principal_server(
+            expected_audience,
+            policies=selected_policies,
+        )
         self.jwks = jwks
+        self.expected_audience = expected_audience
         self.audit_service = audit_service
         self._now = now or (lambda: int(time.time()))
         self.leeway_seconds = leeway_seconds
+        self._server_policies = selected_policies
+        self._tool_manifest = MCP_TOOL_MANIFEST if tool_manifest is None else dict(tool_manifest)
 
     def verify(
         self,
         token: str,
         *,
-        required_scope: str = ONES_SEARCH_SCOPE,
+        required_scope: str,
     ) -> dict[str, Any]:
         audit = self._untrusted_audit_projection(token)
         try:
@@ -656,7 +734,7 @@ class PrincipalTokenVerifier:
                 token,
                 key=public_key.key,
                 algorithms=["EdDSA"],
-                audience=PRINCIPAL_AUDIENCE,
+                audience=self.expected_audience,
                 issuer=PRINCIPAL_ISSUER,
                 leeway=self.leeway_seconds,
                 options={
@@ -690,16 +768,22 @@ class PrincipalTokenVerifier:
         self,
         token: str,
         database: Database,
+        snapshot_service: JobMcpToolSnapshotService,
         *,
-        required_scope: str = ONES_SEARCH_SCOPE,
+        required_scope: str,
     ) -> dict[str, Any]:
         claims = self.verify(token, required_scope=required_scope)
         row = database.execute_one(
             """
-            select j.internal_user_id, j.status, u.status as user_status,
+            select j.internal_user_id, j.status, j.session_id,
+                   j.agent_publication_id,
+                   j.business_application_publication_id,
+                   s.application_publication_id as session_application_publication_id,
+                   u.status as user_status,
                    u.account_type as user_account_type
               from agent_job j
               join app_user u on u.id = j.internal_user_id
+              join agent_session s on s.id = j.session_id
              where j.id = ?
             """,
             (claims["job_id"],),
@@ -710,6 +794,12 @@ class PrincipalTokenVerifier:
             or str(row.get("status") or "") != "RUNNING"
             or str(row.get("user_status") or "") != "enabled"
             or str(row.get("user_account_type") or "") != "human"
+            or str(row.get("session_id") or "") != claims["session_id"]
+            or str(row.get("agent_publication_id") or "") != claims["agent_publication_id"]
+            or str(row.get("business_application_publication_id") or "")
+            != claims["application_publication_id"]
+            or str(row.get("session_application_publication_id") or "")
+            != claims["application_publication_id"]
         ):
             error_code = "principal_job_user_mismatch"
             self._audit_rejection(
@@ -728,6 +818,33 @@ class PrincipalTokenVerifier:
             raise PrincipalTokenError(
                 "Principal JWT does not match an enabled user's running Job",
                 safe_message="平台身份凭证与当前任务不匹配",
+                error_code=error_code,
+            )
+        try:
+            verified = snapshot_service.verify(str(claims["job_id"]))
+            expected_scopes, authorization_hash = self._snapshot_scopes(
+                claims,
+                verified,
+            )
+        except (AppError, ValueError) as exc:
+            self._audit_rejection(
+                self._claims_audit_projection(claims, token),
+                str(getattr(exc, "error_code", "") or "principal_snapshot_invalid"),
+            )
+            raise PrincipalTokenError(
+                "Principal JWT Job snapshot validation failed",
+                safe_message="平台身份凭证与当前任务不匹配",
+                error_code="principal_snapshot_invalid",
+            ) from exc
+        if claims["scope"] != expected_scopes or claims["authorization_hash"] != authorization_hash:
+            error_code = "principal_token_scope_invalid"
+            self._audit_rejection(
+                self._claims_audit_projection(claims, token),
+                error_code,
+            )
+            raise PrincipalTokenError(
+                "Principal JWT scope or authorization hash does not match the Job snapshot",
+                safe_message="平台身份凭证权限与当前任务不匹配",
                 error_code=error_code,
             )
         return claims
@@ -767,11 +884,19 @@ class PrincipalTokenVerifier:
                 error_code="principal_token_azp_invalid",
             )
         scope = claims["scope"]
+        prefix = f"mcp:{self.expected_audience}:"
         if (
             not isinstance(scope, list)
-            or len(scope) != 1
-            or any(not isinstance(item, str) for item in scope)
-            or scope != [required_scope]
+            or not 1 <= len(scope) <= 64
+            or any(
+                not isinstance(item, str)
+                or not item.startswith(prefix)
+                or not item.endswith(":invoke")
+                or len(item) > 256
+                for item in scope
+            )
+            or scope != sorted(set(scope))
+            or required_scope not in scope
         ):
             raise PrincipalTokenError(
                 "Principal JWT scope is invalid or expanded",
@@ -835,9 +960,84 @@ class PrincipalTokenVerifier:
             return "principal_token_signature_invalid"
         return "principal_token_invalid"
 
-    @staticmethod
-    def _untrusted_audit_projection(token: str) -> dict[str, Any]:
-        projection: dict[str, Any] = {"audience": PRINCIPAL_AUDIENCE}
+    def _snapshot_scopes(
+        self,
+        claims: Mapping[str, Any],
+        verified: Mapping[str, Any],
+    ) -> tuple[list[str], str]:
+        snapshot = verified.get("snapshot")
+        if not isinstance(snapshot, dict):
+            raise PrincipalTokenError(
+                "Principal MCP snapshot is invalid",
+                safe_message="当前任务工具快照无效",
+                error_code="principal_snapshot_invalid",
+            )
+        if (
+            str(snapshot.get("job_id") or "") != claims["job_id"]
+            or str(snapshot.get("agent_publication_id") or "") != claims["agent_publication_id"]
+            or str(snapshot.get("application_publication_id") or "")
+            != claims["application_publication_id"]
+        ):
+            raise PrincipalTokenError(
+                "Principal MCP snapshot provenance does not match claims",
+                safe_message="当前任务工具快照与身份凭证不匹配",
+                error_code="principal_snapshot_invalid",
+            )
+        raw_tools = snapshot.get("tools")
+        if not isinstance(raw_tools, list):
+            raise PrincipalTokenError(
+                "Principal MCP snapshot tools are invalid",
+                safe_message="当前任务工具快照无效",
+                error_code="principal_snapshot_invalid",
+            )
+        scopes: list[str] = []
+        seen: set[str] = set()
+        for item in raw_tools:
+            if (
+                not isinstance(item, dict)
+                or str(item.get("server_code") or "") != self.expected_audience
+            ):
+                continue
+            identifier = str(item.get("tool_identifier") or "")
+            definition = self._tool_manifest.get(identifier)
+            if (
+                not identifier
+                or identifier in seen
+                or definition is None
+                or definition.server_code != self.expected_audience
+                or definition.schema_hash != str(item.get("schema_hash") or "")
+            ):
+                raise PrincipalTokenError(
+                    "Principal MCP snapshot Tool is duplicated or has drifted",
+                    safe_message="当前任务工具快照无效",
+                    error_code="principal_snapshot_invalid",
+                )
+            require_business_principal_server(
+                definition.server_code,
+                policies=self._server_policies,
+            )
+            seen.add(identifier)
+            scopes.append(mcp_invoke_scope(self.expected_audience, identifier))
+        scopes.sort()
+        if not scopes:
+            raise PrincipalTokenError(
+                "Principal MCP snapshot has no Tool for this audience",
+                safe_message="当前任务没有对应业务工具权限",
+                error_code="principal_scope_denied",
+            )
+        authorization_hash = str(verified.get("authorization_hash") or "")
+        if len(authorization_hash) != _AUTHORIZATION_HASH_LENGTH or any(
+            char not in "0123456789abcdef" for char in authorization_hash
+        ):
+            raise PrincipalTokenError(
+                "Principal authorization hash is invalid",
+                safe_message="当前任务授权摘要无效",
+                error_code="principal_snapshot_invalid",
+            )
+        return scopes, authorization_hash
+
+    def _untrusted_audit_projection(self, token: str) -> dict[str, Any]:
+        projection: dict[str, Any] = {"audience": self.expected_audience}
         if not token or len(token) > MAX_PRINCIPAL_TOKEN_BYTES:
             return projection
         try:
@@ -856,7 +1056,13 @@ class PrincipalTokenVerifier:
         if (
             isinstance(scope, list)
             and len(scope) <= 16
-            and all(isinstance(item, str) and len(item) <= 256 for item in scope)
+            and all(
+                isinstance(item, str)
+                and item.startswith(f"mcp:{self.expected_audience}:")
+                and item.endswith(":invoke")
+                and len(item) <= 256
+                for item in scope
+            )
         ):
             projection["scope"] = list(scope)
         for source, target in (
@@ -866,6 +1072,22 @@ class PrincipalTokenVerifier:
         ):
             if type(source) is int:
                 projection[target] = source
+        return projection
+
+    def _claims_audit_projection(
+        self,
+        claims: Mapping[str, Any],
+        token: str,
+    ) -> dict[str, Any]:
+        projection = self._untrusted_audit_projection(token)
+        projection.update(
+            {
+                "audience": self.expected_audience,
+                "job_id": str(claims.get("job_id") or "")[:256],
+                "jti": str(claims.get("jti") or "")[:256],
+                "scope": list(claims.get("scope") or [])[:64],
+            }
+        )
         return projection
 
     def _audit_rejection(self, payload: dict[str, Any], error_code: str) -> None:

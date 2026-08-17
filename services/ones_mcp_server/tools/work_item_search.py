@@ -4,7 +4,6 @@ import time
 from dataclasses import replace
 from typing import Any
 
-from app.modules.identity.application.principal_jwt import ONES_SEARCH_SCOPE
 from app.modules.identity.infrastructure.external_identity_credentials import (
     ExternalIdentityCredentialRepository,
 )
@@ -290,6 +289,3 @@ class OnesWorkItemSearchService:
                 error_code="ones_tool_input_invalid",
             )
         return {"keyword": keyword, "issue_type": issue_type, "limit": limit}
-
-
-assert REQUIRED_SCOPE == ONES_SEARCH_SCOPE

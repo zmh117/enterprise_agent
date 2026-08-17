@@ -4,9 +4,10 @@ import json
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass, field as dataclass_field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Protocol, cast
 from urllib.parse import quote, urlsplit
 
@@ -23,6 +24,20 @@ from app.modules.agent.infrastructure.runtime_protocol import (
     validate_runtime_contract,
 )
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
+from app.shared.mcp_server_policy import (
+    FILE_MCP_SERVER_CODE,
+    MAX_BUSINESS_PRINCIPAL_HEADER_BYTES,
+    MAX_BUSINESS_PRINCIPAL_SERVERS,
+    MAX_MCP_PRINCIPAL_TOKEN_BYTES,
+    MCP_SERVER_POLICIES,
+    ONES_MCP_SERVER_CODE,
+    TOOL_MCP_SERVER_CODE,
+    McpServerAuthMode,
+    McpServerPolicy,
+    business_principal_header_name,
+    require_mcp_server_policy,
+    validate_mcp_server_policies,
+)
 from app.shared.database import assert_external_io_allowed
 from app.shared.exceptions import (
     NonRetryableExecutionError,
@@ -34,9 +49,8 @@ MAX_STREAM_BYTES = 2_097_152
 MAX_EVENTS = 2_048
 IN_PROGRESS_RECOVERY_ATTEMPTS = 12
 IN_PROGRESS_RECOVERY_DELAY_SECONDS = 0.5
-STANDARD_TOOL_MCP_CODE = "tool-mcp"
-ONES_MCP_CODE = "ones-mcp"
-FILE_MCP_CODE = "file-service"
+STANDARD_TOOL_MCP_CODE = TOOL_MCP_SERVER_CODE
+FILE_MCP_CODE = FILE_MCP_SERVER_CODE
 
 
 def _runtime_event_count(value: object) -> int:
@@ -71,15 +85,21 @@ class RuntimeTransport(Protocol):
 
 
 class PrincipalTokenIssuerPort(Protocol):
-    def issue_for_job(self, *, job_id: str) -> str: ...
+    def issue_business_mcp_for_job(self, *, job_id: str, server_code: str) -> str: ...
 
     def issue_file_for_job(self, *, job_id: str) -> str: ...
 
 
 @dataclass(frozen=True, slots=True)
 class RuntimePrincipalTokens:
-    ones: str = ""
-    files: str = ""
+    business: Mapping[str, str] = dataclass_field(default_factory=dict, repr=False)
+    files: str = dataclass_field(default="", repr=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "business", MappingProxyType(dict(self.business)))
+
+    def __repr__(self) -> str:
+        return "RuntimePrincipalTokens(business=<hidden>, files=<hidden>)"
 
 
 class UrlLibRuntimeTransport:
@@ -224,7 +244,7 @@ class RuntimeClientSettings:
     runtime_kind: str = "python-v1"
     allowed_mcp_server_codes: tuple[str, ...] = (
         STANDARD_TOOL_MCP_CODE,
-        ONES_MCP_CODE,
+        ONES_MCP_SERVER_CODE,
         FILE_MCP_CODE,
     )
     allow_insecure_internal_http: bool = False
@@ -333,6 +353,7 @@ class AgentRuntimeHttpClient:
         transport: RuntimeTransport | None = None,
         event_sink: Callable[[str, dict[str, Any]], None] | None = None,
         principal_token_issuer: PrincipalTokenIssuerPort | None = None,
+        server_policies: Mapping[str, McpServerPolicy] | None = None,
     ) -> None:
         self.settings = settings
         self.execution_url = settings.execution_url()
@@ -340,6 +361,10 @@ class AgentRuntimeHttpClient:
         self.transport = transport or UrlLibRuntimeTransport()
         self.event_sink = event_sink
         self.principal_token_issuer = principal_token_issuer
+        self._server_policies = MappingProxyType(
+            dict(MCP_SERVER_POLICIES if server_policies is None else server_policies)
+        )
+        validate_mcp_server_policies(self._server_policies)
 
     def run(self, run_request: AgentRunRequest) -> AgentRunResult:
         request = self._execution_request(run_request)
@@ -430,8 +455,13 @@ class AgentRuntimeHttpClient:
             "Accept": "application/x-ndjson",
             "X-Correlation-Id": f"job:{run_request.job_id}",
         }
-        if principal_tokens.ones:
-            headers["X-MCP-Principal-Token"] = principal_tokens.ones
+        for server_code, token in sorted(principal_tokens.business.items()):
+            headers[
+                business_principal_header_name(
+                    server_code,
+                    policies=self._server_policies,
+                )
+            ] = token
         if principal_tokens.files:
             headers["X-File-Principal-Token"] = principal_tokens.files
         events: list[dict[str, Any]] = []
@@ -600,6 +630,17 @@ class AgentRuntimeHttpClient:
                     safe_message="当前 Job 引用了未允许的 MCP 服务",
                     error_code="mcp_server_not_allowed",
                 )
+            try:
+                require_mcp_server_policy(
+                    binding_item.server_code,
+                    policies=self._server_policies,
+                )
+            except ValueError as exc:
+                raise NonRetryableExecutionError(
+                    "Job references an MCP server without a fixed auth policy",
+                    safe_message="当前 Job 引用了鉴权策略无效的 MCP 服务",
+                    error_code="mcp_server_policy_invalid",
+                ) from exc
             grouped.setdefault(binding_item.server_code, []).append(binding_item)
         mcp_servers: list[dict[str, Any]] = []
         for server_code, tool_bindings in sorted(grouped.items()):
@@ -690,28 +731,96 @@ class AgentRuntimeHttpClient:
             for server in request.get("mcp_servers") or []
             if isinstance(server, dict)
         }
-        requires_ones = ONES_MCP_CODE in server_codes
-        requires_files = FILE_MCP_CODE in server_codes
-        if not requires_ones and not requires_files:
+        business_server_codes: list[str] = []
+        requires_files = False
+        for server_code in sorted(server_codes):
+            try:
+                policy = require_mcp_server_policy(
+                    server_code,
+                    policies=self._server_policies,
+                )
+            except ValueError as exc:
+                raise NonRetryableExecutionError(
+                    "Runtime request references an MCP server without a fixed auth policy",
+                    safe_message="当前 Job 引用了鉴权策略无效的 MCP 服务",
+                    error_code="mcp_server_policy_invalid",
+                ) from exc
+            if policy.auth_mode is McpServerAuthMode.BUSINESS_PRINCIPAL_JWT:
+                business_server_codes.append(server_code)
+            elif policy.auth_mode is McpServerAuthMode.FILE_PRINCIPAL_JWT:
+                requires_files = True
+        if not business_server_codes and not requires_files:
             return RuntimePrincipalTokens()
+        if len(business_server_codes) > MAX_BUSINESS_PRINCIPAL_SERVERS:
+            raise NonRetryableExecutionError(
+                "Runtime request requires too many Business Principal Tokens",
+                safe_message="当前 Job 需要的业务身份凭证过多",
+                error_code="principal_token_count_exceeded",
+            )
         if self.principal_token_issuer is None:
             raise NonRetryableExecutionError(
                 "Governed MCP requires a Principal Token issuer",
                 safe_message="当前 Job 缺少平台身份凭证签发服务",
                 error_code="principal_token_issuer_unavailable",
             )
-        return RuntimePrincipalTokens(
-            ones=(
-                self.principal_token_issuer.issue_for_job(job_id=run_request.job_id)
-                if requires_ones
-                else ""
-            ),
-            files=(
+        business_tokens = {
+            server_code: self._validated_principal_token(
+                self.principal_token_issuer.issue_business_mcp_for_job(
+                    job_id=run_request.job_id,
+                    server_code=server_code,
+                )
+            )
+            for server_code in business_server_codes
+        }
+        file_token = (
+            self._validated_principal_token(
                 self.principal_token_issuer.issue_file_for_job(job_id=run_request.job_id)
-                if requires_files
-                else ""
-            ),
+            )
+            if requires_files
+            else ""
         )
+        total_header_bytes = sum(
+            len(
+                business_principal_header_name(
+                    server_code,
+                    policies=self._server_policies,
+                ).encode("ascii")
+            )
+            + len(token.encode("ascii"))
+            for server_code, token in business_tokens.items()
+        )
+        if file_token:
+            total_header_bytes += len("X-File-Principal-Token") + len(file_token.encode("ascii"))
+        if total_header_bytes > MAX_BUSINESS_PRINCIPAL_HEADER_BYTES:
+            raise NonRetryableExecutionError(
+                "Runtime Principal Token headers are too large",
+                safe_message="当前 Job 的业务身份凭证过大",
+                error_code="principal_token_headers_too_large",
+            )
+        return RuntimePrincipalTokens(business=business_tokens, files=file_token)
+
+    @staticmethod
+    def _validated_principal_token(token: str) -> str:
+        try:
+            encoded = token.encode("ascii")
+        except UnicodeError as exc:
+            raise NonRetryableExecutionError(
+                "Principal Token is not ASCII",
+                safe_message="平台身份凭证无效",
+                error_code="principal_token_invalid",
+            ) from exc
+        if (
+            not token
+            or len(encoded) > MAX_MCP_PRINCIPAL_TOKEN_BYTES
+            or "\r" in token
+            or "\n" in token
+        ):
+            raise NonRetryableExecutionError(
+                "Principal Token is invalid",
+                safe_message="平台身份凭证无效",
+                error_code="principal_token_invalid",
+            )
+        return token
 
     @staticmethod
     def _runtime_bindings(run_request: AgentRunRequest) -> tuple[McpRuntimeBinding, ...]:

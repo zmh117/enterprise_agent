@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import MappingProxyType
 from typing import Any, Final
 
+from app.shared.mcp_server_policy import ONES_MCP_SERVER_CODE, mcp_invoke_scope
 from services.ones_mcp_server.provider.graphql.operations.work_item_search import (
     ISSUE_TYPES,
     WORK_ITEM_SEARCH_DOCUMENT,
@@ -33,10 +34,10 @@ __all__ = [
 ]
 
 
-SERVER_CODE: Final = "ones-mcp"
+SERVER_CODE: Final = ONES_MCP_SERVER_CODE
 SERVER_VERSION: Final = "0.1.0"
 TOOL_IDENTIFIER: Final = "ones_work_item_search"
-REQUIRED_SCOPE: Final = "mcp:ones-mcp:ones_work_item_search:invoke"
+REQUIRED_SCOPE: Final = mcp_invoke_scope(SERVER_CODE, TOOL_IDENTIFIER)
 
 LOGIN_PATH: Final = "/project/api/project/auth/login"
 TOOL_INPUT_SCHEMA: Final[dict[str, Any]] = {
