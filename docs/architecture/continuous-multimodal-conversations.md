@@ -57,7 +57,7 @@ FILE_STORAGE_SECRET_KEY_REF=secret://platform/minio-file-secret-key
 
 上述 MinIO 默认只用于 local/test/testing/development。非本地环境必须显式提供
 非空且不等于仓库占位值的 `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`，Compose
-MinIO 入口会在外部 I/O 前失败关闭。应用不再加载旧 `S3_*` 配置；File Service
+MinIO 入口会在外部 I/O 前失败关闭。应用不再加载对象存储直连配置；File Service
 只通过平台 Secret Reference 解析对象存储凭据。
 
 启动附件profile和钉钉入口：

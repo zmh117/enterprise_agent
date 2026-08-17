@@ -5,7 +5,6 @@ import pytest
 from app.modules.admin.infrastructure.rabbitmq_status import (
     RabbitMQQueueStatusAdapter,
 )
-from app.modules.attachments.storage import S3ObjectStorage
 from app.modules.channel.domain.channel_event import ReplyRoute
 from app.modules.delivery.infrastructure.adapters import (
     DingTalkStreamSessionWebhookDeliveryAdapter,
@@ -16,7 +15,11 @@ from app.modules.mcp_tool_runtime.infrastructure.db.drivers import (
 from app.modules.message_bus.infrastructure.rabbitmq_publisher import (
     RabbitMQPublisher,
 )
-from app.shared.config import ObjectStorageSettings, QueueSettings
+from app.modules.file_workspace.storage import (
+    FileObjectStorageSettings,
+    MinioFileObjectStorage,
+)
+from app.shared.config import QueueSettings
 from app.shared.database import Database, ExternalIOInUnitOfWorkError
 
 
@@ -94,7 +97,7 @@ def test_rabbitmq_status_boundary_violation_is_not_swallowed_as_unavailable() ->
         database.close()
 
 
-def test_object_storage_is_rejected_before_client_call_inside_uow() -> None:
+def test_file_storage_is_rejected_before_client_call_inside_uow() -> None:
     database = Database("sqlite:///:memory:")
     client_called = False
 
@@ -105,14 +108,23 @@ def test_object_storage_is_rejected_before_client_call_inside_uow() -> None:
             client_called = True
             raise AssertionError("client must not run")
 
-    storage = S3ObjectStorage(ObjectStorageSettings(), client=ForbiddenS3Client())
+    storage = MinioFileObjectStorage(
+        FileObjectStorageSettings(
+            endpoint_url="http://minio:9000",
+            bucket="managed-files",
+            access_key_ref="secret://platform/file-storage-access",
+            secret_key_ref="secret://platform/file-storage-secret",
+        ),
+        lambda _ref: "test-credential",
+        client=ForbiddenS3Client(),
+    )
     try:
         with database.unit_of_work():
             with pytest.raises(
                 ExternalIOInUnitOfWorkError,
-                match="object_storage.get",
+                match="file_storage.open_stream",
             ):
-                storage.get(key="object-key")
+                storage.open_stream(internal_object_key="managed/version/object-key")
         assert client_called is False
     finally:
         database.close()

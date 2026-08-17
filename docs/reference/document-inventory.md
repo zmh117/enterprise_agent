@@ -66,7 +66,6 @@
 | `docs/compose-postgres18-rabbitmq4-upgrade.md` | `docs/operations/compose-postgres18-rabbitmq4-upgrade.md` | `operations` |
 | `docs/dingtalk-test-data-rebuild.md` | `docs/operations/dingtalk-test-data-rebuild.md` | `operations` |
 | `docs/emergency-master-key-reencryption.md` | `docs/operations/emergency-master-key-reencryption.md` | `operations` |
-| `docs/execution-policy-runtime-maintenance.md` | `docs/operations/execution-policy-runtime-maintenance.md` | `operations` |
 | `docs/platform-master-key.md` | `docs/operations/platform-master-key.md` | `operations` |
 | `new in baseline reorganization` | `docs/operations/schema-baseline-bootstrap.md` | `new/current` |
 | `new in baseline reorganization` | `docs/operations/schema-baseline-upgrade.md` | `new/current` |

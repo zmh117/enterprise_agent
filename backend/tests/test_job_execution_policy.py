@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 
 import pytest
@@ -8,9 +7,6 @@ import pytest
 from app.modules.delivery.infrastructure.adapters import DeliveryAdapter
 from app.modules.agent.domain.runtime import AgentRunResult, ToolCallBudget
 from app.modules.job.application.create_agent_job_service import CreateAgentJobCommand
-from app.modules.job.application.legacy_runtime_purge_service import (
-    LegacyRuntimePurgeService,
-)
 from app.modules.job.domain.execution_policy import (
     EffectiveExecutionPolicyResolver,
     JobExecutionPolicySnapshot,
@@ -385,132 +381,3 @@ def test_worker_delivers_safe_non_retryable_tool_budget_failure_once() -> None:
     delivered = json.loads(adapter.messages[0])
     assert delivered["error_code"] == "execution_policy_max_tool_calls_exhausted"
     assert "internal detail" not in delivered["message"]
-
-
-def test_legacy_runtime_purge_preserves_control_plane() -> None:
-    c = container()
-    before_users = c.agent_repository.count_rows("app_user")
-    before_agents = c.agent_repository.count_rows("agent_definition")
-    job = c.create_agent_job_service.execute(
-        CreateAgentJobCommand(
-            idempotency_key="purge-policy-test",
-            external_conversation_id="conversation-purge",
-            requester_id="local-user",
-            user_message="check",
-        )
-    )
-    message = c.agent_repository.list_messages(job.session_id)[0]
-    attachment = c.agent_repository.add_attachment(
-        message_id=str(message["id"]),
-        job_id=job.id,
-        ordinal=1,
-        media_type="file",
-        file_name="legacy.txt",
-        declared_mime="text/plain",
-        credential_ciphertext="encrypted",
-    )
-    payload = b"legacy runtime object"
-    digest = hashlib.sha256(payload).hexdigest()
-    object_key = f"attachments/{attachment.id}/{digest}.txt"
-    c.object_storage.put(
-        key=object_key,
-        data=payload,
-        content_type="text/plain",
-        sha256=digest,
-    )
-    c.database.execute(
-        """
-        update message_attachment
-        set object_bucket = ?, object_key = ?
-        where id = ?
-        """,
-        (c.settings.object_storage.bucket, object_key, attachment.id),
-    )
-    before_control_audits = int(
-        c.database.execute_one("select count(*) as count from audit_event where job_id is null")[
-            "count"
-        ]
-    )
-    service = LegacyRuntimePurgeService(
-        database=c.database,
-        storage=c.object_storage,
-        storage_bucket=c.settings.object_storage.bucket,
-    )
-
-    report = service.purge()
-
-    assert report["after"]["runtime_rows"]["agent_job"] == 0
-    assert report["after"]["runtime_rows"]["agent_session"] == 0
-    assert c.agent_repository.count_rows("app_user") == before_users
-    assert c.agent_repository.count_rows("agent_definition") == before_agents
-    assert report["after"]["preserved_unattributed_audit_rows"] == before_control_audits
-    assert c.object_storage.list_keys() == []
-    with pytest.raises(Exception, match="execution_policy_json is required"):
-        c.database.execute(
-            """
-            insert into agent_session
-              (id, source_channel, source_connector_id,
-               external_conversation_id, requester_id, project_code,
-               session_key, created_at, updated_at)
-            values ('session-invalid', 'debug_api', 'connector-debug-api',
-                    'c', 'u', 'default', 'session-invalid', 'now', 'now')
-            """
-        )
-        c.database.execute(
-            """
-            insert into agent_job
-              (id, session_id, idempotency_key, requester_id, project_code,
-               source_channel, source_connector_id, status, created_at)
-            values (
-              'job-invalid', 'session-invalid', 'job-invalid', 'u', 'default',
-              'debug_api', 'connector-debug-api', 'PENDING', 'now'
-            )
-            """
-        )
-
-
-def test_legacy_runtime_purge_stops_before_database_delete_on_object_failure() -> None:
-    c = container()
-    job = c.create_agent_job_service.execute(
-        CreateAgentJobCommand(
-            idempotency_key="purge-object-failure",
-            external_conversation_id="conversation-object-failure",
-            requester_id="local-user",
-            user_message="check",
-        )
-    )
-    message = c.agent_repository.list_messages(job.session_id)[0]
-    attachment = c.agent_repository.add_attachment(
-        message_id=str(message["id"]),
-        job_id=job.id,
-        ordinal=1,
-        media_type="file",
-        file_name="legacy.txt",
-        declared_mime="text/plain",
-        credential_ciphertext="encrypted",
-    )
-    c.database.execute(
-        """
-        update message_attachment
-        set object_bucket = ?, object_key = 'attachments/failing.txt'
-        where id = ?
-        """,
-        (c.settings.object_storage.bucket, attachment.id),
-    )
-
-    class FailingStorage:
-        def delete(self, *, key: str) -> None:
-            del key
-            raise RuntimeError("storage unavailable")
-
-    service = LegacyRuntimePurgeService(
-        database=c.database,
-        storage=FailingStorage(),  # type: ignore[arg-type]
-        storage_bucket=c.settings.object_storage.bucket,
-    )
-    with pytest.raises(NonRetryableExecutionError) as raised:
-        service.purge()
-
-    assert raised.value.error_code == "legacy_runtime_object_delete_failed"
-    assert c.agent_repository.count_rows("agent_job") == 1
-    assert c.agent_repository.count_rows("message_attachment") == 1

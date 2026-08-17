@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import zipfile
@@ -15,6 +16,7 @@ from pptx import Presentation
 
 from app.bootstrap import build_test_container
 from app.modules.attachments.credentials import AttachmentCredentialCipher
+from app.modules.attachments.domain import AttachmentImportReceipt
 from app.modules.attachments.extraction import SafeAttachmentExtractor
 from app.modules.attachments.storage import InMemoryObjectStorage
 from app.modules.channel.domain.channel_event import ChannelAttachment
@@ -72,6 +74,25 @@ class RetryingDownloader:
     ) -> bytes:
         del download_code, max_bytes, connector_id, robot_code
         raise RetryableExecutionError("temporary", safe_message="temporary download failure")
+
+
+class RecordingAttachmentImporter:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, bytes, str]] = []
+
+    def import_content(
+        self,
+        *,
+        attachment_id: str,
+        data: bytes,
+        content_type: str,
+    ) -> AttachmentImportReceipt:
+        self.calls.append((attachment_id, data, content_type))
+        return AttachmentImportReceipt(
+            attachment_id=attachment_id,
+            size_bytes=len(data),
+            sha256=hashlib.sha256(data).hexdigest(),
+        )
 
 
 class FailOnSecondEncryption:
@@ -330,10 +351,16 @@ def test_image_only_is_stored_without_model_execution() -> None:
     data = io.BytesIO()
     image.save(data, format="PNG", pnginfo=None)
     c.attachment_service.downloader = FakeDownloader({"fixture-picture-code": data.getvalue()})  # type: ignore[union-attr]
+    importer = RecordingAttachmentImporter()
+    c.attachment_service.importer = importer  # type: ignore[union-attr]
+    c.attachment_service.storage = None  # type: ignore[union-attr]
 
     assert c.attachment_service.process(task.attachment_id, task.correlation_id) == "failed"  # type: ignore[union-attr]
     assert c.agent_repository.get_attachment(task.attachment_id).status == "stored_not_interpreted"
     assert c.agent_repository.get_job(result.job_id).status == JobStatus.FAILED
+    assert len(importer.calls) == 1
+    assert importer.calls[0][0] == task.attachment_id
+    assert importer.calls[0][2] == "image/png"
 
 
 def test_supported_document_extractors_and_limits() -> None:

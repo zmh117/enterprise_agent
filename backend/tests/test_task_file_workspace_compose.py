@@ -44,16 +44,21 @@ def test_compose_has_one_file_service_and_one_attachment_queue_consumer() -> Non
 def test_minio_credentials_and_connections_stop_at_file_service_boundary() -> None:
     compose = _compose()
     services = compose["services"]
-    direct_credential_services: set[str] = set()
-    for name, service in services.items():
-        environment = service.get("environment", {})
-        if {"S3_ACCESS_KEY", "S3_SECRET_KEY"}.intersection(environment):
-            direct_credential_services.add(name)
-    assert direct_credential_services <= {"minio", "minio-init"}
+    compose_text = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+    retired_prefix = "S" + "3_"
+    assert retired_prefix not in compose_text
+    assert retired_prefix not in env_example
 
     for name in ("minio", "minio-init"):
         service = services[name]
         assert service["environment"]["APP_ENV"] == "${APP_ENV:-local}"
+        assert service["environment"]["MINIO_ROOT_USER"] == (
+            "${MINIO_ROOT_USER:-enterprise_agent}"
+        )
+        assert service["environment"]["MINIO_ROOT_PASSWORD"] == (
+            "${MINIO_ROOT_PASSWORD:-enterprise_agent_change_me}"
+        )
         command = " ".join(service["command"])
         assert "unsafe MinIO credentials for non-local APP_ENV" in command
         assert "exit 1" in command
@@ -75,10 +80,10 @@ def test_minio_credentials_and_connections_stop_at_file_service_boundary() -> No
     )
     assert file_environment["FILE_STORAGE_BUCKET"] == ("${FILE_STORAGE_BUCKET:-agent-files}")
     assert file_environment["FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET"] == (
-        "${S3_BUCKET:-agent-attachments}"
+        "${FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET:-agent-attachments}"
     )
-    assert "S3_ACCESS_KEY" not in file_environment
-    assert "S3_SECRET_KEY" not in file_environment
+    assert "MINIO_ROOT_USER" not in file_environment
+    assert "MINIO_ROOT_PASSWORD" not in file_environment
 
     for name in (
         "agent-worker",
@@ -89,9 +94,18 @@ def test_minio_credentials_and_connections_stop_at_file_service_boundary() -> No
     ):
         service = services[name]
         environment = service.get("environment", {})
-        assert not any(key.startswith("S3_") for key in environment), name
+        assert "MINIO_ROOT_USER" not in environment, name
+        assert "MINIO_ROOT_PASSWORD" not in environment, name
         assert "FILE_STORAGE_LEGACY_ATTACHMENT_BUCKET" not in environment, name
         assert "minio" not in service.get("depends_on", {}), name
+
+
+def test_only_file_workspace_infrastructure_defines_the_minio_client() -> None:
+    adapters = []
+    for path in (ROOT / "backend" / "app").rglob("*.py"):
+        if "boto3.client(" in path.read_text(encoding="utf-8"):
+            adapters.append(path.relative_to(ROOT).as_posix())
+    assert adapters == ["backend/app/modules/file_workspace/storage.py"]
 
 
 def test_worker_identity_bootstrap_is_role_separated_and_file_service_is_hardened() -> None:

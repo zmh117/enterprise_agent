@@ -215,8 +215,8 @@ def test_compose_keeps_principal_keys_provider_config_and_runtime_urls_separated
         "DINGTALK_RUNTIME_AUTH_TOKEN_FILE",
         "PYTHON_AGENT_RUNTIME_URL",
         "TYPESCRIPT_AGENT_RUNTIME_URL",
-        "S3_ACCESS_KEY",
-        "S3_SECRET_KEY",
+        "MINIO_ROOT_USER",
+        "MINIO_ROOT_PASSWORD",
     }.intersection(ones["environment"])
 
     worker = services["agent-worker"]

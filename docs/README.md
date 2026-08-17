@@ -39,7 +39,6 @@
 - [Legacy 042 升级、采用与回滚](operations/schema-baseline-upgrade.md)
 - [Compose PostgreSQL 18 / RabbitMQ 4 升级与恢复](operations/compose-postgres18-rabbitmq4-upgrade.md)
 - [Agent 重试与失败投递](operations/agent-retry-failure-delivery.md)
-- [执行策略维护](operations/execution-policy-runtime-maintenance.md)
 - [平台 Master Key](operations/platform-master-key.md)
 - [Master Key 紧急离线重加密](operations/emergency-master-key-reencryption.md)
 - [钉钉测试数据重建](operations/dingtalk-test-data-rebuild.md)
