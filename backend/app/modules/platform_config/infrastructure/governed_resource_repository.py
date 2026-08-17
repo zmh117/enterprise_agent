@@ -138,6 +138,7 @@ class GovernedResourceRepository:
         provider_type: str,
         config: dict[str, Any],
         secret_refs: dict[str, str],
+        scope_bindings: list[dict[str, Any]],
         content_hash: str,
         actor_id: str,
     ) -> dict[str, Any]:
@@ -147,9 +148,9 @@ class GovernedResourceRepository:
             """
             insert into platform_resource_draft
               (id, resource_id, draft_revision, provider_type, config_json,
-               secret_refs_json, content_hash, status, created_by, updated_by,
+               secret_refs_json, scope_bindings_json, content_hash, status, created_by, updated_by,
                created_at, updated_at)
-            values (?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?)
             """,
             (
                 draft_id,
@@ -158,6 +159,7 @@ class GovernedResourceRepository:
                 provider_type,
                 json_text(config),
                 json_text(secret_refs),
+                json_text(scope_bindings),
                 content_hash,
                 actor_id,
                 actor_id,
@@ -175,6 +177,7 @@ class GovernedResourceRepository:
         provider_type: str,
         config: dict[str, Any],
         secret_refs: dict[str, str],
+        scope_bindings: list[dict[str, Any]],
         content_hash: str,
         actor_id: str,
     ) -> dict[str, Any]:
@@ -185,6 +188,7 @@ class GovernedResourceRepository:
                    provider_type = ?,
                    config_json = ?,
                    secret_refs_json = ?,
+                   scope_bindings_json = ?,
                    content_hash = ?,
                    status = 'DRAFT',
                    updated_by = ?,
@@ -196,6 +200,7 @@ class GovernedResourceRepository:
                 provider_type,
                 json_text(config),
                 json_text(secret_refs),
+                json_text(scope_bindings),
                 content_hash,
                 actor_id,
                 now_iso(),
@@ -376,6 +381,7 @@ class GovernedResourceRepository:
         provider_contract_version: str,
         config: dict[str, Any],
         secret_refs: dict[str, str],
+        scope_bindings: list[dict[str, Any]],
         content_hash: str,
         verification_id: str,
         actor_id: str,
@@ -386,9 +392,9 @@ class GovernedResourceRepository:
             insert into platform_resource_revision
               (id, resource_id, revision, provider_type,
                provider_contract_version, config_json, secret_refs_json,
-               content_hash, verification_id, status, published_by,
+               scope_bindings_json, content_hash, verification_id, status, published_by,
                published_at)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PUBLISHED', ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PUBLISHED', ?, ?)
             """,
             (
                 revision_id,
@@ -398,6 +404,7 @@ class GovernedResourceRepository:
                 provider_contract_version,
                 json_text(config),
                 json_text(secret_refs),
+                json_text(scope_bindings),
                 content_hash,
                 verification_id,
                 actor_id,
@@ -471,6 +478,7 @@ class GovernedResourceRepository:
             "draft_revision": int(row.get("draft_revision") or 0),
             "config": self._json(row.get("config_json") or "{}"),
             "secret_refs": self._json(row.get("secret_refs_json") or "{}"),
+            "scope_bindings": self._json(row.get("scope_bindings_json") or "[]"),
         }
 
     def _verification(self, row: dict[str, Any]) -> dict[str, Any]:
@@ -486,6 +494,7 @@ class GovernedResourceRepository:
             "revision": int(row.get("revision") or 0),
             "config": self._json(row.get("config_json") or "{}"),
             "secret_refs": self._json(row.get("secret_refs_json") or "{}"),
+            "scope_bindings": self._json(row.get("scope_bindings_json") or "[]"),
         }
 
     @staticmethod

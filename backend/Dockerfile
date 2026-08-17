@@ -49,7 +49,6 @@ COPY backend/app/acceptance /app/backend/app/acceptance
 COPY backend/app/cli /app/backend/app/cli
 COPY backend/app/shared /app/backend/app/shared
 COPY backend/app/modules /app/backend/app/modules
-COPY backend/config /app/backend/config
 COPY backend/migrations /app/backend/migrations
 COPY backend/seeds /app/backend/seeds
 COPY contracts/agent-runtime /app/contracts/agent-runtime

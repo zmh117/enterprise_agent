@@ -8,6 +8,7 @@ from app.modules.mcp_tool_runtime.domain.loki_policy import (
 )
 from app.modules.mcp_tool_runtime.domain.redis_policy import (
     assert_read_command,
+    enforce_key_namespace,
     enforce_scan_pattern,
 )
 from app.modules.mcp_tool_runtime.domain.sql.analyzer import analyze_readonly_query
@@ -105,7 +106,7 @@ class DirectReadOnlyToolExecutor:
         resource = self._resolve("database", environment, base, workshop, placement)
         directory = self.schema_inspectors.for_engine(resource.binding.engine).read(
             resource.binding,
-            table_prefix=None,
+            table_prefix=resource.table_prefix or None,
             query=query,
             table_limit=max(1, min(int(limit), 100)),
             column_limit=80,
@@ -155,14 +156,14 @@ class DirectReadOnlyToolExecutor:
             sql,
             engine=binding.engine,
             max_rows=maximum,
-            table_prefix=None,
+            table_prefix=resource.table_prefix or None,
             allowed_database=allowed_database,
             allowed_schema=allowed_schema,
             oracle_compat=database.oracle_compat,
         )
         directory = self.schema_inspectors.for_engine(binding.engine).read(
             binding,
-            table_prefix=None,
+            table_prefix=resource.table_prefix or None,
             query="",
             table_limit=500,
             column_limit=200,
@@ -221,6 +222,10 @@ class DirectReadOnlyToolExecutor:
                 error_code="mcp_redis_key_invalid",
             )
         resource = self._resolve("redis", environment or "", base or "", workshop, placement)
+        enforce_key_namespace(
+            key,
+            key_prefixes=resource.redis_namespace_prefixes,
+        )
         response = self.redis.get(resource.binding, key)
         return self._result(
             resource,
@@ -244,12 +249,13 @@ class DirectReadOnlyToolExecutor:
         del datasource, context
         assert_read_command("scan")
         bounded = max(1, min(int(limit), self.limits.redis_scan_limit))
+        resource = self._resolve("redis", environment or "", base or "", workshop, placement)
         normalized = enforce_scan_pattern(
             pattern,
+            key_prefixes=resource.redis_namespace_prefixes,
             scan_limit=self.limits.redis_scan_limit,
             limit=bounded,
         )
-        resource = self._resolve("redis", environment or "", base or "", workshop, placement)
         response = self.redis.scan(resource.binding, normalized, bounded)
         return self._result(
             resource,
@@ -272,7 +278,11 @@ class DirectReadOnlyToolExecutor:
     ) -> ToolResult:
         del context
         resource = self._resolve("loki", environment or "", base or "", workshop, None)
-        effective = build_effective_selector(selector)
+        effective = build_effective_selector(
+            selector,
+            mandatory_conditions=resource.loki_selector_conditions,
+            require_mandatory=True,
+        )
         response = self._loki(resource).query(
             resource.binding,
             selector=effective,
@@ -298,7 +308,7 @@ class DirectReadOnlyToolExecutor:
         resource = self._resolve("loki", environment, base, workshop, None)
         response = self._loki(resource).labels(
             resource.binding,
-            selector={},
+            selector=dict(resource.loki_selector_conditions),
             minutes=int(minutes),
             limit=int(limit),
         )
@@ -323,7 +333,7 @@ class DirectReadOnlyToolExecutor:
         response = self._loki(resource).label_values(
             resource.binding,
             label=label,
-            selector={},
+            selector=dict(resource.loki_selector_conditions),
             minutes=int(minutes),
             limit=int(limit),
         )
@@ -347,7 +357,11 @@ class DirectReadOnlyToolExecutor:
         resource = self._resolve("loki", environment, base, workshop, None)
         response = self._loki(resource).probe(
             resource.binding,
-            selector=build_effective_selector(selector),
+            selector=build_effective_selector(
+                selector,
+                mandatory_conditions=resource.loki_selector_conditions,
+                require_mandatory=True,
+            ),
             query=query,
             minutes=int(minutes),
             limit=int(limit),
@@ -398,6 +412,20 @@ class DirectReadOnlyToolExecutor:
                 "resource_revision_id": resource.resource_revision_id,
                 "resource_content_hash": resource.resource_content_hash,
                 "placement": resource.placement or None,
+                "scope_target": {
+                    "environment": resource.scope_target[0],
+                    "base": resource.scope_target[1] or None,
+                    "workshop": resource.scope_target[2] or None,
+                },
+                "scope_kind": (
+                    "table_prefix"
+                    if resource.table_prefix
+                    else "redis_namespace"
+                    if resource.redis_namespace_prefixes
+                    else "loki_selector"
+                    if resource.loki_selector_conditions
+                    else "unpartitioned"
+                ),
             },
             truncated=truncated,
         )

@@ -31,4 +31,8 @@ dingtalk-runtime/dist/
 !.claude/
 !.claude/skills/
 !.claude/skills/**
+
+# Re-apply generated Python exclusions after the backend/app allow rules above.
+**/__pycache__/
+**/*.py[cod]
 antvX6/

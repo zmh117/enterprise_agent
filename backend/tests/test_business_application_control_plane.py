@@ -604,6 +604,7 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
         "109_allow_file_service_mcp_publications.sql",
         "110_expand_file_source_received_time.sql",
         "111_expand_text_file_format_policy.sql",
+        "112_expand_resource_revision_scope_bindings.sql",
     ]
     session_columns = {str(row["name"]) for row in db.execute("pragma table_info(agent_session)")}
     assert {

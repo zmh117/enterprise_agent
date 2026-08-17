@@ -36,6 +36,10 @@ from .validation import (
     validate_secret_ref,
 )
 from .resource_maintenance import resource_reset_in_progress
+from .resource_scope_bindings import (
+    assert_resource_scope_bindings_publishable,
+    normalize_resource_scope_bindings,
+)
 
 
 RESOURCE_PROVIDERS = {
@@ -155,10 +159,6 @@ class GovernedResourceService:
                 error_code="resource_code_conflict",
             )
         resource_kind = str(payload.get("resource_kind") or "").lower()
-        provider_type, config, secret_refs, content_hash = self._draft_payload(
-            resource_kind=resource_kind,
-            payload=payload,
-        )
         scope_type = str(payload.get("scope_type") or "").lower()
         placement_value = validate_resource_placement(payload.get("placement"))
         placement = placement_value.value if placement_value is not None else None
@@ -200,6 +200,9 @@ class GovernedResourceService:
                 safe_message="新环境只能直接用于环境级工具资源；基地或车间作用域必须选择已有拓扑",
                 error_code="resource_environment_autocreate_scope_invalid",
             )
+        environment_code = ""
+        base_code = ""
+        workshop_code = ""
         if scope_type == "global":
             if any(
                 str(payload.get(field) or "")
@@ -213,6 +216,8 @@ class GovernedResourceService:
             environment_id = base_id = workshop_id = None
         else:
             environment_code = str(payload.get("environment_code") or "").strip()
+            base_code = str(payload.get("base_code") or "").strip()
+            workshop_code = str(payload.get("workshop_code") or "").strip()
             if create_environment_if_missing:
                 existing_environment = self.config_repository.get_environment_by_code(
                     environment_code
@@ -246,8 +251,8 @@ class GovernedResourceService:
                     )
             environment_id, base_id, workshop_id = self.config_repository.resolve_scope_ids(
                 environment_code=environment_code,
-                base_code=str(payload.get("base_code") or ""),
-                workshop_code=str(payload.get("workshop_code") or ""),
+                base_code=base_code,
+                workshop_code=workshop_code,
             )
         if (
             (scope_type != "global" and environment_id is None)
@@ -261,6 +266,16 @@ class GovernedResourceService:
                 safe_message="工具资源作用域与环境、基地、车间不匹配",
                 error_code="resource_scope_invalid",
             )
+        provider_type, config, secret_refs, scope_bindings, content_hash = (
+            self._draft_payload(
+                resource_kind=resource_kind,
+                scope_type=scope_type,
+                environment_code=environment_code,
+                base_code=base_code,
+                workshop_code=workshop_code,
+                payload=payload,
+            )
+        )
         resource = self.repository.create_resource(
             code=code,
             name=str(payload.get("name") or code),
@@ -278,6 +293,7 @@ class GovernedResourceService:
             provider_type=provider_type,
             config=config,
             secret_refs=secret_refs,
+            scope_bindings=scope_bindings,
             content_hash=content_hash,
             actor_id=actor_id,
         )
@@ -304,9 +320,15 @@ class GovernedResourceService:
         resource = self._resource(code)
         self._require_identity_enabled(resource)
         before = self.repository.get_draft(str(resource["id"]))
-        provider_type, config, secret_refs, content_hash = self._draft_payload(
-            resource_kind=str(resource["resource_kind"]),
-            payload=payload,
+        provider_type, config, secret_refs, scope_bindings, content_hash = (
+            self._draft_payload(
+                resource_kind=str(resource["resource_kind"]),
+                scope_type=str(resource["scope_type"]),
+                environment_code=str(resource.get("environment_code") or ""),
+                base_code=str(resource.get("base_code") or ""),
+                workshop_code=str(resource.get("workshop_code") or ""),
+                payload=payload,
+            )
         )
         draft = self.repository.update_draft(
             resource_id=str(resource["id"]),
@@ -314,6 +336,7 @@ class GovernedResourceService:
             provider_type=provider_type,
             config=config,
             secret_refs=secret_refs,
+            scope_bindings=scope_bindings,
             content_hash=content_hash,
             actor_id=actor_id,
         )
@@ -363,6 +386,11 @@ class GovernedResourceService:
         resource = self._resource(code)
         self._require_identity_enabled(resource)
         draft = self.repository.get_draft(str(resource["id"]))
+        assert_resource_scope_bindings_publishable(
+            draft.get("scope_bindings"),
+            resource_kind=str(resource["resource_kind"]),
+            scope_type=str(resource["scope_type"]),
+        )
         outcome = (verifier or self.verifier).verify(
             resource=resource,
             draft=draft,
@@ -459,6 +487,7 @@ class GovernedResourceService:
             provider_contract_version=str(verification["provider_contract_version"]),
             config=dict(draft["config"]),
             secret_refs=dict(draft["secret_refs"]),
+            scope_bindings=list(draft["scope_bindings"]),
             content_hash=str(draft["content_hash"]),
             verification_id=str(verification["id"]),
             actor_id=actor_id,
@@ -504,6 +533,7 @@ class GovernedResourceService:
             provider_type=str(revision["provider_type"]),
             config=dict(revision["config"]),
             secret_refs=dict(revision["secret_refs"]),
+            scope_bindings=list(revision["scope_bindings"]),
             content_hash=str(revision["content_hash"]),
             actor_id=actor_id,
         )
@@ -660,8 +690,12 @@ class GovernedResourceService:
         self,
         *,
         resource_kind: str,
+        scope_type: str,
+        environment_code: str,
+        base_code: str,
+        workshop_code: str,
         payload: dict[str, Any],
-    ) -> tuple[str, dict[str, Any], dict[str, str], str]:
+    ) -> tuple[str, dict[str, Any], dict[str, str], list[dict[str, Any]], str]:
         providers = RESOURCE_PROVIDERS.get(resource_kind)
         provider_type = str(payload.get("provider_type") or "").lower()
         if not providers or provider_type not in providers:
@@ -695,6 +729,15 @@ class GovernedResourceService:
             )
         config = document.config
         secret_refs = document.secret_refs
+        scope_bindings = normalize_resource_scope_bindings(
+            payload.get("scope_bindings"),
+            resource_kind=resource_kind,
+            scope_type=scope_type,
+            environment_code=environment_code,
+            base_code=base_code,
+            workshop_code=workshop_code,
+        )
+        self._assert_scope_binding_targets_exist(scope_bindings)
         for ref in secret_refs.values():
             code = ref.removeprefix("secret://platform/")
             secret = self.config_repository.get_platform_secret_by_code(code)
@@ -709,6 +752,7 @@ class GovernedResourceService:
                 "provider_type": provider_type,
                 "config": config,
                 "secret_refs": secret_refs,
+                "scope_bindings": scope_bindings,
             },
             ensure_ascii=False,
             separators=(",", ":"),
@@ -718,7 +762,45 @@ class GovernedResourceService:
             document.provider_type,
             config,
             secret_refs,
+            scope_bindings,
             hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        )
+
+    def _assert_scope_binding_targets_exist(
+        self,
+        scope_bindings: list[dict[str, Any]],
+    ) -> None:
+        for binding in scope_bindings:
+            environment_code = str(binding.get("environment_code") or "")
+            base_code = str(binding.get("base_code") or "")
+            workshop_code = str(binding.get("workshop_code") or "")
+            environment = self.config_repository.get_environment_by_code(
+                environment_code
+            )
+            if not environment or environment.get("status") != "enabled":
+                self._raise_scope_binding_target_unavailable()
+            if base_code:
+                base = self.config_repository.get_base_by_code(
+                    environment_code=environment_code,
+                    code=base_code,
+                )
+                if not base or base.get("status") != "enabled":
+                    self._raise_scope_binding_target_unavailable()
+            if workshop_code:
+                workshop = self.config_repository.get_workshop_by_code(
+                    environment_code=environment_code,
+                    base_code=base_code,
+                    code=workshop_code,
+                )
+                if not workshop or workshop.get("status") != "enabled":
+                    self._raise_scope_binding_target_unavailable()
+
+    @staticmethod
+    def _raise_scope_binding_target_unavailable() -> None:
+        raise NonRetryableExecutionError(
+            "Resource scope binding target is unavailable",
+            safe_message="数据范围目标不存在或已停用，请从当前平台拓扑重新选择",
+            error_code="resource_scope_binding_target_unavailable",
         )
 
     def _audit(

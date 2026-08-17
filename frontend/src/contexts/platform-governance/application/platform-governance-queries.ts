@@ -12,6 +12,7 @@ import {
   listEnvironments,
   listGovernedResources,
   listPlatformSecrets,
+  listProviderContracts,
   listWorkshops,
   publishGovernedResource,
   rotatePlatformSecret,
@@ -85,6 +86,10 @@ export function useResourceFormOptions() {
     workshops: useQuery({
       queryKey: ["platform-governance", "workshops"],
       queryFn: listWorkshops,
+    }),
+    providerContracts: useQuery({
+      queryKey: ["platform-governance", "provider-contracts"],
+      queryFn: listProviderContracts,
     }),
   }
 }

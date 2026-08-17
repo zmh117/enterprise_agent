@@ -24,6 +24,9 @@ const resourceDraftSchema = z
     provider_type: z.string(),
     config: z.record(z.string(), z.unknown()),
     secret_refs: z.record(z.string(), z.string()),
+    scope_bindings: z
+      .array(z.record(z.string(), z.unknown()))
+      .default([]),
     status: z.enum(["DRAFT", "VERIFIED"]),
     updated_at: z.string(),
   })
@@ -38,6 +41,9 @@ const resourceRevisionSchema = z
     provider_contract_version: z.string(),
     config: z.record(z.string(), z.unknown()),
     secret_refs: z.record(z.string(), z.string()),
+    scope_bindings: z
+      .array(z.record(z.string(), z.unknown()))
+      .default([]),
     status: z.enum(["PUBLISHED", "DISABLED", "ARCHIVED"]),
     published_at: z.string(),
   })
@@ -186,5 +192,6 @@ export type ResourceFormInput = {
   provider_type: "mysql" | "sqlserver" | "oracle" | "redis" | "loki"
   config: Record<string, unknown>
   secret_refs: Record<string, string>
+  scope_bindings: Array<Record<string, unknown>>
   create_environment_if_missing?: boolean
 }

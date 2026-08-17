@@ -54,7 +54,7 @@ def test_governed_resource_schema_has_stable_revision_records_without_legacy_map
         migrator_build="resource-schema-test",
     ).run()
 
-    assert result.head == "111"
+    assert result.head == "112"
     tables = {
         row["name"]
         for row in database.execute("select name from sqlite_master where type = 'table'")
@@ -87,6 +87,16 @@ def test_governed_resource_schema_has_stable_revision_records_without_legacy_map
     job_columns = {row["name"] for row in database.execute("pragma table_info(agent_job)")}
     assert "classification" in agent_columns
     assert {"execution_scope_id", "execution_scope_hash"}.isdisjoint(job_columns)
+    draft_columns = {
+        row["name"]
+        for row in database.execute("pragma table_info(platform_resource_draft)")
+    }
+    revision_columns = {
+        row["name"]
+        for row in database.execute("pragma table_info(platform_resource_revision)")
+    }
+    assert "scope_bindings_json" in draft_columns
+    assert "scope_bindings_json" in revision_columns
     database.close()
 
 

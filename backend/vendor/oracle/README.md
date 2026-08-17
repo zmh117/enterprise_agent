@@ -1,6 +1,6 @@
-# Oracle Instant Client（供 internal-api-platform thick 模式使用）
+# Oracle Instant Client（供 tool-mcp thick 模式使用）
 
-`internal-api-platform` Docker 镜像只接受 **64-bit Oracle Instant
+`tool-mcp` Docker 镜像只接受 **64-bit Oracle Instant
 Client 19c**，用于 python-oracledb Thick 连接 Oracle 11.2.0.4。Thin
 模式和其他 Instant Client 主版本不会被当成可用能力。
 
@@ -23,7 +23,7 @@ Oracle Instant Client 按 Oracle 许可分发。下载前须接受 Oracle 相关
 3. 重新构建：
 
 ```bash
-docker compose --profile real-tools build internal-api-platform
+docker compose build tool-mcp
 ```
 
 未放入合规 19c Client 时，或目录里只有 21c/23ai 等其他版本时，
@@ -32,9 +32,10 @@ Loki，但 Oracle 保持 blocked。只有检测到 19c 库或 zip 时才会安�
 `unzip`；可用 build-arg 换国内 Debian 源：
 
 ```bash
-docker compose --profile real-tools build internal-api-platform \
+docker compose build \
   --build-arg DEBIAN_MIRROR=https://mirrors.aliyun.com/debian \
-  --build-arg DEBIAN_SECURITY_MIRROR=https://mirrors.aliyun.com/debian-security
+  --build-arg DEBIAN_SECURITY_MIRROR=https://mirrors.aliyun.com/debian-security \
+  tool-mcp
 ```
 
 镜像会设置：
@@ -44,7 +45,7 @@ docker compose --profile real-tools build internal-api-platform \
 
 ## 运行时行为
 
-- 若存在 64-bit 19c 动态库且架构与容器一致，平台进程会初始化一次 Thick
+- 若存在 64-bit 19c 动态库且架构与容器一致，`tool-mcp` 进程会初始化一次 Thick
   模式（`oracledb.init_oracle_client`）。
 - 若不存在、版本不符、架构不匹配或初始化后仍为 Thin，Oracle 验证与执行
   都会失败关闭；MySQL 等其他能力不受影响。

@@ -18,12 +18,15 @@ from app.modules.mcp_tool_runtime.domain.topology import (
     Workshop,
 )
 from app.modules.platform_config.application.secrets import EncryptedDbSecretProvider
+from app.modules.platform_config.application.resource_scope_bindings import (
+    select_resource_scope_binding,
+)
 from app.modules.platform_config.domain.provider_contracts import (
     CanonicalProviderDocument,
     ProviderContractRegistry,
 )
 from app.shared.database import Database
-from app.shared.exceptions import ToolPolicyError
+from app.shared.exceptions import NonRetryableExecutionError, ToolPolicyError
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +36,10 @@ class ResolvedToolResource:
     resource_revision_id: str
     resource_content_hash: str
     placement: str
+    table_prefix: str
+    redis_namespace_prefixes: tuple[str, ...]
+    loki_selector_conditions: tuple[tuple[str, str], ...]
+    scope_target: tuple[str, str, str]
     binding: ResourceBinding
 
 
@@ -146,6 +153,7 @@ class DirectResourceResolver:
                    revision.id as resource_revision_id, revision.revision,
                    revision.provider_type, revision.provider_contract_version,
                    revision.config_json, revision.secret_refs_json,
+                   revision.scope_bindings_json,
                    revision.content_hash
               from platform_resource resource
               join platform_resource_revision revision
@@ -203,12 +211,51 @@ class DirectResourceResolver:
         try:
             config = json.loads(str(row["config_json"]))
             secret_refs = json.loads(str(row["secret_refs_json"]))
+            scope_bindings = json.loads(str(row.get("scope_bindings_json") or "[]"))
         except (TypeError, json.JSONDecodeError) as exc:
             raise ToolPolicyError(
                 "Published MCP Resource document is invalid",
                 safe_message="已发布工具资源配置无效",
                 error_code="mcp_resource_revision_invalid",
             ) from exc
+        try:
+            scope_binding = select_resource_scope_binding(
+                scope_bindings,
+                resource_kind=str(row["resource_kind"]),
+                environment_code=environment,
+                base_code=base,
+                workshop_code=workshop,
+            )
+        except NonRetryableExecutionError as exc:
+            raise ToolPolicyError(
+                "Published MCP Resource scope binding is invalid",
+                safe_message="已发布工具资源的数据范围无效",
+                error_code="mcp_resource_scope_invalid",
+            ) from exc
+        kind = str(row["resource_kind"])
+        if (kind == "loki" or (workshop and kind in {"database", "redis"})) and not scope_binding:
+            raise ToolPolicyError(
+                "Published MCP Resource has no exact data-scope binding",
+                safe_message="当前目标没有已发布的数据范围配置",
+                error_code="mcp_resource_scope_not_resolved",
+            )
+        scope_binding = scope_binding or {}
+        table_prefix = str(scope_binding.get("table_prefix") or "")
+        redis_namespace_prefixes = tuple(
+            str(value)
+            for value in scope_binding.get("namespace_prefixes", [])
+            if str(value)
+        )
+        selector_value = scope_binding.get("selector_conditions") or {}
+        if not isinstance(selector_value, dict):
+            raise ToolPolicyError(
+                "Published Loki selector conditions are invalid",
+                safe_message="已发布 Loki selector 无效",
+                error_code="mcp_resource_scope_invalid",
+            )
+        loki_selector_conditions = tuple(
+            sorted((str(key), str(value)) for key, value in selector_value.items())
+        )
         document = CanonicalProviderDocument(
             provider_type=str(row["provider_type"]),
             contract_version=str(row["provider_contract_version"]),
@@ -279,8 +326,8 @@ class DirectResourceResolver:
         workshop_value = (
             Workshop(
                 code=workshop,
-                table_prefix="",
-                redis_key_prefix="",
+                table_prefix=table_prefix,
+                redis_key_prefix=(redis_namespace_prefixes[0] if redis_namespace_prefixes else ""),
             )
             if workshop
             else None
@@ -303,6 +350,14 @@ class DirectResourceResolver:
             resource_revision_id=str(row["resource_revision_id"]),
             resource_content_hash=str(row["content_hash"]),
             placement=str(row.get("placement") or ""),
+            table_prefix=table_prefix,
+            redis_namespace_prefixes=redis_namespace_prefixes,
+            loki_selector_conditions=loki_selector_conditions,
+            scope_target=(
+                str(scope_binding.get("environment_code") or environment),
+                str(scope_binding.get("base_code") or ""),
+                str(scope_binding.get("workshop_code") or ""),
+            ),
             binding=ResourceBinding(
                 environment=environment_value,
                 base=base_value,

@@ -5,7 +5,9 @@ import {
   LoaderCircleIcon,
   PlusIcon,
   RefreshCwIcon,
+  SearchIcon,
   ServerCogIcon,
+  Trash2Icon,
 } from "lucide-react"
 
 import {
@@ -60,9 +62,11 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Textarea } from "@/components/ui/textarea"
 import {
   useCreateDraftFromRevision,
   useCreateGovernedResource,
+  useDiscoverLokiLabelValues,
   useDeleteGovernedResourceDraft,
   useGovernedResources,
   usePublishGovernedResource,
@@ -70,6 +74,7 @@ import {
   useSaveGovernedResourceDraft,
   useSetResourceIdentityStatus,
   useSetResourceRevisionStatus,
+  useTestLokiResourceDraft,
   useVerifyGovernedResource,
 } from "@/contexts/platform-governance/application/platform-governance-queries"
 import type {
@@ -78,6 +83,7 @@ import type {
   ResourceVerification,
   TopologyItem,
 } from "@/contexts/platform-governance/domain/platform-governance"
+import type { ProviderContract } from "@/contexts/platform-governance/domain/provider-contract"
 import { ApiError } from "@/shared/api/api-client"
 
 type Provider = ResourceFormInput["provider_type"]
@@ -152,6 +158,7 @@ function emptyForm(): ResourceFormInput {
     provider_type: "mysql",
     config: { ...defaultConfigs.mysql },
     secret_refs: {},
+    scope_bindings: [],
   }
 }
 
@@ -170,6 +177,7 @@ function formForResource(resource: GovernedResource | null) {
     provider_type: source.provider_type as Provider,
     config: { ...source.config },
     secret_refs: { ...source.secret_refs },
+    scope_bindings: source.scope_bindings.map((binding) => ({ ...binding })),
   }
 }
 
@@ -542,6 +550,7 @@ function ResourceCard({
 }) {
   const published = resource.published_revision
   const draft = resource.draft
+  const activeDocument = draft ?? published
   const identityEnabled = resource.status === "enabled"
   const identityArchiveBlocked =
     Boolean(draft) ||
@@ -593,6 +602,8 @@ function ResourceCard({
               ? `r${published.revision} · ${published.status}`
               : "尚未发布"}
           </dd>
+          <dt className="text-muted-foreground">数据范围</dt>
+          <dd>{activeDocument?.scope_bindings.length ?? 0} 条绑定</dd>
         </dl>
         {verification ? (
           <p
@@ -760,6 +771,23 @@ function ResourceFormSheet({
     form.scope_type === "environment" &&
     Boolean(normalizedEnvironmentCode) &&
     !environmentExists
+  const providerContracts = options.providerContracts.data ?? []
+  const providerOptions = providerContracts.length
+    ? providerContracts
+        .filter(
+          (contract): contract is typeof contract & { provider_type: Provider } =>
+            contract.provider_type in providerLabels
+        )
+        .map((contract) => ({
+          provider: contract.provider_type,
+          available: contract.available,
+          reason: contract.unavailable_reason,
+        }))
+    : (Object.keys(providerLabels) as Provider[]).map((provider) => ({
+        provider,
+        available: true,
+        reason: "",
+      }))
 
   function setProvider(provider: Provider) {
     const kind: ResourceKind =
@@ -779,6 +807,7 @@ function ResourceFormSheet({
       workshop_code: provider === "loki" ? "" : form.workshop_code,
       config: structuredClone(defaultConfigs[provider]),
       secret_refs: {},
+      scope_bindings: [],
     })
     if (provider === "oracle") setOracleAddressType("service_name")
   }
@@ -867,10 +896,16 @@ function ResourceFormSheet({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {(Object.keys(providerLabels) as Provider[]).map(
-                    (provider) => (
-                      <SelectItem key={provider} value={provider}>
+                  {providerOptions.map(
+                    ({ provider, available, reason }) => (
+                      <SelectItem
+                        key={provider}
+                        value={provider}
+                        disabled={!available}
+                        title={!available ? reason : undefined}
+                      >
                         {providerLabels[provider]}
+                        {!available ? "（当前不可用）" : ""}
                       </SelectItem>
                     )
                   )}
@@ -967,29 +1002,55 @@ function ResourceFormSheet({
             ) : null}
           </FieldGroup>
 
-          <ProviderFields
-            provider={form.provider_type}
-            config={form.config}
-            secrets={secrets.map((secret) => ({
-              code: secret.code,
-              ref: secret.secret_ref,
-            }))}
-            secretRefs={form.secret_refs}
-            oracleAddressType={oracleAddressType}
-            onOracleAddressType={(value) => {
-              setOracleAddressType(value)
-              const next = { ...form.config }
-              if (value === "sid") {
-                delete next.service_name
-                next.sid = ""
-              } else {
-                delete next.sid
-                next.service_name = ""
-              }
-              setForm({ ...form, config: next })
-            }}
-            onConfig={setConfig}
-            onSecret={setSecret}
+          <section className="space-y-4 rounded-lg border p-4">
+            <div>
+              <h3 className="text-sm font-semibold">连接配置</h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                字段边界来自当前 Provider Contract；Secret 只保存受管引用。
+              </p>
+            </div>
+            <ProviderFields
+              provider={form.provider_type}
+              contract={(options.providerContracts.data ?? []).find(
+                (contract) => contract.provider_type === form.provider_type
+              )}
+              config={form.config}
+              secrets={secrets.map((secret) => ({
+                code: secret.code,
+                ref: secret.secret_ref,
+              }))}
+              secretRefs={form.secret_refs}
+              oracleAddressType={oracleAddressType}
+              onOracleAddressType={(value) => {
+                setOracleAddressType(value)
+                const next = { ...form.config }
+                if (value === "sid") {
+                  delete next.service_name
+                  next.sid = ""
+                } else {
+                  delete next.sid
+                  next.service_name = ""
+                }
+                setForm({ ...form, config: next })
+              }}
+              onConfig={setConfig}
+              onSecret={setSecret}
+            />
+          </section>
+          <ScopeBindingsEditor
+            resourceCode={resource?.code ?? ""}
+            resourceKind={form.resource_kind}
+            scopeType={form.scope_type}
+            environmentCode={form.environment_code}
+            baseCode={form.base_code}
+            workshopCode={form.workshop_code}
+            environments={options.environments.data ?? []}
+            bases={options.bases.data ?? []}
+            workshops={options.workshops.data ?? []}
+            bindings={form.scope_bindings}
+            onChange={(scopeBindings) =>
+              setForm({ ...form, scope_bindings: scopeBindings })
+            }
           />
           <MutationError error={error} />
         </form>
@@ -1115,6 +1176,7 @@ function TopologyCombobox({
 
 function ProviderFields({
   provider,
+  contract,
   config,
   secrets,
   secretRefs,
@@ -1124,6 +1186,7 @@ function ProviderFields({
   onSecret,
 }: {
   provider: Provider
+  contract?: ProviderContract
   config: Record<string, unknown>
   secrets: Array<{ code: string; ref: string }>
   secretRefs: Record<string, string>
@@ -1141,15 +1204,17 @@ function ProviderFields({
       min?: number
       max?: number
     } = {}
-  ) => (
+  ) => {
+    const field = contract?.schema.fields.find((item) => item.name === name)
+    return (
     <Field key={name}>
       <FieldLabel htmlFor={`resource-${name}`}>{label}</FieldLabel>
       <Input
         id={`resource-${name}`}
         type={options.numeric ? "number" : "text"}
-        required={options.required}
-        min={options.min}
-        max={options.max}
+        required={field?.required ?? options.required}
+        min={field?.minimum ?? options.min}
+        max={field?.maximum ?? options.max}
         value={String(config[name] ?? "")}
         onChange={(event) =>
           onConfig(
@@ -1159,7 +1224,8 @@ function ProviderFields({
         }
       />
     </Field>
-  )
+    )
+  }
   if (provider === "loki") {
     return (
       <FieldGroup className="grid gap-4 sm:grid-cols-2">
@@ -1299,6 +1365,413 @@ function ProviderFields({
         onChange={(value) => onSecret("password_ref", value)}
       />
     </FieldGroup>
+  )
+}
+
+function ScopeBindingsEditor({
+  resourceCode,
+  resourceKind,
+  scopeType,
+  environmentCode,
+  baseCode,
+  workshopCode,
+  environments,
+  bases,
+  workshops,
+  bindings,
+  onChange,
+}: {
+  resourceCode: string
+  resourceKind: ResourceKind
+  scopeType: ResourceFormInput["scope_type"]
+  environmentCode: string
+  baseCode: string
+  workshopCode: string
+  environments: TopologyItem[]
+  bases: TopologyItem[]
+  workshops: TopologyItem[]
+  bindings: Array<Record<string, unknown>>
+  onChange: (bindings: Array<Record<string, unknown>>) => void
+}) {
+  const lokiTest = useTestLokiResourceDraft()
+  const labelValues = useDiscoverLokiLabelValues()
+  const [activeBinding, setActiveBinding] = useState(0)
+  const [selectedLabel, setSelectedLabel] = useState("")
+  const [selectedValue, setSelectedValue] = useState("")
+
+  function replace(index: number, value: Record<string, unknown>) {
+    onChange(bindings.map((binding, itemIndex) => (itemIndex === index ? value : binding)))
+  }
+
+  function addBinding() {
+    const target: Record<string, unknown> = {
+      environment_code: environmentCode,
+    }
+    if (baseCode) target.base_code = baseCode
+    if (workshopCode && resourceKind !== "loki") target.workshop_code = workshopCode
+    if (resourceKind === "database") target.table_prefix = ""
+    if (resourceKind === "redis") target.namespace_prefixes = []
+    if (resourceKind === "loki") target.selector_conditions = {}
+    onChange([...bindings, target])
+    setActiveBinding(bindings.length)
+    setSelectedLabel("")
+    setSelectedValue("")
+  }
+
+  const active = bindings[activeBinding]
+  const activeConditions =
+    active && typeof active.selector_conditions === "object" && active.selector_conditions
+      ? (active.selector_conditions as Record<string, string>)
+      : {}
+  const availableLabels = (lokiTest.data?.labels ?? []).filter(
+    (label) => !(label in activeConditions)
+  )
+
+  return (
+    <section className="space-y-4 rounded-lg border p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold">数据范围</h3>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            连接与数据范围属于同一个 Draft，保存任一部分都会使旧验证失效。
+          </p>
+        </div>
+        <Button type="button" size="sm" variant="outline" onClick={addBinding}>
+          <PlusIcon aria-hidden="true" />
+          添加范围
+        </Button>
+      </div>
+
+      {!bindings.length ? (
+        <p className="rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">
+          {resourceKind === "loki"
+            ? "先保存 Loki 连接 Draft，再连接发现 label 并添加 Environment/Base selector。"
+            : scopeType === "workshop"
+              ? "Workshop 资源验证前必须添加精确范围。"
+              : "当前目标没有 Workshop 时可以保持无分区范围。"}
+        </p>
+      ) : null}
+
+      {bindings.map((binding, index) => (
+        <div key={index} className="space-y-4 rounded-md border bg-muted/20 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-medium">范围 {index + 1}</p>
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="ghost"
+              aria-label={`删除范围 ${index + 1}`}
+              onClick={() => {
+                onChange(bindings.filter((_, itemIndex) => itemIndex !== index))
+                setActiveBinding(0)
+              }}
+            >
+              <Trash2Icon aria-hidden="true" />
+            </Button>
+          </div>
+          <FieldGroup className="grid gap-3 sm:grid-cols-3">
+            <ScopeTargetInput
+              id={`scope-environment-${index}`}
+              label="Environment"
+              value={String(binding.environment_code ?? "")}
+              disabled={scopeType !== "global"}
+              options={environments.map((item) => item.code)}
+              onChange={(value) =>
+                replace(index, {
+                  ...binding,
+                  environment_code: value,
+                  base_code: "",
+                  workshop_code: "",
+                })
+              }
+            />
+            <ScopeTargetInput
+              id={`scope-base-${index}`}
+              label="Base（可选）"
+              value={String(binding.base_code ?? "")}
+              disabled={scopeType === "base" || scopeType === "workshop"}
+              options={bases
+                .filter(
+                  (item) =>
+                    item.environment_code === String(binding.environment_code ?? "")
+                )
+                .map((item) => item.code)}
+              onChange={(value) =>
+                replace(index, { ...binding, base_code: value, workshop_code: "" })
+              }
+            />
+            {resourceKind !== "loki" ? (
+              <ScopeTargetInput
+                id={`scope-workshop-${index}`}
+                label="Workshop（可选）"
+                value={String(binding.workshop_code ?? "")}
+                disabled={scopeType === "workshop"}
+                options={workshops
+                  .filter(
+                    (item) =>
+                      item.environment_code === String(binding.environment_code ?? "") &&
+                      item.base_code === String(binding.base_code ?? "")
+                  )
+                  .map((item) => item.code)}
+                onChange={(value) => replace(index, { ...binding, workshop_code: value })}
+              />
+            ) : null}
+          </FieldGroup>
+
+          {resourceKind === "database" ? (
+            <Field>
+              <FieldLabel htmlFor={`table-prefix-${index}`}>精确表前缀</FieldLabel>
+              <Input
+                id={`table-prefix-${index}`}
+                required={Boolean(binding.workshop_code)}
+                value={String(binding.table_prefix ?? "")}
+                placeholder="例如 GL001_EBR_"
+                onChange={(event) =>
+                  replace(index, { ...binding, table_prefix: event.target.value })
+                }
+              />
+            </Field>
+          ) : resourceKind === "redis" ? (
+            <Field>
+              <FieldLabel htmlFor={`redis-prefixes-${index}`}>
+                完整 namespace prefixes（每行一个）
+              </FieldLabel>
+              <Textarea
+                id={`redis-prefixes-${index}`}
+                required={Boolean(binding.workshop_code)}
+                value={((binding.namespace_prefixes as string[] | undefined) ?? []).join("\n")}
+                placeholder="cr999.crmes.CRMES_TEST_GL#GL001@$"
+                onChange={(event) =>
+                  replace(index, {
+                    ...binding,
+                    namespace_prefixes: event.target.value
+                      .split("\n")
+                      .map((value) => value.trim())
+                      .filter(Boolean),
+                  })
+                }
+              />
+            </Field>
+          ) : (
+            <LokiSelectorPreview
+              bindingIndex={index}
+              conditions={activeBinding === index ? activeConditions : ((binding.selector_conditions as Record<string, string>) ?? {})}
+              active={activeBinding === index}
+              availableLabels={availableLabels}
+              selectedLabel={selectedLabel}
+              selectedValue={selectedValue}
+              values={labelValues.data?.label === selectedLabel ? labelValues.data.values : []}
+              onActivate={() => {
+                setActiveBinding(index)
+                setSelectedLabel("")
+                setSelectedValue("")
+                labelValues.reset()
+              }}
+              onLabel={setSelectedLabel}
+              onValue={setSelectedValue}
+              onDiscoverValues={() => {
+                if (!selectedLabel || !lokiTest.data?.test_session_id) return
+                labelValues.mutate({
+                  code: resourceCode,
+                  testSessionId: lokiTest.data.test_session_id,
+                  label: selectedLabel,
+                  selectedConditions: activeConditions,
+                })
+              }}
+              onAdd={() => {
+                if (!selectedLabel || !selectedValue) return
+                replace(index, {
+                  ...binding,
+                  selector_conditions: {
+                    ...activeConditions,
+                    [selectedLabel]: selectedValue,
+                  },
+                })
+                setSelectedLabel("")
+                setSelectedValue("")
+                labelValues.reset()
+              }}
+              onRemove={(label) => {
+                const next = { ...activeConditions }
+                delete next[label]
+                replace(index, { ...binding, selector_conditions: next })
+              }}
+              pending={labelValues.isPending}
+            />
+          )}
+        </div>
+      ))}
+
+      {resourceKind === "loki" ? (
+        <div className="space-y-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={!resourceCode || lokiTest.isPending}
+            onClick={() => {
+              lokiTest.mutate(resourceCode)
+              setSelectedLabel("")
+              setSelectedValue("")
+              labelValues.reset()
+            }}
+          >
+            <SearchIcon aria-hidden="true" />
+            {lokiTest.isPending ? "正在连接" : "连接并发现 Labels"}
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            {!resourceCode
+              ? "新资源需要先保存连接 Draft，再打开编辑进行 label 发现。"
+              : "发现结果只用于当前 Draft 的精确条件选择；保存后仍需统一技术验证。"}
+          </p>
+          <MutationError error={lokiTest.error ?? labelValues.error} />
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
+function ScopeTargetInput({
+  id,
+  label,
+  value,
+  disabled,
+  options,
+  onChange,
+}: {
+  id: string
+  label: string
+  value: string
+  disabled: boolean
+  options: string[]
+  onChange: (value: string) => void
+}) {
+  const optional = label.includes("可选")
+  return (
+    <Field>
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <Select
+        value={value || "__none"}
+        disabled={disabled}
+        required={!optional}
+        onValueChange={(next) => {
+          if (next !== null) onChange(next === "__none" ? "" : next)
+        }}
+      >
+        <SelectTrigger id={id} className="w-full">
+          <SelectValue placeholder="请选择" />
+        </SelectTrigger>
+        <SelectContent>
+          {optional ? <SelectItem value="__none">不选择</SelectItem> : null}
+          {options.map((option) => (
+            <SelectItem key={option} value={option}>
+              {option}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </Field>
+  )
+}
+
+function LokiSelectorPreview({
+  bindingIndex,
+  conditions,
+  active,
+  availableLabels,
+  selectedLabel,
+  selectedValue,
+  values,
+  onActivate,
+  onLabel,
+  onValue,
+  onDiscoverValues,
+  onAdd,
+  onRemove,
+  pending,
+}: {
+  bindingIndex: number
+  conditions: Record<string, string>
+  active: boolean
+  availableLabels: string[]
+  selectedLabel: string
+  selectedValue: string
+  values: string[]
+  onActivate: () => void
+  onLabel: (value: string) => void
+  onValue: (value: string) => void
+  onDiscoverValues: () => void
+  onAdd: () => void
+  onRemove: (label: string) => void
+  pending: boolean
+}) {
+  const selector = `{${Object.entries(conditions)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
+    .join(",")}}`
+  return (
+    <div className="space-y-3">
+      <div className="space-y-2">
+        {Object.entries(conditions).map(([label, value]) => (
+          <div key={label} className="flex items-center gap-2 text-xs">
+            <code className="min-w-0 flex-1 rounded bg-muted px-2 py-1">
+              {label}={JSON.stringify(value)}
+            </code>
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="ghost"
+              aria-label={`删除 Loki 条件 ${label}`}
+              onClick={() => onRemove(label)}
+            >
+              <Trash2Icon aria-hidden="true" />
+            </Button>
+          </div>
+        ))}
+      </div>
+      {active ? (
+        <FieldGroup className="grid gap-2 sm:grid-cols-[1fr_auto_1fr_auto]">
+          <Select value={selectedLabel} onValueChange={(value) => onLabel(value ?? "")}>
+            <SelectTrigger aria-label={`范围 ${bindingIndex + 1} Loki label`} className="w-full">
+              <SelectValue placeholder="选择 label" />
+            </SelectTrigger>
+            <SelectContent>
+              {availableLabels.map((label) => (
+                <SelectItem key={label} value={label}>{label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button type="button" size="sm" variant="outline" disabled={!selectedLabel || pending} onClick={onDiscoverValues}>
+            查值
+          </Button>
+          <Select
+            value={selectedValue}
+            disabled={!values.length}
+            onValueChange={(value) => onValue(value ?? "")}
+          >
+            <SelectTrigger aria-label={`范围 ${bindingIndex + 1} Loki value`} className="w-full">
+              <SelectValue placeholder="选择精确值" />
+            </SelectTrigger>
+            <SelectContent>
+              {values.map((value) => (
+                <SelectItem key={value} value={value}>{value}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button type="button" size="sm" disabled={!selectedLabel || !selectedValue} onClick={onAdd}>
+            添加
+          </Button>
+        </FieldGroup>
+      ) : (
+        <Button type="button" size="sm" variant="outline" onClick={onActivate}>
+          编辑此 Selector
+        </Button>
+      )}
+      <Field>
+        <FieldLabel>最终 Selector（只读）</FieldLabel>
+        <Input readOnly value={selector} aria-label={`范围 ${bindingIndex + 1} 最终 Selector`} />
+      </Field>
+    </div>
   )
 }
 

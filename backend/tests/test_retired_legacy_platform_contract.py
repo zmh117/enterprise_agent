@@ -59,6 +59,31 @@ RETIRED_ACTIVE_MARKERS = (
     "/platform/api-capabilities",
     "/platform/builtin-tools",
 )
+RETIRED_CANONICAL_POSITIVE_MARKERS = (
+    "Capability Gateway、API Platform",
+    "backend/config/internal_platform_topology.example.yaml",
+    "FEATURE_REAL_INTERNAL_TOOLS=true",
+    "HttpInternalApiClient",
+    "FakeInternalApiClient",
+    "Tool calls go through internal API platform",
+    "Internal API Platform image bundles Oracle Instant Client",
+    "Internal API Platform loads topology",
+    "Internal API Platform uses DB-backed runtime snapshot",
+    "Internal API Platform resolves Web-managed secrets",
+    "Local Internal API Platform preserves",
+    "Internal API Platform 返回",
+    "Internal API Platform 使用",
+    "Internal API Platform 仍执行",
+    "Internal API Platform 在创建",
+    "调用来自 `internal-api-platform`",
+)
+CANONICAL_SPEC_PATHS = (
+    "openspec/specs/agent-model/spec.md",
+    "openspec/specs/builtin-tool-resource/spec.md",
+    "openspec/specs/execution-delivery/spec.md",
+    "openspec/specs/identity-access/spec.md",
+    "openspec/specs/platform-operations/spec.md",
+)
 
 
 def test_retired_management_and_internal_platform_routes_are_absent() -> None:
@@ -135,4 +160,30 @@ def test_retired_source_paths_and_active_configuration_markers_are_absent() -> N
         for marker in RETIRED_ACTIVE_MARKERS:
             if marker in text:
                 residuals.append(f"{path.relative_to(REPOSITORY_ROOT)}: {marker}")
+    assert residuals == []
+
+
+def test_docker_build_does_not_copy_retired_config_or_python_bytecode() -> None:
+    dockerfile = (REPOSITORY_ROOT / "backend/Dockerfile").read_text(encoding="utf-8")
+    assert "COPY backend/config" not in dockerfile
+
+    dockerignore = (REPOSITORY_ROOT / ".dockerignore").read_text(encoding="utf-8")
+    backend_allow = dockerignore.index("!backend/app/**")
+    assert dockerignore.rindex("**/__pycache__/") > backend_allow
+    assert dockerignore.rindex("**/*.py[cod]") > backend_allow
+
+
+def test_current_docs_and_canonical_specs_do_not_restore_retired_platform() -> None:
+    oracle_readme = (REPOSITORY_ROOT / "backend/vendor/oracle/README.md").read_text(
+        encoding="utf-8"
+    )
+    assert "internal-api-platform" not in oracle_readme.lower()
+    assert "docker compose build tool-mcp" in oracle_readme
+
+    residuals: list[str] = []
+    for relative in CANONICAL_SPEC_PATHS:
+        text = (REPOSITORY_ROOT / relative).read_text(encoding="utf-8")
+        for marker in RETIRED_CANONICAL_POSITIVE_MARKERS:
+            if marker in text:
+                residuals.append(f"{relative}: {marker}")
     assert residuals == []

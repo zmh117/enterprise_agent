@@ -15,6 +15,7 @@ import {
   workshopResponseSchema,
   type ResourceFormInput,
 } from "@/contexts/platform-governance/domain/platform-governance"
+import { parseProviderContractCatalog } from "@/contexts/platform-governance/domain/provider-contract"
 import { apiRequest } from "@/shared/api/api-client"
 
 export async function listPlatformSecrets() {
@@ -64,6 +65,12 @@ export async function listGovernedResources() {
   return resourceListResponseSchema.parse(
     await apiRequest("/api/platform/resources")
   ).resources
+}
+
+export async function listProviderContracts() {
+  return parseProviderContractCatalog(
+    await apiRequest("/api/platform/provider-contracts")
+  )
 }
 
 export async function createGovernedResource(input: ResourceFormInput) {

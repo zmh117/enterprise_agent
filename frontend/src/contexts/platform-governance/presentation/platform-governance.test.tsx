@@ -83,6 +83,7 @@ function governedOracleResource() {
       secret_refs: {
         password_ref: "secret://platform/oracle_reader_password",
       },
+      scope_bindings: [],
       status: "DRAFT",
       updated_at: "2026-07-29T00:00:00Z",
     },
@@ -132,6 +133,12 @@ function governedLokiResource({
             max_response_bytes: 65536,
           },
           secret_refs: {},
+          scope_bindings: [
+            {
+              environment_code: "agent_test",
+              selector_conditions: {},
+            },
+          ],
           status: "VERIFIED",
           updated_at: "2026-08-07T02:00:00Z",
         }
@@ -146,6 +153,12 @@ function governedLokiResource({
           provider_contract_version: "loki_v1",
           config: {},
           secret_refs: {},
+          scope_bindings: [
+            {
+              environment_code: "agent_test",
+              selector_conditions: { cluster: "agent-test" },
+            },
+          ],
           status: revisionStatus,
           published_at: "2026-08-07T01:50:00Z",
         }
@@ -454,6 +467,107 @@ describe("Phase 5 platform governance UI", () => {
     ).toBeInTheDocument()
   })
 
+  it("discovers arbitrary Loki labels and saves the exact selector in the same Draft", async () => {
+    let savedBody: Record<string, unknown> | undefined
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.endsWith("/api/platform/resources/loki_test/loki/test")) {
+        return response({
+          test_session_id: "loki-session-1",
+          draft_revision: 1,
+          labels: ["cluster", "kubernetes_namespace_name"],
+          label_count: 2,
+          truncated: false,
+          expires_at: "2026-08-17T12:05:00Z",
+        })
+      }
+      if (url.endsWith("/api/platform/resources/loki_test/loki/label-values")) {
+        return response({
+          label: "kubernetes_namespace_name",
+          values: ["mes-production"],
+          value_count: 1,
+          truncated: false,
+        })
+      }
+      if (url.endsWith("/api/platform/resources/loki_test/draft") && init?.method === "PUT") {
+        savedBody = JSON.parse(String(init.body)) as Record<string, unknown>
+        return response({
+          draft: {
+            ...governedLokiResource({ draft: true, published: false }).draft,
+            draft_revision: 2,
+            scope_bindings: (savedBody.scope_bindings as unknown[]) ?? [],
+          },
+        })
+      }
+      if (url.endsWith("/api/platform/resources")) {
+        return response({ resources: [governedLokiResource({ draft: true, published: false })] })
+      }
+      if (url.includes("/api/platform/secrets")) return response({ secrets: [] })
+      if (url.includes("/api/platform/environments")) {
+        return response({
+          environments: [
+            {
+              id: "environment-agent-test",
+              code: "agent_test",
+              display_name: "Agent Test",
+              status: "enabled",
+            },
+          ],
+        })
+      }
+      if (url.includes("/api/platform/bases")) return response({ bases: [] })
+      if (url.includes("/api/platform/workshops")) return response({ workshops: [] })
+      if (url.includes("/api/platform/provider-contracts")) return response({ contracts: [] })
+      throw new Error(`unexpected request: ${url}`)
+    })
+    renderWithQuery(<ToolResourcesPage />)
+
+    expect(await screen.findByText("Loki 测试环境")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "编辑草稿" }))
+    fireEvent.click(screen.getByRole("button", { name: "连接并发现 Labels" }))
+
+    const labelSelect = await screen.findByRole("combobox", {
+      name: "范围 1 Loki label",
+    })
+    fireEvent.click(labelSelect)
+    const labelOption = await screen.findByRole("option", {
+      name: "kubernetes_namespace_name",
+    })
+    fireEvent.pointerDown(labelOption, { pointerType: "mouse", button: 0 })
+    fireEvent.click(labelOption)
+    fireEvent.click(screen.getByRole("button", { name: "查值" }))
+
+    const valueSelect = await screen.findByRole("combobox", {
+      name: "范围 1 Loki value",
+    })
+    await waitFor(() => expect(valueSelect).not.toBeDisabled())
+    fireEvent.click(valueSelect)
+    const valueOption = await screen.findByRole("option", {
+      name: "mes-production",
+    })
+    fireEvent.pointerDown(valueOption, { pointerType: "mouse", button: 0 })
+    fireEvent.click(valueOption)
+    fireEvent.click(screen.getByRole("button", { name: "添加" }))
+
+    expect(screen.getByLabelText("范围 1 最终 Selector")).toHaveValue(
+      '{kubernetes_namespace_name="mes-production"}'
+    )
+    fireEvent.click(screen.getByRole("button", { name: "保存 Draft" }))
+
+    await waitFor(() =>
+      expect(savedBody).toMatchObject({
+        scope_bindings: [
+          {
+            environment_code: "agent_test",
+            selector_conditions: {
+              kubernetes_namespace_name: "mes-production",
+            },
+          },
+        ],
+      })
+    )
+  })
+
   it("creates a new Resource Draft directly from a Published revision", async () => {
     let copied = false
     let copyBody: Record<string, unknown> | undefined
@@ -707,6 +821,7 @@ describe("Phase 5 platform governance UI", () => {
       secret_refs: {
         password_ref: "secret://platform/oracle_reader_password",
       },
+      scope_bindings: [],
     })
 
     const body = JSON.parse(

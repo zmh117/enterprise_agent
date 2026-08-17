@@ -49,7 +49,7 @@ def database() -> Database:
           service_name text, status text, value_json text default 'null',
           secret_ref text default ''
         );
-        insert into schema_migration(version) values ('111');
+        insert into schema_migration(version) values ('112');
         """,
         ignore_existing_errors=False,
     )

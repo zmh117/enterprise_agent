@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import UTC, datetime
 import json
 from typing import Any, Protocol
 import urllib.error
+import urllib.parse
 from urllib.request import Request, urlopen
 
 from app.modules.platform_config.domain.provider_contracts import (
@@ -475,6 +477,11 @@ class LokiResourceProbe:
         parsed = json.loads(raw.decode("utf-8"))
         if not isinstance(parsed, dict):
             raise RuntimeError("Loki build info is invalid")
+        scope_checks = self._verify_scope_bindings(
+            config,
+            headers=headers,
+            timeout_seconds=effective_timeout,
+        )
         return {
             "connection": True,
             "build_info": True,
@@ -484,6 +491,55 @@ class LokiResourceProbe:
             "max_minutes": int(config["max_minutes"]),
             "max_lines": int(config["max_lines"]),
             "max_response_bytes": int(config["max_response_bytes"]),
+            **scope_checks,
+        }
+
+    def _verify_scope_bindings(
+        self,
+        config: dict[str, Any],
+        *,
+        headers: dict[str, str],
+        timeout_seconds: int,
+    ) -> dict[str, Any]:
+        bindings = config.get("scope_bindings") or []
+        if not bindings:
+            return {"scope_binding_count": 0, "selector_queries_accepted": 0}
+        accepted = 0
+        matched = 0
+        end_ns = int(datetime.now(UTC).timestamp() * 1_000_000_000)
+        for binding in bindings:
+            conditions = dict(binding.get("selector_conditions") or {})
+            selector = "{" + ",".join(
+                f"{key}={json.dumps(value, ensure_ascii=False)}"
+                for key, value in sorted(conditions.items())
+            ) + "}"
+            query = urllib.parse.urlencode(
+                {
+                    "match[]": selector,
+                    "start": str(end_ns - 15 * 60 * 1_000_000_000),
+                    "end": str(end_ns),
+                }
+            )
+            request = Request(
+                f"{str(config['base_url']).rstrip('/')}/loki/api/v1/series?{query}",
+                headers=headers,
+                method="GET",
+            )
+            with self._urlopen_func(request, timeout=timeout_seconds) as response:
+                raw = response.read(int(config["max_response_bytes"]) + 1)
+            if len(raw) > int(config["max_response_bytes"]):
+                raise RuntimeError("Loki selector verification response is too large")
+            parsed = json.loads(raw.decode("utf-8"))
+            if not isinstance(parsed, dict) or parsed.get("status") not in {None, "success"}:
+                raise RuntimeError("Loki selector verification failed")
+            series = parsed.get("data")
+            accepted += 1
+            if isinstance(series, list) and series:
+                matched += 1
+        return {
+            "scope_binding_count": len(bindings),
+            "selector_queries_accepted": accepted,
+            "selector_bindings_with_recent_match": matched,
         }
 
 
@@ -553,6 +609,7 @@ class GovernedResourceTechnicalVerifier:
                 document,
                 resolve_secret=self._resolve_secret,
             )
+            runtime["scope_bindings"] = list(draft.get("scope_bindings") or [])
             checks = probe.verify(
                 runtime,
                 timeout_seconds=self._timeout_seconds,

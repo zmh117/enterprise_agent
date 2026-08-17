@@ -388,19 +388,19 @@ The system SHALL check tool allowlists, source access, read-only risk policy and
 - **THEN** 审计记录 connector、external event ID、忽略原因和安全 payload 摘要
 
 ### Requirement: Tool calls are recorded with safe summaries
-The system SHALL persist tool call records with sanitized request payload summaries, bounded normalized response summaries, status, duration, risk level, audit linkage, and platform or Capability Release outcome details when available. For governed external APIs, the system MUST record Release and attempt metadata but MUST NOT persist authentication material, raw HTTP request/response bodies or unbounded external content.
+The system SHALL persist tool call records with sanitized request payload summaries, bounded normalized response summaries, status, duration, risk level, audit linkage, and exact MCP Tool or external Capability outcome details when available. For governed external APIs, the system MUST record Release and attempt metadata but MUST NOT persist authentication material, raw HTTP request/response bodies or unbounded external content.
 
 #### Scenario: Database tool succeeds
-- **WHEN** `query_database` returns evidence through the Internal API Platform
-- **THEN** the system records the tool name, sanitized request summary, bounded response summary, duration, status, risk level, related audit event, and platform request metadata if provided
+- **WHEN** `query_database` returns evidence through `tool-mcp`
+- **THEN** the system records the tool identifier/schema hash, sanitized request summary, bounded response summary, duration, status, risk level, related audit event and actual Resource Revision metadata
 
 #### Scenario: Tool call returns sensitive or large data
 - **WHEN** a tool response contains sensitive fields or exceeds inline storage limits
 - **THEN** the system stores a masked or summarized response in PostgreSQL and avoids persisting raw sensitive payloads in the tool call row
 
-#### Scenario: Internal platform rejects a tool call
-- **WHEN** the Internal API Platform rejects a tool call because of authorization, data-source policy, query policy, or malformed parameters
-- **THEN** the system records a failed tool call with a safe rejection reason, duration, risk level, and audit event without exposing platform secrets
+#### Scenario: Tool MCP rejects a call
+- **WHEN** `tool-mcp` rejects a tool call because of Job provenance, authorization, resource resolution, data-source policy, query policy or malformed parameters
+- **THEN** the system records a failed tool call with a safe rejection reason, duration, risk level and audit event without exposing resource secrets
 
 #### Scenario: Governed external API call succeeds after retry
 - **WHEN** a QUERY Capability succeeds after one or more HTTP attempts
