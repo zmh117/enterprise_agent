@@ -64,6 +64,7 @@ class BusinessApplicationRevision:
     workflow_publication_id: str = ""
     task_workspace_retention_period: str = "WEEK"
     file_format_policy_version: str = "text-v1"
+    document_processing_profile_code: str = "NONE"
     task_file_features: dict[str, bool] = field(default_factory=dict)
     session_policy: dict[str, Any] = field(default_factory=dict)
     execution_policy: dict[str, Any] = field(default_factory=dict)

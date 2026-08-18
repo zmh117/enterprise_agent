@@ -186,12 +186,12 @@ def test_job_manifest_freezes_exact_version_and_later_job_sees_new_current() -> 
     assert first["items"][0]["version_id"] == "version-1"
     assert first["items"][0]["auto_materialize"] == 1
     assert first["items"][0]["source_kind"] == "EXPLICIT_REFERENCE"
-    assert first["schema_version"] == 3
+    assert first["schema_version"] == 4
     assert first["items"][0]["source_received_at"] is None
     assert first["items"][0]["version_created_at"]
     runtime_manifest = service.runtime_manifest("job-1")
     assert runtime_manifest == {
-        "schema_version": 3,
+        "schema_version": 4,
         "file_format_policy_version": "text-v1",
         "manifest_hash": first["manifest_hash"],
         "observed_at": first["created_at"],

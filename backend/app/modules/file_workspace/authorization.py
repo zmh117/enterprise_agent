@@ -152,35 +152,104 @@ class FileAuthorizationService:
             self._deny("file_manifest_actions_invalid")
         if not isinstance(actions, list) or any(not isinstance(value, str) for value in actions):
             self._deny("file_manifest_actions_invalid")
-        policy_version = normalize_file_format_policy_version(
-            context.manifest.get("file_format_policy_version")
-        )
-        definition = get_text_format_policy(policy_version).by_code(
-            str(item.get("format_code") or "TXT")
-        )
         try:
             frozen_actions = {FileAction(value) for value in actions}
         except ValueError:
             self._deny("file_manifest_actions_invalid")
-        if not frozen_actions.issubset(definition.actions):
-            self._deny("file_manifest_actions_invalid")
-        named = text_format_for_name(
-            str(item.get("display_name") or ""),
-            policy_version=policy_version,
-        )
-        if (
-            named.code is not definition.code
-            or str(item.get("file_format_code") or "TXT") != definition.code.value
-            or str(item.get("version_format_code") or "TXT") != definition.code.value
-        ):
-            self._deny("file_manifest_format_invalid")
-        if action.value not in actions or action not in definition.actions:
-            self._deny("file_manifest_action_denied")
+        if item.get("representation_id"):
+            if (
+                str(item.get("format_code") or "")
+                not in {"PDF", "DOCX", "PPTX", "XLSX", "PNG", "JPEG", "WEBP"}
+                or frozen_actions
+                != {FileAction.READ_METADATA, FileAction.RETAIN, FileAction.DELIVER}
+                or action not in frozen_actions
+            ):
+                self._deny("file_manifest_action_denied")
+        else:
+            policy_version = normalize_file_format_policy_version(
+                context.manifest.get("file_format_policy_version")
+            )
+            definition = get_text_format_policy(policy_version).by_code(
+                str(item.get("format_code") or "TXT")
+            )
+            if not frozen_actions.issubset(definition.actions):
+                self._deny("file_manifest_actions_invalid")
+            named = text_format_for_name(
+                str(item.get("display_name") or ""),
+                policy_version=policy_version,
+            )
+            if (
+                named.code is not definition.code
+                or str(item.get("file_format_code") or "TXT") != definition.code.value
+                or str(item.get("version_format_code") or "TXT") != definition.code.value
+            ):
+                self._deny("file_manifest_format_invalid")
+            if action.value not in actions or action not in definition.actions:
+                self._deny("file_manifest_action_denied")
         if str(item.get("file_status")) != "ACTIVE" or str(item.get("version_status")) not in {
             "AVAILABLE",
             "CONFLICT",
         }:
             self._deny("file_content_unavailable")
+        if str(item.get("owner_type")) != str(context.workspace["owner_type"]):
+            self._deny("file_owner_boundary_denied")
+        if str(item.get("owner_type")) == WorkspaceOwnerType.PRIVATE_USER.value:
+            if str(item.get("owner_user_id")) != str(context.claims["sub"]):
+                self._deny("file_private_owner_denied")
+        elif any(
+            str(item.get(field) or "") != str(context.workspace[field] or "")
+            for field in (
+                "owner_enterprise_id",
+                "owner_connector_id",
+                "owner_conversation_id",
+            )
+        ):
+            self._deny("file_group_boundary_denied")
+        return item
+
+    def require_manifest_representation(
+        self,
+        context: FileAuthorizationContext,
+        *,
+        file_id: str,
+        version_id: str,
+    ) -> dict[str, Any]:
+        item = self.database.execute_one(
+            """
+            select i.*, f.tenant_id, f.owner_type, f.owner_user_id,
+                   f.owner_enterprise_id, f.owner_connector_id,
+                   f.owner_conversation_id, f.status as file_status,
+                   v.status as version_status, r.status as representation_status,
+                   r.source_file_id, r.source_version_id, r.object_key,
+                   r.size_bytes as live_representation_size_bytes,
+                   r.content_sha256 as live_representation_sha256,
+                   r.content_deleted_at as representation_content_deleted_at
+              from agent_job_file_snapshot_item i
+              join managed_file f on f.id = i.file_id
+              join managed_file_version v on v.id = i.version_id
+              join file_representation r on r.id = i.representation_id
+             where i.snapshot_id = ? and i.file_id = ? and i.version_id = ?
+            """,
+            (context.manifest["id"], file_id, version_id),
+        )
+        if (
+            item is None
+            or str(item.get("tenant_id")) != str(context.claims["tenant_id"])
+            or str(item.get("source_file_id")) != file_id
+            or str(item.get("source_version_id")) != version_id
+            or str(item.get("representation_kind") or "") != "MARKDOWN"
+            or str(item.get("representation_format_code") or "") != "MARKDOWN"
+            or str(item.get("representation_status") or "") != "AVAILABLE"
+            or item.get("representation_content_deleted_at")
+            or int(item.get("live_representation_size_bytes") or -1)
+            != int(item.get("representation_size_bytes") or -2)
+            or str(item.get("live_representation_sha256") or "")
+            != str(item.get("representation_sha256") or "")
+            or str(item.get("file_status") or "") != "ACTIVE"
+            or str(item.get("version_status") or "") not in {"AVAILABLE", "CONFLICT"}
+        ):
+            self._deny("file_representation_denied")
+        assert item is not None
         if str(item.get("owner_type")) != str(context.workspace["owner_type"]):
             self._deny("file_owner_boundary_denied")
         if str(item.get("owner_type")) == WorkspaceOwnerType.PRIVATE_USER.value:

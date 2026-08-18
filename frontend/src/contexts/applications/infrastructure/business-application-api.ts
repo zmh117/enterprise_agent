@@ -43,6 +43,31 @@ export const catalogSchema = z.object({
   agents: z.array(componentReferenceSchema),
   workflows: z.array(componentReferenceSchema),
   connectors: z.array(componentReferenceSchema),
+  document_processing_profiles: z
+    .array(
+      z.object({
+        code: z.enum(["NONE", "docling-text-v1"]),
+        version: z.string(),
+        hash: z.string(),
+        label: z.string(),
+        source_format_codes: z.array(z.string()),
+        output_kinds: z.array(z.string()),
+        limits: z
+          .object({
+            max_source_bytes: z.number().int().positive(),
+            max_pdf_pages: z.number().int().positive(),
+            processing_timeout_seconds: z.number().int().positive(),
+          })
+          .optional(),
+        document_processing_status: z.enum([
+          "DISABLED",
+          "CONFIGURED_UNAVAILABLE",
+          "READY",
+        ]),
+        document_processing_reason_code: z.string(),
+      })
+    )
+    .default([]),
   mcp_tools_by_agent_publication: z
     .record(
       z.string(),

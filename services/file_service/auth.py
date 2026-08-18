@@ -15,6 +15,8 @@ from app.modules.identity.application.principal_jwt import (
 from app.modules.identity.application.service_principal import (
     DELIVERY_WORKER_AUTHORIZED_PARTY,
     DELIVERY_WORKER_SCOPES,
+    FILE_PROCESSING_WORKER_AUTHORIZED_PARTY,
+    FILE_PROCESSING_WORKER_SCOPES,
     FILE_SERVICE_INTERNAL_AUDIENCE,
     FILE_WORKER_AUTHORIZED_PARTY,
     FILE_WORKER_SCOPES,
@@ -247,6 +249,21 @@ class FileWorkerPrincipalVerifier(FilePrincipalVerifier):
         )
         if claims["sub"] != DELIVERY_WORKER_AUTHORIZED_PARTY:
             self._deny("file_delivery_subject_invalid")
+        return claims
+
+    def verify_processing(self, token: str, *, required_scope: str) -> dict[str, Any]:
+        if required_scope not in FILE_PROCESSING_WORKER_SCOPES:
+            self._deny("file_processing_worker_scope_invalid")
+        claims = self._verify(
+            token,
+            issuer=FILE_WORKER_ISSUER,
+            audience=FILE_SERVICE_AUDIENCE,
+            authorized_party=FILE_PROCESSING_WORKER_AUTHORIZED_PARTY,
+            allowed_claims=self._service_claims,
+            required_scopes=FILE_PROCESSING_WORKER_SCOPES,
+        )
+        if claims["sub"] != FILE_PROCESSING_WORKER_AUTHORIZED_PARTY:
+            self._deny("file_processing_worker_subject_invalid")
         return claims
 
 

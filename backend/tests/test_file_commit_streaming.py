@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import json
 import sqlite3
@@ -9,8 +10,14 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
+from pypdf import PdfWriter
 
 from app.modules.file_workspace.authorization import FileAuthorizationContext
+from app.modules.document_processing import (
+    DocumentProcessingRepository,
+    GovernedDocumentProcessingService,
+    SourceStreamGrantSigner,
+)
 from app.modules.file_workspace.contracts import FILE_TRANSFER_META_KEY
 from app.modules.file_workspace.domain import (
     FileAction,
@@ -66,7 +73,7 @@ class _Storage:
         internal_object_key: str | None = None,
     ) -> InternalStoredObject:
         assert kind in {"staging", "attachment"}
-        assert content_type in {"text/plain", "text/markdown"}
+        assert content_type in {"text/plain", "text/markdown", "application/pdf"}
         if self.fail_put:
             raise OSError("simulated object write failure")
         key = internal_object_key or self.new_object_key(kind=kind)
@@ -116,6 +123,33 @@ class _Authorization:
                 "File manifest action denied",
                 safe_message="当前任务无权访问该文件",
                 error_code="file_manifest_item_denied",
+            )
+        return row
+
+    def require_manifest_representation(
+        self,
+        context: FileAuthorizationContext,
+        *,
+        file_id: str,
+        version_id: str,
+    ) -> dict[str, Any]:
+        row = self.repository.database.execute_one(
+            """
+            select i.*, r.object_key,
+                   r.size_bytes as live_representation_size_bytes,
+                   r.content_sha256 as live_representation_sha256
+              from agent_job_file_snapshot_item i
+              join file_representation r on r.id = i.representation_id
+             where i.snapshot_id = ? and i.file_id = ? and i.version_id = ?
+               and r.status = 'AVAILABLE'
+            """,
+            (context.manifest["id"], file_id, version_id),
+        )
+        if row is None:
+            raise PermissionDenied(
+                "File representation denied",
+                safe_message="当前任务无权访问该文件",
+                error_code="file_representation_denied",
             )
         return row
 
@@ -458,6 +492,105 @@ def test_materialization_is_exact_version_job_bound_and_one_time() -> None:
     assert error.value.error_code == "file_transfer_consumed"
 
 
+def test_manifest_v4_materializes_frozen_markdown_not_original_document() -> None:
+    repository, service, context, storage = _fixture(file_format_policy_version="text-v2")
+    owner = FileOwner(WorkspaceOwnerType.PRIVATE_USER, user_id="user-a")
+    original = b"%PDF-1.7 confidential binary"
+    markdown = b"# Governed representation\n"
+    original_sha256 = hashlib.sha256(original).hexdigest()
+    representation_sha256 = hashlib.sha256(markdown).hexdigest()
+    original_key = storage.new_object_key(kind="attachment")
+    representation_key = storage.new_object_key(kind="representation")
+    storage.objects[original_key] = original
+    storage.objects[representation_key] = markdown
+    repository.create_file(
+        file_id="file-document",
+        tenant_id="tenant-a",
+        owner=owner,
+        display_name="input.pdf",
+        actor_id="file-worker",
+        format_code="PDF",
+    )
+    repository.create_version(
+        version_id="version-document-1",
+        file_id="file-document",
+        version_number=1,
+        version_kind=FileVersionKind.ATTACHMENT,
+        status=FileVersionStatus.AVAILABLE,
+        media_type="application/pdf",
+        encoding="",
+        size_bytes=len(original),
+        content_sha256=original_sha256,
+        object_key=original_key,
+        source_kind=FileSourceKind.MESSAGE_ATTACHMENT,
+        actor_id="file-worker",
+        format_code="PDF",
+        advance_current_from="",
+    )
+    repository.database.execute(
+        """
+        insert into file_processing_run
+          (id, tenant_id, source_file_id, source_version_id, processor_code,
+           processor_version, processor_build_digest, profile_code, profile_hash,
+           status, source_size_bytes, completed_at, created_by, created_at, updated_at)
+        values ('run-document', 'tenant-a', 'file-document', 'version-document-1',
+                'docling-serve', '1.30.0', ?, 'docling-text-v1', ?, 'SUCCEEDED',
+                ?, ?, 'file-processing-worker', ?, ?)
+        """,
+        ("sha256:" + "c" * 64, "d" * 64, len(original), TIMESTAMP, TIMESTAMP, TIMESTAMP),
+    )
+    repository.database.execute(
+        """
+        insert into file_representation
+          (id, processing_run_id, tenant_id, source_file_id, source_version_id,
+           kind, media_type, encoding, status, size_bytes, content_sha256,
+           object_key, profile_hash, created_at)
+        values ('representation-document-md', 'run-document', 'tenant-a',
+                'file-document', 'version-document-1', 'MARKDOWN', 'text/markdown',
+                'utf-8', 'AVAILABLE', ?, ?, ?, ?, ?)
+        """,
+        (len(markdown), representation_sha256, representation_key, "d" * 64, TIMESTAMP),
+    )
+    repository.database.execute(
+        """
+        insert into agent_job_file_snapshot_item
+          (id, snapshot_id, ordinal, file_id, version_id, display_name, format_code,
+           source_kind, allowed_actions_json, auto_materialize, conflict_candidate,
+           version_created_at, representation_id, representation_kind,
+           representation_size_bytes, representation_sha256,
+           representation_format_code, representation_created_at, created_at)
+        values ('snapshot-item-document', 'snapshot-file', 1, 'file-document',
+                'version-document-1', 'input.pdf', 'PDF', 'CURRENT_MESSAGE', ?, 1, 0,
+                ?, 'representation-document-md', 'MARKDOWN', ?, ?, 'MARKDOWN', ?, ?)
+        """,
+        (
+            json.dumps(["READ_METADATA", "RETAIN", "DELIVER"]),
+            TIMESTAMP,
+            len(markdown),
+            representation_sha256,
+            TIMESTAMP,
+            TIMESTAMP,
+        ),
+    )
+
+    prepared = service.prepare_materialization(
+        context=context,
+        arguments={"file_id": "file-document", "version_id": "version-document-1"},
+    )
+    control = prepared[INTERNAL_TRANSFER_META][FILE_TRANSFER_META_KEY]
+    assert control["relative_path"].endswith(".md")
+    assert control["expected_sha256"] == representation_sha256
+
+    async def download() -> bytes:
+        stream, _media_type = await service.download_transfer(
+            transfer_id=str(control["transfer_id"]), token="file-principal-token"
+        )
+        return b"".join([chunk async for chunk in stream])
+
+    assert asyncio.run(download()) == markdown
+    assert original != markdown
+
+
 def test_stale_base_creates_conflict_without_advancing_current() -> None:
     repository, service, context, storage = _fixture()
     prepared = service.prepare_commit(
@@ -734,3 +867,107 @@ def test_file_worker_attachment_import_is_idempotent_and_builds_txt_lineage() ->
             )
         )
     assert error.value.error_code == "file_attachment_idempotency_conflict"
+
+
+def test_file_worker_document_import_sniffs_source_and_queues_processing() -> None:
+    repository, existing_service, context, storage = _fixture(file_format_policy_version="text-v2")
+    repository.database.execute(
+        """
+        update business_application_publication
+           set document_processing_profile_code = 'docling-text-v1',
+               document_processing_profile_version = '1',
+               document_processing_profile_hash = ?
+         where id = 'app-file-p1'
+        """,
+        ("337dc23bd405e7225e8ffca06b72852ed19121723bc8b1abeafdc05cf5ceac42",),
+    )
+    document_processing = GovernedDocumentProcessingService(
+        DocumentProcessingRepository(repository.database),
+        repository,
+        storage,
+        SourceStreamGrantSigner(b"document-processing-test-signing-key-32"),
+        processor_version="1.30.0",
+        processor_build_digest="sha256:" + "a" * 64,
+    )
+    service = GovernedFileStreamingService(
+        repository,
+        existing_service.authorization,
+        storage,
+        _Principal(context),
+        now=lambda: NOW,
+        document_processing=document_processing,
+    )
+    repository.database.execute(
+        """
+        insert into agent_message
+          (id, session_id, job_id, role, content, created_at, sequence_no)
+        values ('message-document', 'session-file', 'job-file', 'user', '', ?, 2)
+        """,
+        (TIMESTAMP,),
+    )
+    repository.database.execute(
+        """
+        insert into message_attachment
+          (id, message_id, job_id, ordinal, media_type, file_name, status,
+           retention_days, expires_at, created_at, updated_at)
+        values ('attachment-pdf', 'message-document', 'job-file', 0,
+                'application/pdf', 'input.pdf', 'DOWNLOADING', 360, ?, ?, ?)
+        """,
+        ("2027-08-09T00:00:00+00:00", TIMESTAMP, TIMESTAMP),
+    )
+    pdf = io.BytesIO()
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    writer.write(pdf)
+    imported = asyncio.run(
+        service.import_attachment(
+            attachment_id="attachment-pdf",
+            service_claims={"sub": "file-worker"},
+            media_type="application/pdf",
+            body=_body(pdf.getvalue()),
+        )
+    )
+    version = repository.get_version(str(imported["version_id"]))
+    assert version["format_code"] == "PDF"
+    assert version["media_type"] == "application/pdf"
+    attachment = repository.database.execute_one(
+        """
+        select readability_status, file_processing_run_id, readability_error_code
+          from message_attachment where id = 'attachment-pdf'
+        """
+    )
+    assert attachment is not None
+    assert attachment["readability_status"] == "PENDING"
+    assert attachment["file_processing_run_id"]
+    assert attachment["readability_error_code"] == ""
+    run = document_processing.repository.get_run(str(attachment["file_processing_run_id"]))
+    assert run["source_version_id"] == imported["version_id"]
+    assert run["status"] == "QUEUED"
+    assert repository.database.execute_one(
+        """
+        select count(*) as value from file_domain_outbox
+         where event_type = 'file.processing.requested' and aggregate_id = ?
+        """,
+        (run["id"],),
+    ) == {"value": 1}
+
+    repository.database.execute(
+        """
+        insert into message_attachment
+          (id, message_id, job_id, ordinal, media_type, file_name, status,
+           retention_days, expires_at, created_at, updated_at)
+        values ('attachment-pdf-bad', 'message-document', 'job-file', 1,
+                'application/pdf', 'bad.pdf', 'DOWNLOADING', 360, ?, ?, ?)
+        """,
+        ("2027-08-09T00:00:00+00:00", TIMESTAMP, TIMESTAMP),
+    )
+    with pytest.raises(NonRetryableExecutionError) as malformed:
+        asyncio.run(
+            service.import_attachment(
+                attachment_id="attachment-pdf-bad",
+                service_claims={"sub": "file-worker"},
+                media_type="application/pdf",
+                body=_body(b"not a pdf"),
+            )
+        )
+    assert malformed.value.error_code == "document_source_signature_mismatch"

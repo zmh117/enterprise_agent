@@ -12,6 +12,8 @@ _EVENT_TYPES = {
     "file.attachment.imported",
     "file.version.committed",
     "file.version.conflict_created",
+    "file.processing.requested",
+    "file.processing.completed",
 }
 _PAYLOAD_KEYS = {
     "attachment_id",
@@ -24,6 +26,13 @@ _PAYLOAD_KEYS = {
     "content_sha256",
     "format_code",
     "file_format_policy_version",
+    "contract_version",
+    "run_id",
+    "source_version_id",
+    "profile_hash",
+    "attempt",
+    "correlation_id",
+    "error_code",
 }
 
 
@@ -64,6 +73,15 @@ class AuditFileDomainEventSink:
         )
 
 
+class CompositeFileDomainEventSink:
+    def __init__(self, *sinks: FileDomainEventSink) -> None:
+        self.sinks = tuple(sinks)
+
+    def publish(self, event: dict[str, Any]) -> None:
+        for sink in self.sinks:
+            sink.publish(event)
+
+
 class FileDomainOutboxPublisher:
     def __init__(
         self,
@@ -86,7 +104,8 @@ class FileDomainOutboxPublisher:
                     if event is None:
                         break
                     projected = self._safe_event(event)
-                    self.sink.publish(projected)
+                self.sink.publish(projected)
+                with self.repository.database.unit_of_work():
                     self.repository.mark_domain_outbox_published(str(event["id"]))
             except Exception as exc:
                 if event is not None:
@@ -113,7 +132,18 @@ class FileDomainOutboxPublisher:
             "size_bytes",
             "content_sha256",
         }
-        if event_type == "file.attachment.imported":
+        if event_type in {"file.processing.requested", "file.processing.completed"}:
+            required = {
+                "contract_version",
+                "run_id",
+                "source_version_id",
+                "profile_hash",
+                "attempt",
+                "correlation_id",
+            }
+            if event_type == "file.processing.completed":
+                required.add("status")
+        elif event_type == "file.attachment.imported":
             required.add("attachment_id")
         else:
             required.update({"job_id", "status"})

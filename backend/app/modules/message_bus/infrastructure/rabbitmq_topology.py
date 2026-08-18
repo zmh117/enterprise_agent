@@ -23,6 +23,26 @@ def declare_channel_event_topology(channel: Any, queue: QueueSettings) -> None:
     )
 
 
+def declare_file_processing_topology(channel: Any, queue: QueueSettings) -> None:
+    channel.queue_declare(queue=queue.file_processing_dead_queue, durable=True)
+    channel.queue_declare(
+        queue=queue.file_processing_queue,
+        durable=True,
+        arguments={
+            "x-dead-letter-exchange": "",
+            "x-dead-letter-routing-key": queue.file_processing_dead_queue,
+        },
+    )
+    channel.queue_declare(
+        queue=queue.file_processing_retry_queue,
+        durable=True,
+        arguments={
+            "x-dead-letter-exchange": "",
+            "x-dead-letter-routing-key": queue.file_processing_queue,
+        },
+    )
+
+
 def inspect_agent_job_topology(rabbitmq_url: str, queue: QueueSettings) -> dict[str, object]:
     try:
         import pika

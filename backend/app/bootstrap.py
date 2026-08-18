@@ -647,6 +647,9 @@ def _build_container(
             file_worker_bootstrap_file=(
                 settings.service_principal.file_worker_bootstrap_token_file
             ),
+            file_processing_worker_bootstrap_file=(
+                settings.service_principal.file_processing_worker_bootstrap_token_file
+            ),
             delivery_worker_bootstrap_file=(
                 settings.service_principal.delivery_worker_bootstrap_token_file
             ),

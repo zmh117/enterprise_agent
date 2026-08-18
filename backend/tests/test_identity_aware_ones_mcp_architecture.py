@@ -262,20 +262,33 @@ def test_secret_bootstrap_makes_container_principal_private_key_read_only(
     assert stat.S_IMODE(principal_private_key.stat().st_mode) == 0o400
     assert stat.S_IMODE((tmp_path / "principal-jwks.json").stat().st_mode) == 0o644
     file_worker_bootstrap = tmp_path / "file-worker-bootstrap-token"
+    processing_worker_bootstrap = tmp_path / "file-processing-worker-bootstrap-token"
     delivery_worker_bootstrap = tmp_path / "delivery-worker-bootstrap-token"
+    docling_api_key = tmp_path / "docling-api-key"
     assert not (tmp_path / "service-principal-private.pem").exists()
     assert not (tmp_path / "service-principal-jwks.json").exists()
     assert stat.S_IMODE(file_worker_bootstrap.stat().st_mode) == 0o400
+    assert stat.S_IMODE(processing_worker_bootstrap.stat().st_mode) == 0o400
     assert stat.S_IMODE(delivery_worker_bootstrap.stat().st_mode) == 0o400
+    assert stat.S_IMODE(docling_api_key.stat().st_mode) == 0o400
     assert file_worker_bootstrap.read_bytes() != delivery_worker_bootstrap.read_bytes()
+    assert processing_worker_bootstrap.read_bytes() not in {
+        file_worker_bootstrap.read_bytes(),
+        delivery_worker_bootstrap.read_bytes(),
+        docling_api_key.read_bytes(),
+    }
 
     loaded = principal_private_key.read_bytes()
     file_worker_loaded = file_worker_bootstrap.read_bytes()
     delivery_worker_loaded = delivery_worker_bootstrap.read_bytes()
+    processing_worker_loaded = processing_worker_bootstrap.read_bytes()
+    docling_api_key_loaded = docling_api_key.read_bytes()
     subprocess.run([str(script), str(tmp_path)], check=True, capture_output=True, text=True)
     assert principal_private_key.read_bytes() == loaded
     assert file_worker_bootstrap.read_bytes() == file_worker_loaded
     assert delivery_worker_bootstrap.read_bytes() == delivery_worker_loaded
+    assert processing_worker_bootstrap.read_bytes() == processing_worker_loaded
+    assert docling_api_key.read_bytes() == docling_api_key_loaded
     assert stat.S_IMODE(principal_private_key.stat().st_mode) == 0o400
 
 

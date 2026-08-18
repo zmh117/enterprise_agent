@@ -43,6 +43,7 @@
 - [Master Key 紧急离线重加密](operations/emergency-master-key-reencryption.md)
 - [钉钉测试数据重建](operations/dingtalk-test-data-rebuild.md)
 - [Task File Workspace 切换与运行](operations/task-file-workspace-cutover.md)
+- [受治理文档处理](operations/governed-document-processing.md)
 - [TypeScript Agent Runtime 分阶段退役](operations/typescript-agent-runtime-retirement.md)
 
 ## 验证与参考

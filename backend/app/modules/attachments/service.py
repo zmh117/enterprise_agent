@@ -112,6 +112,7 @@ class AttachmentProcessingService:
             digest = hashlib.sha256(data).hexdigest()
             object_bucket: str | None = None
             object_key: str | None = None
+            document_readability_pending = False
             if self.importer is not None:
                 assert self.importer is not None
                 imported = self.importer.import_content(
@@ -126,6 +127,7 @@ class AttachmentProcessingService:
                         error_code="file_service_receipt_mismatch",
                     )
                 stored_size = imported.size_bytes
+                document_readability_pending = imported.readability_status == "PENDING"
             else:
                 if self.storage is None:
                     raise RetryableExecutionError(
@@ -145,6 +147,20 @@ class AttachmentProcessingService:
                 object_bucket = stored.bucket
                 object_key = stored.key
             if task_text:
+                self.repository.update_attachment(
+                    attachment_id,
+                    status="READY",
+                    detected_mime=detected_mime,
+                    size_bytes=stored_size,
+                    sha256=digest,
+                    object_bucket=object_bucket,
+                    object_key=object_key,
+                    clear_credential=True,
+                )
+            elif document_readability_pending:
+                # Governed document processing owns extraction for this source.
+                # The source download is terminal, while Job release remains gated
+                # by the separately persisted readability state.
                 self.repository.update_attachment(
                     attachment_id,
                     status="READY",
@@ -238,8 +254,10 @@ class AttachmentProcessingService:
     @operation_unit_of_work(lambda service: service.repository.database)
     def _release_if_ready(self, job_id: str, correlation_id: str) -> str:
         attachments = self.repository.list_attachments(job_id)
-        if not attachments or any(
-            item.status not in TERMINAL_ATTACHMENT_STATUSES for item in attachments
+        if (
+            not attachments
+            or any(item.status not in TERMINAL_ATTACHMENT_STATUSES for item in attachments)
+            or any(item.readability_status == "PENDING" for item in attachments)
         ):
             return "waiting"
         job = self.repository.get_job(job_id)
@@ -263,7 +281,9 @@ class AttachmentProcessingService:
                     )
                 return "failed"
         usable = bool((job.input_message or "").strip()) or any(
-            item.status == "READY" for item in attachments
+            item.readability_status in {"AVAILABLE", "PARTIAL"}
+            or (item.readability_status == "NOT_REQUIRED" and item.status == "READY")
+            for item in attachments
         )
         if usable:
             self.repository.transition_job(job_id=job_id, target=JobStatus.PENDING)
@@ -282,6 +302,10 @@ class AttachmentProcessingService:
                 correlation_id=correlation_id,
             )
         return "failed"
+
+    def release_if_ready(self, job_id: str, correlation_id: str) -> str:
+        """Retry-safe public release hook driven by persistent attachment state."""
+        return self._release_if_ready(job_id, correlation_id)
 
     def report_orphan_objects(self) -> list[str]:
         if self.storage is None:

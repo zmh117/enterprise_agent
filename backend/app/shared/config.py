@@ -27,6 +27,11 @@ class QueueSettings:
     webhook_dead_queue: str = "agent.webhook.dispatch.dead.queue"
     channel_queue: str = "agent.channel.dispatch.queue"
     channel_dead_queue: str = "agent.channel.dispatch.dead.queue"
+    file_processing_queue: str = "agent.file.processing.queue"
+    file_processing_retry_queue: str = "agent.file.processing.retry.queue"
+    file_processing_dead_queue: str = "agent.file.processing.dead.queue"
+    file_processing_max_attempts: int = 3
+    file_processing_retry_base_seconds: int = 30
     max_retry_count: int = 3
     retry_delay_seconds: int = 30
     dispatch_outbox_max_attempts: int = 8
@@ -149,6 +154,7 @@ class PrincipalJwtSettings:
 class ServicePrincipalSettings:
     enabled: bool = False
     file_worker_bootstrap_token_file: str = ""
+    file_processing_worker_bootstrap_token_file: str = ""
     delivery_worker_bootstrap_token_file: str = ""
     identity_base_url: str = "http://api-server:8000"
     identity_allowed_hosts: tuple[str, ...] = ("api-server",)
@@ -190,12 +196,47 @@ class FileServiceSettings:
     secure: bool = False
     max_mcp_request_bytes: int = 32 * 1024
     jwks_refresh_seconds: int = 60
+    document_processor_version: str = ""
+    document_processor_build_digest: str = ""
 
     def __post_init__(self) -> None:
         if not self.bucket or not self.legacy_attachment_bucket:
             raise ValueError("File storage bucket names are required")
         if self.bucket == self.legacy_attachment_bucket:
             raise ValueError("Managed files and legacy attachments require distinct buckets")
+        if bool(self.document_processor_version) != bool(self.document_processor_build_digest):
+            raise ValueError("Document processor version and digest must be configured together")
+        if self.document_processor_build_digest and (
+            len(self.document_processor_build_digest) != 71
+            or not self.document_processor_build_digest.startswith("sha256:")
+        ):
+            raise ValueError("Document processor image digest is invalid")
+
+
+@dataclass(frozen=True)
+class DocumentProcessingWorkerSettings:
+    docling_base_url: str = "http://docling-serve:5001"
+    docling_allowed_hosts: tuple[str, ...] = ("docling-serve",)
+    docling_api_key_file: str = ""
+    connect_timeout_seconds: int = 5
+    poll_interval_seconds: float = 2.0
+    total_timeout_seconds: int = 600
+    max_response_bytes: int = 80 * 1024 * 1024
+    concurrency: int = 1
+
+    def __post_init__(self) -> None:
+        if not self.docling_allowed_hosts:
+            raise ValueError("Docling allowed hosts are required")
+        if not 1 <= self.connect_timeout_seconds <= 60:
+            raise ValueError("Docling connect timeout is invalid")
+        if not 0.1 <= self.poll_interval_seconds <= 30:
+            raise ValueError("Docling poll interval is invalid")
+        if not 1 <= self.total_timeout_seconds <= 600:
+            raise ValueError("Docling total timeout is invalid")
+        if not 1024 <= self.max_response_bytes <= 128 * 1024 * 1024:
+            raise ValueError("Docling response size bound is invalid")
+        if self.concurrency not in {1, 2}:
+            raise ValueError("Document processing concurrency must be 1 or 2")
 
 
 @dataclass(frozen=True)
@@ -300,6 +341,9 @@ class Settings:
     service_principal: ServicePrincipalSettings = field(default_factory=ServicePrincipalSettings)
     ones_mcp: OnesMcpSettings = field(default_factory=OnesMcpSettings)
     file_service: FileServiceSettings = field(default_factory=FileServiceSettings)
+    document_processing_worker: DocumentProcessingWorkerSettings = field(
+        default_factory=DocumentProcessingWorkerSettings
+    )
     webhooks: WebhookSettings = field(default_factory=WebhookSettings)
     managed_channels: ManagedChannelSettings = field(default_factory=ManagedChannelSettings)
 
@@ -373,6 +417,9 @@ def load_settings() -> Settings:
         service_principal=ServicePrincipalSettings(
             enabled=_env_bool("SERVICE_PRINCIPAL_ENABLED"),
             file_worker_bootstrap_token_file=os.getenv("FILE_WORKER_BOOTSTRAP_TOKEN_FILE", ""),
+            file_processing_worker_bootstrap_token_file=os.getenv(
+                "FILE_PROCESSING_WORKER_BOOTSTRAP_TOKEN_FILE", ""
+            ),
             delivery_worker_bootstrap_token_file=os.getenv(
                 "DELIVERY_WORKER_BOOTSTRAP_TOKEN_FILE", ""
             ),
@@ -422,6 +469,24 @@ def load_settings() -> Settings:
             secure=_env_bool("FILE_STORAGE_SECURE"),
             max_mcp_request_bytes=int(os.getenv("FILE_MCP_MAX_REQUEST_BYTES", str(32 * 1024))),
             jwks_refresh_seconds=int(os.getenv("FILE_JWKS_REFRESH_SECONDS", "60")),
+            document_processor_version=os.getenv("DOCUMENT_PROCESSOR_VERSION", ""),
+            document_processor_build_digest=os.getenv("DOCUMENT_PROCESSOR_BUILD_DIGEST", ""),
+        ),
+        document_processing_worker=DocumentProcessingWorkerSettings(
+            docling_base_url=os.getenv(
+                "DOCLING_SERVE_INTERNAL_BASE_URL", "http://docling-serve:5001"
+            ),
+            docling_allowed_hosts=_csv_tuple(
+                os.getenv("DOCLING_SERVE_INTERNAL_ALLOWED_HOSTS", "docling-serve")
+            ),
+            docling_api_key_file=os.getenv("DOCLING_SERVE_API_KEY_FILE", ""),
+            connect_timeout_seconds=int(os.getenv("DOCLING_SERVE_CONNECT_TIMEOUT_SECONDS", "5")),
+            poll_interval_seconds=float(os.getenv("DOCLING_SERVE_POLL_INTERVAL_SECONDS", "2")),
+            total_timeout_seconds=int(os.getenv("DOCLING_SERVE_TOTAL_TIMEOUT_SECONDS", "600")),
+            max_response_bytes=int(
+                os.getenv("DOCLING_SERVE_MAX_RESPONSE_BYTES", str(80 * 1024 * 1024))
+            ),
+            concurrency=int(os.getenv("FILE_PROCESSING_WORKER_CONCURRENCY", "1")),
         ),
         dingtalk=DingTalkSettings(
             secret=os.getenv("DINGTALK_SECRET", ""),
@@ -495,6 +560,17 @@ def load_settings() -> Settings:
             channel_queue=os.getenv("CHANNEL_DISPATCH_QUEUE", "agent.channel.dispatch.queue"),
             channel_dead_queue=os.getenv(
                 "CHANNEL_DISPATCH_DEAD_QUEUE", "agent.channel.dispatch.dead.queue"
+            ),
+            file_processing_queue=os.getenv("FILE_PROCESSING_QUEUE", "agent.file.processing.queue"),
+            file_processing_retry_queue=os.getenv(
+                "FILE_PROCESSING_RETRY_QUEUE", "agent.file.processing.retry.queue"
+            ),
+            file_processing_dead_queue=os.getenv(
+                "FILE_PROCESSING_DEAD_QUEUE", "agent.file.processing.dead.queue"
+            ),
+            file_processing_max_attempts=int(os.getenv("FILE_PROCESSING_MAX_ATTEMPTS", "3")),
+            file_processing_retry_base_seconds=int(
+                os.getenv("FILE_PROCESSING_RETRY_BASE_SECONDS", "30")
             ),
             max_retry_count=int(os.getenv("AGENT_MAX_RETRY_COUNT", "3")),
             retry_delay_seconds=int(os.getenv("AGENT_RETRY_DELAY_SECONDS", "30")),

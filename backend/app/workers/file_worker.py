@@ -53,9 +53,19 @@ def main() -> None:
         while True:
             try:
                 result = importer.run_maintenance()
+                release_job_ids = result.pop("document_processing_release_job_ids", [])
+                released = 0
+                if isinstance(release_job_ids, list):
+                    for job_id in release_job_ids:
+                        outcome = attachment_service.release_if_ready(
+                            job_id,
+                            f"document-processing-reconcile:{job_id}"[:128],
+                        )
+                        released += int(outcome == "released")
                 publish_status(
                     **{
                         **result,
+                        "document_processing_jobs_released": released,
                         "status": "RUNNING",
                         "file_service": "ready",
                         "last_error_class": "",

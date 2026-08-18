@@ -12,7 +12,7 @@ def _compose() -> dict[str, object]:
     return yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
 
 
-def test_compose_has_one_file_service_and_one_attachment_queue_consumer() -> None:
+def test_compose_has_one_file_service_one_attachment_consumer_and_separate_processing_pair() -> None:
     compose = _compose()
     services = compose["services"]
 
@@ -27,7 +27,13 @@ def test_compose_has_one_file_service_and_one_attachment_queue_consumer() -> Non
     assert "attachment-worker" not in services
     assert "file-mcp" not in services
     assert "docling-server" not in services
-    assert "docling-serve" not in services
+    assert "docling-serve" in services
+    assert "file-processing-worker" in services
+    assert services["file-processing-worker"]["command"] == [
+        "python",
+        "-m",
+        "app.workers.file_processing_worker",
+    ]
 
     attachment_consumers = [
         name
@@ -113,6 +119,7 @@ def test_worker_identity_bootstrap_is_role_separated_and_file_service_is_hardene
     file_service = services["file-service"]
     file_worker = services["file-worker"]
     delivery_worker = services["delivery-dispatch-worker"]
+    processing_worker = services["file-processing-worker"]
 
     assert file_service["read_only"] is True
     assert file_service["cap_drop"] == ["ALL"]
@@ -125,6 +132,12 @@ def test_worker_identity_bootstrap_is_role_separated_and_file_service_is_hardene
     assert "delivery_worker_bootstrap_token" not in file_worker["secrets"]
     assert "delivery_worker_bootstrap_token" in delivery_worker["secrets"]
     assert "file_worker_bootstrap_token" not in delivery_worker["secrets"]
+    assert set(processing_worker["secrets"]) == {
+        "file_processing_worker_bootstrap_token",
+        "docling_api_key",
+    }
+    assert "file_worker_bootstrap_token" not in processing_worker["secrets"]
+    assert "delivery_worker_bootstrap_token" not in processing_worker["secrets"]
     assert "principal_jwt_private_key" not in file_worker["secrets"]
     assert "principal_jwt_private_key" not in delivery_worker["secrets"]
 
@@ -132,10 +145,12 @@ def test_worker_identity_bootstrap_is_role_separated_and_file_service_is_hardene
     assert {
         "principal_jwt_private_key",
         "file_worker_bootstrap_token",
+        "file_processing_worker_bootstrap_token",
         "delivery_worker_bootstrap_token",
     } <= set(api["secrets"])
     assert file_worker["depends_on"]["api-server"]["condition"] == "service_healthy"
     assert delivery_worker["depends_on"]["api-server"]["condition"] == "service_healthy"
+    assert processing_worker["depends_on"]["api-server"]["condition"] == "service_healthy"
 
     compose_text = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     assert "FILE_WORKER_PRINCIPAL_TOKEN_FILE" not in compose_text
@@ -168,4 +183,7 @@ def test_backend_image_contains_file_service_and_file_worker_targets() -> None:
     dockerfile = (ROOT / "backend" / "Dockerfile").read_text(encoding="utf-8")
     assert "FROM api-server AS file-service" in dockerfile
     assert "import app.workers.file_worker" in dockerfile
+    assert "FROM agent-worker AS file-processing-worker" in dockerfile
+    assert "import app.workers.file_processing_worker" in dockerfile
     assert "COPY backend/app/modules/file_workspace" in dockerfile
+    assert "COPY backend/app/modules/document_processing" in dockerfile

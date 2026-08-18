@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+import hashlib
+import hmac
 from typing import Any, Never
 
 from app.bootstrap import build_worker_container
@@ -11,13 +13,22 @@ from app.modules.file_workspace.lifecycle_service import FileLifecycleService
 from app.modules.file_workspace.delivery_service import FileVersionDeliveryService
 from app.modules.file_workspace.domain_outbox import (
     AuditFileDomainEventSink,
+    CompositeFileDomainEventSink,
     FileDomainOutboxPublisher,
+)
+from app.modules.message_bus.infrastructure.rabbitmq_file_processing import (
+    RabbitMQFileProcessingPublisher,
 )
 from app.modules.file_workspace.storage import (
     FileObjectStorageSettings,
     MinioFileObjectStorage,
 )
 from app.modules.file_workspace.streaming_service import GovernedFileStreamingService
+from app.modules.document_processing import (
+    DocumentProcessingRepository,
+    GovernedDocumentProcessingService,
+    SourceStreamGrantSigner,
+)
 from app.modules.mcp_audit import McpAuditCoordinator
 from app.shared.config import load_settings
 from app.shared.exceptions import NonRetryableExecutionError
@@ -68,15 +79,11 @@ class _UnavailableStreamingOperations:
         del attachment_id, service_claims, media_type, body
         self._raise()
 
-    async def run_maintenance(
-        self, *, service_claims: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def run_maintenance(self, *, service_claims: dict[str, Any]) -> dict[str, Any]:
         del service_claims
         self._raise()
 
-    async def maintenance_metrics(
-        self, *, service_claims: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def maintenance_metrics(self, *, service_claims: dict[str, Any]) -> dict[str, Any]:
         del service_claims
         self._raise()
 
@@ -161,7 +168,26 @@ def create_default_app() -> Any:
         storage = _UnavailableStorage()
         storage_readiness = storage
     streaming: GovernedFileStreamingService | _UnavailableStreamingOperations
+    document_processing: GovernedDocumentProcessingService | None = None
     if isinstance(storage, MinioFileObjectStorage):
+        if (
+            settings.file_service.document_processor_version
+            and settings.file_service.document_processor_build_digest
+            and settings.app_config_master_key
+        ):
+            signing_key = hmac.new(
+                settings.app_config_master_key.encode("utf-8"),
+                b"enterprise-agent/document-source-grant/v1",
+                hashlib.sha256,
+            ).digest()
+            document_processing = GovernedDocumentProcessingService(
+                DocumentProcessingRepository(runtime.database),
+                repository,
+                storage,
+                SourceStreamGrantSigner(signing_key),
+                processor_version=settings.file_service.document_processor_version,
+                processor_build_digest=(settings.file_service.document_processor_build_digest),
+            )
         streaming = GovernedFileStreamingService(
             repository,
             authorization,
@@ -174,7 +200,10 @@ def create_default_app() -> Any:
                 legacy_attachment_bucket=settings.file_service.legacy_attachment_bucket,
                 domain_outbox=FileDomainOutboxPublisher(
                     repository,
-                    AuditFileDomainEventSink(runtime.audit_service),
+                    CompositeFileDomainEventSink(
+                        AuditFileDomainEventSink(runtime.audit_service),
+                        RabbitMQFileProcessingPublisher(settings.rabbitmq_url, settings.queue),
+                    ),
                 ),
             ),
             delivery_intents=FileVersionDeliveryService(
@@ -182,10 +211,9 @@ def create_default_app() -> Any:
                 runtime.agent_repository,
                 settings.delivery,
             ),
+            document_processing=document_processing,
         )
-        application = FileWorkspaceApplicationService(
-            repository, authorization, streaming
-        )
+        application = FileWorkspaceApplicationService(repository, authorization, streaming)
     else:
         streaming = _UnavailableStreamingOperations()
         application = FileWorkspaceApplicationService(repository, authorization)
@@ -194,6 +222,7 @@ def create_default_app() -> Any:
         service_principal=service_verifier,
         application=application,
         streaming=streaming,
+        document_processing=document_processing,
         database=runtime.database,
         storage=storage_readiness,
         jwks=jwks,

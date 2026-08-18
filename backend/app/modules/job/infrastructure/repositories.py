@@ -3172,6 +3172,14 @@ class AgentRepository:
             task_workspace_id=str(row.get("task_workspace_id") or ""),
             claimed_at=(str(row["claimed_at"]) if row.get("claimed_at") else None),
             failure_code=str(row.get("failure_code") or ""),
+            readability_status=str(row.get("readability_status") or "NOT_REQUIRED"),
+            file_processing_run_id=str(row.get("file_processing_run_id") or ""),
+            readability_error_code=str(row.get("readability_error_code") or ""),
+            readability_updated_at=(
+                str(row["readability_updated_at"])
+                if row.get("readability_updated_at")
+                else None
+            ),
         )
 
     def _dispatch_event_from_row(self, row: dict[str, Any]) -> JobDispatchEvent:

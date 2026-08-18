@@ -30,6 +30,7 @@ x-api-env: &api-env
   SERVICE_PRINCIPAL_ENABLED: "true"
   PRINCIPAL_JWT_PRIVATE_KEY_FILE: /run/secrets/principal_jwt_private_key
   FILE_WORKER_BOOTSTRAP_TOKEN_FILE: /run/secrets/file_worker_bootstrap_token
+  FILE_PROCESSING_WORKER_BOOTSTRAP_TOKEN_FILE: /run/secrets/file_processing_worker_bootstrap_token
   DELIVERY_WORKER_BOOTSTRAP_TOKEN_FILE: /run/secrets/delivery_worker_bootstrap_token
   SERVICE_PRINCIPAL_TTL_SECONDS: ${SERVICE_PRINCIPAL_TTL_SECONDS:-300}
   # ONES 本人身份验证只由 API 发起；固定 Provider 配置不得下发给
@@ -300,6 +301,8 @@ services:
       FILE_STORAGE_SECURE: ${FILE_STORAGE_SECURE:-false}
       FILE_JWKS_REFRESH_SECONDS: ${FILE_JWKS_REFRESH_SECONDS:-60}
       FILE_MCP_MAX_REQUEST_BYTES: ${FILE_MCP_MAX_REQUEST_BYTES:-32768}
+      DOCUMENT_PROCESSOR_VERSION: v1.30.0
+      DOCUMENT_PROCESSOR_BUILD_DIGEST: sha256:061d35c03611bc15b73d024c8e8387bcf0624279f8b57c16c1567326f214ba56
     secrets:
       - app_config_master_key
       - principal_jwks
@@ -314,6 +317,8 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD
@@ -414,6 +419,7 @@ services:
       - model_probe_auth_token
       - principal_jwt_private_key
       - file_worker_bootstrap_token
+      - file_processing_worker_bootstrap_token
       - delivery_worker_bootstrap_token
     ports:
       - "8000:8000"
@@ -693,6 +699,143 @@ services:
       retries: 6
       start_period: 30s
 
+  docling-serve:
+    image: ghcr.io/docling-project/docling-serve-cpu:v1.30.0@sha256:061d35c03611bc15b73d024c8e8387bcf0624279f8b57c16c1567326f214ba56
+    restart: unless-stopped
+    user: "1001:0"
+    read_only: true
+    tmpfs:
+      - /tmp:size=2g,mode=0700,uid=1001,gid=0
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        api_key="$$(cat /run/secrets/docling_api_key)"
+        test -n "$${api_key}"
+        export DOCLING_SERVE_API_KEY="$${api_key}"
+        exec docling-serve run
+    environment:
+      DOCLING_DEVICE: cpu
+      DOCLING_NUM_THREADS: "4"
+      DOCLING_SERVE_ENG_KIND: local
+      DOCLING_SERVE_ENG_LOC_NUM_WORKERS: "1"
+      DOCLING_SERVE_ENG_LOC_SHARE_MODELS: "true"
+      DOCLING_SERVE_ENABLE_UI: "false"
+      DOCLING_SERVE_ENABLE_MANAGEMENT_ENDPOINTS: "false"
+      DOCLING_SERVE_SHOW_VERSION_INFO: "false"
+      DOCLING_SERVE_DEBUG_ERROR_DETAILS: "false"
+      DOCLING_SERVE_ENABLE_REMOTE_SERVICES: "false"
+      DOCLING_SERVE_ALLOW_EXTERNAL_PLUGINS: "false"
+      DOCLING_SERVE_ALLOW_CUSTOM_VLM_CONFIG: "false"
+      DOCLING_SERVE_ALLOW_CUSTOM_PICTURE_DESCRIPTION_CONFIG: "false"
+      DOCLING_SERVE_ALLOW_CUSTOM_CODE_FORMULA_CONFIG: "false"
+      DOCLING_SERVE_ALLOWED_SOURCE_TYPES: "[]"
+      DOCLING_SERVE_ALLOWED_TARGET_TYPES: '["inbody"]'
+      DOCLING_SERVE_MAX_FILE_SIZE: "26214400"
+      DOCLING_SERVE_MAX_NUM_PAGES: "300"
+      DOCLING_SERVE_MAX_DOCUMENT_TIMEOUT: "600"
+      DOCLING_SERVE_SINGLE_USE_RESULTS: "true"
+      DOCLING_SERVE_SCRATCH_PATH: /tmp/docling-scratch
+      DOCLING_SERVE_ARTIFACTS_PATH: /opt/app-root/src/.cache/docling/models
+      DOCLING_SERVE_LOG_FORMAT: json
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    secrets:
+      - docling_api_key
+    expose:
+      - "5001"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5001/ready', timeout=3)"
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 8G
+          pids: 256
+    networks:
+      - document-processing
+
+  file-processing-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: file-processing-worker
+    command: ["python", "-m", "app.workers.file_processing_worker"]
+    restart: unless-stopped
+    user: "10006:10006"
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=0700,uid=10006,gid=10006
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      FILE_PROCESSING_QUEUE: agent.file.processing.queue
+      FILE_PROCESSING_RETRY_QUEUE: agent.file.processing.retry.queue
+      FILE_PROCESSING_DEAD_QUEUE: agent.file.processing.dead.queue
+      FILE_PROCESSING_MAX_ATTEMPTS: "3"
+      FILE_PROCESSING_RETRY_BASE_SECONDS: "30"
+      FILE_PROCESSING_WORKER_CONCURRENCY: "1"
+      FILE_SERVICE_INTERNAL_BASE_URL: http://file-service:9105
+      FILE_SERVICE_INTERNAL_ALLOWED_HOSTS: file-service
+      FILE_SERVICE_INTERNAL_TIMEOUT_SECONDS: "30"
+      SERVICE_PRINCIPAL_ENABLED: "true"
+      SERVICE_IDENTITY_INTERNAL_BASE_URL: http://api-server:8000
+      SERVICE_IDENTITY_INTERNAL_ALLOWED_HOSTS: api-server
+      FILE_PROCESSING_WORKER_BOOTSTRAP_TOKEN_FILE: /run/secrets/file_processing_worker_bootstrap_token
+      SERVICE_IDENTITY_TIMEOUT_SECONDS: ${SERVICE_IDENTITY_TIMEOUT_SECONDS:-5}
+      SERVICE_PRINCIPAL_REFRESH_SKEW_SECONDS: ${SERVICE_PRINCIPAL_REFRESH_SKEW_SECONDS:-60}
+      DOCLING_SERVE_INTERNAL_BASE_URL: http://docling-serve:5001
+      DOCLING_SERVE_INTERNAL_ALLOWED_HOSTS: docling-serve
+      DOCLING_SERVE_API_KEY_FILE: /run/secrets/docling_api_key
+      DOCLING_SERVE_CONNECT_TIMEOUT_SECONDS: "5"
+      DOCLING_SERVE_POLL_INTERVAL_SECONDS: "2"
+      DOCLING_SERVE_TOTAL_TIMEOUT_SECONDS: "600"
+      DOCLING_SERVE_MAX_RESPONSE_BYTES: "83886080"
+    secrets:
+      - file_processing_worker_bootstrap_token
+      - docling_api_key
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      file-service:
+        condition: service_healthy
+      api-server:
+        condition: service_healthy
+      docling-serve:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import json,time; from pathlib import Path; h=Path('/tmp/file-processing-worker.heartbeat'); s=Path('/tmp/file-processing-worker.status.json'); v=json.loads(s.read_text()) if s.exists() else {}; ok=h.exists() and time.time()-h.stat().st_mtime < 120 and v.get('rabbitmq')=='ready' and v.get('file_service')=='ready' and v.get('docling')=='ready'; raise SystemExit(0 if ok else 1)"
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+          pids: 128
+    networks:
+      - default
+      - document-processing
+
 secrets:
   app_config_master_key:
     file: ${APP_CONFIG_MASTER_KEY_FILE:-${HOME}/.config/enterprise-agent/app-config-master-key}
@@ -708,8 +851,12 @@ secrets:
     file: ${PRINCIPAL_JWKS_FILE:-${HOME}/.config/enterprise-agent/principal-jwks.json}
   file_worker_bootstrap_token:
     file: ${FILE_WORKER_BOOTSTRAP_TOKEN_FILE:-${HOME}/.config/enterprise-agent/file-worker-bootstrap-token}
+  file_processing_worker_bootstrap_token:
+    file: ${FILE_PROCESSING_WORKER_BOOTSTRAP_TOKEN_FILE:-${HOME}/.config/enterprise-agent/file-processing-worker-bootstrap-token}
   delivery_worker_bootstrap_token:
     file: ${DELIVERY_WORKER_BOOTSTRAP_TOKEN_FILE:-${HOME}/.config/enterprise-agent/delivery-worker-bootstrap-token}
+  docling_api_key:
+    file: ${DOCLING_SERVE_API_KEY_FILE:-${HOME}/.config/enterprise-agent/docling-api-key}
   file_storage_bootstrap_access_key:
     environment: MINIO_ROOT_USER
   file_storage_bootstrap_secret_key:
@@ -728,5 +875,7 @@ volumes:
 
 networks:
   agent-runtime-control:
+    internal: true
+  document-processing:
     internal: true
   provider-egress: {}

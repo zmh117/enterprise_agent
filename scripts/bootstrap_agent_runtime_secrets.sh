@@ -17,7 +17,9 @@ principal_private_key="$target_dir/principal-jwt-private.pem"
 principal_public_der="$target_dir/principal-jwt-public.der"
 principal_jwks="$target_dir/principal-jwks.json"
 file_worker_bootstrap_token="$target_dir/file-worker-bootstrap-token"
+file_processing_worker_bootstrap_token="$target_dir/file-processing-worker-bootstrap-token"
 delivery_worker_bootstrap_token="$target_dir/delivery-worker-bootstrap-token"
+docling_api_key="$target_dir/docling-api-key"
 
 for temporary_key in "$principal_public_der"; do
   if [ -e "$temporary_key" ]; then
@@ -81,11 +83,21 @@ if [ ! -e "$delivery_worker_bootstrap_token" ]; then
   openssl rand -base64 48 | tr -d '\n' > "$delivery_worker_bootstrap_token"
 fi
 
+if [ ! -e "$file_processing_worker_bootstrap_token" ]; then
+  openssl rand -base64 48 | tr -d '\n' > "$file_processing_worker_bootstrap_token"
+fi
+
+if [ ! -e "$docling_api_key" ]; then
+  openssl rand -base64 48 | tr -d '\n' > "$docling_api_key"
+fi
+
 chmod 0600 "$private_key" "$public_key" "$probe_token"
 chmod 0400 \
   "$principal_private_key" \
   "$file_worker_bootstrap_token" \
-  "$delivery_worker_bootstrap_token"
+  "$file_processing_worker_bootstrap_token" \
+  "$delivery_worker_bootstrap_token" \
+  "$docling_api_key"
 chmod 0644 "$principal_jwks"
 
 echo "Agent Runtime secret files are complete in $target_dir"

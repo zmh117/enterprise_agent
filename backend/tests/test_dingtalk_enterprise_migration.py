@@ -16,7 +16,7 @@ def test_027_fresh_schema_enforces_enterprise_and_identity_invariants() -> None:
             default_migrations_dir(),
             migrator_build="dingtalk-enterprise-test",
         ).run()
-        assert result.head == "112"
+        assert result.head == "113"
         timestamp = "2026-08-03T00:00:00+00:00"
         database.execute(
             """

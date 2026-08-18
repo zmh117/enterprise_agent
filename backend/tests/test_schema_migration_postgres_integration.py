@@ -230,7 +230,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "112"
+        assert result.head == "113"
         assert result.applied == (
             "100",
             "101",
@@ -245,6 +245,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
             "110",
             "111",
             "112",
+            "113",
         )
         assert database.execute_one(
             """
@@ -254,9 +255,9 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
                and table_type = 'BASE TABLE'
                and table_name not in ('schema_migration', 'schema_baseline_adoption')
             """
-        ) == {"count": 91}
-        assert comments["table_count"] == 91
-        assert comments["column_count"] == 1125
+        ) == {"count": 110}
+        assert comments["table_count"] == 110
+        assert comments["column_count"] == 1416
     finally:
         database.close()
 
@@ -274,7 +275,7 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "112"
+        assert result.head == "113"
         assert result.applied == (
             "100",
             "101",
@@ -289,9 +290,10 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
             "110",
             "111",
             "112",
+            "113",
         )
-        assert comments["table_count"] == 91
-        assert comments["column_count"] == 1127
+        assert comments["table_count"] == 110
+        assert comments["column_count"] == 1416
         assert {
             "dingding_conversation_id",
             "dingding_user_id",

@@ -237,6 +237,14 @@ export function ApplicationsPage() {
                     label="工作区周期"
                     value={application.task_workspace_retention_period}
                   />
+                  <Definition
+                    label="文档处理"
+                    value={
+                      application.document_processing_profile_code === "NONE"
+                        ? "关闭"
+                        : `${application.document_processing_profile_code} · ${application.document_processing_status}`
+                    }
+                  />
                 </dl>
                 <Link
                   className={buttonVariants({

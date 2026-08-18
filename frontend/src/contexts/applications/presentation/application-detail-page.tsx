@@ -262,6 +262,13 @@ function OverviewTab({ application }: { application: BusinessApplication }) {
               "文件格式策略",
               formatFileFormatPolicy(draft?.file_format_policy_version),
             ],
+            [
+              "文档处理",
+              formatDocumentProcessing(
+                draft?.document_processing_profile_code,
+                draft?.document_processing_status
+              ),
+            ],
           ]}
         />
         <SummaryCard
@@ -421,6 +428,9 @@ function PolicyEditor({
   const textV2RuntimeCompatible =
     selectedAgent?.runtime_protocol_versions.includes("1.3") === true
   const textV2Cutover = catalog?.text_v2_cutover_preflight
+  const selectedDocumentProfile = catalog?.document_processing_profiles.find(
+    (item) => item.code === form.document_processing_profile_code
+  )
   return (
     <Card className="shadow-none">
       <CardHeader>
@@ -510,6 +520,55 @@ function PolicyEditor({
               切换预检发现 {textV2Cutover.blocking_job_count} 个仍引用旧 File
               MCP Schema 的活动或待重试 Job；排空或隔离前不能发布或激活
               text-v2。
+            </p>
+          ) : null}
+        </Field>
+        <Field label="文档处理 Profile" htmlFor="policy-document-processing">
+          <select
+            id="policy-document-processing"
+            className={selectClass}
+            value={form.document_processing_profile_code}
+            onChange={(event) => {
+              const profile = event.target
+                .value as SaveDraftInput["document_processing_profile_code"]
+              setForm({
+                ...form,
+                document_processing_profile_code: profile,
+                session_policy:
+                  profile === "docling-text-v1"
+                    ? {
+                        ...form.session_policy,
+                        attachments_enabled: true,
+                      }
+                    : form.session_policy,
+              })
+            }}
+          >
+            {(catalog?.document_processing_profiles.length
+              ? catalog.document_processing_profiles
+              : [
+                  {
+                    code: "NONE" as const,
+                    label: "关闭文档处理",
+                  },
+                ]
+            ).map((profile) => (
+              <option key={profile.code} value={profile.code}>
+                {profile.label}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs leading-5 text-muted-foreground">
+            仅可选择平台代码发布的固定 Profile；发布后冻结 code、version 与
+            hash，不能填写 Docling URL、模型、插件或原始 options。
+          </p>
+          {selectedDocumentProfile?.code === "docling-text-v1" ? (
+            <p className="text-xs leading-5 text-amber-700">
+              当前状态：
+              {formatDocumentProcessingStatus(
+                selectedDocumentProfile.document_processing_status
+              )}
+              。仅提供有界 OCR/表格文字提取，不提供图片语义理解；依赖全部就绪前不会误报 READY。
             </p>
           ) : null}
         </Field>
@@ -1280,6 +1339,13 @@ function ValidationTab({ application }: { application: BusinessApplication }) {
             "文件格式策略",
             formatFileFormatPolicy(revision?.file_format_policy_version),
           ],
+          [
+            "文档处理",
+            formatDocumentProcessing(
+              revision?.document_processing_profile_code,
+              revision?.document_processing_status
+            ),
+          ],
         ]}
       />
     </div>
@@ -1446,6 +1512,30 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
                             ? `就绪 · Runtime ${publication.file_format_compatibility.required_runtime_protocol}`
                             : "不兼容 · Runtime 或 File MCP Schema 已漂移"
                         }
+                      />
+                      <PublicationMetadata
+                        label="文档处理 Profile"
+                        value={`${publication.document_processing_profile_code} · ${
+                          publication.document_processing_profile_source ===
+                          "legacy_default"
+                            ? "历史兼容默认"
+                            : `v${publication.document_processing_profile_version}`
+                        }`}
+                      />
+                      <PublicationMetadata
+                        label="文档处理状态"
+                        value={formatDocumentProcessingStatus(
+                          publication.document_processing_status
+                        )}
+                      />
+                      <PublicationMetadata
+                        label="Profile 哈希"
+                        value={
+                          publication.document_processing_profile_hash
+                            ? `${publication.document_processing_profile_hash.slice(0, 16)}…`
+                            : "无（NONE）"
+                        }
+                        monospace
                       />
                     </dl>
                   </div>
@@ -1643,6 +1733,8 @@ function draftToForm(application: BusinessApplication): SaveDraftInput {
     task_workspace_retention_period:
       draft?.task_workspace_retention_period ?? "WEEK",
     file_format_policy_version: draft?.file_format_policy_version ?? "text-v1",
+    document_processing_profile_code:
+      draft?.document_processing_profile_code ?? "NONE",
     task_file_features: taskFileFeatures,
     session_policy: {
       conversation_mode: "channel",
@@ -1776,6 +1868,24 @@ function formatFileFormatPolicy(
   return policy === "text-v2"
     ? "text-v2（TXT/Markdown 全能力，LOG 只读）"
     : "text-v1（TXT 全能力）"
+}
+
+function formatDocumentProcessing(
+  profile: "NONE" | "docling-text-v1" | null | undefined,
+  status: "DISABLED" | "CONFIGURED_UNAVAILABLE" | "READY" | null | undefined
+): string {
+  if (!profile || profile === "NONE") return "关闭"
+  return `${profile} · ${formatDocumentProcessingStatus(
+    status ?? "CONFIGURED_UNAVAILABLE"
+  )}`
+}
+
+function formatDocumentProcessingStatus(
+  status: "DISABLED" | "CONFIGURED_UNAVAILABLE" | "READY"
+): string {
+  if (status === "READY") return "就绪"
+  if (status === "CONFIGURED_UNAVAILABLE") return "已配置但依赖未就绪"
+  return "已关闭"
 }
 
 function changeTrigger(

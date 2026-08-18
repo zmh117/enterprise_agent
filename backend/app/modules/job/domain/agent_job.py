@@ -103,3 +103,7 @@ class MessageAttachment:
     object_bucket: str = ""
     object_key: str = ""
     failure_code: str = ""
+    readability_status: str = "NOT_REQUIRED"
+    file_processing_run_id: str = ""
+    readability_error_code: str = ""
+    readability_updated_at: str | None = None

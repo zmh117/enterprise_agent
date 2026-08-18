@@ -366,7 +366,7 @@ class FileWorkspaceRepository:
                   (id, job_id, workspace_id, tenant_id, principal_user_id,
                    business_application_publication_id, retention_period,
                    schema_version, file_format_policy_version, manifest_hash, created_at)
-                values (?, ?, ?, ?, ?, ?, ?, 3, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, 4, ?, ?, ?)
                 """,
                 (
                     snapshot_id,
@@ -401,8 +401,11 @@ class FileWorkspaceRepository:
                       (id, snapshot_id, ordinal, file_id, version_id, display_name,
                        format_code, source_kind, allowed_actions_json, auto_materialize,
                        conflict_candidate, source_received_at, version_created_at,
+                       representation_id, representation_kind,
+                       representation_size_bytes, representation_sha256,
+                       representation_format_code, representation_created_at,
                        created_at)
-                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         _id("file_snapshot_item"),
@@ -418,6 +421,12 @@ class FileWorkspaceRepository:
                         int(bool(item.get("conflict_candidate"))),
                         source_received_at,
                         version_created_at,
+                        item.get("representation_id"),
+                        item.get("representation_kind"),
+                        item.get("representation_size_bytes"),
+                        item.get("representation_sha256"),
+                        item.get("representation_format_code"),
+                        item.get("representation_created_at"),
                         timestamp,
                     ),
                 )

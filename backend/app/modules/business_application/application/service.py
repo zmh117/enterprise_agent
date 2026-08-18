@@ -17,11 +17,13 @@ from app.modules.business_application.application.mcp_tool_composition import (
 from app.modules.business_application.domain.policies import (
     canonical_json,
     normalize_routing_key,
+    publication_document_processing_profile,
     reject_dangerous_content,
     required_file_mcp_tools,
     snapshot_hash,
     validate_code,
     validate_delivery,
+    validate_document_processing_profile_code,
     validate_environment,
     validate_execution_policy,
     validate_file_format_policy_version,
@@ -32,6 +34,12 @@ from app.modules.business_application.domain.policies import (
     validate_status,
     validate_trigger,
     verify_publication_snapshot,
+)
+from app.modules.document_processing import (
+    DOCLING_TEXT_V1,
+    DocumentProcessingProfileCode,
+    document_processing_profile_snapshot,
+    document_processing_state,
 )
 from app.modules.business_application.domain.runtime import (
     RouteResolutionOutcome,
@@ -47,7 +55,7 @@ from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
 from app.shared.database import operation_unit_of_work
 from app.shared.exceptions import NonRetryableExecutionError, NotFound
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 WRITABLE_AGENT_RUNTIME_KIND = "python-v1"
 
 
@@ -224,6 +232,9 @@ class BusinessApplicationService:
         file_format_policy_version = validate_file_format_policy_version(
             payload.get("file_format_policy_version")
         )
+        document_processing_profile_code = validate_document_processing_profile_code(
+            payload.get("document_processing_profile_code")
+        )
         task_file_features = validate_task_file_features(payload.get("task_file_features"))
         validate_task_file_attachment_dependency(
             session_policy=session_policy,
@@ -283,6 +294,7 @@ class BusinessApplicationService:
             "workflow_publication_id": str(payload.get("workflow_publication_id") or "").strip(),
             "task_workspace_retention_period": task_workspace_retention_period,
             "file_format_policy_version": file_format_policy_version,
+            "document_processing_profile_code": document_processing_profile_code,
             "task_file_features": task_file_features,
             "session_policy": session_policy,
             "execution_policy": execution_policy,
@@ -299,6 +311,7 @@ class BusinessApplicationService:
             workflow_publication_id=str(normalized["workflow_publication_id"]),
             task_workspace_retention_period=task_workspace_retention_period,
             file_format_policy_version=file_format_policy_version,
+            document_processing_profile_code=document_processing_profile_code,
             task_file_features=task_file_features,
             session_policy=session_policy,
             execution_policy=execution_policy,
@@ -312,6 +325,7 @@ class BusinessApplicationService:
         )
         if mcp_tools:
             revision = self.repository.get_revision(str(revision["id"]))
+        revision = self._revision_with_document_processing(revision)
         self._audit("draft_saved", actor_id, application, revision=revision)
         return revision
 
@@ -340,6 +354,7 @@ class BusinessApplicationService:
         result = self.repository.set_validation(
             str(revision["id"]), valid=not errors, errors=errors
         )
+        result = self._revision_with_document_processing(result)
         self._audit("validated", actor_id, application, revision=result)
         return result
 
@@ -429,6 +444,7 @@ class BusinessApplicationService:
             tools=prepared_mcp_tools,
         )
         publication = self.repository.get_publication(str(publication["id"]))
+        publication = self._publication_document_processing(publication)
         self._audit("published", actor_id, application, publication=publication)
         return publication
 
@@ -906,6 +922,7 @@ class BusinessApplicationService:
             "agents": agents,
             "workflows": [reference(item) for item in self.workflow_reader.catalog(project_code)],
             "connectors": [reference(item) for item in self.connector_reader.catalog()],
+            "document_processing_profiles": self._document_processing_profile_catalog(),
             **mcp_tool_catalog,
         }
 
@@ -1002,6 +1019,12 @@ class BusinessApplicationService:
                 agent=agent,
             )
         )
+        try:
+            validate_document_processing_profile_code(
+                revision.get("document_processing_profile_code")
+            )
+        except NonRetryableExecutionError as exc:
+            errors.extend(exc.field_errors)
         if (
             validate_file_format_policy_version(revision.get("file_format_policy_version"))
             == "text-v2"
@@ -1108,6 +1131,9 @@ class BusinessApplicationService:
             ),
             "file_format_policy_version": validate_file_format_policy_version(
                 revision.get("file_format_policy_version")
+            ),
+            "document_processing_profile": document_processing_profile_snapshot(
+                revision.get("document_processing_profile_code")
             ),
             "task_file_features": validate_task_file_features(revision.get("task_file_features")),
             "session_policy": revision["session_policy"],
@@ -1219,6 +1245,9 @@ class BusinessApplicationService:
                 "file_format_policy_version": (publication or revision or {}).get(
                     "file_format_policy_version", "text-v1"
                 ),
+                "document_processing_profile_code": (
+                    publication or revision or {}
+                ).get("document_processing_profile_code", "NONE"),
                 "task_file_features": (publication or revision or {}).get(
                     "task_file_features", validate_task_file_features(None)
                 ),
@@ -1268,6 +1297,18 @@ class BusinessApplicationService:
                 application.get("file_format_policy_version")
                 or (application.get("draft") or {}).get("file_format_policy_version")
             ),
+            "document_processing_profile_code": validate_document_processing_profile_code(
+                application.get("document_processing_profile_code")
+                or (application.get("draft") or {}).get(
+                    "document_processing_profile_code"
+                )
+            ),
+            **document_processing_state(
+                application.get("document_processing_profile_code")
+                or (application.get("draft") or {}).get(
+                    "document_processing_profile_code"
+                )
+            ),
             **readiness.to_dict(),
         }
 
@@ -1285,6 +1326,11 @@ class BusinessApplicationService:
         ]
         return {
             **application,
+            "draft": (
+                self._revision_with_document_processing(application["draft"])
+                if isinstance(application.get("draft"), dict)
+                else None
+            ),
             "publications": publications,
             "deployments": deployments,
             **readiness.to_dict(),
@@ -1293,6 +1339,9 @@ class BusinessApplicationService:
     def _snapshot_summary(self, snapshot: dict[str, Any]) -> dict[str, Any]:
         file_format_policy_version = validate_file_format_policy_version(
             snapshot.get("file_format_policy_version")
+        )
+        document_profile, document_profile_source = (
+            publication_document_processing_profile(snapshot)
         )
         return {
             "schema_version": snapshot.get("schema_version"),
@@ -1312,6 +1361,12 @@ class BusinessApplicationService:
                 if "file_format_policy_version" in snapshot
                 else "legacy_default"
             ),
+            "document_processing_profile": document_profile,
+            "document_processing_profile_code": document_profile["code"],
+            "document_processing_profile_version": document_profile["version"],
+            "document_processing_profile_hash": document_profile["hash"],
+            "document_processing_profile_source": document_profile_source,
+            **document_processing_state(document_profile["code"]),
             "task_file_features": validate_task_file_features(snapshot.get("task_file_features")),
             "file_format_compatibility": self._file_format_compatibility(
                 snapshot,
@@ -1421,8 +1476,85 @@ class BusinessApplicationService:
             "snapshot": snapshot_summary,
             "retirement_status": snapshot_summary["retirement_status"],
             "file_format_compatibility": snapshot_summary["file_format_compatibility"],
+            "document_processing_profile_code": snapshot_summary[
+                "document_processing_profile_code"
+            ],
+            "document_processing_profile_version": snapshot_summary[
+                "document_processing_profile_version"
+            ],
+            "document_processing_profile_hash": snapshot_summary[
+                "document_processing_profile_hash"
+            ],
+            "document_processing_profile_source": snapshot_summary[
+                "document_processing_profile_source"
+            ],
+            "document_processing_status": snapshot_summary[
+                "document_processing_status"
+            ],
+            "document_processing_reason_code": snapshot_summary[
+                "document_processing_reason_code"
+            ],
             **readiness.to_dict(),
         }
+
+    @staticmethod
+    def _revision_with_document_processing(revision: dict[str, Any]) -> dict[str, Any]:
+        code = validate_document_processing_profile_code(
+            revision.get("document_processing_profile_code")
+        )
+        return {
+            **revision,
+            "document_processing_profile_code": code,
+            **document_processing_state(code),
+        }
+
+    @staticmethod
+    def _publication_document_processing(
+        publication: dict[str, Any],
+    ) -> dict[str, Any]:
+        profile, source = publication_document_processing_profile(
+            dict(publication.get("snapshot") or {})
+        )
+        return {
+            **publication,
+            "document_processing_profile_code": profile["code"],
+            "document_processing_profile_version": profile["version"],
+            "document_processing_profile_hash": profile["hash"],
+            "document_processing_profile_source": source,
+            **document_processing_state(profile["code"]),
+        }
+
+    @staticmethod
+    def _document_processing_profile_catalog() -> list[dict[str, Any]]:
+        return [
+            {
+                "code": DocumentProcessingProfileCode.NONE.value,
+                "version": "",
+                "hash": "",
+                "label": "关闭文档处理",
+                "source_format_codes": [],
+                "output_kinds": [],
+                **document_processing_state(DocumentProcessingProfileCode.NONE.value),
+            },
+            {
+                "code": DOCLING_TEXT_V1.code.value,
+                "version": DOCLING_TEXT_V1.version,
+                "hash": DOCLING_TEXT_V1.profile_hash,
+                "label": "Docling 文字提取 v1",
+                "source_format_codes": [
+                    item.code.value for item in DOCLING_TEXT_V1.source_formats
+                ],
+                "output_kinds": list(DOCLING_TEXT_V1.output_kinds),
+                "limits": {
+                    "max_source_bytes": DOCLING_TEXT_V1.max_source_bytes,
+                    "max_pdf_pages": DOCLING_TEXT_V1.max_pdf_pages,
+                    "processing_timeout_seconds": (
+                        DOCLING_TEXT_V1.processing_timeout_seconds
+                    ),
+                },
+                **document_processing_state(DOCLING_TEXT_V1.code.value),
+            },
+        ]
 
     def _runtime_for_application(self, application: dict[str, Any]) -> RuntimeReadiness:
         deployment = next(

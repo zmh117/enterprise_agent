@@ -136,6 +136,15 @@ class AgentContextBuilder:
                     else "Do not modify code, databases, Redis, services, deployments, or files."
                 ),
                 "Every conclusion must cite evidence or state uncertainty.",
+                *(
+                    [
+                        "One or more document inputs are partial or unavailable. Use only the "
+                        "materialized readable representations, disclose missing coverage, and "
+                        "never infer or fabricate omitted content."
+                    ]
+                    if file_manifest and file_manifest.get("readability_notices")
+                    else []
+                ),
             ],
             user_question=(job.input_message.strip() or ATTACHMENT_ONLY_USER_QUESTION),
             project_code=job.project_code,

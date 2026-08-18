@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Protocol
 
 
@@ -28,6 +29,40 @@ class WebhookEventMessage:
 class ChannelEventMessage:
     channel_event_id: str
     correlation_id: str
+
+
+@dataclass(frozen=True)
+class FileProcessingTaskMessage:
+    contract_version: str
+    run_id: str
+    source_version_id: str
+    profile_hash: str
+    attempt: int
+    correlation_id: str
+    redelivered: bool = False
+
+    def safe_payload(self) -> dict[str, str | int]:
+        return {
+            "contract_version": self.contract_version,
+            "run_id": self.run_id,
+            "source_version_id": self.source_version_id,
+            "profile_hash": self.profile_hash,
+            "attempt": self.attempt,
+            "correlation_id": self.correlation_id,
+        }
+
+
+class FileProcessingDisposition(StrEnum):
+    ACK = "ACK"
+    RETRY = "RETRY"
+    DEAD = "DEAD"
+
+
+@dataclass(frozen=True)
+class FileProcessingTaskResult:
+    disposition: FileProcessingDisposition
+    error_code: str = ""
+    delay_seconds: int = 0
 
 
 class MessagePublisher(Protocol):
@@ -83,3 +118,7 @@ class WebhookEventHandler(Protocol):
 
 class ChannelEventHandler(Protocol):
     def __call__(self, message: ChannelEventMessage) -> None: ...
+
+
+class FileProcessingTaskHandler(Protocol):
+    def __call__(self, message: FileProcessingTaskMessage) -> FileProcessingTaskResult: ...

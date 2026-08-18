@@ -103,6 +103,8 @@ class _InProcessAttachmentImporter:
             sha256=str(result["sha256"]),
             file_id=str(result["file_id"]),
             version_id=str(result["version_id"]),
+            readability_status=str(result.get("readability_status") or "NOT_REQUIRED"),
+            processing_run_id=str(result.get("processing_run_id") or ""),
         )
 
 
@@ -304,7 +306,7 @@ def test_text_v2_mixed_txt_log_markdown_attachments_freeze_one_manifest() -> Non
     assert manifest_service is not None
     manifest = manifest_service.runtime_manifest(job.id)
     assert manifest is not None
-    assert manifest["schema_version"] == 3
+    assert manifest["schema_version"] == 4
     assert manifest["file_format_policy_version"] == "text-v2"
     by_format = {item["format_code"]: item for item in manifest["items"]}
     assert set(by_format) == {"TXT", "LOG", "MARKDOWN"}
@@ -369,10 +371,13 @@ def test_text_v2_binary_log_fails_without_managed_version_or_object() -> None:
     queued = runtime.message_bus.attachments.popleft()
 
     assert staged.status == "attachments_staged"
-    assert runtime.attachment_service.process(
-        queued.attachment_id,
-        queued.correlation_id,
-    ) == "staged"
+    assert (
+        runtime.attachment_service.process(
+            queued.attachment_id,
+            queued.correlation_id,
+        )
+        == "staged"
+    )
     assert runtime.agent_repository.get_attachment(queued.attachment_id).status == "REJECTED"
     assert file_repository.database.execute_one(
         "select count(*) as value from managed_file_version"

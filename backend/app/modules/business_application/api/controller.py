@@ -92,6 +92,11 @@ class RevisionResponse(BaseModel):
     workflow_publication_id: str = ""
     task_workspace_retention_period: Literal["DAY", "WEEK", "MONTH"] = "WEEK"
     file_format_policy_version: Literal["text-v1", "text-v2"] = "text-v1"
+    document_processing_profile_code: Literal["NONE", "docling-text-v1"] = "NONE"
+    document_processing_status: Literal[
+        "DISABLED", "CONFIGURED_UNAVAILABLE", "READY"
+    ] = "DISABLED"
+    document_processing_reason_code: str = "profile_disabled"
     task_file_features: TaskFileFeaturesResponse = Field(default_factory=TaskFileFeaturesResponse)
     session_policy: dict[str, Any] = Field(default_factory=dict)
     execution_policy: dict[str, Any] = Field(default_factory=dict)
@@ -121,6 +126,16 @@ class PublicationResponse(RuntimeStateResponse):
     )
     file_format_policy_version: Literal["text-v1", "text-v2"] = "text-v1"
     file_format_policy_source: Literal["publication_snapshot", "legacy_default"] = "legacy_default"
+    document_processing_profile_code: Literal["NONE", "docling-text-v1"] = "NONE"
+    document_processing_profile_version: str = ""
+    document_processing_profile_hash: str = ""
+    document_processing_profile_source: Literal[
+        "publication_snapshot", "legacy_default"
+    ] = "legacy_default"
+    document_processing_status: Literal[
+        "DISABLED", "CONFIGURED_UNAVAILABLE", "READY"
+    ] = "DISABLED"
+    document_processing_reason_code: str = "profile_disabled"
     task_file_features: TaskFileFeaturesResponse = Field(default_factory=TaskFileFeaturesResponse)
     task_file_features_source: Literal["publication_snapshot", "legacy_default"] = "legacy_default"
 
@@ -152,6 +167,11 @@ class ApplicationSummaryResponse(RuntimeStateResponse):
     active_environments: list[str] = Field(default_factory=list)
     task_workspace_retention_period: Literal["DAY", "WEEK", "MONTH"] = "WEEK"
     file_format_policy_version: Literal["text-v1", "text-v2"] = "text-v1"
+    document_processing_profile_code: Literal["NONE", "docling-text-v1"] = "NONE"
+    document_processing_status: Literal[
+        "DISABLED", "CONFIGURED_UNAVAILABLE", "READY"
+    ] = "DISABLED"
+    document_processing_reason_code: str = "profile_disabled"
 
 
 class ApplicationResponse(ApplicationSummaryResponse):
@@ -201,6 +221,7 @@ class CatalogResponse(BaseModel):
     agents: list[ComponentReferenceResponse]
     workflows: list[ComponentReferenceResponse]
     connectors: list[ComponentReferenceResponse]
+    document_processing_profiles: list[dict[str, Any]] = Field(default_factory=list)
     mcp_tools_by_agent_publication: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
 
 
@@ -283,6 +304,7 @@ class SaveDraftRequest(StrictRequest):
     workflow_publication_id: str = Field(default="", max_length=200)
     task_workspace_retention_period: Literal["DAY", "WEEK", "MONTH"] = "WEEK"
     file_format_policy_version: Literal["text-v1", "text-v2"] = "text-v1"
+    document_processing_profile_code: Literal["NONE", "docling-text-v1"] = "NONE"
     task_file_features: TaskFileFeaturesResponse = Field(default_factory=TaskFileFeaturesResponse)
     session_policy: SessionPolicyRequest = Field(default_factory=SessionPolicyRequest)
     execution_policy: ExecutionPolicyRequest = Field(default_factory=ExecutionPolicyRequest)

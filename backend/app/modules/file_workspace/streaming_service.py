@@ -14,6 +14,11 @@ from app.modules.file_workspace.authorization import (
     FileAuthorizationContext,
     FileAuthorizationService,
 )
+from app.modules.document_processing import (
+    GovernedDocumentProcessingService,
+    ValidatedDocumentSource,
+    validate_document_source,
+)
 from app.modules.file_workspace.contracts import (
     FILE_TRANSFER_META_KEY,
     FILE_TRANSFER_PROTOCOL,
@@ -115,6 +120,7 @@ class GovernedFileStreamingService:
         quota: WorkspaceQuotaService | None = None,
         lifecycle: FileLifecycleService | None = None,
         delivery_intents: FileDeliveryIntentPort | None = None,
+        document_processing: GovernedDocumentProcessingService | None = None,
     ) -> None:
         self.repository = repository
         self.authorization = authorization
@@ -125,6 +131,7 @@ class GovernedFileStreamingService:
         self.quota = quota or WorkspaceQuotaService(repository.database)
         self.lifecycle = lifecycle
         self.delivery_intents = delivery_intents
+        self.document_processing = document_processing
 
     def prepare_materialization(
         self,
@@ -134,34 +141,62 @@ class GovernedFileStreamingService:
     ) -> dict[str, Any]:
         file_id = str(arguments["file_id"])
         version_id = str(arguments["version_id"])
-        item = self.authorization.require_manifest_action(
-            context,
-            file_id=file_id,
-            version_id=version_id,
-            action=FileAction.MATERIALIZE,
+        representation = self.repository.database.execute_one(
+            """
+            select representation_id from agent_job_file_snapshot_item
+             where snapshot_id = ? and file_id = ? and version_id = ?
+            """,
+            (context.manifest["id"], file_id, version_id),
         )
-        version = self.repository.require_content_available(version_id)
-        if str(version["file_id"]) != file_id:
-            self._deny("file_manifest_item_denied", "当前任务无权访问该文件")
+        is_representation = bool(representation and representation.get("representation_id"))
+        if is_representation:
+            item = self.authorization.require_manifest_representation(
+                context, file_id=file_id, version_id=version_id
+            )
+            content = {
+                "size_bytes": int(item["representation_size_bytes"]),
+                "content_sha256": str(item["representation_sha256"]),
+            }
+        else:
+            item = self.authorization.require_manifest_action(
+                context,
+                file_id=file_id,
+                version_id=version_id,
+                action=FileAction.MATERIALIZE,
+            )
+            content = self.repository.require_content_available(version_id)
+            if str(content["file_id"]) != file_id:
+                self._deny("file_manifest_item_denied", "当前任务无权访问该文件")
         handle = _opaque("sandbox_entry")
         transfer_id = _opaque("file_transfer")
         requested = str(arguments.get("preferred_name") or item["display_name"])
-        policy_version = normalize_file_format_policy_version(
-            context.manifest.get("file_format_policy_version")
-        )
-        definition = validate_format_action(
-            policy_version=policy_version,
-            format_code=str(item.get("format_code") or "TXT"),
-            action=FileAction.MATERIALIZE,
-        )
-        requested_definition = text_format_for_name(
-            requested,
-            policy_version=policy_version,
-        )
-        if requested_definition.code is not definition.code:
-            self._deny("file_format_mismatch", "文件名与冻结格式不一致")
+        if is_representation:
+            if arguments.get("preferred_name") and Path(requested).suffix.lower() != ".md":
+                self._deny("file_format_mismatch", "文档可读表示必须使用 Markdown 文件名")
+            requested = f"{Path(requested).stem or 'document'}.md"
+            format_code = "MARKDOWN"
+            extension = ".md"
+            allowed_actions = [FileAction.MATERIALIZE.value]
+        else:
+            policy_version = normalize_file_format_policy_version(
+                context.manifest.get("file_format_policy_version")
+            )
+            definition = validate_format_action(
+                policy_version=policy_version,
+                format_code=str(item.get("format_code") or "TXT"),
+                action=FileAction.MATERIALIZE,
+            )
+            requested_definition = text_format_for_name(
+                requested,
+                policy_version=policy_version,
+            )
+            if requested_definition.code is not definition.code:
+                self._deny("file_format_mismatch", "文件名与冻结格式不一致")
+            format_code = definition.code.value
+            extension = definition.extension
+            allowed_actions = self._item_actions(item)
         stem = Path(requested).stem[:120] or "input"
-        relative_path = f"inputs/{stem}-{handle[-8:]}{definition.extension}"
+        relative_path = f"inputs/{stem}-{handle[-8:]}{extension}"
         expires_at = _iso(self.now() + TRANSFER_TTL)
         self.repository.create_materialization_transfer(
             transfer_id=transfer_id,
@@ -171,17 +206,17 @@ class GovernedFileStreamingService:
             version_id=version_id,
             sandbox_entry_handle=handle,
             relative_path=relative_path,
-            expected_size_bytes=int(version["size_bytes"]),
-            expected_sha256=str(version["content_sha256"]),
+            expected_size_bytes=int(content["size_bytes"]),
+            expected_sha256=str(content["content_sha256"]),
             expires_at=expires_at,
-            format_code=definition.code.value,
+            format_code=format_code,
         )
         return {
             "file_id": file_id,
             "version_id": version_id,
             "display_name": requested,
-            "format_code": definition.code.value,
-            "allowed_actions": self._item_actions(item),
+            "format_code": format_code,
+            "allowed_actions": allowed_actions,
             "expires_at": expires_at,
             INTERNAL_TRANSFER_META: {
                 FILE_TRANSFER_META_KEY: {
@@ -190,9 +225,9 @@ class GovernedFileStreamingService:
                     "transfer_id": transfer_id,
                     "sandbox_entry_handle": handle,
                     "relative_path": relative_path,
-                    "expected_size_bytes": int(version["size_bytes"]),
-                    "expected_sha256": str(version["content_sha256"]),
-                    "format_code": definition.code.value,
+                    "expected_size_bytes": int(content["size_bytes"]),
+                    "expected_sha256": str(content["content_sha256"]),
+                    "format_code": format_code,
                 }
             },
         }
@@ -397,22 +432,43 @@ class GovernedFileStreamingService:
         )
         if str(transfer["workspace_id"]) != str(context.workspace["id"]):
             self._deny("file_transfer_binding_mismatch", "文件传输与当前任务不匹配")
-        self.authorization.require_manifest_action(
-            context,
-            file_id=str(transfer["file_id"]),
-            version_id=str(transfer["version_id"]),
-            action=FileAction.MATERIALIZE,
+        frozen = self.repository.database.execute_one(
+            """
+            select representation_id from agent_job_file_snapshot_item
+             where snapshot_id = ? and file_id = ? and version_id = ?
+            """,
+            (context.manifest["id"], transfer["file_id"], transfer["version_id"]),
         )
-        version = self.repository.require_content_available(str(transfer["version_id"]))
-        if int(version["size_bytes"]) != int(transfer["expected_size_bytes"]) or str(
-            version["content_sha256"]
+        if frozen and frozen.get("representation_id"):
+            item = self.authorization.require_manifest_representation(
+                context,
+                file_id=str(transfer["file_id"]),
+                version_id=str(transfer["version_id"]),
+            )
+            content = {
+                "size_bytes": int(item["live_representation_size_bytes"]),
+                "content_sha256": str(item["live_representation_sha256"]),
+                "object_key": str(item["object_key"]),
+            }
+        else:
+            self.authorization.require_manifest_action(
+                context,
+                file_id=str(transfer["file_id"]),
+                version_id=str(transfer["version_id"]),
+                action=FileAction.MATERIALIZE,
+            )
+            content = self.repository.require_content_available(str(transfer["version_id"]))
+            if str(content.get("format_code") or "TXT") != str(
+                transfer.get("format_code") or "TXT"
+            ):
+                self._deny("file_format_mismatch", "文件传输格式不一致")
+        if int(content["size_bytes"]) != int(transfer["expected_size_bytes"]) or str(
+            content["content_sha256"]
         ) != str(transfer["expected_sha256"]):
             self._deny("file_transfer_integrity_mismatch", "文件完整性校验失败")
-        if str(version.get("format_code") or "TXT") != str(transfer.get("format_code") or "TXT"):
-            self._deny("file_format_mismatch", "文件传输格式不一致")
         stream = await asyncio.to_thread(
             self.storage.open_stream,
-            internal_object_key=str(version["object_key"]),
+            internal_object_key=str(content["object_key"]),
         )
 
         async def chunks() -> AsyncIterator[bytes]:
@@ -654,9 +710,12 @@ class GovernedFileStreamingService:
                     "附件与任务文件工作区边界不一致",
                 )
         definition: TextFormatDefinition | None = None
+        document_source: ValidatedDocumentSource | None = None
         policy_version = FileFormatPolicyVersion.TEXT_V1
+        document_profile_code = "NONE"
         if workspace_id:
             policy_version = self._workspace_policy(workspace_id)
+            document_profile_code = self._workspace_document_profile(workspace_id)
             try:
                 definition = text_format_for_name(
                     str(row["file_name"]),
@@ -679,6 +738,18 @@ class GovernedFileStreamingService:
                 content_sha256 = validated.content_sha256
             else:
                 size_bytes, content_sha256 = await self._copy_attachment_stream(body, content)
+                if document_profile_code == "docling-text-v1":
+                    if self.document_processing is None:
+                        self._deny(
+                            "document_processing_unavailable",
+                            "文档处理依赖尚未就绪",
+                        )
+                    document_source = validate_document_source(
+                        content,
+                        display_name=str(row["file_name"]),
+                        declared_media_type=media_type,
+                        declared_size_bytes=size_bytes,
+                    )
             existing_hash = str(row.get("sha256") or "")
             if existing_hash and str(row.get("object_key") or ""):
                 if existing_hash != content_sha256 or int(row.get("size_bytes") or 0) != size_bytes:
@@ -696,7 +767,11 @@ class GovernedFileStreamingService:
                 content_type=(
                     definition.canonical_media_type
                     if definition is not None
-                    else media_type.split(";", 1)[0][:128]
+                    else (
+                        document_source.media_type
+                        if document_source is not None
+                        else media_type.split(";", 1)[0][:128]
+                    )
                 ),
                 content_sha256=content_sha256,
                 size_bytes=size_bytes,
@@ -721,6 +796,14 @@ class GovernedFileStreamingService:
                     content_sha256=content_sha256,
                     definition=definition,
                 )
+            elif document_source is not None:
+                self._publish_attachment_document(
+                    attachment={**row, "task_workspace_id": workspace_id},
+                    object_key=object_key,
+                    size_bytes=size_bytes,
+                    content_sha256=content_sha256,
+                    source=document_source,
+                )
             self._ensure_attachment_cleanup(attachment_id)
             return self._attachment_receipt(attachment_id)
         except Exception:
@@ -733,7 +816,25 @@ class GovernedFileStreamingService:
         if self.lifecycle is None:
             self._deny("file_lifecycle_not_ready", "文件生命周期处理尚未就绪")
         assert self.lifecycle is not None
-        return cast(dict[str, Any], await asyncio.to_thread(self.lifecycle.run_once))
+        result = cast(dict[str, Any], await asyncio.to_thread(self.lifecycle.run_once))
+        if self.document_processing is not None:
+            reconciliation = await asyncio.to_thread(
+                self.document_processing.reconcile_attachment_readability
+            )
+            processing = await asyncio.to_thread(
+                self.document_processing.cleanup_expired_transfers,
+                now=self.now(),
+            )
+            result.update(
+                {
+                    "representation_transfers_expired": processing["expired"],
+                    "representation_staging_deleted": processing["deleted"],
+                    "representation_staging_delete_failed": processing["failed"],
+                    "document_readability_reconciled": reconciliation["reconciled"],
+                    "document_processing_release_job_ids": reconciliation["release_job_ids"],
+                }
+            )
+        return result
 
     async def maintenance_metrics(self, *, service_claims: dict[str, Any]) -> dict[str, Any]:
         if str(service_claims.get("sub") or "") != "file-worker":
@@ -741,7 +842,12 @@ class GovernedFileStreamingService:
         if self.lifecycle is None:
             self._deny("file_lifecycle_not_ready", "文件生命周期处理尚未就绪")
         assert self.lifecycle is not None
-        return cast(dict[str, Any], await asyncio.to_thread(self.lifecycle.metrics))
+        result = cast(dict[str, Any], await asyncio.to_thread(self.lifecycle.metrics))
+        if self.document_processing is not None:
+            result["document_processing"] = await asyncio.to_thread(
+                self.document_processing.repository.processing_summary
+            )
+        return result
 
     async def _copy_attachment_stream(
         self, body: AsyncIterator[bytes], destination: BinaryIO
@@ -877,6 +983,127 @@ class GovernedFileStreamingService:
                 },
             )
 
+    def _publish_attachment_document(
+        self,
+        *,
+        attachment: dict[str, Any],
+        object_key: str,
+        size_bytes: int,
+        content_sha256: str,
+        source: ValidatedDocumentSource,
+    ) -> None:
+        workspace_id = str(attachment.get("task_workspace_id") or "")
+        if not workspace_id or self.document_processing is None:
+            self._deny("document_processing_unavailable", "文档处理依赖尚未就绪")
+        existing = self.repository.database.execute_one(
+            "select * from message_attachment_file_binding where attachment_id = ?",
+            (attachment["id"],),
+        )
+        if existing is not None:
+            version = self.repository.get_version(str(existing["version_id"]))
+            if (
+                str(version["content_sha256"]) != content_sha256
+                or int(version["size_bytes"]) != size_bytes
+            ):
+                self._deny(
+                    "file_attachment_idempotency_conflict",
+                    "附件标识已绑定不同内容",
+                )
+            return
+        with self.repository.database.unit_of_work():
+            workspace = self.repository.get_workspace(workspace_id)
+            if str(workspace["status"]) != "ACTIVE":
+                self._deny("file_workspace_expired", "任务文件工作区已失效")
+            self.quota.require_commit_capacity(
+                workspace_id=workspace_id,
+                incoming_bytes=size_bytes,
+                creates_logical_file=True,
+                now=_iso(self.now()),
+            )
+            display_name = self._available_attachment_name(
+                workspace_id=workspace_id,
+                requested=str(attachment["file_name"]),
+                attachment_id=str(attachment["id"]),
+            )
+            file_id = _opaque("managed_file")
+            version_id = _opaque("file_version")
+            self.repository.create_file(
+                file_id=file_id,
+                tenant_id=str(workspace["tenant_id"]),
+                owner=self._owner(workspace),
+                display_name=display_name,
+                actor_id="file-worker",
+                source_received_at=str(attachment.get("created_at") or "") or None,
+                format_code=source.format_code.value,
+            )
+            self.repository.create_version(
+                version_id=version_id,
+                file_id=file_id,
+                version_number=1,
+                version_kind=FileVersionKind.ATTACHMENT,
+                status=FileVersionStatus.AVAILABLE,
+                media_type=source.media_type,
+                encoding="",
+                size_bytes=size_bytes,
+                content_sha256=content_sha256,
+                object_key=object_key,
+                source_kind=FileSourceKind.MESSAGE_ATTACHMENT,
+                actor_id="file-worker",
+                format_code=source.format_code.value,
+                source_reference_digest=content_sha256,
+                advance_current_from="",
+            )
+            self.repository.link_workspace_file(
+                workspace_id=workspace_id,
+                file_id=file_id,
+                version_id=version_id,
+                logical_name=display_name,
+                role=WorkspaceFileRole.INPUT,
+            )
+            self.repository.add_external_reference(
+                file_id=file_id,
+                version_id=version_id,
+                provider=(
+                    "DINGTALK"
+                    if str(attachment.get("source_channel") or "").startswith("ding")
+                    else "CHANNEL"
+                ),
+                source_type="CHAT_ATTACHMENT",
+                source_id=str(attachment["id"]),
+                source_digest=content_sha256,
+            )
+            expires_at = self._attachment_expiry(attachment)
+            self.repository.bind_attachment(
+                attachment_id=str(attachment["id"]),
+                file_id=file_id,
+                version_id=version_id,
+                retention_expires_at=expires_at,
+            )
+            self.repository.add_retention(
+                version_id=version_id,
+                reason=RetentionReason.MESSAGE_ATTACHMENT,
+                source_id=str(attachment["id"]),
+                starts_at=str(attachment.get("created_at") or _iso(self.now())),
+                expires_at=expires_at,
+                retention_days=int(attachment.get("retention_days") or 360),
+            )
+            run = self.document_processing.request_processing(
+                tenant_id=str(workspace["tenant_id"]),
+                source_file_id=file_id,
+                source_version_id=version_id,
+                actor_id="file-worker",
+                correlation_id=str(attachment.get("id") or "")[:128],
+            )
+            self.repository.database.execute(
+                """
+                update message_attachment
+                   set readability_status = 'PENDING', file_processing_run_id = ?,
+                       readability_error_code = '', readability_updated_at = ?
+                 where id = ?
+                """,
+                (run["id"], _iso(self.now()), attachment["id"]),
+            )
+
     def _ensure_attachment_cleanup(
         self, attachment_id: str, *, reason: str = "RETENTION_EXPIRED"
     ) -> None:
@@ -908,6 +1135,7 @@ class GovernedFileStreamingService:
         row = self.repository.database.execute_one(
             """
             select a.id as attachment_id, a.size_bytes, a.sha256,
+                   a.readability_status, a.file_processing_run_id,
                    b.file_id, b.version_id
               from message_attachment a
               left join message_attachment_file_binding b on b.attachment_id = a.id
@@ -924,6 +1152,8 @@ class GovernedFileStreamingService:
             "sha256": str(row.get("sha256") or ""),
             "file_id": str(row.get("file_id") or ""),
             "version_id": str(row.get("version_id") or ""),
+            "readability_status": str(row.get("readability_status") or "NOT_REQUIRED"),
+            "processing_run_id": str(row.get("file_processing_run_id") or ""),
             "status": "IMPORTED",
         }
 
@@ -1276,6 +1506,25 @@ class GovernedFileStreamingService:
             self._deny("file_workspace_expired", "任务文件工作区已失效")
         assert row is not None
         return normalize_file_format_policy_version(row.get("file_format_policy_version"))
+
+    def _workspace_document_profile(self, workspace_id: str) -> str:
+        row = self.repository.database.execute_one(
+            """
+            select p.document_processing_profile_code
+              from task_workspace w
+              join business_application_publication p
+                on p.id = w.business_application_publication_id
+             where w.id = ?
+            """,
+            (workspace_id,),
+        )
+        if row is None:
+            self._deny("file_workspace_expired", "任务文件工作区已失效")
+        assert row is not None
+        code = str(row.get("document_processing_profile_code") or "NONE")
+        if code not in {"NONE", "docling-text-v1"}:
+            self._deny("document_processing_profile_invalid", "文档处理Profile无效")
+        return code
 
     @staticmethod
     def _item_actions(item: dict[str, Any]) -> list[str]:

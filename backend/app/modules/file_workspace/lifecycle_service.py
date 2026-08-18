@@ -352,6 +352,42 @@ class FileLifecycleService:
             version = self.repository.get_version(resource_id)
             if str(version["status"]) in {"CONTENT_UNAVAILABLE", "DELETED"}:
                 return "complete"
+            processing_objects = self.repository.database.execute(
+                """
+                select id, object_key, 'representation' as object_kind
+                  from file_representation
+                 where source_version_id = ? and status = 'AVAILABLE'
+                union all
+                select t.id, t.staging_object_key as object_key,
+                       'transfer' as object_kind
+                  from file_representation_transfer t
+                  join file_processing_run r on r.id = t.processing_run_id
+                 where r.source_version_id = ?
+                   and t.status in ('OPEN', 'UPLOADING', 'STAGED')
+                """,
+                (resource_id, resource_id),
+            )
+            for item in processing_objects:
+                self.storage.delete(internal_object_key=str(item["object_key"]))
+                if str(item["object_kind"]) == "representation":
+                    self.repository.database.execute(
+                        """
+                        update file_representation
+                           set status = 'CONTENT_UNAVAILABLE', content_deleted_at = ?
+                         where id = ? and status = 'AVAILABLE'
+                        """,
+                        (timestamp, item["id"]),
+                    )
+                else:
+                    self.repository.database.execute(
+                        """
+                        update file_representation_transfer
+                           set status = 'EXPIRED', error_code = 'source_retired',
+                               updated_at = ?
+                         where id = ? and status in ('OPEN', 'UPLOADING', 'STAGED')
+                        """,
+                        (timestamp, item["id"]),
+                    )
             self.storage.delete(internal_object_key=str(version["object_key"]))
             self.repository.mark_content_unavailable(version_id=resource_id)
             return "complete"
@@ -431,6 +467,8 @@ class FileLifecycleService:
             for query in (
                 "select object_key from managed_file_version where status in ('AVAILABLE', 'CONFLICT')",
                 "select object_key from file_object_staging where status <> 'DELETED'",
+                "select object_key from file_representation where status = 'AVAILABLE'",
+                "select staging_object_key as object_key from file_representation_transfer where status in ('OPEN', 'UPLOADING', 'STAGED')",
             )
             for row in self.repository.database.execute(query)
             if row.get("object_key")

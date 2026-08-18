@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from pathlib import Path
 from typing import Any, Never
 
 from app.modules.channel.domain.channel_event import ChannelFileReference
@@ -41,6 +42,9 @@ MARKDOWN_OUTPUT_FORMAT_MARKERS = (
     "markdown文档",
     "markdownfile",
     "markdowndocument",
+)
+DOCUMENT_INPUT_SUFFIXES = frozenset(
+    {".pdf", ".docx", ".pptx", ".xlsx", ".png", ".jpg", ".jpeg", ".webp"}
 )
 TXT_OUTPUT_ACTION_MARKERS = (
     "生成",
@@ -136,6 +140,7 @@ class JobFileManifestService:
                 str(getattr(item, "file_name", "")),
                 policy_version=policy_version,
             )
+            or Path(str(getattr(item, "file_name", ""))).suffix.lower() in DOCUMENT_INPUT_SUFFIXES
             for item in attachments
         ) or bool(file_references)
         active = self.repository.get_active_workspace(session_id)
@@ -243,7 +248,7 @@ class JobFileManifestService:
             manifest_hash = hashlib.sha256(
                 json.dumps(
                     {
-                        "schema_version": 3,
+                        "schema_version": 4,
                         "file_format_policy_version": policy_version,
                         "items": canonical,
                     },
@@ -292,9 +297,6 @@ class JobFileManifestService:
                     safe_message="任务文件清单无效",
                     error_code="file_manifest_invalid",
                 )
-            definition = get_text_format_policy(policy_version).by_code(
-                str(item.get("format_code") or "TXT")
-            )
             try:
                 frozen_actions = {FileAction(action) for action in actions}
             except ValueError as exc:
@@ -303,18 +305,48 @@ class JobFileManifestService:
                     safe_message="任务文件清单无效",
                     error_code="file_manifest_actions_invalid",
                 ) from exc
-            if not frozen_actions.issubset(definition.actions):
-                raise NonRetryableExecutionError(
-                    "Job File Manifest actions exceed the frozen format policy",
-                    safe_message="任务文件清单无效",
-                    error_code="file_manifest_actions_invalid",
-                )
+            representation_id = item.get("representation_id")
+            format_code = str(item.get("format_code") or "TXT")
+            representation: dict[str, Any] = {}
+            if representation_id:
+                if (
+                    format_code not in {"PDF", "DOCX", "PPTX", "XLSX", "PNG", "JPEG", "WEBP"}
+                    or frozen_actions
+                    != {FileAction.READ_METADATA, FileAction.RETAIN, FileAction.DELIVER}
+                    or str(item.get("representation_kind") or "") != "MARKDOWN"
+                    or str(item.get("representation_format_code") or "") != "MARKDOWN"
+                    or int(item.get("representation_size_bytes") or 0) < 1
+                    or len(str(item.get("representation_sha256") or "")) != 64
+                    or not item.get("representation_created_at")
+                ):
+                    raise NonRetryableExecutionError(
+                        "Job File Manifest representation is invalid",
+                        safe_message="任务文件清单无效",
+                        error_code="file_manifest_invalid",
+                    )
+                representation = {
+                    "representation_id": str(representation_id),
+                    "representation_kind": "MARKDOWN",
+                    "representation_size_bytes": int(item["representation_size_bytes"]),
+                    "representation_sha256": str(item["representation_sha256"]),
+                    "representation_format_code": "MARKDOWN",
+                    "representation_created_at": str(item["representation_created_at"]),
+                }
+            else:
+                definition = get_text_format_policy(policy_version).by_code(format_code)
+                if not frozen_actions.issubset(definition.actions):
+                    raise NonRetryableExecutionError(
+                        "Job File Manifest actions exceed the frozen format policy",
+                        safe_message="任务文件清单无效",
+                        error_code="file_manifest_actions_invalid",
+                    )
+                format_code = definition.code.value
             projected.append(
                 {
                     "file_id": str(item["file_id"]),
                     "version_id": str(item["version_id"]),
                     "display_name": str(item["display_name"]),
-                    "format_code": definition.code.value,
+                    "format_code": format_code,
                     "source_kind": str(item["source_kind"]),
                     "allowed_actions": actions,
                     "auto_materialize": bool(item.get("auto_materialize")),
@@ -325,18 +357,39 @@ class JobFileManifestService:
                         else None
                     ),
                     "version_created_at": str(item.get("version_created_at") or ""),
+                    **representation,
                 }
             )
         canonical = [self._canonical_item(item) for item in projected]
-        if int(snapshot.get("schema_version") or 1) >= 3:
+        schema_version = int(snapshot.get("schema_version") or 1)
+        if schema_version >= 4:
             hash_value: object = {
+                "schema_version": 4,
+                "file_format_policy_version": policy_version.value,
+                "items": canonical,
+            }
+        elif schema_version >= 3:
+            for canonical_item in canonical:
+                for key in (
+                    "representation_id",
+                    "representation_kind",
+                    "representation_size_bytes",
+                    "representation_sha256",
+                    "representation_format_code",
+                    "representation_created_at",
+                ):
+                    canonical_item.pop(key, None)
+            hash_value = {
                 "schema_version": 3,
                 "file_format_policy_version": policy_version.value,
                 "items": canonical,
             }
         else:
-            for item in canonical:
-                item.pop("format_code", None)
+            for canonical_item in canonical:
+                canonical_item.pop("format_code", None)
+                for key in tuple(canonical_item):
+                    if key.startswith("representation_"):
+                        canonical_item.pop(key, None)
             hash_value = canonical
         actual_hash = hashlib.sha256(
             json.dumps(
@@ -352,12 +405,35 @@ class JobFileManifestService:
                 safe_message="任务文件清单无效",
                 error_code="file_manifest_invalid",
             )
+        readability_rows = self.repository.database.execute(
+            """
+            select file_name, readability_status, readability_error_code
+              from message_attachment
+             where job_id = ? and readability_status in ('PARTIAL', 'NO_TEXT', 'UNAVAILABLE')
+             order by ordinal, id
+            """,
+            (job_id,),
+        )
         return {
-            "schema_version": int(snapshot.get("schema_version") or 1),
+            "schema_version": schema_version,
             "file_format_policy_version": policy_version.value,
             "manifest_hash": str(snapshot["manifest_hash"]),
             "observed_at": str(snapshot.get("created_at") or ""),
             "items": projected,
+            **(
+                {
+                    "readability_notices": [
+                        {
+                            "file_name": str(row.get("file_name") or "")[:255],
+                            "status": str(row["readability_status"]),
+                            "error_code": str(row.get("readability_error_code") or "")[:128],
+                        }
+                        for row in readability_rows
+                    ]
+                }
+                if readability_rows
+                else {}
+            ),
         }
 
     def has_pending_text_attachments(self, job_id: str) -> bool:
@@ -430,6 +506,12 @@ class JobFileManifestService:
             "conflict_candidate": bool(item.get("conflict_candidate")),
             "source_received_at": item.get("source_received_at"),
             "version_created_at": str(item["version_created_at"]),
+            "representation_id": item.get("representation_id"),
+            "representation_kind": item.get("representation_kind"),
+            "representation_size_bytes": item.get("representation_size_bytes"),
+            "representation_sha256": item.get("representation_sha256"),
+            "representation_format_code": item.get("representation_format_code"),
+            "representation_created_at": item.get("representation_created_at"),
         }
 
     def _manifest_items(
@@ -508,23 +590,33 @@ class JobFileManifestService:
                    v.status as version_status, v.format_code as version_format_code,
                    v.media_type, v.encoding,
                    v.size_bytes, f.source_received_at,
-                   v.created_at as version_created_at
+                   v.created_at as version_created_at,
+                   a.readability_status, a.readability_error_code,
+                   r.id as representation_id, r.kind as representation_kind,
+                   r.size_bytes as representation_size_bytes,
+                   r.content_sha256 as representation_sha256,
+                   r.created_at as representation_created_at
               from message_attachment a
               left join message_attachment_file_binding b on b.attachment_id = a.id
               left join task_workspace_file wf
                 on wf.workspace_id = ? and wf.file_id = b.file_id and wf.status = 'ACTIVE'
               left join managed_file f on f.id = b.file_id
               left join managed_file_version v on v.id = b.version_id
+              left join file_representation r
+                on r.processing_run_id = a.file_processing_run_id
+               and r.kind = 'MARKDOWN' and r.status = 'AVAILABLE'
              where a.job_id = ?
              order by a.ordinal
             """,
             (workspace_id, job_id),
         )
         for row in text_attachments:
-            if not is_task_text_name(
+            is_text = is_task_text_name(
                 str(row.get("attachment_name") or ""),
                 policy_version=policy_version,
-            ):
+            )
+            is_document = str(row.get("readability_status") or "NOT_REQUIRED") != "NOT_REQUIRED"
+            if not is_text and not is_document:
                 continue
             status = str(row.get("attachment_status") or "")
             if status not in {"READY", "REJECTED", "FAILED", "stored_not_interpreted"}:
@@ -542,6 +634,49 @@ class JobFileManifestService:
                     error_code="file_attachment_not_imported",
                 )
             self._require_file_boundary(row, workspace)
+            if is_document:
+                readability = str(row.get("readability_status") or "")
+                if readability == "PENDING":
+                    raise NonRetryableExecutionError(
+                        "Document representation is still pending",
+                        safe_message="文档可读表示尚未生成",
+                        error_code="file_inputs_pending",
+                    )
+                if readability not in {"AVAILABLE", "PARTIAL"}:
+                    continue
+                if not row.get("representation_id"):
+                    raise NonRetryableExecutionError(
+                        "Document representation is unavailable",
+                        safe_message="文档可读表示不可用",
+                        error_code="file_representation_unavailable",
+                    )
+                self._require_file_boundary(row, workspace)
+                item = {
+                    "file_id": str(row["file_id"]),
+                    "version_id": str(row["version_id"]),
+                    "display_name": str(row["display_name"]),
+                    "format_code": str(row.get("file_format_code") or "PDF"),
+                    "source_kind": SnapshotSourceKind.CURRENT_MESSAGE.value,
+                    "allowed_actions": [
+                        FileAction.READ_METADATA.value,
+                        FileAction.RETAIN.value,
+                        FileAction.DELIVER.value,
+                    ],
+                    "auto_materialize": True,
+                    "conflict_candidate": False,
+                    "source_received_at": str(row.get("source_received_at"))
+                    if row.get("source_received_at")
+                    else None,
+                    "version_created_at": str(row["version_created_at"]),
+                    "representation_id": str(row["representation_id"]),
+                    "representation_kind": "MARKDOWN",
+                    "representation_size_bytes": int(row["representation_size_bytes"]),
+                    "representation_sha256": str(row["representation_sha256"]),
+                    "representation_format_code": "MARKDOWN",
+                    "representation_created_at": str(row["representation_created_at"]),
+                }
+                by_identity[(str(row["file_id"]), str(row["version_id"]))] = item
+                continue
             if not self._eligible_text(row, policy_version=policy_version):
                 raise NonRetryableExecutionError(
                     "Imported task TXT attachment is invalid",

@@ -258,13 +258,13 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             return context
         manifest = context.retrieved_context.get("file_manifest")
         schema_version = manifest.get("schema_version") if isinstance(manifest, dict) else None
-        if not isinstance(manifest, dict) or schema_version not in {1, 2, 3}:
+        if not isinstance(manifest, dict) or schema_version not in {1, 2, 3, 4}:
             raise NonRetryableExecutionError(
                 "Runtime Job File Manifest is missing or invalid",
                 safe_message="任务文件清单无效",
                 error_code="file_manifest_runtime_invalid",
             )
-        if schema_version in {2, 3} and not _is_utc_rfc3339(manifest.get("observed_at")):
+        if schema_version in {2, 3, 4} and not _is_utc_rfc3339(manifest.get("observed_at")):
             raise NonRetryableExecutionError(
                 "Runtime Job File Manifest observation time is invalid",
                 safe_message="任务文件清单无效",
@@ -288,9 +288,14 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
                 )
             source_received_at = item.get("source_received_at")
             version_created_at = item.get("version_created_at")
-            if schema_version in {2, 3} and (
+            representation_id = item.get("representation_id")
+            if schema_version in {2, 3, 4} and (
                 (source_received_at is not None and not _is_utc_rfc3339(source_received_at))
                 or not _is_utc_rfc3339(version_created_at)
+                or (
+                    representation_id is not None
+                    and not _is_utc_rfc3339(item.get("representation_created_at"))
+                )
             ):
                 raise NonRetryableExecutionError(
                     "Runtime Job File Manifest item time is invalid",
@@ -304,6 +309,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             display_name = item.get("display_name")
             actions = item.get("allowed_actions")
             format_code = item.get("format_code", "TXT")
+            has_representation = schema_version == 4 and representation_id is not None
             if (
                 not isinstance(file_id, str)
                 or _OPAQUE_IDENTIFIER.fullmatch(file_id) is None
@@ -312,8 +318,26 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
                 or not isinstance(display_name, str)
                 or not 1 <= len(display_name) <= 255
                 or not isinstance(actions, list)
-                or "MATERIALIZE" not in actions
-                or format_code not in {"TXT", "LOG", "MARKDOWN"}
+                or (
+                    not has_representation
+                    and (
+                        "MATERIALIZE" not in actions
+                        or format_code not in {"TXT", "LOG", "MARKDOWN"}
+                    )
+                )
+                or (
+                    has_representation
+                    and (
+                        not isinstance(representation_id, str)
+                        or _OPAQUE_IDENTIFIER.fullmatch(representation_id) is None
+                        or item.get("representation_kind") != "MARKDOWN"
+                        or item.get("representation_format_code") != "MARKDOWN"
+                        or not isinstance(item.get("representation_size_bytes"), int)
+                        or int(item["representation_size_bytes"]) < 1
+                        or not isinstance(item.get("representation_sha256"), str)
+                        or len(str(item["representation_sha256"])) != 64
+                    )
+                )
             ):
                 raise NonRetryableExecutionError(
                     "Runtime Job File Manifest item is invalid",
@@ -339,15 +363,30 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
                 {
                     "file_id": file_id,
                     "version_id": version_id,
-                    "display_name": display_name,
-                    "format_code": str(format_code),
-                    "allowed_actions": list(actions),
+                    "display_name": (
+                        f"{display_name.rsplit('.', 1)[0]}.md"
+                        if has_representation
+                        else display_name
+                    ),
+                    "format_code": "MARKDOWN" if has_representation else str(format_code),
+                    "allowed_actions": (["MATERIALIZE"] if has_representation else list(actions)),
                     "relative_path": str(result["relative_path"]),
                     "sandbox_entry_handle": str(result["sandbox_entry_handle"]),
                     "size_bytes": int(result["size_bytes"]),
                     "sha256": str(result["sha256"]),
                     "source_received_at": source_received_at,
                     "version_created_at": str(version_created_at or ""),
+                    **(
+                        {
+                            "source_display_name": display_name,
+                            "source_format_code": str(format_code),
+                            "representation_id": str(representation_id),
+                            "representation_kind": "MARKDOWN",
+                            "representation_created_at": str(item["representation_created_at"]),
+                        }
+                        if has_representation
+                        else {}
+                    ),
                 }
             )
         return replace(

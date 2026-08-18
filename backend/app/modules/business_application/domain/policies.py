@@ -11,6 +11,11 @@ from app.modules.business_application.domain.models import (
     DeliveryType,
     TriggerType,
 )
+from app.modules.document_processing import (
+    DocumentProcessingProfileCode,
+    document_processing_profile_snapshot,
+    normalize_document_processing_profile_code,
+)
 from app.modules.file_workspace.text_format_policy import (
     FileFormatPolicyVersion,
     normalize_file_format_policy_version,
@@ -163,6 +168,10 @@ def validate_file_format_policy_version(value: object) -> str:
         ) from exc
 
 
+def validate_document_processing_profile_code(value: object) -> str:
+    return normalize_document_processing_profile_code(value).value
+
+
 def validate_task_file_features(value: object) -> dict[str, bool]:
     if value is None:
         return dict(DEFAULT_TASK_FILE_FEATURES)
@@ -246,13 +255,35 @@ def publication_file_format_policy(snapshot: dict[str, Any]) -> tuple[str, str]:
     )
 
 
+def publication_document_processing_profile(
+    snapshot: dict[str, Any],
+) -> tuple[dict[str, str], str]:
+    value = snapshot.get("document_processing_profile")
+    if value is None:
+        return document_processing_profile_snapshot(None), "legacy_default"
+    if not isinstance(value, dict):
+        raise validation_error(
+            "document_processing_profile",
+            "发布快照中的文档处理Profile无效",
+        )
+    expected = document_processing_profile_snapshot(value.get("code"))
+    if value != expected:
+        raise validation_error(
+            "document_processing_profile",
+            "发布快照中的文档处理Profile与代码注册版本不一致",
+        )
+    return expected, "publication_snapshot"
+
+
 def verify_publication_snapshot(
     snapshot: dict[str, Any],
     *,
     schema_version: int,
     expected_hash: str,
 ) -> bool:
-    if schema_version not in {1, 2, 3, 4} or not verify_snapshot(snapshot, expected_hash):
+    if schema_version not in {1, 2, 3, 4, 5} or not verify_snapshot(
+        snapshot, expected_hash
+    ):
         return False
     if schema_version == 1:
         return True
@@ -273,11 +304,26 @@ def verify_publication_snapshot(
             and snapshot.get("task_workspace_retention_period") in TASK_WORKSPACE_RETENTION_PERIODS
             and features_valid
         )
-    return (
-        snapshot.get("schema_version") == 4
-        and snapshot.get("task_workspace_retention_period") in TASK_WORKSPACE_RETENTION_PERIODS
+    v4_valid = (
+        snapshot.get("task_workspace_retention_period") in TASK_WORKSPACE_RETENTION_PERIODS
         and snapshot.get("file_format_policy_version") in FILE_FORMAT_POLICY_VERSIONS
         and features_valid
+    )
+    if schema_version == 4:
+        return snapshot.get("schema_version") == 4 and v4_valid
+    try:
+        profile, profile_source = publication_document_processing_profile(snapshot)
+    except NonRetryableExecutionError:
+        return False
+    return (
+        snapshot.get("schema_version") == 5
+        and v4_valid
+        and profile_source == "publication_snapshot"
+        and profile["code"]
+        in {
+            DocumentProcessingProfileCode.NONE.value,
+            DocumentProcessingProfileCode.DOCLING_TEXT_V1.value,
+        }
     )
 
 

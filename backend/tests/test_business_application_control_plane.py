@@ -13,15 +13,18 @@ from app.main import create_app
 from app.modules.business_application.domain.policies import (
     canonical_json,
     normalize_routing_key,
+    publication_document_processing_profile,
     publication_file_format_policy,
     publication_task_file_features,
     required_file_mcp_tools,
     reject_dangerous_content,
     snapshot_hash,
     validate_execution_policy,
+    verify_publication_snapshot,
     validate_task_file_attachment_dependency,
     validate_task_file_features,
 )
+from app.modules.document_processing import DOCLING_TEXT_V1
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.mcp_tool_runtime.job_snapshot import JobMcpToolSnapshotService
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
@@ -223,7 +226,7 @@ def test_workspace_retention_is_frozen_in_revision_publication_hash_and_audit() 
         code="workspace-retention-policy",
         revision_id=str(revision["id"]),
     )
-    assert publication["schema_version"] == 4
+    assert publication["schema_version"] == 5
     assert publication["file_format_policy_version"] == "text-v1"
     assert publication["file_format_policy_source"] == "publication_snapshot"
     assert publication["task_file_features"] == {
@@ -348,7 +351,7 @@ def test_file_format_policy_is_frozen_and_legacy_publications_remain_text_v1() -
         code="file-format-policy",
         revision_id=str(revision["id"]),
     )
-    assert publication["schema_version"] == 4
+    assert publication["schema_version"] == 5
     assert publication["snapshot"]["file_format_policy_version"] == "text-v2"
     assert publication["file_format_policy_version"] == "text-v2"
     assert publication["file_format_policy_source"] == "publication_snapshot"
@@ -553,6 +556,128 @@ def test_task_file_feature_flags_are_strict_frozen_and_legacy_default_off() -> N
     assert snapshot_hash(frozen["snapshot"]) == frozen["config_hash"]
 
 
+def test_document_processing_profile_is_strict_frozen_and_legacy_default_off() -> None:
+    assert publication_document_processing_profile({"schema_version": 4}) == (
+        {"code": "NONE", "version": "", "hash": ""},
+        "legacy_default",
+    )
+    container = build_test_container(control_plane_settings(), migrate=True, seed=True)
+    service = container.business_application_service
+    application = service.create(
+        actor_id="user_local_admin",
+        code="document-processing-profile",
+        name="Document Processing Profile",
+        description="safe",
+        project_code="default",
+        owner_user_id="user_local_admin",
+    )
+    assert application["draft"]["document_processing_profile_code"] == "NONE"
+    assert application["draft"]["document_processing_status"] == "DISABLED"
+
+    payload = draft_payload()
+    payload["document_processing_profile_code"] = "docling-text-v1"
+    revision = service.save_draft(
+        actor_id="user_local_admin",
+        code="document-processing-profile",
+        expected_revision=int(application["revision"]),
+        payload=payload,
+    )
+    assert revision["document_processing_profile_code"] == "docling-text-v1"
+    assert revision["document_processing_status"] == "CONFIGURED_UNAVAILABLE"
+
+    publication = service.publish(
+        actor_id="user_local_admin",
+        code="document-processing-profile",
+        revision_id=str(revision["id"]),
+    )
+    expected_profile = {
+        "code": "docling-text-v1",
+        "version": "1",
+        "hash": DOCLING_TEXT_V1.profile_hash,
+    }
+    assert publication["schema_version"] == 5
+    assert publication["snapshot"]["document_processing_profile"] == expected_profile
+    assert publication["document_processing_profile_code"] == "docling-text-v1"
+    assert publication["document_processing_profile_version"] == "1"
+    assert publication["document_processing_profile_hash"] == DOCLING_TEXT_V1.profile_hash
+    assert publication["document_processing_profile_source"] == "publication_snapshot"
+    assert publication["document_processing_status"] == "CONFIGURED_UNAVAILABLE"
+    assert snapshot_hash(publication["snapshot"]) == publication["config_hash"]
+    assert verify_publication_snapshot(
+        publication["snapshot"],
+        schema_version=5,
+        expected_hash=publication["config_hash"],
+    )
+
+    payload["document_processing_profile_code"] = "NONE"
+    next_revision = service.save_draft(
+        actor_id="user_local_admin",
+        code="document-processing-profile",
+        expected_revision=int(revision["revision"]),
+        payload=payload,
+    )
+    assert next_revision["document_processing_status"] == "DISABLED"
+    frozen = container.business_application_repository.get_publication(str(publication["id"]))
+    assert frozen["document_processing_profile_code"] == "docling-text-v1"
+    assert frozen["document_processing_profile_hash"] == DOCLING_TEXT_V1.profile_hash
+
+    tampered = dict(publication["snapshot"])
+    tampered["document_processing_profile"] = {
+        **expected_profile,
+        "hash": "0" * 64,
+    }
+    assert not verify_publication_snapshot(
+        tampered,
+        schema_version=5,
+        expected_hash=snapshot_hash(tampered),
+    )
+
+    catalog = service.catalog(
+        actor_id="user_local_admin",
+        code="document-processing-profile",
+    )
+    assert [item["code"] for item in catalog["document_processing_profiles"]] == [
+        "NONE",
+        "docling-text-v1",
+    ]
+    assert catalog["document_processing_profiles"][1]["document_processing_status"] == (
+        "CONFIGURED_UNAVAILABLE"
+    )
+    assert "request_options" not in catalog["document_processing_profiles"][1]
+
+
+def test_document_processing_profile_http_contract_rejects_arbitrary_options() -> None:
+    settings = control_plane_settings()
+    container = build_test_container(settings, migrate=True, seed=True)
+    application = container.business_application_service.create(
+        actor_id="user_local_admin",
+        code="document-profile-http",
+        name="Document Profile HTTP",
+        description="safe",
+        project_code="default",
+        owner_user_id="user_local_admin",
+    )
+    payload = draft_payload()
+    payload.update(
+        {
+            "expected_revision": application["revision"],
+            "document_processing_profile_code": "docling-text-v1",
+            "document_processing_options": {"url": "https://example.invalid"},
+        }
+    )
+    app = create_app(settings, container_factory=lambda _: container)
+
+    with TestClient(app) as client:
+        csrf = login(client)
+        response = client.put(
+            "/api/admin/business-applications/document-profile-http/draft",
+            json=payload,
+            headers=csrf_headers(csrf),
+        )
+
+    assert response.status_code == 422
+
+
 def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
     db = Database("sqlite:///:memory:")
     migrator = Migrator(
@@ -605,6 +730,7 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
         "110_expand_file_source_received_time.sql",
         "111_expand_text_file_format_policy.sql",
         "112_expand_resource_revision_scope_bindings.sql",
+        "113_expand_document_file_processing.sql",
     ]
     session_columns = {str(row["name"]) for row in db.execute("pragma table_info(agent_session)")}
     assert {

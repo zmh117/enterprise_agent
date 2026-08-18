@@ -89,8 +89,20 @@ const taskFileFeaturesSchema = z.object({
   default_file_delivery_enabled: z.boolean().default(false),
 })
 
-export const revisionSchema = z
-  .object({
+const documentProcessingProfileCodeSchema = z.enum([
+  "NONE",
+  "docling-text-v1",
+])
+
+const documentProcessingStateSchema = z.object({
+  document_processing_status: z
+    .enum(["DISABLED", "CONFIGURED_UNAVAILABLE", "READY"])
+    .default("DISABLED"),
+  document_processing_reason_code: z.string().default("profile_disabled"),
+})
+
+export const revisionSchema = documentProcessingStateSchema
+  .extend({
     id: z.string(),
     application_id: z.string(),
     revision: z.number(),
@@ -103,6 +115,9 @@ export const revisionSchema = z
     file_format_policy_version: z
       .enum(["text-v1", "text-v2"])
       .default("text-v1"),
+    document_processing_profile_code: documentProcessingProfileCodeSchema.default(
+      "NONE"
+    ),
     task_file_features: taskFileFeaturesSchema.default({
       workspace_enabled: false,
       file_mcp_enabled: false,
@@ -122,6 +137,7 @@ export const revisionSchema = z
   .passthrough()
 
 export const publicationSchema = runtimeStateSchema
+  .merge(documentProcessingStateSchema)
   .extend({
     id: z.string(),
     application_id: z.string(),
@@ -143,6 +159,14 @@ export const publicationSchema = runtimeStateSchema
       .enum(["text-v1", "text-v2"])
       .default("text-v1"),
     file_format_policy_source: z
+      .enum(["publication_snapshot", "legacy_default"])
+      .default("legacy_default"),
+    document_processing_profile_code: documentProcessingProfileCodeSchema.default(
+      "NONE"
+    ),
+    document_processing_profile_version: z.string().default(""),
+    document_processing_profile_hash: z.string().default(""),
+    document_processing_profile_source: z
       .enum(["publication_snapshot", "legacy_default"])
       .default("legacy_default"),
     file_format_compatibility: z
@@ -185,6 +209,7 @@ export const deploymentSchema = runtimeStateSchema
   .passthrough()
 
 export const applicationSummarySchema = runtimeStateSchema
+  .merge(documentProcessingStateSchema)
   .extend({
     id: z.string(),
     code: z.string(),
@@ -202,6 +227,9 @@ export const applicationSummarySchema = runtimeStateSchema
     file_format_policy_version: z
       .enum(["text-v1", "text-v2"])
       .default("text-v1"),
+    document_processing_profile_code: documentProcessingProfileCodeSchema.default(
+      "NONE"
+    ),
   })
   .passthrough()
 
@@ -232,6 +260,7 @@ export type SaveDraftInput = {
   workflow_publication_id: string
   task_workspace_retention_period: "DAY" | "WEEK" | "MONTH"
   file_format_policy_version: "text-v1" | "text-v2"
+  document_processing_profile_code: "NONE" | "docling-text-v1"
   task_file_features: {
     workspace_enabled: boolean
     file_mcp_enabled: boolean

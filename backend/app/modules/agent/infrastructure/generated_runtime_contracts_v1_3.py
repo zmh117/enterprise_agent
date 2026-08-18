@@ -24,7 +24,16 @@ SafeMessage = str
 FileFormatPolicyVersion = Literal["text-v2"]
 TextFormatCode = Literal["TXT", "LOG", "MARKDOWN"]
 FileAction = Literal["READ_METADATA", "MATERIALIZE", "EDIT", "COMMIT", "RETAIN", "DELIVER"]
-RuntimeEvent = dict[str, object] | dict[str, object] | dict[str, object] | dict[str, object] | dict[str, object] | dict[str, object] | dict[str, object]
+RuntimeEvent = (
+    dict[str, object]
+    | dict[str, object]
+    | dict[str, object]
+    | dict[str, object]
+    | dict[str, object]
+    | dict[str, object]
+    | dict[str, object]
+)
+
 
 class JsonSummary(TypedDict):
     pass
@@ -121,10 +130,16 @@ class JobFileManifestItem(TypedDict):
     conflict_candidate: bool
     source_received_at: str | None
     version_created_at: str
+    representation_id: NotRequired[Identifier]
+    representation_kind: NotRequired[Literal["MARKDOWN"]]
+    representation_size_bytes: NotRequired[int]
+    representation_sha256: NotRequired[Sha256Digest]
+    representation_format_code: NotRequired[Literal["MARKDOWN"]]
+    representation_created_at: NotRequired[str]
 
 
 class JobFileManifest(TypedDict):
-    schema_version: Literal[3]
+    schema_version: Literal[3, 4]
     file_format_policy_version: FileFormatPolicyVersion
     manifest_hash: Sha256Digest
     observed_at: str

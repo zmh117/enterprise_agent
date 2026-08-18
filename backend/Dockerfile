@@ -83,6 +83,7 @@ COPY backend/app/modules/authorization_center /app/backend/app/modules/authoriza
 COPY backend/app/modules/business_application /app/backend/app/modules/business_application
 COPY backend/app/modules/channel /app/backend/app/modules/channel
 COPY backend/app/modules/delivery /app/backend/app/modules/delivery
+COPY backend/app/modules/document_processing /app/backend/app/modules/document_processing
 COPY backend/app/modules/dingding/__init__.py /app/backend/app/modules/dingding/
 COPY backend/app/modules/dingding/application /app/backend/app/modules/dingding/application
 COPY backend/app/modules/dingding/infrastructure /app/backend/app/modules/dingding/infrastructure
@@ -106,10 +107,18 @@ COPY backend/migrations /app/backend/migrations
 COPY backend/seeds /app/backend/seeds
 COPY contracts/agent-runtime /app/contracts/agent-runtime
 COPY .claude/skills /app/.claude/skills
-RUN python -c "import app.bootstrap; import app.workers.agent_job_worker; import app.workers.job_dispatch_worker; import app.workers.delivery_dispatch_worker; import app.workers.webhook_dispatch_worker; import app.workers.channel_dispatch_worker; import app.workers.file_worker"
+RUN python -c "import app.bootstrap; import app.workers.agent_job_worker; import app.workers.job_dispatch_worker; import app.workers.delivery_dispatch_worker; import app.workers.webhook_dispatch_worker; import app.workers.channel_dispatch_worker; import app.workers.file_worker; import app.workers.file_processing_worker"
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-deps --no-build-isolation .
 CMD ["python", "-m", "app.workers.agent_job_worker"]
+
+FROM agent-worker AS file-processing-worker
+USER root
+RUN groupadd --system --gid 10006 file-processing-worker \
+    && useradd --system --uid 10006 --gid 10006 --no-create-home file-processing-worker \
+    && python -c "import app.workers.file_processing_worker"
+USER 10006:10006
+CMD ["python", "-m", "app.workers.file_processing_worker"]
 
 FROM claude-runtime AS python-agent-runtime
 COPY backend/app/__init__.py /app/backend/app/

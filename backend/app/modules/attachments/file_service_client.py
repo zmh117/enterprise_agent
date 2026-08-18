@@ -95,6 +95,8 @@ class FileServiceAttachmentImporter:
                 sha256=str(value["sha256"]),
                 file_id=str(value.get("file_id") or ""),
                 version_id=str(value.get("version_id") or ""),
+                readability_status=str(value.get("readability_status") or "NOT_REQUIRED"),
+                processing_run_id=str(value.get("processing_run_id") or ""),
             )
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise RetryableExecutionError(
@@ -114,7 +116,7 @@ class FileServiceAttachmentImporter:
             )
         return receipt
 
-    def run_maintenance(self) -> dict[str, int | str]:
+    def run_maintenance(self) -> dict[str, int | str | list[str]]:
         request = urllib.request.Request(
             f"{self.base_url}/internal/v1/file-maintenance/run",
             data=b"",
@@ -144,11 +146,19 @@ class FileServiceAttachmentImporter:
                 safe_message="文件清理服务响应无效",
                 error_code="file_service_response_invalid",
             )
-        return {
+        safe: dict[str, int | str | list[str]] = {
             str(key): item
             for key, item in value.items()
             if isinstance(item, (int, str)) and not isinstance(item, bool)
         }
+        release_ids = value.get("document_processing_release_job_ids", [])
+        if (
+            isinstance(release_ids, list)
+            and len(release_ids) <= 1000
+            and all(isinstance(item, str) and 0 < len(item) <= 128 for item in release_ids)
+        ):
+            safe["document_processing_release_job_ids"] = release_ids
+        return safe
 
     def _token(self) -> str:
         token = self.token_provider.access_token()

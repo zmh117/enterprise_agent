@@ -15,6 +15,8 @@ from app.modules.identity.api import build_service_principal_router
 from app.modules.identity.application.principal_jwt import PrincipalJwks, PrincipalSigningKey
 from app.modules.identity.application.service_principal import (
     DELIVERY_WORKER_AUTHORIZED_PARTY,
+    FILE_PROCESSING_WORKER_AUTHORIZED_PARTY,
+    FILE_PROCESSING_WORKER_SCOPES,
     FILE_SERVICE_INTERNAL_AUDIENCE,
     FILE_WORKER_AUTHORIZED_PARTY,
     FILE_WORKER_SCOPES,
@@ -56,6 +58,7 @@ def _issuer(*, now: int = 1_900_000_000) -> tuple[ServicePrincipalTokenIssuer, _
         signing_key=_signing_key(),
         bootstrap_credentials={
             FILE_WORKER_AUTHORIZED_PARTY: "f" * 48,
+            FILE_PROCESSING_WORKER_AUTHORIZED_PARTY: "p" * 48,
             DELIVERY_WORKER_AUTHORIZED_PARTY: "d" * 48,
         },
         audit_service=audit,  # type: ignore[arg-type]
@@ -125,6 +128,27 @@ def test_file_worker_verifier_requires_full_fixed_role_scope_set() -> None:
         )
 
 
+def test_file_processing_worker_has_a_distinct_exact_scope_set() -> None:
+    issuer, _ = _issuer()
+    token = issuer.issue("p" * 48).access_token
+    verifier = FileWorkerPrincipalVerifier(
+        PrincipalJwks.from_dict(issuer.signing_key.public_jwks()),
+        now=lambda: 1_900_000_001,
+    )
+
+    claims = verifier.verify_processing(
+        token,
+        required_scope="internal:file-service:document-processing:source:read",
+    )
+    assert claims["sub"] == FILE_PROCESSING_WORKER_AUTHORIZED_PARTY
+    assert frozenset(claims["scope"]) == FILE_PROCESSING_WORKER_SCOPES
+    with pytest.raises(FilePrincipalError):
+        verifier.verify_service(
+            token,
+            required_scope="internal:file-service:attachment:import",
+        )
+
+
 def test_shared_principal_jwks_does_not_blur_job_and_service_token_domains() -> None:
     signing_key = _signing_key()
     jwks = PrincipalJwks.from_dict(signing_key.public_jwks())
@@ -133,6 +157,7 @@ def test_shared_principal_jwks_does_not_blur_job_and_service_token_domains() -> 
         signing_key=signing_key,
         bootstrap_credentials={
             FILE_WORKER_AUTHORIZED_PARTY: "f" * 48,
+            FILE_PROCESSING_WORKER_AUTHORIZED_PARTY: "p" * 48,
             DELIVERY_WORKER_AUTHORIZED_PARTY: "d" * 48,
         },
         audit_service=audit,  # type: ignore[arg-type]

@@ -50,6 +50,8 @@ class AttachmentImportReceipt:
     sha256: str
     file_id: str = ""
     version_id: str = ""
+    readability_status: str = "NOT_REQUIRED"
+    processing_run_id: str = ""
 
 
 class AttachmentImporter(Protocol):

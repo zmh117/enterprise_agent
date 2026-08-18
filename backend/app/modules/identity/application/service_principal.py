@@ -26,6 +26,7 @@ from app.shared.exceptions import NonRetryableExecutionError, RetryableExecution
 SERVICE_PRINCIPAL_ISSUER = "enterprise-agent-service-identity"
 FILE_SERVICE_INTERNAL_AUDIENCE = "file-service-internal"
 FILE_WORKER_AUTHORIZED_PARTY = "file-worker"
+FILE_PROCESSING_WORKER_AUTHORIZED_PARTY = "file-processing-worker"
 DELIVERY_WORKER_AUTHORIZED_PARTY = "delivery-worker"
 FILE_WORKER_SCOPES = frozenset(
     {
@@ -33,9 +34,15 @@ FILE_WORKER_SCOPES = frozenset(
         "internal:file-service:content:cleanup",
     }
 )
-DELIVERY_WORKER_SCOPES = frozenset(
-    {"internal:file-service:delivery:read"}
+FILE_PROCESSING_WORKER_SCOPES = frozenset(
+    {
+        "internal:file-service:document-processing:claim",
+        "internal:file-service:document-processing:source:read",
+        "internal:file-service:document-processing:representation:write",
+        "internal:file-service:document-processing:complete",
+    }
 )
+DELIVERY_WORKER_SCOPES = frozenset({"internal:file-service:delivery:read"})
 MAX_SERVICE_PRINCIPAL_TTL_SECONDS = 5 * 60
 SERVICE_PRINCIPAL_TOKEN_PATH = "/api/internal/service-principal/token"
 
@@ -67,6 +74,11 @@ SERVICE_PRINCIPAL_GRANTS = {
         subject=FILE_WORKER_AUTHORIZED_PARTY,
         audience=FILE_SERVICE_INTERNAL_AUDIENCE,
         scopes=FILE_WORKER_SCOPES,
+    ),
+    FILE_PROCESSING_WORKER_AUTHORIZED_PARTY: ServicePrincipalGrant(
+        subject=FILE_PROCESSING_WORKER_AUTHORIZED_PARTY,
+        audience=FILE_SERVICE_INTERNAL_AUDIENCE,
+        scopes=FILE_PROCESSING_WORKER_SCOPES,
     ),
     DELIVERY_WORKER_AUTHORIZED_PARTY: ServicePrincipalGrant(
         subject=DELIVERY_WORKER_AUTHORIZED_PARTY,
@@ -149,6 +161,7 @@ class ServicePrincipalTokenIssuer:
         *,
         signing_private_key_file: str,
         file_worker_bootstrap_file: str,
+        file_processing_worker_bootstrap_file: str,
         delivery_worker_bootstrap_file: str,
         audit_service: AuditService,
         environment: str,
@@ -163,6 +176,10 @@ class ServicePrincipalTokenIssuer:
                 FILE_WORKER_AUTHORIZED_PARTY: _read_bootstrap_credential(
                     file_worker_bootstrap_file,
                     label="File Worker bootstrap credential",
+                ),
+                FILE_PROCESSING_WORKER_AUTHORIZED_PARTY: _read_bootstrap_credential(
+                    file_processing_worker_bootstrap_file,
+                    label="File Processing Worker bootstrap credential",
                 ),
                 DELIVERY_WORKER_AUTHORIZED_PARTY: _read_bootstrap_credential(
                     delivery_worker_bootstrap_file,
@@ -341,10 +358,7 @@ class ServicePrincipalTokenClient:
         self._lock = threading.Lock()
 
     def __repr__(self) -> str:
-        return (
-            "ServicePrincipalTokenClient("
-            f"url={self.url!r}, credential=<hidden>, token=<hidden>)"
-        )
+        return f"ServicePrincipalTokenClient(url={self.url!r}, credential=<hidden>, token=<hidden>)"
 
     def access_token(self) -> str:
         now = self._now()
