@@ -30,3 +30,11 @@ Business Application Revision SHALL 选择一个代码发布的`document_process
 - **WHEN** 应用Publication的Profile为`NONE`
 - **THEN** 其它已发布Channel、Agent和文本文件能力继续按原配置运行
 - **AND** 系统不为该应用创建Docling processing run
+
+#### Scenario: 配置选择与实时运行状态分区展示
+- **WHEN** 管理员查看Business Application的组成配置
+- **THEN** 管理端分别展示“直接文本文件策略”和“文档解析/OCR Profile”，并明确TXT、LOG、Markdown不进入Docling
+- **AND** 组成配置只表达当前Profile选择，不根据静态默认值推断processing worker、Docling、队列或File Service的实时状态
+- **WHEN** 管理员查看已激活Publication的发布与运行信息
+- **THEN** 文档解析/OCR运行状态来自File Processing Worker、Docling、processing队列和File Service的实时安全探针
+- **AND** Publication未激活、探针失败或状态无法取得时不得报告`READY`

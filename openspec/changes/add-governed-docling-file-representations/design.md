@@ -116,6 +116,8 @@ Docling Markdown 不再写入 `attachment_content`，也不经 conversation atta
 
 因此新增文档处理不会改变 Delivery Outbox 的精确版本语义，也不会因解析部分成功而新增 `PARTIAL` Agent Job终态。
 
+管理端也按这三条路径区分配置语义：“直接文本文件策略”只描述TXT、LOG和Markdown如何由Agent经任务工作区直接读取，“文档解析/OCR Profile”只描述PDF、Office和图片如何生成只读文字表示。组成配置只显示选择结果；processing worker、Docling、processing队列和File Service的实时状态只在已激活Publication的“发布与运行”及运行中心展示。实时探针不可达、Publication未激活或状态未知时均不得从静态Profile注册信息推断`READY`。
+
 ### 9. 安全与网络边界
 
 `docling-serve` 不映射宿主端口，不启用 UI，只连接专用内部网络；镜像必须固定 tag 和 digest，模型 artifacts 在镜像构建/受控部署阶段准备，运行时不从互联网下载。服务开启独立 API Key并关闭 remote services、custom configs、callbacks 和 external plugins。

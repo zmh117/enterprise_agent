@@ -15,6 +15,7 @@ from app.modules.message_bus.application.message_publisher import (
     FileProcessingDisposition,
     FileProcessingTaskMessage,
 )
+from app.workers.file_processing_worker import document_processing_readiness
 
 
 MESSAGE = FileProcessingTaskMessage(
@@ -206,3 +207,34 @@ def test_worker_maps_unexpected_failure_to_bounded_retry() -> None:
     assert result.disposition is FileProcessingDisposition.RETRY
     assert result.error_code == "document_processing_unexpected"
     assert files.calls[-1][0] == "retry"
+
+
+def test_worker_readiness_requires_fresh_heartbeat_and_every_dependency() -> None:
+    ready = document_processing_readiness(
+        {"rabbitmq": "ready", "file_service": "ready", "docling": "ready"},
+        30,
+    )
+    assert ready == {
+        "status": "ok",
+        "ready": True,
+        "reason_code": "ready",
+        "components": {
+            "rabbitmq": "ready",
+            "file_service": "ready",
+            "docling": "ready",
+        },
+    }
+
+    docling_down = document_processing_readiness(
+        {"rabbitmq": "ready", "file_service": "ready", "docling": "unavailable"},
+        30,
+    )
+    assert docling_down["ready"] is False
+    assert docling_down["reason_code"] == "docling_unavailable"
+
+    stale = document_processing_readiness(
+        {"rabbitmq": "ready", "file_service": "ready", "docling": "ready"},
+        121,
+    )
+    assert stale["ready"] is False
+    assert stale["reason_code"] == "file_processing_worker_heartbeat_stale"

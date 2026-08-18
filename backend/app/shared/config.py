@@ -218,6 +218,10 @@ class DocumentProcessingWorkerSettings:
     docling_base_url: str = "http://docling-serve:5001"
     docling_allowed_hosts: tuple[str, ...] = ("docling-serve",)
     docling_api_key_file: str = ""
+    readiness_host: str = "0.0.0.0"
+    readiness_port: int = 9106
+    internal_base_url: str = "http://file-processing-worker:9106"
+    internal_allowed_hosts: tuple[str, ...] = ("file-processing-worker",)
     connect_timeout_seconds: int = 5
     poll_interval_seconds: float = 2.0
     total_timeout_seconds: int = 600
@@ -227,6 +231,12 @@ class DocumentProcessingWorkerSettings:
     def __post_init__(self) -> None:
         if not self.docling_allowed_hosts:
             raise ValueError("Docling allowed hosts are required")
+        if not self.readiness_host:
+            raise ValueError("Document processing readiness host is required")
+        if not 1 <= self.readiness_port <= 65535:
+            raise ValueError("Document processing readiness port is invalid")
+        if not self.internal_allowed_hosts:
+            raise ValueError("Document processing worker allowed hosts are required")
         if not 1 <= self.connect_timeout_seconds <= 60:
             raise ValueError("Docling connect timeout is invalid")
         if not 0.1 <= self.poll_interval_seconds <= 30:
@@ -480,6 +490,18 @@ def load_settings() -> Settings:
                 os.getenv("DOCLING_SERVE_INTERNAL_ALLOWED_HOSTS", "docling-serve")
             ),
             docling_api_key_file=os.getenv("DOCLING_SERVE_API_KEY_FILE", ""),
+            readiness_host=os.getenv("FILE_PROCESSING_WORKER_READINESS_HOST", "0.0.0.0"),
+            readiness_port=int(os.getenv("FILE_PROCESSING_WORKER_READINESS_PORT", "9106")),
+            internal_base_url=os.getenv(
+                "FILE_PROCESSING_WORKER_INTERNAL_BASE_URL",
+                "http://file-processing-worker:9106",
+            ),
+            internal_allowed_hosts=_csv_tuple(
+                os.getenv(
+                    "FILE_PROCESSING_WORKER_INTERNAL_ALLOWED_HOSTS",
+                    "file-processing-worker",
+                )
+            ),
             connect_timeout_seconds=int(os.getenv("DOCLING_SERVE_CONNECT_TIMEOUT_SECONDS", "5")),
             poll_interval_seconds=float(os.getenv("DOCLING_SERVE_POLL_INTERVAL_SECONDS", "2")),
             total_timeout_seconds=int(os.getenv("DOCLING_SERVE_TOTAL_TIMEOUT_SECONDS", "600")),

@@ -92,6 +92,72 @@ function executionSummary(overrides: Record<string, unknown> = {}) {
   }
 }
 
+function fileOperations(overrides: Record<string, unknown> = {}) {
+  return {
+    file_service: { configured: true, ready: true, reason_code: "ready" },
+    file_worker: {
+      configured: true,
+      ready: true,
+      reason_code: "ready",
+      attachment_queue: {
+        availability: "available",
+        ready: 0,
+        unacked: 0,
+        consumers: 1,
+      },
+    },
+    document_processing: {
+      configured: true,
+      ready: true,
+      reason_code: "ready",
+      file_processing_worker: {
+        configured: true,
+        ready: true,
+        reason_code: "ready",
+        components: {
+          rabbitmq: "ready",
+          file_service: "ready",
+          docling: "ready",
+        },
+      },
+      queues: {
+        processing: {
+          availability: "available",
+          ready: 2,
+          unacked: 1,
+          consumers: 1,
+        },
+        retry: {
+          availability: "available",
+          ready: 3,
+          unacked: 0,
+          consumers: 0,
+        },
+        dead: {
+          availability: "available",
+          ready: 4,
+          unacked: 0,
+          consumers: 0,
+        },
+      },
+    },
+    backlog: {
+      cleanup: 0,
+      staging: 0,
+      attachment: 0,
+      workspace: 0,
+      retained: 0,
+      conflict: 0,
+      domain_outbox: 0,
+    },
+    earliest_due: "",
+    domain_outbox_earliest_created_at: "",
+    domain_outbox_failure_code: "",
+    recent_cleanup: null,
+    ...overrides,
+  }
+}
+
 function deliveryEvent(overrides: Record<string, unknown> = {}) {
   return {
     id: "delivery-1",
@@ -178,6 +244,28 @@ function renderRoute(
 }
 
 describe("runtime provenance records", () => {
+  it("shows live document processing dependencies and queue state", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      if (String(input).startsWith("/api/admin/file-operations")) {
+        return response(fileOperations())
+      }
+      return response({
+        items: [],
+        page: { limit: 50, has_more: false, next_cursor: null },
+      })
+    })
+
+    renderRoute("/operations/jobs", "/operations/jobs", <RuntimeRecordsPage />)
+
+    expect(await screen.findByText(/文档解析\/OCR 就绪/)).toBeInTheDocument()
+    expect(screen.getByText("文档处理队列")).toBeInTheDocument()
+    expect(
+      screen.getByText(/ready 2 · unacked 1 · consumer 1/)
+    ).toBeInTheDocument()
+    expect(screen.getByText(/retry 3 · dead 4/)).toBeInTheDocument()
+    expect(screen.getByText(/Docling 就绪/)).toBeInTheDocument()
+  })
+
   it("shows attributed and legacy jobs without guessing ownership", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(() =>
       response({
@@ -260,12 +348,8 @@ describe("runtime provenance records", () => {
     const params = new URL(requestUrl, "http://localhost").searchParams
     expect(params.get("username")).toBe("admin")
     expect(params.get("application_name")).toBe("诊断助手")
-    expect(params.get("start")).toBe(
-      new Date("2026-08-13T09:00").toISOString()
-    )
-    expect(params.get("end")).toBe(
-      new Date("2026-08-13T10:00").toISOString()
-    )
+    expect(params.get("start")).toBe(new Date("2026-08-13T09:00").toISOString())
+    expect(params.get("end")).toBe(new Date("2026-08-13T10:00").toISOString())
     expect(screen.queryByLabelText("用户安全标识")).not.toBeInTheDocument()
     expect(screen.queryByLabelText("Agent")).not.toBeInTheDocument()
     expect(screen.queryByLabelText("模型")).not.toBeInTheDocument()
@@ -376,49 +460,55 @@ describe("runtime provenance records", () => {
   })
 
   it("loads the next model-call page without replacing prior rows", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
-      const url = String(input)
-      if (url.includes("/model-calls?")) {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((input) => {
+        const url = String(input)
+        if (url.includes("/model-calls?")) {
+          return response({
+            job_id: "job-1",
+            items: [
+              modelCall({
+                id: "model-call-2",
+                runtime_sequence: 10,
+                model_id: "claude-safe-model-next",
+                provider_request_id: "request-safe-2",
+              }),
+            ],
+            limit: 50,
+            has_more: false,
+            next_cursor: null,
+          })
+        }
         return response({
-          job_id: "job-1",
-          items: [
-            modelCall({
-              id: "model-call-2",
-              runtime_sequence: 10,
-              model_id: "claude-safe-model-next",
-              provider_request_id: "request-safe-2",
-            }),
-          ],
-          limit: 50,
-          has_more: false,
-          next_cursor: null,
+          job: job(),
+          session_ref: { id: "session-1" },
+          steps: [],
+          tool_calls: [],
+          execution_summary: executionSummary(),
+          model_calls: {
+            items: [modelCall()],
+            limit: 50,
+            has_more: true,
+            next_cursor: "opaque-cursor-1",
+          },
+          deliveries: { events: [], attempts: [], chunks: [] },
+          webhook_events: [],
         })
-      }
-      return response({
-        job: job(),
-        session_ref: { id: "session-1" },
-        steps: [],
-        tool_calls: [],
-        execution_summary: executionSummary(),
-        model_calls: {
-          items: [modelCall()],
-          limit: 50,
-          has_more: true,
-          next_cursor: "opaque-cursor-1",
-        },
-        deliveries: { events: [], attempts: [], chunks: [] },
-        webhook_events: [],
       })
-    })
     renderRoute(
       "/operations/jobs/job-1",
       "/operations/jobs/:jobId",
       <RuntimeJobDetailPage />
     )
 
-    fireEvent.click(await screen.findByRole("button", { name: "加载更多模型请求" }))
+    fireEvent.click(
+      await screen.findByRole("button", { name: "加载更多模型请求" })
+    )
 
-    expect(await screen.findByText("claude-safe-model-next")).toBeInTheDocument()
+    expect(
+      await screen.findByText("claude-safe-model-next")
+    ).toBeInTheDocument()
     expect(screen.getAllByText("claude-safe-model").length).toBeGreaterThan(0)
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
@@ -489,7 +579,9 @@ describe("runtime provenance records", () => {
       expect(
         screen.getByText(new RegExp(`失败位置 ${failureLabel}`))
       ).toBeInTheDocument()
-      expect(screen.getByText("Job 重试已耗尽", { exact: false })).toBeInTheDocument()
+      expect(
+        screen.getByText("Job 重试已耗尽", { exact: false })
+      ).toBeInTheDocument()
       expect(
         screen.getByText("不可用（SDK 未提供请求起点）")
       ).toBeInTheDocument()
@@ -512,7 +604,12 @@ describe("runtime provenance records", () => {
           delivery_status: "FAILED",
           display_failure_stage: "DELIVERY",
         }),
-        model_calls: { items: [], limit: 50, has_more: false, next_cursor: null },
+        model_calls: {
+          items: [],
+          limit: 50,
+          has_more: false,
+          next_cursor: null,
+        },
         deliveries: {
           events: [
             deliveryEvent({
@@ -534,7 +631,9 @@ describe("runtime provenance records", () => {
       <RuntimeJobDetailPage />
     )
 
-    expect(await screen.findByText("Agent 执行 SUCCEEDED · Delivery FAILED")).toBeInTheDocument()
+    expect(
+      await screen.findByText("Agent 执行 SUCCEEDED · Delivery FAILED")
+    ).toBeInTheDocument()
     expect(screen.getByText(/失败位置 结果投递/)).toBeInTheDocument()
     expect(screen.getByText("Agent 已完成 · 投递失败")).toBeInTheDocument()
   })

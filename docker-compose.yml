@@ -31,6 +31,8 @@ x-api-env: &api-env
   PRINCIPAL_JWT_PRIVATE_KEY_FILE: /run/secrets/principal_jwt_private_key
   FILE_WORKER_BOOTSTRAP_TOKEN_FILE: /run/secrets/file_worker_bootstrap_token
   FILE_PROCESSING_WORKER_BOOTSTRAP_TOKEN_FILE: /run/secrets/file_processing_worker_bootstrap_token
+  FILE_PROCESSING_WORKER_INTERNAL_BASE_URL: http://file-processing-worker:9106
+  FILE_PROCESSING_WORKER_INTERNAL_ALLOWED_HOSTS: file-processing-worker
   DELIVERY_WORKER_BOOTSTRAP_TOKEN_FILE: /run/secrets/delivery_worker_bootstrap_token
   SERVICE_PRINCIPAL_TTL_SECONDS: ${SERVICE_PRINCIPAL_TTL_SECONDS:-300}
   # ONES 本人身份验证只由 API 发起；固定 Provider 配置不得下发给
@@ -788,6 +790,8 @@ services:
       FILE_PROCESSING_MAX_ATTEMPTS: "3"
       FILE_PROCESSING_RETRY_BASE_SECONDS: "30"
       FILE_PROCESSING_WORKER_CONCURRENCY: "1"
+      FILE_PROCESSING_WORKER_READINESS_HOST: 0.0.0.0
+      FILE_PROCESSING_WORKER_READINESS_PORT: "9106"
       FILE_SERVICE_INTERNAL_BASE_URL: http://file-service:9105
       FILE_SERVICE_INTERNAL_ALLOWED_HOSTS: file-service
       FILE_SERVICE_INTERNAL_TIMEOUT_SECONDS: "30"
@@ -807,6 +811,8 @@ services:
     secrets:
       - file_processing_worker_bootstrap_token
       - docling_api_key
+    expose:
+      - "9106"
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -821,7 +827,7 @@ services:
         - CMD
         - python
         - -c
-        - "import json,time; from pathlib import Path; h=Path('/tmp/file-processing-worker.heartbeat'); s=Path('/tmp/file-processing-worker.status.json'); v=json.loads(s.read_text()) if s.exists() else {}; ok=h.exists() and time.time()-h.stat().st_mtime < 120 and v.get('rabbitmq')=='ready' and v.get('file_service')=='ready' and v.get('docling')=='ready'; raise SystemExit(0 if ok else 1)"
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9106/ready', timeout=3)"
       interval: 15s
       timeout: 5s
       retries: 6

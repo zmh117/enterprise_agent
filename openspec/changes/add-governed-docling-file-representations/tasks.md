@@ -20,6 +20,7 @@
 - [x] 3.3 为 Business Application revision 增加 `document_processing_profile_code`，默认 `NONE`；发布时校验 profile 并冻结 code、version 和 hash。
 - [x] 3.4 保持旧 publication 的 `NONE` 兼容行为，禁止平台通过全局开关静默改变已发布应用语义。
 - [x] 3.5 补充管理 API/UI 的 profile 展示、选择、发布校验和只读快照测试，不向普通用户暴露 Docling 原生任意配置。
+- [x] 3.6 将管理端直接文本文件策略与文档解析/OCR Profile分区命名；配置页只显示选择，已激活Publication与运行中心通过File Processing Worker内部readiness及队列聚合展示实时依赖状态，未知状态不得误报READY。
 
 ## 4. File Service 处理领域
 

@@ -47,6 +47,8 @@ import {
   RuntimeReadinessPanel,
   RuntimeStatusBadge,
 } from "@/contexts/applications/presentation/runtime-readiness"
+import { useFileOperations } from "@/contexts/operations/application/runtime-record-queries"
+import type { FileOperations } from "@/contexts/operations/domain/runtime-record"
 import { cn } from "@/lib/utils"
 
 const FILE_MCP_READ_TOOL_IDS = [
@@ -259,14 +261,13 @@ function OverviewTab({ application }: { application: BusinessApplication }) {
             ],
             ["任务文件能力", formatTaskFileFeatures(draft?.task_file_features)],
             [
-              "文件格式策略",
+              "直接文本文件策略",
               formatFileFormatPolicy(draft?.file_format_policy_version),
             ],
             [
-              "文档处理",
-              formatDocumentProcessing(
-                draft?.document_processing_profile_code,
-                draft?.document_processing_status
+              "文档解析/OCR",
+              formatDocumentProcessingSelection(
+                draft?.document_processing_profile_code
               ),
             ],
           ]}
@@ -462,7 +463,7 @@ function PolicyEditor({
             自然周期固定到期，活动不会滚动延期；不影响聊天附件的 360 天保留。
           </p>
         </Field>
-        <Field label="文件格式策略" htmlFor="policy-file-format">
+        <Field label="直接文本文件策略" htmlFor="policy-file-format">
           <select
             id="policy-file-format"
             className={selectClass}
@@ -504,7 +505,8 @@ function PolicyEditor({
             </option>
           </select>
           <p className="text-xs leading-5 text-muted-foreground">
-            代码注册的固定矩阵，发布后冻结；Markdown
+            TXT、LOG、Markdown 由 Agent 通过任务工作区直接读取，不进入
+            Docling；代码注册的固定矩阵会在发布后冻结。Markdown
             始终按不可信纯文本处理，不在管理端渲染。
           </p>
           {form.file_format_policy_version === "text-v2" &&
@@ -523,7 +525,10 @@ function PolicyEditor({
             </p>
           ) : null}
         </Field>
-        <Field label="文档处理 Profile" htmlFor="policy-document-processing">
+        <Field
+          label="文档解析/OCR Profile"
+          htmlFor="policy-document-processing"
+        >
           <select
             id="policy-document-processing"
             className={selectClass}
@@ -560,15 +565,14 @@ function PolicyEditor({
           </select>
           <p className="text-xs leading-5 text-muted-foreground">
             仅可选择平台代码发布的固定 Profile；发布后冻结 code、version 与
-            hash，不能填写 Docling URL、模型、插件或原始 options。
+            hash。PDF、DOCX、PPTX、XLSX 和图片通过 Docling
+            生成只读文字表示，再由 Agent 读取；不能填写 Docling
+            URL、模型、插件或原始 options。
           </p>
           {selectedDocumentProfile?.code === "docling-text-v1" ? (
-            <p className="text-xs leading-5 text-amber-700">
-              当前状态：
-              {formatDocumentProcessingStatus(
-                selectedDocumentProfile.document_processing_status
-              )}
-              。仅提供有界 OCR/表格文字提取，不提供图片语义理解；依赖全部就绪前不会误报 READY。
+            <p className="text-xs leading-5 text-muted-foreground">
+              当前选择：已选择。仅提供有界
+              OCR/表格文字提取，不提供图片语义理解；真实运行状态请到“发布与运行”查看。
             </p>
           ) : null}
         </Field>
@@ -1336,14 +1340,13 @@ function ValidationTab({ application }: { application: BusinessApplication }) {
             formatTaskFileFeatures(revision?.task_file_features),
           ],
           [
-            "文件格式策略",
+            "直接文本文件策略",
             formatFileFormatPolicy(revision?.file_format_policy_version),
           ],
           [
-            "文档处理",
-            formatDocumentProcessing(
-              revision?.document_processing_profile_code,
-              revision?.document_processing_status
+            "文档解析/OCR",
+            formatDocumentProcessingSelection(
+              revision?.document_processing_profile_code
             ),
           ],
         ]}
@@ -1355,6 +1358,7 @@ function ValidationTab({ application }: { application: BusinessApplication }) {
 function PublicationTab({ application }: { application: BusinessApplication }) {
   const activate = useActivatePublication(application.code)
   const deactivate = useDeactivateLocalDeployment(application.code)
+  const fileOperations = useFileOperations()
   const environment = "local"
   const deployment = application.deployments.find(
     (item) => item.environment === environment
@@ -1494,7 +1498,7 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
                         }`}
                       />
                       <PublicationMetadata
-                        label="文件格式策略"
+                        label="直接文本文件策略"
                         value={`${formatFileFormatPolicy(
                           publication.file_format_policy_version
                         )} · ${
@@ -1514,7 +1518,7 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
                         }
                       />
                       <PublicationMetadata
-                        label="文档处理 Profile"
+                        label="文档解析/OCR Profile"
                         value={`${publication.document_processing_profile_code} · ${
                           publication.document_processing_profile_source ===
                           "legacy_default"
@@ -1523,9 +1527,14 @@ function PublicationTab({ application }: { application: BusinessApplication }) {
                         }`}
                       />
                       <PublicationMetadata
-                        label="文档处理状态"
-                        value={formatDocumentProcessingStatus(
-                          publication.document_processing_status
+                        label="文档解析/OCR 运行状态"
+                        value={formatDocumentProcessingRuntimeStatus(
+                          publication.document_processing_profile_code,
+                          deployment?.active === true &&
+                            deployment.publication_id === publication.id,
+                          fileOperations.data,
+                          fileOperations.isLoading,
+                          fileOperations.isError
                         )}
                       />
                       <PublicationMetadata
@@ -1870,22 +1879,41 @@ function formatFileFormatPolicy(
     : "text-v1（TXT 全能力）"
 }
 
-function formatDocumentProcessing(
-  profile: "NONE" | "docling-text-v1" | null | undefined,
-  status: "DISABLED" | "CONFIGURED_UNAVAILABLE" | "READY" | null | undefined
+function formatDocumentProcessingSelection(
+  profile: "NONE" | "docling-text-v1" | null | undefined
 ): string {
   if (!profile || profile === "NONE") return "关闭"
-  return `${profile} · ${formatDocumentProcessingStatus(
-    status ?? "CONFIGURED_UNAVAILABLE"
+  return `${profile}（已选择）`
+}
+
+function formatDocumentProcessingRuntimeStatus(
+  profile: "NONE" | "docling-text-v1",
+  active: boolean,
+  operations: FileOperations | undefined,
+  loading: boolean,
+  failed: boolean
+): string {
+  if (profile === "NONE") return "已关闭"
+  if (!active) return "未激活（不评估运行依赖）"
+  if (loading) return "正在读取实时状态"
+  if (failed || !operations) return "状态不可用（未推断为就绪）"
+  if (operations.document_processing.ready) return "就绪"
+  return `不可用 · ${formatDocumentProcessingReason(
+    operations.document_processing.reason_code
   )}`
 }
 
-function formatDocumentProcessingStatus(
-  status: "DISABLED" | "CONFIGURED_UNAVAILABLE" | "READY"
-): string {
-  if (status === "READY") return "就绪"
-  if (status === "CONFIGURED_UNAVAILABLE") return "已配置但依赖未就绪"
-  return "已关闭"
+function formatDocumentProcessingReason(reasonCode: string): string {
+  const labels: Record<string, string> = {
+    file_service_unavailable: "File Service 未就绪",
+    file_processing_worker_not_configured: "Processing Worker 未配置",
+    file_processing_worker_unavailable: "Processing Worker 未就绪",
+    file_processing_worker_heartbeat_stale: "Processing Worker 心跳过期",
+    file_processing_queue_unavailable: "处理队列未就绪",
+    rabbitmq_unavailable: "RabbitMQ 未就绪",
+    docling_unavailable: "Docling 未就绪",
+  }
+  return labels[reasonCode] ?? "处理依赖未就绪"
 }
 
 function changeTrigger(

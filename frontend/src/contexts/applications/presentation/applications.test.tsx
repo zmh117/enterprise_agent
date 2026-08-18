@@ -173,6 +173,74 @@ describe("Business Application workbench", () => {
           mcp_tools_by_agent_publication: {},
         })
       }
+      if (url.endsWith("/api/admin/file-operations")) {
+        return response({
+          file_service: {
+            configured: true,
+            ready: true,
+            reason_code: "ready",
+          },
+          file_worker: {
+            configured: true,
+            ready: true,
+            reason_code: "ready",
+            attachment_queue: {
+              availability: "available",
+              ready: 0,
+              unacked: 0,
+              consumers: 1,
+            },
+          },
+          document_processing: {
+            configured: true,
+            ready: true,
+            reason_code: "ready",
+            file_processing_worker: {
+              configured: true,
+              ready: true,
+              reason_code: "ready",
+              components: {
+                rabbitmq: "ready",
+                file_service: "ready",
+                docling: "ready",
+              },
+            },
+            queues: {
+              processing: {
+                availability: "available",
+                ready: 0,
+                unacked: 0,
+                consumers: 1,
+              },
+              retry: {
+                availability: "available",
+                ready: 0,
+                unacked: 0,
+                consumers: 0,
+              },
+              dead: {
+                availability: "available",
+                ready: 0,
+                unacked: 0,
+                consumers: 0,
+              },
+            },
+          },
+          backlog: {
+            cleanup: 0,
+            staging: 0,
+            attachment: 0,
+            workspace: 0,
+            retained: 0,
+            conflict: 0,
+            domain_outbox: 0,
+          },
+          earliest_due: "",
+          domain_outbox_earliest_created_at: "",
+          domain_outbox_failure_code: "",
+          recent_cleanup: null,
+        })
+      }
       return response({
         application: {
           id: "business_app_test",
@@ -219,9 +287,26 @@ describe("Business Application workbench", () => {
               runtime_components: {},
               affected_routes: [],
               legacy_fallback_enabled: false,
+              document_processing_profile_code: "docling-text-v1",
+              document_processing_profile_version: "1",
+              document_processing_profile_hash: "a".repeat(64),
+              document_processing_profile_source: "publication_snapshot",
+              document_processing_status: "CONFIGURED_UNAVAILABLE",
+              document_processing_reason_code:
+                "processing_dependencies_unavailable",
             },
           ],
-          deployments: [],
+          deployments: [
+            {
+              id: "deployment-1",
+              application_id: "business_app_test",
+              environment: "local",
+              publication_id:
+                "business_app_publication_d28011cc1804417e8780a6d1587893b4",
+              active: true,
+              revision: 1,
+            },
+          ],
         },
       })
     })
@@ -246,7 +331,8 @@ describe("Business Application workbench", () => {
     expect(
       await screen.findByText(/请先选择 Agent 发布版本/)
     ).toBeInTheDocument()
-    expect(screen.getByLabelText("文档处理 Profile")).toBeInTheDocument()
+    expect(screen.getByLabelText("直接文本文件策略")).toBeInTheDocument()
+    expect(screen.getByLabelText("文档解析/OCR Profile")).toBeInTheDocument()
     expect(
       await screen.findByRole("option", {
         name: "Docling 文字提取 v1",
@@ -254,6 +340,10 @@ describe("Business Application workbench", () => {
     ).toBeInTheDocument()
     expect(screen.queryByLabelText(/Docling URL/i)).not.toBeInTheDocument()
     expect(screen.queryByLabelText(/SQL/i)).not.toBeInTheDocument()
+    expect(
+      screen.getByText(/TXT、LOG、Markdown.*不进入 Docling/)
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/已配置但依赖未就绪/)).not.toBeInTheDocument()
 
     fireEvent.click(screen.getAllByRole("tab", { name: "发布与运行" })[0])
     const publicationCard = await screen.findByTestId(
@@ -264,6 +354,10 @@ describe("Business Application workbench", () => {
     expect(within(publicationCard).getByText("发布人")).toBeInTheDocument()
     expect(within(publicationCard).getByText("发布时间")).toBeInTheDocument()
     expect(within(publicationCard).getByText("结构版本")).toBeInTheDocument()
+    expect(
+      within(publicationCard).getByText("文档解析/OCR 运行状态")
+    ).toBeInTheDocument()
+    expect(await within(publicationCard).findByText("就绪")).toBeInTheDocument()
     expect(
       within(publicationCard).getByRole("status").parentElement
     ).toHaveClass("sm:col-span-2")

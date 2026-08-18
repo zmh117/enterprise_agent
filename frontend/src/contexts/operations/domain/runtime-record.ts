@@ -288,9 +288,7 @@ export const runtimeJobDetailSchema = z
       has_more: false,
       next_cursor: null,
     }),
-    mcp_operation_links: z
-      .array(z.record(z.string(), z.string()))
-      .default([]),
+    mcp_operation_links: z.array(z.record(z.string(), z.string())).default([]),
     file_workspace: z
       .object({
         enabled: z.boolean(),
@@ -364,6 +362,41 @@ export const fileOperationsSchema = z.object({
       ready: z.number().int().nonnegative().nullable(),
       unacked: z.number().int().nonnegative().nullable(),
       consumers: z.number().int().nonnegative().nullable(),
+    }),
+  }),
+  document_processing: z.object({
+    configured: z.boolean(),
+    ready: z.boolean(),
+    reason_code: z.string(),
+    file_processing_worker: z.object({
+      configured: z.boolean(),
+      ready: z.boolean(),
+      reason_code: z.string(),
+      components: z.object({
+        rabbitmq: z.enum(["ready", "unavailable"]),
+        file_service: z.enum(["ready", "unavailable"]),
+        docling: z.enum(["ready", "unavailable"]),
+      }),
+    }),
+    queues: z.object({
+      processing: z.object({
+        availability: z.string(),
+        ready: z.number().int().nonnegative().nullable(),
+        unacked: z.number().int().nonnegative().nullable(),
+        consumers: z.number().int().nonnegative().nullable(),
+      }),
+      retry: z.object({
+        availability: z.string(),
+        ready: z.number().int().nonnegative().nullable(),
+        unacked: z.number().int().nonnegative().nullable(),
+        consumers: z.number().int().nonnegative().nullable(),
+      }),
+      dead: z.object({
+        availability: z.string(),
+        ready: z.number().int().nonnegative().nullable(),
+        unacked: z.number().int().nonnegative().nullable(),
+        consumers: z.number().int().nonnegative().nullable(),
+      }),
     }),
   }),
   backlog: z.object({

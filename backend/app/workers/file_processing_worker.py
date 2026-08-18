@@ -5,7 +5,10 @@ import logging
 import threading
 import time
 import urllib.request
+from collections.abc import Callable
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 
 from app.modules.document_processing.file_service_client import (
     DocumentProcessingFileServiceClient,
@@ -26,6 +29,54 @@ from app.shared.logging import configure_logging, with_correlation
 logger = logging.getLogger(__name__)
 HEARTBEAT = Path("/tmp/file-processing-worker.heartbeat")
 STATUS = Path("/tmp/file-processing-worker.status.json")
+READINESS_MAX_HEARTBEAT_AGE_SECONDS = 120
+
+
+def document_processing_readiness(
+    status: dict[str, str],
+    heartbeat_age_seconds: float | None,
+) -> dict[str, Any]:
+    components = {
+        name: "ready" if status.get(name) == "ready" else "unavailable"
+        for name in ("rabbitmq", "file_service", "docling")
+    }
+    reason_code = "ready"
+    if heartbeat_age_seconds is None or heartbeat_age_seconds > READINESS_MAX_HEARTBEAT_AGE_SECONDS:
+        reason_code = "file_processing_worker_heartbeat_stale"
+    else:
+        for name in ("rabbitmq", "file_service", "docling"):
+            if components[name] != "ready":
+                reason_code = f"{name}_unavailable"
+                break
+    ready = reason_code == "ready"
+    return {
+        "status": "ok" if ready else "degraded",
+        "ready": ready,
+        "reason_code": reason_code,
+        "components": components,
+    }
+
+
+def _readiness_handler(
+    snapshot: Callable[[], dict[str, Any]],
+) -> type[BaseHTTPRequestHandler]:
+    class ReadinessHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            if self.path != "/ready":
+                self.send_error(404)
+                return
+            payload = snapshot()
+            body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+            self.send_response(200 if payload.get("ready") is True else 503)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: object) -> None:
+            del format, args
+
+    return ReadinessHandler
 
 
 def main() -> None:
@@ -68,22 +119,24 @@ def main() -> None:
     )
     consumer = RabbitMQFileProcessingConsumer(settings.rabbitmq_url, settings.queue)
     status_lock = threading.Lock()
+    runtime_status: dict[str, str] = {}
 
     def publish_status(**updates: str) -> None:
         with status_lock:
-            current: dict[str, str] = {}
-            if STATUS.exists():
-                try:
-                    value = json.loads(STATUS.read_text())
-                    if isinstance(value, dict):
-                        current = {str(key): str(item) for key, item in value.items()}
-                except (OSError, json.JSONDecodeError):
-                    current = {}
-            current.update(updates)
+            runtime_status.update(updates)
             temporary = STATUS.with_suffix(".tmp")
-            temporary.write_text(json.dumps(current, sort_keys=True))
+            temporary.write_text(json.dumps(runtime_status, sort_keys=True))
             temporary.replace(STATUS)
             HEARTBEAT.touch()
+
+    def readiness_snapshot() -> dict[str, Any]:
+        with status_lock:
+            current = dict(runtime_status)
+        try:
+            heartbeat_age = max(0.0, time.time() - HEARTBEAT.stat().st_mtime)
+        except OSError:
+            heartbeat_age = None
+        return document_processing_readiness(current, heartbeat_age)
 
     def dependency_monitor() -> None:
         endpoints = {
@@ -120,6 +173,15 @@ def main() -> None:
         file_service="unavailable",
         docling="unavailable",
     )
+    readiness_server = ThreadingHTTPServer(
+        (worker_settings.readiness_host, worker_settings.readiness_port),
+        _readiness_handler(readiness_snapshot),
+    )
+    threading.Thread(
+        target=readiness_server.serve_forever,
+        name="file-processing-readiness",
+        daemon=True,
+    ).start()
     threading.Thread(
         target=dependency_monitor,
         name="file-processing-dependencies",

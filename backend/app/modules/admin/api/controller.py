@@ -281,8 +281,17 @@ def build_admin_router() -> APIRouter:
             c.database,
             RabbitMQQueueStatusAdapter(c.settings.rabbitmq_url, c.settings.queue),
             attachment_queue=c.settings.queue.attachment_queue,
+            file_processing_queue=c.settings.queue.file_processing_queue,
+            file_processing_retry_queue=c.settings.queue.file_processing_retry_queue,
+            file_processing_dead_queue=c.settings.queue.file_processing_dead_queue,
             file_service_base_url=c.settings.file_service.internal_base_url,
             file_service_allowed_hosts=c.settings.file_service.internal_allowed_hosts,
+            file_processing_worker_base_url=(
+                c.settings.document_processing_worker.internal_base_url
+            ),
+            file_processing_worker_allowed_hosts=(
+                c.settings.document_processing_worker.internal_allowed_hosts
+            ),
         ).query()
 
     @router.get("/jobs")
@@ -572,13 +581,9 @@ def _job_cursor(cursor: str) -> tuple[str, str]:
 
 
 def _csv_values(value: str) -> tuple[str, ...]:
-    return tuple(
-        dict.fromkeys(
-            item.strip()[:100]
-            for item in value.split(",")
-            if item.strip()
-        )
-    )[:20]
+    return tuple(dict.fromkeys(item.strip()[:100] for item in value.split(",") if item.strip()))[
+        :20
+    ]
 
 
 def _page(items: list[dict[str, Any]], page: PageWindow, time_field: str) -> dict[str, Any]:

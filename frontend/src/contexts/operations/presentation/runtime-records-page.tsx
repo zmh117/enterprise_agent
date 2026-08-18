@@ -161,17 +161,28 @@ export function RuntimeRecordsPage() {
 
 function FileOperationsPanel({ value }: { value: FileOperations }) {
   const queue = value.file_worker.attachment_queue
+  const documentProcessing = value.document_processing
+  const processingQueues = documentProcessing.queues
   const backlog = value.backlog
   return (
     <Card className="shadow-none">
       <CardHeader>
         <CardTitle className="flex flex-wrap items-center gap-2 text-base">
           文件工作区运行状态
-          <Badge variant={value.file_service.ready ? "secondary" : "destructive"}>
+          <Badge
+            variant={value.file_service.ready ? "secondary" : "destructive"}
+          >
             File Service {value.file_service.ready ? "就绪" : "不可用"}
           </Badge>
-          <Badge variant={value.file_worker.ready ? "secondary" : "destructive"}>
+          <Badge
+            variant={value.file_worker.ready ? "secondary" : "destructive"}
+          >
             File Worker {value.file_worker.ready ? "就绪" : "不可用"}
+          </Badge>
+          <Badge
+            variant={documentProcessing.ready ? "secondary" : "destructive"}
+          >
+            文档解析/OCR {documentProcessing.ready ? "就绪" : "不可用"}
           </Badge>
         </CardTitle>
       </CardHeader>
@@ -179,6 +190,18 @@ function FileOperationsPanel({ value }: { value: FileOperations }) {
         <Metric
           label="附件队列"
           value={`ready ${queue.ready ?? "-"} · unacked ${queue.unacked ?? "-"} · consumer ${queue.consumers ?? "-"}`}
+        />
+        <Metric
+          label="文档处理队列"
+          value={`ready ${processingQueues.processing.ready ?? "-"} · unacked ${processingQueues.processing.unacked ?? "-"} · consumer ${processingQueues.processing.consumers ?? "-"}`}
+        />
+        <Metric
+          label="文档处理重试 / DLQ"
+          value={`retry ${processingQueues.retry.ready ?? "-"} · dead ${processingQueues.dead.ready ?? "-"}`}
+        />
+        <Metric
+          label="文档处理依赖"
+          value={`RabbitMQ ${formatDependencyState(documentProcessing.file_processing_worker.components.rabbitmq)} · File Service ${formatDependencyState(documentProcessing.file_processing_worker.components.file_service)} · Docling ${formatDependencyState(documentProcessing.file_processing_worker.components.docling)}`}
         />
         <Metric
           label="清理积压"
@@ -199,6 +222,10 @@ function FileOperationsPanel({ value }: { value: FileOperations }) {
       </CardContent>
     </Card>
   )
+}
+
+function formatDependencyState(value: "ready" | "unavailable") {
+  return value === "ready" ? "就绪" : "不可用"
 }
 
 function JobRow({ job }: { job: RuntimeJob }) {
@@ -383,10 +410,7 @@ function FileWorkspacePolicyPanel({
     enabled: boolean
     manifest_schema_version: number | null
     file_format_policy_version: "text-v1" | "text-v2"
-    policy_source:
-      | "job_file_manifest"
-      | "job_route_decision"
-      | "legacy_default"
+    policy_source: "job_file_manifest" | "job_route_decision" | "legacy_default"
     formats: Array<{
       format_code: "TXT" | "LOG" | "MARKDOWN"
       file_count: number
@@ -463,18 +487,28 @@ function ExecutionAccountingPanel({ summary }: { summary: ExecutionSummary }) {
           </Badge>
         </CardTitle>
         <p className="text-sm text-muted-foreground">
-          Agent 执行 {summary.execution_status} · Delivery {summary.delivery_status}
+          Agent 执行 {summary.execution_status} · Delivery{" "}
+          {summary.delivery_status}
         </p>
       </CardHeader>
       <CardContent>
         <dl className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
-          <Metric label="总耗时" value={formatDuration(summary.total_duration_ms)} />
+          <Metric
+            label="总耗时"
+            value={formatDuration(summary.total_duration_ms)}
+          />
           <Metric
             label="模型 API 耗时"
             value={formatDuration(summary.total_api_duration_ms)}
           />
-          <Metric label="输入 Token" value={formatCounter(summary.input_tokens)} />
-          <Metric label="输出 Token" value={formatCounter(summary.output_tokens)} />
+          <Metric
+            label="输入 Token"
+            value={formatCounter(summary.input_tokens)}
+          />
+          <Metric
+            label="输出 Token"
+            value={formatCounter(summary.output_tokens)}
+          />
           <Metric
             label="缓存创建 Token"
             value={formatCounter(summary.cache_creation_input_tokens)}
@@ -522,10 +556,17 @@ function ModelCallsPanel({
     setIsLoadingMore(true)
     setLoadError("")
     try {
-      const page = await listRuntimeJobModelCalls(jobId, cursor, initialPage.limit)
+      const page = await listRuntimeJobModelCalls(
+        jobId,
+        cursor,
+        initialPage.limit
+      )
       setCalls((current) => {
         const knownIds = new Set(current.map((call) => call.id))
-        return [...current, ...page.items.filter((call) => !knownIds.has(call.id))]
+        return [
+          ...current,
+          ...page.items.filter((call) => !knownIds.has(call.id)),
+        ]
       })
       setHasMore(page.has_more)
       setCursor(page.next_cursor)
@@ -541,7 +582,8 @@ function ModelCallsPanel({
       <CardHeader>
         <CardTitle>模型请求</CardTitle>
         <p className="text-sm text-muted-foreground">
-          只展示 SDK 安全标识和统计，不展示 Prompt、完整回复或原始 Provider 载荷。
+          只展示 SDK 安全标识和统计，不展示 Prompt、完整回复或原始 Provider
+          载荷。
         </p>
       </CardHeader>
       <CardContent>
@@ -572,7 +614,8 @@ function ModelCallsPanel({
                           Message {call.provider_message_id}
                         </p>
                       ) : null}
-                      {!call.provider_request_id && !call.provider_message_id ? (
+                      {!call.provider_request_id &&
+                      !call.provider_message_id ? (
                         <p className="mt-1 text-xs text-muted-foreground">
                           标识不可用
                         </p>
@@ -590,7 +633,8 @@ function ModelCallsPanel({
                         {formatCounter(call.output_tokens)}
                       </p>
                       <p className="mt-1 text-muted-foreground">
-                        缓存创建 {formatCounter(call.cache_creation_input_tokens)} ·
+                        缓存创建{" "}
+                        {formatCounter(call.cache_creation_input_tokens)} ·
                         缓存读取 {formatCounter(call.cache_read_input_tokens)}
                       </p>
                     </td>
@@ -609,7 +653,9 @@ function ModelCallsPanel({
             </table>
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">没有可用的模型轮次统计。</p>
+          <p className="text-sm text-muted-foreground">
+            没有可用的模型轮次统计。
+          </p>
         )}
         {loadError ? (
           <p className="mt-3 text-xs text-destructive" role="alert">

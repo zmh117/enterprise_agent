@@ -108,6 +108,24 @@ class RabbitMQQueueStatusAdapter:
                 "dead_letter_of": q.attachment_queue,
             },
             {
+                "name": q.file_processing_queue,
+                "purpose": "Document processing",
+                "retry_of": None,
+                "dead_letter_of": None,
+            },
+            {
+                "name": q.file_processing_retry_queue,
+                "purpose": "Document processing retry",
+                "retry_of": q.file_processing_queue,
+                "dead_letter_of": None,
+            },
+            {
+                "name": q.file_processing_dead_queue,
+                "purpose": "Document processing dead letters",
+                "retry_of": None,
+                "dead_letter_of": q.file_processing_queue,
+            },
+            {
                 "name": q.webhook_queue,
                 "purpose": "Webhook dispatch",
                 "retry_of": None,

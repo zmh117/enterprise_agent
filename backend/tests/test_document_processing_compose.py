@@ -18,9 +18,7 @@ def test_docling_image_is_digest_pinned_offline_nonroot_and_internal_only() -> N
     service = compose["services"]["docling-serve"]
     environment = service["environment"]
 
-    assert service["image"] == (
-        "quay.io/docling-project/docling-serve:v1.30.0@" + DIGEST
-    )
+    assert service["image"] == ("quay.io/docling-project/docling-serve:v1.30.0@" + DIGEST)
     assert service["user"] == "1001:0"
     assert service["read_only"] is True
     assert service["cap_drop"] == ["ALL"]
@@ -74,6 +72,10 @@ def test_processing_worker_has_only_queue_file_service_identity_and_docling_boun
         "docling_api_key",
     }
     assert environment["FILE_PROCESSING_WORKER_CONCURRENCY"] == "1"
+    assert environment["FILE_PROCESSING_WORKER_READINESS_HOST"] == "0.0.0.0"
+    assert environment["FILE_PROCESSING_WORKER_READINESS_PORT"] == "9106"
+    assert worker["expose"] == ["9106"]
+    assert "ports" not in worker
     assert environment["FILE_PROCESSING_MAX_ATTEMPTS"] == "3"
     assert environment["DOCLING_SERVE_TOTAL_TIMEOUT_SECONDS"] == "600"
     assert environment["FILE_PROCESSING_WORKER_BOOTSTRAP_TOKEN_FILE"] == (
@@ -96,6 +98,7 @@ def test_processing_worker_has_only_queue_file_service_identity_and_docling_boun
     assert worker["depends_on"]["docling-serve"]["condition"] == "service_healthy"
     assert worker["depends_on"]["file-service"]["condition"] == "service_healthy"
     assert worker["depends_on"]["rabbitmq"]["condition"] == "service_healthy"
+    assert worker["healthcheck"]["test"][-1].find("/ready") >= 0
 
 
 def test_processing_topology_adds_no_redis_rq_ray_file_mcp_or_host_docling_port() -> None:
@@ -126,8 +129,6 @@ def test_processing_secrets_are_generated_as_files_and_never_have_example_values
     assert "FILE_PROCESSING_WORKER_BOOTSTRAP_TOKEN_FILE=" in env_example
     assert "DOCLING_SERVE_API_KEY_FILE=" in env_example
     assert "DOCLING_SERVE_API_KEY=replace" not in env_example
-    script = (ROOT / "scripts/bootstrap_agent_runtime_secrets.sh").read_text(
-        encoding="utf-8"
-    )
+    script = (ROOT / "scripts/bootstrap_agent_runtime_secrets.sh").read_text(encoding="utf-8")
     assert "file-processing-worker-bootstrap-token" in script
     assert "docling-api-key" in script
