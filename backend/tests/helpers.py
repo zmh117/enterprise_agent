@@ -355,6 +355,7 @@ def activate_dingtalk_test_application(
     agent_publication_id: str = "agent_publication_default_v1",
     task_file_features: dict[str, bool] | None = None,
     file_format_policy_version: str = "text-v1",
+    document_processing_profile_code: str = "NONE",
 ) -> dict[str, object]:
     ensure_active_dingtalk_test_enterprise(container)
     normalized_task_file_features = validate_task_file_features(task_file_features)
@@ -453,6 +454,7 @@ def activate_dingtalk_test_application(
             },
             "task_file_features": normalized_task_file_features,
             "file_format_policy_version": file_format_policy_version,
+            "document_processing_profile_code": document_processing_profile_code,
             "triggers": triggers,
             "deliveries": [
                 {

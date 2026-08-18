@@ -4,7 +4,10 @@ import asyncio
 import json
 from collections.abc import Iterable
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
+
+import pytest
 
 from app.modules.agent.application.agent_result_service import AgentResultService
 from app.modules.attachments.domain import AttachmentImportReceipt
@@ -224,6 +227,46 @@ def test_unsupported_picture_then_plain_text_does_not_freeze_file_mcp_tools() ->
     frozen = snapshot_service.verify(job.id)
     server_codes = {str(item["server_code"]) for item in frozen["snapshot"]["tools"]}
     assert "file-service" not in server_codes
+
+
+@pytest.mark.parametrize(
+    ("file_name", "content_type"),
+    (
+        ("scan.png", "image/png"),
+        (
+            "report.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ),
+        ("report.pdf", "application/pdf"),
+    ),
+)
+def test_docling_profile_stages_supported_document_attachments(
+    file_name: str,
+    content_type: str,
+) -> None:
+    runtime = multimodal_container(
+        task_file_features=FEATURES,
+        file_format_policy_version="text-v2",
+        document_processing_profile_code="docling-text-v1",
+    )
+    suffix = Path(file_name).suffix[1:]
+    payload = load_fixture("file.json")
+    payload["msgId"] = f"docling-stage-{suffix}"
+    payload["content"] = {
+        "downloadCode": f"download-{suffix}",
+        "fileName": file_name,
+        "fileSize": 1024,
+        "contentType": content_type,
+    }
+
+    staged = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=payload,
+        correlation_id=str(payload["msgId"]),
+    )
+
+    assert staged.status == "attachments_staged", (staged.reason, staged.error_code)
+    assert runtime.agent_repository.count_rows("agent_job") == 0
+    assert len(runtime.message_bus.attachments) == 1
 
 
 def test_draw_txt_request_creates_workspace_and_freezes_file_tools() -> None:

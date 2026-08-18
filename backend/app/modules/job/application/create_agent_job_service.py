@@ -19,6 +19,7 @@ from app.modules.channel.domain.channel_event import (
     RoutingContext,
 )
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
+from app.modules.document_processing import resolve_document_processing_profile
 from app.modules.file_workspace.manifest_service import (
     JobFileManifestService,
     is_explicit_text_output_request,
@@ -53,6 +54,21 @@ ISOLATED_SESSION_SOURCE_CHANNELS = {
     "webhook",
 }
 TERMINAL_ATTACHMENT_STATUSES = {"READY", "REJECTED", "FAILED", "stored_not_interpreted"}
+
+
+def _is_supported_workspace_attachment(
+    file_name: str,
+    *,
+    policy_version: object,
+    document_processing_profile_code: object,
+) -> bool:
+    if is_task_text_name(file_name, policy_version=policy_version):
+        return True
+    profile = resolve_document_processing_profile(document_processing_profile_code)
+    if profile is None:
+        return False
+    extension = Path(file_name).suffix.lower()
+    return any(extension in definition.extensions for definition in profile.source_formats)
 
 
 @dataclass(frozen=True)
@@ -101,6 +117,7 @@ class CreateAgentJobCommand:
     sender_staff_id: str = ""
     task_workspace_retention_period: str = "WEEK"
     file_format_policy_version: str = "text-v1"
+    document_processing_profile_code: str = "NONE"
     task_file_features: dict[str, bool] = field(default_factory=dict)
     file_references: tuple[ChannelFileReference, ...] = ()
     requests_file_output: bool = False
@@ -222,7 +239,11 @@ class CreateAgentJobService:
             )
         policy_version = normalize_file_format_policy_version(command.file_format_policy_version)
         if not all(
-            is_task_text_name(item.file_name, policy_version=policy_version)
+            _is_supported_workspace_attachment(
+                item.file_name,
+                policy_version=policy_version,
+                document_processing_profile_code=command.document_processing_profile_code,
+            )
             for item in command.attachments
         ):
             raise NonRetryableExecutionError(
@@ -239,6 +260,7 @@ class CreateAgentJobService:
             command.attachments,
             enabled=attachments_enabled,
             file_format_policy_version=policy_version,
+            document_processing_profile_code=command.document_processing_profile_code,
         )
         if self.credential_cipher is None:
             raise NonRetryableExecutionError(
@@ -412,6 +434,7 @@ class CreateAgentJobService:
             command.attachments,
             enabled=attachments_enabled,
             file_format_policy_version=policy_version,
+            document_processing_profile_code=command.document_processing_profile_code,
         )
         requester_id = command.effective_requester_id
         source_channel = command.effective_source_channel
@@ -981,6 +1004,7 @@ class CreateAgentJobService:
         *,
         enabled: bool,
         file_format_policy_version: object = FileFormatPolicyVersion.TEXT_V1,
+        document_processing_profile_code: object = "NONE",
     ) -> None:
         if attachments and not enabled:
             raise NonRetryableExecutionError(
@@ -991,10 +1015,19 @@ class CreateAgentJobService:
             raise NonRetryableExecutionError(
                 "attachment_count_exceeded", safe_message="附件数量过多"
             )
+        profile = resolve_document_processing_profile(document_processing_profile_code)
+        document_extensions = frozenset(
+            extension
+            for definition in (profile.source_formats if profile is not None else ())
+            for extension in definition.extensions
+        )
         total = 0
         for attachment in attachments:
             extension = Path(attachment.file_name).suffix.lower()
-            if extension not in self.attachment_settings.allowed_extensions:
+            if (
+                extension not in self.attachment_settings.allowed_extensions
+                and extension not in document_extensions
+            ):
                 raise NonRetryableExecutionError(
                     "unsupported_attachment_type", safe_message="不支持此附件类型"
                 )

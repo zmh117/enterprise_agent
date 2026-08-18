@@ -110,6 +110,7 @@ def multimodal_container(
     *,
     task_file_features: dict[str, bool] | None = None,
     file_format_policy_version: str = "text-v1",
+    document_processing_profile_code: str = "NONE",
 ) -> object:
     settings = Settings(
         database_dsn="sqlite:///:memory:",
@@ -158,6 +159,7 @@ def multimodal_container(
         capabilities=tool_identifiers,
         task_file_features=normalized_task_file_features,
         file_format_policy_version=file_format_policy_version,
+        document_processing_profile_code=document_processing_profile_code,
     )
     application = container.business_application_repository.get_by_code(
         "multimodal-test-application"
