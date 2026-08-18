@@ -36,6 +36,10 @@ class SafeAttachmentExtractor:
             return "text/markdown"
         if extension in {".jpg", ".jpeg", ".png", ".webp"}:
             return self._inspect_image(data)
+        if extension == ".pdf":
+            if not data.startswith(b"%PDF-"):
+                raise _rejected("invalid_pdf")
+            return "application/pdf"
         raise _rejected("unsupported_extension")
 
     def extract(self, *, file_name: str, data: bytes) -> ExtractedContent:
@@ -51,6 +55,8 @@ class SafeAttachmentExtractor:
             return self._extract_xlsx(data)
         if extension == ".pptx":
             return self._extract_pptx(data)
+        if extension == ".pdf":
+            raise _rejected("pdf_requires_document_processing")
         raise _rejected("unsupported_extension")
 
     def normalize_image(self, *, data: bytes) -> tuple[bytes, str]:

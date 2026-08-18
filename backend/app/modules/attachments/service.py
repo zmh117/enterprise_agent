@@ -14,6 +14,7 @@ from app.modules.attachments.domain import (
 from app.modules.attachments.extraction import SafeAttachmentExtractor
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.delivery.application.result_delivery_service import ResultDeliveryService
+from app.modules.document_processing.profile import DOCLING_TEXT_V1
 from app.modules.file_workspace.manifest_service import JobFileManifestService
 from app.modules.file_workspace.text_format_policy import get_text_format_policy
 from app.modules.job.domain.job_status import JobStatus
@@ -86,11 +87,15 @@ class AttachmentProcessingService:
                 (item for item in policy.formats if item.extension == suffix),
                 None,
             )
-            task_text = (
-                self.importer is not None
-                and bool(context.get("task_workspace_id"))
-                and text_definition is not None
+            document_definition = next(
+                (item for item in DOCLING_TEXT_V1.source_formats if suffix in item.extensions),
+                None,
             )
+            workspace_import = self.importer is not None and bool(
+                context.get("task_workspace_id")
+            )
+            task_text = workspace_import and text_definition is not None
+            governed_document = workspace_import and document_definition is not None
             if task_text:
                 fallback_mime = {
                     ".txt": "text/plain",
@@ -98,6 +103,23 @@ class AttachmentProcessingService:
                     ".md": "text/markdown",
                 }[suffix]
                 detected_mime = attachment.declared_mime or fallback_mime
+            elif governed_document:
+                # File Service owns source validation for Docling inputs. The MVP
+                # extractor must not reject PDF before that boundary, and DingTalk
+                # often omits Content-Type, so empty/generic declarations map to
+                # the profile canonical type.
+                assert document_definition is not None
+                declared = (attachment.declared_mime or "").split(";", 1)[0].strip().lower()
+                if declared in document_definition.accepted_media_types or declared in {
+                    "",
+                    "application/octet-stream",
+                    "binary/octet-stream",
+                }:
+                    detected_mime = document_definition.canonical_media_type
+                else:
+                    detected_mime = (
+                        attachment.declared_mime or document_definition.canonical_media_type
+                    )
             else:
                 detected_mime = self.extractor.inspect(
                     file_name=attachment.file_name,

@@ -35,6 +35,7 @@ from app.python_runtime.job_sandbox import JobSandboxManager
 from app.shared.config import DeliverySettings
 from backend.tests.test_continuous_multimodal_conversations import (
     FakeDownloader,
+    RecordingAttachmentImporter,
     load_fixture,
     multimodal_container,
 )
@@ -267,6 +268,65 @@ def test_docling_profile_stages_supported_document_attachments(
     assert staged.status == "attachments_staged", (staged.reason, staged.error_code)
     assert runtime.agent_repository.count_rows("agent_job") == 0
     assert len(runtime.message_bus.attachments) == 1
+
+
+class RecordingDocumentImporter(RecordingAttachmentImporter):
+    def import_content(
+        self,
+        *,
+        attachment_id: str,
+        data: bytes,
+        content_type: str,
+    ) -> AttachmentImportReceipt:
+        receipt = super().import_content(
+            attachment_id=attachment_id,
+            data=data,
+            content_type=content_type,
+        )
+        return AttachmentImportReceipt(
+            attachment_id=receipt.attachment_id,
+            size_bytes=receipt.size_bytes,
+            sha256=receipt.sha256,
+            file_id="managed_file_pdf_test",
+            version_id="file_version_pdf_test",
+            readability_status="PENDING",
+            processing_run_id="file_processing_run_pdf_test",
+        )
+
+
+def test_docling_profile_imports_pdf_when_dingtalk_omits_content_type() -> None:
+    runtime = multimodal_container(
+        task_file_features=FEATURES,
+        file_format_policy_version="text-v2",
+        document_processing_profile_code="docling-text-v1",
+    )
+    payload = load_fixture("file.json")
+    payload["msgId"] = "docling-pdf-no-mime"
+    payload["content"] = {
+        "downloadCode": "pdf-empty-mime",
+        "fileName": "每周行情.pdf",
+        "fileSize": 16,
+        "contentType": "",
+    }
+    staged = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=payload,
+        correlation_id="docling-pdf-no-mime",
+    )
+    assert staged.status == "attachments_staged", (staged.reason, staged.error_code)
+    task = runtime.message_bus.attachments.popleft()
+    importer = RecordingDocumentImporter()
+    runtime.attachment_service.importer = importer
+    runtime.attachment_service.storage = None
+    runtime.attachment_service.downloader = FakeDownloader(
+        {"pdf-empty-mime": b"%PDF-1.4\n%%EOF\n"}
+    )
+
+    outcome = runtime.attachment_service.process(task.attachment_id, "docling-pdf-no-mime")
+
+    assert outcome == "staged"
+    attachment = runtime.agent_repository.get_attachment(task.attachment_id)
+    assert attachment.status == "READY"
+    assert importer.calls[0][2] == "application/pdf"
 
 
 def test_draw_txt_request_creates_workspace_and_freezes_file_tools() -> None:

@@ -86,6 +86,7 @@ class AttachmentSettings:
         ".docx",
         ".xlsx",
         ".pptx",
+        ".pdf",
         ".md",
         ".markdown",
         ".txt",
@@ -643,7 +644,7 @@ def load_settings() -> Settings:
             allowed_extensions=_csv_tuple(
                 os.getenv(
                     "ATTACHMENT_ALLOWED_EXTENSIONS",
-                    ".jpg,.jpeg,.png,.webp,.docx,.xlsx,.pptx,.md,.markdown,.txt,.log",
+                    ".jpg,.jpeg,.png,.webp,.docx,.xlsx,.pptx,.pdf,.md,.markdown,.txt,.log",
                 )
             ),
             max_count=int(os.getenv("ATTACHMENT_MAX_COUNT", "10")),

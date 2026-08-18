@@ -525,6 +525,13 @@ def test_active_content_mime_mismatch_and_damaged_documents_are_rejected() -> No
         extractor.inspect(file_name="renamed.xlsx", data=data.getvalue())
     with pytest.raises(Exception, match="invalid_ooxml"):
         extractor.inspect(file_name="damaged.docx", data=b"not-a-zip")
+    assert extractor.inspect(file_name="report.pdf", data=b"%PDF-1.7\n1 0 obj\n") == (
+        "application/pdf"
+    )
+    with pytest.raises(Exception, match="invalid_pdf"):
+        extractor.inspect(file_name="report.pdf", data=b"%FDF-1.2")
+    with pytest.raises(Exception, match="pdf_requires_document_processing"):
+        extractor.extract(file_name="report.pdf", data=b"%PDF-1.7\n")
 
 
 def test_expired_credential_is_cleared_and_retry_exhaustion_goes_dead() -> None:
