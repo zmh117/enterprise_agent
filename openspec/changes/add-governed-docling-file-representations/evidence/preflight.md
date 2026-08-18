@@ -26,12 +26,12 @@ Checked at 2026-08-17 on branch `one_runtime`.
 
 ## Candidate upstream image
 
-- Official image: `ghcr.io/docling-project/docling-serve-cpu:v1.30.0`.
-- Multi-architecture index digest: `sha256:061d35c03611bc15b73d024c8e8387bcf0624279f8b57c16c1567326f214ba56`.
-- Linux amd64 manifest: `sha256:d68eed01c2ec260b4a3cd7548749ff7e2f3633a9004e72c8e3f880c283b4a101`.
-- Linux arm64 manifest: `sha256:2f655ccdfafcf351ca189eb37b082713e17ce595f19b9e12cba0764b839fc288`.
+- Official image: `quay.io/docling-project/docling-serve:v1.30.0`.
+- Multi-architecture index digest: `sha256:0244089785d5ccb7570dfaa593cdc81ec64a1aadc63ffa9dce065064b0a6a807`.
+- Linux amd64 manifest: `sha256:0ccbc00b5f8b443334a7c4f36a5c6ff89c684c6fbe18ff7c1bc41e00b8e01657`.
+- Linux arm64 manifest: `sha256:b09477515c6234bb86c8a90c9db3af2b5d6991aeb6b64c3348283be264dba63c`.
 - OCI metadata identifies release `v1.30.0`, source revision `69192d178924bbae2f1733e2d7cd21ffd04259c5`, license `MIT`, runtime user `1001`, and preloaded model artifacts.
-- Registry attestations contain SLSA provenance for both architectures. No upstream SBOM attestation was exposed by the OCI index (`docker buildx imagetools inspect --format '{{json .SBOM}}'` returned `{}`). A local Docker Scout SPDX generation against the exact arm64 digest was attempted twice and stopped after bounded waits while still indexing the 4.4 GB image. Deployment remains blocked on a successfully generated and retained SBOM digest; provenance alone is not treated as an SBOM.
+- Registry attestations contain SLSA provenance for both architectures. No upstream SBOM attestation was exposed by the OCI index (`docker buildx imagetools inspect --format '{{json .SBOM}}'` returned `{}`). A local Docker Scout SPDX generation against the exact arm64 image was attempted twice and stopped after bounded waits while still indexing the 4.4 GB compressed image. Local Compose wiring may be validated with the profile left at `NONE`; production profile enablement remains blocked on a successfully generated and retained SBOM digest. Provenance alone is not treated as an SBOM.
 
 Official references:
 

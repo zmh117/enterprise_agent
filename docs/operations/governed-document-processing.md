@@ -21,11 +21,11 @@ File Service Outbox -> RabbitMQ file-processing queue
 
 ## 固定发布物与安全配置
 
-Compose 固定官方 CPU 多架构镜像：
+Compose 固定官方多架构镜像，并通过环境配置强制 CPU 执行：
 
 ```text
-ghcr.io/docling-project/docling-serve-cpu:v1.30.0
-sha256:061d35c03611bc15b73d024c8e8387bcf0624279f8b57c16c1567326f214ba56
+quay.io/docling-project/docling-serve:v1.30.0
+sha256:0244089785d5ccb7570dfaa593cdc81ec64a1aadc63ffa9dce065064b0a6a807
 ```
 
 镜像使用上游非 root UID 1001、只读根文件系统、受限 tmpfs、CPU/内存/PID 限制。
@@ -33,7 +33,7 @@ sha256:061d35c03611bc15b73d024c8e8387bcf0624279f8b57c16c1567326f214ba56
 下载均关闭；只允许 `inbody` target。输入上限为 25 MiB、PDF 300 页、处理 600 秒。
 
 当前发布核验已确认版本、multi-arch digest、amd64/arm64 manifest、MIT 许可证和
-SLSA provenance。镜像 SBOM 尚未取得可审计证据，因此不能把 SBOM 门禁表述为完成；
+SLSA provenance。镜像 SBOM 尚未取得可审计证据，因此不能把生产启用的 SBOM 门禁表述为完成；
 详见 OpenSpec change 的 `evidence/preflight.md`。
 
 ## Secret 自举

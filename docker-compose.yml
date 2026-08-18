@@ -302,7 +302,7 @@ services:
       FILE_JWKS_REFRESH_SECONDS: ${FILE_JWKS_REFRESH_SECONDS:-60}
       FILE_MCP_MAX_REQUEST_BYTES: ${FILE_MCP_MAX_REQUEST_BYTES:-32768}
       DOCUMENT_PROCESSOR_VERSION: v1.30.0
-      DOCUMENT_PROCESSOR_BUILD_DIGEST: sha256:061d35c03611bc15b73d024c8e8387bcf0624279f8b57c16c1567326f214ba56
+      DOCUMENT_PROCESSOR_BUILD_DIGEST: sha256:0244089785d5ccb7570dfaa593cdc81ec64a1aadc63ffa9dce065064b0a6a807
     secrets:
       - app_config_master_key
       - principal_jwks
@@ -700,7 +700,7 @@ services:
       start_period: 30s
 
   docling-serve:
-    image: ghcr.io/docling-project/docling-serve-cpu:v1.30.0@sha256:061d35c03611bc15b73d024c8e8387bcf0624279f8b57c16c1567326f214ba56
+    image: quay.io/docling-project/docling-serve:v1.30.0@sha256:0244089785d5ccb7570dfaa593cdc81ec64a1aadc63ffa9dce065064b0a6a807
     restart: unless-stopped
     user: "1001:0"
     read_only: true

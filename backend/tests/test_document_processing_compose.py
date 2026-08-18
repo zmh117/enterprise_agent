@@ -6,7 +6,7 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DIGEST = "sha256:061d35c03611bc15b73d024c8e8387bcf0624279f8b57c16c1567326f214ba56"
+DIGEST = "sha256:0244089785d5ccb7570dfaa593cdc81ec64a1aadc63ffa9dce065064b0a6a807"
 
 
 def _compose() -> dict[str, object]:
@@ -19,7 +19,7 @@ def test_docling_image_is_digest_pinned_offline_nonroot_and_internal_only() -> N
     environment = service["environment"]
 
     assert service["image"] == (
-        "ghcr.io/docling-project/docling-serve-cpu:v1.30.0@" + DIGEST
+        "quay.io/docling-project/docling-serve:v1.30.0@" + DIGEST
     )
     assert service["user"] == "1001:0"
     assert service["read_only"] is True
