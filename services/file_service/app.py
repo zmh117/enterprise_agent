@@ -298,6 +298,7 @@ def create_app(
     application: FileWorkspaceApplicationService,
     streaming: FileStreamingOperations,
     document_processing: DocumentProcessingOperations | None = None,
+    document_processing_expected: bool = False,
     database: Any,
     storage: FileServiceReadiness,
     jwks: CachedPrincipalJwks,
@@ -347,6 +348,10 @@ def create_app(
                 "task_workspace_list_files",
             ):
                 raise ValueError("File Tool Manifest is invalid")
+            if document_processing_expected and document_processing is None:
+                raise ValueError(
+                    "File Service document processing is configured but was not composed"
+                )
             return JSONResponse(
                 {
                     "status": "ok",
@@ -357,6 +362,9 @@ def create_app(
                     "principal_jwks": "ready",
                     "tool_manifest": "ready",
                     "streaming_api": "ready",
+                    "document_processing": (
+                        "ready" if document_processing is not None else "not_configured"
+                    ),
                 }
             )
         except Exception:

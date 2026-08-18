@@ -44,10 +44,15 @@ PROCESSING_RUN_TRANSITIONS = {
             ProcessingRunStatus.FAILED,
         }
     ),
+    # The worker keeps a run SUBMITTED while it polls the processor and streams the
+    # resulting representations, so every terminal state is reachable from here.
     ProcessingRunStatus.SUBMITTED: frozenset(
         {
             ProcessingRunStatus.RUNNING,
             ProcessingRunStatus.RETRY_WAIT,
+            ProcessingRunStatus.SUCCEEDED,
+            ProcessingRunStatus.PARTIAL,
+            ProcessingRunStatus.NO_TEXT,
             ProcessingRunStatus.FAILED,
         }
     ),

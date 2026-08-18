@@ -8,7 +8,7 @@ from typing import Literal, NotRequired, TypedDict
 from jsonschema import Draft202012Validator
 
 PROTOCOL_VERSION = "1.3"
-CONTRACT_SCHEMA_SHA256 = "5f6856d5f0b8d02d674f76bd91bbee8d2f9b2859e9d0f8085c56557ab1f28159"
+CONTRACT_SCHEMA_SHA256 = "a05b4afe6259433e28aa0dc7c3aa2552ff984a1f909a88ed3b270a656bc454f0"
 CONTRACT_SCHEMA_PATH = (
     Path(__file__).resolve().parents[5]
     / "contracts"
@@ -23,6 +23,8 @@ RuntimeKind = Literal["python-v1", "typescript-v1"]
 SafeMessage = str
 FileFormatPolicyVersion = Literal["text-v2"]
 TextFormatCode = Literal["TXT", "LOG", "MARKDOWN"]
+DocumentSourceFormatCode = Literal["PDF", "DOCX", "PPTX", "XLSX", "PNG", "JPEG", "WEBP"]
+RepresentationKind = Literal["MARKDOWN"]
 FileAction = Literal["READ_METADATA", "MATERIALIZE", "EDIT", "COMMIT", "RETAIN", "DELIVER"]
 RuntimeEvent = (
     dict[str, object]
@@ -123,7 +125,7 @@ class JobFileManifestItem(TypedDict):
     file_id: Identifier
     version_id: Identifier
     display_name: str
-    format_code: TextFormatCode
+    format_code: TextFormatCode | DocumentSourceFormatCode
     source_kind: Literal["CURRENT_MESSAGE", "EXPLICIT_REFERENCE", "WORKSPACE", "CONFLICT"]
     allowed_actions: list[FileAction]
     auto_materialize: bool
@@ -131,11 +133,17 @@ class JobFileManifestItem(TypedDict):
     source_received_at: str | None
     version_created_at: str
     representation_id: NotRequired[Identifier]
-    representation_kind: NotRequired[Literal["MARKDOWN"]]
+    representation_kind: NotRequired[RepresentationKind]
     representation_size_bytes: NotRequired[int]
     representation_sha256: NotRequired[Sha256Digest]
-    representation_format_code: NotRequired[Literal["MARKDOWN"]]
+    representation_format_code: NotRequired[RepresentationKind]
     representation_created_at: NotRequired[str]
+
+
+class JobFileReadabilityNotice(TypedDict):
+    file_name: str
+    status: Literal["PARTIAL", "NO_TEXT", "UNAVAILABLE"]
+    error_code: str
 
 
 class JobFileManifest(TypedDict):
@@ -144,6 +152,7 @@ class JobFileManifest(TypedDict):
     manifest_hash: Sha256Digest
     observed_at: str
     items: list[JobFileManifestItem]
+    readability_notices: NotRequired[list[JobFileReadabilityNotice]]
 
 
 class FileContext(TypedDict):

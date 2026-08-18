@@ -318,6 +318,7 @@ def test_file_service_health_readiness_and_transport_fail_closed_without_secrets
         readiness = client.get("/ready")
         assert readiness.status_code == 200
         assert readiness.json()["streaming_api"] == "ready"
+        assert readiness.json()["document_processing"] == "not_configured"
         denied = client.post(
             "/mcp",
             json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
@@ -330,6 +331,28 @@ def test_file_service_health_readiness_and_transport_fail_closed_without_secrets
         )
         assert attachment.status_code == 403
         assert "not persisted" not in attachment.text
+
+
+def test_file_service_readiness_fails_closed_when_document_processing_is_configured_but_absent() -> (
+    None
+):
+    app = create_app(
+        principal=_NeverCalledPrincipal(),  # type: ignore[arg-type]
+        service_principal=_NeverCalledServicePrincipal(),  # type: ignore[arg-type]
+        application=_NeverCalledApplication(),  # type: ignore[arg-type]
+        streaming=_NeverCalledStreaming(),  # type: ignore[arg-type]
+        document_processing=None,
+        document_processing_expected=True,
+        database=_Database(),
+        storage=_Ready(),
+        jwks=_Ready(),  # type: ignore[arg-type]
+    )
+    with TestClient(app) as client:
+        readiness = client.get("/ready")
+
+    assert readiness.status_code == 503
+    assert readiness.json()["status"] == "degraded"
+    assert "master" not in readiness.text.lower()
 
 
 def test_file_config_exception_tool_and_audit_surfaces_drop_secrets_objects_and_body() -> None:

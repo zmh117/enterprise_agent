@@ -270,6 +270,78 @@ def test_lost_docling_task_retry_clears_only_the_persisted_external_task() -> No
     assert retried["external_task_id"] == ""
 
 
+def test_submitted_run_reaches_every_terminal_state_like_the_real_worker_order() -> None:
+    database, _storage, service, file_id, version_id, _body = _service()
+    run = service.request_processing(
+        tenant_id="tenant-default",
+        source_file_id=file_id,
+        source_version_id=version_id,
+        actor_id="file-worker",
+        correlation_id="safe",
+    )
+    with database.unit_of_work():
+        claimed = service.repository.claim_due_run(worker_id="processing-worker-1")
+    assert claimed is not None
+    # The worker marks the run SUBMITTED before it polls Docling, so the terminal
+    # transitions have to be reachable from SUBMITTED rather than only from RUNNING.
+    submitted = service.mark_submitted(run_id=str(run["id"]), external_task_id="task-1")
+    assert submitted["status"] == "SUBMITTED"
+
+    markdown = b"# Extracted\n\nSafe text.\n"
+    docling_json = json.dumps(
+        {"schema_name": "DoclingDocument", "texts": []}, sort_keys=True
+    ).encode()
+    for kind, media_type, content in (
+        ("MARKDOWN", "text/markdown", markdown),
+        ("DOCLING_JSON", "application/json", docling_json),
+    ):
+        prepared = service.prepare_representation_transfer(
+            run_id=str(run["id"]),
+            kind=kind,
+            expected_size_bytes=len(content),
+            expected_sha256=hashlib.sha256(content).hexdigest(),
+            now=NOW,
+        )
+        service.upload_representation(
+            transfer_id=prepared["transfer_id"],
+            upload_token=prepared["upload_token"],
+            stream=io.BytesIO(content),
+            media_type=media_type,
+            now=NOW,
+        )
+    representations = service.finalize(
+        run_id=str(run["id"]),
+        partial=False,
+        page_count=2,
+        processing_time_ms=1250,
+    )
+
+    assert {item["status"] for item in representations} == {"AVAILABLE"}
+    assert service.repository.get_run(str(run["id"]))["status"] == "SUCCEEDED"
+
+
+def test_submitted_run_can_complete_without_text() -> None:
+    database, _storage, service, file_id, version_id, _body = _service()
+    run = service.request_processing(
+        tenant_id="tenant-default",
+        source_file_id=file_id,
+        source_version_id=version_id,
+        actor_id="file-worker",
+        correlation_id="safe",
+    )
+    with database.unit_of_work():
+        assert service.repository.claim_due_run(worker_id="processing-worker-1") is not None
+    service.mark_submitted(run_id=str(run["id"]), external_task_id="task-2")
+
+    completed = service.complete_without_text(
+        run_id=str(run["id"]),
+        page_count=1,
+        processing_time_ms=100,
+    )
+
+    assert completed["status"] == "NO_TEXT"
+
+
 def test_two_staged_outputs_become_visible_atomically_and_finalize_is_idempotent() -> None:
     database, storage, service, file_id, version_id, _body = _service()
     run = service.request_processing(

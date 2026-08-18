@@ -158,6 +158,7 @@ def _validate_file_context(payload: dict[str, Any]) -> None:
             "runtime_file_policy_mismatch",
             "file manifest policy does not match the request",
         )
+    document_actions = {"READ_METADATA", "RETAIN", "DELIVER"}
     matrix = {
         "TXT": {"READ_METADATA", "MATERIALIZE", "EDIT", "COMMIT", "RETAIN", "DELIVER"},
         "LOG": {"READ_METADATA", "MATERIALIZE", "RETAIN", "DELIVER"},
@@ -169,12 +170,45 @@ def _validate_file_context(payload: dict[str, Any]) -> None:
             "RETAIN",
             "DELIVER",
         },
+        "PDF": document_actions,
+        "DOCX": document_actions,
+        "PPTX": document_actions,
+        "XLSX": document_actions,
+        "PNG": document_actions,
+        "JPEG": document_actions,
+        "WEBP": document_actions,
     }
-    suffixes = {"TXT": ".txt", "LOG": ".log", "MARKDOWN": ".md"}
+    suffixes = {
+        "TXT": (".txt",),
+        "LOG": (".log",),
+        "MARKDOWN": (".md",),
+        "PDF": (".pdf",),
+        "DOCX": (".docx",),
+        "PPTX": (".pptx",),
+        "XLSX": (".xlsx",),
+        "PNG": (".png",),
+        "JPEG": (".jpg", ".jpeg"),
+        "WEBP": (".webp",),
+    }
+    # Document source items are only readable through a completed Markdown
+    # representation, so the representation fields travel as one indivisible set.
+    representation_fields = (
+        "representation_id",
+        "representation_kind",
+        "representation_size_bytes",
+        "representation_sha256",
+        "representation_format_code",
+        "representation_created_at",
+    )
     identities: set[tuple[str, str]] = set()
     for item in manifest.get("items") or []:
         assert isinstance(item, dict)
         format_code = str(item["format_code"])
+        if format_code not in suffixes:
+            raise RuntimeProtocolError(
+                "runtime_file_format_mismatch",
+                "file manifest declares an unsupported format",
+            )
         identity = (str(item["file_id"]), str(item["version_id"]))
         if identity in identities:
             raise RuntimeProtocolError(
@@ -191,4 +225,16 @@ def _validate_file_context(payload: dict[str, Any]) -> None:
             raise RuntimeProtocolError(
                 "runtime_file_actions_invalid",
                 "file manifest actions exceed the frozen format policy",
+            )
+        is_document = format_code not in {"TXT", "LOG", "MARKDOWN"}
+        present = {field for field in representation_fields if item.get(field) is not None}
+        if is_document and len(present) != len(representation_fields):
+            raise RuntimeProtocolError(
+                "runtime_file_representation_invalid",
+                "document manifest item requires a complete Markdown representation",
+            )
+        if not is_document and present:
+            raise RuntimeProtocolError(
+                "runtime_file_representation_invalid",
+                "text manifest item must not carry a document representation",
             )

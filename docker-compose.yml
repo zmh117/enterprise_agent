@@ -744,6 +744,11 @@ services:
       DOCLING_SERVE_LOG_FORMAT: json
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
+      # torch.compile writes a shared object into the inductor cache and dlopens it,
+      # which cannot work while /tmp stays noexec. Stay in eager mode instead of
+      # granting this container an executable writable directory.
+      TORCH_COMPILE_DISABLE: "1"
+      TORCHDYNAMO_DISABLE: "1"
     secrets:
       - docling_api_key
     expose:

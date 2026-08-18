@@ -1525,6 +1525,20 @@
         "MARKDOWN"
       ]
     },
+    "DocumentSourceFormatCode": {
+      "enum": [
+        "PDF",
+        "DOCX",
+        "PPTX",
+        "XLSX",
+        "PNG",
+        "JPEG",
+        "WEBP"
+      ]
+    },
+    "RepresentationKind": {
+      "const": "MARKDOWN"
+    },
     "FileAction": {
       "enum": [
         "READ_METADATA",
@@ -1561,10 +1575,17 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 255,
-          "pattern": "^[^/\\\\\\u0000]+\\.(?:txt|log|md)$"
+          "pattern": "^[^/\\\\\\u0000]+\\.(?:txt|log|md|pdf|docx|pptx|xlsx|png|jpg|jpeg|webp)$"
         },
         "format_code": {
-          "$ref": "#/$defs/TextFormatCode"
+          "oneOf": [
+            {
+              "$ref": "#/$defs/TextFormatCode"
+            },
+            {
+              "$ref": "#/$defs/DocumentSourceFormatCode"
+            }
+          ]
         },
         "source_kind": {
           "enum": [
@@ -1599,6 +1620,63 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 64
+        },
+        "representation_id": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "representation_kind": {
+          "$ref": "#/$defs/RepresentationKind"
+        },
+        "representation_size_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "representation_sha256": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "representation_format_code": {
+          "$ref": "#/$defs/RepresentationKind"
+        },
+        "representation_created_at": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "dependentRequired": {
+        "representation_id": [
+          "representation_kind",
+          "representation_size_bytes",
+          "representation_sha256",
+          "representation_format_code",
+          "representation_created_at"
+        ]
+      }
+    },
+    "JobFileReadabilityNotice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file_name",
+        "status",
+        "error_code"
+      ],
+      "properties": {
+        "file_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "status": {
+          "enum": [
+            "PARTIAL",
+            "NO_TEXT",
+            "UNAVAILABLE"
+          ]
+        },
+        "error_code": {
+          "type": "string",
+          "maxLength": 128
         }
       }
     },
@@ -1614,7 +1692,10 @@
       ],
       "properties": {
         "schema_version": {
-          "const": 3
+          "enum": [
+            3,
+            4
+          ]
         },
         "file_format_policy_version": {
           "$ref": "#/$defs/FileFormatPolicyVersion"
@@ -1633,8 +1714,42 @@
           "items": {
             "$ref": "#/$defs/JobFileManifestItem"
           }
+        },
+        "readability_notices": {
+          "type": "array",
+          "maxItems": 40,
+          "items": {
+            "$ref": "#/$defs/JobFileReadabilityNotice"
+          }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "schema_version": {
+                "const": 3
+              }
+            },
+            "required": [
+              "schema_version"
+            ]
+          },
+          "then": {
+            "properties": {
+              "items": {
+                "items": {
+                  "not": {
+                    "required": [
+                      "representation_id"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
     },
     "FileContext": {
       "type": "object",

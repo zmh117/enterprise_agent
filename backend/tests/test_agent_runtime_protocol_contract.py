@@ -248,6 +248,89 @@ def test_worker_reads_v13_file_policy_and_rejects_log_action_expansion() -> None
     assert invalid.value.code == "runtime_file_actions_invalid"
 
 
+def _v13_document_manifest_request() -> dict[str, Any]:
+    return json.loads(
+        (CONTRACT_ROOT_V13 / "golden" / "execution-request-file-manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+
+def test_worker_reads_v13_document_manifest_with_markdown_representation() -> None:
+    request = _v13_document_manifest_request()
+    manifest = request["file_context"]["file_manifest"]
+
+    assert manifest["schema_version"] == 4
+    document = next(item for item in manifest["items"] if item["format_code"] == "DOCX")
+    assert document["representation_kind"] == "MARKDOWN"
+    assert manifest["readability_notices"][0]["status"] == "UNAVAILABLE"
+    assert canonical_request_digest(request) == request["request_digest"]
+    assert validate_execution_request(request) == request
+
+
+def test_worker_reads_v13_manifest_readability_notices_and_rejects_unknown_status() -> None:
+    request = _v13_document_manifest_request()
+    request["file_context"]["file_manifest"]["readability_notices"] = [
+        {"file_name": "partial.pdf", "status": "PARTIAL", "error_code": ""},
+        {"file_name": "empty.png", "status": "NO_TEXT", "error_code": "docling_no_text"},
+    ]
+    request["request_digest"] = canonical_request_digest(request)
+    assert validate_execution_request(request) == request
+
+    forged = copy.deepcopy(request)
+    forged["file_context"]["file_manifest"]["readability_notices"][0]["status"] = "AVAILABLE"
+    forged["request_digest"] = canonical_request_digest(forged)
+    with pytest.raises(RuntimeProtocolError) as invalid:
+        validate_execution_request(forged)
+    assert invalid.value.code == "runtime_request_invalid"
+
+
+def test_worker_rejects_v13_document_item_without_complete_representation() -> None:
+    request = _v13_document_manifest_request()
+    document = next(
+        item
+        for item in request["file_context"]["file_manifest"]["items"]
+        if item["format_code"] == "DOCX"
+    )
+    del document["representation_sha256"]
+    request["request_digest"] = canonical_request_digest(request)
+
+    with pytest.raises(RuntimeProtocolError) as invalid:
+        validate_execution_request(request)
+    assert invalid.value.code == "runtime_request_invalid"
+
+
+def test_worker_rejects_v13_text_item_carrying_document_representation() -> None:
+    request = _v13_document_manifest_request()
+    items = request["file_context"]["file_manifest"]["items"]
+    document = next(item for item in items if item["format_code"] == "DOCX")
+    text = next(item for item in items if item["format_code"] == "TXT")
+    for field in (
+        "representation_id",
+        "representation_kind",
+        "representation_size_bytes",
+        "representation_sha256",
+        "representation_format_code",
+        "representation_created_at",
+    ):
+        text[field] = document[field]
+    request["request_digest"] = canonical_request_digest(request)
+
+    with pytest.raises(RuntimeProtocolError) as invalid:
+        validate_execution_request(request)
+    assert invalid.value.code == "runtime_file_representation_invalid"
+
+
+def test_v13_schema_keeps_representation_fields_out_of_version_three_manifests() -> None:
+    request = _v13_document_manifest_request()
+    request["file_context"]["file_manifest"]["schema_version"] = 3
+    request["request_digest"] = canonical_request_digest(request)
+
+    with pytest.raises(RuntimeProtocolError) as invalid:
+        validate_execution_request(request)
+    assert invalid.value.code == "runtime_request_invalid"
+
+
 def test_worker_v11_accepts_exact_origins_and_old_worker_rejects_new_event() -> None:
     fixture = json.loads(
         (CONTRACT_ROOT_V11 / "golden" / "safe-runtime-fixture.json").read_text(encoding="utf-8")

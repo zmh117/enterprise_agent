@@ -121,6 +121,9 @@ def create_default_app() -> Any:
         seed=settings.seed_local_config,
         service_name="file-service",
     )
+    # The container resolves the master key and the database-backed config overlay;
+    # reading the pre-bootstrap Settings would silently drop both.
+    settings = runtime.settings
     repository = FileWorkspaceRepository(runtime.database)
     authorization = FileAuthorizationService(
         runtime.database,
@@ -169,12 +172,12 @@ def create_default_app() -> Any:
         storage_readiness = storage
     streaming: GovernedFileStreamingService | _UnavailableStreamingOperations
     document_processing: GovernedDocumentProcessingService | None = None
+    document_processing_expected = bool(
+        settings.file_service.document_processor_version
+        and settings.file_service.document_processor_build_digest
+    )
     if isinstance(storage, MinioFileObjectStorage):
-        if (
-            settings.file_service.document_processor_version
-            and settings.file_service.document_processor_build_digest
-            and settings.app_config_master_key
-        ):
+        if document_processing_expected and settings.app_config_master_key:
             signing_key = hmac.new(
                 settings.app_config_master_key.encode("utf-8"),
                 b"enterprise-agent/document-source-grant/v1",
@@ -223,6 +226,7 @@ def create_default_app() -> Any:
         application=application,
         streaming=streaming,
         document_processing=document_processing,
+        document_processing_expected=document_processing_expected,
         database=runtime.database,
         storage=storage_readiness,
         jwks=jwks,
