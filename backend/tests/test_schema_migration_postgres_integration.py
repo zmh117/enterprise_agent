@@ -230,7 +230,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "113"
+        assert result.head == "114"
         assert result.applied == (
             "100",
             "101",
@@ -246,6 +246,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
             "111",
             "112",
             "113",
+            "114",
         )
         assert database.execute_one(
             """
@@ -275,7 +276,7 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "113"
+        assert result.head == "114"
         assert result.applied == (
             "100",
             "101",
@@ -291,6 +292,7 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
             "111",
             "112",
             "113",
+            "114",
         )
         assert comments["table_count"] == 110
         assert comments["column_count"] == 1416
@@ -380,14 +382,14 @@ def test_postgres_agent_run_audit_precision_constraints_and_cascade(
                agent_runtime_protocol_version)
             values ('postgres-audit-job', 'postgres-audit-session',
                     'postgres-audit-job', 'default', 'SUCCEEDED', ?, 'test',
-                    'connector-test', 'audit-user', '1.2')
+                    'connector-test', 'audit-user', '1.3')
             """,
             (timestamp,),
         )
         repository = ExecutionAuditRepository(database)
         digest = "a" * 64
         model_event = {
-            "protocol_version": "1.2",
+            "protocol_version": "1.3",
             "invocation_id": "postgres-invocation",
             "request_digest": digest,
             "sequence": 1,
@@ -424,14 +426,14 @@ def test_postgres_agent_run_audit_precision_constraints_and_cascade(
             },
         }
         terminal = {
-            "protocol_version": "1.2",
+            "protocol_version": "1.3",
             "invocation_id": "postgres-invocation",
             "request_digest": digest,
             "sequence": 3,
             "event_type": "terminal",
             "timestamp": timestamp,
             "payload": {
-                "protocol_version": "1.2",
+                "protocol_version": "1.3",
                 "invocation_id": "postgres-invocation",
                 "request_digest": digest,
                 "last_sequence": 3,
