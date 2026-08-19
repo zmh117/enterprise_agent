@@ -59,7 +59,7 @@ File Service MUST 在非空文字触发 Agent Job 时，按当前用户、租户
 
 时段硬证据命中的保留版本即使当前 `task_workspace_file` 不是 `ACTIVE`，只要仍在聊天附件保留期内且归属边界一致，MUST 允许写入本 Job Manifest。这些历史项默认 `auto_materialize=false`，且 MUST NOT 获得 `EDIT` 或 `COMMIT`。
 
-Job File Manifest、File MCP 文件列表/元数据和 Runtime 自动物化元数据 MUST 明确区分：原始聊天附件进入平台的 `source_received_at`、精确版本产生的 `version_created_at` 以及 Manifest 冻结或查询发生的 `observed_at`。`source_received_at` MUST 取平台创建原始 `message_attachment` 记录的时间，并在后续版本中保持不变；无聊天附件来源的 Agent 生成文件 MUST 返回 `null`。所有非空时间 MUST 是带时区的 UTC RFC 3339。系统 MUST NOT 使用 File Worker 导入完成时间、版本创建时间、工作区加入时间、Manifest 条目创建时间或含义模糊的 `created_at` 回答“上传时间”。新的 Manifest schema MUST 把来源接收时间和版本创建时间冻结进不可变条目及其 hash；旧 schema 可兼容读取但不得虚构缺失时间。
+Job File Manifest、File MCP 文件列表/元数据和 Runtime 自动物化元数据 MUST 明确区分：原始聊天附件进入平台的 `source_received_at`、精确版本产生的 `version_created_at` 以及 Manifest 冻结或查询发生的 `observed_at`。`source_received_at` MUST 取平台创建原始 `message_attachment` 记录的时间，并在后续版本中保持不变；无聊天附件来源的 Agent 生成文件 MUST 返回 `null`。持久化与 Manifest hash 仍使用同一瞬时；面向 Agent 的 File MCP 列表/元数据、Runtime Manifest 和自动物化元数据中的非空时间 MUST 投影为 Asia/Shanghai RFC 3339（偏移固定 `+08:00`），MUST NOT 把 UTC 墙钟（`Z` 或 `+00:00`）当作北京时间对用户陈述。系统 MUST NOT 使用 File Worker 导入完成时间、版本创建时间、工作区加入时间、Manifest 条目创建时间或含义模糊的 `created_at` 回答“上传时间”。新的 Manifest schema MUST 把来源接收时间和版本创建时间冻结进不可变条目及其 hash；旧 schema 可兼容读取但不得虚构缺失时间。
 
 #### Scenario: 暂存附件已经完成导入且本轮绑定
 - **WHEN** 后续非空文字本轮绑定了已形成可用精确版本且所需能力已就绪的暂存附件
@@ -95,6 +95,11 @@ Job File Manifest、File MCP 文件列表/元数据和 Runtime 自动物化元�
 - **WHEN** 工作区文件由 Agent 生成且没有聊天附件来源
 - **THEN** File Service 返回 `source_received_at=null` 和非空 `version_created_at`
 - **AND** Agent 不把该文件归入“最近上传的附件”集合
+
+#### Scenario: Agent 可见文件时间使用东八区
+- **WHEN** File MCP、Runtime Manifest 或自动物化元数据返回 `source_received_at`、`version_created_at`、`representation_created_at` 或 `observed_at`
+- **THEN** 非空值是 Asia/Shanghai RFC 3339（`+08:00`）
+- **AND** 与存储瞬时表示同一时刻，且不改写 Manifest hash
 
 #### Scenario: 时段召回的历史版本进入本 Job 清单
 - **WHEN** 本轮时段硬证据绑定了一份未挂接当前活动工作区、仍在保留期的附件精确版本，且所需能力已就绪且窗口内唯一

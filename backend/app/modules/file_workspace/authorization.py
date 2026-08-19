@@ -192,10 +192,10 @@ class FileAuthorizationService:
                 self._deny("file_manifest_format_invalid")
             if action.value not in actions or action not in definition.actions:
                 self._deny("file_manifest_action_denied")
-        if str(item.get("file_status")) != "ACTIVE" or str(item.get("version_status")) not in {
-            "AVAILABLE",
-            "CONFLICT",
-        }:
+        if action is not FileAction.READ_METADATA and (
+            str(item.get("file_status")) != "ACTIVE"
+            or str(item.get("version_status")) not in {"AVAILABLE", "CONFLICT"}
+        ):
             self._deny("file_content_unavailable")
         if str(item.get("owner_type")) != str(context.workspace["owner_type"]):
             self._deny("file_owner_boundary_denied")

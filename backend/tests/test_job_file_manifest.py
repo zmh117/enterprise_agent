@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+import json
 from typing import Any
 
 import pytest
 
 from app.modules.channel.domain.channel_event import ChannelFileReference
+from app.modules.file_workspace.clock import to_shanghai_rfc3339
 from app.modules.file_workspace.domain import (
     FileOwner,
     FileSourceKind,
@@ -22,7 +24,11 @@ from app.modules.file_workspace.manifest_service import (
 from app.modules.file_workspace.repository import FileWorkspaceRepository
 from app.modules.file_workspace.workspace_service import TaskWorkspaceService
 from app.shared.exceptions import NonRetryableExecutionError
-from backend.tests.test_file_workspace_repository import TIMESTAMP, _database
+from backend.tests.test_file_workspace_repository import (
+    SHANGHAI_TIMESTAMP,
+    TIMESTAMP,
+    _database,
+)
 
 
 @pytest.mark.parametrize(
@@ -194,7 +200,7 @@ def test_job_manifest_freezes_exact_version_and_later_job_sees_new_current() -> 
         "schema_version": 4,
         "file_format_policy_version": "text-v1",
         "manifest_hash": first["manifest_hash"],
-        "observed_at": first["created_at"],
+        "observed_at": to_shanghai_rfc3339(first["created_at"]),
         "items": [
             {
                 "file_id": "file-notes",
@@ -211,7 +217,9 @@ def test_job_manifest_freezes_exact_version_and_later_job_sees_new_current() -> 
                 "auto_materialize": True,
                 "conflict_candidate": False,
                 "source_received_at": None,
-                "version_created_at": first["items"][0]["version_created_at"],
+                "version_created_at": to_shanghai_rfc3339(
+                    first["items"][0]["version_created_at"]
+                ),
             }
         ],
     }
@@ -291,8 +299,11 @@ def test_job_manifest_freezes_attachment_receipt_time_separately_from_version_ti
     assert item["source_received_at"] == TIMESTAMP
     assert item["version_created_at"] != item["source_received_at"]
     runtime = service.runtime_manifest("job-uploaded")
-    assert runtime["items"][0]["source_received_at"] == TIMESTAMP
-    assert runtime["items"][0]["version_created_at"] == item["version_created_at"]
+    assert runtime["items"][0]["source_received_at"] == SHANGHAI_TIMESTAMP
+    assert runtime["items"][0]["version_created_at"] == to_shanghai_rfc3339(
+        item["version_created_at"]
+    )
+    assert runtime["observed_at"].endswith("+08:00")
 
 
 def test_manifest_rejects_cross_workspace_reference_without_snapshot_side_effect() -> None:
@@ -663,3 +674,281 @@ def test_job_manifest_pending_workspace_image_is_metadata_only() -> None:
     assert item["representation_id"] is None
     runtime = service.runtime_manifest("job-image-pending")
     assert "representation_id" not in runtime["items"][0]
+
+
+def test_manifest_recalls_unlinked_retained_version_without_restoring_old_workspace() -> None:
+    repository, service = _service()
+    old_workspace = service.resolve_workspace(
+        tenant_id="tenant-a",
+        session_id="session-file",
+        requester_id="user-a",
+        conversation_type="direct",
+        enterprise_id="tenant-a",
+        connector_id="connector-a",
+        conversation_id="conversation-a",
+        sender_staff_id="staff-a",
+        publication_id="app-file-p1",
+        retention_period="WEEK",
+        attachments=(),
+        file_references=(),
+        requests_file_output=True,
+    )
+    assert old_workspace is not None
+    _create_txt(
+        repository,
+        workspace_id=str(old_workspace["id"]),
+        file_id="file-retained",
+        version_id="version-retained",
+        source_received_at=TIMESTAMP,
+    )
+    repository.database.execute(
+        """
+        update task_workspace_file
+           set status = 'REMOVED', removed_at = ?, updated_at = ?
+         where workspace_id = ? and file_id = 'file-retained'
+        """,
+        (TIMESTAMP, TIMESTAMP, old_workspace["id"]),
+    )
+    repository.database.execute(
+        "update task_workspace set status = 'CLEANED', updated_at = ? where id = ?",
+        (TIMESTAMP, old_workspace["id"]),
+    )
+    new_workspace = service.resolve_workspace(
+        tenant_id="tenant-a",
+        session_id="session-file",
+        requester_id="user-a",
+        conversation_type="direct",
+        enterprise_id="tenant-a",
+        connector_id="connector-a",
+        conversation_id="conversation-a",
+        sender_staff_id="staff-a",
+        publication_id="app-file-p1",
+        retention_period="WEEK",
+        attachments=(),
+        file_references=(),
+        requests_file_output=True,
+    )
+    assert new_workspace is not None
+    assert new_workspace["id"] != old_workspace["id"]
+    assert repository.get_workspace(str(old_workspace["id"]))["status"] == "CLEANED"
+    _insert_job(repository, job_id="job-recall", workspace_id=str(new_workspace["id"]))
+    repository.database.execute(
+        """
+        update agent_job
+           set business_application_route_decision_json = ?
+         where id = 'job-recall'
+        """,
+        (
+            json.dumps(
+                {"task_file_features": {"runtime_file_edit_enabled": True}},
+                ensure_ascii=True,
+            ),
+        ),
+    )
+    service.register_request(
+        job_id="job-recall",
+        workspace=new_workspace,
+        requester_id="user-a",
+        publication_id="app-file-p1",
+        file_references=(
+            ChannelFileReference(
+                file_id="file-retained",
+                version_id="version-retained",
+                auto_materialize=True,
+            ),
+        ),
+    )
+    snapshot = service.finalize("job-recall")
+    assert snapshot is not None
+    item = snapshot["items"][0]
+    assert item["file_id"] == "file-retained"
+    assert item["source_kind"] == "EXPLICIT_REFERENCE"
+    assert item["auto_materialize"] == 1
+    actions = json.loads(str(item["allowed_actions_json"]))
+    assert "COMMIT" not in actions
+    assert "EDIT" not in actions
+    assert "MATERIALIZE" in actions
+    assert (
+        repository.database.execute_one(
+            """
+            select id from task_workspace_file
+             where workspace_id = ? and file_id = 'file-retained' and status = 'ACTIVE'
+            """,
+            (new_workspace["id"],),
+        )
+        is None
+    )
+    assert repository.database.execute_one(
+        """
+        select status from task_workspace_file
+         where workspace_id = ? and file_id = 'file-retained'
+        """,
+        (old_workspace["id"],),
+    )["status"] == "REMOVED"
+
+
+def test_force_create_opens_empty_workspace_without_file_input() -> None:
+    repository, service = _service()
+    kwargs = {
+        "tenant_id": "tenant-a",
+        "session_id": "session-file",
+        "requester_id": "user-a",
+        "conversation_type": "direct",
+        "enterprise_id": "tenant-a",
+        "connector_id": "connector-a",
+        "conversation_id": "conversation-a",
+        "sender_staff_id": "staff-a",
+        "publication_id": "app-file-p1",
+        "retention_period": "WEEK",
+        "attachments": (),
+        "file_references": (),
+        "requests_file_output": False,
+    }
+    assert service.resolve_workspace(**kwargs) is None
+    workspace = service.resolve_workspace(**kwargs, force_create=True)
+    assert workspace is not None
+    assert repository.database.execute_one(
+        "select count(*) as value from task_workspace_file where workspace_id = ?",
+        (workspace["id"],),
+    ) == {"value": 0}
+
+
+def test_manifest_rejects_foreign_retained_file_id() -> None:
+    repository, service = _service()
+    workspace = service.resolve_workspace(
+        tenant_id="tenant-a",
+        session_id="session-file",
+        requester_id="user-a",
+        conversation_type="direct",
+        enterprise_id="tenant-a",
+        connector_id="connector-a",
+        conversation_id="conversation-a",
+        sender_staff_id="staff-a",
+        publication_id="app-file-p1",
+        retention_period="WEEK",
+        attachments=(),
+        file_references=(),
+        requests_file_output=True,
+    )
+    assert workspace is not None
+    repository.create_file(
+        file_id="file-other-user",
+        tenant_id="tenant-a",
+        owner=FileOwner(WorkspaceOwnerType.PRIVATE_USER, user_id="user-b"),
+        display_name="secret.txt",
+        actor_id="user-b",
+        source_received_at=TIMESTAMP,
+    )
+    repository.create_version(
+        version_id="version-other-user",
+        file_id="file-other-user",
+        version_number=1,
+        version_kind=FileVersionKind.ATTACHMENT,
+        status=FileVersionStatus.AVAILABLE,
+        media_type="text/plain",
+        encoding="utf-8",
+        size_bytes=5,
+        content_sha256="a" * 64,
+        object_key="opaque/version-other-user",
+        source_kind=FileSourceKind.MESSAGE_ATTACHMENT,
+        actor_id="user-b",
+        advance_current_from="",
+    )
+    _insert_job(repository, job_id="job-foreign-recall", workspace_id=str(workspace["id"]))
+    service.register_request(
+        job_id="job-foreign-recall",
+        workspace=workspace,
+        requester_id="user-a",
+        publication_id="app-file-p1",
+        file_references=(
+            ChannelFileReference(
+                file_id="file-other-user",
+                version_id="version-other-user",
+                auto_materialize=False,
+            ),
+        ),
+    )
+    with pytest.raises(NonRetryableExecutionError) as error:
+        service.finalize("job-foreign-recall")
+    assert error.value.error_code in {"file_owner_boundary_denied", "file_reference_denied"}
+
+
+def test_manifest_metadata_only_for_content_unavailable_retained_version() -> None:
+    repository, service = _service()
+    old_workspace = service.resolve_workspace(
+        tenant_id="tenant-a",
+        session_id="session-file",
+        requester_id="user-a",
+        conversation_type="direct",
+        enterprise_id="tenant-a",
+        connector_id="connector-a",
+        conversation_id="conversation-a",
+        sender_staff_id="staff-a",
+        publication_id="app-file-p1",
+        retention_period="WEEK",
+        attachments=(),
+        file_references=(),
+        requests_file_output=True,
+    )
+    assert old_workspace is not None
+    _create_txt(
+        repository,
+        workspace_id=str(old_workspace["id"]),
+        file_id="file-cleaned",
+        version_id="version-cleaned",
+        source_received_at=TIMESTAMP,
+    )
+    repository.database.execute(
+        """
+        update task_workspace_file
+           set status = 'REMOVED', removed_at = ?, updated_at = ?
+         where file_id = 'file-cleaned'
+        """,
+        (TIMESTAMP, TIMESTAMP),
+    )
+    repository.mark_content_unavailable(version_id="version-cleaned", deleted_at=TIMESTAMP)
+    repository.database.execute(
+        "update task_workspace set status = 'CLEANED', updated_at = ? where id = ?",
+        (TIMESTAMP, old_workspace["id"]),
+    )
+    new_workspace = service.resolve_workspace(
+        tenant_id="tenant-a",
+        session_id="session-file",
+        requester_id="user-a",
+        conversation_type="direct",
+        enterprise_id="tenant-a",
+        connector_id="connector-a",
+        conversation_id="conversation-a",
+        sender_staff_id="staff-a",
+        publication_id="app-file-p1",
+        retention_period="WEEK",
+        attachments=(),
+        file_references=(),
+        requests_file_output=True,
+    )
+    assert new_workspace is not None
+    _insert_job(
+        repository,
+        job_id="job-cleaned",
+        workspace_id=str(new_workspace["id"]),
+        session_id="session-file",
+    )
+    service.register_request(
+        job_id="job-cleaned",
+        workspace=new_workspace,
+        requester_id="user-a",
+        publication_id="app-file-p1",
+        file_references=(
+            ChannelFileReference(
+                file_id="file-cleaned",
+                version_id="version-cleaned",
+                auto_materialize=False,
+            ),
+        ),
+    )
+    snapshot = service.finalize("job-cleaned")
+    assert snapshot is not None
+    item = snapshot["items"][0]
+    assert item["auto_materialize"] == 0
+    assert json.loads(str(item["allowed_actions_json"])) == ["READ_METADATA"]
+    assert item["source_kind"] == "EXPLICIT_REFERENCE"

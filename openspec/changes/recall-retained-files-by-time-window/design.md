@@ -12,6 +12,7 @@
 
 - Resolver 用代码注册的时段词 + 文件指代词绑定仍在保留期的精确版本。
 - 「上周 / 这周」与工作区 `WEEK` 使用同一套上海自然周边界；日历日和闭区间按 `source_received_at` 过滤。
+- File MCP、Runtime Manifest 与自动物化元数据把文件时间投影为 Asia/Shanghai RFC 3339（`+08:00`），避免 Agent 把 UTC 墙钟说成北京时间；存储与 Manifest hash 仍用同一瞬时。
 - 命中版本进入本 Job Manifest；默认不自动物化；唯一且要读正文且内容可用时才预加载。
 - 空窗、多份内容问题走固定系统说明；禁止模型把空窗说成「没发过」。
 - 正文已清理：元数据可列，物化返回既有 `file_content_unavailable`。

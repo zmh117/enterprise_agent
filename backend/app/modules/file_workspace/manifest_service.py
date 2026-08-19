@@ -3,10 +3,15 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Never
 
 from app.modules.channel.domain.channel_event import ChannelFileReference
+from app.modules.file_workspace.clock import (
+    project_file_time_fields,
+    to_shanghai_rfc3339,
+)
 from app.modules.file_workspace.domain import (
     DOCUMENT_MANIFEST_ACTIONS,
     GOVERNED_DOCUMENT_FORMATS,
@@ -135,6 +140,7 @@ class JobFileManifestService:
         file_references: tuple[ChannelFileReference, ...],
         requests_file_output: bool,
         file_format_policy_version: object = FileFormatPolicyVersion.TEXT_V1,
+        force_create: bool = False,
     ) -> dict[str, Any] | None:
         policy_version = normalize_file_format_policy_version(file_format_policy_version)
         has_text_input = any(
@@ -146,7 +152,7 @@ class JobFileManifestService:
             for item in attachments
         ) or bool(file_references)
         active = self.repository.get_active_workspace(session_id)
-        if active is None and not (has_text_input or requests_file_output):
+        if active is None and not (has_text_input or requests_file_output or force_create):
             return None
         if not all((tenant_id, publication_id, requester_id)):
             raise NonRetryableExecutionError(
@@ -177,7 +183,7 @@ class JobFileManifestService:
             publication_id=publication_id,
             retention_period=period,
             actor_id=requester_id,
-            has_file_input=has_text_input,
+            has_file_input=has_text_input or force_create,
             requests_file_output=requests_file_output,
         )
         if workspace is None:
@@ -223,7 +229,12 @@ class JobFileManifestService:
                 file_format_policy_version
             ).value,
             explicit_references=(
-                {"file_id": item.file_id, "version_id": item.version_id} for item in file_references
+                {
+                    "file_id": item.file_id,
+                    "version_id": item.version_id,
+                    "auto_materialize": item.auto_materialize,
+                }
+                for item in file_references
             ),
         )
 
@@ -426,8 +437,8 @@ class JobFileManifestService:
             "schema_version": schema_version,
             "file_format_policy_version": policy_version.value,
             "manifest_hash": str(snapshot["manifest_hash"]),
-            "observed_at": str(snapshot.get("created_at") or ""),
-            "items": projected,
+            "observed_at": to_shanghai_rfc3339(snapshot.get("created_at")) or "",
+            "items": [project_file_time_fields(item) for item in projected],
             **(
                 {
                     "readability_notices": [
@@ -578,27 +589,50 @@ class JobFileManifestService:
                 file_id=str(reference.get("file_id") or ""),
                 version_id=str(reference.get("version_id") or ""),
             )
+            historical = reference_row is None
+            if reference_row is None:
+                reference_row = self._retained_reference_row(
+                    session_id=str(workspace.get("session_id") or ""),
+                    file_id=str(reference.get("file_id") or ""),
+                    version_id=str(reference.get("version_id") or ""),
+                )
             if reference_row is None:
                 self._invalid_reference()
             self._require_file_boundary(reference_row, workspace)
             identity = (str(reference_row["file_id"]), str(reference_row["version_id"]))
-            if self._eligible_text(reference_row, policy_version=policy_version):
-                by_identity[identity] = self._item(
+            auto_materialize = bool(reference.get("auto_materialize", True))
+            if not self._content_available(reference_row):
+                if not historical:
+                    self._invalid_reference()
+                by_identity[identity] = self._metadata_only_item(
                     reference_row,
                     source_kind=SnapshotSourceKind.EXPLICIT_REFERENCE,
-                    auto_materialize=True,
+                )
+                continue
+            if self._eligible_text(reference_row, policy_version=policy_version):
+                item = self._item(
+                    reference_row,
+                    source_kind=SnapshotSourceKind.EXPLICIT_REFERENCE,
+                    auto_materialize=auto_materialize,
                     conflict_candidate=bool(reference_row.get("conflict_candidate")),
                     policy_version=policy_version,
                 )
             elif self._eligible_document(reference_row):
-                by_identity[identity] = self._document_item(
+                item = self._document_item(
                     reference_row,
                     source_kind=SnapshotSourceKind.EXPLICIT_REFERENCE,
-                    auto_materialize=True,
+                    auto_materialize=auto_materialize,
                     conflict_candidate=bool(reference_row.get("conflict_candidate")),
                 )
             else:
                 self._invalid_reference()
+            if historical:
+                item["allowed_actions"] = [
+                    action
+                    for action in item["allowed_actions"]
+                    if action not in {FileAction.EDIT.value, FileAction.COMMIT.value}
+                ]
+            by_identity[identity] = item
 
         text_attachments = self.repository.database.execute(
             """
@@ -828,6 +862,104 @@ class JobFileManifestService:
             """,
             (version_id, workspace_id, file_id),
         )
+
+    def _retained_reference_row(
+        self, *, session_id: str, file_id: str, version_id: str
+    ) -> dict[str, Any] | None:
+        if not session_id or not file_id or not version_id:
+            return None
+        now = datetime.now(UTC).isoformat()
+        return self.repository.database.execute_one(
+            """
+            select f.id as file_id, v.id as version_id,
+                   coalesce(
+                     (
+                       select wf.logical_name
+                         from task_workspace_file wf
+                        where wf.file_id = f.id
+                        order by case wf.status when 'ACTIVE' then 0 else 1 end,
+                                 wf.updated_at desc
+                        limit 1
+                     ),
+                     f.display_name
+                   ) as display_name,
+                   f.tenant_id, f.owner_type, f.owner_user_id,
+                   f.owner_enterprise_id, f.owner_connector_id,
+                   f.owner_conversation_id, f.status as file_status,
+                   f.format_code as file_format_code,
+                   v.status as version_status, v.format_code as version_format_code,
+                   v.media_type, v.encoding,
+                   v.size_bytes, f.source_received_at,
+                   v.created_at as version_created_at,
+                   0 as conflict_candidate
+              from managed_file f
+              join managed_file_version v on v.file_id = f.id and v.id = ?
+             where f.id = ?
+               and v.status != 'DELETED'
+               and f.status != 'DELETED'
+               and (
+                 exists (
+                   select 1
+                     from task_workspace tw
+                     join task_workspace_file wf on wf.workspace_id = tw.id
+                    where tw.session_id = ? and wf.file_id = f.id
+                 )
+                 or exists (
+                   select 1
+                     from message_attachment_file_binding b
+                     join message_attachment a on a.id = b.attachment_id
+                     join agent_message m on m.id = a.message_id
+                    where b.version_id = v.id and m.session_id = ?
+                 )
+               )
+               and (
+                 v.status = 'CONTENT_UNAVAILABLE'
+                 or f.status = 'CONTENT_UNAVAILABLE'
+                 or not exists (
+                   select 1 from file_retention_fact r where r.version_id = v.id
+                 )
+                 or exists (
+                   select 1 from file_retention_fact r
+                    where r.version_id = v.id and r.expires_at > ?
+                 )
+               )
+            """,
+            (version_id, file_id, session_id, session_id, now),
+        )
+
+    @staticmethod
+    def _content_available(row: dict[str, Any]) -> bool:
+        return str(row.get("file_status") or "") == "ACTIVE" and str(
+            row.get("version_status") or ""
+        ) in {"AVAILABLE", "CONFLICT"}
+
+    @staticmethod
+    def _metadata_only_item(
+        row: dict[str, Any],
+        *,
+        source_kind: SnapshotSourceKind,
+    ) -> dict[str, Any]:
+        format_code = str(row.get("file_format_code") or "TXT")
+        if format_code in GOVERNED_DOCUMENT_FORMATS:
+            allowed = [
+                action.value for action in FileAction if action in DOCUMENT_MANIFEST_ACTIONS
+            ]
+        else:
+            allowed = [FileAction.READ_METADATA.value]
+        return {
+            "file_id": str(row["file_id"]),
+            "version_id": str(row["version_id"]),
+            "display_name": str(row["display_name"]),
+            "format_code": format_code,
+            "source_kind": source_kind.value,
+            "allowed_actions": allowed,
+            "auto_materialize": False,
+            "conflict_candidate": False,
+            "source_received_at": (
+                str(row.get("source_received_at")) if row.get("source_received_at") else None
+            ),
+            "version_created_at": str(row["version_created_at"]),
+        }
 
     @staticmethod
     def _item(

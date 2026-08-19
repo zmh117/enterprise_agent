@@ -35,6 +35,7 @@ class ChannelFileReference:
 
     file_id: str
     version_id: str
+    auto_materialize: bool = True
 
 
 @dataclass(frozen=True)

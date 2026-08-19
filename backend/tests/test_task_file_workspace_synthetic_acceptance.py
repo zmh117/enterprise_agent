@@ -6,6 +6,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -14,10 +15,12 @@ from app.modules.attachments.domain import AttachmentImportReceipt
 from app.modules.delivery.application.delivery_dispatch_service import (
     DeliveryOutboxDispatcher,
 )
+from app.modules.file_workspace.application import FileWorkspaceApplicationService
 from app.modules.file_workspace.authorization import (
     FileAuthorizationContext,
     FileAuthorizationService,
 )
+from app.modules.file_workspace.contracts import FILE_TRANSFER_META_KEY
 from app.modules.file_workspace.delivery_service import FileVersionDeliveryService
 from app.modules.file_workspace.domain import (
     FileOwner,
@@ -252,6 +255,261 @@ def _enable_in_process_attachment_import(
     runtime.attachment_service.importer = _InProcessAttachmentImporter(streaming)
     runtime.attachment_service.storage = None
     return file_repository, storage
+
+
+SHANGHAI = ZoneInfo("Asia/Shanghai")
+FROZEN_TODAY = datetime(2026, 8, 19, 12, 0, tzinfo=SHANGHAI)
+FROZEN_MONDAY = datetime(2026, 8, 17, 10, 0, tzinfo=SHANGHAI)
+LAST_WEEK_RECEIVED_AT = "2026-08-12T04:00:00+00:00"
+TODAY_RECEIVED_AT = "2026-08-19T01:40:47+00:00"
+
+
+def _freeze_resolver_now(monkeypatch: pytest.MonkeyPatch, now: datetime) -> None:
+    monkeypatch.setattr(
+        "app.modules.job.application.create_agent_job_service.resolver_now",
+        lambda: now,
+    )
+
+
+def _expire_active_workspaces(runtime: Any) -> None:
+    timestamp = datetime.now(UTC).isoformat()
+    rows = runtime.database.execute("select id from task_workspace where status = 'ACTIVE'")
+    for row in rows:
+        runtime.database.execute(
+            "update task_workspace set status = 'CLEANED', updated_at = ? where id = ?",
+            (timestamp, row["id"]),
+        )
+        runtime.database.execute(
+            """
+            update task_workspace_file
+               set status = 'REMOVED', removed_at = ?, updated_at = ?
+             where workspace_id = ? and status = 'ACTIVE'
+            """,
+            (timestamp, timestamp, row["id"]),
+        )
+
+
+def _backdate_file(runtime: Any, *, file_id: str, received_at: str) -> None:
+    runtime.database.execute(
+        "update managed_file set source_received_at = ? where id = ?",
+        (received_at, file_id),
+    )
+
+
+def _snapshot_items(runtime: Any, snapshot_id: str) -> list[dict[str, Any]]:
+    return runtime.database.execute(
+        """
+        select display_name, source_kind, auto_materialize, file_id, version_id,
+               allowed_actions_json
+          from agent_job_file_snapshot_item
+         where snapshot_id = ?
+         order by ordinal
+        """,
+        (snapshot_id,),
+    )
+
+
+def _import_channel_file(
+    runtime: Any,
+    *,
+    msg_id: str,
+    file_name: str,
+    content_type: str,
+    data: bytes,
+) -> dict[str, Any]:
+    payload = load_fixture("file.json")
+    payload["msgId"] = msg_id
+    payload["content"] = {
+        "downloadCode": f"{msg_id}-code",
+        "fileName": file_name,
+        "fileSize": len(data),
+        "contentType": content_type,
+    }
+    staged = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=payload,
+        correlation_id=msg_id,
+    )
+    assert staged.status == "attachments_staged", (staged.reason, staged.error_code)
+    task = runtime.message_bus.attachments.popleft()
+    runtime.attachment_service.downloader = FakeDownloader({f"{msg_id}-code": data})
+    runtime.attachment_service.process(task.attachment_id, msg_id)
+    binding = runtime.database.execute_one(
+        """
+        select b.file_id, b.version_id, a.file_name
+          from message_attachment_file_binding b
+          join message_attachment a on a.id = b.attachment_id
+         where a.id = ?
+        """,
+        (task.attachment_id,),
+    )
+    assert binding is not None
+    return dict(binding)
+
+
+def _attach_markdown_representation(
+    runtime: Any,
+    *,
+    file_id: str,
+    version_id: str,
+    markdown: bytes = b"caption\n",
+) -> None:
+    tenant = runtime.database.execute_one(
+        "select tenant_id from managed_file where id = ?",
+        (file_id,),
+    )
+    assert tenant is not None
+    run_id = f"run-{version_id}"
+    timestamp = datetime.now(UTC).isoformat()
+    runtime.database.execute(
+        """
+        insert into file_processing_run
+          (id, tenant_id, source_file_id, source_version_id, processor_code,
+           processor_version, processor_build_digest, profile_code, profile_hash,
+           status, source_size_bytes, completed_at, created_by, created_at, updated_at)
+        values (?, ?, ?, ?, 'docling-serve', '1.30.0', ?, 'docling-text-v1', ?,
+                'SUCCEEDED', ?, ?, 'file-processing-worker', ?, ?)
+        """,
+        (
+            run_id,
+            tenant["tenant_id"],
+            file_id,
+            version_id,
+            "sha256:" + "b" * 64,
+            "d" * 64,
+            len(markdown),
+            timestamp,
+            timestamp,
+            timestamp,
+        ),
+    )
+    runtime.database.execute(
+        """
+        insert into file_representation
+          (id, processing_run_id, tenant_id, source_file_id, source_version_id,
+           kind, media_type, encoding, status, size_bytes, content_sha256,
+           object_key, profile_hash, created_at)
+        values (?, ?, ?, ?, ?, 'MARKDOWN', 'text/markdown', 'utf-8', 'AVAILABLE',
+                ?, ?, ?, ?, ?)
+        """,
+        (
+            f"representation-{version_id}",
+            run_id,
+            tenant["tenant_id"],
+            file_id,
+            version_id,
+            len(markdown),
+            "e" * 64,
+            f"opaque/representation-{version_id}",
+            "d" * 64,
+            timestamp,
+        ),
+    )
+    runtime.database.execute(
+        """
+        update message_attachment
+           set readability_status = 'AVAILABLE', readability_updated_at = ?
+         where id in (
+           select attachment_id from message_attachment_file_binding where version_id = ?
+         )
+        """,
+        (timestamp, version_id),
+    )
+
+
+def _workspace_owner(workspace: dict[str, Any]) -> FileOwner:
+    owner_type = WorkspaceOwnerType(str(workspace["owner_type"]))
+    if owner_type is WorkspaceOwnerType.PRIVATE_USER:
+        return FileOwner(owner_type, user_id=str(workspace["owner_user_id"]))
+    return FileOwner(
+        owner_type,
+        enterprise_id=str(workspace["owner_enterprise_id"]),
+        connector_id=str(workspace["owner_connector_id"]),
+        conversation_id=str(workspace["owner_conversation_id"]),
+    )
+
+
+def _seed_png_with_session_attachment(
+    runtime: Any,
+    file_repository: FileWorkspaceRepository,
+    *,
+    file_id: str,
+    version_id: str,
+    display_name: str,
+    received_at: str,
+) -> None:
+    workspace = runtime.database.execute_one(
+        "select * from task_workspace where status = 'ACTIVE'"
+    )
+    assert workspace is not None
+    file_repository.create_file(
+        file_id=file_id,
+        tenant_id=str(workspace["tenant_id"]),
+        owner=_workspace_owner(workspace),
+        display_name=display_name,
+        actor_id="file-worker",
+        format_code="PNG",
+        source_received_at=received_at,
+    )
+    file_repository.create_version(
+        version_id=version_id,
+        file_id=file_id,
+        version_number=1,
+        version_kind=FileVersionKind.ATTACHMENT,
+        status=FileVersionStatus.AVAILABLE,
+        media_type="image/png",
+        encoding="",
+        size_bytes=12,
+        content_sha256="f" * 64,
+        object_key=f"opaque/{version_id}",
+        source_kind=FileSourceKind.MESSAGE_ATTACHMENT,
+        actor_id="file-worker",
+        format_code="PNG",
+        advance_current_from="",
+    )
+    file_repository.link_workspace_file(
+        workspace_id=str(workspace["id"]),
+        file_id=file_id,
+        version_id=version_id,
+        logical_name=display_name,
+        role=WorkspaceFileRole.INPUT,
+    )
+    message_id = runtime.agent_repository.add_message(
+        session_id=str(workspace["session_id"]),
+        job_id=None,
+        role="user",
+        content="",
+        external_message_id=f"seed-{file_id}",
+        message_type="file",
+    )
+    timestamp = datetime.now(UTC).isoformat()
+    attachment_id = f"attachment-{file_id}"
+    runtime.database.execute(
+        """
+        insert into message_attachment
+          (id, message_id, job_id, ordinal, media_type, file_name, declared_mime,
+           declared_size, status, readability_status, task_workspace_id,
+           created_at, updated_at, readability_updated_at, finished_at)
+        values (?, ?, null, 0, 'image/png', ?, 'image/png', 12, 'READY', 'AVAILABLE',
+                ?, ?, ?, ?, ?)
+        """,
+        (
+            attachment_id,
+            message_id,
+            display_name,
+            workspace["id"],
+            timestamp,
+            timestamp,
+            timestamp,
+            timestamp,
+        ),
+    )
+    file_repository.bind_attachment(
+        attachment_id=attachment_id,
+        file_id=file_id,
+        version_id=version_id,
+        retention_expires_at="2027-08-14T00:00:00+00:00",
+    )
+    _attach_markdown_representation(runtime, file_id=file_id, version_id=version_id)
 
 
 def test_unsupported_picture_then_plain_text_does_not_freeze_file_mcp_tools() -> None:
@@ -1142,7 +1400,10 @@ def test_blocked_turn_notifies_once_without_replaying_and_ordinary_upload_stays_
     assert runtime.agent_repository.count_rows("agent_job") == 0
 
 
-def test_today_image_question_binds_ready_workspace_png_and_unrelated_text_does_not() -> None:
+def test_today_image_question_binds_ready_workspace_png_and_unrelated_text_does_not(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _freeze_resolver_now(monkeypatch, FROZEN_TODAY)
     runtime = multimodal_container(task_file_features=FEATURES)
     file_repository, _storage = _enable_in_process_attachment_import(runtime)
     runtime.attachment_service.downloader = FakeDownloader({"notes-code": b"notes\n"})
@@ -1289,3 +1550,312 @@ def test_today_image_question_binds_ready_workspace_png_and_unrelated_text_does_
     assert image_item["source_kind"] == "EXPLICIT_REFERENCE"
     assert bool(image_item["auto_materialize"]) is True
     assert image_item["representation_id"] == "representation-today-image"
+
+
+def test_last_week_image_is_recalled_after_workspace_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _freeze_resolver_now(monkeypatch, FROZEN_MONDAY)
+    runtime = multimodal_container(task_file_features=FEATURES)
+    file_repository, _storage = _enable_in_process_attachment_import(runtime)
+    _import_channel_file(
+        runtime,
+        msg_id="carrier-txt",
+        file_name="carrier.txt",
+        content_type="text/plain",
+        data=b"carrier\n",
+    )
+    _seed_png_with_session_attachment(
+        runtime,
+        file_repository,
+        file_id="file-last-week-png",
+        version_id="version-last-week-png",
+        display_name="last-week.png",
+        received_at=LAST_WEEK_RECEIVED_AT,
+    )
+    old_workspace_id = str(
+        runtime.database.execute_one("select id from task_workspace where status = 'ACTIVE'")["id"]
+    )
+    _expire_active_workspaces(runtime)
+
+    asked = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=_group_text(msg_id="ask-last-week-image", content="上周的图什么内容"),
+        correlation_id="ask-last-week-image",
+    )
+    assert asked.status == "received"
+    job = runtime.agent_repository.get_job(asked.job_id)
+    assert job.task_workspace_id
+    assert job.task_workspace_id != old_workspace_id
+    assert (
+        runtime.database.execute_one(
+            "select status from task_workspace where id = ?",
+            (old_workspace_id,),
+        )["status"]
+        == "CLEANED"
+    )
+    assert (
+        runtime.database.execute_one(
+            """
+            select id from task_workspace_file
+             where workspace_id = ? and file_id = ? and status = 'ACTIVE'
+            """,
+            (job.task_workspace_id, "file-last-week-png"),
+        )
+        is None
+    )
+    snapshot = file_repository.get_job_snapshot(job.id)
+    item = runtime.database.execute_one(
+        """
+        select display_name, source_kind, auto_materialize
+          from agent_job_file_snapshot_item
+         where snapshot_id = ? and file_id = ?
+        """,
+        (snapshot["id"], "file-last-week-png"),
+    )
+    assert item is not None
+    assert item["display_name"] == "last-week.png"
+    assert item["source_kind"] == "EXPLICIT_REFERENCE"
+    assert bool(item["auto_materialize"]) is True
+
+
+def test_calendar_date_and_range_recall_txt_after_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _freeze_resolver_now(monkeypatch, FROZEN_MONDAY)
+    runtime = multimodal_container(task_file_features=FEATURES)
+    file_repository, _storage = _enable_in_process_attachment_import(runtime)
+    first = _import_channel_file(
+        runtime,
+        msg_id="aug12-txt",
+        file_name="aug12.txt",
+        content_type="text/plain",
+        data=b"hello\n",
+    )
+    second = _import_channel_file(
+        runtime,
+        msg_id="aug14-txt",
+        file_name="aug14.txt",
+        content_type="text/plain",
+        data=b"world\n",
+    )
+    _backdate_file(runtime, file_id=str(first["file_id"]), received_at=LAST_WEEK_RECEIVED_AT)
+    _backdate_file(
+        runtime,
+        file_id=str(second["file_id"]),
+        received_at="2026-08-14T04:00:00+00:00",
+    )
+    _expire_active_workspaces(runtime)
+
+    named = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=_group_text(msg_id="ask-aug12-file", content="8月12日的文件什么内容"),
+        correlation_id="ask-aug12-file",
+    )
+    assert named.status == "received"
+    named_job = runtime.agent_repository.get_job(named.job_id)
+    named_snapshot = file_repository.get_job_snapshot(named_job.id)
+    names = {row["display_name"] for row in _snapshot_items(runtime, named_snapshot["id"])}
+    assert names == {"aug12.txt"}
+
+    ranged = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=_group_text(msg_id="ask-aug-range", content="8月10日到15日发了哪些文件"),
+        correlation_id="ask-aug-range",
+    )
+    assert ranged.status == "received"
+    ranged_job = runtime.agent_repository.get_job(ranged.job_id)
+    ranged_snapshot = file_repository.get_job_snapshot(ranged_job.id)
+    items = _snapshot_items(runtime, ranged_snapshot["id"])
+    assert {row["display_name"] for row in items} == {"aug12.txt", "aug14.txt"}
+    assert all(not bool(row["auto_materialize"]) for row in items)
+
+
+def test_date_chat_without_file_token_does_not_recall_or_create_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _freeze_resolver_now(monkeypatch, FROZEN_MONDAY)
+    runtime = multimodal_container(task_file_features=FEATURES)
+    _enable_in_process_attachment_import(runtime)
+    imported = _import_channel_file(
+        runtime,
+        msg_id="aug12-plan",
+        file_name="plan.txt",
+        content_type="text/plain",
+        data=b"plan\n",
+    )
+    _backdate_file(runtime, file_id=str(imported["file_id"]), received_at=LAST_WEEK_RECEIVED_AT)
+    _expire_active_workspaces(runtime)
+    asked = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=_group_text(msg_id="ask-aug12-chat", content="8月12日附近有什么安排"),
+        correlation_id="ask-aug12-chat",
+    )
+    assert asked.status == "received"
+    job = runtime.agent_repository.get_job(asked.job_id)
+    assert job.task_workspace_id == ""
+    assert runtime.agent_repository.count_rows("agent_job_file_snapshot") == 0
+
+
+def test_time_window_multiple_files_clarify_or_list_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _freeze_resolver_now(monkeypatch, FROZEN_MONDAY)
+    runtime = multimodal_container(task_file_features=FEATURES)
+    _enable_in_process_attachment_import(runtime)
+    first = _import_channel_file(
+        runtime,
+        msg_id="week-a",
+        file_name="a.txt",
+        content_type="text/plain",
+        data=b"a\n",
+    )
+    second = _import_channel_file(
+        runtime,
+        msg_id="week-b",
+        file_name="b.txt",
+        content_type="text/plain",
+        data=b"b\n",
+    )
+    _backdate_file(runtime, file_id=str(first["file_id"]), received_at=LAST_WEEK_RECEIVED_AT)
+    _backdate_file(
+        runtime,
+        file_id=str(second["file_id"]),
+        received_at="2026-08-13T04:00:00+00:00",
+    )
+    _expire_active_workspaces(runtime)
+
+    content = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=_group_text(msg_id="ask-week-content", content="上周的文件什么内容"),
+        correlation_id="ask-week-content",
+    )
+    assert content.status == "system_notice"
+    notice = _latest_system_notice(runtime)
+    assert notice["notice_kind"] == "time_window_ambiguous"
+    assert "没发过" not in notice["markdown"]
+    assert runtime.agent_repository.count_rows("agent_job") == 0
+
+    listed = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=_group_text(msg_id="ask-week-names", content="上周发了哪些文件"),
+        correlation_id="ask-week-names",
+    )
+    assert listed.status == "received"
+    listed_job = runtime.agent_repository.get_job(listed.job_id)
+    items = _snapshot_items(
+        runtime, FileWorkspaceRepository(runtime.database).get_job_snapshot(listed_job.id)["id"]
+    )
+    assert {row["display_name"] for row in items} == {"a.txt", "b.txt"}
+    assert all(not bool(row["auto_materialize"]) for row in items)
+
+
+def test_empty_time_window_notice_does_not_claim_never_sent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _freeze_resolver_now(monkeypatch, FROZEN_MONDAY)
+    runtime = multimodal_container(task_file_features=FEATURES)
+    asked = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=_group_text(msg_id="ask-empty-week", content="上周的附件"),
+        correlation_id="ask-empty-week",
+    )
+    assert asked.status == "system_notice"
+    notice = _latest_system_notice(runtime)
+    assert notice["notice_kind"] == "time_window_empty"
+    assert "仍可访问" in notice["markdown"]
+    assert "没发过" not in notice["markdown"]
+    assert runtime.agent_repository.count_rows("agent_job") == 0
+    assert runtime.database.execute_one("select id from task_workspace") is None
+
+
+def test_recalled_available_file_can_materialize_and_cleaned_file_lists_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _freeze_resolver_now(monkeypatch, FROZEN_MONDAY)
+    runtime = multimodal_container(task_file_features=FEATURES)
+    file_repository, storage = _enable_in_process_attachment_import(runtime)
+    imported = _import_channel_file(
+        runtime,
+        msg_id="retain-txt",
+        file_name="keep.txt",
+        content_type="text/plain",
+        data=b"keep\n",
+    )
+    extra = _import_channel_file(
+        runtime,
+        msg_id="extra-this-week",
+        file_name="extra.txt",
+        content_type="text/plain",
+        data=b"extra\n",
+    )
+    _backdate_file(runtime, file_id=str(imported["file_id"]), received_at=LAST_WEEK_RECEIVED_AT)
+    _backdate_file(
+        runtime,
+        file_id=str(extra["file_id"]),
+        received_at="2026-08-18T01:00:00+00:00",
+    )
+    _expire_active_workspaces(runtime)
+    asked = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=_group_text(msg_id="ask-keep", content="上周的文件什么内容"),
+        correlation_id="ask-keep",
+    )
+    assert asked.status == "received"
+    job = runtime.agent_repository.get_job(asked.job_id)
+    snapshot = file_repository.get_job_snapshot(job.id)
+    runtime.database.execute("update agent_job set status = 'RUNNING' where id = ?", (job.id,))
+    claims = {
+        "sub": job.internal_user_id,
+        "tenant_id": snapshot["tenant_id"],
+        "job_id": job.id,
+        "session_id": job.session_id,
+        "agent_publication_id": job.agent_publication_id,
+        "application_publication_id": job.business_application_publication_id,
+    }
+    authorization = FileAuthorizationService(runtime.database, _BusinessAccess())
+    context = authorization.require_job(
+        claims=claims,
+        tool_identifier="file_prepare_materialization",
+    )
+    application = FileWorkspaceApplicationService(
+        file_repository,
+        authorization,
+        GovernedFileStreamingService(
+            file_repository,
+            authorization,
+            storage,
+            _MutablePrincipal(),
+            now=lambda: NOW,
+        ),
+    )
+    listed = application.invoke(
+        context=context,
+        tool_identifier="task_workspace_list_files",
+        arguments={},
+    )
+    assert [item["display_name"] for item in listed["items"]] == ["keep.txt"]
+    assert extra["file_id"] not in {item["file_id"] for item in listed["items"]}
+    prepared = application.invoke(
+        context=context,
+        tool_identifier="file_prepare_materialization",
+        arguments={
+            "file_id": imported["file_id"],
+            "version_id": imported["version_id"],
+        },
+    )
+    transfer = prepared[INTERNAL_TRANSFER_META][FILE_TRANSFER_META_KEY]
+    assert str(transfer["relative_path"]).startswith("inputs/")
+
+    file_repository.mark_content_unavailable(
+        version_id=str(imported["version_id"]),
+        deleted_at=datetime.now(UTC).isoformat(),
+    )
+    listed_after = application.invoke(
+        context=context,
+        tool_identifier="task_workspace_list_files",
+        arguments={},
+    )
+    assert listed_after["items"][0]["version_status"] == "CONTENT_UNAVAILABLE"
+    with pytest.raises(Exception) as error:
+        application.invoke(
+            context=context,
+            tool_identifier="file_prepare_materialization",
+            arguments={
+                "file_id": imported["file_id"],
+                "version_id": imported["version_id"],
+            },
+        )
+    assert getattr(error.value, "error_code", "") == "file_content_unavailable"

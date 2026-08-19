@@ -472,6 +472,8 @@ def test_file_job_context_exposes_frozen_file_tools_and_sandbox_instructions() -
     assert "observed_at" in restrictions
     assert "version_created_at" in restrictions
     assert "generic created_at" in restrictions
+    assert "Asia/Shanghai" in restrictions
+    assert "+08:00" in restrictions
 
 
 def test_text_v2_context_exposes_log_read_only_and_markdown_output_rules() -> None:

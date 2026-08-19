@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, datetime, time, timedelta
 import re
 import unicodedata
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 FileCapability = Literal["METADATA", "ORIGINAL", "READABLE_CONTENT"]
 BindReason = Literal[
@@ -12,8 +14,12 @@ BindReason = Literal[
     "QUOTE",
     "FILENAME",
     "DEIXIS",
+    "TIME_WINDOW",
 ]
 GateAction = Literal["enqueue_job", "wait_source", "system_notice"]
+
+SHANGHAI = ZoneInfo("Asia/Shanghai")
+TIME_WINDOW_METADATA_LIMIT = 20
 
 GENERIC_DEIXIS_PATTERNS: tuple[str, ...] = (
     "这个文件",
@@ -65,6 +71,67 @@ PLURAL_DEIXIS_PATTERNS: tuple[str, ...] = (
     "刚才那些",
 )
 
+FILE_REFERRING_TOKENS: tuple[str, ...] = (
+    "文件",
+    "附件",
+    "图片",
+    "文档",
+    "材料",
+    "表格",
+    "xlsx",
+    "docx",
+    "pptx",
+    "pdf",
+    ".txt",
+    ".md",
+    ".log",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    "图",
+    "表",
+)
+GENERIC_FILE_REFERRING_TOKENS: tuple[str, ...] = (
+    "文件",
+    "附件",
+    "文档",
+    "材料",
+    "表格",
+    "xlsx",
+    "docx",
+    "pptx",
+    "pdf",
+    ".txt",
+    ".md",
+    ".log",
+)
+IMAGE_FILE_REFERRING_TOKENS: tuple[str, ...] = (
+    "图片",
+    "的图",
+    "张图",
+    "个图",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+)
+
+PREVIOUS_WEEK_TOKENS: tuple[str, ...] = ("上个星期", "上星期", "上周")
+CURRENT_WEEK_TOKENS: tuple[str, ...] = ("这个星期", "这一周", "这周", "本周")
+PREVIOUS_MONTH_TOKENS: tuple[str, ...] = ("上个月", "上月")
+TODAY_TOKENS: tuple[str, ...] = ("今天", "今日")
+YESTERDAY_TOKENS: tuple[str, ...] = ("昨天", "昨日")
+
+DATE_RANGE_CN = re.compile(
+    r"(?:(\d{4})年)?(\d{1,2})月(\d{1,2})[日号]\s*(?:到|至|~|—|-)\s*(?:(\d{1,2})月)?(\d{1,2})[日号]"
+)
+DATE_RANGE_ISO = re.compile(
+    r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})\s*(?:到|至|~|—)\s*(?:(\d{4})[-/])?(\d{1,2})[-/](\d{1,2})"
+)
+SINGLE_DATE_CN = re.compile(r"(?:(\d{4})年)?(\d{1,2})月(\d{1,2})[日号]")
+SINGLE_DATE_ISO = re.compile(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})")
+
 METADATA_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     re.compile(pattern, re.IGNORECASE)
     for pattern in (
@@ -77,6 +144,12 @@ METADATA_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
         r"上传时间",
         r"何时上传",
         r"什么时候(传|上传)",
+        r"哪些文件",
+        r"哪些附件",
+        r"发了哪些",
+        r"传了哪些",
+        r"有哪些(文件|附件|图)",
+        r"有什么(文件|附件)",
         r"file\s*name",
         r"how\s+big",
         r"what\s+format",
@@ -100,6 +173,20 @@ ORIGINAL_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
 SOURCE_TERMINAL = frozenset({"READY", "REJECTED", "FAILED", "stored_not_interpreted"})
 READABLE_READY = frozenset({"AVAILABLE", "PARTIAL", "NOT_REQUIRED"})
 READABLE_FAILED = frozenset({"NO_TEXT", "UNAVAILABLE"})
+KNOWN_BIND_REASONS = {
+    "CURRENT_MESSAGE",
+    "EXPLICIT_REFERENCE",
+    "QUOTE",
+    "FILENAME",
+    "DEIXIS",
+    "TIME_WINDOW",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class TimeWindow:
+    start: datetime
+    end: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +199,8 @@ class WorkspaceFileCandidate:
     source_status: str = ""
     readability_status: str = "NOT_REQUIRED"
     source_ready_at: str | None = None
+    source_received_at: str | None = None
+    content_available: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,6 +219,8 @@ class FileDependency:
     display_name: str = ""
     source_status: str = ""
     readability_status: str = "NOT_REQUIRED"
+    source_received_at: str | None = None
+    content_available: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +229,7 @@ class ResolverDecision:
     ambiguous: bool = False
     clarification_names: tuple[str, ...] = ()
     quote_unresolved: bool = False
+    notice_kind: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +238,10 @@ class GateDecision:
     reason_code: str
     notice_kind: str = ""
     dependencies: tuple[FileDependency, ...] = ()
+
+
+def resolver_now() -> datetime:
+    return datetime.now(SHANGHAI)
 
 
 def normalize_display_name(value: str) -> str:
@@ -176,6 +272,41 @@ def has_plural_deixis(text: str) -> bool:
     return any(token in text for token in PLURAL_DEIXIS_PATTERNS)
 
 
+def has_file_referring_token(text: str) -> bool:
+    return any(token in text for token in FILE_REFERRING_TOKENS)
+
+
+def is_image_only_file_query(text: str) -> bool:
+    has_image = any(token in text for token in IMAGE_FILE_REFERRING_TOKENS) or (
+        "图" in text and "文件" not in text and "附件" not in text and "文档" not in text
+    )
+    has_generic = any(token in text for token in GENERIC_FILE_REFERRING_TOKENS)
+    return has_image and not has_generic
+
+
+def parse_time_window(text: str, *, now: datetime | None = None) -> TimeWindow | None:
+    moment = (now or resolver_now()).astimezone(SHANGHAI)
+    if any(token in text for token in PREVIOUS_WEEK_TOKENS):
+        current = _week_start(moment)
+        return TimeWindow(start=current - timedelta(days=7), end=current)
+    if any(token in text for token in CURRENT_WEEK_TOKENS):
+        current = _week_start(moment)
+        return TimeWindow(start=current, end=current + timedelta(days=7))
+    if any(token in text for token in PREVIOUS_MONTH_TOKENS):
+        first_this_month = datetime(moment.year, moment.month, 1, tzinfo=SHANGHAI)
+        last_month = first_this_month - timedelta(days=1)
+        start = datetime(last_month.year, last_month.month, 1, tzinfo=SHANGHAI)
+        return TimeWindow(start=start, end=first_this_month)
+    if any(token in text for token in TODAY_TOKENS):
+        return _day_window(moment.date())
+    if any(token in text for token in YESTERDAY_TOKENS):
+        return _day_window(moment.date() - timedelta(days=1))
+    ranged = _parse_date_range(text, moment)
+    if ranged is not None:
+        return ranged
+    return _parse_single_date(text, moment)
+
+
 def resolve_file_context(
     *,
     text: str,
@@ -183,6 +314,8 @@ def resolve_file_context(
     explicit_references: tuple[tuple[str, str], ...] = (),
     quoted_external_message_id: str = "",
     candidates: tuple[WorkspaceFileCandidate, ...] = (),
+    retained_candidates: tuple[WorkspaceFileCandidate, ...] = (),
+    now: datetime | None = None,
 ) -> ResolverDecision:
     capability = infer_capability(text)
     if current_attachments:
@@ -253,6 +386,16 @@ def resolve_file_context(
             )
         )
 
+    window = parse_time_window(text, now=now)
+    if window is not None and has_file_referring_token(text) and not skip_deixis:
+        return _resolve_time_window(
+            text=text,
+            capability=capability,
+            window=window,
+            candidates=candidates,
+            retained_candidates=retained_candidates,
+        )
+
     if skip_deixis:
         return ResolverDecision(dependencies=(), quote_unresolved=True)
     if has_plural_deixis(text):
@@ -299,11 +442,38 @@ def resolve_file_context(
 
 
 def evaluate_file_gate(decision: ResolverDecision) -> GateDecision:
-    if decision.ambiguous:
+    if decision.notice_kind == "time_window_empty":
         return GateDecision(
             action="system_notice",
-            reason_code="file_binding_ambiguous",
-            notice_kind="ambiguous",
+            reason_code="time_window_empty",
+            notice_kind="time_window_empty",
+            dependencies=(),
+        )
+    if decision.notice_kind == "time_window_too_many":
+        return GateDecision(
+            action="system_notice",
+            reason_code="time_window_too_many",
+            notice_kind="time_window_too_many",
+            dependencies=(),
+        )
+    if decision.notice_kind == "content_unavailable":
+        return GateDecision(
+            action="system_notice",
+            reason_code="file_content_unavailable",
+            notice_kind="content_unavailable",
+            dependencies=decision.dependencies,
+        )
+    if decision.ambiguous:
+        notice_kind = decision.notice_kind or "ambiguous"
+        reason_code = (
+            "time_window_ambiguous"
+            if notice_kind == "time_window_ambiguous"
+            else "file_binding_ambiguous"
+        )
+        return GateDecision(
+            action="system_notice",
+            reason_code=reason_code,
+            notice_kind=notice_kind,
             dependencies=(),
         )
     if not decision.dependencies:
@@ -375,12 +545,210 @@ def system_notice_markdown(
             "请指明要使用的文件",
             f"工作区里有多份可能相关的文件（{listed}）。请回复具体文件、引用那条文件消息，或写出完整文件名。",
         )
+    if notice_kind == "time_window_ambiguous":
+        listed = "、".join(_safe_file_name(name) for name in display_names) or "多份文件"
+        return (
+            "请指明要使用的文件",
+            f"该时段有多份仍可访问的文件（{listed}）。请引用那条文件消息，或写出完整文件名。",
+        )
+    if notice_kind == "time_window_too_many":
+        return (
+            "请缩小文件范围",
+            "该时段仍可访问的文件超过 20 个。请缩小到某一天，或写出完整文件名。",
+        )
+    if notice_kind == "time_window_empty":
+        return (
+            "该时段没有仍可访问的文件",
+            "该时段没有仍可访问的文件。其他问题可以继续发送。",
+        )
+    if notice_kind == "content_unavailable":
+        return (
+            "文件内容已不可用",
+            f"《{names}》内容已按保留策略清理，请重新发送文件。其他问题可以继续发送。",
+        )
     if notice_kind == "ready":
         return (
             "文件已可继续提问",
             f"《{names}》可读内容已经生成，现在可以继续提问。",
         )
     return ("文件尚未可阅读", "当前还不能基于该文件回答。其他问题可以继续发送。")
+
+
+def _resolve_time_window(
+    *,
+    text: str,
+    capability: FileCapability,
+    window: TimeWindow,
+    candidates: tuple[WorkspaceFileCandidate, ...],
+    retained_candidates: tuple[WorkspaceFileCandidate, ...],
+) -> ResolverDecision:
+    pool = _window_candidates(window, candidates, retained_candidates)
+    if is_image_only_file_query(text):
+        pool = [item for item in pool if _is_image_candidate(item)]
+    if not pool:
+        return ResolverDecision(
+            dependencies=(),
+            notice_kind="time_window_empty",
+        )
+    if capability == "METADATA" and len(pool) > TIME_WINDOW_METADATA_LIMIT:
+        return ResolverDecision(
+            dependencies=(),
+            notice_kind="time_window_too_many",
+            clarification_names=tuple(sorted({item.display_name for item in pool[:20]})),
+        )
+    if capability != "METADATA" and len(pool) > 1:
+        return ResolverDecision(
+            dependencies=(),
+            ambiguous=True,
+            notice_kind="time_window_ambiguous",
+            clarification_names=tuple(sorted({item.display_name for item in pool})),
+        )
+    if capability == "METADATA":
+        return ResolverDecision(
+            dependencies=tuple(
+                _dependency_from_candidate(item, capability, "TIME_WINDOW") for item in pool
+            )
+        )
+    winner = pool[0]
+    bound = _dependency_from_candidate(winner, capability, "TIME_WINDOW")
+    if not winner.content_available:
+        return ResolverDecision(
+            dependencies=(bound,),
+            notice_kind="content_unavailable",
+        )
+    return ResolverDecision(dependencies=(bound,))
+
+
+def _window_candidates(
+    window: TimeWindow,
+    candidates: tuple[WorkspaceFileCandidate, ...],
+    retained_candidates: tuple[WorkspaceFileCandidate, ...],
+) -> list[WorkspaceFileCandidate]:
+    merged: dict[tuple[str, str], WorkspaceFileCandidate] = {}
+    for item in (*retained_candidates, *candidates):
+        if not item.file_id or not item.version_id:
+            continue
+        if not _received_at_in_window(item.source_received_at, window):
+            continue
+        identity = (item.file_id, item.version_id)
+        previous = merged.get(identity)
+        if previous is None or (not previous.attachment_id and item.attachment_id):
+            merged[identity] = item
+    return list(merged.values())
+
+
+def _received_at_in_window(value: str | None, window: TimeWindow) -> bool:
+    parsed = _parse_instant(value)
+    if parsed is None:
+        return False
+    return window.start <= parsed < window.end
+
+
+def _parse_instant(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed
+
+
+def _week_start(moment: datetime) -> datetime:
+    local = moment.astimezone(SHANGHAI)
+    monday = local.date() - timedelta(days=local.weekday())
+    return datetime.combine(monday, time.min, tzinfo=SHANGHAI)
+
+
+def _day_window(day: date) -> TimeWindow:
+    start = datetime.combine(day, time.min, tzinfo=SHANGHAI)
+    return TimeWindow(start=start, end=start + timedelta(days=1))
+
+
+def _parse_date_range(text: str, moment: datetime) -> TimeWindow | None:
+    iso = DATE_RANGE_ISO.search(text)
+    if iso is not None:
+        start_year, start_month, start_day, end_year, end_month, end_day = (
+            _optional_int(iso.group(1)),
+            int(iso.group(2)),
+            int(iso.group(3)),
+            _optional_int(iso.group(4)),
+            int(iso.group(5)),
+            int(iso.group(6)),
+        )
+        start = _resolve_date(start_year, start_month, start_day, moment)
+        end = _resolve_date(end_year or start.year, end_month, end_day, moment, year_locked=True)
+        return _inclusive_days(start, end)
+    match = DATE_RANGE_CN.search(text)
+    if match is None:
+        return None
+    year, month, day, end_month, end_day = (
+        _optional_int(match.group(1)),
+        int(match.group(2)),
+        int(match.group(3)),
+        _optional_int(match.group(4)),
+        int(match.group(5)),
+    )
+    start = _resolve_date(year, month, day, moment)
+    end = _resolve_date(year or start.year, end_month or month, end_day, moment, year_locked=True)
+    return _inclusive_days(start, end)
+
+
+def _parse_single_date(text: str, moment: datetime) -> TimeWindow | None:
+    iso = SINGLE_DATE_ISO.search(text)
+    if iso is not None:
+        day = _resolve_date(int(iso.group(1)), int(iso.group(2)), int(iso.group(3)), moment)
+        return _day_window(day)
+    match = SINGLE_DATE_CN.search(text)
+    if match is None:
+        return None
+    day = _resolve_date(
+        _optional_int(match.group(1)),
+        int(match.group(2)),
+        int(match.group(3)),
+        moment,
+    )
+    return _day_window(day)
+
+
+def _inclusive_days(start: date, end: date) -> TimeWindow | None:
+    if end < start:
+        return None
+    first = datetime.combine(start, time.min, tzinfo=SHANGHAI)
+    last = datetime.combine(end, time.min, tzinfo=SHANGHAI) + timedelta(days=1)
+    return TimeWindow(start=first, end=last)
+
+
+def _resolve_date(
+    year: int | None,
+    month: int,
+    day: int,
+    moment: datetime,
+    *,
+    year_locked: bool = False,
+) -> date:
+    try:
+        if year is not None:
+            return datetime(year, month, day, tzinfo=SHANGHAI).date()
+        candidate = datetime(moment.year, month, day, tzinfo=SHANGHAI)
+    except ValueError:
+        return moment.date()
+    if year_locked:
+        return candidate.date()
+    if candidate > moment:
+        try:
+            return datetime(moment.year - 1, month, day, tzinfo=SHANGHAI).date()
+        except ValueError:
+            return candidate.date()
+    return candidate.date()
+
+
+def _optional_int(value: str | None) -> int | None:
+    if not value:
+        return None
+    return int(value)
 
 
 def _dependency_from_candidate(
@@ -397,6 +765,8 @@ def _dependency_from_candidate(
         reason=reason,
         source_status=item.source_status,
         readability_status=item.readability_status,
+        source_received_at=item.source_received_at,
+        content_available=item.content_available,
     )
 
 
@@ -463,6 +833,8 @@ def file_dependency_payload(item: FileDependency) -> dict[str, str]:
         "reason": item.reason,
         "source_status": item.source_status,
         "readability_status": item.readability_status,
+        "source_received_at": item.source_received_at or "",
+        "content_available": "true" if item.content_available else "false",
     }
 
 
@@ -471,8 +843,10 @@ def file_dependency_from_payload(value: dict[str, object]) -> FileDependency:
     reason = str(value.get("reason") or "FILENAME")
     if capability not in {"METADATA", "ORIGINAL", "READABLE_CONTENT"}:
         capability = "READABLE_CONTENT"
-    if reason not in {"CURRENT_MESSAGE", "EXPLICIT_REFERENCE", "QUOTE", "FILENAME", "DEIXIS"}:
+    if reason not in KNOWN_BIND_REASONS:
         reason = "FILENAME"
+    content_available = str(value.get("content_available") or "true").lower() != "false"
+    received = str(value.get("source_received_at") or "")
     return FileDependency(
         required_capability=capability,  # type: ignore[arg-type]
         reason=reason,  # type: ignore[arg-type]
@@ -482,4 +856,6 @@ def file_dependency_from_payload(value: dict[str, object]) -> FileDependency:
         display_name=str(value.get("display_name") or ""),
         source_status=str(value.get("source_status") or ""),
         readability_status=str(value.get("readability_status") or "NOT_REQUIRED"),
+        source_received_at=received or None,
+        content_available=content_available,
     )

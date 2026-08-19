@@ -26,6 +26,7 @@ from app.shared.migrations import Migrator
 
 
 TIMESTAMP = "2026-08-14T00:00:00+00:00"
+SHANGHAI_TIMESTAMP = "2026-08-14T08:00:00+08:00"
 EXPIRES_AT = "2026-08-17T16:00:00+00:00"
 
 

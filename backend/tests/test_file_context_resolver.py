@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from app.modules.job.application.file_context import (
+    SHANGHAI,
     CurrentMessageAttachment,
     WorkspaceFileCandidate,
     evaluate_file_gate,
     infer_capability,
+    parse_time_window,
     resolve_file_context,
     system_notice_markdown,
 )
@@ -143,8 +147,10 @@ def test_substring_without_full_filename_does_not_bind() -> None:
 
 
 def test_image_content_question_binds_unique_latest_image() -> None:
+    now = datetime(2026, 8, 19, 12, 0, tzinfo=SHANGHAI)
     decision = resolve_file_context(
         text="今天发的图片什么内容",
+        now=now,
         candidates=(
             WorkspaceFileCandidate(
                 file_id="f-old",
@@ -153,6 +159,7 @@ def test_image_content_question_binds_unique_latest_image() -> None:
                 source_status="READY",
                 readability_status="NOT_REQUIRED",
                 source_ready_at="2026-08-19T02:00:00+00:00",
+                source_received_at="2026-08-19T02:00:00+00:00",
             ),
             WorkspaceFileCandidate(
                 file_id="f-image",
@@ -161,11 +168,12 @@ def test_image_content_question_binds_unique_latest_image() -> None:
                 source_status="READY",
                 readability_status="AVAILABLE",
                 source_ready_at="2026-08-19T01:40:47+00:00",
+                source_received_at="2026-08-19T01:40:47+00:00",
             ),
         ),
     )
     assert [item.version_id for item in decision.dependencies] == ["v-image"]
-    assert decision.dependencies[0].reason == "DEIXIS"
+    assert decision.dependencies[0].reason == "TIME_WINDOW"
     assert decision.dependencies[0].required_capability == "READABLE_CONTENT"
 
 
@@ -195,8 +203,10 @@ def test_image_deixis_does_not_bind_later_non_image() -> None:
 
 
 def test_image_deixis_without_images_does_not_bind() -> None:
+    now = datetime(2026, 8, 19, 12, 0, tzinfo=SHANGHAI)
     decision = resolve_file_context(
         text="今天发的图片什么内容",
+        now=now,
         candidates=(
             WorkspaceFileCandidate(
                 file_id="f1",
@@ -204,11 +214,13 @@ def test_image_deixis_without_images_does_not_bind() -> None:
                 display_name="notes.txt",
                 source_status="READY",
                 source_ready_at="2026-08-19T00:00:00+00:00",
+                source_received_at="2026-08-19T00:00:00+00:00",
             ),
         ),
     )
     assert decision.dependencies == ()
-    assert decision.ambiguous is False
+    assert decision.notice_kind == "time_window_empty"
+    assert evaluate_file_gate(decision).action == "system_notice"
 
 
 def test_deixis_binds_unique_latest_ready_file() -> None:
@@ -399,3 +411,176 @@ def test_processing_failed_is_system_notice() -> None:
     gate = evaluate_file_gate(decision)
     assert gate.action == "system_notice"
     assert gate.reason_code == "file_processing_failed"
+
+
+def test_parse_time_window_natural_week_and_calendar_dates() -> None:
+    monday = datetime(2026, 8, 17, 10, 0, tzinfo=SHANGHAI)
+    last_week = parse_time_window("上周的图", now=monday)
+    assert last_week is not None
+    assert last_week.start.isoformat() == "2026-08-10T00:00:00+08:00"
+    assert last_week.end.isoformat() == "2026-08-17T00:00:00+08:00"
+
+    this_week = parse_time_window("这周的文件", now=monday)
+    assert this_week is not None
+    assert this_week.start.isoformat() == "2026-08-17T00:00:00+08:00"
+    assert this_week.end.isoformat() == "2026-08-24T00:00:00+08:00"
+
+    day = parse_time_window("8月12日的文件", now=monday)
+    assert day is not None
+    assert day.start.isoformat() == "2026-08-12T00:00:00+08:00"
+    assert day.end.isoformat() == "2026-08-13T00:00:00+08:00"
+
+    spanned = parse_time_window("8月10日到15日的附件", now=monday)
+    assert spanned is not None
+    assert spanned.start.isoformat() == "2026-08-10T00:00:00+08:00"
+    assert spanned.end.isoformat() == "2026-08-16T00:00:00+08:00"
+
+    january = datetime(2026, 1, 5, 9, 0, tzinfo=SHANGHAI)
+    rolled = parse_time_window("12月20日的文件", now=january)
+    assert rolled is not None
+    assert rolled.start.isoformat() == "2025-12-20T00:00:00+08:00"
+
+
+def test_date_chat_without_file_token_does_not_bind() -> None:
+    now = datetime(2026, 8, 19, 12, 0, tzinfo=SHANGHAI)
+    decision = resolve_file_context(
+        text="8月12日附近有什么安排",
+        now=now,
+        retained_candidates=(
+            WorkspaceFileCandidate(
+                file_id="f1",
+                version_id="v1",
+                display_name="plan.xlsx",
+                source_status="READY",
+                source_received_at="2026-08-12T04:00:00+00:00",
+            ),
+        ),
+    )
+    assert decision.dependencies == ()
+    assert decision.notice_kind == ""
+    assert evaluate_file_gate(decision).reason_code == "no_file_dependency"
+
+
+def test_time_window_beats_current_workspace_deixis() -> None:
+    now = datetime(2026, 8, 17, 10, 0, tzinfo=SHANGHAI)
+    decision = resolve_file_context(
+        text="上周这张图",
+        now=now,
+        candidates=(
+            WorkspaceFileCandidate(
+                file_id="f-this-week",
+                version_id="v-this-week",
+                display_name="today.png",
+                source_status="READY",
+                readability_status="AVAILABLE",
+                source_ready_at="2026-08-17T01:00:00+00:00",
+                source_received_at="2026-08-17T01:00:00+00:00",
+            ),
+        ),
+        retained_candidates=(
+            WorkspaceFileCandidate(
+                file_id="f-last-week",
+                version_id="v-last-week",
+                display_name="last-week.png",
+                source_status="READY",
+                readability_status="AVAILABLE",
+                source_received_at="2026-08-12T04:00:00+00:00",
+            ),
+        ),
+    )
+    assert [item.version_id for item in decision.dependencies] == ["v-last-week"]
+    assert decision.dependencies[0].reason == "TIME_WINDOW"
+
+
+def test_empty_time_window_is_system_notice_not_job() -> None:
+    now = datetime(2026, 8, 17, 10, 0, tzinfo=SHANGHAI)
+    decision = resolve_file_context(text="上周的附件", now=now)
+    gate = evaluate_file_gate(decision)
+    assert gate.action == "system_notice"
+    assert gate.reason_code == "time_window_empty"
+    _title, body = system_notice_markdown(notice_kind="time_window_empty", display_names=())
+    assert "仍可访问" in body
+    assert "没发过" not in body
+    assert "从来没有" not in body
+
+
+def test_multiple_time_window_content_questions_are_ambiguous() -> None:
+    now = datetime(2026, 8, 17, 10, 0, tzinfo=SHANGHAI)
+    decision = resolve_file_context(
+        text="上周的文件什么内容",
+        now=now,
+        retained_candidates=(
+            WorkspaceFileCandidate(
+                file_id="f1",
+                version_id="v1",
+                display_name="a.txt",
+                source_status="READY",
+                source_received_at="2026-08-12T04:00:00+00:00",
+            ),
+            WorkspaceFileCandidate(
+                file_id="f2",
+                version_id="v2",
+                display_name="b.txt",
+                source_status="READY",
+                source_received_at="2026-08-13T04:00:00+00:00",
+            ),
+        ),
+    )
+    assert decision.ambiguous is True
+    gate = evaluate_file_gate(decision)
+    assert gate.reason_code == "time_window_ambiguous"
+    _title, body = system_notice_markdown(
+        notice_kind="time_window_ambiguous",
+        display_names=decision.clarification_names,
+    )
+    assert "该时段" in body
+    assert "{" not in body
+
+
+def test_multiple_time_window_metadata_binds_all_without_preload() -> None:
+    now = datetime(2026, 8, 17, 10, 0, tzinfo=SHANGHAI)
+    assert infer_capability("上周发了哪些文件") == "METADATA"
+    decision = resolve_file_context(
+        text="上周发了哪些文件",
+        now=now,
+        retained_candidates=(
+            WorkspaceFileCandidate(
+                file_id="f1",
+                version_id="v1",
+                display_name="a.txt",
+                source_status="READY",
+                source_received_at="2026-08-12T04:00:00+00:00",
+            ),
+            WorkspaceFileCandidate(
+                file_id="f2",
+                version_id="v2",
+                display_name="b.txt",
+                source_status="READY",
+                source_received_at="2026-08-13T04:00:00+00:00",
+            ),
+        ),
+    )
+    assert {item.version_id for item in decision.dependencies} == {"v1", "v2"}
+    assert all(item.reason == "TIME_WINDOW" for item in decision.dependencies)
+    assert evaluate_file_gate(decision).action == "enqueue_job"
+
+
+def test_unique_time_window_content_unavailable_is_system_notice() -> None:
+    now = datetime(2026, 8, 17, 10, 0, tzinfo=SHANGHAI)
+    decision = resolve_file_context(
+        text="上周的文件什么内容",
+        now=now,
+        retained_candidates=(
+            WorkspaceFileCandidate(
+                file_id="f1",
+                version_id="v1",
+                display_name="old.txt",
+                source_status="READY",
+                source_received_at="2026-08-12T04:00:00+00:00",
+                content_available=False,
+            ),
+        ),
+    )
+    gate = evaluate_file_gate(decision)
+    assert gate.action == "system_notice"
+    assert gate.reason_code == "file_content_unavailable"

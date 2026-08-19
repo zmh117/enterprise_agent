@@ -4,7 +4,7 @@ import re
 import threading
 from collections.abc import Mapping
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import datetime
 from types import MappingProxyType
 from typing import Any
 from urllib.parse import urlsplit
@@ -47,14 +47,14 @@ from app.shared.exceptions import NonRetryableExecutionError
 _OPAQUE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
 
-def _is_utc_rfc3339(value: object) -> bool:
+def _is_aware_rfc3339(value: object) -> bool:
     if not isinstance(value, str) or not value:
         return False
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return False
-    return parsed.tzinfo is not None and parsed.utcoffset() == timedelta(0)
+    return parsed.tzinfo is not None and parsed.utcoffset() is not None
 
 
 class FixedMcpClaudeSdkClient(ClaudeSdkClient):
@@ -264,7 +264,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
                 safe_message="任务文件清单无效",
                 error_code="file_manifest_runtime_invalid",
             )
-        if schema_version in {2, 3, 4} and not _is_utc_rfc3339(manifest.get("observed_at")):
+        if schema_version in {2, 3, 4} and not _is_aware_rfc3339(manifest.get("observed_at")):
             raise NonRetryableExecutionError(
                 "Runtime Job File Manifest observation time is invalid",
                 safe_message="任务文件清单无效",
@@ -290,11 +290,11 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             version_created_at = item.get("version_created_at")
             representation_id = item.get("representation_id")
             if schema_version in {2, 3, 4} and (
-                (source_received_at is not None and not _is_utc_rfc3339(source_received_at))
-                or not _is_utc_rfc3339(version_created_at)
+                (source_received_at is not None and not _is_aware_rfc3339(source_received_at))
+                or not _is_aware_rfc3339(version_created_at)
                 or (
                     representation_id is not None
-                    and not _is_utc_rfc3339(item.get("representation_created_at"))
+                    and not _is_aware_rfc3339(item.get("representation_created_at"))
                 )
             ):
                 raise NonRetryableExecutionError(

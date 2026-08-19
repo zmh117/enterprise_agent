@@ -76,6 +76,23 @@ def test_attachment_import_audit_projection_has_no_fake_job_binding() -> None:
     assert row == {"job_id": None, "event_type": "file.domain_event.published"}
 
 
+def test_audit_record_treats_blank_job_id_as_unbound() -> None:
+    repository, _, _, _ = _fixture()
+    audit = AuditService(AuditRepository(repository.database))
+    audit.record(
+        "delivery.dispatch.failed",
+        status="FAILED",
+        summary="Delivery dispatch failed safely",
+        job_id="",
+        actor_id="delivery-dispatcher",
+        payload={"delivery_kind": "system_notice"},
+    )
+    row = repository.database.execute_one(
+        "select job_id, event_type from audit_event order by created_at desc limit 1"
+    )
+    assert row == {"job_id": None, "event_type": "delivery.dispatch.failed"}
+
+
 def test_file_domain_outbox_is_published_once_by_maintenance() -> None:
     repository, streaming, context, storage = _fixture()
     committed = asyncio.run(

@@ -40,6 +40,7 @@ from app.modules.job.application.file_context import (
     file_dependency_from_payload,
     file_dependency_payload,
     resolve_file_context,
+    resolver_now,
     system_notice_markdown,
 )
 from app.modules.job.domain.agent_job import AgentJob, AgentSession
@@ -808,6 +809,30 @@ class CreateAgentJobService:
                 session_id=session.id,
                 workspace_id=str(file_workspace["id"]) if file_workspace else "",
             )
+            if (
+                file_workspace is None
+                and self.file_manifest_service is not None
+                and bool(command.task_file_features.get("workspace_enabled"))
+                and gate.action == "enqueue_job"
+                and any(item.reason == "TIME_WINDOW" for item in gate.dependencies)
+            ):
+                file_workspace = self.file_manifest_service.resolve_workspace(
+                    tenant_id=command.tenant_id,
+                    session_id=session.id,
+                    requester_id=requester_id,
+                    conversation_type=command.conversation_type,
+                    enterprise_id=command.enterprise_id,
+                    connector_id=command.source_connector_id,
+                    conversation_id=external_conversation_id,
+                    sender_staff_id=command.sender_staff_id,
+                    publication_id=command.business_application_publication_id,
+                    retention_period=command.task_workspace_retention_period,
+                    attachments=command.attachments,
+                    file_references=command.file_references,
+                    requests_file_output=False,
+                    file_format_policy_version=command.file_format_policy_version,
+                    force_create=True,
+                )
             if gate.action == "system_notice":
                 return self._persist_system_notice(
                     command=command,
@@ -964,8 +989,18 @@ class CreateAgentJobService:
                 for item in gate.dependencies:
                     identity = (item.file_id, item.version_id)
                     if item.file_id and item.version_id and identity not in seen:
+                        auto_materialize = item.reason != "TIME_WINDOW" or (
+                            item.required_capability in {"READABLE_CONTENT", "ORIGINAL"}
+                            and item.content_available
+                            and sum(1 for dep in gate.dependencies if dep.reason == "TIME_WINDOW")
+                            == 1
+                        )
                         manifest_references.append(
-                            ChannelFileReference(file_id=item.file_id, version_id=item.version_id)
+                            ChannelFileReference(
+                                file_id=item.file_id,
+                                version_id=item.version_id,
+                                auto_materialize=auto_materialize,
+                            )
                         )
                         seen.add(identity)
                 self.file_manifest_service.register_request(
@@ -1067,20 +1102,9 @@ class CreateAgentJobService:
             session_id=session_id,
             workspace_id=workspace_id,
         )
-        candidates = tuple(
-            WorkspaceFileCandidate(
-                file_id=str(row.get("file_id") or ""),
-                version_id=str(row.get("version_id") or ""),
-                display_name=str(row.get("display_name") or ""),
-                attachment_id=str(row.get("attachment_id") or ""),
-                message_external_id=str(row.get("message_external_id") or ""),
-                source_status=str(row.get("source_status") or ""),
-                readability_status=str(row.get("readability_status") or "NOT_REQUIRED"),
-                source_ready_at=(
-                    str(row["source_ready_at"]) if row.get("source_ready_at") else None
-                ),
-            )
-            for row in rows
+        retained_rows = self.repository.list_session_retained_attachment_rows(
+            session_id=session_id,
+            now=datetime.now(UTC).isoformat(),
         )
         decision = resolve_file_context(
             text=command.resolver_text or command.user_message,
@@ -1092,9 +1116,37 @@ class CreateAgentJobService:
                 (item.file_id, item.version_id) for item in command.file_references
             ),
             quoted_external_message_id=command.quoted_external_message_id,
-            candidates=candidates,
+            candidates=self._workspace_file_candidates(rows),
+            retained_candidates=self._workspace_file_candidates(retained_rows),
+            now=resolver_now(),
         )
         return evaluate_file_gate(decision), decision
+
+    @staticmethod
+    def _workspace_file_candidates(rows: list[dict[str, Any]]) -> tuple[WorkspaceFileCandidate, ...]:
+        return tuple(
+            WorkspaceFileCandidate(
+                file_id=str(row.get("file_id") or ""),
+                version_id=str(row.get("version_id") or ""),
+                display_name=str(row.get("display_name") or ""),
+                attachment_id=str(row.get("attachment_id") or ""),
+                message_external_id=str(row.get("message_external_id") or ""),
+                source_status=str(row.get("source_status") or ""),
+                readability_status=str(row.get("readability_status") or "NOT_REQUIRED"),
+                source_ready_at=(
+                    str(row["source_ready_at"]) if row.get("source_ready_at") else None
+                ),
+                source_received_at=(
+                    str(row["source_received_at"]) if row.get("source_received_at") else None
+                ),
+                content_available=(
+                    str(row.get("file_status") or "ACTIVE") == "ACTIVE"
+                    and str(row.get("version_status") or "AVAILABLE")
+                    in {"AVAILABLE", "CONFLICT"}
+                ),
+            )
+            for row in rows
+        )
 
     def _persist_system_notice(
         self,

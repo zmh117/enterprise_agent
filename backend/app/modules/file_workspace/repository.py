@@ -441,12 +441,16 @@ class FileWorkspaceRepository:
         principal_user_id: str,
         publication_id: str,
         retention_period: RetentionPeriod,
-        explicit_references: Iterable[dict[str, str]],
+        explicit_references: Iterable[dict[str, Any]],
         file_format_policy_version: str = "text-v1",
     ) -> dict[str, Any]:
         timestamp = _now()
         references = [
-            {"file_id": str(item["file_id"]), "version_id": str(item["version_id"])}
+            {
+                "file_id": str(item["file_id"]),
+                "version_id": str(item["version_id"]),
+                "auto_materialize": bool(item.get("auto_materialize", True)),
+            }
             for item in explicit_references
         ]
         self.database.execute(

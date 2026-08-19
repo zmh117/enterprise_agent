@@ -1489,10 +1489,15 @@ class AgentRepository:
                    coalesce(m.external_message_id, '') as message_external_id,
                    a.status as source_status,
                    a.readability_status as readability_status,
-                   a.finished_at as source_ready_at
+                   a.finished_at as source_ready_at,
+                   f.source_received_at as source_received_at,
+                   f.status as file_status,
+                   v.status as version_status
               from message_attachment a
               join agent_message m on m.id = a.message_id
               left join message_attachment_file_binding b on b.attachment_id = a.id
+              left join managed_file f on f.id = b.file_id
+              left join managed_file_version v on v.id = b.version_id
               left join task_workspace_file wf
                 on wf.workspace_id = a.task_workspace_id
                and wf.file_id = b.file_id
@@ -1519,16 +1524,70 @@ class AgentRepository:
                       order by a.readability_updated_at desc, a.id desc
                       limit 1
                    ), 'NOT_REQUIRED') as readability_status,
-                   v.created_at as source_ready_at
+                   v.created_at as source_ready_at,
+                   f.source_received_at as source_received_at,
+                   f.status as file_status,
+                   v.status as version_status
               from task_workspace_file wf
+              join managed_file f on f.id = wf.file_id
               join managed_file_version v on v.id = wf.selected_version_id
              where wf.workspace_id = ? and wf.status = 'ACTIVE'
              order by v.created_at, wf.file_id
             """,
             (workspace_id,),
         )
+        return self._merge_file_turn_rows([*attachments, *workspace_files])
+
+    def list_session_retained_attachment_rows(
+        self,
+        *,
+        session_id: str,
+        now: str,
+    ) -> list[dict[str, Any]]:
+        if not session_id:
+            return []
+        rows = self.database.execute(
+            """
+            select coalesce(b.file_id, '') as file_id,
+                   coalesce(b.version_id, '') as version_id,
+                   coalesce(a.file_name, f.display_name, '') as display_name,
+                   a.id as attachment_id,
+                   coalesce(m.external_message_id, '') as message_external_id,
+                   a.status as source_status,
+                   a.readability_status as readability_status,
+                   a.finished_at as source_ready_at,
+                   f.source_received_at as source_received_at,
+                   f.status as file_status,
+                   v.status as version_status
+              from message_attachment a
+              join agent_message m on m.id = a.message_id
+              join message_attachment_file_binding b on b.attachment_id = a.id
+              join managed_file f on f.id = b.file_id
+              join managed_file_version v on v.id = b.version_id
+             where m.session_id = ?
+               and v.status != 'DELETED'
+               and f.status != 'DELETED'
+               and (
+                 v.status = 'CONTENT_UNAVAILABLE'
+                 or f.status = 'CONTENT_UNAVAILABLE'
+                 or not exists (
+                   select 1 from file_retention_fact r where r.version_id = v.id
+                 )
+                 or exists (
+                   select 1 from file_retention_fact r
+                    where r.version_id = v.id and r.expires_at > ?
+                 )
+               )
+             order by a.created_at, a.id
+            """,
+            (session_id, now),
+        )
+        return [row for row in rows if row.get("file_id") and row.get("version_id")]
+
+    @staticmethod
+    def _merge_file_turn_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         merged: dict[tuple[str, str, str], dict[str, Any]] = {}
-        for row in [*attachments, *workspace_files]:
+        for row in rows:
             payload = dict(row)
             file_id = str(payload.get("file_id") or "")
             version_id = str(payload.get("version_id") or "")
@@ -3747,6 +3806,7 @@ class AuditRepository:
         audit_id = new_id("audit")
         safe_summary = redact_sensitive_text(summary)
         safe_payload = sanitize_for_persistence(payload_summary or {})
+        persisted_job_id = (job_id or "").strip() or None
         self.database.execute(
             """
             insert into audit_event
@@ -3755,7 +3815,7 @@ class AuditRepository:
             """,
             (
                 audit_id,
-                job_id,
+                persisted_job_id,
                 event_type,
                 actor_id,
                 status,
