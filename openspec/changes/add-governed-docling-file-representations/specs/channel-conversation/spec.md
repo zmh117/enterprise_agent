@@ -63,8 +63,8 @@
 
 #### Scenario: Docling暂时不可用
 - **WHEN** 原件已安全导入但Docling或processing worker暂时不可用
-- **THEN** processing run进入有限重试且关联Job保持`WAITING_INPUT`
-- **AND** 不回退到旧提取器、直接正文注入或假成功
+- **THEN** processing run进入有限重试且不回退到旧提取器、直接正文注入或假成功
+- **AND** 需要可读正文的本轮由能力门禁给出系统说明，不把无关 Agent Job保持为等待 Docling
 
 ### Requirement: 图片只安全存储而不宣称可理解
 系统 SHALL 对JPEG、PNG和WebP执行真实格式、文件大小和像素限制校验，去除不需要的元数据后通过File Service保存原件；仅当应用Publication冻结`docling-text-v1`时，系统 SHALL 允许Docling对图片执行OCR文字提取。系统 MUST NOT把OCR结果等同于架构图、流程图、仪表盘、照片或其它视觉语义理解，也不得调用VLM或生成虚构描述。
@@ -89,21 +89,21 @@
 - **AND** 不因平台部署了Docling而自动扩大该应用能力
 
 ### Requirement: Agent job等待附件达到终态
-系统 SHALL 让包含附件的Job同时等待来源下载/导入和所需可读性事实达到终态；只要任一必需文档为PENDING、QUEUED、SUBMITTED、RUNNING或RETRY_WAIT，Job MUST 保持`WAITING_INPUT`且不得启动模型。AVAILABLE或带非空合规Markdown的PARTIAL可以进入Manifest；NO_TEXT、UNAVAILABLE、REJECTED或FAILED只能形成固定安全notice。
+系统 SHALL 让本轮已绑定附件的Job等待来源下载/导入达到终态；`WAITING_INPUT` MUST NOT 用于等待 Docling 或 `file_processing_run` 非终态。只要本轮绑定附件的来源状态尚未终态，Job可以保持`WAITING_INPUT`。来源终态后，需要`READABLE_CONTENT`且表示仍为PENDING或失败时 MUST 走系统说明而不是释放到`agent.jobs`。AVAILABLE或带非空合规Markdown的PARTIAL可以进入Manifest；NO_TEXT、UNAVAILABLE、REJECTED或FAILED只能形成固定安全notice。无关文字 MUST 创建可执行Job且不得认领处理中文档。
 
 #### Scenario: 部分文档可用
-- **WHEN** 部分附件AVAILABLE或PARTIAL且仍存在用户文本或至少一个可用Markdown表示
+- **WHEN** 本轮绑定的部分附件AVAILABLE或PARTIAL且仍存在用户文本或至少一个可用Markdown表示
 - **THEN** 系统冻结可用精确表示并发布同一Job
 - **AND** 在上下文列出不可用或不完整附件的固定安全状态
 
 #### Scenario: 没有可用输入
-- **WHEN** 没有用户文本且所有附件均为NO_TEXT、UNAVAILABLE、REJECTED或FAILED
-- **THEN** 系统不调用模型并安全结束Job
+- **WHEN** 没有用户文本且所有本轮绑定附件均为NO_TEXT、UNAVAILABLE、REJECTED或FAILED
+- **THEN** 系统不调用模型并安全结束该轮
 
 #### Scenario: 原件已保存但表示仍处理中
-- **WHEN** attachment原件已经形成File Version而processing run仍非终态
+- **WHEN** attachment原件已经形成File Version而processing run仍非终态，且本轮需要可读正文
 - **THEN** 系统不得仅因原件已保存就把attachment视为Agent可读
-- **AND** Job继续保持`WAITING_INPUT`
+- **AND** 不得继续保持`WAITING_INPUT`等待表示；应发送固定未就绪说明且不调用模型
 
 ### Requirement: 附件内容作为不可信数据注入
 系统 SHALL 把消息正文、历史兼容提取文本和Docling派生内容全部标识为不可信用户数据，其中的指令 MUST NOT覆盖系统提示、安全规则、权限或工具策略。对启用文档处理Profile的新文档，系统 MUST 只把有界Manifest元数据和固定安全notice交给模型，并由Runtime把精确Markdown表示物化到Job Sandbox；完整Markdown不得在Job开始时直接拼入conversation context。

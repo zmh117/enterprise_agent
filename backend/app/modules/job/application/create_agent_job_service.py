@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import Any
 import hashlib
 import json
@@ -29,6 +30,17 @@ from app.modules.file_workspace.text_format_policy import (
     FileFormatPolicyVersion,
     normalize_file_format_policy_version,
     policy_runtime_protocol_version,
+)
+from app.modules.job.application.file_context import (
+    CurrentMessageAttachment,
+    GateDecision,
+    ResolverDecision,
+    WorkspaceFileCandidate,
+    evaluate_file_gate,
+    file_dependency_from_payload,
+    file_dependency_payload,
+    resolve_file_context,
+    system_notice_markdown,
 )
 from app.modules.job.domain.agent_job import AgentJob, AgentSession
 from app.modules.mcp_tool_runtime.job_snapshot import (
@@ -121,6 +133,8 @@ class CreateAgentJobCommand:
     task_file_features: dict[str, bool] = field(default_factory=dict)
     file_references: tuple[ChannelFileReference, ...] = ()
     requests_file_output: bool = False
+    quoted_external_message_id: str = ""
+    resolver_text: str = ""
 
     @property
     def effective_requester_id(self) -> str:
@@ -164,6 +178,15 @@ class StagedAttachmentIntake:
     attachment_ids: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class SystemNoticeIntake:
+    session_id: str
+    message_id: str
+    delivery_id: str
+    reason_code: str
+    task_workspace_id: str = ""
+
+
 class CreateAgentJobService:
     def __init__(
         self,
@@ -186,6 +209,7 @@ class CreateAgentJobService:
         mcp_tool_snapshot_service: JobMcpToolSnapshotService | None = None,
         runtime_readiness_guard: AgentRuntimeReadinessGuard | None = None,
         file_manifest_service: JobFileManifestService | None = None,
+        delivery_service: Any = None,
     ) -> None:
         self.repository = repository
         self.permission_service = permission_service
@@ -205,6 +229,7 @@ class CreateAgentJobService:
         self.mcp_tool_snapshot_service = mcp_tool_snapshot_service
         self.runtime_readiness_guard = runtime_readiness_guard
         self.file_manifest_service = file_manifest_service
+        self.delivery_service = delivery_service
 
     def stage_attachments(self, command: CreateAgentJobCommand) -> StagedAttachmentIntake:
         """Persist a file-only channel event without manufacturing an Agent Job."""
@@ -411,12 +436,26 @@ class CreateAgentJobService:
             attachment_ids=tuple(attachment_ids),
         )
 
-    def execute(self, command: CreateAgentJobCommand) -> AgentJob:
+    def execute(self, command: CreateAgentJobCommand) -> AgentJob | SystemNoticeIntake:
         existing = self.repository.get_job_by_idempotency_key(command.idempotency_key)
         if existing is not None:
             if self.mcp_tool_snapshot_service is not None:
                 self.mcp_tool_snapshot_service.verify(existing.id)
             return existing
+        existing_notice = self.repository.get_system_notice_by_idempotency_key(
+            command.idempotency_key
+        )
+        if existing_notice is not None:
+            binding = json.loads(str(existing_notice.get("delivery_binding_json") or "{}"))
+            if not isinstance(binding, dict):
+                binding = {}
+            return SystemNoticeIntake(
+                session_id=str(existing_notice.get("session_id") or ""),
+                message_id=str(binding.get("user_message_id") or ""),
+                delivery_id=str(existing_notice.get("id") or ""),
+                reason_code=str(binding.get("reason_code") or "file_readable_content_not_ready"),
+                task_workspace_id=str(binding.get("task_workspace_id") or ""),
+            )
         self._assert_application_runtime_available(command)
         if command.conversation_mode in {"application", "actor"}:
             raise NonRetryableExecutionError(
@@ -764,15 +803,28 @@ class CreateAgentJobService:
                 )
                 else None
             )
-            staged_attachments = (
-                self.repository.list_staged_attachments(
-                    session_id=session.id,
-                    task_workspace_id=str(file_workspace["id"]),
-                )
-                if file_workspace is not None
-                and bool(command.task_file_features.get("file_mcp_enabled"))
-                else []
+            gate, file_decision = self._file_turn_gate(
+                command=command,
+                session_id=session.id,
+                workspace_id=str(file_workspace["id"]) if file_workspace else "",
             )
+            if gate.action == "system_notice":
+                return self._persist_system_notice(
+                    command=command,
+                    session=session,
+                    workspace_id=str(file_workspace["id"]) if file_workspace else "",
+                    reply_route=reply_route,
+                    gate=gate,
+                    decision=file_decision,
+                    correlation_id=correlation_id,
+                    requester_id=requester_id,
+                )
+            bound_attachment_ids = tuple(
+                item.attachment_id
+                for item in gate.dependencies
+                if item.attachment_id and not item.attachment_id.startswith("current:")
+            )
+            file_turn_payload = [file_dependency_payload(item) for item in gate.dependencies]
             job = self.repository.create_job(
                 session_id=session.id,
                 idempotency_key=command.idempotency_key,
@@ -791,7 +843,7 @@ class CreateAgentJobService:
                 reply_route=reply_route,
                 initial_status=(
                     JobStatus.WAITING_INPUT
-                    if command.attachments or staged_attachments
+                    if gate.action == "wait_source" or command.attachments
                     else JobStatus.PENDING
                 ),
                 internal_user_id=requester_id,
@@ -822,12 +874,14 @@ class CreateAgentJobService:
                     ).value,
                     "authorization_snapshot": business_authorization_snapshot,
                     "runtime_authorization": runtime_authorization_snapshot,
+                    "file_turn_dependencies": file_turn_payload,
                 },
                 execution_policy=execution_policy.to_dict(),
                 model_runtime_provenance=model_runtime_provenance,
                 agent_runtime_kind=agent_runtime_kind,
                 agent_runtime_protocol_version=agent_runtime_protocol_version,
                 task_workspace_id=(str(file_workspace["id"]) if file_workspace else ""),
+                quoted_external_message_id=command.quoted_external_message_id,
             )
             mcp_tool_snapshot: dict[str, Any] = {}
             if command.business_application_id and self.mcp_tool_snapshot_service is not None:
@@ -882,20 +936,21 @@ class CreateAgentJobService:
                     credential_expires_at=attachment.source_credential_expires_at,
                 )
                 attachment_ids.append(created.id)
-            if staged_attachments and file_workspace is not None:
+            if bound_attachment_ids and file_workspace is not None:
                 claimed = self.repository.claim_staged_attachments(
                     session_id=session.id,
                     task_workspace_id=str(file_workspace["id"]),
                     job_id=job.id,
+                    attachment_ids=bound_attachment_ids,
                 )
                 self.audit_service.record(
                     "attachment.intake.claimed",
                     status="SUCCEEDED",
-                    summary="A text-triggered Agent job claimed staged attachments",
+                    summary="A text-triggered Agent job claimed bound staged attachments",
                     job_id=job.id,
                     actor_id=requester_id,
                     payload={
-                        "attachment_count": len(claimed) - len(command.attachments),
+                        "attachment_count": len(claimed),
                         "task_workspace_id": str(file_workspace["id"]),
                     },
                 )
@@ -904,12 +959,21 @@ class CreateAgentJobService:
                 command.task_file_features.get("file_mcp_enabled")
             ):
                 assert self.file_manifest_service is not None
+                manifest_references = list(command.file_references)
+                seen = {(item.file_id, item.version_id) for item in manifest_references}
+                for item in gate.dependencies:
+                    identity = (item.file_id, item.version_id)
+                    if item.file_id and item.version_id and identity not in seen:
+                        manifest_references.append(
+                            ChannelFileReference(file_id=item.file_id, version_id=item.version_id)
+                        )
+                        seen.add(identity)
                 self.file_manifest_service.register_request(
                     job_id=job.id,
                     workspace=file_workspace,
                     requester_id=requester_id,
                     publication_id=command.business_application_publication_id,
-                    file_references=command.file_references,
+                    file_references=tuple(manifest_references),
                     file_format_policy_version=command.file_format_policy_version,
                 )
                 if not self.file_manifest_service.has_pending_text_attachments(job.id):
@@ -991,6 +1055,127 @@ class CreateAgentJobService:
         for attachment_id in attachment_ids:
             self.publisher.publish_attachment(attachment_id, correlation_id)
         return job
+
+    def _file_turn_gate(
+        self,
+        *,
+        command: CreateAgentJobCommand,
+        session_id: str,
+        workspace_id: str,
+    ) -> tuple[GateDecision, ResolverDecision]:
+        rows = self.repository.list_file_turn_candidate_rows(
+            session_id=session_id,
+            workspace_id=workspace_id,
+        )
+        candidates = tuple(
+            WorkspaceFileCandidate(
+                file_id=str(row.get("file_id") or ""),
+                version_id=str(row.get("version_id") or ""),
+                display_name=str(row.get("display_name") or ""),
+                attachment_id=str(row.get("attachment_id") or ""),
+                message_external_id=str(row.get("message_external_id") or ""),
+                source_status=str(row.get("source_status") or ""),
+                readability_status=str(row.get("readability_status") or "NOT_REQUIRED"),
+                source_ready_at=(
+                    str(row["source_ready_at"]) if row.get("source_ready_at") else None
+                ),
+            )
+            for row in rows
+        )
+        decision = resolve_file_context(
+            text=command.resolver_text or command.user_message,
+            current_attachments=tuple(
+                CurrentMessageAttachment(file_name=item.file_name, ordinal=ordinal)
+                for ordinal, item in enumerate(command.attachments, start=1)
+            ),
+            explicit_references=tuple(
+                (item.file_id, item.version_id) for item in command.file_references
+            ),
+            quoted_external_message_id=command.quoted_external_message_id,
+            candidates=candidates,
+        )
+        return evaluate_file_gate(decision), decision
+
+    def _persist_system_notice(
+        self,
+        *,
+        command: CreateAgentJobCommand,
+        session: AgentSession,
+        workspace_id: str,
+        reply_route: dict[str, Any],
+        gate: GateDecision,
+        decision: ResolverDecision,
+        correlation_id: str,
+        requester_id: str,
+    ) -> SystemNoticeIntake:
+        names = decision.clarification_names or tuple(
+            item.display_name for item in gate.dependencies if item.display_name
+        )
+        title, markdown = system_notice_markdown(
+            notice_kind=gate.notice_kind or "pending",
+            display_names=names,
+        )
+        message_id = self.repository.add_message(
+            session_id=session.id,
+            job_id=None,
+            role="user",
+            content=command.user_message,
+            external_message_id=(command.external_message_id or command.external_event_id),
+            sender_id=requester_id,
+            sender_display_name=command.requester_display_name,
+            message_type="text",
+            content_status="READY",
+            quoted_external_message_id=command.quoted_external_message_id,
+            safe_metadata={"file_turn_admission": gate.reason_code},
+        )
+        delivery_id = ""
+        if self.delivery_service is not None:
+            delivery_id = self.delivery_service.enqueue_system_notice(
+                idempotency_key=command.idempotency_key,
+                session_id=session.id,
+                reply_route=reply_route or session.reply_route or {"type": "none"},
+                title=title,
+                markdown=markdown,
+                reason_code=gate.reason_code,
+                correlation_id=correlation_id,
+                application_publication_id=command.business_application_publication_id,
+                principal_user_id=requester_id,
+                agent_publication_id=command.fixed_agent_publication_id,
+                notice_kind=gate.notice_kind,
+                user_message_id=message_id,
+                task_workspace_id=workspace_id,
+            )
+        version_ids = tuple(item.version_id for item in gate.dependencies if item.version_id)
+        if workspace_id and gate.reason_code == "file_readable_content_not_ready" and version_ids:
+            self.repository.record_file_readiness_blocked_turn(
+                session_id=session.id,
+                workspace_id=workspace_id,
+                user_message_id=message_id,
+                reason_code=gate.reason_code,
+                version_ids=version_ids,
+                expires_at=(datetime.now(UTC) + timedelta(hours=24)).isoformat(),
+            )
+        self.audit_service.record(
+            "file.turn.admission.blocked",
+            status="SUCCEEDED",
+            summary="File turn admission ended without an Agent job",
+            actor_id=requester_id,
+            payload={
+                "session_id": session.id,
+                "reason_code": gate.reason_code,
+                "version_ids": [
+                    item.version_id for item in gate.dependencies if item.version_id
+                ],
+                "delivery_id": delivery_id,
+            },
+        )
+        return SystemNoticeIntake(
+            session_id=session.id,
+            message_id=message_id,
+            delivery_id=delivery_id,
+            reason_code=gate.reason_code,
+            task_workspace_id=workspace_id,
+        )
 
     def _assert_application_runtime_available(
         self,

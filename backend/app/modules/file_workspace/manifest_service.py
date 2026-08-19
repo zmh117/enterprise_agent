@@ -637,11 +637,31 @@ class JobFileManifestService:
             if is_document:
                 readability = str(row.get("readability_status") or "")
                 if readability == "PENDING":
-                    raise NonRetryableExecutionError(
-                        "Document representation is still pending",
-                        safe_message="文档可读表示尚未生成",
-                        error_code="file_inputs_pending",
-                    )
+                    by_identity[(str(row["file_id"]), str(row["version_id"]))] = {
+                        "file_id": str(row["file_id"]),
+                        "version_id": str(row["version_id"]),
+                        "display_name": str(row["display_name"]),
+                        "format_code": str(row.get("file_format_code") or "PDF"),
+                        "source_kind": SnapshotSourceKind.CURRENT_MESSAGE.value,
+                        "allowed_actions": [
+                            FileAction.READ_METADATA.value,
+                            FileAction.RETAIN.value,
+                            FileAction.DELIVER.value,
+                        ],
+                        "auto_materialize": False,
+                        "conflict_candidate": False,
+                        "source_received_at": str(row.get("source_received_at"))
+                        if row.get("source_received_at")
+                        else None,
+                        "version_created_at": str(row["version_created_at"]),
+                        "representation_id": None,
+                        "representation_kind": None,
+                        "representation_size_bytes": None,
+                        "representation_sha256": None,
+                        "representation_format_code": None,
+                        "representation_created_at": None,
+                    }
+                    continue
                 if readability not in {"AVAILABLE", "PARTIAL"}:
                     continue
                 if not row.get("representation_id"):

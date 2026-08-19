@@ -907,6 +907,7 @@ def _build_container(
         settings=settings.delivery,
         business_authorization_service=business_authorization_service,
     )
+    create_job_service.delivery_service = result_delivery_service
     file_version_delivery_service = FileVersionDeliveryService(
         file_workspace_repository,
         agent_repository,

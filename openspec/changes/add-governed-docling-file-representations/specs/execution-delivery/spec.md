@@ -1,12 +1,12 @@
 ## ADDED Requirements
 
 ### Requirement: Agent Job按文档可读性终态释放
-当Job认领需要文档处理的附件时，Job SHALL 保持现有`WAITING_INPUT`直到来源导入和可读性事实均进入确定终态。平台 MUST NOT因原始对象已保存、Docling容器healthy或processing消息已发布就提前进入`PENDING`。`AVAILABLE`及带合规非空Markdown的`PARTIAL`可以释放；`NO_TEXT`、`UNAVAILABLE`或`FAILED`只能形成固定notice。只有文件且没有任何可用文字时 MUST 不调用模型。
+当本轮绑定需要文档处理的附件时，Job SHALL 只在来源导入未终态时保持`WAITING_INPUT`。平台 MUST NOT因原始对象已保存、Docling容器healthy、processing消息已发布或表示仍为PENDING就把无关文字推迟到`agent.jobs`之外。需要`READABLE_CONTENT`且表示未就绪时 MUST 在入队前结束本轮。`AVAILABLE`及带合规非空Markdown的`PARTIAL`可以释放；`NO_TEXT`、`UNAVAILABLE`或`FAILED`只能形成固定notice。只有文件且没有任何可用文字时 MUST 不调用模型。
 
 #### Scenario: Processing run仍在重试
-- **WHEN** 附件原件已保存但processing run处于`RETRY_WAIT`
-- **THEN** 同一Job继续保持`WAITING_INPUT`
-- **AND** 不创建缺少representation的最终Manifest
+- **WHEN** 本轮绑定附件原件已保存但processing run处于`RETRY_WAIT`，且所需能力为可读正文
+- **THEN** 系统不把该轮释放到 Agent 队列
+- **AND** 通过原reply route发送固定未就绪说明，不创建缺少representation的最终Agent Manifest
 
 #### Scenario: 部分结果可用
 - **WHEN** processing run为`PARTIAL`且发布了通过校验的非空Markdown

@@ -37,7 +37,10 @@ from app.modules.file_workspace.streaming_service import (
     INTERNAL_TRANSFER_META,
     GovernedFileStreamingService,
 )
+from app.modules.file_workspace.delivery_service import FileVersionDeliveryService
 from app.modules.file_workspace.workspace_service import TaskWorkspaceService
+from app.modules.job.infrastructure.repositories import AgentRepository
+from app.shared.config import DeliverySettings
 from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
 from backend.tests.test_file_workspace_repository import EXPIRES_AT, TIMESTAMP, _database
 
@@ -940,6 +943,18 @@ def test_file_worker_document_import_sniffs_source_and_queues_processing() -> No
     assert attachment["readability_status"] == "PENDING"
     assert attachment["file_processing_run_id"]
     assert attachment["readability_error_code"] == ""
+    with pytest.raises(NonRetryableExecutionError) as pending_materialize:
+        service.prepare_materialization(
+            context=context,
+            arguments={
+                "file_id": str(imported["file_id"]),
+                "version_id": str(imported["version_id"]),
+            },
+        )
+    assert pending_materialize.value.error_code == "file_readable_content_not_ready"
+    assert repository.database.execute_one(
+        "select count(*) as value from file_materialization_transfer"
+    ) == {"value": 0}
     run = document_processing.repository.get_run(str(attachment["file_processing_run_id"]))
     assert run["source_version_id"] == imported["version_id"]
     assert run["status"] == "QUEUED"
@@ -971,3 +986,131 @@ def test_file_worker_document_import_sniffs_source_and_queues_processing() -> No
             )
         )
     assert malformed.value.error_code == "document_source_signature_mismatch"
+
+
+def test_unreadable_document_rejects_materialization_but_allows_original_delivery() -> None:
+    repository, service, context, storage = _fixture()
+    owner = FileOwner(WorkspaceOwnerType.PRIVATE_USER, user_id="user-a")
+    original = b"%PDF-1.4 pending source\n"
+    object_key = storage.new_object_key(kind="attachment")
+    storage.objects[object_key] = original
+    repository.create_file(
+        file_id="file-pending-pdf",
+        tenant_id="tenant-a",
+        owner=owner,
+        display_name="pending.pdf",
+        actor_id="file-worker",
+        format_code="PDF",
+    )
+    repository.create_version(
+        version_id="version-pending-pdf",
+        file_id="file-pending-pdf",
+        version_number=1,
+        version_kind=FileVersionKind.ATTACHMENT,
+        status=FileVersionStatus.AVAILABLE,
+        media_type="application/pdf",
+        encoding="",
+        size_bytes=len(original),
+        content_sha256=hashlib.sha256(original).hexdigest(),
+        object_key=object_key,
+        source_kind=FileSourceKind.MESSAGE_ATTACHMENT,
+        actor_id="file-worker",
+        format_code="PDF",
+        advance_current_from="",
+    )
+    repository.link_workspace_file(
+        workspace_id="workspace-a",
+        file_id="file-pending-pdf",
+        version_id="version-pending-pdf",
+        logical_name="pending.pdf",
+        role=WorkspaceFileRole.INPUT,
+    )
+    repository.database.execute(
+        """
+        insert into agent_job_file_snapshot_item
+          (id, snapshot_id, ordinal, file_id, version_id, display_name, format_code,
+           source_kind, allowed_actions_json, auto_materialize, conflict_candidate,
+           version_created_at, created_at)
+        values ('snapshot-item-pending-pdf', 'snapshot-file', 2, 'file-pending-pdf',
+                'version-pending-pdf', 'pending.pdf', 'PDF', 'CURRENT_MESSAGE', ?, 0, 0, ?, ?)
+        """,
+        (
+            json.dumps(
+                [
+                    FileAction.READ_METADATA.value,
+                    FileAction.MATERIALIZE.value,
+                    FileAction.RETAIN.value,
+                    FileAction.DELIVER.value,
+                ]
+            ),
+            TIMESTAMP,
+            TIMESTAMP,
+        ),
+    )
+    repository.database.execute(
+        """
+        insert into agent_message
+          (id, session_id, job_id, role, content, created_at, sequence_no)
+        values ('message-pending-pdf', 'session-file', 'job-file', 'user', '', ?, 3)
+        """,
+        (TIMESTAMP,),
+    )
+    repository.database.execute(
+        """
+        insert into message_attachment
+          (id, message_id, job_id, ordinal, media_type, file_name, status,
+           readability_status, retention_days, expires_at, created_at, updated_at)
+        values ('attachment-pending-pdf', 'message-pending-pdf', 'job-file', 0,
+                'application/pdf', 'pending.pdf', 'READY', 'PENDING', 360, ?, ?, ?)
+        """,
+        ("2027-08-09T00:00:00+00:00", TIMESTAMP, TIMESTAMP),
+    )
+    repository.database.execute(
+        """
+        insert into message_attachment_file_binding
+          (attachment_id, file_id, version_id, retention_expires_at, created_at)
+        values ('attachment-pending-pdf', 'file-pending-pdf', 'version-pending-pdf', ?, ?)
+        """,
+        ("2027-08-09T00:00:00+00:00", TIMESTAMP),
+    )
+    refreshed = FileAuthorizationContext(
+        context.claims,
+        context.job,
+        context.workspace,
+        repository.get_job_snapshot("job-file"),
+    )
+    with pytest.raises(NonRetryableExecutionError) as pending:
+        service.prepare_materialization(
+            context=refreshed,
+            arguments={"file_id": "file-pending-pdf", "version_id": "version-pending-pdf"},
+        )
+    assert pending.value.error_code == "file_readable_content_not_ready"
+    repository.database.execute(
+        """
+        update message_attachment
+           set readability_status = 'UNAVAILABLE'
+         where id = 'attachment-pending-pdf'
+        """
+    )
+    with pytest.raises(NonRetryableExecutionError) as failed:
+        service.prepare_materialization(
+            context=refreshed,
+            arguments={"file_id": "file-pending-pdf", "version_id": "version-pending-pdf"},
+        )
+    assert failed.value.error_code == "file_processing_failed"
+    assert repository.database.execute_one(
+        "select count(*) as value from file_materialization_transfer"
+    ) == {"value": 0}
+
+    service.delivery_intents = FileVersionDeliveryService(
+        repository,
+        AgentRepository(repository.database),
+        DeliverySettings(),
+    )
+    delivered = service.deliver_version(
+        context=refreshed,
+        arguments={"file_id": "file-pending-pdf", "version_id": "version-pending-pdf"},
+    )
+    assert delivered["file_id"] == "file-pending-pdf"
+    assert delivered["version_id"] == "version-pending-pdf"
+    assert delivered["delivery_status"]

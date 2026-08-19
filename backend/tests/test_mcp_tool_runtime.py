@@ -465,6 +465,8 @@ def test_file_job_context_exposes_frozen_file_tools_and_sandbox_instructions() -
     restrictions = " ".join(context.tool_restrictions)
     assert "runtime_materialized_files" in restrictions
     assert "file_manifest" in restrictions
+    assert "readability_status" in restrictions
+    assert "file_readable_content_not_ready" in restrictions
     assert "Read, Glob, Grep, Edit, and Write" in restrictions
     assert "source_received_at" in restrictions
     assert "observed_at" in restrictions

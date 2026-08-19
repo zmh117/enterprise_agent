@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from app.modules.attachments.credentials import AttachmentCredentialCipher
 from app.modules.attachments.domain import (
@@ -17,6 +18,13 @@ from app.modules.delivery.application.result_delivery_service import ResultDeliv
 from app.modules.document_processing.profile import DOCLING_TEXT_V1
 from app.modules.file_workspace.manifest_service import JobFileManifestService
 from app.modules.file_workspace.text_format_policy import get_text_format_policy
+from app.modules.job.application.file_context import (
+    ResolverDecision,
+    evaluate_file_gate,
+    file_dependency_from_payload,
+    system_notice_markdown,
+)
+from app.modules.job.domain.agent_job import AgentJob
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.modules.message_bus.application.message_publisher import MessagePublisher
@@ -276,15 +284,18 @@ class AttachmentProcessingService:
     @operation_unit_of_work(lambda service: service.repository.database)
     def _release_if_ready(self, job_id: str, correlation_id: str) -> str:
         attachments = self.repository.list_attachments(job_id)
-        if (
-            not attachments
-            or any(item.status not in TERMINAL_ATTACHMENT_STATUSES for item in attachments)
-            or any(item.readability_status == "PENDING" for item in attachments)
+        if not attachments or any(
+            item.status not in TERMINAL_ATTACHMENT_STATUSES for item in attachments
         ):
             return "waiting"
         job = self.repository.get_job(job_id)
         if job.status != JobStatus.WAITING_INPUT:
             return job.status.value.lower()
+        gate = self._evaluate_stored_file_gate(job, attachments)
+        if gate is not None and gate.action == "wait_source":
+            return "waiting"
+        if gate is not None and gate.action == "system_notice":
+            return self._end_waiting_job_with_notice(job, gate, correlation_id)
         if self.file_manifest_service is not None:
             try:
                 self.file_manifest_service.finalize(job_id)
@@ -324,6 +335,117 @@ class AttachmentProcessingService:
                 correlation_id=correlation_id,
             )
         return "failed"
+
+    def _evaluate_stored_file_gate(self, job: AgentJob, attachments: list[Any]) -> Any:
+        stored = (job.business_application_route_decision or {}).get("file_turn_dependencies")
+        if not isinstance(stored, list) or not stored:
+            return None
+        by_ordinal = {item.ordinal: item for item in attachments}
+        dependencies = []
+        for item in stored:
+            if not isinstance(item, dict):
+                continue
+            payload = dict(item)
+            attachment_id = str(payload.get("attachment_id") or "")
+            if attachment_id.startswith("current:"):
+                try:
+                    ordinal = int(attachment_id.split(":", 1)[1])
+                except ValueError:
+                    ordinal = 0
+                match = by_ordinal.get(ordinal)
+                if match is not None:
+                    payload["attachment_id"] = match.id
+            refreshed = self.repository.refresh_file_turn_dependency_row(payload)
+            dependencies.append(file_dependency_from_payload(refreshed))
+        return evaluate_file_gate(ResolverDecision(dependencies=tuple(dependencies)))
+
+    def _end_waiting_job_with_notice(
+        self,
+        job: AgentJob,
+        gate: Any,
+        correlation_id: str,
+    ) -> str:
+        names = tuple(item.display_name for item in gate.dependencies if item.display_name)
+        title, markdown = system_notice_markdown(
+            notice_kind=gate.notice_kind or "pending",
+            display_names=names,
+        )
+        self.repository.transition_job(
+            job_id=job.id,
+            target=JobStatus.FAILED,
+            error_message=title,
+        )
+        self.repository.abandon_pending_dispatch(job.id, reason_code=gate.reason_code)
+        if self.delivery_service is not None:
+            self.delivery_service.enqueue_system_notice(
+                idempotency_key=f"file-release-notice:{job.id}",
+                session_id=job.session_id,
+                reply_route=job.reply_route or {"type": "none"},
+                title=title,
+                markdown=markdown,
+                reason_code=gate.reason_code,
+                correlation_id=correlation_id,
+                application_publication_id=job.business_application_publication_id,
+                principal_user_id=job.requester_id,
+                agent_publication_id=job.agent_publication_id,
+                notice_kind=gate.notice_kind,
+                task_workspace_id=job.task_workspace_id,
+            )
+        version_ids = tuple(item.version_id for item in gate.dependencies if item.version_id)
+        if (
+            job.task_workspace_id
+            and job.input_message_id
+            and gate.reason_code == "file_readable_content_not_ready"
+            and version_ids
+        ):
+            self.repository.record_file_readiness_blocked_turn(
+                session_id=job.session_id,
+                workspace_id=job.task_workspace_id,
+                user_message_id=job.input_message_id,
+                reason_code=gate.reason_code,
+                version_ids=version_ids,
+                expires_at=(datetime.now(UTC) + timedelta(hours=24)).isoformat(),
+            )
+        self.audit_service.record(
+            "file.turn.admission.blocked",
+            status="SUCCEEDED",
+            summary="Waiting job ended with a file admission system notice",
+            job_id=job.id,
+            payload={
+                "session_id": job.session_id,
+                "reason_code": gate.reason_code,
+                "version_ids": [
+                    item.version_id for item in gate.dependencies if item.version_id
+                ],
+            },
+        )
+        return "system_notice"
+
+    def reconcile_file_readiness_notices(self) -> dict[str, int]:
+        expired = self.repository.expire_file_readiness_blocked_turns()
+        notified = 0
+        if self.delivery_service is None:
+            return {"expired": expired, "notified": 0}
+        for turn in self.repository.list_ready_file_readiness_blocked_turns():
+            version_ids = tuple(self.repository.list_blocked_turn_version_ids(str(turn["id"])))
+            names = self.repository.display_names_for_versions(version_ids)
+            title, markdown = system_notice_markdown(notice_kind="ready", display_names=names)
+            session = self.repository.get_session(str(turn["session_id"]))
+            self.delivery_service.enqueue_system_notice(
+                idempotency_key=f"file-ready-notice:{turn['id']}",
+                session_id=str(turn["session_id"]),
+                reply_route=session.reply_route or {"type": "none"},
+                title=title,
+                markdown=markdown,
+                reason_code="file_readable_content_ready",
+                correlation_id=f"file-ready:{turn['id']}",
+                notice_kind="ready",
+                user_message_id=str(turn["user_message_id"]),
+                task_workspace_id=str(turn["workspace_id"]),
+            )
+            self.repository.mark_file_readiness_blocked_turn_notified(str(turn["id"]))
+            notified += 1
+        return {"expired": expired, "notified": notified}
 
     def release_if_ready(self, job_id: str, correlation_id: str) -> str:
         """Retry-safe public release hook driven by persistent attachment state."""

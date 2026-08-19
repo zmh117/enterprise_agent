@@ -210,6 +210,7 @@ def test_private_file_authorization_rechecks_job_publication_owner_and_manifest_
     )
     assert listed["items"][0]["source_received_at"] == TIMESTAMP
     assert listed["items"][0]["version_created_at"]
+    assert listed["items"][0]["readability_status"] == "NOT_REQUIRED"
     assert listed["observed_at"].endswith("+00:00")
     assert "created_at" not in listed["items"][0]
 
@@ -220,6 +221,7 @@ def test_private_file_authorization_rechecks_job_publication_owner_and_manifest_
     )
     assert metadata["source_received_at"] == TIMESTAMP
     assert metadata["version_created_at"] == listed["items"][0]["version_created_at"]
+    assert metadata["readability_status"] == "NOT_REQUIRED"
     assert metadata["observed_at"].endswith("+00:00")
     assert "created_at" not in metadata
 

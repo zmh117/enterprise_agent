@@ -22,7 +22,7 @@ from app.modules.job.application.create_agent_job_service import (
 from app.modules.job.domain.agent_job import AgentJob
 from app.modules.job.infrastructure.repositories import AgentRepository
 from app.shared.database import Database
-from app.shared.exceptions import NotFound, PermissionDenied
+from app.shared.exceptions import NonRetryableExecutionError, NotFound, PermissionDenied
 
 
 class DebugJobAccessService:
@@ -260,7 +260,14 @@ class DebugJobAccessService:
             task_file_features=task_file_features,
             continue_session_id=continue_session_id,
         )
-        return self.create_job_service.execute(command), scoped_idempotency_key
+        created = self.create_job_service.execute(command)
+        if not isinstance(created, AgentJob):
+            raise NonRetryableExecutionError(
+                "File admission produced a system notice instead of a Job",
+                safe_message="当前还不能基于该文件回答",
+                error_code=created.reason_code,
+            )
+        return created, scoped_idempotency_key
 
     def require_job_read(self, *, user_id: str, job_id: str) -> dict[str, Any]:
         try:

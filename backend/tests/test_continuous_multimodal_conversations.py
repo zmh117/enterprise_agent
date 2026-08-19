@@ -543,7 +543,10 @@ def test_expired_credential_is_cleared_and_retry_exhaustion_goes_dead() -> None:
         "update message_attachment set source_credential_expires_at = ? where id = ?",
         ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), task.attachment_id),
     )
-    assert c.attachment_service.process(task.attachment_id, "1") == "failed"  # type: ignore[union-attr]
+    assert c.attachment_service.process(task.attachment_id, "1") in {  # type: ignore[union-attr]
+        "failed",
+        "system_notice",
+    }
     secret = c.agent_repository.get_attachment_secret(task.attachment_id)
     assert secret["source_credential_ciphertext"] == ""
     assert c.agent_repository.get_job(first.job_id).status == JobStatus.FAILED

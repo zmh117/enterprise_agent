@@ -141,6 +141,7 @@ class GovernedFileStreamingService:
     ) -> dict[str, Any]:
         file_id = str(arguments["file_id"])
         version_id = str(arguments["version_id"])
+        self._deny_unreadable_document(file_id=file_id, version_id=version_id)
         representation = self.repository.database.execute_one(
             """
             select representation_id from agent_job_file_snapshot_item
@@ -1584,6 +1585,49 @@ class GovernedFileStreamingService:
             connector_id=str(workspace.get("owner_connector_id") or ""),
             conversation_id=str(workspace.get("owner_conversation_id") or ""),
         )
+
+    def _deny_unreadable_document(self, *, file_id: str, version_id: str) -> None:
+        row = self.repository.database.execute_one(
+            """
+            select f.format_code,
+                   coalesce((
+                     select a.readability_status
+                       from message_attachment_file_binding b
+                       join message_attachment a on a.id = b.attachment_id
+                      where b.version_id = v.id
+                      order by a.readability_updated_at desc, a.id desc
+                      limit 1
+                   ), 'NOT_REQUIRED') as readability_status
+              from managed_file f
+              join managed_file_version v on v.file_id = f.id
+             where f.id = ? and v.id = ?
+            """,
+            (file_id, version_id),
+        )
+        if row is None:
+            return
+        format_code = str(row.get("format_code") or "")
+        readability = str(row.get("readability_status") or "NOT_REQUIRED")
+        if format_code not in {"PDF", "DOCX", "PPTX", "XLSX", "PNG", "JPEG", "WEBP"} and (
+            readability == "NOT_REQUIRED"
+        ):
+            return
+        markdown = self.repository.database.execute_one(
+            """
+            select status
+              from file_representation
+             where source_version_id = ? and kind = 'MARKDOWN'
+               and status in ('AVAILABLE', 'PARTIAL')
+             order by created_at desc
+             limit 1
+            """,
+            (version_id,),
+        )
+        if markdown is not None:
+            return
+        if readability in {"NO_TEXT", "UNAVAILABLE"}:
+            self._deny("file_processing_failed", "文档可读内容生成失败")
+        self._deny("file_readable_content_not_ready", "文档可读内容尚未生成")
 
     @staticmethod
     def _deny(code: str, safe_message: str) -> Never:

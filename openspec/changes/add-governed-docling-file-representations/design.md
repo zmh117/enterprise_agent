@@ -98,9 +98,10 @@ File Service 为每个 run/kind 创建不透明 staging transfer。Worker 按流
 
 保留 `message_attachment` 的来源下载/导入状态，并增加与 processing run 关联的可读性事实，避免继续让 `READY` 同时表示“原件已保存”和“Agent 已能阅读”。可读性状态至少区分 `NOT_REQUIRED`、`PENDING`、`AVAILABLE`、`PARTIAL`、`NO_TEXT` 和 `UNAVAILABLE`。
 
-当 Job认领需处理的附件时：
+当本轮文字绑定了需处理的附件时：
 
-- 任一必需表示仍为 PENDING，Job 保持 `WAITING_INPUT`；
+- 来源下载/导入未终态时，Job 可以保持 `WAITING_INPUT`；
+- 来源已保存但必需 Markdown 表示仍为 PENDING 时，不得继续用 `WAITING_INPUT` 等待 Docling，也不得把无关文字 Job 绑进该处理中文档；准入改由 `decouple-document-readiness-from-agent-turns` 的能力门禁处理；
 - AVAILABLE 后，Manifest v4冻结精确 Markdown representation；
 - PARTIAL 且存在非空、未超限 Markdown时允许执行，并加入固定安全 notice；
 - NO_TEXT/UNAVAILABLE 只加入固定安全 notice，不注入伪造正文；
@@ -134,7 +135,7 @@ representation 不得比 source version 活得更久，并沿用任务工作区�
 
 ## Risks / Trade-offs
 
-- [CPU Docling 对扫描 PDF 延迟较高] → 第一阶段以 25 MiB、300页、600秒、受控并发和 `WAITING_INPUT` 限制范围；上线前用合成 born-digital/扫描件基准验证，未达SLO时再提出 GPU/RQ 扩容 change。
+- [CPU Docling 对扫描 PDF 延迟较高] → 第一阶段以 25 MiB、300页、600秒、受控并发限制范围，并用独立 processing worker 避免挡住 Agent 问答；上线前用合成 born-digital/扫描件基准验证，未达SLO时再提出 GPU/RQ 扩容 change。
 - [Docling local task 在容器重启后丢失] → PostgreSQL processing run与RabbitMQ是事实源；丢失 task ID只导致同一 run 新 attempt 重算，表示发布保持幂等。
 - [异步结果默认单次读取，响应取得后持久化失败] → Worker先写受治理 staging，再终结；失败时重新提交转换，不把 Docling scratch 当持久事实。
 - [Markdown 或 JSON 膨胀] → File Service在写入和终结前执行独立上限；Markdown超15 MiB不静默截断、不进入 Runtime，JSON超限使 run 安全失败。

@@ -450,6 +450,7 @@ class AgentRepository:
         agent_runtime_kind: str = "python-v1",
         agent_runtime_protocol_version: str = "1.0",
         task_workspace_id: str = "",
+        quoted_external_message_id: str = "",
     ) -> AgentJob:
         existing = self.get_job_by_idempotency_key(idempotency_key)
         if existing:
@@ -574,6 +575,7 @@ class AgentRepository:
                 sender_display_name=requester_display_name,
                 message_type=message_type,
                 content_status=message_content_status,
+                quoted_external_message_id=quoted_external_message_id,
             )
             message = self.database.execute_one(
                 """
@@ -839,6 +841,24 @@ class AgentRepository:
                 error_code="job_dispatch_persistence_failed",
             )
         return self._dispatch_event_from_row(row)
+
+    def abandon_pending_dispatch(self, job_id: str, *, reason_code: str) -> None:
+        timestamp = now_iso()
+        self.database.execute(
+            """
+            update job_dispatch_outbox
+               set status = 'DEAD',
+                   last_error_code = ?,
+                   last_error_summary = 'Job ended without model execution',
+                   dead_at = coalesce(dead_at, ?),
+                   claimed_by = '',
+                   claimed_at = null,
+                   updated_at = ?
+             where job_id = ?
+               and status in ('PENDING', 'RETRY_WAIT', 'RUNNING')
+            """,
+            (reason_code[:80], timestamp, timestamp, job_id),
+        )
 
     def get_dispatch_event_for_job(self, job_id: str) -> JobDispatchEvent | None:
         row = self.database.execute_one(
@@ -1234,6 +1254,7 @@ class AgentRepository:
         message_type: str = "text",
         content_status: str = "READY",
         safe_metadata: dict[str, Any] | None = None,
+        quoted_external_message_id: str = "",
     ) -> str:
         if external_message_id:
             existing = self.database.execute_one(
@@ -1259,8 +1280,8 @@ class AgentRepository:
             insert into agent_message
               (id, session_id, job_id, role, content, created_at, external_message_id,
                sender_id, sender_display_name, message_type, sequence_no, content_status,
-               safe_metadata_json)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               safe_metadata_json, quoted_external_message_id)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 message_id,
@@ -1276,6 +1297,7 @@ class AgentRepository:
                 int(sequence["message_sequence"]),
                 content_status,
                 json.dumps(safe_metadata or {}, ensure_ascii=False),
+                quoted_external_message_id,
             ),
         )
         return message_id
@@ -1425,20 +1447,373 @@ class AgentRepository:
         session_id: str,
         task_workspace_id: str,
         job_id: str,
+        attachment_ids: tuple[str, ...] | list[str] = (),
     ) -> list[MessageAttachment]:
+        ids = [
+            item
+            for item in attachment_ids
+            if item and not str(item).startswith("current:")
+        ]
+        if not ids:
+            return []
         timestamp = now_iso()
+        placeholders = ", ".join("?" for _ in ids)
         self.database.execute(
-            """
+            f"""
             update message_attachment
                set job_id = ?, claimed_at = ?, updated_at = ?
              where job_id is null and task_workspace_id = ?
+               and id in ({placeholders})
                and message_id in (
                  select id from agent_message where session_id = ?
                )
             """,
-            (job_id, timestamp, timestamp, task_workspace_id, session_id),
+            (job_id, timestamp, timestamp, task_workspace_id, *ids, session_id),
         )
         return self.list_attachments(job_id)
+
+    def list_file_turn_candidate_rows(
+        self,
+        *,
+        session_id: str,
+        workspace_id: str,
+    ) -> list[dict[str, Any]]:
+        if not session_id or not workspace_id:
+            return []
+        attachments = self.database.execute(
+            """
+            select coalesce(b.file_id, '') as file_id,
+                   coalesce(b.version_id, '') as version_id,
+                   coalesce(wf.logical_name, a.file_name) as display_name,
+                   a.id as attachment_id,
+                   coalesce(m.external_message_id, '') as message_external_id,
+                   a.status as source_status,
+                   a.readability_status as readability_status,
+                   a.finished_at as source_ready_at
+              from message_attachment a
+              join agent_message m on m.id = a.message_id
+              left join message_attachment_file_binding b on b.attachment_id = a.id
+              left join task_workspace_file wf
+                on wf.workspace_id = a.task_workspace_id
+               and wf.file_id = b.file_id
+               and wf.status = 'ACTIVE'
+             where m.session_id = ? and a.task_workspace_id = ?
+             order by a.finished_at, a.id
+            """,
+            (session_id, workspace_id),
+        )
+        workspace_files = self.database.execute(
+            """
+            select wf.file_id as file_id,
+                   wf.selected_version_id as version_id,
+                   wf.logical_name as display_name,
+                   '' as attachment_id,
+                   '' as message_external_id,
+                   case when v.status = 'AVAILABLE' then 'READY' else coalesce(v.status, '') end
+                     as source_status,
+                   coalesce((
+                     select a.readability_status
+                       from message_attachment_file_binding b
+                       join message_attachment a on a.id = b.attachment_id
+                      where b.version_id = wf.selected_version_id
+                      order by a.readability_updated_at desc, a.id desc
+                      limit 1
+                   ), 'NOT_REQUIRED') as readability_status,
+                   v.created_at as source_ready_at
+              from task_workspace_file wf
+              join managed_file_version v on v.id = wf.selected_version_id
+             where wf.workspace_id = ? and wf.status = 'ACTIVE'
+             order by v.created_at, wf.file_id
+            """,
+            (workspace_id,),
+        )
+        merged: dict[tuple[str, str, str], dict[str, Any]] = {}
+        for row in [*attachments, *workspace_files]:
+            payload = dict(row)
+            file_id = str(payload.get("file_id") or "")
+            version_id = str(payload.get("version_id") or "")
+            attachment_id = str(payload.get("attachment_id") or "")
+            key = (file_id, version_id, attachment_id or file_id)
+            existing = merged.get(key)
+            if existing is None:
+                merged[key] = payload
+                continue
+            if not existing.get("message_external_id") and payload.get("message_external_id"):
+                merged[key] = payload
+        return list(merged.values())
+
+    def get_system_notice_by_idempotency_key(
+        self, idempotency_key: str
+    ) -> dict[str, Any] | None:
+        if not idempotency_key:
+            return None
+        row = self.database.execute_one(
+            "select * from delivery_outbox where event_key = ?",
+            (f"delivery.system_notice:{idempotency_key}",),
+        )
+        return dict(row) if row is not None else None
+
+    def create_system_notice_event(
+        self,
+        *,
+        idempotency_key: str,
+        session_id: str,
+        application_publication_id: str,
+        delivery_binding: dict[str, Any],
+        target_summary: dict[str, Any],
+        correlation_id: str,
+        max_attempts: int,
+        max_replay_count: int,
+        principal_user_id: str = "",
+        agent_publication_id: str = "",
+    ) -> DeliveryEvent:
+        timestamp = now_iso()
+        event_key = f"delivery.system_notice:{idempotency_key}"
+        existing = self.database.execute_one(
+            "select * from delivery_outbox where event_key = ?",
+            (event_key,),
+        )
+        if existing is not None:
+            return self._delivery_event_from_row(existing)
+        event_id = new_id("delivery_outbox")
+        self.database.execute(
+            """
+            insert into delivery_outbox
+              (id, event_key, job_id, result_artifact_id,
+               application_publication_id, delivery_binding_json,
+               target_summary, correlation_id, status, attempt_count,
+               max_attempts, replay_count, max_replay_count,
+               next_attempt_at, created_at, updated_at,
+               delivery_kind, session_id, principal_user_id, agent_publication_id)
+            values (?, ?, null, null, ?, ?, ?, ?, 'PENDING', 0, ?, 0, ?, ?, ?, ?,
+                    'SYSTEM_NOTICE', ?, ?, ?)
+            on conflict(event_key) do nothing
+            """,
+            (
+                event_id,
+                event_key,
+                application_publication_id,
+                json.dumps(delivery_binding, ensure_ascii=False, sort_keys=True),
+                json.dumps(target_summary, ensure_ascii=False, sort_keys=True),
+                correlation_id,
+                max(1, int(max_attempts)),
+                max(0, int(max_replay_count)),
+                timestamp,
+                timestamp,
+                timestamp,
+                session_id,
+                principal_user_id,
+                agent_publication_id,
+            ),
+        )
+        row = self.database.execute_one(
+            "select * from delivery_outbox where event_key = ?",
+            (event_key,),
+        )
+        if row is None:
+            raise NonRetryableExecutionError(
+                "System notice delivery event could not be persisted",
+                safe_message="系统说明保存失败",
+                error_code="delivery_outbox_persistence_failed",
+            )
+        return self._delivery_event_from_row(row)
+
+    def record_file_readiness_blocked_turn(
+        self,
+        *,
+        session_id: str,
+        workspace_id: str,
+        user_message_id: str,
+        reason_code: str,
+        version_ids: tuple[str, ...],
+        expires_at: str,
+    ) -> str:
+        turn_id = new_id("file_turn")
+        timestamp = now_iso()
+        self.database.execute(
+            """
+            insert into file_readiness_blocked_turn
+              (id, session_id, workspace_id, user_message_id, reason_code,
+               status, created_at, expires_at, notified_at)
+            values (?, ?, ?, ?, ?, 'OPEN', ?, ?, null)
+            """,
+            (
+                turn_id,
+                session_id,
+                workspace_id,
+                user_message_id,
+                reason_code,
+                timestamp,
+                expires_at,
+            ),
+        )
+        for version_id in dict.fromkeys(version_ids):
+            if not version_id:
+                continue
+            self.database.execute(
+                """
+                insert into file_readiness_blocked_turn_version
+                  (turn_id, file_version_id)
+                values (?, ?)
+                """,
+                (turn_id, version_id),
+            )
+        return turn_id
+
+    def expire_file_readiness_blocked_turns(self, *, now: str | None = None) -> int:
+        timestamp = now or now_iso()
+        rows = self.database.execute(
+            """
+            update file_readiness_blocked_turn
+               set status = 'EXPIRED'
+             where status = 'OPEN'
+               and (
+                 expires_at <= ?
+                 or workspace_id in (
+                   select id from task_workspace where status <> 'ACTIVE'
+                 )
+               )
+            returning id
+            """,
+            (timestamp,),
+        )
+        return len(rows)
+
+    def list_ready_file_readiness_blocked_turns(self) -> list[dict[str, Any]]:
+        rows = self.database.execute(
+            """
+            select t.id, t.session_id, t.workspace_id, t.user_message_id, t.reason_code
+              from file_readiness_blocked_turn t
+             where t.status = 'OPEN'
+               and exists (
+                 select 1 from file_readiness_blocked_turn_version v
+                  where v.turn_id = t.id
+               )
+               and not exists (
+                 select 1
+                   from file_readiness_blocked_turn_version v
+                  where v.turn_id = t.id
+                    and coalesce((
+                      select a.readability_status
+                        from message_attachment_file_binding b
+                        join message_attachment a on a.id = b.attachment_id
+                       where b.version_id = v.file_version_id
+                       order by a.readability_updated_at desc, a.id desc
+                       limit 1
+                    ), (
+                      select case r.status
+                               when 'AVAILABLE' then 'AVAILABLE'
+                               when 'PARTIAL' then 'PARTIAL'
+                               else r.status
+                             end
+                        from file_representation r
+                       where r.source_version_id = v.file_version_id
+                         and r.kind = 'MARKDOWN'
+                       order by r.created_at desc
+                       limit 1
+                    ), 'PENDING') not in ('AVAILABLE', 'PARTIAL')
+               )
+             order by t.created_at, t.id
+            """
+        )
+        return [dict(row) for row in rows]
+
+    def list_blocked_turn_version_ids(self, turn_id: str) -> list[str]:
+        rows = self.database.execute(
+            """
+            select file_version_id
+              from file_readiness_blocked_turn_version
+             where turn_id = ?
+             order by file_version_id
+            """,
+            (turn_id,),
+        )
+        return [str(row["file_version_id"]) for row in rows]
+
+    def mark_file_readiness_blocked_turn_notified(self, turn_id: str) -> None:
+        timestamp = now_iso()
+        self.database.execute(
+            """
+            update file_readiness_blocked_turn
+               set status = 'NOTIFIED', notified_at = ?
+             where id = ? and status = 'OPEN'
+            """,
+            (timestamp, turn_id),
+        )
+
+    def display_names_for_versions(self, version_ids: tuple[str, ...]) -> tuple[str, ...]:
+        names: list[str] = []
+        for version_id in version_ids:
+            row = self.database.execute_one(
+                """
+                select coalesce(wf.logical_name, f.display_name, a.file_name, '') as display_name
+                  from managed_file_version v
+                  join managed_file f on f.id = v.file_id
+                  left join task_workspace_file wf
+                    on wf.file_id = v.file_id and wf.status = 'ACTIVE'
+                  left join message_attachment_file_binding b on b.version_id = v.id
+                  left join message_attachment a on a.id = b.attachment_id
+                 where v.id = ?
+                 limit 1
+                """,
+                (version_id,),
+            )
+            names.append(str((row or {}).get("display_name") or "文件"))
+        return tuple(names)
+
+    def refresh_file_turn_dependency_row(self, payload: dict[str, Any]) -> dict[str, Any]:
+        refreshed = dict(payload)
+        attachment_id = str(payload.get("attachment_id") or "")
+        version_id = str(payload.get("version_id") or "")
+        if attachment_id and not attachment_id.startswith("current:"):
+            row = self.database.execute_one(
+                """
+                select a.status, a.readability_status, a.file_name,
+                       coalesce(b.file_id, '') as file_id,
+                       coalesce(b.version_id, '') as version_id
+                  from message_attachment a
+                  left join message_attachment_file_binding b on b.attachment_id = a.id
+                 where a.id = ?
+                """,
+                (attachment_id,),
+            )
+            if row is not None:
+                refreshed["source_status"] = str(row["status"] or "")
+                refreshed["readability_status"] = str(
+                    row.get("readability_status") or "NOT_REQUIRED"
+                )
+                refreshed["file_id"] = str(row.get("file_id") or refreshed.get("file_id") or "")
+                refreshed["version_id"] = str(
+                    row.get("version_id") or refreshed.get("version_id") or ""
+                )
+                refreshed["display_name"] = str(
+                    row.get("file_name") or refreshed.get("display_name") or ""
+                )
+                return refreshed
+        if version_id:
+            row = self.database.execute_one(
+                """
+                select v.status as version_status,
+                       coalesce((
+                         select a.readability_status
+                           from message_attachment_file_binding b
+                           join message_attachment a on a.id = b.attachment_id
+                          where b.version_id = v.id
+                          order by a.readability_updated_at desc, a.id desc
+                          limit 1
+                       ), 'NOT_REQUIRED') as readability_status
+                  from managed_file_version v
+                 where v.id = ?
+                """,
+                (version_id,),
+            )
+            if row is not None:
+                status = str(row.get("version_status") or "")
+                refreshed["source_status"] = "READY" if status == "AVAILABLE" else status
+                refreshed["readability_status"] = str(
+                    row.get("readability_status") or "NOT_REQUIRED"
+                )
+        return refreshed
 
     def update_attachment(
         self,
@@ -1944,11 +2319,14 @@ class AgentRepository:
                     with candidate as (
                       select outbox.id
                         from delivery_outbox outbox
-                        join agent_job job on job.id = outbox.job_id
+                        left join agent_job job on job.id = outbox.job_id
                        where outbox.status in ('PENDING', 'RETRY_WAIT')
                          and outbox.next_attempt_at <= ?
                          and outbox.attempt_count < outbox.max_attempts
-                         and job.status in ('SUCCEEDED', 'FAILED', 'TIMEOUT')
+                         and (
+                           outbox.delivery_kind = 'SYSTEM_NOTICE'
+                           or job.status in ('SUCCEEDED', 'FAILED', 'TIMEOUT')
+                         )
                        order by outbox.next_attempt_at,
                                 outbox.created_at,
                                 outbox.id
@@ -1992,11 +2370,14 @@ class AgentRepository:
                      where id = (
                        select outbox.id
                          from delivery_outbox outbox
-                         join agent_job job on job.id = outbox.job_id
+                         left join agent_job job on job.id = outbox.job_id
                         where outbox.status in ('PENDING', 'RETRY_WAIT')
                           and outbox.next_attempt_at <= ?
                           and outbox.attempt_count < outbox.max_attempts
-                          and job.status in ('SUCCEEDED', 'FAILED', 'TIMEOUT')
+                          and (
+                            outbox.delivery_kind = 'SYSTEM_NOTICE'
+                            or job.status in ('SUCCEEDED', 'FAILED', 'TIMEOUT')
+                          )
                         order by outbox.next_attempt_at,
                                  outbox.created_at,
                                  outbox.id
@@ -2044,7 +2425,7 @@ class AgentRepository:
             """,
             (
                 attempt_id,
-                event.job_id,
+                event.job_id or None,
                 str(event.delivery_binding.get("route_type") or "none"),
                 str(event.delivery_binding.get("connector_id") or ""),
                 json.dumps(
@@ -3211,8 +3592,8 @@ class AgentRepository:
         return DeliveryEvent(
             id=str(row["id"]),
             event_key=str(row["event_key"]),
-            job_id=str(row["job_id"]),
-            result_artifact_id=str(row["result_artifact_id"]),
+            job_id=str(row["job_id"] or ""),
+            result_artifact_id=str(row["result_artifact_id"] or ""),
             application_publication_id=str(row.get("application_publication_id") or ""),
             delivery_binding=self._json_from_text(row.get("delivery_binding_json") or "{}"),
             target_summary=self._json_from_text(row.get("target_summary") or "{}"),

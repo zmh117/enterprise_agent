@@ -77,7 +77,7 @@ def test_workspace_expand_schema_enforces_active_owner_and_version_constraints()
         default_migrations_dir(),
         migrator_build="task-file-workspace-schema-test",
     ).run()
-    assert result.head == "114"
+    assert result.head == "115"
     tables = {
         str(row["name"])
         for row in database.execute("select name from sqlite_master where type = 'table'")
@@ -331,7 +331,7 @@ def test_attachment_retention_backfill_uses_360_days_and_only_marks_cleanup(
     ).run()
 
     assert upgraded.applied == (
-        "107", "108", "109", "110", "111", "112", "113", "114"
+        "107", "108", "109", "110", "111", "112", "113", "114", "115"
     )
     attachment = database.execute_one(
         """
@@ -433,7 +433,7 @@ def test_source_received_time_backfill_uses_attachment_record_without_object_acc
         migrator_build="file-time-upgrade",
     ).run()
 
-    assert upgraded.applied == ("110", "111", "112", "113", "114")
+    assert upgraded.applied == ("110", "111", "112", "113", "114", "115")
     assert database.execute_one(
         "select source_received_at from managed_file where id = 'file-time'"
     ) == {"source_received_at": TIMESTAMP}

@@ -9,7 +9,7 @@
 - 新增不可变 `file_processing_run` 与 `file_representation` 事实，分别记录精确源版本的处理状态/处理器 provenance，以及 Markdown、Docling JSON 派生内容的对象位置、哈希、大小、状态和血缘；派生表示不得冒充或替换原始 File Version。
 - 通过 File Domain Outbox、RabbitMQ 和独立 `file-processing-worker` 编排异步转换；消息只携带稳定 ID，Worker 通过受控 File Service 流式接口读取原件和回传派生内容，不获得 MinIO 凭据或对象键。
 - 扩展 Job File Manifest，使 Job 同时冻结原始 File Version ID 和用于阅读的精确 Markdown Representation ID；Runtime 只把 Markdown 表示物化到单 Job 沙盒，原始二进制不进入 Agent 文件工具或模型上下文。
-- 让包含文档的 Job 在所需表示完成前保持 `WAITING_INPUT`；部分成功、完全失败、超限、加密、损坏和处理器重启均产生确定、可审计且不虚构文件理解的结果。
+- 文档处理在独立 `file-processing-worker` 上完成；Agent Job 只在本轮已绑定附件的**来源导入**未终态时使用 `WAITING_INPUT`。需要可读正文但表示未就绪时，由 `decouple-document-readiness-from-agent-turns` 规定的能力门禁用系统说明结束本轮，不得让无关问答等待 Docling。部分成功、完全失败、超限、加密、损坏和处理器重启仍产生确定、可审计且不虚构文件理解的结果。
 - 由 Business Application Revision 选择代码发布的文档处理 profile，并由 Publication 不可变冻结；未选择 profile 的发布不获得 Docling 能力，也不能提交任意 Docling 参数、模型、URL 或插件配置。
 - 默认 Compose 新增内部 `docling-serve` 和 `file-processing-worker`，固定镜像版本与 digest、资源上限、健康/就绪探针、Secret 隔离和安全积压观测；不新增独立 File MCP，不把 Docling 暴露为 Agent Tool/MCP。
 - 以扩展迁移和兼容读取方式引入新 schema/Manifest；既有 Job、旧 Manifest 和未启用文档处理的 Publication 保持可恢复，旧 `attachment_content` 写入路径只在新链路稳定并经过显式 contract gate 后退役。

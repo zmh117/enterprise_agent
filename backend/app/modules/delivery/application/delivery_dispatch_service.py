@@ -178,6 +178,8 @@ class DeliveryOutboxDispatcher:
         event: DeliveryEvent,
         attempt_id: str,
     ) -> DeliveryStatus:
+        if str(event.delivery_binding.get("delivery_kind") or "") == "system_notice":
+            return self._dispatch_system_notice(event=event, attempt_id=attempt_id)
         job = self.repository.get_job(event.job_id)
         artifact = self.repository.get_artifact(event.result_artifact_id)
         route = ReplyRoute.from_dict(job.reply_route)
@@ -369,6 +371,104 @@ class DeliveryOutboxDispatcher:
                 "delivery_id": event.id,
                 "attempt_id": attempt_id,
                 "chunk_count": len(chunks),
+            },
+        )
+        return DeliveryStatus.SUCCEEDED
+
+    def _dispatch_system_notice(
+        self,
+        *,
+        event: DeliveryEvent,
+        attempt_id: str,
+    ) -> DeliveryStatus:
+        route_payload = event.delivery_binding.get("reply_route")
+        if not isinstance(route_payload, dict):
+            route_payload = {
+                "type": str(event.delivery_binding.get("route_type") or "none"),
+                "connector_id": str(event.delivery_binding.get("connector_id") or ""),
+            }
+        route = ReplyRoute.from_dict(route_payload)
+        self._require_original_binding(event, route, route_payload)
+        self.audit_service.record(
+            "delivery.started",
+            status="RUNNING",
+            summary="Delivery Dispatcher claimed a session system notice",
+            actor_id=self.worker_id,
+            payload={
+                "delivery_id": event.id,
+                "attempt_id": attempt_id,
+                "attempt_no": event.attempt_count,
+                "route_type": route.type,
+                "connector_id": route.connector_id,
+                "delivery_kind": "system_notice",
+            },
+        )
+        if route.type == "none":
+            self.repository.mark_delivery_skipped(event=event, attempt_id=attempt_id)
+            return DeliveryStatus.SKIPPED
+        connector = None
+        if route.connector_id:
+            connector = self.delivery_service.connector_registry.require_delivery(
+                route.connector_id
+            )
+            endpoint = self.delivery_service.connector_registry.endpoint_url(connector)
+            self.delivery_service.connector_registry.assert_host_allowed(connector, endpoint)
+        adapter = self.delivery_service.adapters.get(route.type)
+        if adapter is None:
+            raise NonRetryableExecutionError(
+                f"Delivery adapter is not installed: {route.type}",
+                safe_message="投递适配器未安装",
+                error_code="delivery_adapter_not_installed",
+            )
+        title = str(event.delivery_binding.get("title") or "文件尚未可阅读")
+        markdown = str(event.delivery_binding.get("markdown") or "")
+        if any(token in markdown.lower() for token in ("agent_runtime_error", "failure_notification")):
+            raise NonRetryableExecutionError(
+                "System notice payload used a forbidden failure envelope",
+                safe_message="系统说明格式无效",
+                error_code="system_notice_payload_invalid",
+            )
+        chunks = self.delivery_service.chunker.titled_chunks(title=title, text=markdown)
+        for index, (chunk_title, chunk_text) in enumerate(chunks, start=1):
+            payload_hash = _chunk_payload_hash(chunk_title, chunk_text)
+            if self.repository.has_successful_delivery_chunk(
+                delivery_id=event.id,
+                chunk_index=index,
+                payload_hash=payload_hash,
+            ):
+                continue
+            adapter.send(
+                connector=connector,
+                route=route,
+                title=chunk_title,
+                text=chunk_text,
+            )
+            self.delivery_service.sent_messages.append(
+                {
+                    "title": chunk_title,
+                    "text": chunk_text,
+                    "route_type": route.type,
+                }
+            )
+            self._record_delivery_chunk(
+                event=event,
+                attempt_id=attempt_id,
+                chunk_index=index,
+                chunk_count=len(chunks),
+                payload_hash=payload_hash,
+                payload_summary={"title": chunk_title, "chars": len(chunk_text)},
+                status="SUCCEEDED",
+            )
+        self.repository.mark_delivery_succeeded(event=event, attempt_id=attempt_id)
+        self.audit_service.record(
+            "delivery.completed",
+            status="SUCCEEDED",
+            summary="Session system notice delivered",
+            actor_id=self.worker_id,
+            payload={
+                "delivery_id": event.id,
+                "attempt_id": attempt_id,
+                "delivery_kind": "system_notice",
             },
         )
         return DeliveryStatus.SUCCEEDED

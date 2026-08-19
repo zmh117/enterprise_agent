@@ -57,7 +57,11 @@ class FileWorkspaceApplicationService:
                 version_id=str(arguments["version_id"]),
                 action=FileAction.READ_METADATA,
             )
-            return {**self._metadata(item), "observed_at": _observed_at()}
+            return {
+                **self._metadata(item),
+                "readability_status": self._readability_status(str(arguments["version_id"])),
+                "observed_at": _observed_at(),
+            }
         if tool_identifier == "file_prepare_materialization":
             if self.streaming is None:
                 self._deny("file_streaming_not_ready", "文件流式操作尚未就绪")
@@ -117,7 +121,15 @@ class FileWorkspaceApplicationService:
                    v.id as version_id, v.version_number, v.status as version_status,
                    v.media_type, v.size_bytes, v.content_sha256,
                    f.source_received_at,
-                   v.created_at as version_created_at
+                   v.created_at as version_created_at,
+                   coalesce((
+                     select a.readability_status
+                       from message_attachment_file_binding b
+                       join message_attachment a on a.id = b.attachment_id
+                      where b.version_id = v.id
+                      order by a.readability_updated_at desc, a.id desc
+                      limit 1
+                   ), 'NOT_REQUIRED') as readability_status
               from task_workspace_file wf
               join managed_file f on f.id = wf.file_id
               join managed_file_version v on v.id = wf.selected_version_id
@@ -153,7 +165,24 @@ class FileWorkspaceApplicationService:
                 else None
             ),
             "version_created_at": str(row.get("version_created_at") or ""),
+            "readability_status": str(row.get("readability_status") or "NOT_REQUIRED"),
         }
+
+    def _readability_status(self, version_id: str) -> str:
+        row = self.repository.database.execute_one(
+            """
+            select coalesce((
+                     select a.readability_status
+                       from message_attachment_file_binding b
+                       join message_attachment a on a.id = b.attachment_id
+                      where b.version_id = ?
+                      order by a.readability_updated_at desc, a.id desc
+                      limit 1
+                   ), 'NOT_REQUIRED') as readability_status
+            """,
+            (version_id,),
+        )
+        return str((row or {}).get("readability_status") or "NOT_REQUIRED")
 
     @staticmethod
     def _deny(code: str, safe_message: str) -> Never:

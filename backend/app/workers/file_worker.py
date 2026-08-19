@@ -62,10 +62,13 @@ def main() -> None:
                             f"document-processing-reconcile:{job_id}"[:128],
                         )
                         released += int(outcome == "released")
+                notice = attachment_service.reconcile_file_readiness_notices()
                 publish_status(
                     **{
                         **result,
                         "document_processing_jobs_released": released,
+                        "file_readiness_notices_expired": int(notice.get("expired") or 0),
+                        "file_readiness_notices_notified": int(notice.get("notified") or 0),
                         "status": "RUNNING",
                         "file_service": "ready",
                         "last_error_class": "",

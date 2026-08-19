@@ -38,6 +38,7 @@ def test_job_message_authorization_snapshot_and_dispatch_event_commit_together()
             "authorization_snapshot": {},
             "runtime_authorization": {},
             "file_format_policy_version": "text-v1",
+            "file_turn_dependencies": [],
         }
         assert [message["job_id"] for message in messages] == [job.id]
         assert event is not None

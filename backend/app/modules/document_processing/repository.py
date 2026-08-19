@@ -607,11 +607,12 @@ class DocumentProcessingRepository:
               from message_attachment a
               join agent_job j on j.id = a.job_id
              where j.status = 'WAITING_INPUT'
-               and a.file_processing_run_id is not null
                and not exists (
                  select 1 from message_attachment pending
                   where pending.job_id = a.job_id
-                    and pending.readability_status = 'PENDING'
+                    and pending.status not in (
+                      'READY', 'REJECTED', 'FAILED', 'stored_not_interpreted'
+                    )
                )
              order by a.job_id limit ?
             """,

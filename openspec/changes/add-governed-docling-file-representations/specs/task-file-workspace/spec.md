@@ -43,7 +43,7 @@ File Service MUST 把PDF、DOCX、PPTX、XLSX、PNG、JPEG和WebP作为受治理
 - **AND** 不调用Docling或声称已解析
 
 ### Requirement: Job 创建时冻结精确文件清单
-File Service MUST 在非空文字触发Agent Job时，按当前用户、tenant、任务工作区、Business Application Publication和授权范围冻结Job File Manifest。直接可读文本条目 MUST 指向当时精确File Version；需文档处理的条目 MUST 同时冻结原始File/Version ID与精确Markdown Representation ID、kind、size、SHA-256和安全物化名。该文字Job原子认领的未消费附件、同一消息新上传附件和明确引用文件 SHALL 在可读性终态后自动物化；其他文件只提供不含正文、凭据和对象位置的元数据，由Agent按需选择。清单冻结身份但不冻结授权，物化时 MUST 重新检查当前访问权。纯附件暂存事件 MUST NOT单独生成Manifest。
+File Service MUST 在非空文字触发Agent Job时，按当前用户、tenant、任务工作区、Business Application Publication和授权范围冻结Job File Manifest。直接可读文本条目 MUST 指向当时精确File Version；需文档处理的条目 MUST 同时冻结原始File/Version ID与精确Markdown Representation ID、kind、size、SHA-256和安全物化名。该文字Job本轮确定性绑定且能力已就绪的附件、同一消息新上传附件和明确引用文件 SHALL 自动物化；其他文件只提供不含正文、凭据和对象位置的元数据，由Agent按需选择。系统 MUST NOT 把工作区全部未挂接Job的附件自动列入物化集合。清单冻结身份但不冻结授权，物化时 MUST 重新检查当前访问权。纯附件暂存事件 MUST NOT单独生成Manifest。
 
 Job File Manifest、File MCP文件列表/元数据和Runtime自动物化元数据 MUST 明确区分：原始聊天附件进入平台的`source_received_at`、精确原始版本产生的`version_created_at`、representation产生时间以及Manifest冻结或查询发生的`observed_at`。`source_received_at` MUST 取平台创建原始`message_attachment`记录的时间并在后续版本/表示中保持不变；无聊天附件来源的Agent生成文件 MUST 返回`null`。所有非空时间 MUST 是带时区的UTC RFC 3339。系统 MUST NOT使用File Worker导入完成时间、processing run时间、representation时间、工作区引用时间、Manifest条目时间或含义模糊的`created_at`回答“上传时间”。Manifest schema v4 MUST 把源身份、表示身份、来源接收时间和版本创建时间纳入不可变条目及其hash；旧schema可兼容读取但不得虚构缺失时间或表示。
 
@@ -52,9 +52,9 @@ Job File Manifest、File MCP文件列表/元数据和Runtime自动物化元数�
 - **THEN** 创建事务认领附件并立即把该版本冻结为自动物化项
 
 #### Scenario: 暂存文档仍在处理
-- **WHEN** 后续非空文字创建Job时，认领文档的来源或可读性尚未进入安全终态
-- **THEN** 系统先冻结工作区与待处理集合并保持Job等待
-- **AND** 表示进入安全终态后才完成不可变Manifest并释放同一个Job
+- **WHEN** 后续非空文字未绑定该文档
+- **THEN** 系统立即创建可执行Job且不自动物化处理中文档
+- **AND** 该文档继续作为工作区元数据候选
 
 #### Scenario: 其他Job在执行期间产生新表示
 - **WHEN** 当前Job清单冻结source V3和representation R1后，同一source Version产生R2或文件产生V4

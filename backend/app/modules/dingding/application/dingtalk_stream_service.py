@@ -18,6 +18,10 @@ from app.modules.channel.domain.channel_event import (
 )
 from app.modules.channel.infrastructure.connector_registry import ConnectorRegistry
 from app.modules.identity.domain import ExternalIdentityDescriptor
+from app.modules.job.application.create_agent_job_service import (
+    StagedAttachmentIntake,
+    SystemNoticeIntake,
+)
 from app.modules.job.domain.agent_job import AgentJob
 from app.modules.identity_discovery.application import (
     DingTalkIdentityDiscoveryService,
@@ -342,7 +346,26 @@ class DingTalkStreamMessageService:
                 ),
             )
 
-        if not isinstance(acceptance, AgentJob):
+        if isinstance(acceptance, SystemNoticeIntake):
+            self.audit_service.record(
+                "dingtalk.stream.system_notice",
+                status="SUCCEEDED",
+                summary="DingTalk turn ended with a file admission system notice",
+                actor_id=message.user_id,
+                payload={
+                    "connector_id": source_connector_id,
+                    "event_id": message.event_id,
+                    "session_id": acceptance.session_id,
+                    "reason_code": acceptance.reason_code,
+                },
+            )
+            return DingTalkStreamHandleResult(
+                accepted=True,
+                status="system_notice",
+                ack_status="OK",
+                ack_message="OK",
+            )
+        if isinstance(acceptance, StagedAttachmentIntake):
             self.audit_service.record(
                 "dingtalk.stream.attachments_staged",
                 status="SUCCEEDED",
@@ -664,6 +687,8 @@ class DingTalkStreamMessageService:
                     "source_ingress_event_id": str(payload.get("_source_ingress_event_id") or ""),
                     "received_at": str(payload.get("_received_at") or ""),
                     "occurred_at": message.occurred_at,
+                    "original_message_id": message.original_message_id,
+                    "current_message_text": message.content,
                 },
                 external_identity=ExternalIdentityDescriptor(
                     provider="dingtalk",

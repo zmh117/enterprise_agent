@@ -1144,6 +1144,8 @@ class ChannelDispatchService:
             self.repository.attach_job(str(event["id"]), result.job_id)
         elif result.status == "attachments_staged":
             self.repository.mark_event_attachments_staged(str(event["id"]))
+        elif result.status == "system_notice":
+            self.repository.mark_event_attachments_staged(str(event["id"]))
         elif result.status not in {"ignored"}:
             with self.repository.database.unit_of_work():
                 if (

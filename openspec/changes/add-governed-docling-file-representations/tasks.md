@@ -47,7 +47,7 @@
 
 - [x] 6.1 在启用 profile 的 publication 上，将支持格式的附件导入为 source version 并触发异步 processing；停止为该路径生成新的 `attachment_content`，但保留旧 publication 兼容读取。
 - [x] 6.2 分离 source ingestion 状态和 readability 状态，落实 `NOT_REQUIRED`、`PENDING`、`AVAILABLE`、`PARTIAL`、`NO_TEXT`、`UNAVAILABLE` 的确定性转换。
-- [x] 6.3 Job 在必需表示 `PENDING` 时进入受限等待状态，仅由持久化处理事件释放；重启后不得依赖进程内等待或丢失唤醒。
+- [x] 6.3 ~~Job 在必需表示 PENDING 时保持 WAITING_INPUT~~ 已由 `decouple-document-readiness-from-agent-turns` 取代：仅来源导入可等待；表示未就绪走能力门禁与系统说明，无关问答不得等待 Docling。
 - [x] 6.4 对非空 `PARTIAL` Markdown 允许带治理提示继续；对 `NO_TEXT`/`UNAVAILABLE` 禁止伪造文本或静默当成可读内容。
 - [x] 6.5 当请求只有不可读附件且无有效文本指令时，不调用模型并返回结构化不可处理说明；混合输入则仅使用可用表示并附带缺失提示。
 - [ ] 6.6 补充渠道附件 E2E 前置测试，覆盖 DOCX/PPTX/XLSX/PDF/PNG/JPEG/WebP、旧 publication、重复 ingress 和 Job 重放。

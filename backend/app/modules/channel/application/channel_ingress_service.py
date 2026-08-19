@@ -18,6 +18,7 @@ from app.modules.job.application.create_agent_job_service import (
     CreateAgentJobCommand,
     CreateAgentJobService,
     StagedAttachmentIntake,
+    SystemNoticeIntake,
 )
 from app.modules.job.domain.agent_job import AgentJob
 from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
@@ -41,7 +42,7 @@ class ChannelIngressService:
         self.business_application_resolver = business_application_resolver
         self.runtime_environment = runtime_environment
 
-    def accept(self, event: ChannelEvent) -> AgentJob | StagedAttachmentIntake:
+    def accept(self, event: ChannelEvent) -> AgentJob | StagedAttachmentIntake | SystemNoticeIntake:
         self.audit_service.record(
             "channel.received",
             status="SUCCEEDED",
@@ -198,6 +199,10 @@ class ChannelIngressService:
             },
             file_references=event.file_references,
             requests_file_output=event.requests_file_output,
+            quoted_external_message_id=str(
+                event.source.metadata.get("original_message_id") or ""
+            ),
+            resolver_text=str(event.source.metadata.get("current_message_text") or event.message),
         )
         if (
             not event.message.strip()
@@ -220,7 +225,22 @@ class ChannelIngressService:
                     },
                 )
             return intake
-        job = self.create_job_service.execute(command)
+        accepted = self.create_job_service.execute(command)
+        if isinstance(accepted, SystemNoticeIntake):
+            if resolution is not None and resolution.outcome == RouteResolutionOutcome.MATCHED:
+                self.audit_service.record(
+                    "business_application.route.system_notice",
+                    status="SUCCEEDED",
+                    summary="Business Application route ended the turn with a system notice",
+                    actor_id=requester_id,
+                    payload={
+                        **self._safe_route_decision(event, resolution),
+                        "session_id": accepted.session_id,
+                        "reason_code": accepted.reason_code,
+                    },
+                )
+            return accepted
+        job = accepted
         if resolution is not None and resolution.outcome == RouteResolutionOutcome.MATCHED:
             self.audit_service.record(
                 "business_application.route.job_created",

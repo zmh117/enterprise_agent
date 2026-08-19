@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +56,55 @@ FEATURES = {
     "runtime_file_edit_enabled": True,
     "default_file_delivery_enabled": True,
 }
+
+
+def _group_text(
+    *,
+    msg_id: str,
+    content: str,
+    original_msg_id: str = "",
+    conversation_id: str = "group-conversation-redacted",
+) -> dict[str, object]:
+    payload = load_fixture("group_text.json")
+    payload["conversationId"] = conversation_id
+    payload["msgId"] = msg_id
+    payload["text"] = {"content": content}
+    if original_msg_id:
+        payload["originalMsgId"] = original_msg_id
+    return payload
+
+
+def _latest_system_notice(runtime: Any) -> dict[str, Any]:
+    row = runtime.database.execute_one(
+        """
+        select id, job_id, session_id, delivery_kind, delivery_binding_json
+          from delivery_outbox
+         where delivery_kind = 'SYSTEM_NOTICE'
+         order by created_at desc, id desc
+        """
+    )
+    assert row is not None
+    binding = json.loads(str(row["delivery_binding_json"] or "{}"))
+    return {
+        "id": row["id"],
+        "job_id": row["job_id"],
+        "session_id": row["session_id"],
+        "title": str(binding.get("title") or ""),
+        "markdown": str(binding.get("markdown") or ""),
+        "reason_code": str(binding.get("reason_code") or ""),
+        "notice_kind": str(binding.get("notice_kind") or ""),
+    }
+
+
+def _mark_readability(runtime: Any, *, file_name: str, status: str) -> None:
+    runtime.database.execute(
+        """
+        update message_attachment
+           set readability_status = ?, readability_updated_at = ?
+         where file_name = ?
+        """,
+        (status, datetime.now(UTC).isoformat(), file_name),
+    )
 
 
 def _mcp_wire_result(result: dict[str, Any]) -> dict[str, Any]:
@@ -680,7 +729,7 @@ def test_synthetic_private_txt_crosses_channel_file_worker_sandbox_commit_and_de
 
 def test_multiple_file_only_messages_stage_silently_then_one_text_claims_one_job() -> None:
     runtime = multimodal_container(task_file_features=FEATURES)
-    file_repository, _storage = _enable_in_process_attachment_import(runtime)
+    _enable_in_process_attachment_import(runtime)
     sources = {
         "code-1": b"first\n",
         "code-2": b"second\n",
@@ -716,24 +765,20 @@ def test_multiple_file_only_messages_stage_silently_then_one_text_claims_one_job
     text_payload = load_fixture("group_text.json")
     text_payload["conversationId"] = "group-conversation-redacted"
     text_payload["msgId"] = "claim-staged-files"
-    text_payload["text"] = {"content": "比较刚才三个文件，只回复一次"}
+    text_payload["text"] = {"content": "比较这些文件，只回复一次"}
     triggered = runtime.dingtalk_stream_message_service.handle_callback(
         payload=text_payload,
         correlation_id="claim-staged-files",
     )
 
-    assert triggered.status == "received"
-    assert runtime.agent_repository.count_rows("agent_job") == 1
-    job = runtime.agent_repository.get_job(triggered.job_id)
-    assert job.input_message == "比较刚才三个文件，只回复一次"
-    assert job.status == JobStatus.WAITING_INPUT
-    claimed = runtime.agent_repository.list_attachments(job.id)
-    assert [item.file_name for item in claimed] == [
-        "input-1.txt",
-        "input-2.txt",
-        "input-3.txt",
-    ]
-    assert all(item.claimed_at for item in claimed)
+    assert triggered.status == "system_notice"
+    assert triggered.job_id == ""
+    assert runtime.agent_repository.count_rows("agent_job") == 0
+    notice = _latest_system_notice(runtime)
+    assert notice["job_id"] is None
+    assert "请指明" in str(notice["title"])
+    assert "agent_runtime_error" not in str(notice["markdown"])
+    assert "{" not in str(notice["markdown"])
 
     queued = list(runtime.message_bus.attachments)
     runtime.message_bus.attachments.clear()
@@ -741,32 +786,31 @@ def test_multiple_file_only_messages_stage_silently_then_one_text_claims_one_job
         runtime.attachment_service.process(item.attachment_id, item.correlation_id)
         for item in queued
     ]
-    assert outcomes == ["waiting", "waiting", "released"]
-    assert runtime.agent_repository.get_job(job.id).status == JobStatus.PENDING
-    manifest = file_repository.get_job_snapshot(job.id)
-    items = runtime.database.execute(
-        """
-        select display_name, auto_materialize
-          from agent_job_file_snapshot_item
-         where snapshot_id = ? order by ordinal
-        """,
-        (manifest["id"],),
-    )
-    assert [row["display_name"] for row in items] == [
-        "input-1.txt",
-        "input-2.txt",
-        "input-3.txt",
-    ]
-    assert all(bool(row["auto_materialize"]) for row in items)
+    assert outcomes == ["staged", "staged", "staged"]
 
     text_payload["msgId"] = "later-unrelated-text"
-    text_payload["text"] = {"content": "继续说明结论"}
+    text_payload["text"] = {"content": "ONES MCP 的权限应该放在哪里？"}
     later = runtime.dingtalk_stream_message_service.handle_callback(
         payload=text_payload,
         correlation_id="later-unrelated-text",
     )
+    assert later.status == "received"
+    assert runtime.agent_repository.count_rows("agent_job") == 1
+    later_job = runtime.agent_repository.get_job(later.job_id)
+    assert later_job.status == JobStatus.PENDING
+    assert runtime.agent_repository.list_attachments(later_job.id) == []
+
+    text_payload["msgId"] = "named-file-text"
+    text_payload["text"] = {"content": "请看 input-1.txt 里写了什么"}
+    named = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=text_payload,
+        correlation_id="named-file-text",
+    )
+    assert named.status == "received"
     assert runtime.agent_repository.count_rows("agent_job") == 2
-    assert runtime.agent_repository.list_attachments(later.job_id) == []
+    named_job = runtime.agent_repository.get_job(named.job_id)
+    claimed = runtime.agent_repository.list_attachments(named_job.id)
+    assert [item.file_name for item in claimed] == ["input-1.txt"]
 
 
 def test_text_job_does_not_wait_when_concurrent_attachment_claim_is_lost(
@@ -838,7 +882,7 @@ def test_staged_attachments_are_claimed_only_by_the_same_channel_session() -> No
 
     private_text = load_fixture("direct_text.json")
     private_text["msgId"] = "same-session-text"
-    private_text["text"] = {"content": "处理刚才的私聊文件"}
+    private_text["text"] = {"content": "请看 private.txt"}
     private_job_result = runtime.dingtalk_stream_message_service.handle_callback(
         payload=private_text,
         correlation_id="same-session-text",
@@ -882,4 +926,209 @@ def test_managed_channel_marks_file_only_ingress_as_staged_without_job() -> None
     stored = runtime.managed_channel_repository.get_event(str(event["id"]))
     assert stored["status"] == "ATTACHMENTS_STAGED"
     assert stored["job_id"] is None
+    assert runtime.agent_repository.count_rows("agent_job") == 0
+
+
+def test_named_file_waits_only_for_source_import() -> None:
+    runtime = multimodal_container(task_file_features=FEATURES)
+    _enable_in_process_attachment_import(runtime)
+    runtime.attachment_service.downloader = FakeDownloader({"wait-code": b"body\n"})
+    payload = load_fixture("file.json")
+    payload["msgId"] = "wait-source-file"
+    payload["content"] = {
+        "downloadCode": "wait-code",
+        "fileName": "input-wait.txt",
+        "fileSize": 5,
+        "contentType": "text/plain",
+    }
+    staged = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=payload,
+        correlation_id="wait-source-file",
+    )
+    assert staged.status == "attachments_staged"
+    asked = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=_group_text(msg_id="wait-source-text", content="请看 input-wait.txt 里写了什么"),
+        correlation_id="wait-source-text",
+    )
+    assert asked.status == "received"
+    job = runtime.agent_repository.get_job(asked.job_id)
+    assert job.status == JobStatus.WAITING_INPUT
+    claimed = runtime.agent_repository.list_attachments(job.id)
+    assert [item.file_name for item in claimed] == ["input-wait.txt"]
+    task = runtime.message_bus.attachments.popleft()
+    assert runtime.attachment_service.process(task.attachment_id, task.correlation_id) == "released"
+    assert runtime.agent_repository.get_job(job.id).status == JobStatus.PENDING
+
+
+def test_processing_document_metadata_executes_while_content_is_system_notice() -> None:
+    runtime = multimodal_container(task_file_features=FEATURES)
+    _enable_in_process_attachment_import(runtime)
+    runtime.attachment_service.downloader = FakeDownloader({"meta-code": b"secret-body\n"})
+    payload = load_fixture("file.json")
+    payload["msgId"] = "pending-meta-file"
+    payload["content"] = {
+        "downloadCode": "meta-code",
+        "fileName": "input-meta.txt",
+        "fileSize": 12,
+        "contentType": "text/plain",
+    }
+    runtime.dingtalk_stream_message_service.handle_callback(
+        payload=payload,
+        correlation_id="pending-meta-file",
+    )
+    task = runtime.message_bus.attachments.popleft()
+    assert runtime.attachment_service.process(task.attachment_id, task.correlation_id) == "staged"
+    _mark_readability(runtime, file_name="input-meta.txt", status="PENDING")
+
+    metadata = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=_group_text(msg_id="pending-meta-text", content="input-meta.txt 叫什么名字？"),
+        correlation_id="pending-meta-text",
+    )
+    assert metadata.status == "received"
+    meta_job = runtime.agent_repository.get_job(metadata.job_id)
+    assert meta_job.status == JobStatus.PENDING
+    snapshot = FileWorkspaceRepository(runtime.database).get_job_snapshot(meta_job.id)
+    items = runtime.database.execute(
+        """
+        select display_name, auto_materialize
+          from agent_job_file_snapshot_item
+         where snapshot_id = ?
+        """,
+        (snapshot["id"],),
+    )
+    assert all(not bool(row["auto_materialize"]) for row in items)
+
+    content = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=_group_text(msg_id="pending-content-text", content="总结 input-meta.txt"),
+        correlation_id="pending-content-text",
+    )
+    assert content.status == "system_notice"
+    assert runtime.agent_repository.count_rows("agent_job") == 1
+    notice = _latest_system_notice(runtime)
+    assert "可读内容" in notice["markdown"]
+    assert "agent_runtime_error" not in notice["markdown"]
+    assert runtime.database.execute_one(
+        "select count(*) as value from file_readiness_blocked_turn where status = 'OPEN'"
+    ) == {"value": 1}
+
+
+def test_quote_binds_referenced_file_instead_of_workspace_siblings() -> None:
+    runtime = multimodal_container(task_file_features=FEATURES)
+    _enable_in_process_attachment_import(runtime)
+    sources = {"quote-1": b"one\n", "quote-2": b"two\n"}
+    runtime.attachment_service.downloader = FakeDownloader(sources)
+    for ordinal in (1, 2):
+        payload = load_fixture("file.json")
+        payload["msgId"] = f"quoted-file-{ordinal}"
+        payload["content"] = {
+            "downloadCode": f"quote-{ordinal}",
+            "fileName": f"quoted-{ordinal}.txt",
+            "fileSize": len(sources[f"quote-{ordinal}"]),
+            "contentType": "text/plain",
+        }
+        runtime.dingtalk_stream_message_service.handle_callback(
+            payload=payload,
+            correlation_id=f"quoted-file-{ordinal}",
+        )
+    while runtime.message_bus.attachments:
+        task = runtime.message_bus.attachments.popleft()
+        runtime.attachment_service.process(task.attachment_id, task.correlation_id)
+
+    asked = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=_group_text(
+            msg_id="quote-text",
+            content="请总结这个附件",
+            original_msg_id="quoted-file-2",
+        ),
+        correlation_id="quote-text",
+    )
+    assert asked.status == "received"
+    claimed = runtime.agent_repository.list_attachments(asked.job_id)
+    assert [item.file_name for item in claimed] == ["quoted-2.txt"]
+
+
+def test_blocked_turn_notifies_once_without_replaying_and_ordinary_upload_stays_silent() -> None:
+    runtime = multimodal_container(task_file_features=FEATURES)
+    _enable_in_process_attachment_import(runtime)
+    runtime.attachment_service.downloader = FakeDownloader(
+        {"ready-code": b"ready-body\n", "silent-code": b"silent\n"}
+    )
+    silent = load_fixture("file.json")
+    silent["msgId"] = "silent-upload"
+    silent["content"] = {
+        "downloadCode": "silent-code",
+        "fileName": "silent.txt",
+        "fileSize": 7,
+        "contentType": "text/plain",
+    }
+    runtime.dingtalk_stream_message_service.handle_callback(
+        payload=silent,
+        correlation_id="silent-upload",
+    )
+    silent_task = runtime.message_bus.attachments.popleft()
+    runtime.attachment_service.process(silent_task.attachment_id, silent_task.correlation_id)
+    assert runtime.attachment_service.reconcile_file_readiness_notices() == {
+        "expired": 0,
+        "notified": 0,
+    }
+    assert runtime.database.execute_one(
+        "select count(*) as value from delivery_outbox where delivery_kind = 'SYSTEM_NOTICE'"
+    ) == {"value": 0}
+
+    payload = load_fixture("file.json")
+    payload["msgId"] = "blocked-ready-file"
+    payload["content"] = {
+        "downloadCode": "ready-code",
+        "fileName": "blocked.txt",
+        "fileSize": 11,
+        "contentType": "text/plain",
+    }
+    runtime.dingtalk_stream_message_service.handle_callback(
+        payload=payload,
+        correlation_id="blocked-ready-file",
+    )
+    task = runtime.message_bus.attachments.popleft()
+    runtime.attachment_service.process(task.attachment_id, task.correlation_id)
+    _mark_readability(runtime, file_name="blocked.txt", status="PENDING")
+    blocked = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=_group_text(msg_id="blocked-content", content="总结 blocked.txt"),
+        correlation_id="blocked-content",
+    )
+    assert blocked.status == "system_notice"
+    assert runtime.agent_repository.count_rows("agent_job") == 0
+    first_notice = _latest_system_notice(runtime)
+    _mark_readability(runtime, file_name="blocked.txt", status="AVAILABLE")
+    result = runtime.attachment_service.reconcile_file_readiness_notices()
+    assert result["notified"] == 1
+    assert result["expired"] == 0
+    ready = _latest_system_notice(runtime)
+    assert ready["id"] != first_notice["id"]
+    assert "已经生成" in ready["markdown"]
+    assert runtime.agent_repository.count_rows("agent_job") == 0
+    assert runtime.database.execute_one(
+        "select status from file_readiness_blocked_turn"
+    ) == {"status": "NOTIFIED"}
+
+    runtime.database.execute(
+        """
+        insert into file_readiness_blocked_turn
+          (id, session_id, workspace_id, user_message_id, reason_code,
+           status, created_at, expires_at, notified_at)
+        values (
+          'file_turn_expired',
+          (select session_id from file_readiness_blocked_turn limit 1),
+          (select workspace_id from file_readiness_blocked_turn limit 1),
+          (select user_message_id from file_readiness_blocked_turn limit 1),
+          'file_readable_content_not_ready',
+          'OPEN', ?, ?, null
+        )
+        """,
+        (
+            datetime.now(UTC).isoformat(),
+            (datetime.now(UTC) - timedelta(hours=1)).isoformat(),
+        ),
+    )
+    expired = runtime.attachment_service.reconcile_file_readiness_notices()
+    assert expired["expired"] == 1
+    assert expired["notified"] == 0
     assert runtime.agent_repository.count_rows("agent_job") == 0

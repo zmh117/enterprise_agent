@@ -51,6 +51,70 @@ class ResultDeliveryService:
             title="Agent 诊断报告",
         )
 
+    def enqueue_system_notice(
+        self,
+        *,
+        idempotency_key: str,
+        session_id: str,
+        reply_route: dict[str, Any],
+        title: str,
+        markdown: str,
+        reason_code: str,
+        correlation_id: str,
+        application_publication_id: str = "",
+        principal_user_id: str = "",
+        agent_publication_id: str = "",
+        notice_kind: str = "",
+        user_message_id: str = "",
+        task_workspace_id: str = "",
+    ) -> str:
+        route = ReplyRoute.from_dict(reply_route)
+        canonical_route = json.dumps(
+            reply_route or {"type": "none"},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        event = self.repository.create_system_notice_event(
+            idempotency_key=idempotency_key,
+            session_id=session_id,
+            application_publication_id=application_publication_id,
+            delivery_binding={
+                "delivery_kind": "system_notice",
+                "title": title,
+                "markdown": markdown,
+                "route_type": route.type,
+                "connector_id": route.connector_id,
+                "route_hash": hashlib.sha256(canonical_route.encode("utf-8")).hexdigest(),
+                "route_source": "agent_session.reply_route_json",
+                "reply_route": dict(reply_route or {"type": "none"}),
+                "reason_code": reason_code,
+                "notice_kind": notice_kind,
+                "user_message_id": user_message_id,
+                "task_workspace_id": task_workspace_id,
+            },
+            target_summary=_target_summary(route, None),
+            correlation_id=correlation_id,
+            max_attempts=self.settings.outbox_max_attempts,
+            max_replay_count=self.settings.outbox_max_replays,
+            principal_user_id=principal_user_id,
+            agent_publication_id=agent_publication_id,
+        )
+        self.audit_service.record(
+            "delivery.outbox.created",
+            status="PENDING",
+            summary="Session system notice persisted for independent dispatch",
+            payload={
+                "delivery_id": event.id,
+                "delivery_kind": "system_notice",
+                "route_type": route.type,
+                "connector_id": route.connector_id,
+                "session_id": session_id,
+                "reason_code": reason_code,
+            },
+        )
+        return event.id
+
     def enqueue_job_failure(
         self,
         *,
