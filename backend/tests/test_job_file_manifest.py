@@ -442,3 +442,224 @@ def test_attachment_queries_do_not_embed_or_bind_txt_only_suffix_filters(
         assert "lower(a.file_name)" not in sql
         assert "%.txt" not in sql
         assert "%.txt" not in params
+
+
+def _create_png(
+    repository: FileWorkspaceRepository,
+    *,
+    workspace_id: str,
+    file_id: str,
+    version_id: str,
+    logical_name: str = "image-1.png",
+    with_representation: bool = True,
+) -> None:
+    owner = FileOwner(WorkspaceOwnerType.PRIVATE_USER, user_id="user-a")
+    repository.create_file(
+        file_id=file_id,
+        tenant_id="tenant-a",
+        owner=owner,
+        display_name=logical_name,
+        actor_id="user-a",
+        format_code="PNG",
+        source_received_at=TIMESTAMP,
+    )
+    repository.create_version(
+        version_id=version_id,
+        file_id=file_id,
+        version_number=1,
+        version_kind=FileVersionKind.ATTACHMENT,
+        status=FileVersionStatus.AVAILABLE,
+        media_type="image/png",
+        encoding="",
+        size_bytes=12,
+        content_sha256="c" * 64,
+        object_key=f"opaque/{version_id}",
+        source_kind=FileSourceKind.MESSAGE_ATTACHMENT,
+        actor_id="user-a",
+        format_code="PNG",
+        advance_current_from="",
+    )
+    repository.link_workspace_file(
+        workspace_id=workspace_id,
+        file_id=file_id,
+        version_id=version_id,
+        logical_name=logical_name,
+        role=WorkspaceFileRole.INPUT,
+    )
+    if not with_representation:
+        return
+    markdown = b"# image caption\n"
+    repository.database.execute(
+        """
+        insert into file_processing_run
+          (id, tenant_id, source_file_id, source_version_id, processor_code,
+           processor_version, processor_build_digest, profile_code, profile_hash,
+           status, source_size_bytes, completed_at, created_by, created_at, updated_at)
+        values (?, 'tenant-a', ?, ?, 'docling-serve', '1.30.0', ?, 'docling-text-v1',
+                ?, 'SUCCEEDED', 12, ?, 'file-processing-worker', ?, ?)
+        """,
+        (
+            f"run-{version_id}",
+            file_id,
+            version_id,
+            "sha256:" + "b" * 64,
+            "d" * 64,
+            TIMESTAMP,
+            TIMESTAMP,
+            TIMESTAMP,
+        ),
+    )
+    repository.database.execute(
+        """
+        insert into file_representation
+          (id, processing_run_id, tenant_id, source_file_id, source_version_id,
+           kind, media_type, encoding, status, size_bytes, content_sha256,
+           object_key, profile_hash, created_at)
+        values (?, ?, 'tenant-a', ?, ?, 'MARKDOWN', 'text/markdown', 'utf-8',
+                'AVAILABLE', ?, ?, ?, ?, ?)
+        """,
+        (
+            f"representation-{version_id}",
+            f"run-{version_id}",
+            file_id,
+            version_id,
+            len(markdown),
+            "e" * 64,
+            f"opaque/representation-{version_id}",
+            "d" * 64,
+            TIMESTAMP,
+        ),
+    )
+
+
+def test_job_manifest_freezes_workspace_image_as_on_demand_candidate() -> None:
+    repository, service = _service()
+    workspace = service.resolve_workspace(
+        tenant_id="tenant-a",
+        session_id="session-file",
+        requester_id="user-a",
+        conversation_type="direct",
+        enterprise_id="tenant-a",
+        connector_id="connector-a",
+        conversation_id="conversation-a",
+        sender_staff_id="staff-a",
+        publication_id="app-file-p1",
+        retention_period="WEEK",
+        attachments=(),
+        file_references=(),
+        requests_file_output=True,
+    )
+    assert workspace is not None
+    workspace_id = str(workspace["id"])
+    _create_png(
+        repository,
+        workspace_id=workspace_id,
+        file_id="file-image",
+        version_id="version-image",
+    )
+    _insert_job(repository, job_id="job-image-workspace", workspace_id=workspace_id)
+    service.register_request(
+        job_id="job-image-workspace",
+        workspace=workspace,
+        requester_id="user-a",
+        publication_id="app-file-p1",
+        file_references=(),
+    )
+    snapshot = service.finalize("job-image-workspace")
+    assert snapshot is not None
+    item = snapshot["items"][0]
+    assert item["file_id"] == "file-image"
+    assert item["format_code"] == "PNG"
+    assert item["source_kind"] == "WORKSPACE"
+    assert item["auto_materialize"] == 0
+    assert item["representation_id"] == "representation-version-image"
+    runtime = service.runtime_manifest("job-image-workspace")
+    assert runtime["items"][0]["auto_materialize"] is False
+    assert runtime["items"][0]["representation_id"] == "representation-version-image"
+
+
+def test_job_manifest_explicit_image_reference_auto_materializes_markdown() -> None:
+    repository, service = _service()
+    workspace = service.resolve_workspace(
+        tenant_id="tenant-a",
+        session_id="session-file",
+        requester_id="user-a",
+        conversation_type="direct",
+        enterprise_id="tenant-a",
+        connector_id="connector-a",
+        conversation_id="conversation-a",
+        sender_staff_id="staff-a",
+        publication_id="app-file-p1",
+        retention_period="WEEK",
+        attachments=(),
+        file_references=(),
+        requests_file_output=True,
+    )
+    assert workspace is not None
+    workspace_id = str(workspace["id"])
+    _create_png(
+        repository,
+        workspace_id=workspace_id,
+        file_id="file-bound-image",
+        version_id="version-bound-image",
+    )
+    _insert_job(repository, job_id="job-image-bound", workspace_id=workspace_id)
+    service.register_request(
+        job_id="job-image-bound",
+        workspace=workspace,
+        requester_id="user-a",
+        publication_id="app-file-p1",
+        file_references=(
+            ChannelFileReference(file_id="file-bound-image", version_id="version-bound-image"),
+        ),
+    )
+    snapshot = service.finalize("job-image-bound")
+    assert snapshot is not None
+    item = snapshot["items"][0]
+    assert item["source_kind"] == "EXPLICIT_REFERENCE"
+    assert item["auto_materialize"] == 1
+    assert item["representation_id"] == "representation-version-bound-image"
+
+
+def test_job_manifest_pending_workspace_image_is_metadata_only() -> None:
+    repository, service = _service()
+    workspace = service.resolve_workspace(
+        tenant_id="tenant-a",
+        session_id="session-file",
+        requester_id="user-a",
+        conversation_type="direct",
+        enterprise_id="tenant-a",
+        connector_id="connector-a",
+        conversation_id="conversation-a",
+        sender_staff_id="staff-a",
+        publication_id="app-file-p1",
+        retention_period="WEEK",
+        attachments=(),
+        file_references=(),
+        requests_file_output=True,
+    )
+    assert workspace is not None
+    workspace_id = str(workspace["id"])
+    _create_png(
+        repository,
+        workspace_id=workspace_id,
+        file_id="file-pending-image",
+        version_id="version-pending-image",
+        with_representation=False,
+    )
+    _insert_job(repository, job_id="job-image-pending", workspace_id=workspace_id)
+    service.register_request(
+        job_id="job-image-pending",
+        workspace=workspace,
+        requester_id="user-a",
+        publication_id="app-file-p1",
+        file_references=(),
+    )
+    snapshot = service.finalize("job-image-pending")
+    assert snapshot is not None
+    item = snapshot["items"][0]
+    assert item["format_code"] == "PNG"
+    assert item["auto_materialize"] == 0
+    assert item["representation_id"] is None
+    runtime = service.runtime_manifest("job-image-pending")
+    assert "representation_id" not in runtime["items"][0]

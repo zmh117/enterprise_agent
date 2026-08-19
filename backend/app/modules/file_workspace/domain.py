@@ -80,6 +80,14 @@ class FileAction(StrEnum):
     DELIVER = "DELIVER"
 
 
+GOVERNED_DOCUMENT_FORMATS = frozenset(
+    {"PDF", "DOCX", "PPTX", "XLSX", "PNG", "JPEG", "WEBP"}
+)
+DOCUMENT_MANIFEST_ACTIONS = frozenset(
+    {FileAction.READ_METADATA, FileAction.RETAIN, FileAction.DELIVER}
+)
+
+
 class CommitUserIntent(StrEnum):
     MODIFY = "MODIFY"
     GENERATE = "GENERATE"

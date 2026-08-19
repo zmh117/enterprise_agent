@@ -4,7 +4,12 @@ import json
 from dataclasses import dataclass
 from typing import Any, Never, Protocol
 
-from app.modules.file_workspace.domain import FileAction, WorkspaceOwnerType
+from app.modules.file_workspace.domain import (
+    DOCUMENT_MANIFEST_ACTIONS,
+    GOVERNED_DOCUMENT_FORMATS,
+    FileAction,
+    WorkspaceOwnerType,
+)
 from app.modules.file_workspace.text_format_policy import (
     get_text_format_policy,
     normalize_file_format_policy_version,
@@ -158,12 +163,13 @@ class FileAuthorizationService:
             self._deny("file_manifest_actions_invalid")
         if item.get("representation_id"):
             if (
-                str(item.get("format_code") or "")
-                not in {"PDF", "DOCX", "PPTX", "XLSX", "PNG", "JPEG", "WEBP"}
-                or frozen_actions
-                != {FileAction.READ_METADATA, FileAction.RETAIN, FileAction.DELIVER}
+                str(item.get("format_code") or "") not in GOVERNED_DOCUMENT_FORMATS
+                or frozen_actions != DOCUMENT_MANIFEST_ACTIONS
                 or action not in frozen_actions
             ):
+                self._deny("file_manifest_action_denied")
+        elif str(item.get("format_code") or "") in GOVERNED_DOCUMENT_FORMATS:
+            if frozen_actions != DOCUMENT_MANIFEST_ACTIONS or action not in frozen_actions:
                 self._deny("file_manifest_action_denied")
         else:
             policy_version = normalize_file_format_policy_version(

@@ -213,6 +213,20 @@ def test_private_file_authorization_rechecks_job_publication_owner_and_manifest_
     assert listed["items"][0]["readability_status"] == "NOT_REQUIRED"
     assert listed["observed_at"].endswith("+00:00")
     assert "created_at" not in listed["items"][0]
+    _create_file(
+        repository,
+        file_id="file-after-freeze",
+        version_id="version-after-freeze",
+        owner=owner,
+        workspace_id="workspace-private",
+        logical_name="after-freeze.txt",
+    )
+    listed_again = application.invoke(
+        context=context,
+        tool_identifier="task_workspace_list_files",
+        arguments={},
+    )
+    assert [item["file_id"] for item in listed_again["items"]] == ["file-private"]
 
     metadata = application.invoke(
         context=context,

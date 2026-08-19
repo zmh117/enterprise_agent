@@ -8,6 +8,8 @@ from typing import Any, Never
 
 from app.modules.channel.domain.channel_event import ChannelFileReference
 from app.modules.file_workspace.domain import (
+    DOCUMENT_MANIFEST_ACTIONS,
+    GOVERNED_DOCUMENT_FORMATS,
     FileAction,
     FileOwner,
     RetentionPeriod,
@@ -310,9 +312,8 @@ class JobFileManifestService:
             representation: dict[str, Any] = {}
             if representation_id:
                 if (
-                    format_code not in {"PDF", "DOCX", "PPTX", "XLSX", "PNG", "JPEG", "WEBP"}
-                    or frozen_actions
-                    != {FileAction.READ_METADATA, FileAction.RETAIN, FileAction.DELIVER}
+                    format_code not in GOVERNED_DOCUMENT_FORMATS
+                    or frozen_actions != DOCUMENT_MANIFEST_ACTIONS
                     or str(item.get("representation_kind") or "") != "MARKDOWN"
                     or str(item.get("representation_format_code") or "") != "MARKDOWN"
                     or int(item.get("representation_size_bytes") or 0) < 1
@@ -332,6 +333,13 @@ class JobFileManifestService:
                     "representation_format_code": "MARKDOWN",
                     "representation_created_at": str(item["representation_created_at"]),
                 }
+            elif format_code in GOVERNED_DOCUMENT_FORMATS:
+                if frozen_actions != DOCUMENT_MANIFEST_ACTIONS:
+                    raise NonRetryableExecutionError(
+                        "Job File Manifest actions exceed the frozen format policy",
+                        safe_message="任务文件清单无效",
+                        error_code="file_manifest_actions_invalid",
+                    )
             else:
                 definition = get_text_format_policy(policy_version).by_code(format_code)
                 if not frozen_actions.issubset(definition.actions):
@@ -546,14 +554,20 @@ class JobFileManifestService:
         by_identity: dict[tuple[str, str], dict[str, Any]] = {}
         for row in regular:
             self._require_file_boundary(row, workspace)
-            if not self._eligible_text(row, policy_version=policy_version):
-                continue
-            by_identity[(str(row["file_id"]), str(row["version_id"]))] = self._item(
-                row,
-                source_kind=SnapshotSourceKind.WORKSPACE,
-                auto_materialize=False,
-                policy_version=policy_version,
-            )
+            identity = (str(row["file_id"]), str(row["version_id"]))
+            if self._eligible_text(row, policy_version=policy_version):
+                by_identity[identity] = self._item(
+                    row,
+                    source_kind=SnapshotSourceKind.WORKSPACE,
+                    auto_materialize=False,
+                    policy_version=policy_version,
+                )
+            elif self._eligible_document(row):
+                by_identity[identity] = self._document_item(
+                    row,
+                    source_kind=SnapshotSourceKind.WORKSPACE,
+                    auto_materialize=False,
+                )
 
         explicit = request.get("explicit_references") or []
         for reference in explicit:
@@ -567,17 +581,24 @@ class JobFileManifestService:
             if reference_row is None:
                 self._invalid_reference()
             self._require_file_boundary(reference_row, workspace)
-            if not self._eligible_text(reference_row, policy_version=policy_version):
-                self._invalid_reference()
-            by_identity[(str(reference_row["file_id"]), str(reference_row["version_id"]))] = (
-                self._item(
+            identity = (str(reference_row["file_id"]), str(reference_row["version_id"]))
+            if self._eligible_text(reference_row, policy_version=policy_version):
+                by_identity[identity] = self._item(
                     reference_row,
                     source_kind=SnapshotSourceKind.EXPLICIT_REFERENCE,
                     auto_materialize=True,
                     conflict_candidate=bool(reference_row.get("conflict_candidate")),
                     policy_version=policy_version,
                 )
-            )
+            elif self._eligible_document(reference_row):
+                by_identity[identity] = self._document_item(
+                    reference_row,
+                    source_kind=SnapshotSourceKind.EXPLICIT_REFERENCE,
+                    auto_materialize=True,
+                    conflict_candidate=bool(reference_row.get("conflict_candidate")),
+                )
+            else:
+                self._invalid_reference()
 
         text_attachments = self.repository.database.execute(
             """
@@ -733,13 +754,21 @@ class JobFileManifestService:
         )
         for row in conflicts:
             self._require_file_boundary(row, workspace)
+            identity = (str(row["file_id"]), str(row["version_id"]))
             if self._eligible_text(row, policy_version=policy_version):
-                by_identity[(str(row["file_id"]), str(row["version_id"]))] = self._item(
+                by_identity[identity] = self._item(
                     row,
                     source_kind=SnapshotSourceKind.CONFLICT,
                     auto_materialize=False,
                     conflict_candidate=True,
                     policy_version=policy_version,
+                )
+            elif self._eligible_document(row):
+                by_identity[identity] = self._document_item(
+                    row,
+                    source_kind=SnapshotSourceKind.CONFLICT,
+                    auto_materialize=False,
+                    conflict_candidate=True,
                 )
         items = list(by_identity.values())
         job = (
@@ -828,6 +857,82 @@ class JobFileManifestService:
             ),
             "version_created_at": str(row["version_created_at"]),
         }
+
+    def _document_item(
+        self,
+        row: dict[str, Any],
+        *,
+        source_kind: SnapshotSourceKind,
+        auto_materialize: bool,
+        conflict_candidate: bool = False,
+    ) -> dict[str, Any]:
+        representation = self._latest_markdown_representation(str(row["version_id"]))
+        ready = representation is not None
+        item = {
+            "file_id": str(row["file_id"]),
+            "version_id": str(row["version_id"]),
+            "display_name": str(row["display_name"]),
+            "format_code": str(row.get("file_format_code") or "PDF"),
+            "source_kind": source_kind.value,
+            "allowed_actions": [
+                action.value for action in FileAction if action in DOCUMENT_MANIFEST_ACTIONS
+            ],
+            "auto_materialize": bool(auto_materialize and ready),
+            "conflict_candidate": conflict_candidate,
+            "source_received_at": (
+                str(row.get("source_received_at")) if row.get("source_received_at") else None
+            ),
+            "version_created_at": str(row["version_created_at"]),
+            "representation_id": None,
+            "representation_kind": None,
+            "representation_size_bytes": None,
+            "representation_sha256": None,
+            "representation_format_code": None,
+            "representation_created_at": None,
+        }
+        if representation is None:
+            return item
+        item.update(
+            {
+                "representation_id": str(representation["representation_id"]),
+                "representation_kind": "MARKDOWN",
+                "representation_size_bytes": int(representation["representation_size_bytes"]),
+                "representation_sha256": str(representation["representation_sha256"]),
+                "representation_format_code": "MARKDOWN",
+                "representation_created_at": str(representation["representation_created_at"]),
+            }
+        )
+        return item
+
+    def _latest_markdown_representation(self, version_id: str) -> dict[str, Any] | None:
+        if not version_id:
+            return None
+        return self.repository.database.execute_one(
+            """
+            select id as representation_id,
+                   size_bytes as representation_size_bytes,
+                   content_sha256 as representation_sha256,
+                   created_at as representation_created_at
+              from file_representation
+             where source_version_id = ? and kind = 'MARKDOWN'
+               and status in ('AVAILABLE', 'PARTIAL')
+               and coalesce(size_bytes, 0) > 0
+               and length(coalesce(content_sha256, '')) = 64
+             order by created_at desc
+             limit 1
+            """,
+            (version_id,),
+        )
+
+    @staticmethod
+    def _eligible_document(row: dict[str, Any]) -> bool:
+        format_code = str(row.get("file_format_code") or "")
+        return (
+            format_code in GOVERNED_DOCUMENT_FORMATS
+            and str(row.get("version_format_code") or "") == format_code
+            and str(row.get("file_status") or "") == "ACTIVE"
+            and str(row.get("version_status") or "") in {"AVAILABLE", "CONFLICT"}
+        )
 
     @staticmethod
     def _eligible_text(row: dict[str, Any], *, policy_version: object) -> bool:

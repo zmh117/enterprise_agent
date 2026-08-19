@@ -15,7 +15,7 @@ BindReason = Literal[
 ]
 GateAction = Literal["enqueue_job", "wait_source", "system_notice"]
 
-DEIXIS_PATTERNS: tuple[str, ...] = (
+GENERIC_DEIXIS_PATTERNS: tuple[str, ...] = (
     "这个文件",
     "这份文件",
     "该文件",
@@ -23,17 +23,37 @@ DEIXIS_PATTERNS: tuple[str, ...] = (
     "刚才那个",
     "刚才的文件",
     "刚才那份",
+    "刚才上传的文件",
     "上面的附件",
     "这个附件",
     "这份附件",
-    "这张图",
-    "这张图片",
     "这个表",
     "这张表",
     "该文档",
     "这份文档",
     "这个文档",
 )
+
+IMAGE_DEIXIS_PATTERNS: tuple[str, ...] = (
+    "这张图",
+    "这张图片",
+    "那张图",
+    "那张图片",
+    "这个图",
+    "这个图片",
+    "发的图片",
+    "发的图",
+    "传来的图片",
+    "上传的图片",
+    "刚才的图片",
+    "刚才那张",
+    "图片什么内容",
+    "图片的内容",
+    "图片里",
+)
+
+DEIXIS_PATTERNS: tuple[str, ...] = GENERIC_DEIXIS_PATTERNS + IMAGE_DEIXIS_PATTERNS
+IMAGE_NAME_SUFFIXES: tuple[str, ...] = (".png", ".jpg", ".jpeg", ".webp")
 
 PLURAL_DEIXIS_PATTERNS: tuple[str, ...] = (
     "这些文件",
@@ -140,8 +160,16 @@ def infer_capability(text: str) -> FileCapability:
     return "READABLE_CONTENT"
 
 
+def has_generic_deixis(text: str) -> bool:
+    return any(token in text for token in GENERIC_DEIXIS_PATTERNS)
+
+
+def has_image_deixis(text: str) -> bool:
+    return any(token in text for token in IMAGE_DEIXIS_PATTERNS)
+
+
 def has_deixis(text: str) -> bool:
-    return any(token in text for token in DEIXIS_PATTERNS)
+    return has_generic_deixis(text) or has_image_deixis(text)
 
 
 def has_plural_deixis(text: str) -> bool:
@@ -240,9 +268,12 @@ def resolve_file_context(
     if not has_deixis(text) and not has_plural_deixis(text):
         return ResolverDecision(dependencies=())
 
-    ready = [item for item in candidates if item.source_status in SOURCE_TERMINAL]
+    pool = _deixis_candidate_pool(text, candidates)
+    if not pool:
+        return ResolverDecision(dependencies=())
+    ready = [item for item in pool if item.source_status in SOURCE_TERMINAL]
     if not ready:
-        ready = list(candidates)
+        ready = list(pool)
     if len(ready) == 1:
         return ResolverDecision(
             dependencies=(_dependency_from_candidate(ready[0], capability, "DEIXIS"),)
@@ -367,6 +398,20 @@ def _dependency_from_candidate(
         source_status=item.source_status,
         readability_status=item.readability_status,
     )
+
+
+def _deixis_candidate_pool(
+    text: str,
+    candidates: tuple[WorkspaceFileCandidate, ...],
+) -> list[WorkspaceFileCandidate]:
+    if has_image_deixis(text):
+        return [item for item in candidates if _is_image_candidate(item)]
+    return list(candidates)
+
+
+def _is_image_candidate(item: WorkspaceFileCandidate) -> bool:
+    name = normalize_display_name(item.display_name)
+    return name.endswith(IMAGE_NAME_SUFFIXES)
 
 
 def _unique_filename_hits(

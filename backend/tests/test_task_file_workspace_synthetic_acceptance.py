@@ -19,6 +19,14 @@ from app.modules.file_workspace.authorization import (
     FileAuthorizationService,
 )
 from app.modules.file_workspace.delivery_service import FileVersionDeliveryService
+from app.modules.file_workspace.domain import (
+    FileOwner,
+    FileSourceKind,
+    FileVersionKind,
+    FileVersionStatus,
+    WorkspaceFileRole,
+    WorkspaceOwnerType,
+)
 from app.modules.file_workspace.repository import FileWorkspaceRepository
 from app.modules.file_workspace.streaming_service import GovernedFileStreamingService
 from app.modules.file_workspace.streaming_service import INTERNAL_TRANSFER_META
@@ -1132,3 +1140,152 @@ def test_blocked_turn_notifies_once_without_replaying_and_ordinary_upload_stays_
     assert expired["expired"] == 1
     assert expired["notified"] == 0
     assert runtime.agent_repository.count_rows("agent_job") == 0
+
+
+def test_today_image_question_binds_ready_workspace_png_and_unrelated_text_does_not() -> None:
+    runtime = multimodal_container(task_file_features=FEATURES)
+    file_repository, _storage = _enable_in_process_attachment_import(runtime)
+    runtime.attachment_service.downloader = FakeDownloader({"notes-code": b"notes\n"})
+    payload = load_fixture("file.json")
+    payload["msgId"] = "prior-notes-file"
+    payload["content"] = {
+        "downloadCode": "notes-code",
+        "fileName": "notes.txt",
+        "fileSize": 6,
+        "contentType": "text/plain",
+    }
+    runtime.dingtalk_stream_message_service.handle_callback(
+        payload=payload,
+        correlation_id="prior-notes-file",
+    )
+    task = runtime.message_bus.attachments.popleft()
+    runtime.attachment_service.process(task.attachment_id, task.correlation_id)
+
+    workspace = runtime.database.execute_one(
+        "select * from task_workspace where status = 'ACTIVE'"
+    )
+    assert workspace is not None
+    owner_type = WorkspaceOwnerType(str(workspace["owner_type"]))
+    if owner_type is WorkspaceOwnerType.PRIVATE_USER:
+        owner = FileOwner(owner_type, user_id=str(workspace["owner_user_id"]))
+    else:
+        owner = FileOwner(
+            owner_type,
+            enterprise_id=str(workspace["owner_enterprise_id"]),
+            connector_id=str(workspace["owner_connector_id"]),
+            conversation_id=str(workspace["owner_conversation_id"]),
+        )
+    markdown = b"a red square\n"
+    file_repository.create_file(
+        file_id="file-today-image",
+        tenant_id=str(workspace["tenant_id"]),
+        owner=owner,
+        display_name="image-1-980757d6.png",
+        actor_id="file-worker",
+        format_code="PNG",
+        source_received_at="2026-08-19T01:40:47+00:00",
+    )
+    file_repository.create_version(
+        version_id="version-today-image",
+        file_id="file-today-image",
+        version_number=1,
+        version_kind=FileVersionKind.ATTACHMENT,
+        status=FileVersionStatus.AVAILABLE,
+        media_type="image/png",
+        encoding="",
+        size_bytes=12,
+        content_sha256="f" * 64,
+        object_key="opaque/version-today-image",
+        source_kind=FileSourceKind.MESSAGE_ATTACHMENT,
+        actor_id="file-worker",
+        format_code="PNG",
+        advance_current_from="",
+    )
+    file_repository.link_workspace_file(
+        workspace_id=str(workspace["id"]),
+        file_id="file-today-image",
+        version_id="version-today-image",
+        logical_name="image-1-980757d6.png",
+        role=WorkspaceFileRole.INPUT,
+    )
+    runtime.database.execute(
+        """
+        insert into file_processing_run
+          (id, tenant_id, source_file_id, source_version_id, processor_code,
+           processor_version, processor_build_digest, profile_code, profile_hash,
+           status, source_size_bytes, completed_at, created_by, created_at, updated_at)
+        values ('run-today-image', ?, 'file-today-image', 'version-today-image',
+                'docling-serve', '1.30.0', ?, 'docling-text-v1', ?, 'SUCCEEDED',
+                12, ?, 'file-processing-worker', ?, ?)
+        """,
+        (
+            str(workspace["tenant_id"]),
+            "sha256:" + "b" * 64,
+            "d" * 64,
+            datetime.now(UTC).isoformat(),
+            datetime.now(UTC).isoformat(),
+            datetime.now(UTC).isoformat(),
+        ),
+    )
+    runtime.database.execute(
+        """
+        insert into file_representation
+          (id, processing_run_id, tenant_id, source_file_id, source_version_id,
+           kind, media_type, encoding, status, size_bytes, content_sha256,
+           object_key, profile_hash, created_at)
+        values ('representation-today-image', 'run-today-image', ?,
+                'file-today-image', 'version-today-image', 'MARKDOWN',
+                'text/markdown', 'utf-8', 'AVAILABLE', ?, ?,
+                'opaque/representation-today-image', ?, ?)
+        """,
+        (
+            str(workspace["tenant_id"]),
+            len(markdown),
+            "e" * 64,
+            "d" * 64,
+            datetime.now(UTC).isoformat(),
+        ),
+    )
+
+    unrelated = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=_group_text(msg_id="unrelated-nearby", content="昨天的附近有什么安排"),
+        correlation_id="unrelated-nearby",
+    )
+    assert unrelated.status == "received"
+    unrelated_job = runtime.agent_repository.get_job(unrelated.job_id)
+    unrelated_snapshot = file_repository.get_job_snapshot(unrelated_job.id)
+    unrelated_items = {
+        str(row["display_name"]): row
+        for row in runtime.database.execute(
+            """
+            select display_name, source_kind, auto_materialize, representation_id
+              from agent_job_file_snapshot_item
+             where snapshot_id = ?
+            """,
+            (unrelated_snapshot["id"],),
+        )
+    }
+    assert "image-1-980757d6.png" in unrelated_items
+    assert unrelated_items["image-1-980757d6.png"]["source_kind"] == "WORKSPACE"
+    assert not bool(unrelated_items["image-1-980757d6.png"]["auto_materialize"])
+    assert runtime.agent_repository.list_attachments(unrelated_job.id) == []
+
+    asked = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=_group_text(msg_id="today-image-content", content="今天发的图片什么内容"),
+        correlation_id="today-image-content",
+    )
+    assert asked.status == "received"
+    asked_job = runtime.agent_repository.get_job(asked.job_id)
+    asked_snapshot = file_repository.get_job_snapshot(asked_job.id)
+    image_item = runtime.database.execute_one(
+        """
+        select display_name, source_kind, auto_materialize, representation_id
+          from agent_job_file_snapshot_item
+         where snapshot_id = ? and display_name = 'image-1-980757d6.png'
+        """,
+        (asked_snapshot["id"],),
+    )
+    assert image_item is not None
+    assert image_item["source_kind"] == "EXPLICIT_REFERENCE"
+    assert bool(image_item["auto_materialize"]) is True
+    assert image_item["representation_id"] == "representation-today-image"

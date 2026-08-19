@@ -300,6 +300,50 @@ def test_worker_rejects_v13_document_item_without_complete_representation() -> N
     assert invalid.value.code == "runtime_request_invalid"
 
 
+def test_worker_accepts_v13_metadata_only_document_candidate() -> None:
+    request = _v13_document_manifest_request()
+    document = next(
+        item
+        for item in request["file_context"]["file_manifest"]["items"]
+        if item["format_code"] == "DOCX"
+    )
+    document["auto_materialize"] = False
+    for field in (
+        "representation_id",
+        "representation_kind",
+        "representation_size_bytes",
+        "representation_sha256",
+        "representation_format_code",
+        "representation_created_at",
+    ):
+        document.pop(field, None)
+    request["request_digest"] = canonical_request_digest(request)
+    assert validate_execution_request(request) == request
+
+
+def test_worker_rejects_auto_materialized_document_without_representation() -> None:
+    request = _v13_document_manifest_request()
+    document = next(
+        item
+        for item in request["file_context"]["file_manifest"]["items"]
+        if item["format_code"] == "DOCX"
+    )
+    document["auto_materialize"] = True
+    for field in (
+        "representation_id",
+        "representation_kind",
+        "representation_size_bytes",
+        "representation_sha256",
+        "representation_format_code",
+        "representation_created_at",
+    ):
+        document.pop(field, None)
+    request["request_digest"] = canonical_request_digest(request)
+    with pytest.raises(RuntimeProtocolError) as invalid:
+        validate_execution_request(request)
+    assert invalid.value.code == "runtime_file_representation_invalid"
+
+
 def test_worker_rejects_v13_text_item_carrying_document_representation() -> None:
     request = _v13_document_manifest_request()
     items = request["file_context"]["file_manifest"]["items"]

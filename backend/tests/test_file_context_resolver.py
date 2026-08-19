@@ -142,6 +142,75 @@ def test_substring_without_full_filename_does_not_bind() -> None:
     assert decision.dependencies == ()
 
 
+def test_image_content_question_binds_unique_latest_image() -> None:
+    decision = resolve_file_context(
+        text="今天发的图片什么内容",
+        candidates=(
+            WorkspaceFileCandidate(
+                file_id="f-old",
+                version_id="v-old",
+                display_name="notes.txt",
+                source_status="READY",
+                readability_status="NOT_REQUIRED",
+                source_ready_at="2026-08-19T02:00:00+00:00",
+            ),
+            WorkspaceFileCandidate(
+                file_id="f-image",
+                version_id="v-image",
+                display_name="image-1-980757d6.png",
+                source_status="READY",
+                readability_status="AVAILABLE",
+                source_ready_at="2026-08-19T01:40:47+00:00",
+            ),
+        ),
+    )
+    assert [item.version_id for item in decision.dependencies] == ["v-image"]
+    assert decision.dependencies[0].reason == "DEIXIS"
+    assert decision.dependencies[0].required_capability == "READABLE_CONTENT"
+
+
+def test_image_deixis_does_not_bind_later_non_image() -> None:
+    decision = resolve_file_context(
+        text="这张图片讲了什么？",
+        candidates=(
+            WorkspaceFileCandidate(
+                file_id="f-image",
+                version_id="v-image",
+                display_name="scan.png",
+                source_status="READY",
+                readability_status="AVAILABLE",
+                source_ready_at="2026-08-18T00:00:00+00:00",
+            ),
+            WorkspaceFileCandidate(
+                file_id="f-txt",
+                version_id="v-txt",
+                display_name="later.txt",
+                source_status="READY",
+                readability_status="NOT_REQUIRED",
+                source_ready_at="2026-08-19T00:00:00+00:00",
+            ),
+        ),
+    )
+    assert [item.display_name for item in decision.dependencies] == ["scan.png"]
+
+
+def test_image_deixis_without_images_does_not_bind() -> None:
+    decision = resolve_file_context(
+        text="今天发的图片什么内容",
+        candidates=(
+            WorkspaceFileCandidate(
+                file_id="f1",
+                version_id="v1",
+                display_name="notes.txt",
+                source_status="READY",
+                source_ready_at="2026-08-19T00:00:00+00:00",
+            ),
+        ),
+    )
+    assert decision.dependencies == ()
+    assert decision.ambiguous is False
+
+
 def test_deixis_binds_unique_latest_ready_file() -> None:
     decision = resolve_file_context(
         text="这个表有多少负责人？",

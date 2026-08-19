@@ -228,10 +228,19 @@ def _validate_file_context(payload: dict[str, Any]) -> None:
             )
         is_document = format_code not in {"TXT", "LOG", "MARKDOWN"}
         present = {field for field in representation_fields if item.get(field) is not None}
-        if is_document and len(present) != len(representation_fields):
+        if is_document and present and len(present) != len(representation_fields):
             raise RuntimeProtocolError(
                 "runtime_file_representation_invalid",
                 "document manifest item requires a complete Markdown representation",
+            )
+        if (
+            is_document
+            and item.get("auto_materialize")
+            and len(present) != len(representation_fields)
+        ):
+            raise RuntimeProtocolError(
+                "runtime_file_representation_invalid",
+                "auto-materialized document items require a complete Markdown representation",
             )
         if not is_document and present:
             raise RuntimeProtocolError(

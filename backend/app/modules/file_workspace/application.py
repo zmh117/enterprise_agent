@@ -116,7 +116,7 @@ class FileWorkspaceApplicationService:
         cursor = str(arguments.get("cursor") or "")
         rows = self.repository.database.execute(
             """
-            select wf.id as cursor, wf.logical_name, wf.role,
+            select i.id as cursor, i.display_name as logical_name, coalesce(wf.role, '') as role,
                    f.id as file_id, f.status as file_status,
                    v.id as version_id, v.version_number, v.status as version_status,
                    v.media_type, v.size_bytes, v.content_sha256,
@@ -130,13 +130,15 @@ class FileWorkspaceApplicationService:
                       order by a.readability_updated_at desc, a.id desc
                       limit 1
                    ), 'NOT_REQUIRED') as readability_status
-              from task_workspace_file wf
-              join managed_file f on f.id = wf.file_id
-              join managed_file_version v on v.id = wf.selected_version_id
-             where wf.workspace_id = ? and wf.status = 'ACTIVE' and wf.id > ?
-             order by wf.id limit ?
+              from agent_job_file_snapshot_item i
+              join managed_file f on f.id = i.file_id
+              join managed_file_version v on v.id = i.version_id
+              left join task_workspace_file wf
+                on wf.workspace_id = ? and wf.file_id = i.file_id and wf.status = 'ACTIVE'
+             where i.snapshot_id = ? and i.id > ?
+             order by i.ordinal, i.id limit ?
             """,
-            (context.workspace["id"], cursor, limit + 1),
+            (context.workspace["id"], str(context.manifest["id"]), cursor, limit + 1),
         )
         has_more = len(rows) > limit
         visible = rows[:limit]
