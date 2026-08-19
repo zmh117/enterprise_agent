@@ -188,7 +188,7 @@ class FakePythonExecutor:
 
     def probe(self, request: dict[str, Any]) -> dict[str, Any]:
         return {
-            "protocol_version": "1.0",
+            "protocol_version": CURRENT_RUNTIME_PROTOCOL_VERSION,
             "runtime_kind": "python-v1",
             "probe_id": request["probe_id"],
             "success": True,
@@ -707,7 +707,7 @@ def test_python_runtime_model_probe_and_fixed_mcp_url_boundary(tmp_path: Path) -
     dependencies, _private_key = _dependencies(tmp_path, executor)
     client = TestClient(create_app(dependencies))
     probe = {
-        "protocol_version": "1.0",
+        "protocol_version": CURRENT_RUNTIME_PROTOCOL_VERSION,
         "runtime_kind": "python-v1",
         "probe_id": "probe-1",
         "model_connection": {"revision_id": "revision-1", "config_hash": "a" * 64},
@@ -723,6 +723,7 @@ def test_python_runtime_model_probe_and_fixed_mcp_url_boundary(tmp_path: Path) -
     assert response.status_code == 200
     assert response.json()["runtime_kind"] == "python-v1"
     assert response.json()["success"] is True
+    assert response.json()["protocol_version"] == CURRENT_RUNTIME_PROTOCOL_VERSION
     assert client.get("/health").json() == {"status": "ok"}
     assert client.get("/ready").status_code == 200
     version = client.get("/version").json()
@@ -740,6 +741,31 @@ def test_python_runtime_model_probe_and_fixed_mcp_url_boundary(tmp_path: Path) -
         assert "fixed deployment boundary" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("arbitrary MCP URL was accepted")
+
+
+def test_python_runtime_model_probe_accepts_legacy_v1_request_with_current_response(
+    tmp_path: Path,
+) -> None:
+    executor = FakePythonExecutor()
+    dependencies, _private_key = _dependencies(tmp_path, executor)
+    client = TestClient(create_app(dependencies))
+    probe = {
+        "protocol_version": "1.0",
+        "runtime_kind": "python-v1",
+        "probe_id": "probe-legacy-1",
+        "model_connection": {"revision_id": "revision-1", "config_hash": "a" * 64},
+        "timeout_seconds": 3,
+    }
+
+    response = client.post(
+        "/internal/v1/model-probes",
+        json=probe,
+        headers={"Authorization": "Bearer " + dependencies.model_probe_token},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["protocol_version"] == CURRENT_RUNTIME_PROTOCOL_VERSION
 
 
 def test_python_sdk_model_probe_is_single_turn_toolless_and_bounded() -> None:
@@ -1902,3 +1928,54 @@ def test_python_runtime_decrypts_draft_probe_once_without_persisting_credential(
         pass
     else:  # pragma: no cover
         raise AssertionError("draft probe envelope replay was accepted")
+
+
+def test_python_runtime_draft_probe_accepts_allowlisted_internal_http_gateway(
+    tmp_path: Path,
+) -> None:
+    master_key = "python-draft-probe-gateway-master-key"
+    config = {
+        "schema_version": 1,
+        "protocol": "anthropic_compatible",
+        "base_url": "http://aikeyhub.gateway.mdzy/api",
+        "model": "deepseek-chat",
+        "default_opus_model": "deepseek-chat",
+        "default_sonnet_model": "deepseek-chat",
+        "default_haiku_model": "deepseek-chat",
+        "subagent_model": "deepseek-chat",
+        "effort_level": "max",
+    }
+    config_hash = hashlib.sha256(
+        json.dumps(
+            config,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    request: dict[str, Any] = {
+        "protocol_version": "1.0",
+        "runtime_kind": "python-v1",
+        "probe_id": "probe-python-draft-gateway",
+        "config_hash": config_hash,
+        "timeout_seconds": 15,
+    }
+    request["credential_envelope"] = ModelProbeEnvelopeCipher(master_key).encrypt(
+        probe_id=request["probe_id"],
+        runtime_kind=request["runtime_kind"],
+        config_hash=config_hash,
+        config=config,
+        api_key="fixture-python-draft-gateway-key",
+        lifetime_seconds=30,
+    )
+    resolver = PythonModelBindingResolver(
+        _database(tmp_path),
+        master_key=master_key,
+        allowed_hosts=("api.deepseek.com", "aikeyhub.gateway.mdzy"),
+        dns_resolver=lambda *_args, **_kwargs: [(2, 1, 6, "", ("10.20.30.40", 80))],
+    )
+
+    resolved = resolver.resolve_draft(request)
+
+    assert resolved.binding.base_url == "http://aikeyhub.gateway.mdzy/api"
+    assert resolved.api_key == "fixture-python-draft-gateway-key"

@@ -423,6 +423,84 @@ describe("runtime provenance records", () => {
     expect(screen.getByText(/不渲染正文/)).toBeInTheDocument()
   })
 
+  it("renders document source formats in job evidence instead of failing closed to fixture copy", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      response({
+        job: job(),
+        session_ref: { id: "session-1" },
+        steps: [],
+        tool_calls: [],
+        execution_summary: executionSummary(),
+        model_calls: {
+          items: [],
+          limit: 50,
+          has_more: false,
+          next_cursor: null,
+        },
+        file_workspace: {
+          enabled: true,
+          manifest_schema_version: 4,
+          file_format_policy_version: "text-v2",
+          policy_source: "job_file_manifest",
+          formats: [
+            {
+              format_code: "PNG",
+              file_count: 4,
+              allowed_actions: ["READ_METADATA", "RETAIN", "DELIVER"],
+            },
+            {
+              format_code: "DOCX",
+              file_count: 3,
+              allowed_actions: ["READ_METADATA", "RETAIN", "DELIVER"],
+            },
+            {
+              format_code: "MARKDOWN",
+              file_count: 2,
+              allowed_actions: ["MATERIALIZE"],
+            },
+          ],
+        },
+        deliveries: { events: [], attempts: [], chunks: [] },
+        webhook_events: [],
+      })
+    )
+    renderRoute(
+      "/operations/jobs/job-1",
+      "/operations/jobs/:jobId",
+      <RuntimeJobDetailPage />
+    )
+    expect(await screen.findByText("任务运行归因")).toBeInTheDocument()
+    expect(screen.queryByText("管理服务不可用")).not.toBeInTheDocument()
+    expect(screen.getByText("PNG")).toBeInTheDocument()
+    expect(screen.getByText("DOCX")).toBeInTheDocument()
+    expect(screen.getByText(/当前清单 4 个文件/)).toBeInTheDocument()
+    expect(
+      screen.getAllByText(/原件不进沙盒/).length
+    ).toBeGreaterThan(0)
+  })
+
+  it("does not reuse fixture copy when job evidence cannot be parsed", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      response({
+        job: { id: "job-1" },
+        session_ref: { id: "session-1" },
+        deliveries: { events: [], attempts: [], chunks: [] },
+      })
+    )
+    renderRoute(
+      "/operations/jobs/job-1",
+      "/operations/jobs/:jobId",
+      <RuntimeJobDetailPage />
+    )
+    expect(await screen.findByText("管理服务不可用")).toBeInTheDocument()
+    expect(
+      screen.getByText("任务证据无法展示。控制面返回了当前页面尚未识别的字段。")
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText("无法读取真实控制面数据。页面不会回退到静态 fixture。")
+    ).not.toBeInTheDocument()
+  })
+
   it("renders only whitelisted metadata from a structured tool summary", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(() =>
       response({

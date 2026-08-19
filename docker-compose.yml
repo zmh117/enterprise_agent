@@ -15,6 +15,7 @@ x-runtime-env: &runtime-env
   WEB_ALLOWED_ORIGINS: ${WEB_ALLOWED_ORIGINS:-}
   DINGTALK_RUNTIME_AUTH_TOKEN_FILE: /run/secrets/dingtalk_runtime_auth_token
   # 模型连接由管理端配置，部署环境只负责限制允许访问的主机。
+  # 内部网关示例：api.deepseek.com,aikeyhub.gateway.mdzy
   MODEL_PROVIDER_HOST_ALLOWLIST: ${MODEL_PROVIDER_HOST_ALLOWLIST:-api.deepseek.com}
   PYTHON_AGENT_RUNTIME_URL: http://python-agent-runtime:8091
   PYTHON_AGENT_RUNTIME_ALLOWED_HOSTS: python-agent-runtime

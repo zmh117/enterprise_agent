@@ -16,7 +16,6 @@ from typing import Any
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from app.modules.agent.infrastructure.generated_runtime_contracts import validate_contract
 from app.modules.agent.infrastructure.runtime_protocol import (
     CURRENT_RUNTIME_PROTOCOL_VERSION,
     RuntimeProtocolError,
@@ -314,7 +313,7 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
             raise HTTPException(status_code=401, detail="模型探针服务身份校验失败")
         payload = await request.json()
         try:
-            validate_contract("ModelProbeRequest", payload)
+            validate_runtime_contract("ModelProbeRequest", payload)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="模型探针请求无效") from exc
         if payload["runtime_kind"] != PYTHON_RUNTIME_KIND:
@@ -339,7 +338,7 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
                     "safe_message": str(getattr(exc, "safe_message", "模型连接测试失败")),
                 },
             }
-        validate_contract("ModelProbeResponse", response)
+        validate_runtime_contract("ModelProbeResponse", response)
         return response
 
     @app.post("/internal/v1/model-probes/draft")
@@ -351,7 +350,7 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
             raise HTTPException(status_code=401, detail="模型探针服务身份校验失败")
         payload = await request.json()
         try:
-            validate_contract("DraftModelProbeRequest", payload)
+            validate_runtime_contract("DraftModelProbeRequest", payload)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="草稿模型探针请求无效") from exc
         if payload["runtime_kind"] != PYTHON_RUNTIME_KIND:
@@ -376,7 +375,7 @@ def create_app(dependencies: PythonRuntimeDependencies | None = None) -> FastAPI
                     "safe_message": str(getattr(exc, "safe_message", "模型连接测试失败")),
                 },
             }
-        validate_contract("ModelProbeResponse", response)
+        validate_runtime_contract("ModelProbeResponse", response)
         return response
 
     return app

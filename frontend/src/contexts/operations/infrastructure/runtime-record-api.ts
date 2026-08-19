@@ -5,7 +5,7 @@ import {
   runtimeJobDetailSchema,
   runtimeJobPageSchema,
 } from "@/contexts/operations/domain/runtime-record"
-import { apiRequest } from "@/shared/api/api-client"
+import { ApiError, apiRequest } from "@/shared/api/api-client"
 
 export interface RuntimeJobFilters {
   start?: string
@@ -39,9 +39,18 @@ function apiTimestamp(value: string): string {
 }
 
 export async function getRuntimeJob(jobId: string) {
-  return runtimeJobDetailSchema.parse(
-    await apiRequest(`/api/agent/jobs/${encodeURIComponent(jobId)}/evidence`)
+  const payload = await apiRequest(
+    `/api/agent/jobs/${encodeURIComponent(jobId)}/evidence`
   )
+  const parsed = runtimeJobDetailSchema.safeParse(payload)
+  if (!parsed.success) {
+    throw new ApiError({
+      status: 0,
+      code: "admin_evidence_invalid",
+      message: "任务证据无法展示。控制面返回了当前页面尚未识别的字段。",
+    })
+  }
+  return parsed.data
 }
 
 export async function listRuntimeJobModelCalls(

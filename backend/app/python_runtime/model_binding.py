@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import hashlib
-import ipaddress
 import json
 import socket
 from dataclasses import dataclass
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
-from app.modules.model_connection.domain import ModelRuntimeBinding
+from app.modules.model_connection.domain import (
+    ModelRuntimeBinding,
+    ProviderUrlError,
+    validate_provider_base_url,
+)
 from app.modules.platform_config.application.secrets import EncryptedDbSecretProvider
 from app.modules.platform_config.infrastructure import PlatformConfigRepository
 from app.shared.database import Database
@@ -202,33 +205,16 @@ class PythonModelBindingResolver:
                 safe_message="模型连接配置不完整",
                 error_code="model_connection_integrity_failed",
             )
-        provider_url = urlsplit(str(config.get("base_url") or ""))
-        provider_host = (provider_url.hostname or "").lower()
-        if (
-            provider_url.scheme != "https"
-            or provider_host not in self._allowed_hosts
-            or provider_url.username is not None
-            or provider_url.password is not None
-            or provider_url.port not in {None, 443}
-            or provider_url.path.rstrip("/") != "/anthropic"
-            or provider_url.query
-            or provider_url.fragment
-        ):
+        try:
+            validate_provider_base_url(
+                str(config.get("base_url") or ""),
+                allowed_hosts=self._allowed_hosts,
+                validate_dns=True,
+                dns_resolver=self._dns_resolver,
+            )
+        except ProviderUrlError as exc:
             raise NonRetryableExecutionError(
                 "Draft model provider URL is outside the Runtime boundary",
-                safe_message="模型服务地址不受支持",
-                error_code="model_connection_host_not_allowed",
-            )
-        try:
-            addresses = {
-                str(item[4][0])
-                for item in self._dns_resolver(provider_host, 443, type=socket.SOCK_STREAM)
-            }
-            if not addresses or any(not ipaddress.ip_address(item).is_global for item in addresses):
-                raise ValueError("provider DNS is not public")
-        except Exception as exc:
-            raise NonRetryableExecutionError(
-                "Draft model provider DNS is outside the public network boundary",
                 safe_message="模型服务地址不受支持",
                 error_code="model_connection_host_not_allowed",
             ) from exc

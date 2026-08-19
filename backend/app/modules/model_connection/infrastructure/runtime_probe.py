@@ -11,7 +11,10 @@ from urllib.parse import urlsplit
 
 from jsonschema import ValidationError
 
-from app.modules.agent.infrastructure.generated_runtime_contracts import validate_contract
+from app.modules.agent.infrastructure.runtime_protocol import (
+    CURRENT_RUNTIME_PROTOCOL_VERSION,
+    validate_runtime_contract,
+)
 from app.modules.model_connection.domain import ModelRuntimeBinding
 from app.shared.database import assert_external_io_allowed
 from app.shared.exceptions import NonRetryableExecutionError
@@ -83,7 +86,7 @@ class RuntimeModelProbeClient:
     ) -> dict[str, Any]:
         timeout = max(3, min(int(timeout_seconds), 20))
         payload: dict[str, Any] = {
-            "protocol_version": "1.0",
+            "protocol_version": CURRENT_RUNTIME_PROTOCOL_VERSION,
             "runtime_kind": self.runtime_kind,
             "probe_id": f"probe-{uuid.uuid4().hex}",
             "model_connection": {
@@ -127,7 +130,7 @@ class RuntimeModelProbeClient:
             "effort_level": binding.effort_level,
         }
         payload: dict[str, Any] = {
-            "protocol_version": "1.0",
+            "protocol_version": CURRENT_RUNTIME_PROTOCOL_VERSION,
             "runtime_kind": self.runtime_kind,
             "probe_id": probe_id,
             "config_hash": binding.config_hash,
@@ -158,7 +161,7 @@ class RuntimeModelProbeClient:
         expected_revision_id: str,
         timeout: int,
     ) -> dict[str, Any]:
-        validate_contract(contract_name, payload)
+        validate_runtime_contract(contract_name, payload)
         request = urllib.request.Request(
             endpoint,
             data=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
@@ -177,7 +180,7 @@ class RuntimeModelProbeClient:
                 if response.status != 200 or len(raw) > 65_536:
                     raise ValueError("invalid model probe response")
                 result = json.loads(raw.decode("utf-8"))
-            validate_contract("ModelProbeResponse", result)
+            validate_runtime_contract("ModelProbeResponse", result)
         except urllib.error.HTTPError as exc:
             raise _safe_http_error(exc) from exc
         except (OSError, TimeoutError, UnicodeError, ValueError, ValidationError) as exc:

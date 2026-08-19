@@ -683,8 +683,8 @@ function ConnectionForm({
             <div>
               <h3 className="font-medium">1. 地址与 Credential</h3>
               <p className="mt-1 text-xs text-muted-foreground">
-                仅支持 DeepSeek 官方 HTTPS Anthropic 地址。API Key
-                只保存在当前页面内存，保存后立即清空。
+                支持 DeepSeek 官方 HTTPS Anthropic 地址，以及部署白名单中的内部网关
+                HTTP/HTTPS 地址。API Key 只保存在当前页面内存，保存后立即清空。
               </p>
             </div>
             <div className="grid gap-4 md:grid-cols-2">
@@ -959,8 +959,12 @@ function ConnectionForm({
             <CardTitle>安全边界</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm text-muted-foreground">
-            <p>仅允许 DeepSeek 官方 HTTPS 地址与 443 端口。</p>
-            <p>拒绝 URL 凭据、重定向、私网和环回 DNS 结果。</p>
+            <p>官方 DeepSeek 仅允许 HTTPS、443 端口，且路径以 /anthropic 结尾。</p>
+            <p>
+              部署白名单中的内部网关允许 HTTP/HTTPS 与自定义路径，例如
+              http://aikeyhub.gateway.mdzy/api。
+            </p>
+            <p>拒绝 URL 凭据、查询参数、片段、重定向和环回地址。</p>
             <p>发现与测试不保存 Key；最终配置才写入加密 Secret。</p>
             <p>保存连接不会自动发布 Agent 或切换业务应用。</p>
           </CardContent>

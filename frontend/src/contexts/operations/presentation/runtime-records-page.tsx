@@ -18,15 +18,18 @@ import {
   useRuntimeJob,
   useRuntimeJobs,
 } from "@/contexts/operations/application/runtime-record-queries"
-import type {
-  DeliveryAttempt,
-  DeliveryChunk,
-  DeliveryEvent,
-  ExecutionSummary,
-  ModelCall,
-  ModelCallPage,
-  FileOperations,
-  RuntimeJob,
+import {
+  DOCUMENT_RUNTIME_FILE_FORMATS,
+  TEXT_RUNTIME_FILE_FORMATS,
+  type DeliveryAttempt,
+  type DeliveryChunk,
+  type DeliveryEvent,
+  type ExecutionSummary,
+  type FileOperations,
+  type FileWorkspaceEvidence,
+  type ModelCall,
+  type ModelCallPage,
+  type RuntimeJob,
 } from "@/contexts/operations/domain/runtime-record"
 import {
   listRuntimeJobModelCalls,
@@ -406,17 +409,7 @@ export function RuntimeJobDetailPage() {
 function FileWorkspacePolicyPanel({
   value,
 }: {
-  value: {
-    enabled: boolean
-    manifest_schema_version: number | null
-    file_format_policy_version: "text-v1" | "text-v2"
-    policy_source: "job_file_manifest" | "job_route_decision" | "legacy_default"
-    formats: Array<{
-      format_code: "TXT" | "LOG" | "MARKDOWN"
-      file_count: number
-      allowed_actions: string[]
-    }>
-  }
+  value: FileWorkspaceEvidence
 }) {
   const frozen = new Map(value.formats.map((item) => [item.format_code, item]))
   const matrix =
@@ -427,6 +420,18 @@ function FileWorkspacePolicyPanel({
           ["MARKDOWN", "读取、创建、编辑、提交、发送；不渲染正文"],
         ]
       : [["TXT", "读取、创建、编辑、提交、发送"]]
+  const documentFormats = DOCUMENT_RUNTIME_FILE_FORMATS.filter((format) =>
+    frozen.has(format)
+  )
+  const otherFormats = value.formats.filter(
+    (item) =>
+      !(TEXT_RUNTIME_FILE_FORMATS as readonly string[]).includes(
+        item.format_code
+      ) &&
+      !(DOCUMENT_RUNTIME_FILE_FORMATS as readonly string[]).includes(
+        item.format_code
+      )
+  )
   return (
     <Card className="mt-4 shadow-none">
       <CardHeader>
@@ -445,10 +450,10 @@ function FileWorkspacePolicyPanel({
           。这里只展示格式和操作摘要，不读取或渲染文件正文。
         </p>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-3">
         <dl className="grid gap-3 text-sm lg:grid-cols-3">
           {matrix.map(([format, capability]) => {
-            const item = frozen.get(format as "TXT" | "LOG" | "MARKDOWN")
+            const item = frozen.get(format)
             return (
               <div key={format} className="rounded-lg border p-3">
                 <dt className="font-medium">{format}</dt>
@@ -465,6 +470,45 @@ function FileWorkspacePolicyPanel({
             )
           })}
         </dl>
+        {documentFormats.length ? (
+          <dl className="grid gap-3 text-sm lg:grid-cols-3">
+            {documentFormats.map((format) => {
+              const item = frozen.get(format)
+              return (
+                <div key={format} className="rounded-lg border p-3">
+                  <dt className="font-medium">{format}</dt>
+                  <dd className="mt-1 text-xs text-muted-foreground">
+                    元数据、保留、发送原件；可读正文只走 Markdown 表示，原件不进沙盒
+                  </dd>
+                  <dd className="mt-2 text-xs">
+                    当前清单 {item?.file_count ?? 0} 个文件
+                    {item?.allowed_actions.length
+                      ? ` · ${item.allowed_actions.join(" / ")}`
+                      : ""}
+                  </dd>
+                </div>
+              )
+            })}
+          </dl>
+        ) : null}
+        {otherFormats.length ? (
+          <dl className="grid gap-3 text-sm lg:grid-cols-3">
+            {otherFormats.map((item) => (
+              <div key={item.format_code} className="rounded-lg border p-3">
+                <dt className="font-medium">{item.format_code}</dt>
+                <dd className="mt-1 text-xs text-muted-foreground">
+                  清单已冻结该格式，页面仅展示计数和允许动作。
+                </dd>
+                <dd className="mt-2 text-xs">
+                  当前清单 {item.file_count} 个文件
+                  {item.allowed_actions.length
+                    ? ` · ${item.allowed_actions.join(" / ")}`
+                    : ""}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        ) : null}
       </CardContent>
     </Card>
   )

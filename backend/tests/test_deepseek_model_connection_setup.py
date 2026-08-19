@@ -177,6 +177,37 @@ def test_deepseek_url_derivation_supports_prefix_and_rejects_unsafe_shapes() -> 
         c.database.close()
 
 
+def test_allowlisted_internal_http_gateway_url_is_accepted() -> None:
+    _, c = make_container()
+    service = c.model_connection_service
+    gateway = "http://aikeyhub.gateway.mdzy/api"
+    try:
+        service.allowed_hosts = frozenset({"api.deepseek.com", "aikeyhub.gateway.mdzy"})
+        service.dns_resolver = lambda *args, **kwargs: [(2, 1, 6, "", ("10.20.30.40", 80))]
+        normalized = service.normalize_base_url(gateway + "/", validate_dns=True)
+        assert normalized == gateway
+        assert _deepseek_models_url(normalized) == "http://aikeyhub.gateway.mdzy/api/models"
+
+        for value in (
+            "http://aikeyhub.gateway.mdzy",
+            "http://user@aikeyhub.gateway.mdzy/api",
+            "http://aikeyhub.gateway.mdzy/api?token=1",
+            "ftp://aikeyhub.gateway.mdzy/api",
+        ):
+            with pytest.raises(NonRetryableExecutionError) as rejected:
+                service.normalize_base_url(value, validate_dns=True)
+            assert rejected.value.error_code == "deepseek_url_invalid"
+            assert rejected.value.field_errors
+
+        service.allowed_hosts = frozenset({"api.deepseek.com"})
+        with pytest.raises(NonRetryableExecutionError) as host:
+            service.normalize_base_url(gateway, validate_dns=True)
+        assert host.value.error_code == "deepseek_url_invalid"
+        assert host.value.field_errors[0]["message"] == "仅允许部署白名单中的模型提供方主机"
+    finally:
+        c.database.close()
+
+
 class _Response:
     def __init__(self, body: bytes, status: int = 200) -> None:
         self.body = body

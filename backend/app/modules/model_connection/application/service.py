@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import ipaddress
 import json
 import socket
 import time
@@ -9,7 +8,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
 from typing import Any, NoReturn, Protocol
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.identity.application.authorization import AuthorizationEvaluator
@@ -18,6 +17,10 @@ from app.modules.model_connection.domain import (
     DEFAULT_MODEL_CONNECTION_CODE,
     ModelConnectionConfig,
     ModelRuntimeBinding,
+    ProviderUrlError,
+    normalize_provider_base_url,
+    provider_models_url,
+    validate_provider_base_url,
 )
 from app.modules.model_connection.infrastructure import ModelConnectionRepository
 from app.modules.platform_config.application.secrets import SecretProviderPort
@@ -855,62 +858,20 @@ class ModelConnectionService:
         ).as_dict()
 
     def normalize_base_url(self, value: str, *, validate_dns: bool) -> str:
-        normalized = str(value or "").strip().rstrip("/")
+        normalized = normalize_provider_base_url(value)
         self.validate_base_url(normalized, validate_dns=validate_dns)
         return normalized
 
     def validate_base_url(self, value: str, *, validate_dns: bool) -> None:
         try:
-            parsed = urlsplit(value)
-            port = parsed.port
-        except ValueError as exc:
-            raise _deepseek_url_error("模型提供方地址无效") from exc
-        host = (parsed.hostname or "").lower()
-        if (
-            parsed.scheme != "https"
-            or not host
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.fragment
-            or parsed.query
-        ):
-            raise _deepseek_url_error("必须是不包含凭据、查询参数或片段的 HTTPS 地址")
-        if host not in self.allowed_hosts:
-            raise _deepseek_url_error("仅允许 DeepSeek 官方模型提供方主机")
-        if port not in {None, 443}:
-            raise _deepseek_url_error("模型提供方地址只允许使用 443 端口")
-        path = parsed.path or ""
-        path_parts = path.split("/")
-        if (
-            not path.endswith("/anthropic")
-            or "//" in path
-            or any(part in {".", ".."} for part in path_parts)
-        ):
-            raise _deepseek_url_error("DeepSeek Base URL 必须以 /anthropic 结尾")
-        if not validate_dns:
-            return
-        assert_external_io_allowed("model.dns")
-        try:
-            answers = self.dns_resolver(host, port or 443, type=socket.SOCK_STREAM)
-        except OSError as exc:
-            raise _deepseek_url_error("无法解析模型提供方主机") from exc
-        addresses = {str(item[4][0]) for item in answers if item and len(item) >= 5}
-        if not addresses:
-            raise _deepseek_url_error("无法解析模型提供方主机")
-        for address in addresses:
-            try:
-                ip = ipaddress.ip_address(address)
-            except ValueError as exc:
-                raise _deepseek_url_error("模型提供方 DNS 结果无效") from exc
-            if (
-                ip.is_private
-                or ip.is_loopback
-                or ip.is_link_local
-                or ip.is_reserved
-                or ip.is_unspecified
-                or ip.is_multicast
-            ):
-                raise _deepseek_url_error("模型提供方主机解析到了不允许的网络")
+            validate_provider_base_url(
+                value,
+                allowed_hosts=self.allowed_hosts,
+                validate_dns=validate_dns,
+                dns_resolver=self.dns_resolver,
+            )
+        except ProviderUrlError as exc:
+            raise _deepseek_url_error(exc.message) from exc
 
     def _discover_model_options(
         self,
@@ -1430,20 +1391,10 @@ def _safe_probe_error(exc: Exception) -> NonRetryableExecutionError:
 
 
 def _deepseek_models_url(base_url: str) -> str:
-    parsed = urlsplit(base_url)
-    suffix = "/anthropic"
-    if not parsed.path.endswith(suffix):
-        raise _deepseek_url_error("DeepSeek Base URL 必须以 /anthropic 结尾")
-    prefix = parsed.path[: -len(suffix)]
-    return urlunsplit(
-        (
-            parsed.scheme,
-            parsed.netloc,
-            f"{prefix}/models",
-            "",
-            "",
-        )
-    )
+    try:
+        return provider_models_url(base_url)
+    except ValueError as exc:
+        raise _deepseek_url_error("模型提供方地址无效") from exc
 
 
 def _fetch_deepseek_models(

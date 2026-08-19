@@ -14,6 +14,7 @@ from app.bootstrap import (
     _runtime_model_probe_for_service,
     _runtime_model_probes_for_service,
 )
+from app.modules.agent.infrastructure.runtime_protocol import CURRENT_RUNTIME_PROTOCOL_VERSION
 from app.modules.model_connection.infrastructure.runtime_probe import (
     RuntimeModelProbeClient,
     RuntimeModelProbeSettings,
@@ -78,7 +79,7 @@ def test_runtime_probe_sends_only_fixed_binding_and_accepts_safe_contract(
         )
         return FakeResponse(
             {
-                "protocol_version": "1.0",
+                "protocol_version": CURRENT_RUNTIME_PROTOCOL_VERSION,
                 "runtime_kind": "python-v1",
                 "probe_id": payload["probe_id"],
                 "success": True,
@@ -101,6 +102,7 @@ def test_runtime_probe_sends_only_fixed_binding_and_accepts_safe_contract(
     assert result["success"] is True
     assert observed["url"] == "http://agent-runtime:9102/internal/v1/model-probes"
     assert observed["authorization"].startswith("Bearer probe-token-")
+    assert observed["payload"]["protocol_version"] == CURRENT_RUNTIME_PROTOCOL_VERSION
     assert observed["payload"]["model_connection"] == {
         "revision_id": "revision-1",
         "config_hash": "a" * 64,
@@ -128,7 +130,7 @@ def test_draft_runtime_probe_uses_short_lived_encrypted_one_use_envelope(
         assert decrypted.api_key == "fixture-draft-key"
         return FakeResponse(
             {
-                "protocol_version": "1.0",
+                "protocol_version": CURRENT_RUNTIME_PROTOCOL_VERSION,
                 "runtime_kind": "python-v1",
                 "probe_id": payload["probe_id"],
                 "success": True,

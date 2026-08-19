@@ -272,6 +272,35 @@ export const modelCallPageSchema = z.object({
   next_cursor: z.string().nullable().default(null),
 })
 
+const TEXT_FILE_FORMAT_CODES = ["TXT", "LOG", "MARKDOWN"] as const
+const DOCUMENT_FILE_FORMAT_CODES = [
+  "PDF",
+  "DOCX",
+  "PPTX",
+  "XLSX",
+  "PNG",
+  "JPEG",
+  "WEBP",
+] as const
+
+const fileWorkspaceSchema = z.object({
+  enabled: z.boolean(),
+  manifest_schema_version: z.number().int().nullable(),
+  file_format_policy_version: z.enum(["text-v1", "text-v2"]),
+  policy_source: z.enum([
+    "job_file_manifest",
+    "job_route_decision",
+    "legacy_default",
+  ]),
+  formats: z.array(
+    z.object({
+      format_code: z.string().min(1).max(32),
+      file_count: z.number().int().nonnegative(),
+      allowed_actions: z.array(z.string()),
+    })
+  ),
+})
+
 export const runtimeJobDetailSchema = z
   .object({
     job: runtimeJobSchema,
@@ -289,31 +318,13 @@ export const runtimeJobDetailSchema = z
       next_cursor: null,
     }),
     mcp_operation_links: z.array(z.record(z.string(), z.string())).default([]),
-    file_workspace: z
-      .object({
-        enabled: z.boolean(),
-        manifest_schema_version: z.number().int().nullable(),
-        file_format_policy_version: z.enum(["text-v1", "text-v2"]),
-        policy_source: z.enum([
-          "job_file_manifest",
-          "job_route_decision",
-          "legacy_default",
-        ]),
-        formats: z.array(
-          z.object({
-            format_code: z.enum(["TXT", "LOG", "MARKDOWN"]),
-            file_count: z.number().int().nonnegative(),
-            allowed_actions: z.array(z.string()),
-          })
-        ),
-      })
-      .default({
-        enabled: false,
-        manifest_schema_version: null,
-        file_format_policy_version: "text-v1",
-        policy_source: "legacy_default",
-        formats: [],
-      }),
+    file_workspace: fileWorkspaceSchema.default({
+      enabled: false,
+      manifest_schema_version: null,
+      file_format_policy_version: "text-v1",
+      policy_source: "legacy_default",
+      formats: [],
+    }),
     deliveries: deliveryTimelineSchema,
     webhook_events: z.array(z.record(z.string(), z.unknown())).default([]),
   })
@@ -430,4 +441,7 @@ export type DeliveryEvent = z.infer<typeof deliveryEventSchema>
 export type DeliveryAttempt = z.infer<typeof deliveryAttemptSchema>
 export type DeliveryChunk = z.infer<typeof deliveryChunkSchema>
 export type JobDispatch = z.infer<typeof jobDispatchSchema>
+export type FileWorkspaceEvidence = z.infer<typeof fileWorkspaceSchema>
 export type FileOperations = z.infer<typeof fileOperationsSchema>
+export const TEXT_RUNTIME_FILE_FORMATS = TEXT_FILE_FORMAT_CODES
+export const DOCUMENT_RUNTIME_FILE_FORMATS = DOCUMENT_FILE_FORMAT_CODES
