@@ -900,6 +900,7 @@ class PlatformConfigRepository:
         default: Any = None,
         sensitive: bool = False,
         bootstrap_only: bool = False,
+        tenant_compatible: bool = False,
         service_names: list[str] | None = None,
         description: str = "",
         status: str = "enabled",
@@ -915,6 +916,7 @@ class PlatformConfigRepository:
             json_text(default),
             int(sensitive),
             int(bootstrap_only),
+            int(tenant_compatible),
             json_text(normalized_service_names),
             normalized_description,
             normalized_status,
@@ -929,8 +931,9 @@ class PlatformConfigRepository:
                     """
                     insert into platform_runtime_config_definition
                       (id, key, value_type, default_json, sensitive, bootstrap_only,
+                       tenant_compatible,
                        service_names_json, description, status, revision, created_at, updated_at)
-                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     on conflict(key) do nothing
                     returning id
                     """,
@@ -948,6 +951,7 @@ class PlatformConfigRepository:
                 json_text(existing.get("default")),
                 int(bool(existing.get("sensitive"))),
                 int(bool(existing.get("bootstrap_only"))),
+                int(bool(existing.get("tenant_compatible"))),
                 json_text(
                     _normalize_definition_service_names(existing.get("service_names") or [])
                 ),
@@ -968,6 +972,7 @@ class PlatformConfigRepository:
                 """
                 update platform_runtime_config_definition
                 set value_type = ?, default_json = ?, sensitive = ?, bootstrap_only = ?,
+                    tenant_compatible = ?,
                     service_names_json = ?, description = ?, status = ?,
                     revision = revision + 1, updated_at = ?
                 where id = ? and revision = ?
@@ -1016,6 +1021,7 @@ class PlatformConfigRepository:
         value: Any = None,
         secret_ref: str = "",
         status: str = "enabled",
+        expected_revision: int | None = None,
     ) -> dict[str, Any]:
         definition = self.get_runtime_config_definition(key)
         if not definition:
@@ -1035,16 +1041,22 @@ class PlatformConfigRepository:
             status,
         )
         if existing:
-            self.database.execute(
+            revision = int(existing["revision"])
+            if expected_revision is not None and revision != int(expected_revision):
+                raise ValueError("运行配置值已被其他操作修改，请刷新后重试")
+            changed = self.database.execute(
                 """
                 update platform_runtime_config_value
                 set definition_id = ?, key = ?, scope_type = ?, scope_code = ?,
                     service_name = ?, value_json = ?, secret_ref = ?, status = ?,
                     revision = revision + 1, updated_at = ?
-                where id = ?
+                where id = ? and revision = ?
+                returning id
                 """,
-                (*params, timestamp, existing["id"]),
+                (*params, timestamp, existing["id"], revision),
             )
+            if not changed:
+                raise ValueError("运行配置值已被其他操作修改，请刷新后重试")
             return self.get_runtime_config_value(existing["id"])
         entity_id = new_id("runtime_cfg")
         self.database.execute(
@@ -1062,7 +1074,8 @@ class PlatformConfigRepository:
         where = "" if include_disabled else "where v.status = 'enabled'"
         rows = self.database.execute(
             f"""
-            select v.*, d.value_type, d.sensitive, d.bootstrap_only, d.default_json
+            select v.*, d.value_type, d.sensitive, d.bootstrap_only,
+                   d.tenant_compatible, d.default_json
             from platform_runtime_config_value v
             join platform_runtime_config_definition d on d.id = v.definition_id
             {where}
@@ -1074,7 +1087,8 @@ class PlatformConfigRepository:
     def get_runtime_config_value(self, value_id: str) -> dict[str, Any]:
         row = self.database.execute_one(
             """
-            select v.*, d.value_type, d.sensitive, d.bootstrap_only, d.default_json
+            select v.*, d.value_type, d.sensitive, d.bootstrap_only,
+                   d.tenant_compatible, d.default_json
             from platform_runtime_config_value v
             join platform_runtime_config_definition d on d.id = v.definition_id
             where v.id = ?
@@ -1090,7 +1104,8 @@ class PlatformConfigRepository:
     ) -> dict[str, Any] | None:
         row = self.database.execute_one(
             """
-            select v.*, d.value_type, d.sensitive, d.bootstrap_only, d.default_json
+            select v.*, d.value_type, d.sensitive, d.bootstrap_only,
+                   d.tenant_compatible, d.default_json
             from platform_runtime_config_value v
             join platform_runtime_config_definition d on d.id = v.definition_id
             where v.key = ? and v.scope_type = ? and v.scope_code = ? and v.service_name = ?
@@ -1099,16 +1114,40 @@ class PlatformConfigRepository:
         )
         return self._parse_runtime_config_value(row) if row else None
 
-    def set_runtime_config_value_status(self, value_id: str, status: str) -> dict[str, Any]:
-        self.database.execute(
+    def set_runtime_config_value_status(
+        self,
+        value_id: str,
+        status: str,
+        *,
+        expected_revision: int | None = None,
+    ) -> dict[str, Any]:
+        existing = self.get_runtime_config_value(value_id)
+        revision = int(existing["revision"])
+        if expected_revision is not None and revision != int(expected_revision):
+            raise ValueError("运行配置值已被其他操作修改，请刷新后重试")
+        changed = self.database.execute(
             """
             update platform_runtime_config_value
             set status = ?, revision = revision + 1, updated_at = ?
-            where id = ?
+            where id = ? and revision = ?
+            returning id
             """,
-            (status, now_iso(), value_id),
+            (status, now_iso(), value_id, revision),
         )
+        if not changed:
+            raise ValueError("运行配置值已被其他操作修改，请刷新后重试")
         return self.get_runtime_config_value(value_id)
+
+    def runtime_config_tenant_exists(self, tenant_id: str) -> bool:
+        row = self.database.execute_one(
+            """
+            select 1 as present
+              from dingtalk_enterprise
+             where id = ? and status = 'ACTIVE'
+            """,
+            (tenant_id,),
+        )
+        return row is not None
 
     def runtime_config_revision(self) -> int:
         row = self.database.execute_one(
@@ -1281,6 +1320,7 @@ class PlatformConfigRepository:
             "default": self._json_from_text(row.get("default_json") or "null"),
             "sensitive": bool(int(row.get("sensitive") or 0)),
             "bootstrap_only": bool(int(row.get("bootstrap_only") or 0)),
+            "tenant_compatible": bool(int(row.get("tenant_compatible") or 0)),
             "service_names": self._json_from_text(row.get("service_names_json") or "[]"),
             "revision": int(row.get("revision") or 0),
         }
@@ -1291,6 +1331,7 @@ class PlatformConfigRepository:
             "value": self._json_from_text(row.get("value_json") or "null"),
             "sensitive": bool(int(row.get("sensitive") or 0)),
             "bootstrap_only": bool(int(row.get("bootstrap_only") or 0)),
+            "tenant_compatible": bool(int(row.get("tenant_compatible") or 0)),
             "default": self._json_from_text(row.get("default_json") or "null"),
             "revision": int(row.get("revision") or 0),
         }

@@ -324,6 +324,11 @@ class ClaudePythonFileBridge:
             self._coordinator.process_mcp_control_result,
             envelope,
             self._context,
+            materialization_identity=(
+                (str(arguments["file_id"]), str(arguments["version_id"]))
+                if name == _MATERIALIZE_TOOL
+                else None
+            ),
         )
         return remote, dict(bridge_result)
 

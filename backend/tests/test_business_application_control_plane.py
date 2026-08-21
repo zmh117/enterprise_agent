@@ -968,6 +968,7 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
             "115_expand_file_turn_admission.sql",
             "116_expand_office_embedded_image_layout_ocr.sql",
             "117_expand_docling_layout_ocr_v2.sql",
+            "118_expand_bounded_workspace_working_sets.sql",
         ]
     session_columns = {str(row["name"]) for row in db.execute("pragma table_info(agent_session)")}
     assert {

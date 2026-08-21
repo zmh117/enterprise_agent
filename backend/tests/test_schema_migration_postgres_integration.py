@@ -230,7 +230,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "117"
+        assert result.head == "118"
         assert result.applied == (
             "100",
             "101",
@@ -250,6 +250,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
             "115",
             "116",
             "117",
+            "118",
         )
         assert database.execute_one(
             """
@@ -259,9 +260,9 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
                and table_type = 'BASE TABLE'
                and table_name not in ('schema_migration', 'schema_baseline_adoption')
             """
-        ) == {"count": 121}
-        assert comments["table_count"] == 121
-        assert comments["column_count"] == 1575
+        ) == {"count": 125}
+        assert comments["table_count"] == 125
+        assert comments["column_count"] == 1631
     finally:
         database.close()
 
@@ -279,7 +280,7 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "117"
+        assert result.head == "118"
         assert result.applied == (
             "100",
             "101",
@@ -299,9 +300,10 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
             "115",
             "116",
             "117",
+            "118",
         )
-        assert comments["table_count"] == 121
-        assert comments["column_count"] == 1575
+        assert comments["table_count"] == 125
+        assert comments["column_count"] == 1631
         assert {
             "dingding_conversation_id",
             "dingding_user_id",
@@ -341,7 +343,27 @@ def test_postgres_concurrent_baseline_migrators_apply_100_once(
 
     assert sorted(result.applied for result in results) == [
         (),
-        ("100", "101", "102", "103", "104", "105", "106"),
+        (
+            "100",
+            "101",
+            "102",
+            "103",
+            "104",
+            "105",
+            "106",
+            "107",
+            "108",
+            "109",
+            "110",
+            "111",
+            "112",
+            "113",
+            "114",
+            "115",
+            "116",
+            "117",
+            "118",
+        ),
     ]
     database = Database(postgres_database_dsn)
     try:
@@ -353,6 +375,18 @@ def test_postgres_concurrent_baseline_migrators_apply_100_once(
             "104",
             "105",
             "106",
+            "107",
+            "108",
+            "109",
+            "110",
+            "111",
+            "112",
+            "113",
+            "114",
+            "115",
+            "116",
+            "117",
+            "118",
         ]
     finally:
         database.close()
@@ -559,10 +593,17 @@ def test_postgres_baseline_adoption_operational_verification_and_rollback(
             migrations,
             migrator_build="postgres-adoption-fixture",
         ).run()
-        PlatformConfigRepository(database).upsert_runtime_config_definition(
-            key="POSTGRES_ADOPTION_CONFIG",
-            value_type="string",
-            default="safe-default",
+        database.execute(
+            """
+            insert into platform_runtime_config_definition
+              (id, key, value_type, default_json, sensitive, bootstrap_only,
+               service_names_json, description, status, revision, created_at,
+               updated_at)
+            values ('postgres-adoption-config', 'POSTGRES_ADOPTION_CONFIG',
+                    'string', '"safe-default"', 0, 0, '[]', '', 'enabled', 1,
+                    ?, ?)
+            """,
+            ("2026-08-11T00:00:00Z", "2026-08-11T00:00:00Z"),
         )
         database.execute(
             """

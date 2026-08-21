@@ -16,6 +16,7 @@ from app.python_runtime.file_transfer import (
     FileUploadReceipt,
     parse_file_transfer_control,
 )
+from app.python_runtime.job_sandbox import JobSandboxManager
 
 
 CONTENT = b"private file body that must stay out of MCP JSON"
@@ -99,14 +100,20 @@ def test_python_file_transfer_matches_typescript_control_and_safe_result(
 ) -> None:
     port = _Port()
     coordinator = FileTransferCoordinator(port)
+    sandbox = JobSandboxManager(tmp_path / "sandboxes").create("job-1")
     context = FileTransferContext(
         job_id="job-1",
-        workspace_path=tmp_path,
+        workspace_path=sandbox.path,
         principal_token="principal-token-not-for-json",
+        sandbox=sandbox,
     )
 
-    materialized = coordinator.process_mcp_control_result(_materialize_control(), context)
-    assert (tmp_path / "inputs/evidence.txt").read_bytes() == CONTENT
+    materialized = coordinator.process_mcp_control_result(
+        _materialize_control(),
+        context,
+        materialization_identity=("file-1", "version-1"),
+    )
+    assert (sandbox.path / "inputs/evidence.txt").read_bytes() == CONTENT
     assert materialized == {
         "action": "MATERIALIZED",
         "sandbox_entry_handle": "entry-1",
@@ -116,7 +123,7 @@ def test_python_file_transfer_matches_typescript_control_and_safe_result(
         "sha256": CONTENT_SHA256,
     }
 
-    (tmp_path / "inputs/evidence.txt").write_text("edited result", encoding="utf-8")
+    (sandbox.path / "inputs/evidence.txt").write_text("edited result", encoding="utf-8")
     committed = coordinator.process_mcp_control_result(_upload_control(), context)
     assert port.uploaded == b"edited result"
     assert committed["action"] == "COMMITTED"
@@ -172,6 +179,7 @@ def test_python_file_transfer_removes_partial_content_on_integrity_failure(
             yield b"wrong"
 
     coordinator = FileTransferCoordinator(WrongPort())
+    sandbox = JobSandboxManager(tmp_path / "sandboxes").create("job-1")
     with pytest.raises(
         FileTransferBoundaryError,
         match="download (exceeded|did not match)",
@@ -180,11 +188,99 @@ def test_python_file_transfer_removes_partial_content_on_integrity_failure(
             _materialize_control(),
             FileTransferContext(
                 job_id="job-1",
-                workspace_path=tmp_path,
+                workspace_path=sandbox.path,
                 principal_token="token",
+                sandbox=sandbox,
             ),
+            materialization_identity=("file-1", "version-1"),
         )
-    assert not (tmp_path / "inputs/evidence.txt").exists()
+    assert not (sandbox.path / "inputs/evidence.txt").exists()
+    recovered = FileTransferCoordinator(_Port()).process_mcp_control_result(
+        _materialize_control(),
+        FileTransferContext(
+            job_id="job-1",
+            workspace_path=sandbox.path,
+            principal_token="principal-token-not-for-json",
+            sandbox=sandbox,
+        ),
+        materialization_identity=("file-1", "version-1"),
+    )
+    assert recovered["sha256"] == CONTENT_SHA256
+
+
+def test_python_file_transfer_rejects_capacity_before_download_or_target_creation(
+    tmp_path: Path,
+) -> None:
+    class CountingPort(_Port):
+        def __init__(self) -> None:
+            super().__init__()
+            self.download_calls = 0
+
+        def download(self, **kwargs: object) -> Iterable[bytes]:
+            self.download_calls += 1
+            return super().download(**kwargs)  # type: ignore[arg-type]
+
+    port = CountingPort()
+    sandbox = JobSandboxManager(tmp_path / "sandboxes").create("job-1")
+    for index in range(14):
+        sandbox.reserve_input(
+            identity=(f"reserved-file-{index}", f"reserved-version-{index}"),
+            expected_size_bytes=15 * 1024 * 1024,
+        )
+    sandbox.reserve_work_output(
+        relative_path="outputs/reserved.txt",
+        expected_size_bytes=14 * 1024 * 1024,
+    )
+
+    with pytest.raises(FileTransferBoundaryError) as rejected:
+        FileTransferCoordinator(port).process_mcp_control_result(
+            _materialize_control(),
+            FileTransferContext(
+                job_id="job-1",
+                workspace_path=sandbox.path,
+                principal_token="principal-token-not-for-json",
+                sandbox=sandbox,
+            ),
+            materialization_identity=("file-1", "version-1"),
+        )
+
+    assert rejected.value.code == "sandbox_capacity_exceeded"
+    assert port.download_calls == 0
+    assert not (sandbox.path / "inputs/evidence.txt").exists()
+
+
+@pytest.mark.parametrize("failure_mode", ["download", "sha256"])
+def test_python_file_transfer_releases_reservation_after_download_or_hash_failure(
+    tmp_path: Path,
+    failure_mode: str,
+) -> None:
+    class FailedPort(_Port):
+        def download(self, **_kwargs: object) -> Iterable[bytes]:
+            if failure_mode == "download":
+                raise OSError("synthetic download failure")
+            return [b"x" * len(CONTENT)]
+
+    sandbox = JobSandboxManager(tmp_path / "sandboxes").create("job-1")
+    context = FileTransferContext(
+        job_id="job-1",
+        workspace_path=sandbox.path,
+        principal_token="principal-token-not-for-json",
+        sandbox=sandbox,
+    )
+    with pytest.raises((OSError, FileTransferBoundaryError)):
+        FileTransferCoordinator(FailedPort()).process_mcp_control_result(
+            _materialize_control(),
+            context,
+            materialization_identity=("file-1", "version-1"),
+        )
+    assert not (sandbox.path / "inputs/evidence.txt").exists()
+
+    recovered = FileTransferCoordinator(_Port()).process_mcp_control_result(
+        _materialize_control(),
+        context,
+        materialization_identity=("file-1", "version-1"),
+    )
+    assert recovered["sha256"] == CONTENT_SHA256
 
 
 def test_python_file_transfer_uploads_only_an_explicit_registered_entry(

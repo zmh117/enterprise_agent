@@ -149,27 +149,45 @@ class GovernedFileStreamingService:
             """,
             (context.manifest["id"], file_id, version_id),
         )
-        is_representation = bool(representation and representation.get("representation_id"))
-        if is_representation:
-            item = self.authorization.require_manifest_representation(
+        from_initial_manifest = representation is not None
+        if representation is None:
+            self.repository.promote_catalog_working_set_item(
+                job_id=str(context.claims["job_id"]),
+                workspace_id=str(context.workspace["id"]),
+                snapshot_id=str(context.manifest["id"]),
+                catalog_revision_id=str(
+                    context.manifest.get("workspace_catalog_revision_id") or ""
+                ),
+                file_id=file_id,
+                version_id=version_id,
+            )
+            item = self.authorization.require_working_set_materialization(
                 context, file_id=file_id, version_id=version_id
             )
+            representation = {
+                "representation_id": item.get("representation_id")
+            }
+        is_representation = bool(representation.get("representation_id"))
+        if is_representation:
+            if from_initial_manifest:
+                item = self.authorization.require_manifest_representation(
+                    context, file_id=file_id, version_id=version_id
+                )
             content = {
                 "size_bytes": int(item["representation_size_bytes"]),
                 "content_sha256": str(item["representation_sha256"]),
             }
         else:
-            item = self.authorization.require_manifest_action(
-                context,
-                file_id=file_id,
-                version_id=version_id,
-                action=FileAction.MATERIALIZE,
-            )
+            if from_initial_manifest:
+                item = self.authorization.require_manifest_action(
+                    context,
+                    file_id=file_id,
+                    version_id=version_id,
+                    action=FileAction.MATERIALIZE,
+                )
             content = self.repository.require_content_available(version_id)
             if str(content["file_id"]) != file_id:
                 self._deny("file_manifest_item_denied", "当前任务无权访问该文件")
-        handle = _opaque("sandbox_entry")
-        transfer_id = _opaque("file_transfer")
         requested = str(arguments.get("preferred_name") or item["display_name"])
         if is_representation:
             if arguments.get("preferred_name") and Path(requested).suffix.lower() != ".md":
@@ -196,11 +214,14 @@ class GovernedFileStreamingService:
             format_code = definition.code.value
             extension = definition.extension
             allowed_actions = self._item_actions(item)
+        now = self.now()
+        handle = _opaque("sandbox_entry")
+        transfer_id = _opaque("file_transfer")
         stem = Path(requested).stem[:120] or "input"
         materialization_directory = "inputs/readonly" if is_representation else "inputs"
         relative_path = f"{materialization_directory}/{stem}-{handle[-8:]}{extension}"
-        expires_at = _iso(self.now() + TRANSFER_TTL)
-        self.repository.create_materialization_transfer(
+        expires_at = _iso(now + TRANSFER_TTL)
+        transfer = self.repository.get_or_create_materialization_transfer(
             transfer_id=transfer_id,
             job_id=str(context.claims["job_id"]),
             workspace_id=str(context.workspace["id"]),
@@ -211,8 +232,13 @@ class GovernedFileStreamingService:
             expected_size_bytes=int(content["size_bytes"]),
             expected_sha256=str(content["content_sha256"]),
             expires_at=expires_at,
+            now=_iso(now),
             format_code=format_code,
         )
+        transfer_id = str(transfer["transfer_id"])
+        handle = str(transfer["sandbox_entry_handle"])
+        relative_path = str(transfer["relative_path"])
+        expires_at = str(transfer["expires_at"])
         return {
             "file_id": file_id,
             "version_id": version_id,
@@ -452,6 +478,22 @@ class GovernedFileStreamingService:
                 "content_sha256": str(item["live_representation_sha256"]),
                 "object_key": str(item["object_key"]),
             }
+        elif frozen is None:
+            item = self.authorization.require_working_set_materialization(
+                context,
+                file_id=str(transfer["file_id"]),
+                version_id=str(transfer["version_id"]),
+            )
+            if item.get("representation_id"):
+                content = {
+                    "size_bytes": int(item["live_representation_size_bytes"]),
+                    "content_sha256": str(item["live_representation_sha256"]),
+                    "object_key": str(item["object_key"]),
+                }
+            else:
+                content = self.repository.require_content_available(
+                    str(transfer["version_id"])
+                )
         else:
             self.authorization.require_manifest_action(
                 context,
@@ -597,6 +639,7 @@ class GovernedFileStreamingService:
             format_code=str(intent.get("format_code") or "TXT"),
             action=FileAction.COMMIT,
         )
+        reservation_id = ""
         with tempfile.TemporaryFile(mode="w+b") as content:
             validated = await self.validator.validate_and_copy_async(
                 body,
@@ -616,21 +659,31 @@ class GovernedFileStreamingService:
             terminal = self._terminal_receipt(intent)
             if terminal is not None:
                 return terminal
-            staging = self.repository.get_staging_for_intent(str(intent["id"]))
-            if staging is None:
-                object_key = self.storage.new_object_key(kind="staging")
-                try:
-                    staging = self.repository.create_staging(
-                        intent_id=str(intent["id"]), object_key=object_key
-                    )
-                except Exception:
-                    staging = self.repository.get_staging_for_intent(str(intent["id"]))
-                    if staging is None:
-                        raise
-            if str(staging["status"]) not in {"UPLOADING", "COMPLETE"}:
-                self._deny("file_commit_staging_unavailable", "文件提交暂存状态无效")
-            if str(staging["status"]) == "UPLOADING":
-                try:
+            reservation = self.quota.reserve(
+                workspace_id=str(intent["workspace_id"]),
+                operation_type="FILE_COMMIT",
+                operation_id=commit_id,
+                logical_file_slots=int(not str(intent.get("target_file_id") or "")),
+                billable_bytes=validated.size_bytes,
+                expires_at=str(intent["expires_at"]),
+                now=_iso(self.now()),
+            )
+            reservation_id = str(reservation["id"])
+            try:
+                staging = self.repository.get_staging_for_intent(str(intent["id"]))
+                if staging is None:
+                    object_key = self.storage.new_object_key(kind="staging")
+                    try:
+                        staging = self.repository.create_staging(
+                            intent_id=str(intent["id"]), object_key=object_key
+                        )
+                    except Exception:
+                        staging = self.repository.get_staging_for_intent(str(intent["id"]))
+                        if staging is None:
+                            raise
+                if str(staging["status"]) not in {"UPLOADING", "COMPLETE"}:
+                    self._deny("file_commit_staging_unavailable", "文件提交暂存状态无效")
+                if str(staging["status"]) == "UPLOADING":
                     content.seek(0)
                     await asyncio.to_thread(
                         self.storage.put_stream,
@@ -647,15 +700,34 @@ class GovernedFileStreamingService:
                         size_bytes=validated.size_bytes,
                         content_sha256=validated.content_sha256,
                     )
-                except Exception:
+            except Exception:
+                if "staging" in locals():
                     self._record_compensation(intent=intent, staging=staging)
-                    raise
+                self.quota.finalize_reservation(
+                    reservation_id,
+                    committed=False,
+                    now=_iso(self.now()),
+                )
+                raise
         try:
-            return self._publish(intent_id=str(intent["id"]), staging_id=str(staging["id"]))
+            result = self._publish(
+                intent_id=str(intent["id"]), staging_id=str(staging["id"])
+            )
+            self.quota.finalize_reservation(
+                reservation_id,
+                committed=True,
+                now=_iso(self.now()),
+            )
+            return result
         except Exception as exc:
             latest = self.repository.get_commit_intent(str(intent["id"]))
             terminal = self._terminal_receipt(latest)
             if terminal is not None:
+                self.quota.finalize_reservation(
+                    reservation_id,
+                    committed=True,
+                    now=_iso(self.now()),
+                )
                 return terminal
             logical_name_conflict = self._is_logical_name_conflict(exc)
             self._record_compensation(
@@ -667,6 +739,12 @@ class GovernedFileStreamingService:
                     else "file_commit_publish_failed"
                 ),
             )
+            if reservation_id:
+                self.quota.finalize_reservation(
+                    reservation_id,
+                    committed=False,
+                    now=_iso(self.now()),
+                )
             if logical_name_conflict:
                 self._deny(
                     "file_logical_name_conflict",
@@ -725,6 +803,7 @@ class GovernedFileStreamingService:
                 )
             except NonRetryableExecutionError:
                 definition = None
+        reservation_id = ""
         with tempfile.TemporaryFile(mode="w+b") as content:
             if definition is not None:
                 validated = await self.validator.validate_and_copy_async(
@@ -763,25 +842,45 @@ class GovernedFileStreamingService:
                         "附件标识已绑定不同内容",
                     )
                 return self._attachment_receipt(attachment_id)
+            if workspace_id and (definition is not None or document_source is not None):
+                reservation = self.quota.reserve(
+                    workspace_id=workspace_id,
+                    operation_type="ATTACHMENT_IMPORT",
+                    operation_id=attachment_id,
+                    logical_file_slots=1,
+                    billable_bytes=size_bytes,
+                    expires_at=_iso(self.now() + timedelta(minutes=30)),
+                    now=_iso(self.now()),
+                )
+                reservation_id = str(reservation["id"])
             object_key = self.storage.new_object_key(kind="attachment")
             content.seek(0)
-            await asyncio.to_thread(
-                self.storage.put_stream,
-                content,
-                kind="attachment",
-                content_type=(
-                    definition.canonical_media_type
-                    if definition is not None
-                    else (
-                        document_source.media_type
-                        if document_source is not None
-                        else media_type.split(";", 1)[0][:128]
+            try:
+                await asyncio.to_thread(
+                    self.storage.put_stream,
+                    content,
+                    kind="attachment",
+                    content_type=(
+                        definition.canonical_media_type
+                        if definition is not None
+                        else (
+                            document_source.media_type
+                            if document_source is not None
+                            else media_type.split(";", 1)[0][:128]
+                        )
+                    ),
+                    content_sha256=content_sha256,
+                    size_bytes=size_bytes,
+                    internal_object_key=object_key,
+                )
+            except Exception:
+                if reservation_id:
+                    self.quota.finalize_reservation(
+                        reservation_id,
+                        committed=False,
+                        now=_iso(self.now()),
                     )
-                ),
-                content_sha256=content_sha256,
-                size_bytes=size_bytes,
-                internal_object_key=object_key,
-            )
+                raise
         timestamp = _iso(self.now())
         try:
             self.repository.database.execute(
@@ -810,9 +909,21 @@ class GovernedFileStreamingService:
                     source=document_source,
                 )
             self._ensure_attachment_cleanup(attachment_id)
+            if reservation_id:
+                self.quota.finalize_reservation(
+                    reservation_id,
+                    committed=True,
+                    now=_iso(self.now()),
+                )
             return self._attachment_receipt(attachment_id)
         except Exception:
             self._ensure_attachment_cleanup(attachment_id, reason="ATTACHMENT_IMPORT_COMPENSATION")
+            if reservation_id:
+                self.quota.finalize_reservation(
+                    reservation_id,
+                    committed=False,
+                    now=_iso(self.now()),
+                )
             raise
 
     async def run_maintenance(self, *, service_claims: dict[str, Any]) -> dict[str, Any]:
@@ -908,12 +1019,6 @@ class GovernedFileStreamingService:
             workspace = self.repository.get_workspace(workspace_id)
             if str(workspace["status"]) != "ACTIVE":
                 self._deny("file_workspace_expired", "任务文件工作区已失效")
-            self.quota.require_commit_capacity(
-                workspace_id=workspace_id,
-                incoming_bytes=size_bytes,
-                creates_logical_file=True,
-                now=_iso(self.now()),
-            )
             display_name = self._available_attachment_name(
                 workspace_id=workspace_id,
                 requested=str(attachment["file_name"]),
@@ -1026,12 +1131,6 @@ class GovernedFileStreamingService:
             workspace = self.repository.get_workspace(workspace_id)
             if str(workspace["status"]) != "ACTIVE":
                 self._deny("file_workspace_expired", "任务文件工作区已失效")
-            self.quota.require_commit_capacity(
-                workspace_id=workspace_id,
-                incoming_bytes=size_bytes,
-                creates_logical_file=True,
-                now=_iso(self.now()),
-            )
             requested_name = self._canonical_document_attachment_name(
                 requested=str(attachment["file_name"]),
                 source=source,
@@ -1259,12 +1358,6 @@ class GovernedFileStreamingService:
             if named.code is not definition.code:
                 self._deny("file_format_mismatch", "文件名与提交格式不一致")
             target_file_id = str(intent.get("target_file_id") or "")
-            self.quota.require_commit_capacity(
-                workspace_id=str(workspace["id"]),
-                incoming_bytes=int(intent["size_bytes"]),
-                creates_logical_file=not target_file_id,
-                now=_iso(self.now()),
-            )
             if target_file_id:
                 return self._publish_existing(intent, staging, workspace)
             return self._publish_new(intent, staging, workspace)

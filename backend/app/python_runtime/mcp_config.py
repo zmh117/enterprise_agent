@@ -57,6 +57,93 @@ def _is_aware_rfc3339(value: object) -> bool:
     return parsed.tzinfo is not None and parsed.utcoffset() is not None
 
 
+def _validated_runtime_manifest_items(
+    items: list[object], *, schema_version: int
+) -> list[dict[str, Any]]:
+    """Validate the complete immutable input set before reserving Sandbox budget."""
+
+    validated: list[dict[str, Any]] = []
+    for value in items:
+        if not isinstance(value, dict):
+            raise NonRetryableExecutionError(
+                "Runtime Job File Manifest item is invalid",
+                safe_message="任务文件清单无效",
+                error_code="file_manifest_runtime_invalid",
+            )
+        item = dict(value)
+        source_received_at = item.get("source_received_at")
+        version_created_at = item.get("version_created_at")
+        representation_id = item.get("representation_id")
+        if schema_version in {2, 3, 4, 5} and (
+            (source_received_at is not None and not _is_aware_rfc3339(source_received_at))
+            or not _is_aware_rfc3339(version_created_at)
+            or (
+                representation_id is not None
+                and not _is_aware_rfc3339(item.get("representation_created_at"))
+            )
+        ):
+            raise NonRetryableExecutionError(
+                "Runtime Job File Manifest item time is invalid",
+                safe_message="任务文件清单无效",
+                error_code="file_manifest_runtime_invalid",
+            )
+        if not item.get("auto_materialize"):
+            validated.append(item)
+            continue
+        file_id = item.get("file_id")
+        version_id = item.get("version_id")
+        display_name = item.get("display_name")
+        actions = item.get("allowed_actions")
+        format_code = item.get("format_code", "TXT")
+        has_representation = schema_version >= 4 and representation_id is not None
+        materialization_size = item.get("materialization_size_bytes")
+        if (
+            not isinstance(file_id, str)
+            or _OPAQUE_IDENTIFIER.fullmatch(file_id) is None
+            or not isinstance(version_id, str)
+            or _OPAQUE_IDENTIFIER.fullmatch(version_id) is None
+            or not isinstance(display_name, str)
+            or not 1 <= len(display_name) <= 255
+            or not isinstance(actions, list)
+            or (
+                schema_version >= 5
+                and (
+                    not isinstance(materialization_size, int)
+                    or isinstance(materialization_size, bool)
+                    or materialization_size < 0
+                )
+            )
+            or (
+                not has_representation
+                and (
+                    "MATERIALIZE" not in actions
+                    or format_code not in {"TXT", "LOG", "MARKDOWN"}
+                )
+            )
+            or (
+                has_representation
+                and (
+                    not isinstance(representation_id, str)
+                    or _OPAQUE_IDENTIFIER.fullmatch(representation_id) is None
+                    or item.get("representation_kind") != "MARKDOWN"
+                    or item.get("representation_format_code") != "MARKDOWN"
+                    or not isinstance(item.get("representation_size_bytes"), int)
+                    or isinstance(item.get("representation_size_bytes"), bool)
+                    or int(item["representation_size_bytes"]) < 1
+                    or not isinstance(item.get("representation_sha256"), str)
+                    or len(str(item["representation_sha256"])) != 64
+                )
+            )
+        ):
+            raise NonRetryableExecutionError(
+                "Runtime Job File Manifest item is invalid",
+                safe_message="任务文件清单无效",
+                error_code="file_manifest_runtime_invalid",
+            )
+        validated.append(item)
+    return validated
+
+
 class FixedMcpClaudeSdkClient(ClaudeSdkClient):
     """Python SDK adapter with deployment-fixed MCP and a Runtime-local file bridge."""
 
@@ -232,6 +319,7 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
                 workspace_path=sandbox.path,
                 principal_token=self._file_principal_token,
                 file_format_policy_version=request.context.file_format_policy_version,
+                sandbox=sandbox,
             ),
             timeout_seconds=float(request.context.timeout_seconds),
         )
@@ -258,92 +346,71 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
             return context
         manifest = context.retrieved_context.get("file_manifest")
         schema_version = manifest.get("schema_version") if isinstance(manifest, dict) else None
-        if not isinstance(manifest, dict) or schema_version not in {1, 2, 3, 4}:
+        if not isinstance(manifest, dict) or schema_version not in {1, 2, 3, 4, 5}:
             raise NonRetryableExecutionError(
                 "Runtime Job File Manifest is missing or invalid",
                 safe_message="任务文件清单无效",
                 error_code="file_manifest_runtime_invalid",
             )
-        if schema_version in {2, 3, 4} and not _is_aware_rfc3339(manifest.get("observed_at")):
+        if schema_version in {2, 3, 4, 5} and not _is_aware_rfc3339(
+            manifest.get("observed_at")
+        ):
             raise NonRetryableExecutionError(
                 "Runtime Job File Manifest observation time is invalid",
                 safe_message="任务文件清单无效",
                 error_code="file_manifest_runtime_invalid",
             )
         items = manifest.get("items")
-        if not isinstance(items, list) or len(items) > 20:
+        maximum_items = 40 if schema_version >= 5 else 20
+        if not isinstance(items, list) or len(items) > maximum_items:
             raise NonRetryableExecutionError(
                 "Runtime Job File Manifest items are invalid",
                 safe_message="任务文件清单无效",
                 error_code="file_manifest_runtime_invalid",
             )
+        items = _validated_runtime_manifest_items(items, schema_version=schema_version)
         materialized: list[dict[str, Any]] = []
         seen: set[tuple[str, str]] = set()
-        for item in items:
-            if not isinstance(item, dict):
+        automatic_identities: list[tuple[str, str]] = []
+        sandbox = self._sandbox.get()
+        if schema_version >= 5:
+            if sandbox is None:
                 raise NonRetryableExecutionError(
-                    "Runtime Job File Manifest item is invalid",
-                    safe_message="任务文件清单无效",
-                    error_code="file_manifest_runtime_invalid",
+                    "Runtime Job Sandbox is unavailable",
+                    safe_message="当前任务沙盒不可用",
+                    error_code="runtime_sandbox_unavailable",
                 )
+            reservations: list[tuple[tuple[str, str], int]] = []
+            for candidate in items:
+                if not candidate.get("auto_materialize"):
+                    continue
+                file_id = str(candidate["file_id"])
+                version_id = str(candidate["version_id"])
+                expected_size = int(candidate["materialization_size_bytes"])
+                identity = (file_id, version_id)
+                if identity not in automatic_identities:
+                    automatic_identities.append(identity)
+                    reservations.append((identity, expected_size))
+            try:
+                sandbox.reserve_input_batch(reservations)
+            except JobSandboxError as exc:
+                raise NonRetryableExecutionError(
+                    f"Runtime automatic input preflight failed: {exc.code}",
+                    safe_message="任务输入超过沙盒预算，请缩小工作集",
+                    error_code="file_auto_materialization_preflight_failed",
+                ) from exc
+        for item in items:
             source_received_at = item.get("source_received_at")
             version_created_at = item.get("version_created_at")
             representation_id = item.get("representation_id")
-            if schema_version in {2, 3, 4} and (
-                (source_received_at is not None and not _is_aware_rfc3339(source_received_at))
-                or not _is_aware_rfc3339(version_created_at)
-                or (
-                    representation_id is not None
-                    and not _is_aware_rfc3339(item.get("representation_created_at"))
-                )
-            ):
-                raise NonRetryableExecutionError(
-                    "Runtime Job File Manifest item time is invalid",
-                    safe_message="任务文件清单无效",
-                    error_code="file_manifest_runtime_invalid",
-                )
             if not item.get("auto_materialize"):
                 continue
-            file_id = item.get("file_id")
-            version_id = item.get("version_id")
-            display_name = item.get("display_name")
-            actions = item.get("allowed_actions")
+            file_id = str(item["file_id"])
+            version_id = str(item["version_id"])
+            display_name = str(item["display_name"])
+            actions = list(item["allowed_actions"])
             format_code = item.get("format_code", "TXT")
-            has_representation = schema_version == 4 and representation_id is not None
-            if (
-                not isinstance(file_id, str)
-                or _OPAQUE_IDENTIFIER.fullmatch(file_id) is None
-                or not isinstance(version_id, str)
-                or _OPAQUE_IDENTIFIER.fullmatch(version_id) is None
-                or not isinstance(display_name, str)
-                or not 1 <= len(display_name) <= 255
-                or not isinstance(actions, list)
-                or (
-                    not has_representation
-                    and (
-                        "MATERIALIZE" not in actions
-                        or format_code not in {"TXT", "LOG", "MARKDOWN"}
-                    )
-                )
-                or (
-                    has_representation
-                    and (
-                        not isinstance(representation_id, str)
-                        or _OPAQUE_IDENTIFIER.fullmatch(representation_id) is None
-                        or item.get("representation_kind") != "MARKDOWN"
-                        or item.get("representation_format_code") != "MARKDOWN"
-                        or not isinstance(item.get("representation_size_bytes"), int)
-                        or int(item["representation_size_bytes"]) < 1
-                        or not isinstance(item.get("representation_sha256"), str)
-                        or len(str(item["representation_sha256"])) != 64
-                    )
-                )
-            ):
-                raise NonRetryableExecutionError(
-                    "Runtime Job File Manifest item is invalid",
-                    safe_message="任务文件清单无效",
-                    error_code="file_manifest_runtime_invalid",
-                )
+            has_representation = schema_version >= 4 and representation_id is not None
             identity = (file_id, version_id)
             if identity in seen:
                 continue
@@ -354,6 +421,8 @@ class FixedMcpClaudeSdkClient(ClaudeSdkClient):
                     version_id=version_id,
                 )
             except FileTransferBoundaryError as exc:
+                if sandbox is not None:
+                    sandbox.rollback_inputs(automatic_identities)
                 raise NonRetryableExecutionError(
                     f"Runtime automatic materialization failed: {exc.code}",
                     safe_message="附件无法安全物化到任务沙盒",

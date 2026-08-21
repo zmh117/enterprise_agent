@@ -6,6 +6,7 @@ import io
 import json
 import sqlite3
 from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Any
 
@@ -14,7 +15,10 @@ from PIL import Image
 from pypdf import PdfWriter
 
 from app.modules.audit.application.audit_service import AuditService
-from app.modules.file_workspace.authorization import FileAuthorizationContext
+from app.modules.file_workspace.authorization import (
+    FileAuthorizationContext,
+    FileAuthorizationService,
+)
 from app.modules.document_processing import (
     DocumentProcessingRepository,
     GovernedDocumentProcessingService,
@@ -182,7 +186,9 @@ class _Principal:
 
 
 def _fixture(
-    *, file_format_policy_version: str = "text-v1"
+    *,
+    file_format_policy_version: str = "text-v1",
+    include_catalog_candidate: bool = False,
 ) -> tuple[
     FileWorkspaceRepository,
     GovernedFileStreamingService,
@@ -251,6 +257,39 @@ def _fixture(
         logical_name="source.txt",
         role=WorkspaceFileRole.WORKING,
     )
+    if include_catalog_candidate:
+        candidate = b"catalog candidate"
+        candidate_key = storage.new_object_key(kind="attachment")
+        storage.objects[candidate_key] = candidate
+        repository.create_file(
+            file_id="file-catalog",
+            tenant_id="tenant-a",
+            owner=owner,
+            display_name="catalog.txt",
+            actor_id="user-a",
+        )
+        repository.create_version(
+            version_id="version-catalog-1",
+            file_id="file-catalog",
+            version_number=1,
+            version_kind=FileVersionKind.ATTACHMENT,
+            status=FileVersionStatus.AVAILABLE,
+            media_type="text/plain",
+            encoding="utf-8",
+            size_bytes=len(candidate),
+            content_sha256=hashlib.sha256(candidate).hexdigest(),
+            object_key=candidate_key,
+            source_kind=FileSourceKind.MESSAGE_ATTACHMENT,
+            actor_id="user-a",
+            advance_current_from="",
+        )
+        repository.link_workspace_file(
+            workspace_id="workspace-a",
+            file_id="file-catalog",
+            version_id="version-catalog-1",
+            logical_name="catalog.txt",
+            role=WorkspaceFileRole.INPUT,
+        )
     manifest = repository.create_job_snapshot(
         snapshot_id="snapshot-file",
         job_id="job-file",
@@ -291,6 +330,56 @@ def _fixture(
         now=lambda: NOW,
     )
     return repository, service, context, storage
+
+
+class _AllowBusinessAccess:
+    def require(self, **_kwargs: Any) -> dict[str, Any]:
+        return {}
+
+
+def _install_catalog_tool_snapshot(repository: FileWorkspaceRepository) -> None:
+    repository.database.execute(
+        """
+        insert into agent_definition
+          (id, code, name, created_by, created_at, updated_at)
+        values ('agent-file', 'agent-file', 'File Agent', 'user-a', ?, ?)
+        """,
+        (TIMESTAMP, TIMESTAMP),
+    )
+    repository.database.execute(
+        """
+        insert into agent_revision
+          (id, agent_id, revision, status, created_by, created_at, updated_at)
+        values ('agent-file-r1', 'agent-file', 1, 'published', 'user-a', ?, ?)
+        """,
+        (TIMESTAMP, TIMESTAMP),
+    )
+    repository.database.execute(
+        """
+        insert into agent_publication
+          (id, agent_id, revision_id, revision, snapshot_json, config_hash,
+           published_by, published_at)
+        values ('agent-file-p1', 'agent-file', 'agent-file-r1', 1, '{}', ?,
+                'user-a', ?)
+        """,
+        ("e" * 64, TIMESTAMP),
+    )
+    snapshot = {
+        "tools": [
+            {"tool_identifier": "task_workspace_search_files"},
+            {"tool_identifier": "file_prepare_materialization"},
+        ]
+    }
+    repository.database.execute(
+        """
+        insert into agent_job_mcp_tool_snapshot
+          (id, job_id, application_publication_id, agent_publication_id,
+           schema_version, snapshot_json, snapshot_hash, authorization_hash, created_at)
+        values ('job-file-tools', 'job-file', 'app-file-p1', 'agent-file-p1',
+                1, ?, ?, ?, ?)
+        """,
+        (json.dumps(snapshot), "f" * 64, "1" * 64, TIMESTAMP),
+    )
 
 
 def _new_intent(
@@ -477,7 +566,7 @@ def test_duplicate_logical_name_publish_race_uses_stable_error_and_compensation(
     }
 
 
-def test_materialization_is_exact_version_job_bound_and_one_time() -> None:
+def test_materialization_is_exact_version_job_bound_and_retryable() -> None:
     _repository, service, context, _storage = _fixture()
     prepared = service.prepare_materialization(
         context=context,
@@ -494,14 +583,291 @@ def test_materialization_is_exact_version_job_bound_and_one_time() -> None:
     content, media_type = asyncio.run(download_once())
     assert content == b"source"
     assert media_type == "application/octet-stream"
-    with pytest.raises(NonRetryableExecutionError) as error:
-        asyncio.run(
-            service.download_transfer(
-                transfer_id=str(control["transfer_id"]),
-                token="file-principal-token",
-            )
+    retry_content, retry_media_type = asyncio.run(download_once())
+    assert retry_content == b"source"
+    assert retry_media_type == "application/octet-stream"
+
+
+def test_catalog_selection_appends_once_and_reuses_exact_transfer_without_manifest_mutation() -> None:
+    repository, service, context, _storage = _fixture(include_catalog_candidate=True)
+    _install_catalog_tool_snapshot(repository)
+    service.authorization = FileAuthorizationService(
+        repository.database,
+        _AllowBusinessAccess(),  # type: ignore[arg-type]
+    )
+    manifest_before = repository.get_job_snapshot("job-file")
+
+    first = service.prepare_materialization(
+        context=context,
+        arguments={"file_id": "file-catalog", "version_id": "version-catalog-1"},
+    )
+    repeated = service.prepare_materialization(
+        context=context,
+        arguments={"file_id": "file-catalog", "version_id": "version-catalog-1"},
+    )
+
+    assert first["allowed_actions"] == [FileAction.MATERIALIZE.value]
+    assert repeated[INTERNAL_TRANSFER_META] == first[INTERNAL_TRANSFER_META]
+    assert repository.database.execute_one(
+        "select count(*) as value from agent_job_file_working_set_item where job_id = ?",
+        ("job-file",),
+    ) == {"value": 2}
+    assert repository.database.execute_one(
+        "select count(*) as value from file_materialization_transfer where job_id = ?",
+        ("job-file",),
+    ) == {"value": 1}
+    manifest_after = repository.get_job_snapshot("job-file")
+    assert manifest_after["manifest_hash"] == manifest_before["manifest_hash"]
+    assert manifest_after["items"] == manifest_before["items"]
+
+
+def test_concurrent_catalog_selection_reuses_one_working_set_fact_and_transfer() -> None:
+    repository, service, context, _storage = _fixture(include_catalog_candidate=True)
+    _install_catalog_tool_snapshot(repository)
+    service.authorization = FileAuthorizationService(
+        repository.database,
+        _AllowBusinessAccess(),  # type: ignore[arg-type]
+    )
+
+    def prepare() -> dict[str, Any]:
+        return service.prepare_materialization(
+            context=context,
+            arguments={"file_id": "file-catalog", "version_id": "version-catalog-1"},
         )
-    assert error.value.error_code == "file_transfer_consumed"
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        prepared = list(pool.map(lambda _index: prepare(), range(16)))
+
+    controls = [item[INTERNAL_TRANSFER_META][FILE_TRANSFER_META_KEY] for item in prepared]
+    assert len({str(item["transfer_id"]) for item in controls}) == 1
+    assert len({str(item["sandbox_entry_handle"]) for item in controls}) == 1
+    assert repository.database.execute_one(
+        "select count(*) as value from agent_job_file_working_set_item where job_id = ?",
+        ("job-file",),
+    ) == {"value": 2}
+    assert repository.database.execute_one(
+        "select count(*) as value from file_materialization_transfer where job_id = ?",
+        ("job-file",),
+    ) == {"value": 1}
+
+
+def test_catalog_selection_requires_compatible_tool_snapshot_before_promotion() -> None:
+    repository, service, context, _storage = _fixture(include_catalog_candidate=True)
+    service.authorization = FileAuthorizationService(
+        repository.database,
+        _AllowBusinessAccess(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(NonRetryableExecutionError) as rejected:
+        service.prepare_materialization(
+            context=context,
+            arguments={"file_id": "file-catalog", "version_id": "version-catalog-1"},
+        )
+
+    assert rejected.value.error_code == "file_workspace_publication_upgrade_required"
+    assert repository.database.execute_one(
+        "select count(*) as value from agent_job_file_working_set_item where job_id = ?",
+        ("job-file",),
+    ) == {"value": 1}
+    assert repository.database.execute_one(
+        "select count(*) as value from file_materialization_transfer where job_id = ?",
+        ("job-file",),
+    ) == {"value": 0}
+
+
+def test_catalog_selection_rechecks_current_access_before_reusing_transfer() -> None:
+    repository, service, context, _storage = _fixture(include_catalog_candidate=True)
+    _install_catalog_tool_snapshot(repository)
+    service.authorization = FileAuthorizationService(
+        repository.database,
+        _AllowBusinessAccess(),  # type: ignore[arg-type]
+    )
+    service.prepare_materialization(
+        context=context,
+        arguments={"file_id": "file-catalog", "version_id": "version-catalog-1"},
+    )
+    repository.database.execute(
+        "update task_workspace_file set status = 'REMOVED', removed_at = ? "
+        "where workspace_id = ? and file_id = ?",
+        (TIMESTAMP, "workspace-a", "file-catalog"),
+    )
+
+    with pytest.raises(PermissionDenied) as rejected:
+        service.prepare_materialization(
+            context=context,
+            arguments={"file_id": "file-catalog", "version_id": "version-catalog-1"},
+        )
+
+    assert rejected.value.error_code == "file_working_set_item_denied"
+    assert repository.database.execute_one(
+        "select count(*) as value from file_materialization_transfer where job_id = ?",
+        ("job-file",),
+    ) == {"value": 1}
+
+
+def test_catalog_document_selection_freezes_exact_representation_identity() -> None:
+    repository, service, context, _storage = _fixture(include_catalog_candidate=True)
+    _install_catalog_tool_snapshot(repository)
+    service.authorization = FileAuthorizationService(
+        repository.database,
+        _AllowBusinessAccess(),  # type: ignore[arg-type]
+    )
+    repository.database.execute(
+        "update managed_file set format_code = 'PDF' where id = 'file-catalog'"
+    )
+    repository.database.execute(
+        "update managed_file_version set format_code = 'PDF', media_type = 'application/pdf', "
+        "encoding = '' where id = 'version-catalog-1'"
+    )
+    repository.database.execute(
+        "update task_workspace_catalog_member set format_code = 'PDF' "
+        "where workspace_id = 'workspace-a' and file_id = 'file-catalog' "
+        "and valid_to_revision is null"
+    )
+    repository.database.execute(
+        """
+        insert into file_processing_run
+          (id, tenant_id, source_file_id, source_version_id, processor_code,
+           processor_version, processor_build_digest, profile_code, profile_hash,
+           status, source_size_bytes, completed_at, created_by, created_at, updated_at)
+        values ('catalog-run-1', 'tenant-a', 'file-catalog', 'version-catalog-1',
+                'docling-serve', '1.30.0', ?, 'docling-text-v1', ?, 'SUCCEEDED',
+                17, ?, 'file-processing-worker', ?, ?)
+        """,
+        ("sha256:" + "a" * 64, "b" * 64, TIMESTAMP, TIMESTAMP, TIMESTAMP),
+    )
+    repository.database.execute(
+        """
+        insert into file_representation
+          (id, processing_run_id, tenant_id, source_file_id, source_version_id,
+           kind, media_type, encoding, status, size_bytes, content_sha256,
+           object_key, profile_hash, created_at)
+        values ('catalog-representation-1', 'catalog-run-1', 'tenant-a',
+                'file-catalog', 'version-catalog-1', 'MARKDOWN', 'text/markdown',
+                'utf-8', 'AVAILABLE', 12, ?, 'opaque/catalog-representation-1', ?, ?)
+        """,
+        ("c" * 64, "b" * 64, TIMESTAMP),
+    )
+
+    first = service.prepare_materialization(
+        context=context,
+        arguments={"file_id": "file-catalog", "version_id": "version-catalog-1"},
+    )
+    assert first[INTERNAL_TRANSFER_META][FILE_TRANSFER_META_KEY]["expected_sha256"] == (
+        "c" * 64
+    )
+    repository.database.execute(
+        "update file_representation set status = 'CONTENT_UNAVAILABLE', content_deleted_at = ? "
+        "where id = 'catalog-representation-1'",
+        (TIMESTAMP,),
+    )
+    repository.database.execute(
+        """
+        insert into file_processing_run
+          (id, tenant_id, source_file_id, source_version_id, processor_code,
+           processor_version, processor_build_digest, profile_code, profile_hash,
+           status, source_size_bytes, completed_at, created_by, created_at, updated_at)
+        values ('catalog-run-2', 'tenant-a', 'file-catalog', 'version-catalog-1',
+                'docling-serve', '1.30.0', ?, 'docling-text-v1', ?, 'SUCCEEDED',
+                17, ?, 'file-processing-worker', ?, ?)
+        """,
+        ("sha256:" + "d" * 64, "e" * 64, TIMESTAMP, TIMESTAMP, TIMESTAMP),
+    )
+    repository.database.execute(
+        """
+        insert into file_representation
+          (id, processing_run_id, tenant_id, source_file_id, source_version_id,
+           kind, media_type, encoding, status, size_bytes, content_sha256,
+           object_key, profile_hash, created_at)
+        values ('catalog-representation-2', 'catalog-run-2', 'tenant-a',
+                'file-catalog', 'version-catalog-1', 'MARKDOWN', 'text/markdown',
+                'utf-8', 'AVAILABLE', 13, ?, 'opaque/catalog-representation-2', ?, ?)
+        """,
+        ("f" * 64, "e" * 64, TIMESTAMP),
+    )
+
+    with pytest.raises(PermissionDenied) as replaced:
+        service.prepare_materialization(
+            context=context,
+            arguments={"file_id": "file-catalog", "version_id": "version-catalog-1"},
+        )
+
+    assert replaced.value.error_code == "file_representation_denied"
+    frozen = repository.get_working_set_item(
+        job_id="job-file", file_id="file-catalog", version_id="version-catalog-1"
+    )
+    assert frozen is not None
+    assert frozen["representation_id"] == "catalog-representation-1"
+
+
+def test_catalog_selection_rejects_41st_input_before_transfer_creation() -> None:
+    repository, service, context, _storage = _fixture(include_catalog_candidate=True)
+    _install_catalog_tool_snapshot(repository)
+    service.authorization = FileAuthorizationService(
+        repository.database,
+        _AllowBusinessAccess(),  # type: ignore[arg-type]
+    )
+    owner = FileOwner(WorkspaceOwnerType.PRIVATE_USER, user_id="user-a")
+    catalog_revision_id = str(context.manifest["workspace_catalog_revision_id"])
+    for ordinal in range(1, 40):
+        file_id = f"filler-file-{ordinal}"
+        version_id = f"filler-version-{ordinal}"
+        repository.create_file(
+            file_id=file_id,
+            tenant_id="tenant-a",
+            owner=owner,
+            display_name=f"filler-{ordinal}.txt",
+            actor_id="test",
+        )
+        repository.create_version(
+            version_id=version_id,
+            file_id=file_id,
+            version_number=1,
+            version_kind=FileVersionKind.WORKING,
+            status=FileVersionStatus.AVAILABLE,
+            media_type="text/plain",
+            encoding="utf-8",
+            size_bytes=0,
+            content_sha256=hashlib.sha256(b"").hexdigest(),
+            object_key=f"opaque/filler-{ordinal}",
+            source_kind=FileSourceKind.AGENT_EDITED,
+            actor_id="test",
+            advance_current_from="",
+        )
+        repository.database.execute(
+            """
+            insert into agent_job_file_working_set_item
+              (id, job_id, snapshot_id, workspace_id,
+               workspace_catalog_revision_id, file_id, version_id,
+               selection_source, ordinal, created_at)
+            values (?, 'job-file', 'snapshot-file', 'workspace-a', ?, ?, ?,
+                    'INITIAL_MANIFEST', ?, ?)
+            """,
+            (
+                f"filler-working-{ordinal}",
+                catalog_revision_id,
+                file_id,
+                version_id,
+                ordinal,
+                TIMESTAMP,
+            ),
+        )
+
+    with pytest.raises(NonRetryableExecutionError) as rejected:
+        service.prepare_materialization(
+            context=context,
+            arguments={"file_id": "file-catalog", "version_id": "version-catalog-1"},
+        )
+
+    assert rejected.value.error_code == "job_file_working_set_limit_exceeded"
+    assert repository.database.execute_one(
+        "select count(*) as value from agent_job_file_working_set_item where job_id = ?",
+        ("job-file",),
+    ) == {"value": 40}
+    assert repository.database.execute_one(
+        "select count(*) as value from file_materialization_transfer where job_id = ?",
+        ("job-file",),
+    ) == {"value": 0}
 
 
 def test_manifest_v4_materializes_frozen_markdown_not_original_document() -> None:
@@ -603,8 +969,7 @@ def test_manifest_v4_materializes_frozen_markdown_not_original_document() -> Non
         },
     )
     same_name_control = same_name[INTERNAL_TRANSFER_META][FILE_TRANSFER_META_KEY]
-    assert same_name_control["relative_path"] != control["relative_path"]
-    assert same_name_control["relative_path"].startswith("inputs/readonly/input-")
+    assert same_name_control == control
 
     async def download() -> bytes:
         stream, _media_type = await service.download_transfer(
@@ -746,6 +1111,7 @@ def test_stale_base_creates_conflict_without_advancing_current() -> None:
         ("version-source-2", "WORKSPACE"),
         (str(result["version_id"]), "CONFLICT"),
     }
+    assert later["schema_version"] == 5
 
 
 def test_object_and_database_failures_leave_retryable_cleanup_facts(

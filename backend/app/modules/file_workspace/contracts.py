@@ -86,6 +86,53 @@ _LIST_FILES_SCHEMA: dict[str, Any] = {
     },
 }
 
+_SEARCH_FILES_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "cursor": {"type": "string", "minLength": 1, "maxLength": 2048},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
+        "exact_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255,
+            "pattern": r"^[^/\\\x00-\x1f\x7f]+$",
+        },
+        "name_prefix": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255,
+            "pattern": r"^[^/\\\x00-\x1f\x7f]+$",
+        },
+        "format_codes": {
+            "type": "array",
+            "maxItems": 10,
+            "uniqueItems": True,
+            "items": {
+                "type": "string",
+                "enum": [
+                    "TXT", "LOG", "MARKDOWN", "PDF", "DOCX", "PPTX", "XLSX",
+                    "PNG", "JPEG", "WEBP",
+                ],
+            },
+        },
+        "source_received_from": {"type": "string", "format": "date-time", "maxLength": 40},
+        "source_received_to": {"type": "string", "format": "date-time", "maxLength": 40},
+        "readability_statuses": {
+            "type": "array",
+            "maxItems": 7,
+            "uniqueItems": True,
+            "items": {
+                "type": "string",
+                "enum": [
+                    "DIRECT_TEXT", "PROCESSING", "AVAILABLE", "PARTIAL", "NO_TEXT",
+                    "FAILED", "CONTENT_UNAVAILABLE",
+                ],
+            },
+        },
+    },
+}
+
 _FILE_VERSION_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -155,6 +202,13 @@ FILE_TOOL_MANIFEST: Mapping[str, FileToolDefinition] = MappingProxyType(
             "列出当前 Job 可见的工作区文件元数据；source_received_at 是平台收到原始聊天附件的时间，version_created_at 是精确版本产生时间，observed_at 是本次查询边界；这些时间均为 UTC RFC 3339 机器值；不返回正文或对象位置。",
             _LIST_FILES_SCHEMA,
             operation="task_workspace.files.list",
+            mutating=False,
+        ),
+        "task_workspace_search_files": _tool(
+            "task_workspace_search_files",
+            "按当前RUNNING Job冻结的工作区目录版本分页搜索安全文件元数据；只接受有界名称、格式、来源时间和可读状态过滤，不返回正文、对象位置或凭据。",
+            _SEARCH_FILES_SCHEMA,
+            operation="task_workspace.files.search",
             mutating=False,
         ),
         "file_get_metadata": _tool(

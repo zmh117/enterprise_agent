@@ -71,6 +71,24 @@ PLURAL_DEIXIS_PATTERNS: tuple[str, ...] = (
     "刚才那些",
 )
 
+RECENT_EXPLICIT_COUNT_PATTERN = re.compile(
+    r"刚才(?:发送|上传|发|传)(?:的)?(?P<count>[一二两三四五六七八九十\d]+)"
+    r"(?:个|份|张)?(?:文件|附件|图片|文档)"
+)
+_CHINESE_NUMERALS = {
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+    "十": 10,
+}
+
 FILE_REFERRING_TOKENS: tuple[str, ...] = (
     "文件",
     "附件",
@@ -279,6 +297,22 @@ def has_plural_deixis(text: str) -> bool:
     return any(token in text for token in PLURAL_DEIXIS_PATTERNS)
 
 
+def explicit_recent_file_count(text: str) -> int | None:
+    matched = RECENT_EXPLICIT_COUNT_PATTERN.search(text)
+    if matched is None:
+        return None
+    raw = matched.group("count")
+    if raw.isdigit():
+        value = int(raw)
+    elif raw in _CHINESE_NUMERALS:
+        value = _CHINESE_NUMERALS[raw]
+    elif raw.startswith("十") and raw[1:] in _CHINESE_NUMERALS:
+        value = 10 + _CHINESE_NUMERALS[raw[1:]]
+    else:
+        return None
+    return value if 1 <= value <= 20 else None
+
+
 def has_file_referring_token(text: str) -> bool:
     return any(token in text for token in FILE_REFERRING_TOKENS)
 
@@ -423,6 +457,39 @@ def resolve_file_context(
 
     if skip_deixis:
         return ResolverDecision(dependencies=(), quote_unresolved=True)
+    recent_count = explicit_recent_file_count(text)
+    if recent_count is not None:
+        unique: dict[tuple[str, str], WorkspaceFileCandidate] = {}
+        for item in candidates:
+            if item.source_status not in SOURCE_TERMINAL:
+                continue
+            identity = (item.file_id, item.version_id)
+            previous = unique.get(identity)
+            if previous is None or (not previous.attachment_id and item.attachment_id):
+                unique[identity] = item
+        pool = list(unique.values())
+        if len(pool) < recent_count:
+            return ResolverDecision(
+                dependencies=(),
+                ambiguous=True,
+                clarification_names=tuple(sorted({item.display_name for item in pool})),
+            )
+        selected = sorted(
+            pool,
+            key=lambda item: (
+                item.source_received_at or "",
+                item.source_ready_at or "",
+                item.display_name,
+                item.file_id,
+            ),
+            reverse=True,
+        )[:recent_count]
+        return ResolverDecision(
+            dependencies=tuple(
+                _dependency_from_candidate(item, capability, "DEIXIS")
+                for item in reversed(selected)
+            )
+        )
     if has_plural_deixis(text):
         pool = [item for item in candidates if item.source_status in SOURCE_TERMINAL]
         if not pool:

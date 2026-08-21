@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -142,8 +143,11 @@ def test_python_job_sandbox_rejects_symlinks_special_files_and_limits(
     sandbox = _manager(
         tmp_path,
         capacity_bytes=8,
-        max_files=1,
+        max_files=3,
         max_file_bytes=8,
+        max_input_files=1,
+        max_work_output_files=1,
+        max_tmp_files=1,
     ).create("job-1")
     try:
         outside = tmp_path / "outside.txt"
@@ -243,5 +247,71 @@ def test_python_text_v2_sandbox_allows_markdown_write_and_denies_log_mutation(
                 },
             )
         assert readonly.value.code == "sandbox_file_read_only"
+    finally:
+        sandbox.cleanup()
+
+
+def test_sandbox_v2_reserves_40_inputs_16_work_outputs_and_8_tmp_slots(
+    tmp_path: Path,
+) -> None:
+    sandbox = _manager(tmp_path).create(f"job-budget-{os.getpid()}")
+    try:
+        assert sandbox.limits.max_files == 64
+        assert sandbox.limits.max_input_files == 40
+        assert sandbox.limits.max_work_output_files == 16
+        assert sandbox.limits.max_tmp_files == 8
+        for index in range(40):
+            sandbox.reserve_input(
+                identity=(f"file-{index}", f"version-{index}"),
+                expected_size_bytes=0,
+            )
+        with pytest.raises(JobSandboxError) as input_limit:
+            sandbox.reserve_input(
+                identity=("file-40", "version-40"),
+                expected_size_bytes=0,
+            )
+        assert input_limit.value.code == "sandbox_input_file_count_exceeded"
+        for index in range(16):
+            sandbox.reserve_work_output(
+                relative_path=f"outputs/result-{index}.txt",
+                expected_size_bytes=0,
+            )
+        for index in range(8):
+            sandbox.reserve_tmp(
+                relative_path=f"tmp/internal-{index}.txt",
+                expected_size_bytes=0,
+            )
+        sandbox.assert_within_limits()
+        with pytest.raises(JobSandboxError) as output_limit:
+            sandbox.reserve_work_output(
+                relative_path="work/overflow.txt",
+                expected_size_bytes=0,
+            )
+        assert output_limit.value.code == "sandbox_file_count_exceeded"
+    finally:
+        sandbox.cleanup()
+
+
+def test_sandbox_input_reservations_are_concurrency_safe_and_stop_at_40(
+    tmp_path: Path,
+) -> None:
+    sandbox = _manager(tmp_path).create("job-concurrent-budget")
+
+    def reserve(index: int) -> str:
+        try:
+            sandbox.reserve_input(
+                identity=(f"file-{index}", f"version-{index}"),
+                expected_size_bytes=1,
+            )
+            return "reserved"
+        except JobSandboxError as exc:
+            return exc.code
+
+    try:
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            outcomes = list(pool.map(reserve, range(64)))
+        assert outcomes.count("reserved") == 40
+        assert outcomes.count("sandbox_input_file_count_exceeded") == 24
+        assert sandbox.usage() == (0, 0)
     finally:
         sandbox.cleanup()

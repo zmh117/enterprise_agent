@@ -4,11 +4,19 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 
 from fastapi.testclient import TestClient
+import pytest
 
 from app import main as app_main
 from app.bootstrap import build_test_container
 from app.main import create_app
 from app.modules.platform_config.infrastructure import PlatformConfigRepository
+from app.modules.platform_config.application.validation import PlatformConfigValidationError
+from app.modules.file_workspace.domain import (
+    FileOwner,
+    RetentionPeriod,
+    WorkspaceOwnerType,
+)
+from app.modules.file_workspace.repository import FileWorkspaceRepository
 from app.shared.database import Database, default_migrations_dir
 from app.shared.migrations import Migrator
 from app.shared.runtime_config_loader import load_settings_with_db_overlay
@@ -67,6 +75,216 @@ def test_definition_reconciliation_normalizes_semantic_fields() -> None:
     assert second == first
     assert second["service_names"] == ["worker-a", "worker-b"]
     assert service.repository.list_config_audit(limit=500) == audit_after_first
+
+
+def test_tenant_runtime_config_is_code_gated_bounded_and_revision_safe() -> None:
+    runtime = container()
+    service = runtime.platform_config_service
+    active_limit = service.repository.get_runtime_config_definition(
+        "FILE_WORKSPACE_ACTIVE_FILE_LIMIT"
+    )
+    bytes_limit = service.repository.get_runtime_config_definition(
+        "FILE_WORKSPACE_BILLABLE_BYTES_LIMIT"
+    )
+    assert active_limit is not None and active_limit["tenant_compatible"] is True
+    assert active_limit["default"] == 200
+    assert bytes_limit is not None and bytes_limit["tenant_compatible"] is True
+    assert bytes_limit["default"] == 2 * 1024 * 1024 * 1024
+
+    runtime.database.execute(
+        """
+        insert into dingtalk_enterprise
+          (id, name, corp_id, status, verification_event_id, verified_at,
+           revision, created_by, created_at, updated_at)
+        values ('tenant-runtime-config', 'Runtime Config Tenant', 'corp-runtime-config',
+                'ACTIVE', 'verification-runtime-config',
+                '2026-08-21T00:00:00+00:00', 1, 'user_local_admin',
+                '2026-08-21T00:00:00+00:00', '2026-08-21T00:00:00+00:00')
+        """
+    )
+
+    with pytest.raises(ValueError, match="不允许使用tenant作用域"):
+        service.upsert_runtime_config_value(
+            {
+                "key": "ANTHROPIC_MODEL",
+                "scope_type": "tenant",
+                "scope_code": "tenant-runtime-config",
+                "value": "model-a",
+            },
+            actor_id="user_local_admin",
+        )
+    with pytest.raises(ValueError, match="不存在、未验证或未启用"):
+        service.upsert_runtime_config_value(
+            {
+                "key": "FILE_WORKSPACE_ACTIVE_FILE_LIMIT",
+                "scope_type": "tenant",
+                "scope_code": "unknown-tenant",
+                "value": 500,
+            },
+            actor_id="user_local_admin",
+        )
+    with pytest.raises(PlatformConfigValidationError, match="outside code bounds"):
+        service.upsert_runtime_config_value(
+            {
+                "key": "FILE_WORKSPACE_ACTIVE_FILE_LIMIT",
+                "scope_type": "tenant",
+                "scope_code": "tenant-runtime-config",
+                "value": 1001,
+            },
+            actor_id="user_local_admin",
+        )
+
+    created = service.upsert_runtime_config_value(
+        {
+            "key": "FILE_WORKSPACE_ACTIVE_FILE_LIMIT",
+            "scope_type": "tenant",
+            "scope_code": "tenant-runtime-config",
+            "service_name": "file-service",
+            "value": 500,
+        },
+        actor_id="user_local_admin",
+    )
+    assert created["revision"] == 1
+    snapshot = service.runtime_config_snapshot(
+        service_name="file-service",
+        scopes={"tenant": "tenant-runtime-config"},
+    )
+    assert snapshot["effective"]["FILE_WORKSPACE_ACTIVE_FILE_LIMIT"]["value"] == 500
+    assert snapshot["effective"]["FILE_WORKSPACE_BILLABLE_BYTES_LIMIT"]["value"] == (
+        2 * 1024 * 1024 * 1024
+    )
+
+    with pytest.raises(ValueError, match="expected_revision"):
+        service.upsert_runtime_config_value(
+            {
+                "key": "FILE_WORKSPACE_ACTIVE_FILE_LIMIT",
+                "scope_type": "tenant",
+                "scope_code": "tenant-runtime-config",
+                "service_name": "file-service",
+                "value": 600,
+            },
+            actor_id="user_local_admin",
+        )
+    with pytest.raises(ValueError, match="刷新后重试"):
+        service.upsert_runtime_config_value(
+            {
+                "key": "FILE_WORKSPACE_ACTIVE_FILE_LIMIT",
+                "scope_type": "tenant",
+                "scope_code": "tenant-runtime-config",
+                "service_name": "file-service",
+                "value": 600,
+                "expected_revision": 999,
+            },
+            actor_id="user_local_admin",
+        )
+    updated = service.upsert_runtime_config_value(
+        {
+            "key": "FILE_WORKSPACE_ACTIVE_FILE_LIMIT",
+            "scope_type": "tenant",
+            "scope_code": "tenant-runtime-config",
+            "service_name": "file-service",
+            "value": 600,
+            "expected_revision": created["revision"],
+        },
+        actor_id="user_local_admin",
+    )
+    assert updated["revision"] == 2
+
+
+def test_tenant_file_limit_raise_is_blocked_by_incompatible_active_publication() -> None:
+    runtime = container()
+    service = runtime.platform_config_service
+    timestamp = "2026-08-21T00:00:00+00:00"
+    runtime.database.execute(
+        """
+        insert into dingtalk_enterprise
+          (id, name, corp_id, status, verification_event_id, verified_at,
+           revision, created_by, created_at, updated_at)
+        values ('tenant-quota-gate', 'Quota Gate Tenant', 'corp-quota-gate',
+                'ACTIVE', 'verification-quota-gate', ?, 1, 'user_local_admin', ?, ?)
+        """,
+        (timestamp, timestamp, timestamp),
+    )
+    runtime.database.execute(
+        """
+        insert into business_application
+          (id, code, name, project_code, status, revision,
+           created_by, created_at, updated_at)
+        values ('quota-gate-app', 'quota-gate-app', 'Quota Gate App', 'default',
+                'enabled', 1, 'user_local_admin', ?, ?)
+        """,
+        (timestamp, timestamp),
+    )
+    runtime.database.execute(
+        """
+        insert into business_application_revision
+          (id, application_id, revision, status, created_by, created_at, updated_at)
+        values ('quota-gate-r1', 'quota-gate-app', 1, 'published',
+                'user_local_admin', ?, ?)
+        """,
+        (timestamp, timestamp),
+    )
+    runtime.database.execute(
+        """
+        insert into business_application_publication
+          (id, application_id, revision_id, revision, snapshot_json,
+           config_hash, published_by, published_at)
+        values ('quota-gate-p1', 'quota-gate-app', 'quota-gate-r1', 1, '{}', ?,
+                'user_local_admin', ?)
+        """,
+        ("7" * 64, timestamp),
+    )
+    runtime.database.execute(
+        """
+        insert into agent_session
+          (id, source_channel, source_connector_id, external_conversation_id,
+           requester_id, project_code, session_key, created_at, updated_at)
+        values ('quota-gate-session', 'debug_api', 'debug-api', 'quota-gate-conversation',
+                'user_local_admin', 'default', 'quota-gate-session-key', ?, ?)
+        """,
+        (timestamp, timestamp),
+    )
+    FileWorkspaceRepository(runtime.database).create_workspace(
+        workspace_id="quota-gate-workspace",
+        tenant_id="tenant-quota-gate",
+        session_id="quota-gate-session",
+        owner=FileOwner(WorkspaceOwnerType.PRIVATE_USER, user_id="user_local_admin"),
+        publication_id="quota-gate-p1",
+        retention_period=RetentionPeriod.WEEK,
+        expires_at="2026-08-24T16:00:00+00:00",
+        actor_id="user_local_admin",
+    )
+    current = service.upsert_runtime_config_value(
+        {
+            "key": "FILE_WORKSPACE_ACTIVE_FILE_LIMIT",
+            "scope_type": "tenant",
+            "scope_code": "tenant-quota-gate",
+            "service_name": "file-service",
+            "value": 20,
+        },
+        actor_id="user_local_admin",
+    )
+
+    diagnostics = service.file_workspace_tenant_diagnostics("tenant-quota-gate")
+    assert diagnostics["incompatible_publications"] == [
+        {
+            "application_code": "quota-gate-app",
+            "publication_id": "quota-gate-p1",
+            "publication_revision": 1,
+        }
+    ]
+    with pytest.raises(ValueError, match="quota-gate-app@r1"):
+        service.upsert_runtime_config_value(
+            {
+                "key": "FILE_WORKSPACE_ACTIVE_FILE_LIMIT",
+                "scope_type": "tenant",
+                "scope_code": "tenant-quota-gate",
+                "service_name": "file-service",
+                "value": 200,
+                "expected_revision": current["revision"],
+            },
+            actor_id="user_local_admin",
+        )
 
 
 def test_builtin_sync_reports_and_audits_only_real_changes() -> None:

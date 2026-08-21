@@ -43,7 +43,7 @@ from app.python_runtime.model_binding import (
     PythonModelBindingResolver,
     ResolvedPythonModelBinding,
 )
-from app.python_runtime.job_sandbox import JobSandboxManager
+from app.python_runtime.job_sandbox import JobSandboxLimits, JobSandboxManager
 from app.python_runtime.claude_client import ClaudeSdk, ClaudeSdkClient, build_system_prompt
 from app.python_runtime.mcp_config import FixedMcpClaudeSdkClient
 from app.python_runtime.sdk_event_normalizer import extract_tool_events
@@ -741,6 +741,24 @@ def test_python_runtime_model_probe_and_fixed_mcp_url_boundary(tmp_path: Path) -
         assert "fixed deployment boundary" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("arbitrary MCP URL was accepted")
+
+
+def test_python_runtime_readiness_fails_closed_on_sandbox_v2_config_drift(
+    tmp_path: Path,
+) -> None:
+    executor = FakePythonExecutor()
+    dependencies, _private_key = _dependencies(tmp_path, executor)
+    dependencies.sandbox_manager = JobSandboxManager(
+        tmp_path / "runtime-sandboxes-drifted",
+        limits=JobSandboxLimits(max_input_files=39),
+    )
+
+    response = TestClient(create_app(dependencies)).get("/ready")
+
+    assert response.status_code == 503
+    assert response.json()["ready"] is False
+    assert response.json()["sandbox"] == "unavailable"
+    assert response.json()["sandbox_max_input_files"] == 39
 
 
 def test_python_runtime_model_probe_accepts_legacy_v1_request_with_current_response(

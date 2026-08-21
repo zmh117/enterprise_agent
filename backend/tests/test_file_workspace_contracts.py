@@ -29,6 +29,7 @@ from app.python_runtime.file_transfer import (
 EXPECTED_FILE_TOOLS = {
     "task_workspace_get",
     "task_workspace_list_files",
+    "task_workspace_search_files",
     "file_get_metadata",
     "file_prepare_materialization",
     "file_create_commit_intent",

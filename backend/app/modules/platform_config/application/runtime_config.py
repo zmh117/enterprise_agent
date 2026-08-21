@@ -33,6 +33,7 @@ class RuntimeConfigDefinitionSpec:
     default: Any
     sensitive: bool = False
     bootstrap_only: bool = False
+    tenant_compatible: bool = False
     service_names: tuple[str, ...] = ()
     description: str = ""
     classification: str = "runtime-config"
@@ -326,6 +327,22 @@ RUNTIME_CONFIG_DEFINITIONS: tuple[RuntimeConfigDefinitionSpec, ...] = (
         service_names=("job-dispatch-worker",),
     ),
     RuntimeConfigDefinitionSpec(
+        "FILE_WORKSPACE_ACTIVE_FILE_LIMIT",
+        "int",
+        200,
+        tenant_compatible=True,
+        service_names=("file-service",),
+        description="任务工作区ACTIVE逻辑文件数量上限，代码硬上限1000",
+    ),
+    RuntimeConfigDefinitionSpec(
+        "FILE_WORKSPACE_BILLABLE_BYTES_LIMIT",
+        "int",
+        2 * 1024 * 1024 * 1024,
+        tenant_compatible=True,
+        service_names=("file-service",),
+        description="任务工作区计费内容字节上限，代码硬上限10GiB",
+    ),
+    RuntimeConfigDefinitionSpec(
         "FEATURE_WEBHOOK_TRIGGERS",
         "bool",
         True,
@@ -377,6 +394,29 @@ RUNTIME_CONFIG_DEFINITIONS: tuple[RuntimeConfigDefinitionSpec, ...] = (
     ),
 )
 
+RUNTIME_CONFIG_INTEGER_BOUNDS: dict[str, tuple[int, int]] = {
+    "FILE_WORKSPACE_ACTIVE_FILE_LIMIT": (1, 1000),
+    "FILE_WORKSPACE_BILLABLE_BYTES_LIMIT": (1, 10 * 1024 * 1024 * 1024),
+}
+
+
+def builtin_runtime_config_definition(key: str) -> RuntimeConfigDefinitionSpec | None:
+    normalized = str(key or "").strip()
+    return next((item for item in RUNTIME_CONFIG_DEFINITIONS if item.key == normalized), None)
+
+
+def validate_runtime_config_value_bounds(key: str, value: Any) -> Any:
+    bounds = RUNTIME_CONFIG_INTEGER_BOUNDS.get(str(key or "").strip())
+    if bounds is None:
+        return value
+    minimum, maximum = bounds
+    if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+        raise PlatformConfigValidationError(
+            f"Runtime config value is outside code bounds: {key}",
+            safe_message="运行配置值超出代码允许范围",
+        )
+    return value
+
 
 class RuntimeConfigRegistry:
     def __init__(self, repository: PlatformConfigRepository) -> None:
@@ -391,6 +431,7 @@ class RuntimeConfigRegistry:
                 default=definition.default,
                 sensitive=definition.sensitive,
                 bootstrap_only=definition.bootstrap_only,
+                tenant_compatible=definition.tenant_compatible,
                 service_names=list(definition.service_names),
                 description=definition.description,
             )
@@ -416,6 +457,7 @@ class RuntimeConfigRegistry:
                 "default": item.default,
                 "sensitive": item.sensitive,
                 "bootstrap_only": item.bootstrap_only,
+                "tenant_compatible": item.tenant_compatible,
                 "service_names": list(item.service_names),
                 "classification": (
                     item.classification
@@ -536,16 +578,19 @@ class RuntimeConfigSnapshotBuilder:
 
 
 def validate_runtime_config_definition_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    key = str(payload.get("key") or "").strip()
     value_type = validate_config_value_type(str(payload.get("value_type") or "string"))
     default = payload.get("default")
     if default is not None and default != "":
-        coerce_runtime_value(default, value_type, field="default")
+        coerced_default = coerce_runtime_value(default, value_type, field="default")
+        validate_runtime_config_value_bounds(key, coerced_default)
     return {
-        "key": str(payload.get("key") or "").strip(),
+        "key": key,
         "value_type": value_type.value,
         "default": default,
         "sensitive": bool(payload.get("sensitive", value_type.value == "secret_ref")),
         "bootstrap_only": bool(payload.get("bootstrap_only")),
+        "tenant_compatible": False,
         "service_names": [str(item) for item in (payload.get("service_names") or [])],
         "description": str(payload.get("description") or ""),
         "status": str(payload.get("status") or "enabled"),
@@ -570,6 +615,7 @@ def _priority(value: dict[str, Any]) -> int:
     base = {
         "global": 10,
         "service": 20,
+        "tenant": 80,
         "project": 30,
         "environment": 40,
         "base": 50,

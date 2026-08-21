@@ -42,6 +42,7 @@ FILE_MCP_READ_TOOLS = frozenset(
     {
         "task_workspace_get",
         "task_workspace_list_files",
+        "task_workspace_search_files",
         "file_get_metadata",
         "file_prepare_materialization",
     }

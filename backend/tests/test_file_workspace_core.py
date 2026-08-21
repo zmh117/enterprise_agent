@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -23,6 +24,8 @@ from app.modules.file_workspace.quota import (
 from app.modules.file_workspace.repository import FileWorkspaceRepository
 from app.modules.file_workspace.txt_validation import TxtStreamValidator
 from app.modules.file_workspace.workspace_service import TaskWorkspaceService
+from app.modules.platform_config.infrastructure import PlatformConfigRepository
+from app.modules.platform_config.application.runtime_config import RuntimeConfigRegistry
 from app.shared.exceptions import NonRetryableExecutionError
 from backend.tests.test_file_workspace_repository import TIMESTAMP, _database
 
@@ -170,7 +173,7 @@ def test_workspace_quota_counts_logical_files_and_only_unretained_temporary_cont
         expires_at="2026-08-17T00:00:00+08:00",
         actor_id="user-a",
     )
-    for index in range(20):
+    for index in range(200):
         _workspace_with_file(
             repository,
             workspace_id="workspace-quota",
@@ -180,8 +183,8 @@ def test_workspace_quota_counts_logical_files_and_only_unretained_temporary_cont
         )
     quota = WorkspaceQuotaService(database)
     usage = quota.usage("workspace-quota", now=TIMESTAMP)
-    assert usage.file_count == 20
-    assert usage.temporary_bytes == 100
+    assert usage.file_count == 200
+    assert usage.temporary_bytes == 1000
     with pytest.raises(NonRetryableExecutionError) as error:
         quota.require_commit_capacity(
             workspace_id="workspace-quota",
@@ -198,7 +201,51 @@ def test_workspace_quota_counts_logical_files_and_only_unretained_temporary_cont
         starts_at=TIMESTAMP,
         expires_at="2027-08-09T00:00:00+00:00",
     )
-    assert quota.usage("workspace-quota", now=TIMESTAMP).temporary_bytes == 95
+    assert quota.usage("workspace-quota", now=TIMESTAMP).temporary_bytes == 995
+    database.execute(
+        """
+        insert into file_processing_run
+          (id, tenant_id, source_file_id, source_version_id, processor_code,
+           processor_version, processor_build_digest, profile_code, profile_hash,
+           status, source_size_bytes, completed_at, created_by, created_at, updated_at)
+        values ('quota-run', 'tenant-a', 'file-0', 'version-0', 'docling-serve',
+                '1.30.0', ?, 'docling-layout-ocr-v1', ?, 'SUCCEEDED', 5, ?,
+                'file-worker', ?, ?)
+        """,
+        ("sha256:" + "2" * 64, "3" * 64, TIMESTAMP, TIMESTAMP, TIMESTAMP),
+    )
+    database.execute(
+        """
+        insert into file_representation
+          (id, processing_run_id, tenant_id, source_file_id, source_version_id,
+           kind, media_type, encoding, status, size_bytes, content_sha256,
+           object_key, profile_hash, created_at)
+        values ('quota-representation', 'quota-run', 'tenant-a', 'file-0',
+                'version-0', 'MARKDOWN', 'text/markdown', 'utf-8', 'AVAILABLE',
+                5, ?, 'opaque/quota-derived', ?, ?)
+        """,
+        ("4" * 64, "3" * 64, TIMESTAMP),
+    )
+    database.execute(
+        """
+        insert into document_parent_artifact_transfer
+          (id, processing_run_id, kind, token_hash, expected_size_bytes,
+           expected_sha256, received_size_bytes, received_sha256,
+           staging_object_key, status, expires_at, created_at, updated_at, finalized_at)
+        values ('quota-parent-transfer', 'quota-run', 'PARENT_MARKDOWN', ?, 5, ?,
+                5, ?, 'opaque/quota-derived', 'FINALIZED', ?, ?, ?, ?)
+        """,
+        (
+            "5" * 64,
+            "4" * 64,
+            "4" * 64,
+            "2026-08-22T00:00:00+00:00",
+            TIMESTAMP,
+            TIMESTAMP,
+            TIMESTAMP,
+        ),
+    )
+    assert quota.usage("workspace-quota", now=TIMESTAMP).temporary_bytes == 1000
     database.execute(
         "update managed_file_version set size_bytes = ? where id = 'version-1'",
         (MAX_TEMPORARY_BYTES,),
@@ -211,6 +258,88 @@ def test_workspace_quota_counts_logical_files_and_only_unretained_temporary_cont
             now=TIMESTAMP,
         )
     assert error.value.error_code == "workspace_quota_exceeded"
+
+
+def test_workspace_quota_reservations_are_concurrency_safe_and_lowering_is_read_only() -> None:
+    database = _database()
+    repository = FileWorkspaceRepository(database)
+    repository.create_workspace(
+        workspace_id="workspace-reservations",
+        tenant_id="tenant-a",
+        session_id="session-file",
+        owner=_owner(),
+        publication_id="app-file-p1",
+        retention_period=RetentionPeriod.WEEK,
+        expires_at="2026-08-17T00:00:00+08:00",
+        actor_id="user-a",
+    )
+    quota = WorkspaceQuotaService(database)
+
+    def reserve(index: int) -> str:
+        try:
+            quota.reserve(
+                workspace_id="workspace-reservations",
+                operation_type="ATTACHMENT_IMPORT",
+                operation_id=f"concurrent-{index}",
+                logical_file_slots=1,
+                billable_bytes=1,
+                expires_at="2026-08-22T00:00:00+00:00",
+                now=TIMESTAMP,
+            )
+            return "reserved"
+        except NonRetryableExecutionError as exc:
+            return exc.error_code
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        outcomes = list(pool.map(reserve, range(205)))
+    assert outcomes.count("reserved") == 200
+    assert outcomes.count("workspace_file_limit_exceeded") == 5
+    usage = quota.usage("workspace-reservations", now=TIMESTAMP)
+    assert usage.reserved_file_slots == 200
+    assert usage.reserved_billable_bytes == 200
+
+    reserved_operations = database.execute(
+        """
+        select operation_id from task_workspace_quota_reservation
+         where workspace_id = 'workspace-reservations' and status = 'RESERVED'
+        """
+    )
+    for row in reserved_operations:
+        quota.finalize_operation(
+            workspace_id="workspace-reservations",
+            operation_type="ATTACHMENT_IMPORT",
+            operation_id=str(row["operation_id"]),
+            committed=False,
+            now=TIMESTAMP,
+        )
+    _workspace_with_file(
+        repository,
+        workspace_id="workspace-reservations",
+        file_id="existing-file-0",
+        version_id="existing-version-0",
+        size_bytes=5,
+    )
+    config_repository = PlatformConfigRepository(database)
+    RuntimeConfigRegistry(config_repository).ensure_builtin_definitions()
+    config_repository.upsert_runtime_config_value(
+        key="FILE_WORKSPACE_ACTIVE_FILE_LIMIT",
+        scope_type="service",
+        scope_code="file-service",
+        service_name="file-service",
+        value=1,
+    )
+    assert repository.require_content_available("existing-version-0")["size_bytes"] == 5
+    with pytest.raises(NonRetryableExecutionError) as lowered:
+        quota.reserve(
+            workspace_id="workspace-reservations",
+            operation_type="ATTACHMENT_IMPORT",
+            operation_id="after-lowering",
+            logical_file_slots=1,
+            billable_bytes=1,
+            expires_at="2026-08-22T00:00:00+00:00",
+            now=TIMESTAMP,
+        )
+    assert lowered.value.error_code == "workspace_file_limit_exceeded"
 
 
 def test_deleted_internal_content_is_terminal_even_when_external_reference_remains() -> None:

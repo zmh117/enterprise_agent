@@ -254,13 +254,18 @@ def _tool_restrictions(
     if file_job:
         readable_formats = "TXT/LOG/Markdown" if file_format_policy_version == "text-v2" else "TXT"
         writable_formats = "TXT/Markdown" if file_format_policy_version == "text-v2" else "TXT"
+        candidate_instruction = (
+            "For other workspace candidates, page task_workspace_search_files over the Job-frozen catalog, choose the exact returned File/Version, then call file_prepare_materialization before reading; never declare workspace, tenant, catalog revision, object location, or credentials."
+            if "task_workspace_search_files" in assigned
+            else "This legacy Publication can use only the exact File/Version entries already present in file_manifest; do not attempt to discover or materialize any other workspace file."
+        )
         restrictions.extend(
             [
                 f"Current-message and explicitly referenced {readable_formats} files are materialized by Runtime before model execution; read them from the runtime_materialized_files sandbox paths.",
-                "For other workspace candidates, use the exact File/Version IDs in file_manifest and file_prepare_materialization before reading.",
+                candidate_instruction,
                 "If file_get_metadata or list_files shows readability_status PENDING, NO_TEXT, or UNAVAILABLE, do not invent document body and do not infer content from the file name; tell the user readable content is not ready or failed, and continue answering unrelated questions. Call file_prepare_materialization only after AVAILABLE or PARTIAL, and treat file_readable_content_not_ready or file_processing_failed as terminal for that file.",
                 "File MCP and file_manifest timestamps (source_received_at, version_created_at, observed_at, representation_created_at, expires_at) are canonical UTC RFC 3339 machine values and must be used as UTC instants for comparisons. In every user-visible answer, convert file timestamps to Asia/Shanghai (UTC+08:00) before display and label upload timestamps as 上传时间（东八区） or 北京时间; never display 上传时间（UTC） or a raw Z/+00:00 timestamp unless the user explicitly asks for UTC. For relative upload-time requests, compare source_received_at with the service-provided observed_at; do not treat version_created_at or a generic created_at as upload time.",
-                f"Use only Read, Glob, Grep, Edit, and Write with safe relative {readable_formats} paths inside inputs, work, outputs, or tmp; LOG remains read-only.",
+                f"Use only Read, Glob, Grep, Edit, and Write with safe relative {readable_formats} paths; create files only in work or outputs, edit only authorized existing inputs, and never write internal tmp; LOG remains read-only.",
                 f"To persist an output, select one exact sandbox {writable_formats} file and then use the frozen File MCP commit flow; never assume a local edit changed File Service state.",
             ]
         )

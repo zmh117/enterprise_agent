@@ -177,6 +177,18 @@ def test_runtime_tmpfs_and_per_job_limits_are_explicitly_configured() -> None:
     assert environment["PYTHON_AGENT_RUNTIME_SANDBOX_MAX_FILE_BYTES"] == (
         "${AGENT_RUNTIME_SANDBOX_MAX_FILE_BYTES:-15728640}"
     )
+    assert environment["PYTHON_AGENT_RUNTIME_SANDBOX_MAX_FILES"] == (
+        "${AGENT_RUNTIME_SANDBOX_MAX_FILES:-64}"
+    )
+    assert environment["PYTHON_AGENT_RUNTIME_SANDBOX_MAX_INPUT_FILES"] == (
+        "${AGENT_RUNTIME_SANDBOX_MAX_INPUT_FILES:-40}"
+    )
+    assert environment["PYTHON_AGENT_RUNTIME_SANDBOX_MAX_WORK_OUTPUT_FILES"] == (
+        "${AGENT_RUNTIME_SANDBOX_MAX_WORK_OUTPUT_FILES:-16}"
+    )
+    assert environment["PYTHON_AGENT_RUNTIME_SANDBOX_MAX_TMP_FILES"] == (
+        "${AGENT_RUNTIME_SANDBOX_MAX_TMP_FILES:-8}"
+    )
 
 
 def test_backend_image_contains_file_service_and_file_worker_targets() -> None:

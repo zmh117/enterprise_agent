@@ -21,7 +21,7 @@ DingTalk sanitized Channel event
 
 测试同时证明 Job 沙盒在终态路径清理、输入/输出正文不进入 MCP 控制结果，以及默认文件交付使用冻结的当前 reply route。RabbitMQ durable queue/retry/dead 声明、单消费者消息 schema 和 ack 边界由 `backend/tests/test_attachment_worker_contract.py` 独立验证；Compose 单消费者和凭据隔离由 `backend/tests/test_task_file_workspace_compose.py` 验证。
 
-混合格式用例证明 `text-v2` Job 固定选择 Runtime protocol v1.3，Manifest schema v3 同时冻结 TXT、只读 LOG 和可编辑 Markdown 的精确版本与操作集合。Python Runtime 使用 `contracts/agent-runtime/text-format-policy-v2.fixture.json` 比较扩展名、MIME、BOM、NUL、大小、路径、符号链接、操作和稳定错误码；Markdown 正文不会进入管理端或被渲染。
+混合格式用例证明`text-v2` Job在既有Runtime protocol v1.2/v1.3上使用Manifest schema v5，冻结目录revision及已选TXT、只读LOG和Markdown精确版本；未选目录项不复制进Manifest。Python Runtime使用`contracts/agent-runtime/text-format-policy-v2.fixture.json`比较扩展名、MIME、BOM、NUL、大小、路径、符号链接、操作和稳定错误码；Markdown正文不会进入管理端或被渲染。
 
 ## 群与并发
 

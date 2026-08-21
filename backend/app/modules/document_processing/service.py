@@ -30,6 +30,7 @@ from app.modules.document_processing.profile import (
 )
 from app.modules.document_processing.repository import DocumentProcessingRepository
 from app.modules.file_workspace.repository import FileWorkspaceRepository
+from app.modules.file_workspace.quota import WorkspaceQuotaService
 from app.modules.file_workspace.storage import InternalStoredObject
 from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
 
@@ -136,6 +137,7 @@ class GovernedDocumentProcessingService:
     ) -> None:
         self.repository = repository
         self.file_repository = file_repository
+        self.workspace_quota = WorkspaceQuotaService(file_repository.database)
         self.storage = storage
         self.source_grant_signer = source_grant_signer
         self.audit_service = audit_service
@@ -441,6 +443,17 @@ class GovernedDocumentProcessingService:
         token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
         staging_object_key = self.storage.new_object_key(kind="staging")
         expires_at = (issued_at + REPRESENTATION_TRANSFER_TTL).isoformat()
+        workspace_id = self._workspace_for_run(run)
+        operation_id = f"representation:{run_id}:{representation_kind.value}"
+        self.workspace_quota.reserve(
+            workspace_id=workspace_id,
+            operation_type="FILE_PROCESSING",
+            operation_id=operation_id,
+            logical_file_slots=0,
+            billable_bytes=expected_size_bytes,
+            expires_at=expires_at,
+            now=issued_at.isoformat(),
+        )
         transfer, created = self.repository.create_or_get_transfer(
             run_id=run_id,
             kind=representation_kind,
@@ -491,13 +504,25 @@ class GovernedDocumentProcessingService:
         self._validate_digest(expected_sha256)
         issued_at = now or datetime.now(UTC)
         token = secrets.token_urlsafe(32)
+        expires_at = (issued_at + PICTURE_TRANSFER_TTL).isoformat()
+        workspace_id = self._workspace_for_run(run)
+        operation_id = f"parent:{run_id}"
+        self.workspace_quota.reserve(
+            workspace_id=workspace_id,
+            operation_type="FILE_PROCESSING",
+            operation_id=operation_id,
+            logical_file_slots=0,
+            billable_bytes=expected_size_bytes,
+            expires_at=expires_at,
+            now=issued_at.isoformat(),
+        )
         transfer, created = self.repository.create_or_get_parent_artifact_transfer(
             run_id=run_id,
             token_hash=hashlib.sha256(token.encode()).hexdigest(),
             expected_size_bytes=expected_size_bytes,
             expected_sha256=expected_sha256,
             staging_object_key=self.storage.new_object_key(kind="staging"),
-            expires_at=(issued_at + PICTURE_TRANSFER_TTL).isoformat(),
+            expires_at=expires_at,
         )
         if not created:
             return {
@@ -547,11 +572,20 @@ class GovernedDocumentProcessingService:
             size_bytes=len(body),
             internal_object_key=str(transfer["staging_object_key"]),
         )
-        return self.repository.finalize_parent_artifact_transfer(
+        result = self.repository.finalize_parent_artifact_transfer(
             transfer_id=transfer_id,
             received_size_bytes=stored.size_bytes,
             received_sha256=stored.content_sha256,
         )
+        run = self.repository.get_run(str(transfer["processing_run_id"]))
+        self.workspace_quota.finalize_operation(
+            workspace_id=self._workspace_for_run(run),
+            operation_type="FILE_PROCESSING",
+            operation_id=f"parent:{run['id']}",
+            committed=True,
+            now=(now or datetime.now(UTC)).isoformat(),
+        )
+        return result
 
     def open_parent_artifact(self, *, run_id: str) -> BinaryIO:
         transfer = self.repository.parent_artifact_for_run(run_id)
@@ -617,6 +651,19 @@ class GovernedDocumentProcessingService:
         ):
             self._deny("document_picture_transform_invalid", "内嵌图片变换无效")
         self._validate_digest(normalized_sha256)
+        issued_at = now or datetime.now(UTC)
+        expires_at = (issued_at + PICTURE_TRANSFER_TTL).isoformat()
+        workspace_id = self._workspace_for_run(run)
+        operation_id = f"picture:{run_id}:{normalized_sha256}"
+        self.workspace_quota.reserve(
+            workspace_id=workspace_id,
+            operation_type="DERIVATIVE_WRITE",
+            operation_id=operation_id,
+            logical_file_slots=0,
+            billable_bytes=size_bytes,
+            expires_at=expires_at,
+            now=issued_at.isoformat(),
+        )
         object_key = self.storage.new_object_key(kind="staging")
         asset, _ = self.repository.create_or_get_picture_asset(
             run_id=run_id,
@@ -633,12 +680,11 @@ class GovernedDocumentProcessingService:
             object_key=object_key,
         )
         token = secrets.token_urlsafe(32)
-        issued_at = now or datetime.now(UTC)
         transfer, created = self.repository.create_or_get_picture_asset_transfer(
             picture_asset_id=str(asset["id"]),
             token_hash=hashlib.sha256(token.encode()).hexdigest(),
             staging_object_key=str(asset["object_key"]),
-            expires_at=(issued_at + PICTURE_TRANSFER_TTL).isoformat(),
+            expires_at=expires_at,
         )
         result = {
             "picture_asset_id": str(asset["id"]),
@@ -679,11 +725,21 @@ class GovernedDocumentProcessingService:
             size_bytes=len(body),
             internal_object_key=str(transfer["staging_object_key"]),
         )
-        return self.repository.finalize_picture_asset_transfer(
+        result = self.repository.finalize_picture_asset_transfer(
             transfer_id=transfer_id,
             received_size_bytes=stored.size_bytes,
             received_sha256=stored.content_sha256,
         )
+        asset = self.repository.get_picture_asset(str(transfer["picture_asset_id"]))
+        run = self.repository.get_run(str(transfer["processing_run_id"]))
+        self.workspace_quota.finalize_operation(
+            workspace_id=self._workspace_for_run(run),
+            operation_type="DERIVATIVE_WRITE",
+            operation_id=f"picture:{run['id']}:{asset['normalized_sha256']}",
+            committed=True,
+            now=(now or datetime.now(UTC)).isoformat(),
+        )
+        return result
 
     def register_picture_occurrence(self, **values: Any) -> dict[str, Any]:
         bbox = values.pop("parent_bbox", None)
@@ -825,13 +881,25 @@ class GovernedDocumentProcessingService:
         self._validate_digest(expected_sha256)
         token = secrets.token_urlsafe(32)
         issued_at = now or datetime.now(UTC)
+        workspace_id = self._workspace_for_run(run)
+        operation_id = f"picture-result:{picture_item_id}"
+        expires_at = (issued_at + PICTURE_TRANSFER_TTL).isoformat()
+        self.workspace_quota.reserve(
+            workspace_id=workspace_id,
+            operation_type="DERIVATIVE_WRITE",
+            operation_id=operation_id,
+            logical_file_slots=0,
+            billable_bytes=expected_size_bytes,
+            expires_at=expires_at,
+            now=issued_at.isoformat(),
+        )
         transfer, created = self.repository.create_or_get_picture_result_transfer(
             picture_item_id=picture_item_id,
             token_hash=hashlib.sha256(token.encode()).hexdigest(),
             expected_size_bytes=expected_size_bytes,
             expected_sha256=expected_sha256,
             staging_object_key=self.storage.new_object_key(kind="staging"),
-            expires_at=(issued_at + PICTURE_TRANSFER_TTL).isoformat(),
+            expires_at=expires_at,
         )
         result = {
             "transfer_id": str(transfer["id"]),
@@ -878,11 +946,19 @@ class GovernedDocumentProcessingService:
             size_bytes=len(body),
             internal_object_key=str(transfer["staging_object_key"]),
         )
-        return self.repository.finalize_picture_result_transfer(
+        result_row = self.repository.finalize_picture_result_transfer(
             transfer_id=transfer_id,
             received_size_bytes=stored.size_bytes,
             received_sha256=stored.content_sha256,
         )
+        self.workspace_quota.finalize_operation(
+            workspace_id=self._workspace_for_run(run),
+            operation_type="DERIVATIVE_WRITE",
+            operation_id=f"picture-result:{item['id']}",
+            committed=True,
+            now=(now or datetime.now(UTC)).isoformat(),
+        )
+        return result_row
 
     def open_picture_result(self, *, picture_item_id: str) -> BinaryIO:
         transfer = self.repository.database.execute_one(
@@ -1028,6 +1104,13 @@ class GovernedDocumentProcessingService:
             received_sha256=stored.content_sha256,
         )
         run = self.repository.get_run(str(staged_transfer["processing_run_id"]))
+        self.workspace_quota.finalize_operation(
+            workspace_id=self._workspace_for_run(run),
+            operation_type="FILE_PROCESSING",
+            operation_id=f"representation:{run['id']}:{kind.value}",
+            committed=True,
+            now=(now or datetime.now(UTC)).isoformat(),
+        )
         self._audit_run(
             "file.document.representation.staged",
             run=run,
@@ -1080,6 +1163,9 @@ class GovernedDocumentProcessingService:
                 run_id=run_id,
                 due_at=datetime.now(UTC).isoformat(),
             )
+            self.file_repository.refresh_workspace_catalog_for_version(
+                version_id=str(run["source_version_id"]),
+            )
             self._record_completion(self.repository.get_run(run_id))
         completed = self.repository.get_run(run_id)
         self._audit_run(
@@ -1112,6 +1198,9 @@ class GovernedDocumentProcessingService:
                 page_count=page_count,
                 processing_time_ms=processing_time_ms,
             )
+            self.file_repository.refresh_workspace_catalog_for_version(
+                version_id=str(run["source_version_id"]),
+            )
             self._record_completion(run)
         self._audit_run(
             "file.document.processing.completed",
@@ -1137,6 +1226,9 @@ class GovernedDocumentProcessingService:
                 target=ProcessingRunStatus.FAILED,
                 error_code=error_code,
                 processing_time_ms=processing_time_ms,
+            )
+            self.file_repository.refresh_workspace_catalog_for_version(
+                version_id=str(run["source_version_id"]),
             )
             self._record_completion(run)
         self._audit_run(
@@ -1205,6 +1297,25 @@ class GovernedDocumentProcessingService:
 
     def reconcile_attachment_readability(self, *, limit: int = 100) -> dict[str, Any]:
         return self.repository.reconcile_attachment_readability(limit=limit)
+
+    def _workspace_for_run(self, run: dict[str, Any]) -> str:
+        rows = self.file_repository.database.execute(
+            """
+            select distinct workspace.id
+              from task_workspace workspace
+              join task_workspace_file member on member.workspace_id = workspace.id
+             where member.file_id = ? and member.status = 'ACTIVE'
+               and workspace.tenant_id = ?
+             order by workspace.id
+            """,
+            (str(run["source_file_id"]), str(run["tenant_id"])),
+        )
+        if len(rows) != 1:
+            self._deny(
+                "document_workspace_binding_invalid",
+                "文档处理的工作区绑定无效",
+            )
+        return str(rows[0]["id"])
 
     def _record_completion(self, run: dict[str, Any]) -> None:
         payload = self.repository.safe_message_payload(

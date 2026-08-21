@@ -343,8 +343,17 @@ def build_platform_config_router() -> APIRouter:
         return {"value": entity}
 
     @router.post("/runtime-config/values/{value_id}/disable")
-    def disable_runtime_config_value(request: Request, value_id: str) -> dict[str, Any]:
-        return _set_runtime_config_value_status(request, value_id, "disabled")
+    def disable_runtime_config_value(
+        request: Request,
+        value_id: str,
+        expected_revision: int | None = Query(default=None, gt=0),
+    ) -> dict[str, Any]:
+        return _set_runtime_config_value_status(
+            request,
+            value_id,
+            "disabled",
+            expected_revision=expected_revision,
+        )
 
     @router.get("/runtime-config/snapshot")
     def runtime_config_snapshot(
@@ -355,6 +364,7 @@ def build_platform_config_router() -> APIRouter:
         base: str = "",
         workshop: str = "",
         connector: str = "",
+        tenant: str = "",
     ) -> dict[str, Any]:
         _require_management_read(request, resource_type="platform_config")
         scopes = {
@@ -363,6 +373,7 @@ def build_platform_config_router() -> APIRouter:
             "base": base,
             "workshop": workshop,
             "connector": connector,
+            "tenant": tenant,
         }
         return {
             "snapshot": _container(request).platform_config_service.runtime_config_snapshot(
@@ -370,6 +381,21 @@ def build_platform_config_router() -> APIRouter:
                 scopes={key: value for key, value in scopes.items() if value},
             )
         }
+
+    @router.get("/runtime-config/file-workspace-diagnostics")
+    def file_workspace_runtime_config_diagnostics(
+        request: Request,
+        tenant: str,
+    ) -> dict[str, Any]:
+        _require_management_read(request, resource_type="platform_config")
+        try:
+            diagnostics = (
+                _container(request)
+                .platform_config_service.file_workspace_tenant_diagnostics(tenant)
+            )
+        except Exception as exc:
+            raise _handle(exc) from exc
+        return {"diagnostics": diagnostics}
 
     @router.get("/runtime-config/env-migration")
     def runtime_config_env_migration(request: Request) -> dict[str, Any]:
@@ -703,7 +729,11 @@ def _set_workshop_status(
 
 
 def _set_runtime_config_value_status(
-    request: Request, value_id: str, status: str
+    request: Request,
+    value_id: str,
+    status: str,
+    *,
+    expected_revision: int | None = None,
 ) -> dict[str, Any]:
     try:
         entity = _container(request).platform_config_service.set_runtime_config_value_status(
@@ -711,6 +741,7 @@ def _set_runtime_config_value_status(
             status,
             actor_id=_actor(request),
             correlation_id=_correlation_id(request),
+            expected_revision=expected_revision,
         )
     except Exception as exc:
         raise _handle(exc) from exc

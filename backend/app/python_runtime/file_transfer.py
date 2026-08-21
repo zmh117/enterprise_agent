@@ -16,6 +16,7 @@ from app.modules.file_workspace.text_format_policy import (
     TextFormatDefinition,
     text_format_for_name,
 )
+from app.python_runtime.job_sandbox import JobSandbox, JobSandboxError
 from app.shared.exceptions import NonRetryableExecutionError
 
 
@@ -37,6 +38,7 @@ class FileTransferContext:
     workspace_path: Path
     principal_token: str
     file_format_policy_version: str = "text-v1"
+    sandbox: JobSandbox | None = None
 
 
 @dataclass(frozen=True)
@@ -339,6 +341,12 @@ class FileTransferCoordinator:
         context: FileTransferContext,
         maximum_size_bytes: int = 15 * 1024 * 1024,
     ) -> dict[str, object]:
+        if context.sandbox is not None:
+            context.sandbox.reconcile()
+            try:
+                context.sandbox.assert_within_limits()
+            except JobSandboxError as exc:
+                raise FileTransferBoundaryError(exc.code, str(exc)) from exc
         safe_path, definition = _relative_text_path(
             relative_path,
             policy_version=context.file_format_policy_version,
@@ -443,23 +451,36 @@ class FileTransferCoordinator:
         self,
         result: object,
         context: FileTransferContext,
+        *,
+        materialization_identity: tuple[str, str] | None = None,
     ) -> dict[str, object]:
         control = parse_file_transfer_control(result)
         if control["action"] == "MATERIALIZE":
-            return self._materialize(control, context)
+            return self._materialize(
+                control,
+                context,
+                materialization_identity=materialization_identity,
+            )
         return self._upload(control, context)
 
     def _materialize(
         self,
         control: Mapping[str, object],
         context: FileTransferContext,
+        *,
+        materialization_identity: tuple[str, str] | None,
     ) -> dict[str, object]:
-        handle = str(control["sandbox_entry_handle"])
-        if handle in self._entries:
+        if context.sandbox is None or context.sandbox.path != context.workspace_path:
             raise FileTransferBoundaryError(
-                "file_transfer_handle_conflict",
-                "sandbox entry handle is already bound",
+                "runtime_sandbox_budget_unavailable",
+                "materialization requires the current Job Sandbox budget",
             )
+        if materialization_identity is None:
+            raise FileTransferBoundaryError(
+                "file_transfer_control_invalid",
+                "materialization identity is required for sandbox accounting",
+            )
+        handle = str(control["sandbox_entry_handle"])
         relative_path = str(control["relative_path"])
         _safe_path, definition = _relative_text_path(
             relative_path,
@@ -473,10 +494,49 @@ class FileTransferCoordinator:
             )
         target = _sandbox_path(context.workspace_path, relative_path)
         _reject_symlinks(context.workspace_path, target)
-        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         digest = hashlib.sha256()
         size_bytes = 0
         expected_size = _bounded_text_size(control["expected_size_bytes"], "expected_size_bytes")
+        expected_sha256 = str(control["expected_sha256"])
+        try:
+            reservation = context.sandbox.reserve_input(
+                identity=materialization_identity,
+                expected_size_bytes=expected_size,
+            )
+            if reservation.committed:
+                target = _sandbox_path(context.workspace_path, reservation.relative_path)
+                if (
+                    reservation.relative_path != relative_path
+                    or reservation.sha256 != expected_sha256
+                    or not target.is_file()
+                    or target.stat().st_size != expected_size
+                ):
+                    raise FileTransferBoundaryError(
+                        "file_transfer_handle_conflict",
+                        "materialized input no longer matches its exact identity",
+                    )
+                self._entries.setdefault(handle, (relative_path, target, definition.code))
+                return {
+                    "action": "MATERIALIZED",
+                    "sandbox_entry_handle": handle,
+                    "relative_path": relative_path,
+                    "size_bytes": expected_size,
+                    "sha256": expected_sha256,
+                    "format_code": definition.code.value,
+                }
+            reservation = context.sandbox.bind_input_reservation(
+                reservation,
+                relative_path=relative_path,
+            )
+        except JobSandboxError as exc:
+            raise FileTransferBoundaryError(exc.code, str(exc)) from exc
+        if handle in self._entries:
+            context.sandbox.release_input_reservation(materialization_identity)
+            raise FileTransferBoundaryError(
+                "file_transfer_handle_conflict",
+                "sandbox entry handle is already bound",
+            )
+        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         decoder = codecs.getincrementaldecoder("utf-8")(errors="strict")
         try:
             with target.open("xb") as output:
@@ -512,20 +572,33 @@ class FileTransferCoordinator:
                     )
         except UnicodeDecodeError as exc:
             target.unlink(missing_ok=True)
+            context.sandbox.release_input_reservation(materialization_identity)
             raise FileTransferBoundaryError(
                 "file_transfer_encoding_invalid",
                 "download must be valid UTF-8",
             ) from exc
         except Exception:
             target.unlink(missing_ok=True)
+            context.sandbox.release_input_reservation(materialization_identity)
             raise
         actual_sha256 = digest.hexdigest()
-        if size_bytes != expected_size or actual_sha256 != str(control["expected_sha256"]):
+        if size_bytes != expected_size or actual_sha256 != expected_sha256:
             target.unlink(missing_ok=True)
+            context.sandbox.release_input_reservation(materialization_identity)
             raise FileTransferBoundaryError(
                 "file_transfer_integrity_mismatch",
                 "download did not match the frozen file version",
             )
+        try:
+            context.sandbox.commit_input_reservation(
+                reservation,
+                size_bytes=size_bytes,
+                sha256=actual_sha256,
+            )
+        except JobSandboxError as exc:
+            target.unlink(missing_ok=True)
+            context.sandbox.release_input_reservation(materialization_identity)
+            raise FileTransferBoundaryError(exc.code, str(exc)) from exc
         self._entries[handle] = (relative_path, target, definition.code)
         return {
             "action": "MATERIALIZED",

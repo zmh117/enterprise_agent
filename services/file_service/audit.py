@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Literal
 
 from app.modules.file_workspace.authorization import FileAuthorizationContext
@@ -34,6 +36,19 @@ class FileMcpAudit:
                 error_code="file_mcp_invocation_mismatch",
             )
         definition = FILE_TOOL_MANIFEST[tool_identifier]
+        filter_summary = ""
+        if tool_identifier == "task_workspace_search_files":
+            filter_shape = {
+                "keys": sorted(
+                    key
+                    for key in arguments
+                    if key not in {"cursor", "file_id", "version_id"}
+                ),
+                "has_cursor": bool(arguments.get("cursor")),
+            }
+            filter_summary = hashlib.sha256(
+                json.dumps(filter_shape, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
         return self.coordinator.begin(
             McpAuditContext(
                 correlation_id=(correlation_id.strip() or f"job:{claims['job_id']}")[:128],
@@ -62,6 +77,10 @@ class FileMcpAudit:
                     "file_id": arguments.get("file_id"),
                     "version_id": arguments.get("version_id"),
                     "commit_id": arguments.get("commit_id"),
+                    "workspace_catalog_revision_id": authorization.manifest.get(
+                        "workspace_catalog_revision_id"
+                    ),
+                    "filter_summary": filter_summary,
                 }
             ),
         )
@@ -85,10 +104,19 @@ class FileMcpAudit:
         duration_ms: int,
         error_code: str = "",
     ) -> None:
+        response = dict(result)
+        if handle.context.tool_identifier == "task_workspace_search_files":
+            response = {
+                "workspace_catalog_revision_id": result.get(
+                    "workspace_catalog_revision_id"
+                ),
+                "returned_count": len(result.get("items") or []),
+                "error_code": error_code,
+            }
         self.coordinator.complete(
             handle,
             status=status,
             error_code=error_code,
-            business_response=safe_file_audit_summary(result),
+            business_response=safe_file_audit_summary(response),
             duration_ms=max(duration_ms, 0),
         )

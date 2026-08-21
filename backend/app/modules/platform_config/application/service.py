@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from app.modules.platform_config.application.runtime_config import (
     RuntimeConfigRegistry,
     RuntimeConfigSnapshotBuilder,
+    builtin_runtime_config_definition,
     validate_runtime_config_definition_payload,
+    validate_runtime_config_value_bounds,
 )
 from app.modules.permission.application.permission_service import PermissionService
 from app.modules.platform_config.application.governed_resources import (
@@ -469,6 +472,7 @@ class PlatformConfigService:
         self.require_admin(actor_id)
         normalized = validate_runtime_config_definition_payload(payload)
         key = validate_code(normalized["key"], field="key")
+        builtin = builtin_runtime_config_definition(key)
         before = self.repository.get_runtime_config_definition(key)
         reconciliation = self.repository.upsert_runtime_config_definition(
             key=key,
@@ -476,6 +480,7 @@ class PlatformConfigService:
             default=normalized["default"],
             sensitive=normalized["sensitive"],
             bootstrap_only=normalized["bootstrap_only"],
+            tenant_compatible=bool(builtin and builtin.tenant_compatible),
             service_names=normalized["service_names"],
             description=normalized["description"],
             status=validate_status(normalized["status"]).value,
@@ -515,7 +520,16 @@ class PlatformConfigService:
             raise ValueError(f"{key} is bootstrap-only and must be managed by deployment env")
         value_type = validate_config_value_type(str(definition["value_type"]))
         scope_type = validate_runtime_scope_type(str(payload.get("scope_type") or "global"))
-        scope_code = str(payload.get("scope_code") or "*")
+        scope_code = str(payload.get("scope_code") or "*").strip()
+        if scope_type.value == "tenant":
+            if not definition.get("tenant_compatible"):
+                raise ValueError("该运行配置定义不允许使用tenant作用域")
+            if not scope_code or scope_code == "*" or len(scope_code) > 128:
+                raise ValueError("tenant作用域必须指定受治理tenant身份")
+            if not self.repository.runtime_config_tenant_exists(scope_code):
+                raise ValueError("tenant不存在、未验证或未启用")
+        elif scope_type.value == "global":
+            scope_code = "*"
         service_name = str(payload.get("service_name") or "")
         before = self.repository.find_runtime_config_value(
             key=key,
@@ -532,7 +546,30 @@ class PlatformConfigService:
             self._require_available_platform_secret(secret_ref)
         else:
             value = coerce_runtime_value(payload.get("value"), value_type)
+            value = validate_runtime_config_value_bounds(key, value)
             assert_no_secret_payload({key: value})
+        if (
+            scope_type.value == "tenant"
+            and key == "FILE_WORKSPACE_ACTIVE_FILE_LIMIT"
+            and int(value or 0) > 20
+        ):
+            compatibility = self.file_workspace_tenant_diagnostics(scope_code)
+            incompatible = compatibility["incompatible_publications"]
+            if incompatible:
+                identities = ", ".join(
+                    f"{item['application_code']}@r{item['publication_revision']}"
+                    for item in incompatible
+                )
+                raise ValueError(
+                    "tenant仍有未冻结task_workspace_search_files的启用Publication: "
+                    + identities
+                )
+        expected_revision_raw = payload.get("expected_revision")
+        expected_revision = (
+            int(expected_revision_raw) if expected_revision_raw not in (None, "") else None
+        )
+        if before and scope_type.value == "tenant" and expected_revision is None:
+            raise ValueError("修改tenant运行配置必须提供expected_revision")
         entity = self.repository.upsert_runtime_config_value(
             key=key,
             scope_type=scope_type.value,
@@ -541,6 +578,7 @@ class PlatformConfigService:
             value=value,
             secret_ref=secret_ref,
             status=validate_status(str(payload.get("status") or "enabled")).value,
+            expected_revision=expected_revision,
         )
         public = self._public_runtime_config_value(entity)
         self._audit("runtime_config_value", public, "upsert", actor_id, before, correlation_id)
@@ -548,13 +586,22 @@ class PlatformConfigService:
 
     @operation_unit_of_work(lambda service: service.repository.database)
     def set_runtime_config_value_status(
-        self, value_id: str, status: str, *, actor_id: str, correlation_id: str = ""
+        self,
+        value_id: str,
+        status: str,
+        *,
+        actor_id: str,
+        correlation_id: str = "",
+        expected_revision: int | None = None,
     ) -> dict[str, Any]:
         self.require_admin(actor_id)
         before = self.repository.get_runtime_config_value(value_id)
+        if before.get("scope_type") == "tenant" and expected_revision is None:
+            raise ValueError("修改tenant运行配置必须提供expected_revision")
         entity = self.repository.set_runtime_config_value_status(
             validate_code(value_id, field="value_id"),
             validate_status(status).value,
+            expected_revision=expected_revision,
         )
         public = self._public_runtime_config_value(entity)
         self._audit("runtime_config_value", public, status, actor_id, before, correlation_id)
@@ -567,6 +614,98 @@ class PlatformConfigService:
             service_name=service_name,
             scopes=scopes or {},
         )
+
+    def file_workspace_tenant_diagnostics(self, tenant_id: str) -> dict[str, Any]:
+        """Return non-sensitive effective quota and compatibility facts for one tenant."""
+
+        tenant_id = str(tenant_id or "").strip()
+        if (
+            not tenant_id
+            or len(tenant_id) > 128
+            or not self.repository.runtime_config_tenant_exists(tenant_id)
+        ):
+            raise ValueError("tenant不存在、未验证或未启用")
+        snapshot = self.runtime_snapshot_builder.build_snapshot(
+            service_name="file-service",
+            scopes={"tenant": tenant_id},
+        )
+        effective = snapshot.get("effective") or {}
+        file_entry = effective.get("FILE_WORKSPACE_ACTIVE_FILE_LIMIT") or {}
+        bytes_entry = effective.get("FILE_WORKSPACE_BILLABLE_BYTES_LIMIT") or {}
+        file_limit = min(1000, max(1, int(file_entry.get("value") or 200)))
+        bytes_limit = min(
+            10 * 1024 * 1024 * 1024,
+            max(1, int(bytes_entry.get("value") or 2 * 1024 * 1024 * 1024)),
+        )
+        workspaces = self.repository.database.execute(
+            """
+            select id from task_workspace
+             where tenant_id = ? and status = 'ACTIVE'
+             order by id
+            """,
+            (tenant_id,),
+        )
+        from app.modules.file_workspace.quota import WorkspaceQuotaService
+
+        quota = WorkspaceQuotaService(self.repository.database)
+        usage = [
+            quota.usage(str(row["id"]), now=datetime.now(UTC).isoformat())
+            for row in workspaces
+        ]
+        candidates = self.repository.database.execute(
+            """
+            select distinct publication.id as publication_id,
+                   publication.revision as publication_revision,
+                   application.code as application_code
+              from task_workspace workspace
+              join business_application_publication publication
+                on publication.id = workspace.business_application_publication_id
+              join business_application application
+                on application.id = publication.application_id
+             where workspace.tenant_id = ? and workspace.status = 'ACTIVE'
+               and application.status = 'enabled'
+               and not exists (
+                 select 1 from business_application_publication_mcp_tool tool
+                  where tool.application_publication_id = publication.id
+                    and tool.server_code = 'file-service'
+                    and tool.tool_identifier = 'task_workspace_search_files'
+               )
+             order by application.code, publication.revision, publication.id
+            """,
+            (tenant_id,),
+        )
+        incompatible = [
+            {
+                "application_code": str(row["application_code"]),
+                "publication_id": str(row["publication_id"]),
+                "publication_revision": int(row["publication_revision"]),
+            }
+            for row in candidates
+        ]
+        return {
+            "tenant_id": tenant_id,
+            "config_revision": int(snapshot.get("revision") or 0),
+            "active_file_limit": {
+                "value": file_limit,
+                "source": str(file_entry.get("source") or "definition-default"),
+                "revision": int(file_entry.get("revision") or 0),
+            },
+            "billable_bytes_limit": {
+                "value": bytes_limit,
+                "source": str(bytes_entry.get("source") or "definition-default"),
+                "revision": int(bytes_entry.get("revision") or 0),
+            },
+            "usage": {
+                "workspace_count": len(workspaces),
+                "active_file_count": sum(item.active_file_count for item in usage),
+                "billable_bytes": sum(item.billable_bytes for item in usage),
+                "reserved_file_slots": sum(item.reserved_file_slots for item in usage),
+                "reserved_billable_bytes": sum(
+                    item.reserved_billable_bytes for item in usage
+                ),
+            },
+            "incompatible_publications": incompatible,
+        }
 
     @operation_unit_of_work(lambda service: service.repository.database)
     def import_topology_yaml(

@@ -18,7 +18,7 @@ def _migrated_database() -> Database:
         default_migrations_dir(),
         migrator_build="document-file-processing-schema-test",
     ).run()
-    assert result.head == "117"
+    assert result.head == "118"
     return database
 
 
@@ -150,7 +150,7 @@ def test_document_processing_expand_schema_and_defaults() -> None:
         "select sql from sqlite_master where type = 'table' and name = 'agent_job_file_snapshot'"
     )
     assert snapshot_sql is not None
-    assert "schema_version IN (1, 2, 3, 4)" in str(snapshot_sql["sql"])
+    assert "schema_version IN (1, 2, 3, 4, 5)" in str(snapshot_sql["sql"])
 
     revision_info = {
         str(row["name"]): row for row in database.execute(

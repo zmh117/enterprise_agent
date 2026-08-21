@@ -19,6 +19,7 @@ import {
 import { DebugJobPage } from "@/contexts/operations/presentation/debug-job-page"
 import { CredentialCenterPage } from "@/contexts/platform-governance/presentation/credential-center-page"
 import { ToolResourcesPage } from "@/contexts/platform-governance/presentation/tool-resources-page"
+import { RuntimeConfigPage } from "@/contexts/platform-governance/presentation/runtime-config-page"
 import { UserDetailPage, UsersPage } from "@/contexts/users"
 import { DingTalkIdentityDiscoveryPage } from "@/contexts/dingtalk-identity-discovery"
 import { RoleAuthorizationPage, RoleDetailPage } from "@/contexts/authorization"
@@ -111,6 +112,10 @@ export const appRouter = createBrowserRouter([
       {
         path: "/platform/resources",
         element: protectedPage("platform.read", <ToolResourcesPage />),
+      },
+      {
+        path: "/platform/runtime-config",
+        element: protectedPage("platform.read", <RuntimeConfigPage />),
       },
     ],
   },

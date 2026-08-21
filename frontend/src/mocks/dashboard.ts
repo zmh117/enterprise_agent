@@ -11,6 +11,7 @@ import {
   UserSearchIcon,
   UsersIcon,
   ShieldCheckIcon,
+  Settings2Icon,
 } from "lucide-react"
 
 export const prototypeMeta = {
@@ -146,6 +147,13 @@ export const navigationGroups: NavigationGroup[] = [
         active: true,
         href: "/platform/secrets",
         requiredCapability: "secrets.read",
+      },
+      {
+        label: "运行配置",
+        icon: Settings2Icon,
+        active: true,
+        href: "/platform/runtime-config",
+        requiredCapability: "platform.read",
       },
     ],
   },

@@ -44,7 +44,7 @@ from services.file_service.principal import FilePrincipalResolver
 
 logger = logging.getLogger(__name__)
 SERVER_VERSION = "0.1.0"
-REQUIRED_SCHEMA_VERSION = 116
+REQUIRED_SCHEMA_VERSION = 118
 MAX_TOOL_RESPONSE_BYTES = 256 * 1024
 
 
@@ -412,6 +412,7 @@ def create_app(
                 "file_retain_version",
                 "task_workspace_get",
                 "task_workspace_list_files",
+                "task_workspace_search_files",
             ):
                 raise ValueError("File Tool Manifest is invalid")
             if document_processing_expected and document_processing is None:

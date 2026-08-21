@@ -66,34 +66,43 @@ class FileWorkspaceRepository:
         timestamp = _now()
         owner_type, user_id, enterprise_id, connector_id, conversation_id = owner.database_values()
         try:
-            self.database.execute(
-                """
-                insert into task_workspace
-                  (id, tenant_id, session_id, owner_type, owner_user_id,
-                   owner_enterprise_id, owner_connector_id, owner_conversation_id,
-                   business_application_publication_id, retention_period,
-                   retention_timezone, status, expires_at, created_by,
-                   created_at, updated_at)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Asia/Shanghai',
-                        'ACTIVE', ?, ?, ?, ?)
-                """,
-                (
-                    workspace_id,
-                    tenant_id,
-                    session_id,
-                    owner_type,
-                    user_id,
-                    enterprise_id,
-                    connector_id,
-                    conversation_id,
-                    publication_id,
-                    retention_period.value,
-                    expires_at,
-                    actor_id,
-                    timestamp,
-                    timestamp,
-                ),
-            )
+            with self.database.unit_of_work():
+                self.database.execute(
+                    """
+                    insert into task_workspace
+                      (id, tenant_id, session_id, owner_type, owner_user_id,
+                       owner_enterprise_id, owner_connector_id, owner_conversation_id,
+                       business_application_publication_id, retention_period,
+                       retention_timezone, status, expires_at, created_by,
+                       created_at, updated_at)
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Asia/Shanghai',
+                            'ACTIVE', ?, ?, ?, ?)
+                    """,
+                    (
+                        workspace_id,
+                        tenant_id,
+                        session_id,
+                        owner_type,
+                        user_id,
+                        enterprise_id,
+                        connector_id,
+                        conversation_id,
+                        publication_id,
+                        retention_period.value,
+                        expires_at,
+                        actor_id,
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+                self.database.execute(
+                    """
+                    insert into task_workspace_catalog_revision
+                      (id, workspace_id, revision, created_at)
+                    values (?, ?, 0, ?)
+                    """,
+                    (f"workspace_catalog_{workspace_id}_r0", workspace_id, timestamp),
+                )
         except Exception as exc:
             if "unique" in str(exc).lower():
                 raise NonRetryableExecutionError(
@@ -293,24 +302,32 @@ class FileWorkspaceRepository:
     ) -> dict[str, Any]:
         link_id = _id("workspace_file")
         timestamp = _now()
-        self.database.execute(
-            """
-            insert into task_workspace_file
-              (id, workspace_id, file_id, selected_version_id, logical_name,
-               role, status, created_at, updated_at)
-            values (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
-            """,
-            (
-                link_id,
-                workspace_id,
-                file_id,
-                version_id,
-                logical_name,
-                role.value,
-                timestamp,
-                timestamp,
-            ),
-        )
+        with self.database.unit_of_work():
+            self.database.execute(
+                """
+                insert into task_workspace_file
+                  (id, workspace_id, file_id, selected_version_id, logical_name,
+                   role, status, created_at, updated_at)
+                values (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
+                """,
+                (
+                    link_id,
+                    workspace_id,
+                    file_id,
+                    version_id,
+                    logical_name,
+                    role.value,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            self._advance_catalog_member(
+                workspace_id=workspace_id,
+                file_id=file_id,
+                version_id=version_id,
+                logical_name=logical_name,
+                timestamp=timestamp,
+            )
         return self._required("task_workspace_file", link_id, "未找到工作区文件")
 
     def add_external_reference(
@@ -357,16 +374,53 @@ class FileWorkspaceRepository:
         manifest_hash: str,
         items: Iterable[dict[str, Any]],
         file_format_policy_version: str = "text-v1",
+        workspace_catalog_revision_id: str | None = None,
     ) -> dict[str, Any]:
+        from app.modules.file_workspace.quota import WorkspaceQuotaService
+
         timestamp = _now()
+        materialized_items = list(items)
+        identities = {
+            (str(item["file_id"]), str(item["version_id"]))
+            for item in materialized_items
+        }
+        if len(identities) != len(materialized_items):
+            raise NonRetryableExecutionError(
+                "Job file snapshot contains duplicate identities",
+                safe_message="任务文件清单包含重复文件版本",
+                error_code="file_manifest_duplicate_identity",
+            )
+        if len(materialized_items) > 40:
+            raise NonRetryableExecutionError(
+                "Job file working set exceeds the code limit",
+                safe_message="任务输入文件超过 40 个，请缩小工作集",
+                error_code="job_file_working_set_limit_exceeded",
+            )
+        catalog = self.current_catalog_revision(workspace_id)
+        if workspace_catalog_revision_id is not None and str(catalog["id"]) != str(
+            workspace_catalog_revision_id
+        ):
+            raise NonRetryableExecutionError(
+                "Workspace catalog revision changed before snapshot creation",
+                safe_message="工作区目录已变化，请重试",
+                error_code="workspace_catalog_revision_conflict",
+            )
+        catalog_revision_id = str(catalog["id"])
+        quota = WorkspaceQuotaService(self.database).effective_limits(workspace_id)
         with self.database.unit_of_work():
             self.database.execute(
                 """
                 insert into agent_job_file_snapshot
                   (id, job_id, workspace_id, tenant_id, principal_user_id,
                    business_application_publication_id, retention_period,
-                   schema_version, file_format_policy_version, manifest_hash, created_at)
-                values (?, ?, ?, ?, ?, ?, ?, 4, ?, ?, ?)
+                   schema_version, file_format_policy_version, manifest_hash,
+                   workspace_catalog_revision_id, active_file_limit,
+                   billable_bytes_limit, quota_config_revision,
+                   active_file_limit_source, billable_bytes_limit_source,
+                   job_input_limit, sandbox_file_limit, sandbox_capacity_bytes,
+                   sandbox_limit_version, created_at)
+                values (?, ?, ?, ?, ?, ?, ?, 5, ?, ?, ?, ?, ?, ?, ?, ?,
+                        40, 64, 234881024, 'sandbox-v2', ?)
                 """,
                 (
                     snapshot_id,
@@ -378,10 +432,16 @@ class FileWorkspaceRepository:
                     retention_period.value,
                     file_format_policy_version,
                     manifest_hash,
+                    catalog_revision_id,
+                    quota.active_file_limit,
+                    quota.billable_bytes_limit,
+                    quota.config_revision,
+                    quota.active_file_limit_source,
+                    quota.billable_bytes_limit_source,
                     timestamp,
                 ),
             )
-            for ordinal, item in enumerate(items):
+            for ordinal, item in enumerate(materialized_items):
                 actions = [
                     FileAction(str(action)).value for action in item.get("allowed_actions", [])
                 ]
@@ -427,6 +487,33 @@ class FileWorkspaceRepository:
                         item.get("representation_sha256"),
                         item.get("representation_format_code"),
                         item.get("representation_created_at"),
+                        timestamp,
+                    ),
+                )
+                self.database.execute(
+                    """
+                    insert into agent_job_file_working_set_item
+                      (id, job_id, snapshot_id, workspace_id,
+                       workspace_catalog_revision_id, file_id, version_id,
+                       representation_id, representation_kind,
+                       representation_size_bytes, representation_sha256,
+                       selection_source, ordinal, created_at)
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                            'INITIAL_MANIFEST', ?, ?)
+                    """,
+                    (
+                        _id("job_file_working_set"),
+                        job_id,
+                        snapshot_id,
+                        workspace_id,
+                        catalog_revision_id,
+                        str(item["file_id"]),
+                        str(item["version_id"]),
+                        item.get("representation_id"),
+                        item.get("representation_kind"),
+                        item.get("representation_size_bytes"),
+                        item.get("representation_sha256"),
+                        ordinal,
                         timestamp,
                     ),
                 )
@@ -542,6 +629,268 @@ class FileWorkspaceRepository:
             (row["id"],),
         )
         return row
+
+    def promote_catalog_working_set_item(
+        self,
+        *,
+        job_id: str,
+        workspace_id: str,
+        snapshot_id: str,
+        catalog_revision_id: str,
+        file_id: str,
+        version_id: str,
+    ) -> dict[str, Any]:
+        """Append one exact frozen-catalog identity to a running Job."""
+
+        timestamp = _now()
+        with self.database.unit_of_work():
+            lock_suffix = " for update" if self.database.engine == "postgres" else ""
+            job = self.database.execute_one(
+                f"select status from agent_job where id = ?{lock_suffix}", (job_id,)
+            )
+            if job is None or str(job["status"]) != "RUNNING":
+                raise NonRetryableExecutionError(
+                    "Job is not running for working-set promotion",
+                    safe_message="当前任务不能再选择文件",
+                    error_code="job_file_working_set_job_not_running",
+                )
+            snapshot = self.database.execute_one(
+                """
+                select * from agent_job_file_snapshot
+                 where id = ? and job_id = ? and workspace_id = ?
+                """,
+                (snapshot_id, job_id, workspace_id),
+            )
+            if (
+                snapshot is None
+                or int(snapshot.get("schema_version") or 0) < 5
+                or str(snapshot.get("workspace_catalog_revision_id") or "")
+                != catalog_revision_id
+            ):
+                raise NonRetryableExecutionError(
+                    "Job Manifest is not compatible with catalog promotion",
+                    safe_message="当前任务不支持按需选择工作区文件",
+                    error_code="file_workspace_search_manifest_incompatible",
+                )
+            self._require_catalog_promotion_tools(job_id)
+            existing = self.database.execute_one(
+                """
+                select * from agent_job_file_working_set_item
+                 where job_id = ? and file_id = ? and version_id = ?
+                """,
+                (job_id, file_id, version_id),
+            )
+            if existing is not None:
+                return self._working_set_item(existing)
+            revision = self.database.execute_one(
+                """
+                select revision from task_workspace_catalog_revision
+                 where id = ? and workspace_id = ?
+                """,
+                (catalog_revision_id, workspace_id),
+            )
+            if revision is None:
+                raise NonRetryableExecutionError(
+                    "Frozen catalog revision is invalid",
+                    safe_message="任务冻结的工作区目录无效",
+                    error_code="file_manifest_invalid",
+                )
+            member = self.database.execute_one(
+                """
+                select member.*, file.status as file_status,
+                       version.status as version_status
+                  from task_workspace_catalog_member member
+                  join managed_file file on file.id = member.file_id
+                  join managed_file_version version on version.id = member.version_id
+                 where member.workspace_id = ? and member.file_id = ?
+                   and member.version_id = ?
+                   and member.valid_from_revision <= ?
+                   and (member.valid_to_revision is null
+                        or member.valid_to_revision > ?)
+                   and exists (
+                     select 1 from task_workspace_file current_member
+                      where current_member.workspace_id = member.workspace_id
+                        and current_member.file_id = member.file_id
+                        and current_member.status = 'ACTIVE'
+                   )
+                """,
+                (
+                    workspace_id,
+                    file_id,
+                    version_id,
+                    int(revision["revision"]),
+                    int(revision["revision"]),
+                ),
+            )
+            if (
+                member is None
+                or str(member["file_status"]) != "ACTIVE"
+                or str(member["version_status"]) not in {"AVAILABLE", "CONFLICT"}
+            ):
+                raise NonRetryableExecutionError(
+                    "Frozen catalog member is no longer authorized",
+                    safe_message="所选文件当前不可访问",
+                    error_code="file_catalog_member_denied",
+                )
+            count = self.database.execute_one(
+                """
+                select count(*) as value from agent_job_file_working_set_item
+                 where job_id = ?
+                """,
+                (job_id,),
+            )
+            ordinal = int((count or {}).get("value") or 0)
+            if ordinal >= 40:
+                raise NonRetryableExecutionError(
+                    "Job file working set reached the code limit",
+                    safe_message="任务输入文件已达到 40 个上限",
+                    error_code="job_file_working_set_limit_exceeded",
+                )
+            representation: dict[str, Any] | None = None
+            if str(member["format_code"]) not in {"TXT", "LOG", "MARKDOWN"}:
+                representation = self.database.execute_one(
+                    """
+                    select representation.id, representation.kind,
+                           representation.size_bytes, representation.content_sha256
+                      from file_representation representation
+                      join file_processing_run run
+                        on run.id = representation.processing_run_id
+                     where representation.source_file_id = ?
+                       and representation.source_version_id = ?
+                       and representation.kind = 'MARKDOWN'
+                       and representation.status = 'AVAILABLE'
+                       and run.status in ('SUCCEEDED', 'PARTIAL')
+                     order by representation.created_at desc, representation.id desc
+                     limit 1
+                    """,
+                    (file_id, version_id),
+                )
+                if representation is None:
+                    raise NonRetryableExecutionError(
+                        "Selected document has no readable Markdown representation",
+                        safe_message="所选文档的可读内容尚不可用",
+                        error_code="file_readable_content_not_ready",
+                    )
+            working_set_id = _id("job_file_working_set")
+            self.database.execute(
+                """
+                insert into agent_job_file_working_set_item
+                  (id, job_id, snapshot_id, workspace_id,
+                   workspace_catalog_revision_id, file_id, version_id,
+                   representation_id, representation_kind,
+                   representation_size_bytes, representation_sha256,
+                   selection_source, ordinal, created_at)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CATALOG_SEARCH', ?, ?)
+                """,
+                (
+                    working_set_id,
+                    job_id,
+                    snapshot_id,
+                    workspace_id,
+                    catalog_revision_id,
+                    file_id,
+                    version_id,
+                    representation.get("id") if representation else None,
+                    "MARKDOWN" if representation else None,
+                    representation.get("size_bytes") if representation else None,
+                    representation.get("content_sha256") if representation else None,
+                    ordinal,
+                    timestamp,
+                ),
+            )
+            return self._working_set_item(self._required_working_set(working_set_id))
+
+    def get_working_set_item(
+        self, *, job_id: str, file_id: str, version_id: str
+    ) -> dict[str, Any] | None:
+        row = self.database.execute_one(
+            """
+            select * from agent_job_file_working_set_item
+             where job_id = ? and file_id = ? and version_id = ?
+            """,
+            (job_id, file_id, version_id),
+        )
+        return self._working_set_item(row) if row is not None else None
+
+    def _required_working_set(self, working_set_id: str) -> dict[str, Any]:
+        row = self.database.execute_one(
+            "select * from agent_job_file_working_set_item where id = ?",
+            (working_set_id,),
+        )
+        if row is None:
+            raise NotFound("Working-set item not found", safe_message="未找到任务输入文件")
+        return row
+
+    def _working_set_item(self, row: dict[str, Any]) -> dict[str, Any]:
+        revision = self.database.execute_one(
+            """
+            select revision from task_workspace_catalog_revision where id = ?
+            """,
+            (row["workspace_catalog_revision_id"],),
+        )
+        if revision is None:
+            raise NonRetryableExecutionError(
+                "Working-set catalog revision is missing",
+                safe_message="任务输入文件事实无效",
+                error_code="file_manifest_invalid",
+            )
+        enriched = self.database.execute_one(
+            """
+            select member.logical_name as display_name, member.format_code,
+                   member.source_received_at, member.version_created_at,
+                   member.readability_status,
+                   file.tenant_id, file.owner_type, file.owner_user_id,
+                   file.owner_enterprise_id, file.owner_connector_id,
+                   file.owner_conversation_id, file.status as file_status,
+                   version.status as version_status, version.version_number,
+                   version.media_type, version.size_bytes, version.content_sha256
+              from task_workspace_catalog_member member
+              join managed_file file on file.id = member.file_id
+              join managed_file_version version on version.id = member.version_id
+             where member.workspace_id = ? and member.file_id = ?
+               and member.version_id = ? and member.valid_from_revision <= ?
+               and (member.valid_to_revision is null or member.valid_to_revision > ?)
+            """,
+            (
+                row["workspace_id"],
+                row["file_id"],
+                row["version_id"],
+                int(revision["revision"]),
+                int(revision["revision"]),
+            ),
+        )
+        if enriched is None:
+            raise NonRetryableExecutionError(
+                "Working-set catalog member is missing",
+                safe_message="任务输入文件事实无效",
+                error_code="file_manifest_invalid",
+            )
+        return {**row, **enriched}
+
+    def _require_catalog_promotion_tools(self, job_id: str) -> None:
+        row = self.database.execute_one(
+            "select snapshot_json from agent_job_mcp_tool_snapshot where job_id = ?",
+            (job_id,),
+        )
+        try:
+            snapshot = json.loads(str((row or {}).get("snapshot_json") or "{}"))
+            tools = snapshot.get("tools") if isinstance(snapshot, dict) else None
+            identifiers = {
+                str(item.get("tool_identifier") or "")
+                for item in tools
+                if isinstance(item, dict)
+            }
+        except (AttributeError, TypeError, json.JSONDecodeError):
+            identifiers = set()
+        if not {
+            "task_workspace_search_files",
+            "file_prepare_materialization",
+        }.issubset(identifiers):
+            raise NonRetryableExecutionError(
+                "Job Tool Snapshot is not compatible with catalog promotion",
+                safe_message="当前任务发布版本不支持按需选择文件",
+                error_code="file_workspace_publication_upgrade_required",
+            )
 
     def create_commit_intent(
         self,
@@ -860,6 +1209,95 @@ class FileWorkspaceRepository:
         )
         return self._required("file_materialization_transfer", row_id, "未找到文件物化传输")
 
+    def reusable_materialization_transfer(
+        self,
+        *,
+        job_id: str,
+        workspace_id: str,
+        file_id: str,
+        version_id: str,
+        expected_size_bytes: int,
+        expected_sha256: str,
+        format_code: str,
+        now: str,
+    ) -> dict[str, Any] | None:
+        return self.database.execute_one(
+            """
+            select * from file_materialization_transfer
+             where job_id = ? and workspace_id = ? and file_id = ? and version_id = ?
+               and expected_size_bytes = ? and expected_sha256 = ? and format_code = ?
+               and status in ('READY', 'CONSUMED') and expires_at > ?
+             order by created_at, id
+             limit 1
+            """,
+            (
+                job_id,
+                workspace_id,
+                file_id,
+                version_id,
+                expected_size_bytes,
+                expected_sha256,
+                format_code,
+                now,
+            ),
+        )
+
+    def get_or_create_materialization_transfer(
+        self,
+        *,
+        transfer_id: str,
+        job_id: str,
+        workspace_id: str,
+        file_id: str,
+        version_id: str,
+        sandbox_entry_handle: str,
+        relative_path: str,
+        expected_size_bytes: int,
+        expected_sha256: str,
+        expires_at: str,
+        now: str,
+        format_code: str,
+    ) -> dict[str, Any]:
+        """Serialize exact transfer creation on the Job for concurrent MCP retries."""
+
+        with self.database.unit_of_work():
+            lock_suffix = " for update" if self.database.engine == "postgres" else ""
+            job = self.database.execute_one(
+                f"select status from agent_job where id = ?{lock_suffix}",
+                (job_id,),
+            )
+            if job is None or str(job["status"]) != "RUNNING":
+                raise NonRetryableExecutionError(
+                    "Job is not running for materialization transfer",
+                    safe_message="当前任务不能再物化文件",
+                    error_code="file_job_not_authorized",
+                )
+            reusable = self.reusable_materialization_transfer(
+                job_id=job_id,
+                workspace_id=workspace_id,
+                file_id=file_id,
+                version_id=version_id,
+                expected_size_bytes=expected_size_bytes,
+                expected_sha256=expected_sha256,
+                format_code=format_code,
+                now=now,
+            )
+            if reusable is not None:
+                return reusable
+            return self.create_materialization_transfer(
+                transfer_id=transfer_id,
+                job_id=job_id,
+                workspace_id=workspace_id,
+                file_id=file_id,
+                version_id=version_id,
+                sandbox_entry_handle=sandbox_entry_handle,
+                relative_path=relative_path,
+                expected_size_bytes=expected_size_bytes,
+                expected_sha256=expected_sha256,
+                expires_at=expires_at,
+                format_code=format_code,
+            )
+
     def consume_materialization_transfer(
         self, *, transfer_id: str, job_id: str, now: str
     ) -> dict[str, Any]:
@@ -883,6 +1321,8 @@ class FileWorkspaceRepository:
                     safe_message="文件传输已过期",
                     error_code="file_transfer_expired",
                 )
+            if str(row["status"]) == "CONSUMED":
+                return row
             changed = self.database.execute(
                 """
                 update file_materialization_transfer
@@ -892,9 +1332,14 @@ class FileWorkspaceRepository:
                 (now, row["id"]),
             )
             if not changed:
+                latest = self._required(
+                    "file_materialization_transfer", str(row["id"]), "未找到文件物化传输"
+                )
+                if str(latest["status"]) == "CONSUMED":
+                    return latest
                 raise NonRetryableExecutionError(
-                    "File materialization transfer was already consumed",
-                    safe_message="文件传输已使用",
+                    "File materialization transfer cannot be consumed",
+                    safe_message="文件传输不可用",
                     error_code="file_transfer_consumed",
                 )
             return self._required(
@@ -911,18 +1356,383 @@ class FileWorkspaceRepository:
         logical_name: str,
     ) -> dict[str, Any]:
         timestamp = _now()
+        with self.database.unit_of_work():
+            changed = self.database.execute(
+                """
+                update task_workspace_file
+                   set selected_version_id = ?, role = ?, logical_name = ?, updated_at = ?
+                 where workspace_id = ? and file_id = ? and status = 'ACTIVE'
+                 returning id
+                """,
+                (version_id, role.value, logical_name, timestamp, workspace_id, file_id),
+            )
+            if not changed:
+                self._state_conflict()
+            self._advance_catalog_member(
+                workspace_id=workspace_id,
+                file_id=file_id,
+                version_id=version_id,
+                logical_name=logical_name,
+                timestamp=timestamp,
+            )
+        return self._required("task_workspace_file", str(changed[0]["id"]), "未找到工作区文件")
+
+    def remove_active_workspace_files(self, *, workspace_id: str, removed_at: str) -> int:
+        """Remove every ACTIVE member and preserve the transition as one revision."""
+
+        with self.database.unit_of_work():
+            rows = self.database.execute(
+                """
+                select file_id from task_workspace_file
+                 where workspace_id = ? and status = 'ACTIVE'
+                 order by file_id
+                """,
+                (workspace_id,),
+            )
+            if not rows:
+                return 0
+            revision, _revision_id = self._next_catalog_revision(
+                workspace_id=workspace_id, timestamp=removed_at
+            )
+            self.database.execute(
+                """
+                update task_workspace_catalog_member
+                   set valid_to_revision = ?, closed_at = ?
+                 where workspace_id = ? and valid_to_revision is null
+                """,
+                (revision, removed_at, workspace_id),
+            )
+            self.database.execute(
+                """
+                update task_workspace_file
+                   set status = 'REMOVED', removed_at = ?, updated_at = ?
+                 where workspace_id = ? and status = 'ACTIVE'
+                """,
+                (removed_at, removed_at, workspace_id),
+            )
+            return len(rows)
+
+    def current_catalog_revision(self, workspace_id: str) -> dict[str, Any]:
+        row = self.database.execute_one(
+            """
+            select revision.id, revision.workspace_id, revision.revision,
+                   revision.created_at
+              from task_workspace workspace
+              join task_workspace_catalog_revision revision
+                on revision.workspace_id = workspace.id
+               and revision.revision = workspace.catalog_revision
+             where workspace.id = ?
+            """,
+            (workspace_id,),
+        )
+        if row is None:
+            raise NotFound("Catalog revision not found", safe_message="未找到工作区目录版本")
+        return row
+
+    def search_catalog_revision(
+        self,
+        *,
+        workspace_id: str,
+        catalog_revision_id: str,
+        limit: int,
+        exact_name: str = "",
+        name_prefix: str = "",
+        format_codes: tuple[str, ...] = (),
+        source_received_from: str = "",
+        source_received_to: str = "",
+        readability_statuses: tuple[str, ...] = (),
+        after_sort_name: str = "",
+        after_logical_name: str = "",
+        after_file_id: str = "",
+    ) -> list[dict[str, Any]]:
+        revision = self.database.execute_one(
+            """
+            select revision from task_workspace_catalog_revision
+             where id = ? and workspace_id = ?
+            """,
+            (catalog_revision_id, workspace_id),
+        )
+        if revision is None:
+            raise NotFound("Catalog revision not found", safe_message="未找到工作区目录版本")
+        revision_number = int(revision["revision"])
+        predicates = [
+            "member.workspace_id = ?",
+            "member.valid_from_revision <= ?",
+            "(member.valid_to_revision is null or member.valid_to_revision > ?)",
+        ]
+        parameters: list[object] = [workspace_id, revision_number, revision_number]
+        if exact_name:
+            predicates.append("lower(member.logical_name) = lower(?)")
+            parameters.append(exact_name)
+        if name_prefix:
+            predicates.append("lower(member.logical_name) like lower(?) escape '\\'")
+            parameters.append(self._escape_like(name_prefix) + "%")
+        if format_codes:
+            predicates.append(
+                f"member.format_code in ({','.join('?' for _ in format_codes)})"
+            )
+            parameters.extend(format_codes)
+        if source_received_from:
+            predicates.append("member.source_received_at >= ?")
+            parameters.append(source_received_from)
+        if source_received_to:
+            predicates.append("member.source_received_at <= ?")
+            parameters.append(source_received_to)
+        if readability_statuses:
+            predicates.append(
+                "member.readability_status in "
+                f"({','.join('?' for _ in readability_statuses)})"
+            )
+            parameters.extend(readability_statuses)
+        if after_file_id:
+            predicates.append(
+                """
+                (lower(member.logical_name) > ?
+                 or (lower(member.logical_name) = ? and member.logical_name > ?)
+                 or (lower(member.logical_name) = ? and member.logical_name = ?
+                     and member.file_id > ?))
+                """
+            )
+            parameters.extend(
+                (
+                    after_sort_name,
+                    after_sort_name,
+                    after_logical_name,
+                    after_sort_name,
+                    after_logical_name,
+                    after_file_id,
+                )
+            )
+        rows = self.database.execute(
+            f"""
+            select member.file_id, member.version_id, member.logical_name,
+                   member.format_code, member.size_bytes,
+                   member.source_received_at, member.version_created_at,
+                   member.readability_status,
+                   lower(member.logical_name) as sort_name
+              from task_workspace_catalog_member member
+             where {' and '.join(predicates)}
+             order by lower(member.logical_name), member.logical_name, member.file_id
+             limit ?
+            """,
+            (*parameters, limit),
+        )
+        return rows
+
+    def cleanup_unreferenced_catalog_history(self, workspace_id: str) -> dict[str, int]:
+        """Remove only catalog facts that cannot affect any current or historical Job."""
+
+        with self.database.unit_of_work():
+            current = self.current_catalog_revision(workspace_id)
+            protected_rows = self.database.execute(
+                """
+                select distinct revision.revision
+                  from task_workspace_catalog_revision revision
+                 where revision.workspace_id = ?
+                   and (
+                     revision.id = ?
+                     or exists (
+                       select 1 from agent_job_file_snapshot snapshot
+                        where snapshot.workspace_catalog_revision_id = revision.id
+                     )
+                     or exists (
+                       select 1 from agent_job_file_working_set_item working
+                        where working.workspace_catalog_revision_id = revision.id
+                     )
+                   )
+                 order by revision.revision
+                """,
+                (workspace_id, current["id"]),
+            )
+            protected = {int(row["revision"]) for row in protected_rows}
+            removable_members = []
+            for member in self.database.execute(
+                """
+                select id, valid_from_revision, valid_to_revision
+                  from task_workspace_catalog_member
+                 where workspace_id = ? and valid_to_revision is not null
+                 order by valid_from_revision, id
+                """,
+                (workspace_id,),
+            ):
+                start = int(member["valid_from_revision"])
+                end = int(member["valid_to_revision"])
+                if not any(start <= revision < end for revision in protected):
+                    removable_members.append(str(member["id"]))
+            for member_id in removable_members:
+                self.database.execute(
+                    "delete from task_workspace_catalog_member where id = ?",
+                    (member_id,),
+                )
+            removable_revisions = self.database.execute(
+                """
+                select id from task_workspace_catalog_revision
+                 where workspace_id = ? and id != ?
+                   and not exists (
+                     select 1 from agent_job_file_snapshot snapshot
+                      where snapshot.workspace_catalog_revision_id = task_workspace_catalog_revision.id
+                   )
+                   and not exists (
+                     select 1 from agent_job_file_working_set_item working
+                      where working.workspace_catalog_revision_id = task_workspace_catalog_revision.id
+                   )
+                 order by revision, id
+                """,
+                (workspace_id, current["id"]),
+            )
+            for revision in removable_revisions:
+                self.database.execute(
+                    "delete from task_workspace_catalog_revision where id = ?",
+                    (revision["id"],),
+                )
+            return {
+                "members_deleted": len(removable_members),
+                "revisions_deleted": len(removable_revisions),
+                "protected_revisions": len(protected),
+            }
+
+    @staticmethod
+    def _escape_like(value: str) -> str:
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+    def refresh_workspace_catalog_for_version(
+        self,
+        *,
+        version_id: str,
+        observed_at: str | None = None,
+    ) -> int:
+        timestamp = observed_at or _now()
+        with self.database.unit_of_work():
+            rows = self.database.execute(
+                """
+                select workspace_id, file_id, logical_name
+                  from task_workspace_file
+                 where selected_version_id = ? and status = 'ACTIVE'
+                 order by workspace_id, file_id
+                """,
+                (version_id,),
+            )
+            for row in rows:
+                self._advance_catalog_member(
+                    workspace_id=str(row["workspace_id"]),
+                    file_id=str(row["file_id"]),
+                    version_id=version_id,
+                    logical_name=str(row["logical_name"]),
+                    timestamp=timestamp,
+                )
+            return len(rows)
+
+    def _advance_catalog_member(
+        self,
+        *,
+        workspace_id: str,
+        file_id: str,
+        version_id: str,
+        logical_name: str,
+        timestamp: str,
+    ) -> dict[str, Any]:
+        revision, revision_id = self._next_catalog_revision(
+            workspace_id=workspace_id, timestamp=timestamp
+        )
+        self.database.execute(
+            """
+            update task_workspace_catalog_member
+               set valid_to_revision = ?, closed_at = ?
+             where workspace_id = ? and file_id = ? and valid_to_revision is null
+            """,
+            (revision, timestamp, workspace_id, file_id),
+        )
+        version = self.get_version(version_id)
+        file_row = self.get_file(file_id)
+        readability = self._catalog_readability(version_id, str(version["format_code"]))
+        member_id = _id("workspace_catalog_member")
+        self.database.execute(
+            """
+            insert into task_workspace_catalog_member
+              (id, workspace_id, file_id, version_id, logical_name, format_code,
+               size_bytes, source_received_at, version_created_at,
+               readability_status, valid_from_revision, created_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                member_id,
+                workspace_id,
+                file_id,
+                version_id,
+                logical_name,
+                str(version["format_code"]),
+                int(version["size_bytes"]),
+                file_row.get("source_received_at"),
+                str(version["created_at"]),
+                readability,
+                revision,
+                timestamp,
+            ),
+        )
+        return {"id": member_id, "revision_id": revision_id, "revision": revision}
+
+    def _next_catalog_revision(self, *, workspace_id: str, timestamp: str) -> tuple[int, str]:
+        suffix = " for update" if self.database.engine == "postgres" else ""
+        workspace = self.database.execute_one(
+            f"select catalog_revision from task_workspace where id = ?{suffix}",
+            (workspace_id,),
+        )
+        if workspace is None:
+            raise NotFound("Workspace not found", safe_message="未找到任务工作区")
+        current = int(workspace.get("catalog_revision") or 0)
+        revision = current + 1
+        revision_id = _id("workspace_catalog")
+        self.database.execute(
+            """
+            insert into task_workspace_catalog_revision
+              (id, workspace_id, revision, created_at)
+            values (?, ?, ?, ?)
+            """,
+            (revision_id, workspace_id, revision, timestamp),
+        )
         changed = self.database.execute(
             """
-            update task_workspace_file
-               set selected_version_id = ?, role = ?, logical_name = ?, updated_at = ?
-             where workspace_id = ? and file_id = ? and status = 'ACTIVE'
-             returning id
+            update task_workspace set catalog_revision = ?, updated_at = ?
+             where id = ? and catalog_revision = ? returning id
             """,
-            (version_id, role.value, logical_name, timestamp, workspace_id, file_id),
+            (revision, timestamp, workspace_id, current),
         )
         if not changed:
             self._state_conflict()
-        return self._required("task_workspace_file", str(changed[0]["id"]), "未找到工作区文件")
+        return revision, revision_id
+
+    def _catalog_readability(self, version_id: str, format_code: str) -> str:
+        version = self.get_version(version_id)
+        if str(version["status"]) == "CONTENT_UNAVAILABLE":
+            return "CONTENT_UNAVAILABLE"
+        if format_code in {"TXT", "LOG", "MARKDOWN"}:
+            return "DIRECT_TEXT"
+        representation = self.database.execute_one(
+            """
+            select run.status as run_status
+              from file_representation representation
+              join file_processing_run run on run.id = representation.processing_run_id
+             where representation.source_version_id = ?
+               and representation.kind = 'MARKDOWN'
+               and representation.status = 'AVAILABLE'
+             order by representation.created_at desc, representation.id desc
+             limit 1
+            """,
+            (version_id,),
+        )
+        if representation is not None:
+            return "PARTIAL" if str(representation["run_status"]) == "PARTIAL" else "AVAILABLE"
+        run = self.database.execute_one(
+            """
+            select status from file_processing_run
+             where source_version_id = ?
+             order by created_at desc, id desc limit 1
+            """,
+            (version_id,),
+        )
+        if run is None or str(run["status"]) not in {"NO_TEXT", "FAILED"}:
+            return "PROCESSING"
+        return str(run["status"])
 
     def add_domain_outbox(
         self,

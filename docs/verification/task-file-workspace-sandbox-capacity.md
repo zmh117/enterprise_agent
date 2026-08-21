@@ -1,32 +1,27 @@
-# 任务文件工作区沙盒容量基线
+# 任务文件工作区 Sandbox v2 容量基线
 
 ## 结论
 
-- Python Runtime 容器的 Job Sandbox 默认容量：256 MiB。
-- Runtime readiness 的容量下限：64 MiB；低于该值必须拒绝就绪。
-- 第一阶段单文件上限：15 MiB。
-- 工作区未保留内容配额：100 MiB。
-- 最大建模工作集：224 MiB，默认容量保留 32 MiB 安全余量。
+- Python Runtime每个Job Sandbox：最多64个常规文件、224 MiB共享容量。
+- `inputs`：最多40个不同File/Version；重复物化同一版本不重复计数。
+- `work/outputs`：合计最多16个文件。
+- Runtime内部`tmp`与安全余量：最多8个文件，Agent不可直接写入。
+- 每个文本或Markdown文件仍不得超过15 MiB。
+- readiness必须同时验证64/224 MiB、40/16/8和15 MiB单文件限制；任一配置漂移均失败关闭。
 
-这是 Python Runtime 容器的容量边界，不代表允许单个 Agent 无界使用全部空间。实现仍须执行每 Job 文件数、逻辑字节和路径配额。
+224 MiB是三个分区共享的真实字节池，不承诺64个文件都可达到15 MiB。任何入口在剩余容量不足时都必须先拒绝，再产生文件或下载字节。
 
 ## 建模方法
 
-`single-legal-file` 同时写入：
+`one-max-input-output-with-tmp`写入一个15 MiB输入、一个15 MiB输出和1 MiB临时文件，共3个文件、31 MiB。
 
-- 15 MiB 合法输入；
-- 15 MiB 编辑后输出；
-- 16 MiB SDK、配置和流式处理临时空间。
+`sandbox-v2-partition-boundary`写入：
 
-合计 46 MiB，因此 32 MiB 不能处理一个合法输入；readiness 下限取整为 64 MiB。
+- 40个5 MiB输入，共200 MiB；
+- 16个1 MiB工作/输出文件，共16 MiB；
+- 8个1 MiB Runtime临时文件，共8 MiB。
 
-`maximum-workspace-working-set` 同时写入：
-
-- 100 MiB 已物化工作区输入；
-- 100 MiB 编辑或生成输出预留；
-- 24 MiB 流式传输与 Runtime 临时空间。
-
-合计 224 MiB；默认 256 MiB，剩余 32 MiB，约为建模工作集的 14.3%。
+合计正好64个文件、224 MiB。该场景只用于验证分区计数和共享容量边界；实际Job仍须按每项真实大小整批预检。
 
 ## 可重复验证
 
@@ -36,4 +31,4 @@
 .venv/bin/python scripts/benchmark_file_workspace_sandbox.py
 ```
 
-脚本只生成有效 UTF-8 合成文本，输出 JSON 中的逻辑大小、实际分配大小和耗时；临时文件在每个场景完成后立即删除。部署配置使用统一的受控容量配置，并由 Python Runtime readiness 校验不低于 64 MiB。
+脚本只生成UTF-8合成文本，输出文件数、逻辑大小、实际分配大小和耗时，并在每个场景结束后删除临时内容。自动输入与File MCP物化的首字节前拒绝、失败释放和hash不匹配清理由Runtime聚焦回归验证。

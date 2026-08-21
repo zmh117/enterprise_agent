@@ -1004,7 +1004,7 @@ def test_text_v2_mixed_txt_log_markdown_attachments_freeze_one_manifest() -> Non
     assert manifest_service is not None
     manifest = manifest_service.runtime_manifest(job.id)
     assert manifest is not None
-    assert manifest["schema_version"] == 4
+    assert manifest["schema_version"] == 5
     assert manifest["file_format_policy_version"] == "text-v2"
     by_format = {item["format_code"]: item for item in manifest["items"]}
     assert set(by_format) == {"TXT", "LOG", "MARKDOWN"}
@@ -1181,10 +1181,12 @@ def test_synthetic_private_txt_crosses_channel_file_worker_sandbox_commit_and_de
             job_id=job.id,
             workspace_path=sandbox.path,
             principal_token="synthetic-principal",
+            sandbox=sandbox,
         )
         materialized = coordinator.process_mcp_control_result(
             _mcp_wire_result(transfer),
             transfer_context,
+            materialization_identity=(file_id, base_version_id),
         )
         relative_path = str(materialized["relative_path"])
         local_file = sandbox.path / relative_path
@@ -1806,9 +1808,7 @@ def test_today_image_question_binds_ready_workspace_png_and_unrelated_text_does_
             (unrelated_snapshot["id"],),
         )
     }
-    assert "image-1-980757d6.png" in unrelated_items
-    assert unrelated_items["image-1-980757d6.png"]["source_kind"] == "WORKSPACE"
-    assert not bool(unrelated_items["image-1-980757d6.png"]["auto_materialize"])
+    assert unrelated_items == {}
     assert runtime.agent_repository.list_attachments(unrelated_job.id) == []
 
     asked = runtime.dingtalk_stream_message_service.handle_callback(

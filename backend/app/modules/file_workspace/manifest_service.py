@@ -253,15 +253,18 @@ class JobFileManifestService:
             pending = self.repository.get_job_file_request(job_id)
             workspace = self.repository.get_workspace(str(pending["workspace_id"]))
             self._require_request_boundary(pending, workspace)
+            catalog = self.repository.current_catalog_revision(str(workspace["id"]))
             items = self._manifest_items(job_id, pending, workspace)
             canonical = [self._canonical_item(item) for item in items]
+            self._preflight_working_set(canonical)
             policy_version = normalize_file_format_policy_version(
                 pending.get("file_format_policy_version")
             ).value
             manifest_hash = hashlib.sha256(
                 json.dumps(
                     {
-                        "schema_version": 4,
+                        "schema_version": 5,
+                        "workspace_catalog_revision_id": str(catalog["id"]),
                         "file_format_policy_version": policy_version,
                         "items": canonical,
                     },
@@ -281,6 +284,7 @@ class JobFileManifestService:
                 file_format_policy_version=policy_version,
                 manifest_hash=manifest_hash,
                 items=canonical,
+                workspace_catalog_revision_id=str(catalog["id"]),
             )
             self.repository.finalize_job_file_request(job_id)
             return snapshot
@@ -376,12 +380,41 @@ class JobFileManifestService:
                         else None
                     ),
                     "version_created_at": str(item.get("version_created_at") or ""),
+                    **(
+                        {
+                            "materialization_size_bytes": int(
+                                item["representation_size_bytes"]
+                                if representation_id
+                                else self.repository.get_version(str(item["version_id"]))[
+                                    "size_bytes"
+                                ]
+                            )
+                        }
+                        if int(snapshot.get("schema_version") or 1) >= 5
+                        else {}
+                    ),
                     **representation,
                 }
             )
         canonical = [self._canonical_item(item) for item in projected]
         schema_version = int(snapshot.get("schema_version") or 1)
-        if schema_version >= 4:
+        if schema_version >= 5:
+            catalog_revision_id = str(
+                snapshot.get("workspace_catalog_revision_id") or ""
+            )
+            if not catalog_revision_id:
+                raise NonRetryableExecutionError(
+                    "Manifest v5 catalog revision is missing",
+                    safe_message="任务文件清单无效",
+                    error_code="file_manifest_invalid",
+                )
+            hash_value: object = {
+                "schema_version": 5,
+                "workspace_catalog_revision_id": catalog_revision_id,
+                "file_format_policy_version": policy_version.value,
+                "items": canonical,
+            }
+        elif schema_version >= 4:
             hash_value: object = {
                 "schema_version": 4,
                 "file_format_policy_version": policy_version.value,
@@ -435,6 +468,15 @@ class JobFileManifestService:
         )
         return {
             "schema_version": schema_version,
+            **(
+                {
+                    "workspace_catalog_revision_id": str(
+                        snapshot["workspace_catalog_revision_id"]
+                    )
+                }
+                if schema_version >= 5
+                else {}
+            ),
             "file_format_policy_version": policy_version.value,
             "manifest_hash": str(snapshot["manifest_hash"]),
             "observed_at": to_utc_rfc3339(snapshot.get("created_at")) or "",
@@ -454,6 +496,43 @@ class JobFileManifestService:
                 else {}
             ),
         }
+
+    def require_publication_workspace_compatibility(
+        self,
+        *,
+        workspace_id: str,
+        publication_id: str,
+        planned_new_files: int = 0,
+    ) -> None:
+        """Fail before Job creation when a legacy Publication cannot discover the workspace."""
+
+        if self._publication_has_catalog_search(publication_id):
+            return
+        lock_suffix = " for update" if self.repository.database.engine == "postgres" else ""
+        workspace = self.repository.database.execute_one(
+            f"select id from task_workspace where id = ?{lock_suffix}",
+            (workspace_id,),
+        )
+        if workspace is None:
+            raise NonRetryableExecutionError(
+                "Task workspace is unavailable",
+                safe_message="任务文件工作区不可用",
+                error_code="file_workspace_unavailable",
+            )
+        row = self.repository.database.execute_one(
+            """
+            select count(*) as value from task_workspace_file
+             where workspace_id = ? and status = 'ACTIVE'
+            """,
+            (workspace_id,),
+        )
+        active_count = int((row or {}).get("value") or 0)
+        if active_count + max(0, planned_new_files) > 20:
+            raise NonRetryableExecutionError(
+                "Application Publication lacks frozen catalog search for a large workspace",
+                safe_message="当前应用发布版本不支持超过 20 个文件的工作区，请先升级发布版本",
+                error_code="file_workspace_publication_upgrade_required",
+            )
 
     def has_pending_text_attachments(self, job_id: str) -> bool:
         request = (
@@ -533,6 +612,59 @@ class JobFileManifestService:
             "representation_created_at": item.get("representation_created_at"),
         }
 
+    def _preflight_working_set(self, items: list[dict[str, Any]]) -> None:
+        identities = {
+            (str(item["file_id"]), str(item["version_id"])) for item in items
+        }
+        if len(identities) != len(items):
+            raise NonRetryableExecutionError(
+                "Manifest v5 contains duplicate File/Version identities",
+                safe_message="任务文件清单包含重复文件版本",
+                error_code="file_manifest_duplicate_identity",
+            )
+        if len(items) > 40:
+            raise NonRetryableExecutionError(
+                "Manifest v5 exceeds the Job input working-set limit",
+                safe_message="任务输入文件超过 40 个，请缩小工作集",
+                error_code="job_file_working_set_limit_exceeded",
+            )
+        planned_bytes = 0
+        for item in items:
+            if not bool(item.get("auto_materialize")):
+                continue
+            representation_id = str(item.get("representation_id") or "")
+            if representation_id:
+                size = int(item.get("representation_size_bytes") or -1)
+                row = self.repository.database.execute_one(
+                    """
+                    select size_bytes, content_sha256, status
+                      from file_representation where id = ?
+                    """,
+                    (representation_id,),
+                )
+                if (
+                    row is None
+                    or str(row["status"]) != "AVAILABLE"
+                    or int(row["size_bytes"]) != size
+                    or str(row["content_sha256"])
+                    != str(item.get("representation_sha256") or "")
+                ):
+                    raise NonRetryableExecutionError(
+                        "Planned Markdown representation changed during preflight",
+                        safe_message="文档可读表示已变化，请重试",
+                        error_code="file_representation_identity_changed",
+                    )
+            else:
+                row = self.repository.require_content_available(str(item["version_id"]))
+                size = int(row["size_bytes"])
+            planned_bytes += size
+        if planned_bytes > 224 * 1024 * 1024:
+            raise NonRetryableExecutionError(
+                "Automatic Job inputs exceed the Sandbox capacity",
+                safe_message="任务输入总容量超过 224 MiB，请缩小工作集",
+                error_code="job_file_working_set_capacity_exceeded",
+            )
+
     def _manifest_items(
         self,
         job_id: str,
@@ -543,24 +675,33 @@ class JobFileManifestService:
         policy_version = normalize_file_format_policy_version(
             request.get("file_format_policy_version")
         )
-        regular = self.repository.database.execute(
-            """
-            select wf.file_id, wf.selected_version_id as version_id,
-                   wf.logical_name as display_name, f.tenant_id, f.owner_type,
-                   f.owner_user_id, f.owner_enterprise_id, f.owner_connector_id,
-                   f.owner_conversation_id, f.status as file_status,
-                   f.format_code as file_format_code,
-                   v.status as version_status, v.format_code as version_format_code,
-                   v.media_type, v.encoding,
-                   v.size_bytes, f.source_received_at,
-                   v.created_at as version_created_at
-              from task_workspace_file wf
-              join managed_file f on f.id = wf.file_id
-              join managed_file_version v on v.id = wf.selected_version_id
-             where wf.workspace_id = ? and wf.status = 'ACTIVE'
-             order by wf.logical_name, wf.file_id
-            """,
-            (workspace_id,),
+        catalog_search_enabled = self._publication_has_catalog_search(
+            str(request.get("business_application_publication_id") or "")
+        )
+        # Compatible Publications discover unselected files through the frozen
+        # catalog. Legacy Publications retain their bounded <=20 Manifest view.
+        regular = (
+            []
+            if catalog_search_enabled
+            else self.repository.database.execute(
+                """
+                select wf.file_id, wf.selected_version_id as version_id,
+                       wf.logical_name as display_name, f.tenant_id, f.owner_type,
+                       f.owner_user_id, f.owner_enterprise_id, f.owner_connector_id,
+                       f.owner_conversation_id, f.status as file_status,
+                       f.format_code as file_format_code,
+                       v.status as version_status, v.format_code as version_format_code,
+                       v.media_type, v.encoding, v.size_bytes, f.source_received_at,
+                       v.created_at as version_created_at
+                  from task_workspace_file wf
+                  join managed_file f on f.id = wf.file_id
+                  join managed_file_version v on v.id = wf.selected_version_id
+                 where wf.workspace_id = ? and wf.status = 'ACTIVE'
+                 order by wf.logical_name, wf.file_id
+                 limit 20
+                """,
+                (workspace_id,),
+            )
         )
         by_identity: dict[tuple[str, str], dict[str, Any]] = {}
         for row in regular:
@@ -765,26 +906,30 @@ class JobFileManifestService:
                 policy_version=policy_version,
             )
 
-        conflicts = self.repository.database.execute(
-            """
-            select c.file_id, c.candidate_version_id as version_id,
-                   wf.logical_name as display_name, f.tenant_id, f.owner_type,
-                   f.owner_user_id, f.owner_enterprise_id, f.owner_connector_id,
-                   f.owner_conversation_id, f.status as file_status,
-                   f.format_code as file_format_code,
-                   v.status as version_status, v.format_code as version_format_code,
-                   v.media_type, v.encoding,
-                   v.size_bytes, f.source_received_at,
-                   v.created_at as version_created_at
-              from file_conflict_candidate c
-              join task_workspace_file wf
-                on wf.workspace_id = ? and wf.file_id = c.file_id and wf.status = 'ACTIVE'
-              join managed_file f on f.id = c.file_id
-              join managed_file_version v on v.id = c.candidate_version_id
-             where c.status = 'OPEN'
-             order by c.created_at, c.id
-            """,
-            (workspace_id,),
+        conflicts = (
+            []
+            if catalog_search_enabled
+            else self.repository.database.execute(
+                """
+                select c.file_id, c.candidate_version_id as version_id,
+                       wf.logical_name as display_name, f.tenant_id, f.owner_type,
+                       f.owner_user_id, f.owner_enterprise_id, f.owner_connector_id,
+                       f.owner_conversation_id, f.status as file_status,
+                       f.format_code as file_format_code,
+                       v.status as version_status, v.format_code as version_format_code,
+                       v.media_type, v.encoding, v.size_bytes, f.source_received_at,
+                       v.created_at as version_created_at
+                  from file_conflict_candidate c
+                  join task_workspace_file wf
+                    on wf.workspace_id = ? and wf.file_id = c.file_id
+                   and wf.status = 'ACTIVE'
+                  join managed_file f on f.id = c.file_id
+                  join managed_file_version v on v.id = c.candidate_version_id
+                 where c.status = 'OPEN'
+                 order by c.created_at, c.id
+                """,
+                (workspace_id,),
+            )
         )
         for row in conflicts:
             self._require_file_boundary(row, workspace)
@@ -832,6 +977,22 @@ class JobFileManifestService:
                     if action not in {FileAction.EDIT.value, FileAction.COMMIT.value}
                 ]
         return items
+
+    def _publication_has_catalog_search(self, publication_id: str) -> bool:
+        if not publication_id:
+            return False
+        return bool(
+            self.repository.database.execute_one(
+                """
+                select 1 as present
+                  from business_application_publication_mcp_tool
+                 where application_publication_id = ?
+                   and server_code = 'file-service'
+                   and tool_identifier = 'task_workspace_search_files'
+                """,
+                (publication_id,),
+            )
+        )
 
     def _reference_row(
         self, *, workspace_id: str, file_id: str, version_id: str

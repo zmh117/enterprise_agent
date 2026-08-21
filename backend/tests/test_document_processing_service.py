@@ -32,6 +32,8 @@ from app.modules.file_workspace.domain import (
     FileSourceKind,
     FileVersionKind,
     FileVersionStatus,
+    RetentionPeriod,
+    WorkspaceFileRole,
     WorkspaceOwnerType,
 )
 from app.modules.file_workspace.lifecycle_service import FileLifecycleService
@@ -95,6 +97,47 @@ def _database() -> Database:
         default_migrations_dir(),
         migrator_build="document-processing-service-test",
     ).run()
+    timestamp = NOW.isoformat()
+    database.execute(
+        """
+        insert into business_application
+          (id, code, name, project_code, status, revision,
+           created_by, created_at, updated_at)
+        values ('document-app', 'document-app', 'Document App', 'default',
+                'enabled', 1, 'file-worker', ?, ?)
+        """,
+        (timestamp, timestamp),
+    )
+    database.execute(
+        """
+        insert into business_application_revision
+          (id, application_id, revision, status, created_by, created_at, updated_at)
+        values ('document-app-r1', 'document-app', 1, 'published',
+                'file-worker', ?, ?)
+        """,
+        (timestamp, timestamp),
+    )
+    database.execute(
+        """
+        insert into business_application_publication
+          (id, application_id, revision_id, revision, schema_version,
+           snapshot_json, config_hash, published_by, published_at)
+        values ('document-app-p1', 'document-app', 'document-app-r1', 1, 1,
+                '{}', ?, 'file-worker', ?)
+        """,
+        ("a" * 64, timestamp),
+    )
+    database.execute(
+        """
+        insert into agent_session
+          (id, source_channel, source_connector_id, external_conversation_id,
+           requester_id, project_code, session_key, created_at, updated_at)
+        values ('document-session', 'test', 'document-connector',
+                'document-conversation', 'user-document-owner', 'default',
+                'document-session', ?, ?)
+        """,
+        (timestamp, timestamp),
+    )
     return database
 
 
@@ -110,13 +153,24 @@ def _source(
     version_id = "managed_file_version_document_source"
     object_key = storage.new_object_key(kind="attachment")
     storage.objects[object_key] = body
+    owner = FileOwner(
+        owner_type=WorkspaceOwnerType.PRIVATE_USER,
+        user_id="user-document-owner",
+    )
+    file_repository.create_workspace(
+        workspace_id="document-workspace",
+        tenant_id=tenant_id,
+        session_id="document-session",
+        owner=owner,
+        publication_id="document-app-p1",
+        retention_period=RetentionPeriod.WEEK,
+        expires_at="2026-08-24T00:00:00+00:00",
+        actor_id="file-worker",
+    )
     file_repository.create_file(
         file_id=file_id,
         tenant_id=tenant_id,
-        owner=FileOwner(
-            owner_type=WorkspaceOwnerType.PRIVATE_USER,
-            user_id="user-document-owner",
-        ),
+        owner=owner,
         display_name="source.pdf",
         actor_id="file-worker",
         format_code="PDF",
@@ -136,6 +190,13 @@ def _source(
         actor_id="file-worker",
         format_code="PDF",
         advance_current_from="",
+    )
+    file_repository.link_workspace_file(
+        workspace_id="document-workspace",
+        file_id=file_id,
+        version_id=version_id,
+        logical_name="source.pdf",
+        role=WorkspaceFileRole.INPUT,
     )
     return file_repository, file_id, version_id, body
 
@@ -1133,6 +1194,10 @@ def test_representation_cleanup_follows_source_version_lifecycle() -> None:
          where event_type like 'file.document.%'
         """
     )
+    service.file_repository.remove_active_workspace_files(
+        workspace_id="document-workspace",
+        removed_at=NOW.isoformat(),
+    )
     service.file_repository.enqueue_cleanup(
         resource_type=CleanupResourceType.FILE_VERSION,
         resource_id=version_id,
@@ -1172,6 +1237,10 @@ def test_source_version_cleanup_waits_for_nonterminal_document_processing() -> N
         actor_id="file-worker",
         correlation_id="retention-boundary",
         profile_code="docling-layout-ocr-v1",
+    )
+    service.file_repository.remove_active_workspace_files(
+        workspace_id="document-workspace",
+        removed_at=NOW.isoformat(),
     )
     service.file_repository.enqueue_cleanup(
         resource_type=CleanupResourceType.FILE_VERSION,

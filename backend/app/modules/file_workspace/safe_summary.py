@@ -22,6 +22,9 @@ _ALLOWED_FILE_AUDIT_FIELDS = frozenset(
         "size_bytes",
         "content_sha256",
         "item_count",
+        "returned_count",
+        "workspace_catalog_revision_id",
+        "filter_summary",
     }
 )
 

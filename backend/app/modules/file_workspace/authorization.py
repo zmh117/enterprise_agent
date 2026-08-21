@@ -272,6 +272,112 @@ class FileAuthorizationService:
             self._deny("file_group_boundary_denied")
         return item
 
+    def require_working_set_materialization(
+        self,
+        context: FileAuthorizationContext,
+        *,
+        file_id: str,
+        version_id: str,
+    ) -> dict[str, Any]:
+        item = self.database.execute_one(
+            """
+            select working.*, file.tenant_id, file.owner_type,
+                   file.owner_user_id, file.owner_enterprise_id,
+                   file.owner_connector_id, file.owner_conversation_id,
+                   file.status as file_status, file.format_code as file_format_code,
+                   version.status as version_status,
+                   version.format_code as version_format_code,
+                   version.version_number, version.media_type,
+                   version.size_bytes, version.content_sha256,
+                   member.logical_name as display_name,
+                   member.format_code, member.readability_status,
+                   representation.status as representation_status,
+                   representation.source_file_id,
+                   representation.source_version_id,
+                   representation.object_key,
+                   representation.size_bytes as live_representation_size_bytes,
+                   representation.content_sha256 as live_representation_sha256,
+                   representation.content_deleted_at as representation_content_deleted_at
+              from agent_job_file_working_set_item working
+              join task_workspace_catalog_revision revision
+                on revision.id = working.workspace_catalog_revision_id
+              join task_workspace_catalog_member member
+                on member.workspace_id = working.workspace_id
+               and member.file_id = working.file_id
+               and member.version_id = working.version_id
+               and member.valid_from_revision <= revision.revision
+               and (member.valid_to_revision is null
+                    or member.valid_to_revision > revision.revision)
+              join managed_file file on file.id = working.file_id
+              join managed_file_version version on version.id = working.version_id
+              left join file_representation representation
+                on representation.id = working.representation_id
+             where working.job_id = ? and working.snapshot_id = ?
+               and working.workspace_id = ? and working.file_id = ?
+               and working.version_id = ?
+            """,
+            (
+                context.claims["job_id"],
+                context.manifest["id"],
+                context.workspace["id"],
+                file_id,
+                version_id,
+            ),
+        )
+        if (
+            item is None
+            or str(item.get("tenant_id") or "") != str(context.claims["tenant_id"])
+            or str(item.get("file_status") or "") != "ACTIVE"
+            or str(item.get("version_status") or "") not in {"AVAILABLE", "CONFLICT"}
+            or not self.database.execute_one(
+                """
+                select 1 as active from task_workspace_file
+                 where workspace_id = ? and file_id = ? and status = 'ACTIVE'
+                """,
+                (context.workspace["id"], file_id),
+            )
+        ):
+            self._deny("file_working_set_item_denied")
+        assert item is not None
+        has_representation = bool(item.get("representation_id"))
+        if has_representation and (
+            str(item.get("representation_kind") or "") != "MARKDOWN"
+            or str(item.get("representation_status") or "") != "AVAILABLE"
+            or str(item.get("source_file_id") or "") != file_id
+            or str(item.get("source_version_id") or "") != version_id
+            or item.get("representation_content_deleted_at")
+            or int(item.get("live_representation_size_bytes") or -1)
+            != int(item.get("representation_size_bytes") or -2)
+            or str(item.get("live_representation_sha256") or "")
+            != str(item.get("representation_sha256") or "")
+        ):
+            self._deny("file_representation_denied")
+        if not has_representation:
+            policy = normalize_file_format_policy_version(
+                context.manifest.get("file_format_policy_version")
+            )
+            definition = get_text_format_policy(policy).by_code(
+                str(item.get("format_code") or "TXT")
+            )
+            if FileAction.MATERIALIZE not in definition.actions:
+                self._deny("file_working_set_action_denied")
+        if str(item.get("owner_type")) != str(context.workspace["owner_type"]):
+            self._deny("file_owner_boundary_denied")
+        if str(item.get("owner_type")) == WorkspaceOwnerType.PRIVATE_USER.value:
+            if str(item.get("owner_user_id")) != str(context.claims["sub"]):
+                self._deny("file_private_owner_denied")
+        elif any(
+            str(item.get(field) or "") != str(context.workspace[field] or "")
+            for field in (
+                "owner_enterprise_id",
+                "owner_connector_id",
+                "owner_conversation_id",
+            )
+        ):
+            self._deny("file_group_boundary_denied")
+        item["allowed_actions_json"] = json.dumps([FileAction.MATERIALIZE.value])
+        return item
+
     @staticmethod
     def _require_owner(row: dict[str, Any], *, sender_user_id: str) -> None:
         owner_type = WorkspaceOwnerType(str(row.get("owner_type") or ""))

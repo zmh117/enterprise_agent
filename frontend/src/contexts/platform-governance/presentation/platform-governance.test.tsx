@@ -13,6 +13,7 @@ import { createDebugJob } from "@/contexts/operations/infrastructure/debug-job-a
 import { DebugJobPage } from "@/contexts/operations/presentation/debug-job-page"
 import { createGovernedResource } from "@/contexts/platform-governance/infrastructure/platform-governance-api"
 import { CredentialCenterPage } from "@/contexts/platform-governance/presentation/credential-center-page"
+import { RuntimeConfigPage } from "@/contexts/platform-governance/presentation/runtime-config-page"
 import { ToolResourcesPage } from "@/contexts/platform-governance/presentation/tool-resources-page"
 import { navigationGroups } from "@/mocks/dashboard"
 
@@ -173,10 +174,111 @@ describe("Phase 5 platform governance UI", () => {
     expect(group?.items.map((item) => item.href)).toEqual([
       "/platform/resources",
       "/platform/secrets",
+      "/platform/runtime-config",
     ])
     expect(group?.items.map((item) => item.requiredCapability)).toEqual([
       "platform.read",
       "secrets.read",
+      "platform.read",
+    ])
+  })
+
+  it("loads tenant quota diagnostics and saves both governed values with CAS", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.includes("file-workspace-diagnostics")) {
+        return response({
+          diagnostics: {
+            tenant_id: "tenant-a",
+            config_revision: 12,
+            active_file_limit: { value: 200, source: "tenant", revision: 4 },
+            billable_bytes_limit: {
+              value: 2 * 1024 ** 3,
+              source: "tenant",
+              revision: 5,
+            },
+            usage: {
+              workspace_count: 3,
+              active_file_count: 120,
+              billable_bytes: 1024,
+              reserved_file_slots: 2,
+              reserved_billable_bytes: 512,
+            },
+            incompatible_publications: [
+              {
+                application_code: "legacy-app",
+                publication_id: "legacy-publication-1",
+                publication_revision: 7,
+              },
+            ],
+          },
+        })
+      }
+      if (url.includes("/api/platform/runtime-config/values")) {
+        if (init?.method === "POST") return response({ value: { status: "enabled" } })
+        return response({
+          values: [
+            {
+              id: "active-value",
+              key: "FILE_WORKSPACE_ACTIVE_FILE_LIMIT",
+              scope_type: "tenant",
+              scope_code: "tenant-a",
+              service_name: "file-service",
+              revision: 4,
+              value: 200,
+              status: "enabled",
+            },
+            {
+              id: "bytes-value",
+              key: "FILE_WORKSPACE_BILLABLE_BYTES_LIMIT",
+              scope_type: "tenant",
+              scope_code: "tenant-a",
+              service_name: "file-service",
+              revision: 5,
+              value: 2 * 1024 ** 3,
+              status: "enabled",
+            },
+          ],
+        })
+      }
+      return response({}, 404)
+    })
+    renderWithQuery(<RuntimeConfigPage />)
+
+    fireEvent.change(screen.getByLabelText("Tenant ID"), {
+      target: { value: "tenant-a" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "加载" }))
+
+    expect(await screen.findByText("legacy-app · r7")).toBeInTheDocument()
+    expect(screen.getByDisplayValue("200")).toBeInTheDocument()
+    expect(screen.getByDisplayValue("2")).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText("每工作区 ACTIVE 文件上限"), {
+      target: { value: "250" },
+    })
+    fireEvent.change(screen.getByLabelText("每工作区计费容量（GiB）"), {
+      target: { value: "3" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "保存 tenant 配额" }))
+
+    expect(await screen.findByText("tenant 文件工作区配额已保存。")).toBeInTheDocument()
+    const writes = fetchMock.mock.calls.filter(
+      ([input, init]) =>
+        String(input).includes("/api/platform/runtime-config/values") &&
+        init?.method === "POST"
+    )
+    expect(writes).toHaveLength(2)
+    expect(writes.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
+      expect.objectContaining({
+        key: "FILE_WORKSPACE_ACTIVE_FILE_LIMIT",
+        value: 250,
+        expected_revision: 4,
+      }),
+      expect.objectContaining({
+        key: "FILE_WORKSPACE_BILLABLE_BYTES_LIMIT",
+        value: 3 * 1024 ** 3,
+        expected_revision: 5,
+      }),
     ])
   })
 

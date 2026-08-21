@@ -847,6 +847,15 @@ class CreateAgentJobService:
                     correlation_id=correlation_id,
                     requester_id=requester_id,
                 )
+            if file_workspace is not None and bool(
+                command.task_file_features.get("file_mcp_enabled")
+            ):
+                assert self.file_manifest_service is not None
+                self.file_manifest_service.require_publication_workspace_compatibility(
+                    workspace_id=str(file_workspace["id"]),
+                    publication_id=command.business_application_publication_id,
+                    planned_new_files=len(command.attachments),
+                )
             bound_attachment_ids = tuple(
                 item.attachment_id
                 for item in gate.dependencies

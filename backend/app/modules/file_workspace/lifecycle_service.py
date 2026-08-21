@@ -139,13 +139,9 @@ class FileLifecycleService:
                 self.repository.transition_workspace(
                     workspace_id, WorkspaceStatus.CLEANING, at=timestamp
                 )
-                self.repository.database.execute(
-                    """
-                    update task_workspace_file
-                       set status = 'REMOVED', removed_at = ?, updated_at = ?
-                     where workspace_id = ? and status = 'ACTIVE'
-                    """,
-                    (timestamp, timestamp, workspace_id),
+                self.repository.remove_active_workspace_files(
+                    workspace_id=workspace_id,
+                    removed_at=timestamp,
                 )
                 self.repository.enqueue_cleanup(
                     resource_type=CleanupResourceType.WORKSPACE,

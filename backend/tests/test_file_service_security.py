@@ -262,7 +262,7 @@ def test_file_service_requires_distinct_managed_and_legacy_private_buckets() -> 
 class _Database:
     def execute_one(self, query: str) -> dict[str, Any]:
         if "schema_migration" in query:
-            return {"version": "116"}
+            return {"version": "118"}
         return {"ready": 1}
 
     def execute(self, query: str) -> list[dict[str, Any]]:

@@ -274,8 +274,9 @@ def test_real_python_runtime_sdk_loop_uses_local_file_bridge_before_model_result
         tool_restrictions=["TXT only"],
         skills={},
         retrieved_context={
-            "file_manifest": {
-                "schema_version": 2,
+                "file_manifest": {
+                    "schema_version": 5,
+                    "workspace_catalog_revision_id": "catalog-revision-python-1",
                 "manifest_hash": "c" * 64,
                 "observed_at": "2026-08-15T22:00:00+08:00",
                 "items": [
@@ -293,7 +294,8 @@ def test_real_python_runtime_sdk_loop_uses_local_file_bridge_before_model_result
                         "auto_materialize": True,
                         "conflict_candidate": False,
                         "source_received_at": "2026-08-15T21:30:00+08:00",
-                        "version_created_at": "2026-08-15T21:30:03+08:00",
+                            "version_created_at": "2026-08-15T21:30:03+08:00",
+                            "materialization_size_bytes": len(SOURCE),
                     }
                 ],
             }

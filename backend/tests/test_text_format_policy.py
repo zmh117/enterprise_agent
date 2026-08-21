@@ -226,7 +226,7 @@ def test_shared_fixture_matches_python_sandbox_path_and_symlink_policy(tmp_path:
             tmp_path / item["id"],
             limits=JobSandboxLimits(
                 capacity_bytes=max(max_file_bytes, 1024),
-                max_files=40,
+                max_files=64,
                 max_file_bytes=max_file_bytes,
             ),
         )

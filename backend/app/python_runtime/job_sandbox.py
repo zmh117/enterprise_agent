@@ -5,8 +5,9 @@ import json
 import os
 import shutil
 import stat
+import threading
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Callable, Mapping, Never
 
@@ -21,9 +22,12 @@ from app.shared.exceptions import NonRetryableExecutionError
 
 SANDBOX_MARKER = ".enterprise-agent-sandbox.json"
 SANDBOX_SCHEMA_VERSION = 1
-SANDBOX_FILE_LIMIT = 40
+SANDBOX_FILE_LIMIT = 64
 SANDBOX_CAPACITY_BYTES = 224 * 1024 * 1024
 SANDBOX_FILE_BYTES = 15 * 1024 * 1024
+SANDBOX_INPUT_FILE_LIMIT = 40
+SANDBOX_WORK_OUTPUT_FILE_LIMIT = 16
+SANDBOX_TMP_FILE_LIMIT = 8
 FILE_TOOL_NAMES = ("Read", "Glob", "Grep", "Edit", "Write")
 ALLOWED_FILE_TOOLS = frozenset(FILE_TOOL_NAMES)
 ALLOWED_TOP_LEVEL = frozenset({"inputs", "work", "outputs", "tmp"})
@@ -40,14 +44,59 @@ class JobSandboxLimits:
     capacity_bytes: int = SANDBOX_CAPACITY_BYTES
     max_files: int = SANDBOX_FILE_LIMIT
     max_file_bytes: int = SANDBOX_FILE_BYTES
+    max_input_files: int = SANDBOX_INPUT_FILE_LIMIT
+    max_work_output_files: int = SANDBOX_WORK_OUTPUT_FILE_LIMIT
+    max_tmp_files: int = SANDBOX_TMP_FILE_LIMIT
 
     def __post_init__(self) -> None:
         if (
             self.capacity_bytes < self.max_file_bytes
             or self.max_files < 1
             or self.max_file_bytes < 1
+            or self.max_input_files < 1
+            or self.max_work_output_files < 1
+            or self.max_tmp_files < 1
+            or self.max_input_files
+            + self.max_work_output_files
+            + self.max_tmp_files
+            > self.max_files
         ):
             raise ValueError("Job Sandbox limits are invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxInputReservation:
+    token: str
+    identity: tuple[str, str]
+    expected_size_bytes: int
+    relative_path: str = ""
+    committed: bool = False
+    sha256: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxReservation:
+    token: str
+    partition: str
+    relative_path: str
+    expected_size_bytes: int
+
+
+@dataclass(slots=True)
+class _PendingReservation:
+    token: str
+    partition: str
+    expected_size_bytes: int
+    identity: tuple[str, str] | None = None
+    relative_path: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class _CommittedInput:
+    identity: tuple[str, str]
+    relative_path: str
+    size_bytes: int
+    sha256: str
 
 
 @dataclass(slots=True)
@@ -56,6 +105,13 @@ class JobSandbox:
     path: Path
     limits: JobSandboxLimits
     file_format_policy_version: FileFormatPolicyVersion = FileFormatPolicyVersion.TEXT_V1
+    _budget_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
+    _pending: dict[str, _PendingReservation] = field(default_factory=dict, repr=False)
+    _input_tokens: dict[tuple[str, str], str] = field(default_factory=dict, repr=False)
+    _committed_inputs: dict[tuple[str, str], _CommittedInput] = field(
+        default_factory=dict, repr=False
+    )
+    _write_reservations: dict[str, str] = field(default_factory=dict, repr=False)
 
     def cleanup(self) -> None:
         shutil.rmtree(self.path, ignore_errors=True)
@@ -122,6 +178,13 @@ class JobSandbox:
         return value
 
     def _authorize_write(self, tool_name: str, target: Path, value: Mapping[str, object]) -> None:
+        relative = target.relative_to(self.path).as_posix()
+        top_level = PurePosixPath(relative).parts[0]
+        if top_level == "tmp" or (top_level == "inputs" and not target.exists()):
+            self._deny(
+                "sandbox_write_partition_denied",
+                "Agent cannot create inputs or write internal temporary files",
+            )
         if target.exists() and not target.is_file():
             self._deny("sandbox_entry_invalid", "write target must be a regular file")
         content = value.get("content") if tool_name == "Write" else value.get("new_string")
@@ -130,17 +193,263 @@ class JobSandbox:
         incoming = len(content.encode("utf-8"))
         if incoming > self.limits.max_file_bytes:
             self._deny("sandbox_file_limit_exceeded", "text file exceeds the sandbox limit")
-        file_count, total_bytes = self.usage()
-        previous = target.stat().st_size if target.exists() else 0
-        if not target.exists() and file_count >= self.limits.max_files:
-            self._deny("sandbox_file_count_exceeded", "sandbox file count is exhausted")
-        if total_bytes - previous + max(previous, incoming) > self.limits.capacity_bytes:
-            self._deny("sandbox_capacity_exceeded", "sandbox capacity is exhausted")
-        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with self._budget_lock:
+            self._reconcile_write_reservations()
+            previous = target.stat().st_size if target.exists() else 0
+            projected = max(previous, incoming)
+            old_token = self._write_reservations.get(relative)
+            if old_token:
+                self._pending.pop(old_token, None)
+            token = self._reserve_locked(
+                partition="inputs" if top_level == "inputs" else "work_outputs",
+                expected_size_bytes=projected,
+                relative_path=relative,
+                replacing_size_bytes=previous,
+                replacing_file=target.exists(),
+            )
+            self._write_reservations[relative] = token
+            target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
 
-    def usage(self) -> tuple[int, int]:
-        count = 0
-        size_bytes = 0
+    def reserve_input(
+        self, *, identity: tuple[str, str], expected_size_bytes: int
+    ) -> SandboxInputReservation:
+        """Reserve one exact File/Version before any target file is created."""
+
+        if expected_size_bytes < 0 or expected_size_bytes > self.limits.max_file_bytes:
+            self._deny("sandbox_file_limit_exceeded", "input exceeds the sandbox file limit")
+        with self._budget_lock:
+            committed = self._committed_inputs.get(identity)
+            if committed is not None:
+                if committed.size_bytes != expected_size_bytes:
+                    self._deny(
+                        "sandbox_input_identity_conflict",
+                        "input identity was already materialized with different content",
+                    )
+                return SandboxInputReservation(
+                    token="",
+                    identity=identity,
+                    expected_size_bytes=committed.size_bytes,
+                    relative_path=committed.relative_path,
+                    committed=True,
+                    sha256=committed.sha256,
+                )
+            existing_token = self._input_tokens.get(identity)
+            if existing_token:
+                pending = self._pending[existing_token]
+                if pending.expected_size_bytes != expected_size_bytes:
+                    self._deny(
+                        "sandbox_input_identity_conflict",
+                        "input identity reservation size changed",
+                    )
+                return SandboxInputReservation(
+                    token=pending.token,
+                    identity=identity,
+                    expected_size_bytes=pending.expected_size_bytes,
+                    relative_path=pending.relative_path,
+                )
+            token = self._reserve_locked(
+                partition="inputs",
+                expected_size_bytes=expected_size_bytes,
+                identity=identity,
+            )
+            self._input_tokens[identity] = token
+            return SandboxInputReservation(token, identity, expected_size_bytes)
+
+    def reserve_input_batch(
+        self, entries: list[tuple[tuple[str, str], int]]
+    ) -> list[SandboxInputReservation]:
+        """Atomically reserve a complete automatic-input batch."""
+
+        created: list[SandboxInputReservation] = []
+        with self._budget_lock:
+            preexisting_tokens = set(self._pending)
+            try:
+                for identity, expected_size_bytes in entries:
+                    created.append(
+                        self.reserve_input(
+                            identity=identity,
+                            expected_size_bytes=expected_size_bytes,
+                        )
+                    )
+            except Exception:
+                for reservation in created:
+                    if (
+                        reservation.token
+                        and reservation.token not in preexisting_tokens
+                        and not reservation.committed
+                    ):
+                        self._release_input_locked(reservation.identity)
+                raise
+        return created
+
+    def reserve_work_output(
+        self, *, relative_path: str, expected_size_bytes: int
+    ) -> SandboxReservation:
+        return self._reserve_named_path(
+            partition="work_outputs",
+            relative_path=relative_path,
+            expected_size_bytes=expected_size_bytes,
+            allowed_top_levels={"work", "outputs"},
+        )
+
+    def reserve_tmp(
+        self, *, relative_path: str, expected_size_bytes: int
+    ) -> SandboxReservation:
+        return self._reserve_named_path(
+            partition="tmp",
+            relative_path=relative_path,
+            expected_size_bytes=expected_size_bytes,
+            allowed_top_levels={"tmp"},
+        )
+
+    def commit_reservation(self, reservation: SandboxReservation) -> None:
+        with self._budget_lock:
+            pending = self._pending.get(reservation.token)
+            target = self.path / reservation.relative_path
+            if (
+                pending is None
+                or pending.partition != reservation.partition
+                or pending.relative_path != reservation.relative_path
+                or not target.is_file()
+                or target.stat().st_size > pending.expected_size_bytes
+            ):
+                self._deny("sandbox_reservation_invalid", "sandbox reservation is inconsistent")
+            self._pending.pop(reservation.token, None)
+
+    def release_reservation(self, reservation: SandboxReservation) -> None:
+        with self._budget_lock:
+            self._pending.pop(reservation.token, None)
+
+    def reconcile(self) -> None:
+        with self._budget_lock:
+            self._reconcile_write_reservations()
+
+    def assert_within_limits(self) -> None:
+        with self._budget_lock:
+            self._reconcile_write_reservations()
+            usage = self.partition_usage()
+            pending = list(self._pending.values())
+            limits = {
+                "inputs": self.limits.max_input_files,
+                "work_outputs": self.limits.max_work_output_files,
+                "tmp": self.limits.max_tmp_files,
+            }
+            for partition, limit in limits.items():
+                count = usage[partition][0] + sum(
+                    1 for item in pending if item.partition == partition
+                )
+                if count > limit:
+                    self._deny("sandbox_file_count_exceeded", "sandbox partition exceeded")
+            count = sum(item[0] for item in usage.values()) + len(pending)
+            size = sum(item[1] for item in usage.values()) + sum(
+                item.expected_size_bytes for item in pending
+            )
+            if count > self.limits.max_files:
+                self._deny("sandbox_file_count_exceeded", "sandbox file count exceeded")
+            if size > self.limits.capacity_bytes:
+                self._deny("sandbox_capacity_exceeded", "sandbox capacity exceeded")
+
+    def bind_input_reservation(
+        self, reservation: SandboxInputReservation, *, relative_path: str
+    ) -> SandboxInputReservation:
+        with self._budget_lock:
+            if reservation.committed:
+                if reservation.relative_path != relative_path:
+                    self._deny(
+                        "sandbox_input_identity_conflict",
+                        "materialized input path changed",
+                    )
+                return reservation
+            pending = self._pending.get(reservation.token)
+            if pending is None or pending.identity != reservation.identity:
+                self._deny("sandbox_reservation_invalid", "input reservation is unavailable")
+            path = PurePosixPath(relative_path)
+            if not path.parts or path.parts[0] != "inputs":
+                self._deny("sandbox_partition_invalid", "input path is outside inputs")
+            if pending.relative_path and pending.relative_path != relative_path:
+                self._deny("sandbox_input_identity_conflict", "input path changed")
+            target = self.path / relative_path
+            if target.exists():
+                self._deny("sandbox_entry_conflict", "input target already exists")
+            if any(
+                item.relative_path == relative_path and item.token != pending.token
+                for item in self._pending.values()
+            ):
+                self._deny("sandbox_entry_conflict", "input target is already reserved")
+            pending.relative_path = relative_path
+            return SandboxInputReservation(
+                pending.token,
+                reservation.identity,
+                pending.expected_size_bytes,
+                relative_path,
+            )
+
+    def commit_input_reservation(
+        self,
+        reservation: SandboxInputReservation,
+        *,
+        size_bytes: int,
+        sha256: str,
+    ) -> SandboxInputReservation:
+        with self._budget_lock:
+            pending = self._pending.get(reservation.token)
+            if (
+                pending is None
+                or pending.identity != reservation.identity
+                or not pending.relative_path
+                or size_bytes != pending.expected_size_bytes
+            ):
+                self._deny("sandbox_reservation_invalid", "input reservation is inconsistent")
+            self._pending.pop(pending.token, None)
+            self._input_tokens.pop(reservation.identity, None)
+            committed = _CommittedInput(
+                reservation.identity,
+                pending.relative_path,
+                size_bytes,
+                sha256,
+            )
+            self._committed_inputs[reservation.identity] = committed
+            return SandboxInputReservation(
+                token="",
+                identity=reservation.identity,
+                expected_size_bytes=size_bytes,
+                relative_path=committed.relative_path,
+                committed=True,
+                sha256=sha256,
+            )
+
+    def release_input_reservation(self, identity: tuple[str, str]) -> None:
+        with self._budget_lock:
+            self._release_input_locked(identity)
+
+    def rollback_inputs(self, identities: list[tuple[str, str]]) -> None:
+        """Remove every pending or completed member of a failed automatic batch."""
+
+        with self._budget_lock:
+            for identity in identities:
+                self._release_input_locked(identity)
+                committed = self._committed_inputs.pop(identity, None)
+                if committed is not None:
+                    (self.path / committed.relative_path).unlink(missing_ok=True)
+
+    def committed_input(
+        self, identity: tuple[str, str]
+    ) -> SandboxInputReservation | None:
+        with self._budget_lock:
+            committed = self._committed_inputs.get(identity)
+            if committed is None:
+                return None
+            return SandboxInputReservation(
+                token="",
+                identity=identity,
+                expected_size_bytes=committed.size_bytes,
+                relative_path=committed.relative_path,
+                committed=True,
+                sha256=committed.sha256,
+            )
+
+    def partition_usage(self) -> dict[str, tuple[int, int]]:
+        usage = {"inputs": [0, 0], "work_outputs": [0, 0], "tmp": [0, 0]}
         for root, directories, files in os.walk(self.path, followlinks=False):
             root_path = Path(root)
             for name in directories:
@@ -156,9 +465,110 @@ class JobSandbox:
                     self._deny("sandbox_symlink_denied", "sandbox contains a symlink")
                 if not stat.S_ISREG(state.st_mode):
                     self._deny("sandbox_special_file_denied", "sandbox contains a special file")
-                count += 1
-                size_bytes += state.st_size
-        return count, size_bytes
+                relative = entry.relative_to(self.path)
+                top = relative.parts[0]
+                partition = (
+                    "inputs" if top == "inputs" else "tmp" if top == "tmp" else "work_outputs"
+                )
+                usage[partition][0] += 1
+                usage[partition][1] += state.st_size
+        return {key: (value[0], value[1]) for key, value in usage.items()}
+
+    def _reserve_locked(
+        self,
+        *,
+        partition: str,
+        expected_size_bytes: int,
+        identity: tuple[str, str] | None = None,
+        relative_path: str = "",
+        replacing_size_bytes: int = 0,
+        replacing_file: bool = False,
+    ) -> str:
+        usage = self.partition_usage()
+        pending = list(self._pending.values())
+        partition_count = usage[partition][0] + sum(
+            1 for item in pending if item.partition == partition
+        )
+        total_count = sum(item[0] for item in usage.values()) + len(pending)
+        if replacing_file:
+            partition_count -= 1
+            total_count -= 1
+        partition_limit = {
+            "inputs": self.limits.max_input_files,
+            "work_outputs": self.limits.max_work_output_files,
+            "tmp": self.limits.max_tmp_files,
+        }[partition]
+        if partition_count >= partition_limit or total_count >= self.limits.max_files:
+            code = (
+                "sandbox_input_file_count_exceeded"
+                if partition == "inputs"
+                else "sandbox_file_count_exceeded"
+            )
+            self._deny(code, "sandbox file partition is exhausted")
+        total_bytes = sum(item[1] for item in usage.values()) + sum(
+            item.expected_size_bytes for item in pending
+        )
+        total_bytes -= replacing_size_bytes
+        if total_bytes + expected_size_bytes > self.limits.capacity_bytes:
+            self._deny("sandbox_capacity_exceeded", "sandbox capacity is exhausted")
+        token = f"sandbox-reservation:{uuid.uuid4()}"
+        self._pending[token] = _PendingReservation(
+            token=token,
+            partition=partition,
+            expected_size_bytes=expected_size_bytes,
+            identity=identity,
+            relative_path=relative_path,
+        )
+        return token
+
+    def _reserve_named_path(
+        self,
+        *,
+        partition: str,
+        relative_path: str,
+        expected_size_bytes: int,
+        allowed_top_levels: set[str],
+    ) -> SandboxReservation:
+        path = PurePosixPath(relative_path)
+        if (
+            path.is_absolute()
+            or str(path) != relative_path
+            or not path.parts
+            or path.parts[0] not in allowed_top_levels
+            or "." in path.parts
+            or ".." in path.parts
+        ):
+            self._deny("sandbox_path_invalid", "sandbox reservation path is invalid")
+        if expected_size_bytes < 0 or expected_size_bytes > self.limits.max_file_bytes:
+            self._deny("sandbox_file_limit_exceeded", "sandbox file exceeds its limit")
+        with self._budget_lock:
+            target = self.path / relative_path
+            self._reject_symlinks(target)
+            if target.exists():
+                self._deny("sandbox_entry_conflict", "sandbox target already exists")
+            token = self._reserve_locked(
+                partition=partition,
+                expected_size_bytes=expected_size_bytes,
+                relative_path=relative_path,
+            )
+            return SandboxReservation(token, partition, relative_path, expected_size_bytes)
+
+    def _release_input_locked(self, identity: tuple[str, str]) -> None:
+        token = self._input_tokens.pop(identity, None)
+        if token:
+            self._pending.pop(token, None)
+
+    def _reconcile_write_reservations(self) -> None:
+        for relative_path, token in list(self._write_reservations.items()):
+            pending = self._pending.get(token)
+            target = self.path / relative_path
+            if pending is not None and target.exists() and target.stat().st_size <= pending.expected_size_bytes:
+                self._pending.pop(token, None)
+                self._write_reservations.pop(relative_path, None)
+
+    def usage(self) -> tuple[int, int]:
+        usage = self.partition_usage()
+        return sum(item[0] for item in usage.values()), sum(item[1] for item in usage.values())
 
     def _relative_path(self, value: object, *, allow_root: bool, write: bool = False) -> str:
         value = self._sdk_relative_path(value, allow_root=allow_root)

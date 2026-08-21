@@ -8,6 +8,8 @@ from typing import Any
 import pytest
 
 from app.modules.channel.domain.channel_event import ChannelFileReference
+from app.modules.file_workspace.application import FileWorkspaceApplicationService
+from app.modules.file_workspace.authorization import FileAuthorizationContext
 from app.modules.file_workspace.clock import to_utc_rfc3339
 from app.modules.file_workspace.domain import (
     FileOwner,
@@ -118,6 +120,7 @@ def _create_txt(
     advance_from: str = "",
     link: bool = True,
     source_received_at: str | None = None,
+    logical_name: str = "notes.txt",
 ) -> None:
     owner = FileOwner(WorkspaceOwnerType.PRIVATE_USER, user_id="user-a")
     if version_number == 1:
@@ -125,7 +128,7 @@ def _create_txt(
             file_id=file_id,
             tenant_id="tenant-a",
             owner=owner,
-            display_name="notes.txt",
+            display_name=logical_name,
             actor_id="user-a",
             source_received_at=source_received_at,
         )
@@ -149,11 +152,58 @@ def _create_txt(
             workspace_id=workspace_id,
             file_id=file_id,
             version_id=version_id,
-            logical_name="notes.txt",
+            logical_name=logical_name,
             role=WorkspaceFileRole.WORKING,
         )
 
 
+def _enable_catalog_search(repository: FileWorkspaceRepository) -> None:
+    repository.database.execute(
+        """
+        insert into agent_definition
+          (id, code, name, created_by, created_at, updated_at)
+        values ('agent-catalog', 'agent-catalog', 'Catalog Agent', 'user-a', ?, ?)
+        """,
+        (TIMESTAMP, TIMESTAMP),
+    )
+    repository.database.execute(
+        """
+        insert into agent_revision
+          (id, agent_id, revision, status, created_by, created_at, updated_at)
+        values ('agent-catalog-r1', 'agent-catalog', 1, 'published', 'user-a', ?, ?)
+        """,
+        (TIMESTAMP, TIMESTAMP),
+    )
+    repository.database.execute(
+        """
+        insert into agent_publication
+          (id, agent_id, revision_id, revision, snapshot_json, config_hash,
+           published_by, published_at)
+        values ('agent-catalog-p1', 'agent-catalog', 'agent-catalog-r1', 1, '{}', ?,
+                'user-a', ?)
+        """,
+        ("9" * 64, TIMESTAMP),
+    )
+    repository.database.execute(
+        """
+        insert into agent_publication_mcp_tool
+          (agent_publication_id, server_code, tool_identifier, schema_hash,
+           selection_order, created_at)
+        values ('agent-catalog-p1', 'file-service', 'task_workspace_search_files',
+                ?, 0, ?)
+        """,
+        ("8" * 64, TIMESTAMP),
+    )
+    repository.database.execute(
+        """
+        insert into business_application_publication_mcp_tool
+          (application_publication_id, agent_publication_id, server_code,
+           tool_identifier, schema_hash, selection_order, created_at)
+        values ('app-file-p1', 'agent-catalog-p1', 'file-service',
+                'task_workspace_search_files', ?, 0, ?)
+        """,
+        ("8" * 64, TIMESTAMP),
+    )
 def test_job_manifest_freezes_exact_version_and_later_job_sees_new_current() -> None:
     repository, service = _service()
     workspace = service.resolve_workspace(
@@ -192,12 +242,23 @@ def test_job_manifest_freezes_exact_version_and_later_job_sees_new_current() -> 
     assert first["items"][0]["version_id"] == "version-1"
     assert first["items"][0]["auto_materialize"] == 1
     assert first["items"][0]["source_kind"] == "EXPLICIT_REFERENCE"
-    assert first["schema_version"] == 4
+    assert first["schema_version"] == 5
+    assert first["workspace_catalog_revision_id"]
+    assert first["active_file_limit"] == 200
+    assert first["billable_bytes_limit"] == 2 * 1024 * 1024 * 1024
+    assert first["quota_config_revision"] >= 0
+    assert first["active_file_limit_source"] == "definition-default"
+    assert first["billable_bytes_limit_source"] == "definition-default"
+    assert first["job_input_limit"] == 40
+    assert first["sandbox_file_limit"] == 64
+    assert first["sandbox_capacity_bytes"] == 224 * 1024 * 1024
+    assert first["sandbox_limit_version"] == "sandbox-v2"
     assert first["items"][0]["source_received_at"] is None
     assert first["items"][0]["version_created_at"]
     runtime_manifest = service.runtime_manifest("job-1")
     assert runtime_manifest == {
-        "schema_version": 4,
+        "schema_version": 5,
+        "workspace_catalog_revision_id": first["workspace_catalog_revision_id"],
         "file_format_policy_version": "text-v1",
         "manifest_hash": first["manifest_hash"],
         "observed_at": to_utc_rfc3339(first["created_at"]),
@@ -220,6 +281,7 @@ def test_job_manifest_freezes_exact_version_and_later_job_sees_new_current() -> 
                 "version_created_at": to_utc_rfc3339(
                     first["items"][0]["version_created_at"]
                 ),
+                "materialization_size_bytes": 5,
             }
         ],
     }
@@ -233,12 +295,12 @@ def test_job_manifest_freezes_exact_version_and_later_job_sees_new_current() -> 
         advance_from="version-1",
         link=False,
     )
-    repository.database.execute(
-        """
-        update task_workspace_file set selected_version_id = 'version-2'
-         where workspace_id = ? and file_id = 'file-notes'
-        """,
-        (workspace_id,),
+    repository.update_workspace_file_version(
+        workspace_id=workspace_id,
+        file_id="file-notes",
+        version_id="version-2",
+        role=WorkspaceFileRole.WORKING,
+        logical_name="notes.txt",
     )
     frozen_again = service.finalize("job-1")
     assert frozen_again is not None
@@ -250,13 +312,17 @@ def test_job_manifest_freezes_exact_version_and_later_job_sees_new_current() -> 
         workspace=workspace,
         requester_id="user-a",
         publication_id="app-file-p1",
-        file_references=(),
+        file_references=(
+            ChannelFileReference(
+                file_id="file-notes", version_id="version-2"
+            ),
+        ),
     )
     second = service.finalize("job-2")
     assert second is not None
     assert second["items"][0]["version_id"] == "version-2"
-    assert second["items"][0]["auto_materialize"] == 0
-    assert second["items"][0]["source_kind"] == "WORKSPACE"
+    assert second["items"][0]["auto_materialize"] == 1
+    assert second["items"][0]["source_kind"] == "EXPLICIT_REFERENCE"
 
 
 def test_runtime_manifest_reads_legacy_v3_without_representation_fields() -> None:
@@ -366,7 +432,11 @@ def test_job_manifest_freezes_attachment_receipt_time_separately_from_version_ti
         workspace=workspace,
         requester_id="user-a",
         publication_id="app-file-p1",
-        file_references=(),
+        file_references=(
+            ChannelFileReference(
+                file_id="file-uploaded", version_id="version-uploaded"
+            ),
+        ),
     )
 
     snapshot = service.finalize("job-uploaded")
@@ -619,8 +689,9 @@ def _create_png(
     )
 
 
-def test_job_manifest_freezes_workspace_image_as_on_demand_candidate() -> None:
+def test_job_manifest_keeps_unselected_workspace_image_out_of_initial_items() -> None:
     repository, service = _service()
+    _enable_catalog_search(repository)
     workspace = service.resolve_workspace(
         tenant_id="tenant-a",
         session_id="session-file",
@@ -654,15 +725,376 @@ def test_job_manifest_freezes_workspace_image_as_on_demand_candidate() -> None:
     )
     snapshot = service.finalize("job-image-workspace")
     assert snapshot is not None
-    item = snapshot["items"][0]
-    assert item["file_id"] == "file-image"
-    assert item["format_code"] == "PNG"
-    assert item["source_kind"] == "WORKSPACE"
-    assert item["auto_materialize"] == 0
-    assert item["representation_id"] == "representation-version-image"
+    assert snapshot["schema_version"] == 5
+    assert snapshot["workspace_catalog_revision_id"]
+    assert snapshot["items"] == []
     runtime = service.runtime_manifest("job-image-workspace")
-    assert runtime["items"][0]["auto_materialize"] is False
-    assert runtime["items"][0]["representation_id"] == "representation-version-image"
+    assert runtime["items"] == []
+
+
+def test_manifest_v5_catalog_search_keeps_frozen_keyset_pages_stable() -> None:
+    repository, manifest_service = _service()
+    _enable_catalog_search(repository)
+    workspace = manifest_service.resolve_workspace(
+        tenant_id="tenant-a",
+        session_id="session-file",
+        requester_id="user-a",
+        conversation_type="direct",
+        enterprise_id="tenant-a",
+        connector_id="connector-a",
+        conversation_id="conversation-a",
+        sender_staff_id="staff-a",
+        publication_id="app-file-p1",
+        retention_period="WEEK",
+        attachments=(),
+        file_references=(),
+        requests_file_output=True,
+    )
+    assert workspace is not None
+    workspace_id = str(workspace["id"])
+    for index, name in enumerate(("alpha.txt", "beta.txt", "gamma.txt"), start=1):
+        _create_txt(
+            repository,
+            workspace_id=workspace_id,
+            file_id=f"catalog-file-{index}",
+            version_id=f"catalog-version-{index}",
+            logical_name=name,
+        )
+    _insert_job(repository, job_id="job-catalog-v5", workspace_id=workspace_id)
+    manifest_service.register_request(
+        job_id="job-catalog-v5",
+        workspace=workspace,
+        requester_id="user-a",
+        publication_id="app-file-p1",
+        file_references=(),
+    )
+    snapshot = manifest_service.finalize("job-catalog-v5")
+    assert snapshot is not None and snapshot["items"] == []
+    context = FileAuthorizationContext(
+        claims={"tenant_id": "tenant-a", "sub": "user-a"},
+        job={"id": "job-catalog-v5"},
+        workspace={"id": workspace_id, "status": "ACTIVE"},
+        manifest=snapshot,
+    )
+    application = FileWorkspaceApplicationService(
+        repository,
+        authorization=object(),  # type: ignore[arg-type]
+    )
+    first = application.invoke(
+        context=context,
+        tool_identifier="task_workspace_search_files",
+        arguments={"limit": 2},
+    )
+    assert [item["display_name"] for item in first["items"]] == [
+        "alpha.txt",
+        "beta.txt",
+    ]
+    assert first["next_cursor"]
+
+    _create_txt(
+        repository,
+        workspace_id=workspace_id,
+        file_id="catalog-file-4",
+        version_id="catalog-version-4",
+        logical_name="delta.txt",
+    )
+    second = application.invoke(
+        context=context,
+        tool_identifier="task_workspace_search_files",
+        arguments={"limit": 2, "cursor": first["next_cursor"]},
+    )
+    assert [item["display_name"] for item in second["items"]] == ["gamma.txt"]
+    assert second["workspace_catalog_revision_id"] == snapshot[
+        "workspace_catalog_revision_id"
+    ]
+    with pytest.raises(NonRetryableExecutionError) as mismatch:
+        application.invoke(
+            context=context,
+            tool_identifier="task_workspace_search_files",
+            arguments={
+                "limit": 2,
+                "cursor": first["next_cursor"],
+                "name_prefix": "a",
+            },
+        )
+    assert mismatch.value.error_code == "file_workspace_search_cursor_invalid"
+    with pytest.raises(NonRetryableExecutionError) as invalid_limit:
+        application.invoke(
+            context=context,
+            tool_identifier="task_workspace_search_files",
+            arguments={"limit": 51},
+        )
+    assert invalid_limit.value.error_code == "file_tool_input_invalid"
+    with pytest.raises(NonRetryableExecutionError) as invalid_range:
+        application.invoke(
+            context=context,
+            tool_identifier="task_workspace_search_files",
+            arguments={
+                "source_received_from": "2026-08-20T00:00:00Z",
+                "source_received_to": "2026-08-19T00:00:00Z",
+            },
+        )
+    assert invalid_range.value.error_code == "file_tool_input_invalid"
+    foreign_context = FileAuthorizationContext(
+        claims={"tenant_id": "tenant-b", "sub": "user-b"},
+        job={"id": "job-foreign"},
+        workspace={"id": "workspace-foreign", "status": "ACTIVE"},
+        manifest={
+            **snapshot,
+            "id": "snapshot-foreign",
+            "manifest_hash": "f" * 64,
+        },
+    )
+    with pytest.raises(NonRetryableExecutionError) as foreign_cursor:
+        application.invoke(
+            context=foreign_context,
+            tool_identifier="task_workspace_search_files",
+            arguments={"limit": 2, "cursor": first["next_cursor"]},
+        )
+    assert foreign_cursor.value.error_code == "file_workspace_search_cursor_invalid"
+
+
+def test_thousand_file_catalog_keeps_manifest_bounded_to_two_selected_inputs() -> None:
+    repository, manifest_service = _service()
+    _enable_catalog_search(repository)
+    workspace = manifest_service.resolve_workspace(
+        tenant_id="tenant-a",
+        session_id="session-file",
+        requester_id="user-a",
+        conversation_type="direct",
+        enterprise_id="tenant-a",
+        connector_id="connector-a",
+        conversation_id="conversation-a",
+        sender_staff_id="staff-a",
+        publication_id="app-file-p1",
+        retention_period="WEEK",
+        attachments=(),
+        file_references=(),
+        requests_file_output=True,
+    )
+    assert workspace is not None
+    workspace_id = str(workspace["id"])
+    with repository.database.unit_of_work():
+        for index in range(1000):
+            _create_txt(
+                repository,
+                workspace_id=workspace_id,
+                file_id=f"scale-file-{index:04d}",
+                version_id=f"scale-version-{index:04d}-v1",
+                logical_name=f"scale-{index:04d}.txt",
+            )
+    _insert_job(repository, job_id="job-scale-1000", workspace_id=workspace_id)
+    manifest_service.register_request(
+        job_id="job-scale-1000",
+        workspace=workspace,
+        requester_id="user-a",
+        publication_id="app-file-p1",
+        file_references=(
+            ChannelFileReference(
+                file_id="scale-file-0000", version_id="scale-version-0000-v1"
+            ),
+            ChannelFileReference(
+                file_id="scale-file-0999", version_id="scale-version-0999-v1"
+            ),
+        ),
+    )
+    snapshot = manifest_service.finalize("job-scale-1000")
+    assert snapshot is not None
+    assert len(snapshot["items"]) == 2
+    assert repository.database.execute_one(
+        "select count(*) as value from task_workspace_file "
+        "where workspace_id = ? and status = 'ACTIVE'",
+        (workspace_id,),
+    ) == {"value": 1000}
+    runtime_manifest = manifest_service.runtime_manifest("job-scale-1000")
+    assert len(json.dumps(runtime_manifest, separators=(",", ":"))) < 4096
+
+    frozen_revision_id = str(snapshot["workspace_catalog_revision_id"])
+    frozen_page = repository.search_catalog_revision(
+        workspace_id=workspace_id,
+        catalog_revision_id=frozen_revision_id,
+        limit=50,
+    )
+    assert len(frozen_page) == 50
+    assert frozen_page[0]["logical_name"] == "scale-0000.txt"
+    assert frozen_page[-1]["logical_name"] == "scale-0049.txt"
+
+    _create_txt(
+        repository,
+        workspace_id=workspace_id,
+        file_id="scale-file-0500",
+        version_id="scale-version-0500-v2",
+        version_number=2,
+        advance_from="scale-version-0500-v1",
+        link=False,
+        logical_name="scale-0500.txt",
+    )
+    repository.update_workspace_file_version(
+        workspace_id=workspace_id,
+        file_id="scale-file-0500",
+        version_id="scale-version-0500-v2",
+        role=WorkspaceFileRole.WORKING,
+        logical_name="scale-0500.txt",
+    )
+    old_result = repository.search_catalog_revision(
+        workspace_id=workspace_id,
+        catalog_revision_id=frozen_revision_id,
+        limit=50,
+        exact_name="scale-0500.txt",
+    )
+    assert [item["version_id"] for item in old_result] == ["scale-version-0500-v1"]
+
+    _insert_job(repository, job_id="job-scale-next", workspace_id=workspace_id)
+    manifest_service.register_request(
+        job_id="job-scale-next",
+        workspace=workspace,
+        requester_id="user-a",
+        publication_id="app-file-p1",
+        file_references=(),
+    )
+    next_snapshot = manifest_service.finalize("job-scale-next")
+    assert next_snapshot is not None
+    assert next_snapshot["workspace_catalog_revision_id"] != frozen_revision_id
+    current_result = repository.search_catalog_revision(
+        workspace_id=workspace_id,
+        catalog_revision_id=str(next_snapshot["workspace_catalog_revision_id"]),
+        limit=50,
+        exact_name="scale-0500.txt",
+    )
+    assert [item["version_id"] for item in current_result] == ["scale-version-0500-v2"]
+
+
+def test_catalog_cleanup_preserves_every_job_referenced_revision_semantics() -> None:
+    repository, service = _service()
+    _enable_catalog_search(repository)
+    workspace = service.resolve_workspace(
+        tenant_id="tenant-a",
+        session_id="session-file",
+        requester_id="user-a",
+        conversation_type="direct",
+        enterprise_id="tenant-a",
+        connector_id="connector-a",
+        conversation_id="conversation-a",
+        sender_staff_id="staff-a",
+        publication_id="app-file-p1",
+        retention_period="WEEK",
+        attachments=(),
+        file_references=(),
+        requests_file_output=True,
+    )
+    assert workspace is not None
+    workspace_id = str(workspace["id"])
+    _create_txt(
+        repository,
+        workspace_id=workspace_id,
+        file_id="cleanup-file",
+        version_id="cleanup-v1",
+    )
+    _insert_job(repository, job_id="job-cleanup", workspace_id=workspace_id)
+    service.register_request(
+        job_id="job-cleanup",
+        workspace=workspace,
+        requester_id="user-a",
+        publication_id="app-file-p1",
+        file_references=(),
+    )
+    snapshot = service.finalize("job-cleanup")
+    assert snapshot is not None
+    frozen_revision_id = str(snapshot["workspace_catalog_revision_id"])
+
+    for number, (previous, current) in enumerate(
+        (("cleanup-v1", "cleanup-v2"), ("cleanup-v2", "cleanup-v3")),
+        start=2,
+    ):
+        _create_txt(
+            repository,
+            workspace_id=workspace_id,
+            file_id="cleanup-file",
+            version_id=current,
+            version_number=number,
+            advance_from=previous,
+            link=False,
+        )
+        repository.update_workspace_file_version(
+            workspace_id=workspace_id,
+            file_id="cleanup-file",
+            version_id=current,
+            role=WorkspaceFileRole.WORKING,
+            logical_name="notes.txt",
+        )
+
+    result = repository.cleanup_unreferenced_catalog_history(workspace_id)
+
+    assert result["protected_revisions"] == 2
+    assert result["revisions_deleted"] >= 1
+    frozen = repository.search_catalog_revision(
+        workspace_id=workspace_id,
+        catalog_revision_id=frozen_revision_id,
+        limit=20,
+    )
+    assert [(row["file_id"], row["version_id"]) for row in frozen] == [
+        ("cleanup-file", "cleanup-v1")
+    ]
+
+
+def test_legacy_publication_is_compatible_through_20_files_and_fails_closed_at_21() -> None:
+    repository, service = _service()
+    workspace = service.resolve_workspace(
+        tenant_id="tenant-a",
+        session_id="session-file",
+        requester_id="user-a",
+        conversation_type="direct",
+        enterprise_id="tenant-a",
+        connector_id="connector-a",
+        conversation_id="conversation-a",
+        sender_staff_id="staff-a",
+        publication_id="app-file-p1",
+        retention_period="WEEK",
+        attachments=(),
+        file_references=(),
+        requests_file_output=True,
+    )
+    assert workspace is not None
+    workspace_id = str(workspace["id"])
+    for index in range(20):
+        _create_txt(
+            repository,
+            workspace_id=workspace_id,
+            file_id=f"legacy-file-{index}",
+            version_id=f"legacy-version-{index}",
+            logical_name=f"legacy-{index:02d}.txt",
+        )
+    service.require_publication_workspace_compatibility(
+        workspace_id=workspace_id,
+        publication_id="app-file-p1",
+    )
+    with pytest.raises(NonRetryableExecutionError) as planned_21st:
+        service.require_publication_workspace_compatibility(
+            workspace_id=workspace_id,
+            publication_id="app-file-p1",
+            planned_new_files=1,
+        )
+    assert planned_21st.value.error_code == "file_workspace_publication_upgrade_required"
+
+    _create_txt(
+        repository,
+        workspace_id=workspace_id,
+        file_id="legacy-file-20",
+        version_id="legacy-version-20",
+        logical_name="legacy-20.txt",
+    )
+    with pytest.raises(NonRetryableExecutionError) as existing_21:
+        service.require_publication_workspace_compatibility(
+            workspace_id=workspace_id,
+            publication_id="app-file-p1",
+        )
+    assert existing_21.value.error_code == "file_workspace_publication_upgrade_required"
+
+    _enable_catalog_search(repository)
+    service.require_publication_workspace_compatibility(
+        workspace_id=workspace_id,
+        publication_id="app-file-p1",
+    )
 
 
 def test_job_manifest_explicit_image_reference_auto_materializes_markdown() -> None:
@@ -726,8 +1158,9 @@ def test_job_manifest_explicit_image_reference_auto_materializes_markdown() -> N
     assert "opaque/private-ocr-layout" not in serialized
 
 
-def test_job_manifest_pending_workspace_image_is_metadata_only() -> None:
+def test_job_manifest_keeps_pending_unselected_image_out_of_initial_items() -> None:
     repository, service = _service()
+    _enable_catalog_search(repository)
     workspace = service.resolve_workspace(
         tenant_id="tenant-a",
         session_id="session-file",
@@ -762,12 +1195,9 @@ def test_job_manifest_pending_workspace_image_is_metadata_only() -> None:
     )
     snapshot = service.finalize("job-image-pending")
     assert snapshot is not None
-    item = snapshot["items"][0]
-    assert item["format_code"] == "PNG"
-    assert item["auto_materialize"] == 0
-    assert item["representation_id"] is None
+    assert snapshot["items"] == []
     runtime = service.runtime_manifest("job-image-pending")
-    assert "representation_id" not in runtime["items"][0]
+    assert runtime["items"] == []
 
 
 def test_manifest_recalls_unlinked_retained_version_without_restoring_old_workspace() -> None:

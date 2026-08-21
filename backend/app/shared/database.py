@@ -263,6 +263,7 @@ class UnitOfWork:
         self._token: Token[UnitOfWork | None] | None = None
         self._external_io_token: Token[int] | None = None
         self._entered = False
+        self._sqlite_lock_acquired = False
 
     def __enter__(self) -> UnitOfWork:
         if self._entered:
@@ -274,6 +275,9 @@ class UnitOfWork:
         if connection is None:
             raise RuntimeError("Database session did not provide a connection")
         self.connection = connection
+        if self._parent is None and self.database.engine == "sqlite":
+            self.database._sqlite_transaction_lock.acquire()
+            self._sqlite_lock_acquired = True
         try:
             if self._parent is None:
                 connection.execute(
@@ -296,6 +300,9 @@ class UnitOfWork:
             self._session_manager.__exit__(None, None, None)
             self._session_manager = None
             self.connection = None
+            if self._sqlite_lock_acquired:
+                self.database._sqlite_transaction_lock.release()
+                self._sqlite_lock_acquired = False
             raise
 
     def __exit__(
@@ -324,6 +331,9 @@ class UnitOfWork:
             self._session_manager.__exit__(exc_type, exc_value, traceback)
             self._session_manager = None
             self.connection = None
+            if self._sqlite_lock_acquired:
+                self.database._sqlite_transaction_lock.release()
+                self._sqlite_lock_acquired = False
         return False
 
 
@@ -349,6 +359,7 @@ class Database:
         self._pool_timeout_seconds = pool_timeout_seconds
         self._pool: _ConnectionPool | None = None
         self._pool_lock = threading.Lock()
+        self._sqlite_transaction_lock = threading.RLock()
         self._closed = False
         self._scope: ContextVar[_ConnectionScope | None] = ContextVar(
             f"database_scope_{id(self)}",

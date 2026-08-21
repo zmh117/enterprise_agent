@@ -52,6 +52,7 @@ class SecretVersionStatus(str, Enum):
 class RuntimeConfigScope(str, Enum):
     GLOBAL = "global"
     SERVICE = "service"
+    TENANT = "tenant"
     PROJECT = "project"
     ENVIRONMENT = "environment"
     BASE = "base"
@@ -166,6 +167,7 @@ class RuntimeConfigDefinition:
     default: Any = None
     sensitive: bool = False
     bootstrap_only: bool = False
+    tenant_compatible: bool = False
     service_names: tuple[str, ...] = ()
     description: str = ""
     status: ConfigStatus = ConfigStatus.ENABLED
