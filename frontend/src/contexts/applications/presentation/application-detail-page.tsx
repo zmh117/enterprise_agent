@@ -589,7 +589,7 @@ function PolicyEditor({
             <div className="space-y-1">
               <p className="text-xs leading-5 text-muted-foreground">
                 {selectedDocumentProfile.code === "docling-layout-ocr-v1"
-                  ? "当前选择：除正文与表格外，对 DOCX/PPTX 内嵌图片提取文字、置信度、阅读顺序、0..10000 坐标和有限几何关系。它不是 VLM，不识别箭头、颜色、图标、照片含义或因果；OCR 内容始终是不可信文件数据。"
+                  ? "当前选择：除正文与表格外，对 DOCX/PPTX 原始内嵌图片提取文字、置信度、阅读顺序、0..10000 坐标和有限几何关系。仅应用图片自身 EXIF 方向，不应用 Office 显示裁剪、旋转或翻转，因此可能提取页面上已裁掉的区域。它不是 VLM，不识别箭头、颜色、图标、照片含义或因果；OCR 内容始终是不可信文件数据。"
                   : "当前选择：仅提供有界 OCR/表格文字提取，不提供 Office 内嵌图片布局或图片语义理解。"}
                 真实运行状态请到“发布与运行”查看。
               </p>

@@ -19,7 +19,7 @@
 - **AND** 不调用VLM、远程图片描述、外部插件或运行时模型下载
 
 ### Requirement: Office内嵌图片使用稳定派生身份和双坐标空间
-系统 SHALL 从精确DOCX/PPTX source Version的Docling结构结果中为每个内嵌栅格图片创建稳定picture occurrence，并 MUST 把可复用的规范化图片asset与其一个或多个父文档出现位置分开建模。PPTX父锚点 MUST 包含slide、Docling picture `self_ref`形成的稳定shape/ref及图片在slide中的规范化bbox；DOCX父锚点 MUST 包含稳定picture `self_ref`、Docling返回且可解析的最近父容器ref（段落、表格单元、section或body）及同父节点顺序，且 MUST NOT 要求上游未提供的段落/单元ref或声称存在跨渲染环境稳定的页码坐标。图片内部OCR坐标 MUST 使用左上角原点、`0..10000`整数空间，并保留原始/规范化尺寸、方向、旋转和裁剪变换。
+系统 SHALL 从精确DOCX/PPTX source Version的Docling结构结果中为每个内嵌栅格图片创建稳定picture occurrence，并 MUST 把可复用的规范化图片asset与其一个或多个父文档出现位置分开建模。PPTX父锚点 MUST 包含slide、Docling picture `self_ref`形成的稳定shape/ref及图片在slide中的规范化bbox；DOCX父锚点 MUST 包含稳定picture `self_ref`、Docling返回且可解析的最近父容器ref（段落、表格单元、section或body）及同父节点顺序，且 MUST NOT 要求上游未提供的段落/单元ref或声称存在跨渲染环境稳定的页码坐标。图片内部OCR坐标 MUST 使用左上角原点、`0..10000`整数空间，并保留原始/规范化尺寸、图片自身EXIF方向及`RAW_EMBEDDED_MEDIA_AFTER_EXIF`像素基准。系统 MUST 使用Office包内原始嵌入图片，不应用或声称应用Office显示层裁剪、旋转或翻转。
 
 #### Scenario: PPTX图片包含文字
 - **WHEN** PPTX第4张slide中的一个picture shape被安全提取并完成OCR
@@ -36,6 +36,11 @@
 - **THEN** 系统可以在同一tenant/source/run/Profile边界内按SHA-256复用一次OCR计算
 - **AND** 每个出现位置仍保存独立occurrence、顺序和父锚点
 
+#### Scenario: Office显示层裁剪或旋转图片
+- **WHEN** PPTX或DOCX只在DrawingML显示层裁剪、旋转或翻转一张内嵌图片
+- **THEN** OCR仍使用Office包内原始嵌入图片并仅规范化图片自身EXIF方向
+- **AND** 布局JSON、Markdown、管理端与Runtime能力说明必须明确未应用Office显示变换且结果可能包含页面上已裁掉区域
+
 ### Requirement: OCR布局使用版本化不可变Schema
 系统 MUST 为`docling-layout-ocr-v1`发布符合`enterprise-agent.office-image-ocr-layout/v1`的不可变`OCR_LAYOUT_JSON` Representation。该Schema MUST 绑定精确source File/Version、processing run、Profile hash、layout/Assembler version，并为所有图片occurrence保存图片摘要、父锚点、状态以及有界OCR block；每个block MUST 保存稳定局部ID、Unicode文字、`confidence_bp`、`reading_order`、规范化bbox和可选polygon。若Profile包含word级结果，word MUST 受独立数量/字符上限约束并保持block归属。完整OCR文字和坐标 MUST 保存在File Service管理的私有对象中，PostgreSQL不得逐block/word保存正文。
 
@@ -45,7 +50,7 @@
 - **AND** 该对象不得成为File Version、可交付原件或Agent可物化内容
 
 #### Scenario: 坐标不符合规范
-- **WHEN** OCR结果包含NaN、无穷值、越界值、反向bbox、未知原点或无法应用的旋转/裁剪变换
+- **WHEN** OCR结果包含NaN、无穷值、越界值、反向bbox、未知原点或无法应用的图片自身EXIF方向变换
 - **THEN** Provider在发布布局表示前失败关闭对应item
 - **AND** 不猜测、夹断或静默改用引擎原始坐标
 
@@ -90,7 +95,7 @@
 - **AND** 重复完成事件不得创建第二个assembly或重复Representation
 
 ### Requirement: Agent只读取布局增强Markdown
-系统 MUST 由版本化确定性Assembler把父文档Markdown与布局OCR附录合并为同一份最终Markdown。附录 SHALL 为每张图片列出父锚点、坐标系、按reading order排序的有界block、置信度等级、允许的空间关系和确定状态，并 MUST 明确结果为布局OCR而非完整视觉理解。Manifest与Runtime只能冻结和物化该Markdown Representation；Office原件、图片asset、Docling JSON和`OCR_LAYOUT_JSON`不得进入Job Sandbox、MCP JSON或初始conversation context。
+系统 MUST 由版本化确定性Assembler把父文档Markdown与布局OCR附录合并为同一份最终Markdown。附录 SHALL 为每张图片列出父锚点、坐标系、按reading order排序的有界block、置信度等级、允许的空间关系和确定状态，并 MUST 明确结果为布局OCR而非完整视觉理解。附录 MUST 同时声明像素基准为应用图片自身EXIF后的原始嵌入图片、未应用Office显示裁剪/旋转/翻转且可能包含页面上已裁掉区域。Manifest与Runtime只能冻结和物化该Markdown Representation；Office原件、图片asset、Docling JSON和`OCR_LAYOUT_JSON`不得进入Job Sandbox、MCP JSON或初始conversation context。
 
 #### Scenario: Agent分析带截图的PPTX
 - **WHEN** Job Manifest冻结PPTX source Version及`docling-layout-ocr-v1`生成的最终Markdown

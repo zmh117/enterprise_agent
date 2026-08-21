@@ -19,11 +19,11 @@ Business Application Revision SHALL 允许从代码注册目录选择`NONE`、`d
 - **AND** 新Profile部署不得追溯修改Publication或历史Job
 
 ### Requirement: 管理端准确展示布局OCR能力边界
-管理端 SHALL 把`docling-layout-ocr-v1`展示为“Office内嵌图片布局OCR”，并 MUST 说明它提取文字、置信度、坐标、阅读顺序和几何关系，但不提供VLM、箭头、颜色、图标、照片语义或精确图表因果。管理端只能选择代码Profile，不得输入Docling URL、OCR引擎、模型、prompt、坐标阈值或原始options；依赖未全部就绪时不得显示READY。
+管理端 SHALL 把`docling-layout-ocr-v1`展示为“Office内嵌图片布局OCR”，并 MUST 说明它提取文字、置信度、坐标、阅读顺序和几何关系，但不提供VLM、箭头、颜色、图标、照片语义或精确图表因果。管理端 MUST 同时说明OCR使用Office包内原始嵌入图片、仅应用图片自身EXIF方向、不应用Office显示裁剪/旋转/翻转且结果可能包含已裁掉区域。管理端只能选择代码Profile，不得输入Docling URL、OCR引擎、模型、prompt、坐标阈值或原始options；依赖未全部就绪时不得显示READY。
 
 #### Scenario: 管理员查看Profile说明
 - **WHEN** 管理员在Business Application组成配置中选择布局OCR Profile
-- **THEN** 页面显示固定能力、限制和非VLM边界
+- **THEN** 页面显示固定能力、原始图片像素基准、Office显示变换未应用、可能包含已裁掉区域的限制和非VLM边界
 - **AND** 不把OCR坐标描述为完整图片语义理解
 
 #### Scenario: OCR模型artifact缺失

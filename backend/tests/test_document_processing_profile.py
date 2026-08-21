@@ -85,7 +85,7 @@ def test_docling_layout_ocr_v1_is_a_complete_fixed_superset() -> None:
     assert profile.output_kinds == ("MARKDOWN", "DOCLING_JSON", "OCR_LAYOUT_JSON")
     assert profile.profile_hash == DOCLING_LAYOUT_OCR_V1_PROFILE_HASH
     assert profile.profile_hash == (
-        "261633ba86e2e5db9d271bb5a96ebd7fd2edee330d85ab5bc96dd5e2ad190c5e"
+        "3d7fc7efe62fbd1cc42bd1d00f944a97fa722699eb4b59041398a87a2ebb57ad"
     )
 
     layout = profile.canonical_payload["layout_ocr"]
@@ -93,6 +93,11 @@ def test_docling_layout_ocr_v1_is_a_complete_fixed_superset() -> None:
     assert layout["bundle_request_options"]["target_type"] == "zip"
     assert layout["bundle_request_options"]["image_export_mode"] == "referenced"
     assert layout["picture_ocr_request_options"]["ocr_preset"] == "rapidocr"
+    assert layout["picture_pixel_basis"] == {
+        "source": "docling-referenced-embedded-media",
+        "image_exif_orientation_applied": True,
+        "office_display_crop_rotation_flip_applied": False,
+    }
     assert layout["model_artifact"]["digest"] == (
         "sha256:9e53a21c25853b53fa0b46df02bb8ebad1d5087dee342d7ef412efecaad0912c"
     )

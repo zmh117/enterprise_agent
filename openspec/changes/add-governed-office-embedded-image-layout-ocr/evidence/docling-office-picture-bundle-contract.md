@@ -32,8 +32,10 @@
 - 当前正式Compose只允许`inbody`target；后续部署任务必须显式允许受控`zip`，但只有新Profile的固定Provider可以请求它，旧Profile合同不变。
 - 固定镜像默认INFO日志会输出上传名与外部task ID。验证确认提高Docling应用/访问日志级别后不再输出这些字段；实现仍须发送与用户display name无关的固定安全上传名，并增加日志边界测试。
 
-## Transform fidelity follow-up（阻塞）
+## Transform fidelity follow-up 与已确认像素基准
 
 2026-08-21 使用额外合成PPTX复核了Office可见变换：源PNG为`1200×800`，在slide中设置上/下各25%裁剪并旋转90度。固定镜像的`referenced` artifact仍为原始`1200×800` PNG；裁剪和旋转没有烘焙到导出像素。把`include_page_images`改为`true`后，DOCX/PPTX bundle的entry、图片数和图片尺寸均未增加，不能取得可绑定的渲染页像素。
 
-因此固定上游合同只证明图片身份、父锚点和原始artifact导出，不证明Office可见裁剪/旋转。若直接OCR该artifact，会读取用户在Office中已裁掉的区域并错误解释旋转方向，违反设计3.4/6.1/9.5。目标change已在active数据库migration、布局Publication创建和激活之前暂停；必须先确认新的可见像素事实源方案。该探针只使用合成色块和固定测试文字，输出结构与尺寸聚合，不输出图片、OCR正文、Secret或业务标识。
+因此固定上游合同只证明图片身份、父锚点和原始artifact导出，不证明Office可见裁剪/旋转。已确认采用该原始artifact作为OCR像素事实源：平台仅应用图片文件自身EXIF方向，不解析DrawingML，也不应用Office显示层裁剪、旋转或翻转，不增加OOXML变换检查器。Profile canonical payload记录`RAW_EMBEDDED_MEDIA_AFTER_EXIF`与`office_display_transform_applied=false`，布局Markdown、管理端与Runtime明确提示结果可能包含页面上已裁掉区域。
+
+该选择把上述探针从阻塞项转换为固定回归合同：合成PPTX必须继续证明导出图片为原始`1200×800`像素，且所有Agent可见结果不得声称等同Office可见渲染。此决定不自动授权创建或激活目标Publication；仍须完成任务9.7的新鲜全链E2E。探针只使用合成色块和固定测试文字，输出结构与尺寸聚合，不输出图片、OCR正文、Secret或业务标识。

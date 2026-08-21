@@ -592,6 +592,8 @@ class GovernedDocumentProcessingService:
             self._deny("document_picture_limit_exceeded", "内嵌图片超过安全上限")
         expected_transform = {
             "version",
+            "pixel_basis",
+            "office_display_transform_applied",
             "source_origin",
             "target_origin",
             "exif_orientation",
@@ -601,7 +603,11 @@ class GovernedDocumentProcessingService:
         if (
             not isinstance(normalization_transform, dict)
             or set(normalization_transform) != expected_transform
-            or normalization_transform.get("version") != "exif-orientation/v1"
+            or normalization_transform.get("version")
+            != "embedded-media-exif-orientation/v1"
+            or normalization_transform.get("pixel_basis")
+            != "RAW_EMBEDDED_MEDIA_AFTER_EXIF"
+            or normalization_transform.get("office_display_transform_applied") is not False
             or normalization_transform.get("source_origin") != "TOPLEFT"
             or normalization_transform.get("target_origin") != "TOPLEFT"
             or normalization_transform.get("exif_orientation") not in range(1, 9)

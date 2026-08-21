@@ -58,6 +58,18 @@ def test_picture_normalization_applies_exif_orientation_before_hashing() -> None
     assert (normalized.width_pixels, normalized.height_pixels) == (8, 12)
     assert normalized.exif_orientation == 6
     assert normalized.transform["normalized_size"] == [8, 12]
+    assert set(normalized.transform) == {
+        "version",
+        "pixel_basis",
+        "office_display_transform_applied",
+        "source_origin",
+        "target_origin",
+        "exif_orientation",
+        "original_size",
+        "normalized_size",
+    }
+    assert normalized.transform["pixel_basis"] == "RAW_EMBEDDED_MEDIA_AFTER_EXIF"
+    assert normalized.transform["office_display_transform_applied"] is False
 
 
 def test_picture_normalization_rejects_media_mismatch_and_hard_limits() -> None:

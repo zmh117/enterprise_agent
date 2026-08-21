@@ -248,7 +248,9 @@ def test_layout_profile_freezes_three_outputs_deadline_and_unique_picture_assemb
             height_pixels=24,
             normalization_transform_json=json.dumps(
                 {
-                    "version": "exif-orientation/v1",
+                    "version": "embedded-media-exif-orientation/v1",
+                    "pixel_basis": "RAW_EMBEDDED_MEDIA_AFTER_EXIF",
+                    "office_display_transform_applied": False,
                     "source_origin": "TOPLEFT",
                     "target_origin": "TOPLEFT",
                     "exif_orientation": 1,
@@ -916,7 +918,9 @@ def test_layout_upload_rejects_omitted_frozen_picture_occurrence() -> None:
             height_pixels=8,
             normalization_transform_json=json.dumps(
                 {
-                    "version": "exif-orientation/v1",
+                    "version": "embedded-media-exif-orientation/v1",
+                    "pixel_basis": "RAW_EMBEDDED_MEDIA_AFTER_EXIF",
+                    "office_display_transform_applied": False,
                     "source_origin": "TOPLEFT",
                     "target_origin": "TOPLEFT",
                     "exif_orientation": 1,

@@ -472,6 +472,17 @@ describe("Business Application workbench", () => {
               document_processing_reason_code:
                 "processing_dependencies_unavailable",
             },
+            {
+              code: "docling-layout-ocr-v1",
+              version: "1",
+              hash: "b".repeat(64),
+              label: "Docling Office 内嵌图片布局 OCR v1",
+              source_format_codes: ["PDF", "DOCX", "PPTX", "XLSX"],
+              output_kinds: ["MARKDOWN", "DOCLING_JSON", "OCR_LAYOUT_JSON"],
+              document_processing_status: "CONFIGURED_UNAVAILABLE",
+              document_processing_reason_code:
+                "processing_dependencies_unavailable",
+            },
           ],
           mcp_tools_by_agent_publication: {
             agent_publication_default_v1: [
@@ -596,6 +607,27 @@ describe("Business Application workbench", () => {
     expect(
       screen.getByText(/不能发布 Docling 文件上下文/)
     ).toBeInTheDocument()
+    const documentProcessingProfile = screen.getByLabelText(
+      "文档解析/OCR Profile"
+    )
+    fireEvent.change(documentProcessingProfile, {
+      target: { value: "docling-layout-ocr-v1" },
+    })
+    expect(documentProcessingProfile).toHaveValue("docling-layout-ocr-v1")
+    expect(
+      screen.getByText((_, element) => {
+        const content = element?.textContent ?? ""
+        return (
+          element?.tagName === "P" &&
+          content.includes("原始内嵌图片") &&
+          content.includes("不应用 Office 显示裁剪、旋转或翻转") &&
+          content.includes("已裁掉的区域")
+        )
+      })
+    ).toBeInTheDocument()
+    fireEvent.change(documentProcessingProfile, {
+      target: { value: "docling-text-v1" },
+    })
     const mcpTool = await screen.findByLabelText(
       "选择 MCP Tool search_merge_requests"
     )

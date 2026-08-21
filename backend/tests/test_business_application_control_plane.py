@@ -762,6 +762,8 @@ def test_document_processing_profile_is_strict_frozen_and_legacy_default_off() -
         "reading_order": True,
         "confidence": True,
         "bounded_geometric_relations": True,
+        "picture_pixel_basis": "RAW_EMBEDDED_MEDIA_AFTER_EXIF",
+        "office_display_transform_applied": False,
         "vlm": False,
         "visual_semantics": False,
     }

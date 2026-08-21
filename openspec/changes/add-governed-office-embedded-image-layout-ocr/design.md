@@ -53,12 +53,12 @@ File Service在创建transfer、校验media type/encoding/schema/大小和原子
 - 精确source File/Version、processing run、Profile hash、layout schema version和Assembler version；
 - `picture_occurrence_id`、稳定`picture_ref`、出现顺序和规范化图片SHA-256；
 - 父锚点：PPTX使用`slide_no`、Docling picture `self_ref`作为稳定shape/ref和图片在slide中的规范化bbox；DOCX使用picture `self_ref`、Docling返回且可解析的最近稳定父容器ref（可能是段落、表格单元、section或body）和同父节点顺序，不要求上游未提供的段落/单元ref，也不包含伪造页码；
-- 图片空间：规范化后宽高、原始宽高、旋转、裁剪/方向变换；
+- 图片空间：规范化后宽高、原始宽高、图片自身EXIF方向、`RAW_EMBEDDED_MEDIA_AFTER_EXIF`像素基准及`office_display_transform_applied=false`事实；
 - OCR block与可选word：稳定局部ID、Unicode文字、`confidence_bp`、`reading_order`、规范化bbox和可选polygon；
 - 有界关系：`LEFT_OF`、`RIGHT_OF`、`ABOVE`、`BELOW`、`SAME_ROW`、`CONTAINS`，以及关系算法version；
 - 每张图片的`AVAILABLE`、`NO_TEXT`、`SKIPPED_LIMIT`或`FAILED`状态和白名单错误码。
 
-图片内部坐标统一为左上角原点、闭区间`0..10000`的整数空间；bbox固定为`[x0,y0,x1,y1]`且必须满足非负、有序和边界约束。浮点、像素、左下角原点、EXIF方向和裁剪坐标只在Provider内转换，不直接成为平台契约。整数规范化减少引擎差异和canonical JSON/hash漂移。
+图片内部坐标统一为左上角原点、闭区间`0..10000`的整数空间；bbox固定为`[x0,y0,x1,y1]`且必须满足非负、有序和边界约束。浮点、像素、左下角原点和图片自身EXIF方向只在Provider内转换，不直接成为平台坐标契约。Office显示层裁剪、旋转和翻转不参与图片像素规范化；整数规范化减少引擎差异和canonical JSON/hash漂移。
 
 完整OCR文字和坐标只保存在File Service管理的对象中。PostgreSQL保存run/item、schema、状态、大小、SHA-256、模型/引擎provenance、锚点摘要和生命周期，不逐word保存OCR正文。
 
@@ -66,11 +66,11 @@ File Service在创建transfer、校验media type/encoding/schema/大小和原子
 
 父Docling任务使用代码固定的`target_type=zip`、`image_export_mode=referenced`和`include_images=true`取得有界、带picture ref的内部图片artifact bundle；既有`docling-text-v1`继续使用原`inbody + placeholder`合同。Docling部署可以为固定Provider允许`zip`target，但Worker、用户、管理端和环境变量不得选择target或导出模式。Provider必须对返回包实施总响应大小、entry数量、路径、媒体类型、单entry大小、解压后总量、重复名和symlink边界校验；图片、Base64、文件名和对象路径不得写日志或队列。固定镜像在默认INFO级别会记录上传名和外部task ID，因此生产部署必须把Docling应用/访问日志提升到不输出该字段的受控级别，Provider同时只发送与source display name无关的固定安全上传名。
 
-File Processing Worker安全解码并规范化白名单PNG/JPEG/WebP，去除非必要元数据，校验单图/累计像素和大小，再通过绑定parent run的File Service staging保存`document_picture_asset`。数据库中的asset与occurrence分离：相同规范化SHA-256在同一tenant/source Version/run/Profile内可复用一次OCR计算，但每个DOCX/PPTX出现位置保留独立occurrence和父锚点。不得跨tenant用内容哈希探测或复用业务图片。
+File Processing Worker安全解码并规范化白名单PNG/JPEG/WebP，仅应用图片文件自身EXIF方向、去除非必要元数据，校验单图/累计像素和大小，再通过绑定parent run的File Service staging保存`document_picture_asset`。OCR像素事实源固定为Docling从Office包导出的原始嵌入媒体；Worker不解析DrawingML，也不应用Office显示层裁剪、旋转或翻转。数据库中的asset与occurrence分离：相同规范化SHA-256在同一tenant/source Version/run/Profile内可复用一次OCR计算，但每个DOCX/PPTX出现位置保留独立occurrence和父锚点。不得跨tenant用内容哈希探测或复用业务图片。
 
 图片asset只服务处理恢复，Agent不可见，也不占任务工作区逻辑文件数；其字节计入Profile固定的派生内容配额。父run终态且三个最终representations发布后，asset内容进入可重试清理；保留asset/occurrence ID、哈希、状态和provenance，但不得继续返回图片字节。新Profile或处理器重算必须从仍可用的精确Office source Version重新提取，不恢复旧已清理asset。
 
-未选择在File Processing Worker独立解析OOXML ZIP，因为这会形成第二套Office结构/关系事实；也未选择把图片作为`managed_file`，因为一份PPTX的图片数量不应消耗工作区逻辑文件名额或获得原件File动作。
+未选择在File Processing Worker独立解析OOXML ZIP或增加DrawingML变换检查器，因为这会形成第二套Office结构/关系事实并显著增加裁剪、旋转、翻转、蒙版和特效兼容面。代价是OCR可能包含Office页面上已裁掉的区域，方向也只反映原始图片自身EXIF；Profile、布局JSON、Markdown、管理端和Runtime必须显式声明该限制。也未选择把图片作为`managed_file`，因为一份PPTX的图片数量不应消耗工作区逻辑文件名额或获得原件File动作。
 
 ### 5. 父解析和子图片OCR使用持久item编排
 
@@ -135,6 +135,7 @@ Representation和picture asset不得比source Version更晚可用，并继承ten
 - [坐标让Agent误以为获得完整视觉理解] → Profile、Markdown标题和固定notice统一称“布局OCR”，明确不识别箭头、颜色、图标、照片语义和未提取内容。
 - [DOCX页坐标随渲染环境漂移] → 只保存稳定文档节点/段落/表格锚点和图片内部坐标，不渲染或伪造页码。
 - [Docling导出图片bundle或picture ref在升级后漂移] → Provider使用固定镜像digest、严格结果schema和合成DOCX/PPTX契约测试；任何processor/digest/Profile变化创建新run，不覆盖旧表示。
+- [Office显示层裁剪/旋转未体现在原始媒体] → 将原始嵌入图片明确冻结为OCR像素事实源，只应用图片自身EXIF；合成fixture证明未应用Office显示变换，所有Agent可见与管理端说明提示可能包含已裁掉区域。
 - [大量图片导致CPU、队列和对象存储放大] → child item持久编排、去重、硬/软上限、独立积压观测和基准后固定并发；asset在parent终态后清理。
 - [OCR block/关系数量导致JSON与Markdown膨胀] → block/word/relation/字符/字节独立上限、相邻关系算法和Profile驱动终结；不得无提示截断。
 - [OCR错误或低置信度被Agent当成事实] → 保存置信度、标记低置信度、保留原文字面输出，不做无依据纠错；Agent面向用户应说明机器提取边界。
@@ -156,4 +157,4 @@ Representation和picture asset不得比source Version更晚可用，并继承ten
 
 - 固定镜像referenced ZIP合同已通过，精确结构与设计收紧记录在`evidence/docling-office-picture-bundle-contract.md`。
 - 固定CPU典型/边界基准已通过，上限与原始聚合指标记录在`evidence/layout-ocr-limit-benchmark.md`；这些值必须进入Profile canonical payload与hash后才允许激活新Profile。
-- 后续Office transform fidelity探针发现固定镜像导出原始图片像素，不应用PPTX裁剪/旋转，`include_page_images=true`也不生成可绑定渲染像素。按照apply gate，active数据库migration、目标Publication和目标激活暂停，等待显式选择新的可见像素事实源；详见`evidence/docling-office-picture-bundle-contract.md`。
+- Office transform fidelity探针证明固定镜像导出原始图片像素，不应用PPTX裁剪/旋转，`include_page_images=true`也不生成可绑定渲染像素。已明确选择原始嵌入图片作为OCR像素事实源，不增加OOXML变换检查器；Profile hash、布局输出、Markdown、管理端和Runtime均冻结并提示该边界。此项不再阻塞migration与兼容部署，但目标Publication仍须通过任务9.7新鲜E2E后才能激活；详见`evidence/docling-office-picture-bundle-contract.md`。

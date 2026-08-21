@@ -299,6 +299,11 @@ DOCLING_LAYOUT_OCR_V1 = DocumentProcessingProfile(
                 "do_code_enrichment": False,
                 "do_formula_enrichment": False,
             },
+            "picture_pixel_basis": {
+                "source": "docling-referenced-embedded-media",
+                "image_exif_orientation_applied": True,
+                "office_display_crop_rotation_flip_applied": False,
+            },
             "model_artifact": {
                 "code": "docling-v1.30.0-cpu-model-bundle",
                 "revision": "v1.30.0",
@@ -363,7 +368,7 @@ DOCLING_LAYOUT_OCR_V1 = DocumentProcessingProfile(
     ),
 )
 DOCLING_LAYOUT_OCR_V1_PROFILE_HASH = (
-    "261633ba86e2e5db9d271bb5a96ebd7fd2edee330d85ab5bc96dd5e2ad190c5e"
+    "3d7fc7efe62fbd1cc42bd1d00f944a97fa722699eb4b59041398a87a2ebb57ad"
 )
 
 if DOCLING_LAYOUT_OCR_V1.profile_hash != DOCLING_LAYOUT_OCR_V1_PROFILE_HASH:

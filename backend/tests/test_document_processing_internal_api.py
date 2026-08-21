@@ -247,7 +247,11 @@ def test_picture_asset_and_result_streams_are_bound_to_run_item_and_service_scop
                 "original_height_pixels": 8,
                 "width_pixels": 16,
                 "height_pixels": 8,
-                "normalization_transform": {"version": "exif-orientation/v1"},
+                "normalization_transform": {
+                    "version": "embedded-media-exif-orientation/v1",
+                    "pixel_basis": "RAW_EMBEDDED_MEDIA_AFTER_EXIF",
+                    "office_display_transform_applied": False,
+                },
                 "size_bytes": 14,
             },
         )
@@ -336,7 +340,11 @@ def test_picture_prepare_rejects_arbitrary_storage_location_before_domain_call()
                 "original_height_pixels": 8,
                 "width_pixels": 16,
                 "height_pixels": 8,
-                "normalization_transform": {"version": "exif-orientation/v1"},
+                "normalization_transform": {
+                    "version": "embedded-media-exif-orientation/v1",
+                    "pixel_basis": "RAW_EMBEDDED_MEDIA_AFTER_EXIF",
+                    "office_display_transform_applied": False,
+                },
                 "size_bytes": 14,
                 "object_key": "forbidden/private/location",
             },

@@ -27,7 +27,7 @@
 - **AND** 不以容器health替代契约就绪
 
 ### Requirement: 布局OCR验收覆盖坐标、恢复和能力边界
-上线验收 MUST 使用不含真实业务数据的合成DOCX/PPTX，覆盖内嵌图片文字、重复图片、旋转/裁剪、低置信度、多block、无文字、损坏图片、超图片数、超像素、超输出大小及提示注入。证据 MUST 关联source Version、parent run、picture asset/occurrence/item、三种Representation、Manifest、Runtime Markdown读取、Agent结果与原件Delivery，并验证逐图重试、Docling重启、Worker崩溃、幂等assembly、asset/representation清理和Secret不泄漏；不得以单元测试或容器healthy代替新鲜业务链路。
+上线验收 MUST 使用不含真实业务数据的合成DOCX/PPTX，覆盖内嵌图片文字、重复图片、图片自身EXIF方向、Office显示层旋转/裁剪未应用且明确提示、低置信度、多block、无文字、损坏图片、超图片数、超像素、超输出大小及提示注入。证据 MUST 关联source Version、parent run、picture asset/occurrence/item、三种Representation、Manifest、Runtime Markdown读取、Agent结果与原件Delivery，并验证逐图重试、Docling重启、Worker崩溃、幂等assembly、asset/representation清理和Secret不泄漏；不得以单元测试或容器healthy代替新鲜业务链路。
 
 #### Scenario: PPTX布局OCR成功
 - **WHEN** 合成PPTX包含已知slide/shape位置和多个已知图片内文字框

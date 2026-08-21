@@ -7,7 +7,7 @@
 - 新增代码发布 Profile `docling-layout-ocr-v1`。它是 `docling-text-v1` 的完整超集，继续支持既有源格式、正文、表格和独立图片 OCR，并为 DOCX、PPTX 内嵌栅格图片提取 OCR 文字、置信度、规范化坐标、阅读顺序和有界空间关系；既有 `docling-text-v1` 的 code、version、hash 和历史行为保持不变。
 - 为每个精确源 File Version 生成不可变 `OCR_LAYOUT_JSON` 派生表示，使用版本化 Schema 保存图片父文档锚点、图片尺寸/摘要、OCR block/word、坐标与空间关系；完整 OCR 内容继续由 File Service 写入私有对象存储，PostgreSQL 只保存身份、状态、大小、哈希、Profile/处理器 provenance 和生命周期事实。
 - 由确定性 Assembler 把有界布局结果合并进同一份 Agent 可读 Markdown，明确坐标系、图片位置、OCR 置信度、阅读顺序和部分失败；Agent 仍只物化 Markdown，`OCR_LAYOUT_JSON`、Docling JSON、Office 原件和图片字节均不得进入 Job Sandbox、MCP JSON 或初始 conversation context。
-- 为 PPTX 保存 slide/shape 与幻灯片内图片位置；为 DOCX 保存稳定文档节点/段落锚点，不伪造会随字体和渲染环境变化的页码坐标。图片内部坐标统一规范化为左上角原点的 `0..10000` 整数空间，同时保留原始像素尺寸、旋转和裁剪变换。
+- 为 PPTX 保存 slide/shape 与幻灯片内图片位置；为 DOCX 保存稳定文档节点/段落锚点，不伪造会随字体和渲染环境变化的页码坐标。图片内部坐标统一规范化为左上角原点的 `0..10000` 整数空间；OCR使用Office包内原始嵌入图片，仅应用图片自身EXIF方向，不解析或应用Office显示层裁剪、旋转或翻转，并显式提示结果可能包含已裁掉区域。
 - 对内嵌图片实施真实格式、压缩大小、解码像素、累计像素、图片数量、OCR block/字符数、派生字节、处理时间和并发上限；重复图片可按内容哈希复用 OCR 计算，但每个父文档出现位置保留独立锚点。
 - 将图片提取、OCR布局结果和 Markdown 组装纳入现有 processing run、Outbox、RabbitMQ、File Processing Worker、staging/finalize、重试与清理边界；部分图片失败或超限必须形成明确 `PARTIAL` notice，不得静默省略或声称已完整理解。
 - 保持图片内容为不可信用户数据。图片中的文字和空间关系不得改变系统提示、Tool可见性、授权、网络或沙盒边界；日志、审计、队列和错误事实不得记录OCR正文、文件名、原图、对象键或原始异常。

@@ -99,7 +99,9 @@ def normalize_picture_asset(
         height_pixels=height,
         exif_orientation=orientation,
         transform={
-            "version": "exif-orientation/v1",
+            "version": "embedded-media-exif-orientation/v1",
+            "pixel_basis": "RAW_EMBEDDED_MEDIA_AFTER_EXIF",
+            "office_display_transform_applied": False,
             "source_origin": "TOPLEFT",
             "target_origin": "TOPLEFT",
             "exif_orientation": orientation,
