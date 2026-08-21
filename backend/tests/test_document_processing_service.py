@@ -10,6 +10,7 @@ import pytest
 from PIL import Image
 from pypdf import PdfWriter
 
+from app.modules.audit.application.audit_service import AuditService
 from app.modules.document_processing import (
     DOCLING_TEXT_V1,
     DocumentProcessingRepository,
@@ -29,6 +30,7 @@ from app.modules.file_workspace.lifecycle_service import FileLifecycleService
 from app.modules.file_workspace.domain_outbox import FileDomainOutboxPublisher
 from app.modules.file_workspace.repository import FileWorkspaceRepository
 from app.modules.file_workspace.storage import InternalStoredObject
+from app.modules.job.infrastructure.repositories import AuditRepository
 from app.shared.database import Database, default_migrations_dir
 from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
 from app.shared.migrations import Migrator
@@ -147,6 +149,7 @@ def _service() -> tuple[
         file_repository,
         storage,
         SourceStreamGrantSigner(b"document-processing-test-signing-key-32"),
+        AuditService(AuditRepository(database)),
         processor_version="1.30.0",
         processor_build_digest=PROCESSOR_DIGEST,
     )
@@ -208,7 +211,7 @@ def test_processing_request_is_idempotent_and_outbox_payload_is_bounded() -> Non
 
 
 def test_source_stream_grant_binds_tenant_principal_run_and_expiry() -> None:
-    _database_value, _storage, service, file_id, version_id, body = _service()
+    database, _storage, service, file_id, version_id, body = _service()
     run = service.request_processing(
         tenant_id="tenant-default",
         source_file_id=file_id,
@@ -225,6 +228,13 @@ def test_source_stream_grant_binds_tenant_principal_run_and_expiry() -> None:
         service_principal_id="file-processing-worker",
         now=NOW,
     )
+    with pytest.raises(PermissionDenied):
+        service.prepare_source_stream(
+            run_id=str(run["id"]),
+            tenant_id="tenant-other",
+            service_principal_id="file-processing-worker",
+            now=NOW,
+        )
     assert (
         service.open_source_stream(
             grant=grant["grant"],
@@ -245,6 +255,29 @@ def test_source_stream_grant_binds_tenant_principal_run_and_expiry() -> None:
             service_principal_id="file-processing-worker",
             now=NOW + timedelta(minutes=6),
         )
+    audit_rows = database.execute(
+        """
+        select event_type, status, payload_summary from audit_event
+         where event_type like 'file.document.source_%'
+         order by created_at, id
+        """
+    )
+    assert [row["event_type"] for row in audit_rows].count(
+        "file.document.source_grant.issued"
+    ) == 1
+    assert [row["event_type"] for row in audit_rows].count(
+        "file.document.source_stream.opened"
+    ) == 1
+    assert [row["status"] for row in audit_rows].count("DENIED") == 3
+    serialized = json.dumps(audit_rows)
+    for forbidden in (
+        grant["grant"],
+        "document.pdf",
+        "object/source",
+        body.hex()[:32],
+        "test-signing-key",
+    ):
+        assert forbidden not in serialized
 
 
 def test_lost_docling_task_retry_clears_only_the_persisted_external_task() -> None:
@@ -318,6 +351,20 @@ def test_submitted_run_reaches_every_terminal_state_like_the_real_worker_order()
 
     assert {item["status"] for item in representations} == {"AVAILABLE"}
     assert service.repository.get_run(str(run["id"]))["status"] == "SUCCEEDED"
+    audit = database.execute_one(
+        """
+        select payload_summary from audit_event
+         where event_type = 'file.document.processing.completed'
+         order by created_at desc, id desc limit 1
+        """
+    )
+    assert audit is not None
+    bounded_audit = json.loads(str(audit["payload_summary"]))
+    audit_payload = json.loads(str(bounded_audit["payload"]))
+    assert audit_payload["page_count"] == 2
+    assert audit_payload["processing_time_ms"] == 1250
+    assert audit_payload["representation_sizes"]["MARKDOWN"] == len(markdown)
+    assert "Safe text" not in json.dumps(audit_payload)
 
 
 def test_submitted_run_can_complete_without_text() -> None:
@@ -338,7 +385,6 @@ def test_submitted_run_can_complete_without_text() -> None:
         page_count=1,
         processing_time_ms=100,
     )
-
     assert completed["status"] == "NO_TEXT"
 
 
@@ -565,6 +611,12 @@ def test_representation_cleanup_follows_source_version_lifecycle() -> None:
         page_count=1,
         processing_time_ms=100,
     )
+    audit_count_before = database.execute_one(
+        """
+        select count(*) as value from audit_event
+         where event_type like 'file.document.%'
+        """
+    )
     service.file_repository.enqueue_cleanup(
         resource_type=CleanupResourceType.FILE_VERSION,
         resource_id=version_id,
@@ -581,6 +633,18 @@ def test_representation_cleanup_follows_source_version_lifecycle() -> None:
     retired = service.repository.list_representations(str(run["id"]))
     assert {item["status"] for item in retired} == {"CONTENT_UNAVAILABLE"}
     assert all(str(item["object_key"]) not in storage.objects for item in representations)
+    retained_run = service.repository.get_run(str(run["id"]))
+    assert retained_run["processor_build_digest"] == PROCESSOR_DIGEST
+    assert retained_run["profile_hash"] == DOCLING_TEXT_V1.profile_hash
+    assert {item["content_sha256"] for item in retired} == {
+        item["content_sha256"] for item in representations
+    }
+    assert database.execute_one(
+        """
+        select count(*) as value from audit_event
+         where event_type like 'file.document.%'
+        """
+    ) == audit_count_before
 
 
 def _pdf_bytes(page_count: int) -> bytes:

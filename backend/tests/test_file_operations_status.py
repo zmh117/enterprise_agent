@@ -47,6 +47,76 @@ class _Database:
             }
         raise AssertionError(normalized)
 
+    def execute(
+        self, sql: str, params: tuple[object, ...] = ()
+    ) -> list[dict[str, Any]]:
+        normalized = " ".join(sql.split())
+        if "group by r.tenant_id" in normalized:
+            return [
+                {
+                    "tenant_id": "tenant-safe",
+                    "application_id": "application-safe",
+                    "application_code": "diagnostic-safe",
+                    "publication_id": "publication-safe",
+                    "profile_code": "docling-text-v1",
+                    "status": "FAILED",
+                    "count": 2,
+                    "total_attempts": 4,
+                    "source_size_bytes": 1200,
+                    "output_size_bytes": 0,
+                    "earliest_created_at": "2026-08-15T00:00:00+00:00",
+                    "latest_updated_at": "2026-08-15T02:00:00+00:00",
+                }
+            ]
+        run = {
+            "run_id": "run-safe",
+            "source_version_id": "version-safe",
+            "tenant_id": "tenant-safe",
+            "job_id": "job-safe",
+            "application_id": "application-safe",
+            "application_code": "diagnostic-safe",
+            "publication_id": "publication-safe",
+            "profile_code": "docling-text-v1",
+            "profile_hash": "a" * 64,
+            "status": "FAILED",
+            "attempt": 2,
+            "error_code": "docling_format_rejected",
+            "page_count": 3,
+            "processing_time_ms": 2000,
+            "updated_at": "2026-08-15T02:00:00+00:00",
+        }
+        if "where r.status = 'FAILED'" in normalized:
+            return [run]
+        if "r.processor_build_digest" in normalized:
+            return [
+                {
+                    **run,
+                    "processor_code": "docling-serve",
+                    "processor_version": "1.30.0",
+                    "processor_build_digest": "sha256:" + "b" * 64,
+                    "source_size_bytes": 600,
+                    "created_at": "2026-08-15T00:00:00+00:00",
+                }
+            ]
+        if "where processing_run_id in" in normalized:
+            assert params == ("run-safe",)
+            return [
+                {
+                    "id": "representation-safe",
+                    "processing_run_id": "run-safe",
+                    "source_version_id": "version-safe",
+                    "kind": "MARKDOWN",
+                    "media_type": "text/markdown",
+                    "status": "AVAILABLE",
+                    "size_bytes": 42,
+                    "content_sha256": "c" * 64,
+                    "profile_hash": "a" * 64,
+                    "created_at": "2026-08-15T01:00:00+00:00",
+                    "content_deleted_at": None,
+                }
+            ]
+        raise AssertionError(normalized)
+
 
 class _Queues:
     def collect(self) -> dict[str, Any]:
@@ -141,11 +211,10 @@ def test_file_operations_projection_is_safe_bounded_and_worker_aware() -> None:
         "unacked": 1,
         "consumers": 1,
     }
-    assert status["document_processing"] == {
-        "configured": True,
-        "ready": True,
-        "reason_code": "ready",
-        "file_processing_worker": {
+    assert status["document_processing"]["configured"] is True
+    assert status["document_processing"]["ready"] is True
+    assert status["document_processing"]["reason_code"] == "ready"
+    assert status["document_processing"]["file_processing_worker"] == {
             "configured": True,
             "ready": True,
             "reason_code": "ready",
@@ -154,8 +223,8 @@ def test_file_operations_projection_is_safe_bounded_and_worker_aware() -> None:
                 "file_service": "ready",
                 "docling": "ready",
             },
-        },
-        "queues": {
+        }
+    assert status["document_processing"]["queues"] == {
             "processing": {
                 "availability": "available",
                 "ready": 2,
@@ -174,8 +243,39 @@ def test_file_operations_projection_is_safe_bounded_and_worker_aware() -> None:
                 "unacked": 0,
                 "consumers": 0,
             },
-        },
     }
+    operations = status["document_processing"]["operations"]
+    assert operations["groups"] == [
+        {
+            "tenant_id": "tenant-safe",
+            "application_id": "application-safe",
+            "application_code": "diagnostic-safe",
+            "publication_id": "publication-safe",
+            "profile_code": "docling-text-v1",
+            "status": "FAILED",
+            "count": 2,
+            "total_attempts": 4,
+            "source_size_bytes": 1200,
+            "output_size_bytes": 0,
+            "earliest_created_at": "2026-08-15T00:00:00+00:00",
+            "latest_updated_at": "2026-08-15T02:00:00+00:00",
+        }
+    ]
+    assert operations["recent_failures"][0]["error_code"] == "docling_format_rejected"
+    assert operations["traces"][0]["representations"] == [
+        {
+            "representation_id": "representation-safe",
+            "source_version_id": "version-safe",
+            "kind": "MARKDOWN",
+            "media_type": "text/markdown",
+            "status": "AVAILABLE",
+            "size_bytes": 42,
+            "content_sha256": "c" * 64,
+            "profile_hash": "a" * 64,
+            "created_at": "2026-08-15T01:00:00+00:00",
+            "content_deleted_at": "",
+        }
+    ]
     assert status["backlog"] == {
         "cleanup": 7,
         "staging": 2,

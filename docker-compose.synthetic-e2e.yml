@@ -1,0 +1,40 @@
+# Isolated acceptance overlay. Use with a distinct Compose project name so all
+# PostgreSQL/RabbitMQ/MinIO volumes and networks are fresh and disposable.
+services:
+  postgres:
+    ports: !reset []
+  migrator:
+    # The normal local migrator creates an operator before any optional seed.
+    # Synthetic acceptance needs deterministic seed identities first so later
+    # channel and Runtime facts can be correlated without patching rows by hand.
+    volumes:
+      - ./backend/seeds/local_seed.sql:/app/backend/seeds/local_seed.sql:ro
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        python -m app.cli.migrate
+        python -c "import os; from pathlib import Path; from app.shared.database import Database; db=Database(os.environ['DATABASE_DSN']); db.execute_script(Path('/app/backend/seeds/local_seed.sql').read_text()); db.close()"
+        python -m app.cli.bootstrap_file_storage_secrets
+        python -m app.cli.bootstrap_admin --non-interactive
+        python -m app.cli.bootstrap_agents
+        python -m app.cli.apply_agent_runtime_grants
+  rabbitmq:
+    ports: !reset []
+  minio:
+    ports: !reset []
+  api-server:
+    ports: !reset []
+  admin-web:
+    ports: !reset []
+
+# The base file gives these volumes global names. Override every name here;
+# a distinct Compose project name alone cannot isolate globally named volumes.
+volumes:
+  postgres18-data:
+    name: enterprise_agent_docling_e2e_postgres18_data
+    external: false
+  rabbitmq4-data:
+    name: enterprise_agent_docling_e2e_rabbitmq4_data
+  minio-data:
+    name: enterprise_agent_docling_e2e_minio_data

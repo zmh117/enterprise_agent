@@ -98,6 +98,59 @@ def draft_payload(*, route: str = "", mcp_tools: list[str] | None = None) -> dic
     }
 
 
+def enable_file_context_dependencies(container: object, payload: dict[str, object]) -> None:
+    agent_row = container.database.execute_one(
+        "select snapshot_json from agent_publication where id = ?",
+        ("agent_publication_default_v1",),
+    )
+    assert agent_row is not None
+    agent_snapshot = json.loads(str(agent_row["snapshot_json"]))
+    agent_snapshot["runtime_kind"] = "python-v1"
+    agent_snapshot["supported_runtime_protocol_versions"] = ["1.2", "1.3"]
+    container.database.execute(
+        """
+        update agent_publication
+           set schema_version = 3, snapshot_json = ?, config_hash = ?
+         where id = ?
+        """,
+        (
+            json.dumps(agent_snapshot, ensure_ascii=False, sort_keys=True),
+            snapshot_hash(agent_snapshot),
+            "agent_publication_default_v1",
+        ),
+    )
+    features = {
+        "workspace_enabled": True,
+        "file_mcp_enabled": True,
+        "runtime_file_edit_enabled": False,
+        "default_file_delivery_enabled": False,
+    }
+    payload["task_file_features"] = features
+    session_policy = dict(payload["session_policy"])
+    session_policy["attachments_enabled"] = True
+    session_policy["continuous_conversation_enabled"] = True
+    payload["session_policy"] = session_policy
+    required_tools = sorted(required_file_mcp_tools(features))
+    for selection_order, identifier in enumerate(required_tools, start=30):
+        definition = MCP_TOOL_MANIFEST[identifier]
+        container.database.execute(
+            """
+            insert into agent_publication_mcp_tool
+              (agent_publication_id, server_code, tool_identifier, schema_hash,
+               model_description, selection_order, created_at)
+            values ('agent_publication_default_v1', ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (
+                definition.server_code,
+                definition.identifier,
+                definition.schema_hash,
+                definition.description,
+                selection_order,
+            ),
+        )
+    payload["mcp_tools"] = required_tools
+
+
 def create_draft_publish(
     container: object, code: str, *, route: str = ""
 ) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
@@ -556,6 +609,47 @@ def test_task_file_feature_flags_are_strict_frozen_and_legacy_default_off() -> N
     assert snapshot_hash(frozen["snapshot"]) == frozen["config_hash"]
 
 
+def test_document_processing_profile_rejects_incomplete_file_context_dependencies() -> None:
+    container = build_test_container(control_plane_settings(), migrate=True, seed=True)
+    service = container.business_application_service
+    application = service.create(
+        actor_id="user_local_admin",
+        code="document-processing-dependencies",
+        name="Document Processing Dependencies",
+        description="safe",
+        project_code="default",
+        owner_user_id="user_local_admin",
+    )
+    payload = draft_payload()
+    payload["document_processing_profile_code"] = "docling-text-v1"
+
+    with pytest.raises(NonRetryableExecutionError) as incomplete:
+        service.save_draft(
+            actor_id="user_local_admin",
+            code="document-processing-dependencies",
+            expected_revision=int(application["revision"]),
+            payload=payload,
+        )
+    assert {item["field"] for item in incomplete.value.field_errors} == {
+        "task_file_features.workspace_enabled",
+        "task_file_features.file_mcp_enabled",
+        "session_policy.attachments_enabled",
+        "session_policy.continuous_conversation_enabled",
+        "agent_publication_id",
+    }
+
+    enable_file_context_dependencies(container, payload)
+    payload["mcp_tools"] = []
+    with pytest.raises(NonRetryableExecutionError) as missing_tools:
+        service.save_draft(
+            actor_id="user_local_admin",
+            code="document-processing-dependencies",
+            expected_revision=int(application["revision"]),
+            payload=payload,
+        )
+    assert "mcp_tools" in {item["field"] for item in missing_tools.value.field_errors}
+
+
 def test_document_processing_profile_is_strict_frozen_and_legacy_default_off() -> None:
     assert publication_document_processing_profile({"schema_version": 4}) == (
         {"code": "NONE", "version": "", "hash": ""},
@@ -576,6 +670,7 @@ def test_document_processing_profile_is_strict_frozen_and_legacy_default_off() -
 
     payload = draft_payload()
     payload["document_processing_profile_code"] = "docling-text-v1"
+    enable_file_context_dependencies(container, payload)
     revision = service.save_draft(
         actor_id="user_local_admin",
         code="document-processing-profile",
@@ -729,9 +824,11 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
         "109_allow_file_service_mcp_publications.sql",
         "110_expand_file_source_received_time.sql",
         "111_expand_text_file_format_policy.sql",
-        "112_expand_resource_revision_scope_bindings.sql",
-        "113_expand_document_file_processing.sql",
-    ]
+            "112_expand_resource_revision_scope_bindings.sql",
+            "113_expand_document_file_processing.sql",
+            "114_expand_execution_summary_protocol_v13.sql",
+            "115_expand_file_turn_admission.sql",
+        ]
     session_columns = {str(row["name"]) for row in db.execute("pragma table_info(agent_session)")}
     assert {
         "application_publication_id",

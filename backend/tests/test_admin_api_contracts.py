@@ -79,6 +79,38 @@ def test_admin_capabilities_fail_closed_without_policy_and_audit_denial() -> Non
     assert denied
 
 
+def test_file_processing_operations_require_queue_status_read_permission() -> None:
+    settings = unified_settings()
+    container = build_test_container(settings, migrate=True, seed=True)
+    container.identity_admin_service.create_user(
+        actor_id="user_local_admin",
+        username="file-operations-limited",
+        display_name="File Operations Limited",
+        email="",
+        password="file-operations-limited-password",
+    )
+    app = create_app(settings, container_factory=lambda _: container)
+
+    with TestClient(app) as client:
+        login(
+            client,
+            "file-operations-limited",
+            "file-operations-limited-password",
+        )
+        response = client.get("/api/admin/file-operations")
+        denial = container.database.execute_one(
+            """
+            select status, payload_summary from audit_event
+             where status = 'DENIED' order by created_at desc, id desc limit 1
+            """
+        )
+
+    assert response.status_code == 403
+    assert denial is not None
+    assert denial["status"] == "DENIED"
+    assert "queue_status" in str(denial["payload_summary"])
+
+
 def test_admin_validation_errors_have_stable_contract_and_correlation_id() -> None:
     settings = unified_settings()
     container = build_test_container(settings, migrate=True, seed=True)

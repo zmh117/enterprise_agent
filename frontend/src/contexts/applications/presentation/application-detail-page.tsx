@@ -426,7 +426,7 @@ function PolicyEditor({
   const selectedAgent = catalog?.agents.find(
     (item) => item.id === form.agent_publication_id
   )
-  const textV2RuntimeCompatible =
+  const fileContextRuntimeCompatible =
     selectedAgent?.runtime_protocol_versions.includes("1.3") === true
   const textV2Cutover = catalog?.text_v2_cutover_preflight
   const selectedDocumentProfile = catalog?.document_processing_profiles.find(
@@ -510,7 +510,7 @@ function PolicyEditor({
             始终按不可信纯文本处理，不在管理端渲染。
           </p>
           {form.file_format_policy_version === "text-v2" &&
-          !textV2RuntimeCompatible ? (
+          !fileContextRuntimeCompatible ? (
             <p className="text-xs leading-5 text-destructive">
               所选 Agent 发布版本未声明支持 Runtime protocol v1.3，不能发布
               text-v2。
@@ -536,14 +536,29 @@ function PolicyEditor({
             onChange={(event) => {
               const profile = event.target
                 .value as SaveDraftInput["document_processing_profile_code"]
+              const taskFileFeatures =
+                profile === "docling-text-v1"
+                  ? {
+                      ...form.task_file_features,
+                      workspace_enabled: true,
+                      file_mcp_enabled: true,
+                    }
+                  : form.task_file_features
               setForm({
                 ...form,
                 document_processing_profile_code: profile,
+                task_file_features: taskFileFeatures,
+                mcp_tools: selectRequiredFileMcpTools(
+                  form.mcp_tools,
+                  taskFileFeatures,
+                  availableFileTools
+                ),
                 session_policy:
                   profile === "docling-text-v1"
                     ? {
                         ...form.session_policy,
                         attachments_enabled: true,
+                        continuous_conversation_enabled: true,
                       }
                     : form.session_policy,
               })
@@ -570,10 +585,18 @@ function PolicyEditor({
             URL、模型、插件或原始 options。
           </p>
           {selectedDocumentProfile?.code === "docling-text-v1" ? (
-            <p className="text-xs leading-5 text-muted-foreground">
-              当前选择：已选择。仅提供有界
-              OCR/表格文字提取，不提供图片语义理解；真实运行状态请到“发布与运行”查看。
-            </p>
+            <div className="space-y-1">
+              <p className="text-xs leading-5 text-muted-foreground">
+                当前选择：已选择。仅提供有界
+                OCR/表格文字提取，不提供图片语义理解；真实运行状态请到“发布与运行”查看。
+              </p>
+              {!fileContextRuntimeCompatible ? (
+                <p className="text-xs leading-5 text-destructive">
+                  所选 Agent 发布版本未声明支持 Runtime protocol
+                  v1.3，不能发布 Docling 文件上下文。
+                </p>
+              ) : null}
+            </div>
           ) : null}
         </Field>
         <div className="space-y-3 rounded-md border p-4 md:col-span-2 xl:col-span-2">

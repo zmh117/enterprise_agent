@@ -14,7 +14,7 @@
 - **AND** 不把OCR能力描述为完整图片内容理解
 
 ### Requirement: MVP只接受现代白名单格式
-系统 SHALL 为启用`docling-text-v1`的任务工作区链路支持PDF、DOCX、XLSX、PPTX、JPEG、PNG和WebP原件，并继续按已冻结文本格式策略支持UTF-8 TXT、LOG和Markdown；系统 MUST 根据真实内容探测MIME、校验扩展名、数量、文件大小、解压后大小及结构上限。源文档单文件 MUST 不超过25MiB；Agent可读文本仍 MUST 不超过15MiB。系统 MUST 拒绝DOC、XLS、PPT、宏文件及其他未支持格式。
+系统 SHALL 为启用`docling-text-v1`的任务工作区链路支持PDF、DOCX、XLSX、PPTX、JPEG、PNG和WebP原件，并继续按已冻结文本格式策略支持UTF-8 TXT、LOG和Markdown；系统 MUST 根据真实内容探测MIME、校验格式、数量、文件大小、解压后大小及结构上限。对成功安全解码、像素校验并重新编码的JPEG、PNG和WebP，系统 MUST 以规范化后的真实媒体类型与文件签名确定源格式，并在渠道原始扩展名不一致时使用真实格式的canonical extension创建受治理文件名，同时保留原始名称作为来源元数据；该兼容行为不得用于PDF、Office或其他格式。源文档单文件 MUST 不超过25MiB；Agent可读文本仍 MUST 不超过15MiB。系统 MUST 拒绝DOC、XLS、PPT、宏文件及其他未支持格式。
 
 #### Scenario: 现代Office附件通过受治理校验
 - **WHEN** DOCX、XLSX或PPTX的扩展名、MIME、大小和结构符合固定源文件策略且应用启用文档处理Profile
@@ -31,9 +31,14 @@
 - **THEN** 系统将attachment标记为REJECTED并保存安全错误码
 
 #### Scenario: 类型伪装或超限
-- **WHEN** 扩展名与真实MIME冲突，或附件数量、大小、页数、解压后大小、行列、像素或幻灯片超过对应固定策略
+- **WHEN** PDF或Office扩展名与真实MIME/结构冲突，图片无法安全解码为白名单格式，或附件数量、大小、页数、解压后大小、行列、像素或幻灯片超过对应固定策略
 - **THEN** 系统将attachment或processing run标记为确定拒绝
 - **AND** 不调用模型、不静默截断或降级到宽松解析器
+
+#### Scenario: 渠道把JPEG或WebP命名为PNG
+- **WHEN** 渠道附件名以`.png`结尾，但图片字节可安全解码并规范化为JPEG或WebP且满足全部资源上限
+- **THEN** File Service按规范化后的真实媒体类型和签名保存原件，并把受治理display name改为`.jpg`或`.webp`
+- **AND** 原始渠道名称只作为来源元数据保留，不因错误扩展名拒绝合法图片或覆盖同名文件
 
 #### Scenario: 旧版Office或其他格式到达
 - **WHEN** 消息包含DOC、XLS、PPT、宏文件、压缩包、音视频、SVG、脚本、可执行文件或未知格式
@@ -87,6 +92,11 @@
 - **WHEN** 图片通过安全存储校验但应用Publication的Profile为NONE
 - **THEN** 系统保持不解释图片内容的安全状态
 - **AND** 不因平台部署了Docling而自动扩大该应用能力
+
+#### Scenario: File Service拒绝图片原件导入
+- **WHEN** File Service以稳定安全错误码拒绝图片导入
+- **THEN** File Worker把该机器码保存到`message_attachment.failure_code`并将附件置为确定终态
+- **AND** 不以本地化提示文字替代机器码，不记录File Service原始响应、文件字节或内部异常
 
 ### Requirement: Agent job等待附件达到终态
 系统 SHALL 让本轮已绑定附件的Job等待来源下载/导入达到终态；`WAITING_INPUT` MUST NOT 用于等待 Docling 或 `file_processing_run` 非终态。只要本轮绑定附件的来源状态尚未终态，Job可以保持`WAITING_INPUT`。来源终态后，需要`READABLE_CONTENT`且表示仍为PENDING或失败时 MUST 走系统说明而不是释放到`agent.jobs`。AVAILABLE或带非空合规Markdown的PARTIAL可以进入Manifest；NO_TEXT、UNAVAILABLE、REJECTED或FAILED只能形成固定安全notice。无关文字 MUST 创建可执行Job且不得认领处理中文档。

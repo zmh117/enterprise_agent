@@ -34,6 +34,7 @@ from app.modules.message_bus.infrastructure.rabbitmq_attachment_consumer import 
 )
 from app.modules.message_bus.infrastructure.rabbitmq_publisher import RabbitMQPublisher
 from app.shared.config import AttachmentSettings, QueueSettings
+from app.shared.exceptions import NonRetryableExecutionError
 from backend.tests.test_continuous_multimodal_conversations import (
     FakeDownloader,
     RetryingDownloader,
@@ -90,6 +91,15 @@ class _Connection:
 
     def close(self) -> None:
         self.closed = True
+
+
+class _RejectingImporter:
+    def import_content(self, **_kwargs: object) -> object:
+        raise NonRetryableExecutionError(
+            "File Service rejected attachment import",
+            safe_message="附件导入被拒绝",
+            error_code="document_source_media_type_mismatch",
+        )
 
 
 def _install_fake_pika(monkeypatch: pytest.MonkeyPatch, channel: _Channel) -> _Connection:
@@ -288,3 +298,45 @@ def test_attachment_retry_reuses_source_identity_and_keeps_job_waiting() -> None
     assert retry_row is not None
     assert retry_row["retry_count"] == 1
     assert runtime.agent_repository.get_job(job.id).status == JobStatus.WAITING_INPUT
+
+
+def test_attachment_rejection_persists_machine_error_code() -> None:
+    runtime = multimodal_container()
+    job = runtime.create_agent_job_service.execute(
+        CreateAgentJobCommand(
+            idempotency_key="attachment-machine-error-code",
+            requester_id="user_local_admin",
+            external_conversation_id="attachment-machine-error-code",
+            external_event_id="attachment-machine-error-code-event",
+            external_message_id="attachment-machine-error-code-message",
+            user_message="",
+            source_channel="dingding_stream",
+            source_connector_id="connector-dingtalk-stream-default",
+            conversation_type="direct",
+            bot_identity="robot-redacted",
+            attachments=(
+                ChannelAttachment(
+                    media_type="document",
+                    file_name="safe.md",
+                    source_credential="download-safe",
+                ),
+            ),
+        )
+    )
+    task = runtime.message_bus.attachments.popleft()
+    runtime.attachment_service.downloader = FakeDownloader(  # type: ignore[union-attr]
+        {"download-safe": b"safe text"}
+    )
+    runtime.attachment_service.importer = _RejectingImporter()  # type: ignore[union-attr]
+
+    runtime.attachment_service.process(task.attachment_id, "correlation-safe")  # type: ignore[union-attr]
+
+    row = runtime.database.execute_one(
+        "select status, failure_code from message_attachment where id = ?",
+        (task.attachment_id,),
+    )
+    assert row == {
+        "status": "REJECTED",
+        "failure_code": "document_source_media_type_mismatch",
+    }
+    assert runtime.agent_repository.get_job(job.id).status == JobStatus.FAILED

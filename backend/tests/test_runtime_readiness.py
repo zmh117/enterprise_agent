@@ -4,6 +4,8 @@ from dataclasses import replace
 
 from app import main
 from app.shared.config import AgentRuntimeSettings
+from app.shared.database import default_migrations_dir
+from app.shared.migrations import deployable_migration_catalog, load_migration_catalog
 from backend.tests.helpers import container, test_settings as _test_settings
 
 
@@ -24,6 +26,9 @@ def test_ready_checks_schema_database_rabbit_token_and_master_key(
 ) -> None:
     runtime = container()
     try:
+        expected_schema_head = deployable_migration_catalog(
+            load_migration_catalog(default_migrations_dir())
+        )[-1].version
         monkeypatch.setattr(
             main,
             "_check_rabbitmq",
@@ -37,7 +42,7 @@ def test_ready_checks_schema_database_rabbit_token_and_master_key(
         assert ready["core"] == {
             "database": True,
             "schema": True,
-            "schema_head": "112",
+            "schema_head": expected_schema_head,
             "rabbitmq": True,
             "master_key": True,
             "runtime_assembly": True,

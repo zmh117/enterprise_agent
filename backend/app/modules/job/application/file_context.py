@@ -190,6 +190,13 @@ class TimeWindow:
 
 
 @dataclass(frozen=True, slots=True)
+class TimeWindowParse:
+    window: TimeWindow | None = None
+    matched: bool = False
+    invalid: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class WorkspaceFileCandidate:
     file_id: str
     version_id: str
@@ -285,24 +292,39 @@ def is_image_only_file_query(text: str) -> bool:
 
 
 def parse_time_window(text: str, *, now: datetime | None = None) -> TimeWindow | None:
+    return _parse_time_window(text, now=now).window
+
+
+def _parse_time_window(text: str, *, now: datetime | None = None) -> TimeWindowParse:
     moment = (now or resolver_now()).astimezone(SHANGHAI)
     if any(token in text for token in PREVIOUS_WEEK_TOKENS):
         current = _week_start(moment)
-        return TimeWindow(start=current - timedelta(days=7), end=current)
+        return TimeWindowParse(
+            window=TimeWindow(start=current - timedelta(days=7), end=current),
+            matched=True,
+        )
     if any(token in text for token in CURRENT_WEEK_TOKENS):
         current = _week_start(moment)
-        return TimeWindow(start=current, end=current + timedelta(days=7))
+        return TimeWindowParse(
+            window=TimeWindow(start=current, end=current + timedelta(days=7)),
+            matched=True,
+        )
     if any(token in text for token in PREVIOUS_MONTH_TOKENS):
         first_this_month = datetime(moment.year, moment.month, 1, tzinfo=SHANGHAI)
         last_month = first_this_month - timedelta(days=1)
         start = datetime(last_month.year, last_month.month, 1, tzinfo=SHANGHAI)
-        return TimeWindow(start=start, end=first_this_month)
+        return TimeWindowParse(
+            window=TimeWindow(start=start, end=first_this_month),
+            matched=True,
+        )
     if any(token in text for token in TODAY_TOKENS):
-        return _day_window(moment.date())
+        return TimeWindowParse(window=_day_window(moment.date()), matched=True)
     if any(token in text for token in YESTERDAY_TOKENS):
-        return _day_window(moment.date() - timedelta(days=1))
+        return TimeWindowParse(
+            window=_day_window(moment.date() - timedelta(days=1)), matched=True
+        )
     ranged = _parse_date_range(text, moment)
-    if ranged is not None:
+    if ranged.matched:
         return ranged
     return _parse_single_date(text, moment)
 
@@ -386,7 +408,10 @@ def resolve_file_context(
             )
         )
 
-    window = parse_time_window(text, now=now)
+    parsed_window = _parse_time_window(text, now=now)
+    if parsed_window.invalid and has_file_referring_token(text) and not skip_deixis:
+        return ResolverDecision(dependencies=(), notice_kind="invalid_time_window")
+    window = parsed_window.window
     if window is not None and has_file_referring_token(text) and not skip_deixis:
         return _resolve_time_window(
             text=text,
@@ -442,6 +467,13 @@ def resolve_file_context(
 
 
 def evaluate_file_gate(decision: ResolverDecision) -> GateDecision:
+    if decision.notice_kind == "invalid_time_window":
+        return GateDecision(
+            action="system_notice",
+            reason_code="invalid_time_window",
+            notice_kind="invalid_time_window",
+            dependencies=(),
+        )
     if decision.notice_kind == "time_window_empty":
         return GateDecision(
             action="system_notice",
@@ -561,6 +593,11 @@ def system_notice_markdown(
             "该时段没有仍可访问的文件",
             "该时段没有仍可访问的文件。其他问题可以继续发送。",
         )
+    if notice_kind == "invalid_time_window":
+        return (
+            "请提供有效日期",
+            "指定的日期或日期范围无效。请按实际日历日期重新描述文件时间范围。",
+        )
     if notice_kind == "content_unavailable":
         return (
             "文件内容已不可用",
@@ -590,33 +627,17 @@ def _resolve_time_window(
             dependencies=(),
             notice_kind="time_window_empty",
         )
-    if capability == "METADATA" and len(pool) > TIME_WINDOW_METADATA_LIMIT:
+    if len(pool) > TIME_WINDOW_METADATA_LIMIT:
         return ResolverDecision(
             dependencies=(),
             notice_kind="time_window_too_many",
             clarification_names=tuple(sorted({item.display_name for item in pool[:20]})),
         )
-    if capability != "METADATA" and len(pool) > 1:
-        return ResolverDecision(
-            dependencies=(),
-            ambiguous=True,
-            notice_kind="time_window_ambiguous",
-            clarification_names=tuple(sorted({item.display_name for item in pool})),
+    return ResolverDecision(
+        dependencies=tuple(
+            _dependency_from_candidate(item, "METADATA", "TIME_WINDOW") for item in pool
         )
-    if capability == "METADATA":
-        return ResolverDecision(
-            dependencies=tuple(
-                _dependency_from_candidate(item, capability, "TIME_WINDOW") for item in pool
-            )
-        )
-    winner = pool[0]
-    bound = _dependency_from_candidate(winner, capability, "TIME_WINDOW")
-    if not winner.content_available:
-        return ResolverDecision(
-            dependencies=(bound,),
-            notice_kind="content_unavailable",
-        )
-    return ResolverDecision(dependencies=(bound,))
+    )
 
 
 def _window_candidates(
@@ -667,7 +688,7 @@ def _day_window(day: date) -> TimeWindow:
     return TimeWindow(start=start, end=start + timedelta(days=1))
 
 
-def _parse_date_range(text: str, moment: datetime) -> TimeWindow | None:
+def _parse_date_range(text: str, moment: datetime) -> TimeWindowParse:
     iso = DATE_RANGE_ISO.search(text)
     if iso is not None:
         start_year, start_month, start_day, end_year, end_month, end_day = (
@@ -679,38 +700,56 @@ def _parse_date_range(text: str, moment: datetime) -> TimeWindow | None:
             int(iso.group(6)),
         )
         start = _resolve_date(start_year, start_month, start_day, moment)
+        if start is None:
+            return TimeWindowParse(matched=True, invalid=True)
         end = _resolve_date(end_year or start.year, end_month, end_day, moment, year_locked=True)
-        return _inclusive_days(start, end)
+        window = _inclusive_days(start, end) if end is not None else None
+        return TimeWindowParse(window=window, matched=True, invalid=window is None)
     match = DATE_RANGE_CN.search(text)
     if match is None:
-        return None
-    year, month, day, end_month, end_day = (
-        _optional_int(match.group(1)),
-        int(match.group(2)),
-        int(match.group(3)),
-        _optional_int(match.group(4)),
-        int(match.group(5)),
-    )
+        return TimeWindowParse()
+    year = _optional_int(match.group(1))
+    month = int(match.group(2))
+    day = int(match.group(3))
+    range_end_month = _optional_int(match.group(4))
+    range_end_day = int(match.group(5))
     start = _resolve_date(year, month, day, moment)
-    end = _resolve_date(year or start.year, end_month or month, end_day, moment, year_locked=True)
-    return _inclusive_days(start, end)
+    if start is None:
+        return TimeWindowParse(matched=True, invalid=True)
+    end = _resolve_date(
+        year or start.year,
+        range_end_month or month,
+        range_end_day,
+        moment,
+        year_locked=True,
+    )
+    window = _inclusive_days(start, end) if end is not None else None
+    return TimeWindowParse(window=window, matched=True, invalid=window is None)
 
 
-def _parse_single_date(text: str, moment: datetime) -> TimeWindow | None:
+def _parse_single_date(text: str, moment: datetime) -> TimeWindowParse:
     iso = SINGLE_DATE_ISO.search(text)
     if iso is not None:
         day = _resolve_date(int(iso.group(1)), int(iso.group(2)), int(iso.group(3)), moment)
-        return _day_window(day)
+        return TimeWindowParse(
+            window=_day_window(day) if day is not None else None,
+            matched=True,
+            invalid=day is None,
+        )
     match = SINGLE_DATE_CN.search(text)
     if match is None:
-        return None
+        return TimeWindowParse()
     day = _resolve_date(
         _optional_int(match.group(1)),
         int(match.group(2)),
         int(match.group(3)),
         moment,
     )
-    return _day_window(day)
+    return TimeWindowParse(
+        window=_day_window(day) if day is not None else None,
+        matched=True,
+        invalid=day is None,
+    )
 
 
 def _inclusive_days(start: date, end: date) -> TimeWindow | None:
@@ -728,13 +767,13 @@ def _resolve_date(
     moment: datetime,
     *,
     year_locked: bool = False,
-) -> date:
+) -> date | None:
     try:
         if year is not None:
             return datetime(year, month, day, tzinfo=SHANGHAI).date()
         candidate = datetime(moment.year, month, day, tzinfo=SHANGHAI)
     except ValueError:
-        return moment.date()
+        return None
     if year_locked:
         return candidate.date()
     if candidate > moment:

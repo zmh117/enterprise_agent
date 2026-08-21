@@ -140,6 +140,81 @@ function fileOperations(overrides: Record<string, unknown> = {}) {
           consumers: 0,
         },
       },
+      operations: {
+        groups: [
+          {
+            tenant_id: "tenant-safe",
+            application_id: "application-safe",
+            application_code: "diagnostic-safe",
+            publication_id: "publication-safe",
+            profile_code: "docling-text-v1",
+            status: "FAILED",
+            count: 1,
+            total_attempts: 2,
+            source_size_bytes: 2048,
+            output_size_bytes: 0,
+            earliest_created_at: "2026-08-15T00:00:00+00:00",
+            latest_updated_at: "2026-08-15T01:00:00+00:00",
+          },
+        ],
+        recent_failures: [
+          {
+            run_id: "run-safe",
+            source_version_id: "version-safe",
+            tenant_id: "tenant-safe",
+            job_id: "job-safe",
+            application_id: "application-safe",
+            application_code: "diagnostic-safe",
+            publication_id: "publication-safe",
+            profile_code: "docling-text-v1",
+            profile_hash: "a".repeat(64),
+            status: "FAILED",
+            attempt: 2,
+            error_code: "docling_format_rejected",
+            page_count: null,
+            processing_time_ms: 100,
+            updated_at: "2026-08-15T01:00:00+00:00",
+          },
+        ],
+        traces: [
+          {
+            run_id: "run-safe",
+            source_version_id: "version-safe",
+            tenant_id: "tenant-safe",
+            job_id: "job-safe",
+            application_id: "application-safe",
+            application_code: "diagnostic-safe",
+            publication_id: "publication-safe",
+            profile_code: "docling-text-v1",
+            profile_hash: "a".repeat(64),
+            status: "FAILED",
+            attempt: 2,
+            error_code: "docling_format_rejected",
+            page_count: null,
+            processing_time_ms: 100,
+            updated_at: "2026-08-15T01:00:00+00:00",
+            processor_code: "docling-serve",
+            processor_version: "1.30.0",
+            processor_build_digest: `sha256:${"b".repeat(64)}`,
+            source_size_bytes: 2048,
+            created_at: "2026-08-15T00:00:00+00:00",
+            representations: [
+              {
+                representation_id: "representation-safe",
+                source_version_id: "version-safe",
+                kind: "MARKDOWN",
+                media_type: "text/markdown",
+                status: "AVAILABLE",
+                size_bytes: 100,
+                content_sha256: "c".repeat(64),
+                profile_hash: "a".repeat(64),
+                created_at: "2026-08-15T00:30:00+00:00",
+                content_deleted_at: "",
+              },
+            ],
+          },
+        ],
+      },
     },
     backlog: {
       cleanup: 0,
@@ -264,6 +339,14 @@ describe("runtime provenance records", () => {
     ).toBeInTheDocument()
     expect(screen.getByText(/retry 3 · dead 4/)).toBeInTheDocument()
     expect(screen.getByText(/Docling 就绪/)).toBeInTheDocument()
+    expect(screen.getByText("处理分组")).toBeInTheDocument()
+    expect(screen.getByText(/diagnostic-safe · docling-text-v1 · FAILED/)).toBeInTheDocument()
+    expect(screen.getByText("最近失败")).toBeInTheDocument()
+    expect(screen.getByText(/docling_format_rejected/)).toBeInTheDocument()
+    expect(
+      screen.getByText("source → run → representation → Job")
+    ).toBeInTheDocument()
+    expect(screen.getByText(/run-safe → 1 representation/)).toBeInTheDocument()
   })
 
   it("shows attributed and legacy jobs without guessing ownership", async () => {

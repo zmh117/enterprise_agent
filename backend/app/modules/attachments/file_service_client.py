@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import urllib.error
 import urllib.request
 from urllib.parse import quote, urlsplit
@@ -9,6 +10,11 @@ from urllib.parse import quote, urlsplit
 from app.modules.attachments.domain import AttachmentImportReceipt
 from app.modules.identity.application.service_principal import AccessTokenProvider
 from app.shared.exceptions import NonRetryableExecutionError, RetryableExecutionError
+
+
+_MAX_ERROR_RESPONSE_BYTES = 64 * 1024
+_SAFE_ERROR_CODE = re.compile(r"[a-z][a-z0-9_]{0,127}\Z")
+_SAFE_ERROR_PREFIXES = ("document_", "file_", "workspace_")
 
 
 class FileServiceAttachmentImporter:
@@ -68,7 +74,7 @@ class FileServiceAttachmentImporter:
                 raise NonRetryableExecutionError(
                     "File Service rejected attachment import",
                     safe_message="附件导入被拒绝",
-                    error_code="file_attachment_import_denied",
+                    error_code=_attachment_import_error_code(exc),
                 ) from exc
             raise RetryableExecutionError(
                 "File Service attachment import failed",
@@ -169,3 +175,27 @@ class FileServiceAttachmentImporter:
                 error_code="file_worker_principal_unavailable",
             )
         return token
+
+
+def _attachment_import_error_code(exc: urllib.error.HTTPError) -> str:
+    fallback = "file_attachment_import_denied"
+    try:
+        payload = exc.read(_MAX_ERROR_RESPONSE_BYTES + 1)
+    except (OSError, ValueError):
+        return fallback
+    if len(payload) > _MAX_ERROR_RESPONSE_BYTES:
+        return fallback
+    try:
+        value = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return fallback
+    if not isinstance(value, dict):
+        return fallback
+    candidate = value.get("error_code")
+    if (
+        not isinstance(candidate, str)
+        or _SAFE_ERROR_CODE.fullmatch(candidate) is None
+        or not candidate.startswith(_SAFE_ERROR_PREFIXES)
+    ):
+        return fallback
+    return candidate

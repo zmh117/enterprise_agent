@@ -22,7 +22,6 @@ from app.modules.job.application.create_agent_job_service import (
     StagedAttachmentIntake,
     SystemNoticeIntake,
 )
-from app.modules.job.domain.agent_job import AgentJob
 from app.modules.identity_discovery.application import (
     DingTalkIdentityDiscoveryService,
 )

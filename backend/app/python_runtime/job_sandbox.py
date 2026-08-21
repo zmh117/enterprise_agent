@@ -185,6 +185,11 @@ class JobSandbox:
             )
         except NonRetryableExecutionError:
             self._deny("sandbox_file_type_denied", "file format is not allowed")
+        if write and path.parts[:2] == ("inputs", "readonly"):
+            self._deny(
+                "sandbox_file_read_only",
+                "governed representation inputs are read-only",
+            )
         if write and not definition.writable:
             self._deny("sandbox_file_read_only", "this file format is read-only")
         return value

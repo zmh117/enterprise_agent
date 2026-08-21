@@ -20,6 +20,7 @@ from app.shared.exceptions import NonRetryableExecutionError
 class ValidatedDocumentSource:
     format_code: DocumentSourceFormatCode
     media_type: str
+    canonical_extension: str
     size_bytes: int
     page_count: int | None
 
@@ -30,18 +31,40 @@ def validate_document_source(
     display_name: str,
     declared_media_type: str,
     declared_size_bytes: int,
+    allow_image_extension_canonicalization: bool = False,
 ) -> ValidatedDocumentSource:
     if declared_size_bytes < 1 or declared_size_bytes > DOCLING_TEXT_V1.max_source_bytes:
         _reject("document_source_size_exceeded", "文档原件大小必须在 1 字节到 25 MiB 之间")
     extension = Path(display_name).suffix.lower()
-    definition = next(
+    extension_definition = next(
         (item for item in DOCLING_TEXT_V1.source_formats if extension in item.extensions),
         None,
     )
-    if definition is None:
+    if extension_definition is None:
         _reject("document_source_format_unsupported", "文档原件格式不受支持")
-    assert definition is not None
+    assert extension_definition is not None
     normalized_media_type = declared_media_type.split(";", 1)[0].strip().lower()
+    definition = extension_definition
+    image_codes = {
+        DocumentSourceFormatCode.PNG,
+        DocumentSourceFormatCode.JPEG,
+        DocumentSourceFormatCode.WEBP,
+    }
+    if (
+        allow_image_extension_canonicalization
+        and extension_definition.code in image_codes
+    ):
+        media_definition = next(
+            (
+                item
+                for item in DOCLING_TEXT_V1.source_formats
+                if item.code in image_codes
+                and normalized_media_type in item.accepted_media_types
+            ),
+            None,
+        )
+        if media_definition is not None:
+            definition = media_definition
     if normalized_media_type not in definition.accepted_media_types:
         _reject("document_source_media_type_mismatch", "文件扩展名与媒体类型不一致")
     actual_size = _stream_size(stream)
@@ -63,6 +86,7 @@ def validate_document_source(
     return ValidatedDocumentSource(
         format_code=definition.code,
         media_type=definition.canonical_media_type,
+        canonical_extension=definition.extensions[0],
         size_bytes=actual_size,
         page_count=page_count,
     )

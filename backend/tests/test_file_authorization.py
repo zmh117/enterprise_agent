@@ -6,7 +6,7 @@ import pytest
 
 from app.modules.file_workspace.application import FileWorkspaceApplicationService
 from app.modules.file_workspace.authorization import FileAuthorizationService
-from app.modules.file_workspace.clock import to_shanghai_rfc3339
+from app.modules.file_workspace.clock import to_utc_rfc3339
 from app.modules.file_workspace.domain import (
     FileAction,
     FileOwner,
@@ -23,7 +23,6 @@ from app.modules.mcp_audit import McpAuditCoordinator
 from app.shared.exceptions import PermissionDenied
 from backend.tests.test_file_workspace_repository import (
     EXPIRES_AT,
-    SHANGHAI_TIMESTAMP,
     TIMESTAMP,
     _database,
 )
@@ -214,16 +213,16 @@ def test_private_file_authorization_rechecks_job_publication_owner_and_manifest_
         tool_identifier="task_workspace_get",
         arguments={},
     )
-    assert workspace["expires_at"] == to_shanghai_rfc3339(EXPIRES_AT)
+    assert workspace["expires_at"] == to_utc_rfc3339(EXPIRES_AT)
     listed = application.invoke(
         context=context,
         tool_identifier="task_workspace_list_files",
         arguments={},
     )
-    assert listed["items"][0]["source_received_at"] == SHANGHAI_TIMESTAMP
-    assert listed["items"][0]["version_created_at"].endswith("+08:00")
+    assert listed["items"][0]["source_received_at"] == TIMESTAMP
+    assert listed["items"][0]["version_created_at"].endswith("+00:00")
     assert listed["items"][0]["readability_status"] == "NOT_REQUIRED"
-    assert listed["observed_at"].endswith("+08:00")
+    assert listed["observed_at"].endswith("+00:00")
     assert "created_at" not in listed["items"][0]
     _create_file(
         repository,
@@ -245,10 +244,10 @@ def test_private_file_authorization_rechecks_job_publication_owner_and_manifest_
         tool_identifier="file_get_metadata",
         arguments={"file_id": "file-private", "version_id": "version-private"},
     )
-    assert metadata["source_received_at"] == SHANGHAI_TIMESTAMP
+    assert metadata["source_received_at"] == TIMESTAMP
     assert metadata["version_created_at"] == listed["items"][0]["version_created_at"]
     assert metadata["readability_status"] == "NOT_REQUIRED"
-    assert metadata["observed_at"].endswith("+08:00")
+    assert metadata["observed_at"].endswith("+00:00")
     assert "created_at" not in metadata
 
     audit = FileMcpAudit(McpAuditCoordinator(database, max_payload_bytes=4096))

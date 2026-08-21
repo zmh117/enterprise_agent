@@ -10,8 +10,8 @@ from app.modules.file_workspace.authorization import (
     FileAuthorizationService,
 )
 from app.modules.file_workspace.clock import (
-    project_file_time_fields,
-    to_shanghai_rfc3339,
+    canonicalize_file_time_fields,
+    to_utc_rfc3339,
 )
 from app.modules.file_workspace.contracts import FILE_TOOL_MANIFEST
 from app.modules.file_workspace.domain import FileAction
@@ -105,7 +105,7 @@ class FileWorkspaceApplicationService:
             "workspace_id": str(workspace["id"]),
             "status": str(workspace["status"]),
             "retention_period": str(persisted["retention_period"]),
-            "expires_at": to_shanghai_rfc3339(persisted.get("expires_at"))
+            "expires_at": to_utc_rfc3339(persisted.get("expires_at"))
             or str(persisted["expires_at"]),
             "file_count": int(counts["file_count"]),
             "logical_bytes": int(counts["logical_bytes"]),
@@ -174,7 +174,7 @@ class FileWorkspaceApplicationService:
             "version_created_at": str(row.get("version_created_at") or ""),
             "readability_status": str(row.get("readability_status") or "NOT_REQUIRED"),
         }
-        return project_file_time_fields(payload)
+        return canonicalize_file_time_fields(payload)
 
     def _readability_status(self, version_id: str) -> str:
         row = self.repository.database.execute_one(
@@ -202,4 +202,4 @@ class FileWorkspaceApplicationService:
 
 
 def _observed_at() -> str:
-    return to_shanghai_rfc3339(datetime.now(UTC)) or ""
+    return to_utc_rfc3339(datetime.now(UTC)) or ""

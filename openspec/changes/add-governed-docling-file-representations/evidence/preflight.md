@@ -1,6 +1,7 @@
 # Docling apply preflight
 
-Checked at 2026-08-17 on branch `one_runtime`.
+Checked at 2026-08-17 on branch `one_runtime`; supply-chain evidence refreshed at
+2026-08-21.
 
 ## Checkout and ownership
 
@@ -31,10 +32,23 @@ Checked at 2026-08-17 on branch `one_runtime`.
 - Linux amd64 manifest: `sha256:0ccbc00b5f8b443334a7c4f36a5c6ff89c684c6fbe18ff7c1bc41e00b8e01657`.
 - Linux arm64 manifest: `sha256:b09477515c6234bb86c8a90c9db3af2b5d6991aeb6b64c3348283be264dba63c`.
 - OCI metadata identifies release `v1.30.0`, source revision `69192d178924bbae2f1733e2d7cd21ffd04259c5`, license `MIT`, runtime user `1001`, and preloaded model artifacts.
-- Registry attestations contain SLSA provenance for both architectures. No upstream SBOM attestation was exposed by the OCI index (`docker buildx imagetools inspect --format '{{json .SBOM}}'` returned `{}`). A local Docker Scout SPDX generation against the exact arm64 image was attempted twice and stopped after bounded waits while still indexing the 4.4 GB compressed image. Local Compose wiring may be validated with the profile left at `NONE`; production profile enablement remains blocked on a successfully generated and retained SBOM digest. Provenance alone is not treated as an SBOM.
+- Registry attestations contain SLSA provenance for both architectures. The upstream
+  `v1.30.0` image workflow enables build provenance attestations but does not enable
+  BuildKit SBOM generation, the GitHub release has no SBOM asset, and no upstream SBOM
+  attestation is exposed by the OCI index. This is recorded as an upstream supply-chain
+  gap; provenance is not treated as an SBOM.
+- On 2026-08-21, `docker sbom --format spdx-json` completed against the exact pinned
+  multi-architecture digest on the local `linux/arm64` platform. The generated SPDX JSON
+  stream has SHA-256
+  `2ef16546525f332a1880d5e3faaf29c6cfc95cde4fdb9be7f901f36a390a10d7`.
+  This is compensating, locally generated evidence only, not an official Docling SBOM.
+  Releasing to an environment whose policy requires a vendor-published or retained SBOM
+  remains blocked until that artifact is produced and stored by the release pipeline.
 
 Official references:
 
 - <https://github.com/docling-project/docling-serve/releases/tag/v1.30.0>
 - <https://github.com/docling-project/docling-serve#container-images>
 - <https://github.com/docling-project/docling-serve/blob/v1.30.0/LICENSE>
+- <https://github.com/docling-project/docling-serve/blob/v1.30.0/.github/workflows/images.yml>
+- <https://github.com/docling-project/docling-serve/blob/v1.30.0/.github/workflows/job-image.yml>

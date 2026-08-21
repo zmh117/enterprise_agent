@@ -265,17 +265,23 @@ class BusinessApplicationService:
             agent_publication_id=agent_publication_id,
             raw_tools=payload.get("mcp_tools") or [],
         )
+        document_profile_errors = self._document_processing_compatibility_errors(
+            document_processing_profile_code=document_processing_profile_code,
+            task_file_features=task_file_features,
+            session_policy=session_policy,
+            agent=selected_agent,
+        )
         file_tool_errors = self.mcp_tool_composition_service.file_feature_errors(
             agent_publication_id=agent_publication_id,
             task_file_features=task_file_features,
             selected_tools=mcp_tools,
         )
-        if file_tool_errors:
+        if document_profile_errors or file_tool_errors:
             raise NonRetryableExecutionError(
-                "Task file features require frozen File MCP Tools",
-                safe_message="任务文件功能缺少已发布的 File MCP 工具",
+                "Document processing or task file dependencies are incomplete",
+                safe_message="文档处理或任务文件依赖不完整",
                 error_code="validation_failed",
-                field_errors=file_tool_errors,
+                field_errors=[*document_profile_errors, *file_tool_errors],
             )
         compatibility_errors = self._file_policy_compatibility_errors(
             file_format_policy_version=file_format_policy_version,
@@ -1020,17 +1026,78 @@ class BusinessApplicationService:
             )
         )
         try:
-            validate_document_processing_profile_code(
+            document_processing_profile_code = validate_document_processing_profile_code(
                 revision.get("document_processing_profile_code")
             )
         except NonRetryableExecutionError as exc:
             errors.extend(exc.field_errors)
+            document_processing_profile_code = DocumentProcessingProfileCode.NONE.value
+        errors.extend(
+            self._document_processing_compatibility_errors(
+                document_processing_profile_code=document_processing_profile_code,
+                task_file_features=validate_task_file_features(
+                    revision.get("task_file_features")
+                ),
+                session_policy=validate_session_policy(
+                    dict(revision.get("session_policy") or {})
+                ),
+                agent=agent,
+            )
+        )
         if (
             validate_file_format_policy_version(revision.get("file_format_policy_version"))
             == "text-v2"
         ):
             errors.extend(self.mcp_tool_composition_service.text_v2_cutover_errors())
         return errors, components
+
+    @staticmethod
+    def _document_processing_compatibility_errors(
+        *,
+        document_processing_profile_code: str,
+        task_file_features: dict[str, bool],
+        session_policy: dict[str, Any],
+        agent: ComponentReference | None,
+    ) -> list[dict[str, str]]:
+        if document_processing_profile_code != DocumentProcessingProfileCode.DOCLING_TEXT_V1.value:
+            return []
+        errors: list[dict[str, str]] = []
+        if not task_file_features.get("workspace_enabled"):
+            errors.append(
+                {
+                    "field": "task_file_features.workspace_enabled",
+                    "message": "Docling 文字提取必须启用任务工作区",
+                }
+            )
+        if not task_file_features.get("file_mcp_enabled"):
+            errors.append(
+                {
+                    "field": "task_file_features.file_mcp_enabled",
+                    "message": "Docling 文字提取必须启用 File MCP",
+                }
+            )
+        if not session_policy.get("attachments_enabled"):
+            errors.append(
+                {
+                    "field": "session_policy.attachments_enabled",
+                    "message": "Docling 文字提取必须允许消息附件",
+                }
+            )
+        if not session_policy.get("continuous_conversation_enabled"):
+            errors.append(
+                {
+                    "field": "session_policy.continuous_conversation_enabled",
+                    "message": "Docling 文字提取必须启用连续会话",
+                }
+            )
+        if agent is None or "1.3" not in agent.runtime_protocol_versions:
+            errors.append(
+                {
+                    "field": "agent_publication_id",
+                    "message": "所选 Agent 发布版本不支持 Docling 文件上下文 Runtime 能力",
+                }
+            )
+        return errors
 
     @staticmethod
     def _file_policy_compatibility_errors(

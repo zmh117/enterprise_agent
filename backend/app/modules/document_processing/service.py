@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, BinaryIO, Protocol
 
+from app.modules.audit.application.audit_service import AuditService
 from app.modules.document_processing.domain import (
     REPRESENTATION_MEDIA_TYPES,
     ProcessingRunStatus,
@@ -118,6 +119,7 @@ class GovernedDocumentProcessingService:
         file_repository: FileWorkspaceRepository,
         storage: DocumentObjectStoragePort,
         source_grant_signer: SourceStreamGrantSigner,
+        audit_service: AuditService,
         *,
         processor_version: str,
         processor_build_digest: str,
@@ -126,6 +128,7 @@ class GovernedDocumentProcessingService:
         self.file_repository = file_repository
         self.storage = storage
         self.source_grant_signer = source_grant_signer
+        self.audit_service = audit_service
         self.processor_version = processor_version
         self.processor_build_digest = processor_build_digest
 
@@ -163,7 +166,16 @@ class GovernedDocumentProcessingService:
                     aggregate_id=str(run["id"]),
                     payload=payload,
                 )
-        return self.repository.get_run(str(run["id"]))
+        result = self.repository.get_run(str(run["id"]))
+        self._audit_run(
+            "file.document.processing.requested",
+            run=result,
+            status="CREATED" if created else "REPLAYED",
+            summary="Governed document processing request recorded",
+            actor_id=actor_id,
+            extra={"created": created},
+        )
+        return result
 
     def claim(
         self,
@@ -189,6 +201,14 @@ class GovernedDocumentProcessingService:
         if status is ProcessingRunStatus.RETRY_WAIT:
             self._deny("document_processing_retry_not_due", "文档处理重试尚未到期")
         source = self.repository.get_source_version_for_run(str(claimed["id"]))
+        if started:
+            self._audit_run(
+                "file.document.processing.transition",
+                run=claimed,
+                status="RUNNING",
+                summary="Document processing run claimed",
+                actor_id=service_principal_id,
+            )
         return {
             "run_id": str(claimed["id"]),
             "tenant_id": str(claimed["tenant_id"]),
@@ -206,7 +226,15 @@ class GovernedDocumentProcessingService:
         }
 
     def mark_submitted(self, *, run_id: str, external_task_id: str) -> dict[str, Any]:
-        return self.repository.mark_submitted(run_id, external_task_id=external_task_id)
+        run = self.repository.mark_submitted(run_id, external_task_id=external_task_id)
+        self._audit_run(
+            "file.document.processing.transition",
+            run=run,
+            status="SUBMITTED",
+            summary="Document processing run submitted to governed processor",
+            actor_id="file-processing-worker",
+        )
+        return run
 
     def schedule_retry(
         self,
@@ -221,12 +249,21 @@ class GovernedDocumentProcessingService:
         if not error_code or not error_code.replace("_", "").isalnum():
             self._deny("document_processing_error_code_invalid", "文档处理错误分类无效")
         next_retry = (now or datetime.now(UTC)) + timedelta(seconds=delay_seconds)
-        return self.repository.schedule_retry(
+        run = self.repository.schedule_retry(
             run_id,
             error_code=error_code[:128],
             next_retry_at=next_retry.isoformat(),
             clear_external_task=error_code == "docling_task_not_found",
         )
+        self._audit_run(
+            "file.document.processing.retry_scheduled",
+            run=run,
+            status="RETRY_WAIT",
+            summary="Document processing retry scheduled",
+            actor_id="file-processing-worker",
+            extra={"delay_seconds": delay_seconds},
+        )
+        return run
 
     def prepare_source_stream(
         self,
@@ -238,14 +275,30 @@ class GovernedDocumentProcessingService:
     ) -> dict[str, str]:
         run = self.repository.get_run(run_id)
         if str(run["tenant_id"]) != tenant_id:
+            self._audit_run(
+                "file.document.source_stream.denied",
+                run=run,
+                status="DENIED",
+                summary="Cross-tenant document source stream denied",
+                actor_id=service_principal_id,
+                extra={"reason_code": "document_source_tenant_mismatch"},
+            )
             raise PermissionDenied(
                 "Cross-tenant document source stream denied",
                 safe_message="不能跨租户读取文档原件",
             )
         if str(run["status"]) not in {"RUNNING", "SUBMITTED"}:
+            self._audit_run(
+                "file.document.source_stream.denied",
+                run=run,
+                status="DENIED",
+                summary="Document source stream denied for processing state",
+                actor_id=service_principal_id,
+                extra={"reason_code": "document_processing_state_conflict"},
+            )
             self._deny("document_processing_state_conflict", "当前处理任务不能读取原件")
         issued_at = now or datetime.now(UTC)
-        return {
+        result = {
             "run_id": run_id,
             "source_version_id": str(run["source_version_id"]),
             "grant": self.source_grant_signer.issue(
@@ -255,6 +308,18 @@ class GovernedDocumentProcessingService:
             ),
             "expires_at": (issued_at + SOURCE_GRANT_TTL).isoformat(),
         }
+        self._audit_run(
+            "file.document.source_grant.issued",
+            run=run,
+            status="SUCCEEDED",
+            summary="Short-lived document source stream grant issued",
+            actor_id=service_principal_id,
+            extra={
+                "purpose": "document-processing-source-read",
+                "expires_at": result["expires_at"],
+            },
+        )
+        return result
 
     def open_source_stream(
         self,
@@ -263,11 +328,24 @@ class GovernedDocumentProcessingService:
         service_principal_id: str,
         now: datetime | None = None,
     ) -> BinaryIO:
-        payload = self.source_grant_signer.verify(
-            grant,
-            service_principal_id=service_principal_id,
-            now=now or datetime.now(UTC),
-        )
+        try:
+            payload = self.source_grant_signer.verify(
+                grant,
+                service_principal_id=service_principal_id,
+                now=now or datetime.now(UTC),
+            )
+        except PermissionDenied:
+            self.audit_service.record(
+                "file.document.source_stream.denied",
+                status="DENIED",
+                summary="Document source stream grant rejected",
+                actor_id=service_principal_id,
+                payload={
+                    "purpose": "document-processing-source-read",
+                    "reason_code": "document_source_grant_invalid",
+                },
+            )
+            raise
         run = self.repository.get_run(str(payload["run_id"]))
         expected = {
             "tenant_id": str(run["tenant_id"]),
@@ -275,14 +353,39 @@ class GovernedDocumentProcessingService:
             "source_version_id": str(run["source_version_id"]),
         }
         if any(str(payload.get(key) or "") != value for key, value in expected.items()):
+            self._audit_run(
+                "file.document.source_stream.denied",
+                run=run,
+                status="DENIED",
+                summary="Document source stream identity mismatch",
+                actor_id=service_principal_id,
+                extra={"reason_code": "document_source_identity_mismatch"},
+            )
             raise PermissionDenied(
                 "Document source stream identity mismatch",
                 safe_message="文档原件读取授权不匹配",
             )
         source = self.repository.get_source_version_for_run(str(run["id"]))
         if str(source["status"]) != "AVAILABLE":
+            self._audit_run(
+                "file.document.source_stream.denied",
+                run=run,
+                status="DENIED",
+                summary="Unavailable document source stream denied",
+                actor_id=service_principal_id,
+                extra={"reason_code": "document_source_unavailable"},
+            )
             self._deny("document_source_unavailable", "待处理文件内容不可用")
-        return self.storage.open_stream(internal_object_key=str(source["object_key"]))
+        stream = self.storage.open_stream(internal_object_key=str(source["object_key"]))
+        self._audit_run(
+            "file.document.source_stream.opened",
+            run=run,
+            status="SUCCEEDED",
+            summary="Document source stream opened for governed processing",
+            actor_id=service_principal_id,
+            extra={"purpose": "document-processing-source-read"},
+        )
+        return stream
 
     def prepare_representation_transfer(
         self,
@@ -390,11 +493,21 @@ class GovernedDocumentProcessingService:
                 size_bytes=size,
                 internal_object_key=str(transfer["staging_object_key"]),
             )
-        return self.repository.mark_transfer_staged(
+        staged_transfer = self.repository.mark_transfer_staged(
             transfer_id,
             received_size_bytes=stored.size_bytes,
             received_sha256=stored.content_sha256,
         )
+        run = self.repository.get_run(str(staged_transfer["processing_run_id"]))
+        self._audit_run(
+            "file.document.representation.staged",
+            run=run,
+            status="STAGED",
+            summary="Governed document representation staged",
+            actor_id="file-processing-worker",
+            extra={"kind": kind.value, "output_size_bytes": stored.size_bytes},
+        )
+        return staged_transfer
 
     def finalize(
         self,
@@ -434,6 +547,20 @@ class GovernedDocumentProcessingService:
                 processing_time_ms=processing_time_ms,
             )
             self._record_completion(self.repository.get_run(run_id))
+        completed = self.repository.get_run(run_id)
+        self._audit_run(
+            "file.document.processing.completed",
+            run=completed,
+            status=str(completed["status"]),
+            summary="Governed document processing completed",
+            actor_id="file-processing-worker",
+            extra={
+                "representation_sizes": {
+                    str(item["kind"]): int(item["size_bytes"])
+                    for item in representations
+                }
+            },
+        )
         return representations
 
     def complete_without_text(
@@ -452,6 +579,13 @@ class GovernedDocumentProcessingService:
                 processing_time_ms=processing_time_ms,
             )
             self._record_completion(run)
+        self._audit_run(
+            "file.document.processing.completed",
+            run=run,
+            status="NO_TEXT",
+            summary="Governed document processing completed without readable text",
+            actor_id="file-processing-worker",
+        )
         return run
 
     def fail(
@@ -471,6 +605,13 @@ class GovernedDocumentProcessingService:
                 processing_time_ms=processing_time_ms,
             )
             self._record_completion(run)
+        self._audit_run(
+            "file.document.processing.completed",
+            run=run,
+            status="FAILED",
+            summary="Governed document processing failed",
+            actor_id="file-processing-worker",
+        )
         return run
 
     def cleanup_expired_transfers(
@@ -510,6 +651,48 @@ class GovernedDocumentProcessingService:
             event_type="file.processing.completed",
             aggregate_type="file_processing_run",
             aggregate_id=str(run["id"]),
+            payload=payload,
+        )
+
+    def _audit_run(
+        self,
+        event_type: str,
+        *,
+        run: dict[str, Any],
+        status: str,
+        summary: str,
+        actor_id: str,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        context = self.repository.processing_context(str(run["id"]))
+        payload: dict[str, Any] = {
+            "run_id": str(run["id"]),
+            "source_version_id": str(run["source_version_id"]),
+            "tenant_id": str(run["tenant_id"]),
+            "profile_code": str(run["profile_code"]),
+            "profile_hash": str(run["profile_hash"]),
+            "processor_version": str(run["processor_version"]),
+            "processor_build_digest": str(run["processor_build_digest"]),
+            "source_size_bytes": int(run["source_size_bytes"]),
+            "processing_status": str(run["status"]),
+            "attempt": int(run["attempt"]),
+            "error_code": str(run.get("error_code") or "")[:128],
+            "page_count": run.get("page_count"),
+            "processing_time_ms": run.get("processing_time_ms"),
+            "business_application_id": context["business_application_id"],
+            "business_application_code": context["business_application_code"],
+            "business_application_publication_id": context[
+                "business_application_publication_id"
+            ],
+        }
+        if extra:
+            payload.update(extra)
+        self.audit_service.record(
+            event_type,
+            status=status,
+            summary=summary,
+            job_id=str(context["job_id"] or "") or None,
+            actor_id=actor_id,
             payload=payload,
         )
 

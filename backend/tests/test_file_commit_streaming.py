@@ -10,8 +10,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
+from PIL import Image
 from pypdf import PdfWriter
 
+from app.modules.audit.application.audit_service import AuditService
 from app.modules.file_workspace.authorization import FileAuthorizationContext
 from app.modules.document_processing import (
     DocumentProcessingRepository,
@@ -39,7 +41,7 @@ from app.modules.file_workspace.streaming_service import (
 )
 from app.modules.file_workspace.delivery_service import FileVersionDeliveryService
 from app.modules.file_workspace.workspace_service import TaskWorkspaceService
-from app.modules.job.infrastructure.repositories import AgentRepository
+from app.modules.job.infrastructure.repositories import AgentRepository, AuditRepository
 from app.shared.config import DeliverySettings
 from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
 from backend.tests.test_file_workspace_repository import EXPIRES_AT, TIMESTAMP, _database
@@ -76,7 +78,14 @@ class _Storage:
         internal_object_key: str | None = None,
     ) -> InternalStoredObject:
         assert kind in {"staging", "attachment"}
-        assert content_type in {"text/plain", "text/markdown", "application/pdf"}
+        assert content_type in {
+            "text/plain",
+            "text/markdown",
+            "application/pdf",
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+        }
         if self.fail_put:
             raise OSError("simulated object write failure")
         key = internal_object_key or self.new_object_key(kind=kind)
@@ -581,8 +590,21 @@ def test_manifest_v4_materializes_frozen_markdown_not_original_document() -> Non
         arguments={"file_id": "file-document", "version_id": "version-document-1"},
     )
     control = prepared[INTERNAL_TRANSFER_META][FILE_TRANSFER_META_KEY]
+    assert control["relative_path"].startswith("inputs/readonly/")
     assert control["relative_path"].endswith(".md")
     assert control["expected_sha256"] == representation_sha256
+    assert prepared["allowed_actions"] == [FileAction.MATERIALIZE.value]
+    same_name = service.prepare_materialization(
+        context=context,
+        arguments={
+            "file_id": "file-document",
+            "version_id": "version-document-1",
+            "preferred_name": "input.md",
+        },
+    )
+    same_name_control = same_name[INTERNAL_TRANSFER_META][FILE_TRANSFER_META_KEY]
+    assert same_name_control["relative_path"] != control["relative_path"]
+    assert same_name_control["relative_path"].startswith("inputs/readonly/input-")
 
     async def download() -> bytes:
         stream, _media_type = await service.download_transfer(
@@ -592,6 +614,44 @@ def test_manifest_v4_materializes_frozen_markdown_not_original_document() -> Non
 
     assert asyncio.run(download()) == markdown
     assert original != markdown
+
+    tampered = service.prepare_materialization(
+        context=context,
+        arguments={"file_id": "file-document", "version_id": "version-document-1"},
+    )
+    repository.database.execute(
+        """
+        update file_representation
+           set size_bytes = size_bytes + 1, content_sha256 = ?
+         where id = 'representation-document-md'
+        """,
+        ("f" * 64,),
+    )
+    with pytest.raises(NonRetryableExecutionError) as integrity_error:
+        asyncio.run(
+            service.download_transfer(
+                transfer_id=str(
+                    tampered[INTERNAL_TRANSFER_META][FILE_TRANSFER_META_KEY]["transfer_id"]
+                ),
+                token="file-principal-token",
+            )
+        )
+    assert integrity_error.value.error_code == "file_transfer_integrity_mismatch"
+
+    repository.database.execute(
+        """
+        update file_representation
+           set status = 'CONTENT_UNAVAILABLE', content_deleted_at = ?
+         where id = 'representation-document-md'
+        """,
+        (TIMESTAMP,),
+    )
+    with pytest.raises(NonRetryableExecutionError) as expired:
+        service.prepare_materialization(
+            context=context,
+            arguments={"file_id": "file-document", "version_id": "version-document-1"},
+        )
+    assert expired.value.error_code == "file_readable_content_not_ready"
 
 
 def test_stale_base_creates_conflict_without_advancing_current() -> None:
@@ -889,6 +949,7 @@ def test_file_worker_document_import_sniffs_source_and_queues_processing() -> No
         repository,
         storage,
         SourceStreamGrantSigner(b"document-processing-test-signing-key-32"),
+        AuditService(AuditRepository(repository.database)),
         processor_version="1.30.0",
         processor_build_digest="sha256:" + "a" * 64,
     )
@@ -986,6 +1047,91 @@ def test_file_worker_document_import_sniffs_source_and_queues_processing() -> No
             )
         )
     assert malformed.value.error_code == "document_source_signature_mismatch"
+
+
+def test_file_worker_canonicalizes_misnamed_images_and_disambiguates_names() -> None:
+    repository, existing_service, context, storage = _fixture(file_format_policy_version="text-v2")
+    repository.database.execute(
+        """
+        update business_application_publication
+           set document_processing_profile_code = 'docling-text-v1',
+               document_processing_profile_version = '1',
+               document_processing_profile_hash = ?
+         where id = 'app-file-p1'
+        """,
+        ("337dc23bd405e7225e8ffca06b72852ed19121723bc8b1abeafdc05cf5ceac42",),
+    )
+    document_processing = GovernedDocumentProcessingService(
+        DocumentProcessingRepository(repository.database),
+        repository,
+        storage,
+        SourceStreamGrantSigner(b"document-processing-test-signing-key-32"),
+        AuditService(AuditRepository(repository.database)),
+        processor_version="1.30.0",
+        processor_build_digest="sha256:" + "a" * 64,
+    )
+    service = GovernedFileStreamingService(
+        repository,
+        existing_service.authorization,
+        storage,
+        _Principal(context),
+        now=lambda: NOW,
+        document_processing=document_processing,
+    )
+    repository.database.execute(
+        """
+        insert into agent_message
+          (id, session_id, job_id, role, content, created_at, sequence_no)
+        values ('message-images', 'session-file', 'job-file', 'user', '', ?, 2)
+        """,
+        (TIMESTAMP,),
+    )
+    image = io.BytesIO()
+    Image.new("RGB", (3, 2), color="white").save(image, format="JPEG")
+    body = image.getvalue()
+    imported: list[dict[str, Any]] = []
+    for ordinal, attachment_id in enumerate(
+        ("attachment-misnamed-image-1", "attachment-misnamed-image-2")
+    ):
+        repository.database.execute(
+            """
+            insert into message_attachment
+              (id, message_id, job_id, ordinal, media_type, file_name, status,
+               retention_days, expires_at, created_at, updated_at)
+            values (?, 'message-images', 'job-file', ?,
+                    'image', 'channel-image.png', 'DOWNLOADING', 360, ?, ?, ?)
+            """,
+            (
+                attachment_id,
+                ordinal,
+                "2027-08-09T00:00:00+00:00",
+                TIMESTAMP,
+                TIMESTAMP,
+            ),
+        )
+        imported.append(
+            asyncio.run(
+                service.import_attachment(
+                    attachment_id=attachment_id,
+                    service_claims={"sub": "file-worker"},
+                    media_type="image/jpeg",
+                    body=_body(body),
+                )
+            )
+        )
+
+    versions = [repository.get_version(str(item["version_id"])) for item in imported]
+    files = [repository.get_file(str(item["file_id"])) for item in imported]
+    assert [item["format_code"] for item in versions] == ["JPEG", "JPEG"]
+    assert [item["media_type"] for item in versions] == ["image/jpeg", "image/jpeg"]
+    assert files[0]["display_name"] == "channel-image.jpg"
+    assert files[1]["display_name"].startswith("channel-image-")
+    assert files[1]["display_name"].endswith(".jpg")
+    assert files[1]["display_name"] != files[0]["display_name"]
+    assert repository.database.execute_one(
+        "select count(*) as value from file_processing_run where source_file_id in (?, ?)",
+        (imported[0]["file_id"], imported[1]["file_id"]),
+    ) == {"value": 2}
 
 
 def test_unreadable_document_rejects_materialization_but_allows_original_delivery() -> None:

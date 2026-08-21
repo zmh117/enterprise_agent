@@ -399,6 +399,7 @@ describe("Business Application workbench", () => {
               status: "enabled",
               config_hash: "agent-hash",
               runtime_kind: "python-v1",
+              runtime_protocol_versions: ["1.2"],
               direction: "",
               component_type: "agent_publication",
             },
@@ -426,6 +427,29 @@ describe("Business Application workbench", () => {
               runtime_kind: "",
               direction: "ingress",
               component_type: "dingtalk_enterprise_stream",
+            },
+          ],
+          document_processing_profiles: [
+            {
+              code: "NONE",
+              version: "",
+              hash: "",
+              label: "关闭文档处理",
+              source_format_codes: [],
+              output_kinds: [],
+              document_processing_status: "DISABLED",
+              document_processing_reason_code: "profile_disabled",
+            },
+            {
+              code: "docling-text-v1",
+              version: "1",
+              hash: "a".repeat(64),
+              label: "Docling 文字提取 v1",
+              source_format_codes: ["PDF", "DOCX", "PPTX", "XLSX"],
+              output_kinds: ["MARKDOWN", "DOCLING_JSON"],
+              document_processing_status: "CONFIGURED_UNAVAILABLE",
+              document_processing_reason_code:
+                "processing_dependencies_unavailable",
             },
           ],
           mcp_tools_by_agent_publication: {
@@ -539,17 +563,23 @@ describe("Business Application workbench", () => {
     expect(continuousConversation).toBeChecked()
     const attachments = screen.getByLabelText("允许消息附件")
     expect(attachments).not.toBeChecked()
-    fireEvent.click(screen.getByRole("checkbox", { name: "任务工作区" }))
+    fireEvent.change(screen.getByLabelText("文档解析/OCR Profile"), {
+      target: { value: "docling-text-v1" },
+    })
+    expect(screen.getByRole("checkbox", { name: "任务工作区" })).toBeChecked()
+    expect(screen.getByRole("checkbox", { name: "File MCP" })).toBeChecked()
     expect(attachments).toBeChecked()
     expect(attachments).toHaveAttribute("aria-disabled", "true")
     expect(continuousConversation).toBeChecked()
     expect(continuousConversation).toHaveAttribute("aria-disabled", "true")
+    expect(
+      screen.getByText(/不能发布 Docling 文件上下文/)
+    ).toBeInTheDocument()
     const mcpTool = await screen.findByLabelText(
       "选择 MCP Tool search_merge_requests"
     )
     fireEvent.click(mcpTool)
     expect(mcpTool).toBeChecked()
-    fireEvent.click(screen.getByRole("checkbox", { name: "File MCP" }))
     const requiredFileTool = screen.getByLabelText(
       "选择 MCP Tool file_prepare_materialization"
     )
@@ -563,6 +593,11 @@ describe("Business Application workbench", () => {
           conversation_mode: "channel",
           continuous_conversation_enabled: true,
           attachments_enabled: true,
+        },
+        document_processing_profile_code: "docling-text-v1",
+        task_file_features: {
+          workspace_enabled: true,
+          file_mcp_enabled: true,
         },
         mcp_tools: expect.arrayContaining([
           "search_merge_requests",

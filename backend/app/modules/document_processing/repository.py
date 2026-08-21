@@ -137,6 +137,36 @@ class DocumentProcessingRepository:
             )
         return row
 
+    def processing_context(self, run_id: str) -> dict[str, Any]:
+        """Return safe attribution only; never project names, object keys or content."""
+        run = self.get_run(run_id)
+        attachment = self.database.execute_one(
+            """
+            select a.job_id, j.business_application_id,
+                   j.business_application_code,
+                   j.business_application_publication_id
+              from message_attachment a
+              join agent_job j on j.id = a.job_id
+             where a.file_processing_run_id = ?
+             order by a.updated_at desc, a.id desc
+             limit 1
+            """,
+            (run_id,),
+        )
+        return {
+            "job_id": str((attachment or {}).get("job_id") or ""),
+            "business_application_id": str(
+                (attachment or {}).get("business_application_id") or ""
+            ),
+            "business_application_code": str(
+                (attachment or {}).get("business_application_code") or ""
+            ),
+            "business_application_publication_id": str(
+                (attachment or {}).get("business_application_publication_id") or ""
+            ),
+            "tenant_id": str(run["tenant_id"]),
+        }
+
     def claim_run(self, run_id: str) -> tuple[dict[str, Any], bool]:
         """Claim one message-addressed run without following arbitrary queue input."""
         timestamp = _now()

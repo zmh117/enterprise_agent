@@ -358,6 +358,73 @@ export const conversationDetailSchema = z
   })
   .passthrough()
 
+const documentProcessingRunSchema = z.object({
+  run_id: z.string(),
+  source_version_id: z.string(),
+  tenant_id: z.string(),
+  job_id: z.string(),
+  application_id: z.string(),
+  application_code: z.string(),
+  publication_id: z.string(),
+  profile_code: z.string(),
+  profile_hash: z.string(),
+  status: z.string(),
+  attempt: z.number().int().nonnegative(),
+  error_code: z.string(),
+  page_count: z.number().int().nonnegative().nullable(),
+  processing_time_ms: z.number().int().nonnegative().nullable(),
+  updated_at: z.string(),
+})
+
+const documentProcessingOperationsSchema = z.object({
+  groups: z
+    .array(
+      z.object({
+        tenant_id: z.string(),
+        application_id: z.string(),
+        application_code: z.string(),
+        publication_id: z.string(),
+        profile_code: z.string(),
+        status: z.string(),
+        count: z.number().int().nonnegative(),
+        total_attempts: z.number().int().nonnegative(),
+        source_size_bytes: z.number().int().nonnegative(),
+        output_size_bytes: z.number().int().nonnegative(),
+        earliest_created_at: z.string(),
+        latest_updated_at: z.string(),
+      })
+    )
+    .default([]),
+  recent_failures: z.array(documentProcessingRunSchema).default([]),
+  traces: z
+    .array(
+      documentProcessingRunSchema.extend({
+        processor_code: z.string(),
+        processor_version: z.string(),
+        processor_build_digest: z.string(),
+        source_size_bytes: z.number().int().nonnegative(),
+        created_at: z.string(),
+        representations: z
+          .array(
+            z.object({
+              representation_id: z.string(),
+              source_version_id: z.string(),
+              kind: z.string(),
+              media_type: z.string(),
+              status: z.string(),
+              size_bytes: z.number().int().nonnegative(),
+              content_sha256: z.string(),
+              profile_hash: z.string(),
+              created_at: z.string(),
+              content_deleted_at: z.string(),
+            })
+          )
+          .default([]),
+      })
+    )
+    .default([]),
+})
+
 export const fileOperationsSchema = z.object({
   file_service: z.object({
     configured: z.boolean(),
@@ -408,6 +475,11 @@ export const fileOperationsSchema = z.object({
         unacked: z.number().int().nonnegative().nullable(),
         consumers: z.number().int().nonnegative().nullable(),
       }),
+    }),
+    operations: documentProcessingOperationsSchema.default({
+      groups: [],
+      recent_failures: [],
+      traces: [],
     }),
   }),
   backlog: z.object({

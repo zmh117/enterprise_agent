@@ -203,6 +203,10 @@ def test_python_text_v2_sandbox_allows_markdown_write_and_denies_log_mutation(
     )
     try:
         (sandbox.path / "inputs/service.log").write_text("line\n", encoding="utf-8")
+        (sandbox.path / "inputs/readonly").mkdir()
+        (sandbox.path / "inputs/readonly/document.md").write_text(
+            "# extracted\n", encoding="utf-8"
+        )
         assert (
             sandbox.authorize_tool("Read", {"file_path": "inputs/service.log"})["file_path"]
             == "inputs/service.log"
@@ -213,6 +217,22 @@ def test_python_text_v2_sandbox_allows_markdown_write_and_denies_log_mutation(
             )["file_path"]
             == "outputs/report.md"
         )
+        assert (
+            sandbox.authorize_tool(
+                "Read", {"file_path": "inputs/readonly/document.md"}
+            )["file_path"]
+            == "inputs/readonly/document.md"
+        )
+        with pytest.raises(JobSandboxError) as representation_readonly:
+            sandbox.authorize_tool(
+                "Edit",
+                {
+                    "file_path": "inputs/readonly/document.md",
+                    "old_string": "extracted",
+                    "new_string": "changed",
+                },
+            )
+        assert representation_readonly.value.code == "sandbox_file_read_only"
         with pytest.raises(JobSandboxError) as readonly:
             sandbox.authorize_tool(
                 "Edit",

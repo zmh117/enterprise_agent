@@ -136,6 +136,11 @@ File Service MUST 为每个run和representation kind创建绑定身份的不透�
 - **WHEN** 文件名、Markdown、JSON、原始错误或文件字节准备写入日志或审计
 - **THEN** 系统阻止该字段并只保留run ID、版本、Profile、大小、耗时、状态和白名单错误码
 
+#### Scenario: 内部原件导入返回安全拒绝
+- **WHEN** File Service拒绝File Worker提交的原件流
+- **THEN** 响应只包含有界安全消息和稳定白名单`error_code`，File Worker只持久化机器码
+- **AND** File Worker不复制原始响应正文、内部异常、文件名或文件内容到失败事实和审计
+
 ### Requirement: Representation生命周期不得扩大原件访问
 Representation MUST 继承source Version的tenant、owner和访问边界，不得比source内容更晚可用。任务工作区到期且不存在非终态Job或processing run依赖时，派生内容 SHALL 进入可重试清理；清理后 MAY 保留run、hash、processor provenance和删除审计，但 MUST NOT恢复、物化或返回已删除内容。
 

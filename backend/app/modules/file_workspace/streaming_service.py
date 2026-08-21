@@ -197,7 +197,8 @@ class GovernedFileStreamingService:
             extension = definition.extension
             allowed_actions = self._item_actions(item)
         stem = Path(requested).stem[:120] or "input"
-        relative_path = f"inputs/{stem}-{handle[-8:]}{extension}"
+        materialization_directory = "inputs/readonly" if is_representation else "inputs"
+        relative_path = f"{materialization_directory}/{stem}-{handle[-8:]}{extension}"
         expires_at = _iso(self.now() + TRANSFER_TTL)
         self.repository.create_materialization_transfer(
             transfer_id=transfer_id,
@@ -750,6 +751,9 @@ class GovernedFileStreamingService:
                         display_name=str(row["file_name"]),
                         declared_media_type=media_type,
                         declared_size_bytes=size_bytes,
+                        allow_image_extension_canonicalization=(
+                            str(row.get("media_type") or "").lower() == "image"
+                        ),
                     )
             existing_hash = str(row.get("sha256") or "")
             if existing_hash and str(row.get("object_key") or ""):
@@ -1021,9 +1025,13 @@ class GovernedFileStreamingService:
                 creates_logical_file=True,
                 now=_iso(self.now()),
             )
+            requested_name = self._canonical_document_attachment_name(
+                requested=str(attachment["file_name"]),
+                source=source,
+            )
             display_name = self._available_attachment_name(
                 workspace_id=workspace_id,
-                requested=str(attachment["file_name"]),
+                requested=requested_name,
                 attachment_id=str(attachment["id"]),
             )
             file_id = _opaque("managed_file")
@@ -1173,6 +1181,16 @@ class GovernedFileStreamingService:
         path = Path(requested)
         stem = path.stem[:220] or "attachment"
         return f"{stem}-{attachment_id[-8:]}{path.suffix.lower()}"
+
+    @staticmethod
+    def _canonical_document_attachment_name(
+        *, requested: str, source: ValidatedDocumentSource
+    ) -> str:
+        path = Path(requested)
+        if path.suffix.lower() == source.canonical_extension:
+            return requested
+        stem = path.stem[:220] or "attachment"
+        return f"{stem}{source.canonical_extension}"
 
     def _attachment_expiry(self, attachment: dict[str, Any]) -> str:
         existing = str(attachment.get("expires_at") or "")

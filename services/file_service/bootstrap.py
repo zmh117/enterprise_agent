@@ -188,6 +188,7 @@ def create_default_app() -> Any:
                 repository,
                 storage,
                 SourceStreamGrantSigner(signing_key),
+                runtime.audit_service,
                 processor_version=settings.file_service.document_processor_version,
                 processor_build_digest=(settings.file_service.document_processor_build_digest),
             )

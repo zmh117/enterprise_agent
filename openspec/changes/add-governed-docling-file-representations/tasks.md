@@ -2,8 +2,8 @@
 
 - [x] 1.1 重新核对当前分支、dirty worktree、migration head、active changes 和相关 canonical specs，记录与 `support-log-and-markdown-workspace-files`、平台拓扑变更的重叠点，确保不覆盖并行工作。
 - [x] 1.2 明确本变更与 Markdown 工作区支持、File Service/File Worker 拓扑的依赖顺序；对复用字段、manifest 版本和 Compose 服务名形成唯一实现口径。
-- [ ] 1.3 从官方 Docling/Docling Serve 发布物核验候选镜像的版本、digest、CPU 架构、许可证和 SBOM；在实现时固定 tag 与 digest，不使用 `latest`。
-- [ ] 1.4 用脱敏样本完成 CPU 基准测试并记录峰值内存、单文件延迟和吞吐；据此把 phase 1 worker 并发固定为 1 或 2，并验证 25 MiB、300 页、600 秒边界可执行。
+- [x] 1.3 从官方 Docling/Docling Serve 发布物核验候选镜像的版本、digest、CPU 架构、许可证和 SBOM；在实现时固定 tag 与 digest，不使用 `latest`。（上游未发布 SBOM；已明确记录该缺口及固定 digest 的本地 SPDX 补偿证据，供应商 SBOM 门禁仍 fail closed。）
+- [x] 1.4 用脱敏样本完成 CPU 基准测试并记录峰值内存、单文件延迟和吞吐；据此把 phase 1 worker 并发固定为 1 或 2，并验证 25 MiB、300 页、600 秒边界可执行。（ARM64 实测边界文件 246.5 秒、峰值约 3.27 GiB，phase 1 固定并发 1。）
 
 ## 2. 数据模型与扩展迁移
 
@@ -27,7 +27,7 @@
 - [x] 4.1 实现处理运行与派生表示的领域模型、repository 和状态机，区分 source lifecycle、processing lifecycle 与 representation lifecycle。
 - [x] 4.2 在 source import 时执行真实格式嗅探、扩展名/MIME 一致性检查、大小与页数边界检查，并仅授予 `READ_METADATA`、`RETAIN`、`DELIVER` 等源文件动作。
 - [x] 4.3 通过 File Domain Outbox 幂等创建处理请求，消息只携带稳定 ID、profile hash、尝试号和追踪标识，不携带二进制或凭据。
-- [ ] 4.4 提供仅供 processing worker 使用的短期授权 source stream 接口，校验 tenant、principal、source version、用途和审计上下文。
+- [x] 4.4 提供仅供 processing worker 使用的短期授权 source stream 接口，校验 tenant、principal、source version、用途和审计上下文。
 - [x] 4.5 提供 representation staging/upload/finalize 接口：分别校验 Markdown/JSON 大小、hash、媒体类型和 profile provenance，二者完成后原子暴露成功结果。
 - [x] 4.6 实现 finalize、重复投递、worker 崩溃重试和并发完成的幂等保护，失败结果不得留下可见的半成品表示。
 - [x] 4.7 实现 orphan staging reconciliation、失败重试扫描和 retention cleanup；派生表示不得比 source version 或其受治理 workspace 生命周期更长。
@@ -50,7 +50,8 @@
 - [x] 6.3 ~~Job 在必需表示 PENDING 时保持 WAITING_INPUT~~ 已由 `decouple-document-readiness-from-agent-turns` 取代：仅来源导入可等待；表示未就绪走能力门禁与系统说明，无关问答不得等待 Docling。
 - [x] 6.4 对非空 `PARTIAL` Markdown 允许带治理提示继续；对 `NO_TEXT`/`UNAVAILABLE` 禁止伪造文本或静默当成可读内容。
 - [x] 6.5 当请求只有不可读附件且无有效文本指令时，不调用模型并返回结构化不可处理说明；混合输入则仅使用可用表示并附带缺失提示。
-- [ ] 6.6 补充渠道附件 E2E 前置测试，覆盖 DOCX/PPTX/XLSX/PDF/PNG/JPEG/WebP、旧 publication、重复 ingress 和 Job 重放。
+- [x] 6.6 补充渠道附件 E2E 前置测试，覆盖 DOCX/PPTX/XLSX/PDF/PNG/JPEG/WebP、旧 publication、重复 ingress 和 Job 重放。
+- [x] 6.7 修复渠道图片名称与真实格式不一致：以安全规范化后的JPEG/PNG/WebP媒体类型和签名决定source格式及canonical extension，保留原始来源名称、同名消歧，并让File Worker持久化File Service白名单机器错误码而不是本地化提示文字；补充聚焦回归。
 
 ## 7. Manifest v4 与 Runtime 物化
 
@@ -59,14 +60,14 @@
 - [x] 7.3 File Service 物化接口按冻结的 representation version 校验 tenant、Job、manifest hash 和动作，拒绝 latest-following、跨 Job 访问及 source/representation 混用。
 - [x] 7.4 更新 Runtime 文件协议与 bridge，把 Markdown 表示物化到每 Job sandbox 的确定性只读路径，并保留 source/display/provenance 元数据映射。
 - [x] 7.5 Runtime 仅通过既有 `Read`/`Grep`/`Glob` 能力访问 Markdown 文件；不得将全文重新内联到 conversation context，也不得新增通用 HTTP/MCP/Shell executor。
-- [ ] 7.6 增加 manifest v3/v4 compatibility、tamper rejection、过期表示、只读权限、同名冲突和 cleanup 的聚焦测试。
+- [x] 7.6 增加 manifest v3/v4 compatibility、tamper rejection、过期表示、只读权限、同名冲突和 cleanup 的聚焦测试。
 
 ## 8. Delivery、审计与运维可见性
 
 - [x] 8.1 保持渠道/文件交付引用 original source version；Markdown/JSON representation 不得替代用户原始附件或被意外交付。
-- [ ] 8.2 增加处理请求、状态跃迁、拒绝原因、重试、耗时、页数、输出大小和 Job 关联的结构化 audit/metrics，并执行 payload redaction。
-- [ ] 8.3 在管理面提供按 tenant/application/profile/status 的 backlog、失败和 DLQ 摘要，以及 source→run→representation→Job 的可追溯视图。
-- [ ] 8.4 为审计保留期、访问控制、representation provenance 和原始业务内容不落日志增加契约测试。
+- [x] 8.2 增加处理请求、状态跃迁、拒绝原因、重试、耗时、页数、输出大小和 Job 关联的结构化 audit/metrics，并执行 payload redaction。
+- [x] 8.3 在管理面提供按 tenant/application/profile/status 的 backlog、失败和 DLQ 摘要，以及 source→run→representation→Job 的可追溯视图。
+- [x] 8.4 为审计保留期、访问控制、representation provenance 和原始业务内容不落日志增加契约测试。
 
 ## 9. Compose、网络与 Secret 边界
 
@@ -79,8 +80,8 @@
 ## 10. 验证、发布门禁与旧路径退役证据
 
 - [x] 10.1 运行受影响模块的 schema、repository、File Service、worker、Runtime、Business Application、渠道和 delivery 聚焦测试，并记录失败与修复证据。
-- [ ] 10.2 在 fresh PostgreSQL/RabbitMQ/MinIO/Docling Compose 环境执行脱敏 synthetic E2E，验证七类输入、拒绝边界、超时、重试、重启、幂等与 representation cleanup。
+- [x] 10.2 在 fresh PostgreSQL/RabbitMQ/MinIO/Docling Compose 环境执行脱敏 synthetic E2E，验证七类输入、拒绝边界、超时、重试、重启、幂等与 representation cleanup。
 - [ ] 10.3 执行一条真实的 Runtime→Inbox→Outbox→RabbitMQ→Job→processing worker→Docling→representation→Runtime→Delivery 链路，证明成功与失败路径，而不以容器健康替代业务证据。
-- [ ] 10.4 在默认 `NONE` 下验证零行为变化；再按单个测试 publication 启用 `docling-text-v1`，观察 backlog、资源和错误率后才允许扩大范围。
-- [ ] 10.5 对新 profile 路径执行“无新增 `attachment_content`”对账并记录旧数据依赖；本变更不 drop 旧表/列，后续 contract migration 必须另行审批并满足备份、保留期和零引用门禁。
+- [x] 10.4 在默认 `NONE` 下验证零行为变化；再按单个测试 publication 启用 `docling-text-v1`，观察 backlog、资源和错误率后才允许扩大范围。
+- [x] 10.5 对新 profile 路径执行“无新增 `attachment_content`”对账并记录旧数据依赖；本变更不 drop 旧表/列，后续 contract migration 必须另行审批并满足备份、保留期和零引用门禁。
 - [x] 10.6 运行完整相关测试、`openspec validate add-governed-docling-file-representations --strict`、migration/schema 检查和 `git diff --check`，将实现状态与剩余限制写入 evidence，不把设计意图表述为已上线能力。

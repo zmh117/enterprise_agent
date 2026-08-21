@@ -145,21 +145,21 @@ FILE_TOOL_MANIFEST: Mapping[str, FileToolDefinition] = MappingProxyType(
     {
         "task_workspace_get": _tool(
             "task_workspace_get",
-            "查询当前 Job 绑定的任务工作区安全摘要；工作区身份从 Principal 与 Job 解析；expires_at 为 Asia/Shanghai RFC 3339。",
+            "查询当前 Job 绑定的任务工作区安全摘要；工作区身份从 Principal 与 Job 解析；expires_at 为 UTC RFC 3339 机器值。",
             dict(_EMPTY_SCHEMA),
             operation="task_workspace.read",
             mutating=False,
         ),
         "task_workspace_list_files": _tool(
             "task_workspace_list_files",
-            "列出当前 Job 可见的工作区文件元数据；source_received_at 是平台收到原始聊天附件的时间，version_created_at 是精确版本产生时间，observed_at 是本次查询边界；这些时间均为 Asia/Shanghai RFC 3339（+08:00）；不返回正文或对象位置。",
+            "列出当前 Job 可见的工作区文件元数据；source_received_at 是平台收到原始聊天附件的时间，version_created_at 是精确版本产生时间，observed_at 是本次查询边界；这些时间均为 UTC RFC 3339 机器值；不返回正文或对象位置。",
             _LIST_FILES_SCHEMA,
             operation="task_workspace.files.list",
             mutating=False,
         ),
         "file_get_metadata": _tool(
             "file_get_metadata",
-            "查询当前 Job File Manifest 中精确文件版本的安全元数据，并明确返回来源接收时间、版本创建时间和查询边界；这些时间均为 Asia/Shanghai RFC 3339（+08:00）。",
+            "查询当前 Job File Manifest 中精确文件版本的安全元数据，并明确返回来源接收时间、版本创建时间和查询边界；这些时间均为 UTC RFC 3339 机器值。",
             dict(_FILE_VERSION_SCHEMA),
             operation="file.metadata.read",
             mutating=False,

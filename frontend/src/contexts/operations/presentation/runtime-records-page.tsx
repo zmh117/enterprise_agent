@@ -5,7 +5,7 @@ import {
   RefreshCwIcon,
 } from "lucide-react"
 import { Link, useParams } from "react-router-dom"
-import { useState } from "react"
+import { type ReactNode, useState } from "react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -166,6 +166,7 @@ function FileOperationsPanel({ value }: { value: FileOperations }) {
   const queue = value.file_worker.attachment_queue
   const documentProcessing = value.document_processing
   const processingQueues = documentProcessing.queues
+  const processingOperations = documentProcessing.operations
   const backlog = value.backlog
   return (
     <Card className="shadow-none">
@@ -189,42 +190,125 @@ function FileOperationsPanel({ value }: { value: FileOperations }) {
           </Badge>
         </CardTitle>
       </CardHeader>
-      <CardContent className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
-        <Metric
-          label="附件队列"
-          value={`ready ${queue.ready ?? "-"} · unacked ${queue.unacked ?? "-"} · consumer ${queue.consumers ?? "-"}`}
-        />
-        <Metric
-          label="文档处理队列"
-          value={`ready ${processingQueues.processing.ready ?? "-"} · unacked ${processingQueues.processing.unacked ?? "-"} · consumer ${processingQueues.processing.consumers ?? "-"}`}
-        />
-        <Metric
-          label="文档处理重试 / DLQ"
-          value={`retry ${processingQueues.retry.ready ?? "-"} · dead ${processingQueues.dead.ready ?? "-"}`}
-        />
-        <Metric
-          label="文档处理依赖"
-          value={`RabbitMQ ${formatDependencyState(documentProcessing.file_processing_worker.components.rabbitmq)} · File Service ${formatDependencyState(documentProcessing.file_processing_worker.components.file_service)} · Docling ${formatDependencyState(documentProcessing.file_processing_worker.components.docling)}`}
-        />
-        <Metric
-          label="清理积压"
-          value={`总计 ${backlog.cleanup} · staging ${backlog.staging} · 附件 ${backlog.attachment}`}
-        />
-        <Metric
-          label="生命周期积压"
-          value={`工作区 ${backlog.workspace} · 保留 ${backlog.retained} · 冲突 ${backlog.conflict} · 事件 ${backlog.domain_outbox}`}
-        />
-        <Metric
-          label="最近清理结果"
-          value={
-            value.recent_cleanup
-              ? `${value.recent_cleanup.status} · ${formatDate(value.recent_cleanup.updated_at)}`
-              : "暂无记录"
-          }
-        />
+      <CardContent className="space-y-4 text-sm">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <Metric
+            label="附件队列"
+            value={`ready ${queue.ready ?? "-"} · unacked ${queue.unacked ?? "-"} · consumer ${queue.consumers ?? "-"}`}
+          />
+          <Metric
+            label="文档处理队列"
+            value={`ready ${processingQueues.processing.ready ?? "-"} · unacked ${processingQueues.processing.unacked ?? "-"} · consumer ${processingQueues.processing.consumers ?? "-"}`}
+          />
+          <Metric
+            label="文档处理重试 / DLQ"
+            value={`retry ${processingQueues.retry.ready ?? "-"} · dead ${processingQueues.dead.ready ?? "-"}`}
+          />
+          <Metric
+            label="文档处理依赖"
+            value={`RabbitMQ ${formatDependencyState(documentProcessing.file_processing_worker.components.rabbitmq)} · File Service ${formatDependencyState(documentProcessing.file_processing_worker.components.file_service)} · Docling ${formatDependencyState(documentProcessing.file_processing_worker.components.docling)}`}
+          />
+          <Metric
+            label="清理积压"
+            value={`总计 ${backlog.cleanup} · staging ${backlog.staging} · 附件 ${backlog.attachment}`}
+          />
+          <Metric
+            label="生命周期积压"
+            value={`工作区 ${backlog.workspace} · 保留 ${backlog.retained} · 冲突 ${backlog.conflict} · 事件 ${backlog.domain_outbox}`}
+          />
+          <Metric
+            label="最近清理结果"
+            value={
+              value.recent_cleanup
+                ? `${value.recent_cleanup.status} · ${formatDate(value.recent_cleanup.updated_at)}`
+                : "暂无记录"
+            }
+          />
+        </div>
+        <div className="grid gap-4 xl:grid-cols-3">
+          <DocumentProcessingList title="处理分组">
+            {processingOperations.groups.slice(0, 8).map((group) => (
+              <li
+                key={`${group.tenant_id}:${group.application_id}:${group.profile_code}:${group.status}`}
+              >
+                <p className="font-medium">
+                  {group.application_code || group.application_id || "未归因应用"} ·{" "}
+                  {group.profile_code} · {group.status}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  tenant {group.tenant_id} · {group.count} 个 · attempt{" "}
+                  {group.total_attempts} · 输入 {formatFileBytes(group.source_size_bytes)} ·
+                  输出 {formatFileBytes(group.output_size_bytes)}
+                </p>
+              </li>
+            ))}
+            {!processingOperations.groups.length ? (
+              <li className="text-muted-foreground">暂无处理运行</li>
+            ) : null}
+          </DocumentProcessingList>
+          <DocumentProcessingList title="最近失败">
+            {processingOperations.recent_failures.slice(0, 6).map((run) => (
+              <li key={run.run_id}>
+                <p className="font-mono text-xs">{run.run_id}</p>
+                <p className="text-xs text-muted-foreground">
+                  {run.application_code || "未归因应用"} · {run.error_code || "unknown"} ·
+                  attempt {run.attempt}
+                </p>
+              </li>
+            ))}
+            {!processingOperations.recent_failures.length ? (
+              <li className="text-muted-foreground">暂无失败</li>
+            ) : null}
+          </DocumentProcessingList>
+          <DocumentProcessingList title="source → run → representation → Job">
+            {processingOperations.traces.slice(0, 6).map((trace) => (
+              <li key={trace.run_id}>
+                <p className="font-mono text-xs">{trace.source_version_id}</p>
+                <p className="font-mono text-xs text-muted-foreground">
+                  {trace.run_id} → {trace.representations.length} representation
+                  {trace.job_id ? " → " : ""}
+                  {trace.job_id ? (
+                    <Link
+                      className="hover:underline"
+                      to={`/operations/jobs/${encodeURIComponent(trace.job_id)}`}
+                    >
+                      {trace.job_id}
+                    </Link>
+                  ) : (
+                    ""
+                  )}
+                </p>
+              </li>
+            ))}
+            {!processingOperations.traces.length ? (
+              <li className="text-muted-foreground">暂无血缘记录</li>
+            ) : null}
+          </DocumentProcessingList>
+        </div>
       </CardContent>
     </Card>
   )
+}
+
+function DocumentProcessingList({
+  title,
+  children,
+}: {
+  title: string
+  children: ReactNode
+}) {
+  return (
+    <section className="rounded-md border p-3">
+      <h3 className="mb-2 font-medium">{title}</h3>
+      <ul className="space-y-2">{children}</ul>
+    </section>
+  )
+}
+
+function formatFileBytes(value: number) {
+  if (value < 1024) return `${value} B`
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`
+  return `${(value / (1024 * 1024)).toFixed(1)} MiB`
 }
 
 function formatDependencyState(value: "ready" | "unavailable") {

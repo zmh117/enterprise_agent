@@ -9,8 +9,8 @@ from typing import Any, Never
 
 from app.modules.channel.domain.channel_event import ChannelFileReference
 from app.modules.file_workspace.clock import (
-    project_file_time_fields,
-    to_shanghai_rfc3339,
+    canonicalize_file_time_fields,
+    to_utc_rfc3339,
 )
 from app.modules.file_workspace.domain import (
     DOCUMENT_MANIFEST_ACTIONS,
@@ -437,8 +437,8 @@ class JobFileManifestService:
             "schema_version": schema_version,
             "file_format_policy_version": policy_version.value,
             "manifest_hash": str(snapshot["manifest_hash"]),
-            "observed_at": to_shanghai_rfc3339(snapshot.get("created_at")) or "",
-            "items": [project_file_time_fields(item) for item in projected],
+            "observed_at": to_utc_rfc3339(snapshot.get("created_at")) or "",
+            "items": [canonicalize_file_time_fields(item) for item in projected],
             **(
                 {
                     "readability_notices": [
@@ -1000,7 +1000,7 @@ class JobFileManifestService:
     ) -> dict[str, Any]:
         representation = self._latest_markdown_representation(str(row["version_id"]))
         ready = representation is not None
-        item = {
+        item: dict[str, Any] = {
             "file_id": str(row["file_id"]),
             "version_id": str(row["version_id"]),
             "display_name": str(row["display_name"]),

@@ -1,4 +1,4 @@
-# Implementation validation — 2026-08-18
+# Implementation validation — refreshed 2026-08-21
 
 ## Confirmed in the current checkout
 
@@ -17,14 +17,19 @@
 - The provider contract was checked against the official v1.30.0 source and uses only internal multipart async submit, poll, and fetch endpoints; the v1.29/v1.30 multiple-target, chunking, and callback additions are not exposed by the governed profile.
 - Runtime configuration disables remote sources, callbacks, plugins, custom pipelines, VLM, UI exposure, and runtime model downloads.
 
-## Intentionally not claimed complete
+## Remaining release limitations
 
-- No official SBOM artifact was found for the pinned release, so task 1.3 remains open even though version, digest, architecture, license, provenance, and non-root metadata were checked.
-- No CPU benchmark has been run on the deployment target; the phase-1 concurrency of one and the current CPU/memory limits are conservative configuration, not benchmark evidence.
-- No fresh live PostgreSQL/RabbitMQ/MinIO/Docling synthetic seven-format E2E has been run.
-- No real Runtime-to-Delivery business-chain evidence has been captured.
-- The source-stream authorization path is implemented and tested, but dedicated read-access audit evidence remains open.
-- Production rollout remains disabled by the default publication profile `NONE`; enabling `docling-text-v1` requires a controlled test publication and observation window.
+- The upstream release still has no official SBOM. Local SPDX JSON for the pinned digest
+  is compensating evidence only, so environments requiring a vendor SBOM remain blocked.
+- The ARM64 CPU benchmark and fresh isolated seven-format Compose E2E are recorded in
+  `cpu-benchmark.md` and `synthetic-compose-e2e.md`; concurrency remains one.
+- Source-stream authorization and safe read-audit evidence are implemented and covered by
+  focused tests.
+- The real model Runtime-to-Delivery success path remains open because the isolated fresh
+  database has no ready model credential. The historical-publication failure path was
+  observed as `runtime_model_binding_missing`; no real secret was copied into the fixture.
+- Production rollout remains disabled by default profile `NONE`. The observed
+  `docling-text-v1` path was confined to one isolated synthetic publication.
 
 ## Local Compose deployment evidence
 

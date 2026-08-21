@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
@@ -9,11 +10,18 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
+from pypdf import PdfWriter
 
+from app.modules.audit.application.audit_service import AuditService
 from app.modules.agent.application.agent_result_service import AgentResultService
 from app.modules.attachments.domain import AttachmentImportReceipt
 from app.modules.delivery.application.delivery_dispatch_service import (
     DeliveryOutboxDispatcher,
+)
+from app.modules.document_processing import (
+    DocumentProcessingRepository,
+    GovernedDocumentProcessingService,
+    SourceStreamGrantSigner,
 )
 from app.modules.file_workspace.application import FileWorkspaceApplicationService
 from app.modules.file_workspace.authorization import (
@@ -27,13 +35,14 @@ from app.modules.file_workspace.domain import (
     FileSourceKind,
     FileVersionKind,
     FileVersionStatus,
+    RetentionReason,
     WorkspaceFileRole,
     WorkspaceOwnerType,
 )
 from app.modules.file_workspace.repository import FileWorkspaceRepository
 from app.modules.file_workspace.streaming_service import GovernedFileStreamingService
 from app.modules.file_workspace.streaming_service import INTERNAL_TRANSFER_META
-from app.modules.job.infrastructure.repositories import AgentRepository
+from app.modules.job.infrastructure.repositories import AgentRepository, AuditRepository
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.job.api.agent_job_debug_controller import _file_workspace_evidence
 from app.modules.message_bus.application.message_publisher import ChannelEventMessage
@@ -251,6 +260,33 @@ def _enable_in_process_attachment_import(
         storage,
         _MutablePrincipal(),
         now=lambda: NOW,
+    )
+    runtime.attachment_service.importer = _InProcessAttachmentImporter(streaming)
+    runtime.attachment_service.storage = None
+    return file_repository, storage
+
+
+def _enable_in_process_document_import(
+    runtime: Any,
+) -> tuple[FileWorkspaceRepository, _Storage]:
+    file_repository = FileWorkspaceRepository(runtime.database)
+    storage = _Storage()
+    document_processing = GovernedDocumentProcessingService(
+        DocumentProcessingRepository(runtime.database),
+        file_repository,
+        storage,
+        SourceStreamGrantSigner(b"synthetic-document-source-grant-key"),
+        AuditService(AuditRepository(runtime.database)),
+        processor_version="1.30.0",
+        processor_build_digest="sha256:" + "a" * 64,
+    )
+    streaming = GovernedFileStreamingService(
+        file_repository,
+        FileAuthorizationService(runtime.database, _BusinessAccess()),
+        storage,
+        _MutablePrincipal(),
+        now=lambda: NOW,
+        document_processing=document_processing,
     )
     runtime.attachment_service.importer = _InProcessAttachmentImporter(streaming)
     runtime.attachment_service.storage = None
@@ -483,20 +519,23 @@ def _seed_png_with_session_attachment(
     )
     timestamp = datetime.now(UTC).isoformat()
     attachment_id = f"attachment-{file_id}"
+    retention_expires_at = "2027-08-14T00:00:00+00:00"
     runtime.database.execute(
         """
         insert into message_attachment
           (id, message_id, job_id, ordinal, media_type, file_name, declared_mime,
            declared_size, status, readability_status, task_workspace_id,
-           created_at, updated_at, readability_updated_at, finished_at)
+           retention_days, expires_at, created_at, updated_at,
+           readability_updated_at, finished_at)
         values (?, ?, null, 0, 'image/png', ?, 'image/png', 12, 'READY', 'AVAILABLE',
-                ?, ?, ?, ?, ?)
+                ?, 360, ?, ?, ?, ?, ?)
         """,
         (
             attachment_id,
             message_id,
             display_name,
             workspace["id"],
+            retention_expires_at,
             timestamp,
             timestamp,
             timestamp,
@@ -507,7 +546,14 @@ def _seed_png_with_session_attachment(
         attachment_id=attachment_id,
         file_id=file_id,
         version_id=version_id,
-        retention_expires_at="2027-08-14T00:00:00+00:00",
+        retention_expires_at=retention_expires_at,
+    )
+    file_repository.add_retention(
+        version_id=version_id,
+        reason=RetentionReason.MESSAGE_ATTACHMENT,
+        source_id=attachment_id,
+        starts_at=received_at,
+        expires_at=retention_expires_at,
     )
     _attach_markdown_representation(runtime, file_id=file_id, version_id=version_id)
 
@@ -549,9 +595,19 @@ def test_unsupported_picture_then_plain_text_does_not_freeze_file_mcp_tools() ->
     ("file_name", "content_type"),
     (
         ("scan.png", "image/png"),
+        ("scan.jpg", "image/jpeg"),
+        ("scan.webp", "image/webp"),
         (
             "report.docx",
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ),
+        (
+            "slides.pptx",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ),
+        (
+            "table.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         ),
         ("report.pdf", "application/pdf"),
     ),
@@ -583,6 +639,152 @@ def test_docling_profile_stages_supported_document_attachments(
     assert staged.status == "attachments_staged", (staged.reason, staged.error_code)
     assert runtime.agent_repository.count_rows("agent_job") == 0
     assert len(runtime.message_bus.attachments) == 1
+
+
+def test_old_publication_keeps_document_profile_none_behavior() -> None:
+    runtime = multimodal_container(
+        task_file_features=FEATURES,
+        file_format_policy_version="text-v2",
+        document_processing_profile_code="NONE",
+    )
+    payload = load_fixture("file.json")
+    payload["msgId"] = "legacy-none-docx"
+    payload["content"] = {
+        "downloadCode": "legacy-none-docx",
+        "fileName": "legacy.docx",
+        "fileSize": 1024,
+        "contentType": (
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        ),
+    }
+
+    rejected = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=payload,
+        correlation_id="legacy-none-docx",
+    )
+
+    assert rejected.accepted is False
+    assert rejected.error_code == "file_workspace_type_unsupported"
+    assert runtime.agent_repository.count_rows("message_attachment") == 0
+    assert runtime.agent_repository.count_rows("file_processing_run") == 0
+
+
+def test_document_duplicate_ingress_and_job_replay_do_not_duplicate_facts() -> None:
+    runtime = multimodal_container(
+        task_file_features=FEATURES,
+        file_format_policy_version="text-v2",
+        document_processing_profile_code="docling-text-v1",
+    )
+    _enable_in_process_document_import(runtime)
+    output = io.BytesIO()
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    writer.write(output)
+    source = output.getvalue()
+    payload = load_fixture("file.json")
+    payload["msgId"] = "document-replay-pdf"
+    payload["content"] = {
+        "downloadCode": "document-replay-pdf",
+        "fileName": "replay.pdf",
+        "fileSize": len(source),
+        "contentType": "application/pdf",
+    }
+
+    first_ingress = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=payload,
+        correlation_id="document-replay-pdf-1",
+    )
+    replayed_ingress = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=payload,
+        correlation_id="document-replay-pdf-2",
+    )
+    assert first_ingress.status == "attachments_staged"
+    assert replayed_ingress.status == "attachments_staged"
+    assert runtime.agent_repository.count_rows("message_attachment") == 1
+    assert len(runtime.message_bus.attachments) == 1
+
+    task = runtime.message_bus.attachments.popleft()
+    runtime.attachment_service.downloader = FakeDownloader(
+        {"document-replay-pdf": source}
+    )
+    assert runtime.attachment_service.process(task.attachment_id, task.correlation_id) == (
+        "staged"
+    )
+    attachment = runtime.database.execute_one(
+        """
+        select a.file_processing_run_id, b.file_id, b.version_id
+          from message_attachment a
+          join message_attachment_file_binding b on b.attachment_id = a.id
+         where a.id = ?
+        """,
+        (task.attachment_id,),
+    )
+    assert attachment is not None
+    run_id = str(attachment["file_processing_run_id"])
+    timestamp = datetime.now(UTC).isoformat()
+    markdown = b"synthetic replay text\n"
+    runtime.database.execute(
+        """
+        update file_processing_run
+           set status = 'SUCCEEDED', page_count = 1, processing_time_ms = 10,
+               completed_at = ?, updated_at = ?
+         where id = ?
+        """,
+        (timestamp, timestamp, run_id),
+    )
+    run = runtime.database.execute_one(
+        "select tenant_id, profile_hash from file_processing_run where id = ?",
+        (run_id,),
+    )
+    assert run is not None
+    runtime.database.execute(
+        """
+        insert into file_representation
+          (id, processing_run_id, tenant_id, source_file_id, source_version_id,
+           kind, media_type, encoding, status, size_bytes, content_sha256,
+           object_key, profile_hash, created_at)
+        values ('representation-replay-pdf', ?, ?, ?, ?, 'MARKDOWN',
+                'text/markdown', 'utf-8', 'AVAILABLE', ?, ?,
+                'opaque/representation-replay-pdf', ?, ?)
+        """,
+        (
+            run_id,
+            run["tenant_id"],
+            attachment["file_id"],
+            attachment["version_id"],
+            len(markdown),
+            "b" * 64,
+            run["profile_hash"],
+            timestamp,
+        ),
+    )
+    runtime.database.execute(
+        """
+        update message_attachment
+           set readability_status = 'AVAILABLE', readability_updated_at = ?
+         where id = ?
+        """,
+        (timestamp, task.attachment_id),
+    )
+
+    instruction = _group_text(
+        msg_id="document-replay-question",
+        content="读取 replay.pdf 里写了什么",
+    )
+    first_job = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=instruction,
+        correlation_id="document-replay-question-1",
+    )
+    replayed_job = runtime.dingtalk_stream_message_service.handle_callback(
+        payload=instruction,
+        correlation_id="document-replay-question-2",
+    )
+
+    assert first_job.job_id == replayed_job.job_id
+    assert runtime.agent_repository.count_rows("agent_job") == 1
+    assert runtime.agent_repository.count_rows("agent_job_file_snapshot") == 1
+    assert runtime.agent_repository.count_rows("file_processing_run") == 1
+    assert runtime.agent_repository.count_rows("file_representation") == 1
 
 
 class RecordingDocumentImporter(RecordingAttachmentImporter):
@@ -1548,7 +1750,7 @@ def test_today_image_question_binds_ready_workspace_png_and_unrelated_text_does_
     )
     assert image_item is not None
     assert image_item["source_kind"] == "EXPLICIT_REFERENCE"
-    assert bool(image_item["auto_materialize"]) is True
+    assert bool(image_item["auto_materialize"]) is False
     assert image_item["representation_id"] == "representation-today-image"
 
 
@@ -1615,7 +1817,7 @@ def test_last_week_image_is_recalled_after_workspace_expiry(
     assert item is not None
     assert item["display_name"] == "last-week.png"
     assert item["source_kind"] == "EXPLICIT_REFERENCE"
-    assert bool(item["auto_materialize"]) is True
+    assert bool(item["auto_materialize"]) is False
 
 
 def test_calendar_date_and_range_recall_txt_after_expiry(
@@ -1693,7 +1895,7 @@ def test_date_chat_without_file_token_does_not_recall_or_create_workspace(
     assert runtime.agent_repository.count_rows("agent_job_file_snapshot") == 0
 
 
-def test_time_window_multiple_files_clarify_or_list_metadata(
+def test_time_window_multiple_files_list_metadata_without_preload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _freeze_resolver_now(monkeypatch, FROZEN_MONDAY)
@@ -1725,11 +1927,14 @@ def test_time_window_multiple_files_clarify_or_list_metadata(
         payload=_group_text(msg_id="ask-week-content", content="上周的文件什么内容"),
         correlation_id="ask-week-content",
     )
-    assert content.status == "system_notice"
-    notice = _latest_system_notice(runtime)
-    assert notice["notice_kind"] == "time_window_ambiguous"
-    assert "没发过" not in notice["markdown"]
-    assert runtime.agent_repository.count_rows("agent_job") == 0
+    assert content.status == "received"
+    content_job = runtime.agent_repository.get_job(content.job_id)
+    content_items = _snapshot_items(
+        runtime,
+        FileWorkspaceRepository(runtime.database).get_job_snapshot(content_job.id)["id"],
+    )
+    assert {row["display_name"] for row in content_items} == {"a.txt", "b.txt"}
+    assert all(not bool(row["auto_materialize"]) for row in content_items)
 
     listed = runtime.dingtalk_stream_message_service.handle_callback(
         payload=_group_text(msg_id="ask-week-names", content="上周发了哪些文件"),

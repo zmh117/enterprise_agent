@@ -77,6 +77,7 @@ class FileOperationsStatusService:
         else:
             document_processing_reason_code = "file_processing_queue_unavailable"
         metrics = self._metrics()
+        document_processing_operations = self._document_processing_operations()
         return {
             "file_service": file_service,
             "file_worker": {
@@ -99,12 +100,184 @@ class FileOperationsStatusService:
                     "retry": self._queue_projection(processing_retry_queue),
                     "dead": self._queue_projection(processing_dead_queue),
                 },
+                "operations": document_processing_operations,
             },
             "backlog": metrics["backlog"],
             "earliest_due": metrics["earliest_due"],
             "domain_outbox_earliest_created_at": metrics["domain_outbox_earliest_created_at"],
             "domain_outbox_failure_code": metrics["domain_outbox_failure_code"],
             "recent_cleanup": metrics["recent_cleanup"],
+        }
+
+    def _document_processing_operations(self) -> dict[str, Any]:
+        attribution_cte = """
+            with attachment_context as (
+              select a.file_processing_run_id, a.job_id,
+                     j.business_application_id,
+                     j.business_application_code,
+                     j.business_application_publication_id,
+                     row_number() over (
+                       partition by a.file_processing_run_id
+                       order by a.updated_at desc, a.id desc
+                     ) as rank
+                from message_attachment a
+                join agent_job j on j.id = a.job_id
+               where a.file_processing_run_id is not null
+            ), representation_totals as (
+              select processing_run_id, count(*) as representation_count,
+                     sum(size_bytes) as output_size_bytes
+                from file_representation
+               group by processing_run_id
+            )
+        """
+        groups = self.database.execute(
+            attribution_cte
+            + """
+            select r.tenant_id,
+                   coalesce(a.business_application_id, '') as application_id,
+                   coalesce(a.business_application_code, '') as application_code,
+                   coalesce(a.business_application_publication_id, '') as publication_id,
+                   r.profile_code, r.status, count(*) as count,
+                   sum(r.attempt) as total_attempts,
+                   sum(r.source_size_bytes) as source_size_bytes,
+                   sum(coalesce(t.output_size_bytes, 0)) as output_size_bytes,
+                   min(r.created_at) as earliest_created_at,
+                   max(r.updated_at) as latest_updated_at
+              from file_processing_run r
+              left join attachment_context a
+                on a.file_processing_run_id = r.id and a.rank = 1
+              left join representation_totals t on t.processing_run_id = r.id
+             group by r.tenant_id, application_id, application_code,
+                      publication_id, r.profile_code, r.status
+             order by r.tenant_id, application_code, r.profile_code, r.status
+             limit 200
+            """
+        )
+        failures = self.database.execute(
+            attribution_cte
+            + """
+            select r.id as run_id, r.source_version_id, r.tenant_id,
+                   r.profile_code, r.profile_hash, r.status, r.attempt,
+                   r.error_code, r.page_count, r.processing_time_ms,
+                   r.updated_at, coalesce(a.job_id, '') as job_id,
+                   coalesce(a.business_application_id, '') as application_id,
+                   coalesce(a.business_application_code, '') as application_code,
+                   coalesce(a.business_application_publication_id, '') as publication_id
+              from file_processing_run r
+              left join attachment_context a
+                on a.file_processing_run_id = r.id and a.rank = 1
+             where r.status = 'FAILED'
+             order by r.updated_at desc, r.id desc
+             limit 50
+            """
+        )
+        traces = self.database.execute(
+            attribution_cte
+            + """
+            select r.id as run_id, r.source_version_id, r.tenant_id,
+                   r.processor_code, r.processor_version,
+                   r.processor_build_digest, r.profile_code, r.profile_hash,
+                   r.status, r.attempt, r.error_code, r.source_size_bytes,
+                   r.page_count, r.processing_time_ms, r.created_at, r.updated_at,
+                   coalesce(a.job_id, '') as job_id,
+                   coalesce(a.business_application_id, '') as application_id,
+                   coalesce(a.business_application_code, '') as application_code,
+                   coalesce(a.business_application_publication_id, '') as publication_id
+              from file_processing_run r
+              left join attachment_context a
+                on a.file_processing_run_id = r.id and a.rank = 1
+             order by r.updated_at desc, r.id desc
+             limit 50
+            """
+        )
+        trace_ids = [str(row["run_id"]) for row in traces]
+        representation_rows: list[dict[str, Any]] = []
+        if trace_ids:
+            placeholders = ", ".join("?" for _ in trace_ids)
+            representation_rows = self.database.execute(
+                f"""
+                select id, processing_run_id, source_version_id, kind, media_type,
+                       status, size_bytes, content_sha256, profile_hash, created_at,
+                       content_deleted_at
+                  from file_representation
+                 where processing_run_id in ({placeholders})
+                 order by processing_run_id, kind
+                """,
+                tuple(trace_ids),
+            )
+        representations: dict[str, list[dict[str, Any]]] = {}
+        for row in representation_rows:
+            representations.setdefault(str(row["processing_run_id"]), []).append(
+                {
+                    "representation_id": str(row["id"]),
+                    "source_version_id": str(row["source_version_id"]),
+                    "kind": str(row["kind"]),
+                    "media_type": str(row["media_type"]),
+                    "status": str(row["status"]),
+                    "size_bytes": int(row["size_bytes"]),
+                    "content_sha256": str(row["content_sha256"]),
+                    "profile_hash": str(row["profile_hash"]),
+                    "created_at": str(row["created_at"]),
+                    "content_deleted_at": str(row.get("content_deleted_at") or ""),
+                }
+            )
+        return {
+            "groups": [
+                {
+                    "tenant_id": str(row["tenant_id"]),
+                    "application_id": str(row.get("application_id") or ""),
+                    "application_code": str(row.get("application_code") or ""),
+                    "publication_id": str(row.get("publication_id") or ""),
+                    "profile_code": str(row["profile_code"]),
+                    "status": str(row["status"]),
+                    "count": int(row["count"]),
+                    "total_attempts": int(row.get("total_attempts") or 0),
+                    "source_size_bytes": int(row.get("source_size_bytes") or 0),
+                    "output_size_bytes": int(row.get("output_size_bytes") or 0),
+                    "earliest_created_at": str(row.get("earliest_created_at") or ""),
+                    "latest_updated_at": str(row.get("latest_updated_at") or ""),
+                }
+                for row in groups
+            ],
+            "recent_failures": [self._processing_run_projection(row) for row in failures],
+            "traces": [
+                {
+                    **self._processing_run_projection(row),
+                    "processor_code": str(row["processor_code"]),
+                    "processor_version": str(row["processor_version"]),
+                    "processor_build_digest": str(row["processor_build_digest"]),
+                    "source_size_bytes": int(row["source_size_bytes"]),
+                    "created_at": str(row["created_at"]),
+                    "representations": representations.get(str(row["run_id"]), []),
+                }
+                for row in traces
+            ],
+        }
+
+    @staticmethod
+    def _processing_run_projection(row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "run_id": str(row["run_id"]),
+            "source_version_id": str(row["source_version_id"]),
+            "tenant_id": str(row["tenant_id"]),
+            "job_id": str(row.get("job_id") or ""),
+            "application_id": str(row.get("application_id") or ""),
+            "application_code": str(row.get("application_code") or ""),
+            "publication_id": str(row.get("publication_id") or ""),
+            "profile_code": str(row["profile_code"]),
+            "profile_hash": str(row["profile_hash"]),
+            "status": str(row["status"]),
+            "attempt": int(row["attempt"]),
+            "error_code": str(row.get("error_code") or "")[:128],
+            "page_count": (
+                int(row["page_count"]) if row.get("page_count") is not None else None
+            ),
+            "processing_time_ms": (
+                int(row["processing_time_ms"])
+                if row.get("processing_time_ms") is not None
+                else None
+            ),
+            "updated_at": str(row["updated_at"]),
         }
 
     @staticmethod

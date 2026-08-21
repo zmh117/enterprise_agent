@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+import hashlib
 import json
 from typing import Any
 
 import pytest
 
 from app.modules.channel.domain.channel_event import ChannelFileReference
-from app.modules.file_workspace.clock import to_shanghai_rfc3339
+from app.modules.file_workspace.clock import to_utc_rfc3339
 from app.modules.file_workspace.domain import (
     FileOwner,
     FileSourceKind,
@@ -25,7 +26,6 @@ from app.modules.file_workspace.repository import FileWorkspaceRepository
 from app.modules.file_workspace.workspace_service import TaskWorkspaceService
 from app.shared.exceptions import NonRetryableExecutionError
 from backend.tests.test_file_workspace_repository import (
-    SHANGHAI_TIMESTAMP,
     TIMESTAMP,
     _database,
 )
@@ -200,7 +200,7 @@ def test_job_manifest_freezes_exact_version_and_later_job_sees_new_current() -> 
         "schema_version": 4,
         "file_format_policy_version": "text-v1",
         "manifest_hash": first["manifest_hash"],
-        "observed_at": to_shanghai_rfc3339(first["created_at"]),
+        "observed_at": to_utc_rfc3339(first["created_at"]),
         "items": [
             {
                 "file_id": "file-notes",
@@ -217,7 +217,7 @@ def test_job_manifest_freezes_exact_version_and_later_job_sees_new_current() -> 
                 "auto_materialize": True,
                 "conflict_candidate": False,
                 "source_received_at": None,
-                "version_created_at": to_shanghai_rfc3339(
+                "version_created_at": to_utc_rfc3339(
                     first["items"][0]["version_created_at"]
                 ),
             }
@@ -257,6 +257,82 @@ def test_job_manifest_freezes_exact_version_and_later_job_sees_new_current() -> 
     assert second["items"][0]["version_id"] == "version-2"
     assert second["items"][0]["auto_materialize"] == 0
     assert second["items"][0]["source_kind"] == "WORKSPACE"
+
+
+def test_runtime_manifest_reads_legacy_v3_without_representation_fields() -> None:
+    repository, service = _service()
+    workspace = service.resolve_workspace(
+        tenant_id="tenant-a",
+        session_id="session-file",
+        requester_id="user-a",
+        conversation_type="direct",
+        enterprise_id="tenant-a",
+        connector_id="connector-a",
+        conversation_id="conversation-a",
+        sender_staff_id="staff-a",
+        publication_id="app-file-p1",
+        retention_period="WEEK",
+        attachments=(),
+        file_references=(),
+        requests_file_output=True,
+    )
+    assert workspace is not None
+    _create_txt(
+        repository,
+        workspace_id=str(workspace["id"]),
+        file_id="file-legacy-v3",
+        version_id="version-legacy-v3",
+    )
+    _insert_job(repository, job_id="job-legacy-v3", workspace_id=str(workspace["id"]))
+    service.register_request(
+        job_id="job-legacy-v3",
+        workspace=workspace,
+        requester_id="user-a",
+        publication_id="app-file-p1",
+        file_references=(
+            ChannelFileReference(
+                file_id="file-legacy-v3",
+                version_id="version-legacy-v3",
+            ),
+        ),
+    )
+    snapshot = service.finalize("job-legacy-v3")
+    assert snapshot is not None
+    current_runtime = service.runtime_manifest("job-legacy-v3")
+    legacy_items = [service._canonical_item(item) for item in current_runtime["items"]]
+    for item in legacy_items:
+        for key in tuple(item):
+            if key.startswith("representation_"):
+                item.pop(key)
+    legacy_hash = hashlib.sha256(
+        json.dumps(
+            {
+                "schema_version": 3,
+                "file_format_policy_version": current_runtime[
+                    "file_format_policy_version"
+                ],
+                "items": legacy_items,
+            },
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    repository.database.execute(
+        """
+        update agent_job_file_snapshot
+           set schema_version = 3, manifest_hash = ?
+         where job_id = 'job-legacy-v3'
+        """,
+        (legacy_hash,),
+    )
+
+    runtime = service.runtime_manifest("job-legacy-v3")
+
+    assert runtime["schema_version"] == 3
+    assert runtime["manifest_hash"] == legacy_hash
+    assert runtime["items"][0]["version_id"] == "version-legacy-v3"
+    assert "representation_id" not in runtime["items"][0]
 
 
 def test_job_manifest_freezes_attachment_receipt_time_separately_from_version_time() -> None:
@@ -299,11 +375,11 @@ def test_job_manifest_freezes_attachment_receipt_time_separately_from_version_ti
     assert item["source_received_at"] == TIMESTAMP
     assert item["version_created_at"] != item["source_received_at"]
     runtime = service.runtime_manifest("job-uploaded")
-    assert runtime["items"][0]["source_received_at"] == SHANGHAI_TIMESTAMP
-    assert runtime["items"][0]["version_created_at"] == to_shanghai_rfc3339(
+    assert runtime["items"][0]["source_received_at"] == TIMESTAMP
+    assert runtime["items"][0]["version_created_at"] == to_utc_rfc3339(
         item["version_created_at"]
     )
-    assert runtime["observed_at"].endswith("+08:00")
+    assert runtime["observed_at"].endswith("+00:00")
 
 
 def test_manifest_rejects_cross_workspace_reference_without_snapshot_side_effect() -> None:

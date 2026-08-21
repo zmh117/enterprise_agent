@@ -33,8 +33,9 @@ sha256:0244089785d5ccb7570dfaa593cdc81ec64a1aadc63ffa9dce065064b0a6a807
 下载均关闭；只允许 `inbody` target。输入上限为 25 MiB、PDF 300 页、处理 600 秒。
 
 当前发布核验已确认版本、multi-arch digest、amd64/arm64 manifest、MIT 许可证和
-SLSA provenance。镜像 SBOM 尚未取得可审计证据，因此不能把生产启用的 SBOM 门禁表述为完成；
-详见 OpenSpec change 的 `evidence/preflight.md`。
+SLSA provenance。上游 v1.30.0 没有发布官方 SBOM；针对固定 digest 已在本地生成
+SPDX JSON 并记录流哈希，但该结果只能作为补偿证据，不能表述为官方 SBOM。要求供应商
+SBOM 或制品留存的生产门禁仍未满足，详见 OpenSpec change 的 `evidence/preflight.md`。
 
 ## Secret 自举
 
@@ -67,6 +68,18 @@ RabbitMQ 消息、审计 payload 或数据库。
 Runtime→Inbox→Outbox→RabbitMQ→Job→processing worker→Docling→representation→
 Runtime→Delivery 链路，以及失败、重试、重启和清理路径。
 
+脱敏验收必须使用 `docker-compose.synthetic-e2e.yml`，并显式设置独立 project：
+
+```bash
+docker compose -p enterprise_agent_docling_e2e \
+  -f docker-compose.yml -f docker-compose.synthetic-e2e.yml config --quiet
+```
+
+不能只传 `-p` 后沿用基础 Compose 的全局具名卷；overlay 必须保留独立的
+`enterprise_agent_docling_e2e_postgres18_data`、RabbitMQ 和 MinIO 卷名。验收脚本只允许
+读取其生成的 synthetic 样本目录，不得挂载或下载真实业务附件。完整命令和安全输出字段
+见 change 的 `evidence/synthetic-compose-e2e.md`。
+
 ## 重试、DLQ 与处置
 
 - 处理消息只包含 run/source version/profile hash/attempt/correlation ID，不包含文档、
@@ -80,7 +93,9 @@ Runtime→Delivery 链路，以及失败、重试、重启和清理路径。
 
 ## 当前发布限制
 
-- CPU 脱敏样本基准尚未执行；并发保持 1，不得扩大或启用 GPU。
-- SBOM 证据尚未取得；若生产门禁要求 SBOM，必须先补齐并重新核验 digest。
-- 在完成 synthetic E2E 和真实全链路证据前，管理面必须显示
+- ARM64 CPU 脱敏样本基准已覆盖七类格式与 25 MiB/300 页联合边界；边界文件耗时
+  246.5 秒，容器生命周期峰值约 3.27 GiB，因此并发继续固定为 1，不得直接扩大或启用 GPU。
+- 上游未发布官方 SBOM；若生产门禁要求供应商 SBOM 或可下载制品，必须先补齐并重新核验 digest。
+- Fresh Compose synthetic E2E 已完成，但真实模型 Runtime→Delivery 成功链仍缺少隔离环境
+  的 ready 模型连接。在补齐该证据前，管理面必须显示
   `CONFIGURED_UNAVAILABLE`，不得显示 `READY`。

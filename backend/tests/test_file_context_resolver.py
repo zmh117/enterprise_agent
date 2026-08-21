@@ -146,7 +146,7 @@ def test_substring_without_full_filename_does_not_bind() -> None:
     assert decision.dependencies == ()
 
 
-def test_image_content_question_binds_unique_latest_image() -> None:
+def test_image_time_window_question_returns_metadata_candidate() -> None:
     now = datetime(2026, 8, 19, 12, 0, tzinfo=SHANGHAI)
     decision = resolve_file_context(
         text="今天发的图片什么内容",
@@ -174,7 +174,7 @@ def test_image_content_question_binds_unique_latest_image() -> None:
     )
     assert [item.version_id for item in decision.dependencies] == ["v-image"]
     assert decision.dependencies[0].reason == "TIME_WINDOW"
-    assert decision.dependencies[0].required_capability == "READABLE_CONTENT"
+    assert decision.dependencies[0].required_capability == "METADATA"
 
 
 def test_image_deixis_does_not_bind_later_non_image() -> None:
@@ -441,6 +441,34 @@ def test_parse_time_window_natural_week_and_calendar_dates() -> None:
     assert rolled.start.isoformat() == "2025-12-20T00:00:00+08:00"
 
 
+def test_invalid_calendar_date_and_reversed_range_do_not_resolve() -> None:
+    now = datetime(2026, 8, 19, 12, 0, tzinfo=SHANGHAI)
+    assert parse_time_window("2月30日的文件", now=now) is None
+    assert parse_time_window("8月15日到10日的文件", now=now) is None
+
+
+def test_invalid_file_date_returns_safe_notice_without_job() -> None:
+    now = datetime(2026, 8, 19, 12, 0, tzinfo=SHANGHAI)
+    decision = resolve_file_context(text="2月30日的文件", now=now)
+    gate = evaluate_file_gate(decision)
+    assert decision.dependencies == ()
+    assert gate.action == "system_notice"
+    assert gate.reason_code == "invalid_time_window"
+    title, body = system_notice_markdown(
+        notice_kind="invalid_time_window", display_names=()
+    )
+    assert "有效日期" in title
+    assert "今天" not in body
+
+
+def test_invalid_date_without_file_semantics_stays_on_normal_job_path() -> None:
+    now = datetime(2026, 8, 19, 12, 0, tzinfo=SHANGHAI)
+    decision = resolve_file_context(text="2月30日这个说法成立吗", now=now)
+    assert decision.notice_kind == ""
+    assert decision.dependencies == ()
+    assert evaluate_file_gate(decision).action == "enqueue_job"
+
+
 def test_date_chat_without_file_token_does_not_bind() -> None:
     now = datetime(2026, 8, 19, 12, 0, tzinfo=SHANGHAI)
     decision = resolve_file_context(
@@ -504,7 +532,7 @@ def test_empty_time_window_is_system_notice_not_job() -> None:
     assert "从来没有" not in body
 
 
-def test_multiple_time_window_content_questions_are_ambiguous() -> None:
+def test_multiple_time_window_content_questions_return_metadata_candidates() -> None:
     now = datetime(2026, 8, 17, 10, 0, tzinfo=SHANGHAI)
     decision = resolve_file_context(
         text="上周的文件什么内容",
@@ -526,15 +554,11 @@ def test_multiple_time_window_content_questions_are_ambiguous() -> None:
             ),
         ),
     )
-    assert decision.ambiguous is True
+    assert decision.ambiguous is False
+    assert {item.version_id for item in decision.dependencies} == {"v1", "v2"}
+    assert all(item.required_capability == "METADATA" for item in decision.dependencies)
     gate = evaluate_file_gate(decision)
-    assert gate.reason_code == "time_window_ambiguous"
-    _title, body = system_notice_markdown(
-        notice_kind="time_window_ambiguous",
-        display_names=decision.clarification_names,
-    )
-    assert "该时段" in body
-    assert "{" not in body
+    assert gate.action == "enqueue_job"
 
 
 def test_multiple_time_window_metadata_binds_all_without_preload() -> None:
@@ -565,7 +589,7 @@ def test_multiple_time_window_metadata_binds_all_without_preload() -> None:
     assert evaluate_file_gate(decision).action == "enqueue_job"
 
 
-def test_unique_time_window_content_unavailable_is_system_notice() -> None:
+def test_unique_time_window_content_unavailable_remains_metadata_only() -> None:
     now = datetime(2026, 8, 17, 10, 0, tzinfo=SHANGHAI)
     decision = resolve_file_context(
         text="上周的文件什么内容",
@@ -582,5 +606,27 @@ def test_unique_time_window_content_unavailable_is_system_notice() -> None:
         ),
     )
     gate = evaluate_file_gate(decision)
+    assert gate.action == "enqueue_job"
+    assert decision.dependencies[0].required_capability == "METADATA"
+
+
+def test_time_window_over_candidate_limit_is_system_notice() -> None:
+    now = datetime(2026, 8, 17, 10, 0, tzinfo=SHANGHAI)
+    decision = resolve_file_context(
+        text="上周的文件什么内容",
+        now=now,
+        retained_candidates=tuple(
+            WorkspaceFileCandidate(
+                file_id=f"f{index}",
+                version_id=f"v{index}",
+                display_name=f"file-{index}.txt",
+                source_status="READY",
+                source_received_at="2026-08-12T04:00:00+00:00",
+            )
+            for index in range(21)
+        ),
+    )
+    gate = evaluate_file_gate(decision)
+    assert decision.dependencies == ()
     assert gate.action == "system_notice"
-    assert gate.reason_code == "file_content_unavailable"
+    assert gate.reason_code == "time_window_too_many"

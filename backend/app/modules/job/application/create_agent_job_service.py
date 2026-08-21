@@ -37,7 +37,6 @@ from app.modules.job.application.file_context import (
     ResolverDecision,
     WorkspaceFileCandidate,
     evaluate_file_gate,
-    file_dependency_from_payload,
     file_dependency_payload,
     resolve_file_context,
     resolver_now,
@@ -335,6 +334,7 @@ class CreateAgentJobService:
             conversation_mode=command.conversation_mode,
         )
         attachment_ids: list[str] = []
+        new_attachment_ids: list[str] = []
         with self.repository.database.unit_of_work():
             session = self.repository.create_session(
                 project_code=project_code,
@@ -399,7 +399,7 @@ class CreateAgentJobService:
                 safe_metadata={"attachment_intake": True},
             )
             for ordinal, attachment in enumerate(command.attachments, start=1):
-                created = self.repository.add_attachment(
+                attachment_row, attachment_created = self.repository.add_or_get_attachment(
                     message_id=message_id,
                     job_id=None,
                     task_workspace_id=str(workspace["id"]),
@@ -414,7 +414,9 @@ class CreateAgentJobService:
                     credential_type=attachment.source_credential_type,
                     credential_expires_at=attachment.source_credential_expires_at,
                 )
-                attachment_ids.append(created.id)
+                attachment_ids.append(attachment_row.id)
+                if attachment_created:
+                    new_attachment_ids.append(attachment_row.id)
             self.audit_service.record(
                 "attachment.intake.staged",
                 status="SUCCEEDED",
@@ -424,11 +426,12 @@ class CreateAgentJobService:
                     "session_id": session.id,
                     "task_workspace_id": str(workspace["id"]),
                     "attachment_count": len(attachment_ids),
+                    "new_attachment_count": len(new_attachment_ids),
                     "external_event_id": command.external_event_id,
                 },
             )
         correlation_id = command.correlation_id or new_correlation_id()
-        for attachment_id in attachment_ids:
+        for attachment_id in new_attachment_ids:
             self.publisher.publish_attachment(attachment_id, correlation_id)
         return StagedAttachmentIntake(
             session_id=session.id,

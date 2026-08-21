@@ -258,20 +258,28 @@ class AttachmentProcessingService:
                 attachment_id, correlation_id, "attachment_retry_exhausted"
             )
         except Exception as exc:
-            code = getattr(exc, "safe_message", str(exc))[:100]
+            error_code = str(getattr(exc, "error_code", "") or "")[:128]
+            if not error_code:
+                error_code = (
+                    "attachment_processing_rejected"
+                    if isinstance(exc, NonRetryableExecutionError)
+                    else "attachment_processing_failed"
+                )
             self.repository.update_attachment(
                 attachment_id,
                 status="REJECTED" if isinstance(exc, NonRetryableExecutionError) else "FAILED",
-                failure_code=code,
+                failure_code=error_code,
                 clear_credential=True,
             )
-            self.publisher.publish_attachment_dead_letter(attachment_id, correlation_id, code)
+            self.publisher.publish_attachment_dead_letter(
+                attachment_id, correlation_id, error_code
+            )
             self.audit_service.record(
                 "attachment.rejected",
                 status="FAILED",
                 summary="Attachment processing failed safely",
                 job_id=attachment.job_id or None,
-                payload={"attachment_id": attachment_id, "failure_code": code},
+                payload={"attachment_id": attachment_id, "failure_code": error_code},
             )
         return self._release_attachment_if_ready(attachment_id, correlation_id)
 

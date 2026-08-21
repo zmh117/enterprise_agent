@@ -1317,21 +1317,53 @@ class AgentRepository:
         credential_type: str = "",
         credential_expires_at: str | None = None,
     ) -> MessageAttachment:
+        attachment, _created = self.add_or_get_attachment(
+            message_id=message_id,
+            job_id=job_id,
+            task_workspace_id=task_workspace_id,
+            ordinal=ordinal,
+            media_type=media_type,
+            file_name=file_name,
+            declared_mime=declared_mime,
+            declared_size=declared_size,
+            credential_ciphertext=credential_ciphertext,
+            credential_type=credential_type,
+            credential_expires_at=credential_expires_at,
+        )
+        return attachment
+
+    def add_or_get_attachment(
+        self,
+        *,
+        message_id: str,
+        job_id: str | None,
+        task_workspace_id: str = "",
+        ordinal: int,
+        media_type: str,
+        file_name: str,
+        declared_mime: str = "",
+        declared_size: int | None = None,
+        credential_ciphertext: str = "",
+        credential_type: str = "",
+        credential_expires_at: str | None = None,
+    ) -> tuple[MessageAttachment, bool]:
         existing = self.database.execute_one(
             "select * from message_attachment where message_id = ? and ordinal = ?",
             (message_id, ordinal),
         )
         if existing:
-            return self._attachment_from_row(existing)
+            return self._attachment_from_row(existing), False
         attachment_id = new_id("attachment")
         timestamp = now_iso()
-        self.database.execute(
+        inserted = self.database.execute(
             """
             insert into message_attachment
               (id, message_id, job_id, ordinal, media_type, file_name, declared_mime,
                declared_size, status, source_credential_ciphertext, source_credential_type,
                source_credential_expires_at, task_workspace_id, created_at, updated_at)
             values (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?, ?)
+            on conflict(message_id, ordinal) do nothing
+            returning *
             """,
             (
                 attachment_id,
@@ -1350,7 +1382,15 @@ class AgentRepository:
                 timestamp,
             ),
         )
-        return self.get_attachment(attachment_id)
+        if inserted:
+            return self._attachment_from_row(inserted[0]), True
+        existing = self.database.execute_one(
+            "select * from message_attachment where message_id = ? and ordinal = ?",
+            (message_id, ordinal),
+        )
+        if existing is None:
+            raise RuntimeError("Attachment idempotency lookup failed")
+        return self._attachment_from_row(existing), False
 
     def increment_attachment_retry(self, attachment_id: str) -> int:
         row = self.database.execute_one(
@@ -1563,24 +1603,21 @@ class AgentRepository:
               join agent_message m on m.id = a.message_id
               join message_attachment_file_binding b on b.attachment_id = a.id
               join managed_file f on f.id = b.file_id
-              join managed_file_version v on v.id = b.version_id
+             join managed_file_version v on v.id = b.version_id
              where m.session_id = ?
-               and v.status != 'DELETED'
-               and f.status != 'DELETED'
-               and (
-                 v.status = 'CONTENT_UNAVAILABLE'
-                 or f.status = 'CONTENT_UNAVAILABLE'
-                 or not exists (
-                   select 1 from file_retention_fact r where r.version_id = v.id
-                 )
-                 or exists (
-                   select 1 from file_retention_fact r
-                    where r.version_id = v.id and r.expires_at > ?
-                 )
+               and a.status in ('READY', 'stored_not_interpreted')
+               and a.expires_at is not null
+               and a.expires_at > ?
+               and b.retention_expires_at > ?
+               and f.status = 'ACTIVE'
+               and v.status in ('AVAILABLE', 'CONFLICT')
+               and exists (
+                 select 1 from file_retention_fact r
+                  where r.version_id = v.id and r.expires_at > ?
                )
              order by a.created_at, a.id
             """,
-            (session_id, now),
+            (session_id, now, now, now),
         )
         return [row for row in rows if row.get("file_id") and row.get("version_id")]
 
