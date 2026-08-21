@@ -170,10 +170,10 @@ describe("Business Application workbench", () => {
                 "processing_dependencies_unavailable",
             },
             {
-              code: "docling-layout-ocr-v1",
-              version: "1",
+              code: "docling-layout-ocr-v2",
+              version: "2",
               hash: "b".repeat(64),
-              label: "Docling Office 内嵌图片布局 OCR v1",
+              label: "Docling Office 内嵌图片布局 OCR v2",
               source_format_codes: ["PDF", "DOCX", "PPTX", "XLSX"],
               output_kinds: ["MARKDOWN", "DOCLING_JSON", "OCR_LAYOUT_JSON"],
               limits: {
@@ -356,7 +356,7 @@ describe("Business Application workbench", () => {
     ).toBeInTheDocument()
     expect(
       await screen.findByRole("option", {
-        name: "Docling Office 内嵌图片布局 OCR v1",
+        name: "Docling Office 内嵌图片布局 OCR v2",
       })
     ).toBeInTheDocument()
     expect(screen.queryByLabelText(/Docling URL/i)).not.toBeInTheDocument()
@@ -473,10 +473,10 @@ describe("Business Application workbench", () => {
                 "processing_dependencies_unavailable",
             },
             {
-              code: "docling-layout-ocr-v1",
-              version: "1",
+              code: "docling-layout-ocr-v2",
+              version: "2",
               hash: "b".repeat(64),
-              label: "Docling Office 内嵌图片布局 OCR v1",
+              label: "Docling Office 内嵌图片布局 OCR v2",
               source_format_codes: ["PDF", "DOCX", "PPTX", "XLSX"],
               output_kinds: ["MARKDOWN", "DOCLING_JSON", "OCR_LAYOUT_JSON"],
               document_processing_status: "CONFIGURED_UNAVAILABLE",
@@ -611,9 +611,9 @@ describe("Business Application workbench", () => {
       "文档解析/OCR Profile"
     )
     fireEvent.change(documentProcessingProfile, {
-      target: { value: "docling-layout-ocr-v1" },
+      target: { value: "docling-layout-ocr-v2" },
     })
-    expect(documentProcessingProfile).toHaveValue("docling-layout-ocr-v1")
+    expect(documentProcessingProfile).toHaveValue("docling-layout-ocr-v2")
     expect(
       screen.getByText((_, element) => {
         const content = element?.textContent ?? ""

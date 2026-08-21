@@ -230,7 +230,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "116"
+        assert result.head == "117"
         assert result.applied == (
             "100",
             "101",
@@ -249,6 +249,7 @@ def test_postgres_baseline_100_fresh_schema_and_comments(
             "114",
             "115",
             "116",
+            "117",
         )
         assert database.execute_one(
             """
@@ -278,7 +279,7 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
         ).run()
         comments = postgres_comment_snapshot(database)
 
-        assert result.head == "116"
+        assert result.head == "117"
         assert result.applied == (
             "100",
             "101",
@@ -297,6 +298,7 @@ def test_postgres_explicit_fresh_contract_schema_and_comments(
             "114",
             "115",
             "116",
+            "117",
         )
         assert comments["table_count"] == 121
         assert comments["column_count"] == 1575

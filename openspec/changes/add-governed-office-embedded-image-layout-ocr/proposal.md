@@ -5,6 +5,7 @@
 ## What Changes
 
 - 新增代码发布 Profile `docling-layout-ocr-v1`。它是 `docling-text-v1` 的完整超集，继续支持既有源格式、正文、表格和独立图片 OCR，并为 DOCX、PPTX 内嵌栅格图片提取 OCR 文字、置信度、规范化坐标、阅读顺序和有界空间关系；既有 `docling-text-v1` 的 code、version、hash 和历史行为保持不变。
+- 新鲜真实链路证明固定 Docling 1.30.0 不保证提供逐 OCR block 置信度，因此追加代码发布 Profile `docling-layout-ocr-v2` 和布局 Schema v2：文字与坐标继续是必需事实，`confidence_bp` 在上游未提供时固定为 `null` 并在 Markdown 显式标注“上游未提供”；v1 code/version/hash 与历史结果保持不变，但不得再用于新 Publication。
 - 为每个精确源 File Version 生成不可变 `OCR_LAYOUT_JSON` 派生表示，使用版本化 Schema 保存图片父文档锚点、图片尺寸/摘要、OCR block/word、坐标与空间关系；完整 OCR 内容继续由 File Service 写入私有对象存储，PostgreSQL 只保存身份、状态、大小、哈希、Profile/处理器 provenance 和生命周期事实。
 - 由确定性 Assembler 把有界布局结果合并进同一份 Agent 可读 Markdown，明确坐标系、图片位置、OCR 置信度、阅读顺序和部分失败；Agent 仍只物化 Markdown，`OCR_LAYOUT_JSON`、Docling JSON、Office 原件和图片字节均不得进入 Job Sandbox、MCP JSON 或初始 conversation context。
 - 为 PPTX 保存 slide/shape 与幻灯片内图片位置；为 DOCX 保存稳定文档节点/段落锚点，不伪造会随字体和渲染环境变化的页码坐标。图片内部坐标统一规范化为左上角原点的 `0..10000` 整数空间；OCR使用Office包内原始嵌入图片，仅应用图片自身EXIF方向，不解析或应用Office显示层裁剪、旋转或翻转，并显式提示结果可能包含已裁掉区域。
@@ -22,7 +23,7 @@
 
 ### Modified Capabilities
 
-- `business-application`: 增加代码发布的 `docling-layout-ocr-v1` 选择与 Publication code/version/hash 冻结，保持旧 Publication 和 `docling-text-v1` 行为不变。
+- `business-application`: 增加代码发布的 `docling-layout-ocr-v2` 选择与 Publication code/version/hash 冻结，保留 `docling-layout-ocr-v1` 仅用于历史快照解释，并保持旧 Publication 和 `docling-text-v1` 行为不变。
 - `task-file-workspace`: 增加 `OCR_LAYOUT_JSON` 派生表示的身份、配额、生命周期和非物化规则，并保持 Agent 只读取冻结的布局增强 Markdown。
 - `platform-operations`: 增加 Office 图片提取/OCR所需固定模型 artifacts、资源上限、队列/就绪/积压观测和布局 OCR 端到端验收。
 
@@ -30,5 +31,5 @@
 
 - 受影响代码包括文档处理 Profile 注册、Docling Provider/适配层、File Processing Worker、processing run 与 representation staging/finalize、File Service 流式接口、Manifest/Markdown组装、派生内容配额与生命周期、管理端 Profile 展示及运行中心观测。
 - 需要前向 migration 扩展 Profile 约束、Representation kind、OCR Layout provenance/Schema元数据、Profile驱动的必需输出集合及必要索引；2026-08-21 apply preflight确认磁盘与本地Compose ledger的当前head均为`115_expand_file_turn_admission.sql`，因此候选版本为`116`，创建migration前仍须再次确认head未变化。
-- `docling-layout-ocr-v1` 仍通过 Business Application Publication 显式启用，不因部署模型或容器而自动赋予既有应用新能力；Publication一次只选择一个文档处理 Profile，新 Profile 必须包含旧文字 Profile 的全部能力而不是与其叠加选择。
+- `docling-layout-ocr-v2` 仍通过 Business Application Publication 显式启用，不因部署模型或容器而自动赋予既有应用新能力；Publication一次只选择一个文档处理 Profile，新 Profile 必须包含旧文字 Profile 的全部能力而不是与其叠加选择。已冻结 v1 快照保持可解释，但新发布或重新激活必须迁移到 v2。
 - Agent Runtime 协议保持现状：Manifest冻结原件和最终 Markdown Representation，Runtime只物化 Markdown。任何未来向多模态模型发送原图或识别视觉语义的能力必须另行提出 change。

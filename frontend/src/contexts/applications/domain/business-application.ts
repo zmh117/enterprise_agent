@@ -93,6 +93,7 @@ const documentProcessingProfileCodeSchema = z.enum([
   "NONE",
   "docling-text-v1",
   "docling-layout-ocr-v1",
+  "docling-layout-ocr-v2",
 ])
 
 const documentProcessingStateSchema = z.object({
@@ -265,6 +266,7 @@ export type SaveDraftInput = {
     | "NONE"
     | "docling-text-v1"
     | "docling-layout-ocr-v1"
+    | "docling-layout-ocr-v2"
   task_file_features: {
     workspace_enabled: boolean
     file_mcp_enabled: boolean

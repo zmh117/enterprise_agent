@@ -26,6 +26,7 @@ class DocumentProcessingProfileCode(StrEnum):
     NONE = "NONE"
     DOCLING_TEXT_V1 = "docling-text-v1"
     DOCLING_LAYOUT_OCR_V1 = "docling-layout-ocr-v1"
+    DOCLING_LAYOUT_OCR_V2 = "docling-layout-ocr-v2"
 
 
 class DocumentProcessingStatus(StrEnum):
@@ -375,11 +376,52 @@ if DOCLING_LAYOUT_OCR_V1.profile_hash != DOCLING_LAYOUT_OCR_V1_PROFILE_HASH:
     raise RuntimeError("docling-layout-ocr-v1 canonical profile hash changed")
 
 
+_DOCLING_LAYOUT_OCR_V2_OPTIONS = _plain_value(DOCLING_LAYOUT_OCR_V1.layout_ocr_options)
+_DOCLING_LAYOUT_OCR_V2_OPTIONS["layout_schema"] = {
+    "name": "enterprise-agent.office-image-ocr-layout",
+    "version": "v2",
+}
+_DOCLING_LAYOUT_OCR_V2_OPTIONS["picture_result_schema"] = {
+    "name": "enterprise-agent.office-picture-ocr-result",
+    "version": "v2",
+}
+_DOCLING_LAYOUT_OCR_V2_OPTIONS["confidence_contract"] = {
+    "source": "docling-text-item-or-provenance",
+    "unit": "basis-points",
+    "missing_value": None,
+    "aggregate_fallback_enabled": False,
+}
+_DOCLING_LAYOUT_OCR_V2_OPTIONS["assembler_version"] = "office-image-layout-assembler/v2"
+
+DOCLING_LAYOUT_OCR_V2 = DocumentProcessingProfile(
+    code=DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V2,
+    version="2",
+    processor_code=DOCLING_LAYOUT_OCR_V1.processor_code,
+    source_formats=DOCLING_LAYOUT_OCR_V1.source_formats,
+    output_kinds=DOCLING_LAYOUT_OCR_V1.output_kinds,
+    request_options=DOCLING_LAYOUT_OCR_V1.request_options,
+    max_source_bytes=DOCLING_LAYOUT_OCR_V1.max_source_bytes,
+    max_pdf_pages=DOCLING_LAYOUT_OCR_V1.max_pdf_pages,
+    processing_timeout_seconds=DOCLING_LAYOUT_OCR_V1.processing_timeout_seconds,
+    max_markdown_bytes=DOCLING_LAYOUT_OCR_V1.max_markdown_bytes,
+    max_docling_json_bytes=DOCLING_LAYOUT_OCR_V1.max_docling_json_bytes,
+    max_attempts=DOCLING_LAYOUT_OCR_V1.max_attempts,
+    layout_ocr_options=MappingProxyType(_DOCLING_LAYOUT_OCR_V2_OPTIONS),
+)
+DOCLING_LAYOUT_OCR_V2_PROFILE_HASH = (
+    "c3f6d45b3d23f70727e047158f20b1e798fa9a6d188aa11b8985385a1bc79cb8"
+)
+
+if DOCLING_LAYOUT_OCR_V2.profile_hash != DOCLING_LAYOUT_OCR_V2_PROFILE_HASH:
+    raise RuntimeError("docling-layout-ocr-v2 canonical profile hash changed")
+
+
 PROFILE_REGISTRY: Mapping[DocumentProcessingProfileCode, DocumentProcessingProfile] = (
     MappingProxyType(
         {
             DocumentProcessingProfileCode.DOCLING_TEXT_V1: DOCLING_TEXT_V1,
             DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V1: DOCLING_LAYOUT_OCR_V1,
+            DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V2: DOCLING_LAYOUT_OCR_V2,
         }
     )
 )
@@ -428,6 +470,14 @@ def required_output_kinds_for_profile(
         value,
         profile_hash=profile_hash,
     ).output_kinds
+
+
+def require_layout_ocr_profile_by_hash(value: object) -> DocumentProcessingProfile:
+    profile_hash = str(value or "")
+    for profile in PROFILE_REGISTRY.values():
+        if profile.layout_ocr_options is not None and profile.profile_hash == profile_hash:
+            return profile
+    raise _profile_error("布局OCR Profile版本不匹配")
 
 
 def document_processing_profile_snapshot(value: object) -> dict[str, str]:

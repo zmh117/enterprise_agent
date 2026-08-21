@@ -18,7 +18,7 @@ def _migrated_database() -> Database:
         default_migrations_dir(),
         migrator_build="document-file-processing-schema-test",
     ).run()
-    assert result.head == "116"
+    assert result.head == "117"
     return database
 
 
@@ -283,6 +283,34 @@ def test_layout_ocr_picture_facts_are_run_bound_and_unique() -> None:
         )
 
 
+def test_layout_ocr_v2_profile_constraints_accept_v2_and_reject_unknown_codes() -> None:
+    database = _migrated_database()
+    _insert_source_file(database)
+    _insert_processing_run(database, profile_code="docling-layout-ocr-v2")
+    database.execute(
+        """
+        insert into document_picture_asset
+          (id, processing_run_id, tenant_id, source_file_id, source_version_id,
+           profile_code, profile_hash, normalized_sha256, media_type,
+           original_width_pixels, original_height_pixels, width_pixels,
+           height_pixels, normalization_transform_json, size_bytes, object_key, status,
+           created_at, updated_at)
+        values ('asset-v2', 'run-a', 'tenant-a', 'file-source', 'version-source-1',
+                'docling-layout-ocr-v2', ?, ?, 'image/png', 32, 24, 32, 24,
+                '{"version":"exif-orientation/v1"}', 256,
+                'private/pictures/asset-v2', 'AVAILABLE', ?, ?)
+        """,
+        ("c" * 64, "f" * 64, TIMESTAMP, TIMESTAMP),
+    )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        database.execute(
+            "update file_processing_run set profile_code = 'docling-layout-ocr-v3' where id = 'run-a'"
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        database.execute(
+            "update document_picture_asset set profile_code = 'docling-layout-ocr-v3' where id = 'asset-v2'"
+        )
 def test_processing_schema_has_retry_lookup_and_cleanup_indexes() -> None:
     database = _migrated_database()
     indexes = {

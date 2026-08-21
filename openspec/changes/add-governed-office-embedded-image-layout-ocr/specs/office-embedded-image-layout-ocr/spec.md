@@ -42,7 +42,12 @@
 - **AND** 布局JSON、Markdown、管理端与Runtime能力说明必须明确未应用Office显示变换且结果可能包含页面上已裁掉区域
 
 ### Requirement: OCR布局使用版本化不可变Schema
-系统 MUST 为`docling-layout-ocr-v1`发布符合`enterprise-agent.office-image-ocr-layout/v1`的不可变`OCR_LAYOUT_JSON` Representation。该Schema MUST 绑定精确source File/Version、processing run、Profile hash、layout/Assembler version，并为所有图片occurrence保存图片摘要、父锚点、状态以及有界OCR block；每个block MUST 保存稳定局部ID、Unicode文字、`confidence_bp`、`reading_order`、规范化bbox和可选polygon。若Profile包含word级结果，word MUST 受独立数量/字符上限约束并保持block归属。完整OCR文字和坐标 MUST 保存在File Service管理的私有对象中，PostgreSQL不得逐block/word保存正文。
+系统 MUST 为`docling-layout-ocr-v2`发布符合`enterprise-agent.office-image-ocr-layout/v2`的不可变`OCR_LAYOUT_JSON` Representation，并 MUST 保留v1 Schema与Profile的历史解释。v2 Schema MUST 绑定精确source File/Version、processing run、Profile hash、layout/Assembler version，并为所有图片occurrence保存图片摘要、父锚点、状态以及有界OCR block；每个block MUST 保存稳定局部ID、Unicode文字、`confidence_bp`、`reading_order`、规范化bbox和可选polygon。`confidence_bp` MUST 为上游明确提供并规范化后的`0..10000`整数，或在上游未提供逐block置信度时为JSON `null`；系统不得复制聚合置信度或生成默认值。若Profile包含word级结果，word MUST 受独立数量/字符上限约束并保持block归属。完整OCR文字和坐标 MUST 保存在File Service管理的私有对象中，PostgreSQL不得逐block/word保存正文。
+
+#### Scenario: 上游未提供逐block置信度
+- **WHEN** 固定Docling成功返回合规文字、provenance和bbox但没有逐block`confidence`
+- **THEN** v2布局结果保留文字与坐标并把`confidence_bp`保存为`null`
+- **AND** Markdown明确“置信度=上游未提供”，不把图片标记为`FAILED`且不发明数值
 
 #### Scenario: OCR布局终结成功
 - **WHEN** 同一run的全部有界图片item已经进入确定终态且Assembler生成合规布局JSON
@@ -95,7 +100,7 @@
 - **AND** 重复完成事件不得创建第二个assembly或重复Representation
 
 ### Requirement: Agent只读取布局增强Markdown
-系统 MUST 由版本化确定性Assembler把父文档Markdown与布局OCR附录合并为同一份最终Markdown。附录 SHALL 为每张图片列出父锚点、坐标系、按reading order排序的有界block、置信度等级、允许的空间关系和确定状态，并 MUST 明确结果为布局OCR而非完整视觉理解。附录 MUST 同时声明像素基准为应用图片自身EXIF后的原始嵌入图片、未应用Office显示裁剪/旋转/翻转且可能包含页面上已裁掉区域。Manifest与Runtime只能冻结和物化该Markdown Representation；Office原件、图片asset、Docling JSON和`OCR_LAYOUT_JSON`不得进入Job Sandbox、MCP JSON或初始conversation context。
+系统 MUST 由版本化确定性Assembler把父文档Markdown与布局OCR附录合并为同一份最终Markdown。附录 SHALL 为每张图片列出父锚点、坐标系、按reading order排序的有界block、上游提供时的置信度等级或明确的置信度不可用标记、允许的空间关系和确定状态，并 MUST 明确结果为布局OCR而非完整视觉理解。附录 MUST 同时声明像素基准为应用图片自身EXIF后的原始嵌入图片、未应用Office显示裁剪/旋转/翻转且可能包含页面上已裁掉区域。Manifest与Runtime只能冻结和物化该Markdown Representation；Office原件、图片asset、Docling JSON和`OCR_LAYOUT_JSON`不得进入Job Sandbox、MCP JSON或初始conversation context。
 
 #### Scenario: Agent分析带截图的PPTX
 - **WHEN** Job Manifest冻结PPTX source Version及`docling-layout-ocr-v1`生成的最终Markdown
@@ -106,6 +111,11 @@
 - **WHEN** block的`confidence_bp`低于Profile固定阈值
 - **THEN** Markdown必须标记低置信度并保留机器提取字面值
 - **AND** Assembler不得自动改写成看似确定的内容
+
+#### Scenario: 成功图片没有可提取文字
+- **WHEN** Docling返回`success`、没有errors且该图片Markdown为空
+- **THEN** v2 item进入`NO_TEXT`并生成没有block的合规结果
+- **AND** 不因缺少可消费的文字结构把图片记为`FAILED`，也不声称图片没有视觉含义
 
 #### Scenario: 尝试物化布局JSON或图片
 - **WHEN** Agent或Runtime请求物化`OCR_LAYOUT_JSON`、Docling JSON、Office原件或picture asset

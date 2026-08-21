@@ -9,7 +9,11 @@ from collections.abc import Callable
 import httpx
 import pytest
 
-from app.modules.document_processing.profile import DOCLING_LAYOUT_OCR_V1, DOCLING_TEXT_V1
+from app.modules.document_processing.profile import (
+    DOCLING_LAYOUT_OCR_V1,
+    DOCLING_LAYOUT_OCR_V2,
+    DOCLING_TEXT_V1,
+)
 from app.modules.document_processing.provider import (
     DoclingServeProvider,
     DocumentProcessorFailure,
@@ -115,6 +119,33 @@ def test_docling_provider_uses_only_async_multipart_poll_and_result_contract() -
         "/v1/status/poll/task-1",
         "/v1/result/task-1",
     ]
+
+
+def test_layout_v2_provider_accepts_unambiguous_successful_no_text_result() -> None:
+    payload = {
+        "document": {
+            "filename": "picture-input",
+            "md_content": "",
+            "json_content": None,
+        },
+        "status": "success",
+        "processing_time": 0.5,
+        "timings": {},
+        "errors": [],
+        "confidence": None,
+    }
+    provider = _provider(lambda _: httpx.Response(200, json=payload))
+
+    result = provider.fetch_picture("task-empty", profile=DOCLING_LAYOUT_OCR_V2)
+
+    assert result.no_text is True
+    assert result.partial is False
+    assert result.markdown == b""
+    assert result.docling_json == b"{}"
+
+    with pytest.raises(DocumentProcessorFailure) as captured:
+        provider.fetch_picture("task-empty-v1", profile=DOCLING_LAYOUT_OCR_V1)
+    assert captured.value.error_code == "docling_picture_result_invalid"
 
 
 @pytest.mark.parametrize(

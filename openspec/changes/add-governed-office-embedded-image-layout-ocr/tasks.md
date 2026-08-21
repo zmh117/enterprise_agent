@@ -78,3 +78,12 @@
 - [x] 9.6 运行受影响后端测试、migration tests、静态检查、管理端测试/build、Compose配置/安全测试和`git diff --check`，修复全部回归并记录不含敏感数据的证据。
 - [ ] 9.7 在新建验收Publication上完成附件入站→parent/逐图/assembly→三种Representation→Manifest→Runtime Markdown读取→Agent回答→原件Delivery的新鲜E2E，证明Agent只陈述文字/布局边界且全链幂等、隔离、可清理。
 - [ ] 9.8 执行`openspec validate add-governed-office-embedded-image-layout-ocr --strict`并复核全部任务证据；仅在固定上限、模型digest、Profile hash、readiness和新鲜E2E均通过后允许目标Publication激活。
+
+## 10. Docling 1.30.0 真实置信度合同修正
+
+- [x] 10.1 记录新鲜DOCX链路中7个`docling_picture_confidence_missing`和1个结构错误的非敏感证据，明确父解析、图片导出、逐图HTTP成功与适配失败边界。
+- [x] 10.2 新增不可变`docling-layout-ocr-v2`、布局/picture-result Schema v2、Profile hash与forward migration；保留v1 code/version/hash和历史解释，新Publication不得再选择v1。
+- [x] 10.3 v2仅在上游提供逐block置信度时规范化数值，缺失时保存`null`并在Markdown显示“上游未提供”；确定成功且无文字时生成`NO_TEXT`，非空结构、provenance、bbox或坐标异常仍失败关闭并使用安全细分错误码。
+- [x] 10.4 让Provider、Worker、Repository、readiness和清理按冻结Profile解析v1/v2，证明历史v1不变且v2不会混用v1布局结果。
+- [x] 10.5 补齐Profile、migration、Provider、适配、Worker、File Service、Publication和管理端回归，运行受影响测试/build、Compose校验、`git diff --check`与OpenSpec严格校验。
+- [ ] 10.6 重建受影响服务，使用新建v2验收Publication完成同一DOCX的真实逐图、三Representation、Manifest、Runtime读取、Agent回答和原件Delivery E2E；确认不再把缺失置信度判为整图失败。

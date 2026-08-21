@@ -22,12 +22,13 @@ from app.modules.document_processing.layout_ocr import (
     adapt_docling_picture_result,
     append_layout_ocr_markdown,
     assemble_layout_representation,
+    build_no_text_picture_result,
 )
 from app.modules.document_processing.profile import (
-    DOCLING_LAYOUT_OCR_V1,
     DOCLING_TEXT_V1,
     DocumentProcessingProfile,
     require_document_processing_profile,
+    require_layout_ocr_profile_by_hash,
 )
 from app.modules.document_processing.provider import (
     DocumentProcessor,
@@ -113,7 +114,7 @@ class FileProcessingWorkerService:
             self._require_run_not_expired(run.run_deadline_at, profile=profile)
             if task.state is ProcessorTaskState.FAILURE:
                 raise DocumentProcessorFailure("docling_conversion_failed", retryable=False)
-            if profile.profile_hash == DOCLING_LAYOUT_OCR_V1.profile_hash:
+            if profile.layout_ocr_options is not None:
                 self._complete_layout_parent(
                     run=run,
                     profile=profile,
@@ -326,11 +327,10 @@ class FileProcessingWorkerService:
             )
             if item.terminal:
                 return FileProcessingTaskResult(FileProcessingDisposition.ACK)
-            if item.profile_hash != DOCLING_LAYOUT_OCR_V1.profile_hash:
-                raise DocumentProcessorFailure("document_profile_mismatch", retryable=False)
+            profile = require_layout_ocr_profile_by_hash(item.profile_hash)
             self._require_run_not_expired(
                 item.run_deadline_at,
-                profile=DOCLING_LAYOUT_OCR_V1,
+                profile=profile,
             )
             if item.external_task_id:
                 task = self.processor.poll(item.external_task_id)
@@ -339,7 +339,7 @@ class FileProcessingWorkerService:
                 task = self.processor.submit_picture(
                     stream=io.BytesIO(content),
                     media_type=item.media_type,
-                    profile=DOCLING_LAYOUT_OCR_V1,
+                    profile=profile,
                 )
                 self.file_service.mark_picture_submitted(
                     picture_item_id=item.picture_item_id,
@@ -349,20 +349,20 @@ class FileProcessingWorkerService:
                 task,
                 started=started,
                 timeout_seconds=int(
-                    DOCLING_LAYOUT_OCR_V1.layout_ocr_options["limits"][
+                    profile.layout_ocr_options["limits"][
                         "picture_attempt_deadline_seconds"
                     ]
                 ),
             )
             self._require_run_not_expired(
                 item.run_deadline_at,
-                profile=DOCLING_LAYOUT_OCR_V1,
+                profile=profile,
             )
             if task.state is ProcessorTaskState.FAILURE:
                 raise DocumentProcessorFailure("docling_conversion_failed", retryable=False)
             result = self.processor.fetch_picture(
                 task.task_id,
-                profile=DOCLING_LAYOUT_OCR_V1,
+                profile=profile,
             )
             transform = dict(item.normalization_transform)
             normalized = NormalizedPicture(
@@ -376,10 +376,14 @@ class FileProcessingWorkerService:
                 exif_orientation=int(transform["exif_orientation"]),
                 transform=transform,
             )
-            picture_result = adapt_docling_picture_result(
-                result.docling_json,
-                picture=normalized,
-                profile=DOCLING_LAYOUT_OCR_V1,
+            picture_result = (
+                build_no_text_picture_result(picture=normalized, profile=profile)
+                if result.no_text
+                else adapt_docling_picture_result(
+                    result.docling_json,
+                    picture=normalized,
+                    profile=profile,
+                )
             )
             parsed = json.loads(picture_result)
             status = str(parsed["status"])
@@ -448,19 +452,25 @@ class FileProcessingWorkerService:
                 run_id=message.run_id,
                 profile_hash=message.profile_hash,
             )
+            profile = require_document_processing_profile(
+                context["profile_code"],
+                profile_hash=context["profile_hash"],
+            )
+            if profile.layout_ocr_options is None:
+                raise DocumentProcessorFailure("document_profile_mismatch", retryable=False)
             self._require_run_not_expired(
                 str(context["run_deadline_at"]),
-                profile=DOCLING_LAYOUT_OCR_V1,
+                profile=profile,
             )
             assembly_timeout = int(
-                DOCLING_LAYOUT_OCR_V1.layout_ocr_options["limits"][
+                profile.layout_ocr_options["limits"][
                     "assembly_deadline_seconds"
                 ]
             )
             occurrence_values: list[dict[str, object]] = []
             result_cache: dict[str, bytes] = {}
             maximum_result = int(
-                DOCLING_LAYOUT_OCR_V1.layout_ocr_options["limits"][
+                profile.layout_ocr_options["limits"][
                     "max_ocr_layout_json_bytes"
                 ]
             )
@@ -484,7 +494,7 @@ class FileProcessingWorkerService:
                 source_file_id=str(context["source_file_id"]),
                 source_version_id=str(context["source_version_id"]),
                 run_id=message.run_id,
-                profile=DOCLING_LAYOUT_OCR_V1,
+                profile=profile,
                 occurrences=occurrence_values,
             )
             self._require_stage_not_expired(
@@ -494,7 +504,7 @@ class FileProcessingWorkerService:
             )
             parent = self.file_service.download_parent_artifact(
                 run_id=message.run_id,
-                maximum_bytes=DOCLING_LAYOUT_OCR_V1.max_markdown_bytes,
+                maximum_bytes=profile.max_markdown_bytes,
             )
             markdown = append_layout_ocr_markdown(parent, layout)
             self._require_stage_not_expired(
@@ -560,9 +570,18 @@ class FileProcessingWorkerService:
     ) -> FileProcessingTaskResult:
         safe_code = _safe_error_code(error_code)
         attempt = item.attempt if item is not None else message.attempt + 1
-        if retryable and attempt < int(
-            DOCLING_LAYOUT_OCR_V1.layout_ocr_options["limits"]["max_picture_attempts"]
-        ):
+        max_picture_attempts = self.max_attempts
+        try:
+            retry_profile = require_layout_ocr_profile_by_hash(
+                item.profile_hash if item is not None else message.profile_hash
+            )
+            assert retry_profile.layout_ocr_options is not None
+            max_picture_attempts = int(
+                retry_profile.layout_ocr_options["limits"]["max_picture_attempts"]
+            )
+        except NonRetryableExecutionError:
+            pass
+        if retryable and attempt < max_picture_attempts:
             delay = min(self.retry_base_seconds * (2 ** max(attempt - 1, 0)), 120)
             try:
                 self.file_service.retry_picture_item(

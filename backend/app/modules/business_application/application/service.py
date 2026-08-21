@@ -37,6 +37,7 @@ from app.modules.business_application.domain.policies import (
 )
 from app.modules.document_processing import (
     DOCLING_LAYOUT_OCR_V1,
+    DOCLING_LAYOUT_OCR_V2,
     DOCLING_TEXT_V1,
     DocumentProcessingProfileCode,
     document_processing_profile_snapshot,
@@ -426,9 +427,21 @@ class BusinessApplicationService:
                 error_code="validation_failed",
                 field_errors=errors,
             )
+        profile_code = str(revision.get("document_processing_profile_code") or "")
+        if profile_code == DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V1.value:
+            raise NonRetryableExecutionError(
+                "Document layout OCR v1 is deprecated for new publications",
+                safe_message="Office 内嵌图片布局 OCR v1 已停止新发布，请选择 v2",
+                error_code="validation_failed",
+                field_errors=[
+                    {
+                        "field": "document_processing_profile_code",
+                        "message": "布局 OCR v1 仅保留历史解释，新发布必须使用 v2",
+                    }
+                ],
+            )
         if (
-            str(revision.get("document_processing_profile_code") or "")
-            == DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V1.value
+            profile_code == DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V2.value
             and not self.document_layout_ocr_publication_ready
         ):
             raise NonRetryableExecutionError(
@@ -495,8 +508,14 @@ class BusinessApplicationService:
             )
         self._require_python_application_publication(publication)
         profile, _ = publication_document_processing_profile(publication["snapshot"])
+        if profile["code"] == DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V1.value:
+            raise NonRetryableExecutionError(
+                "Document layout OCR v1 cannot be reactivated",
+                safe_message="Office 内嵌图片布局 OCR v1 已停止重新激活，请发布 v2",
+                error_code="runtime_not_ready",
+            )
         if (
-            profile["code"] == DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V1.value
+            profile["code"] == DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V2.value
             and not self.document_layout_ocr_publication_ready
         ):
             raise NonRetryableExecutionError(
@@ -1630,6 +1649,7 @@ class BusinessApplicationService:
                 "label": "关闭文档处理",
                 "source_format_codes": [],
                 "output_kinds": [],
+                "selectable": True,
                 **document_processing_state(DocumentProcessingProfileCode.NONE.value),
             },
             {
@@ -1641,6 +1661,7 @@ class BusinessApplicationService:
                     item.code.value for item in DOCLING_TEXT_V1.source_formats
                 ],
                 "output_kinds": list(DOCLING_TEXT_V1.output_kinds),
+                "selectable": True,
                 "limits": {
                     "max_source_bytes": DOCLING_TEXT_V1.max_source_bytes,
                     "max_pdf_pages": DOCLING_TEXT_V1.max_pdf_pages,
@@ -1659,6 +1680,7 @@ class BusinessApplicationService:
                     item.code.value for item in DOCLING_LAYOUT_OCR_V1.source_formats
                 ],
                 "output_kinds": list(DOCLING_LAYOUT_OCR_V1.output_kinds),
+                "selectable": False,
                 "limits": {
                     "max_source_bytes": DOCLING_LAYOUT_OCR_V1.max_source_bytes,
                     "max_pdf_pages": DOCLING_LAYOUT_OCR_V1.max_pdf_pages,
@@ -1677,7 +1699,39 @@ class BusinessApplicationService:
                     "vlm": False,
                     "visual_semantics": False,
                 },
-                **document_processing_state(DOCLING_LAYOUT_OCR_V1.code.value),
+                "document_processing_status": "CONFIGURED_UNAVAILABLE",
+                "document_processing_reason_code": "profile_deprecated",
+            },
+            {
+                "code": DOCLING_LAYOUT_OCR_V2.code.value,
+                "version": DOCLING_LAYOUT_OCR_V2.version,
+                "hash": DOCLING_LAYOUT_OCR_V2.profile_hash,
+                "label": "Docling Office 内嵌图片布局 OCR v2",
+                "source_format_codes": [
+                    item.code.value for item in DOCLING_LAYOUT_OCR_V2.source_formats
+                ],
+                "output_kinds": list(DOCLING_LAYOUT_OCR_V2.output_kinds),
+                "selectable": True,
+                "limits": {
+                    "max_source_bytes": DOCLING_LAYOUT_OCR_V2.max_source_bytes,
+                    "max_pdf_pages": DOCLING_LAYOUT_OCR_V2.max_pdf_pages,
+                    "processing_timeout_seconds": (
+                        DOCLING_LAYOUT_OCR_V2.processing_timeout_seconds
+                    ),
+                },
+                "capabilities": {
+                    "office_embedded_image_ocr": True,
+                    "coordinates": "TOPLEFT_0_10000",
+                    "reading_order": True,
+                    "confidence_when_upstream_provided": True,
+                    "missing_confidence": "EXPLICIT_NULL",
+                    "bounded_geometric_relations": True,
+                    "picture_pixel_basis": "RAW_EMBEDDED_MEDIA_AFTER_EXIF",
+                    "office_display_transform_applied": False,
+                    "vlm": False,
+                    "visual_semantics": False,
+                },
+                **document_processing_state(DOCLING_LAYOUT_OCR_V2.code.value),
             },
         ]
 

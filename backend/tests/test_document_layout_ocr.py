@@ -11,19 +11,24 @@ from app.modules.document_processing.layout_ocr import (
     adapt_docling_picture_result,
     append_layout_ocr_markdown,
     assemble_layout_representation,
+    build_no_text_picture_result,
     validate_layout_representation,
 )
-from app.modules.document_processing.profile import DOCLING_LAYOUT_OCR_V1
+from app.modules.document_processing.profile import (
+    DOCLING_LAYOUT_OCR_V1,
+    DOCLING_LAYOUT_OCR_V2,
+    DocumentProcessingProfile,
+)
 from app.modules.document_processing.provider import DocumentProcessorFailure
 
 
-def _picture():
+def _picture(profile: DocumentProcessingProfile = DOCLING_LAYOUT_OCR_V1):
     output = io.BytesIO()
     Image.new("RGB", (100, 100), color="white").save(output, format="PNG")
     return normalize_picture_asset(
         output.getvalue(),
         declared_media_type="image/png",
-        profile=DOCLING_LAYOUT_OCR_V1,
+        profile=profile,
     )
 
 
@@ -157,7 +162,7 @@ def test_picture_layout_rejects_unknown_or_non_applicable_coordinates(origin: st
     }
 
 
-def test_picture_layout_rejects_missing_confidence_instead_of_inventing_it() -> None:
+def test_v1_picture_layout_rejects_missing_confidence_instead_of_inventing_it() -> None:
     value = json.loads(_docling_result())
     value["texts"][0].pop("confidence")
     with pytest.raises(DocumentProcessorFailure) as captured:
@@ -167,3 +172,76 @@ def test_picture_layout_rejects_missing_confidence_instead_of_inventing_it() -> 
             profile=DOCLING_LAYOUT_OCR_V1,
         )
     assert captured.value.error_code == "docling_picture_confidence_missing"
+
+
+def test_v2_picture_layout_preserves_text_and_bbox_when_confidence_is_unavailable() -> None:
+    value = json.loads(_docling_result())
+    value["texts"][0].pop("confidence")
+    picture = _picture(DOCLING_LAYOUT_OCR_V2)
+
+    result = adapt_docling_picture_result(
+        json.dumps(value).encode(),
+        picture=picture,
+        profile=DOCLING_LAYOUT_OCR_V2,
+    )
+    parsed = json.loads(result)
+
+    assert parsed["schema_version"] == "v2"
+    assert parsed["blocks"][0]["text"] == "左侧"
+    assert parsed["blocks"][0]["bbox"] == [1000, 2000, 4000, 4000]
+    assert parsed["blocks"][0]["confidence_bp"] is None
+    assert parsed["blocks"][1]["confidence_bp"] == 4200
+
+    layout = assemble_layout_representation(
+        source_file_id="file-v2",
+        source_version_id="version-v2",
+        run_id="run-v2",
+        profile=DOCLING_LAYOUT_OCR_V2,
+        occurrences=[
+            {
+                "occurrence_index": 1,
+                "picture_ref": "#/pictures/0",
+                "picture_sha256": picture.content_sha256,
+                "parent_anchor": {
+                    "source_format": "PPTX",
+                    "slide_no": 1,
+                    "shape_ref": "#/pictures/0",
+                    "slide_bbox": [0, 0, 10_000, 10_000],
+                },
+                "status": "AVAILABLE",
+                "error_code": "",
+                "result": result,
+            }
+        ],
+    )
+    assert json.loads(layout)["schema_version"] == "v2"
+    markdown = append_layout_ocr_markdown(b"# Parent\n", layout).decode()
+    assert "置信度=上游未提供" in markdown
+    assert "低置信度=4200/10000" in markdown
+
+
+def test_v2_confirmed_no_text_result_is_valid_without_docling_text_structure() -> None:
+    result = build_no_text_picture_result(
+        picture=_picture(DOCLING_LAYOUT_OCR_V2),
+        profile=DOCLING_LAYOUT_OCR_V2,
+    )
+    parsed = json.loads(result)
+
+    assert parsed["schema_version"] == "v2"
+    assert parsed["status"] == "NO_TEXT"
+    assert parsed["blocks"] == []
+    assert parsed["relations"] == []
+
+
+def test_v2_nonempty_result_uses_safe_structural_error_code() -> None:
+    value = json.loads(_docling_result())
+    value["texts"][0]["prov"] = []
+
+    with pytest.raises(DocumentProcessorFailure) as captured:
+        adapt_docling_picture_result(
+            json.dumps(value).encode(),
+            picture=_picture(DOCLING_LAYOUT_OCR_V2),
+            profile=DOCLING_LAYOUT_OCR_V2,
+        )
+
+    assert captured.value.error_code == "docling_picture_provenance_invalid"

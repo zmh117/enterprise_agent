@@ -13,7 +13,7 @@ DOCX 与 PPTX 的父文档定位语义不同。PPTX shape 在固定 slide 坐标
 **Goals:**
 
 - 新增单选代码Profile `docling-layout-ocr-v1`，完整继承`docling-text-v1`的格式、正文、表格、独立图片OCR、安全和原件交付语义，并增加DOCX/PPTX内嵌栅格图片布局OCR。
-- 为每个图片出现位置冻结父文档锚点，并为每个规范化图片冻结内部OCR文字、置信度、阅读顺序、规范化坐标和有界空间关系。
+- 为每个图片出现位置冻结父文档锚点，并为每个规范化图片冻结内部OCR文字、可用时的上游置信度、阅读顺序、规范化坐标和有界空间关系；上游未提供置信度时保存明确的 unavailable 事实，不伪造数值。
 - 发布不可变`OCR_LAYOUT_JSON`和布局增强`MARKDOWN`；Agent只读取Markdown，不接收原图、Base64、Docling JSON或OCR Layout JSON。
 - 让父文档解析、图片提取、子图片OCR、组装、失败恢复、配额、清理和审计具有持久且幂等的状态边界。
 - 保持现有Runtime协议、File MCP工具集合、原件身份、Delivery和历史Publication行为不变。
@@ -130,6 +130,16 @@ Representation和picture asset不得比source Version更晚可用，并继承ten
 
 软上限用于可解释的部分成功，硬上限用于防止解压、像素和任务放大。数量、像素、字符、关系和字节分别校验，不能用其中一个额度替代另一个。
 
+### 11. 真实 Provider 合同修正使用新 Profile 与 Schema v2
+
+2026-08-21 的新鲜 DOCX 链路中，父解析、8 张图片导出、逐图 Docling HTTP 200 和 assembly 均完成，但 7 张图片因 Docling 1.30.0 的 `DoclingDocument.texts[*]` 没有逐 block `confidence` 被 v1 适配器判为 `docling_picture_confidence_missing`，另 1 张成功响应触发通用结构错误。该结果证明“每个 block 必有上游置信度”的 v1 合同不成立，而不是图片或 OCR 服务整体失败。
+
+`docling-layout-ocr-v1`、`enterprise-agent.office-image-ocr-layout/v1` 和其 picture-result v1 保持不可变，仅用于历史快照与在途任务解释。新增 `docling-layout-ocr-v2`、布局 Schema v2、picture-result v2 和 Assembler v2；v2 的 block 仍必须保存文字、reading order 和合规 bbox，但 `confidence_bp` 允许为整数 `0..10000` 或 JSON `null`。只有上游明确提供逐 block 数值时才规范化为 basis points；缺失时保存 `null`，Markdown显示“置信度=上游未提供”，不得复制文档级聚合值或发明默认值。数字置信度仍执行既有低置信度标记。
+
+当 Docling 返回确定 `success`、无 errors 且 Markdown 为空时，v2 将该图片确定为 `NO_TEXT`，即使无可消费的 Docling JSON 文本结构；这只表示未提取到文字，不表示图片没有视觉语义。非空结果中的未知 page、text、provenance、bbox 或坐标原点继续失败关闭，并使用不含业务内容的细分结构错误码观测失败位置；日志、数据库和消息仍不得记录响应正文、OCR文字或坐标。
+
+新 Draft/Publication 不再选择 v1，目标应用必须创建并激活冻结 v2 code/version/hash 的新 Publication。部署同时保留 v1 处理代码以解释历史与安全终结已冻结任务，不原地修改 v1 hash，也不把 v2 语义回填到历史结果。
+
 ## Risks / Trade-offs
 
 - [坐标让Agent误以为获得完整视觉理解] → Profile、Markdown标题和固定notice统一称“布局OCR”，明确不识别箭头、颜色、图标、照片语义和未提取内容。
@@ -138,7 +148,7 @@ Representation和picture asset不得比source Version更晚可用，并继承ten
 - [Office显示层裁剪/旋转未体现在原始媒体] → 将原始嵌入图片明确冻结为OCR像素事实源，只应用图片自身EXIF；合成fixture证明未应用Office显示变换，所有Agent可见与管理端说明提示可能包含已裁掉区域。
 - [大量图片导致CPU、队列和对象存储放大] → child item持久编排、去重、硬/软上限、独立积压观测和基准后固定并发；asset在parent终态后清理。
 - [OCR block/关系数量导致JSON与Markdown膨胀] → block/word/relation/字符/字节独立上限、相邻关系算法和Profile驱动终结；不得无提示截断。
-- [OCR错误或低置信度被Agent当成事实] → 保存置信度、标记低置信度、保留原文字面输出，不做无依据纠错；Agent面向用户应说明机器提取边界。
+- [OCR错误或低置信度被Agent当成事实] → 上游提供时保存并标记置信度，未提供时显式标注 unavailable；保留原文字面输出，不做无依据纠错；Agent面向用户应说明机器提取边界。
 - [图片中包含提示注入] → 内容只作为沙盒不可信文件读取，Tool与权限在服务端固定，图片文字不得影响Manifest、授权或Provider选项。
 - [新change与未同步Docling change冲突] → apply gate要求基础change先完成并同步canonical；之后重新生成差异、分配migration并运行严格验证，禁止覆盖当前active工作。
 

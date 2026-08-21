@@ -13,7 +13,7 @@ from typing import Any
 from app.modules.document_processing.file_service_client import (
     DocumentProcessingFileServiceClient,
 )
-from app.modules.document_processing.profile import DOCLING_LAYOUT_OCR_V1
+from app.modules.document_processing.profile import DOCLING_LAYOUT_OCR_V2
 from app.modules.document_processing.provider import (
     DoclingServeProvider,
     read_docling_api_key,
@@ -99,11 +99,11 @@ def main() -> None:
     worker_settings = settings.document_processing_worker
     if worker_settings.concurrency != 1:
         raise RuntimeError("Phase 1 File Processing Worker concurrency must be 1")
-    layout_options = DOCLING_LAYOUT_OCR_V1.layout_ocr_options
+    layout_options = DOCLING_LAYOUT_OCR_V2.layout_ocr_options
     if layout_options is None:
         raise RuntimeError("Document layout OCR Profile is invalid")
     if worker_settings.layout_ocr_enabled and (
-        worker_settings.layout_profile_hash != DOCLING_LAYOUT_OCR_V1.profile_hash
+        worker_settings.layout_profile_hash != DOCLING_LAYOUT_OCR_V2.profile_hash
         or worker_settings.model_artifact_digest
         != str(layout_options["model_artifact"]["digest"])
     ):

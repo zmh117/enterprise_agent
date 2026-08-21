@@ -93,7 +93,7 @@ class RevisionResponse(BaseModel):
     task_workspace_retention_period: Literal["DAY", "WEEK", "MONTH"] = "WEEK"
     file_format_policy_version: Literal["text-v1", "text-v2"] = "text-v1"
     document_processing_profile_code: Literal[
-        "NONE", "docling-text-v1", "docling-layout-ocr-v1"
+        "NONE", "docling-text-v1", "docling-layout-ocr-v1", "docling-layout-ocr-v2"
     ] = "NONE"
     document_processing_status: Literal[
         "DISABLED", "CONFIGURED_UNAVAILABLE", "READY"
@@ -129,7 +129,7 @@ class PublicationResponse(RuntimeStateResponse):
     file_format_policy_version: Literal["text-v1", "text-v2"] = "text-v1"
     file_format_policy_source: Literal["publication_snapshot", "legacy_default"] = "legacy_default"
     document_processing_profile_code: Literal[
-        "NONE", "docling-text-v1", "docling-layout-ocr-v1"
+        "NONE", "docling-text-v1", "docling-layout-ocr-v1", "docling-layout-ocr-v2"
     ] = "NONE"
     document_processing_profile_version: str = ""
     document_processing_profile_hash: str = ""
@@ -172,7 +172,7 @@ class ApplicationSummaryResponse(RuntimeStateResponse):
     task_workspace_retention_period: Literal["DAY", "WEEK", "MONTH"] = "WEEK"
     file_format_policy_version: Literal["text-v1", "text-v2"] = "text-v1"
     document_processing_profile_code: Literal[
-        "NONE", "docling-text-v1", "docling-layout-ocr-v1"
+        "NONE", "docling-text-v1", "docling-layout-ocr-v1", "docling-layout-ocr-v2"
     ] = "NONE"
     document_processing_status: Literal[
         "DISABLED", "CONFIGURED_UNAVAILABLE", "READY"
@@ -311,7 +311,7 @@ class SaveDraftRequest(StrictRequest):
     task_workspace_retention_period: Literal["DAY", "WEEK", "MONTH"] = "WEEK"
     file_format_policy_version: Literal["text-v1", "text-v2"] = "text-v1"
     document_processing_profile_code: Literal[
-        "NONE", "docling-text-v1", "docling-layout-ocr-v1"
+        "NONE", "docling-text-v1", "docling-layout-ocr-v1", "docling-layout-ocr-v2"
     ] = "NONE"
     task_file_features: TaskFileFeaturesResponse = Field(default_factory=TaskFileFeaturesResponse)
     session_policy: SessionPolicyRequest = Field(default_factory=SessionPolicyRequest)

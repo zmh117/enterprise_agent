@@ -15,7 +15,6 @@ from urllib.parse import quote, urlsplit
 import httpx
 
 from app.modules.document_processing.profile import (
-    DOCLING_LAYOUT_OCR_V1,
     DocumentProcessingProfile,
     DocumentProcessingProfileCode,
     require_document_processing_profile,
@@ -208,10 +207,7 @@ class DoclingServeProvider:
             raise DocumentProcessorFailure("document_source_media_type_mismatch", retryable=False)
         options = profile.request_options
         target_type = "inbody"
-        if (
-            profile.code is DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V1
-            and format_code in {"DOCX", "PPTX"}
-        ):
+        if profile.layout_ocr_options is not None and format_code in {"DOCX", "PPTX"}:
             if profile.layout_ocr_options is None:
                 raise DocumentProcessorFailure("document_profile_mismatch", retryable=False)
             options = profile.layout_ocr_options["bundle_request_options"]
@@ -314,8 +310,12 @@ class DoclingServeProvider:
         source_format: str,
     ) -> DocumentProcessorBundleResult:
         _require_task_id(task_id)
+        registered = require_document_processing_profile(
+            profile.code.value,
+            profile_hash=profile.profile_hash,
+        )
         if (
-            profile.profile_hash != DOCLING_LAYOUT_OCR_V1.profile_hash
+            registered is not profile
             or source_format not in {"DOCX", "PPTX"}
             or profile.layout_ocr_options is None
         ):
@@ -341,7 +341,11 @@ class DoclingServeProvider:
         media_type: str,
         profile: DocumentProcessingProfile,
     ) -> ProcessorTask:
-        if profile.profile_hash != DOCLING_LAYOUT_OCR_V1.profile_hash:
+        registered = require_document_processing_profile(
+            profile.code.value,
+            profile_hash=profile.profile_hash,
+        )
+        if registered is not profile or profile.layout_ocr_options is None:
             raise DocumentProcessorFailure("document_profile_mismatch", retryable=False)
         if media_type not in {"image/png", "image/jpeg", "image/webp"}:
             raise DocumentProcessorFailure("document_source_media_type_mismatch", retryable=False)
@@ -370,7 +374,11 @@ class DoclingServeProvider:
         profile: DocumentProcessingProfile,
     ) -> DocumentProcessorResult:
         _require_task_id(task_id)
-        if profile.profile_hash != DOCLING_LAYOUT_OCR_V1.profile_hash:
+        registered = require_document_processing_profile(
+            profile.code.value,
+            profile_hash=profile.profile_hash,
+        )
+        if registered is not profile or profile.layout_ocr_options is None:
             raise DocumentProcessorFailure("document_profile_mismatch", retryable=False)
         value = self._request("GET", f"/v1/result/{quote(task_id, safe='')}")
         if not isinstance(value, dict) or not set(value).issubset(self._result_keys):
@@ -385,31 +393,53 @@ class DoclingServeProvider:
         document = value["document"]
         if not isinstance(document, dict) or not set(document).issubset(self._document_keys):
             raise DocumentProcessorFailure("docling_response_schema_invalid", retryable=True)
-        json_value = document.get("json_content")
         markdown_value = document.get("md_content")
-        if (
-            not isinstance(json_value, dict)
-            or json_value.get("schema_name") != "DoclingDocument"
-            or markdown_value is not None
-            and not isinstance(markdown_value, str)
-        ):
+        if markdown_value is not None and not isinstance(markdown_value, str):
             raise DocumentProcessorFailure("docling_picture_result_invalid", retryable=False)
-        encoded_json = json.dumps(
-            json_value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        ).encode()
+        errors = value["errors"]
+        if not isinstance(errors, list) or len(errors) > 100:
+            raise DocumentProcessorFailure("docling_response_schema_invalid", retryable=True)
         processing_time = value["processing_time"]
         if not isinstance(processing_time, (int, float)) or isinstance(processing_time, bool):
             raise DocumentProcessorFailure("docling_response_schema_invalid", retryable=True)
         markdown = str(markdown_value or "").encode()
+        json_value = document.get("json_content")
+        json_has_text = False
+        if isinstance(json_value, dict):
+            texts = json_value.get("texts")
+            json_has_text = isinstance(texts, list) and any(
+                isinstance(item, dict)
+                and isinstance(item.get("text"), str)
+                and bool(str(item["text"]).strip())
+                for item in texts
+            )
+        confirmed_no_text = (
+            profile.code is DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V2
+            and status == "success"
+            and not errors
+            and not markdown.strip()
+            and not json_has_text
+        )
+        if confirmed_no_text:
+            encoded_json = b"{}"
+        else:
+            if (
+                not isinstance(json_value, dict)
+                or json_value.get("schema_name") != "DoclingDocument"
+            ):
+                raise DocumentProcessorFailure("docling_picture_result_invalid", retryable=False)
+            encoded_json = json.dumps(
+                json_value,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode()
         return DocumentProcessorResult(
             markdown=markdown,
             docling_json=encoded_json,
-            partial=status == "partial_success" or bool(value["errors"]),
-            no_text=not markdown.strip(),
+            partial=status == "partial_success" or bool(errors),
+            no_text=confirmed_no_text,
             page_count=1,
             processing_time_ms=max(0, int(float(processing_time) * 1000)),
         )

@@ -14,10 +14,7 @@ from app.modules.document_processing.domain import (
     decode_required_representation_kinds,
     require_processing_transition,
 )
-from app.modules.document_processing.profile import (
-    DocumentProcessingProfileCode,
-    require_document_processing_profile,
-)
+from app.modules.document_processing.profile import require_document_processing_profile
 from app.shared.database import Database
 from app.shared.exceptions import NonRetryableExecutionError, NotFound, PermissionDenied
 
@@ -113,7 +110,7 @@ class DocumentProcessingRepository:
                 run_deadline_at,
                 (
                     "PENDING"
-                    if profile.code is DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V1
+                    if profile.layout_ocr_options is not None
                     else "NOT_REQUIRED"
                 ),
                 actor_id,
@@ -775,7 +772,7 @@ class DocumentProcessingRepository:
         profile = require_document_processing_profile(
             run["profile_code"], profile_hash=run["profile_hash"]
         )
-        if profile.code is not DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V1:
+        if profile.layout_ocr_options is None:
             self._deny("document_picture_profile_invalid", "当前Profile不处理内嵌图片")
         if media_type not in {"image/png", "image/jpeg", "image/webp"}:
             self._deny("document_picture_media_type_invalid", "内嵌图片媒体类型无效")
@@ -1519,7 +1516,7 @@ class DocumentProcessingRepository:
         profile = require_document_processing_profile(
             run["profile_code"], profile_hash=run["profile_hash"]
         )
-        if profile.code is not DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V1:
+        if profile.layout_ocr_options is None:
             self._deny("document_parent_artifact_profile_invalid", "当前Profile不暂存父Markdown")
         transfer_id = _id("parent_artifact_transfer")
         timestamp = _now()
@@ -1785,7 +1782,11 @@ class DocumentProcessingRepository:
     ) -> list[dict[str, Any]]:
         """Freeze cleanup facts only after the complete layout output set is visible."""
         run = self.get_run(run_id)
-        if str(run["profile_code"]) != "docling-layout-ocr-v1":
+        profile = require_document_processing_profile(
+            run["profile_code"],
+            profile_hash=run["profile_hash"],
+        )
+        if profile.layout_ocr_options is None:
             return []
         required = {kind.value for kind in self.required_output_kinds(run)}
         available = {

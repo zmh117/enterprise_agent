@@ -14,7 +14,11 @@ from app.modules.document_processing.file_service_client import (
 )
 from app.modules.document_processing.image_normalization import normalize_picture_asset
 from app.modules.document_processing.layout_ocr import adapt_docling_picture_result
-from app.modules.document_processing.profile import DOCLING_LAYOUT_OCR_V1
+from app.modules.document_processing.profile import (
+    DOCLING_LAYOUT_OCR_V1,
+    DOCLING_LAYOUT_OCR_V2,
+    DocumentProcessingProfile,
+)
 from app.modules.document_processing.provider import (
     DocumentProcessorBundleResult,
     DocumentProcessorFailure,
@@ -181,6 +185,10 @@ def _picture_docling_json() -> bytes:
 
 
 class _LayoutProcessor(_Processor):
+    def __init__(self) -> None:
+        super().__init__()
+        self.picture_docling_json = _picture_docling_json()
+
     def fetch_bundle(self, task_id: str, **_: Any) -> DocumentProcessorBundleResult:
         self.calls.append(("fetch_bundle", task_id))
         return DocumentProcessorBundleResult(
@@ -213,7 +221,7 @@ class _LayoutProcessor(_Processor):
         self.calls.append(("fetch_picture", task_id))
         return DocumentProcessorResult(
             markdown=b"safe",
-            docling_json=_picture_docling_json(),
+            docling_json=self.picture_docling_json,
             partial=False,
             no_text=False,
             page_count=1,
@@ -222,18 +230,27 @@ class _LayoutProcessor(_Processor):
 
 
 class _LayoutFileService(_FileService):
-    def __init__(self) -> None:
-        super().__init__(LAYOUT_RUN)
+    def __init__(
+        self,
+        profile: DocumentProcessingProfile = DOCLING_LAYOUT_OCR_V1,
+    ) -> None:
+        self.profile = profile
+        run = replace(
+            LAYOUT_RUN,
+            profile_code=profile.code.value,
+            profile_hash=profile.profile_hash,
+        )
+        super().__init__(run)
         normalized = normalize_picture_asset(
             _png(),
             declared_media_type="image/png",
-            profile=DOCLING_LAYOUT_OCR_V1,
+            profile=profile,
         )
         self.normalized = normalized
         self.picture_result = adapt_docling_picture_result(
             _picture_docling_json(),
             picture=normalized,
-            profile=DOCLING_LAYOUT_OCR_V1,
+            profile=profile,
         )
 
     def upload_parent_artifact(self, **values: Any) -> None:
@@ -265,7 +282,7 @@ class _LayoutFileService(_FileService):
         return ClaimedPictureItem(
             picture_item_id="item-layout",
             run_id="run-layout",
-            profile_hash=DOCLING_LAYOUT_OCR_V1.profile_hash,
+            profile_hash=self.profile.profile_hash,
             run_deadline_at="2026-08-21T12:30:00+00:00",
             status="CLAIMED",
             attempt=1,
@@ -294,7 +311,7 @@ class _LayoutFileService(_FileService):
     def claim_assembly(self, **_: Any) -> dict[str, Any]:
         return {
             "run_id": "run-layout",
-            "profile_hash": DOCLING_LAYOUT_OCR_V1.profile_hash,
+            "profile_hash": self.profile.profile_hash,
             "assembly_status": "CLAIMED",
             "assembly_attempt": 1,
             "claimed": True,
@@ -305,8 +322,8 @@ class _LayoutFileService(_FileService):
             "run_id": "run-layout",
             "source_file_id": "file-layout",
             "source_version_id": "version-layout",
-            "profile_code": "docling-layout-ocr-v1",
-            "profile_hash": DOCLING_LAYOUT_OCR_V1.profile_hash,
+            "profile_code": self.profile.code.value,
+            "profile_hash": self.profile.profile_hash,
             "run_deadline_at": "2026-08-21T12:30:00+00:00",
             "assembly_status": "CLAIMED",
             "occurrences": [
@@ -552,6 +569,31 @@ def test_layout_picture_stage_stages_canonical_result_and_completes_item() -> No
     parsed = json.loads(files.picture_result)
     assert parsed["blocks"][0]["bbox"] == [1000, 2000, 9000, 8000]
     assert parsed["blocks"][0]["confidence_bp"] == 9000
+
+
+def test_layout_v2_picture_stage_keeps_blocks_when_docling_omits_confidence() -> None:
+    files = _LayoutFileService(DOCLING_LAYOUT_OCR_V2)
+    processor = _LayoutProcessor()
+    value = json.loads(processor.picture_docling_json)
+    value["texts"][0].pop("confidence")
+    processor.picture_docling_json = json.dumps(value, ensure_ascii=False).encode()
+    message = PictureProcessingTaskMessage(
+        contract_version="file-picture-processing/v1",
+        run_id="run-layout",
+        picture_item_id="item-layout",
+        profile_hash=DOCLING_LAYOUT_OCR_V2.profile_hash,
+        attempt=0,
+        correlation_id="correlation-layout-v2",
+    )
+
+    result = _worker(files, processor)(message)
+
+    assert result.disposition is FileProcessingDisposition.ACK
+    assert ("picture_complete", "AVAILABLE") in files.calls
+    parsed = json.loads(files.picture_result)
+    assert parsed["schema_version"] == "v2"
+    assert parsed["blocks"][0]["text"] == "安全文字"
+    assert parsed["blocks"][0]["confidence_bp"] is None
 
 
 def test_layout_picture_attempt_uses_frozen_120_second_deadline() -> None:

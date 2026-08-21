@@ -9,8 +9,8 @@ from typing import Any
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from app.modules.document_processing.profile import (
-    DOCLING_LAYOUT_OCR_V1,
     DocumentProcessingProfile,
+    require_document_processing_profile,
 )
 from app.modules.document_processing.provider import DocumentProcessorFailure
 
@@ -36,9 +36,11 @@ def normalize_picture_asset(
     used_total_pixels: int = 0,
     used_derived_bytes: int = 0,
 ) -> NormalizedPicture:
-    if profile.profile_hash != DOCLING_LAYOUT_OCR_V1.profile_hash:
-        raise DocumentProcessorFailure("document_profile_mismatch", retryable=False)
-    if profile.layout_ocr_options is None:
+    registered = require_document_processing_profile(
+        profile.code.value,
+        profile_hash=profile.profile_hash,
+    )
+    if registered is not profile or profile.layout_ocr_options is None:
         raise DocumentProcessorFailure("document_profile_mismatch", retryable=False)
     limits = profile.layout_ocr_options["limits"]
     if declared_media_type not in {"image/png", "image/jpeg", "image/webp"}:

@@ -1559,7 +1559,12 @@ class GovernedFileStreamingService:
             self._deny("file_workspace_expired", "任务文件工作区已失效")
         assert row is not None
         code = str(row.get("document_processing_profile_code") or "NONE")
-        if code not in {"NONE", "docling-text-v1", "docling-layout-ocr-v1"}:
+        if code not in {
+            "NONE",
+            "docling-text-v1",
+            "docling-layout-ocr-v1",
+            "docling-layout-ocr-v2",
+        }:
             self._deny("document_processing_profile_invalid", "文档处理Profile无效")
         return code
 

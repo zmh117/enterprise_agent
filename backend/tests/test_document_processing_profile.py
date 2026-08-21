@@ -5,6 +5,8 @@ import pytest
 from app.modules.document_processing import (
     DOCLING_LAYOUT_OCR_V1,
     DOCLING_LAYOUT_OCR_V1_PROFILE_HASH,
+    DOCLING_LAYOUT_OCR_V2,
+    DOCLING_LAYOUT_OCR_V2_PROFILE_HASH,
     DOCLING_TEXT_V1,
     DOCLING_TEXT_V1_PROFILE_HASH,
     DocumentProcessingProfileCode,
@@ -112,6 +114,37 @@ def test_docling_layout_ocr_v1_is_a_complete_fixed_superset() -> None:
     assert layout["security"]["runtime_options_override_enabled"] is False
 
 
+def test_docling_layout_ocr_v2_freezes_nullable_upstream_confidence_contract() -> None:
+    profile = DOCLING_LAYOUT_OCR_V2
+
+    assert profile.code is DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V2
+    assert profile.version == "2"
+    assert profile.source_formats == DOCLING_LAYOUT_OCR_V1.source_formats
+    assert profile.request_options == DOCLING_LAYOUT_OCR_V1.request_options
+    assert profile.output_kinds == DOCLING_LAYOUT_OCR_V1.output_kinds
+    assert profile.profile_hash == DOCLING_LAYOUT_OCR_V2_PROFILE_HASH
+    assert profile.profile_hash == (
+        "c3f6d45b3d23f70727e047158f20b1e798fa9a6d188aa11b8985385a1bc79cb8"
+    )
+
+    layout = profile.canonical_payload["layout_ocr"]
+    assert layout["layout_schema"] == {
+        "name": "enterprise-agent.office-image-ocr-layout",
+        "version": "v2",
+    }
+    assert layout["picture_result_schema"] == {
+        "name": "enterprise-agent.office-picture-ocr-result",
+        "version": "v2",
+    }
+    assert layout["confidence_contract"] == {
+        "source": "docling-text-item-or-provenance",
+        "unit": "basis-points",
+        "missing_value": None,
+        "aggregate_fallback_enabled": False,
+    }
+    assert layout["assembler_version"] == "office-image-layout-assembler/v2"
+
+
 def test_docling_text_v1_payload_does_not_inherit_layout_fields() -> None:
     assert "layout_ocr" not in DOCLING_TEXT_V1.canonical_payload
     assert DOCLING_TEXT_V1.profile_hash == DOCLING_TEXT_V1_PROFILE_HASH
@@ -134,6 +167,11 @@ def test_profile_snapshot_preserves_disabled_legacy_default() -> None:
         "code": "docling-layout-ocr-v1",
         "version": "1",
         "hash": DOCLING_LAYOUT_OCR_V1.profile_hash,
+    }
+    assert document_processing_profile_snapshot("docling-layout-ocr-v2") == {
+        "code": "docling-layout-ocr-v2",
+        "version": "2",
+        "hash": DOCLING_LAYOUT_OCR_V2.profile_hash,
     }
 
 

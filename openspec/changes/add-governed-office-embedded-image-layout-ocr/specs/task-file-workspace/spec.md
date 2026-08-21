@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: 布局OCR派生表示与原件保持不同身份
-File Service MUST 把`docling-layout-ocr-v1`产生的`MARKDOWN`、`DOCLING_JSON`和`OCR_LAYOUT_JSON`保存为绑定同一精确source Version与processing run的不同不可变Representation。只有最终Markdown SHALL 具有受控`MATERIALIZE`动作；Docling JSON、OCR Layout JSON、picture asset和Office原件不得进入Agent Sandbox、成为File Version、改变current version、获得编辑/提交动作或作为原件交付。
+File Service MUST 把`docling-layout-ocr-v1`或`docling-layout-ocr-v2`产生的`MARKDOWN`、`DOCLING_JSON`和`OCR_LAYOUT_JSON`保存为绑定同一精确source Version与processing run的不同不可变Representation；各run必须严格使用其冻结Profile对应的Schema，不得混用v1/v2结果。只有最终Markdown SHALL 具有受控`MATERIALIZE`动作；Docling JSON、OCR Layout JSON、picture asset和Office原件不得进入Agent Sandbox、成为File Version、改变current version、获得编辑/提交动作或作为原件交付。
 
 #### Scenario: Job使用布局增强Markdown
 - **WHEN** Job Manifest冻结Office source Version及布局Profile的最终Markdown Representation
@@ -27,7 +27,7 @@ File Service MUST 把`docling-layout-ocr-v1`产生的`MARKDOWN`、`DOCLING_JSON`
 - **AND** 不因Profile或source相同而放宽精确Representation绑定
 
 ### Requirement: 图片派生资产和布局输出受工作区配额与清理约束
-picture asset、item staging、OCR Layout JSON、Docling JSON和布局增强Markdown的实际字节 MUST 计入`docling-layout-ocr-v1`固定的派生内容配额；picture occurrence和asset不得占任务工作区逻辑文件名额。新提取、OCR或终结会突破任一冻结上限时 MUST 在发布可见Representation前拒绝或按Profile定义的明确PARTIAL路径终结，不得留下错误可见性。工作区到期或source内容不可用后，图片asset和布局派生内容 MUST 按既有非终态依赖、保留与可重试清理规则处理。
+picture asset、item staging、OCR Layout JSON、Docling JSON和布局增强Markdown的实际字节 MUST 计入相应布局OCR Profile固定的派生内容配额；picture occurrence和asset不得占任务工作区逻辑文件名额。新提取、OCR或终结会突破任一冻结上限时 MUST 在发布可见Representation前拒绝或按Profile定义的明确PARTIAL路径终结，不得留下错误可见性。工作区到期或source内容不可用后，图片asset和布局派生内容 MUST 按既有非终态依赖、保留与可重试清理规则处理。
 
 #### Scenario: 一份PPTX包含多张内嵌图片
 - **WHEN** File Service为同一PPTX创建多个picture occurrence与处理asset

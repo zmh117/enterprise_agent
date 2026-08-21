@@ -324,6 +324,7 @@ def verify_publication_snapshot(
             DocumentProcessingProfileCode.NONE.value,
             DocumentProcessingProfileCode.DOCLING_TEXT_V1.value,
             DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V1.value,
+            DocumentProcessingProfileCode.DOCLING_LAYOUT_OCR_V2.value,
         }
     )
 

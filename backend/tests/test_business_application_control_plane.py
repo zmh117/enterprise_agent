@@ -24,7 +24,11 @@ from app.modules.business_application.domain.policies import (
     validate_task_file_attachment_dependency,
     validate_task_file_features,
 )
-from app.modules.document_processing import DOCLING_LAYOUT_OCR_V1, DOCLING_TEXT_V1
+from app.modules.document_processing import (
+    DOCLING_LAYOUT_OCR_V1,
+    DOCLING_LAYOUT_OCR_V2,
+    DOCLING_TEXT_V1,
+)
 from app.modules.job.domain.job_status import JobStatus
 from app.modules.mcp_tool_runtime.job_snapshot import JobMcpToolSnapshotService
 from app.modules.mcp_tool_runtime.manifest import MCP_TOOL_MANIFEST
@@ -50,9 +54,9 @@ def control_plane_settings() -> object:
         document_processing_worker=replace(
             settings.document_processing_worker,
             layout_ocr_enabled=True,
-            layout_profile_hash=DOCLING_LAYOUT_OCR_V1.profile_hash,
+            layout_profile_hash=DOCLING_LAYOUT_OCR_V2.profile_hash,
             model_artifact_digest=str(
-                DOCLING_LAYOUT_OCR_V1.layout_ocr_options["model_artifact"]["digest"]
+                DOCLING_LAYOUT_OCR_V2.layout_ocr_options["model_artifact"]["digest"]
             ),
         ),
     )
@@ -744,13 +748,19 @@ def test_document_processing_profile_is_strict_frozen_and_legacy_default_off() -
         "NONE",
         "docling-text-v1",
         "docling-layout-ocr-v1",
+        "docling-layout-ocr-v2",
     ]
     assert catalog["document_processing_profiles"][1]["document_processing_status"] == (
         "CONFIGURED_UNAVAILABLE"
     )
     assert "request_options" not in catalog["document_processing_profiles"][1]
-    layout_catalog = catalog["document_processing_profiles"][2]
-    assert layout_catalog["hash"] == DOCLING_LAYOUT_OCR_V1.profile_hash
+    legacy_layout_catalog = catalog["document_processing_profiles"][2]
+    assert legacy_layout_catalog["hash"] == DOCLING_LAYOUT_OCR_V1.profile_hash
+    assert legacy_layout_catalog["selectable"] is False
+    assert legacy_layout_catalog["document_processing_reason_code"] == "profile_deprecated"
+    layout_catalog = catalog["document_processing_profiles"][3]
+    assert layout_catalog["hash"] == DOCLING_LAYOUT_OCR_V2.profile_hash
+    assert layout_catalog["selectable"] is True
     assert layout_catalog["output_kinds"] == [
         "MARKDOWN",
         "DOCLING_JSON",
@@ -760,7 +770,8 @@ def test_document_processing_profile_is_strict_frozen_and_legacy_default_off() -
         "office_embedded_image_ocr": True,
         "coordinates": "TOPLEFT_0_10000",
         "reading_order": True,
-        "confidence": True,
+        "confidence_when_upstream_provided": True,
+        "missing_confidence": "EXPLICIT_NULL",
         "bounded_geometric_relations": True,
         "picture_pixel_basis": "RAW_EMBEDDED_MEDIA_AFTER_EXIF",
         "office_display_transform_applied": False,
@@ -768,7 +779,7 @@ def test_document_processing_profile_is_strict_frozen_and_legacy_default_off() -
         "visual_semantics": False,
     }
 
-    payload["document_processing_profile_code"] = "docling-layout-ocr-v1"
+    payload["document_processing_profile_code"] = "docling-layout-ocr-v2"
     layout_revision = service.save_draft(
         actor_id="user_local_admin",
         code="document-processing-profile",
@@ -781,9 +792,9 @@ def test_document_processing_profile_is_strict_frozen_and_legacy_default_off() -
         revision_id=str(layout_revision["id"]),
     )
     assert layout_publication["snapshot"]["document_processing_profile"] == {
-        "code": "docling-layout-ocr-v1",
-        "version": "1",
-        "hash": DOCLING_LAYOUT_OCR_V1.profile_hash,
+        "code": "docling-layout-ocr-v2",
+        "version": "2",
+        "hash": DOCLING_LAYOUT_OCR_V2.profile_hash,
     }
 
 
@@ -842,7 +853,7 @@ def test_layout_profile_publication_fails_closed_until_deployment_contract_is_re
     )
     payload = draft_payload()
     enable_file_context_dependencies(container, payload)
-    payload["document_processing_profile_code"] = "docling-layout-ocr-v1"
+    payload["document_processing_profile_code"] = "docling-layout-ocr-v2"
     revision = service.save_draft(
         actor_id="user_local_admin",
         code="layout-profile-not-ready",
@@ -860,6 +871,44 @@ def test_layout_profile_publication_fails_closed_until_deployment_contract_is_re
     assert "document_processing_profile_code" in {
         item["field"] for item in blocked.value.field_errors
     }
+
+
+def test_layout_v1_remains_parseable_but_cannot_create_new_publication() -> None:
+    settings = control_plane_settings()
+    container = build_test_container(settings, migrate=True, seed=True)
+    service = container.business_application_service
+    application = service.create(
+        actor_id="user_local_admin",
+        code="layout-profile-v1-deprecated",
+        name="Layout Profile V1 Deprecated",
+        description="safe",
+        project_code="default",
+        owner_user_id="user_local_admin",
+    )
+    payload = draft_payload()
+    enable_file_context_dependencies(container, payload)
+    payload["document_processing_profile_code"] = "docling-layout-ocr-v1"
+    revision = service.save_draft(
+        actor_id="user_local_admin",
+        code="layout-profile-v1-deprecated",
+        expected_revision=int(application["revision"]),
+        payload=payload,
+    )
+
+    with pytest.raises(NonRetryableExecutionError) as blocked:
+        service.publish(
+            actor_id="user_local_admin",
+            code="layout-profile-v1-deprecated",
+            revision_id=str(revision["id"]),
+        )
+
+    assert blocked.value.error_code == "validation_failed"
+    assert blocked.value.field_errors == [
+        {
+            "field": "document_processing_profile_code",
+            "message": "布局 OCR v1 仅保留历史解释，新发布必须使用 v2",
+        }
+    ]
 
 
 def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
@@ -918,6 +967,7 @@ def test_migration_is_repeatable_and_constraints_are_enforced() -> None:
             "114_expand_execution_summary_protocol_v13.sql",
             "115_expand_file_turn_admission.sql",
             "116_expand_office_embedded_image_layout_ocr.sql",
+            "117_expand_docling_layout_ocr_v2.sql",
         ]
     session_columns = {str(row["name"]) for row in db.execute("pragma table_info(agent_session)")}
     assert {

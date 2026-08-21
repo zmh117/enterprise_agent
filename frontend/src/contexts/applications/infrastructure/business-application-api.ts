@@ -46,12 +46,18 @@ export const catalogSchema = z.object({
   document_processing_profiles: z
     .array(
       z.object({
-        code: z.enum(["NONE", "docling-text-v1", "docling-layout-ocr-v1"]),
+        code: z.enum([
+          "NONE",
+          "docling-text-v1",
+          "docling-layout-ocr-v1",
+          "docling-layout-ocr-v2",
+        ]),
         version: z.string(),
         hash: z.string(),
         label: z.string(),
         source_format_codes: z.array(z.string()),
         output_kinds: z.array(z.string()),
+        selectable: z.boolean().default(true),
         limits: z
           .object({
             max_source_bytes: z.number().int().positive(),
