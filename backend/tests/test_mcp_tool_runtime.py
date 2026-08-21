@@ -473,7 +473,9 @@ def test_file_job_context_exposes_frozen_file_tools_and_sandbox_instructions() -
     assert "version_created_at" in restrictions
     assert "generic created_at" in restrictions
     assert "canonical UTC RFC 3339" in restrictions
-    assert "display timezone" in restrictions
+    assert "Asia/Shanghai (UTC+08:00)" in restrictions
+    assert "上传时间（东八区）" in restrictions
+    assert "never display 上传时间（UTC）" in restrictions
 
 
 def test_text_v2_context_exposes_log_read_only_and_markdown_output_rules() -> None:
