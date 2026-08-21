@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from collections.abc import Callable
 from typing import Any, Protocol
+from zoneinfo import ZoneInfo
 
 from app.modules.audit.application.audit_service import AuditService
 from app.modules.channel.application.channel_ingress_service import ChannelIngressService
@@ -31,6 +33,9 @@ from app.shared.exceptions import NonRetryableExecutionError, PermissionDenied
 logger = logging.getLogger(__name__)
 
 MAX_QUOTED_MESSAGE_CHARS = 8_000
+MAX_ATTACHMENT_FILE_NAME_CHARS = 255
+DINGTALK_DISPLAY_TIMEZONE = ZoneInfo("Asia/Shanghai")
+INVALID_ATTACHMENT_FILE_NAME_CHARS = frozenset('<>:"|?*')
 
 
 @dataclass(frozen=True)
@@ -842,6 +847,57 @@ def _dict_value(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _safe_attachment_file_name(value: str) -> str:
+    """Keep a user-facing basename while removing path/control characters."""
+    normalized = unicodedata.normalize("NFC", value).replace("\\", "/")
+    basename = normalized.rsplit("/", 1)[-1].strip().strip(".")
+    safe = "".join(
+        "_"
+        if character in INVALID_ATTACHMENT_FILE_NAME_CHARS
+        or unicodedata.category(character).startswith("C")
+        else character
+        for character in basename
+    ).strip()
+    if not safe:
+        return ""
+    if len(safe) <= MAX_ATTACHMENT_FILE_NAME_CHARS:
+        return safe
+    dot = safe.rfind(".")
+    suffix = safe[dot:] if 0 < dot and len(safe) - dot <= 20 else ""
+    stem_limit = MAX_ATTACHMENT_FILE_NAME_CHARS - len(suffix)
+    return safe[:stem_limit].rstrip() + suffix
+
+
+def _attachment_message_time(payload: dict[str, Any]) -> datetime:
+    for key in ("createAt", "create_at", "timestamp", "_received_at"):
+        raw = payload.get(key)
+        if raw is None or not str(raw).strip():
+            continue
+        text = str(raw).strip()
+        try:
+            numeric = float(text)
+        except ValueError:
+            try:
+                parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=UTC)
+            return parsed
+        try:
+            if abs(numeric) >= 100_000_000_000:
+                numeric /= 1000
+            return datetime.fromtimestamp(numeric, tz=UTC)
+        except (OverflowError, OSError, ValueError):
+            continue
+    return datetime.now(UTC)
+
+
+def _unnamed_image_file_name(payload: dict[str, Any]) -> str:
+    local_time = _attachment_message_time(payload).astimezone(DINGTALK_DISPLAY_TIMEZONE)
+    return f"图片-{local_time:%Y%m%d-%H%M%S}.png"
+
+
 def _reply_mention_target(message: DingTalkStreamIncomingMessage) -> dict[str, list[str]]:
     if message.conversation_type != "group":
         return {}
@@ -881,15 +937,14 @@ def _attachments(
         rich = _dict_value(payload.get("content") or payload).get("richText") or []
         raw_items = [item for item in rich if isinstance(item, dict) and item.get("downloadCode")]
     result: list[ChannelAttachment] = []
-    for index, item in enumerate(raw_items, start=1):
+    for item in raw_items:
         download_code = str(item.get("downloadCode") or "")
         if not download_code:
             continue
-        file_name = str(
-            item.get("fileName")
-            or item.get("filename")
-            or (f"image-{index}.png" if msgtype in {"picture", "image", "richtext"} else "")
-        )
+        provided_name = str(item.get("fileName") or item.get("filename") or "")
+        file_name = _safe_attachment_file_name(provided_name)
+        if not file_name and msgtype in {"picture", "image", "richtext"}:
+            file_name = _unnamed_image_file_name(payload)
         if not file_name:
             continue
         suffix = file_name.lower().rsplit(".", 1)[-1] if "." in file_name else ""

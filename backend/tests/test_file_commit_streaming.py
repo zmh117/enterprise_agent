@@ -1125,7 +1125,7 @@ def test_file_worker_canonicalizes_misnamed_images_and_disambiguates_names() -> 
     assert [item["format_code"] for item in versions] == ["JPEG", "JPEG"]
     assert [item["media_type"] for item in versions] == ["image/jpeg", "image/jpeg"]
     assert files[0]["display_name"] == "channel-image.jpg"
-    assert files[1]["display_name"].startswith("channel-image-")
+    assert files[1]["display_name"] == "channel-image (2).jpg"
     assert files[1]["display_name"].endswith(".jpg")
     assert files[1]["display_name"] != files[0]["display_name"]
     assert repository.database.execute_one(

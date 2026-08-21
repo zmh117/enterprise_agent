@@ -10,6 +10,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
+from PIL import Image
 from pypdf import PdfWriter
 
 from app.modules.audit.application.audit_service import AuditService
@@ -380,6 +381,83 @@ def _import_channel_file(
     )
     assert binding is not None
     return dict(binding)
+
+
+def test_duplicate_original_attachment_names_use_readable_sequence() -> None:
+    runtime = multimodal_container(
+        task_file_features=FEATURES,
+        file_format_policy_version="text-v2",
+    )
+    _enable_in_process_attachment_import(runtime)
+
+    _import_channel_file(
+        runtime,
+        msg_id="duplicate-original-name-1",
+        file_name="生产记录.txt",
+        content_type="text/plain",
+        data=b"first\n",
+    )
+    _import_channel_file(
+        runtime,
+        msg_id="duplicate-original-name-2",
+        file_name="生产记录.txt",
+        content_type="text/plain",
+        data=b"second\n",
+    )
+
+    rows = runtime.database.execute(
+        """
+        select logical_name from task_workspace_file
+         where status = 'ACTIVE'
+         order by logical_name
+        """
+    )
+    assert [row["logical_name"] for row in rows] == [
+        "生产记录 (2).txt",
+        "生产记录.txt",
+    ]
+
+
+def test_unnamed_native_pictures_use_time_name_real_extension_and_sequence() -> None:
+    runtime = multimodal_container(
+        task_file_features=FEATURES,
+        file_format_policy_version="text-v2",
+        document_processing_profile_code="docling-text-v1",
+    )
+    _enable_in_process_document_import(runtime)
+    image = Image.new("RGB", (2, 2), "red")
+    output = io.BytesIO()
+    image.save(output, format="JPEG")
+    source = output.getvalue()
+    created_at = int(datetime(2026, 8, 19, 1, 40, 47, tzinfo=UTC).timestamp() * 1000)
+
+    for sequence in (1, 2):
+        payload = load_fixture("picture.json")
+        payload["msgId"] = f"unnamed-native-picture-{sequence}"
+        payload["createAt"] = created_at
+        payload["content"] = {"downloadCode": f"unnamed-native-picture-{sequence}-code"}
+        staged = runtime.dingtalk_stream_message_service.handle_callback(
+            payload=payload,
+            correlation_id=str(payload["msgId"]),
+        )
+        assert staged.status == "attachments_staged", (staged.reason, staged.error_code)
+        task = runtime.message_bus.attachments.popleft()
+        runtime.attachment_service.downloader = FakeDownloader(
+            {f"unnamed-native-picture-{sequence}-code": source}
+        )
+        runtime.attachment_service.process(task.attachment_id, str(payload["msgId"]))
+
+    rows = runtime.database.execute(
+        """
+        select logical_name from task_workspace_file
+         where status = 'ACTIVE'
+         order by logical_name
+        """
+    )
+    assert [row["logical_name"] for row in rows] == [
+        "图片-20260819-094047 (2).jpg",
+        "图片-20260819-094047.jpg",
+    ]
 
 
 def _attach_markdown_representation(

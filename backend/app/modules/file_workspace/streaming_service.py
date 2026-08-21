@@ -909,7 +909,6 @@ class GovernedFileStreamingService:
             display_name = self._available_attachment_name(
                 workspace_id=workspace_id,
                 requested=str(attachment["file_name"]),
-                attachment_id=str(attachment["id"]),
             )
             file_id = _opaque("managed_file")
             version_id = _opaque("file_version")
@@ -1032,7 +1031,6 @@ class GovernedFileStreamingService:
             display_name = self._available_attachment_name(
                 workspace_id=workspace_id,
                 requested=requested_name,
-                attachment_id=str(attachment["id"]),
             )
             file_id = _opaque("managed_file")
             version_id = _opaque("file_version")
@@ -1166,21 +1164,32 @@ class GovernedFileStreamingService:
             "status": "IMPORTED",
         }
 
-    def _available_attachment_name(
-        self, *, workspace_id: str, requested: str, attachment_id: str
-    ) -> str:
-        occupied = self.repository.database.execute_one(
-            """
-            select id from task_workspace_file
-             where workspace_id = ? and logical_name = ? and status = 'ACTIVE'
+    def _available_attachment_name(self, *, workspace_id: str, requested: str) -> str:
+        occupied = {
+            str(row["logical_name"])
+            for row in self.repository.database.execute(
+                """
+            select logical_name from task_workspace_file
+             where workspace_id = ? and status = 'ACTIVE'
             """,
-            (workspace_id, requested),
-        )
-        if occupied is None:
+                (workspace_id,),
+            )
+        }
+        if requested not in occupied:
             return requested
         path = Path(requested)
-        stem = path.stem[:220] or "attachment"
-        return f"{stem}-{attachment_id[-8:]}{path.suffix.lower()}"
+        suffix = path.suffix
+        stem = path.stem or "attachment"
+        for sequence in range(2, len(occupied) + 2):
+            marker = f" ({sequence})"
+            stem_limit = max(1, 255 - len(marker) - len(suffix))
+            candidate = f"{stem[:stem_limit]}{marker}{suffix}"
+            if candidate not in occupied:
+                return candidate
+        self._deny(
+            "file_workspace_name_conflict",
+            "任务工作区中无法生成唯一文件名",
+        )
 
     @staticmethod
     def _canonical_document_attachment_name(

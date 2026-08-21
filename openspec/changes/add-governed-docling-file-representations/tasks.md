@@ -51,7 +51,7 @@
 - [x] 6.4 对非空 `PARTIAL` Markdown 允许带治理提示继续；对 `NO_TEXT`/`UNAVAILABLE` 禁止伪造文本或静默当成可读内容。
 - [x] 6.5 当请求只有不可读附件且无有效文本指令时，不调用模型并返回结构化不可处理说明；混合输入则仅使用可用表示并附带缺失提示。
 - [x] 6.6 补充渠道附件 E2E 前置测试，覆盖 DOCX/PPTX/XLSX/PDF/PNG/JPEG/WebP、旧 publication、重复 ingress 和 Job 重放。
-- [x] 6.7 修复渠道图片名称与真实格式不一致：以安全规范化后的JPEG/PNG/WebP媒体类型和签名决定source格式及canonical extension，保留原始来源名称、同名消歧，并让File Worker持久化File Service白名单机器错误码而不是本地化提示文字；补充聚焦回归。
+- [x] 6.7 修复渠道图片名称与真实格式不一致：以安全规范化后的JPEG/PNG/WebP媒体类型和签名决定source格式及canonical extension，渠道有原名时保留安全basename，原生picture无原名时按Asia/Shanghai消息时间生成可读名称，同名使用 ` (2)`、` (3)` 消歧且不暴露attachment ID，并让File Worker持久化File Service白名单机器错误码而不是本地化提示文字；补充聚焦回归。
 
 ## 7. Manifest v4 与 Runtime 物化
 

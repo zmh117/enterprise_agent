@@ -49,7 +49,7 @@ Docling 官方 v1 API 可以接收 multipart 文件、异步返回 task ID、轮
 
 新增代码注册的源格式定义：PDF、DOCX、PPTX、XLSX、PNG、JPEG、WebP。它们允许 `READ_METADATA`、`RETAIN`、`DELIVER`，但不得直接 `MATERIALIZE`、`EDIT` 或 `COMMIT` 到 Agent Sandbox。现有文本格式策略继续定义 TXT、LOG 和 Markdown 的读写动作。
 
-渠道提供的图片文件名和媒体类型只作为来源元数据，不能作为真实格式事实。File Worker 必须先安全解码 JPEG、PNG 或 WebP、执行像素上限检查、去除不需要的元数据并重新编码；File Service 再按规范化字节的真实媒体类型与文件签名确定源格式。若图片原始扩展名与规范化格式不一致，File Service 使用相同 stem 和真实格式的 canonical extension 创建受治理 display name，并在同名时继续使用既有不透明 attachment 后缀消歧；原始名称仍只保留在 `message_attachment` 来源事实中。该兼容规则仅适用于成功解码并重新编码的图片，不适用于 PDF、Office 或其他文件，后者的扩展名、媒体类型和结构仍必须严格一致。
+渠道提供的图片文件名和媒体类型只作为来源元数据，不能作为真实格式事实。渠道确实提供文件名时，ingress 在去除路径、控制字符和非法字符后保留安全原名；DingTalk 原生 picture 消息只有 `downloadCode` 而没有原始文件名时，使用消息时间按 `Asia/Shanghai` 生成 `图片-YYYYMMDD-HHMMSS` stem，不伪造原名。File Worker 必须先安全解码 JPEG、PNG 或 WebP、执行像素上限检查、去除不需要的元数据并重新编码；File Service 再按规范化字节的真实媒体类型与文件签名确定源格式。受治理 display name 使用安全 stem 和真实格式的 canonical extension；同一工作区内同名时依次使用 ` (2)`、` (3)` 可读后缀，不得向用户暴露不透明 attachment ID。安全规范化后的来源名称仍保留在 `message_attachment` 来源事实中。该图片格式兼容规则仅适用于成功解码并重新编码的图片，不适用于 PDF、Office 或其他文件，后者的扩展名、媒体类型和结构仍必须严格一致。
 
 File Service 的拒绝响应只向 File Worker 返回有界安全消息和稳定机器 `error_code`。File Worker 必须保存白名单机器码到 `message_attachment.failure_code`，不得把本地化提示文字当作错误码，也不得记录原始响应正文。这样运维可以区分格式、签名、配额和身份拒绝，而不泄漏文件内容或内部异常。
 

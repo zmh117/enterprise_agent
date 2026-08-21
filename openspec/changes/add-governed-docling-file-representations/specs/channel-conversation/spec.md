@@ -14,7 +14,17 @@
 - **AND** 不把OCR能力描述为完整图片内容理解
 
 ### Requirement: MVP只接受现代白名单格式
-系统 SHALL 为启用`docling-text-v1`的任务工作区链路支持PDF、DOCX、XLSX、PPTX、JPEG、PNG和WebP原件，并继续按已冻结文本格式策略支持UTF-8 TXT、LOG和Markdown；系统 MUST 根据真实内容探测MIME、校验格式、数量、文件大小、解压后大小及结构上限。对成功安全解码、像素校验并重新编码的JPEG、PNG和WebP，系统 MUST 以规范化后的真实媒体类型与文件签名确定源格式，并在渠道原始扩展名不一致时使用真实格式的canonical extension创建受治理文件名，同时保留原始名称作为来源元数据；该兼容行为不得用于PDF、Office或其他格式。源文档单文件 MUST 不超过25MiB；Agent可读文本仍 MUST 不超过15MiB。系统 MUST 拒绝DOC、XLS、PPT、宏文件及其他未支持格式。
+系统 SHALL 为启用`docling-text-v1`的任务工作区链路支持PDF、DOCX、XLSX、PPTX、JPEG、PNG和WebP原件，并继续按已冻结文本格式策略支持UTF-8 TXT、LOG和Markdown；系统 MUST 根据真实内容探测MIME、校验格式、数量、文件大小、解压后大小及结构上限。渠道提供文件名时，系统 MUST 保留其安全规范化后的 basename 作为用户可见名称基础；原生图片消息不提供文件名时，系统 MUST 按消息时间和固定 `Asia/Shanghai` 时区生成可读名称，不得伪造原名。对成功安全解码、像素校验并重新编码的JPEG、PNG和WebP，系统 MUST 以规范化后的真实媒体类型与文件签名确定源格式，并使用真实格式的canonical extension创建受治理文件名，同时保留安全规范化后的来源名称作为来源元数据；该兼容行为不得用于PDF、Office或其他格式。同一工作区的同名文件 MUST 使用 ` (2)`、` (3)` 递增后缀消歧，不得暴露内部 attachment ID。源文档单文件 MUST 不超过25MiB；Agent可读文本仍 MUST 不超过15MiB。系统 MUST 拒绝DOC、XLS、PPT、宏文件及其他未支持格式。
+
+#### Scenario: 渠道提供可用原始文件名
+- **WHEN** 渠道附件提供可安全规范化的原始文件名
+- **THEN** 任务工作区保留其安全basename和经真实内容校正的canonical extension
+- **AND** 同名时使用 ` (2)`、` (3)` 递增后缀，不展示不透明内部标识
+
+#### Scenario: DingTalk原生图片没有原始文件名
+- **WHEN** 原生picture消息只提供`downloadCode`和消息时间
+- **THEN** 系统生成 `图片-YYYYMMDD-HHMMSS.<canonical extension>` 作为用户可见文件名
+- **AND** 时间按`Asia/Shanghai`解释，扩展名由实际文件签名决定
 
 #### Scenario: 现代Office附件通过受治理校验
 - **WHEN** DOCX、XLSX或PPTX的扩展名、MIME、大小和结构符合固定源文件策略且应用启用文档处理Profile
